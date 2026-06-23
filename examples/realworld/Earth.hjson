@@ -1,0 +1,173 @@
+// Earth — a complete real-world definition for `inkhaven realworld`.
+//
+// Drop this in a project as `world.hjson`, then:
+//   inkhaven realworld validate          # check it parses + is consistent
+//   inkhaven realworld compile            # astronomy → geology → climate →
+//                                         #   hydrology → demographics (CLI)
+//   inkhaven realworld map                # render the map with plakat
+//
+// Every value here is our real Sun/Earth/Moon. The astronomy block is exact
+// (closed-form physics re-asserts it each run); geology/climate/hydrology/
+// demographics are *seeded procedural* — they generate a plausible Earth-like
+// world from these parameters, not a literal map of our continents. To compile
+// the actual Earth, supply a real heightmap via the `dem:` block (see below).
+{
+    name: "Earth"
+
+    // The world seed drives every procedural layer. Change it to regenerate the
+    // continents/climate/rivers/settlements while keeping the same physics.
+    seed: 299792458  // any integer (or a "0x…" hex string) — drives every layer
+    primary_language: "en"
+
+    // ── Astronomy — the real Sol system (exact, closed-form) ─────────────────
+    astronomy: {
+        // The Sun: a G2V main-sequence star, ~4.6 Gyr old, 1 solar luminosity.
+        star: {
+            class: "G2V"
+            age_gyr: 4.6
+            luminosity_solar: 1.0
+            mass_solar: 1.0
+        }
+        // Earth: 1 Earth mass/radius, 23.44° axial tilt (the seasons), a 24-hour
+        // solar day, spinning prograde (west→east; the Sun rises in the east).
+        planet: {
+            mass_earth: 1.0
+            radius_earth: 1.0
+            axial_tilt_deg: 23.44
+            day_length_hours: 24.0
+            rotation_direction: "prograde"
+        }
+        // The orbit: 1 AU, slightly eccentric (e=0.0167), 365.256-day year.
+        orbit: {
+            semi_major_axis_au: 1.0
+            eccentricity: 0.0167
+            year_length_days: 365.256
+        }
+        // The Moon: 1 lunar mass, 27.32-day sidereal period (the ~29.5-day
+        // synodic/phase period is computed), e=0.0549. It dominates the tides.
+        moons: [
+            {
+                name: "Luna"
+                mass_lunar: 1.0
+                period_days: 27.3217
+                eccentricity: 0.0549
+            }
+        ]
+        // The Gregorian calendar: 12 months, a 7-day week. `month_length_days`
+        // is a uniform model (real months are 28–31 days), so the consistency
+        // check reports a small year-length divergence — that's expected.
+        calendar: {
+            months: 12
+            month_length_days: 30
+            weekdays: 7
+            month_names: [
+                "January", "February", "March", "April", "May", "June",
+                "July", "August", "September", "October", "November", "December"
+            ]
+            day_names: [
+                "Monday", "Tuesday", "Wednesday", "Thursday",
+                "Friday", "Saturday", "Sunday"
+            ]
+            new_year_aligns_to: "winter_solstice"
+        }
+    }
+
+    // ── Geology — seeded procedural, tuned to Earth ──────────────────────────
+    // 7 major tectonic plates, 7 continents, active orogeny (young fold
+    // mountains like the Himalayas/Andes). `sea_level` is the land/sea threshold
+    // on the generated heightmap, not a literal ocean fraction: ~0.40 yields an
+    // Earth-like balance — ocean-dominant, but with continents large enough for
+    // rivers, biomes, and civilizations. Raise it for a wetter, more drowned
+    // world; lower it for more land.
+    geology: {
+        generated: {
+            plates: 7
+            continents: 7
+            mountain_orogeny: "active"
+            sea_level: 0.40
+            // Descriptive knobs — materialize into the World book's Setting, and
+            // `notable_minerals` join the fact-checker's known resources (so a
+            // story trading Earth ores isn't flagged as an economy contradiction).
+            volcanism: "moderate"
+            mineral_richness: "rich"
+            notable_minerals: [
+                "iron", "copper", "tin", "gold", "silver", "coal",
+                "salt", "limestone", "marble", "clay"
+            ]
+        }
+
+        // To compile the *real* Earth instead of a generated one, comment out the
+        // `generated:` block above and supply a grayscale heightmap (brighter =
+        // higher). Any equirectangular DEM works (e.g. NOAA ETOPO downsampled).
+        //
+        // dem: {
+        //     path: "assets/earth_heightmap.png"
+        //     scale_km_per_pixel: 50.0
+        //     sea_level_pixel_value: 128
+        // }
+    }
+
+    // ── Geography — named regions + landmarks (author-asserted) ──────────────
+    // Regions add colour to the World book. Landmarks with a climate_zone become
+    // gazetteer entries the fact-checker resolves by name — so "snow fell on
+    // Cairo" can be flagged against its hot_desert zone even before you compile
+    // and accept procedural Places.
+    geography: {
+        regions: [
+            { name: "Sahara", climate: "tropical", biome: "hot_desert", description: "The great northern desert of Africa." }
+            { name: "Amazonia", climate: "equatorial", biome: "tropical_rainforest", description: "The world's largest rainforest basin." }
+            { name: "Siberia", climate: "subarctic", biome: "taiga", description: "Vast boreal forest and tundra across northern Asia." }
+            { name: "Mediterranean Basin", climate: "temperate", biome: "mediterranean", description: "Warm-summer coastlands ringing the inland sea." }
+        ]
+        landmarks: [
+            { name: "Cairo", kind: "city", climate_zone: "hot_desert", population: 9500000, description: "On the Nile at the edge of the Sahara." }
+            { name: "London", kind: "city", climate_zone: "temperate_forest", population: 8900000, description: "On the Thames, North Atlantic maritime climate." }
+            { name: "Singapore", kind: "port", climate_zone: "tropical_rainforest", population: 5700000, description: "Equatorial entrepôt on the Strait of Malacca." }
+            { name: "Reykjavik", kind: "port", climate_zone: "tundra", population: 130000, description: "Subpolar capital warmed by the Gulf Stream." }
+            { name: "Mount Everest", kind: "mountain", description: "Earth's highest peak, in the Himalaya." }
+        ]
+    }
+
+    // ── Hydrology — named waters + rainfall (descriptive) ────────────────────
+    // The procedural hydrology layer still generates rivers/lakes from the
+    // heightmap; this block names the real ones for the World book.
+    hydrology: {
+        rainfall: "temperate"
+        rivers: [
+            { name: "Nile", description: "Longest river on Earth; flows north to the Mediterranean." }
+            { name: "Amazon", description: "Greatest river by discharge; drains the rainforest basin." }
+            { name: "Yangtze", description: "Longest river in Asia." }
+            { name: "Mississippi", description: "Principal river of North America." }
+        ]
+        lakes: [
+            { name: "Lake Baikal", description: "Deepest and oldest freshwater lake." }
+            { name: "Lake Superior", description: "Largest freshwater lake by area." }
+        ]
+        seas: [
+            { name: "Mediterranean Sea", description: "Enclosed sea between Europe, Africa, and Asia." }
+            { name: "Caribbean Sea", description: "Tropical sea of the western Atlantic." }
+        ]
+    }
+
+    // ── Economy — tech, currency, trade, resources ───────────────────────────
+    // `resources` (like geology.notable_minerals) extend the fact-checker's
+    // known goods. Set tech_level to your story's era.
+    economy: {
+        tech_level: "industrial"
+        currency: "mixed national currencies"
+        trade_goods: [
+            "grain", "oil", "textiles", "machinery", "spices", "timber", "fish"
+        ]
+        resources: [
+            "petroleum", "natural gas", "uranium", "lithium", "rare earths"
+        ]
+    }
+
+    // ── Magic — none on Earth ────────────────────────────────────────────────
+    // The fact-checker treats every physical claim literally. Enable this and add
+    // rules to carve out exceptions for a setting with magic or advanced tech.
+    magic: {
+        enabled: false
+        rules: []
+    }
+}

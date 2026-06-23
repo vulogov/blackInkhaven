@@ -925,6 +925,17 @@ pub enum Command {
         /// Check a paragraph by id (reads its content from the store).
         #[arg(long)]
         paragraph: Option<String>,
+        /// Also run the slow track — an LLM pass for subtle / implicit
+        /// contradictions the patterns miss (needs an LLM provider; cost-capped).
+        #[arg(long)]
+        slow: bool,
+        /// Slow-track per-call soft cap (estimated tokens). The call is skipped
+        /// with a notice if the estimate exceeds this; `--force` overrides it.
+        #[arg(long, default_value_t = 6000)]
+        max_cost: usize,
+        /// Run the slow track even if the cost estimate exceeds `--max-cost`.
+        #[arg(long)]
+        force: bool,
     },
     /// `inkhaven template
     /// <subcommand>`.  Surfaces information about
@@ -3576,6 +3587,33 @@ pub enum RealworldCommand {
         #[arg(long)]
         materialize: bool,
     },
+    /// Cross-paragraph coherence pass (slow track): gather every paragraph under a
+    /// node (book / chapter) and ask the LLM for contradictions *between* them — a
+    /// character in two places, a fact reversed, a timeline that doesn't add up.
+    Coherence {
+        /// The book or chapter node id whose paragraphs to check together.
+        node: String,
+        /// Per-call soft cap (estimated tokens); the call is skipped with a notice
+        /// if exceeded unless `--force`.
+        #[arg(long, default_value_t = 8000)]
+        max_cost: usize,
+        /// Run even if the cost estimate exceeds `--max-cost`.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Render the world map with `plakat`: compile every layer, emit a MapSpec,
+    /// and write a features PNG + GeoJSON under `assets/maps/`. Resolved landmark
+    /// positions are read back to refine each Place's coordinates.
+    Map {
+        /// Build and write the MapSpec but don't invoke `plakat` (useful for
+        /// inspecting the spec or when plakat isn't installed).
+        #[arg(long)]
+        spec_only: bool,
+        /// Don't update Place coordinates from plakat's resolved landmark
+        /// positions (render the map but leave the cross-references untouched).
+        #[arg(long)]
+        no_ingest: bool,
+    },
 }
 
 /// WORLD-4 — the proposal queue surface (RFC §8.9). Accepting a proposal commits
@@ -4067,8 +4105,8 @@ impl Cli {
             }
             Command::Output(cmd) => output::run(&project, cmd).map_err(Into::into),
             Command::Realworld(cmd) => realworld::run(&project, cmd).map_err(Into::into),
-            Command::FactCheck { text, paragraph } => {
-                realworld::fact_check(&project, text, paragraph).map_err(Into::into)
+            Command::FactCheck { text, paragraph, slow, max_cost, force } => {
+                realworld::fact_check(&project, text, paragraph, slow, max_cost, force).map_err(Into::into)
             }
             Command::Thread(cmd) => {
                 thread::run(&project, cmd).map_err(Into::into)

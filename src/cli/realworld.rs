@@ -27,12 +27,23 @@ pub fn run(project: &Path, cmd: RealworldCommand) -> Result<()> {
         RealworldCommand::Proposals { cmd } => proposals(project, cmd),
         RealworldCommand::Places => places(project),
         RealworldCommand::Magic { materialize } => magic(project, materialize),
+        RealworldCommand::Map { spec_only, no_ingest } => map(project, spec_only, no_ingest),
+        RealworldCommand::Coherence { node, max_cost, force } => {
+            coherence(project, &node, max_cost, force)
+        }
     }
 }
 
 /// Fact-check prose against the world (fast track). `--text` checks a literal
 /// string; `--paragraph` reads a paragraph's content from the store.
-pub fn fact_check(project: &Path, text: Option<String>, paragraph: Option<String>) -> Result<()> {
+pub fn fact_check(
+    project: &Path,
+    text: Option<String>,
+    paragraph: Option<String>,
+    slow: bool,
+    max_cost: usize,
+    force: bool,
+) -> Result<()> {
     use crate::world::fact_check::check_paragraph;
     // The magic ledger (if any) is consulted; a missing world.hjson is fine.
     let def = load(project).ok();
@@ -64,7 +75,7 @@ pub fn fact_check(project: &Path, text: Option<String>, paragraph: Option<String
     // Build the world context: the gazetteer (world-linked Places) lets the
     // climate + demographics checks resolve place names; the moon names feed the
     // astronomy check.
-    let places = crate::world::storage::WorldStore::open_for_project(project)
+    let mut places = crate::world::storage::WorldStore::open_for_project(project)
         .ok()
         .and_then(|ws| ws.list_place_links().ok())
         .unwrap_or_default();
@@ -78,18 +89,36 @@ pub fn fact_check(project: &Path, text: Option<String>, paragraph: Option<String
                 .collect()
         })
         .unwrap_or_default();
-    let world_ctx = if !places.is_empty() || !moons.is_empty() {
+    let mut minerals: Vec<String> = def
+        .as_ref()
+        .and_then(|d| geology_for(project, d).ok())
+        .map(|g| g.minerals.iter().map(|m| m.mineral.clone()).collect())
+        .unwrap_or_default();
+    // Merge author-declared geography landmarks + economy/geology resources.
+    if let Some(d) = def.as_ref() {
+        places.extend(crate::world::fact_check::declared_places(d));
+        minerals.extend(d.declared_minerals());
+    }
+    let world_ctx = if !places.is_empty() || !moons.is_empty() || !minerals.is_empty() {
         Some(crate::world::fact_check::WorldContext::new(
-            crate::world::fact_check::Gazetteer::new(places),
-            moons,
+            crate::world::fact_check::Gazetteer::new(places.clone()),
+            moons.clone(),
+            minerals.clone(),
         ))
     } else {
         None
     };
 
-    let findings = check_paragraph(&prose, &ledger, &[], world_ctx.as_ref());
+    let mut findings = check_paragraph(&prose, &ledger, &[], world_ctx.as_ref());
+    if slow {
+        match run_slow_track(project, &prose, def.as_ref(), &ledger, &places, &moons, &minerals, &findings, max_cost, force) {
+            Ok(mut slow_findings) => findings.append(&mut slow_findings),
+            Err(e) => eprintln!("slow track skipped: {e}"),
+        }
+    }
     if findings.is_empty() {
         println!("✓ no issues found");
+        eprintln!("({})", crate::world::fact_check_lang::backend_note());
         return Ok(());
     }
     for f in &findings {
@@ -102,6 +131,235 @@ pub fn fact_check(project: &Path, text: Option<String>, paragraph: Option<String
         println!("{icon} [{}] {}{note}", f.category, f.body);
     }
     println!("\n{} finding(s).", findings.len());
+    eprintln!("({})", crate::world::fact_check_lang::backend_note());
+    Ok(())
+}
+
+/// The slow track: an LLM pass for subtle contradictions the patterns miss.
+/// Cost-capped (daily call ceiling). Returns its findings; the fast findings are
+/// passed in as the seam (the prompt tells the model not to repeat them).
+#[allow(clippy::too_many_arguments)]
+fn run_slow_track(
+    project: &Path,
+    prose: &str,
+    def: Option<&WorldDefinition>,
+    ledger: &crate::world::types::MagicLedger,
+    places: &[crate::world::proposals::PlaceLink],
+    moons: &[String],
+    minerals: &[String],
+    fast: &[crate::world::fact_check::Finding],
+    soft_cap: usize,
+    force: bool,
+) -> Result<Vec<crate::world::fact_check::Finding>> {
+    use crate::world::fact_check_slow::{build_slow_prompt, magic_summary, world_summary, SLOW_SYSTEM};
+
+    let def = def.ok_or_else(|| Error::Config("slow track needs a world.hjson".into()))?;
+    let summary = world_summary(def, places, moons, minerals);
+    let magic = magic_summary(ledger);
+    let prompt = build_slow_prompt(prose, &summary, &magic, fast);
+    slow_llm_call(project, "slow track", SLOW_SYSTEM, prompt, soft_cap, force)
+}
+
+/// TUI entry point for the slow track: build the world context from the project,
+/// run the fast check as the seam, then the cost-capped slow call. Returns the
+/// findings or a single error string (no stderr noise). Safe to call from a
+/// background worker thread (it opens its own world store). The daily cap and the
+/// per-call soft cap are enforced inside.
+pub(crate) fn slow_track_for_tui(
+    project: &Path,
+    prose: &str,
+) -> std::result::Result<Vec<crate::world::fact_check::Finding>, String> {
+    use crate::world::compile::compile_astronomy;
+    use crate::world::fact_check::{check_paragraph, Gazetteer, WorldContext};
+    use crate::world::storage::WorldStore;
+
+    let def = load(project).map_err(|e| e.to_string())?;
+    let ledger = def.magic.clone().unwrap_or_default();
+    let mut places = WorldStore::open_for_project(project)
+        .ok()
+        .and_then(|ws| ws.list_place_links().ok())
+        .unwrap_or_default();
+    places.extend(crate::world::fact_check::declared_places(&def));
+    let moons: Vec<String> =
+        compile_astronomy(&def.astronomy).moons.iter().map(|m| m.name.clone()).collect();
+    let mut minerals: Vec<String> = geology_for(project, &def)
+        .map(|g| g.minerals.iter().map(|m| m.mineral.clone()).collect())
+        .unwrap_or_default();
+    minerals.extend(def.declared_minerals());
+
+    let ctx = WorldContext::new(Gazetteer::new(places.clone()), moons.clone(), minerals.clone());
+    let fast = check_paragraph(prose, &ledger, &[], Some(&ctx));
+    run_slow_track(project, prose, Some(&def), &ledger, &places, &moons, &minerals, &fast, 6000, false)
+        .map_err(|e| e.to_string())
+}
+
+/// The shared slow-track LLM call: daily-cap check, provider resolution, cost
+/// preflight (soft cap overridable with `force`), retry-on-transient with
+/// backoff, usage record, and response parse. Used by both the per-paragraph slow
+/// track and the cross-paragraph coherence pass.
+fn slow_llm_call(
+    project: &Path,
+    label: &str,
+    system: &str,
+    prompt: String,
+    soft_cap: usize,
+    force: bool,
+) -> Result<Vec<crate::world::fact_check::Finding>> {
+    use crate::config::Config;
+    use crate::project::ProjectLayout;
+    use crate::world::fact_check_slow::{
+        backoff_delay, is_transient, parse_slow_findings, slow_preflight, PreflightVerdict,
+    };
+    use crate::world::storage::WorldStore;
+
+    const DAILY_CAP: i64 = 200;
+    let day = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let store = WorldStore::open_for_project(project)
+        .map_err(|e| Error::Store(format!("world store: {e}")))?;
+    let used = store.llm_calls_today(&day).map_err(|e| Error::Store(format!("{e}")))?;
+
+    // The LLM provider (errors cleanly when none is configured).
+    let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
+    let ai = crate::ai::AiClient::from_config(&cfg.llm)
+        .map_err(|e| Error::Config(format!("no LLM provider for the {label}: {e}")))?;
+    let (model, _env) = ai
+        .resolve_provider(&cfg.llm, None)
+        .map_err(|e| Error::Config(format!("resolving provider: {e}")))?;
+
+    // Preflight: estimate the cost and gate on the daily hard cap + per-call soft
+    // cap (the soft cap is overridable with --force; 0 disables it).
+    let effective_soft = if force { 0 } else { soft_cap };
+    let (pf, verdict) = slow_preflight(system, &prompt, used, DAILY_CAP, effective_soft);
+    match verdict {
+        PreflightVerdict::DailyCapReached => {
+            return Err(Error::Config(format!("daily slow-track cap reached ({DAILY_CAP} calls)")));
+        }
+        PreflightVerdict::OverSoftCap { est_total_tokens, soft_cap } => {
+            return Err(Error::Config(format!(
+                "{label} skipped: estimated ~{est_total_tokens} tokens exceeds soft cap {soft_cap} — \
+                 re-run with --force or raise --max-cost"
+            )));
+        }
+        PreflightVerdict::Proceed => {}
+    }
+    eprintln!(
+        "{label} · model: {model} · ~{} tokens · {}/{} calls today · checking…",
+        pf.est_total_tokens, pf.calls_used, pf.daily_cap
+    );
+
+    // Call with retry-on-transient (rate limit / timeout / upstream 5xx).
+    const MAX_ATTEMPTS: u32 = 3;
+    let mut last_err = String::new();
+    for attempt in 0..MAX_ATTEMPTS {
+        match crate::ai::stream::collect_blocking(
+            ai.client.clone(),
+            model.to_string(),
+            Some(system.to_string()),
+            prompt.clone(),
+        ) {
+            Ok(raw) => {
+                let _ = store.record_llm_call(&day);
+                return Ok(parse_slow_findings(&raw));
+            }
+            Err(e) => {
+                last_err = e.to_string();
+                if attempt + 1 < MAX_ATTEMPTS && is_transient(&last_err) {
+                    let d = backoff_delay(attempt);
+                    eprintln!("  transient error ({last_err}); retrying in {:.1}s…", d.as_secs_f32());
+                    std::thread::sleep(d);
+                    continue;
+                }
+                break;
+            }
+        }
+    }
+    Err(Error::Store(format!("LLM error: {last_err}")))
+}
+
+/// WORLD-4 slow-track **coherence pass**: gather every paragraph under a node
+/// (book / chapter) in document order and ask the LLM for contradictions *between*
+/// them — a character in two places, a fact reversed, a timeline that doesn't add
+/// up. One cost-capped call; findings cite the `¶` numbers.
+fn coherence(project: &Path, node_id: &str, max_cost: usize, force: bool) -> Result<()> {
+    use crate::config::Config;
+    use crate::project::ProjectLayout;
+    use crate::store::hierarchy::Hierarchy;
+    use crate::store::node::NodeKind;
+    use crate::store::Store;
+    use crate::world::fact_check_slow::{
+        build_coherence_prompt, magic_summary, world_summary, COHERENCE_SYSTEM,
+    };
+    use crate::world::storage::WorldStore;
+
+    let id = uuid::Uuid::parse_str(node_id)
+        .map_err(|e| Error::Config(format!("bad node id `{node_id}`: {e}")))?;
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout, &cfg)?;
+    let hierarchy = Hierarchy::load(&store)?;
+
+    // The container's paragraphs, document order.
+    let para_ids: Vec<uuid::Uuid> = hierarchy
+        .collect_subtree(id)
+        .into_iter()
+        .filter(|pid| hierarchy.get(*pid).map(|n| n.kind == NodeKind::Paragraph).unwrap_or(false))
+        .collect();
+    if para_ids.is_empty() {
+        return Err(Error::Config("no paragraphs under that node".into()));
+    }
+    let labeled: Vec<(String, String)> = para_ids
+        .iter()
+        .map(|pid| {
+            let label = hierarchy.get(*pid).map(|n| hierarchy.slug_path(n)).unwrap_or_else(|| pid.to_string());
+            let text = store
+                .get_content(*pid)
+                .ok()
+                .flatten()
+                .map(|b| String::from_utf8_lossy(&b).into_owned())
+                .unwrap_or_default();
+            (label, text)
+        })
+        .collect();
+
+    // World context (coherence needs a world.hjson, like the slow track).
+    let def = load(project)?;
+    let ledger = def.magic.clone().unwrap_or_default();
+    let mut places = WorldStore::open_for_project(project)
+        .ok()
+        .and_then(|ws| ws.list_place_links().ok())
+        .unwrap_or_default();
+    places.extend(crate::world::fact_check::declared_places(&def));
+    let moons: Vec<String> =
+        crate::world::compile::compile_astronomy(&def.astronomy).moons.iter().map(|m| m.name.clone()).collect();
+    let mut minerals: Vec<String> = geology_for(project, &def)
+        .map(|g| g.minerals.iter().map(|m| m.mineral.clone()).collect())
+        .unwrap_or_default();
+    minerals.extend(def.declared_minerals());
+
+    let summary = world_summary(&def, &places, &moons, &minerals);
+    let magic = magic_summary(&ledger);
+    let (prompt, kept) = build_coherence_prompt(&labeled, &summary, &magic);
+    if kept.is_empty() {
+        println!("✓ no non-empty paragraphs to check");
+        return Ok(());
+    }
+    println!("coherence · {} paragraph(s) under `{}`", kept.len(), node_id);
+
+    let findings = slow_llm_call(project, "coherence", COHERENCE_SYSTEM, prompt, max_cost, force)?;
+    if findings.is_empty() {
+        println!("✓ paragraphs are consistent");
+        return Ok(());
+    }
+    for f in &findings {
+        let icon = match f.severity.as_str() {
+            "contradiction" => "⊗",
+            "warning" => "⚠",
+            _ => "●",
+        };
+        println!("{icon} [{}] {}", f.category, f.body);
+    }
+    println!("\n{} cross-paragraph finding(s).", findings.len());
     Ok(())
 }
 
@@ -154,6 +412,81 @@ fn places(project: &Path) -> Result<()> {
         );
     }
     println!("\n{} world-linked place(s).", links.len());
+    Ok(())
+}
+
+/// Render the world map with plakat. Compiles every layer, emits a MapSpec from
+/// the geology/climate/hydrology/demographics outputs, hands it to `plakat map`,
+/// and reads the resolved landmark positions back to refine Place coordinates.
+fn map(project: &Path, spec_only: bool, no_ingest: bool) -> Result<()> {
+    use crate::world::compile::{compile_astronomy, compile_climate, compile_demographics, compile_hydrology};
+    use crate::world::plakat;
+    use crate::world::storage::WorldStore;
+
+    let def = load(project)?;
+    let astro = compile_astronomy(&def.astronomy);
+    let geo = geology_for(project, &def)?;
+    let climate = compile_climate(&def, &astro, &geo);
+    let hydro = compile_hydrology(&geo, &climate);
+    let demo = compile_demographics(&climate, &hydro);
+
+    // Accepted Places give landmarks stable ids so we can ingest resolved
+    // positions back onto the right cross-reference. An absent store is fine.
+    let store = WorldStore::open_for_project(project).ok();
+    let links = store.as_ref().and_then(|s| s.list_place_links().ok()).unwrap_or_default();
+
+    let spec = plakat::build_map_spec(&def.name, &geo, &climate, &hydro, &demo, &links);
+    let (gw, gh) = (geo.width, geo.height);
+
+    if spec_only {
+        let dir = plakat::maps_dir(project);
+        std::fs::create_dir_all(&dir).map_err(|e| Error::Store(format!("creating {}: {e}", dir.display())))?;
+        let path = dir.join("world.mapspec.json");
+        let body = serde_json::to_string_pretty(&spec)
+            .map_err(|e| Error::Store(format!("serializing spec: {e}")))?;
+        crate::io_atomic::write(&path, body.as_bytes())
+            .map_err(|e| Error::Store(format!("writing {}: {e}", path.display())))?;
+        println!("map · {} ({}×{} grid)", def.name, gw, gh);
+        println!(
+            "  spec: {} ranges, {} rivers, {} regions, {} landmarks",
+            spec["terrain"]["mountain_ranges"].as_array().map(|a| a.len()).unwrap_or(0),
+            spec["water"]["rivers"].as_array().map(|a| a.len()).unwrap_or(0),
+            spec["regions"].as_array().map(|a| a.len()).unwrap_or(0),
+            spec["landmarks"].as_array().map(|a| a.len()).unwrap_or(0),
+        );
+        println!("  → {} (--spec-only; not rendered)", path.display());
+        return Ok(());
+    }
+
+    if let Some(v) = plakat::detect() {
+        println!("map · {} ({}×{} grid) · {v}", def.name, gw, gh);
+    }
+    let art = plakat::render(project, &spec, def.seed_u64(), gw, gh)
+        .map_err(|e| Error::Config(format!("rendering map: {e}")))?;
+
+    println!("  spec:     {}", art.spec_path.display());
+    println!("  features: {}", art.png_path.display());
+    println!("  geojson:  {}", art.geojson_path.display());
+
+    // Ingest: refine each accepted Place's coordinates from the landmark plakat
+    // resolved for it.
+    let mut updated = 0usize;
+    if !no_ingest {
+        if let Some(s) = store.as_ref() {
+            for lm in &art.landmarks {
+                if let Some(pid) = lm.place_id() {
+                    if s.update_place_link_coords(pid, lm.x, lm.y).is_ok() {
+                        updated += 1;
+                    }
+                }
+            }
+        }
+    }
+    println!(
+        "  {} landmark(s) resolved{}",
+        art.landmarks.len(),
+        if no_ingest { String::new() } else { format!(", {updated} Place coordinate(s) refined") }
+    );
     Ok(())
 }
 
@@ -661,7 +994,11 @@ fn compile_demographics_cli(project: &Path, json: bool, materialize: bool) -> Re
         layout.require_initialized()?;
         let cfg = Config::load_layered(&layout.config_path())?;
         let store = Store::open(layout, &cfg)?;
-        Some(crate::world::materialize::materialize_demographics(&store, &cfg, &out)?)
+        let r = crate::world::materialize::materialize_demographics(&store, &cfg, &out)?;
+        // Demographics is the terminal layer of a full compile — also flush the
+        // author-declared Setting (geography / hydrology / economy) here.
+        let _ = crate::world::materialize::materialize_setting(&store, &cfg, &def)?;
+        Some(r)
     } else {
         None
     };

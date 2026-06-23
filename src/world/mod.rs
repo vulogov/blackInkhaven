@@ -25,7 +25,10 @@
 
 pub mod compile;
 pub mod fact_check;
+pub mod fact_check_lang;
+pub mod fact_check_slow;
 pub mod materialize;
+pub mod plakat;
 pub mod proposals;
 pub mod storage;
 pub mod types;

@@ -44,6 +44,12 @@ const INIT_SQL: &str = "
         y               INTEGER,
         created_at      BIGINT NOT NULL
     );
+
+    -- WORLD-4 P5 — slow-track LLM usage, for the cost caps. One row per day.
+    CREATE TABLE IF NOT EXISTS world_llm_usage (
+        day   TEXT   NOT NULL PRIMARY KEY,   -- YYYY-MM-DD
+        calls INTEGER NOT NULL DEFAULT 0
+    );
 ";
 
 /// Per-project world store. Cloneable; clones share the pool.
@@ -159,6 +165,33 @@ impl WorldStore {
                 &now_secs(),
             ],
         )
+    }
+
+    /// Update a place link's grid coordinates (used when plakat resolves a
+    /// landmark to a refined map position).
+    pub fn update_place_link_coords(&self, place_id: Uuid, x: usize, y: usize) -> Result<()> {
+        self.engine.execute_with(
+            "UPDATE world_place_links SET x = ?, y = ? WHERE place_id = ?",
+            &[&(x as i64), &(y as i64), &place_id.to_string()],
+        )
+    }
+
+    /// Record one slow-track LLM call against today's tally; returns the new count.
+    pub fn record_llm_call(&self, day: &str) -> Result<i64> {
+        self.engine.execute_with(
+            "INSERT INTO world_llm_usage (day, calls) VALUES (?, 1) \
+             ON CONFLICT (day) DO UPDATE SET calls = calls + 1",
+            &[&day],
+        )?;
+        Ok(self.llm_calls_today(day)?)
+    }
+
+    /// How many slow-track LLM calls have run on `day` (YYYY-MM-DD).
+    pub fn llm_calls_today(&self, day: &str) -> Result<i64> {
+        let rows = self
+            .engine
+            .select_all_with("SELECT calls FROM world_llm_usage WHERE day = ?", &[&day])?;
+        Ok(rows.first().map(|r| int(r.first())).unwrap_or(0))
     }
 
     /// All Place ↔ World cross-references, newest first.

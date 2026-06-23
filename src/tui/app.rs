@@ -1598,6 +1598,18 @@ pub(crate) struct App {
     fc_last_fp: Option<(Uuid, u64)>,
     fc_activity_at: Option<std::time::Instant>,
     fc_needs_check: bool,
+    /// WORLD-4 — set when `Ctrl+B W` → `F` arms a scope sub-chord; the next key
+    /// (`P` paragraph / `B` book / `R` recent) picks the fact-check scope.
+    fc_scope_armed: bool,
+    /// WORLD-4 — opt-in: after a long idle, auto-run the **slow** (LLM) track on
+    /// the open paragraph in the background. Off by default (it spends tokens);
+    /// toggled with `Ctrl+B W` → `S`. Cost-capped like the manual slow track.
+    slow_auto: bool,
+    /// The paragraph an in-flight auto slow check is running on (findings attach
+    /// here on completion), and the content fingerprint already submitted (so the
+    /// same prose triggers at most one slow call).
+    slow_auto_para: Option<Uuid>,
+    fc_slow_last_fp: Option<(Uuid, u64)>,
     tree_cursor: usize,
     tree_scroll: usize,
 
@@ -2210,6 +2222,10 @@ impl App {
             fc_last_fp: None,
             fc_activity_at: None,
             fc_needs_check: false,
+            fc_scope_armed: false,
+            slow_auto: false,
+            slow_auto_para: None,
+            fc_slow_last_fp: None,
             output_expanded: std::collections::HashSet::new(),
             tree_cursor: 0,
             tree_scroll: 0,
@@ -2875,6 +2891,28 @@ impl App {
                 }
                 Err(e) => self.status = format!("deep refresh failed: {e}"),
             },
+            BgJobKind::SlowFactCheck => {
+                let target = self.slow_auto_para.take();
+                match result {
+                    Ok(n) => {
+                        let count: usize = n.parse().unwrap_or(0);
+                        self.status = if count == 0 {
+                            "slow fact-check: no further issues".into()
+                        } else {
+                            format!("⚠ slow fact-check: {count} finding(s) in this ¶ — ^B Tab → Output")
+                        };
+                        if count > 0 {
+                            self.emit_ai_task_complete(
+                                "world_slow_fact_check",
+                                &format!("Slow fact-check found {count} contradiction(s)."),
+                                elapsed_secs,
+                                target,
+                            );
+                        }
+                    }
+                    Err(e) => self.status = format!("slow fact-check skipped: {e}"),
+                }
+            }
         }
     }
 
@@ -5666,6 +5704,9 @@ pub(super) enum BgMsg {
 pub(super) enum BgJobKind {
     /// The deep AI refresh (facts check / facts scan / drift / continuity).
     DeepRefresh,
+    /// WORLD-4 — an idle-triggered slow-track fact check (LLM). The worker emits
+    /// its findings to Output directly; the `Ok` payload is the finding count.
+    SlowFactCheck,
 }
 
 /// An in-flight background job: its progress/result channel + a label + which
@@ -10475,7 +10516,7 @@ impl App {
     fn open_world_overview(&mut self) {
         let rows = self.build_world_overview_rows();
         self.modal = Modal::WorldOverview { rows, cursor: 0 };
-        self.status = "World overview · ↑↓ scroll · Esc".into();
+        self.status = "World · ↑↓ scroll · C compile · P proposals · F fact-check · M map · Esc".into();
     }
 
     fn build_world_overview_rows(&self) -> Vec<String> {
@@ -10542,14 +10583,9 @@ impl App {
         ));
         rows.push("".into());
 
-        // The remaining MVP layers (not yet implemented).
-        for layer in ["Geology", "Climate", "Hydrology", "Demographics"] {
-            rows.push(format!("{layer}  · not yet implemented (WORLD-4 P1+)"));
-        }
-        rows.push("".into());
-
-        // Materialization status: is the astronomy in the World book?
-        let materialized = self
+        // The chapter titles already materialized under the World book — drives
+        // the per-layer ✓ / pending status below.
+        let world_chapters: Vec<String> = self
             .hierarchy
             .iter()
             .find(|n| {
@@ -10560,15 +10596,40 @@ impl App {
                 self.hierarchy
                     .children_of(Some(world.id))
                     .iter()
-                    .any(|c| c.title.eq_ignore_ascii_case("Astronomy"))
+                    .map(|c| c.title.clone())
+                    .collect()
             })
-            .unwrap_or(false);
-        rows.push(if materialized {
-            "Materialized into World / Astronomy ✓".into()
+            .unwrap_or_default();
+        let has = |title: &str| world_chapters.iter().any(|c| c.eq_ignore_ascii_case(title));
+
+        // The remaining MVP layers — all shipped; show whether each is in the book.
+        let geo_mode = match def.geology.as_ref() {
+            Some(g) if g.dem.is_some() => "DEM-sourced",
+            _ => "generated",
+        };
+        for (layer, note) in [
+            ("Geology", geo_mode),
+            ("Climate", "derived"),
+            ("Hydrology", "derived"),
+            ("Demographics", "derived"),
+            ("Magic Ledger", if def.magic.as_ref().map(|m| m.enabled).unwrap_or(false) { "enabled" } else { "off" }),
+        ] {
+            let mark = if has(layer) { "✓ in World book" } else { "· press C to compile" };
+            rows.push(format!("{layer}  ({note})  {mark}"));
+        }
+        rows.push("".into());
+
+        let any = !world_chapters.is_empty();
+        rows.push(if any {
+            format!("Materialized: {} chapter(s) under World ✓", world_chapters.len())
         } else {
-            "Not materialized — `inkhaven realworld compile --materialize`".into()
+            "Not materialized yet — press C (compile) to populate the World book".into()
         });
         rows.push("".into());
+        rows.push(format!(
+            "Keys:  C compile · P proposals · F fact-check (→P/B/R) · M map · S slow-auto [{}]",
+            if self.slow_auto { "on" } else { "off" }
+        ));
         rows.push("CLI: inkhaven realworld new / validate / compile [--materialize]".into());
         rows
     }
@@ -10578,6 +10639,18 @@ impl App {
             Modal::WorldOverview { rows, .. } => rows.len(),
             _ => return false,
         };
+        // A pending F scope sub-chord intercepts the next key.
+        if self.fc_scope_armed {
+            self.fc_scope_armed = false;
+            match key.code {
+                KeyCode::Char('p') | KeyCode::Char('P') => self.fact_check_open_paragraph(),
+                KeyCode::Char('b') | KeyCode::Char('B') => self.fact_check_scope_book(),
+                KeyCode::Char('r') | KeyCode::Char('R') => self.fact_check_scope_recent(),
+                KeyCode::Esc => self.status = "fact-check: scope cancelled".into(),
+                _ => self.status = "fact-check: P paragraph · B book · R recent".into(),
+            }
+            return true;
+        }
         match key.code {
             KeyCode::Esc => {
                 self.modal = Modal::None;
@@ -10599,11 +10672,97 @@ impl App {
             KeyCode::Char('c') | KeyCode::Char('C') => self.run_world_compile(),
             // P: open the proposal queue.
             KeyCode::Char('p') | KeyCode::Char('P') => self.open_world_proposals(),
-            // F: fact-check the open paragraph → Output.
-            KeyCode::Char('f') | KeyCode::Char('F') => self.fact_check_open_paragraph(),
+            // F: arm the fact-check scope sub-chord (P paragraph / B book / R recent).
+            KeyCode::Char('f') | KeyCode::Char('F') => {
+                self.fc_scope_armed = true;
+                self.status = "fact-check scope · P paragraph · B book · R recent · Esc".into();
+            }
+            // M: render the world map with plakat.
+            KeyCode::Char('m') | KeyCode::Char('M') => self.run_world_map(),
+            // S: toggle idle auto slow-track (opt-in; spends tokens).
+            KeyCode::Char('s') | KeyCode::Char('S') => {
+                self.slow_auto = !self.slow_auto;
+                self.fc_slow_last_fp = None;
+                self.status = if self.slow_auto {
+                    "slow auto-check ON — runs the LLM track after ~45s idle (cost-capped)".into()
+                } else {
+                    "slow auto-check OFF".into()
+                };
+            }
             _ => {}
         }
         true
+    }
+
+    /// WORLD-4 — `Ctrl+B W` → `M`. Compile every layer, emit a plakat MapSpec, and
+    /// render the map (features PNG + GeoJSON) under `assets/maps/`, then read the
+    /// resolved landmark positions back to refine each Place's coordinates.
+    /// Synchronous (like compile); plakat is a subprocess, gracefully absent.
+    fn run_world_map(&mut self) {
+        use crate::world::compile::*;
+        use crate::world::plakat;
+        use crate::world::storage::WorldStore;
+        use crate::world::types::WorldDefinition;
+        let root = self.store.project_root().to_path_buf();
+        let raw = match std::fs::read_to_string(root.join("world.hjson")) {
+            Ok(r) => r,
+            Err(_) => {
+                self.status = "world: no world.hjson — `inkhaven realworld new <name>`".into();
+                return;
+            }
+        };
+        let def = match WorldDefinition::from_hjson(&raw) {
+            Ok(d) => d,
+            Err(e) => {
+                self.status = format!("world.hjson: {e}");
+                return;
+            }
+        };
+        if plakat::detect().is_none() {
+            self.status = "map: plakat not on PATH — `cargo install plakat` to render maps".into();
+            return;
+        }
+        let geo = match def.geology.as_ref().and_then(|g| g.dem.as_ref()) {
+            Some(dem) => match compile_geology_dem(&def, &root.join(&dem.path)) {
+                Ok(g) => g,
+                Err(e) => {
+                    self.status = format!("world geology: {e}");
+                    return;
+                }
+            },
+            None => compile_geology(&def),
+        };
+        let astro = compile_astronomy(&def.astronomy);
+        let climate = compile_climate(&def, &astro, &geo);
+        let hydro = compile_hydrology(&geo, &climate);
+        let demo = compile_demographics(&climate, &hydro);
+
+        let store = WorldStore::open_for_project(&root).ok();
+        let links = store.as_ref().and_then(|s| s.list_place_links().ok()).unwrap_or_default();
+        let spec = plakat::build_map_spec(&def.name, &geo, &climate, &hydro, &demo, &links);
+
+        self.status = "map: rendering with plakat…".into();
+        match plakat::render(&root, &spec, def.seed_u64(), geo.width, geo.height) {
+            Ok(art) => {
+                let mut refined = 0usize;
+                if let Some(s) = store.as_ref() {
+                    for lm in &art.landmarks {
+                        if let Some(pid) = lm.place_id() {
+                            if s.update_place_link_coords(pid, lm.x, lm.y).is_ok() {
+                                refined += 1;
+                            }
+                        }
+                    }
+                }
+                self.refresh_hierarchy_after_world_write();
+                self.status = format!(
+                    "map → {} · {} landmark(s), {refined} Place(s) refined",
+                    art.png_path.display(),
+                    art.landmarks.len()
+                );
+            }
+            Err(e) => self.status = format!("map: {e}"),
+        }
     }
 
     /// WORLD-4 — `Ctrl+B W` → `C`. Compile every MVP layer, materialize them into
@@ -10651,6 +10810,7 @@ impl App {
             m::materialize_hydrology(&self.store, &self.cfg, &hydro),
             m::materialize_demographics(&self.store, &self.cfg, &demo),
             m::materialize_magic(&self.store, &self.cfg, &def.magic.clone().unwrap_or_default()),
+            m::materialize_setting(&self.store, &self.cfg, &def),
         ];
         for s in &steps {
             if let Err(e) = s {
@@ -10711,12 +10871,166 @@ impl App {
             .as_ref()
             .map(|d| compile_astronomy(&d.astronomy).moons.iter().map(|m| m.name.clone()).collect())
             .unwrap_or_default();
-        let places = WorldStore::open_for_project(&root)
+        let minerals: Vec<String> = def
+            .as_ref()
+            .map(|d| {
+                let geo = match d.geology.as_ref().and_then(|g| g.dem.as_ref()) {
+                    Some(dem) => {
+                        crate::world::compile::compile_geology_dem(d, &root.join(&dem.path)).ok()
+                    }
+                    None => Some(crate::world::compile::compile_geology(d)),
+                };
+                geo.map(|g| g.minerals.iter().map(|m| m.mineral.clone()).collect()).unwrap_or_default()
+            })
+            .unwrap_or_default();
+        let mut places = WorldStore::open_for_project(&root)
             .ok()
             .and_then(|ws| ws.list_place_links().ok())
             .unwrap_or_default();
-        let ctx = WorldContext::new(Gazetteer::new(places), moons);
+        let mut minerals = minerals;
+        if let Some(d) = def.as_ref() {
+            places.extend(crate::world::fact_check::declared_places(d));
+            minerals.extend(d.declared_minerals());
+        }
+        let ctx = WorldContext::new(Gazetteer::new(places), moons, minerals);
         Some((doc.id, check_paragraph(&text, &ledger, &[], Some(&ctx))))
+    }
+
+    /// Build the fact-check world context (magic ledger + gazetteer/moons/minerals)
+    /// once, for the book/recent scope passes that check many paragraphs. Returns
+    /// `None` if there's no `world.hjson`.
+    fn build_fact_check_context(
+        &self,
+    ) -> Option<(crate::world::types::MagicLedger, crate::world::fact_check::WorldContext)> {
+        use crate::world::compile::compile_astronomy;
+        use crate::world::fact_check::{Gazetteer, WorldContext};
+        use crate::world::storage::WorldStore;
+        use crate::world::types::WorldDefinition;
+        let root = self.store.project_root().to_path_buf();
+        let def = std::fs::read_to_string(root.join("world.hjson"))
+            .ok()
+            .and_then(|raw| WorldDefinition::from_hjson(&raw).ok())?;
+        let ledger = def.magic.clone().unwrap_or_default();
+        let moons: Vec<String> =
+            compile_astronomy(&def.astronomy).moons.iter().map(|m| m.name.clone()).collect();
+        let minerals: Vec<String> = match def.geology.as_ref().and_then(|g| g.dem.as_ref()) {
+            Some(dem) => crate::world::compile::compile_geology_dem(&def, &root.join(&dem.path)).ok(),
+            None => Some(crate::world::compile::compile_geology(&def)),
+        }
+        .map(|g| g.minerals.iter().map(|m| m.mineral.clone()).collect())
+        .unwrap_or_default();
+        let mut places = WorldStore::open_for_project(&root)
+            .ok()
+            .and_then(|ws| ws.list_place_links().ok())
+            .unwrap_or_default();
+        places.extend(crate::world::fact_check::declared_places(&def));
+        let mut minerals = minerals;
+        minerals.extend(def.declared_minerals());
+        Some((ledger, WorldContext::new(Gazetteer::new(places), moons, minerals)))
+    }
+
+    /// The paragraph's current text: the open editor buffer if it's the one open
+    /// (so unsaved edits count), else the on-disk content from the store.
+    fn paragraph_text(&self, id: Uuid) -> Option<String> {
+        if let Some(doc) = self.opened.as_ref() {
+            if doc.id == id {
+                return Some(doc.textarea.lines().join("\n"));
+            }
+        }
+        self.store
+            .get_content(id)
+            .ok()
+            .flatten()
+            .map(|b| String::from_utf8_lossy(&b).into_owned())
+    }
+
+    /// WORLD-4 — `Ctrl+B W` → `F` → `B`. Fact-check every paragraph in the book
+    /// that contains the open paragraph (fast track), surfacing all findings in
+    /// Output.
+    fn fact_check_scope_book(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "fact-check: open a paragraph in the target book first".into();
+            return;
+        };
+        let open_id = doc.id;
+        // Walk up to the book ancestor of the open paragraph.
+        let Some(node) = self.hierarchy.get(open_id) else {
+            self.status = "fact-check: paragraph not in the hierarchy".into();
+            return;
+        };
+        let book_id = self
+            .hierarchy
+            .ancestors(node)
+            .into_iter()
+            .find(|a| a.kind == crate::store::node::NodeKind::Book)
+            .map(|b| b.id)
+            .or_else(|| {
+                (node.kind == crate::store::node::NodeKind::Book).then_some(open_id)
+            });
+        let Some(book_id) = book_id else {
+            self.status = "fact-check: no enclosing book".into();
+            return;
+        };
+        let para_ids: Vec<Uuid> = self
+            .hierarchy
+            .collect_subtree(book_id)
+            .into_iter()
+            .filter(|id| {
+                self.hierarchy
+                    .get(*id)
+                    .map(|n| n.kind == crate::store::node::NodeKind::Paragraph)
+                    .unwrap_or(false)
+            })
+            .collect();
+        self.run_fact_check_over(&para_ids, "book");
+    }
+
+    /// WORLD-4 — `Ctrl+B W` → `F` → `R`. Fact-check the most recently modified
+    /// paragraphs (across all books), surfacing findings in Output.
+    fn fact_check_scope_recent(&mut self) {
+        const RECENT: usize = 12;
+        let mut paras: Vec<(&Node, chrono::DateTime<chrono::Utc>)> = self
+            .hierarchy
+            .iter()
+            .filter(|n| n.kind == crate::store::node::NodeKind::Paragraph)
+            .map(|n| (n, n.modified_at))
+            .collect();
+        paras.sort_by(|a, b| b.1.cmp(&a.1));
+        let para_ids: Vec<Uuid> = paras.into_iter().take(RECENT).map(|(n, _)| n.id).collect();
+        self.run_fact_check_over(&para_ids, "recent");
+    }
+
+    /// Run the fast fact-check over a set of paragraphs, replacing each one's prior
+    /// Output findings, and flip to Output with a per-scope summary.
+    fn run_fact_check_over(&mut self, para_ids: &[Uuid], scope: &str) {
+        use crate::world::fact_check::{check_paragraph, emit_finding};
+        let Some((ledger, ctx)) = self.build_fact_check_context() else {
+            self.status = "fact-check: no world.hjson — `inkhaven realworld new <name>`".into();
+            return;
+        };
+        let (mut checked, mut total) = (0usize, 0usize);
+        for &id in para_ids {
+            let Some(text) = self.paragraph_text(id) else { continue };
+            if text.trim().is_empty() {
+                continue;
+            }
+            checked += 1;
+            self.clear_paragraph_fact_warnings(id);
+            let findings = check_paragraph(&text, &ledger, &[], Some(&ctx));
+            for f in &findings {
+                emit_finding(f, Some(id));
+            }
+            total += findings.len();
+        }
+        if total == 0 {
+            self.status = format!("fact-check ({scope}): no issues in {checked} ¶");
+            return;
+        }
+        self.modal = Modal::None;
+        self.output_selected = 0;
+        self.change_focus(Focus::Ai);
+        self.right_pane = RightPane::Output;
+        self.status = format!("fact-check ({scope}): {total} finding(s) across {checked} ¶ → Output (^B Tab)");
     }
 
     /// Clear the Output pane's existing fact-check findings for a paragraph, so a
@@ -10776,6 +11090,57 @@ impl App {
                 }
             }
         }
+        // Opt-in: after a longer idle, auto-run the slow (LLM) track once per
+        // content version, in the background. Gated on `slow_auto` so it never
+        // spends tokens unasked.
+        if self.slow_auto && matches!(self.modal, Modal::None) && self.bg_job.is_none() {
+            const SLOW_IDLE_SECS: u64 = 45;
+            let changed = fp.is_some() && fp != self.fc_slow_last_fp;
+            if changed {
+                if let Some(t) = self.fc_activity_at {
+                    if t.elapsed() >= std::time::Duration::from_secs(SLOW_IDLE_SECS) {
+                        self.fc_slow_last_fp = fp;
+                        self.maybe_spawn_slow_check();
+                    }
+                }
+            }
+        }
+    }
+
+    /// Spawn the idle slow-track check in the background (the LLM call blocks the
+    /// worker, not the UI). The worker emits its findings straight to Output (the
+    /// store is a thread-safe global); we keep the target paragraph id to report
+    /// completion against.
+    fn maybe_spawn_slow_check(&mut self) {
+        let Some(doc) = self.opened.as_ref() else { return };
+        let id = doc.id;
+        let prose = doc.textarea.lines().join("\n");
+        if prose.trim().is_empty() {
+            return;
+        }
+        let root = self.store.project_root().to_path_buf();
+        self.slow_auto_para = Some(id);
+        self.start_bg_job(BgJobKind::SlowFactCheck, "slow fact-check", move |tx, _cancel| {
+            let result = match crate::cli::realworld::slow_track_for_tui(&root, &prose) {
+                Ok(findings) => {
+                    // Replace this paragraph's prior fact warnings, then emit.
+                    if let Some(s) = crate::pane::output::active() {
+                        if let Ok(msgs) = s.by_kind(crate::pane::output::kinds::FACT_CHECK_WARNING) {
+                            for m in msgs.iter().filter(|m| m.source_paragraph_id == Some(id)) {
+                                let _ = s.dismiss(m.id);
+                            }
+                        }
+                    }
+                    let n = findings.len();
+                    for f in &findings {
+                        crate::world::fact_check::emit_finding(f, Some(id));
+                    }
+                    Ok(n.to_string())
+                }
+                Err(e) => Err(e),
+            };
+            let _ = tx.send(BgMsg::Done(result));
+        });
     }
 
     /// Run the fast check silently into Output — no focus change (the author is
