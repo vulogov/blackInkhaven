@@ -241,6 +241,165 @@ impl Lang {
     }
 }
 
+/// A finding's message, parameterised so it can be rendered in any language
+/// (the localised `body`) and in English (the `body_en` fallback).
+pub enum Msg<'a> {
+    Travel { km: f32, days: f32, pace: f32, severe: bool },
+    Climate { weather: Weather, place: &'a str, zone: &'a str },
+    Population { place: &'a str, claimed: u64, modeled: u64 },
+    Astronomy { claimed: usize, world: usize, moons: &'a str },
+    Economy { metal: &'a str, minerals: &'a str },
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum Weather {
+    Cold,
+    Hot,
+}
+
+impl Lang {
+    /// Render a message in this language. The `_en` English text is `Lang::En`.
+    pub fn render(&self, m: &Msg) -> String {
+        match self {
+            Lang::En => render_en(m),
+            Lang::Ru => render_ru(m),
+            Lang::Es => render_es(m),
+            Lang::Fr => render_fr(m),
+            Lang::De => render_de(m),
+        }
+    }
+}
+
+fn p(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1e6)
+    } else if n >= 10_000 {
+        format!("{:.0}k", n as f64 / 1e3)
+    } else {
+        n.to_string()
+    }
+}
+
+fn render_en(m: &Msg) -> String {
+    match m {
+        Msg::Travel { km, days, pace, severe } => format!(
+            "Travel of {km:.0} km in {days:.0} day(s) = {pace:.0} km/day, which {} pre-industrial overland travel (typically 25–80 km/day).",
+            if *severe { "far exceeds" } else { "exceeds" }
+        ),
+        Msg::Climate { weather, place, zone } => format!(
+            "Implausible: {} at {place}, whose climate zone is {}.",
+            if *weather == Weather::Cold { "freezing weather" } else { "tropical heat" },
+            zone.replace('_', " ")
+        ),
+        Msg::Population { place, claimed, modeled } => format!(
+            "{place} is described with ~{} people, but the world models ~{} for it.",
+            p(*claimed), p(*modeled)
+        ),
+        Msg::Astronomy { claimed, world, moons } => format!(
+            "The prose implies {claimed} moon(s), but this world has {world} ({moons})."
+        ),
+        Msg::Economy { metal, minerals } => format!(
+            "{metal} is mined or worked here, but this world's geology yields only: {minerals}."
+        ),
+    }
+}
+
+fn render_ru(m: &Msg) -> String {
+    match m {
+        Msg::Travel { km, days, pace, severe } => format!(
+            "Путь в {km:.0} км за {days:.0} дн. = {pace:.0} км/день, что {} доиндустриальную скорость (обычно 25–80 км/день).",
+            if *severe { "значительно превышает" } else { "превышает" }
+        ),
+        Msg::Climate { weather, place, zone } => format!(
+            "Неправдоподобно: {} в «{place}», климатическая зона которого — {}.",
+            if *weather == Weather::Cold { "морозная погода" } else { "тропическая жара" },
+            zone.replace('_', " ")
+        ),
+        Msg::Population { place, claimed, modeled } => format!(
+            "Для «{place}» указано ~{} жит., но модель мира даёт ~{}.",
+            p(*claimed), p(*modeled)
+        ),
+        Msg::Astronomy { claimed, world, moons } => format!(
+            "В тексте подразумевается лун: {claimed}, но в этом мире их {world} ({moons})."
+        ),
+        Msg::Economy { metal, minerals } => format!(
+            "Здесь добывают {metal}, но геология этого мира даёт только: {minerals}."
+        ),
+    }
+}
+
+fn render_es(m: &Msg) -> String {
+    match m {
+        Msg::Travel { km, days, pace, severe } => format!(
+            "Un viaje de {km:.0} km en {days:.0} día(s) = {pace:.0} km/día, que {} el ritmo preindustrial (normalmente 25–80 km/día).",
+            if *severe { "supera con creces" } else { "supera" }
+        ),
+        Msg::Climate { weather, place, zone } => format!(
+            "Inverosímil: {} en {place}, cuya zona climática es {}.",
+            if *weather == Weather::Cold { "clima helado" } else { "calor tropical" },
+            zone.replace('_', " ")
+        ),
+        Msg::Population { place, claimed, modeled } => format!(
+            "{place} se describe con ~{} habitantes, pero el mundo modela ~{}.",
+            p(*claimed), p(*modeled)
+        ),
+        Msg::Astronomy { claimed, world, moons } => format!(
+            "El texto implica {claimed} luna(s), pero este mundo tiene {world} ({moons})."
+        ),
+        Msg::Economy { metal, minerals } => format!(
+            "Aquí se extrae {metal}, pero la geología de este mundo solo da: {minerals}."
+        ),
+    }
+}
+
+fn render_fr(m: &Msg) -> String {
+    match m {
+        Msg::Travel { km, days, pace, severe } => format!(
+            "Un trajet de {km:.0} km en {days:.0} jour(s) = {pace:.0} km/jour, ce qui dépasse {}le rythme préindustriel (typiquement 25–80 km/jour).",
+            if *severe { "largement " } else { "" }
+        ),
+        Msg::Climate { weather, place, zone } => format!(
+            "Invraisemblable : {} à {place}, dont la zone climatique est {}.",
+            if *weather == Weather::Cold { "un froid glacial" } else { "une chaleur tropicale" },
+            zone.replace('_', " ")
+        ),
+        Msg::Population { place, claimed, modeled } => format!(
+            "{place} est décrite avec ~{} habitants, mais le monde en modélise ~{}.",
+            p(*claimed), p(*modeled)
+        ),
+        Msg::Astronomy { claimed, world, moons } => format!(
+            "Le texte implique {claimed} lune(s), mais ce monde en a {world} ({moons})."
+        ),
+        Msg::Economy { metal, minerals } => format!(
+            "On extrait ici du {metal}, mais la géologie de ce monde ne donne que : {minerals}."
+        ),
+    }
+}
+
+fn render_de(m: &Msg) -> String {
+    match m {
+        Msg::Travel { km, days, pace, severe } => format!(
+            "Eine Reise von {km:.0} km in {days:.0} Tag(en) = {pace:.0} km/Tag, was die vorindustrielle Reisegeschwindigkeit {}überschreitet (typisch 25–80 km/Tag).",
+            if *severe { "deutlich " } else { "" }
+        ),
+        Msg::Climate { weather, place, zone } => format!(
+            "Unplausibel: {} in {place}, dessen Klimazone {} ist.",
+            if *weather == Weather::Cold { "frostiges Wetter" } else { "tropische Hitze" },
+            zone.replace('_', " ")
+        ),
+        Msg::Population { place, claimed, modeled } => format!(
+            "{place} wird mit ~{} Einwohnern beschrieben, aber die Welt modelliert ~{}.",
+            p(*claimed), p(*modeled)
+        ),
+        Msg::Astronomy { claimed, world, moons } => format!(
+            "Der Text impliziert {claimed} Mond(e), aber diese Welt hat {world} ({moons})."
+        ),
+        Msg::Economy { metal, minerals } => format!(
+            "Hier wird {metal} abgebaut, aber die Geologie dieser Welt liefert nur: {minerals}."
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -258,6 +417,19 @@ mod tests {
         );
         // Short or ambiguous text falls back to English — that's intended.
         assert_eq!(detect("rode 600 km"), Lang::En);
+    }
+
+    #[test]
+    fn messages_render_per_language() {
+        let m = Msg::Travel { km: 600.0, days: 3.0, pace: 200.0, severe: true };
+        assert!(Lang::En.render(&m).contains("Travel of 600 km"));
+        assert!(Lang::Ru.render(&m).contains("Путь"));
+        assert!(Lang::De.render(&m).contains("Reise"));
+        assert!(Lang::Fr.render(&m).contains("trajet"));
+        assert!(Lang::Es.render(&m).contains("viaje"));
+        // The economy frame localises while the canonical mineral stays put.
+        let e = Msg::Economy { metal: "silver", minerals: "gold, iron" };
+        assert!(Lang::Ru.render(&e).contains("silver") && Lang::Ru.render(&e).contains("добывают"));
     }
 
     #[test]
