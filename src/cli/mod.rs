@@ -925,6 +925,10 @@ pub enum Command {
         /// Check a paragraph by id (reads its content from the store).
         #[arg(long)]
         paragraph: Option<String>,
+        /// Also run the slow track — an LLM pass for subtle / implicit
+        /// contradictions the patterns miss (needs an LLM provider; cost-capped).
+        #[arg(long)]
+        slow: bool,
     },
     /// `inkhaven template
     /// <subcommand>`.  Surfaces information about
@@ -4067,8 +4071,8 @@ impl Cli {
             }
             Command::Output(cmd) => output::run(&project, cmd).map_err(Into::into),
             Command::Realworld(cmd) => realworld::run(&project, cmd).map_err(Into::into),
-            Command::FactCheck { text, paragraph } => {
-                realworld::fact_check(&project, text, paragraph).map_err(Into::into)
+            Command::FactCheck { text, paragraph, slow } => {
+                realworld::fact_check(&project, text, paragraph, slow).map_err(Into::into)
             }
             Command::Thread(cmd) => {
                 thread::run(&project, cmd).map_err(Into::into)
