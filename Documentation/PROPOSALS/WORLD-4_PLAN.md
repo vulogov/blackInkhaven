@@ -102,9 +102,27 @@
 >   `node.file`, THEN `update_paragraph_content`. CLI: `realworld compile
 >   --materialize` opens the store + writes the book. Smoke-validated end-to-end
 >   (3 created → idempotent 0-created/3-updated; JSON body lands on disk). +1
->   system-book registration test. tests 1591→1592. ZERO new deps. *Next P0:
->   the `Ctrl+B W` chord scaffold (resolve the ToggleTypewriter collision) +
->   `Ctrl+B W` overview / view. Then P1 (geology/climate/hydrology + first deps).*
+>   system-book registration test. tests 1591→1592. ZERO new deps.
+> - **P0.4 — `Ctrl+B W` World overview (UNRELEASED, 1.3.25-dev) → P0 COMPLETE.**
+>   Chord collision resolved (user-decided): **ToggleTypewriter moved `Ctrl+B W` →
+>   `Ctrl+B Shift+W`** (Ctrl+V W was unavailable — it's the story-graph views),
+>   freeing `Ctrl+B W` for the World family. `Action::OpenWorldOverview` →
+>   `Modal::WorldOverview{rows,cursor}` (read-only scrollable list, mirrors the
+>   ConLang hub Ctrl+B X): reads `world.hjson`, compiles astronomy, shows the
+>   definition + astronomy summary (year/divergence/tilt/moons/tide/calendar) +
+>   per-layer status (geology/climate/hydrology/demographics "not yet
+>   implemented") + materialization status (is it in World/Astronomy?). `↑↓`
+>   scroll, `Esc` close. KEYBINDING.md updated. +1 chord regression test
+>   (Ctrl+B W→overview, Ctrl+B Shift+W→typewriter). tests 1592→1593. ZERO new deps.
+>   *Sub-chords (W L/N/C/M/P/F…) deferred — the CLI covers compile/validate; the
+>   sub-family lands with P2's proposal queue (the first thing that needs a TUI).*
+>
+> **★★ WORLD-4 P0 COMPLETE (astronomy layer end-to-end): types + closed-form
+> physics + materialization into the World book + `realworld` CLI + `Ctrl+B W`
+> overview. 14 tests, ZERO new deps, all signed.** *Next: **P1** —
+> geology (seed→Voronoi plates→continents→mountains→noise heightmap, OR DEM
+> import) + climate (zonal model) + hydrology (D8 flow). FIRST new deps land here:
+> `image`, `noise`, `delaunator` (all pure-Rust, per §11).*
 >
 > **DEFERRED DELIVERABLE (user-requested 2026-06-25):** once WORLD-4 is *fully*
 > implemented (all five layers + magic), generate `./examples/realworld/Earth.hjson`

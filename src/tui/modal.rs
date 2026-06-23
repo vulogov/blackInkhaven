@@ -763,6 +763,13 @@ pub(super) enum Modal {
         rows: Vec<ConlangHubRow>,
         cursor: usize,
     },
+    /// WORLD-4 — the World overview (`Ctrl+B W`): a read-only, scrollable
+    /// summary of the project's world definition + compiled astronomy +
+    /// materialization status. `↑↓` scroll, `Esc` closes.
+    WorldOverview {
+        rows: Vec<String>,
+        cursor: usize,
+    },
     /// LANG-1 P2.7c — the `:lang:` inline-insertion picker. Typing `:<lang>:`
     /// in the editor opens it; type to filter, `↑↓` move, `Enter` inserts the
     /// word in place of the trigger, `Esc` leaves the literal text.

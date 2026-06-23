@@ -9262,6 +9262,7 @@ impl App {
             A::OpenEditorialPass => self.open_editorial_pass(),
             A::OpenStoryBible => self.open_story_bible(),
             A::OpenConlangHub => self.open_conlang_hub(),
+            A::OpenWorldOverview => self.open_world_overview(),
             A::RunDeepRefresh => self.start_deep_refresh(),
             A::OpenLlmPicker => self.open_llm_picker(),
             A::ToggleSound => self.toggle_sound(),
@@ -10433,6 +10434,136 @@ impl App {
             }
             KeyCode::Down => {
                 if let Modal::ConlangHub { cursor, .. } = &mut self.modal {
+                    if n > 0 {
+                        *cursor = (*cursor + 1).min(n - 1);
+                    }
+                }
+            }
+            _ => {}
+        }
+        true
+    }
+
+    /// WORLD-4 — `Ctrl+B W`. Build the read-only World overview: the world
+    /// definition + compiled astronomy + materialization status.
+    fn open_world_overview(&mut self) {
+        let rows = self.build_world_overview_rows();
+        self.modal = Modal::WorldOverview { rows, cursor: 0 };
+        self.status = "World overview · ↑↓ scroll · Esc".into();
+    }
+
+    fn build_world_overview_rows(&self) -> Vec<String> {
+        use crate::world::compile::compile_astronomy;
+        use crate::world::types::WorldDefinition;
+        let root = self.store.project_root();
+        let path = root.join("world.hjson");
+        let mut rows: Vec<String> = Vec::new();
+        let Ok(raw) = std::fs::read_to_string(&path) else {
+            rows.push("No world.hjson in this project.".into());
+            rows.push("".into());
+            rows.push("Create one with:  inkhaven realworld new <name>".into());
+            return rows;
+        };
+        let def = match WorldDefinition::from_hjson(&raw) {
+            Ok(d) => d,
+            Err(e) => {
+                rows.push("world.hjson failed to parse:".into());
+                rows.push(format!("  {e}"));
+                return rows;
+            }
+        };
+        rows.push(format!("World: {}", def.name));
+        rows.push(format!(
+            "  seed {:#x} · primary language {}",
+            def.seed_u64(),
+            def.primary_language
+        ));
+        rows.push("".into());
+
+        let a = &def.astronomy;
+        let out = compile_astronomy(a);
+        rows.push("Astronomy  ✓".into());
+        rows.push(format!(
+            "  star {} (L={} L☉, {:.2} M☉)",
+            a.star.class, a.star.luminosity_solar, out.stellar_mass_solar
+        ));
+        rows.push(format!(
+            "  planet {:.2} M⊕ · tilt {:.1}° · day {:.1} h",
+            a.planet.mass_earth, a.planet.axial_tilt_deg, a.planet.day_length_hours
+        ));
+        let div = out
+            .year_length_divergence_pct
+            .map(|d| format!(" ({d:+.1}% vs declared{})", if d.abs() > 1.0 { " ⚠" } else { "" }))
+            .unwrap_or_default();
+        rows.push(format!("  year {:.1} planet-days{}", out.year_length_planet_days, div));
+        for m in &out.moons {
+            rows.push(format!(
+                "  moon {} · synodic {:.1} planet-days · {:.1} lunations/yr",
+                m.name, m.synodic_period_planet_days, m.lunar_months_per_year
+            ));
+        }
+        if let Some(dom) = &out.tide.dominant_moon {
+            rows.push(format!(
+                "  tides {} dominant · sun {:.2}× the dominant moon",
+                dom, out.tide.solar_relative_to_dominant
+            ));
+        }
+        rows.push(format!(
+            "  calendar {:.0} declared vs {:.1} computed days ({})",
+            out.calendar_check.declared_days,
+            out.calendar_check.computed_days,
+            if out.calendar_check.consistent { "consistent" } else { "off >1 day ⚠" }
+        ));
+        rows.push("".into());
+
+        // The remaining MVP layers (not yet implemented).
+        for layer in ["Geology", "Climate", "Hydrology", "Demographics"] {
+            rows.push(format!("{layer}  · not yet implemented (WORLD-4 P1+)"));
+        }
+        rows.push("".into());
+
+        // Materialization status: is the astronomy in the World book?
+        let materialized = self
+            .hierarchy
+            .iter()
+            .find(|n| {
+                n.kind == crate::store::node::NodeKind::Book
+                    && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_WORLD)
+            })
+            .map(|world| {
+                self.hierarchy
+                    .children_of(Some(world.id))
+                    .iter()
+                    .any(|c| c.title.eq_ignore_ascii_case("Astronomy"))
+            })
+            .unwrap_or(false);
+        rows.push(if materialized {
+            "Materialized into World / Astronomy ✓".into()
+        } else {
+            "Not materialized — `inkhaven realworld compile --materialize`".into()
+        });
+        rows.push("".into());
+        rows.push("CLI: inkhaven realworld new / validate / compile [--materialize]".into());
+        rows
+    }
+
+    fn world_overview_handle_key(&mut self, key: KeyEvent) -> bool {
+        let n = match &self.modal {
+            Modal::WorldOverview { rows, .. } => rows.len(),
+            _ => return false,
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "World overview: closed".into();
+            }
+            KeyCode::Up => {
+                if let Modal::WorldOverview { cursor, .. } = &mut self.modal {
+                    *cursor = cursor.saturating_sub(1);
+                }
+            }
+            KeyCode::Down => {
+                if let Modal::WorldOverview { cursor, .. } = &mut self.modal {
                     if n > 0 {
                         *cursor = (*cursor + 1).min(n - 1);
                     }
@@ -18123,6 +18254,10 @@ impl App {
         }
         if matches!(self.modal, Modal::ConlangHub { .. }) {
             self.conlang_hub_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::WorldOverview { .. }) {
+            self.world_overview_handle_key(key);
             return Ok(false);
         }
         if matches!(self.modal, Modal::LangInsert { .. }) {

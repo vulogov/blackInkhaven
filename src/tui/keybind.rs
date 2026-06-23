@@ -129,6 +129,10 @@ pub enum Action {
     /// LANG-1 P2.7b — `Ctrl+B X`. Open the ConLang hub overview.
     #[serde(rename = "view.open_conlang_hub")]
     OpenConlangHub,
+    /// WORLD-4 — `Ctrl+B W`. Open the World overview (the world definition +
+    /// compiled astronomy + materialization status).
+    #[serde(rename = "world.open_overview")]
+    OpenWorldOverview,
     #[serde(rename = "view.run_deep_refresh")]
     RunDeepRefresh,
     #[serde(rename = "global.open_llm_picker")]
@@ -859,6 +863,7 @@ impl Action {
             Action::OpenEditorialPass => "editorial".into(),
             Action::OpenStoryBible => "bible".into(),
             Action::OpenConlangHub => "conlang".into(),
+            Action::OpenWorldOverview => "world".into(),
             Action::RunDeepRefresh => "deep refresh".into(),
             Action::OpenLlmPicker => "LLM".into(),
             Action::ToggleSound => "sound".into(),
@@ -1038,6 +1043,8 @@ impl Action {
                 "Open the story bible (1.3.8) — a consolidated, navigable view of the world you've built: every Character with the attributes the continuity bible has tracked across chapters (`eye_color: brown (ch.3)`), plus the Places, Artefacts, and Facts books. 1.3.10 adds semantic drift: under any entity `inkhaven drift scan` flagged, a ⚠ drift badge names the contradicting descriptions and shows the entity's chapter-ordered description trail (each row jumps to its source). 1.3.11 banners the world-consistency health line (the `inkhaven world` summary) at the top. `↑↓` navigate, `Enter` jumps to the entry's source paragraph, `Esc` closes. Run `inkhaven continuity extract` to populate the character attributes. Mnemonic: L for Lore.".into(),
             Action::OpenConlangHub =>
                 "Open the ConLang hub (LANG-1, Ctrl+B X) — a read-only overview of every constructed language under the Language system book: phoneme inventory (consonants / vowels), template + constraint + allophony counts, prosody (stress rule, tone), romanization schemes, lexicon size, and linked speakers (Places / Characters). `↑↓` scroll, `Esc` closes. The deep operations live on the CLI — `inkhaven language audit / generate-lexicon / query / scan-manuscript` — plus `Ctrl+B Q` to translate a paragraph into an invented language. Mnemonic: X for conlang.".into(),
+            Action::OpenWorldOverview =>
+                "Open the World overview (WORLD-4, Ctrl+B W) — a read-only summary of the project's world simulation: the `world.hjson` definition (name / seed / star / planet / moons), the compiled astronomy layer (year length in planet-days with the declared-vs-computed divergence flag, axial tilt, season markers, lunar synodic periods, dominant tide, calendar consistency), and whether it has been materialized into the World system book. `↑↓` scroll, `Esc` closes. The operations live on the CLI — `inkhaven realworld new / validate / compile [--materialize]`. Mnemonic: W for World. (Typewriter / focus mode moved to Ctrl+B Shift+W.)".into(),
             Action::RunDeepRefresh =>
                 "Run the deep AI world refresh (1.3.12) in the background — facts check, facts scan, semantic drift, and continuity extract, the same scans as `inkhaven world --deep`, in the manuscript's language. Runs off the main thread (a cloned, pool-shared store), so the editor stays fully responsive; a `⟳ deep refresh` status chip tracks progress. When it finishes, the open story bible / Editorial Pass rebuilds itself from the fresh sidecars and the status shows the new world-consistency summary. Needs an LLM provider; one job at a time. Mnemonic: F for reFresh.".into(),
             Action::OpenLlmPicker =>
@@ -1053,7 +1060,7 @@ impl Action {
             Action::BackupNow =>
                 "Run a project backup now (Ctrl+B Shift+B). Always fires — ignores the exit-hook recency cooldown.".into(),
             Action::ToggleTypewriter =>
-                "Toggle distraction-free / focus mode — hides every other pane (Tree, AI, Search, AI prompt) and gives the editor the full window. Re-press to restore the four-pane layout. Internally still called \"typewriter mode\" in some log strings + the HJSON config field; the chord serde key is `global.toggle_typewriter` for backward-compat.".into(),
+                "Toggle distraction-free / focus mode (Ctrl+B Shift+W) — hides every other pane (Tree, AI, Search, AI prompt) and gives the editor the full window. Re-press to restore the four-pane layout. Moved from Ctrl+B W to Ctrl+B Shift+W in WORLD-4 (Ctrl+B W now opens the World overview). Internally still called \"typewriter mode\" in some log strings + the HJSON config field; the chord serde key is `global.toggle_typewriter` for backward-compat.".into(),
             Action::ToggleAiFullscreen =>
                 "Toggle full-screen AI mode — AI pane | chat history + AI prompt.".into(),
             Action::StatusFilterReady =>
@@ -1367,7 +1374,11 @@ impl KeyBindings {
                 // 1.2.7+ — Ctrl+B U undoes the most-recent
                 // paragraph delete (single-slot kill-ring).
                 entry("u", Action::UndoLastDelete, Scope::Any),
-                entry("w", Action::ToggleTypewriter, Scope::Any),
+                // WORLD-4 — Ctrl+B W opens the World overview; ToggleTypewriter
+                // moved to Ctrl+B Shift+W to free the W prefix for the world
+                // chord family (user-decided 2026-06-25).
+                entry("w", Action::OpenWorldOverview, Scope::Any),
+                entry("Shift+w", Action::ToggleTypewriter, Scope::Any),
                 entry("k", Action::ToggleAiFullscreen, Scope::Any),
                 // LANG-1 P2.7b — Ctrl+B X opens the ConLang hub overview.
                 entry("x", Action::OpenConlangHub, Scope::Any),
@@ -2135,6 +2146,24 @@ mod tests {
             k.resolve_meta_sub(&ev('q'), Focus::Tree),
             Some(Action::OpenImpositionPreview),
             "tree Ctrl+B Q opens the imposition preview",
+        );
+    }
+
+    #[test]
+    fn meta_w_opens_world_overview_typewriter_moves_to_shift_w() {
+        // WORLD-4 — Ctrl+B W is now the World overview; ToggleTypewriter (focus
+        // mode) moved to Ctrl+B Shift+W to free the W prefix.
+        let k = KeyBindings::defaults();
+        assert_eq!(
+            k.resolve_meta_sub(&ev('w'), Focus::Editor),
+            Some(Action::OpenWorldOverview),
+            "Ctrl+B W opens the World overview",
+        );
+        let shift_w = KeyEvent::new(KeyCode::Char('w'), KeyModifiers::SHIFT);
+        assert_eq!(
+            k.resolve_meta_sub(&shift_w, Focus::Editor),
+            Some(Action::ToggleTypewriter),
+            "Ctrl+B Shift+W is now focus/typewriter mode",
         );
     }
 
