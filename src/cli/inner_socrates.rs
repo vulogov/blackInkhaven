@@ -17,6 +17,7 @@ pub fn run(project: &Path, cmd: InnerSocratesCommand) -> Result<()> {
         InnerSocratesCommand::Check { text, paragraph, slow, max_cost, force } => {
             check(project, text, paragraph, slow, max_cost, force)
         }
+        InnerSocratesCommand::Timeline { max_cost, force } => timeline(project, max_cost, force),
         InnerSocratesCommand::Ledger => ledger(project),
     }
 }
@@ -99,10 +100,29 @@ fn run_slow(
     soft_cap: usize,
     force: bool,
 ) -> Result<Vec<crate::inner_socrates::types::SocraticFinding>> {
-    use crate::config::Config;
     use crate::inner_socrates::slow::{
         apply_persona_and_ledger, build_slow_prompt, intent_summary, parse_slow_findings, SLOW_SYSTEM,
     };
+    let lang = crate::world::fact_check_lang::detect(prose);
+    let prompt = build_slow_prompt(persona, prose, &intent_summary(ledger), fast_findings, lang);
+    let raw = socratic_llm_call(project, "slow track", SLOW_SYSTEM, prompt, soft_cap, force)?;
+    let parsed = parse_slow_findings(&raw, &persona.id);
+    Ok(apply_persona_and_ledger(parsed, persona, ledger, ctx))
+}
+
+/// The shared Socratic LLM call: daily-cap check, provider resolution, cost
+/// preflight (soft cap overridable with `force`), retry-on-transient with
+/// backoff, usage record (`slow_track` sub-budget), returning the raw response.
+/// Reused by the prose slow track and the timeline pass.
+fn socratic_llm_call(
+    project: &Path,
+    label: &str,
+    system: &str,
+    prompt: String,
+    soft_cap: usize,
+    force: bool,
+) -> Result<String> {
+    use crate::config::Config;
     use crate::project::ProjectLayout;
     use crate::world::fact_check_slow::{backoff_delay, is_transient, slow_preflight, PreflightVerdict};
 
@@ -113,33 +133,29 @@ fn run_slow(
         .map_err(|e| Error::Store(format!("inner-socrates store: {e}")))?;
     let used = store.llm_calls_today(&day, SUB_BUDGET).map_err(|e| Error::Store(format!("{e}")))?;
 
-    // The LLM provider (errors cleanly when none is configured).
     let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
     let ai = crate::ai::AiClient::from_config(&cfg.llm)
-        .map_err(|e| Error::Config(format!("no LLM provider for the slow track: {e}")))?;
+        .map_err(|e| Error::Config(format!("no LLM provider for the {label}: {e}")))?;
     let (model, _env) = ai
         .resolve_provider(&cfg.llm, None)
         .map_err(|e| Error::Config(format!("resolving provider: {e}")))?;
 
-    let lang = crate::world::fact_check_lang::detect(prose);
-    let prompt = build_slow_prompt(persona, prose, &intent_summary(ledger), fast_findings, lang);
-
     let effective_soft = if force { 0 } else { soft_cap };
-    let (pf, verdict) = slow_preflight(SLOW_SYSTEM, &prompt, used, DAILY_CAP, effective_soft);
+    let (pf, verdict) = slow_preflight(system, &prompt, used, DAILY_CAP, effective_soft);
     match verdict {
         PreflightVerdict::DailyCapReached => {
             return Err(Error::Config(format!("daily slow-track cap reached ({DAILY_CAP} calls)")));
         }
         PreflightVerdict::OverSoftCap { est_total_tokens, soft_cap } => {
             return Err(Error::Config(format!(
-                "slow track skipped: estimated ~{est_total_tokens} tokens exceeds soft cap {soft_cap} — \
+                "{label} skipped: estimated ~{est_total_tokens} tokens exceeds soft cap {soft_cap} — \
                  re-run with --force or raise --max-cost"
             )));
         }
         PreflightVerdict::Proceed => {}
     }
     eprintln!(
-        "slow track · model: {model} · ~{} tokens · {}/{} calls today · reading…",
+        "{label} · model: {model} · ~{} tokens · {}/{} calls today · reading…",
         pf.est_total_tokens, pf.calls_used, pf.daily_cap
     );
 
@@ -149,13 +165,12 @@ fn run_slow(
         match crate::ai::stream::collect_blocking(
             ai.client.clone(),
             model.to_string(),
-            Some(SLOW_SYSTEM.to_string()),
+            Some(system.to_string()),
             prompt.clone(),
         ) {
             Ok(raw) => {
                 let _ = store.record_llm_call(&day, SUB_BUDGET);
-                let parsed = parse_slow_findings(&raw, &persona.id);
-                return Ok(apply_persona_and_ledger(parsed, persona, ledger, ctx));
+                return Ok(raw);
             }
             Err(e) => {
                 last_err = e.to_string();
@@ -170,6 +185,60 @@ fn run_slow(
         }
     }
     Err(Error::Store(format!("LLM error: {last_err}")))
+}
+
+/// `inner-socrates timeline` — the timeline pass: compare the project's timeline
+/// of events against the prose and ask whether what is declared is dramatized.
+/// Silently does nothing when the project has no events.
+fn timeline(project: &Path, soft_cap: usize, force: bool) -> Result<()> {
+    use crate::config::Config;
+    use crate::inner_socrates::slow::{
+        build_timeline_prompt, intent_summary, parse_timeline_findings, TIMELINE_SYSTEM,
+    };
+    use crate::inner_socrates::timeline as tl;
+    use crate::inner_socrates::types::Persona;
+    use crate::project::ProjectLayout;
+    use crate::store::hierarchy::Hierarchy;
+    use crate::store::Store;
+
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout, &cfg)?;
+    let hierarchy = Hierarchy::load(&store)?;
+
+    let events = tl::gather_events(&hierarchy);
+    if events.is_empty() {
+        println!("(no timeline events — nothing to examine)");
+        return Ok(());
+    }
+
+    let is_store = InnerSocratesStore::open_for_project(project).ok();
+    let ledger = is_store.as_ref().and_then(|s| s.load_ledger().ok()).unwrap_or_default();
+    let persona = Persona::default_inner_socrates();
+
+    let summary = tl::timeline_summary(&events);
+    let densest = tl::densest_window(&events, 365); // a year, in day-ticks
+    let prompt = build_timeline_prompt(&persona, &summary, densest, &intent_summary(&ledger));
+
+    let raw = socratic_llm_call(project, "timeline pass", TIMELINE_SYSTEM, prompt, soft_cap, force)?;
+    let findings: Vec<_> = parse_timeline_findings(&raw, &persona.id)
+        .into_iter()
+        .filter(|f| !persona.mutes(f.category))
+        .collect();
+
+    let gaps = tl::dramatization_gaps(&events).len();
+    println!("timeline · {} event(s), {} undepicted", events.len(), gaps);
+    if findings.is_empty() {
+        println!("\u{2713} the prose and timeline sit well together");
+        return Ok(());
+    }
+    for f in &findings {
+        emit_finding(f, None);
+        println!("\u{25c7} {} [{}] {}", f.severity.label(), f.category.label(), f.question);
+    }
+    println!("\n{} question(s) · persona: {}", findings.len(), persona.name);
+    Ok(())
 }
 
 /// Resolve `(prose, paragraph_id)` from `--text` or `--paragraph <id>`.
