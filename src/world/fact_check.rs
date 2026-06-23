@@ -324,23 +324,56 @@ fn canon_season(name: &str) -> Option<CanonSeason> {
     }
 }
 
-/// English seasonal date-hints (festivals, agricultural / solstitial references).
-/// Per-language tables land in P4; non-English prose simply matches none of these.
+/// Seasonal date-hints (festivals, agricultural / solstitial references) per
+/// language. Multilingual from WORLD-4's baseline; lowercase (the text is
+/// lowercased before matching).
+use CanonSeason::{Autumn, Spring, Summer, Winter};
+
 const DATE_HINTS_EN: &[(&str, CanonSeason)] = &[
-    ("midsummer", CanonSeason::Summer),
-    ("high summer", CanonSeason::Summer),
-    ("summer solstice", CanonSeason::Summer),
-    ("midwinter", CanonSeason::Winter),
-    ("deep winter", CanonSeason::Winter),
-    ("winter solstice", CanonSeason::Winter),
-    ("yule", CanonSeason::Winter),
-    ("spring festival", CanonSeason::Spring),
-    ("vernal equinox", CanonSeason::Spring),
-    ("planting season", CanonSeason::Spring),
-    ("harvest", CanonSeason::Autumn),
-    ("harvest festival", CanonSeason::Autumn),
-    ("autumn equinox", CanonSeason::Autumn),
+    ("midsummer", Summer), ("high summer", Summer), ("summer solstice", Summer),
+    ("midwinter", Winter), ("deep winter", Winter), ("winter solstice", Winter), ("yule", Winter),
+    ("spring festival", Spring), ("vernal equinox", Spring), ("planting season", Spring),
+    ("harvest", Autumn), ("harvest festival", Autumn), ("autumn equinox", Autumn),
 ];
+
+const DATE_HINTS_RU: &[(&str, CanonSeason)] = &[
+    ("разгар лета", Summer), ("середина лета", Summer), ("летнее солнцестояние", Summer), ("купала", Summer),
+    ("разгар зимы", Winter), ("середина зимы", Winter), ("зимнее солнцестояние", Winter), ("святки", Winter),
+    ("весенний праздник", Spring), ("весеннее равноденствие", Spring), ("посевная", Spring), ("масленица", Spring),
+    ("жатва", Autumn), ("сбор урожая", Autumn), ("осеннее равноденствие", Autumn),
+];
+
+const DATE_HINTS_ES: &[(&str, CanonSeason)] = &[
+    ("pleno verano", Summer), ("solsticio de verano", Summer), ("san juan", Summer),
+    ("pleno invierno", Winter), ("solsticio de invierno", Winter),
+    ("fiesta de primavera", Spring), ("equinoccio de primavera", Spring), ("la siembra", Spring),
+    ("la cosecha", Autumn), ("vendimia", Autumn), ("equinoccio de otoño", Autumn),
+];
+
+const DATE_HINTS_FR: &[(&str, CanonSeason)] = &[
+    ("plein été", Summer), ("solstice d'été", Summer), ("la saint-jean", Summer),
+    ("plein hiver", Winter), ("solstice d'hiver", Winter),
+    ("fête du printemps", Spring), ("équinoxe de printemps", Spring), ("les semailles", Spring),
+    ("la moisson", Autumn), ("les vendanges", Autumn), ("équinoxe d'automne", Autumn),
+];
+
+const DATE_HINTS_DE: &[(&str, CanonSeason)] = &[
+    ("hochsommer", Summer), ("mittsommer", Summer), ("sommersonnenwende", Summer), ("johannistag", Summer),
+    ("hochwinter", Winter), ("mittwinter", Winter), ("wintersonnenwende", Winter), ("julfest", Winter),
+    ("frühlingsfest", Spring), ("frühlingsäquinoktium", Spring), ("die aussaat", Spring),
+    ("die ernte", Autumn), ("erntedankfest", Autumn), ("herbstäquinoktium", Autumn),
+];
+
+/// The date-hint table for a language.
+fn date_hints(lang: Lang) -> &'static [(&'static str, CanonSeason)] {
+    match lang {
+        Lang::En => DATE_HINTS_EN,
+        Lang::Ru => DATE_HINTS_RU,
+        Lang::Es => DATE_HINTS_ES,
+        Lang::Fr => DATE_HINTS_FR,
+        Lang::De => DATE_HINTS_DE,
+    }
+}
 
 /// WORLD-5 — the `date_coherence` check: a seasonal date-hint in the prose (a
 /// festival, a harvest, a solstice) that contradicts the timeline-dated season.
@@ -358,7 +391,7 @@ pub fn check_date_coherence(
     };
     let lang = crate::world::fact_check_lang::detect(text);
     let lower = text.to_lowercase();
-    for (hint, implied) in DATE_HINTS_EN {
+    for (hint, implied) in date_hints(lang) {
         if *implied != dated && contains_word(&lower, hint) {
             let msg = Msg::DateCoherence { hint, season };
             let ctx = CheckContext { category: "date_coherence", ..Default::default() };
@@ -913,6 +946,32 @@ mod tests {
         // A custom-named season can't be compared → nothing.
         let custom = TimelineContext { effective_season: Some("Frostmoon".into()), ..winter.clone() };
         assert!(check_date_coherence("The midsummer feast.", &custom, &empty_ledger()).is_empty());
+    }
+
+    #[test]
+    fn date_coherence_detects_hints_in_five_languages() {
+        use crate::world::timeline_context::{DateSource, TimelineContext};
+        let winter = TimelineContext {
+            paragraph_id: uuid::Uuid::nil(),
+            linked_events: vec![uuid::Uuid::nil()],
+            nearby_events: vec![],
+            effective_date: Some(1),
+            date_source: DateSource::ExplicitLink(uuid::Uuid::nil()),
+            effective_season: Some("winter".into()),
+        };
+        // A high-summer marker in winter-dated prose, in each language.
+        let cases = [
+            "In high summer they feasted, and the wine flowed with song through the night.",
+            "В разгар лета они праздновали, и пели песни в большом зале города.",
+            "En pleno verano celebraban la fiesta, con vino y con canciones para todos.",
+            "En plein été, ils célébraient la fête, avec du vin et sans fin dans la nuit.",
+            "Im Hochsommer feierten sie das Fest, und durch die Nacht ohne Ende mit Wein.",
+        ];
+        for c in cases {
+            let f = check_date_coherence(c, &winter, &empty_ledger());
+            assert_eq!(f.len(), 1, "expected a summer-in-winter finding for: {c} (got {f:?})");
+            assert_eq!(f[0].category, "date_coherence");
+        }
     }
 
     #[test]

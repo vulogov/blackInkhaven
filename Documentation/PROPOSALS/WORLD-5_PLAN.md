@@ -127,3 +127,10 @@
   `events_for_character`, `events_for_place`, `season_for`, `effective_date`) in a
   new `scripting/stdlib/world_timeline` module. Surface-only; the checks are
   unchanged. 1724. *Next: P4 multilingual date-hints (RU/ES/FR/DE) + P5 polish/docs.*
+- **P4 — multilingual date-hint tables (UNRELEASED, 1.3.30-dev).** `date_coherence`
+  detection now works in all five languages: per-language hint tables (RU/ES/FR/DE
+  festivals + solstitial / agricultural references — `разгар лета`, `pleno verano`,
+  `plein été`, `Hochsommer`, harvests, …) selected by the detected language. The
+  messages were already localized (P2.2); this completes the *detection* side.
+  Verified end-to-end in all five languages. +1 test, 1725. *Next: P5 — the `📅`
+  Output marker + coexistence-guidance docs.*
