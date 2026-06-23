@@ -60,7 +60,15 @@ pub fn fact_check(project: &Path, text: Option<String>, paragraph: Option<String
         }
     };
 
-    let findings = check_paragraph(&prose, &ledger, &[]);
+    // Build the gazetteer from the world-linked Places (if any) so the climate +
+    // demographics checks can resolve place names in the prose.
+    let gaz = crate::world::storage::WorldStore::open_for_project(project)
+        .ok()
+        .and_then(|ws| ws.list_place_links().ok())
+        .filter(|links| !links.is_empty())
+        .map(crate::world::fact_check::Gazetteer::new);
+
+    let findings = check_paragraph(&prose, &ledger, &[], gaz.as_ref());
     if findings.is_empty() {
         println!("✓ no issues found");
         return Ok(());
