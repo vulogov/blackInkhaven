@@ -25,6 +25,8 @@
 
 pub mod compile;
 pub mod materialize;
+pub mod proposals;
+pub mod storage;
 pub mod types;
 
 use std::fmt;

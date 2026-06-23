@@ -7,7 +7,7 @@
 
 use std::path::Path;
 
-use crate::cli::RealworldCommand;
+use crate::cli::{ProposalsCommand, RealworldCommand};
 use crate::error::{Error, Result};
 use crate::world::compile::compile_astronomy;
 use crate::world::types::WorldDefinition;
@@ -23,7 +23,169 @@ pub fn run(project: &Path, cmd: RealworldCommand) -> Result<()> {
         RealworldCommand::Compile { layer, json, materialize } => {
             compile(project, layer.as_deref(), json, materialize)
         }
+        RealworldCommand::Propose => propose(project),
+        RealworldCommand::Proposals { cmd } => proposals(project, cmd),
     }
+}
+
+/// Run the compiler through demographics and seed the proposal queue.
+fn propose(project: &Path) -> Result<()> {
+    use crate::world::compile::{compile_astronomy, compile_climate, compile_demographics, compile_hydrology};
+    use crate::world::proposals::place_proposals;
+    use crate::world::storage::WorldStore;
+
+    let def = load(project)?;
+    let astro = compile_astronomy(&def.astronomy);
+    let geo = geology_for(project, &def)?;
+    let climate = compile_climate(&def, &astro, &geo);
+    let hydro = compile_hydrology(&geo, &climate);
+    let demo = compile_demographics(&climate, &hydro);
+
+    let store = WorldStore::open_for_project(project)
+        .map_err(|e| Error::Store(format!("opening world store: {e}")))?;
+    let resolved = store
+        .resolved_signatures()
+        .map_err(|e| Error::Store(format!("reading proposals: {e}")))?;
+    store.clear_pending().map_err(|e| Error::Store(format!("clearing proposals: {e}")))?;
+
+    let proposals = place_proposals(&demo, def.seed_u64());
+    let (mut added, mut skipped) = (0usize, 0usize);
+    for p in &proposals {
+        if resolved.contains(&p.signature) {
+            skipped += 1; // already accepted or rejected — don't re-propose
+            continue;
+        }
+        store.insert(p).map_err(|e| Error::Store(format!("inserting proposal: {e}")))?;
+        added += 1;
+    }
+    println!(
+        "proposed {added} Place(s) into the queue ({skipped} already resolved, skipped)"
+    );
+    println!("review with `inkhaven realworld proposals list`");
+    Ok(())
+}
+
+fn proposals(project: &Path, cmd: ProposalsCommand) -> Result<()> {
+    use crate::world::storage::WorldStore;
+    let store = WorldStore::open_for_project(project)
+        .map_err(|e| Error::Store(format!("opening world store: {e}")))?;
+    match cmd {
+        ProposalsCommand::List { status } => {
+            let list = store
+                .list(status.as_deref())
+                .map_err(|e| Error::Store(format!("listing proposals: {e}")))?;
+            if list.is_empty() {
+                println!("(no proposals{})", status.map(|s| format!(" with status {s}")).unwrap_or_default());
+                return Ok(());
+            }
+            for p in &list {
+                println!("{} [{}] {} — {}", &p.id.to_string()[..8], p.status, p.name, p.rationale);
+            }
+            println!("\n{} proposal(s). Accept with `realworld proposals accept <id>`.", list.len());
+            Ok(())
+        }
+        ProposalsCommand::Accept { id } => {
+            let uuid = parse_id(&store, &id)?;
+            accept_one(project, &store, uuid)?;
+            Ok(())
+        }
+        ProposalsCommand::Reject { id } => {
+            let uuid = parse_id(&store, &id)?;
+            store.set_status(uuid, "rejected").map_err(|e| Error::Store(format!("reject: {e}")))?;
+            println!("rejected {id}");
+            Ok(())
+        }
+        ProposalsCommand::AcceptAll => {
+            let pending = store
+                .list(Some("pending"))
+                .map_err(|e| Error::Store(format!("listing: {e}")))?;
+            let mut n = 0;
+            for p in &pending {
+                accept_one(project, &store, p.id)?;
+                n += 1;
+            }
+            println!("accepted {n} proposal(s)");
+            Ok(())
+        }
+        ProposalsCommand::Clear => {
+            store.clear_pending().map_err(|e| Error::Store(format!("clear: {e}")))?;
+            println!("cleared pending proposals");
+            Ok(())
+        }
+    }
+}
+
+/// Resolve a possibly-abbreviated proposal id (first 8 chars) to a full UUID.
+fn parse_id(store: &crate::world::storage::WorldStore, id: &str) -> Result<uuid::Uuid> {
+    if let Ok(u) = uuid::Uuid::parse_str(id) {
+        return Ok(u);
+    }
+    let list = store.list(None).map_err(|e| Error::Store(format!("listing: {e}")))?;
+    list.iter()
+        .find(|p| p.id.to_string().starts_with(id))
+        .map(|p| p.id)
+        .ok_or_else(|| Error::Config(format!("no proposal matching id `{id}`")))
+}
+
+/// Accept a proposal: create the Place and mark it accepted.
+fn accept_one(
+    project: &Path,
+    store: &crate::world::storage::WorldStore,
+    id: uuid::Uuid,
+) -> Result<()> {
+    let p = store
+        .get(id)
+        .map_err(|e| Error::Store(format!("get proposal: {e}")))?
+        .ok_or_else(|| Error::Config(format!("no proposal `{id}`")))?;
+    if p.status == "accepted" {
+        println!("{} already accepted", p.name);
+        return Ok(());
+    }
+    create_place(project, &p)?;
+    store.set_status(id, "accepted").map_err(|e| Error::Store(format!("accept: {e}")))?;
+    println!("accepted {} → Places", p.name);
+    Ok(())
+}
+
+/// Commit an accepted Place proposal as a prose paragraph under the Places book.
+fn create_place(project: &Path, p: &crate::world::proposals::PlaceProposal) -> Result<()> {
+    use crate::config::Config;
+    use crate::project::ProjectLayout;
+    use crate::store::hierarchy::Hierarchy;
+    use crate::store::{InsertPosition, NodeKind, Store, SYSTEM_TAG_PLACES};
+
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout, &cfg)?;
+
+    let places = Hierarchy::load(&store)?
+        .iter()
+        .find(|n| n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(SYSTEM_TAG_PLACES))
+        .cloned()
+        .ok_or_else(|| Error::Store("Places system book missing".into()))?;
+
+    let pop = p.payload.get("population").and_then(|v| v.as_u64()).unwrap_or(0);
+    let class = p.payload.get("class").and_then(|v| v.as_str()).unwrap_or("settlement");
+    let basis = p.payload.get("basis").and_then(|v| v.as_str()).unwrap_or("").replace('_', " ");
+    let biome = p.payload.get("biome").and_then(|v| v.as_str()).unwrap_or("").replace('_', " ");
+    let prose = format!(
+        "{} is a {} of roughly {} people, set at a {} in a {} zone.\n\n// world-compiler proposal {}\n",
+        p.name, class, pop, basis, biome, p.signature
+    );
+
+    let h = Hierarchy::load(&store)?;
+    let mut node = store
+        .create_node(&cfg, &h, NodeKind::Paragraph, &p.name, Some(&places), None, InsertPosition::End)
+        .map_err(|e| Error::Store(format!("creating Place: {e}")))?;
+    if let Some(rel) = &node.file {
+        std::fs::write(store.project_root().join(rel), prose.as_bytes())
+            .map_err(|e| Error::Store(format!("writing Place: {e}")))?;
+    }
+    store
+        .update_paragraph_content(&mut node, prose.as_bytes())
+        .map_err(|e| Error::Store(format!("saving Place: {e}")))?;
+    Ok(())
 }
 
 /// Load + parse the project's `world.hjson`.
