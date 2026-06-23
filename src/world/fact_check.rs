@@ -32,6 +32,21 @@ impl Gazetteer {
     }
 }
 
+/// The world data the fact-checker needs beyond the magic ledger: the gazetteer
+/// (place names → world data) and the astronomy facts (moon names). Bundled so
+/// new world-data categories don't keep changing the check signature.
+pub struct WorldContext {
+    pub gazetteer: Gazetteer,
+    /// The world's moon names (for the astronomy check).
+    pub moons: Vec<String>,
+}
+
+impl WorldContext {
+    pub fn new(gazetteer: Gazetteer, moons: Vec<String>) -> Self {
+        Self { gazetteer, moons }
+    }
+}
+
 /// Whole-word containment (so "Or" doesn't match inside "Orenarm").
 fn contains_word(haystack: &str, needle: &str) -> bool {
     if needle.is_empty() {
@@ -72,15 +87,61 @@ pub fn check_paragraph(
     text: &str,
     ledger: &MagicLedger,
     roles: &[String],
-    gaz: Option<&Gazetteer>,
+    ctx: Option<&WorldContext>,
 ) -> Vec<Finding> {
     let mut findings = Vec::new();
     findings.extend(check_travel_time(text, ledger, roles));
-    if let Some(g) = gaz {
-        findings.extend(check_climate(text, g, ledger));
-        findings.extend(check_population(text, g, ledger));
+    if let Some(c) = ctx {
+        findings.extend(check_climate(text, &c.gazetteer, ledger));
+        findings.extend(check_population(text, &c.gazetteer, ledger));
+        findings.extend(check_astronomy(text, &c.moons, ledger));
     }
     findings
+}
+
+/// Astronomy check: a stated moon count that disagrees with the world's sky.
+fn check_astronomy(text: &str, moons: &[String], ledger: &MagicLedger) -> Vec<Finding> {
+    let world_count = moons.len();
+    if world_count == 0 {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for sentence in split_sentences(text) {
+        let Some(claimed) = find_moon_count(sentence) else {
+            continue;
+        };
+        if claimed == world_count {
+            continue;
+        }
+        let body = format!(
+            "The prose implies {claimed} moon(s), but this world has {world_count} ({}).",
+            moons.join(", ")
+        );
+        let ctx = CheckContext { category: "astronomy", ..Default::default() };
+        let suppressed_by = ledger.find_suppressor(&ctx).map(|r| r.kind.clone());
+        let severity = if suppressed_by.is_some() { "info" } else { "warning" };
+        out.push(Finding { category: "astronomy".into(), severity: severity.into(), body, suppressed_by });
+    }
+    out
+}
+
+/// Extract a moon count from a sentence: "the three moons", "both moons", "two
+/// moons hung overhead".
+fn find_moon_count(s: &str) -> Option<usize> {
+    use std::sync::OnceLock;
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(
+            r"(?i)\b(\d+|both|one|two|three|four|five|six|seven)\s+moons?\b",
+        )
+        .unwrap()
+    });
+    let caps = re.captures(s)?;
+    let w = caps.get(1)?.as_str().to_ascii_lowercase();
+    if w == "both" {
+        return Some(2);
+    }
+    word_to_number(&w).map(|n| n as usize)
 }
 
 /// Climate check: weather described at a place that contradicts the place's
@@ -434,7 +495,7 @@ mod tests {
 
     #[test]
     fn flags_snow_in_the_tropics() {
-        let g = gaz();
+        let g = WorldContext::new(gaz(), vec![]);
         let f = check_paragraph("A blizzard buried Velmaril overnight.", &empty_ledger(), &[], Some(&g));
         assert_eq!(f.len(), 1);
         assert_eq!(f[0].category, "climate");
@@ -446,7 +507,7 @@ mod tests {
 
     #[test]
     fn flags_a_population_mismatch() {
-        let g = gaz();
+        let g = WorldContext::new(gaz(), vec![]);
         // Velmaril models ~40k; prose claims 2 million → off by 50× → warning.
         let f = check_paragraph("Velmaril, a teeming city of 2 million souls.", &empty_ledger(), &[], Some(&g));
         assert_eq!(f.len(), 1);
@@ -462,5 +523,18 @@ mod tests {
         // "Korthun" must not match inside another word.
         assert_eq!(g.mentioned_in("the Korthuns").len(), 0);
         assert_eq!(g.mentioned_in("near Korthun, north").len(), 1);
+    }
+
+    #[test]
+    fn flags_wrong_moon_count() {
+        let ctx = WorldContext::new(gaz(), vec!["Korthana".into(), "Eldra".into()]);
+        // World has 2 moons; prose says three.
+        let f = check_paragraph("All three moons hung over the bay.", &empty_ledger(), &[], Some(&ctx));
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].category, "astronomy");
+        assert_eq!(f[0].severity, "warning");
+        // "both moons" agrees with two → no finding.
+        let f2 = check_paragraph("Both moons were full.", &empty_ledger(), &[], Some(&ctx));
+        assert!(f2.is_empty(), "got {f2:?}");
     }
 }

@@ -35,7 +35,8 @@ pub fn run(project: &Path, cmd: RealworldCommand) -> Result<()> {
 pub fn fact_check(project: &Path, text: Option<String>, paragraph: Option<String>) -> Result<()> {
     use crate::world::fact_check::check_paragraph;
     // The magic ledger (if any) is consulted; a missing world.hjson is fine.
-    let ledger = load(project).ok().and_then(|d| d.magic).unwrap_or_default();
+    let def = load(project).ok();
+    let ledger = def.as_ref().and_then(|d| d.magic.clone()).unwrap_or_default();
 
     let prose = match (text, paragraph) {
         (Some(t), _) => t,
@@ -60,15 +61,33 @@ pub fn fact_check(project: &Path, text: Option<String>, paragraph: Option<String
         }
     };
 
-    // Build the gazetteer from the world-linked Places (if any) so the climate +
-    // demographics checks can resolve place names in the prose.
-    let gaz = crate::world::storage::WorldStore::open_for_project(project)
+    // Build the world context: the gazetteer (world-linked Places) lets the
+    // climate + demographics checks resolve place names; the moon names feed the
+    // astronomy check.
+    let places = crate::world::storage::WorldStore::open_for_project(project)
         .ok()
         .and_then(|ws| ws.list_place_links().ok())
-        .filter(|links| !links.is_empty())
-        .map(crate::world::fact_check::Gazetteer::new);
+        .unwrap_or_default();
+    let moons: Vec<String> = def
+        .as_ref()
+        .map(|d| {
+            crate::world::compile::compile_astronomy(&d.astronomy)
+                .moons
+                .iter()
+                .map(|m| m.name.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    let world_ctx = if !places.is_empty() || !moons.is_empty() {
+        Some(crate::world::fact_check::WorldContext::new(
+            crate::world::fact_check::Gazetteer::new(places),
+            moons,
+        ))
+    } else {
+        None
+    };
 
-    let findings = check_paragraph(&prose, &ledger, &[], gaz.as_ref());
+    let findings = check_paragraph(&prose, &ledger, &[], world_ctx.as_ref());
     if findings.is_empty() {
         println!("✓ no issues found");
         return Ok(());
