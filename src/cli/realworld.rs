@@ -94,7 +94,7 @@ fn compile(project: &Path, layer: Option<&str>, json: bool, materialize: bool) -
         return Err(Error::Config(format!("unknown layer `{l}` (one of: {})", known.join(", "))));
     }
     match l {
-        "geology" => return compile_geology_cli(project, json),
+        "geology" => return compile_geology_cli(project, json, materialize),
         "climate" | "hydrology" | "demographics" => {
             return Err(Error::Config(format!(
                 "layer `{l}` is not implemented yet — astronomy + geology have landed (WORLD-4 P0/P1)"
@@ -173,10 +173,24 @@ fn compile(project: &Path, layer: Option<&str>, json: bool, materialize: bool) -
 
 /// Compile + print the generated geology layer. (Materialization into the World
 /// book + heightmap PNG export lands in the next WORLD-4 increment.)
-fn compile_geology_cli(project: &Path, json: bool) -> Result<()> {
+fn compile_geology_cli(project: &Path, json: bool, materialize: bool) -> Result<()> {
     use crate::world::compile::compile_geology;
     let def = load(project)?;
     let out = compile_geology(&def);
+
+    let mat_report = if materialize {
+        use crate::config::Config;
+        use crate::project::ProjectLayout;
+        use crate::store::Store;
+        let layout = ProjectLayout::new(project);
+        layout.require_initialized()?;
+        let cfg = Config::load_layered(&layout.config_path())?;
+        let store = Store::open(layout, &cfg)?;
+        Some(crate::world::materialize::materialize_geology(&store, &cfg, &out)?)
+    } else {
+        None
+    };
+
     if json {
         let v = serde_json::to_string_pretty(&out)
             .map_err(|e| Error::Store(format!("serializing geology: {e}")))?;
@@ -208,6 +222,14 @@ fn compile_geology_cli(project: &Path, json: bool) -> Result<()> {
         "  minerals:   {}",
         out.minerals.iter().map(|m| m.mineral.as_str()).collect::<Vec<_>>().join(", ")
     );
+    if let Some(r) = &mat_report {
+        println!(
+            "  → World/{}: {} paragraph(s) created, {} updated; heightmap → assets/world/heightmap.png",
+            r.chapter,
+            r.created.len(),
+            r.updated.len()
+        );
+    }
     Ok(())
 }
 
