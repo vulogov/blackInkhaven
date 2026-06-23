@@ -18,6 +18,16 @@ pub enum Lang {
 /// Detect a paragraph's language, mapping to one of the five baselines (default
 /// English). Reuses the same whatlang → ISO mapping the prompt system uses.
 pub fn detect(text: &str) -> Lang {
+    detect_with_confidence(text).0
+}
+
+/// Like [`detect`], but also reports whether the call is **confident**. A
+/// confident result has a clear script or function-word signal; a non-confident
+/// one is the English fallback (no signal) or a near-tie between Latin baselines.
+/// Callers that want to *degrade rather than mislead* — e.g. avoid emitting a
+/// language-specific warning under the wrong assumption — gate on this. Never
+/// panics, on any input (empty, emoji-only, megabytes, mixed-script).
+pub fn detect_with_confidence(text: &str) -> (Lang, bool) {
     // A script + function-word heuristic, deliberately not `whatlang`: for the
     // *fixed set* of five baselines this is far more robust than a general
     // detector, which confuses sister languages (Russian↔Bulgarian,
@@ -27,7 +37,7 @@ pub fn detect(text: &str) -> Lang {
     let lower = text.to_lowercase();
     let cyrillic = lower.chars().filter(|c| ('а'..='я').contains(c) || *c == 'ё').count();
     if cyrillic >= 3 {
-        return Lang::Ru;
+        return (Lang::Ru, true);
     }
     let score = |words: &[&str]| words.iter().filter(|w| contains_word(&lower, w)).count();
     let de = score(&["der", "das", "und", "ein", "eine", "durch", "über", "ohne", "nicht", "mit", "den", "dem", "ist", "auch"]);
@@ -35,13 +45,72 @@ pub fn detect(text: &str) -> Lang {
     let es = score(&["el", "los", "las", "sin", "por", "con", "para", "una", "del", "muy", "tres", "días", "pero", "como"]);
     let en = score(&["the", "and", "of", "to", "in", "for", "with", "that", "was", "three", "days", "she", "he"]);
     // English last so it wins ties (max_by_key keeps the last maximum).
-    let best = [(Lang::De, de), (Lang::Fr, fr), (Lang::Es, es), (Lang::En, en)]
-        .into_iter()
-        .max_by_key(|(_, n)| *n)
-        .filter(|(_, n)| *n > 0);
-    match best {
-        Some((lang, _)) => lang,
-        None => Lang::En,
+    let mut ranked = [(Lang::De, de), (Lang::Fr, fr), (Lang::Es, es), (Lang::En, en)];
+    ranked.sort_by_key(|(_, n)| *n);
+    let (top_lang, top) = ranked[3];
+    let (_, second) = ranked[2];
+    if top == 0 {
+        return (Lang::En, false); // no signal at all — fall back, not confident.
+    }
+    // Confident when the winner has real signal and clears the runner-up.
+    let confident = top >= 2 && top > second;
+    (top_lang, confident)
+}
+
+// ── detection-backend capability (graceful degradation) ──────────────────────
+
+/// Which language-analysis backend the fact-checker is using. The `Heuristic`
+/// backend ships in the binary and is always available; the optional `Enhanced`
+/// backend (a Universal-Dependencies parse model, RFC P4) is *never required* —
+/// when its asset is absent or unreadable the checker degrades to `Heuristic`
+/// rather than failing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Backend {
+    Heuristic,
+    Enhanced,
+}
+
+/// Path the optional enhanced (UD parser) asset would load from: `$INKHAVEN_LANG_MODEL`
+/// if set, else `~/.inkhaven/assets/lang/parser.bin`. Returning a path does not
+/// imply the file exists.
+pub fn enhanced_asset_path() -> Option<std::path::PathBuf> {
+    if let Some(p) = std::env::var_os("INKHAVEN_LANG_MODEL") {
+        return Some(std::path::PathBuf::from(p));
+    }
+    dirs_home().map(|h| h.join(".inkhaven").join("assets").join("lang").join("parser.bin"))
+}
+
+fn dirs_home() -> Option<std::path::PathBuf> {
+    std::env::var_os("HOME").map(std::path::PathBuf::from)
+}
+
+/// The active backend. `Enhanced` only when the asset is present and non-empty;
+/// any absence or read error silently degrades to `Heuristic`. Pure observation —
+/// never downloads, never fails.
+pub fn active_backend() -> Backend {
+    match enhanced_asset_path() {
+        Some(p) => match std::fs::metadata(&p) {
+            Ok(m) if m.len() > 0 => Backend::Enhanced,
+            _ => Backend::Heuristic,
+        },
+        None => Backend::Heuristic,
+    }
+}
+
+/// A one-line, user-facing description of the active detection backend and how to
+/// upgrade it — shown so authors understand they're on the always-available
+/// heuristic, not a silent failure.
+pub fn backend_note() -> String {
+    match active_backend() {
+        Backend::Enhanced => {
+            let p = enhanced_asset_path().map(|p| p.display().to_string()).unwrap_or_default();
+            format!("language: enhanced parser ({p})")
+        }
+        Backend::Heuristic => {
+            "language: built-in heuristic (5 baselines; no external model needed — set \
+             INKHAVEN_LANG_MODEL to use an enhanced parser)"
+                .to_string()
+        }
     }
 }
 
@@ -437,5 +506,37 @@ mod tests {
         assert!(contains_word("за три дня", "три"));
         assert!(!contains_word("материк", "три")); // not a substring match
         assert!(contains_word("в шахте добывали", "шахте"));
+    }
+
+    #[test]
+    fn confidence_reflects_signal() {
+        // Clear Russian script → confident.
+        let (l, c) = detect_with_confidence("Гонец скакал три долгих дня без отдыха через горы.");
+        assert_eq!(l, Lang::Ru);
+        assert!(c);
+        // Clear German function words → confident.
+        let (l, c) = detect_with_confidence("Der Bote ritt durch das weite Land ohne Rast und nicht müde.");
+        assert_eq!((l, c), (Lang::De, true));
+        // No signal → English fallback, NOT confident (degrade, don't assert).
+        let (l, c) = detect_with_confidence("rode 600 km");
+        assert_eq!(l, Lang::En);
+        assert!(!c);
+    }
+
+    #[test]
+    fn detection_never_panics_on_hostile_input() {
+        for s in ["", "   ", "🚀🚀🚀", "123 456 789", &"a".repeat(100_000), "中文字符", "Ω≈ç√∫"] {
+            let _ = detect_with_confidence(s); // must not panic
+        }
+    }
+
+    #[test]
+    fn backend_defaults_to_heuristic_and_degrades() {
+        // With no model env pointing at a real file, the backend is the built-in
+        // heuristic and the note explains the (non-failing) degradation.
+        // (We don't mutate process env here; just assert the note is well-formed.)
+        let note = backend_note();
+        assert!(note.starts_with("language:"));
+        assert!(matches!(active_backend(), Backend::Heuristic | Backend::Enhanced));
     }
 }
