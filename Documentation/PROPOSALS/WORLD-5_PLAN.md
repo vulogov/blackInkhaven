@@ -132,5 +132,13 @@
   festivals + solstitial / agricultural references — `разгар лета`, `pleno verano`,
   `plein été`, `Hochsommer`, harvests, …) selected by the detected language. The
   messages were already localized (P2.2); this completes the *detection* side.
-  Verified end-to-end in all five languages. +1 test, 1725. *Next: P5 — the `📅`
-  Output marker + coexistence-guidance docs.*
+  Verified end-to-end in all five languages. +1 test, 1725.
+- **P5 — editor integration + the 📅 marker + docs → WORLD-5 COMPLETE (UNRELEASED,
+  1.3.30-dev).** The timeline checks now run in the **editor** (`collect_timeline_findings`
+  wired into the manual `Ctrl+B W → F` and the ambient auto-check), not just the
+  CLI; `emit_finding_timeline` marks them so the Output pane shows a **📅** on
+  timeline-derived findings. Docs: a "Timeline-aware checking (WORLD-5)" section in
+  `WORLDBUILDING.md` (the four gains, the flags, the Bund words, the
+  legacy-critique coexistence note) + tutorial 80. 1725. **★ WORLD-5 fully
+  implemented per the RFC** (the deferred astronomy/demographics/economy *dated
+  grounding* needs a world-state-over-time model the RFC's non-goals rule out).
