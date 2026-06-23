@@ -145,5 +145,15 @@ for §8 detailed design, Appendix A (schema), B (config), E (overlays).
   as a `socratic_inquiry` message (persona / category / track / question + EN
   fallback). A headless CLI (`inkhaven inner-socrates check --text|--paragraph`,
   `… ledger`) runs the Fast track → consult ledger → persist → emit → print. +3
-  tests, 1686. *Next: P3 — the `Ctrl+B I` chord family + debounced auto-check into
-  the Output pane.*
+  tests, 1686. *Next: P3 — the chord family + debounced auto-check into Output.*
+- **P3 — TUI chord family + ambient auto-check (UNRELEASED, 1.3.28-dev).** The
+  Socratic family lives on **`Ctrl+B J`** (the RFC's `I` was book-info; resolved
+  onto `J`, user-decided 2026-06-26). New `Action::OpenInnerSocratesOverview` +
+  the `Modal::InnerSocratesOverview` (active persona, recent questions, ledger
+  count) with a scrollable render mirroring the World overview. Sub-keys: **`F`**
+  fast-check the open paragraph → Output (flips you there), **`L`** view the intent
+  ledger, **`S`** persona (stub until persona storage), **`A`** toggle the ambient
+  auto-check. `tick_inner_socrates` runs the Fast track on a 5 s writing pause into
+  Output without stealing focus (opt-in, off by default — quiet by default),
+  mirroring WORLD-4's `tick_fact_check`; a re-check replaces the paragraph's prior
+  `socratic_inquiry` messages. +1 test, 1687. *Next: P4 — the Slow LLM track.*

@@ -133,6 +133,11 @@ pub enum Action {
     /// compiled astronomy + materialization status).
     #[serde(rename = "world.open_overview")]
     OpenWorldOverview,
+    /// INNER_SOCRATES-1 — `Ctrl+B J`. Open the Inner Socrates overview (active
+    /// persona, recent questions, the intent ledger). `I` was taken by book-info,
+    /// so the family lives on `J` (user-decided 2026-06-26).
+    #[serde(rename = "inner_socrates.open_overview")]
+    OpenInnerSocratesOverview,
     #[serde(rename = "view.run_deep_refresh")]
     RunDeepRefresh,
     #[serde(rename = "global.open_llm_picker")]
@@ -864,6 +869,7 @@ impl Action {
             Action::OpenStoryBible => "bible".into(),
             Action::OpenConlangHub => "conlang".into(),
             Action::OpenWorldOverview => "world".into(),
+            Action::OpenInnerSocratesOverview => "inner socrates".into(),
             Action::RunDeepRefresh => "deep refresh".into(),
             Action::OpenLlmPicker => "LLM".into(),
             Action::ToggleSound => "sound".into(),
@@ -1045,6 +1051,8 @@ impl Action {
                 "Open the ConLang hub (LANG-1, Ctrl+B X) — a read-only overview of every constructed language under the Language system book: phoneme inventory (consonants / vowels), template + constraint + allophony counts, prosody (stress rule, tone), romanization schemes, lexicon size, and linked speakers (Places / Characters). `↑↓` scroll, `Esc` closes. The deep operations live on the CLI — `inkhaven language audit / generate-lexicon / query / scan-manuscript` — plus `Ctrl+B Q` to translate a paragraph into an invented language. Mnemonic: X for conlang.".into(),
             Action::OpenWorldOverview =>
                 "Open the World overview (WORLD-4, Ctrl+B W) — a read-only summary of the project's world simulation: the `world.hjson` definition (name / seed / star / planet / moons), the compiled astronomy layer (year length in planet-days with the declared-vs-computed divergence flag, axial tilt, season markers, lunar synodic periods, dominant tide, calendar consistency), and whether it has been materialized into the World system book. `↑↓` scroll, `Esc` closes. The operations live on the CLI — `inkhaven realworld new / validate / compile [--materialize]`. Mnemonic: W for World. (Typewriter / focus mode moved to Ctrl+B Shift+W.)".into(),
+            Action::OpenInnerSocratesOverview =>
+                "Open the Inner Socrates overview (INNER_SOCRATES-1, Ctrl+B J) — examined authorship: the active Reader Persona, recent Socratic questions about your prose, and the intent ledger (deliberate authorial choices the interrogator respects). Sub-keys: `S` select persona, `L` view ledger, `F` fast-check the open paragraph. `↑↓` scroll, `Esc` closes. Inner Socrates produces questions, never corrections. The CLI surface is `inkhaven inner-socrates check / ledger`. Mnemonic: J (I was taken by book-info).".into(),
             Action::RunDeepRefresh =>
                 "Run the deep AI world refresh (1.3.12) in the background — facts check, facts scan, semantic drift, and continuity extract, the same scans as `inkhaven world --deep`, in the manuscript's language. Runs off the main thread (a cloned, pool-shared store), so the editor stays fully responsive; a `⟳ deep refresh` status chip tracks progress. When it finishes, the open story bible / Editorial Pass rebuilds itself from the fresh sidecars and the status shows the new world-consistency summary. Needs an LLM provider; one job at a time. Mnemonic: F for reFresh.".into(),
             Action::OpenLlmPicker =>
@@ -1379,6 +1387,10 @@ impl KeyBindings {
                 // chord family (user-decided 2026-06-25).
                 entry("w", Action::OpenWorldOverview, Scope::Any),
                 entry("Shift+w", Action::ToggleTypewriter, Scope::Any),
+                // INNER_SOCRATES-1 — Ctrl+B J opens the Inner Socrates overview.
+                // `I` is book-info; the Socratic family lives on `J`
+                // (user-decided 2026-06-26).
+                entry("j", Action::OpenInnerSocratesOverview, Scope::Any),
                 entry("k", Action::ToggleAiFullscreen, Scope::Any),
                 // LANG-1 P2.7b — Ctrl+B X opens the ConLang hub overview.
                 entry("x", Action::OpenConlangHub, Scope::Any),
@@ -2164,6 +2176,23 @@ mod tests {
             k.resolve_meta_sub(&shift_w, Focus::Editor),
             Some(Action::ToggleTypewriter),
             "Ctrl+B Shift+W is now focus/typewriter mode",
+        );
+    }
+
+    #[test]
+    fn meta_j_opens_inner_socrates_book_info_keeps_i() {
+        // INNER_SOCRATES-1 — Ctrl+B J is the Socratic family; Ctrl+B I stays
+        // book-info (the collision was resolved onto J, user-decided 2026-06-26).
+        let k = KeyBindings::defaults();
+        assert_eq!(
+            k.resolve_meta_sub(&ev('j'), Focus::Editor),
+            Some(Action::OpenInnerSocratesOverview),
+            "Ctrl+B J opens the Inner Socrates overview",
+        );
+        assert_eq!(
+            k.resolve_meta_sub(&ev('i'), Focus::Editor),
+            Some(Action::OpenBookInfo),
+            "Ctrl+B I remains book-info",
         );
     }
 

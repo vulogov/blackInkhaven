@@ -224,6 +224,10 @@ impl super::App {
             self.draw_world_overview_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::InnerSocratesOverview { .. }) {
+            self.draw_inner_socrates_overview_modal(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::WorldProposals { .. }) {
             self.draw_world_proposals_modal(f, area);
             return;
