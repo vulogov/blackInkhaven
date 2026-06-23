@@ -383,6 +383,8 @@ pub enum Msg<'a> {
     Population { place: &'a str, claimed: u64, modeled: u64 },
     Astronomy { claimed: usize, world: usize, moons: &'a str },
     Economy { metal: &'a str, minerals: &'a str },
+    /// WORLD-5 — weather contradicting the timeline-dated season.
+    DateSeason { weather: Weather, season: &'a str },
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -435,6 +437,10 @@ fn render_en(m: &Msg) -> String {
         Msg::Economy { metal, minerals } => format!(
             "{metal} is mined or worked here, but this world's geology yields only: {minerals}."
         ),
+        Msg::DateSeason { weather, season } => format!(
+            "{} described here, but the timeline places this in {season}.",
+            if *weather == Weather::Cold { "Freezing weather" } else { "Tropical heat" }
+        ),
     }
 }
 
@@ -458,6 +464,10 @@ fn render_ru(m: &Msg) -> String {
         ),
         Msg::Economy { metal, minerals } => format!(
             "Здесь добывают {metal}, но геология этого мира даёт только: {minerals}."
+        ),
+        Msg::DateSeason { weather, season } => format!(
+            "{} здесь, но хронология относит это к сезону «{season}».",
+            if *weather == Weather::Cold { "Описана морозная погода" } else { "Описана тропическая жара" }
         ),
     }
 }
@@ -483,6 +493,10 @@ fn render_es(m: &Msg) -> String {
         Msg::Economy { metal, minerals } => format!(
             "Aquí se extrae {metal}, pero la geología de este mundo solo da: {minerals}."
         ),
+        Msg::DateSeason { weather, season } => format!(
+            "{} aquí, pero la cronología sitúa esto en la estación «{season}».",
+            if *weather == Weather::Cold { "Se describe un frío helado" } else { "Se describe un calor tropical" }
+        ),
     }
 }
 
@@ -507,6 +521,10 @@ fn render_fr(m: &Msg) -> String {
         Msg::Economy { metal, minerals } => format!(
             "On extrait ici du {metal}, mais la géologie de ce monde ne donne que : {minerals}."
         ),
+        Msg::DateSeason { weather, season } => format!(
+            "{} ici, mais la chronologie place ceci à la saison « {season} ».",
+            if *weather == Weather::Cold { "Un froid glacial est décrit" } else { "Une chaleur tropicale est décrite" }
+        ),
     }
 }
 
@@ -530,6 +548,10 @@ fn render_de(m: &Msg) -> String {
         ),
         Msg::Economy { metal, minerals } => format!(
             "Hier wird {metal} abgebaut, aber die Geologie dieser Welt liefert nur: {minerals}."
+        ),
+        Msg::DateSeason { weather, season } => format!(
+            "{} hier, aber die Chronologie verortet dies in der Jahreszeit „{season}“.",
+            if *weather == Weather::Cold { "Frostiges Wetter wird beschrieben" } else { "Tropische Hitze wird beschrieben" }
         ),
     }
 }
