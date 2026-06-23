@@ -88,21 +88,19 @@ fn show(project: &Path, json: bool) -> Result<()> {
 }
 
 fn compile(project: &Path, layer: Option<&str>, json: bool, materialize: bool) -> Result<()> {
-    // P0: only the astronomy layer exists. A `--layer <other>` names a real but
-    // not-yet-implemented layer; say so rather than silently doing astronomy.
-    if let Some(l) = layer {
-        let known = ["astronomy", "geology", "climate", "hydrology", "demographics"];
-        if !known.contains(&l) {
+    let l = layer.unwrap_or("astronomy");
+    let known = ["astronomy", "geology", "climate", "hydrology", "demographics"];
+    if !known.contains(&l) {
+        return Err(Error::Config(format!("unknown layer `{l}` (one of: {})", known.join(", "))));
+    }
+    match l {
+        "geology" => return compile_geology_cli(project, json),
+        "climate" | "hydrology" | "demographics" => {
             return Err(Error::Config(format!(
-                "unknown layer `{l}` (one of: {})",
-                known.join(", ")
+                "layer `{l}` is not implemented yet — astronomy + geology have landed (WORLD-4 P0/P1)"
             )));
         }
-        if l != "astronomy" {
-            return Err(Error::Config(format!(
-                "layer `{l}` is not implemented yet — only `astronomy` has landed (WORLD-4 P0)"
-            )));
-        }
+        _ => {} // astronomy — falls through to the body below.
     }
 
     let def = load(project)?;
@@ -170,6 +168,46 @@ fn compile(project: &Path, layer: Option<&str>, json: bool, materialize: bool) -
             r.updated.len()
         );
     }
+    Ok(())
+}
+
+/// Compile + print the generated geology layer. (Materialization into the World
+/// book + heightmap PNG export lands in the next WORLD-4 increment.)
+fn compile_geology_cli(project: &Path, json: bool) -> Result<()> {
+    use crate::world::compile::compile_geology;
+    let def = load(project)?;
+    let out = compile_geology(&def);
+    if json {
+        let v = serde_json::to_string_pretty(&out)
+            .map_err(|e| Error::Store(format!("serializing geology: {e}")))?;
+        println!("{v}");
+        return Ok(());
+    }
+    println!("geology · {} ({} source, {}×{} grid)", def.name, out.source, out.width, out.height);
+    println!(
+        "  plates:     {} ({} continental) · boundaries {}▲ {}▽ {}↔",
+        out.plates.len(),
+        out.plates.iter().filter(|p| p.continental).count(),
+        out.boundaries.convergent,
+        out.boundaries.divergent,
+        out.boundaries.transform
+    );
+    println!(
+        "  land:       {} continent(s) · {:.0}% ocean · land fraction {:.2}",
+        out.continents, out.sea_coverage_pct, out.elevation.land_fraction
+    );
+    println!(
+        "  elevation:  min {:.2} · mean {:.2} · max {:.2}",
+        out.elevation.min, out.elevation.mean, out.elevation.max
+    );
+    println!("  mountains:  {} range(s)", out.mountain_ranges.len());
+    for r in out.mountain_ranges.iter().take(4) {
+        println!("    plates {}–{} · peak {:.2} · {} cells", r.plate_a, r.plate_b, r.peak_elevation, r.cell_count);
+    }
+    println!(
+        "  minerals:   {}",
+        out.minerals.iter().map(|m| m.mineral.as_str()).collect::<Vec<_>>().join(", ")
+    );
     Ok(())
 }
 

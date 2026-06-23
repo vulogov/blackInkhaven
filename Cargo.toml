@@ -248,6 +248,13 @@ image = { version = "0.25", default-features = false, features = [
   "gif",
   "webp",
 ] }
+# WORLD-4 P1 — the world-simulation geology layer. Both pure-Rust, MIT/Apache
+# (RFC §11). `noise` synthesises the procedural heightmap; `delaunator` gives the
+# Delaunay triangulation behind the Voronoi plate boundaries. `image` (above) is
+# reused for DEM/heightmap import. (Determinism uses a tiny in-tree seeded PRNG,
+# not `rand`, to keep `(definition, seed) -> identical output` airtight.)
+noise = "0.9"
+delaunator = "1"
 # typst-syntax — Phase 1 of the typst-as-library plan (1.2.5+). Pulls
 # in the Typst parser only (no eval, no layout, no render, no fonts).
 # Used by `src/typst_check.rs` to surface parse errors at the source

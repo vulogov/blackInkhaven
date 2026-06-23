@@ -119,10 +119,23 @@
 >
 > **★★ WORLD-4 P0 COMPLETE (astronomy layer end-to-end): types + closed-form
 > physics + materialization into the World book + `realworld` CLI + `Ctrl+B W`
-> overview. 14 tests, ZERO new deps, all signed.** *Next: **P1** —
-> geology (seed→Voronoi plates→continents→mountains→noise heightmap, OR DEM
-> import) + climate (zonal model) + hydrology (D8 flow). FIRST new deps land here:
-> `image`, `noise`, `delaunator` (all pure-Rust, per §11).*
+> overview. 14 tests, ZERO new deps, all signed.**
+> - **P1.1 — geology layer + first new deps (UNRELEASED, 1.3.25-dev).** Added
+>   `noise` + `delaunator` (pure-Rust, MIT/Apache, RFC §11; `image` was already
+>   in-tree, covers DEM). Determinism uses an **in-tree SplitMix64** seeded by the
+>   world seed, not `rand`. `types::{world::{GeologyDef,GeneratedGeology,
+>   DemGeology},geology::GeologyOutput}` + `compile::geology_layer::compile_geology`
+>   (generated path): seed → plate seeds → **Delaunay adjacency** (delaunator) →
+>   boundary classification (convergent/divergent/transform from relative plate
+>   motion) → **4-octave Perlin heightmap** (noise) biased by continental plates +
+>   convergent-boundary uplift (orogeny active/quiet/ancient) → continents
+>   (flood-fill ≥0.5% land), sea coverage, mountain ranges, mineral hints,
+>   elevation stats. Heightmap kept in-memory (`#[serde(skip)]` — a PNG asset
+>   later, not JSON). CLI `realworld compile --layer geology` (+`--json`). 5 tests;
+>   smoke-validated (Velmaron → 4▲1▽8↔, 2 continents, 36% ocean, 3 ranges along
+>   convergent boundaries, copper/gold/iron/coal). tests 1593→1598. *Next P1:
+>   geology materialization (World/Geology/* + heightmap PNG) + DEM import, then
+>   climate (zonal model) + hydrology (D8 flow).*
 >
 > **DEFERRED DELIVERABLE (user-requested 2026-06-25):** once WORLD-4 is *fully*
 > implemented (all five layers + magic), generate `./examples/realworld/Earth.hjson`
