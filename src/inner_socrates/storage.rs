@@ -193,6 +193,33 @@ impl InnerSocratesStore {
             .collect())
     }
 
+    /// A paragraph's findings in chronological order (oldest first) — the history
+    /// of what the interrogator has asked about it across re-checks / drafts.
+    pub fn findings_history(&self, paragraph_id: Uuid) -> Result<Vec<(i64, SocraticFinding)>> {
+        let rows = self.engine.select_all_with(
+            "SELECT emitted_at, category, severity, persona_id, question, question_en, suppressed_by \
+             FROM socratic_findings WHERE paragraph_id = ? ORDER BY emitted_at ASC, id",
+            &[&paragraph_id.to_string()],
+        )?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                let category = Category::from_id(&text(r.get(1)))?;
+                Some((
+                    int(r.first()),
+                    SocraticFinding {
+                        category,
+                        severity: severity_from_id(&text(r.get(2))),
+                        persona_id: text(r.get(3)),
+                        question: text(r.get(4)),
+                        question_en: text(r.get(5)),
+                        suppressed_by: opt_text(r.get(6)),
+                    },
+                ))
+            })
+            .collect())
+    }
+
     // ── intent ledger ──────────────────────────────────────────────────────────
 
     /// Insert or replace an intent entry.
