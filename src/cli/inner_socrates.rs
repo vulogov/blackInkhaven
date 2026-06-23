@@ -20,6 +20,68 @@ pub fn run(project: &Path, cmd: InnerSocratesCommand) -> Result<()> {
         InnerSocratesCommand::Timeline { max_cost, force } => timeline(project, max_cost, force),
         InnerSocratesCommand::Ledger => ledger(project),
         InnerSocratesCommand::Persona(cmd) => persona(project, cmd),
+        InnerSocratesCommand::Suggestions(cmd) => suggestions(project, cmd),
+    }
+}
+
+/// The promotion-candidate surface — list / promote / dismiss.
+fn suggestions(project: &Path, cmd: crate::cli::SuggestionsCommand) -> Result<()> {
+    use crate::cli::SuggestionsCommand;
+    use crate::inner_socrates::intent::{IntentEntry, IntentKind, IntentScope, ScopeLevel};
+    use crate::inner_socrates::types::Category;
+    let store = InnerSocratesStore::open_for_project(project)
+        .map_err(|e| Error::Store(format!("inner-socrates store: {e}")))?;
+    let cat = |s: &str| Category::from_id(s).ok_or_else(|| Error::Config(format!("unknown category `{s}`")));
+    match cmd {
+        SuggestionsCommand::List { threshold } => {
+            let cands = store.promotion_candidates(threshold).map_err(|e| Error::Store(format!("{e}")))?;
+            if cands.is_empty() {
+                println!("(no promotion candidates — patterns accumulate as you dismiss findings)");
+                return Ok(());
+            }
+            for c in &cands {
+                let where_ = if c.chapter_id.is_empty() { "project-wide".into() } else { format!("chapter {}", c.chapter_id) };
+                println!(
+                    "  {} ({}×, {}) → propose `{}`",
+                    c.category.id(),
+                    c.count,
+                    where_,
+                    IntentKind::proposed_for(c.category).id()
+                );
+            }
+            println!("\npromote with: inkhaven inner-socrates suggestions promote <category> [--chapter <id>]");
+            Ok(())
+        }
+        SuggestionsCommand::Promote { category, chapter, description } => {
+            let category = cat(&category)?;
+            let scope = match &chapter {
+                Some(c) => IntentScope::Chapter(c.clone()),
+                None => IntentScope::Project,
+            };
+            let entry = IntentEntry {
+                id: uuid::Uuid::new_v4().to_string(),
+                kind: IntentKind::proposed_for(category),
+                description: description.unwrap_or_else(|| {
+                    format!("{} is a deliberate choice here", category.label())
+                }),
+                scope,
+                coverage: vec![category],
+                scope_level: ScopeLevel::Project,
+            };
+            store.add_intent(&entry).map_err(|e| Error::Store(format!("{e}")))?;
+            // Refuse the candidate so it doesn't re-suggest now that it's declared.
+            let _ = store.refuse_promotion(category, chapter.as_deref().unwrap_or(""));
+            println!("declared intent `{}` covering {} — the interrogator will respect it", entry.id, category.id());
+            Ok(())
+        }
+        SuggestionsCommand::Dismiss { category, chapter } => {
+            let category = cat(&category)?;
+            store
+                .refuse_promotion(category, chapter.as_deref().unwrap_or(""))
+                .map_err(|e| Error::Store(format!("{e}")))?;
+            println!("won't re-suggest promoting {}", category.id());
+            Ok(())
+        }
     }
 }
 

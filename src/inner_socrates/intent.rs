@@ -44,6 +44,26 @@ impl IntentKind {
     }
 }
 
+impl IntentKind {
+    /// The intent kind a promotion suggestion proposes for a dismissed category —
+    /// the natural declaration that would suppress that category.
+    pub fn proposed_for(category: Category) -> IntentKind {
+        match category {
+            Category::FramingInterrogation => IntentKind::FramingChoice,
+            Category::StructuralPatterns
+            | Category::ImplicitComparison
+            | Category::SentenceLengthAnomalies => IntentKind::StructuralEcho,
+            Category::DramatizationGap
+            | Category::ImplicationTracing
+            | Category::TemporalDensity => IntentKind::DeliberateTemporalAmbiguity,
+            Category::AssumptionSurfacing | Category::TensionDetection => {
+                IntentKind::DeliberateAmbiguity
+            }
+            _ => IntentKind::StylisticChoice,
+        }
+    }
+}
+
 /// Whether an entry stays in this project or is exportable to a `.isl` series
 /// bundle (forward-compatible from MVP).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

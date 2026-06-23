@@ -203,4 +203,18 @@ for §8 detailed design, Appendix A (schema), B (config), E (overlays).
   timeline [--max-cost] [--force]` loads the events, builds the prompt, calls the
   LLM via the extracted shared `socratic_llm_call` (preflight + retry + sub-budget),
   and emits — **silently doing nothing when the project has no timeline**. +5
-  tests, 1704. *Next: P7 — conversation/suggestion F9 scopes + wizard.*
+  tests, 1704.
+- **P7a — Reader Personas + user-config layer (UNRELEASED, 1.3.28-dev).** The 5
+  bundled personas (distinct voice + emphasis), `parse_persona` (HJSON) for
+  user/project personas, two-level `load_all` (project > user > bundled), and an
+  `active_persona` store row. `user_config` adds the XDG `~/.config/inkhaven/`
+  layer. CLI `persona list|show|activate`; `Ctrl+B J → S` cycles the active
+  persona; every check path now uses the active persona. +4 tests, 1708.
+- **P7b — promotion mechanism (UNRELEASED, 1.3.28-dev).** Dismissals are recorded
+  (`socratic_dismissals`); `promotion_candidates(threshold)` aggregates by
+  `(category, chapter)` excluding refused ones; `IntentKind::proposed_for` maps a
+  category to the natural declaration. Dismissing a `socratic_inquiry` in Output
+  records it (with the paragraph's chapter) and hints at the threshold; CLI
+  `suggestions list|promote|dismiss` promotes a pattern into an intent-ledger entry
+  that then suppresses it. +3 tests, 1710. *Next: P8 — bundle / snapshot / Bund /
+  docs; the deep AI-pane conversation scope + wizard remain.*
