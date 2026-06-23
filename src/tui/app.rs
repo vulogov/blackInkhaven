@@ -10569,9 +10569,239 @@ impl App {
                     }
                 }
             }
+            // C: compile the world (materialize all five layers + seed proposals).
+            KeyCode::Char('c') | KeyCode::Char('C') => self.run_world_compile(),
+            // P: open the proposal queue.
+            KeyCode::Char('p') | KeyCode::Char('P') => self.open_world_proposals(),
             _ => {}
         }
         true
+    }
+
+    /// WORLD-4 — `Ctrl+B W` → `C`. Compile every MVP layer, materialize them into
+    /// the World book (+ heightmap asset), and seed the Place proposal queue.
+    /// Reuses the already-open project store (no second handle).
+    fn run_world_compile(&mut self) {
+        use crate::world::compile::*;
+        use crate::world::types::WorldDefinition;
+        let root = self.store.project_root().to_path_buf();
+        let raw = match std::fs::read_to_string(root.join("world.hjson")) {
+            Ok(r) => r,
+            Err(_) => {
+                self.status = "world: no world.hjson — `inkhaven realworld new <name>`".into();
+                return;
+            }
+        };
+        let def = match WorldDefinition::from_hjson(&raw) {
+            Ok(d) => d,
+            Err(e) => {
+                self.status = format!("world.hjson: {e}");
+                return;
+            }
+        };
+        // Geology: DEM if declared, else generated.
+        let geo = match def.geology.as_ref().and_then(|g| g.dem.as_ref()) {
+            Some(dem) => match compile_geology_dem(&def, &root.join(&dem.path)) {
+                Ok(g) => g,
+                Err(e) => {
+                    self.status = format!("world geology: {e}");
+                    return;
+                }
+            },
+            None => compile_geology(&def),
+        };
+        let astro = compile_astronomy(&def.astronomy);
+        let climate = compile_climate(&def, &astro, &geo);
+        let hydro = compile_hydrology(&geo, &climate);
+        let demo = compile_demographics(&climate, &hydro);
+
+        use crate::world::materialize as m;
+        let steps: Vec<crate::error::Result<m::MaterializeReport>> = vec![
+            m::materialize_astronomy(&self.store, &self.cfg, &astro),
+            m::materialize_geology(&self.store, &self.cfg, &geo),
+            m::materialize_climate(&self.store, &self.cfg, &climate),
+            m::materialize_hydrology(&self.store, &self.cfg, &hydro),
+            m::materialize_demographics(&self.store, &self.cfg, &demo),
+        ];
+        for s in &steps {
+            if let Err(e) = s {
+                self.status = format!("world materialize: {e}");
+                return;
+            }
+        }
+
+        // Seed the proposal queue, skipping already-resolved sites.
+        let n_proposed = (|| -> crate::error::Result<usize> {
+            use crate::world::proposals::place_proposals;
+            use crate::world::storage::WorldStore;
+            let ws = WorldStore::open_for_project(&root)
+                .map_err(|e| crate::error::Error::Store(format!("world store: {e}")))?;
+            let resolved = ws
+                .resolved_signatures()
+                .map_err(|e| crate::error::Error::Store(format!("{e}")))?;
+            ws.clear_pending().map_err(|e| crate::error::Error::Store(format!("{e}")))?;
+            let mut n = 0;
+            for p in place_proposals(&demo, def.seed_u64()) {
+                if !resolved.contains(&p.signature) {
+                    ws.insert(&p).map_err(|e| crate::error::Error::Store(format!("{e}")))?;
+                    n += 1;
+                }
+            }
+            Ok(n)
+        })();
+        match n_proposed {
+            Ok(n) => {
+                self.refresh_hierarchy_after_world_write();
+                self.status = format!(
+                    "world compiled — 5 layers materialized, {n} Place proposal(s) (Ctrl+B W → P)"
+                );
+            }
+            Err(e) => self.status = format!("world proposals: {e}"),
+        }
+    }
+
+    /// Reload the hierarchy after the compiler wrote into the World/Places books,
+    /// so the new paragraphs show in the tree without a restart.
+    fn refresh_hierarchy_after_world_write(&mut self) {
+        if let Ok(h) = crate::store::hierarchy::Hierarchy::load(&self.store) {
+            self.hierarchy = h;
+            self.rebuild_rows_preserving_cursor();
+        }
+    }
+
+    /// WORLD-4 — `Ctrl+B W` → `P`. Open the Place proposal queue.
+    fn open_world_proposals(&mut self) {
+        use crate::world::storage::WorldStore;
+        let root = self.store.project_root().to_path_buf();
+        let proposals = match WorldStore::open_for_project(&root).and_then(|ws| ws.list(Some("pending"))) {
+            Ok(p) => p,
+            Err(e) => {
+                self.status = format!("proposals: {e}");
+                return;
+            }
+        };
+        if proposals.is_empty() {
+            self.status = "no pending proposals — press C to compile + propose".into();
+            return;
+        }
+        self.status = format!("{} proposal(s) · ⏎ accept · r reject · Esc", proposals.len());
+        self.modal = Modal::WorldProposals { proposals, cursor: 0 };
+    }
+
+    fn world_proposals_handle_key(&mut self, key: KeyEvent) -> bool {
+        let n = match &self.modal {
+            Modal::WorldProposals { proposals, .. } => proposals.len(),
+            _ => return false,
+        };
+        match key.code {
+            KeyCode::Esc => self.open_world_overview(),
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Modal::WorldProposals { cursor, .. } = &mut self.modal {
+                    *cursor = cursor.saturating_sub(1);
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Modal::WorldProposals { cursor, .. } = &mut self.modal {
+                    if n > 0 {
+                        *cursor = (*cursor + 1).min(n - 1);
+                    }
+                }
+            }
+            KeyCode::Enter => self.resolve_selected_proposal(true),
+            KeyCode::Char('r') => self.resolve_selected_proposal(false),
+            _ => {}
+        }
+        true
+    }
+
+    /// Accept (create the Place) or reject the selected proposal, then refresh
+    /// the overlay from the store.
+    fn resolve_selected_proposal(&mut self, accept: bool) {
+        let (id, name) = match &self.modal {
+            Modal::WorldProposals { proposals, cursor } => match proposals.get(*cursor) {
+                Some(p) => (p.id, p.name.clone()),
+                None => return,
+            },
+            _ => return,
+        };
+        let result = if accept { self.accept_world_proposal(id) } else { self.reject_world_proposal(id) };
+        match result {
+            Ok(()) => {
+                self.status = if accept {
+                    format!("accepted {name} → Places")
+                } else {
+                    format!("rejected {name}")
+                };
+                // Reload pending proposals; close the overlay when none remain.
+                use crate::world::storage::WorldStore;
+                let root = self.store.project_root().to_path_buf();
+                let remaining =
+                    WorldStore::open_for_project(&root).and_then(|ws| ws.list(Some("pending"))).unwrap_or_default();
+                if remaining.is_empty() {
+                    self.refresh_hierarchy_after_world_write();
+                    self.modal = Modal::None;
+                    self.status = "proposal queue empty".into();
+                } else if let Modal::WorldProposals { proposals, cursor } = &mut self.modal {
+                    *cursor = (*cursor).min(remaining.len() - 1);
+                    *proposals = remaining;
+                }
+            }
+            Err(e) => self.status = format!("proposal: {e}"),
+        }
+    }
+
+    fn accept_world_proposal(&mut self, id: uuid::Uuid) -> crate::error::Result<()> {
+        use crate::store::hierarchy::Hierarchy;
+        use crate::store::{InsertPosition, NodeKind, SYSTEM_TAG_PLACES};
+        use crate::world::storage::WorldStore;
+        let root = self.store.project_root().to_path_buf();
+        let ws = WorldStore::open_for_project(&root)
+            .map_err(|e| crate::error::Error::Store(format!("world store: {e}")))?;
+        let p = ws
+            .get(id)
+            .map_err(|e| crate::error::Error::Store(format!("{e}")))?
+            .ok_or_else(|| crate::error::Error::Config("proposal not found".into()))?;
+
+        let places = self
+            .hierarchy
+            .iter()
+            .find(|n| n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(SYSTEM_TAG_PLACES))
+            .cloned()
+            .ok_or_else(|| crate::error::Error::Store("Places book missing".into()))?;
+        let pop = p.payload.get("population").and_then(|v| v.as_u64()).unwrap_or(0);
+        let class = p.payload.get("class").and_then(|v| v.as_str()).unwrap_or("settlement");
+        let basis = p.payload.get("basis").and_then(|v| v.as_str()).unwrap_or("").replace('_', " ");
+        let biome = p.payload.get("biome").and_then(|v| v.as_str()).unwrap_or("").replace('_', " ");
+        let prose = format!(
+            "{} is a {} of roughly {} people, set at a {} in a {} zone.\n\n// world-compiler proposal {}\n",
+            p.name, class, pop, basis, biome, p.signature
+        );
+        let h = Hierarchy::load(&self.store)?;
+        let mut node = self.store.create_node(
+            &self.cfg,
+            &h,
+            NodeKind::Paragraph,
+            &p.name,
+            Some(&places),
+            None,
+            InsertPosition::End,
+        )?;
+        if let Some(rel) = &node.file {
+            std::fs::write(self.store.project_root().join(rel), prose.as_bytes())
+                .map_err(|e| crate::error::Error::Store(format!("writing Place: {e}")))?;
+        }
+        self.store.update_paragraph_content(&mut node, prose.as_bytes())?;
+        ws.set_status(id, "accepted").map_err(|e| crate::error::Error::Store(format!("{e}")))?;
+        Ok(())
+    }
+
+    fn reject_world_proposal(&mut self, id: uuid::Uuid) -> crate::error::Result<()> {
+        use crate::world::storage::WorldStore;
+        let root = self.store.project_root().to_path_buf();
+        let ws = WorldStore::open_for_project(&root)
+            .map_err(|e| crate::error::Error::Store(format!("world store: {e}")))?;
+        ws.set_status(id, "rejected").map_err(|e| crate::error::Error::Store(format!("{e}")))?;
+        Ok(())
     }
 
     /// LANG-1 P2.7c — after the closing `:` of a `:<lang>:` is typed in the
@@ -18258,6 +18488,10 @@ impl App {
         }
         if matches!(self.modal, Modal::WorldOverview { .. }) {
             self.world_overview_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::WorldProposals { .. }) {
+            self.world_proposals_handle_key(key);
             return Ok(false);
         }
         if matches!(self.modal, Modal::LangInsert { .. }) {

@@ -765,9 +765,17 @@ pub(super) enum Modal {
     },
     /// WORLD-4 — the World overview (`Ctrl+B W`): a read-only, scrollable
     /// summary of the project's world definition + compiled astronomy +
-    /// materialization status. `↑↓` scroll, `Esc` closes.
+    /// materialization status. `↑↓` scroll, `Esc` closes; `C` compiles, `P`
+    /// opens the proposal queue.
     WorldOverview {
         rows: Vec<String>,
+        cursor: usize,
+    },
+    /// WORLD-4 — the proposal queue (`Ctrl+B W` → `P`): the compiler's pending
+    /// Place proposals. `↑↓` navigate, `Enter` accept (commits the Place), `r`
+    /// reject, `Esc` back.
+    WorldProposals {
+        proposals: Vec<crate::world::proposals::PlaceProposal>,
         cursor: usize,
     },
     /// LANG-1 P2.7c — the `:lang:` inline-insertion picker. Typing `:<lang>:`
