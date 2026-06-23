@@ -95,9 +95,10 @@ fn compile(project: &Path, layer: Option<&str>, json: bool, materialize: bool) -
     }
     match l {
         "geology" => return compile_geology_cli(project, json, materialize),
-        "climate" | "hydrology" | "demographics" => {
+        "climate" => return compile_climate_cli(project, json, materialize),
+        "hydrology" | "demographics" => {
             return Err(Error::Config(format!(
-                "layer `{l}` is not implemented yet — astronomy + geology have landed (WORLD-4 P0/P1)"
+                "layer `{l}` is not implemented yet — astronomy + geology + climate have landed (WORLD-4 P0/P1)"
             )));
         }
         _ => {} // astronomy — falls through to the body below.
@@ -225,6 +226,57 @@ fn compile_geology_cli(project: &Path, json: bool, materialize: bool) -> Result<
     if let Some(r) = &mat_report {
         println!(
             "  → World/{}: {} paragraph(s) created, {} updated; heightmap → assets/world/heightmap.png",
+            r.chapter,
+            r.created.len(),
+            r.updated.len()
+        );
+    }
+    Ok(())
+}
+
+/// Compile + print the climate layer (astronomy + geology → zonal climate).
+fn compile_climate_cli(project: &Path, json: bool, materialize: bool) -> Result<()> {
+    use crate::world::compile::{compile_astronomy, compile_climate, compile_geology};
+    let def = load(project)?;
+    let astro = compile_astronomy(&def.astronomy);
+    let geo = compile_geology(&def);
+    let out = compile_climate(&def, &astro, &geo);
+
+    let mat_report = if materialize {
+        use crate::config::Config;
+        use crate::project::ProjectLayout;
+        use crate::store::Store;
+        let layout = ProjectLayout::new(project);
+        layout.require_initialized()?;
+        let cfg = Config::load_layered(&layout.config_path())?;
+        let store = Store::open(layout, &cfg)?;
+        Some(crate::world::materialize::materialize_climate(&store, &cfg, &out)?)
+    } else {
+        None
+    };
+
+    if json {
+        let v = serde_json::to_string_pretty(&out)
+            .map_err(|e| Error::Store(format!("serializing climate: {e}")))?;
+        println!("{v}");
+        return Ok(());
+    }
+    println!("climate · {} ({}×{} grid)", def.name, out.width, out.height);
+    println!(
+        "  land mean: {:.1}°C · {:.0} mm/yr precipitation",
+        out.mean_land_temp_c, out.mean_land_precip_mm
+    );
+    println!("  winds:     {}", out.winds.iter().map(|w| format!("{} ({})", w.name, w.direction)).collect::<Vec<_>>().join(" · "));
+    println!("  biomes ({}):", out.zones.len());
+    for z in out.zones.iter().take(8) {
+        println!(
+            "    {:<20} {:>4.0}% · {:>5.0}…{:<4.0}°C · {:>5.0}…{:.0} mm",
+            z.biome, z.area_pct, z.temp_min_c, z.temp_max_c, z.precip_min_mm, z.precip_max_mm
+        );
+    }
+    if let Some(r) = &mat_report {
+        println!(
+            "  → World/{}: {} paragraph(s) created, {} updated",
             r.chapter,
             r.created.len(),
             r.updated.len()

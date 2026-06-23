@@ -7,6 +7,7 @@
 //! parses cleanly even though only astronomy is wired this phase.
 
 pub mod astronomy;
+pub mod climate;
 pub mod geology;
 pub mod world;
 
@@ -14,6 +15,7 @@ pub use astronomy::{
     AstronomyOutput, CalendarCheck, EclipsePotential, InsolationBand, MoonOutput, SeasonMarker,
     TideContribution, TideSummary,
 };
+pub use climate::{Biome, ClimateOutput, ClimateZone, WindBand};
 pub use geology::{
     BoundarySummary, ElevationStats, GeologyOutput, MineralHint, MountainRange, Plate,
 };
