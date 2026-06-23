@@ -914,6 +914,18 @@ pub enum Command {
     /// `Documentation/PROPOSALS/WORLD-4_PLAN.md`.
     #[command(subcommand)]
     Realworld(RealworldCommand),
+
+    /// WORLD-4 — fact-check prose against the simulated world (fast track):
+    /// flag implausible world-assertions (travel time, …), respecting the
+    /// `magic:` ledger's declared exceptions.
+    FactCheck {
+        /// Check this literal text.
+        #[arg(long)]
+        text: Option<String>,
+        /// Check a paragraph by id (reads its content from the store).
+        #[arg(long)]
+        paragraph: Option<String>,
+    },
     /// `inkhaven template
     /// <subcommand>`.  Surfaces information about
     /// the project templates available to
@@ -4055,6 +4067,9 @@ impl Cli {
             }
             Command::Output(cmd) => output::run(&project, cmd).map_err(Into::into),
             Command::Realworld(cmd) => realworld::run(&project, cmd).map_err(Into::into),
+            Command::FactCheck { text, paragraph } => {
+                realworld::fact_check(&project, text, paragraph).map_err(Into::into)
+            }
             Command::Thread(cmd) => {
                 thread::run(&project, cmd).map_err(Into::into)
             }
