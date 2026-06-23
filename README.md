@@ -314,6 +314,8 @@ Reference:
   Characters.
 - [`Documentation/WORLDBUILDING.md`](Documentation/WORLDBUILDING.md) — the
   `realworld` world simulator and fact-checker (RFC WORLD-4).
+- [`Documentation/INNER_SOCRATES.md`](Documentation/INNER_SOCRATES.md) — the
+  Socratic interrogator for examined authorship (RFC INNER_SOCRATES-1).
 
 ## Built with
 
