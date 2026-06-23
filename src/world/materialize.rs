@@ -8,12 +8,14 @@
 //! content is updated in place on subsequent compiles, so the World book never
 //! accumulates duplicates.
 
+use std::path::{Path, PathBuf};
+
 use crate::config::Config;
 use crate::error::{Error, Result};
 use crate::store::hierarchy::Hierarchy;
 use crate::store::node::Node;
 use crate::store::{InsertPosition, NodeKind, Store, SYSTEM_TAG_WORLD};
-use crate::world::types::AstronomyOutput;
+use crate::world::types::{AstronomyOutput, GeologyOutput};
 
 /// What a materialize pass did, for the CLI/TUI to report.
 #[derive(Debug, Default, Clone)]
@@ -66,6 +68,73 @@ pub fn materialize_astronomy(
         }
     }
     Ok(report)
+}
+
+/// Materialize a geology output into `World / Geology / *` (continents & plates,
+/// mountains & ranges, mineral distribution) and write the heightmap as a
+/// grayscale PNG under `assets/world/heightmap.png` — the heightmap travels as
+/// an asset, not as a wall of JSON (the summary paragraph points at it).
+pub fn materialize_geology(
+    store: &Store,
+    cfg: &Config,
+    out: &GeologyOutput,
+) -> Result<MaterializeReport> {
+    let world = world_book(store)?;
+    let chapter = ensure_chapter(store, cfg, &world, "Geology")?;
+
+    let png = write_heightmap_png(store.project_root(), out)?;
+    let png_rel = png
+        .strip_prefix(store.project_root())
+        .unwrap_or(&png)
+        .display()
+        .to_string();
+
+    let continents = serde_json::json!({
+        "source": out.source,
+        "width": out.width,
+        "height": out.height,
+        "sea_level": out.sea_level,
+        "plates": out.plates,
+        "boundaries": out.boundaries,
+        "continents": out.continents,
+        "sea_coverage_pct": out.sea_coverage_pct,
+        "elevation": out.elevation,
+        "heightmap_asset": png_rel,
+    });
+    let mountains = serde_json::json!({ "mountain_ranges": out.mountain_ranges });
+    let minerals = serde_json::json!({ "minerals": out.minerals });
+
+    let mut report = MaterializeReport { chapter: "Geology".into(), ..Default::default() };
+    for (title, payload) in [
+        ("Continents and plates", continents),
+        ("Mountains and ranges", mountains),
+        ("Mineral distribution", minerals),
+    ] {
+        let body = serde_json::to_string_pretty(&payload)
+            .map_err(|e| Error::Store(format!("serializing {title}: {e}")))?;
+        match ensure_paragraph(store, cfg, &chapter, title, &body)? {
+            Outcome::Created => report.created.push(title.to_string()),
+            Outcome::Updated => report.updated.push(title.to_string()),
+        }
+    }
+    Ok(report)
+}
+
+/// Render the normalised heightmap as an 8-bit grayscale PNG asset.
+fn write_heightmap_png(root: &Path, out: &GeologyOutput) -> Result<PathBuf> {
+    let dir = root.join("assets").join("world");
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| Error::Store(format!("creating {}: {e}", dir.display())))?;
+    let path = dir.join("heightmap.png");
+    let mut img = image::GrayImage::new(out.width as u32, out.height as u32);
+    for y in 0..out.height {
+        for x in 0..out.width {
+            let v = (out.heightmap[y * out.width + x].clamp(0.0, 1.0) * 255.0).round() as u8;
+            img.put_pixel(x as u32, y as u32, image::Luma([v]));
+        }
+    }
+    img.save(&path).map_err(|e| Error::Store(format!("writing {}: {e}", path.display())))?;
+    Ok(path)
 }
 
 /// Locate the World system book (seeded by `ensure_system_books` on open).
