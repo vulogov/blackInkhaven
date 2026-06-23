@@ -21,11 +21,12 @@
 
 // The detector API lands ahead of its PANE-1 / CLI / Bund consumers (P1+), the
 // same way `world/mod.rs` ships its types before the phases that wire them.
-#![allow(dead_code)]
+#![allow(dead_code, unused_imports)]
 
 pub mod fuzzy_overlap;
 pub mod legacy;
 pub mod orphan;
+pub mod pane;
 pub mod types;
 
 // The legacy payload builder keeps its historical path

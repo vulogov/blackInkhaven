@@ -109,5 +109,16 @@ custom rules reserved (`ink.event.critique.custom` no-op) but not implemented.
   cluster detection with common-window gate + 10-event list cap). `legacy.rs` holds
   the original `build_health_payload` verbatim (re-exported). `mod.rs` adds
   `fuzz_windows(calendar)`, `CritiqueReport`, and `run()`. 18 unit tests pass.
+- **P1** — _done._ Two new Output kinds (`timeline_orphan_warning`,
+  `timeline_fuzzy_overlap_warning`) in `pane/output/types.rs`. `critique/pane.rs`
+  emits them (`timeline-critique` provenance, `timeline:true` 📅 marker, headlines
+  assembled from caller-resolved date/entity labels, `CritSeverity` →
+  `pane::Severity`). `render/panes.rs`: orphan `⊘` / overlap `⧉` kind glyphs +
+  a `⏎ jump to event` action-hint arm. Chord rewiring in `timeline_impl.rs`: the
+  scope prologue factored into `timeline_critique_scope`; `timeline_start_health_critique`
+  now projects view events → `CritiqueEvent`, runs `critique::run`, emits findings,
+  and surfaces the Output pane; the original AI-pane streaming survives verbatim as
+  `timeline_run_legacy_critique` (for the P3 `--legacy` flag). Orphan age is `None`
+  (no creation timestamp in the model → Recent). Full suite green (1740).
 </content>
 </invoke>
