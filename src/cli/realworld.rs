@@ -28,6 +28,7 @@ pub fn run(project: &Path, cmd: RealworldCommand) -> Result<()> {
         RealworldCommand::Places => places(project),
         RealworldCommand::Magic { materialize } => magic(project, materialize),
         RealworldCommand::Map { spec_only, no_ingest } => map(project, spec_only, no_ingest),
+        RealworldCommand::CoLocation => co_location(project),
         RealworldCommand::Coherence { node, max_cost, force } => {
             coherence(project, &node, max_cost, force)
         }
@@ -365,6 +366,59 @@ fn coherence(project: &Path, node_id: &str, max_cost: usize, force: bool) -> Res
         println!("{icon} [{}] {}", f.category, f.body);
     }
     println!("\n{} cross-paragraph finding(s).", findings.len());
+    Ok(())
+}
+
+/// WORLD-5 — the `co_location` check: a character placed in two different places
+/// at overlapping times, per the timeline. Pure (no LLM); respects the magic
+/// ledger. Resolves character / place names from the hierarchy for the message.
+fn co_location(project: &Path) -> Result<()> {
+    use crate::config::Config;
+    use crate::project::ProjectLayout;
+    use crate::store::hierarchy::Hierarchy;
+    use crate::store::Store;
+    use crate::world::fact_check::emit_finding;
+    use crate::world::timeline_context as tc;
+
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout, &cfg)?;
+    let hierarchy = Hierarchy::load(&store)?;
+    let events = tc::gather_events(&hierarchy);
+    if events.is_empty() {
+        println!("(no timeline events — nothing to check)");
+        return Ok(());
+    }
+    let ledger = load(project).ok().and_then(|d| d.magic).unwrap_or_default();
+    let name = |id: uuid::Uuid| hierarchy.get(id).map(|n| n.title.clone()).unwrap_or_else(|| "?".into());
+
+    let conflicts = tc::co_location_conflicts(&events);
+    if conflicts.is_empty() {
+        println!("\u{2713} no co-location conflicts in {} event(s)", events.len());
+        return Ok(());
+    }
+    for c in &conflicts {
+        let ctx = crate::world::types::magic::CheckContext { category: "co_location", ..Default::default() };
+        let suppressed_by = ledger.find_suppressor(&ctx).map(|r| r.kind.clone());
+        let severity = if suppressed_by.is_some() { "info" } else { "contradiction" };
+        let body = format!(
+            "{} is in {} (\u{201c}{}\u{201d}) and {} (\u{201c}{}\u{201d}) at overlapping times.",
+            name(c.character), name(c.place_a), c.title_a, name(c.place_b), c.title_b
+        );
+        let finding = crate::world::fact_check::Finding {
+            category: "co_location".into(),
+            severity: severity.into(),
+            body: body.clone(),
+            body_en: body.clone(),
+            suppressed_by: suppressed_by.clone(),
+        };
+        emit_finding(&finding, None);
+        let icon = if suppressed_by.is_some() { "\u{25cf}" } else { "\u{2297}" };
+        let note = suppressed_by.map(|r| format!(" (ok — magic rule `{r}`)")).unwrap_or_default();
+        println!("{icon} [co_location] {body}{note}");
+    }
+    println!("\n{} co-location conflict(s).", conflicts.len());
     Ok(())
 }
 

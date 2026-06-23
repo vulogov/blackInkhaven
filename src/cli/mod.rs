@@ -3594,6 +3594,10 @@ pub enum RealworldCommand {
         #[arg(long)]
         materialize: bool,
     },
+    /// WORLD-5 — flag every co-location conflict in the timeline: a character whose
+    /// events place them in two different places at overlapping times. Pure
+    /// timeline check (no LLM); respects the `magic:` ledger.
+    CoLocation,
     /// Cross-paragraph coherence pass (slow track): gather every paragraph under a
     /// node (book / chapter) and ask the LLM for contradictions *between* them — a
     /// character in two places, a fact reversed, a timeline that doesn't add up.

@@ -91,3 +91,12 @@
   no-op otherwise) via `timeline_findings`. +2 tests, 1720. *Next: travel_time
   event-derived durations + the P2 cross-paragraph categories (date_coherence,
   co_location).*
+- **P2.1 — the `co_location` category (UNRELEASED, 1.3.30-dev).** A character
+  placed in two *different* places at overlapping event times — a contradiction
+  the timeline alone reveals, no prose needed. `co_location_conflicts(events)` is
+  pure + tested (overlap via event spans; ignores shared-place and no-place pairs).
+  CLI `realworld co-location` gathers the events, resolves character/place names
+  from the hierarchy, applies the magic ledger (a `teleportation`-style rule
+  covering `co_location` suppresses to info), and emits `fact_check_warning`
+  findings. +2 tests, 1722. *Next: `date_coherence` (prose date-hints vs the
+  event's season), travel_time event-derived durations, then P3 flags/Bund.*
