@@ -15,6 +15,8 @@ pub struct WorldDefinition {
     #[serde(default = "default_language")]
     pub primary_language: String,
     pub astronomy: AstronomyDef,
+    #[serde(default)]
+    pub geology: Option<GeologyDef>,
 }
 
 fn default_language() -> String {
@@ -127,6 +129,69 @@ pub struct Moon {
     pub period_days: f64,
     #[serde(default)]
     pub eccentricity: f64,
+}
+
+/// The `geology` declaration block: either `generated` (procedural, from the
+/// seed) or `dem` (import an external heightmap). If both are present, `dem`
+/// wins; if neither, a default generated geology is used.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct GeologyDef {
+    #[serde(default)]
+    pub generated: Option<GeneratedGeology>,
+    #[serde(default)]
+    pub dem: Option<DemGeology>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct GeneratedGeology {
+    #[serde(default = "default_plates")]
+    pub plates: u32,
+    #[serde(default = "default_continents")]
+    pub continents: u32,
+    /// `active` | `quiet` | `ancient` — drives mountain elevation.
+    #[serde(default = "default_orogeny")]
+    pub mountain_orogeny: String,
+    /// 0.0 (no oceans) … 1.0 (drowned world); the land/sea threshold.
+    #[serde(default = "default_sea_level")]
+    pub sea_level: f32,
+}
+
+impl Default for GeneratedGeology {
+    fn default() -> Self {
+        GeneratedGeology {
+            plates: default_plates(),
+            continents: default_continents(),
+            mountain_orogeny: default_orogeny(),
+            sea_level: default_sea_level(),
+        }
+    }
+}
+
+fn default_plates() -> u32 {
+    7
+}
+fn default_continents() -> u32 {
+    4
+}
+fn default_orogeny() -> String {
+    "active".to_string()
+}
+fn default_sea_level() -> f32 {
+    0.4
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DemGeology {
+    pub path: String,
+    #[serde(default = "default_dem_scale")]
+    pub scale_km_per_pixel: f32,
+    /// Pixel values at or below this are treated as sea.
+    #[serde(default)]
+    pub sea_level_pixel_value: Option<u16>,
+}
+
+fn default_dem_scale() -> f32 {
+    5.0
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
