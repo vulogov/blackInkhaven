@@ -335,8 +335,10 @@ fn check_travel_time(text: &str, ledger: &MagicLedger, roles: &[String]) -> Vec<
 }
 
 /// Emit a finding to the Output pane as a `fact_check_warning` (a no-op outside
-/// the TUI). Suppressed findings carry the rule note in their metadata.
-pub fn emit_finding(f: &Finding) {
+/// the TUI). `source` is the paragraph the finding is about, so a re-check can
+/// clear the paragraph's prior findings first. Suppressed findings carry the
+/// rule note in their metadata.
+pub fn emit_finding(f: &Finding, source: Option<uuid::Uuid>) {
     use crate::pane::output::{kinds, Lifetime, Message, Severity};
     let severity = match f.severity.as_str() {
         "contradiction" => Severity::Contradiction,
@@ -347,7 +349,7 @@ pub fn emit_finding(f: &Finding) {
         Some(rule) => format!("{} (consistent with magic rule `{rule}`)", f.body),
         None => f.body.clone(),
     };
-    let msg = Message::new(
+    let mut msg = Message::new(
         kinds::FACT_CHECK_WARNING,
         severity,
         Lifetime::UntilActedOn,
@@ -358,6 +360,9 @@ pub fn emit_finding(f: &Finding) {
             "suppressed_by": f.suppressed_by,
         }),
     );
+    if let Some(id) = source {
+        msg = msg.with_source_paragraph(id);
+    }
     crate::pane::output::emit(&msg);
 }
 
