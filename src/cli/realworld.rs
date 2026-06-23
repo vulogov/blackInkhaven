@@ -113,13 +113,7 @@ fn compile(project: &Path, layer: Option<&str>, json: bool, materialize: bool) -
         "geology" => return compile_geology_cli(project, json, materialize),
         "climate" => return compile_climate_cli(project, json, materialize),
         "hydrology" => return compile_hydrology_cli(project, json, materialize),
-        "demographics" => {
-            return Err(Error::Config(
-                "layer `demographics` is not implemented yet — astronomy + geology + climate + \
-                 hydrology have landed (WORLD-4 P0/P1)"
-                    .into(),
-            ));
-        }
+        "demographics" => return compile_demographics_cli(project, json, materialize),
         _ => {} // astronomy — falls through to the body below.
     }
 
@@ -352,6 +346,77 @@ fn compile_hydrology_cli(project: &Path, json: bool, materialize: bool) -> Resul
         );
     }
     Ok(())
+}
+
+/// Compile + print the demographics layer (climate + hydrology → settlements).
+fn compile_demographics_cli(project: &Path, json: bool, materialize: bool) -> Result<()> {
+    use crate::world::compile::{compile_astronomy, compile_climate, compile_demographics, compile_hydrology};
+    let def = load(project)?;
+    let astro = compile_astronomy(&def.astronomy);
+    let geo = geology_for(project, &def)?;
+    let climate = compile_climate(&def, &astro, &geo);
+    let hydro = compile_hydrology(&geo, &climate);
+    let out = compile_demographics(&climate, &hydro);
+
+    let mat_report = if materialize {
+        use crate::config::Config;
+        use crate::project::ProjectLayout;
+        use crate::store::Store;
+        let layout = ProjectLayout::new(project);
+        layout.require_initialized()?;
+        let cfg = Config::load_layered(&layout.config_path())?;
+        let store = Store::open(layout, &cfg)?;
+        Some(crate::world::materialize::materialize_demographics(&store, &cfg, &out)?)
+    } else {
+        None
+    };
+
+    if json {
+        let v = serde_json::to_string_pretty(&out)
+            .map_err(|e| Error::Store(format!("serializing demographics: {e}")))?;
+        println!("{v}");
+        return Ok(());
+    }
+    println!("demographics · {} ({}×{} grid)", def.name, climate.width, climate.height);
+    println!(
+        "  population: {} · {:.0}% of land habitable",
+        fmt_pop(out.total_population),
+        out.habitable_fraction * 100.0
+    );
+    println!(
+        "  settlements: {} ({} cities, {} towns, {} villages)",
+        out.settlements.len(),
+        out.size_classes.cities,
+        out.size_classes.towns,
+        out.size_classes.villages
+    );
+    for s in out.settlements.iter().take(6) {
+        println!(
+            "    {:<8} ({:>3},{:>3}) · pop {:>7} · {} · {}",
+            s.class, s.x, s.y, fmt_pop(s.population), s.basis, s.biome
+        );
+    }
+    println!("  roles: {}", out.role_archetypes.join(", "));
+    if let Some(r) = &mat_report {
+        println!(
+            "  → World/{}: {} paragraph(s) created, {} updated",
+            r.chapter,
+            r.created.len(),
+            r.updated.len()
+        );
+    }
+    Ok(())
+}
+
+/// Human-readable population (12,450 / 1.2M).
+fn fmt_pop(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 10_000 {
+        format!("{:.0}k", n as f64 / 1_000.0)
+    } else {
+        n.to_string()
+    }
 }
 
 /// Open the project store and materialize the astronomy output into the World

@@ -15,7 +15,9 @@ use crate::error::{Error, Result};
 use crate::store::hierarchy::Hierarchy;
 use crate::store::node::Node;
 use crate::store::{InsertPosition, NodeKind, Store, SYSTEM_TAG_WORLD};
-use crate::world::types::{AstronomyOutput, ClimateOutput, GeologyOutput, HydrologyOutput};
+use crate::world::types::{
+    AstronomyOutput, ClimateOutput, DemographicsOutput, GeologyOutput, HydrologyOutput,
+};
 
 /// What a materialize pass did, for the CLI/TUI to report.
 #[derive(Debug, Default, Clone)]
@@ -176,6 +178,40 @@ pub fn materialize_hydrology(
     let mut report = MaterializeReport { chapter: "Hydrology".into(), ..Default::default() };
     for (title, payload) in
         [("River systems", rivers), ("Watersheds and settlement priors", basins)]
+    {
+        let body = serde_json::to_string_pretty(&payload)
+            .map_err(|e| Error::Store(format!("serializing {title}: {e}")))?;
+        match ensure_paragraph(store, cfg, &chapter, title, &body)? {
+            Outcome::Created => report.created.push(title.to_string()),
+            Outcome::Updated => report.updated.push(title.to_string()),
+        }
+    }
+    Ok(report)
+}
+
+/// Materialize a demographics output into `World / Demographics / *`: the
+/// settlement overview + role archetypes, and the population distribution (the
+/// settlement list). Turning settlements into named Place records flows through
+/// the proposal queue (P2.2), not direct materialization.
+pub fn materialize_demographics(
+    store: &Store,
+    cfg: &Config,
+    out: &DemographicsOutput,
+) -> Result<MaterializeReport> {
+    let world = world_book(store)?;
+    let chapter = ensure_chapter(store, cfg, &world, "Demographics")?;
+
+    let overview = serde_json::json!({
+        "total_population": out.total_population,
+        "habitable_fraction": out.habitable_fraction,
+        "size_classes": out.size_classes,
+        "role_archetypes": out.role_archetypes,
+    });
+    let distribution = serde_json::json!({ "settlements": out.settlements });
+
+    let mut report = MaterializeReport { chapter: "Demographics".into(), ..Default::default() };
+    for (title, payload) in
+        [("Settlement overview", overview), ("Population distribution", distribution)]
     {
         let body = serde_json::to_string_pretty(&payload)
             .map_err(|e| Error::Store(format!("serializing {title}: {e}")))?;
