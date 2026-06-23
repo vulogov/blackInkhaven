@@ -49,7 +49,100 @@ pub fn check_paragraph(
     detect_structural_patterns(&sentences, lang, persona, ledger, ctx, &mut out);
     detect_unattributed_dialogue(text, &lower, lang, &m, persona, ledger, ctx, &mut out);
     detect_sentence_length(&sentences, lang, persona, ledger, ctx, &mut out);
+    // The two parser-adjacent categories use conservative English-only heuristics
+    // (no UD parser bundled); they stay quiet (Notice severity) to limit noise.
+    if lang == Lang::En {
+        detect_tense_shift(&sentences, persona, ledger, ctx, &mut out);
+        detect_pronoun_ambiguity(&sentences, persona, ledger, ctx, &mut out);
+    }
     out
+}
+
+/// Past-tense auxiliaries and present-tense auxiliaries — reliable function-word
+/// signals of a sentence's tense (more robust than `-ed` detection).
+const PAST_AUX: &[&str] = &["was", "were", "had", "did"];
+const PRESENT_AUX: &[&str] = &["is", "are", "am"];
+
+/// `tense_voice_shifts` — a paragraph that is clearly past-tense but slips into
+/// the present (or the reverse). Conservative: needs a ≥4-sentence paragraph with
+/// a strong past majority and a clear present outlier (dialogue ignored).
+fn detect_tense_shift(
+    sentences: &[&str],
+    persona: &Persona,
+    ledger: &IntentLedger,
+    ctx: &FindingContext,
+    out: &mut Vec<SocraticFinding>,
+) {
+    if sentences.len() < 4 {
+        return;
+    }
+    let (mut past, mut present) = (0usize, 0usize);
+    for s in sentences {
+        if s.contains('"') || s.contains('\u{201c}') {
+            continue; // dialogue: present tense there is normal
+        }
+        let low = s.to_lowercase();
+        let is_past = PAST_AUX.iter().any(|w| contains_word(&low, w));
+        let is_present = !is_past && PRESENT_AUX.iter().any(|w| contains_word(&low, w));
+        if is_past {
+            past += 1;
+        } else if is_present {
+            present += 1;
+        }
+    }
+    // A clear past majority with a present outlier (simple-past verbs without an
+    // auxiliary aren't counted, so the bar is ≥2 aux-past + present dominant).
+    if past >= 2 && present >= 1 && past >= present * 2 {
+        push(out, persona, ledger, ctx, Lang::En, Category::TenseVoiceShifts, Severity::Notice, Msg::TenseShift);
+    }
+}
+
+/// Third-person pronouns whose antecedent may be ambiguous.
+const PRONOUNS: &[&str] = &["he", "she", "they", "him", "her", "them", "his", "their"];
+
+/// `pronoun_ambiguity` — a pronoun whose antecedent isn't unambiguous because the
+/// sentence just before names two or more distinct people. Conservative + noisy,
+/// so Notice severity (hidden by default). Emits at most one finding.
+fn detect_pronoun_ambiguity(
+    sentences: &[&str],
+    persona: &Persona,
+    ledger: &IntentLedger,
+    ctx: &FindingContext,
+    out: &mut Vec<SocraticFinding>,
+) {
+    for i in 1..sentences.len() {
+        let low = sentences[i].to_lowercase();
+        let has_pronoun = PRONOUNS.iter().any(|p| contains_word(&low, p));
+        if has_pronoun && capitalized_names(sentences[i - 1]).len() >= 2 {
+            push(out, persona, ledger, ctx, Lang::En, Category::PronounAmbiguity, Severity::Notice, Msg::PronounAmbiguity);
+            return;
+        }
+    }
+}
+
+/// Distinct capitalized words in a sentence that look like proper names: skip the
+/// first word (sentence-initial capitals aren't a signal) and a small stoplist.
+fn capitalized_names(sentence: &str) -> std::collections::BTreeSet<String> {
+    const STOP: &[&str] = &[
+        "i", "the", "a", "an", "and", "but", "or", "if", "when", "then", "so", "yet", "he", "she",
+        "they", "it", "we", "you", "his", "her", "their", "mr", "mrs", "ms", "lord", "lady", "sir",
+    ];
+    let mut names = std::collections::BTreeSet::new();
+    for w in sentence.split_whitespace() {
+        // Sentence-initial function words are filtered by the stoplist rather than
+        // by position, so a name that opens the sentence still counts.
+        let trimmed = w.trim_matches(|c: char| !c.is_alphabetic());
+        let mut chars = trimmed.chars();
+        if let Some(first) = chars.next() {
+            if first.is_uppercase() && trimmed.chars().count() > 1 {
+                let lower = trimmed.to_lowercase();
+                if !STOP.contains(&lower.as_str()) {
+                    names.insert(lower);
+                }
+            }
+        }
+    }
+    names
 }
 
 /// `modal_claims` — a passage that treats an outcome as inevitable. Defused by a
@@ -298,6 +391,35 @@ mod tests {
                     that had gathered there.";
         let f = check(long);
         assert!(f.iter().any(|x| x.category == Category::SentenceLengthAnomalies), "got {f:?}");
+    }
+
+    #[test]
+    fn flags_a_tense_shift() {
+        // Three clearly past sentences, one present outlier (not dialogue).
+        let f = check(
+            "The regent rode north. The roads were empty. The cold had settled deep. He is afraid now.",
+        );
+        assert!(f.iter().any(|x| x.category == Category::TenseVoiceShifts), "got {f:?}");
+        assert!(f.iter().filter(|x| x.category == Category::TenseVoiceShifts).all(|x| x.question.ends_with('?')));
+    }
+
+    #[test]
+    fn consistent_tense_raises_no_shift() {
+        let f = check("The regent rode north. The roads were empty. The cold had settled. He was afraid.");
+        assert!(f.iter().all(|x| x.category != Category::TenseVoiceShifts), "got {f:?}");
+    }
+
+    #[test]
+    fn flags_ambiguous_pronoun() {
+        // Two named people, then a bare pronoun.
+        let f = check("Mara met Corin at the gate. She did not trust the silence.");
+        assert!(f.iter().any(|x| x.category == Category::PronounAmbiguity), "got {f:?}");
+    }
+
+    #[test]
+    fn single_referent_raises_no_pronoun_finding() {
+        let f = check("Mara crossed the yard. She did not trust the silence.");
+        assert!(f.iter().all(|x| x.category != Category::PronounAmbiguity), "got {f:?}");
     }
 
     #[test]

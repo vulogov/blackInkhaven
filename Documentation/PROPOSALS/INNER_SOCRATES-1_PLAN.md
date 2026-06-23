@@ -184,3 +184,12 @@ for §8 detailed design, Appendix A (schema), B (config), E (overlays).
   tracks, personas, intent ledger, Output, the chord family, and five languages —
   questions, never corrections. *Post-MVP: P6 timeline categories, P7
   conversation/suggestion scopes + wizard, P8 snapshot/bundle/Bund/docs.*
+- **P1.2 — the last two Fast categories → Fast track 7/7 (UNRELEASED,
+  1.3.28-dev).** `tense_voice_shifts` (a past-majority paragraph with a present
+  outlier, via reliable auxiliary signals, dialogue ignored) and
+  `pronoun_ambiguity` (a bare third-person pronoun whose prior sentence names ≥2
+  distinct people). Conservative, English-only deterministic heuristics — **no UD
+  parser bundled** (consistent with WORLD-4's 280 MB-model decision), kept at
+  Notice severity (hidden by default) to bound noise; rendered in English in every
+  language until per-language tables land. +4 tests, 1699. *All seven Fast
+  categories now ship.*
