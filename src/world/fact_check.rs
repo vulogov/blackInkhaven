@@ -661,6 +661,16 @@ fn check_travel_time(text: &str, ledger: &MagicLedger, roles: &[String], lang: L
 /// clear the paragraph's prior findings first. Suppressed findings carry the
 /// rule note in their metadata.
 pub fn emit_finding(f: &Finding, source: Option<uuid::Uuid>) {
+    emit_finding_impl(f, source, false);
+}
+
+/// WORLD-5 — emit a timeline-derived finding (carries `timeline: true` so the
+/// Output pane shows the 📅 marker).
+pub fn emit_finding_timeline(f: &Finding, source: Option<uuid::Uuid>) {
+    emit_finding_impl(f, source, true);
+}
+
+fn emit_finding_impl(f: &Finding, source: Option<uuid::Uuid>, timeline: bool) {
     use crate::pane::output::{kinds, Lifetime, Message, Severity};
     let severity = match f.severity.as_str() {
         "contradiction" => Severity::Contradiction,
@@ -680,6 +690,7 @@ pub fn emit_finding(f: &Finding, source: Option<uuid::Uuid>) {
             "body_en": f.body_en,
             "category": f.category,
             "track": "fast",
+            "timeline": timeline,
             "suppressed_by": f.suppressed_by,
         }),
     );
