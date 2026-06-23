@@ -17,6 +17,8 @@ pub struct WorldDefinition {
     pub astronomy: AstronomyDef,
     #[serde(default)]
     pub geology: Option<GeologyDef>,
+    #[serde(default)]
+    pub magic: Option<super::magic::MagicLedger>,
 }
 
 fn default_language() -> String {

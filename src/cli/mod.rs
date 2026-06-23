@@ -3557,6 +3557,13 @@ pub enum RealworldCommand {
     /// List the Place ↔ World cross-references (accepted compiler Places + their
     /// climate zone / biome / hydrology basis / coordinates).
     Places,
+    /// Show the magic ledger — the declared exceptions to physics the
+    /// fact-checker will respect. Edit it in the `magic:` block of `world.hjson`.
+    Magic {
+        /// Also materialize the ledger into the World book.
+        #[arg(long)]
+        materialize: bool,
+    },
 }
 
 /// WORLD-4 — the proposal queue surface (RFC §8.9). Accepting a proposal commits
