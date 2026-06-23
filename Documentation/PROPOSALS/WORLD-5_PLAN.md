@@ -98,5 +98,14 @@
   CLI `realworld co-location` gathers the events, resolves character/place names
   from the hierarchy, applies the magic ledger (a `teleportation`-style rule
   covering `co_location` suppresses to info), and emits `fact_check_warning`
-  findings. +2 tests, 1722. *Next: `date_coherence` (prose date-hints vs the
-  event's season), travel_time event-derived durations, then P3 flags/Bund.*
+  findings. +2 tests, 1722.
+- **P1.2 — travel_time event-derived durations (UNRELEASED, 1.3.30-dev).** The
+  RFC's flagship: `check_travel_timeline` flags a prose-stated travel duration that
+  contradicts the timeline gap between the paragraph's linked event and the
+  traveller's prior different-place event (prose "three days" vs a 35-day gap → a
+  warning). Localized `Msg::TravelTimeline` in all five languages; magic-ledger-
+  respecting; tolerant within ~3× (narrative compression). Wired into the CLI
+  `timeline_findings`. +1 test, 1723. *P1's two headline extensions (climate +
+  travel) ship; astronomy/demographics/economy dated grounding need a
+  world-state-over-time model (out of WORLD-5's additive scope) — deferred. Next:
+  `date_coherence` (P2) + the P3 flags/Bund.*
