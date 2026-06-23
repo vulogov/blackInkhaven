@@ -8,6 +8,7 @@
 
 pub mod astronomy;
 pub mod climate;
+pub mod demographics;
 pub mod geology;
 pub mod hydrology;
 pub mod world;
@@ -17,6 +18,7 @@ pub use astronomy::{
     TideContribution, TideSummary,
 };
 pub use climate::{Biome, ClimateOutput, ClimateZone, WindBand};
+pub use demographics::{DemographicsOutput, Settlement, SizeClassSummary};
 pub use geology::{
     BoundarySummary, ElevationStats, GeologyOutput, MineralHint, MountainRange, Plate,
 };
