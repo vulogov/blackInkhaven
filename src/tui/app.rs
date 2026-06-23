@@ -1503,6 +1503,15 @@ pub(crate) enum RightPane {
     Ai,
 }
 
+/// INNER_SOCRATES-1 — the per-finding outcomes on a `socratic_inquiry` Output
+/// message (RFC §8.10): declare it deliberate, note it, or mark it addressed.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum SocraticOutcome {
+    RecordIntent,
+    MakeNote,
+    Addressed,
+}
+
 pub(crate) struct App {
     layout: ProjectLayout,
     store: Store,
@@ -6832,10 +6841,161 @@ impl App {
             }
             KeyCode::Char('r') if plain => self.remember_output_translation(),
             KeyCode::Char('e') if plain => self.edit_output_translation(),
+            // INNER_SOCRATES-1 — per-finding outcomes on a socratic_inquiry message:
+            // `i` record-as-intent, `m` make-note, `x` mark addressed.
+            KeyCode::Char('i') if plain => self.socratic_outcome(SocraticOutcome::RecordIntent),
+            KeyCode::Char('m') if plain => self.socratic_outcome(SocraticOutcome::MakeNote),
+            KeyCode::Char('x') if plain => self.socratic_outcome(SocraticOutcome::Addressed),
             KeyCode::Enter => self.output_primary_action(),
             _ => {}
         }
         Ok(false)
+    }
+
+    /// Apply a per-finding outcome to the selected `socratic_inquiry` Output
+    /// message (no-op for any other kind / no selection). The message is dismissed
+    /// after a successful outcome so it leaves the queue.
+    fn socratic_outcome(&mut self, outcome: SocraticOutcome) {
+        let Some(m) = crate::pane::output::active()
+            .and_then(|s| s.active().ok())
+            .unwrap_or_default()
+            .get(self.output_selected)
+            .cloned()
+        else {
+            return;
+        };
+        if m.kind != crate::pane::output::kinds::SOCRATIC_INQUIRY {
+            self.status = "that action applies to a Socratic question".into();
+            return;
+        }
+        let acted = match outcome {
+            SocraticOutcome::RecordIntent => self.socratic_record_intent(&m),
+            SocraticOutcome::MakeNote => self.socratic_make_note(&m),
+            SocraticOutcome::Addressed => {
+                self.status = "marked addressed".into();
+                true
+            }
+        };
+        if acted {
+            if let Some(s) = crate::pane::output::active() {
+                let _ = s.dismiss(m.id);
+            }
+        }
+    }
+
+    /// `i` — declare the finding's category a deliberate choice (chapter-scoped),
+    /// writing an intent-ledger entry that suppresses future ones like it.
+    fn socratic_record_intent(&mut self, m: &crate::pane::output::Message) -> bool {
+        use crate::inner_socrates::intent::{IntentEntry, IntentKind, IntentScope, ScopeLevel};
+        use crate::inner_socrates::storage::InnerSocratesStore;
+        use crate::inner_socrates::types::Category;
+        let Some(category) =
+            m.metadata.get("category").and_then(|c| c.as_str()).and_then(Category::from_id)
+        else {
+            return false;
+        };
+        let chapter = self.socratic_chapter_of(m.source_paragraph_id);
+        let scope = if chapter.is_empty() {
+            IntentScope::Project
+        } else {
+            IntentScope::Chapter(chapter)
+        };
+        let Ok(store) = InnerSocratesStore::open_for_project(self.store.project_root()) else {
+            return false;
+        };
+        let entry = IntentEntry {
+            id: Uuid::new_v4().to_string(),
+            kind: IntentKind::proposed_for(category),
+            description: format!("{} is a deliberate choice here", category.label()),
+            scope,
+            coverage: vec![category],
+            scope_level: ScopeLevel::Project,
+        };
+        if store.add_intent(&entry).is_ok() {
+            self.status = format!("declared intent — {} won't be re-asked here", category.label());
+            true
+        } else {
+            false
+        }
+    }
+
+    /// `m` — turn the question into a Notes entry (the question + the paragraph it
+    /// is about), under a "Socratic Notes" chapter of the Notes book.
+    fn socratic_make_note(&mut self, m: &crate::pane::output::Message) -> bool {
+        let question = m.metadata.get("text").and_then(|t| t.as_str()).unwrap_or_default().to_string();
+        let label = m.metadata.get("label").and_then(|l| l.as_str()).unwrap_or("Question").to_string();
+        if question.is_empty() {
+            return false;
+        }
+        let para_text = m
+            .source_paragraph_id
+            .and_then(|pid| self.store.get_content(pid).ok().flatten())
+            .map(|b| String::from_utf8_lossy(&b).into_owned())
+            .unwrap_or_default();
+        let body = format!(
+            "// Socratic note · {label}\n\n> {question}\n\nThe passage:\n{}\n\nMy response:\n",
+            para_text.trim()
+        );
+        match self.create_socratic_note(&label, &body) {
+            Ok(()) => {
+                self.refresh_hierarchy_after_world_write();
+                self.status = "made a note in Notes / Socratic Notes".into();
+                true
+            }
+            Err(e) => {
+                self.status = format!("make note: {e}");
+                false
+            }
+        }
+    }
+
+    /// Create a paragraph under Notes / Socratic Notes with `body`.
+    fn create_socratic_note(&mut self, title: &str, body: &str) -> crate::error::Result<()> {
+        use crate::store::node::NodeKind;
+        use crate::store::InsertPosition;
+        let notes = self
+            .system_book_id(crate::store::SYSTEM_TAG_NOTES)
+            .and_then(|id| self.hierarchy.get(id).cloned())
+            .ok_or_else(|| crate::error::Error::Store("Notes book missing".into()))?;
+        // Find or create the "Socratic Notes" chapter.
+        let chapter = match self
+            .hierarchy
+            .children_of(Some(notes.id))
+            .into_iter()
+            .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Socratic Notes"))
+            .cloned()
+        {
+            Some(c) => c,
+            None => self.store.create_node(
+                &self.cfg,
+                &self.hierarchy,
+                NodeKind::Chapter,
+                "Socratic Notes",
+                Some(&notes),
+                None,
+                InsertPosition::End,
+            )?,
+        };
+        let h = crate::store::hierarchy::Hierarchy::load(&self.store)?;
+        let chapter = h.get(chapter.id).cloned().unwrap_or(chapter);
+        let mut node = self.store.create_node(
+            &self.cfg,
+            &h,
+            NodeKind::Paragraph,
+            title,
+            Some(&chapter),
+            None,
+            InsertPosition::End,
+        )?;
+        if let Some(file) = &node.file {
+            let path = self.store.project_root().join(file);
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(&path, body.as_bytes());
+        }
+        self.store.update_paragraph_content(&mut node, body.as_bytes())?;
+        Ok(())
     }
 
     /// PANE-1 P5 — the per-kind **primary** action (`Enter`), §8.3. The primitive
@@ -11388,9 +11548,44 @@ impl App {
     /// the active persona's voice and the open paragraph's questions, then hand
     /// the author the prompt. The persona discusses; it never rewrites the prose.
     fn socratic_open_conversation(&mut self) {
-        let root = self.store.project_root().to_path_buf();
-        let persona = crate::inner_socrates::personas::active(&root);
+        let persona = crate::inner_socrates::personas::active(self.store.project_root());
         let findings = self.collect_socratic_findings().map(|(_, f)| f).unwrap_or_default();
+        let (prologue, opening) = self.socratic_conversation_seed(&persona, &findings);
+        self.seed_socratic_chat(prologue, opening);
+        self.ai_mode = AiMode::Socratic;
+        self.modal = Modal::None;
+        self.right_pane = RightPane::Ai;
+        self.change_focus(Focus::AiPrompt);
+        self.status = format!("Socratic conversation · {} · F9 to exit", persona.name);
+    }
+
+    /// F9 → Socrates scope: seed a Socratic conversation about the open paragraph
+    /// and make it the sticky `Socratic` AI mode (re-cycling refreshes the seed).
+    /// Shares the conversation builder with the `Ctrl+B J → C` chord.
+    fn seed_socratic_session(&mut self) {
+        let persona = crate::inner_socrates::personas::active(self.store.project_root());
+        let findings = self.collect_socratic_findings().map(|(_, f)| f).unwrap_or_default();
+        let (prologue, opening) = self.socratic_conversation_seed(&persona, &findings);
+        self.seed_socratic_chat(prologue, opening);
+        self.ai_mode = AiMode::Socratic;
+        self.status = if findings.is_empty() {
+            format!("Socrates scope · {} · ask away (F9 to exit)", persona.name)
+        } else {
+            format!(
+                "Socrates scope · {} · {} question(s) queued (F9 to exit)",
+                persona.name,
+                findings.len()
+            )
+        };
+    }
+
+    /// Build the `(prologue, opening)` for a Socratic conversation from a persona
+    /// and the open paragraph's findings.
+    fn socratic_conversation_seed(
+        &self,
+        persona: &crate::inner_socrates::types::Persona,
+        findings: &[crate::inner_socrates::types::SocraticFinding],
+    ) -> (String, String) {
         let questions = if findings.is_empty() {
             "(no open questions on this paragraph yet)".to_string()
         } else {
@@ -11410,11 +11605,7 @@ impl App {
             Some(f) => format!("A few things to consider here. {}", f.question),
             None => format!("I'm reading as {}. Show me what you'd like to examine.", persona.name),
         };
-        self.seed_socratic_chat(prologue, opening);
-        self.modal = Modal::None;
-        self.right_pane = RightPane::Ai;
-        self.change_focus(Focus::AiPrompt);
-        self.status = format!("Socratic conversation · {} · F9 to exit", persona.name);
+        (prologue, opening)
     }
 
     /// `Ctrl+B J` → `N` — the persona authoring wizard: seed the AI pane to guide
@@ -16741,6 +16932,9 @@ impl App {
             // attach: entering it seeds the chat with the world's facts +
             // a fact-analysis framing (which sets its own status).
             AiMode::Facts => self.seed_facts_session(),
+            // INNER_SOCRATES-1 — a sticky conversation scope: entering seeds the
+            // chat with the active persona + the open paragraph's questions.
+            AiMode::Socratic => self.seed_socratic_session(),
             other => {
                 self.status = format!(
                     "AI scope: {} (will prepend matching context to next prompt)",
@@ -16911,6 +17105,9 @@ impl App {
             // turns (no auto-reset), so the seeded facts + the
             // fact-analysis system prompt frame the whole conversation.
             AiMode::Facts => Ok(None),
+            // Socratic is a sticky session scope like Facts — the persona +
+            // questions are seeded into the chat; no per-query prefix.
+            AiMode::Socratic => Ok(None),
         }
     }
 

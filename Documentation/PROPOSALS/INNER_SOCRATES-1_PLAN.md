@@ -234,5 +234,14 @@ for §8 detailed design, Appendix A (schema), B (config), E (overlays).
   persona discusses, never rewrites). `Ctrl+B J → N` seeds the **persona wizard**
   (the AI guides the author through designing a new persona). A `SOCRATIC_SEED_MARKER`
   makes re-entry swap rather than stack. CLI `persona new <id>` scaffolds an
-  editable persona file (the non-AI path). 1713. *The full F9 scope-cycling +
-  per-finding outcome buttons remain a refinement; the conversation + wizard ship.*
+  editable persona file (the non-AI path). 1713.
+- **P7d — F9 scope-cycling + per-finding outcome buttons (UNRELEASED, 1.3.29-dev).**
+  `AiMode::Socratic` joins the **F9 cycle** (Book → Facts → Socrates → None): a
+  sticky conversation scope that, on entry, seeds the chat with the active persona
+  + the open paragraph's questions (sharing the builder with `Ctrl+B J → C`); the
+  scope label shows in the AI header. **Per-finding outcomes** on a
+  `socratic_inquiry` Output message: `i` record-as-intent (writes a chapter-scoped
+  ledger entry suppressing the category), `m` make-note (a Notes / *Socratic Notes*
+  paragraph quoting the question + the passage), `x` mark addressed; each dismisses
+  the message after acting. The Output footer advertises them. +1 test, 1713.
+  **★ INNER_SOCRATES-1 fully implemented per the RFC.**

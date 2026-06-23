@@ -1670,6 +1670,9 @@ impl super::super::App {
                 Some(s) if s == k::AI_TASK_COMPLETE => {
                     " ↑↓ · ⏎ open target · o expand · d dismiss · p pin · ^B Tab"
                 }
+                Some(s) if s == k::SOCRATIC_INQUIRY => {
+                    " ↑↓ · i intent · m note · x addressed · a ask AI · d dismiss · ^B Tab"
+                }
                 _ => " ↑↓ · o expand · r remember · a ask AI · d dismiss · p pin · ^B Tab",
             };
             let hint = Paragraph::new(Line::from(Span::styled(

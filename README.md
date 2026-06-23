@@ -21,51 +21,40 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.3.28 — Inner Socrates
+## Latest release · 1.3.29 — Inner Socrates, in conversation
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.3.28.md`](Documentation/RELEASE_NOTES/1.3.28.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.3.29.md`](Documentation/RELEASE_NOTES/1.3.29.md)
 · Reference: [`Documentation/INNER_SOCRATES.md`](Documentation/INNER_SOCRATES.md)
 · Plan: [`Documentation/PROPOSALS/INNER_SOCRATES-1_PLAN.md`](Documentation/PROPOSALS/INNER_SOCRATES-1_PLAN.md)
-· Tutorial: [`78`](Documentation/Tutorials/78-inner-socrates.md)
 
-A third examined-authorship pillar. The ConLang Suite examines your languages; the
-world simulator examines your world; **Inner Socrates examines your prose** —
-surfacing **questions** about its assumptions, framings, tensions, and significance.
-Non-prescriptive by structural commitment: every finding is a question, never a
-correction. RFC INNER_SOCRATES-1, built end to end.
+A focused follow-on to 1.3.28's [Inner Socrates](Documentation/INNER_SOCRATES.md):
+the Socratic interrogator becomes **interactive**, completing RFC INNER_SOCRATES-1's
+interactive layer.
 
-### Two tracks, fifteen questions
+### The Socrates F9 scope
 
-A **Fast track** (deterministic, instant, no LLM — seven categories, five
-languages, ambient on a writing pause or `Ctrl+B J → F`) and a **Slow track** (the
-configured LLM, cost-capped — five prose categories + three that read the prose
-against the project **timeline**). Three severities (Notice / Inquiry / Probe) map
-onto the Output pane; quiet by default.
+The AI pane's **F9** scope cycle gains **Socrates** (after Facts): a sticky
+**conversation** scope that seeds the chat with the active Reader Persona's voice and
+the open paragraph's questions, then hands you the prompt. The persona discusses the
+work *with* you — it never drafts your prose. (Same conversation `Ctrl+B J → C`
+opens, now in the standard scope cycle.)
 
-### Reader Personas & the intent ledger
+### Per-finding outcomes
 
-Five bundled **personas** read the same prose differently (Inner Socrates, the
-Careful Editor, the Skeptical Reader, the First-Time Reader, the Slow Reader);
-author your own (`persona new`, or `Ctrl+B J → N` for an AI-guided wizard). The
-**intent ledger** — the prose sibling of the world simulator's magic ledger —
-suppresses what you've declared deliberate; the **promotion mechanism** builds it
-from your own repeated dismissals, and `.isl` bundles carry it to the next book.
+A Socratic question in the **Output pane** gains the outcomes a careful reader's note
+deserves — select one and press:
 
-### Surfaces
-
-- **`Ctrl+B J`** — the hub: `F` check · `C` converse · `N` new persona · `S` cycle
-  persona · `L` ledger · `A` ambient toggle. (`Ctrl+B I` stays book-info.)
-- **CLI** — `inkhaven inner-socrates check [--slow] · timeline · persona … ·
-  suggestions … · bundle … · findings …`; read-only `ink.inner_socrates.*` Bund
-  words. A new **Intent** system book (the 13th) seeds on init.
-
-Also in this release: the **WORLDBUILDING.md** reference completes WORLD-4's docs.
+- **`i`** — *record as intent*: declare the category a deliberate choice (chapter
+  scoped); Inkhaven writes an intent-ledger entry and stops asking it here.
+- **`m`** — *make note*: turn the question into a **Socratic Notes** entry quoting the
+  question + the passage, with room for your response.
+- **`x`** — *mark addressed*; **`d`** — *dismiss* (still feeds the promotion
+  mechanism).
 
 ### Dependencies & compatibility
 
-**Zero new dependencies** — everything is inherited from the Output pane and the
-world simulator (the language detector, the cost/retry helpers, the ledger pattern,
-the background-job harness). Non-breaking and opt-in throughout. Tests 1658 → 1713.
+**Zero new dependencies.** Non-breaking and opt-in throughout. Every finding remains
+a question, never a correction. Tests 1713 (stable).
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
