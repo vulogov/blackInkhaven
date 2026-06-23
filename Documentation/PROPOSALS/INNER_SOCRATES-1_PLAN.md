@@ -136,3 +136,14 @@ for §8 detailed design, Appendix A (schema), B (config), E (overlays).
   attribution verb anywhere), `sentence_length_anomalies` (a sentence over 45
   words). Five of the seven Fast categories now ship; `pronoun_ambiguity` +
   `tense_voice_shifts` await the UD parser (P5). +8 tests, 1683.
+- **P2 — storage + Intent system book + Output (UNRELEASED, 1.3.28-dev).**
+  `InnerSocratesStore` on `StorageEngine` (`<project>/inner_socrates.db`) persists
+  emitted findings (clear-per-paragraph for re-checks) and the **intent ledger**
+  (scope + coverage serialized, `load_ledger` for consultation). The **Intent
+  system book** is registered (`SYSTEM_TAG_INTENT` + `SYSTEM_BOOKS`) and seeds on
+  project init. `output::emit_finding` bridges a finding to the PANE-1 Output pane
+  as a `socratic_inquiry` message (persona / category / track / question + EN
+  fallback). A headless CLI (`inkhaven inner-socrates check --text|--paragraph`,
+  `… ledger`) runs the Fast track → consult ledger → persist → emit → print. +3
+  tests, 1686. *Next: P3 — the `Ctrl+B I` chord family + debounced auto-check into
+  the Output pane.*

@@ -30,6 +30,8 @@ pub mod kinds {
     pub const FACT_CHECK_WARNING: &str = "fact_check_warning";
     /// WORLD-4 — a compiler-proposed record awaiting acceptance.
     pub const WORLD_COMPILER_PROPOSAL: &str = "world_compiler_proposal";
+    /// INNER_SOCRATES-1 — a Socratic question about the prose (Fast or Slow track).
+    pub const SOCRATIC_INQUIRY: &str = "socratic_inquiry";
 }
 
 /// Visual / priority class (RFC §7.4).
