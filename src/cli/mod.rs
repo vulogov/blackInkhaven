@@ -3742,6 +3742,12 @@ pub enum PersonaCommand {
     Show { id: String },
     /// Make a persona active for this project.
     Activate { id: String },
+    /// Scaffold a new persona HJSON file in the project to edit.
+    New {
+        id: String,
+        #[arg(long)]
+        name: Option<String>,
+    },
 }
 
 /// WORLD-4 — the proposal queue surface (RFC §8.9). Accepting a proposal commits

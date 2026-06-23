@@ -11243,6 +11243,8 @@ impl App {
             KeyCode::Char('f') | KeyCode::Char('F') => self.socratic_check_open_paragraph(),
             KeyCode::Char('l') | KeyCode::Char('L') => self.socratic_view_ledger(),
             KeyCode::Char('s') | KeyCode::Char('S') => self.socratic_cycle_persona(),
+            KeyCode::Char('c') | KeyCode::Char('C') => self.socratic_open_conversation(),
+            KeyCode::Char('n') | KeyCode::Char('N') => self.socratic_persona_wizard(),
             KeyCode::Char('a') | KeyCode::Char('A') => {
                 self.socratic_auto = !self.socratic_auto;
                 self.socr_last_fp = None;
@@ -11380,6 +11382,78 @@ impl App {
                 }
             }
         }
+    }
+
+    /// `Ctrl+B J` → `C` — open a Socratic **conversation**: seed the AI pane with
+    /// the active persona's voice and the open paragraph's questions, then hand
+    /// the author the prompt. The persona discusses; it never rewrites the prose.
+    fn socratic_open_conversation(&mut self) {
+        let root = self.store.project_root().to_path_buf();
+        let persona = crate::inner_socrates::personas::active(&root);
+        let findings = self.collect_socratic_findings().map(|(_, f)| f).unwrap_or_default();
+        let questions = if findings.is_empty() {
+            "(no open questions on this paragraph yet)".to_string()
+        } else {
+            findings
+                .iter()
+                .map(|f| format!("- [{}] {}", f.category.label(), f.question))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let prologue = format!(
+            "{SOCRATIC_SEED_MARKER}Reader persona: {} — {}\n{}\n\nQuestions raised about the open \
+             paragraph:\n{}\n\nDiscuss these with the author in this persona's voice. You ask \
+             questions; you never prescribe changes and never rewrite their prose.",
+            persona.name, persona.voice_summary, persona.voice_notes, questions,
+        );
+        let opening = match findings.first() {
+            Some(f) => format!("A few things to consider here. {}", f.question),
+            None => format!("I'm reading as {}. Show me what you'd like to examine.", persona.name),
+        };
+        self.seed_socratic_chat(prologue, opening);
+        self.modal = Modal::None;
+        self.right_pane = RightPane::Ai;
+        self.change_focus(Focus::AiPrompt);
+        self.status = format!("Socratic conversation · {} · F9 to exit", persona.name);
+    }
+
+    /// `Ctrl+B J` → `N` — the persona authoring wizard: seed the AI pane to guide
+    /// the author through designing a new Reader Persona.
+    fn socratic_persona_wizard(&mut self) {
+        let prologue = format!(
+            "{SOCRATIC_SEED_MARKER}You are helping the author design a new Reader Persona for \
+             Inkhaven's examined-authorship tool. A persona is a careful-reader perspective with a \
+             voice and per-category emphasis weights. Ask the author about the reader they want to \
+             imagine — what attention it brings, what it instinctively notices, what it avoids, how \
+             it handles pushback. When you have enough, propose an HJSON persona file with fields \
+             id, name, voice_summary, voice_notes, and emphasis (category id -> weight). You never \
+             write the author's prose.",
+        );
+        let opening = "Let's design a new reader. Tell me about the reader you want to imagine — \
+                       what kind of attention do they bring to a page?"
+            .to_string();
+        self.seed_socratic_chat(prologue, opening);
+        self.modal = Modal::None;
+        self.right_pane = RightPane::Ai;
+        self.change_focus(Focus::AiPrompt);
+        self.status = "Persona wizard · describe your reader · F9 to exit".into();
+    }
+
+    /// Seed the AI chat with a Socratic prologue + an opening line, replacing any
+    /// prior Socratic seed (so re-entering swaps rather than stacks).
+    fn seed_socratic_chat(&mut self, prologue: String, opening: String) {
+        if let Some(i) = self.chat_history.iter().position(
+            |t| matches!(t, ChatTurn::User(s) if s.starts_with(SOCRATIC_SEED_MARKER)),
+        ) {
+            if self.chat_history.get(i + 1).is_some_and(|t| matches!(t, ChatTurn::Assistant(_))) {
+                self.chat_history.remove(i + 1);
+            }
+            self.chat_history.remove(i);
+        }
+        let mut seeded = vec![ChatTurn::User(prologue), ChatTurn::Assistant(opening)];
+        seeded.append(&mut self.chat_history);
+        self.chat_history = seeded;
+        self.chat_history_scroll = 0;
     }
 
     /// `Ctrl+B J` → `S` — cycle to the next available Reader Persona and persist
@@ -24383,6 +24457,9 @@ pub(super) const TRANSLATION_BEGIN: &str = "<<<TRANSLATION>>>";
 /// the seed); it also reads as a clear "this is the loaded facts
 /// reference" label in the AI pane.
 pub(crate) const FACTS_SEED_MARKER: &str = "⟦Facts⟧ ";
+/// INNER_SOCRATES-1 — marks the seed turn of a Socratic conversation / persona
+/// wizard, so re-entering swaps the seed rather than stacking another.
+pub(crate) const SOCRATIC_SEED_MARKER: &str = "⟦Socrates⟧ ";
 
 /// 1.2.21+ — one-line framing prepended to the seeded Facts user turn.
 pub(crate) fn facts_seed_intro(lang_iso: &str) -> &'static str {

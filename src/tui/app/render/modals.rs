@@ -4862,7 +4862,7 @@ impl super::super::App {
         f.render_widget(Paragraph::new(lines), body_rect);
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                " ↑↓ · F fast-check ¶ · S persona · L ledger · A auto · Esc ",
+                " ↑↓ · F check · C converse · N new persona · S persona · L ledger · A auto · Esc ",
                 Style::default().add_modifier(Modifier::DIM),
             ))),
             footer_rect,
