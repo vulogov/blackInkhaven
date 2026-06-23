@@ -9,7 +9,7 @@
 //! emitting, each candidate is run past the magic ledger — a declared exception
 //! to physics suppresses the warning with a note (lazy consultation, §8.21).
 
-use crate::world::fact_check_lang::{contains_word, Lang};
+use crate::world::fact_check_lang::{contains_word, Lang, Msg, Weather};
 use crate::world::proposals::PlaceLink;
 use crate::world::types::magic::{CheckContext, MagicLedger};
 
@@ -58,7 +58,10 @@ pub struct Finding {
     pub category: String,
     /// "info" | "warning" | "contradiction".
     pub severity: String,
+    /// The message in the paragraph's language.
     pub body: String,
+    /// The English message (always present; the ask-AI bridge prefers English).
+    pub body_en: String,
     /// The magic rule kind that suppressed this finding, if any.
     pub suppressed_by: Option<String>,
 }
@@ -110,14 +113,18 @@ fn check_economy(text: &str, minerals: &[String], ledger: &MagicLedger, lang: La
             }
             if names.iter().any(|n| contains_word(&lower, &n.to_lowercase())) {
                 seen.insert(*canonical);
-                let body = format!(
-                    "{canonical} is mined or worked here, but this world's geology yields only: {}.",
-                    minerals.join(", ")
-                );
+                let mineral_list = minerals.join(", ");
+                let msg = Msg::Economy { metal: canonical, minerals: &mineral_list };
                 let ctx = CheckContext { category: "economy", ..Default::default() };
                 let suppressed_by = ledger.find_suppressor(&ctx).map(|r| r.kind.clone());
                 let severity = if suppressed_by.is_some() { "info" } else { "warning" };
-                out.push(Finding { category: "economy".into(), severity: severity.into(), body, suppressed_by });
+                out.push(Finding {
+                    category: "economy".into(),
+                    severity: severity.into(),
+                    body: lang.render(&msg),
+                    body_en: Lang::En.render(&msg),
+                    suppressed_by,
+                });
             }
         }
     }
@@ -145,14 +152,18 @@ fn check_astronomy(text: &str, moons: &[String], ledger: &MagicLedger, lang: Lan
         if claimed == world_count {
             continue;
         }
-        let body = format!(
-            "The prose implies {claimed} moon(s), but this world has {world_count} ({}).",
-            moons.join(", ")
-        );
+        let moon_list = moons.join(", ");
+        let msg = Msg::Astronomy { claimed, world: world_count, moons: &moon_list };
         let ctx = CheckContext { category: "astronomy", ..Default::default() };
         let suppressed_by = ledger.find_suppressor(&ctx).map(|r| r.kind.clone());
         let severity = if suppressed_by.is_some() { "info" } else { "warning" };
-        out.push(Finding { category: "astronomy".into(), severity: severity.into(), body, suppressed_by });
+        out.push(Finding {
+            category: "astronomy".into(),
+            severity: severity.into(),
+            body: lang.render(&msg),
+            body_en: Lang::En.render(&msg),
+            suppressed_by,
+        });
     }
     out
 }
@@ -203,13 +214,10 @@ fn check_climate(text: &str, gaz: &Gazetteer, ledger: &MagicLedger, lang: Lang) 
             continue;
         };
         for p in gaz.mentioned_in(sentence) {
-            let Some(verdict) = climate_conflict(&p.climate_zone, weather) else {
+            if !climate_conflict(&p.climate_zone, weather) {
                 continue;
-            };
-            let body = format!(
-                "{}: {} at {}, whose climate zone is {}.",
-                verdict, weather_label(weather), p.name, p.climate_zone.replace('_', " ")
-            );
+            }
+            let msg = Msg::Climate { weather, place: &p.name, zone: &p.climate_zone };
             let ctx = CheckContext {
                 category: "climate_anomaly",
                 roles: &[],
@@ -221,7 +229,8 @@ fn check_climate(text: &str, gaz: &Gazetteer, ledger: &MagicLedger, lang: Lang) 
             out.push(Finding {
                 category: "climate".into(),
                 severity: severity.into(),
-                body,
+                body: lang.render(&msg),
+                body_en: Lang::En.render(&msg),
                 suppressed_by,
             });
         }
@@ -249,17 +258,15 @@ fn check_population(text: &str, gaz: &Gazetteer, ledger: &MagicLedger, lang: Lan
         if ratio <= 3.0 && ratio >= 0.33 {
             continue; // close enough
         }
-        let body = format!(
-            "{} is described with ~{} people, but the world models ~{} for it.",
-            p.name, fmt_pop(claimed as u64), fmt_pop(p.population)
-        );
+        let msg = Msg::Population { place: &p.name, claimed: claimed as u64, modeled: p.population };
         let ctx = CheckContext { category: "demographics", region: Some(&p.name), ..Default::default() };
         let suppressed_by = ledger.find_suppressor(&ctx).map(|r| r.kind.clone());
         let severity = if suppressed_by.is_some() { "info" } else { "warning" };
         out.push(Finding {
             category: "demographics".into(),
             severity: severity.into(),
-            body,
+            body: lang.render(&msg),
+            body_en: Lang::En.render(&msg),
             suppressed_by,
         });
     }
@@ -268,19 +275,6 @@ fn check_population(text: &str, gaz: &Gazetteer, ledger: &MagicLedger, lang: Lan
 
 fn split_sentences(text: &str) -> impl Iterator<Item = &str> {
     text.split(|c| c == '.' || c == '!' || c == '?' || c == '\n')
-}
-
-#[derive(Clone, Copy, PartialEq)]
-enum Weather {
-    Cold,
-    Hot,
-}
-
-fn weather_label(w: Weather) -> &'static str {
-    match w {
-        Weather::Cold => "freezing weather",
-        Weather::Hot => "tropical heat",
-    }
 }
 
 fn detect_weather(s: &str, lang: Lang) -> Option<Weather> {
@@ -294,14 +288,13 @@ fn detect_weather(s: &str, lang: Lang) -> Option<Weather> {
     }
 }
 
-/// Whether `weather` contradicts a climate zone — returns the severity verb.
-fn climate_conflict(zone: &str, weather: Weather) -> Option<&'static str> {
+/// Whether `weather` contradicts a climate zone.
+fn climate_conflict(zone: &str, weather: Weather) -> bool {
     let warm_zones = ["hot_desert", "savanna", "tropical_rainforest", "tropical_seasonal"];
     let cold_zones = ["tundra", "ice_cap", "taiga"];
     match weather {
-        Weather::Cold if warm_zones.contains(&zone) => Some("Implausible"),
-        Weather::Hot if cold_zones.contains(&zone) => Some("Implausible"),
-        _ => None,
+        Weather::Cold => warm_zones.contains(&zone),
+        Weather::Hot => cold_zones.contains(&zone),
     }
 }
 
@@ -361,17 +354,14 @@ fn check_travel_time(text: &str, ledger: &MagicLedger, roles: &[String], lang: L
         // mounted. Use a generous mounted median; flag clear outliers.
         let baseline = 65.0_f32;
         let ratio = pace / baseline;
-        let (severity, note) = if ratio > 2.5 {
-            ("contradiction", "far exceeds")
+        let (severity, severe) = if ratio > 2.5 {
+            ("contradiction", true)
         } else if ratio > 1.5 {
-            ("warning", "exceeds")
+            ("warning", false)
         } else {
             continue; // plausible
         };
-        let body = format!(
-            "Travel of {km:.0} km in {days:.0} day(s) = {pace:.0} km/day, which {note} \
-             pre-industrial overland travel (typically 25–80 km/day)."
-        );
+        let msg = Msg::Travel { km, days, pace, severe };
         // Lazy magic consultation.
         let ctx = CheckContext { category: "travel_time", roles, ..Default::default() };
         let suppressed_by = ledger.find_suppressor(&ctx).map(|r| r.kind.clone());
@@ -379,7 +369,8 @@ fn check_travel_time(text: &str, ledger: &MagicLedger, roles: &[String], lang: L
         out.push(Finding {
             category: "travel_time".into(),
             severity: severity.into(),
-            body,
+            body: lang.render(&msg),
+            body_en: Lang::En.render(&msg),
             suppressed_by,
         });
     }
@@ -407,6 +398,7 @@ pub fn emit_finding(f: &Finding, source: Option<uuid::Uuid>) {
         Lifetime::UntilActedOn,
         serde_json::json!({
             "text": text,
+            "body_en": f.body_en,
             "category": f.category,
             "track": "fast",
             "suppressed_by": f.suppressed_by,

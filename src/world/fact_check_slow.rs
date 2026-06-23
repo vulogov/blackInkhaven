@@ -115,7 +115,8 @@ pub fn parse_slow_findings(raw: &str) -> Vec<Finding> {
             Some(Finding {
                 category,
                 severity: severity.to_string(),
-                body: explanation,
+                body: explanation.clone(),
+                body_en: explanation,
                 suppressed_by: None,
             })
         })
