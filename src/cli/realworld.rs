@@ -30,6 +30,54 @@ pub fn run(project: &Path, cmd: RealworldCommand) -> Result<()> {
     }
 }
 
+/// Fact-check prose against the world (fast track). `--text` checks a literal
+/// string; `--paragraph` reads a paragraph's content from the store.
+pub fn fact_check(project: &Path, text: Option<String>, paragraph: Option<String>) -> Result<()> {
+    use crate::world::fact_check::check_paragraph;
+    // The magic ledger (if any) is consulted; a missing world.hjson is fine.
+    let ledger = load(project).ok().and_then(|d| d.magic).unwrap_or_default();
+
+    let prose = match (text, paragraph) {
+        (Some(t), _) => t,
+        (None, Some(pid)) => {
+            use crate::config::Config;
+            use crate::project::ProjectLayout;
+            use crate::store::Store;
+            let id = uuid::Uuid::parse_str(&pid)
+                .map_err(|e| Error::Config(format!("bad paragraph id `{pid}`: {e}")))?;
+            let layout = ProjectLayout::new(project);
+            layout.require_initialized()?;
+            let cfg = Config::load_layered(&layout.config_path())?;
+            let store = Store::open(layout, &cfg)?;
+            let bytes = store
+                .get_content(id)
+                .map_err(|e| Error::Store(format!("reading paragraph: {e}")))?
+                .ok_or_else(|| Error::Config(format!("paragraph `{pid}` not found")))?;
+            String::from_utf8_lossy(&bytes).into_owned()
+        }
+        (None, None) => {
+            return Err(Error::Config("give --text \"…\" or --paragraph <id>".into()));
+        }
+    };
+
+    let findings = check_paragraph(&prose, &ledger, &[]);
+    if findings.is_empty() {
+        println!("✓ no issues found");
+        return Ok(());
+    }
+    for f in &findings {
+        let icon = match f.severity.as_str() {
+            "contradiction" => "⊗",
+            "warning" => "⚠",
+            _ => "●",
+        };
+        let note = f.suppressed_by.as_deref().map(|r| format!(" (ok — magic rule `{r}`)")).unwrap_or_default();
+        println!("{icon} [{}] {}{note}", f.category, f.body);
+    }
+    println!("\n{} finding(s).", findings.len());
+    Ok(())
+}
+
 /// Show (and optionally materialize) the magic ledger.
 fn magic(project: &Path, materialize: bool) -> Result<()> {
     let def = load(project)?;
