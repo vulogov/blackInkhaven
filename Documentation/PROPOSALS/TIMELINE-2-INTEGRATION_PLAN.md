@@ -145,5 +145,15 @@ custom rules reserved (`ink.event.critique.custom` no-op) but not implemented.
   mapping + what's stronger now. Orphan age = days-since-`modified_at` (real
   staleness in the CLI, where the TUI had none). Smoke-tested end to end
   (orphans graded, overlap found, all four flags). Full suite green (1748).
+- **P4** — _done._ The five `ink.event.critique.*` Bund words
+  (`scripting/stdlib/event_critique.rs`, registered after `world_timeline`):
+  `orphan_check` / `fuzzy_overlap_check` (→ list of finding dicts), `run`
+  (→ `{orphans, overlaps, total}`), `config` (→ enabled flags + thresholds), and
+  `custom` (RESERVED no-op → empty list, forward-compat for the deferred
+  Bund-programmatic rules). All `store_read`; `critique_data` loads events+calendar
+  +config from the active store (orphan age = days-since-`modified_at`); thresholds
+  honour the config. Smoke-verified live via `inkhaven bund` against a fixture
+  (run/config dicts, orphan_check=3, custom=0) — the same no-unit-test pattern as
+  the sibling `world_timeline` adapters. Full suite green (1748).
 </content>
 </invoke>
