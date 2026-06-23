@@ -10810,6 +10810,7 @@ impl App {
             m::materialize_hydrology(&self.store, &self.cfg, &hydro),
             m::materialize_demographics(&self.store, &self.cfg, &demo),
             m::materialize_magic(&self.store, &self.cfg, &def.magic.clone().unwrap_or_default()),
+            m::materialize_setting(&self.store, &self.cfg, &def),
         ];
         for s in &steps {
             if let Err(e) = s {
@@ -10882,10 +10883,15 @@ impl App {
                 geo.map(|g| g.minerals.iter().map(|m| m.mineral.clone()).collect()).unwrap_or_default()
             })
             .unwrap_or_default();
-        let places = WorldStore::open_for_project(&root)
+        let mut places = WorldStore::open_for_project(&root)
             .ok()
             .and_then(|ws| ws.list_place_links().ok())
             .unwrap_or_default();
+        let mut minerals = minerals;
+        if let Some(d) = def.as_ref() {
+            places.extend(crate::world::fact_check::declared_places(d));
+            minerals.extend(d.declared_minerals());
+        }
         let ctx = WorldContext::new(Gazetteer::new(places), moons, minerals);
         Some((doc.id, check_paragraph(&text, &ledger, &[], Some(&ctx))))
     }
@@ -10913,10 +10919,13 @@ impl App {
         }
         .map(|g| g.minerals.iter().map(|m| m.mineral.clone()).collect())
         .unwrap_or_default();
-        let places = WorldStore::open_for_project(&root)
+        let mut places = WorldStore::open_for_project(&root)
             .ok()
             .and_then(|ws| ws.list_place_links().ok())
             .unwrap_or_default();
+        places.extend(crate::world::fact_check::declared_places(&def));
+        let mut minerals = minerals;
+        minerals.extend(def.declared_minerals());
         Some((ledger, WorldContext::new(Gazetteer::new(places), moons, minerals)))
     }
 

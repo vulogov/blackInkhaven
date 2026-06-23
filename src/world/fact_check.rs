@@ -48,6 +48,29 @@ impl Gazetteer {
     }
 }
 
+/// Gazetteer entries for the author-declared landmarks in the world definition:
+/// any `geography.landmark` with a name becomes a resolvable place (its
+/// `climate_zone` / `population` feed the climate + demographics checks; absent
+/// coordinates default to 0). Merged with the stored compiler Places so the
+/// fact-checker resolves both.
+pub fn declared_places(def: &crate::world::types::WorldDefinition) -> Vec<PlaceLink> {
+    let Some(geo) = def.geography.as_ref() else { return Vec::new() };
+    geo.landmarks
+        .iter()
+        .filter(|l| !l.name.trim().is_empty())
+        .map(|l| PlaceLink {
+            place_id: uuid::Uuid::nil(),
+            name: l.name.clone(),
+            biome: l.climate_zone.clone(),
+            climate_zone: l.climate_zone.clone(),
+            hydrology_basis: l.kind.clone(),
+            population: l.population,
+            x: 0,
+            y: 0,
+        })
+        .collect()
+}
+
 /// The world data the fact-checker needs beyond the magic ledger: the gazetteer
 /// (place names → world data) and the astronomy facts (moon names). Bundled so
 /// new world-data categories don't keep changing the check signature.
@@ -596,6 +619,43 @@ mod tests {
         // "Korthun" must not match inside another word.
         assert_eq!(g.mentioned_in("the Korthuns").len(), 0);
         assert_eq!(g.mentioned_in("near Korthun, north").len(), 1);
+    }
+
+    #[test]
+    fn declared_geography_and_economy_feed_the_checker() {
+        let body = r#"{
+            name: "T"
+            seed: 1
+            astronomy: {
+                star: { luminosity_solar: 1.0 }
+                planet: { mass_earth: 1.0, radius_earth: 1.0, axial_tilt_deg: 23.4, day_length_hours: 24.0 }
+                orbit: { semi_major_axis_au: 1.0 }
+                calendar: { months: 12, month_length_days: 30 }
+            }
+            geology: { generated: { notable_minerals: ["iron", "Tin"] } }
+            economy: { resources: ["petroleum", "iron"] }
+            geography: {
+                landmarks: [
+                    { name: "Cairo", kind: "city", climate_zone: "hot_desert", population: 9000000 }
+                ]
+            }
+        }"#;
+        let def = crate::world::types::WorldDefinition::from_hjson(body).unwrap();
+        // declared_minerals: deduped + lowercased union of geology + economy.
+        let m = def.declared_minerals();
+        assert!(m.contains(&"iron".to_string()));
+        assert!(m.contains(&"tin".to_string()));
+        assert!(m.contains(&"petroleum".to_string()));
+        assert_eq!(m.iter().filter(|x| *x == "iron").count(), 1, "deduped");
+        // declared_places: the landmark becomes a gazetteer entry.
+        let places = declared_places(&def);
+        assert_eq!(places.len(), 1);
+        assert_eq!(places[0].name, "Cairo");
+        assert_eq!(places[0].climate_zone, "hot_desert");
+        // …and resolves a climate anomaly by name.
+        let ctx = WorldContext::new(Gazetteer::new(places), vec![], def.declared_minerals());
+        let f = check_paragraph("Snow fell on Cairo for three days.", &empty_ledger(), &[], Some(&ctx));
+        assert!(f.iter().any(|f| f.category == "climate"), "got {f:?}");
     }
 
     #[test]

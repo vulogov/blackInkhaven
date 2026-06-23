@@ -245,6 +245,106 @@ pub fn materialize_magic(
     Ok(report)
 }
 
+/// Materialize the author-declared **Setting** — geography, hydrology, economy,
+/// and any expanded-geology notes — into a `Setting` chapter of the World book.
+/// A no-op (empty report) when the definition declares none of these blocks, so
+/// it's safe to call unconditionally after a compile.
+pub fn materialize_setting(
+    store: &Store,
+    cfg: &Config,
+    def: &crate::world::types::WorldDefinition,
+) -> Result<MaterializeReport> {
+    let mut report = MaterializeReport { chapter: "Setting".into(), ..Default::default() };
+    let geo_notes = def
+        .geology
+        .as_ref()
+        .and_then(|g| g.generated.as_ref())
+        .filter(|g| !g.volcanism.is_empty() || !g.mineral_richness.is_empty() || !g.notable_minerals.is_empty());
+    if def.geography.is_none() && def.hydrology.is_none() && def.economy.is_none() && geo_notes.is_none() {
+        return Ok(report);
+    }
+    let world = world_book(store)?;
+    let chapter = ensure_chapter(store, cfg, &world, "Setting")?;
+
+    let mut sections: Vec<(&str, String)> = Vec::new();
+
+    if let Some(g) = def.geography.as_ref() {
+        let mut s = String::new();
+        if !g.regions.is_empty() {
+            s.push_str("= Regions\n\n");
+            for r in &g.regions {
+                let bits = [r.climate.as_str(), r.biome.as_str()].iter().filter(|x| !x.is_empty()).cloned().collect::<Vec<_>>().join(", ");
+                s.push_str(&format!("- *{}*{}{}\n", r.name, if bits.is_empty() { String::new() } else { format!(" — {bits}") }, if r.description.is_empty() { String::new() } else { format!(". {}", r.description) }));
+            }
+            s.push('\n');
+        }
+        if !g.landmarks.is_empty() {
+            s.push_str("= Landmarks\n\n");
+            for l in &g.landmarks {
+                let pop = if l.population > 0 { format!(", pop {}", l.population) } else { String::new() };
+                s.push_str(&format!("- *{}* ({}{}{}){}\n", l.name, l.kind, if l.climate_zone.is_empty() { String::new() } else { format!(", {}", l.climate_zone) }, pop, if l.description.is_empty() { String::new() } else { format!(" — {}", l.description) }));
+            }
+        }
+        sections.push(("Geography", s));
+    }
+
+    if let Some(h) = def.hydrology.as_ref() {
+        let mut s = String::new();
+        if !h.rainfall.is_empty() {
+            s.push_str(&format!("Rainfall: {}.\n\n", h.rainfall));
+        }
+        for (label, waters) in [("Rivers", &h.rivers), ("Lakes", &h.lakes), ("Seas", &h.seas)] {
+            if !waters.is_empty() {
+                s.push_str(&format!("= {label}\n\n"));
+                for w in waters {
+                    s.push_str(&format!("- *{}*{}\n", w.name, if w.description.is_empty() { String::new() } else { format!(" — {}", w.description) }));
+                }
+                s.push('\n');
+            }
+        }
+        sections.push(("Hydrology", s));
+    }
+
+    if let Some(e) = def.economy.as_ref() {
+        let mut s = String::new();
+        if !e.tech_level.is_empty() {
+            s.push_str(&format!("Technology level: {}.\n", e.tech_level));
+        }
+        if !e.currency.is_empty() {
+            s.push_str(&format!("Currency: {}.\n", e.currency));
+        }
+        if !e.trade_goods.is_empty() {
+            s.push_str(&format!("Trade goods: {}.\n", e.trade_goods.join(", ")));
+        }
+        if !e.resources.is_empty() {
+            s.push_str(&format!("Resources: {}.\n", e.resources.join(", ")));
+        }
+        sections.push(("Economy", s));
+    }
+
+    if let Some(g) = geo_notes {
+        let mut s = String::new();
+        if !g.volcanism.is_empty() {
+            s.push_str(&format!("Volcanism: {}.\n", g.volcanism));
+        }
+        if !g.mineral_richness.is_empty() {
+            s.push_str(&format!("Mineral wealth: {}.\n", g.mineral_richness));
+        }
+        if !g.notable_minerals.is_empty() {
+            s.push_str(&format!("Notable minerals: {}.\n", g.notable_minerals.join(", ")));
+        }
+        sections.push(("Geology Notes", s));
+    }
+
+    for (title, body) in sections {
+        match ensure_paragraph(store, cfg, &chapter, title, body.trim_end())? {
+            Outcome::Created => report.created.push(title.into()),
+            Outcome::Updated => report.updated.push(title.into()),
+        }
+    }
+    Ok(report)
+}
+
 /// Render the normalised heightmap as an 8-bit grayscale PNG asset.
 fn write_heightmap_png(root: &Path, out: &GeologyOutput) -> Result<PathBuf> {
     let dir = root.join("assets").join("world");

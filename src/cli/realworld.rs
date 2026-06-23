@@ -75,7 +75,7 @@ pub fn fact_check(
     // Build the world context: the gazetteer (world-linked Places) lets the
     // climate + demographics checks resolve place names; the moon names feed the
     // astronomy check.
-    let places = crate::world::storage::WorldStore::open_for_project(project)
+    let mut places = crate::world::storage::WorldStore::open_for_project(project)
         .ok()
         .and_then(|ws| ws.list_place_links().ok())
         .unwrap_or_default();
@@ -89,11 +89,16 @@ pub fn fact_check(
                 .collect()
         })
         .unwrap_or_default();
-    let minerals: Vec<String> = def
+    let mut minerals: Vec<String> = def
         .as_ref()
         .and_then(|d| geology_for(project, d).ok())
         .map(|g| g.minerals.iter().map(|m| m.mineral.clone()).collect())
         .unwrap_or_default();
+    // Merge author-declared geography landmarks + economy/geology resources.
+    if let Some(d) = def.as_ref() {
+        places.extend(crate::world::fact_check::declared_places(d));
+        minerals.extend(d.declared_minerals());
+    }
     let world_ctx = if !places.is_empty() || !moons.is_empty() || !minerals.is_empty() {
         Some(crate::world::fact_check::WorldContext::new(
             crate::world::fact_check::Gazetteer::new(places.clone()),
@@ -170,15 +175,17 @@ pub(crate) fn slow_track_for_tui(
 
     let def = load(project).map_err(|e| e.to_string())?;
     let ledger = def.magic.clone().unwrap_or_default();
-    let places = WorldStore::open_for_project(project)
+    let mut places = WorldStore::open_for_project(project)
         .ok()
         .and_then(|ws| ws.list_place_links().ok())
         .unwrap_or_default();
+    places.extend(crate::world::fact_check::declared_places(&def));
     let moons: Vec<String> =
         compile_astronomy(&def.astronomy).moons.iter().map(|m| m.name.clone()).collect();
-    let minerals: Vec<String> = geology_for(project, &def)
+    let mut minerals: Vec<String> = geology_for(project, &def)
         .map(|g| g.minerals.iter().map(|m| m.mineral.clone()).collect())
         .unwrap_or_default();
+    minerals.extend(def.declared_minerals());
 
     let ctx = WorldContext::new(Gazetteer::new(places.clone()), moons.clone(), minerals.clone());
     let fast = check_paragraph(prose, &ledger, &[], Some(&ctx));
@@ -318,15 +325,17 @@ fn coherence(project: &Path, node_id: &str, max_cost: usize, force: bool) -> Res
     // World context (coherence needs a world.hjson, like the slow track).
     let def = load(project)?;
     let ledger = def.magic.clone().unwrap_or_default();
-    let places = WorldStore::open_for_project(project)
+    let mut places = WorldStore::open_for_project(project)
         .ok()
         .and_then(|ws| ws.list_place_links().ok())
         .unwrap_or_default();
+    places.extend(crate::world::fact_check::declared_places(&def));
     let moons: Vec<String> =
         crate::world::compile::compile_astronomy(&def.astronomy).moons.iter().map(|m| m.name.clone()).collect();
-    let minerals: Vec<String> = geology_for(project, &def)
+    let mut minerals: Vec<String> = geology_for(project, &def)
         .map(|g| g.minerals.iter().map(|m| m.mineral.clone()).collect())
         .unwrap_or_default();
+    minerals.extend(def.declared_minerals());
 
     let summary = world_summary(&def, &places, &moons, &minerals);
     let magic = magic_summary(&ledger);
@@ -985,7 +994,11 @@ fn compile_demographics_cli(project: &Path, json: bool, materialize: bool) -> Re
         layout.require_initialized()?;
         let cfg = Config::load_layered(&layout.config_path())?;
         let store = Store::open(layout, &cfg)?;
-        Some(crate::world::materialize::materialize_demographics(&store, &cfg, &out)?)
+        let r = crate::world::materialize::materialize_demographics(&store, &cfg, &out)?;
+        // Demographics is the terminal layer of a full compile — also flush the
+        // author-declared Setting (geography / hydrology / economy) here.
+        let _ = crate::world::materialize::materialize_setting(&store, &cfg, &def)?;
+        Some(r)
     } else {
         None
     };

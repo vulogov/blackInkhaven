@@ -225,6 +225,17 @@
 >   Extracted `slow_llm_call` (shared daily-cap/provider/preflight/retry/record)
 >   now backs both the per-paragraph track and `realworld coherence <node>
 >   [--max-cost] [--force]`. +2 tests. tests 1649→1651.
+> - **P2.x/P7.2 — author-declared setting blocks (UNRELEASED, 1.3.27-dev).**
+>   The definition gains optional `geography` (regions + landmarks), `hydrology`
+>   (named rivers/lakes/seas + rainfall), and `economy` (tech/currency/trade/
+>   resources) blocks, plus expanded `geology` knobs (volcanism, mineral_richness,
+>   notable_minerals). Two *real* hooks, not decoration: `declared_minerals`
+>   (geology + economy resources) extends the economy fact-check's known goods,
+>   and `declared_places` turns geography landmarks into gazetteer entries the
+>   checker resolves by name (verified: "Snow fell on Cairo" flags against its
+>   declared hot_desert zone). `materialize_setting` writes a Setting chapter
+>   (Geography/Hydrology/Economy/Geology Notes) into the World book on compile.
+>   Earth.hjson now exercises all of them. +1 test. tests 1657→1658.
 > - **P7.1 — `examples/realworld/Earth.hjson` (UNRELEASED, 1.3.27-dev) → DEFERRED
 >   DELIVERABLE DONE.** A complete, heavily-commented real-Sun/Earth/Moon
 >   definition (exact astronomy; Earth-tuned procedural geology at `sea_level`
