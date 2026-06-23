@@ -1610,6 +1610,13 @@ pub(crate) struct App {
     /// same prose triggers at most one slow call).
     slow_auto_para: Option<Uuid>,
     fc_slow_last_fp: Option<(Uuid, u64)>,
+    /// INNER_SOCRATES-1 — opt-in ambient Fast track: when on, a writing pause runs
+    /// the Socratic Fast track on the open paragraph into Output (off by default;
+    /// toggled with `Ctrl+B J` → `A`). `socr_last_fp` debounces it.
+    socratic_auto: bool,
+    socr_last_fp: Option<(Uuid, u64)>,
+    socr_activity_at: Option<std::time::Instant>,
+    socr_needs_check: bool,
     tree_cursor: usize,
     tree_scroll: usize,
 
@@ -2226,6 +2233,10 @@ impl App {
             slow_auto: false,
             slow_auto_para: None,
             fc_slow_last_fp: None,
+            socratic_auto: false,
+            socr_last_fp: None,
+            socr_activity_at: None,
+            socr_needs_check: false,
             output_expanded: std::collections::HashSet::new(),
             tree_cursor: 0,
             tree_scroll: 0,
@@ -2508,6 +2519,7 @@ impl App {
             self.tick_crash_mirror();
             self.tick_health_pump();
             self.tick_fact_check();
+            self.tick_inner_socrates();
             // 1.2.9+ — close the TTS playback modal as
             // soon as the engine reports it's idle, so
             // the modal disappears when the paragraph
@@ -6791,6 +6803,7 @@ impl App {
             KeyCode::Char('G') => self.output_selected = n.saturating_sub(1),
             KeyCode::Char('d') if plain => {
                 if let Some(m) = msgs.get(self.output_selected) {
+                    self.record_socratic_dismissal(m);
                     if let Some(s) = crate::pane::output::active() {
                         let _ = s.dismiss(m.id);
                     }
@@ -9330,6 +9343,7 @@ impl App {
             A::OpenStoryBible => self.open_story_bible(),
             A::OpenConlangHub => self.open_conlang_hub(),
             A::OpenWorldOverview => self.open_world_overview(),
+            A::OpenInnerSocratesOverview => self.open_inner_socrates_overview(),
             A::RunDeepRefresh => self.start_deep_refresh(),
             A::OpenLlmPicker => self.open_llm_picker(),
             A::ToggleSound => self.toggle_sound(),
@@ -11160,6 +11174,373 @@ impl App {
         }
         if actionable > 0 {
             self.status = format!("⚠ fact-check: {actionable} finding(s) in this ¶ — ^B Tab → Output");
+        }
+    }
+
+    // ── INNER_SOCRATES-1 (Ctrl+B J) ─────────────────────────────────────────────
+
+    /// `Ctrl+B J` — open the Inner Socrates overview (active persona, recent
+    /// questions, the intent ledger).
+    fn open_inner_socrates_overview(&mut self) {
+        let rows = self.build_inner_socrates_rows();
+        self.modal = Modal::InnerSocratesOverview { rows, cursor: 0 };
+        self.status =
+            "Inner Socrates · F fast-check ¶ · S persona · L ledger · A auto · Esc".into();
+    }
+
+    fn build_inner_socrates_rows(&self) -> Vec<String> {
+        use crate::inner_socrates::storage::InnerSocratesStore;
+        let persona = crate::inner_socrates::personas::active(self.store.project_root());
+        let mut rows = vec![
+            format!("Active persona: {}", persona.name),
+            format!("  {}", persona.voice_summary),
+            String::new(),
+            format!("Ambient auto-check: {}", if self.socratic_auto { "ON" } else { "off (A toggles)" }),
+            String::new(),
+        ];
+        if let Ok(s) = InnerSocratesStore::open_for_project(self.store.project_root()) {
+            let findings = s.list_findings().unwrap_or_default();
+            let intents = s.list_intents().unwrap_or_default();
+            rows.push(format!("Intent ledger: {} entry(ies)", intents.len()));
+            rows.push(String::new());
+            if findings.is_empty() {
+                rows.push("No questions recorded yet.".into());
+                rows.push("Press F to fast-check the open paragraph.".into());
+            } else {
+                rows.push(format!("Recent questions ({} shown):", findings.len().min(12)));
+                for sf in findings.iter().take(12) {
+                    rows.push(format!("  [{}] {}", sf.finding.category.label(), sf.finding.question));
+                }
+            }
+        }
+        rows.push(String::new());
+        rows.push("Inner Socrates asks questions; it never edits your prose.".into());
+        rows
+    }
+
+    fn inner_socrates_overview_handle_key(&mut self, key: KeyEvent) -> bool {
+        let n = match &self.modal {
+            Modal::InnerSocratesOverview { rows, .. } => rows.len(),
+            _ => return false,
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "Inner Socrates: closed".into();
+            }
+            KeyCode::Up => {
+                if let Modal::InnerSocratesOverview { cursor, .. } = &mut self.modal {
+                    *cursor = cursor.saturating_sub(1);
+                }
+            }
+            KeyCode::Down => {
+                if let Modal::InnerSocratesOverview { cursor, .. } = &mut self.modal {
+                    if n > 0 {
+                        *cursor = (*cursor + 1).min(n - 1);
+                    }
+                }
+            }
+            KeyCode::Char('f') | KeyCode::Char('F') => self.socratic_check_open_paragraph(),
+            KeyCode::Char('l') | KeyCode::Char('L') => self.socratic_view_ledger(),
+            KeyCode::Char('s') | KeyCode::Char('S') => self.socratic_cycle_persona(),
+            KeyCode::Char('c') | KeyCode::Char('C') => self.socratic_open_conversation(),
+            KeyCode::Char('n') | KeyCode::Char('N') => self.socratic_persona_wizard(),
+            KeyCode::Char('a') | KeyCode::Char('A') => {
+                self.socratic_auto = !self.socratic_auto;
+                self.socr_last_fp = None;
+                self.status = if self.socratic_auto {
+                    "Inner Socrates ambient auto-check ON — runs on a writing pause".into()
+                } else {
+                    "Inner Socrates ambient auto-check off".into()
+                };
+                let rows = self.build_inner_socrates_rows();
+                if let Modal::InnerSocratesOverview { rows: r, cursor } = &mut self.modal {
+                    *r = rows;
+                    *cursor = 0;
+                }
+            }
+            _ => {}
+        }
+        true
+    }
+
+    /// `Ctrl+B J` → `F` — run the Socratic Fast track over the open paragraph and
+    /// surface the questions in Output (flips you there).
+    fn socratic_check_open_paragraph(&mut self) {
+        let Some((id, findings)) = self.collect_socratic_findings() else {
+            self.status = "Inner Socrates: no paragraph open".into();
+            return;
+        };
+        self.persist_and_emit_socratic(id, &findings);
+        if findings.is_empty() {
+            self.status = "Inner Socrates: no questions for this ¶".into();
+            return;
+        }
+        self.modal = Modal::None;
+        self.output_selected = 0;
+        self.change_focus(Focus::Ai);
+        self.right_pane = RightPane::Output;
+        self.status = format!("Inner Socrates: {} question(s) → Output (^B Tab)", findings.len());
+    }
+
+    /// Build the world-ledger context and run the Socratic Fast track over the
+    /// open paragraph. Returns `(paragraph_id, findings)`.
+    fn collect_socratic_findings(
+        &self,
+    ) -> Option<(Uuid, Vec<crate::inner_socrates::types::SocraticFinding>)> {
+        use crate::inner_socrates::fast;
+        use crate::inner_socrates::intent::FindingContext;
+        use crate::inner_socrates::storage::InnerSocratesStore;
+        let doc = self.opened.as_ref()?;
+        let id = doc.id;
+        let text = doc.textarea.lines().join("\n");
+        let ledger = InnerSocratesStore::open_for_project(self.store.project_root())
+            .ok()
+            .and_then(|s| s.load_ledger().ok())
+            .unwrap_or_default();
+        let persona = crate::inner_socrates::personas::active(self.store.project_root());
+        let chapter = self.socratic_chapter_of(Some(id));
+        let ctx = FindingContext {
+            paragraph_id: Some(id.to_string()),
+            chapter_id: (!chapter.is_empty()).then_some(chapter),
+            ..Default::default()
+        };
+        Some((id, fast::check_paragraph(&text, &persona, &ledger, &ctx)))
+    }
+
+    /// Replace a paragraph's prior Socratic findings (Output + store) with `findings`.
+    fn persist_and_emit_socratic(
+        &self,
+        id: Uuid,
+        findings: &[crate::inner_socrates::types::SocraticFinding],
+    ) {
+        use crate::inner_socrates::output::emit_finding;
+        use crate::inner_socrates::storage::InnerSocratesStore;
+        self.clear_socratic_warnings(id);
+        let store = InnerSocratesStore::open_for_project(self.store.project_root()).ok();
+        if let Some(s) = store.as_ref() {
+            let _ = s.clear_findings_for_paragraph(id);
+        }
+        for f in findings {
+            if let Some(s) = store.as_ref() {
+                let _ = s.insert_finding(f, Some(id), None);
+            }
+            emit_finding(f, Some(id));
+        }
+    }
+
+    /// When the author dismisses a `socratic_inquiry` Output message, record the
+    /// dismissal so the promotion mechanism can suggest declaring it as intent
+    /// once a pattern accumulates. Surfaces a hint at the threshold.
+    fn record_socratic_dismissal(&mut self, m: &crate::pane::output::Message) {
+        use crate::inner_socrates::storage::InnerSocratesStore;
+        use crate::inner_socrates::types::Category;
+        if m.kind != crate::pane::output::kinds::SOCRATIC_INQUIRY {
+            return;
+        }
+        let Some(category) =
+            m.metadata.get("category").and_then(|c| c.as_str()).and_then(Category::from_id)
+        else {
+            return;
+        };
+        let chapter = self.socratic_chapter_of(m.source_paragraph_id);
+        let Ok(store) = InnerSocratesStore::open_for_project(self.store.project_root()) else {
+            return;
+        };
+        let _ = store.record_dismissal(category, &chapter);
+        if let Ok(cands) = store.promotion_candidates(5) {
+            if cands.iter().any(|c| c.category == category && c.chapter_id == chapter) {
+                self.status = format!(
+                    "You've dismissed several {} findings — `inner-socrates suggestions` can declare it as intent",
+                    category.label()
+                );
+            }
+        }
+    }
+
+    /// The chapter slug containing a paragraph (`""` if none / unknown).
+    fn socratic_chapter_of(&self, paragraph_id: Option<Uuid>) -> String {
+        paragraph_id
+            .and_then(|pid| self.hierarchy.get(pid))
+            .and_then(|n| {
+                self.hierarchy
+                    .ancestors(n)
+                    .into_iter()
+                    .find(|a| a.kind == crate::store::node::NodeKind::Chapter)
+                    .map(|c| c.slug.clone())
+            })
+            .unwrap_or_default()
+    }
+
+    /// Clear a paragraph's `socratic_inquiry` messages from Output (a re-check
+    /// replaces them).
+    fn clear_socratic_warnings(&self, para_id: Uuid) {
+        if let Some(s) = crate::pane::output::active() {
+            if let Ok(msgs) = s.by_kind(crate::pane::output::kinds::SOCRATIC_INQUIRY) {
+                for m in msgs.iter().filter(|m| m.source_paragraph_id == Some(para_id)) {
+                    let _ = s.dismiss(m.id);
+                }
+            }
+        }
+    }
+
+    /// `Ctrl+B J` → `C` — open a Socratic **conversation**: seed the AI pane with
+    /// the active persona's voice and the open paragraph's questions, then hand
+    /// the author the prompt. The persona discusses; it never rewrites the prose.
+    fn socratic_open_conversation(&mut self) {
+        let root = self.store.project_root().to_path_buf();
+        let persona = crate::inner_socrates::personas::active(&root);
+        let findings = self.collect_socratic_findings().map(|(_, f)| f).unwrap_or_default();
+        let questions = if findings.is_empty() {
+            "(no open questions on this paragraph yet)".to_string()
+        } else {
+            findings
+                .iter()
+                .map(|f| format!("- [{}] {}", f.category.label(), f.question))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let prologue = format!(
+            "{SOCRATIC_SEED_MARKER}Reader persona: {} — {}\n{}\n\nQuestions raised about the open \
+             paragraph:\n{}\n\nDiscuss these with the author in this persona's voice. You ask \
+             questions; you never prescribe changes and never rewrite their prose.",
+            persona.name, persona.voice_summary, persona.voice_notes, questions,
+        );
+        let opening = match findings.first() {
+            Some(f) => format!("A few things to consider here. {}", f.question),
+            None => format!("I'm reading as {}. Show me what you'd like to examine.", persona.name),
+        };
+        self.seed_socratic_chat(prologue, opening);
+        self.modal = Modal::None;
+        self.right_pane = RightPane::Ai;
+        self.change_focus(Focus::AiPrompt);
+        self.status = format!("Socratic conversation · {} · F9 to exit", persona.name);
+    }
+
+    /// `Ctrl+B J` → `N` — the persona authoring wizard: seed the AI pane to guide
+    /// the author through designing a new Reader Persona.
+    fn socratic_persona_wizard(&mut self) {
+        let prologue = format!(
+            "{SOCRATIC_SEED_MARKER}You are helping the author design a new Reader Persona for \
+             Inkhaven's examined-authorship tool. A persona is a careful-reader perspective with a \
+             voice and per-category emphasis weights. Ask the author about the reader they want to \
+             imagine — what attention it brings, what it instinctively notices, what it avoids, how \
+             it handles pushback. When you have enough, propose an HJSON persona file with fields \
+             id, name, voice_summary, voice_notes, and emphasis (category id -> weight). You never \
+             write the author's prose.",
+        );
+        let opening = "Let's design a new reader. Tell me about the reader you want to imagine — \
+                       what kind of attention do they bring to a page?"
+            .to_string();
+        self.seed_socratic_chat(prologue, opening);
+        self.modal = Modal::None;
+        self.right_pane = RightPane::Ai;
+        self.change_focus(Focus::AiPrompt);
+        self.status = "Persona wizard · describe your reader · F9 to exit".into();
+    }
+
+    /// Seed the AI chat with a Socratic prologue + an opening line, replacing any
+    /// prior Socratic seed (so re-entering swaps rather than stacks).
+    fn seed_socratic_chat(&mut self, prologue: String, opening: String) {
+        if let Some(i) = self.chat_history.iter().position(
+            |t| matches!(t, ChatTurn::User(s) if s.starts_with(SOCRATIC_SEED_MARKER)),
+        ) {
+            if self.chat_history.get(i + 1).is_some_and(|t| matches!(t, ChatTurn::Assistant(_))) {
+                self.chat_history.remove(i + 1);
+            }
+            self.chat_history.remove(i);
+        }
+        let mut seeded = vec![ChatTurn::User(prologue), ChatTurn::Assistant(opening)];
+        seeded.append(&mut self.chat_history);
+        self.chat_history = seeded;
+        self.chat_history_scroll = 0;
+    }
+
+    /// `Ctrl+B J` → `S` — cycle to the next available Reader Persona and persist
+    /// it. (A full picker is a later refinement; cycling is immediate and clear.)
+    fn socratic_cycle_persona(&mut self) {
+        use crate::inner_socrates::storage::InnerSocratesStore;
+        let root = self.store.project_root().to_path_buf();
+        let all = crate::inner_socrates::personas::load_all(&root);
+        if all.is_empty() {
+            return;
+        }
+        let active = crate::inner_socrates::personas::active(&root).id;
+        let cur = all.iter().position(|p| p.id == active).unwrap_or(0);
+        let next = &all[(cur + 1) % all.len()];
+        if let Ok(s) = InnerSocratesStore::open_for_project(&root) {
+            let _ = s.set_active_persona(&next.id);
+        }
+        self.status = format!("Inner Socrates persona: {} — {}", next.name, next.voice_summary);
+        let rows = self.build_inner_socrates_rows();
+        if let Modal::InnerSocratesOverview { rows: r, cursor } = &mut self.modal {
+            *r = rows;
+            *cursor = 0;
+        }
+    }
+
+    /// `Ctrl+B J` → `L` — show the intent ledger in the overview modal.
+    fn socratic_view_ledger(&mut self) {
+        use crate::inner_socrates::storage::InnerSocratesStore;
+        let entries = InnerSocratesStore::open_for_project(self.store.project_root())
+            .ok()
+            .and_then(|s| s.list_intents().ok())
+            .unwrap_or_default();
+        let mut rows = vec!["Intent ledger".to_string(), String::new()];
+        if entries.is_empty() {
+            rows.push("(no entries yet — a declared intent suppresses matching questions)".into());
+        } else {
+            for e in &entries {
+                let cats: Vec<&str> = e.coverage.iter().map(|c| c.label()).collect();
+                rows.push(format!("{} [{}] · covers {}", e.id, e.kind.id(), cats.join(", ")));
+                if !e.description.is_empty() {
+                    rows.push(format!("  {}", e.description));
+                }
+            }
+        }
+        rows.push(String::new());
+        rows.push("Esc closes.".into());
+        self.modal = Modal::InnerSocratesOverview { rows, cursor: 0 };
+        self.status = "Inner Socrates ledger · Esc".into();
+    }
+
+    /// Ambient Socratic Fast track: a writing pause runs the check into Output,
+    /// without stealing focus. Opt-in via the overview's `A` toggle; debounced
+    /// 5 s, mirroring the WORLD-4 fact-check tick.
+    fn tick_inner_socrates(&mut self) {
+        if !self.socratic_auto {
+            return;
+        }
+        let fp = self.opened.as_ref().map(content_fingerprint);
+        if fp != self.socr_last_fp {
+            self.socr_last_fp = fp;
+            self.socr_activity_at = fp.map(|_| std::time::Instant::now());
+            self.socr_needs_check = fp.is_some();
+            return;
+        }
+        if self.socr_needs_check && matches!(self.modal, Modal::None) {
+            if let Some(t) = self.socr_activity_at {
+                if t.elapsed() >= std::time::Duration::from_secs(5) {
+                    self.socr_needs_check = false;
+                    self.auto_socratic_check();
+                }
+            }
+        }
+    }
+
+    /// Run the Socratic Fast track silently into Output (no focus change).
+    fn auto_socratic_check(&mut self) {
+        let Some((id, findings)) = self.collect_socratic_findings() else {
+            return;
+        };
+        self.persist_and_emit_socratic(id, &findings);
+        let actionable = findings
+            .iter()
+            .filter(|f| f.severity != crate::inner_socrates::types::Severity::Notice)
+            .count();
+        if actionable > 0 {
+            self.status =
+                format!("\u{25c7} Inner Socrates: {actionable} question(s) in this ¶ — ^B Tab → Output");
         }
     }
 
@@ -18997,6 +19378,10 @@ impl App {
             self.world_overview_handle_key(key);
             return Ok(false);
         }
+        if matches!(self.modal, Modal::InnerSocratesOverview { .. }) {
+            self.inner_socrates_overview_handle_key(key);
+            return Ok(false);
+        }
         if matches!(self.modal, Modal::WorldProposals { .. }) {
             self.world_proposals_handle_key(key);
             return Ok(false);
@@ -24072,6 +24457,9 @@ pub(super) const TRANSLATION_BEGIN: &str = "<<<TRANSLATION>>>";
 /// the seed); it also reads as a clear "this is the loaded facts
 /// reference" label in the AI pane.
 pub(crate) const FACTS_SEED_MARKER: &str = "⟦Facts⟧ ";
+/// INNER_SOCRATES-1 — marks the seed turn of a Socratic conversation / persona
+/// wizard, so re-entering swaps the seed rather than stacking another.
+pub(crate) const SOCRATIC_SEED_MARKER: &str = "⟦Socrates⟧ ";
 
 /// 1.2.21+ — one-line framing prepended to the seeded Facts user turn.
 pub(crate) fn facts_seed_intro(lang_iso: &str) -> &'static str {

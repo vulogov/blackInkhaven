@@ -4812,6 +4812,63 @@ impl super::super::App {
         );
     }
 
+    /// INNER_SOCRATES-1 — the `Ctrl+B J` overview (active persona, recent
+    /// questions, the intent ledger). Same scrollable shape as the World overview.
+    pub(in crate::tui::app) fn draw_inner_socrates_overview_modal(
+        &mut self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        use ratatui::style::Color;
+        let Modal::InnerSocratesOverview { rows, cursor } = &self.modal else {
+            return;
+        };
+
+        let width = area.width.saturating_sub(6).clamp(48, 86);
+        let height = area.height.saturating_sub(4).max(12);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Inner Socrates ")
+            .border_style(Style::default().fg(self.theme.modal_border).add_modifier(Modifier::BOLD))
+            .style(Style::default().bg(self.theme.modal_bg).fg(self.theme.modal_fg));
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let list_h = inner.height.saturating_sub(1).max(1) as usize;
+        let body_rect = Rect { x: inner.x, y: inner.y, width: inner.width, height: list_h as u16 };
+        let footer_rect =
+            Rect { x: inner.x, y: inner.y + inner.height - 1, width: inner.width, height: 1 };
+
+        let cur = (*cursor).min(rows.len().saturating_sub(1));
+        let start = if cur >= list_h { cur + 1 - list_h } else { 0 };
+        let mut lines: Vec<Line> = Vec::new();
+        for r in rows.iter().skip(start).take(list_h) {
+            let is_header = !r.is_empty() && !r.starts_with(' ');
+            let line = if is_header {
+                Line::from(Span::styled(
+                    r.clone(),
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                ))
+            } else {
+                Line::from(Span::styled(truncate_to(r, 80), Style::default()))
+            };
+            lines.push(line);
+        }
+        f.render_widget(Paragraph::new(lines), body_rect);
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                " ↑↓ · F check · C converse · N new persona · S persona · L ledger · A auto · Esc ",
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
     /// WORLD-4 — the proposal queue (`Ctrl+B W` → `P`): the compiler's pending
     /// Place proposals. Two lines each (name + class, then rationale); the
     /// selected one is marked. `Enter` accepts, `r` rejects.
