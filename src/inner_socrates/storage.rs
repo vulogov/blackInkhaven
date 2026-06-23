@@ -32,6 +32,13 @@ const INIT_SQL: &str = "
     );
     CREATE INDEX IF NOT EXISTS idx_sf_para ON socratic_findings(paragraph_id);
 
+    -- The active Reader Persona for this project (one row).
+    CREATE TABLE IF NOT EXISTS active_persona (
+        singleton  INTEGER NOT NULL PRIMARY KEY DEFAULT 1,
+        persona_id TEXT    NOT NULL,
+        selected_at BIGINT NOT NULL
+    );
+
     -- Slow-track LLM usage, per day per sub-budget (RFC §3.14 — separate from
     -- WORLD-4's tally).
     CREATE TABLE IF NOT EXISTS inner_socrates_llm_usage (
@@ -222,6 +229,22 @@ impl InnerSocratesStore {
     /// The intent ledger, loaded for consultation.
     pub fn load_ledger(&self) -> Result<IntentLedger> {
         Ok(IntentLedger { entries: self.list_intents()? })
+    }
+
+    // ── active persona ──────────────────────────────────────────────────────────
+
+    /// The active persona id for this project, if one has been chosen.
+    pub fn active_persona_id(&self) -> Result<Option<String>> {
+        let rows = self.engine.select_all("SELECT persona_id FROM active_persona WHERE singleton = 1")?;
+        Ok(rows.first().map(|r| text(r.first())).filter(|s| !s.is_empty()))
+    }
+
+    /// Set the active persona (idempotent on the singleton row).
+    pub fn set_active_persona(&self, persona_id: &str) -> Result<()> {
+        self.engine.execute_with(
+            "INSERT OR REPLACE INTO active_persona (singleton, persona_id, selected_at) VALUES (1, ?, ?)",
+            &[&persona_id, &now_secs()],
+        )
     }
 
     // ── LLM usage (sub-budgeted) ────────────────────────────────────────────────

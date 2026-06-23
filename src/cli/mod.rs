@@ -3661,6 +3661,20 @@ pub enum InnerSocratesCommand {
     /// List the intent ledger (the deliberate authorial choices the interrogator
     /// respects).
     Ledger,
+    /// Reader Personas — the careful-reader perspectives you switch between.
+    #[command(subcommand)]
+    Persona(PersonaCommand),
+}
+
+/// INNER_SOCRATES-1 — the Reader Persona surface.
+#[derive(Debug, Subcommand)]
+pub enum PersonaCommand {
+    /// List available personas (bundled + user + project), marking the active one.
+    List,
+    /// Show one persona's voice and category emphasis.
+    Show { id: String },
+    /// Make a persona active for this project.
+    Activate { id: String },
 }
 
 /// WORLD-4 — the proposal queue surface (RFC §8.9). Accepting a proposal commits
