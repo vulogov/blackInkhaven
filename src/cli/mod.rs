@@ -3545,6 +3545,39 @@ pub enum RealworldCommand {
         #[arg(long)]
         materialize: bool,
     },
+    /// Generate Place proposals from the demographics layer into the proposal
+    /// queue (nothing commits until you accept). Re-running skips sites already
+    /// accepted or rejected.
+    Propose,
+    /// Work the proposal queue (list / accept / reject).
+    Proposals {
+        #[command(subcommand)]
+        cmd: ProposalsCommand,
+    },
+}
+
+/// WORLD-4 — the proposal queue surface (RFC §8.9). Accepting a proposal commits
+/// the proposed record (a Place) to its system book; rejecting records the
+/// decision so the compiler won't re-propose it.
+#[derive(Debug, Subcommand)]
+pub enum ProposalsCommand {
+    /// List proposals, optionally filtered by status (pending / accepted / rejected).
+    List {
+        #[arg(long)]
+        status: Option<String>,
+    },
+    /// Accept a proposal by id (creates the Place).
+    Accept {
+        id: String,
+    },
+    /// Reject a proposal by id (won't be re-proposed).
+    Reject {
+        id: String,
+    },
+    /// Accept every pending proposal.
+    AcceptAll,
+    /// Drop all still-pending proposals.
+    Clear,
 }
 
 #[derive(Debug, Subcommand)]
