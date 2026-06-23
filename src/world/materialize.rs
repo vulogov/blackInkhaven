@@ -15,7 +15,7 @@ use crate::error::{Error, Result};
 use crate::store::hierarchy::Hierarchy;
 use crate::store::node::Node;
 use crate::store::{InsertPosition, NodeKind, Store, SYSTEM_TAG_WORLD};
-use crate::world::types::{AstronomyOutput, ClimateOutput, GeologyOutput};
+use crate::world::types::{AstronomyOutput, ClimateOutput, GeologyOutput, HydrologyOutput};
 
 /// What a materialize pass did, for the CLI/TUI to report.
 #[derive(Debug, Default, Clone)]
@@ -141,6 +141,42 @@ pub fn materialize_climate(
 
     let mut report = MaterializeReport { chapter: "Climate".into(), ..Default::default() };
     for (title, payload) in [("Climate zones", zones), ("Prevailing winds", winds)] {
+        let body = serde_json::to_string_pretty(&payload)
+            .map_err(|e| Error::Store(format!("serializing {title}: {e}")))?;
+        match ensure_paragraph(store, cfg, &chapter, title, &body)? {
+            Outcome::Created => report.created.push(title.to_string()),
+            Outcome::Updated => report.updated.push(title.to_string()),
+        }
+    }
+    Ok(report)
+}
+
+/// Materialize a hydrology output into `World / Hydrology / *`: the river
+/// systems, and the watersheds/lakes + settlement priors.
+pub fn materialize_hydrology(
+    store: &Store,
+    cfg: &Config,
+    out: &HydrologyOutput,
+) -> Result<MaterializeReport> {
+    let world = world_book(store)?;
+    let chapter = ensure_chapter(store, cfg, &world, "Hydrology")?;
+
+    let rivers = serde_json::json!({
+        "width": out.width,
+        "height": out.height,
+        "river_count": out.river_count,
+        "major_rivers": out.major_rivers,
+    });
+    let basins = serde_json::json!({
+        "watershed_count": out.watershed_count,
+        "lake_count": out.lake_count,
+        "settlement_priors": out.settlement_priors,
+    });
+
+    let mut report = MaterializeReport { chapter: "Hydrology".into(), ..Default::default() };
+    for (title, payload) in
+        [("River systems", rivers), ("Watersheds and settlement priors", basins)]
+    {
         let body = serde_json::to_string_pretty(&payload)
             .map_err(|e| Error::Store(format!("serializing {title}: {e}")))?;
         match ensure_paragraph(store, cfg, &chapter, title, &body)? {

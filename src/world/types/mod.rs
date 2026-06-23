@@ -9,6 +9,7 @@
 pub mod astronomy;
 pub mod climate;
 pub mod geology;
+pub mod hydrology;
 pub mod world;
 
 pub use astronomy::{
@@ -19,6 +20,7 @@ pub use climate::{Biome, ClimateOutput, ClimateZone, WindBand};
 pub use geology::{
     BoundarySummary, ElevationStats, GeologyOutput, MineralHint, MountainRange, Plate,
 };
+pub use hydrology::{HydrologyOutput, RiverSummary, SettlementPrior};
 pub use world::{
     AstronomyDef, Calendar, DemGeology, GeneratedGeology, GeologyDef, Moon, Orbit, Planet,
     SeedValue, Star, WorldDefinition,
