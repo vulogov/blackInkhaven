@@ -32,6 +32,15 @@ const INIT_SQL: &str = "
     );
     CREATE INDEX IF NOT EXISTS idx_sf_para ON socratic_findings(paragraph_id);
 
+    -- Slow-track LLM usage, per day per sub-budget (RFC §3.14 — separate from
+    -- WORLD-4's tally).
+    CREATE TABLE IF NOT EXISTS inner_socrates_llm_usage (
+        day        TEXT   NOT NULL,
+        sub_budget TEXT   NOT NULL,
+        calls      BIGINT NOT NULL,
+        PRIMARY KEY (day, sub_budget)
+    );
+
     -- The intent ledger — deliberate authorial choices the interrogator respects.
     CREATE TABLE IF NOT EXISTS intent_entries (
         id          TEXT   NOT NULL PRIMARY KEY,
@@ -213,6 +222,36 @@ impl InnerSocratesStore {
     /// The intent ledger, loaded for consultation.
     pub fn load_ledger(&self) -> Result<IntentLedger> {
         Ok(IntentLedger { entries: self.list_intents()? })
+    }
+
+    // ── LLM usage (sub-budgeted) ────────────────────────────────────────────────
+
+    /// Record one LLM call against `(day, sub_budget)`; returns the new count.
+    pub fn record_llm_call(&self, day: &str, sub_budget: &str) -> Result<i64> {
+        self.engine.execute_with(
+            "INSERT INTO inner_socrates_llm_usage (day, sub_budget, calls) VALUES (?, ?, 1) \
+             ON CONFLICT (day, sub_budget) DO UPDATE SET calls = calls + 1",
+            &[&day, &sub_budget],
+        )?;
+        self.llm_calls_today(day, sub_budget)
+    }
+
+    /// How many LLM calls have run on `day` for `sub_budget`.
+    pub fn llm_calls_today(&self, day: &str, sub_budget: &str) -> Result<i64> {
+        let rows = self.engine.select_all_with(
+            "SELECT calls FROM inner_socrates_llm_usage WHERE day = ? AND sub_budget = ?",
+            &[&day, &sub_budget],
+        )?;
+        Ok(rows.first().map(|r| int(r.first())).unwrap_or(0))
+    }
+}
+
+fn int(v: Option<&DuckValue>) -> i64 {
+    match v {
+        Some(DuckValue::BigInt(i)) => *i,
+        Some(DuckValue::Int(i)) => *i as i64,
+        Some(DuckValue::HugeInt(i)) => *i as i64,
+        _ => 0,
     }
 }
 

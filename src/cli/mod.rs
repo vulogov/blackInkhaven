@@ -3637,6 +3637,17 @@ pub enum InnerSocratesCommand {
         /// Check a paragraph by id (reads its content from the store).
         #[arg(long)]
         paragraph: Option<String>,
+        /// Also run the Slow track — an LLM pass for the deep Socratic questions
+        /// patterns miss (needs an LLM provider; cost-capped).
+        #[arg(long)]
+        slow: bool,
+        /// Slow-track per-call soft cap (estimated tokens); skipped with a notice
+        /// if exceeded unless `--force`.
+        #[arg(long, default_value_t = 6000)]
+        max_cost: usize,
+        /// Run the Slow track even if the cost estimate exceeds `--max-cost`.
+        #[arg(long)]
+        force: bool,
     },
     /// List the intent ledger (the deliberate authorial choices the interrogator
     /// respects).

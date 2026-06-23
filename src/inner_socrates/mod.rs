@@ -22,6 +22,7 @@
 pub mod fast;
 pub mod intent;
 pub mod output;
+pub mod slow;
 pub mod storage;
 pub mod text;
 pub mod types;
