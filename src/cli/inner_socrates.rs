@@ -21,6 +21,54 @@ pub fn run(project: &Path, cmd: InnerSocratesCommand) -> Result<()> {
         InnerSocratesCommand::Ledger => ledger(project),
         InnerSocratesCommand::Persona(cmd) => persona(project, cmd),
         InnerSocratesCommand::Suggestions(cmd) => suggestions(project, cmd),
+        InnerSocratesCommand::Bundle(cmd) => bundle(project, cmd),
+    }
+}
+
+/// The `.isl` ledger-bundle surface — export / import.
+fn bundle(project: &Path, cmd: crate::cli::BundleCommand) -> Result<()> {
+    use crate::cli::BundleCommand;
+    use crate::inner_socrates::bundle as isl;
+    let store = InnerSocratesStore::open_for_project(project)
+        .map_err(|e| Error::Store(format!("inner-socrates store: {e}")))?;
+    match cmd {
+        BundleCommand::Export { scope_level, out } => {
+            let scope = match scope_level.as_str() {
+                "project" => isl::ExportScope::Project,
+                "all" => isl::ExportScope::All,
+                _ => isl::ExportScope::Series,
+            };
+            let entries = store.list_intents().map_err(|e| Error::Store(format!("{e}")))?;
+            let body = isl::export(&entries, scope);
+            let count = isl::parse(&body).map(|e| e.len()).unwrap_or(0);
+            let path = out.map(std::path::PathBuf::from).unwrap_or_else(|| project.join("intent-ledger.isl"));
+            crate::io_atomic::write(&path, body.as_bytes())
+                .map_err(|e| Error::Store(format!("writing {}: {e}", path.display())))?;
+            println!("exported {count} entry(ies) → {}", path.display());
+            Ok(())
+        }
+        BundleCommand::Import { path, conflict } => {
+            let body = std::fs::read_to_string(&path)
+                .map_err(|e| Error::Config(format!("reading {path}: {e}")))?;
+            let incoming = isl::parse(&body).map_err(|e| Error::Config(e.to_string()))?;
+            let existing: std::collections::HashSet<String> = store
+                .list_intents()
+                .map_err(|e| Error::Store(format!("{e}")))?
+                .into_iter()
+                .map(|e| e.id)
+                .collect();
+            let (mut added, mut skipped) = (0usize, 0usize);
+            for e in &incoming {
+                if existing.contains(&e.id) && conflict == "skip" {
+                    skipped += 1;
+                    continue;
+                }
+                store.add_intent(e).map_err(|err| Error::Store(format!("{err}")))?;
+                added += 1;
+            }
+            println!("imported {added} entry(ies), {skipped} skipped");
+            Ok(())
+        }
     }
 }
 

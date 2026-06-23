@@ -19,6 +19,7 @@
 // Foundation ahead of its storage / TUI / Bund consumers.
 #![allow(dead_code, unused_imports)]
 
+pub mod bundle;
 pub mod fast;
 pub mod intent;
 pub mod lang;
