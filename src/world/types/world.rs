@@ -17,8 +17,38 @@ pub struct WorldDefinition {
     pub astronomy: AstronomyDef,
     #[serde(default)]
     pub geology: Option<GeologyDef>,
+    /// Author-declared geography: named regions + landmarks. Landmarks feed the
+    /// gazetteer (so the fact-checker resolves them) and materialize.
+    #[serde(default)]
+    pub geography: Option<GeographyDef>,
+    /// Author-declared hydrology: named rivers / lakes / seas + a rainfall note.
+    /// Descriptive (the procedural hydrology layer still runs); materializes.
+    #[serde(default)]
+    pub hydrology: Option<HydrologyDef>,
+    /// Author-declared economy: tech level, currency, trade goods, resources.
+    /// `resources` augment the fact-checker's known minerals.
+    #[serde(default)]
+    pub economy: Option<EconomyDef>,
     #[serde(default)]
     pub magic: Option<super::magic::MagicLedger>,
+}
+
+impl WorldDefinition {
+    /// Minerals the author declared beyond the procedural geology — economy
+    /// `resources` plus geology `notable_minerals` — lowercased. Fed to the
+    /// economy fact-check so trading a declared resource isn't flagged.
+    pub fn declared_minerals(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        if let Some(g) = self.geology.as_ref().and_then(|g| g.generated.as_ref()) {
+            out.extend(g.notable_minerals.iter().map(|m| m.to_lowercase()));
+        }
+        if let Some(e) = self.economy.as_ref() {
+            out.extend(e.resources.iter().map(|m| m.to_lowercase()));
+        }
+        out.sort();
+        out.dedup();
+        out
+    }
 }
 
 fn default_language() -> String {
@@ -156,6 +186,16 @@ pub struct GeneratedGeology {
     /// 0.0 (no oceans) … 1.0 (drowned world); the land/sea threshold.
     #[serde(default = "default_sea_level")]
     pub sea_level: f32,
+    /// `quiet` | `moderate` | `active` — descriptive volcanism note (materializes).
+    #[serde(default)]
+    pub volcanism: String,
+    /// `sparse` | `normal` | `rich` — descriptive mineral-wealth note.
+    #[serde(default)]
+    pub mineral_richness: String,
+    /// Minerals the author asserts the land yields, beyond the procedural hints —
+    /// fed to the economy fact-check via [`WorldDefinition::declared_minerals`].
+    #[serde(default)]
+    pub notable_minerals: Vec<String>,
 }
 
 impl Default for GeneratedGeology {
@@ -165,8 +205,84 @@ impl Default for GeneratedGeology {
             continents: default_continents(),
             mountain_orogeny: default_orogeny(),
             sea_level: default_sea_level(),
+            volcanism: String::new(),
+            mineral_richness: String::new(),
+            notable_minerals: Vec::new(),
         }
     }
+}
+
+/// The `geography` declaration block — author-named regions + landmarks.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct GeographyDef {
+    #[serde(default)]
+    pub regions: Vec<GeoRegion>,
+    #[serde(default)]
+    pub landmarks: Vec<GeoLandmark>,
+}
+
+/// A named region the author asserts (climate/biome hints for the World book).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct GeoRegion {
+    pub name: String,
+    #[serde(default)]
+    pub biome: String,
+    #[serde(default)]
+    pub climate: String,
+    #[serde(default)]
+    pub description: String,
+}
+
+/// A named landmark (city, port, mountain, …). Cities/ports with a `climate_zone`
+/// become gazetteer entries the fact-checker can resolve by name.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct GeoLandmark {
+    pub name: String,
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub climate_zone: String,
+    #[serde(default)]
+    pub population: u64,
+    #[serde(default)]
+    pub description: String,
+}
+
+/// The `hydrology` declaration block — author-named waters + a rainfall note.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct HydrologyDef {
+    /// `arid` | `temperate` | `wet` — descriptive.
+    #[serde(default)]
+    pub rainfall: String,
+    #[serde(default)]
+    pub rivers: Vec<NamedWater>,
+    #[serde(default)]
+    pub lakes: Vec<NamedWater>,
+    #[serde(default)]
+    pub seas: Vec<NamedWater>,
+}
+
+/// A named body of water.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct NamedWater {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+}
+
+/// The `economy` declaration block.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct EconomyDef {
+    /// e.g. `bronze` | `iron` | `medieval` | `industrial`.
+    #[serde(default)]
+    pub tech_level: String,
+    #[serde(default)]
+    pub currency: String,
+    #[serde(default)]
+    pub trade_goods: Vec<String>,
+    /// Resources the economy is built on — augment the fact-checker's minerals.
+    #[serde(default)]
+    pub resources: Vec<String>,
 }
 
 fn default_plates() -> u32 {
