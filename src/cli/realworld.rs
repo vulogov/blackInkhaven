@@ -155,6 +155,37 @@ fn run_slow_track(
     slow_llm_call(project, "slow track", SLOW_SYSTEM, prompt, soft_cap, force)
 }
 
+/// TUI entry point for the slow track: build the world context from the project,
+/// run the fast check as the seam, then the cost-capped slow call. Returns the
+/// findings or a single error string (no stderr noise). Safe to call from a
+/// background worker thread (it opens its own world store). The daily cap and the
+/// per-call soft cap are enforced inside.
+pub(crate) fn slow_track_for_tui(
+    project: &Path,
+    prose: &str,
+) -> std::result::Result<Vec<crate::world::fact_check::Finding>, String> {
+    use crate::world::compile::compile_astronomy;
+    use crate::world::fact_check::{check_paragraph, Gazetteer, WorldContext};
+    use crate::world::storage::WorldStore;
+
+    let def = load(project).map_err(|e| e.to_string())?;
+    let ledger = def.magic.clone().unwrap_or_default();
+    let places = WorldStore::open_for_project(project)
+        .ok()
+        .and_then(|ws| ws.list_place_links().ok())
+        .unwrap_or_default();
+    let moons: Vec<String> =
+        compile_astronomy(&def.astronomy).moons.iter().map(|m| m.name.clone()).collect();
+    let minerals: Vec<String> = geology_for(project, &def)
+        .map(|g| g.minerals.iter().map(|m| m.mineral.clone()).collect())
+        .unwrap_or_default();
+
+    let ctx = WorldContext::new(Gazetteer::new(places.clone()), moons.clone(), minerals.clone());
+    let fast = check_paragraph(prose, &ledger, &[], Some(&ctx));
+    run_slow_track(project, prose, Some(&def), &ledger, &places, &moons, &minerals, &fast, 6000, false)
+        .map_err(|e| e.to_string())
+}
+
 /// The shared slow-track LLM call: daily-cap check, provider resolution, cost
 /// preflight (soft cap overridable with `force`), retry-on-transient with
 /// backoff, usage record, and response parse. Used by both the per-paragraph slow
