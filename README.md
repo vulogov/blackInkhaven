@@ -21,55 +21,61 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.3.26 — The World Fact-Checker
+## Latest release · 1.3.27 — The world, mapped (and a deeper checker)
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.3.26.md`](Documentation/RELEASE_NOTES/1.3.26.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.3.27.md`](Documentation/RELEASE_NOTES/1.3.27.md)
 · Plan: [`Documentation/PROPOSALS/WORLD-4_PLAN.md`](Documentation/PROPOSALS/WORLD-4_PLAN.md)
+· Tutorials: [`76`](Documentation/Tutorials/76-building-a-world-realworld.md),
+[`77`](Documentation/Tutorials/77-world-maps-and-fact-checking.md)
 
-The other half of the world simulation. 1.3.25 gave Inkhaven a compiler that
-**builds** a world; 1.3.26 gives it a **fact-checker** that reads your prose and
-flags claims that don't fit the world you built — **as you write**. A messenger
-who covers 600 km in three days, a blizzard in your tropical capital, a city ten
-times bigger than the map can feed, three moons in a two-moon sky: the Output pane
-tells you, quietly, while you keep typing. RFC WORLD-4 Branch B (fast track).
+1.3.25 built a world; 1.3.26 read your prose against it. 1.3.27 **draws** the
+world and makes the checker **deeper** — RFC WORLD-4, toward its P7 polish.
 
-### The magic ledger
+### Maps — `inkhaven realworld map`
 
-A `magic:` block in `world.hjson` declares your world's exceptions to physics —
-each rule names a `kind`, the check categories it `covers`, and who/where it
-applies to. The fact-checker consults it **lazily** (only after a candidate
-warning): a covered, applicable rule suppresses the warning with a note instead
-of nagging forever. `inkhaven realworld magic` lists it; it materializes into
-`World / Magic Ledger`.
+Inkhaven emits a **MapSpec v2** from the compiled geology / climate / hydrology /
+demographics layers and renders it with [**plakat**](https://crates.io/crates/plakat)
+(`plakat map --map-spec` loads our spec and skips its own LLM). You get a
+**features PNG** and a **GeoJSON** under `assets/maps/` — mountains clustered from
+the heightfield, rivers on their real D8 course, settlements as landmarks
+(coastal cities become ports) — and plakat's resolved positions are read back to
+**refine each accepted Place's coordinates**. `--spec-only` / `--no-ingest`;
+`Ctrl+B W → M`; plakat is optional (a missing binary degrades to a notice).
 
-### The fact-checker — fast track
+### A deeper fact-checker
 
-Deterministic, instant (no LLM), four categories today:
+- **Slow track** — `fact-check --slow` asks the LLM for the subtle contradictions
+  patterns miss, with a **cost preflight**, a per-call soft cap (`--max-cost` /
+  `--force`), a daily ceiling, and retry-with-backoff. An opt-in **idle auto**
+  variant runs it in the background (`Ctrl+B W → S`).
+- **Coherence** — `realworld coherence <node>` checks a run of paragraphs
+  **against each other** (a character in two places, a fact reversed), citing the
+  `¶` numbers.
+- **Scope chords** — `Ctrl+B W → F` then `P` paragraph / `B` book / `R` recent.
+- **Economy** — a fifth fast category: a metal worked that the geology doesn't
+  yield.
 
-- **Travel time** — distance + duration in a sentence implies a pace; flag
-  implausible ones (pure prose, no world data needed).
-- **Climate** — weather at a known place that contradicts its climate zone.
-- **Demographics** — a population that diverges sharply from the modeled figure.
-- **Astronomy** — a moon count that disagrees with the world's sky.
+### Multilingual, never-fail
 
-Climate and demographics resolve place names through a **gazetteer** built from
-the Place ↔ World cross-references — so the loop closes: compile a world, accept
-its cities, write about them, and the checker knows what they are.
+Place names resolve in their **grammatical cases** (`в Москве` matches `Москва`;
+German genitive). Language detection reports a **confidence** and degrades to
+English rather than guessing; the optional enhanced parser
+(`INKHAVEN_LANG_MODEL`) is never required, and detection never panics.
 
-### Real-time, as you write
+### Author-declared setting & a ready-made Earth
 
-When the project has a world, the fast track runs **automatically** — pause a few
-seconds on a paragraph and its findings appear in the **Output pane**, no chord,
-no focus stolen. A re-check replaces the paragraph's prior findings (fixed ones
-disappear). Or ask explicitly: **`Ctrl+B W` → `F`** checks the open paragraph;
-`inkhaven fact-check --text "…"` is the headless form.
+New optional `geography` / `hydrology` / `economy` blocks + expanded `geology`
+materialize into a **Setting** chapter — and **declared landmarks** become
+gazetteer entries the checker resolves by name, while **declared resources** join
+its known goods. The repo ships a complete
+[`examples/realworld/Earth.hjson`](examples/realworld/Earth.hjson) to start from.
 
 ### Dependencies & compatibility
 
-**Zero new dependencies** — the ledger and the whole fast-track checker reuse
-`regex`, the DuckDB stores, and the PANE-1 Output pane. Non-breaking and opt-in:
-the checker only runs when a project has a `world.hjson`; everything else is
-unaffected. Tests 1613 → 1625.
+**Zero new dependencies** — plakat is an optional external binary (not a crate);
+the MapSpec and GeoJSON use `serde_json`; the slow track reuses the existing AI
+client and background-job harness. Non-breaking and opt-in throughout. Tests
+1625 → 1658.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
