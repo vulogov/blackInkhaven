@@ -297,6 +297,74 @@ pub fn check_timeline(
     check_date_season(text, season, ledger, lang)
 }
 
+/// WORLD-5 — a prose-stated travel duration that contradicts the timeline gap
+/// between the paragraph's linked event and the traveller's prior different-place
+/// event. The RFC's flagship example: prose says "three days", the timeline shows
+/// a 35-day gap. `ticks_per_day` converts the gap to days.
+pub fn check_travel_timeline(
+    text: &str,
+    timeline: &crate::world::timeline_context::TimelineContext,
+    events: &[crate::world::timeline_context::TlEvent],
+    ticks_per_day: i64,
+    ledger: &MagicLedger,
+) -> Vec<Finding> {
+    if timeline.linked_events.is_empty() || ticks_per_day <= 0 {
+        return Vec::new();
+    }
+    let lang = crate::world::fact_check_lang::detect(text);
+    let Some(prose_days) = split_sentences(text).filter_map(|s| find_duration_days(s, lang)).next()
+    else {
+        return Vec::new();
+    };
+    let linked: Vec<&crate::world::timeline_context::TlEvent> =
+        events.iter().filter(|e| timeline.linked_events.contains(&e.id)).collect();
+    for anchor in &linked {
+        if anchor.places.is_empty() {
+            continue;
+        }
+        for ch in &anchor.characters {
+            // The traveller's most-recent prior event at a different place.
+            let prior = events
+                .iter()
+                .filter(|e| {
+                    e.id != anchor.id
+                        && e.characters.contains(ch)
+                        && e.start_ticks < anchor.start_ticks
+                        && !e.places.is_empty()
+                        && !e.places.iter().any(|p| anchor.places.contains(p))
+                })
+                .max_by_key(|e| e.start_ticks);
+            let Some(prior) = prior else { continue };
+            let timeline_days =
+                (anchor.start_ticks - prior.start_ticks) as f32 / ticks_per_day as f32;
+            if timeline_days <= 0.0 {
+                continue;
+            }
+            let ratio = prose_days / timeline_days;
+            if (0.33..=3.0).contains(&ratio) {
+                continue; // close enough — narrative compression is fine within ~3×
+            }
+            let msg = Msg::TravelTimeline {
+                prose_days,
+                timeline_days,
+                from: &prior.title,
+                to: &anchor.title,
+            };
+            let ctx = CheckContext { category: "travel_time", ..Default::default() };
+            let suppressed_by = ledger.find_suppressor(&ctx).map(|r| r.kind.clone());
+            let severity = if suppressed_by.is_some() { "info" } else { "warning" };
+            return vec![Finding {
+                category: "travel_time".into(),
+                severity: severity.into(),
+                body: lang.render(&msg),
+                body_en: Lang::En.render(&msg),
+                suppressed_by,
+            }];
+        }
+    }
+    Vec::new()
+}
+
 /// Weather contradicting a dated season. Conservative: only the common
 /// English-named seasons (`summer` / `winter`) are temperature-mapped; a
 /// custom- or conlang-named season degrades to no finding rather than guessing.
@@ -739,6 +807,55 @@ mod tests {
         // No effective season → no timeline finding.
         let none = TimelineContext::empty(uuid::Uuid::nil());
         assert!(check_timeline("Snow fell.", &none, &empty_ledger()).is_empty());
+    }
+
+    #[test]
+    fn travel_timeline_flags_prose_vs_event_gap() {
+        use crate::world::timeline_context::{build_context, TlEvent};
+        use crate::world::timeline_context::TimelineContext;
+        let mara = uuid::Uuid::new_v4();
+        let velmaril = uuid::Uuid::new_v4();
+        let korthun = uuid::Uuid::new_v4();
+        let para = uuid::Uuid::new_v4();
+        // Departure at day 0 (Velmaril), arrival at day 35 (Korthun, linked to para).
+        let depart = TlEvent {
+            id: uuid::Uuid::new_v4(),
+            title: "Departure from Velmaril".into(),
+            start_ticks: 0,
+            end_ticks: None,
+            linked_paragraphs: vec![],
+            characters: vec![mara],
+            places: vec![velmaril],
+        };
+        let arrive = TlEvent {
+            id: uuid::Uuid::new_v4(),
+            title: "Arrival in Korthun".into(),
+            start_ticks: 35,
+            end_ticks: None,
+            linked_paragraphs: vec![para],
+            characters: vec![mara],
+            places: vec![korthun],
+        };
+        let events = vec![depart, arrive];
+        // ticks_per_day = 1 here, so the gap is 35 days.
+        let ctx: TimelineContext = {
+            // build_context needs a calendar; reuse one with day=1.
+            use crate::timeline::calendar::{Calendar, CalendarConfig};
+            let cal = Calendar::from_config(CalendarConfig { preset: "gregorian".into(), ..Default::default() });
+            // gregorian day ticks: build_context only uses season; the travel check
+            // is given ticks_per_day=1 below regardless.
+            build_context(para, &events, &cal, 1000)
+        };
+        // Prose says three days, timeline says 35 → flag.
+        let f = check_travel_timeline("Mara rode three days to Korthun.", &ctx, &events, 1, &empty_ledger());
+        assert_eq!(f.len(), 1, "got {f:?}");
+        assert_eq!(f[0].category, "travel_time");
+        assert_eq!(f[0].severity, "warning");
+        assert!(f[0].body.contains("Korthun"));
+
+        // Prose "thirty days" is within 3× of 35 → no finding.
+        let f2 = check_travel_timeline("Mara rode thirty days to Korthun.", &ctx, &events, 1, &empty_ledger());
+        assert!(f2.is_empty(), "got {f2:?}");
     }
 
     #[test]
