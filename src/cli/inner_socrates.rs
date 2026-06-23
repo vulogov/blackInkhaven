@@ -121,7 +121,8 @@ fn run_slow(
         .resolve_provider(&cfg.llm, None)
         .map_err(|e| Error::Config(format!("resolving provider: {e}")))?;
 
-    let prompt = build_slow_prompt(persona, prose, &intent_summary(ledger), fast_findings);
+    let lang = crate::world::fact_check_lang::detect(prose);
+    let prompt = build_slow_prompt(persona, prose, &intent_summary(ledger), fast_findings, lang);
 
     let effective_soft = if force { 0 } else { soft_cap };
     let (pf, verdict) = slow_preflight(SLOW_SYSTEM, &prompt, used, DAILY_CAP, effective_soft);
