@@ -127,4 +127,12 @@ for §8 detailed design, Appendix A (schema), B (config), E (overlays).
   mirroring the magic ledger), and `fast` (deterministic EN detectors for
   `modal_claims` + `hedged_uncertainty`, reusing `contains_word`). All pure +
   tested; non-prescriptive (every finding renders as a question). No storage / LLM
-  / TUI yet.
+  / TUI yet. +17 tests, 1675.
+- **P1.1 — three more deterministic Fast categories (UNRELEASED, 1.3.28-dev).**
+  A dependency-free `text` util (sentence split, word count, opening word,
+  dialogue-segment count) + three EN detectors wired into `check_paragraph`:
+  `structural_patterns` (a run of ≥3 sentences sharing an opening word, or ≥4 of
+  the same length), `unattributed_dialogue` (≥4 spoken segments with no
+  attribution verb anywhere), `sentence_length_anomalies` (a sentence over 45
+  words). Five of the seven Fast categories now ship; `pronoun_ambiguity` +
+  `tense_voice_shifts` await the UD parser (P5). +8 tests, 1683.

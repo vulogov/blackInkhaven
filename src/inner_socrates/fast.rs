@@ -10,7 +10,25 @@
 use crate::world::fact_check_lang::{contains_word, detect, Lang};
 
 use super::intent::{ConsultationResult, FindingContext, IntentLedger};
+use super::text;
 use super::types::{Category, Persona, Severity, SocraticFinding};
+
+/// A sentence past this many words draws a (gentle) length question.
+const LONG_SENTENCE_WORDS: usize = 45;
+/// This many consecutive sentences sharing an opening word / an exact length
+/// reads as a structural pattern worth noticing.
+const STRUCTURAL_RUN: usize = 3;
+const SAME_LENGTH_RUN: usize = 4;
+/// This many spoken segments with no attribution verb reads as a run of
+/// unattributed dialogue.
+const DIALOGUE_RUN: usize = 4;
+
+/// English dialogue attribution verbs — their presence means the speaker is
+/// tagged somewhere in the passage.
+const ATTRIBUTION_VERBS: &[&str] = &[
+    "said", "asked", "replied", "whispered", "shouted", "muttered", "answered", "cried",
+    "called", "added", "continued", "murmured", "growled", "snapped", "demanded", "breathed",
+];
 
 /// Markers of asserted inevitability (strong) — a claim treated as having no
 /// alternative.
@@ -41,10 +59,139 @@ pub fn check_paragraph(
         return Vec::new();
     }
     let lower = text.to_lowercase();
+    let sentences = text::sentences(text);
     let mut out = Vec::new();
     detect_modal_claims(&lower, persona, ledger, ctx, &mut out);
     detect_hedged_uncertainty(&lower, persona, ledger, ctx, &mut out);
+    detect_structural_patterns(&sentences, persona, ledger, ctx, &mut out);
+    detect_unattributed_dialogue(text, &lower, &sentences, persona, ledger, ctx, &mut out);
+    detect_sentence_length(&sentences, persona, ledger, ctx, &mut out);
     out
+}
+
+/// `structural_patterns` — a run of sentences sharing an opening word (anaphora)
+/// or an exact length (a monotone cadence). Emits at most one finding.
+fn detect_structural_patterns(
+    sentences: &[&str],
+    persona: &Persona,
+    ledger: &IntentLedger,
+    ctx: &FindingContext,
+    out: &mut Vec<SocraticFinding>,
+) {
+    // Same opening word, STRUCTURAL_RUN in a row.
+    let firsts: Vec<Option<String>> = sentences.iter().map(|s| text::first_word(s)).collect();
+    if let Some(word) = longest_equal_run(&firsts).filter(|(_, n)| *n >= STRUCTURAL_RUN).and_then(|(w, _)| w) {
+        push(
+            out,
+            persona,
+            ledger,
+            ctx,
+            Category::StructuralPatterns,
+            Severity::Notice,
+            format!(
+                "Several sentences here open with \u{201c}{word}\u{201d}. Is the repetition a \
+                 deliberate cadence?"
+            ),
+        );
+        return;
+    }
+    // Same exact length, SAME_LENGTH_RUN in a row.
+    let lens: Vec<Option<usize>> =
+        sentences.iter().map(|s| Some(text::word_count(s))).collect();
+    if longest_equal_run(&lens).is_some_and(|(_, n)| n >= SAME_LENGTH_RUN) {
+        push(
+            out,
+            persona,
+            ledger,
+            ctx,
+            Category::StructuralPatterns,
+            Severity::Notice,
+            "A run of sentences here are near-identical in length. Is the even rhythm intended?"
+                .to_string(),
+        );
+    }
+}
+
+/// `unattributed_dialogue` — a run of spoken segments with no attribution verb
+/// anywhere in the passage.
+#[allow(clippy::too_many_arguments)]
+fn detect_unattributed_dialogue(
+    text: &str,
+    lower: &str,
+    _sentences: &[&str],
+    persona: &Persona,
+    ledger: &IntentLedger,
+    ctx: &FindingContext,
+    out: &mut Vec<SocraticFinding>,
+) {
+    let segments = text::dialogue_segment_count(text);
+    if segments < DIALOGUE_RUN {
+        return;
+    }
+    if ATTRIBUTION_VERBS.iter().any(|v| contains_word(lower, v)) {
+        return; // a speaker is tagged somewhere
+    }
+    push(
+        out,
+        persona,
+        ledger,
+        ctx,
+        Category::UnattributedDialogue,
+        Severity::Inquiry,
+        format!(
+            "{segments} lines of dialogue pass here without a speaker tag. Can the reader still \
+             tell who is speaking?"
+        ),
+    );
+}
+
+/// `sentence_length_anomalies` — a single very long sentence.
+fn detect_sentence_length(
+    sentences: &[&str],
+    persona: &Persona,
+    ledger: &IntentLedger,
+    ctx: &FindingContext,
+    out: &mut Vec<SocraticFinding>,
+) {
+    if let Some(n) = sentences.iter().map(|s| text::word_count(s)).max() {
+        if n > LONG_SENTENCE_WORDS {
+            push(
+                out,
+                persona,
+                ledger,
+                ctx,
+                Category::SentenceLengthAnomalies,
+                Severity::Notice,
+                format!(
+                    "One sentence here runs to {n} words. Is its length carrying the reader, or \
+                     losing them?"
+                ),
+            );
+        }
+    }
+}
+
+/// The value and length of the longest run of equal consecutive items (ignoring
+/// `None`s, which break a run). Returns `(value, run_length)`.
+fn longest_equal_run<T: Clone + PartialEq>(items: &[Option<T>]) -> Option<(Option<T>, usize)> {
+    let mut best: Option<(Option<T>, usize)> = None;
+    let mut i = 0;
+    while i < items.len() {
+        let Some(v) = &items[i] else {
+            i += 1;
+            continue;
+        };
+        let mut j = i + 1;
+        while j < items.len() && items[j].as_ref() == Some(v) {
+            j += 1;
+        }
+        let run = j - i;
+        if best.as_ref().is_none_or(|(_, n)| run > *n) {
+            best = Some((Some(v.clone()), run));
+        }
+        i = j;
+    }
+    best
 }
 
 /// `modal_claims` — a passage that treats an outcome as inevitable. Defused by a
@@ -213,6 +360,67 @@ mod tests {
             &FindingContext::default(),
         );
         assert!(f.is_empty(), "muted category produces nothing; got {f:?}");
+    }
+
+    #[test]
+    fn flags_anaphora_opening_word_run() {
+        let f = check_paragraph(
+            "He ran. He fell. He rose.",
+            &socrates(),
+            &IntentLedger::default(),
+            &FindingContext::default(),
+        );
+        let sp: Vec<_> = f.iter().filter(|x| x.category == Category::StructuralPatterns).collect();
+        assert_eq!(sp.len(), 1);
+        assert!(sp[0].question.ends_with('?'));
+        assert!(sp[0].question.to_lowercase().contains("he"));
+    }
+
+    #[test]
+    fn flags_monotone_same_length_run() {
+        let f = check_paragraph(
+            "He ran fast. She fell hard. They rose again. We left town.",
+            &socrates(),
+            &IntentLedger::default(),
+            &FindingContext::default(),
+        );
+        assert!(f.iter().any(|x| x.category == Category::StructuralPatterns));
+    }
+
+    #[test]
+    fn flags_unattributed_dialogue_run() {
+        let f = check_paragraph(
+            "\u{201c}Where?\u{201d} \u{201c}There.\u{201d} \u{201c}Why?\u{201d} \u{201c}Because of the war.\u{201d}",
+            &socrates(),
+            &IntentLedger::default(),
+            &FindingContext::default(),
+        );
+        let d: Vec<_> = f.iter().filter(|x| x.category == Category::UnattributedDialogue).collect();
+        assert_eq!(d.len(), 1, "got {f:?}");
+        assert_eq!(d[0].severity, Severity::Inquiry);
+        assert!(d[0].question.ends_with('?'));
+    }
+
+    #[test]
+    fn attribution_verb_silences_dialogue_finding() {
+        let f = check_paragraph(
+            "\u{201c}Where?\u{201d} she asked. \u{201c}There.\u{201d} \u{201c}Why?\u{201d} \u{201c}The war.\u{201d}",
+            &socrates(),
+            &IntentLedger::default(),
+            &FindingContext::default(),
+        );
+        assert!(f.iter().all(|x| x.category != Category::UnattributedDialogue), "got {f:?}");
+    }
+
+    #[test]
+    fn flags_a_very_long_sentence() {
+        // A 50-word sentence with plenty of English function words.
+        let long = "The regent walked through the hall and into the garden and past the fountain \
+                    and around the wall and down the steps and along the path and over the bridge \
+                    and through the gate and into the field and toward the distant and waiting army \
+                    that had gathered there.";
+        let f = check_paragraph(long, &socrates(), &IntentLedger::default(), &FindingContext::default());
+        assert!(f.iter().any(|x| x.category == Category::SentenceLengthAnomalies), "got {f:?}");
     }
 
     #[test]
