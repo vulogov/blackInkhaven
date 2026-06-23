@@ -82,6 +82,9 @@ pub(super) enum AiMode {
     Chapter,
     Book,
     Facts,
+    /// INNER_SOCRATES-1 — a sticky conversation scope: the AI reads the open
+    /// paragraph as the active Reader Persona and discusses its questions.
+    Socratic,
 }
 
 impl AiMode {
@@ -94,6 +97,7 @@ impl AiMode {
             AiMode::Chapter => "Chapter",
             AiMode::Book => "Book",
             AiMode::Facts => "Facts",
+            AiMode::Socratic => "Socrates",
         }
     }
     pub(super) fn next(self) -> Self {
@@ -104,7 +108,8 @@ impl AiMode {
             AiMode::Subchapter => AiMode::Chapter,
             AiMode::Chapter => AiMode::Book,
             AiMode::Book => AiMode::Facts,
-            AiMode::Facts => AiMode::None,
+            AiMode::Facts => AiMode::Socratic,
+            AiMode::Socratic => AiMode::None,
         }
     }
 }
@@ -186,10 +191,12 @@ mod ai_mode_tests {
             order,
             vec![
                 "None", "Selection", "Paragraph", "Subchapter", "Chapter", "Book", "Facts",
+                "Socrates",
             ],
         );
         // Explicit: the new edges.
         assert_eq!(AiMode::Book.next(), AiMode::Facts);
-        assert_eq!(AiMode::Facts.next(), AiMode::None);
+        assert_eq!(AiMode::Facts.next(), AiMode::Socratic);
+        assert_eq!(AiMode::Socratic.next(), AiMode::None);
     }
 }
