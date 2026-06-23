@@ -48,15 +48,20 @@ fn suspicion_str(s: Suspicion) -> &'static str {
 }
 
 /// Emit an orphan finding. `date_label` is the event's start formatted by the
-/// caller's calendar (e.g. `"year 120"`).
-pub fn emit_orphan(f: &OrphanFinding, date_label: &str) {
-    let headline = format!(
+/// caller's calendar (e.g. `"year 120"`). `elaboration` is the optional LLM text
+/// (P2); when present it's appended to the headline and stored in metadata.
+pub fn emit_orphan(f: &OrphanFinding, date_label: &str, elaboration: Option<&str>) {
+    let mut headline = format!(
         "\"{}\" ({}, \"{}\" track) — {}",
         f.title,
         date_label,
         f.track,
         f.reasons.join(" ")
     );
+    if let Some(extra) = elaboration {
+        headline.push(' ');
+        headline.push_str(extra);
+    }
     let meta = serde_json::json!({
         "text": headline,
         "body_en": headline,
@@ -70,6 +75,7 @@ pub fn emit_orphan(f: &OrphanFinding, date_label: &str) {
         "age_days": f.age_days,
         "track": f.track,
         "reasons": f.reasons,
+        "elaboration": elaboration,
     });
     let msg = Message::new(
         kinds::TIMELINE_ORPHAN_WARNING,
@@ -88,6 +94,7 @@ pub fn emit_overlap(
     window_label: &str,
     char_names: &[String],
     place_names: &[String],
+    elaboration: Option<&str>,
 ) {
     let titles = f
         .titles
@@ -95,7 +102,7 @@ pub fn emit_overlap(
         .map(|t| format!("\"{t}\""))
         .collect::<Vec<_>>()
         .join(" + ");
-    let headline = if f.is_cluster {
+    let mut headline = if f.is_cluster {
         format!(
             "Cluster of {} fuzzy events overlapping {}: {} — {}",
             f.event_ids.len(),
@@ -106,6 +113,10 @@ pub fn emit_overlap(
     } else {
         format!("{} overlap {} — {}", titles, window_label, f.reasons.join(" "))
     };
+    if let Some(extra) = elaboration {
+        headline.push(' ');
+        headline.push_str(extra);
+    }
     let meta = serde_json::json!({
         "text": headline,
         "body_en": headline,
@@ -120,6 +131,7 @@ pub fn emit_overlap(
         "shared_characters": char_names,
         "shared_places": place_names,
         "reasons": f.reasons,
+        "elaboration": elaboration,
     });
     let msg = Message::new(
         kinds::TIMELINE_FUZZY_OVERLAP_WARNING,

@@ -23,6 +23,7 @@
 // same way `world/mod.rs` ships its types before the phases that wire them.
 #![allow(dead_code, unused_imports)]
 
+pub mod elaboration;
 pub mod fuzzy_overlap;
 pub mod legacy;
 pub mod orphan;
