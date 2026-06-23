@@ -10573,6 +10573,8 @@ impl App {
             KeyCode::Char('c') | KeyCode::Char('C') => self.run_world_compile(),
             // P: open the proposal queue.
             KeyCode::Char('p') | KeyCode::Char('P') => self.open_world_proposals(),
+            // F: fact-check the open paragraph → Output.
+            KeyCode::Char('f') | KeyCode::Char('F') => self.fact_check_open_paragraph(),
             _ => {}
         }
         true
@@ -10659,6 +10661,54 @@ impl App {
             }
             Err(e) => self.status = format!("world proposals: {e}"),
         }
+    }
+
+    /// WORLD-4 — `Ctrl+B W` → `F`. Fact-check the open paragraph against the
+    /// simulated world (fast track) and emit findings to the Output pane.
+    fn fact_check_open_paragraph(&mut self) {
+        use crate::world::fact_check::{check_paragraph, emit_finding, Gazetteer, WorldContext};
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "fact-check: no paragraph open".into();
+            return;
+        };
+        let text = doc.textarea.lines().join("\n");
+        let root = self.store.project_root().to_path_buf();
+
+        // World context: ledger + moons from world.hjson, places from world.db.
+        let def = std::fs::read_to_string(root.join("world.hjson"))
+            .ok()
+            .and_then(|raw| crate::world::types::WorldDefinition::from_hjson(&raw).ok());
+        let ledger = def.as_ref().and_then(|d| d.magic.clone()).unwrap_or_default();
+        let moons: Vec<String> = def
+            .as_ref()
+            .map(|d| {
+                crate::world::compile::compile_astronomy(&d.astronomy)
+                    .moons
+                    .iter()
+                    .map(|m| m.name.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let places = crate::world::storage::WorldStore::open_for_project(&root)
+            .ok()
+            .and_then(|ws| ws.list_place_links().ok())
+            .unwrap_or_default();
+        let ctx = WorldContext::new(Gazetteer::new(places), moons);
+
+        let findings = check_paragraph(&text, &ledger, &[], Some(&ctx));
+        if findings.is_empty() {
+            self.status = "fact-check: no issues found".into();
+            return;
+        }
+        for f in &findings {
+            emit_finding(f);
+        }
+        // Surface the findings in Output.
+        self.modal = Modal::None;
+        self.output_selected = 0;
+        self.change_focus(Focus::Ai);
+        self.right_pane = RightPane::Output;
+        self.status = format!("fact-check: {} finding(s) → Output (^B Tab)", findings.len());
     }
 
     /// Reload the hierarchy after the compiler wrote into the World/Places books,
