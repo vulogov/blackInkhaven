@@ -25,6 +25,7 @@
 
 pub mod compile;
 pub mod fact_check;
+pub mod fact_check_slow;
 pub mod materialize;
 pub mod proposals;
 pub mod storage;

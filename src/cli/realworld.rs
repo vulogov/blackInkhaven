@@ -32,7 +32,12 @@ pub fn run(project: &Path, cmd: RealworldCommand) -> Result<()> {
 
 /// Fact-check prose against the world (fast track). `--text` checks a literal
 /// string; `--paragraph` reads a paragraph's content from the store.
-pub fn fact_check(project: &Path, text: Option<String>, paragraph: Option<String>) -> Result<()> {
+pub fn fact_check(
+    project: &Path,
+    text: Option<String>,
+    paragraph: Option<String>,
+    slow: bool,
+) -> Result<()> {
     use crate::world::fact_check::check_paragraph;
     // The magic ledger (if any) is consulted; a missing world.hjson is fine.
     let def = load(project).ok();
@@ -85,15 +90,21 @@ pub fn fact_check(project: &Path, text: Option<String>, paragraph: Option<String
         .unwrap_or_default();
     let world_ctx = if !places.is_empty() || !moons.is_empty() || !minerals.is_empty() {
         Some(crate::world::fact_check::WorldContext::new(
-            crate::world::fact_check::Gazetteer::new(places),
-            moons,
-            minerals,
+            crate::world::fact_check::Gazetteer::new(places.clone()),
+            moons.clone(),
+            minerals.clone(),
         ))
     } else {
         None
     };
 
-    let findings = check_paragraph(&prose, &ledger, &[], world_ctx.as_ref());
+    let mut findings = check_paragraph(&prose, &ledger, &[], world_ctx.as_ref());
+    if slow {
+        match run_slow_track(project, &prose, def.as_ref(), &ledger, &places, &moons, &minerals, &findings) {
+            Ok(mut slow_findings) => findings.append(&mut slow_findings),
+            Err(e) => eprintln!("slow track skipped: {e}"),
+        }
+    }
     if findings.is_empty() {
         println!("✓ no issues found");
         return Ok(());
@@ -109,6 +120,64 @@ pub fn fact_check(project: &Path, text: Option<String>, paragraph: Option<String
     }
     println!("\n{} finding(s).", findings.len());
     Ok(())
+}
+
+/// The slow track: an LLM pass for subtle contradictions the patterns miss.
+/// Cost-capped (daily call ceiling). Returns its findings; the fast findings are
+/// passed in as the seam (the prompt tells the model not to repeat them).
+#[allow(clippy::too_many_arguments)]
+fn run_slow_track(
+    project: &Path,
+    prose: &str,
+    def: Option<&WorldDefinition>,
+    ledger: &crate::world::types::MagicLedger,
+    places: &[crate::world::proposals::PlaceLink],
+    moons: &[String],
+    minerals: &[String],
+    fast: &[crate::world::fact_check::Finding],
+) -> Result<Vec<crate::world::fact_check::Finding>> {
+    use crate::config::Config;
+    use crate::project::ProjectLayout;
+    use crate::world::fact_check_slow::{
+        build_slow_prompt, magic_summary, parse_slow_findings, world_summary, SLOW_SYSTEM,
+    };
+    use crate::world::storage::WorldStore;
+
+    let def = def.ok_or_else(|| Error::Config("slow track needs a world.hjson".into()))?;
+
+    // Daily cost cap.
+    const DAILY_CAP: i64 = 200;
+    let day = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let store = WorldStore::open_for_project(project)
+        .map_err(|e| Error::Store(format!("world store: {e}")))?;
+    let used = store.llm_calls_today(&day).map_err(|e| Error::Store(format!("{e}")))?;
+    if used >= DAILY_CAP {
+        return Err(Error::Config(format!("daily slow-track cap reached ({DAILY_CAP} calls)")));
+    }
+
+    // The LLM provider (errors cleanly when none is configured).
+    let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
+    let ai = crate::ai::AiClient::from_config(&cfg.llm)
+        .map_err(|e| Error::Config(format!("no LLM provider for the slow track: {e}")))?;
+    let (model, _env) = ai
+        .resolve_provider(&cfg.llm, None)
+        .map_err(|e| Error::Config(format!("resolving provider: {e}")))?;
+
+    let summary = world_summary(def, places, moons, minerals);
+    let magic = magic_summary(ledger);
+    let prompt = build_slow_prompt(prose, &summary, &magic, fast);
+
+    eprintln!("slow track · model: {model} · checking…");
+    let raw = crate::ai::stream::collect_blocking(
+        ai.client.clone(),
+        model.to_string(),
+        Some(SLOW_SYSTEM.to_string()),
+        prompt,
+    )
+    .map_err(|e| Error::Store(format!("LLM error: {e}")))?;
+    let _ = store.record_llm_call(&day);
+
+    Ok(parse_slow_findings(&raw))
 }
 
 /// Show (and optionally materialize) the magic ledger.
