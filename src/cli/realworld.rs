@@ -96,10 +96,13 @@ fn compile(project: &Path, layer: Option<&str>, json: bool, materialize: bool) -
     match l {
         "geology" => return compile_geology_cli(project, json, materialize),
         "climate" => return compile_climate_cli(project, json, materialize),
-        "hydrology" | "demographics" => {
-            return Err(Error::Config(format!(
-                "layer `{l}` is not implemented yet — astronomy + geology + climate have landed (WORLD-4 P0/P1)"
-            )));
+        "hydrology" => return compile_hydrology_cli(project, json, materialize),
+        "demographics" => {
+            return Err(Error::Config(
+                "layer `demographics` is not implemented yet — astronomy + geology + climate + \
+                 hydrology have landed (WORLD-4 P0/P1)"
+                    .into(),
+            ));
         }
         _ => {} // astronomy — falls through to the body below.
     }
@@ -273,6 +276,57 @@ fn compile_climate_cli(project: &Path, json: bool, materialize: bool) -> Result<
             "    {:<20} {:>4.0}% · {:>5.0}…{:<4.0}°C · {:>5.0}…{:.0} mm",
             z.biome, z.area_pct, z.temp_min_c, z.temp_max_c, z.precip_min_mm, z.precip_max_mm
         );
+    }
+    if let Some(r) = &mat_report {
+        println!(
+            "  → World/{}: {} paragraph(s) created, {} updated",
+            r.chapter,
+            r.created.len(),
+            r.updated.len()
+        );
+    }
+    Ok(())
+}
+
+/// Compile + print the hydrology layer (geology + climate → D8 flow).
+fn compile_hydrology_cli(project: &Path, json: bool, materialize: bool) -> Result<()> {
+    use crate::world::compile::{compile_astronomy, compile_climate, compile_geology, compile_hydrology};
+    let def = load(project)?;
+    let astro = compile_astronomy(&def.astronomy);
+    let geo = compile_geology(&def);
+    let climate = compile_climate(&def, &astro, &geo);
+    let out = compile_hydrology(&geo, &climate);
+
+    let mat_report = if materialize {
+        use crate::config::Config;
+        use crate::project::ProjectLayout;
+        use crate::store::Store;
+        let layout = ProjectLayout::new(project);
+        layout.require_initialized()?;
+        let cfg = Config::load_layered(&layout.config_path())?;
+        let store = Store::open(layout, &cfg)?;
+        Some(crate::world::materialize::materialize_hydrology(&store, &cfg, &out)?)
+    } else {
+        None
+    };
+
+    if json {
+        let v = serde_json::to_string_pretty(&out)
+            .map_err(|e| Error::Store(format!("serializing hydrology: {e}")))?;
+        println!("{v}");
+        return Ok(());
+    }
+    println!("hydrology · {} ({}×{} grid)", def.name, out.width, out.height);
+    println!(
+        "  rivers:     {} ({} major) · {} lake(s) · {} watershed(s)",
+        out.river_count, out.major_rivers.len(), out.lake_count, out.watershed_count
+    );
+    for r in out.major_rivers.iter().take(4) {
+        println!("    mouth ({:>3},{:>3}) · order {} · flow {:.0}", r.mouth_x, r.mouth_y, r.order, r.flow);
+    }
+    println!("  settlement priors ({}):", out.settlement_priors.len());
+    for p in out.settlement_priors.iter().take(6) {
+        println!("    {:<14} ({:>3},{:>3}) · score {:.0}", p.kind, p.x, p.y, p.score);
     }
     if let Some(r) = &mat_report {
         println!(
