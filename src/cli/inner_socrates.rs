@@ -19,6 +19,56 @@ pub fn run(project: &Path, cmd: InnerSocratesCommand) -> Result<()> {
         }
         InnerSocratesCommand::Timeline { max_cost, force } => timeline(project, max_cost, force),
         InnerSocratesCommand::Ledger => ledger(project),
+        InnerSocratesCommand::Persona(cmd) => persona(project, cmd),
+    }
+}
+
+/// The Reader Persona surface — list / show / activate.
+fn persona(project: &Path, cmd: crate::cli::PersonaCommand) -> Result<()> {
+    use crate::cli::PersonaCommand;
+    use crate::inner_socrates::personas;
+    use crate::inner_socrates::types::Category;
+    let active = personas::active(project).id;
+    match cmd {
+        PersonaCommand::List => {
+            for p in personas::load_all(project) {
+                let mark = if p.id == active { "→" } else { " " };
+                println!("{mark} {:<18} {}", p.id, p.voice_summary);
+            }
+            Ok(())
+        }
+        PersonaCommand::Show { id } => {
+            let p = personas::by_id(project, &id);
+            if p.id != id {
+                return Err(Error::Config(format!("no persona `{id}`")));
+            }
+            println!("{} ({})", p.name, p.id);
+            println!("  {}", p.voice_summary);
+            if !p.voice_notes.is_empty() {
+                println!("\n{}\n", p.voice_notes);
+            }
+            let leaned: Vec<String> = Category::FAST
+                .into_iter()
+                .chain(Category::SLOW)
+                .filter(|c| (p.emphasis_for(*c) - 1.0).abs() > f32::EPSILON)
+                .map(|c| format!("{}={:.1}", c.id(), p.emphasis_for(c)))
+                .collect();
+            if !leaned.is_empty() {
+                println!("emphasis: {}", leaned.join(", "));
+            }
+            Ok(())
+        }
+        PersonaCommand::Activate { id } => {
+            let p = personas::by_id(project, &id);
+            if p.id != id {
+                return Err(Error::Config(format!("no persona `{id}` (try `persona list`)")));
+            }
+            let store = InnerSocratesStore::open_for_project(project)
+                .map_err(|e| Error::Store(format!("inner-socrates store: {e}")))?;
+            store.set_active_persona(&id).map_err(|e| Error::Store(format!("{e}")))?;
+            println!("active persona: {} ({})", p.name, p.id);
+            Ok(())
+        }
     }
 }
 
@@ -40,7 +90,7 @@ fn check(
         .unwrap_or_default();
 
     let (prose, paragraph_id) = resolve_prose(project, text, paragraph)?;
-    let persona = Persona::default_inner_socrates();
+    let persona = crate::inner_socrates::personas::active(project);
     let ctx = FindingContext { paragraph_id: paragraph_id.map(|p| p.to_string()), ..Default::default() };
 
     let mut findings = fast::check_paragraph(&prose, &persona, &ledger, &ctx);
@@ -196,7 +246,6 @@ fn timeline(project: &Path, soft_cap: usize, force: bool) -> Result<()> {
         build_timeline_prompt, intent_summary, parse_timeline_findings, TIMELINE_SYSTEM,
     };
     use crate::inner_socrates::timeline as tl;
-    use crate::inner_socrates::types::Persona;
     use crate::project::ProjectLayout;
     use crate::store::hierarchy::Hierarchy;
     use crate::store::Store;
@@ -215,7 +264,7 @@ fn timeline(project: &Path, soft_cap: usize, force: bool) -> Result<()> {
 
     let is_store = InnerSocratesStore::open_for_project(project).ok();
     let ledger = is_store.as_ref().and_then(|s| s.load_ledger().ok()).unwrap_or_default();
-    let persona = Persona::default_inner_socrates();
+    let persona = crate::inner_socrates::personas::active(project);
 
     let summary = tl::timeline_summary(&events);
     let densest = tl::densest_window(&events, 365); // a year, in day-ticks

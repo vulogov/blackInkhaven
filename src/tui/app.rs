@@ -11189,8 +11189,7 @@ impl App {
 
     fn build_inner_socrates_rows(&self) -> Vec<String> {
         use crate::inner_socrates::storage::InnerSocratesStore;
-        use crate::inner_socrates::types::Persona;
-        let persona = Persona::default_inner_socrates();
+        let persona = crate::inner_socrates::personas::active(self.store.project_root());
         let mut rows = vec![
             format!("Active persona: {}", persona.name),
             format!("  {}", persona.voice_summary),
@@ -11242,10 +11241,7 @@ impl App {
             }
             KeyCode::Char('f') | KeyCode::Char('F') => self.socratic_check_open_paragraph(),
             KeyCode::Char('l') | KeyCode::Char('L') => self.socratic_view_ledger(),
-            KeyCode::Char('s') | KeyCode::Char('S') => {
-                self.status =
-                    "persona selection lands in a later phase (CLI: inkhaven inner-socrates)".into();
-            }
+            KeyCode::Char('s') | KeyCode::Char('S') => self.socratic_cycle_persona(),
             KeyCode::Char('a') | KeyCode::Char('A') => {
                 self.socratic_auto = !self.socratic_auto;
                 self.socr_last_fp = None;
@@ -11292,7 +11288,6 @@ impl App {
         use crate::inner_socrates::fast;
         use crate::inner_socrates::intent::FindingContext;
         use crate::inner_socrates::storage::InnerSocratesStore;
-        use crate::inner_socrates::types::Persona;
         let doc = self.opened.as_ref()?;
         let id = doc.id;
         let text = doc.textarea.lines().join("\n");
@@ -11300,7 +11295,7 @@ impl App {
             .ok()
             .and_then(|s| s.load_ledger().ok())
             .unwrap_or_default();
-        let persona = Persona::default_inner_socrates();
+        let persona = crate::inner_socrates::personas::active(self.store.project_root());
         let ctx = FindingContext { paragraph_id: Some(id.to_string()), ..Default::default() };
         Some((id, fast::check_paragraph(&text, &persona, &ledger, &ctx)))
     }
@@ -11335,6 +11330,29 @@ impl App {
                     let _ = s.dismiss(m.id);
                 }
             }
+        }
+    }
+
+    /// `Ctrl+B J` → `S` — cycle to the next available Reader Persona and persist
+    /// it. (A full picker is a later refinement; cycling is immediate and clear.)
+    fn socratic_cycle_persona(&mut self) {
+        use crate::inner_socrates::storage::InnerSocratesStore;
+        let root = self.store.project_root().to_path_buf();
+        let all = crate::inner_socrates::personas::load_all(&root);
+        if all.is_empty() {
+            return;
+        }
+        let active = crate::inner_socrates::personas::active(&root).id;
+        let cur = all.iter().position(|p| p.id == active).unwrap_or(0);
+        let next = &all[(cur + 1) % all.len()];
+        if let Ok(s) = InnerSocratesStore::open_for_project(&root) {
+            let _ = s.set_active_persona(&next.id);
+        }
+        self.status = format!("Inner Socrates persona: {} — {}", next.name, next.voice_summary);
+        let rows = self.build_inner_socrates_rows();
+        if let Modal::InnerSocratesOverview { rows: r, cursor } = &mut self.modal {
+            *r = rows;
+            *cursor = 0;
         }
     }
 
