@@ -3554,6 +3554,9 @@ pub enum RealworldCommand {
         #[command(subcommand)]
         cmd: ProposalsCommand,
     },
+    /// List the Place ↔ World cross-references (accepted compiler Places + their
+    /// climate zone / biome / hydrology basis / coordinates).
+    Places,
 }
 
 /// WORLD-4 — the proposal queue surface (RFC §8.9). Accepting a proposal commits

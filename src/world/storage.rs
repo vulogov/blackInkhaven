@@ -12,7 +12,7 @@ use duckdb::types::Value as DuckValue;
 use uuid::Uuid;
 
 use crate::storage::engine::StorageEngine;
-use crate::world::proposals::{now_secs, PlaceProposal};
+use crate::world::proposals::{now_secs, PlaceLink, PlaceProposal};
 
 const INIT_SQL: &str = "
     CREATE TABLE IF NOT EXISTS world_proposals (
@@ -28,6 +28,22 @@ const INIT_SQL: &str = "
     );
     CREATE INDEX IF NOT EXISTS idx_wp_status ON world_proposals(status);
     CREATE INDEX IF NOT EXISTS idx_wp_sig    ON world_proposals(signature);
+
+    -- WORLD-4 P2 — Place ↔ World cross-references. One row per accepted
+    -- compiler-proposed Place, linking the Place record (by its node id) back to
+    -- the world data that generated it (climate zone / biome / hydrology basis /
+    -- coordinates). The fact-checker (P4) joins through here.
+    CREATE TABLE IF NOT EXISTS world_place_links (
+        place_id        TEXT   NOT NULL PRIMARY KEY,
+        name            TEXT   NOT NULL,
+        biome           TEXT,
+        climate_zone    TEXT,
+        hydrology_basis TEXT,
+        population      BIGINT,
+        x               INTEGER,
+        y               INTEGER,
+        created_at      BIGINT NOT NULL
+    );
 ";
 
 /// Per-project world store. Cloneable; clones share the pool.
@@ -123,6 +139,102 @@ impl WorldStore {
 
     pub fn count(&self, status: &str) -> Result<usize> {
         Ok(self.list(Some(status))?.len())
+    }
+
+    /// Record a Place ↔ World cross-reference (idempotent on place_id).
+    pub fn insert_place_link(&self, link: &PlaceLink) -> Result<()> {
+        self.engine.execute_with(
+            "INSERT OR REPLACE INTO world_place_links \
+             (place_id, name, biome, climate_zone, hydrology_basis, population, x, y, created_at) \
+             VALUES (?,?,?,?,?,?,?,?,?)",
+            &[
+                &link.place_id.to_string(),
+                &link.name,
+                &link.biome,
+                &link.climate_zone,
+                &link.hydrology_basis,
+                &(link.population as i64),
+                &(link.x as i64),
+                &(link.y as i64),
+                &now_secs(),
+            ],
+        )
+    }
+
+    /// All Place ↔ World cross-references, newest first.
+    pub fn list_place_links(&self) -> Result<Vec<PlaceLink>> {
+        let rows = self.engine.select_all(
+            "SELECT place_id, name, biome, climate_zone, hydrology_basis, population, x, y \
+             FROM world_place_links ORDER BY created_at DESC, name",
+        )?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                Some(PlaceLink {
+                    place_id: Uuid::parse_str(&text(r.first())).ok()?,
+                    name: text(r.get(1)),
+                    biome: text(r.get(2)),
+                    climate_zone: text(r.get(3)),
+                    hydrology_basis: text(r.get(4)),
+                    population: int(r.get(5)).max(0) as u64,
+                    x: int(r.get(6)).max(0) as usize,
+                    y: int(r.get(7)).max(0) as usize,
+                })
+            })
+            .collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::world::proposals::PlaceProposal;
+
+    fn store() -> WorldStore {
+        WorldStore::open(Path::new(":memory:")).unwrap()
+    }
+
+    fn proposal(sig: &str, name: &str) -> PlaceProposal {
+        PlaceProposal {
+            id: Uuid::new_v4(),
+            signature: sig.into(),
+            kind: "place".into(),
+            name: name.into(),
+            payload: serde_json::json!({"x": 60, "y": 69, "population": 40000, "class": "city", "basis": "river_mouth", "biome": "tropical_seasonal"}),
+            rationale: "a city".into(),
+            status: "pending".into(),
+            created_at: 1,
+        }
+    }
+
+    #[test]
+    fn proposal_round_trip_and_dedup() {
+        let s = store();
+        let p = proposal("place:60:69", "Laevokorel");
+        s.insert(&p).unwrap();
+        let listed = s.list(Some("pending")).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].name, "Laevokorel");
+        assert_eq!(listed[0].signature, "place:60:69");
+        // Accept it → it leaves the pending set and joins the resolved signatures.
+        s.set_status(p.id, "accepted").unwrap();
+        assert!(s.list(Some("pending")).unwrap().is_empty());
+        assert!(s.resolved_signatures().unwrap().contains("place:60:69"));
+    }
+
+    #[test]
+    fn place_link_round_trip() {
+        let s = store();
+        let p = proposal("place:60:69", "Laevokorel");
+        let link = PlaceLink::from_proposal(p.id, &p);
+        assert_eq!(link.climate_zone, "tropical_seasonal");
+        assert_eq!(link.hydrology_basis, "river_mouth");
+        s.insert_place_link(&link).unwrap();
+        let back = s.list_place_links().unwrap();
+        assert_eq!(back.len(), 1);
+        assert_eq!(back[0].name, "Laevokorel");
+        assert_eq!(back[0].population, 40000);
+        assert_eq!(back[0].x, 60);
     }
 }
 

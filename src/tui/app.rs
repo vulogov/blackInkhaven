@@ -10791,6 +10791,10 @@ impl App {
                 .map_err(|e| crate::error::Error::Store(format!("writing Place: {e}")))?;
         }
         self.store.update_paragraph_content(&mut node, prose.as_bytes())?;
+        // Record the Place ↔ World cross-reference (climate zone / biome /
+        // hydrology basis / coordinates), keyed to the new Place's node id.
+        ws.insert_place_link(&crate::world::proposals::PlaceLink::from_proposal(node.id, &p))
+            .map_err(|e| crate::error::Error::Store(format!("{e}")))?;
         ws.set_status(id, "accepted").map_err(|e| crate::error::Error::Store(format!("{e}")))?;
         Ok(())
     }
