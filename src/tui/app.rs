@@ -10546,14 +10546,9 @@ impl App {
         ));
         rows.push("".into());
 
-        // The remaining MVP layers (not yet implemented).
-        for layer in ["Geology", "Climate", "Hydrology", "Demographics"] {
-            rows.push(format!("{layer}  · not yet implemented (WORLD-4 P1+)"));
-        }
-        rows.push("".into());
-
-        // Materialization status: is the astronomy in the World book?
-        let materialized = self
+        // The chapter titles already materialized under the World book — drives
+        // the per-layer ✓ / pending status below.
+        let world_chapters: Vec<String> = self
             .hierarchy
             .iter()
             .find(|n| {
@@ -10564,15 +10559,37 @@ impl App {
                 self.hierarchy
                     .children_of(Some(world.id))
                     .iter()
-                    .any(|c| c.title.eq_ignore_ascii_case("Astronomy"))
+                    .map(|c| c.title.clone())
+                    .collect()
             })
-            .unwrap_or(false);
-        rows.push(if materialized {
-            "Materialized into World / Astronomy ✓".into()
+            .unwrap_or_default();
+        let has = |title: &str| world_chapters.iter().any(|c| c.eq_ignore_ascii_case(title));
+
+        // The remaining MVP layers — all shipped; show whether each is in the book.
+        let geo_mode = match def.geology.as_ref() {
+            Some(g) if g.dem.is_some() => "DEM-sourced",
+            _ => "generated",
+        };
+        for (layer, note) in [
+            ("Geology", geo_mode),
+            ("Climate", "derived"),
+            ("Hydrology", "derived"),
+            ("Demographics", "derived"),
+            ("Magic Ledger", if def.magic.as_ref().map(|m| m.enabled).unwrap_or(false) { "enabled" } else { "off" }),
+        ] {
+            let mark = if has(layer) { "✓ in World book" } else { "· press C to compile" };
+            rows.push(format!("{layer}  ({note})  {mark}"));
+        }
+        rows.push("".into());
+
+        let any = !world_chapters.is_empty();
+        rows.push(if any {
+            format!("Materialized: {} chapter(s) under World ✓", world_chapters.len())
         } else {
-            "Not materialized — `inkhaven realworld compile --materialize`".into()
+            "Not materialized yet — press C (compile) to populate the World book".into()
         });
         rows.push("".into());
+        rows.push("Keys:  C compile · P proposals · F fact-check (→P/B/R) · M map".into());
         rows.push("CLI: inkhaven realworld new / validate / compile [--materialize]".into());
         rows
     }
