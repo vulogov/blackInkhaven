@@ -280,6 +280,62 @@ fn check_climate(text: &str, gaz: &Gazetteer, ledger: &MagicLedger, lang: Lang) 
     out
 }
 
+/// WORLD-5 — the timeline-aware entry point. Given a paragraph's
+/// [`TimelineContext`](crate::world::timeline_context::TimelineContext), check the
+/// prose's weather against the **timeline-dated season**: snow in a paragraph the
+/// timeline places in summer is a hard contradiction (dated ground truth, not
+/// prose inference). Returns nothing when the paragraph has no effective season.
+pub fn check_timeline(
+    text: &str,
+    timeline: &crate::world::timeline_context::TimelineContext,
+    ledger: &MagicLedger,
+) -> Vec<Finding> {
+    let Some(season) = timeline.effective_season.as_deref() else {
+        return Vec::new();
+    };
+    let lang = crate::world::fact_check_lang::detect(text);
+    check_date_season(text, season, ledger, lang)
+}
+
+/// Weather contradicting a dated season. Conservative: only the common
+/// English-named seasons (`summer` / `winter`) are temperature-mapped; a
+/// custom- or conlang-named season degrades to no finding rather than guessing.
+fn check_date_season(text: &str, season: &str, ledger: &MagicLedger, lang: Lang) -> Vec<Finding> {
+    let s = season.to_lowercase();
+    let cold_season = s.contains("winter");
+    let hot_season = s.contains("summer");
+    if !cold_season && !hot_season {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for sentence in split_sentences(text) {
+        let Some(weather) = detect_weather(sentence, lang) else {
+            continue;
+        };
+        let conflict = matches!(
+            (weather, cold_season, hot_season),
+            (Weather::Cold, _, true) | (Weather::Hot, true, _)
+        );
+        if !conflict {
+            continue;
+        }
+        let msg = Msg::DateSeason { weather, season };
+        let ctx = CheckContext { category: "climate_anomaly", ..Default::default() };
+        let suppressed_by = ledger.find_suppressor(&ctx).map(|r| r.kind.clone());
+        // A dated season is ground truth — a clear mismatch is a contradiction.
+        let severity = if suppressed_by.is_some() { "info" } else { "contradiction" };
+        out.push(Finding {
+            category: "climate".into(),
+            severity: severity.into(),
+            body: lang.render(&msg),
+            body_en: Lang::En.render(&msg),
+            suppressed_by,
+        });
+        break; // one per paragraph is enough
+    }
+    out
+}
+
 /// Demographics check: a population stated for a place that diverges sharply
 /// from the modelled population.
 fn check_population(text: &str, gaz: &Gazetteer, ledger: &MagicLedger, lang: Lang) -> Vec<Finding> {
@@ -656,6 +712,62 @@ mod tests {
         let ctx = WorldContext::new(Gazetteer::new(places), vec![], def.declared_minerals());
         let f = check_paragraph("Snow fell on Cairo for three days.", &empty_ledger(), &[], Some(&ctx));
         assert!(f.iter().any(|f| f.category == "climate"), "got {f:?}");
+    }
+
+    #[test]
+    fn timeline_dated_season_flags_anachronistic_weather() {
+        use crate::world::timeline_context::{DateSource, TimelineContext};
+        let summer = TimelineContext {
+            paragraph_id: uuid::Uuid::nil(),
+            linked_events: vec![uuid::Uuid::nil()],
+            nearby_events: vec![],
+            effective_date: Some(1000),
+            date_source: DateSource::ExplicitLink(uuid::Uuid::nil()),
+            effective_season: Some("summer".into()),
+        };
+        // Snow, but the timeline dates this in summer → contradiction.
+        let f = check_timeline("Snow fell thick across the city.", &summer, &empty_ledger());
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].category, "climate");
+        assert_eq!(f[0].severity, "contradiction");
+        assert!(f[0].body.contains("summer"));
+
+        // Heat in summer is consistent → nothing.
+        let f2 = check_timeline("The sweltering heat pressed down.", &summer, &empty_ledger());
+        assert!(f2.is_empty(), "got {f2:?}");
+
+        // No effective season → no timeline finding.
+        let none = TimelineContext::empty(uuid::Uuid::nil());
+        assert!(check_timeline("Snow fell.", &none, &empty_ledger()).is_empty());
+    }
+
+    #[test]
+    fn timeline_season_respects_magic_ledger() {
+        use crate::world::timeline_context::{DateSource, TimelineContext};
+        use crate::world::types::magic::{Applicability, MagicLedger, MagicRule};
+        let winter = TimelineContext {
+            paragraph_id: uuid::Uuid::nil(),
+            linked_events: vec![uuid::Uuid::nil()],
+            nearby_events: vec![],
+            effective_date: Some(1),
+            date_source: DateSource::ExplicitLink(uuid::Uuid::nil()),
+            effective_season: Some("winter".into()),
+        };
+        let ledger = MagicLedger {
+            enabled: true,
+            rules: vec![MagicRule {
+                kind: "weather_control".into(),
+                covers: vec!["climate_anomaly".into()],
+                description: "The conclave bends the seasons".into(),
+                applicable_to: Applicability::default(),
+                parameters: Default::default(),
+            }],
+        };
+        // Tropical heat in winter, but a covering magic rule → suppressed (info).
+        let f = check_timeline("Tropical heat lay over the valley.", &winter, &ledger);
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].severity, "info");
+        assert_eq!(f[0].suppressed_by.as_deref(), Some("weather_control"));
     }
 
     #[test]

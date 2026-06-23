@@ -49,8 +49,8 @@ pub fn fact_check(
     let def = load(project).ok();
     let ledger = def.as_ref().and_then(|d| d.magic.clone()).unwrap_or_default();
 
-    let prose = match (text, paragraph) {
-        (Some(t), _) => t,
+    let (prose, paragraph_id) = match (text, paragraph) {
+        (Some(t), _) => (t, None),
         (None, Some(pid)) => {
             use crate::config::Config;
             use crate::project::ProjectLayout;
@@ -65,7 +65,7 @@ pub fn fact_check(
                 .get_content(id)
                 .map_err(|e| Error::Store(format!("reading paragraph: {e}")))?
                 .ok_or_else(|| Error::Config(format!("paragraph `{pid}` not found")))?;
-            String::from_utf8_lossy(&bytes).into_owned()
+            (String::from_utf8_lossy(&bytes).into_owned(), Some(id))
         }
         (None, None) => {
             return Err(Error::Config("give --text \"…\" or --paragraph <id>".into()));
@@ -110,6 +110,11 @@ pub fn fact_check(
     };
 
     let mut findings = check_paragraph(&prose, &ledger, &[], world_ctx.as_ref());
+    // WORLD-5 — timeline-aware checks when the paragraph is identified and the
+    // project has events (auto; silently no-op otherwise).
+    if let Some(pid) = paragraph_id {
+        findings.extend(timeline_findings(project, pid, &prose, &ledger));
+    }
     if slow {
         match run_slow_track(project, &prose, def.as_ref(), &ledger, &places, &moons, &minerals, &findings, max_cost, force) {
             Ok(mut slow_findings) => findings.append(&mut slow_findings),
@@ -361,6 +366,44 @@ fn coherence(project: &Path, node_id: &str, max_cost: usize, force: bool) -> Res
     }
     println!("\n{} cross-paragraph finding(s).", findings.len());
     Ok(())
+}
+
+/// WORLD-5 — build a paragraph's timeline context (events + calendar) and run the
+/// timeline-aware checks. Empty when the project has no events / no calendar.
+fn timeline_findings(
+    project: &Path,
+    paragraph_id: uuid::Uuid,
+    prose: &str,
+    ledger: &crate::world::types::MagicLedger,
+) -> Vec<crate::world::fact_check::Finding> {
+    use crate::config::Config;
+    use crate::project::ProjectLayout;
+    use crate::store::hierarchy::Hierarchy;
+    use crate::store::Store;
+    use crate::timeline::calendar::Calendar;
+    use crate::world::timeline_context as tc;
+
+    let layout = ProjectLayout::new(project);
+    if layout.require_initialized().is_err() {
+        return Vec::new();
+    }
+    let Ok(cfg) = Config::load_layered(&layout.config_path()) else {
+        return Vec::new();
+    };
+    let Ok(store) = Store::open(layout, &cfg) else {
+        return Vec::new();
+    };
+    let Ok(hierarchy) = Hierarchy::load(&store) else {
+        return Vec::new();
+    };
+    let events = tc::gather_events(&hierarchy);
+    if events.is_empty() {
+        return Vec::new();
+    }
+    let calendar = Calendar::from_config(cfg.timeline.calendar.clone());
+    let day = calendar.ticks_per("day").unwrap_or(1);
+    let ctx = tc::build_context(paragraph_id, &events, &calendar, 90 * day);
+    crate::world::fact_check::check_timeline(prose, &ctx, ledger)
 }
 
 /// Show (and optionally materialize) the magic ledger.

@@ -79,3 +79,15 @@
   `events_for_character` / `events_for_place` helpers. Adds
   `Calendar::season_for(point)` (calendar-aware, wraparound-safe). All pure +
   tested; degrades to empty context when the project has no events.
+- **P1.1 — climate gains calendar-grounded season (UNRELEASED, 1.3.30-dev).** The
+  headline P1 win: `fact_check::check_timeline(text, ctx, ledger)` flags prose
+  whose weather contradicts the **timeline-dated season** — snow in a paragraph the
+  timeline places in summer is a **contradiction** (dated ground truth, not prose
+  inference). A localized `Msg::DateSeason` renders in all five languages; the
+  magic ledger suppresses it (a `weather_control` rule covering `climate_anomaly`).
+  Conservative: only the common `summer`/`winter` season names are
+  temperature-mapped (custom/conlang names degrade to no finding). Wired into the
+  CLI `fact-check --paragraph` (auto: runs when the project has events + a calendar;
+  no-op otherwise) via `timeline_findings`. +2 tests, 1720. *Next: travel_time
+  event-derived durations + the P2 cross-paragraph categories (date_coherence,
+  co_location).*
