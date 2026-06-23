@@ -133,9 +133,28 @@
 >   elevation stats. Heightmap kept in-memory (`#[serde(skip)]` — a PNG asset
 >   later, not JSON). CLI `realworld compile --layer geology` (+`--json`). 5 tests;
 >   smoke-validated (Velmaron → 4▲1▽8↔, 2 continents, 36% ocean, 3 ranges along
->   convergent boundaries, copper/gold/iron/coal). tests 1593→1598. *Next P1:
->   geology materialization (World/Geology/* + heightmap PNG) + DEM import, then
->   climate (zonal model) + hydrology (D8 flow).*
+>   convergent boundaries, copper/gold/iron/coal). tests 1593→1598.
+> - **P1.2 — geology materialization (UNRELEASED).** `materialize_geology` → 3
+>   JSON paragraphs under `World / Geology /` (Continents&plates, Mountains&ranges,
+>   Mineral distribution) + the normalised heightmap rendered as
+>   `assets/world/heightmap.png` (8-bit grayscale via `image`; the summary points
+>   at it, not a JSON wall). CLI `--layer geology --materialize`. tests 1598.
+> - **P1.3 — climate layer (UNRELEASED).** `compile_climate(def, astro, geo)` — a
+>   zonal model: global mean from stellar flux (Earth-calibrated), latitude profile
+>   from the astronomy insolation (renormalised, tilt-aware), elevation lapse from
+>   geology; precipitation = zonal belts × continentality (BFS dist-to-ocean) ×
+>   orographic (windward/leeward of mountains); Köppen-style biomes; aggregated
+>   zones + Hadley/Ferrel/Polar wind bands (flip on retrograde). Materializes
+>   `World/Climate/{Climate zones, Prevailing winds}`. 5 tests. tests 1598→1603.
+> - **P1.4 — hydrology layer (UNRELEASED) → P1 terrain trio COMPLETE.**
+>   `compile_hydrology(geo, climate)` — textbook D8: flow direction → rainfall-
+>   weighted accumulation → rivers (Strahler-style order, counted at ocean mouths)
+>   → lakes (interior pits) → watersheds (memoised terminal trace) → settlement
+>   priors (river_mouth/confluence/fertile_valley, ranked, for Layer 5).
+>   Materializes `World/Hydrology/{River systems, Watersheds and settlement
+>   priors}`. 3 tests. tests 1603→1606. *Next: DEM-import path (image; author
+>   supplies a heightmap → skip generated geology) finishes P1; then **P2** —
+>   demographics + the proposal queue + cross-refs + the `Ctrl+B W` sub-chords.*
 >
 > **DEFERRED DELIVERABLE (user-requested 2026-06-25):** once WORLD-4 is *fully*
 > implemented (all five layers + magic), generate `./examples/realworld/Earth.hjson`
