@@ -113,6 +113,7 @@ pub fn fact_check(
     }
     if findings.is_empty() {
         println!("✓ no issues found");
+        eprintln!("({})", crate::world::fact_check_lang::backend_note());
         return Ok(());
     }
     for f in &findings {
@@ -125,6 +126,7 @@ pub fn fact_check(
         println!("{icon} [{}] {}{note}", f.category, f.body);
     }
     println!("\n{} finding(s).", findings.len());
+    eprintln!("({})", crate::world::fact_check_lang::backend_note());
     Ok(())
 }
 

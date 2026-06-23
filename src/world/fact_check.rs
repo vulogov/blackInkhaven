@@ -76,7 +76,11 @@ pub fn check_paragraph(
     roles: &[String],
     ctx: Option<&WorldContext>,
 ) -> Vec<Finding> {
-    let lang = crate::world::fact_check_lang::detect(text);
+    // Degrade rather than mislead: when language detection isn't confident, render
+    // warnings in English (the safe baseline) instead of asserting a guessed
+    // language. The numeric checks themselves are language-agnostic.
+    let (detected, confident) = crate::world::fact_check_lang::detect_with_confidence(text);
+    let lang = if confident { detected } else { Lang::En };
     let mut findings = Vec::new();
     findings.extend(check_travel_time(text, ledger, roles, lang));
     if let Some(c) = ctx {
