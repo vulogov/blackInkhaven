@@ -3587,6 +3587,20 @@ pub enum RealworldCommand {
         #[arg(long)]
         materialize: bool,
     },
+    /// Cross-paragraph coherence pass (slow track): gather every paragraph under a
+    /// node (book / chapter) and ask the LLM for contradictions *between* them — a
+    /// character in two places, a fact reversed, a timeline that doesn't add up.
+    Coherence {
+        /// The book or chapter node id whose paragraphs to check together.
+        node: String,
+        /// Per-call soft cap (estimated tokens); the call is skipped with a notice
+        /// if exceeded unless `--force`.
+        #[arg(long, default_value_t = 8000)]
+        max_cost: usize,
+        /// Run even if the cost estimate exceeds `--max-cost`.
+        #[arg(long)]
+        force: bool,
+    },
     /// Render the world map with `plakat`: compile every layer, emit a MapSpec,
     /// and write a features PNG + GeoJSON under `assets/maps/`. Resolved landmark
     /// positions are read back to refine each Place's coordinates.

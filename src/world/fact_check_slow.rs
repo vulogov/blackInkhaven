@@ -24,6 +24,48 @@ plausible, hypothetical, or about a character's feelings, do not flag it. Respon
 JSON array; each item is {\"category\": one of travel_time|climate|demographics|astronomy|economy|other, \
 \"severity\": warning|contradiction, \"explanation\": a one-sentence reason}. Return [] if nothing contradicts.";
 
+/// The system prompt for the **coherence** pass: where [`SLOW_SYSTEM`] checks one
+/// paragraph against the world, this checks a *run* of paragraphs against each
+/// other — a character in two places at once, a fact asserted then quietly
+/// reversed, a timeline that doesn't add up.
+pub const COHERENCE_SYSTEM: &str = "You are a meticulous continuity editor for a work of fiction. \
+You are given a summary of the story's world and a numbered sequence of consecutive manuscript \
+paragraphs. Identify only CONTRADICTIONS BETWEEN the paragraphs — a character who is in two places \
+without the travel to connect them, an object or fact stated one way then another, a time-of-day or \
+season that cannot follow, a population or name that changes. Cite the paragraph numbers involved. \
+Ignore anything the listed magic rules permit, and ignore a single paragraph's internal claims \
+(another pass handles those). Be conservative: only flag a real inconsistency between two or more \
+paragraphs. Respond ONLY with a JSON array; each item is {\"category\": one of \
+travel_time|climate|demographics|astronomy|economy|continuity|other, \"severity\": warning|contradiction, \
+\"explanation\": a one-sentence reason that names the paragraph numbers}. Return [] if the paragraphs are consistent.";
+
+/// Build the coherence prompt: the world summary + magic rules, then the numbered
+/// run of paragraphs (`¶1`, `¶2`, …). Empty paragraphs are skipped; the numbering
+/// reflects the *kept* order so the model's citations line up with `kept`.
+/// Returns `(prompt, kept_labels)` — `kept_labels[i]` is the caller's label for
+/// the paragraph the model sees as `¶{i+1}`.
+pub fn build_coherence_prompt(
+    labeled: &[(String, String)],
+    world_summary: &str,
+    magic_summary: &str,
+) -> (String, Vec<String>) {
+    let mut body = String::new();
+    let mut kept: Vec<String> = Vec::new();
+    for (label, text) in labeled {
+        if text.trim().is_empty() {
+            continue;
+        }
+        kept.push(label.clone());
+        body.push_str(&format!("¶{} ({}):\n{}\n\n", kept.len(), label, text.trim()));
+    }
+    let prompt = format!(
+        "WORLD:\n{world_summary}\n\nMAGIC RULES (claims these permit are fine):\n{magic_summary}\n\n\
+         PARAGRAPHS (find contradictions BETWEEN these, cite the ¶ numbers):\n{body}\n\
+         Return the JSON array of cross-paragraph contradictions."
+    );
+    (prompt, kept)
+}
+
 /// A compact prose summary of the world for the LLM. Built from the definition +
 /// the world-linked places + the astronomy/geology facts already to hand.
 pub fn world_summary(
@@ -296,6 +338,31 @@ mod tests {
         assert_eq!(backoff_delay(1).as_millis(), 1_000);
         assert_eq!(backoff_delay(2).as_millis(), 2_000);
         assert_eq!(backoff_delay(20).as_millis(), 8_000); // capped
+    }
+
+    #[test]
+    fn coherence_prompt_numbers_kept_paragraphs() {
+        let labeled = vec![
+            ("ch1/p1".to_string(), "The duke left Anvilport at dawn.".to_string()),
+            ("ch1/p2".to_string(), "   ".to_string()), // empty → skipped
+            ("ch1/p3".to_string(), "By noon he was home in Far Vale.".to_string()),
+        ];
+        let (prompt, kept) = build_coherence_prompt(&labeled, "World \"X\".", "None.");
+        assert_eq!(kept, vec!["ch1/p1", "ch1/p3"], "empty paragraph dropped, order kept");
+        assert!(prompt.contains("¶1 (ch1/p1)"));
+        assert!(prompt.contains("¶2 (ch1/p3)"));
+        assert!(!prompt.contains("¶3"), "only two non-empty paragraphs");
+        assert!(prompt.contains("World \"X\"."));
+        assert!(prompt.contains("contradictions BETWEEN"));
+    }
+
+    #[test]
+    fn coherence_response_parses_with_shared_parser() {
+        let raw = r#"[{"category":"continuity","severity":"contradiction","explanation":"¶1 and ¶2 place the duke in two cities a day apart by noon."}]"#;
+        let f = parse_slow_findings(raw);
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].category, "continuity");
+        assert!(f[0].body.contains("¶1"));
     }
 
     #[test]

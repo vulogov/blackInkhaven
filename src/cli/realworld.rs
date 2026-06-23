@@ -28,6 +28,9 @@ pub fn run(project: &Path, cmd: RealworldCommand) -> Result<()> {
         RealworldCommand::Places => places(project),
         RealworldCommand::Magic { materialize } => magic(project, materialize),
         RealworldCommand::Map { spec_only, no_ingest } => map(project, spec_only, no_ingest),
+        RealworldCommand::Coherence { node, max_cost, force } => {
+            coherence(project, &node, max_cost, force)
+        }
     }
 }
 
@@ -141,17 +144,34 @@ fn run_slow_track(
     soft_cap: usize,
     force: bool,
 ) -> Result<Vec<crate::world::fact_check::Finding>> {
+    use crate::world::fact_check_slow::{build_slow_prompt, magic_summary, world_summary, SLOW_SYSTEM};
+
+    let def = def.ok_or_else(|| Error::Config("slow track needs a world.hjson".into()))?;
+    let summary = world_summary(def, places, moons, minerals);
+    let magic = magic_summary(ledger);
+    let prompt = build_slow_prompt(prose, &summary, &magic, fast);
+    slow_llm_call(project, "slow track", SLOW_SYSTEM, prompt, soft_cap, force)
+}
+
+/// The shared slow-track LLM call: daily-cap check, provider resolution, cost
+/// preflight (soft cap overridable with `force`), retry-on-transient with
+/// backoff, usage record, and response parse. Used by both the per-paragraph slow
+/// track and the cross-paragraph coherence pass.
+fn slow_llm_call(
+    project: &Path,
+    label: &str,
+    system: &str,
+    prompt: String,
+    soft_cap: usize,
+    force: bool,
+) -> Result<Vec<crate::world::fact_check::Finding>> {
     use crate::config::Config;
     use crate::project::ProjectLayout;
     use crate::world::fact_check_slow::{
-        backoff_delay, build_slow_prompt, is_transient, magic_summary, parse_slow_findings,
-        slow_preflight, world_summary, PreflightVerdict, SLOW_SYSTEM,
+        backoff_delay, is_transient, parse_slow_findings, slow_preflight, PreflightVerdict,
     };
     use crate::world::storage::WorldStore;
 
-    let def = def.ok_or_else(|| Error::Config("slow track needs a world.hjson".into()))?;
-
-    // Daily cost cap.
     const DAILY_CAP: i64 = 200;
     let day = chrono::Utc::now().format("%Y-%m-%d").to_string();
     let store = WorldStore::open_for_project(project)
@@ -161,33 +181,29 @@ fn run_slow_track(
     // The LLM provider (errors cleanly when none is configured).
     let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
     let ai = crate::ai::AiClient::from_config(&cfg.llm)
-        .map_err(|e| Error::Config(format!("no LLM provider for the slow track: {e}")))?;
+        .map_err(|e| Error::Config(format!("no LLM provider for the {label}: {e}")))?;
     let (model, _env) = ai
         .resolve_provider(&cfg.llm, None)
         .map_err(|e| Error::Config(format!("resolving provider: {e}")))?;
 
-    let summary = world_summary(def, places, moons, minerals);
-    let magic = magic_summary(ledger);
-    let prompt = build_slow_prompt(prose, &summary, &magic, fast);
-
     // Preflight: estimate the cost and gate on the daily hard cap + per-call soft
     // cap (the soft cap is overridable with --force; 0 disables it).
     let effective_soft = if force { 0 } else { soft_cap };
-    let (pf, verdict) = slow_preflight(SLOW_SYSTEM, &prompt, used, DAILY_CAP, effective_soft);
+    let (pf, verdict) = slow_preflight(system, &prompt, used, DAILY_CAP, effective_soft);
     match verdict {
         PreflightVerdict::DailyCapReached => {
             return Err(Error::Config(format!("daily slow-track cap reached ({DAILY_CAP} calls)")));
         }
         PreflightVerdict::OverSoftCap { est_total_tokens, soft_cap } => {
             return Err(Error::Config(format!(
-                "slow track skipped: estimated ~{est_total_tokens} tokens exceeds soft cap {soft_cap} — \
+                "{label} skipped: estimated ~{est_total_tokens} tokens exceeds soft cap {soft_cap} — \
                  re-run with --force or raise --max-cost"
             )));
         }
         PreflightVerdict::Proceed => {}
     }
     eprintln!(
-        "slow track · model: {model} · ~{} tokens · {}/{} calls today · checking…",
+        "{label} · model: {model} · ~{} tokens · {}/{} calls today · checking…",
         pf.est_total_tokens, pf.calls_used, pf.daily_cap
     );
 
@@ -198,7 +214,7 @@ fn run_slow_track(
         match crate::ai::stream::collect_blocking(
             ai.client.clone(),
             model.to_string(),
-            Some(SLOW_SYSTEM.to_string()),
+            Some(system.to_string()),
             prompt.clone(),
         ) {
             Ok(raw) => {
@@ -218,6 +234,91 @@ fn run_slow_track(
         }
     }
     Err(Error::Store(format!("LLM error: {last_err}")))
+}
+
+/// WORLD-4 slow-track **coherence pass**: gather every paragraph under a node
+/// (book / chapter) in document order and ask the LLM for contradictions *between*
+/// them — a character in two places, a fact reversed, a timeline that doesn't add
+/// up. One cost-capped call; findings cite the `¶` numbers.
+fn coherence(project: &Path, node_id: &str, max_cost: usize, force: bool) -> Result<()> {
+    use crate::config::Config;
+    use crate::project::ProjectLayout;
+    use crate::store::hierarchy::Hierarchy;
+    use crate::store::node::NodeKind;
+    use crate::store::Store;
+    use crate::world::fact_check_slow::{
+        build_coherence_prompt, magic_summary, world_summary, COHERENCE_SYSTEM,
+    };
+    use crate::world::storage::WorldStore;
+
+    let id = uuid::Uuid::parse_str(node_id)
+        .map_err(|e| Error::Config(format!("bad node id `{node_id}`: {e}")))?;
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout, &cfg)?;
+    let hierarchy = Hierarchy::load(&store)?;
+
+    // The container's paragraphs, document order.
+    let para_ids: Vec<uuid::Uuid> = hierarchy
+        .collect_subtree(id)
+        .into_iter()
+        .filter(|pid| hierarchy.get(*pid).map(|n| n.kind == NodeKind::Paragraph).unwrap_or(false))
+        .collect();
+    if para_ids.is_empty() {
+        return Err(Error::Config("no paragraphs under that node".into()));
+    }
+    let labeled: Vec<(String, String)> = para_ids
+        .iter()
+        .map(|pid| {
+            let label = hierarchy.get(*pid).map(|n| hierarchy.slug_path(n)).unwrap_or_else(|| pid.to_string());
+            let text = store
+                .get_content(*pid)
+                .ok()
+                .flatten()
+                .map(|b| String::from_utf8_lossy(&b).into_owned())
+                .unwrap_or_default();
+            (label, text)
+        })
+        .collect();
+
+    // World context (coherence needs a world.hjson, like the slow track).
+    let def = load(project)?;
+    let ledger = def.magic.clone().unwrap_or_default();
+    let places = WorldStore::open_for_project(project)
+        .ok()
+        .and_then(|ws| ws.list_place_links().ok())
+        .unwrap_or_default();
+    let moons: Vec<String> =
+        crate::world::compile::compile_astronomy(&def.astronomy).moons.iter().map(|m| m.name.clone()).collect();
+    let minerals: Vec<String> = geology_for(project, &def)
+        .map(|g| g.minerals.iter().map(|m| m.mineral.clone()).collect())
+        .unwrap_or_default();
+
+    let summary = world_summary(&def, &places, &moons, &minerals);
+    let magic = magic_summary(&ledger);
+    let (prompt, kept) = build_coherence_prompt(&labeled, &summary, &magic);
+    if kept.is_empty() {
+        println!("✓ no non-empty paragraphs to check");
+        return Ok(());
+    }
+    println!("coherence · {} paragraph(s) under `{}`", kept.len(), node_id);
+
+    let findings = slow_llm_call(project, "coherence", COHERENCE_SYSTEM, prompt, max_cost, force)?;
+    if findings.is_empty() {
+        println!("✓ paragraphs are consistent");
+        return Ok(());
+    }
+    for f in &findings {
+        let icon = match f.severity.as_str() {
+            "contradiction" => "⊗",
+            "warning" => "⚠",
+            _ => "●",
+        };
+        println!("{icon} [{}] {}", f.category, f.body);
+    }
+    println!("\n{} cross-paragraph finding(s).", findings.len());
+    Ok(())
 }
 
 /// Show (and optionally materialize) the magic ledger.
