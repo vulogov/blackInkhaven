@@ -185,11 +185,63 @@
 >   reusing the lexicon_proposal→promote template); then cross-references
 >   (Place/Character/Artefact ↔ World) + Facts↔World provenance; then **P3** (magic
 >   ledger + plakat).*
->
-> **DEFERRED DELIVERABLE (user-requested 2026-06-25):** once WORLD-4 is *fully*
-> implemented (all five layers + magic), generate `./examples/realworld/Earth.hjson`
-> — a complete real-Earth definition (every parameter) for authors starting in an
-> Earth setting. Tracked here so it isn't lost; do it at the P7 polish phase.
+> - **P3.2 — plakat map integration (UNRELEASED, 1.3.27-dev).** `src/world/plakat.rs`:
+>   `detect()` (`plakat --version`, graceful absence); `build_map_spec(name, geo,
+>   climate, hydro, demo, places)` emits a **plakat MapSpec v2** as a `serde_json::Value`
+>   (mirrored by shape, not by importing plakat's structs — zero new deps).
+>   Positions come from the compiled layers: mountain ranges from clustering the
+>   heightfield's high cells; rivers run their real D8 watercourse (mouth from
+>   hydrology, source traced upstream by max-inflow accumulation); regions anchor at
+>   each dominant biome's centroid; landmarks from the largest settlements (coastal
+>   cities → `port`), carrying `place_<uuid>` ids where a settlement coincides with an
+>   accepted Place link. `render()` writes the spec under `assets/maps/`, invokes
+>   `plakat map --map-spec … --map-dump-features <png> --map-export-geojson <geojson>
+>   --seed <world seed>` (loads our spec, skips plakat's LLM), then
+>   `parse_landmark_coords()` reads the resolved landmark Points back (north-up GeoJSON
+>   re-flipped to the row-0-north grid) → `WorldStore::update_place_link_coords` refines
+>   each accepted Place's coordinates. CLI `realworld map [--spec-only] [--no-ingest]`.
+>   End-to-end verified (Aldoria: 5 ranges, 8 rivers, 6 regions, 20 landmarks → PNG +
+>   GeoJSON, 20 Places refined). +7 tests. tests 1635→1642. *Next: `Ctrl+B W M` TUI
+>   chord; slow-track polish (coherence, scope chords, cost preflight).*
+> - **P5.x — slow-track cost preflight + retry/backoff (UNRELEASED, 1.3.27-dev).**
+>   `fact_check_slow.rs` gains pure, tested cost controls: `estimate_tokens` (~4
+>   chars/token), `slow_preflight(system, prompt, calls_used, daily_cap, soft_cap)`
+>   → `(SlowPreflight, PreflightVerdict::{Proceed|DailyCapReached|OverSoftCap})`,
+>   and `backoff_delay`/`is_transient` for retrying rate-limits/timeouts/5xx.
+>   `run_slow_track` now prints the cost estimate + daily tally before calling,
+>   gates on a per-call soft cap (`fact-check --max-cost <tokens>`, default 6000;
+>   `--force` overrides), and retries transient LLM errors up to 3× with exponential
+>   backoff. +7 tests. tests 1642→1649. *Next: cross-paragraph coherence pass;
+>   `Ctrl+B W F` scope chords (book/paragraph/recent); `Ctrl+B W M` map chord.*
+> - **P3.3/P6.x — TUI world chords (UNRELEASED, 1.3.27-dev).** The `Ctrl+B W`
+>   overview gains `M` (render the map with plakat, refine Place coords) and an
+>   `F` scope sub-chord — `F` then `P` (open paragraph) / `B` (enclosing book) /
+>   `R` (12 most-recently-modified ¶). Extracted `build_fact_check_context` +
+>   `paragraph_text` (prefers the open editor buffer over on-disk). tests 1649.
+> - **P5.x — cross-paragraph coherence pass (UNRELEASED, 1.3.27-dev).**
+>   `COHERENCE_SYSTEM` + `build_coherence_prompt` (pure, tested) number a run of
+>   paragraphs (¶1, ¶2, …) and ask the LLM for contradictions *between* them
+>   (character in two places, fact reversed, timeline that doesn't add up).
+>   Extracted `slow_llm_call` (shared daily-cap/provider/preflight/retry/record)
+>   now backs both the per-paragraph track and `realworld coherence <node>
+>   [--max-cost] [--force]`. +2 tests. tests 1649→1651.
+> - **P2.x/P7.2 — author-declared setting blocks (UNRELEASED, 1.3.27-dev).**
+>   The definition gains optional `geography` (regions + landmarks), `hydrology`
+>   (named rivers/lakes/seas + rainfall), and `economy` (tech/currency/trade/
+>   resources) blocks, plus expanded `geology` knobs (volcanism, mineral_richness,
+>   notable_minerals). Two *real* hooks, not decoration: `declared_minerals`
+>   (geology + economy resources) extends the economy fact-check's known goods,
+>   and `declared_places` turns geography landmarks into gazetteer entries the
+>   checker resolves by name (verified: "Snow fell on Cairo" flags against its
+>   declared hot_desert zone). `materialize_setting` writes a Setting chapter
+>   (Geography/Hydrology/Economy/Geology Notes) into the World book on compile.
+>   Earth.hjson now exercises all of them. +1 test. tests 1657→1658.
+> - **P7.1 — `examples/realworld/Earth.hjson` (UNRELEASED, 1.3.27-dev) → DEFERRED
+>   DELIVERABLE DONE.** A complete, heavily-commented real-Sun/Earth/Moon
+>   definition (exact astronomy; Earth-tuned procedural geology at `sea_level`
+>   0.40 for an ocean-dominant world with usable continents; magic disabled, with
+>   a commented DEM path for compiling the literal Earth). Verified end-to-end:
+>   validate → compile (6.1M people, 20 settlements) → plakat map (20 landmarks).
 
 ---
 

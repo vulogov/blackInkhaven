@@ -156,6 +156,7 @@ mod tests {
                 continents: 4,
                 mountain_orogeny: "active".into(),
                 sea_level: 0.4,
+                ..Default::default()
             }),
             dem: None,
         });

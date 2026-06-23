@@ -459,6 +459,7 @@ mod tests {
                 continents,
                 mountain_orogeny: orogeny.into(),
                 sea_level: sea,
+                ..Default::default()
             }),
             dem: None,
         });
