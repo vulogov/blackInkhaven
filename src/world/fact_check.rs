@@ -9,6 +9,7 @@
 //! emitting, each candidate is run past the magic ledger — a declared exception
 //! to physics suppresses the warning with a note (lazy consultation, §8.21).
 
+use crate::world::fact_check_lang::{contains_word, Lang};
 use crate::world::proposals::PlaceLink;
 use crate::world::types::magic::{CheckContext, MagicLedger};
 
@@ -50,25 +51,6 @@ impl WorldContext {
 }
 
 /// Whole-word containment (so "Or" doesn't match inside "Orenarm").
-fn contains_word(haystack: &str, needle: &str) -> bool {
-    if needle.is_empty() {
-        return false;
-    }
-    let bytes = haystack.as_bytes();
-    let mut from = 0;
-    while let Some(pos) = haystack[from..].find(needle) {
-        let start = from + pos;
-        let end = start + needle.len();
-        let before_ok = start == 0 || !bytes[start - 1].is_ascii_alphanumeric();
-        let after_ok = end == bytes.len() || !bytes[end].is_ascii_alphanumeric();
-        if before_ok && after_ok {
-            return true;
-        }
-        from = start + 1;
-    }
-    false
-}
-
 /// A fact-check finding. `body` is the human message; `suppressed_by` is set
 /// when a magic rule covered it (the warning is informational, not a problem).
 #[derive(Debug, Clone, PartialEq)]
@@ -91,13 +73,14 @@ pub fn check_paragraph(
     roles: &[String],
     ctx: Option<&WorldContext>,
 ) -> Vec<Finding> {
+    let lang = crate::world::fact_check_lang::detect(text);
     let mut findings = Vec::new();
-    findings.extend(check_travel_time(text, ledger, roles));
+    findings.extend(check_travel_time(text, ledger, roles, lang));
     if let Some(c) = ctx {
-        findings.extend(check_climate(text, &c.gazetteer, ledger));
-        findings.extend(check_population(text, &c.gazetteer, ledger));
-        findings.extend(check_astronomy(text, &c.moons, ledger));
-        findings.extend(check_economy(text, &c.minerals, ledger));
+        findings.extend(check_climate(text, &c.gazetteer, ledger, lang));
+        findings.extend(check_population(text, &c.gazetteer, ledger, lang));
+        findings.extend(check_astronomy(text, &c.moons, ledger, lang));
+        findings.extend(check_economy(text, &c.minerals, ledger, lang));
     }
     findings
 }
@@ -106,29 +89,29 @@ pub fn check_paragraph(
 /// doesn't yield. Only the world's mineral hints are modelled, so this is scoped
 /// to ores/metals in a clear extraction context (a mine, a vein, smelting) —
 /// mentioning a gold ring doesn't imply local gold.
-fn check_economy(text: &str, minerals: &[String], ledger: &MagicLedger) -> Vec<Finding> {
+fn check_economy(text: &str, minerals: &[String], ledger: &MagicLedger, lang: Lang) -> Vec<Finding> {
     if minerals.is_empty() {
         return Vec::new();
     }
-    const METALS: &[&str] =
-        &["copper", "gold", "iron", "coal", "silver", "tin", "lead", "mercury", "zinc", "nickel"];
     let available: std::collections::HashSet<String> =
         minerals.iter().map(|m| m.to_ascii_lowercase()).collect();
     let mut out = Vec::new();
     for sentence in split_sentences(text) {
-        if !has_extraction_context(sentence) {
+        if !has_extraction_context(sentence, lang) {
             continue;
         }
         let lower = sentence.to_lowercase();
         let mut seen = std::collections::HashSet::new();
-        for metal in METALS {
-            if available.contains(*metal) || seen.contains(*metal) {
+        // `metals` maps a canonical mineral (the English label the world stores)
+        // to its names in the paragraph's language.
+        for (canonical, names) in lang.metals() {
+            if available.contains(*canonical) || seen.contains(*canonical) {
                 continue;
             }
-            if contains_word(&lower, metal) {
-                seen.insert(metal.to_string());
+            if names.iter().any(|n| contains_word(&lower, &n.to_lowercase())) {
+                seen.insert(*canonical);
                 let body = format!(
-                    "{metal} is mined or worked here, but this world's geology yields only: {}.",
+                    "{canonical} is mined or worked here, but this world's geology yields only: {}.",
                     minerals.join(", ")
                 );
                 let ctx = CheckContext { category: "economy", ..Default::default() };
@@ -143,22 +126,20 @@ fn check_economy(text: &str, minerals: &[String], ledger: &MagicLedger) -> Vec<F
 
 /// Whether a sentence describes resource extraction / working (so a metal
 /// mention is a production claim, not incidental).
-fn has_extraction_context(s: &str) -> bool {
+fn has_extraction_context(s: &str, lang: Lang) -> bool {
     let l = s.to_lowercase();
-    ["mine", "mines", "mining", "mined", "ore", "vein", "veins", "quarry", "smelt", "smelting", "smelter", "dug from", "deposits"]
-        .iter()
-        .any(|w| contains_word(&l, w))
+    lang.extraction_words().iter().any(|w| contains_word(&l, &w.to_lowercase()))
 }
 
 /// Astronomy check: a stated moon count that disagrees with the world's sky.
-fn check_astronomy(text: &str, moons: &[String], ledger: &MagicLedger) -> Vec<Finding> {
+fn check_astronomy(text: &str, moons: &[String], ledger: &MagicLedger, lang: Lang) -> Vec<Finding> {
     let world_count = moons.len();
     if world_count == 0 {
         return Vec::new();
     }
     let mut out = Vec::new();
     for sentence in split_sentences(text) {
-        let Some(claimed) = find_moon_count(sentence) else {
+        let Some(claimed) = find_moon_count(sentence, lang) else {
             continue;
         };
         if claimed == world_count {
@@ -176,31 +157,49 @@ fn check_astronomy(text: &str, moons: &[String], ledger: &MagicLedger) -> Vec<Fi
     out
 }
 
-/// Extract a moon count from a sentence: "the three moons", "both moons", "two
-/// moons hung overhead".
-fn find_moon_count(s: &str) -> Option<usize> {
-    use std::sync::OnceLock;
-    static RE: OnceLock<regex::Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
-        regex::Regex::new(
-            r"(?i)\b(\d+|both|one|two|three|four|five|six|seven)\s+moons?\b",
-        )
-        .unwrap()
-    });
+/// Extract a moon count from a sentence: "the three moons", "both moons".
+fn find_moon_count(s: &str, lang: Lang) -> Option<usize> {
+    let both = both_words(lang);
+    let mut number_words: Vec<&str> =
+        lang.numbers().iter().map(|(w, _)| *w).chain(both.iter().copied()).collect();
+    number_words.sort_by_key(|w| std::cmp::Reverse(w.len()));
+    let num_alt = number_words.iter().map(|w| regex::escape(w)).collect::<Vec<_>>().join("|");
+    let moon_alt = alternation(lang.moon_words());
+    let re = regex::Regex::new(&format!(r"(?i)(\d+|{num_alt})\s+({moon_alt})")).ok()?;
     let caps = re.captures(s)?;
-    let w = caps.get(1)?.as_str().to_ascii_lowercase();
-    if w == "both" {
+    let w = caps.get(1)?.as_str().to_lowercase();
+    if both.iter().any(|b| b.to_lowercase() == w) {
         return Some(2);
     }
-    word_to_number(&w).map(|n| n as usize)
+    word_to_number(&w, lang).map(|n| n as usize)
+}
+
+/// The single-word "both" in each language (a phrase like French "les deux"
+/// can't be a regex token, so those return nothing here).
+fn both_words(lang: Lang) -> &'static [&'static str] {
+    match lang {
+        Lang::En => &["both"],
+        Lang::Ru => &["оба", "обе"],
+        Lang::Es => &["ambos", "ambas"],
+        Lang::De => &["beide"],
+        Lang::Fr => &[],
+    }
+}
+
+/// A case-insensitive regex alternation of the words, longest-first so
+/// "kilometres" matches before "km".
+fn alternation(words: &[&str]) -> String {
+    let mut w: Vec<&str> = words.to_vec();
+    w.sort_by_key(|x| std::cmp::Reverse(x.len()));
+    w.iter().map(|x| regex::escape(x)).collect::<Vec<_>>().join("|")
 }
 
 /// Climate check: weather described at a place that contradicts the place's
 /// climate zone (snow in the tropics, jungle heat on the tundra).
-fn check_climate(text: &str, gaz: &Gazetteer, ledger: &MagicLedger) -> Vec<Finding> {
+fn check_climate(text: &str, gaz: &Gazetteer, ledger: &MagicLedger, lang: Lang) -> Vec<Finding> {
     let mut out = Vec::new();
     for sentence in split_sentences(text) {
-        let Some(weather) = detect_weather(sentence) else {
+        let Some(weather) = detect_weather(sentence, lang) else {
             continue;
         };
         for p in gaz.mentioned_in(sentence) {
@@ -232,10 +231,10 @@ fn check_climate(text: &str, gaz: &Gazetteer, ledger: &MagicLedger) -> Vec<Findi
 
 /// Demographics check: a population stated for a place that diverges sharply
 /// from the modelled population.
-fn check_population(text: &str, gaz: &Gazetteer, ledger: &MagicLedger) -> Vec<Finding> {
+fn check_population(text: &str, gaz: &Gazetteer, ledger: &MagicLedger, lang: Lang) -> Vec<Finding> {
     let mut out = Vec::new();
     for sentence in split_sentences(text) {
-        let Some(claimed) = find_population(sentence) else {
+        let Some(claimed) = find_population(sentence, lang) else {
             continue;
         };
         let places: Vec<_> = gaz.mentioned_in(sentence).into_iter().filter(|p| p.population > 0).collect();
@@ -284,13 +283,11 @@ fn weather_label(w: Weather) -> &'static str {
     }
 }
 
-fn detect_weather(s: &str) -> Option<Weather> {
+fn detect_weather(s: &str, lang: Lang) -> Option<Weather> {
     let l = s.to_lowercase();
-    let cold = ["snow", "snowed", "snowing", "frost", "freezing", "blizzard", "frozen", "ice storm"];
-    let hot = ["sweltering", "scorching", "tropical heat", "jungle heat", "blistering sun"];
-    if cold.iter().any(|w| l.contains(w)) {
+    if lang.cold_weather().iter().any(|w| l.contains(&w.to_lowercase())) {
         Some(Weather::Cold)
-    } else if hot.iter().any(|w| l.contains(w)) {
+    } else if lang.hot_weather().iter().any(|w| l.contains(&w.to_lowercase())) {
         Some(Weather::Hot)
     } else {
         None
@@ -308,22 +305,25 @@ fn climate_conflict(zone: &str, weather: Weather) -> Option<&'static str> {
     }
 }
 
-/// Extract a population figure ("100,000", "100000", "2 thousand", "1 million").
-fn find_population(s: &str) -> Option<f32> {
-    use std::sync::OnceLock;
-    static RE: OnceLock<regex::Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
-        regex::Regex::new(r"(?i)(\d[\d,]*(?:\.\d+)?)\s*(thousand|million)?").unwrap()
-    });
-    // Find the largest number in the sentence (the population claim).
+/// Extract a population figure ("100,000", "2 thousand", "1 million", and the
+/// per-language multiplier words).
+fn find_population(s: &str, lang: Lang) -> Option<f32> {
+    let thousand = alternation(lang.thousand_words());
+    let million = alternation(lang.million_words());
+    let re = regex::Regex::new(&format!(
+        r"(?i)(\d[\d,. ]*\d|\d)\s*({thousand}|{million})?"
+    ))
+    .ok()?;
     let mut best: Option<f32> = None;
     for caps in re.captures_iter(s) {
-        let raw = caps.get(1)?.as_str().replace(',', "");
+        let raw = caps.get(1)?.as_str().replace([',', ' '], "");
         let Ok(mut n) = raw.parse::<f32>() else { continue };
-        match caps.get(2).map(|m| m.as_str().to_ascii_lowercase()) {
-            Some(ref u) if u == "thousand" => n *= 1_000.0,
-            Some(ref u) if u == "million" => n *= 1_000_000.0,
-            _ => {}
+        if let Some(unit) = caps.get(2).map(|m| m.as_str().to_lowercase()) {
+            if lang.thousand_words().iter().any(|w| w.to_lowercase() == unit) {
+                n *= 1_000.0;
+            } else if lang.million_words().iter().any(|w| w.to_lowercase() == unit) {
+                n *= 1_000_000.0;
+            }
         }
         // Only plausibly-population numbers (avoid catching years / small counts).
         if n >= 500.0 && best.map_or(true, |b| n > b) {
@@ -345,10 +345,11 @@ fn fmt_pop(n: u64) -> String {
 
 /// Travel-time check: a sentence that states both a distance and a duration
 /// implies a pace; flag paces that exceed pre-industrial overland travel.
-fn check_travel_time(text: &str, ledger: &MagicLedger, roles: &[String]) -> Vec<Finding> {
+fn check_travel_time(text: &str, ledger: &MagicLedger, roles: &[String], lang: Lang) -> Vec<Finding> {
     let mut out = Vec::new();
-    for sentence in text.split(|c| c == '.' || c == '!' || c == '?' || c == '\n') {
-        let (Some(km), Some(days)) = (find_distance_km(sentence), find_duration_days(sentence))
+    for sentence in split_sentences(text) {
+        let (Some(km), Some(days)) =
+            (find_distance_km(sentence, lang), find_duration_days(sentence, lang))
         else {
             continue;
         };
@@ -417,61 +418,47 @@ pub fn emit_finding(f: &Finding, source: Option<uuid::Uuid>) {
     crate::pane::output::emit(&msg);
 }
 
-/// Extract a distance from a sentence, normalised to km. Recognises km, miles,
-/// and leagues.
-fn find_distance_km(s: &str) -> Option<f32> {
-    use std::sync::OnceLock;
-    static RE: OnceLock<regex::Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
-        regex::Regex::new(r"(?i)(\d+(?:[.,]\d+)?)\s*(km|kilometres?|kilometers?|mi|miles?|leagues?)")
-            .unwrap()
-    });
+/// Extract a distance from a sentence, normalised to km, using the language's
+/// units (km / miles / leagues + their translations).
+fn find_distance_km(s: &str, lang: Lang) -> Option<f32> {
+    let groups = lang.distance_units();
+    let all: Vec<&str> = groups.iter().flat_map(|(us, _)| us.iter().copied()).collect();
+    let alt = alternation(&all);
+    let re = regex::Regex::new(&format!(r"(?i)(\d+(?:[.,]\d+)?)\s*({alt})")).ok()?;
     let caps = re.captures(s)?;
     let n: f32 = caps.get(1)?.as_str().replace(',', ".").parse().ok()?;
-    let unit = caps.get(2)?.as_str().to_ascii_lowercase();
-    Some(match unit.as_str() {
-        u if u.starts_with("mi") => n * 1.609,
-        u if u.starts_with("league") => n * 4.828, // ~3 miles
-        _ => n,
-    })
+    let unit = caps.get(2)?.as_str().to_lowercase();
+    let factor = groups
+        .iter()
+        .find(|(us, _)| us.iter().any(|u| u.to_lowercase() == unit))
+        .map(|(_, f)| *f)
+        .unwrap_or(1.0);
+    Some(n * factor)
 }
 
-/// Extract a duration from a sentence, normalised to days. Digits or spelled-out
-/// one..twelve; days or weeks.
-fn find_duration_days(s: &str) -> Option<f32> {
-    use std::sync::OnceLock;
-    static RE: OnceLock<regex::Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| {
-        regex::Regex::new(
-            r"(?i)\b(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s+(day|days|week|weeks)\b",
-        )
-        .unwrap()
-    });
+/// Extract a duration from a sentence, normalised to days, using the language's
+/// number words + day/week words.
+fn find_duration_days(s: &str, lang: Lang) -> Option<f32> {
+    let nums: Vec<&str> = lang.numbers().iter().map(|(w, _)| *w).collect();
+    let num_alt = alternation(&nums);
+    let day_week: Vec<&str> =
+        lang.day_words().iter().chain(lang.week_words()).copied().collect();
+    let unit_alt = alternation(&day_week);
+    let re = regex::Regex::new(&format!(r"(?i)(\d+|{num_alt})\s+({unit_alt})")).ok()?;
     let caps = re.captures(s)?;
-    let n = word_to_number(caps.get(1)?.as_str())?;
-    let unit = caps.get(2)?.as_str().to_ascii_lowercase();
-    Some(if unit.starts_with("week") { n * 7.0 } else { n })
+    let n = word_to_number(caps.get(1)?.as_str(), lang)?;
+    let unit = caps.get(2)?.as_str().to_lowercase();
+    let is_week = lang.week_words().iter().any(|w| w.to_lowercase() == unit);
+    Some(if is_week { n * 7.0 } else { n })
 }
 
-fn word_to_number(w: &str) -> Option<f32> {
+/// Parse a digit string or a spelled-out number in the given language.
+fn word_to_number(w: &str, lang: Lang) -> Option<f32> {
     if let Ok(n) = w.parse::<f32>() {
         return Some(n);
     }
-    Some(match w.to_ascii_lowercase().as_str() {
-        "one" => 1.0,
-        "two" => 2.0,
-        "three" => 3.0,
-        "four" => 4.0,
-        "five" => 5.0,
-        "six" => 6.0,
-        "seven" => 7.0,
-        "eight" => 8.0,
-        "nine" => 9.0,
-        "ten" => 10.0,
-        "eleven" => 11.0,
-        "twelve" => 12.0,
-        _ => return None,
-    })
+    let lw = w.to_lowercase();
+    lang.numbers().iter().find(|(word, _)| word.to_lowercase() == lw).map(|(_, n)| *n)
 }
 
 #[cfg(test)]
@@ -597,6 +584,36 @@ mod tests {
         // "Korthun" must not match inside another word.
         assert_eq!(g.mentioned_in("the Korthuns").len(), 0);
         assert_eq!(g.mentioned_in("near Korthun, north").len(), 1);
+    }
+
+    #[test]
+    fn per_language_extractors() {
+        // Distance + duration + weather + population in the four non-English
+        // baselines, exercising the vocab directly (not via detection).
+        assert_eq!(find_distance_km("600 км", Lang::Ru), Some(600.0));
+        assert_eq!(find_duration_days("три дня", Lang::Ru), Some(3.0));
+        assert!(detect_weather("на город опустился снег", Lang::Ru).is_some());
+
+        assert_eq!(find_duration_days("tres días", Lang::Es), Some(3.0));
+        assert_eq!(find_duration_days("trois jours", Lang::Fr), Some(3.0));
+
+        // 300 Meilen ≈ 483 km; "drei Tage" = 3; "2 Millionen" = 2,000,000.
+        assert!((find_distance_km("300 Meilen", Lang::De).unwrap() - 482.7).abs() < 1.0);
+        assert_eq!(find_duration_days("drei Tage", Lang::De), Some(3.0));
+        assert!((find_population("2 Millionen", Lang::De).unwrap() - 2_000_000.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn russian_travel_time_flags() {
+        // A full Russian paragraph: 600 km in three days → flagged.
+        let f = check_paragraph(
+            "Гонец проскакал 600 км за три дня без отдыха, чтобы доставить королевский приказ.",
+            &empty_ledger(),
+            &[],
+            None,
+        );
+        assert_eq!(f.len(), 1, "got {f:?}");
+        assert_eq!(f[0].category, "travel_time");
     }
 
     #[test]
