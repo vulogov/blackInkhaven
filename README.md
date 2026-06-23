@@ -312,6 +312,8 @@ Reference:
   Places.
 - [`Documentation/CHARACTERS.md`](Documentation/CHARACTERS.md) — managing
   Characters.
+- [`Documentation/WORLDBUILDING.md`](Documentation/WORLDBUILDING.md) — the
+  `realworld` world simulator and fact-checker (RFC WORLD-4).
 
 ## Built with
 
