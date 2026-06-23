@@ -193,3 +193,14 @@ for §8 detailed design, Appendix A (schema), B (config), E (overlays).
   Notice severity (hidden by default) to bound noise; rendered in English in every
   language until per-language tables land. +4 tests, 1699. *All seven Fast
   categories now ship.*
+- **P6 — timeline-aware Slow categories (UNRELEASED, 1.3.28-dev).** New `timeline`
+  module: `gather_events` (the project hierarchy's `EventData` nodes →
+  `SocEvent`s), `dramatization_gaps` (events with no linked paragraphs),
+  `densest_window` (the tightest event cluster), `timeline_summary` — pure +
+  tested. `slow` gains `TIMELINE_SYSTEM` + `build_timeline_prompt` and a
+  generalized `parse_findings(allowed)` backing `parse_slow_findings` /
+  `parse_timeline_findings` (the three timeline categories). CLI `inner-socrates
+  timeline [--max-cost] [--force]` loads the events, builds the prompt, calls the
+  LLM via the extracted shared `socratic_llm_call` (preflight + retry + sub-budget),
+  and emits — **silently doing nothing when the project has no timeline**. +5
+  tests, 1704. *Next: P7 — conversation/suggestion F9 scopes + wizard.*

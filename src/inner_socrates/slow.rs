@@ -102,9 +102,20 @@ pub fn build_slow_prompt(
     )
 }
 
-/// Parse the LLM's JSON response into findings, attributed to `persona_id`. Keeps
-/// only the five Slow prose categories; tolerant of fences / surrounding prose.
+/// Parse the LLM's JSON response into prose findings (the five prose categories).
 pub fn parse_slow_findings(raw: &str, persona_id: &str) -> Vec<SocraticFinding> {
+    parse_findings(raw, persona_id, &PROSE_CATEGORIES)
+}
+
+/// Parse the LLM's JSON response into timeline findings (the three timeline
+/// categories).
+pub fn parse_timeline_findings(raw: &str, persona_id: &str) -> Vec<SocraticFinding> {
+    parse_findings(raw, persona_id, &TIMELINE_CATEGORIES)
+}
+
+/// Parse the LLM's JSON response into findings, attributed to `persona_id`,
+/// keeping only the `allowed` categories. Tolerant of fences / surrounding prose.
+pub fn parse_findings(raw: &str, persona_id: &str, allowed: &[Category]) -> Vec<SocraticFinding> {
     let Some(json) = extract_json_array(raw) else {
         return Vec::new();
     };
@@ -114,8 +125,7 @@ pub fn parse_slow_findings(raw: &str, persona_id: &str) -> Vec<SocraticFinding> 
     arr.iter()
         .filter_map(|v| {
             let category = Category::from_id(v.get("category").and_then(|c| c.as_str())?)?;
-            // Only the five Slow *prose* categories are valid output here.
-            if !PROSE_CATEGORIES.contains(&category) {
+            if !allowed.contains(&category) {
                 return None;
             }
             let question = v.get("question").and_then(|q| q.as_str())?.trim().to_string();
@@ -156,6 +166,44 @@ const PROSE_CATEGORIES: [Category; 5] = [
     Category::SignificanceProbing,
     Category::ImplicitComparison,
 ];
+
+/// The three timeline-aware Slow categories.
+const TIMELINE_CATEGORIES: [Category; 3] = [
+    Category::DramatizationGap,
+    Category::ImplicationTracing,
+    Category::TemporalDensity,
+];
+
+/// The system prompt for the timeline pass — the prose against the timeline.
+pub const TIMELINE_SYSTEM: &str = "You are a Socratic reader examining a fiction manuscript against \
+its timeline of events. Your task is to surface QUESTIONS — never corrections — about the relationship \
+between what the timeline declares and what the prose actually dramatizes: events the timeline names but \
+no paragraph depicts (a dramatization gap), events whose consequences should ripple forward in the prose \
+but don't visibly (an implication left untraced), and stretches where many events cluster in world-time \
+but the prose passes over them lightly (a temporal density the rhythm may not honour). Respect the \
+author's declared intentions (some gaps and ambiguities are deliberate). Be conservative — backstory \
+need not be dramatized, and absence is often a choice. Respond ONLY with a JSON array; each item is \
+{\"category\": one of dramatization_gap|implication_tracing|temporal_density, \"severity\": \
+notice|inquiry|probe, \"question\": a one-sentence question in your voice, \"question_en\": the same in \
+English}. Return [] if the prose and timeline sit well together.";
+
+/// Build the timeline-pass prompt: persona + declared intents + a summary of the
+/// timeline (events, depicted-or-not) + the densest cluster.
+pub fn build_timeline_prompt(
+    persona: &Persona,
+    timeline_summary: &str,
+    densest_cluster: usize,
+    intent_summary: &str,
+) -> String {
+    format!(
+        "{persona}\n\nDECLARED INTENTIONS (respect these — some temporal gaps are deliberate):\n\
+         {intent_summary}\n\n\
+         TIMELINE (each event, its world-time, and whether the prose depicts it):\n{timeline_summary}\n\
+         The densest stretch holds {densest_cluster} events close together in world-time.\n\n\
+         Return the JSON array of Socratic questions about the prose's relationship to this timeline.",
+        persona = persona_summary(persona),
+    )
+}
 
 /// Post-process raw LLM findings: drop categories the persona mutes, and suppress
 /// those a declared intent covers (the lazy consultation, same as the Fast track).
@@ -228,6 +276,25 @@ mod tests {
         assert_eq!(f[0].severity, Severity::Inquiry);
         assert_eq!(f[1].severity, Severity::Probe);
         assert!(f.iter().all(|x| x.persona_id == "inner-socrates"));
+    }
+
+    #[test]
+    fn timeline_parser_keeps_only_timeline_categories() {
+        let raw = "[\
+            {\"category\":\"dramatization_gap\",\"severity\":\"inquiry\",\"question\":\"Why is the pact never shown?\"},\
+            {\"category\":\"assumption_surfacing\",\"severity\":\"inquiry\",\"question\":\"prose cat — dropped here\"}\
+            ]";
+        let f = parse_timeline_findings(raw, "inner-socrates");
+        assert_eq!(f.len(), 1, "only the timeline category survives: {f:?}");
+        assert_eq!(f[0].category, Category::DramatizationGap);
+    }
+
+    #[test]
+    fn timeline_prompt_carries_summary_and_density() {
+        let p = build_timeline_prompt(&socrates(), "- t=10 Coronation: depicted\n", 3, "None.");
+        assert!(p.contains("Coronation"));
+        assert!(p.contains("3 events"));
+        assert!(p.contains("DECLARED INTENTIONS"));
     }
 
     #[test]

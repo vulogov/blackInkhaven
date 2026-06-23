@@ -26,6 +26,7 @@ pub mod output;
 pub mod slow;
 pub mod storage;
 pub mod text;
+pub mod timeline;
 pub mod types;
 
 use std::fmt;

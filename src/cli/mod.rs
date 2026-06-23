@@ -3649,6 +3649,15 @@ pub enum InnerSocratesCommand {
         #[arg(long)]
         force: bool,
     },
+    /// Run the timeline pass — compare the project's timeline of events against
+    /// the prose and ask whether what is declared is dramatized (needs an LLM
+    /// provider; silently does nothing without a timeline).
+    Timeline {
+        #[arg(long, default_value_t = 8000)]
+        max_cost: usize,
+        #[arg(long)]
+        force: bool,
+    },
     /// List the intent ledger (the deliberate authorial choices the interrogator
     /// respects).
     Ledger,
