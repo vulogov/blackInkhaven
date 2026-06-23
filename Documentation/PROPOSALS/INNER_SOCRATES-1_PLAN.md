@@ -171,3 +171,16 @@ for §8 detailed design, Appendix A (schema), B (config), E (overlays).
   150, retry-on-transient), appends the deep questions to the fast seam, persists +
   emits. Graceful with no provider (fast track still surfaces). +5 tests, 1692.
   *Next: P5 — multilingual (RU/ES/FR/DE patterns + per-language prompts).*
+- **P5 — multilingual → MVP COMPLETE (UNRELEASED, 1.3.28-dev).** New `lang`
+  module: per-language marker tables (modal-strong/moderate/defuse, hedge,
+  dialogue-attribution) for EN/RU/ES/FR/DE, and a localized `Msg` renderer (every
+  Fast question in all five languages, mirroring WORLD-4's `render_*`). `fast`
+  now detects the paragraph's language (`detect_with_confidence`), runs that
+  language's markers, renders the question in it with an English `question_en`
+  fallback, and degrades to English on an uncertain detection. The Slow prompt
+  gains a "respond in {language}" directive + a `question_en` field in the JSON
+  schema (parser reads it, falling back to `question`). Verified RU/ES/DE prose
+  end-to-end. +6 tests, 1695. **★ INNER_SOCRATES-1 MVP (P0–P5) complete:** both
+  tracks, personas, intent ledger, Output, the chord family, and five languages —
+  questions, never corrections. *Post-MVP: P6 timeline categories, P7
+  conversation/suggestion scopes + wizard, P8 snapshot/bundle/Bund/docs.*

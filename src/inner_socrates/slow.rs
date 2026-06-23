@@ -24,8 +24,8 @@ examining; if the paragraph is plain and self-aware, return nothing. Respect the
 intentions (listed below) and do not re-raise what the fast pass already found. Respond ONLY with a \
 JSON array; each item is {\"category\": one of \
 assumption_surfacing|tension_detection|framing_interrogation|significance_probing|implicit_comparison, \
-\"severity\": notice|inquiry|probe, \"question\": a one-sentence question in your voice}. Return [] if \
-nothing rises.";
+\"severity\": notice|inquiry|probe, \"question\": a one-sentence question in your voice in the \
+paragraph's language, \"question_en\": the same question in English}. Return [] if nothing rises.";
 
 /// A compact description of the active persona for the prompt — its character and
 /// the categories it leans into.
@@ -82,16 +82,20 @@ pub fn build_slow_prompt(
     paragraph: &str,
     intent_summary: &str,
     fast_findings: &[SocraticFinding],
+    lang: super::lang::Lang,
 ) -> String {
     let already = if fast_findings.is_empty() {
         "(none)".to_string()
     } else {
         fast_findings.iter().map(|f| format!("- {}", f.question)).collect::<Vec<_>>().join("\n")
     };
+    let language = super::lang::language_name(lang);
     format!(
         "{persona}\n\nDECLARED INTENTIONS (respect these — do not question what they cover):\n\
          {intent_summary}\n\n\
          ALREADY ASKED by the fast pass (do NOT repeat):\n{already}\n\n\
+         The paragraph is in {language}; write each `question` in {language} and its `question_en` \
+         in English.\n\n\
          PARAGRAPH:\n{paragraph}\n\n\
          Return the JSON array of Socratic questions.",
         persona = persona_summary(persona),
@@ -118,6 +122,14 @@ pub fn parse_slow_findings(raw: &str, persona_id: &str) -> Vec<SocraticFinding> 
             if question.is_empty() {
                 return None;
             }
+            // English fallback: the model's `question_en` if present, else the
+            // question itself (the AI-bridge tolerates either).
+            let question_en = v
+                .get("question_en")
+                .and_then(|q| q.as_str())
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| question.clone());
             let severity = match v.get("severity").and_then(|s| s.as_str()) {
                 Some("probe") => Severity::Probe,
                 Some("notice") => Severity::Notice,
@@ -127,7 +139,7 @@ pub fn parse_slow_findings(raw: &str, persona_id: &str) -> Vec<SocraticFinding> 
                 category,
                 severity,
                 persona_id: persona_id.to_string(),
-                question_en: question.clone(),
+                question_en,
                 question,
                 suppressed_by: None,
             })
@@ -188,12 +200,19 @@ mod tests {
             question_en: "What alternatives did you leave out?".into(),
             suppressed_by: None,
         }];
-        let p = build_slow_prompt(&socrates(), "The regent declared war.", "None.", &fast);
+        let p = build_slow_prompt(
+            &socrates(),
+            "The regent declared war.",
+            "None.",
+            &fast,
+            super::super::lang::Lang::En,
+        );
         assert!(p.contains("Inner Socrates"));
         assert!(p.contains("The regent declared war."));
         assert!(p.contains("do NOT repeat"));
         assert!(p.contains("What alternatives did you leave out?"));
         assert!(p.contains("DECLARED INTENTIONS"));
+        assert!(p.contains("English"));
     }
 
     #[test]

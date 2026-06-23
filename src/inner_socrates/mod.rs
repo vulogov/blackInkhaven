@@ -21,6 +21,7 @@
 
 pub mod fast;
 pub mod intent;
+pub mod lang;
 pub mod output;
 pub mod slow;
 pub mod storage;
