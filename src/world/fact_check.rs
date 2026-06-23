@@ -39,11 +39,13 @@ pub struct WorldContext {
     pub gazetteer: Gazetteer,
     /// The world's moon names (for the astronomy check).
     pub moons: Vec<String>,
+    /// The minerals the world's geology yields (for the economy check).
+    pub minerals: Vec<String>,
 }
 
 impl WorldContext {
-    pub fn new(gazetteer: Gazetteer, moons: Vec<String>) -> Self {
-        Self { gazetteer, moons }
+    pub fn new(gazetteer: Gazetteer, moons: Vec<String>, minerals: Vec<String>) -> Self {
+        Self { gazetteer, moons, minerals }
     }
 }
 
@@ -95,8 +97,57 @@ pub fn check_paragraph(
         findings.extend(check_climate(text, &c.gazetteer, ledger));
         findings.extend(check_population(text, &c.gazetteer, ledger));
         findings.extend(check_astronomy(text, &c.moons, ledger));
+        findings.extend(check_economy(text, &c.minerals, ledger));
     }
     findings
+}
+
+/// Economy check: a metal mined or worked in the prose that the world's geology
+/// doesn't yield. Only the world's mineral hints are modelled, so this is scoped
+/// to ores/metals in a clear extraction context (a mine, a vein, smelting) —
+/// mentioning a gold ring doesn't imply local gold.
+fn check_economy(text: &str, minerals: &[String], ledger: &MagicLedger) -> Vec<Finding> {
+    if minerals.is_empty() {
+        return Vec::new();
+    }
+    const METALS: &[&str] =
+        &["copper", "gold", "iron", "coal", "silver", "tin", "lead", "mercury", "zinc", "nickel"];
+    let available: std::collections::HashSet<String> =
+        minerals.iter().map(|m| m.to_ascii_lowercase()).collect();
+    let mut out = Vec::new();
+    for sentence in split_sentences(text) {
+        if !has_extraction_context(sentence) {
+            continue;
+        }
+        let lower = sentence.to_lowercase();
+        let mut seen = std::collections::HashSet::new();
+        for metal in METALS {
+            if available.contains(*metal) || seen.contains(*metal) {
+                continue;
+            }
+            if contains_word(&lower, metal) {
+                seen.insert(metal.to_string());
+                let body = format!(
+                    "{metal} is mined or worked here, but this world's geology yields only: {}.",
+                    minerals.join(", ")
+                );
+                let ctx = CheckContext { category: "economy", ..Default::default() };
+                let suppressed_by = ledger.find_suppressor(&ctx).map(|r| r.kind.clone());
+                let severity = if suppressed_by.is_some() { "info" } else { "warning" };
+                out.push(Finding { category: "economy".into(), severity: severity.into(), body, suppressed_by });
+            }
+        }
+    }
+    out
+}
+
+/// Whether a sentence describes resource extraction / working (so a metal
+/// mention is a production claim, not incidental).
+fn has_extraction_context(s: &str) -> bool {
+    let l = s.to_lowercase();
+    ["mine", "mines", "mining", "mined", "ore", "vein", "veins", "quarry", "smelt", "smelting", "smelter", "dug from", "deposits"]
+        .iter()
+        .any(|w| contains_word(&l, w))
 }
 
 /// Astronomy check: a stated moon count that disagrees with the world's sky.
@@ -500,7 +551,7 @@ mod tests {
 
     #[test]
     fn flags_snow_in_the_tropics() {
-        let g = WorldContext::new(gaz(), vec![]);
+        let g = WorldContext::new(gaz(), vec![], vec![]);
         let f = check_paragraph("A blizzard buried Velmaril overnight.", &empty_ledger(), &[], Some(&g));
         assert_eq!(f.len(), 1);
         assert_eq!(f[0].category, "climate");
@@ -512,7 +563,7 @@ mod tests {
 
     #[test]
     fn flags_a_population_mismatch() {
-        let g = WorldContext::new(gaz(), vec![]);
+        let g = WorldContext::new(gaz(), vec![], vec![]);
         // Velmaril models ~40k; prose claims 2 million → off by 50× → warning.
         let f = check_paragraph("Velmaril, a teeming city of 2 million souls.", &empty_ledger(), &[], Some(&g));
         assert_eq!(f.len(), 1);
@@ -520,6 +571,24 @@ mod tests {
         // A close figure passes.
         let f2 = check_paragraph("Velmaril, a city of 45,000.", &empty_ledger(), &[], Some(&g));
         assert!(f2.is_empty(), "got {f2:?}");
+    }
+
+    #[test]
+    fn flags_a_resource_the_geology_lacks() {
+        // World yields copper/gold/iron/coal; prose mines silver → warning.
+        let ctx = WorldContext::new(
+            Gazetteer::new(vec![]),
+            vec![],
+            vec!["copper".into(), "gold".into(), "iron".into(), "coal".into()],
+        );
+        let f = check_paragraph("The silver mines of the north ran deep.", &empty_ledger(), &[], Some(&ctx));
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].category, "economy");
+        // A metal the world has, or no extraction context, passes.
+        let f2 = check_paragraph("The copper mines of the north ran deep.", &empty_ledger(), &[], Some(&ctx));
+        assert!(f2.is_empty(), "got {f2:?}");
+        let f3 = check_paragraph("She wore a silver ring.", &empty_ledger(), &[], Some(&ctx));
+        assert!(f3.is_empty(), "got {f3:?}");
     }
 
     #[test]
@@ -532,7 +601,7 @@ mod tests {
 
     #[test]
     fn flags_wrong_moon_count() {
-        let ctx = WorldContext::new(gaz(), vec!["Korthana".into(), "Eldra".into()]);
+        let ctx = WorldContext::new(gaz(), vec!["Korthana".into(), "Eldra".into()], vec![]);
         // World has 2 moons; prose says three.
         let f = check_paragraph("All three moons hung over the bay.", &empty_ledger(), &[], Some(&ctx));
         assert_eq!(f.len(), 1);

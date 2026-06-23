@@ -78,10 +78,16 @@ pub fn fact_check(project: &Path, text: Option<String>, paragraph: Option<String
                 .collect()
         })
         .unwrap_or_default();
-    let world_ctx = if !places.is_empty() || !moons.is_empty() {
+    let minerals: Vec<String> = def
+        .as_ref()
+        .and_then(|d| geology_for(project, d).ok())
+        .map(|g| g.minerals.iter().map(|m| m.mineral.clone()).collect())
+        .unwrap_or_default();
+    let world_ctx = if !places.is_empty() || !moons.is_empty() || !minerals.is_empty() {
         Some(crate::world::fact_check::WorldContext::new(
             crate::world::fact_check::Gazetteer::new(places),
             moons,
+            minerals,
         ))
     } else {
         None
