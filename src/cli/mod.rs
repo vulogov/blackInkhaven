@@ -943,6 +943,13 @@ pub enum Command {
         /// Run the slow track even if the cost estimate exceeds `--max-cost`.
         #[arg(long)]
         force: bool,
+        /// WORLD-5 — timeline-aware checks: `auto` (on if the project has a
+        /// timeline), `on`, or `off`.
+        #[arg(long, value_parser = ["auto", "on", "off"], default_value = "auto")]
+        timeline_aware: String,
+        /// WORLD-5 — run *only* the timeline-aware checks (skip the world checks).
+        #[arg(long)]
+        timeline_only: bool,
     },
     /// `inkhaven template
     /// <subcommand>`.  Surfaces information about
@@ -4244,8 +4251,9 @@ impl Cli {
             Command::Output(cmd) => output::run(&project, cmd).map_err(Into::into),
             Command::Realworld(cmd) => realworld::run(&project, cmd).map_err(Into::into),
             Command::InnerSocrates(cmd) => inner_socrates::run(&project, cmd).map_err(Into::into),
-            Command::FactCheck { text, paragraph, slow, max_cost, force } => {
-                realworld::fact_check(&project, text, paragraph, slow, max_cost, force).map_err(Into::into)
+            Command::FactCheck { text, paragraph, slow, max_cost, force, timeline_aware, timeline_only } => {
+                realworld::fact_check(&project, text, paragraph, slow, max_cost, force, &timeline_aware, timeline_only)
+                    .map_err(Into::into)
             }
             Command::Thread(cmd) => {
                 thread::run(&project, cmd).map_err(Into::into)

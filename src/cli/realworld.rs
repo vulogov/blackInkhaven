@@ -37,6 +37,7 @@ pub fn run(project: &Path, cmd: RealworldCommand) -> Result<()> {
 
 /// Fact-check prose against the world (fast track). `--text` checks a literal
 /// string; `--paragraph` reads a paragraph's content from the store.
+#[allow(clippy::too_many_arguments)]
 pub fn fact_check(
     project: &Path,
     text: Option<String>,
@@ -44,6 +45,8 @@ pub fn fact_check(
     slow: bool,
     max_cost: usize,
     force: bool,
+    timeline_aware: &str,
+    timeline_only: bool,
 ) -> Result<()> {
     use crate::world::fact_check::check_paragraph;
     // The magic ledger (if any) is consulted; a missing world.hjson is fine.
@@ -110,11 +113,20 @@ pub fn fact_check(
         None
     };
 
-    let mut findings = check_paragraph(&prose, &ledger, &[], world_ctx.as_ref());
-    // WORLD-5 — timeline-aware checks when the paragraph is identified and the
-    // project has events (auto; silently no-op otherwise).
-    if let Some(pid) = paragraph_id {
-        findings.extend(timeline_findings(project, pid, &prose, &ledger));
+    // WORLD-5 — `--timeline-only` skips the world checks; `--timeline-aware off`
+    // skips the timeline ones. Default (`auto`) runs the timeline checks when the
+    // paragraph is identified and the project has events.
+    let mut findings = if timeline_only {
+        Vec::new()
+    } else {
+        check_paragraph(&prose, &ledger, &[], world_ctx.as_ref())
+    };
+    if timeline_aware != "off" {
+        if let Some(pid) = paragraph_id {
+            findings.extend(timeline_findings(project, pid, &prose, &ledger));
+        } else if timeline_aware == "on" || timeline_only {
+            eprintln!("timeline checks need --paragraph <id> (a linked paragraph), not --text");
+        }
     }
     if slow {
         match run_slow_track(project, &prose, def.as_ref(), &ledger, &places, &moons, &minerals, &findings, max_cost, force) {
