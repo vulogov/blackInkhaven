@@ -157,3 +157,17 @@ for §8 detailed design, Appendix A (schema), B (config), E (overlays).
   Output without stealing focus (opt-in, off by default — quiet by default),
   mirroring WORLD-4's `tick_fact_check`; a re-check replaces the paragraph's prior
   `socratic_inquiry` messages. +1 test, 1687. *Next: P4 — the Slow LLM track.*
+- **P4 — Slow LLM track, 5 prose categories (UNRELEASED, 1.3.28-dev).** New
+  `slow` module: a non-prescriptive `SLOW_SYSTEM` (questions, never corrections),
+  `persona_summary` + `intent_summary` + `build_slow_prompt` (persona voice +
+  emphasis + declared intents + the fast findings as the seam), and
+  `parse_slow_findings` (keeps only the five prose categories —
+  assumption_surfacing / tension_detection / framing_interrogation /
+  significance_probing / implicit_comparison) + `apply_persona_and_ledger`
+  (persona mute + lazy ledger suppression). The store gains a sub-budgeted
+  `inner_socrates_llm_usage` table (`record_llm_call`/`llm_calls_today`). The CLI
+  `check --slow [--max-cost] [--force]` runs the LLM with WORLD-4's
+  `slow_preflight` + `backoff_delay` + `is_transient` (cost preflight, daily cap
+  150, retry-on-transient), appends the deep questions to the fast seam, persists +
+  emits. Graceful with no provider (fast track still surfaces). +5 tests, 1692.
+  *Next: P5 — multilingual (RU/ES/FR/DE patterns + per-language prompts).*
