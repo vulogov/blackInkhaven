@@ -21,66 +21,55 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.3.25 — World Simulation
+## Latest release · 1.3.26 — The World Fact-Checker
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.3.25.md`](Documentation/RELEASE_NOTES/1.3.25.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.3.26.md`](Documentation/RELEASE_NOTES/1.3.26.md)
 · Plan: [`Documentation/PROPOSALS/WORLD-4_PLAN.md`](Documentation/PROPOSALS/WORLD-4_PLAN.md)
 
-Inkhaven gains an actual simulated world. A new **`inkhaven realworld`** compiler
-turns a structured `world.hjson` into a coherent, physically-grounded world — sky,
-terrain, climate, rivers, and settlements — materialized into a new **World**
-system book, with a proposal queue that turns its cities into real Place records
-you accept one by one. The first slice of RFC WORLD-4 (the compiler; the
-fact-checker follows). It also **completes RFC PANE-1**.
+The other half of the world simulation. 1.3.25 gave Inkhaven a compiler that
+**builds** a world; 1.3.26 gives it a **fact-checker** that reads your prose and
+flags claims that don't fit the world you built — **as you write**. A messenger
+who covers 600 km in three days, a blizzard in your tropical capital, a city ten
+times bigger than the map can feed, three moons in a two-moon sky: the Output pane
+tells you, quietly, while you keep typing. RFC WORLD-4 Branch B (fast track).
 
-### The compiler
+### The magic ledger
 
-Five deterministic layers run in dependency order, each a pure function of
-`(definition, seed)`:
+A `magic:` block in `world.hjson` declares your world's exceptions to physics —
+each rule names a `kind`, the check categories it `covers`, and who/where it
+applies to. The fact-checker consults it **lazily** (only after a candidate
+warning): a covered, applicable rule suppresses the warning with a note instead
+of nagging forever. `inkhaven realworld magic` lists it; it materializes into
+`World / Magic Ledger`.
 
-- **Astronomy** — Kepler year length, latitude insolation, lunar synodic periods,
-  tides, calendar-divergence flag.
-- **Geology** — seed → tectonic plates → procedural heightmap → continents,
-  mountains, minerals. Or **import a DEM** (your own heightmap PNG).
-- **Climate** — a zonal model: stellar-flux mean, latitude profile, elevation
-  lapse, rainfall belts + rain shadows → Köppen biomes + prevailing winds.
-- **Hydrology** — D8 flow → rivers (Strahler order) → lakes → watersheds →
-  settlement priors.
-- **Demographics** — biome carrying-capacity → a Rank-Size hierarchy of cities,
-  towns, and villages.
+### The fact-checker — fast track
 
-Each materializes into the **World** book (`World / Astronomy`, `Geology`, …),
-with the heightmap written as a PNG asset. Deterministic and idempotent.
+Deterministic, instant (no LLM), four categories today:
 
-### The proposal queue — the author always wins
+- **Travel time** — distance + duration in a sentence implies a pace; flag
+  implausible ones (pure prose, no world data needed).
+- **Climate** — weather at a known place that contradicts its climate zone.
+- **Demographics** — a population that diverges sharply from the modeled figure.
+- **Astronomy** — a moon count that disagrees with the world's sky.
 
-Settlements don't silently become Places; they enter a **proposal queue** with
-deterministic names. `inkhaven realworld propose` / `proposals list | accept |
-reject | accept-all`. Accepting creates a Place and records a **Place ↔ World
-cross-reference** (climate / biome / hydrology / coordinates). Re-running never
-re-proposes a resolved site.
+Climate and demographics resolve place names through a **gazetteer** built from
+the Place ↔ World cross-references — so the loop closes: compile a world, accept
+its cities, write about them, and the checker knows what they are.
 
-### In the editor — `Ctrl+B W`
+### Real-time, as you write
 
-`Ctrl+B W` opens the **World overview** hub: **`C`** compiles + materializes every
-layer and seeds the queue, **`P`** opens the proposal queue (`Enter` accept, `r`
-reject). Build and curate a whole world without leaving the editor. *(Focus mode
-moved to `Ctrl+B Shift+W`.)*
-
-### PANE-1 completed
-
-The Output pane gains per-kind `Enter` (insert translation / promote lexicon /
-jump to task), `e` edit+remember, `ai_task_complete` notices, a bare-`print`
-mirror, and is now the **default launch pane**. New **`Ctrl+B D`** deterministic
-translation routes to Output; lexicon proposals and variety renderings route there
-too. Full docs ([`OUTPUT_PANE.md`](Documentation/OUTPUT_PANE.md) + tutorial 75).
+When the project has a world, the fast track runs **automatically** — pause a few
+seconds on a paragraph and its findings appear in the **Output pane**, no chord,
+no focus stolen. A re-check replaces the paragraph's prior findings (fixed ones
+disappear). Or ask explicitly: **`Ctrl+B W` → `F`** checks the open paragraph;
+`inkhaven fact-check --text "…"` is the headless form.
 
 ### Dependencies & compatibility
 
-Geology adds two pure-Rust crates — **`noise`** + **`delaunator`**; everything else
-is zero new deps (determinism uses an in-tree seeded PRNG, not `rand`).
-Non-breaking — the World book seeds into existing projects on open; `realworld`
-is opt-in. Tests 1582 → 1613.
+**Zero new dependencies** — the ledger and the whole fast-track checker reuse
+`regex`, the DuckDB stores, and the PANE-1 Output pane. Non-breaking and opt-in:
+the checker only runs when a project has a `world.hjson`; everything else is
+unaffected. Tests 1613 → 1625.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

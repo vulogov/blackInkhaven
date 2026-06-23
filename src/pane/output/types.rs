@@ -26,6 +26,10 @@ pub mod kinds {
     pub const LEXICON_PROPOSAL: &str = "lexicon_proposal";
     pub const VARIETY_RENDERING: &str = "variety_rendering";
     pub const AI_TASK_COMPLETE: &str = "ai_task_complete";
+    /// WORLD-4 Branch B — a fact-checker finding (prose vs the simulated world).
+    pub const FACT_CHECK_WARNING: &str = "fact_check_warning";
+    /// WORLD-4 — a compiler-proposed record awaiting acceptance.
+    pub const WORLD_COMPILER_PROPOSAL: &str = "world_compiler_proposal";
 }
 
 /// Visual / priority class (RFC §7.4).

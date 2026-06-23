@@ -914,6 +914,18 @@ pub enum Command {
     /// `Documentation/PROPOSALS/WORLD-4_PLAN.md`.
     #[command(subcommand)]
     Realworld(RealworldCommand),
+
+    /// WORLD-4 — fact-check prose against the simulated world (fast track):
+    /// flag implausible world-assertions (travel time, …), respecting the
+    /// `magic:` ledger's declared exceptions.
+    FactCheck {
+        /// Check this literal text.
+        #[arg(long)]
+        text: Option<String>,
+        /// Check a paragraph by id (reads its content from the store).
+        #[arg(long)]
+        paragraph: Option<String>,
+    },
     /// `inkhaven template
     /// <subcommand>`.  Surfaces information about
     /// the project templates available to
@@ -3557,6 +3569,13 @@ pub enum RealworldCommand {
     /// List the Place ↔ World cross-references (accepted compiler Places + their
     /// climate zone / biome / hydrology basis / coordinates).
     Places,
+    /// Show the magic ledger — the declared exceptions to physics the
+    /// fact-checker will respect. Edit it in the `magic:` block of `world.hjson`.
+    Magic {
+        /// Also materialize the ledger into the World book.
+        #[arg(long)]
+        materialize: bool,
+    },
 }
 
 /// WORLD-4 — the proposal queue surface (RFC §8.9). Accepting a proposal commits
@@ -4048,6 +4067,9 @@ impl Cli {
             }
             Command::Output(cmd) => output::run(&project, cmd).map_err(Into::into),
             Command::Realworld(cmd) => realworld::run(&project, cmd).map_err(Into::into),
+            Command::FactCheck { text, paragraph } => {
+                realworld::fact_check(&project, text, paragraph).map_err(Into::into)
+            }
             Command::Thread(cmd) => {
                 thread::run(&project, cmd).map_err(Into::into)
             }

@@ -11,6 +11,7 @@ pub mod climate;
 pub mod demographics;
 pub mod geology;
 pub mod hydrology;
+pub mod magic;
 pub mod world;
 
 pub use astronomy::{
@@ -23,6 +24,7 @@ pub use geology::{
     BoundarySummary, ElevationStats, GeologyOutput, MineralHint, MountainRange, Plate,
 };
 pub use hydrology::{HydrologyOutput, RiverSummary, SettlementPrior};
+pub use magic::{Applicability, CheckContext, MagicLedger, MagicRule};
 pub use world::{
     AstronomyDef, Calendar, DemGeology, GeneratedGeology, GeologyDef, Moon, Orbit, Planet,
     SeedValue, Star, WorldDefinition,
