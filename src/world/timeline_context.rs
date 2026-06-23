@@ -159,6 +159,58 @@ pub fn build_context(
     }
 }
 
+/// WORLD-5 — a character placed in two different places in overlapping event
+/// windows. The timeline alone reveals it; no prose needed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CoLocationConflict {
+    pub character: Uuid,
+    pub event_a: Uuid,
+    pub event_b: Uuid,
+    pub title_a: String,
+    pub title_b: String,
+    pub place_a: Uuid,
+    pub place_b: Uuid,
+}
+
+/// Find every co-location conflict in the events: a character whose events place
+/// them at two *different* places (sharing none) in overlapping time. Pure +
+/// deterministic; the caller resolves character/place names and applies the magic
+/// ledger (a `teleportation` rule may excuse it).
+pub fn co_location_conflicts(events: &[TlEvent]) -> Vec<CoLocationConflict> {
+    let mut characters: std::collections::BTreeSet<Uuid> = std::collections::BTreeSet::new();
+    for e in events {
+        characters.extend(e.characters.iter().copied());
+    }
+    let mut out = Vec::new();
+    for ch in characters {
+        let evs: Vec<&TlEvent> = events.iter().filter(|e| e.characters.contains(&ch)).collect();
+        for i in 0..evs.len() {
+            for j in (i + 1)..evs.len() {
+                let (a, b) = (evs[i], evs[j]);
+                if !a.overlaps(b) {
+                    continue;
+                }
+                // A conflict only if they share no place and each names one.
+                if a.places.iter().any(|p| b.places.contains(p)) {
+                    continue;
+                }
+                if let (Some(pa), Some(pb)) = (a.places.first(), b.places.first()) {
+                    out.push(CoLocationConflict {
+                        character: ch,
+                        event_a: a.id,
+                        event_b: b.id,
+                        title_a: a.title.clone(),
+                        title_b: b.title.clone(),
+                        place_a: *pa,
+                        place_b: *pb,
+                    });
+                }
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -224,6 +276,37 @@ mod tests {
         assert_eq!(events_for_character(&events, mara), vec![&events[0]]);
         assert_eq!(events_for_place(&events, velmaril), vec![&events[0]]);
         assert!(events_for_character(&events, Uuid::new_v4()).is_empty());
+    }
+
+    #[test]
+    fn co_location_flags_one_character_two_places() {
+        let mara = Uuid::new_v4();
+        let velmaril = Uuid::new_v4();
+        let korthun = Uuid::new_v4();
+        // Two overlapping events place Mara in different cities.
+        let a = TlEvent { end_ticks: Some(20), ..ev(Uuid::new_v4(), 10, &[], &[mara], &[velmaril]) };
+        let b = ev(Uuid::new_v4(), 15, &[], &[mara], &[korthun]); // instant inside a's span
+        // A third event, far apart in time — no conflict.
+        let c = ev(Uuid::new_v4(), 900, &[], &[mara], &[korthun]);
+        let conflicts = co_location_conflicts(&[a, b, c]);
+        assert_eq!(conflicts.len(), 1);
+        assert_eq!(conflicts[0].character, mara);
+        assert_eq!(conflicts[0].place_a, velmaril);
+        assert_eq!(conflicts[0].place_b, korthun);
+    }
+
+    #[test]
+    fn co_location_ignores_shared_place_and_no_place() {
+        let mara = Uuid::new_v4();
+        let velmaril = Uuid::new_v4();
+        // Overlapping but at the SAME place → fine.
+        let a = TlEvent { end_ticks: Some(20), ..ev(Uuid::new_v4(), 10, &[], &[mara], &[velmaril]) };
+        let b = ev(Uuid::new_v4(), 15, &[], &[mara], &[velmaril]);
+        assert!(co_location_conflicts(&[a, b]).is_empty());
+        // Overlapping, different... but one event has no place → can't establish.
+        let c = TlEvent { end_ticks: Some(20), ..ev(Uuid::new_v4(), 10, &[], &[mara], &[velmaril]) };
+        let d = ev(Uuid::new_v4(), 15, &[], &[mara], &[]);
+        assert!(co_location_conflicts(&[c, d]).is_empty());
     }
 
     #[test]
