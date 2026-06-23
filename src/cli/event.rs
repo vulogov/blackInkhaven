@@ -51,6 +51,27 @@ pub fn run(project: &Path, cmd: EventCommand) -> Result<()> {
             list(&store, &calendar, book_name.as_deref(), track.as_deref())
         }
         EventCommand::Show { path } => show(&store, &calendar, &path),
+        EventCommand::Critique {
+            track,
+            book_name,
+            legacy,
+            migration_check,
+            diff,
+            no_elaborate,
+            force,
+        } => crate::cli::event_critique::run(
+            project,
+            &cfg,
+            &store,
+            &calendar,
+            track.as_deref(),
+            book_name.as_deref(),
+            legacy,
+            migration_check,
+            diff,
+            no_elaborate,
+            force,
+        ),
     }
 }
 

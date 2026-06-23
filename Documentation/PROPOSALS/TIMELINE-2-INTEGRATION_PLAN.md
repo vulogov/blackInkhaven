@@ -133,5 +133,17 @@ custom rules reserved (`ink.event.critique.custom` no-op) but not implemented.
   arg (appended to the headline + stored in metadata). The live synchronous call is
   a CLI concern (P3, where the cost-capped slow-track helper lives); the TUI chords
   stay instant/pattern-only. Full suite green (1746).
+- **P3** — _done._ `inkhaven event critique` CLI (`cli/event_critique.rs`,
+  `EventCommand::Critique`). Scope via `--track` / `--book-name` (default project).
+  Default run: the two retained checks, structured stdout findings (`⊘`/`⧉` glyphs,
+  significance/suspicion icons), with **live cost-capped LLM elaboration** wired
+  through `collect_blocking` + the `ElaborationBudget` (`--no-elaborate` /
+  `--force`). `--legacy`: the original five-item AI audit via one synchronous
+  completion, behind a deprecation warning (config-gated). `--migration-check`:
+  retained-check counts + the four removed categories' new homes (no fabricated
+  cross-system counts — points at the real commands). `--diff`: the category→command
+  mapping + what's stronger now. Orphan age = days-since-`modified_at` (real
+  staleness in the CLI, where the TUI had none). Smoke-tested end to end
+  (orphans graded, overlap found, all four flags). Full suite green (1748).
 </content>
 </invoke>
