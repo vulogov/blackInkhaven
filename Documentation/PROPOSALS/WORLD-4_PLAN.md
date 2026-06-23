@@ -85,10 +85,31 @@
 >   consistency) or `--json`. `--layer geology/…` errors "not implemented yet"
 >   (only astronomy has landed). Smoke-validated: Earth-like template →
 >   synodic month 29.5 d (matches reality), sun 0.46× lunar, 360-day calendar
->   flagged vs the 365.3-day year. tests 1591. ZERO new deps. *Next P0: storage
->   (`world_definitions`/`world_astronomy` on StorageEngine, output.db precedent),
->   materialize → World book `01-astronomy/*` (a NEW 10th system book), the
->   `Ctrl+B W` chord scaffold (resolve the ToggleTypewriter collision).*
+>   flagged vs the 365.3-day year. tests 1591. ZERO new deps.
+> - **P0.3 — World system book + astronomy materialization (UNRELEASED,
+>   1.3.25-dev).** Registered the **World** system book: `SYSTEM_TAG_WORLD` +
+>   `("world","World")` in `SYSTEM_BOOKS` immediately after Artefacts (the seeder's
+>   bump logic slots it into existing projects; the worldbuilding cluster
+>   Places/Characters/Artefacts/World now sits together). `src/world/materialize.rs`
+>   — `materialize_astronomy(store, cfg, &AstronomyOutput)` writes three structured
+>   (JSON, `content_type=hjson`) paragraphs under `World / Astronomy /` — *System
+>   overview* (year/divergence/insolation), *Calendar* (seasons + calendar check),
+>   *Celestial events* (moons/eclipses/tide). **Idempotent** (create-once, then
+>   update-in-place — no duplicates). Astronomy is compiler-owned and overwrites
+>   (it's closed-form fact, not a proposal). GOTCHA: `update_paragraph_content`
+>   syncs the DB but NOT the on-disk `.typ` (the source of truth) — mirror
+>   `create_chapter_paragraph`: set `content_type`, `std::fs::write` the body to
+>   `node.file`, THEN `update_paragraph_content`. CLI: `realworld compile
+>   --materialize` opens the store + writes the book. Smoke-validated end-to-end
+>   (3 created → idempotent 0-created/3-updated; JSON body lands on disk). +1
+>   system-book registration test. tests 1591→1592. ZERO new deps. *Next P0:
+>   the `Ctrl+B W` chord scaffold (resolve the ToggleTypewriter collision) +
+>   `Ctrl+B W` overview / view. Then P1 (geology/climate/hydrology + first deps).*
+>
+> **DEFERRED DELIVERABLE (user-requested 2026-06-25):** once WORLD-4 is *fully*
+> implemented (all five layers + magic), generate `./examples/realworld/Earth.hjson`
+> — a complete real-Earth definition (every parameter) for authors starting in an
+> Earth setting. Tracked here so it isn't lost; do it at the P7 polish phase.
 
 ---
 
