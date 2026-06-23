@@ -25,7 +25,28 @@ pub fn run(project: &Path, cmd: RealworldCommand) -> Result<()> {
         }
         RealworldCommand::Propose => propose(project),
         RealworldCommand::Proposals { cmd } => proposals(project, cmd),
+        RealworldCommand::Places => places(project),
     }
+}
+
+/// List the Place ↔ World cross-references.
+fn places(project: &Path) -> Result<()> {
+    use crate::world::storage::WorldStore;
+    let store = WorldStore::open_for_project(project)
+        .map_err(|e| Error::Store(format!("opening world store: {e}")))?;
+    let links = store.list_place_links().map_err(|e| Error::Store(format!("listing: {e}")))?;
+    if links.is_empty() {
+        println!("(no world-linked places yet — accept some proposals)");
+        return Ok(());
+    }
+    for l in &links {
+        println!(
+            "  {:<16} ({:>3},{:<3}) · {:<18} · {:<14} · pop {}",
+            l.name, l.x, l.y, l.climate_zone, l.hydrology_basis, l.population
+        );
+    }
+    println!("\n{} world-linked place(s).", links.len());
+    Ok(())
 }
 
 /// Run the compiler through demographics and seed the proposal queue.
@@ -141,14 +162,18 @@ fn accept_one(
         println!("{} already accepted", p.name);
         return Ok(());
     }
-    create_place(project, &p)?;
+    let place_id = create_place(project, &p)?;
+    store
+        .insert_place_link(&crate::world::proposals::PlaceLink::from_proposal(place_id, &p))
+        .map_err(|e| Error::Store(format!("place link: {e}")))?;
     store.set_status(id, "accepted").map_err(|e| Error::Store(format!("accept: {e}")))?;
     println!("accepted {} → Places", p.name);
     Ok(())
 }
 
 /// Commit an accepted Place proposal as a prose paragraph under the Places book.
-fn create_place(project: &Path, p: &crate::world::proposals::PlaceProposal) -> Result<()> {
+/// Returns the created Place node id (for the world cross-reference link).
+fn create_place(project: &Path, p: &crate::world::proposals::PlaceProposal) -> Result<uuid::Uuid> {
     use crate::config::Config;
     use crate::project::ProjectLayout;
     use crate::store::hierarchy::Hierarchy;
@@ -185,7 +210,7 @@ fn create_place(project: &Path, p: &crate::world::proposals::PlaceProposal) -> R
     store
         .update_paragraph_content(&mut node, prose.as_bytes())
         .map_err(|e| Error::Store(format!("saving Place: {e}")))?;
-    Ok(())
+    Ok(node.id)
 }
 
 /// Load + parse the project's `world.hjson`.

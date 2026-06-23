@@ -30,6 +30,39 @@ pub struct PlaceProposal {
     pub created_at: i64,
 }
 
+/// A Place ↔ World cross-reference: the world data behind an accepted Place,
+/// keyed to the Place record's node id. Persisted in `world_place_links`.
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct PlaceLink {
+    pub place_id: Uuid,
+    pub name: String,
+    pub biome: String,
+    pub climate_zone: String,
+    pub hydrology_basis: String,
+    pub population: u64,
+    pub x: usize,
+    pub y: usize,
+}
+
+impl PlaceLink {
+    /// Build a link from an accepted proposal + the created Place's node id.
+    pub fn from_proposal(place_id: Uuid, p: &PlaceProposal) -> Self {
+        let s = |k: &str| p.payload.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let u = |k: &str| p.payload.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
+        let biome = s("biome");
+        PlaceLink {
+            place_id,
+            name: p.name.clone(),
+            climate_zone: biome.clone(), // the biome label is the place's climate zone
+            biome,
+            hydrology_basis: s("basis"),
+            population: u("population"),
+            x: u("x") as usize,
+            y: u("y") as usize,
+        }
+    }
+}
+
 /// Generate Place proposals from a demographics output. The settlement grid
 /// coordinates make each proposal's `signature` stable across re-compiles.
 pub fn place_proposals(demo: &DemographicsOutput, seed: u64) -> Vec<PlaceProposal> {
