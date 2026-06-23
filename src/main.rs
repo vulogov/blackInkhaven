@@ -27,6 +27,7 @@ mod book_digest;
 mod manuscript;
 mod pane;
 mod world;
+mod inner_socrates;
 mod planning;
 mod editorial;
 mod drift;

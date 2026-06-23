@@ -778,6 +778,14 @@ pub(super) enum Modal {
         proposals: Vec<crate::world::proposals::PlaceProposal>,
         cursor: usize,
     },
+    /// INNER_SOCRATES-1 — the Inner Socrates overview (`Ctrl+B J`): the active
+    /// Reader Persona, recent Socratic questions, and the intent ledger. `↑↓`
+    /// scroll, `Esc` closes; `F` fast-checks the open paragraph, `S` selects a
+    /// persona, `L` views the ledger, `A` toggles the ambient auto-check.
+    InnerSocratesOverview {
+        rows: Vec<String>,
+        cursor: usize,
+    },
     /// LANG-1 P2.7c — the `:lang:` inline-insertion picker. Typing `:<lang>:`
     /// in the editor opens it; type to filter, `↑↓` move, `Enter` inserts the
     /// word in place of the trigger, `Esc` leaves the literal text.

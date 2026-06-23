@@ -196,3 +196,4 @@ Everything has a home under **`Ctrl+B W`**:
   both cost-capped, with a cost preflight and a daily ceiling.
 
 Back to: **[Tutorial 76 — Building a world](76-building-a-world-realworld.md)**.
+Field-by-field reference: **[`../WORLDBUILDING.md`](../WORLDBUILDING.md)**.

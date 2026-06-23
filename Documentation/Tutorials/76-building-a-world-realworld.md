@@ -231,3 +231,4 @@ to start in a recognisable world, then edit toward your own.
 - `examples/realworld/Earth.hjson` is a ready-made starting point.
 
 Next: **[Tutorial 77 — World maps and the fact-checker](77-world-maps-and-fact-checking.md)**.
+Field-by-field reference: **[`../WORLDBUILDING.md`](../WORLDBUILDING.md)**.

@@ -22,6 +22,7 @@ pub mod doctor_scan;
 pub mod event;
 pub mod comments;
 pub mod language;
+pub mod inner_socrates;
 pub mod output;
 pub mod realworld;
 pub mod templates;
@@ -914,6 +915,12 @@ pub enum Command {
     /// `Documentation/PROPOSALS/WORLD-4_PLAN.md`.
     #[command(subcommand)]
     Realworld(RealworldCommand),
+
+    /// INNER_SOCRATES-1 — examined authorship: run the Socratic interrogator over
+    /// prose (questions, never corrections). See
+    /// `Documentation/PROPOSALS/INNER_SOCRATES-1_PLAN.md`.
+    #[command(subcommand)]
+    InnerSocrates(InnerSocratesCommand),
 
     /// WORLD-4 — fact-check prose against the simulated world (fast track):
     /// flag implausible world-assertions (travel time, …), respecting the
@@ -3616,6 +3623,133 @@ pub enum RealworldCommand {
     },
 }
 
+/// INNER_SOCRATES-1 — the examined-authorship CLI surface. P2 ships the Fast
+/// track (`check`) and the intent ledger (`ledger`); the Slow track, personas,
+/// and conversation land in later phases.
+#[derive(Debug, Subcommand)]
+pub enum InnerSocratesCommand {
+    /// Run the deterministic Fast track over prose and print the questions it
+    /// raises. Persists + emits to Output when the project is initialized.
+    Check {
+        /// Check this literal text.
+        #[arg(long)]
+        text: Option<String>,
+        /// Check a paragraph by id (reads its content from the store).
+        #[arg(long)]
+        paragraph: Option<String>,
+        /// Also run the Slow track — an LLM pass for the deep Socratic questions
+        /// patterns miss (needs an LLM provider; cost-capped).
+        #[arg(long)]
+        slow: bool,
+        /// Slow-track per-call soft cap (estimated tokens); skipped with a notice
+        /// if exceeded unless `--force`.
+        #[arg(long, default_value_t = 6000)]
+        max_cost: usize,
+        /// Run the Slow track even if the cost estimate exceeds `--max-cost`.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Run the timeline pass — compare the project's timeline of events against
+    /// the prose and ask whether what is declared is dramatized (needs an LLM
+    /// provider; silently does nothing without a timeline).
+    Timeline {
+        #[arg(long, default_value_t = 8000)]
+        max_cost: usize,
+        #[arg(long)]
+        force: bool,
+    },
+    /// Inspect persisted findings.
+    #[command(subcommand)]
+    Findings(FindingsCommand),
+    /// List the intent ledger (the deliberate authorial choices the interrogator
+    /// respects).
+    Ledger,
+    /// Reader Personas — the careful-reader perspectives you switch between.
+    #[command(subcommand)]
+    Persona(PersonaCommand),
+    /// Promotion candidates — patterns of repeated dismissal the system suggests
+    /// declaring as a deliberate intent.
+    #[command(subcommand)]
+    Suggestions(SuggestionsCommand),
+    /// `.isl` ledger bundles — carry series-level intentions between books.
+    #[command(subcommand)]
+    Bundle(BundleCommand),
+}
+
+/// INNER_SOCRATES-1 — the `.isl` ledger-bundle surface.
+#[derive(Debug, Subcommand)]
+pub enum BundleCommand {
+    /// Export intent-ledger entries to an `.isl` bundle.
+    Export {
+        /// Which entries to include.
+        #[arg(long, value_parser = ["series", "project", "all"], default_value = "series")]
+        scope_level: String,
+        /// Output path (default: `<project>/intent-ledger.isl`).
+        #[arg(long)]
+        out: Option<String>,
+    },
+    /// Import intent-ledger entries from an `.isl` bundle.
+    Import {
+        path: String,
+        /// What to do when an entry id already exists.
+        #[arg(long, value_parser = ["skip", "override"], default_value = "skip")]
+        conflict: String,
+    },
+}
+
+/// INNER_SOCRATES-1 — the promotion-candidate surface.
+#[derive(Debug, Subcommand)]
+pub enum SuggestionsCommand {
+    /// List promotion candidates (categories dismissed ≥ threshold times).
+    List {
+        #[arg(long, default_value_t = 5)]
+        threshold: i64,
+    },
+    /// Promote a candidate into an intent-ledger entry that suppresses it.
+    Promote {
+        /// The Socratic category id (e.g. `framing_interrogation`).
+        category: String,
+        /// The chapter the entry scopes to (omit for project-wide).
+        #[arg(long)]
+        chapter: Option<String>,
+        /// The author's explanation of the deliberate choice.
+        #[arg(long)]
+        description: Option<String>,
+    },
+    /// Refuse a candidate so it won't re-suggest.
+    Dismiss {
+        category: String,
+        #[arg(long)]
+        chapter: Option<String>,
+    },
+}
+
+/// INNER_SOCRATES-1 — inspecting persisted findings.
+#[derive(Debug, Subcommand)]
+pub enum FindingsCommand {
+    /// List all persisted findings (newest first).
+    List,
+    /// Show a paragraph's findings in chronological order (across re-checks).
+    History { paragraph: String },
+}
+
+/// INNER_SOCRATES-1 — the Reader Persona surface.
+#[derive(Debug, Subcommand)]
+pub enum PersonaCommand {
+    /// List available personas (bundled + user + project), marking the active one.
+    List,
+    /// Show one persona's voice and category emphasis.
+    Show { id: String },
+    /// Make a persona active for this project.
+    Activate { id: String },
+    /// Scaffold a new persona HJSON file in the project to edit.
+    New {
+        id: String,
+        #[arg(long)]
+        name: Option<String>,
+    },
+}
+
 /// WORLD-4 — the proposal queue surface (RFC §8.9). Accepting a proposal commits
 /// the proposed record (a Place) to its system book; rejecting records the
 /// decision so the compiler won't re-propose it.
@@ -4105,6 +4239,7 @@ impl Cli {
             }
             Command::Output(cmd) => output::run(&project, cmd).map_err(Into::into),
             Command::Realworld(cmd) => realworld::run(&project, cmd).map_err(Into::into),
+            Command::InnerSocrates(cmd) => inner_socrates::run(&project, cmd).map_err(Into::into),
             Command::FactCheck { text, paragraph, slow, max_cost, force } => {
                 realworld::fact_check(&project, text, paragraph, slow, max_cost, force).map_err(Into::into)
             }
