@@ -280,6 +280,242 @@ fn check_climate(text: &str, gaz: &Gazetteer, ledger: &MagicLedger, lang: Lang) 
     out
 }
 
+/// WORLD-5 — the timeline-aware entry point. Given a paragraph's
+/// [`TimelineContext`](crate::world::timeline_context::TimelineContext), check the
+/// prose's weather against the **timeline-dated season**: snow in a paragraph the
+/// timeline places in summer is a hard contradiction (dated ground truth, not
+/// prose inference). Returns nothing when the paragraph has no effective season.
+pub fn check_timeline(
+    text: &str,
+    timeline: &crate::world::timeline_context::TimelineContext,
+    ledger: &MagicLedger,
+) -> Vec<Finding> {
+    let Some(season) = timeline.effective_season.as_deref() else {
+        return Vec::new();
+    };
+    let lang = crate::world::fact_check_lang::detect(text);
+    check_date_season(text, season, ledger, lang)
+}
+
+/// A canonical season, for comparing a prose date-hint against a (possibly
+/// custom-named) calendar season.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CanonSeason {
+    Spring,
+    Summer,
+    Autumn,
+    Winter,
+}
+
+/// Map a calendar season name to its canonical season, if it names a recognizable
+/// one (so a conlang/custom season degrades to no comparison).
+fn canon_season(name: &str) -> Option<CanonSeason> {
+    let s = name.to_lowercase();
+    if s.contains("summer") {
+        Some(CanonSeason::Summer)
+    } else if s.contains("winter") {
+        Some(CanonSeason::Winter)
+    } else if s.contains("spring") {
+        Some(CanonSeason::Spring)
+    } else if s.contains("autumn") || s.contains("fall") {
+        Some(CanonSeason::Autumn)
+    } else {
+        None
+    }
+}
+
+/// Seasonal date-hints (festivals, agricultural / solstitial references) per
+/// language. Multilingual from WORLD-4's baseline; lowercase (the text is
+/// lowercased before matching).
+use CanonSeason::{Autumn, Spring, Summer, Winter};
+
+const DATE_HINTS_EN: &[(&str, CanonSeason)] = &[
+    ("midsummer", Summer), ("high summer", Summer), ("summer solstice", Summer),
+    ("midwinter", Winter), ("deep winter", Winter), ("winter solstice", Winter), ("yule", Winter),
+    ("spring festival", Spring), ("vernal equinox", Spring), ("planting season", Spring),
+    ("harvest", Autumn), ("harvest festival", Autumn), ("autumn equinox", Autumn),
+];
+
+const DATE_HINTS_RU: &[(&str, CanonSeason)] = &[
+    ("разгар лета", Summer), ("середина лета", Summer), ("летнее солнцестояние", Summer), ("купала", Summer),
+    ("разгар зимы", Winter), ("середина зимы", Winter), ("зимнее солнцестояние", Winter), ("святки", Winter),
+    ("весенний праздник", Spring), ("весеннее равноденствие", Spring), ("посевная", Spring), ("масленица", Spring),
+    ("жатва", Autumn), ("сбор урожая", Autumn), ("осеннее равноденствие", Autumn),
+];
+
+const DATE_HINTS_ES: &[(&str, CanonSeason)] = &[
+    ("pleno verano", Summer), ("solsticio de verano", Summer), ("san juan", Summer),
+    ("pleno invierno", Winter), ("solsticio de invierno", Winter),
+    ("fiesta de primavera", Spring), ("equinoccio de primavera", Spring), ("la siembra", Spring),
+    ("la cosecha", Autumn), ("vendimia", Autumn), ("equinoccio de otoño", Autumn),
+];
+
+const DATE_HINTS_FR: &[(&str, CanonSeason)] = &[
+    ("plein été", Summer), ("solstice d'été", Summer), ("la saint-jean", Summer),
+    ("plein hiver", Winter), ("solstice d'hiver", Winter),
+    ("fête du printemps", Spring), ("équinoxe de printemps", Spring), ("les semailles", Spring),
+    ("la moisson", Autumn), ("les vendanges", Autumn), ("équinoxe d'automne", Autumn),
+];
+
+const DATE_HINTS_DE: &[(&str, CanonSeason)] = &[
+    ("hochsommer", Summer), ("mittsommer", Summer), ("sommersonnenwende", Summer), ("johannistag", Summer),
+    ("hochwinter", Winter), ("mittwinter", Winter), ("wintersonnenwende", Winter), ("julfest", Winter),
+    ("frühlingsfest", Spring), ("frühlingsäquinoktium", Spring), ("die aussaat", Spring),
+    ("die ernte", Autumn), ("erntedankfest", Autumn), ("herbstäquinoktium", Autumn),
+];
+
+/// The date-hint table for a language.
+fn date_hints(lang: Lang) -> &'static [(&'static str, CanonSeason)] {
+    match lang {
+        Lang::En => DATE_HINTS_EN,
+        Lang::Ru => DATE_HINTS_RU,
+        Lang::Es => DATE_HINTS_ES,
+        Lang::Fr => DATE_HINTS_FR,
+        Lang::De => DATE_HINTS_DE,
+    }
+}
+
+/// WORLD-5 — the `date_coherence` check: a seasonal date-hint in the prose (a
+/// festival, a harvest, a solstice) that contradicts the timeline-dated season.
+/// Softer than the weather check (a festival may be metaphorical) → `warning`.
+pub fn check_date_coherence(
+    text: &str,
+    timeline: &crate::world::timeline_context::TimelineContext,
+    ledger: &MagicLedger,
+) -> Vec<Finding> {
+    let Some(season) = timeline.effective_season.as_deref() else {
+        return Vec::new();
+    };
+    let Some(dated) = canon_season(season) else {
+        return Vec::new();
+    };
+    let lang = crate::world::fact_check_lang::detect(text);
+    let lower = text.to_lowercase();
+    for (hint, implied) in date_hints(lang) {
+        if *implied != dated && contains_word(&lower, hint) {
+            let msg = Msg::DateCoherence { hint, season };
+            let ctx = CheckContext { category: "date_coherence", ..Default::default() };
+            let suppressed_by = ledger.find_suppressor(&ctx).map(|r| r.kind.clone());
+            let severity = if suppressed_by.is_some() { "info" } else { "warning" };
+            return vec![Finding {
+                category: "date_coherence".into(),
+                severity: severity.into(),
+                body: lang.render(&msg),
+                body_en: Lang::En.render(&msg),
+                suppressed_by,
+            }];
+        }
+    }
+    Vec::new()
+}
+
+/// WORLD-5 — a prose-stated travel duration that contradicts the timeline gap
+/// between the paragraph's linked event and the traveller's prior different-place
+/// event. The RFC's flagship example: prose says "three days", the timeline shows
+/// a 35-day gap. `ticks_per_day` converts the gap to days.
+pub fn check_travel_timeline(
+    text: &str,
+    timeline: &crate::world::timeline_context::TimelineContext,
+    events: &[crate::world::timeline_context::TlEvent],
+    ticks_per_day: i64,
+    ledger: &MagicLedger,
+) -> Vec<Finding> {
+    if timeline.linked_events.is_empty() || ticks_per_day <= 0 {
+        return Vec::new();
+    }
+    let lang = crate::world::fact_check_lang::detect(text);
+    let Some(prose_days) = split_sentences(text).filter_map(|s| find_duration_days(s, lang)).next()
+    else {
+        return Vec::new();
+    };
+    let linked: Vec<&crate::world::timeline_context::TlEvent> =
+        events.iter().filter(|e| timeline.linked_events.contains(&e.id)).collect();
+    for anchor in &linked {
+        if anchor.places.is_empty() {
+            continue;
+        }
+        for ch in &anchor.characters {
+            // The traveller's most-recent prior event at a different place.
+            let prior = events
+                .iter()
+                .filter(|e| {
+                    e.id != anchor.id
+                        && e.characters.contains(ch)
+                        && e.start_ticks < anchor.start_ticks
+                        && !e.places.is_empty()
+                        && !e.places.iter().any(|p| anchor.places.contains(p))
+                })
+                .max_by_key(|e| e.start_ticks);
+            let Some(prior) = prior else { continue };
+            let timeline_days =
+                (anchor.start_ticks - prior.start_ticks) as f32 / ticks_per_day as f32;
+            if timeline_days <= 0.0 {
+                continue;
+            }
+            let ratio = prose_days / timeline_days;
+            if (0.33..=3.0).contains(&ratio) {
+                continue; // close enough — narrative compression is fine within ~3×
+            }
+            let msg = Msg::TravelTimeline {
+                prose_days,
+                timeline_days,
+                from: &prior.title,
+                to: &anchor.title,
+            };
+            let ctx = CheckContext { category: "travel_time", ..Default::default() };
+            let suppressed_by = ledger.find_suppressor(&ctx).map(|r| r.kind.clone());
+            let severity = if suppressed_by.is_some() { "info" } else { "warning" };
+            return vec![Finding {
+                category: "travel_time".into(),
+                severity: severity.into(),
+                body: lang.render(&msg),
+                body_en: Lang::En.render(&msg),
+                suppressed_by,
+            }];
+        }
+    }
+    Vec::new()
+}
+
+/// Weather contradicting a dated season. Conservative: only the common
+/// English-named seasons (`summer` / `winter`) are temperature-mapped; a
+/// custom- or conlang-named season degrades to no finding rather than guessing.
+fn check_date_season(text: &str, season: &str, ledger: &MagicLedger, lang: Lang) -> Vec<Finding> {
+    let s = season.to_lowercase();
+    let cold_season = s.contains("winter");
+    let hot_season = s.contains("summer");
+    if !cold_season && !hot_season {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for sentence in split_sentences(text) {
+        let Some(weather) = detect_weather(sentence, lang) else {
+            continue;
+        };
+        let conflict = matches!(
+            (weather, cold_season, hot_season),
+            (Weather::Cold, _, true) | (Weather::Hot, true, _)
+        );
+        if !conflict {
+            continue;
+        }
+        let msg = Msg::DateSeason { weather, season };
+        let ctx = CheckContext { category: "climate_anomaly", ..Default::default() };
+        let suppressed_by = ledger.find_suppressor(&ctx).map(|r| r.kind.clone());
+        // A dated season is ground truth — a clear mismatch is a contradiction.
+        let severity = if suppressed_by.is_some() { "info" } else { "contradiction" };
+        out.push(Finding {
+            category: "climate".into(),
+            severity: severity.into(),
+            body: lang.render(&msg),
+            body_en: Lang::En.render(&msg),
+            suppressed_by,
+        });
+        break; // one per paragraph is enough
+    }
+    out
+}
+
 /// Demographics check: a population stated for a place that diverges sharply
 /// from the modelled population.
 fn check_population(text: &str, gaz: &Gazetteer, ledger: &MagicLedger, lang: Lang) -> Vec<Finding> {
@@ -425,6 +661,16 @@ fn check_travel_time(text: &str, ledger: &MagicLedger, roles: &[String], lang: L
 /// clear the paragraph's prior findings first. Suppressed findings carry the
 /// rule note in their metadata.
 pub fn emit_finding(f: &Finding, source: Option<uuid::Uuid>) {
+    emit_finding_impl(f, source, false);
+}
+
+/// WORLD-5 — emit a timeline-derived finding (carries `timeline: true` so the
+/// Output pane shows the 📅 marker).
+pub fn emit_finding_timeline(f: &Finding, source: Option<uuid::Uuid>) {
+    emit_finding_impl(f, source, true);
+}
+
+fn emit_finding_impl(f: &Finding, source: Option<uuid::Uuid>, timeline: bool) {
     use crate::pane::output::{kinds, Lifetime, Message, Severity};
     let severity = match f.severity.as_str() {
         "contradiction" => Severity::Contradiction,
@@ -444,6 +690,7 @@ pub fn emit_finding(f: &Finding, source: Option<uuid::Uuid>) {
             "body_en": f.body_en,
             "category": f.category,
             "track": "fast",
+            "timeline": timeline,
             "suppressed_by": f.suppressed_by,
         }),
     );
@@ -656,6 +903,164 @@ mod tests {
         let ctx = WorldContext::new(Gazetteer::new(places), vec![], def.declared_minerals());
         let f = check_paragraph("Snow fell on Cairo for three days.", &empty_ledger(), &[], Some(&ctx));
         assert!(f.iter().any(|f| f.category == "climate"), "got {f:?}");
+    }
+
+    #[test]
+    fn timeline_dated_season_flags_anachronistic_weather() {
+        use crate::world::timeline_context::{DateSource, TimelineContext};
+        let summer = TimelineContext {
+            paragraph_id: uuid::Uuid::nil(),
+            linked_events: vec![uuid::Uuid::nil()],
+            nearby_events: vec![],
+            effective_date: Some(1000),
+            date_source: DateSource::ExplicitLink(uuid::Uuid::nil()),
+            effective_season: Some("summer".into()),
+        };
+        // Snow, but the timeline dates this in summer → contradiction.
+        let f = check_timeline("Snow fell thick across the city.", &summer, &empty_ledger());
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].category, "climate");
+        assert_eq!(f[0].severity, "contradiction");
+        assert!(f[0].body.contains("summer"));
+
+        // Heat in summer is consistent → nothing.
+        let f2 = check_timeline("The sweltering heat pressed down.", &summer, &empty_ledger());
+        assert!(f2.is_empty(), "got {f2:?}");
+
+        // No effective season → no timeline finding.
+        let none = TimelineContext::empty(uuid::Uuid::nil());
+        assert!(check_timeline("Snow fell.", &none, &empty_ledger()).is_empty());
+    }
+
+    #[test]
+    fn date_coherence_flags_festival_vs_dated_season() {
+        use crate::world::timeline_context::{DateSource, TimelineContext};
+        let winter = TimelineContext {
+            paragraph_id: uuid::Uuid::nil(),
+            linked_events: vec![uuid::Uuid::nil()],
+            nearby_events: vec![],
+            effective_date: Some(1),
+            date_source: DateSource::ExplicitLink(uuid::Uuid::nil()),
+            effective_season: Some("winter".into()),
+        };
+        // A midsummer feast, but the timeline dates this in winter → warning.
+        let f = check_date_coherence("The midsummer feast filled the hall.", &winter, &empty_ledger());
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].category, "date_coherence");
+        assert_eq!(f[0].severity, "warning");
+        assert!(f[0].body.contains("winter"));
+
+        // A harvest in autumn-dated prose is consistent → nothing.
+        let autumn = TimelineContext { effective_season: Some("autumn".into()), ..winter.clone() };
+        assert!(check_date_coherence("After the harvest, they rested.", &autumn, &empty_ledger()).is_empty());
+
+        // A custom-named season can't be compared → nothing.
+        let custom = TimelineContext { effective_season: Some("Frostmoon".into()), ..winter.clone() };
+        assert!(check_date_coherence("The midsummer feast.", &custom, &empty_ledger()).is_empty());
+    }
+
+    #[test]
+    fn date_coherence_detects_hints_in_five_languages() {
+        use crate::world::timeline_context::{DateSource, TimelineContext};
+        let winter = TimelineContext {
+            paragraph_id: uuid::Uuid::nil(),
+            linked_events: vec![uuid::Uuid::nil()],
+            nearby_events: vec![],
+            effective_date: Some(1),
+            date_source: DateSource::ExplicitLink(uuid::Uuid::nil()),
+            effective_season: Some("winter".into()),
+        };
+        // A high-summer marker in winter-dated prose, in each language.
+        let cases = [
+            "In high summer they feasted, and the wine flowed with song through the night.",
+            "В разгар лета они праздновали, и пели песни в большом зале города.",
+            "En pleno verano celebraban la fiesta, con vino y con canciones para todos.",
+            "En plein été, ils célébraient la fête, avec du vin et sans fin dans la nuit.",
+            "Im Hochsommer feierten sie das Fest, und durch die Nacht ohne Ende mit Wein.",
+        ];
+        for c in cases {
+            let f = check_date_coherence(c, &winter, &empty_ledger());
+            assert_eq!(f.len(), 1, "expected a summer-in-winter finding for: {c} (got {f:?})");
+            assert_eq!(f[0].category, "date_coherence");
+        }
+    }
+
+    #[test]
+    fn travel_timeline_flags_prose_vs_event_gap() {
+        use crate::world::timeline_context::{build_context, TlEvent};
+        use crate::world::timeline_context::TimelineContext;
+        let mara = uuid::Uuid::new_v4();
+        let velmaril = uuid::Uuid::new_v4();
+        let korthun = uuid::Uuid::new_v4();
+        let para = uuid::Uuid::new_v4();
+        // Departure at day 0 (Velmaril), arrival at day 35 (Korthun, linked to para).
+        let depart = TlEvent {
+            id: uuid::Uuid::new_v4(),
+            title: "Departure from Velmaril".into(),
+            start_ticks: 0,
+            end_ticks: None,
+            linked_paragraphs: vec![],
+            characters: vec![mara],
+            places: vec![velmaril],
+        };
+        let arrive = TlEvent {
+            id: uuid::Uuid::new_v4(),
+            title: "Arrival in Korthun".into(),
+            start_ticks: 35,
+            end_ticks: None,
+            linked_paragraphs: vec![para],
+            characters: vec![mara],
+            places: vec![korthun],
+        };
+        let events = vec![depart, arrive];
+        // ticks_per_day = 1 here, so the gap is 35 days.
+        let ctx: TimelineContext = {
+            // build_context needs a calendar; reuse one with day=1.
+            use crate::timeline::calendar::{Calendar, CalendarConfig};
+            let cal = Calendar::from_config(CalendarConfig { preset: "gregorian".into(), ..Default::default() });
+            // gregorian day ticks: build_context only uses season; the travel check
+            // is given ticks_per_day=1 below regardless.
+            build_context(para, &events, &cal, 1000)
+        };
+        // Prose says three days, timeline says 35 → flag.
+        let f = check_travel_timeline("Mara rode three days to Korthun.", &ctx, &events, 1, &empty_ledger());
+        assert_eq!(f.len(), 1, "got {f:?}");
+        assert_eq!(f[0].category, "travel_time");
+        assert_eq!(f[0].severity, "warning");
+        assert!(f[0].body.contains("Korthun"));
+
+        // Prose "thirty days" is within 3× of 35 → no finding.
+        let f2 = check_travel_timeline("Mara rode thirty days to Korthun.", &ctx, &events, 1, &empty_ledger());
+        assert!(f2.is_empty(), "got {f2:?}");
+    }
+
+    #[test]
+    fn timeline_season_respects_magic_ledger() {
+        use crate::world::timeline_context::{DateSource, TimelineContext};
+        use crate::world::types::magic::{Applicability, MagicLedger, MagicRule};
+        let winter = TimelineContext {
+            paragraph_id: uuid::Uuid::nil(),
+            linked_events: vec![uuid::Uuid::nil()],
+            nearby_events: vec![],
+            effective_date: Some(1),
+            date_source: DateSource::ExplicitLink(uuid::Uuid::nil()),
+            effective_season: Some("winter".into()),
+        };
+        let ledger = MagicLedger {
+            enabled: true,
+            rules: vec![MagicRule {
+                kind: "weather_control".into(),
+                covers: vec!["climate_anomaly".into()],
+                description: "The conclave bends the seasons".into(),
+                applicable_to: Applicability::default(),
+                parameters: Default::default(),
+            }],
+        };
+        // Tropical heat in winter, but a covering magic rule → suppressed (info).
+        let f = check_timeline("Tropical heat lay over the valley.", &winter, &ledger);
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].severity, "info");
+        assert_eq!(f[0].suppressed_by.as_deref(), Some("weather_control"));
     }
 
     #[test]

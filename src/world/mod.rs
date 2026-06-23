@@ -31,6 +31,7 @@ pub mod materialize;
 pub mod plakat;
 pub mod proposals;
 pub mod storage;
+pub mod timeline_context;
 pub mod types;
 
 use std::fmt;

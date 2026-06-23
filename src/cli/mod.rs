@@ -943,6 +943,13 @@ pub enum Command {
         /// Run the slow track even if the cost estimate exceeds `--max-cost`.
         #[arg(long)]
         force: bool,
+        /// WORLD-5 — timeline-aware checks: `auto` (on if the project has a
+        /// timeline), `on`, or `off`.
+        #[arg(long, value_parser = ["auto", "on", "off"], default_value = "auto")]
+        timeline_aware: String,
+        /// WORLD-5 — run *only* the timeline-aware checks (skip the world checks).
+        #[arg(long)]
+        timeline_only: bool,
     },
     /// `inkhaven template
     /// <subcommand>`.  Surfaces information about
@@ -3594,6 +3601,10 @@ pub enum RealworldCommand {
         #[arg(long)]
         materialize: bool,
     },
+    /// WORLD-5 — flag every co-location conflict in the timeline: a character whose
+    /// events place them in two different places at overlapping times. Pure
+    /// timeline check (no LLM); respects the `magic:` ledger.
+    CoLocation,
     /// Cross-paragraph coherence pass (slow track): gather every paragraph under a
     /// node (book / chapter) and ask the LLM for contradictions *between* them — a
     /// character in two places, a fact reversed, a timeline that doesn't add up.
@@ -4240,8 +4251,9 @@ impl Cli {
             Command::Output(cmd) => output::run(&project, cmd).map_err(Into::into),
             Command::Realworld(cmd) => realworld::run(&project, cmd).map_err(Into::into),
             Command::InnerSocrates(cmd) => inner_socrates::run(&project, cmd).map_err(Into::into),
-            Command::FactCheck { text, paragraph, slow, max_cost, force } => {
-                realworld::fact_check(&project, text, paragraph, slow, max_cost, force).map_err(Into::into)
+            Command::FactCheck { text, paragraph, slow, max_cost, force, timeline_aware, timeline_only } => {
+                realworld::fact_check(&project, text, paragraph, slow, max_cost, force, &timeline_aware, timeline_only)
+                    .map_err(Into::into)
             }
             Command::Thread(cmd) => {
                 thread::run(&project, cmd).map_err(Into::into)

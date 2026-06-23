@@ -383,6 +383,14 @@ pub enum Msg<'a> {
     Population { place: &'a str, claimed: u64, modeled: u64 },
     Astronomy { claimed: usize, world: usize, moons: &'a str },
     Economy { metal: &'a str, minerals: &'a str },
+    /// WORLD-5 — weather contradicting the timeline-dated season.
+    DateSeason { weather: Weather, season: &'a str },
+    /// WORLD-5 — a prose travel duration contradicting the timeline gap between
+    /// two of the traveller's events.
+    TravelTimeline { prose_days: f32, timeline_days: f32, from: &'a str, to: &'a str },
+    /// WORLD-5 — a seasonal date-hint in the prose (a festival, a harvest)
+    /// contradicting the timeline-dated season.
+    DateCoherence { hint: &'a str, season: &'a str },
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -435,6 +443,16 @@ fn render_en(m: &Msg) -> String {
         Msg::Economy { metal, minerals } => format!(
             "{metal} is mined or worked here, but this world's geology yields only: {minerals}."
         ),
+        Msg::DateSeason { weather, season } => format!(
+            "{} described here, but the timeline places this in {season}.",
+            if *weather == Weather::Cold { "Freezing weather" } else { "Tropical heat" }
+        ),
+        Msg::TravelTimeline { prose_days, timeline_days, from, to } => format!(
+            "The prose suggests about {prose_days:.0} day(s), but the timeline places about {timeline_days:.0} day(s) between \u{201c}{from}\u{201d} and \u{201c}{to}\u{201d}."
+        ),
+        Msg::DateCoherence { hint, season } => format!(
+            "A {hint} is mentioned here, but the timeline places this in {season}."
+        ),
     }
 }
 
@@ -458,6 +476,16 @@ fn render_ru(m: &Msg) -> String {
         ),
         Msg::Economy { metal, minerals } => format!(
             "Здесь добывают {metal}, но геология этого мира даёт только: {minerals}."
+        ),
+        Msg::DateSeason { weather, season } => format!(
+            "{} здесь, но хронология относит это к сезону «{season}».",
+            if *weather == Weather::Cold { "Описана морозная погода" } else { "Описана тропическая жара" }
+        ),
+        Msg::TravelTimeline { prose_days, timeline_days, from, to } => format!(
+            "Текст предполагает около {prose_days:.0} дн., но хронология даёт около {timeline_days:.0} дн. между «{from}» и «{to}»."
+        ),
+        Msg::DateCoherence { hint, season } => format!(
+            "Здесь упоминается «{hint}», но хронология относит это к сезону «{season}»."
         ),
     }
 }
@@ -483,6 +511,16 @@ fn render_es(m: &Msg) -> String {
         Msg::Economy { metal, minerals } => format!(
             "Aquí se extrae {metal}, pero la geología de este mundo solo da: {minerals}."
         ),
+        Msg::DateSeason { weather, season } => format!(
+            "{} aquí, pero la cronología sitúa esto en la estación «{season}».",
+            if *weather == Weather::Cold { "Se describe un frío helado" } else { "Se describe un calor tropical" }
+        ),
+        Msg::TravelTimeline { prose_days, timeline_days, from, to } => format!(
+            "La prosa sugiere unos {prose_days:.0} día(s), pero la cronología sitúa unos {timeline_days:.0} día(s) entre «{from}» y «{to}»."
+        ),
+        Msg::DateCoherence { hint, season } => format!(
+            "Aquí se menciona «{hint}», pero la cronología sitúa esto en la estación «{season}»."
+        ),
     }
 }
 
@@ -507,6 +545,16 @@ fn render_fr(m: &Msg) -> String {
         Msg::Economy { metal, minerals } => format!(
             "On extrait ici du {metal}, mais la géologie de ce monde ne donne que : {minerals}."
         ),
+        Msg::DateSeason { weather, season } => format!(
+            "{} ici, mais la chronologie place ceci à la saison « {season} ».",
+            if *weather == Weather::Cold { "Un froid glacial est décrit" } else { "Une chaleur tropicale est décrite" }
+        ),
+        Msg::TravelTimeline { prose_days, timeline_days, from, to } => format!(
+            "La prose suggère environ {prose_days:.0} jour(s), mais la chronologie place environ {timeline_days:.0} jour(s) entre « {from} » et « {to} »."
+        ),
+        Msg::DateCoherence { hint, season } => format!(
+            "On mentionne ici « {hint} », mais la chronologie place ceci à la saison « {season} »."
+        ),
     }
 }
 
@@ -530,6 +578,16 @@ fn render_de(m: &Msg) -> String {
         ),
         Msg::Economy { metal, minerals } => format!(
             "Hier wird {metal} abgebaut, aber die Geologie dieser Welt liefert nur: {minerals}."
+        ),
+        Msg::DateSeason { weather, season } => format!(
+            "{} hier, aber die Chronologie verortet dies in der Jahreszeit „{season}“.",
+            if *weather == Weather::Cold { "Frostiges Wetter wird beschrieben" } else { "Tropische Hitze wird beschrieben" }
+        ),
+        Msg::TravelTimeline { prose_days, timeline_days, from, to } => format!(
+            "Die Prosa legt etwa {prose_days:.0} Tag(e) nahe, aber die Chronologie verortet etwa {timeline_days:.0} Tag(e) zwischen „{from}“ und „{to}“."
+        ),
+        Msg::DateCoherence { hint, season } => format!(
+            "Hier wird „{hint}“ erwähnt, aber die Chronologie verortet dies in der Jahreszeit „{season}“."
         ),
     }
 }
