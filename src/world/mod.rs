@@ -24,6 +24,7 @@
 #![allow(dead_code, unused_imports)]
 
 pub mod compile;
+pub mod materialize;
 pub mod types;
 
 use std::fmt;

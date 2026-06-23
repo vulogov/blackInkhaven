@@ -3540,6 +3540,10 @@ pub enum RealworldCommand {
         /// Emit the layer output as JSON.
         #[arg(long)]
         json: bool,
+        /// Write the output into the World system book (requires an
+        /// initialized project). Astronomy is compiler-owned and overwrites.
+        #[arg(long)]
+        materialize: bool,
     },
 }
 

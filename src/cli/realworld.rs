@@ -20,7 +20,9 @@ pub fn run(project: &Path, cmd: RealworldCommand) -> Result<()> {
         RealworldCommand::New { name, force } => new(project, &name, force),
         RealworldCommand::Validate => validate(project),
         RealworldCommand::Show { json } => show(project, json),
-        RealworldCommand::Compile { layer, json } => compile(project, layer.as_deref(), json),
+        RealworldCommand::Compile { layer, json, materialize } => {
+            compile(project, layer.as_deref(), json, materialize)
+        }
     }
 }
 
@@ -85,7 +87,7 @@ fn show(project: &Path, json: bool) -> Result<()> {
     Ok(())
 }
 
-fn compile(project: &Path, layer: Option<&str>, json: bool) -> Result<()> {
+fn compile(project: &Path, layer: Option<&str>, json: bool, materialize: bool) -> Result<()> {
     // P0: only the astronomy layer exists. A `--layer <other>` names a real but
     // not-yet-implemented layer; say so rather than silently doing astronomy.
     if let Some(l) = layer {
@@ -105,6 +107,14 @@ fn compile(project: &Path, layer: Option<&str>, json: bool) -> Result<()> {
 
     let def = load(project)?;
     let out = compile_astronomy(&def.astronomy);
+
+    // Materialize first (a side effect that runs in both JSON and human modes),
+    // so `--json --materialize` both writes the book and prints the output.
+    let mat_report = if materialize {
+        Some(materialize_to_store(project, &out)?)
+    } else {
+        None
+    };
 
     if json {
         let v = serde_json::to_string_pretty(&out)
@@ -152,7 +162,32 @@ fn compile(project: &Path, layer: Option<&str>, json: bool) -> Result<()> {
         c.computed_days,
         if c.consistent { "consistent" } else { "off by >1 day ⚠" }
     );
+    if let Some(r) = &mat_report {
+        println!(
+            "  → World/{}: {} paragraph(s) created, {} updated",
+            r.chapter,
+            r.created.len(),
+            r.updated.len()
+        );
+    }
     Ok(())
+}
+
+/// Open the project store and materialize the astronomy output into the World
+/// system book. Requires an initialized project (the World book is seeded on
+/// open).
+fn materialize_to_store(
+    project: &Path,
+    out: &crate::world::types::AstronomyOutput,
+) -> Result<crate::world::materialize::MaterializeReport> {
+    use crate::config::Config;
+    use crate::project::ProjectLayout;
+    use crate::store::Store;
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout, &cfg)?;
+    crate::world::materialize::materialize_astronomy(&store, &cfg, out)
 }
 
 /// A minimal, valid starter `world.hjson` (Earth-like, one moon) — enough to
