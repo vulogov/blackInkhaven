@@ -21,6 +21,7 @@
 
 pub mod fast;
 pub mod intent;
+pub mod text;
 pub mod types;
 
 use std::fmt;
