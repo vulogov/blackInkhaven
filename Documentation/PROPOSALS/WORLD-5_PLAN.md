@@ -1,0 +1,81 @@
+# RFC WORLD-5 — Timeline Integration with the World Fact-Checker
+
+| | |
+|---|---|
+| **RFC** | WORLD-5 |
+| **Title** | Timeline Integration with the World Fact-Checker (event-aware fact-checking) |
+| **Status** | **In progress — building incrementally in the 1.3.x cycle** |
+| **Created** | 2026-06-27 |
+| **Author** | Vladimir Ulogov |
+| **Target version** | author wrote 1.7.0; **pulled forward into the 1.3.x tree** (same cadence as WORLD-4 / INNER_SOCRATES-1) |
+| **Depends on** | WORLD-4 (fact-checker) — **COMPLETE (1.3.25–1.3.27)** · the timeline feature (1.2.6+) — present |
+| **Soft-depends on** | INNER_SOCRATES-1 — **COMPLETE (1.3.28–1.3.29)**; shares the timeline context provider |
+| **External dependency** | none beyond WORLD-4 |
+
+---
+
+> ## Status banner (1.3.x incremental build)
+>
+> Author targeted 1.7.0; per Vladimir's direction we build incrementally in the
+> **1.3.x** tree, one phase per signed increment. **ZERO new deps** (the RFC commits
+> to this in §11). WORLD-5 is a **connector**, not a foundation — it gives the
+> WORLD-4 fact-checker access to the timeline's events so several checks gain ground
+> truth instead of prose inference, plus two new categories.
+>
+> The new module is **`src/world/timeline_context/`** — the shared
+> `TimelineContextProvider` the RFC describes (§8.1). INNER_SOCRATES-1 already reads
+> events (`src/inner_socrates/timeline.rs`); WORLD-5 builds the richer, calendar-aware
+> provider both can consume.
+>
+> ### What we reuse (no reinvention)
+>
+> | Need | Reused from |
+> |---|---|
+> | Event data (start_ticks, precision, track, linked_paragraphs, characters, places) | the timeline feature (`TimelineEvent` / `EventData` on nodes) |
+> | Calendar + season model | `timeline::calendar` (`Calendar`, `SeasonDef`, `decompose`) |
+> | Event gathering from the hierarchy | the `inner_socrates::timeline::gather_events` shape |
+> | The fact-check `Finding` + `emit_finding` + magic-ledger consult | `world::fact_check` |
+> | Cost preflight / retry / multilingual baseline | WORLD-4 (`fact_check_slow`, `fact_check_lang`) |
+> | Output emission (`fact_check_warning` kind) | PANE-1 |
+>
+> ### Purely additive (RFC §1, §7.5)
+>
+> The compiler, plakat, Fast/Slow architecture, magic ledger, Output kinds, CLI/TUI
+> surface, and DuckDB schema are **unchanged**. WORLD-5 only adds the context the
+> checker has, the two new categories, a `--timeline-aware` flag, a `📅` marker, and
+> five read-only Bund words. Projects without a timeline get exactly WORLD-4.
+>
+> ### Phasing (RFC §12 re-cut for 1.3.x)
+>
+> - **P0** — the `TimelineContextProvider`: `TimelineContext` value (linked +
+>   nearby events, effective date + source, effective season), calendar-aware
+>   `season_for`, per-paragraph context building, the event helpers (`events_near`,
+>   `events_for_character`). Pure + tested.
+> - **P1** — extend the existing categories with the context (travel_time gains
+>   event-derived durations; climate gains calendar-grounded season; astronomy /
+>   demographics / economy gain dated grounding).
+> - **P2** — the two new categories: `date_coherence` (prose date-hints vs the
+>   linked event's season) and `co_location` (a character in two places in
+>   overlapping event windows).
+> - **P3** — the `--timeline-aware` / `--timeline-only` CLI flags + the five
+>   `ink.world.fact_check.timeline.*` Bund words.
+> - **P4** — multilingual date-hint tables (RU/ES/FR/DE) + per-language warning text.
+> - **P5** — polish: the `📅` Output marker, coexistence-guidance docs, performance.
+>
+> **Discipline:** the legacy timeline critique (1.2.6+) is **not** touched (that's
+> TIMELINE-2-INTEGRATION); the intent ledger is **not** consulted (that's
+> INNER_SOCRATES-1's lane). The fact-checker handles *world coherence*; magic rules
+> are its only exceptions.
+
+---
+
+## Increment log
+
+- **P0.1 — timeline context provider core (UNRELEASED, 1.3.30-dev).** New
+  `src/world/timeline_context/`: the `TimelineContext` value + `DateSource`,
+  `gather_events` (richer `TlEvent` with linked_paragraphs / characters / places),
+  `build_context(paragraph, events, calendar)` (linked events → effective date →
+  season; nearby events within a window), and the `events_near` /
+  `events_for_character` / `events_for_place` helpers. Adds
+  `Calendar::season_for(point)` (calendar-aware, wraparound-safe). All pure +
+  tested; degrades to empty context when the project has no events.
