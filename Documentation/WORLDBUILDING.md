@@ -358,6 +358,41 @@ then reversed, a timeline that can't follow. Give it a book or chapter node id; 
 gathers the paragraphs in document order and runs one cost-capped call, citing the
 `¶` numbers. Honours the same `--max-cost` / `--force` and daily ceiling.
 
+### Timeline-aware checking (WORLD-5)
+
+When your project has a [timeline](Tutorials/31-story-timeline.md), the fast
+checker learns *when* a paragraph happens — its events give the checker ground
+truth instead of prose inference. A paragraph linked to a timeline event (or near
+one in world-time) gains:
+
+- **Calendar-grounded season** — weather that contradicts the dated season is a
+  **contradiction** (snow in a paragraph the timeline places in summer), not a
+  guess.
+- **Event-derived travel time** — a prose "three days" that contradicts the gap
+  between the traveller's events (say 35 days) is flagged.
+- **`date_coherence`** — a seasonal date-hint in the prose (a *midsummer feast*, a
+  *harvest*, a solstice) that contradicts the dated season.
+- **`co_location`** — a character whose events place them in two *different* places
+  at overlapping times. Check the whole timeline at once with `inkhaven realworld
+  co-location`.
+
+These run automatically (the same `Ctrl+B W → F` and the ambient check), in five
+languages, and respect the **magic ledger** exactly like the world checks — a
+`weather_control` or `teleportation` rule covering the category suppresses the
+finding with a note. Timeline-derived findings carry a **📅** marker in the Output
+pane. The CLI gates them with `fact-check --timeline-aware auto|on|off` (default
+`auto`) and `--timeline-only`. Projects without a timeline are unaffected.
+
+Bund scripts can query the same data read-only: `ink.world.fact_check.timeline.`
+`events_near` / `events_for_character` / `events_for_place` / `season_for` /
+`effective_date`.
+
+> **Two timeline systems, for now.** Inkhaven's older timeline AI critique (1.2.6+,
+> invoked from the swim-lane view) still runs unchanged; during this interim it and
+> the timeline-aware fact-checker may both flag the same things. To avoid the
+> overlap, rely on the fact-checker and simply don't invoke the legacy critique
+> (it requires an explicit chord). A later RFC formally prunes the duplication.
+
 ---
 
 ## CLI reference
@@ -374,7 +409,9 @@ inkhaven realworld places
 inkhaven realworld magic [--materialize]
 inkhaven realworld map [--spec-only] [--no-ingest]
 inkhaven realworld coherence <node> [--max-cost <n>] [--force]
+inkhaven realworld co-location                       # WORLD-5: a character in two places at once
 inkhaven fact-check (--text "…" | --paragraph <id>) [--slow] [--max-cost <n>] [--force]
+                                                     # WORLD-5: [--timeline-aware auto|on|off] [--timeline-only]
 ```
 
 ## TUI reference — the World hub

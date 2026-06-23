@@ -28,6 +28,7 @@ pub fn run(project: &Path, cmd: RealworldCommand) -> Result<()> {
         RealworldCommand::Places => places(project),
         RealworldCommand::Magic { materialize } => magic(project, materialize),
         RealworldCommand::Map { spec_only, no_ingest } => map(project, spec_only, no_ingest),
+        RealworldCommand::CoLocation => co_location(project),
         RealworldCommand::Coherence { node, max_cost, force } => {
             coherence(project, &node, max_cost, force)
         }
@@ -36,6 +37,7 @@ pub fn run(project: &Path, cmd: RealworldCommand) -> Result<()> {
 
 /// Fact-check prose against the world (fast track). `--text` checks a literal
 /// string; `--paragraph` reads a paragraph's content from the store.
+#[allow(clippy::too_many_arguments)]
 pub fn fact_check(
     project: &Path,
     text: Option<String>,
@@ -43,14 +45,16 @@ pub fn fact_check(
     slow: bool,
     max_cost: usize,
     force: bool,
+    timeline_aware: &str,
+    timeline_only: bool,
 ) -> Result<()> {
     use crate::world::fact_check::check_paragraph;
     // The magic ledger (if any) is consulted; a missing world.hjson is fine.
     let def = load(project).ok();
     let ledger = def.as_ref().and_then(|d| d.magic.clone()).unwrap_or_default();
 
-    let prose = match (text, paragraph) {
-        (Some(t), _) => t,
+    let (prose, paragraph_id) = match (text, paragraph) {
+        (Some(t), _) => (t, None),
         (None, Some(pid)) => {
             use crate::config::Config;
             use crate::project::ProjectLayout;
@@ -65,7 +69,7 @@ pub fn fact_check(
                 .get_content(id)
                 .map_err(|e| Error::Store(format!("reading paragraph: {e}")))?
                 .ok_or_else(|| Error::Config(format!("paragraph `{pid}` not found")))?;
-            String::from_utf8_lossy(&bytes).into_owned()
+            (String::from_utf8_lossy(&bytes).into_owned(), Some(id))
         }
         (None, None) => {
             return Err(Error::Config("give --text \"…\" or --paragraph <id>".into()));
@@ -109,7 +113,21 @@ pub fn fact_check(
         None
     };
 
-    let mut findings = check_paragraph(&prose, &ledger, &[], world_ctx.as_ref());
+    // WORLD-5 — `--timeline-only` skips the world checks; `--timeline-aware off`
+    // skips the timeline ones. Default (`auto`) runs the timeline checks when the
+    // paragraph is identified and the project has events.
+    let mut findings = if timeline_only {
+        Vec::new()
+    } else {
+        check_paragraph(&prose, &ledger, &[], world_ctx.as_ref())
+    };
+    if timeline_aware != "off" {
+        if let Some(pid) = paragraph_id {
+            findings.extend(timeline_findings(project, pid, &prose, &ledger));
+        } else if timeline_aware == "on" || timeline_only {
+            eprintln!("timeline checks need --paragraph <id> (a linked paragraph), not --text");
+        }
+    }
     if slow {
         match run_slow_track(project, &prose, def.as_ref(), &ledger, &places, &moons, &minerals, &findings, max_cost, force) {
             Ok(mut slow_findings) => findings.append(&mut slow_findings),
@@ -361,6 +379,100 @@ fn coherence(project: &Path, node_id: &str, max_cost: usize, force: bool) -> Res
     }
     println!("\n{} cross-paragraph finding(s).", findings.len());
     Ok(())
+}
+
+/// WORLD-5 — the `co_location` check: a character placed in two different places
+/// at overlapping times, per the timeline. Pure (no LLM); respects the magic
+/// ledger. Resolves character / place names from the hierarchy for the message.
+fn co_location(project: &Path) -> Result<()> {
+    use crate::config::Config;
+    use crate::project::ProjectLayout;
+    use crate::store::hierarchy::Hierarchy;
+    use crate::store::Store;
+    use crate::world::fact_check::emit_finding;
+    use crate::world::timeline_context as tc;
+
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout, &cfg)?;
+    let hierarchy = Hierarchy::load(&store)?;
+    let events = tc::gather_events(&hierarchy);
+    if events.is_empty() {
+        println!("(no timeline events — nothing to check)");
+        return Ok(());
+    }
+    let ledger = load(project).ok().and_then(|d| d.magic).unwrap_or_default();
+    let name = |id: uuid::Uuid| hierarchy.get(id).map(|n| n.title.clone()).unwrap_or_else(|| "?".into());
+
+    let conflicts = tc::co_location_conflicts(&events);
+    if conflicts.is_empty() {
+        println!("\u{2713} no co-location conflicts in {} event(s)", events.len());
+        return Ok(());
+    }
+    for c in &conflicts {
+        let ctx = crate::world::types::magic::CheckContext { category: "co_location", ..Default::default() };
+        let suppressed_by = ledger.find_suppressor(&ctx).map(|r| r.kind.clone());
+        let severity = if suppressed_by.is_some() { "info" } else { "contradiction" };
+        let body = format!(
+            "{} is in {} (\u{201c}{}\u{201d}) and {} (\u{201c}{}\u{201d}) at overlapping times.",
+            name(c.character), name(c.place_a), c.title_a, name(c.place_b), c.title_b
+        );
+        let finding = crate::world::fact_check::Finding {
+            category: "co_location".into(),
+            severity: severity.into(),
+            body: body.clone(),
+            body_en: body.clone(),
+            suppressed_by: suppressed_by.clone(),
+        };
+        emit_finding(&finding, None);
+        let icon = if suppressed_by.is_some() { "\u{25cf}" } else { "\u{2297}" };
+        let note = suppressed_by.map(|r| format!(" (ok — magic rule `{r}`)")).unwrap_or_default();
+        println!("{icon} [co_location] {body}{note}");
+    }
+    println!("\n{} co-location conflict(s).", conflicts.len());
+    Ok(())
+}
+
+/// WORLD-5 — build a paragraph's timeline context (events + calendar) and run the
+/// timeline-aware checks. Empty when the project has no events / no calendar.
+fn timeline_findings(
+    project: &Path,
+    paragraph_id: uuid::Uuid,
+    prose: &str,
+    ledger: &crate::world::types::MagicLedger,
+) -> Vec<crate::world::fact_check::Finding> {
+    use crate::config::Config;
+    use crate::project::ProjectLayout;
+    use crate::store::hierarchy::Hierarchy;
+    use crate::store::Store;
+    use crate::timeline::calendar::Calendar;
+    use crate::world::timeline_context as tc;
+
+    let layout = ProjectLayout::new(project);
+    if layout.require_initialized().is_err() {
+        return Vec::new();
+    }
+    let Ok(cfg) = Config::load_layered(&layout.config_path()) else {
+        return Vec::new();
+    };
+    let Ok(store) = Store::open(layout, &cfg) else {
+        return Vec::new();
+    };
+    let Ok(hierarchy) = Hierarchy::load(&store) else {
+        return Vec::new();
+    };
+    let events = tc::gather_events(&hierarchy);
+    if events.is_empty() {
+        return Vec::new();
+    }
+    let calendar = Calendar::from_config(cfg.timeline.calendar.clone());
+    let day = calendar.ticks_per("day").unwrap_or(1);
+    let ctx = tc::build_context(paragraph_id, &events, &calendar, 90 * day);
+    let mut out = crate::world::fact_check::check_timeline(prose, &ctx, ledger);
+    out.extend(crate::world::fact_check::check_date_coherence(prose, &ctx, ledger));
+    out.extend(crate::world::fact_check::check_travel_timeline(prose, &ctx, &events, day, ledger));
+    out
 }
 
 /// Show (and optionally materialize) the magic ledger.
