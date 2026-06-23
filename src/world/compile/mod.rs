@@ -7,5 +7,5 @@ pub mod hydrology_layer;
 
 pub use astronomy_layer::compile_astronomy;
 pub use climate_layer::compile_climate;
-pub use geology_layer::compile_geology;
+pub use geology_layer::{compile_geology, compile_geology_dem};
 pub use hydrology_layer::compile_hydrology;

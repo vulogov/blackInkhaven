@@ -39,6 +39,22 @@ fn load(project: &Path) -> Result<WorldDefinition> {
         .map_err(|e| Error::Config(format!("{}: {e}", path.display())))
 }
 
+/// Compile the geology layer, using the external DEM if the definition declares
+/// one (its `path` is resolved relative to the project root) — else generating
+/// it from the seed.
+fn geology_for(
+    project: &Path,
+    def: &WorldDefinition,
+) -> Result<crate::world::types::GeologyOutput> {
+    use crate::world::compile::{compile_geology, compile_geology_dem};
+    if let Some(dem) = def.geology.as_ref().and_then(|g| g.dem.as_ref()) {
+        let path = project.join(&dem.path);
+        compile_geology_dem(def, &path).map_err(Error::Config)
+    } else {
+        Ok(compile_geology(def))
+    }
+}
+
 fn new(project: &Path, name: &str, force: bool) -> Result<()> {
     let path = project.join(WORLD_FILE);
     if path.exists() && !force {
@@ -178,9 +194,8 @@ fn compile(project: &Path, layer: Option<&str>, json: bool, materialize: bool) -
 /// Compile + print the generated geology layer. (Materialization into the World
 /// book + heightmap PNG export lands in the next WORLD-4 increment.)
 fn compile_geology_cli(project: &Path, json: bool, materialize: bool) -> Result<()> {
-    use crate::world::compile::compile_geology;
     let def = load(project)?;
-    let out = compile_geology(&def);
+    let out = geology_for(project, &def)?;
 
     let mat_report = if materialize {
         use crate::config::Config;
@@ -239,10 +254,10 @@ fn compile_geology_cli(project: &Path, json: bool, materialize: bool) -> Result<
 
 /// Compile + print the climate layer (astronomy + geology → zonal climate).
 fn compile_climate_cli(project: &Path, json: bool, materialize: bool) -> Result<()> {
-    use crate::world::compile::{compile_astronomy, compile_climate, compile_geology};
+    use crate::world::compile::{compile_astronomy, compile_climate};
     let def = load(project)?;
     let astro = compile_astronomy(&def.astronomy);
-    let geo = compile_geology(&def);
+    let geo = geology_for(project, &def)?;
     let out = compile_climate(&def, &astro, &geo);
 
     let mat_report = if materialize {
@@ -290,10 +305,10 @@ fn compile_climate_cli(project: &Path, json: bool, materialize: bool) -> Result<
 
 /// Compile + print the hydrology layer (geology + climate → D8 flow).
 fn compile_hydrology_cli(project: &Path, json: bool, materialize: bool) -> Result<()> {
-    use crate::world::compile::{compile_astronomy, compile_climate, compile_geology, compile_hydrology};
+    use crate::world::compile::{compile_astronomy, compile_climate, compile_hydrology};
     let def = load(project)?;
     let astro = compile_astronomy(&def.astronomy);
-    let geo = compile_geology(&def);
+    let geo = geology_for(project, &def)?;
     let climate = compile_climate(&def, &astro, &geo);
     let out = compile_hydrology(&geo, &climate);
 

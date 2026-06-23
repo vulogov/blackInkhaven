@@ -63,6 +63,75 @@ pub fn compile_geology(def: &WorldDefinition) -> GeologyOutput {
     }
 }
 
+/// Compile geology from an external DEM (heightmap) instead of generating it:
+/// read the image, resample to the model grid, normalise, and derive
+/// continents / sea coverage / elevation. A DEM carries no tectonic model, so
+/// plates / boundaries are empty and minerals reduce to sedimentary coal.
+pub fn compile_geology_dem(
+    def: &WorldDefinition,
+    dem_path: &std::path::Path,
+) -> std::result::Result<GeologyOutput, String> {
+    let dem = def
+        .geology
+        .as_ref()
+        .and_then(|d| d.dem.as_ref())
+        .ok_or_else(|| "no `geology.dem` block in the definition".to_string())?;
+    let img = image::open(dem_path)
+        .map_err(|e| format!("reading DEM {}: {e}", dem_path.display()))?
+        .to_luma16();
+    let (iw, ih) = (img.width() as usize, img.height() as usize);
+    if iw == 0 || ih == 0 {
+        return Err(format!("DEM {} is empty", dem_path.display()));
+    }
+
+    // Nearest-neighbour resample to the model grid, tracking min/max to
+    // normalise to [0,1].
+    let mut raw = vec![0u16; W * H];
+    let (mut lo, mut hi) = (u16::MAX, 0u16);
+    for y in 0..H {
+        for x in 0..W {
+            let sx = (x * iw / W).min(iw - 1);
+            let sy = (y * ih / H).min(ih - 1);
+            let v = img.get_pixel(sx as u32, sy as u32)[0];
+            raw[y * W + x] = v;
+            lo = lo.min(v);
+            hi = hi.max(v);
+        }
+    }
+    let span = (hi - lo).max(1) as f32;
+    let heightmap: Vec<f32> = raw.iter().map(|&v| (v - lo) as f32 / span).collect();
+
+    // Sea level: from the declared sea pixel value (normalised), else the default.
+    let sea_level = match dem.sea_level_pixel_value {
+        Some(pv) => ((pv.saturating_sub(lo)) as f32 / span).clamp(0.0, 1.0),
+        None => 0.4,
+    };
+
+    let below = heightmap.iter().filter(|&&e| e <= sea_level).count();
+    let land_fraction = 1.0 - below as f32 / heightmap.len() as f32;
+    let continents = count_continents(&heightmap, sea_level);
+    let elevation = elevation_stats(&heightmap, land_fraction);
+
+    Ok(GeologyOutput {
+        source: "dem".into(),
+        width: W,
+        height: H,
+        sea_level,
+        plates: Vec::new(),
+        boundaries: BoundarySummary::default(),
+        continents,
+        sea_coverage_pct: below as f32 / heightmap.len() as f32 * 100.0,
+        // Without tectonics we don't attribute ranges to plate pairs.
+        mountain_ranges: Vec::new(),
+        minerals: vec![MineralHint {
+            mineral: "coal".into(),
+            context: "old sedimentary lowlands".into(),
+        }],
+        elevation,
+        heightmap,
+    })
+}
+
 // ── Plates ───────────────────────────────────────────────────────────────
 
 fn generate_plates(rng: &mut SplitMix64, g: &GeneratedGeology) -> Vec<Plate> {
@@ -428,6 +497,45 @@ mod tests {
         // A higher sea level drowns more of the same world.
         assert!(high.sea_coverage_pct > low.sea_coverage_pct);
         assert!(high.elevation.land_fraction < low.elevation.land_fraction);
+    }
+
+    #[test]
+    fn dem_import_reads_an_external_heightmap() {
+        use crate::world::types::world::{DemGeology, GeologyDef};
+        // Synthesise a small horizontal-gradient grayscale heightmap.
+        let path = std::env::temp_dir().join("inkhaven_world4_dem_test.png");
+        let (iw, ih) = (40u32, 30u32);
+        let mut img = image::GrayImage::new(iw, ih);
+        for y in 0..ih {
+            for x in 0..iw {
+                let v = (x as f32 / iw as f32 * 255.0) as u8;
+                img.put_pixel(x, y, image::Luma([v]));
+            }
+        }
+        img.save(&path).unwrap();
+
+        let mut def = world(1, 7, 4, 0.4, "active");
+        def.geology = Some(GeologyDef {
+            generated: None,
+            dem: Some(DemGeology {
+                path: path.display().to_string(),
+                scale_km_per_pixel: 5.0,
+                sea_level_pixel_value: None,
+            }),
+        });
+
+        let out = compile_geology_dem(&def, &path).expect("read DEM");
+        assert_eq!(out.source, "dem");
+        assert_eq!(out.width, W);
+        assert_eq!(out.height, H);
+        // A DEM carries no tectonics.
+        assert!(out.plates.is_empty());
+        assert!(out.mountain_ranges.is_empty());
+        // The gradient normalises across the full range; the high (eastern) half
+        // is land, the low (western) half is ocean at sea level 0.4.
+        assert!(out.elevation.min < 0.05 && out.elevation.max > 0.95);
+        assert!(out.continents >= 1, "the high half should be one landmass");
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]
