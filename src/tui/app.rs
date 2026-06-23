@@ -1601,6 +1601,15 @@ pub(crate) struct App {
     /// WORLD-4 — set when `Ctrl+B W` → `F` arms a scope sub-chord; the next key
     /// (`P` paragraph / `B` book / `R` recent) picks the fact-check scope.
     fc_scope_armed: bool,
+    /// WORLD-4 — opt-in: after a long idle, auto-run the **slow** (LLM) track on
+    /// the open paragraph in the background. Off by default (it spends tokens);
+    /// toggled with `Ctrl+B W` → `S`. Cost-capped like the manual slow track.
+    slow_auto: bool,
+    /// The paragraph an in-flight auto slow check is running on (findings attach
+    /// here on completion), and the content fingerprint already submitted (so the
+    /// same prose triggers at most one slow call).
+    slow_auto_para: Option<Uuid>,
+    fc_slow_last_fp: Option<(Uuid, u64)>,
     tree_cursor: usize,
     tree_scroll: usize,
 
@@ -2214,6 +2223,9 @@ impl App {
             fc_activity_at: None,
             fc_needs_check: false,
             fc_scope_armed: false,
+            slow_auto: false,
+            slow_auto_para: None,
+            fc_slow_last_fp: None,
             output_expanded: std::collections::HashSet::new(),
             tree_cursor: 0,
             tree_scroll: 0,
@@ -2879,6 +2891,28 @@ impl App {
                 }
                 Err(e) => self.status = format!("deep refresh failed: {e}"),
             },
+            BgJobKind::SlowFactCheck => {
+                let target = self.slow_auto_para.take();
+                match result {
+                    Ok(n) => {
+                        let count: usize = n.parse().unwrap_or(0);
+                        self.status = if count == 0 {
+                            "slow fact-check: no further issues".into()
+                        } else {
+                            format!("⚠ slow fact-check: {count} finding(s) in this ¶ — ^B Tab → Output")
+                        };
+                        if count > 0 {
+                            self.emit_ai_task_complete(
+                                "world_slow_fact_check",
+                                &format!("Slow fact-check found {count} contradiction(s)."),
+                                elapsed_secs,
+                                target,
+                            );
+                        }
+                    }
+                    Err(e) => self.status = format!("slow fact-check skipped: {e}"),
+                }
+            }
         }
     }
 
@@ -5670,6 +5704,9 @@ pub(super) enum BgMsg {
 pub(super) enum BgJobKind {
     /// The deep AI refresh (facts check / facts scan / drift / continuity).
     DeepRefresh,
+    /// WORLD-4 — an idle-triggered slow-track fact check (LLM). The worker emits
+    /// its findings to Output directly; the `Ok` payload is the finding count.
+    SlowFactCheck,
 }
 
 /// An in-flight background job: its progress/result channel + a label + which
@@ -10589,7 +10626,10 @@ impl App {
             "Not materialized yet — press C (compile) to populate the World book".into()
         });
         rows.push("".into());
-        rows.push("Keys:  C compile · P proposals · F fact-check (→P/B/R) · M map".into());
+        rows.push(format!(
+            "Keys:  C compile · P proposals · F fact-check (→P/B/R) · M map · S slow-auto [{}]",
+            if self.slow_auto { "on" } else { "off" }
+        ));
         rows.push("CLI: inkhaven realworld new / validate / compile [--materialize]".into());
         rows
     }
@@ -10639,6 +10679,16 @@ impl App {
             }
             // M: render the world map with plakat.
             KeyCode::Char('m') | KeyCode::Char('M') => self.run_world_map(),
+            // S: toggle idle auto slow-track (opt-in; spends tokens).
+            KeyCode::Char('s') | KeyCode::Char('S') => {
+                self.slow_auto = !self.slow_auto;
+                self.fc_slow_last_fp = None;
+                self.status = if self.slow_auto {
+                    "slow auto-check ON — runs the LLM track after ~45s idle (cost-capped)".into()
+                } else {
+                    "slow auto-check OFF".into()
+                };
+            }
             _ => {}
         }
         true
@@ -11031,6 +11081,57 @@ impl App {
                 }
             }
         }
+        // Opt-in: after a longer idle, auto-run the slow (LLM) track once per
+        // content version, in the background. Gated on `slow_auto` so it never
+        // spends tokens unasked.
+        if self.slow_auto && matches!(self.modal, Modal::None) && self.bg_job.is_none() {
+            const SLOW_IDLE_SECS: u64 = 45;
+            let changed = fp.is_some() && fp != self.fc_slow_last_fp;
+            if changed {
+                if let Some(t) = self.fc_activity_at {
+                    if t.elapsed() >= std::time::Duration::from_secs(SLOW_IDLE_SECS) {
+                        self.fc_slow_last_fp = fp;
+                        self.maybe_spawn_slow_check();
+                    }
+                }
+            }
+        }
+    }
+
+    /// Spawn the idle slow-track check in the background (the LLM call blocks the
+    /// worker, not the UI). The worker emits its findings straight to Output (the
+    /// store is a thread-safe global); we keep the target paragraph id to report
+    /// completion against.
+    fn maybe_spawn_slow_check(&mut self) {
+        let Some(doc) = self.opened.as_ref() else { return };
+        let id = doc.id;
+        let prose = doc.textarea.lines().join("\n");
+        if prose.trim().is_empty() {
+            return;
+        }
+        let root = self.store.project_root().to_path_buf();
+        self.slow_auto_para = Some(id);
+        self.start_bg_job(BgJobKind::SlowFactCheck, "slow fact-check", move |tx, _cancel| {
+            let result = match crate::cli::realworld::slow_track_for_tui(&root, &prose) {
+                Ok(findings) => {
+                    // Replace this paragraph's prior fact warnings, then emit.
+                    if let Some(s) = crate::pane::output::active() {
+                        if let Ok(msgs) = s.by_kind(crate::pane::output::kinds::FACT_CHECK_WARNING) {
+                            for m in msgs.iter().filter(|m| m.source_paragraph_id == Some(id)) {
+                                let _ = s.dismiss(m.id);
+                            }
+                        }
+                    }
+                    let n = findings.len();
+                    for f in &findings {
+                        crate::world::fact_check::emit_finding(f, Some(id));
+                    }
+                    Ok(n.to_string())
+                }
+                Err(e) => Err(e),
+            };
+            let _ = tx.send(BgMsg::Done(result));
+        });
     }
 
     /// Run the fast check silently into Output — no focus change (the author is
