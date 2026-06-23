@@ -119,3 +119,11 @@
   Wired into the CLI `timeline_findings`. +1 test, 1724. **Both new WORLD-5
   categories (co_location + date_coherence) + both P1 extensions ship.** *Next: P3
   — the `--timeline-aware` flag + `ink.world.fact_check.timeline.*` Bund words.*
+- **P3 — CLI flags + Bund words (UNRELEASED, 1.3.30-dev).** `fact-check` gains
+  `--timeline-aware auto|on|off` (default auto — timeline checks run when a
+  paragraph is identified and the project has events) and `--timeline-only` (skip
+  the world checks, run only the timeline ones). Five read-only
+  `ink.world.fact_check.timeline.*` Bund words (`events_near`,
+  `events_for_character`, `events_for_place`, `season_for`, `effective_date`) in a
+  new `scripting/stdlib/world_timeline` module. Surface-only; the checks are
+  unchanged. 1724. *Next: P4 multilingual date-hints (RU/ES/FR/DE) + P5 polish/docs.*
