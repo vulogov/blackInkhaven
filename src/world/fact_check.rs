@@ -297,6 +297,85 @@ pub fn check_timeline(
     check_date_season(text, season, ledger, lang)
 }
 
+/// A canonical season, for comparing a prose date-hint against a (possibly
+/// custom-named) calendar season.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CanonSeason {
+    Spring,
+    Summer,
+    Autumn,
+    Winter,
+}
+
+/// Map a calendar season name to its canonical season, if it names a recognizable
+/// one (so a conlang/custom season degrades to no comparison).
+fn canon_season(name: &str) -> Option<CanonSeason> {
+    let s = name.to_lowercase();
+    if s.contains("summer") {
+        Some(CanonSeason::Summer)
+    } else if s.contains("winter") {
+        Some(CanonSeason::Winter)
+    } else if s.contains("spring") {
+        Some(CanonSeason::Spring)
+    } else if s.contains("autumn") || s.contains("fall") {
+        Some(CanonSeason::Autumn)
+    } else {
+        None
+    }
+}
+
+/// English seasonal date-hints (festivals, agricultural / solstitial references).
+/// Per-language tables land in P4; non-English prose simply matches none of these.
+const DATE_HINTS_EN: &[(&str, CanonSeason)] = &[
+    ("midsummer", CanonSeason::Summer),
+    ("high summer", CanonSeason::Summer),
+    ("summer solstice", CanonSeason::Summer),
+    ("midwinter", CanonSeason::Winter),
+    ("deep winter", CanonSeason::Winter),
+    ("winter solstice", CanonSeason::Winter),
+    ("yule", CanonSeason::Winter),
+    ("spring festival", CanonSeason::Spring),
+    ("vernal equinox", CanonSeason::Spring),
+    ("planting season", CanonSeason::Spring),
+    ("harvest", CanonSeason::Autumn),
+    ("harvest festival", CanonSeason::Autumn),
+    ("autumn equinox", CanonSeason::Autumn),
+];
+
+/// WORLD-5 — the `date_coherence` check: a seasonal date-hint in the prose (a
+/// festival, a harvest, a solstice) that contradicts the timeline-dated season.
+/// Softer than the weather check (a festival may be metaphorical) → `warning`.
+pub fn check_date_coherence(
+    text: &str,
+    timeline: &crate::world::timeline_context::TimelineContext,
+    ledger: &MagicLedger,
+) -> Vec<Finding> {
+    let Some(season) = timeline.effective_season.as_deref() else {
+        return Vec::new();
+    };
+    let Some(dated) = canon_season(season) else {
+        return Vec::new();
+    };
+    let lang = crate::world::fact_check_lang::detect(text);
+    let lower = text.to_lowercase();
+    for (hint, implied) in DATE_HINTS_EN {
+        if *implied != dated && contains_word(&lower, hint) {
+            let msg = Msg::DateCoherence { hint, season };
+            let ctx = CheckContext { category: "date_coherence", ..Default::default() };
+            let suppressed_by = ledger.find_suppressor(&ctx).map(|r| r.kind.clone());
+            let severity = if suppressed_by.is_some() { "info" } else { "warning" };
+            return vec![Finding {
+                category: "date_coherence".into(),
+                severity: severity.into(),
+                body: lang.render(&msg),
+                body_en: Lang::En.render(&msg),
+                suppressed_by,
+            }];
+        }
+    }
+    Vec::new()
+}
+
 /// WORLD-5 — a prose-stated travel duration that contradicts the timeline gap
 /// between the paragraph's linked event and the traveller's prior different-place
 /// event. The RFC's flagship example: prose says "three days", the timeline shows
@@ -807,6 +886,33 @@ mod tests {
         // No effective season → no timeline finding.
         let none = TimelineContext::empty(uuid::Uuid::nil());
         assert!(check_timeline("Snow fell.", &none, &empty_ledger()).is_empty());
+    }
+
+    #[test]
+    fn date_coherence_flags_festival_vs_dated_season() {
+        use crate::world::timeline_context::{DateSource, TimelineContext};
+        let winter = TimelineContext {
+            paragraph_id: uuid::Uuid::nil(),
+            linked_events: vec![uuid::Uuid::nil()],
+            nearby_events: vec![],
+            effective_date: Some(1),
+            date_source: DateSource::ExplicitLink(uuid::Uuid::nil()),
+            effective_season: Some("winter".into()),
+        };
+        // A midsummer feast, but the timeline dates this in winter → warning.
+        let f = check_date_coherence("The midsummer feast filled the hall.", &winter, &empty_ledger());
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].category, "date_coherence");
+        assert_eq!(f[0].severity, "warning");
+        assert!(f[0].body.contains("winter"));
+
+        // A harvest in autumn-dated prose is consistent → nothing.
+        let autumn = TimelineContext { effective_season: Some("autumn".into()), ..winter.clone() };
+        assert!(check_date_coherence("After the harvest, they rested.", &autumn, &empty_ledger()).is_empty());
+
+        // A custom-named season can't be compared → nothing.
+        let custom = TimelineContext { effective_season: Some("Frostmoon".into()), ..winter.clone() };
+        assert!(check_date_coherence("The midsummer feast.", &custom, &empty_ledger()).is_empty());
     }
 
     #[test]

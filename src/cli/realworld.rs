@@ -458,6 +458,7 @@ fn timeline_findings(
     let day = calendar.ticks_per("day").unwrap_or(1);
     let ctx = tc::build_context(paragraph_id, &events, &calendar, 90 * day);
     let mut out = crate::world::fact_check::check_timeline(prose, &ctx, ledger);
+    out.extend(crate::world::fact_check::check_date_coherence(prose, &ctx, ledger));
     out.extend(crate::world::fact_check::check_travel_timeline(prose, &ctx, &events, day, ledger));
     out
 }

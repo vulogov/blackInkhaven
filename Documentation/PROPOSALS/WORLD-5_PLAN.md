@@ -109,3 +109,13 @@
   travel) ship; astronomy/demographics/economy dated grounding need a
   world-state-over-time model (out of WORLD-5's additive scope) — deferred. Next:
   `date_coherence` (P2) + the P3 flags/Bund.*
+- **P2.2 — the `date_coherence` category (UNRELEASED, 1.3.30-dev).** A seasonal
+  date-hint in the prose (a festival, a harvest, a solstice) that contradicts the
+  timeline-dated season — a midsummer feast in a winter-dated paragraph → `warning`
+  (softer than weather; a festival may be metaphorical). A canonical-season mapper
+  (`summer`/`winter`/`spring`/`autumn`, custom names degrade) + an English
+  date-hint table (`midsummer`, `harvest`, `yule`, …; per-language tables in P4);
+  localized `Msg::DateCoherence` in all five languages; magic-ledger-respecting.
+  Wired into the CLI `timeline_findings`. +1 test, 1724. **Both new WORLD-5
+  categories (co_location + date_coherence) + both P1 extensions ship.** *Next: P3
+  — the `--timeline-aware` flag + `ink.world.fact_check.timeline.*` Bund words.*
