@@ -11221,25 +11221,60 @@ impl App {
 
     /// WORLD-4 — `Ctrl+B W` → `F`. Fact-check the open paragraph and surface the
     /// findings in the Output pane (flips you there).
+    /// WORLD-5 — the timeline-aware findings for the open paragraph: build its
+    /// timeline context (events + calendar) and run the season / date-coherence /
+    /// travel checks. Empty when the project has no events.
+    fn collect_timeline_findings(&self) -> Vec<crate::world::fact_check::Finding> {
+        use crate::world::fact_check as fc;
+        use crate::world::timeline_context as tc;
+        use crate::world::types::WorldDefinition;
+        let Some(doc) = self.opened.as_ref() else { return Vec::new() };
+        let events = tc::gather_events(&self.hierarchy);
+        if events.is_empty() {
+            return Vec::new();
+        }
+        let text = doc.textarea.lines().join("\n");
+        let root = self.store.project_root().to_path_buf();
+        let ledger = std::fs::read_to_string(root.join("world.hjson"))
+            .ok()
+            .and_then(|raw| WorldDefinition::from_hjson(&raw).ok())
+            .and_then(|d| d.magic)
+            .unwrap_or_default();
+        let calendar = crate::timeline::calendar::Calendar::from_config(self.cfg.timeline.calendar.clone());
+        let day = calendar.ticks_per("day").unwrap_or(1);
+        let ctx = tc::build_context(doc.id, &events, &calendar, 90 * day);
+        let mut out = fc::check_timeline(&text, &ctx, &ledger);
+        out.extend(fc::check_date_coherence(&text, &ctx, &ledger));
+        out.extend(fc::check_travel_timeline(&text, &ctx, &events, day, &ledger));
+        out
+    }
+
     fn fact_check_open_paragraph(&mut self) {
-        use crate::world::fact_check::emit_finding;
+        use crate::world::fact_check::{emit_finding, emit_finding_timeline};
         let Some((id, findings)) = self.collect_fact_check_findings() else {
             self.status = "fact-check: no paragraph open".into();
             return;
         };
+        let timeline = self.collect_timeline_findings();
         self.clear_paragraph_fact_warnings(id);
-        if findings.is_empty() {
+        if findings.is_empty() && timeline.is_empty() {
             self.status = "fact-check: no issues found".into();
             return;
         }
         for f in &findings {
             emit_finding(f, Some(id));
         }
+        for f in &timeline {
+            emit_finding_timeline(f, Some(id));
+        }
         self.modal = Modal::None;
         self.output_selected = 0;
         self.change_focus(Focus::Ai);
         self.right_pane = RightPane::Output;
-        self.status = format!("fact-check: {} finding(s) → Output (^B Tab)", findings.len());
+        self.status = format!(
+            "fact-check: {} finding(s) → Output (^B Tab)",
+            findings.len() + timeline.len()
+        );
     }
 
     /// WORLD-4 — the debounced fast fact-checker. Each tick, fingerprint the open
@@ -11320,17 +11355,21 @@ impl App {
     /// Run the fast check silently into Output — no focus change (the author is
     /// writing). Replaces this paragraph's prior findings.
     fn auto_fact_check(&mut self) {
-        use crate::world::fact_check::emit_finding;
+        use crate::world::fact_check::{emit_finding, emit_finding_timeline};
         let Some((id, findings)) = self.collect_fact_check_findings() else {
             return;
         };
+        let timeline = self.collect_timeline_findings();
         self.clear_paragraph_fact_warnings(id);
-        if findings.is_empty() {
+        if findings.is_empty() && timeline.is_empty() {
             return;
         }
-        let actionable = findings.iter().filter(|f| f.severity != "info").count();
+        let actionable = findings.iter().chain(&timeline).filter(|f| f.severity != "info").count();
         for f in &findings {
             emit_finding(f, Some(id));
+        }
+        for f in &timeline {
+            emit_finding_timeline(f, Some(id));
         }
         if actionable > 0 {
             self.status = format!("⚠ fact-check: {actionable} finding(s) in this ¶ — ^B Tab → Output");

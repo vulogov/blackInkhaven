@@ -1554,10 +1554,16 @@ impl super::super::App {
             let text =
                 m.metadata.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string();
             let pin = if m.pinned { " 📌" } else { "" };
+            // WORLD-5 — a 📅 marker on timeline-derived fact-check findings.
+            let timeline = if m.metadata.get("timeline").and_then(|v| v.as_bool()).unwrap_or(false) {
+                " 📅"
+            } else {
+                ""
+            };
             let marker = if sel { "▌" } else { " " };
             lines.push(Line::from(vec![
                 Span::styled(format!("{marker}{icon} "), Style::default().fg(color)),
-                Span::styled(format!("{}{}", m.kind, pin), Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{}{timeline}{pin}", m.kind), Style::default().fg(Color::DarkGray)),
             ]));
             let text_style = if sel {
                 Style::default().add_modifier(Modifier::BOLD)
