@@ -3293,6 +3293,9 @@ pub struct TimelineConfig {
     pub default_track: String,
     pub calendar: crate::timeline::calendar::CalendarConfig,
     pub display: TimelineDisplayConfig,
+    /// TIMELINE-2-INTEGRATION — the refactored timeline critique (orphan +
+    /// fuzzy-precision overlap).
+    pub critique: TimelineCritiqueConfig,
 }
 
 impl Default for TimelineConfig {
@@ -3302,6 +3305,120 @@ impl Default for TimelineConfig {
             default_track: "main".into(),
             calendar: crate::timeline::calendar::CalendarConfig::default(),
             display: TimelineDisplayConfig::default(),
+            critique: TimelineCritiqueConfig::default(),
+        }
+    }
+}
+
+/// TIMELINE-2-INTEGRATION — knobs for the two retained, timeline-internal critique
+/// checks plus optional LLM elaboration. Sensible defaults; users tune per project.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TimelineCritiqueConfig {
+    /// Master switch — when false the critique never runs (chords + CLI no-op).
+    pub enabled: bool,
+    pub orphan: TimelineOrphanConfig,
+    pub fuzzy_overlap: TimelineFuzzyOverlapConfig,
+    pub elaboration: TimelineElaborationConfig,
+    pub legacy_flag_deprecation: TimelineLegacyDeprecationConfig,
+}
+
+impl Default for TimelineCritiqueConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            orphan: TimelineOrphanConfig::default(),
+            fuzzy_overlap: TimelineFuzzyOverlapConfig::default(),
+            elaboration: TimelineElaborationConfig::default(),
+            legacy_flag_deprecation: TimelineLegacyDeprecationConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TimelineOrphanConfig {
+    pub enabled: bool,
+    /// Don't emit orphan findings for events younger than this (days). `0` = emit
+    /// immediately.
+    pub min_orphan_age_days: i64,
+    /// Lowest significance to surface — `"low" | "moderate" | "high"`.
+    pub min_significance: String,
+}
+
+impl Default for TimelineOrphanConfig {
+    fn default() -> Self {
+        Self { enabled: true, min_orphan_age_days: 0, min_significance: "low".into() }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TimelineFuzzyOverlapConfig {
+    pub enabled: bool,
+    /// Lowest suspicion to surface — `"low" | "moderate" | "high"`.
+    pub min_suspicion: String,
+    /// Minimum events for a cluster (vs pairwise) finding.
+    pub cluster_min_size: usize,
+}
+
+impl Default for TimelineFuzzyOverlapConfig {
+    fn default() -> Self {
+        Self { enabled: true, min_suspicion: "moderate".into(), cluster_min_size: 3 }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TimelineElaborationConfig {
+    /// Use LLM elaboration of pattern-detected findings when a provider is
+    /// configured. Falls back to pattern-only text otherwise.
+    pub enabled: bool,
+    /// Hard cap on elaboration LLM calls per critique run.
+    pub max_calls_per_run: usize,
+    /// Ask for confirmation once a run would exceed this many calls.
+    pub confirm_above_calls: usize,
+}
+
+impl Default for TimelineElaborationConfig {
+    fn default() -> Self {
+        Self { enabled: true, max_calls_per_run: 20, confirm_above_calls: 10 }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TimelineLegacyDeprecationConfig {
+    /// Print a deprecation warning when `event critique --legacy` is used.
+    pub warn_on_use: bool,
+}
+
+impl Default for TimelineLegacyDeprecationConfig {
+    fn default() -> Self {
+        Self { warn_on_use: true }
+    }
+}
+
+impl TimelineCritiqueConfig {
+    /// Parse `orphan.min_significance` into the critique enum (defaults to Low on an
+    /// unrecognised value).
+    pub fn min_significance(&self) -> crate::timeline::critique::Significance {
+        use crate::timeline::critique::Significance;
+        match self.orphan.min_significance.to_ascii_lowercase().as_str() {
+            "high" => Significance::High,
+            "moderate" => Significance::Moderate,
+            _ => Significance::Low,
+        }
+    }
+
+    /// Parse `fuzzy_overlap.min_suspicion` into the critique enum (defaults to
+    /// Moderate on an unrecognised value).
+    pub fn min_suspicion(&self) -> crate::timeline::critique::Suspicion {
+        use crate::timeline::critique::Suspicion;
+        match self.fuzzy_overlap.min_suspicion.to_ascii_lowercase().as_str() {
+            "low" => Suspicion::Low,
+            "high" => Suspicion::High,
+            _ => Suspicion::Moderate,
         }
     }
 }

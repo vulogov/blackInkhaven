@@ -653,6 +653,11 @@ impl super::App {
         widen_to_book: bool,
         widen_to_all_tracks: bool,
     ) {
+        let crit_cfg = self.cfg.timeline.critique.clone();
+        if !crit_cfg.enabled {
+            self.status = "timeline critique is disabled (timeline.critique.enabled)".into();
+            return;
+        }
         let Some((critique_events, track_filter, _crumb)) =
             self.timeline_critique_scope(widen_to_book, widen_to_all_tracks)
         else {
@@ -689,14 +694,22 @@ impl super::App {
             .collect();
 
         let fuzz = critique::fuzz_windows(&calendar);
-        let report = critique::run(
+        // Honour the per-category enable switches + thresholds. The chord path is
+        // instant/pattern-only — LLM elaboration is a CLI concern (it blocks).
+        let mut report = critique::run(
             &events,
             &fuzz,
-            critique::Significance::Low,
-            critique::Suspicion::Moderate,
-            critique::DEFAULT_CLUSTER_MIN_SIZE,
+            crit_cfg.min_significance(),
+            crit_cfg.min_suspicion(),
+            crit_cfg.fuzzy_overlap.cluster_min_size.max(2),
             critique::DEFAULT_STALENESS_DAYS,
         );
+        if !crit_cfg.orphan.enabled {
+            report.orphans.clear();
+        }
+        if !crit_cfg.fuzzy_overlap.enabled {
+            report.overlaps.clear();
+        }
 
         if report.is_empty() {
             self.status = "timeline critique: no orphan or overlap issues found".into();
@@ -710,7 +723,7 @@ impl super::App {
                 crate::timeline::TimelinePoint::from_ticks(f.start_ticks),
                 f.precision,
             );
-            critique::pane::emit_orphan(f, &date);
+            critique::pane::emit_orphan(f, &date, None);
         }
         for f in &report.overlaps {
             let window = calendar.format(
@@ -727,7 +740,7 @@ impl super::App {
                 .iter()
                 .filter_map(|id| self.hierarchy.get(*id).map(|n| n.title.clone()))
                 .collect();
-            critique::pane::emit_overlap(f, &window, &char_names, &place_names);
+            critique::pane::emit_overlap(f, &window, &char_names, &place_names, None);
         }
 
         let total = report.total();

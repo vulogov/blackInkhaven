@@ -120,5 +120,18 @@ custom rules reserved (`ink.event.critique.custom` no-op) but not implemented.
   and surfaces the Output pane; the original AI-pane streaming survives verbatim as
   `timeline_run_legacy_critique` (for the P3 `--legacy` flag). Orphan age is `None`
   (no creation timestamp in the model → Recent). Full suite green (1740).
+- **P2** — _done._ `timeline.critique` config block in `config.rs`
+  (`TimelineCritiqueConfig` → `orphan` / `fuzzy_overlap` / `elaboration` /
+  `legacy_flag_deprecation`, with `min_significance()` / `min_suspicion()` enum
+  parsers) + documented defaults in `assets/default_project.hjson`. Chord handler
+  now reads config (per-category enable switches + thresholds; master `enabled`).
+  `critique/elaboration.rs`: the shortened `ELABORATION_SYSTEM` prompt (focused
+  replacement for the legacy template), per-finding orphan/overlap prompt builders,
+  and a closure-injected `elaborate()` gated by `ElaborationBudget`
+  (`max_calls_per_run` cap, `confirm_above` threshold, disabled without an LLM →
+  pattern-only). `emit_orphan`/`emit_overlap` gained an `elaboration: Option<&str>`
+  arg (appended to the headline + stored in metadata). The live synchronous call is
+  a CLI concern (P3, where the cost-capped slow-track helper lives); the TUI chords
+  stay instant/pattern-only. Full suite green (1746).
 </content>
 </invoke>
