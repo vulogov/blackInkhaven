@@ -114,5 +114,8 @@ drafts your prose.
 - Every finding is a question. Inner Socrates helps you see what you wrote — it does
   not write it for you.
 
-See also: the world simulator's [Tutorial 77](77-world-maps-and-fact-checking.md)
-(its fact-checker is the consistency sibling of this interrogator).
+Next: **[Tutorial 79 — the conversation and its
+outcomes](79-socratic-conversation.md)** — a revision pass that talks the questions
+through and resolves each one. See also the world simulator's
+[Tutorial 77](77-world-maps-and-fact-checking.md) (its fact-checker is the
+consistency sibling of this interrogator).
