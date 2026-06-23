@@ -169,10 +169,22 @@
 >   Population distribution}`. CLI `--layer demographics`. 3 tests; smoke: Velmaron
 >   → 25.3M people, 9 cities/11 towns, primate 76k. tests 1607→1610. **Naming
 >   settlements into Place records is the proposal queue's job (P2.2), not direct
->   materialization — Layer 5 is the first layer that *proposes*.** *Next: **P2.2**
->   — the proposal queue (`world_compiler_proposal` → Output via PANE-1; cities →
->   Place proposals; accept/reject/edit; the `Ctrl+B W P` sub-chord), then
->   cross-references (Place/Character/Artefact ↔ World) + Facts↔World provenance.*
+>   materialization — Layer 5 is the first layer that *proposes*.**
+> - **P2.2 — the proposal queue, CLI surface (UNRELEASED).** The defining compiler
+>   feature: settlements → Place **proposals** the author accepts/rejects (nothing
+>   commits without acceptance). `world::proposals` (`PlaceProposal` + deterministic
+>   pronounceable names via a seeded syllable generator + a stable `place:x:y`
+>   signature for dedup) + `world::storage::WorldStore` (a `world_proposals` table
+>   on StorageEngine at `<project>/world.db`). CLI: `realworld propose` (compile →
+>   demographics → seed the queue, skipping signatures already accepted/rejected),
+>   `proposals list [--status]` / `accept <id>` (creates a prose Place under the
+>   Places book) / `reject` / `accept-all` / `clear`; ids accept an 8-char prefix.
+>   Smoke: propose→20, accept Bruniano→`books/places/01-bruniano.typ`, re-propose
+>   skips the resolved site. +1 test. tests 1610→1611. *Next: P2.2-TUI
+>   (`world_compiler_proposal` Output messages + `Ctrl+B W P` overlay + Enter-accept,
+>   reusing the lexicon_proposal→promote template); then cross-references
+>   (Place/Character/Artefact ↔ World) + Facts↔World provenance; then **P3** (magic
+>   ledger + plakat).*
 >
 > **DEFERRED DELIVERABLE (user-requested 2026-06-25):** once WORLD-4 is *fully*
 > implemented (all five layers + magic), generate `./examples/realworld/Earth.hjson`
