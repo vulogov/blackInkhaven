@@ -3580,6 +3580,19 @@ pub enum RealworldCommand {
         #[arg(long)]
         materialize: bool,
     },
+    /// Render the world map with `plakat`: compile every layer, emit a MapSpec,
+    /// and write a features PNG + GeoJSON under `assets/maps/`. Resolved landmark
+    /// positions are read back to refine each Place's coordinates.
+    Map {
+        /// Build and write the MapSpec but don't invoke `plakat` (useful for
+        /// inspecting the spec or when plakat isn't installed).
+        #[arg(long)]
+        spec_only: bool,
+        /// Don't update Place coordinates from plakat's resolved landmark
+        /// positions (render the map but leave the cross-references untouched).
+        #[arg(long)]
+        no_ingest: bool,
+    },
 }
 
 /// WORLD-4 — the proposal queue surface (RFC §8.9). Accepting a proposal commits
