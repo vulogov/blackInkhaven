@@ -26,10 +26,25 @@ impl Gazetteer {
         Self { places }
     }
 
-    /// The world-linked places whose name appears (as a whole word) in `text`.
+    /// The world-linked places whose name appears (as a whole word) in `text`,
+    /// matching in English (no inflection). Kept for callers without a language.
     pub fn mentioned_in(&self, text: &str) -> Vec<&PlaceLink> {
+        self.mentioned_in_lang(text, Lang::En)
+    }
+
+    /// As [`mentioned_in`], but matches the name in any of its grammatical forms
+    /// for `lang` — so a Russian place resolves when it appears declined (e.g.
+    /// `в Москве` matches `Москва`). See [`crate::world::fact_check_lang::name_variants`].
+    pub fn mentioned_in_lang(&self, text: &str, lang: Lang) -> Vec<&PlaceLink> {
         let lower = text.to_lowercase();
-        self.places.iter().filter(|p| contains_word(&lower, &p.name.to_lowercase())).collect()
+        self.places
+            .iter()
+            .filter(|p| {
+                crate::world::fact_check_lang::name_variants(&p.name, lang)
+                    .iter()
+                    .any(|v| contains_word(&lower, v))
+            })
+            .collect()
     }
 }
 
@@ -217,7 +232,7 @@ fn check_climate(text: &str, gaz: &Gazetteer, ledger: &MagicLedger, lang: Lang) 
         let Some(weather) = detect_weather(sentence, lang) else {
             continue;
         };
-        for p in gaz.mentioned_in(sentence) {
+        for p in gaz.mentioned_in_lang(sentence, lang) {
             if !climate_conflict(&p.climate_zone, weather) {
                 continue;
             }
@@ -250,7 +265,8 @@ fn check_population(text: &str, gaz: &Gazetteer, ledger: &MagicLedger, lang: Lan
         let Some(claimed) = find_population(sentence, lang) else {
             continue;
         };
-        let places: Vec<_> = gaz.mentioned_in(sentence).into_iter().filter(|p| p.population > 0).collect();
+        let places: Vec<_> =
+            gaz.mentioned_in_lang(sentence, lang).into_iter().filter(|p| p.population > 0).collect();
         // Only compare when exactly one place is in the sentence (otherwise the
         // number's owner is ambiguous — better to stay quiet than false-positive).
         if places.len() != 1 {
@@ -580,6 +596,24 @@ mod tests {
         // "Korthun" must not match inside another word.
         assert_eq!(g.mentioned_in("the Korthuns").len(), 0);
         assert_eq!(g.mentioned_in("near Korthun, north").len(), 1);
+    }
+
+    #[test]
+    fn gazetteer_resolves_declined_russian_name() {
+        let g = Gazetteer::new(vec![PlaceLink {
+            place_id: uuid::Uuid::nil(),
+            name: "Москва".into(),
+            biome: "temperate_forest".into(),
+            climate_zone: "temperate_forest".into(),
+            hydrology_basis: "river".into(),
+            population: 50_000,
+            x: 10,
+            y: 10,
+        }]);
+        // Prepositional / genitive forms resolve under Russian; English does not.
+        assert_eq!(g.mentioned_in_lang("дорога вела в Москве", Lang::Ru).len(), 1);
+        assert_eq!(g.mentioned_in_lang("к северу от Москвы", Lang::Ru).len(), 1);
+        assert_eq!(g.mentioned_in_lang("дорога вела в Москве", Lang::En).len(), 0);
     }
 
     #[test]

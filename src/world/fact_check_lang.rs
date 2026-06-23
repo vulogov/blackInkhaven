@@ -57,6 +57,71 @@ pub fn detect_with_confidence(text: &str) -> (Lang, bool) {
     (top_lang, confident)
 }
 
+// ── gazetteer grammatical variants ───────────────────────────────────────────
+
+/// The lowercased inflected forms a place name can take in `lang`, including the
+/// base name. Used by the gazetteer so a name resolves when it appears in a
+/// grammatical case — chiefly Russian, whose place names decline (`Москва` →
+/// `Москвы` / `Москве` / `Москву` / `Москвой`). For the Latin baselines proper
+/// nouns are largely invariant (possessive / elision are already caught by the
+/// whole-word boundary check), so only German adds its genitive `-s`.
+///
+/// Over-generation is acceptable: extra forms only add recall on whole-word
+/// matches, and multi-syllable place names rarely collide with real words.
+pub fn name_variants(name: &str, lang: Lang) -> Vec<String> {
+    let base = name.to_lowercase();
+    let mut out = vec![base.clone()];
+    match lang {
+        Lang::Ru => out.extend(russian_cases(&base)),
+        Lang::De => {
+            out.push(format!("{base}s"));
+            out.push(format!("{base}es"));
+        }
+        // English possessive (`Korthun's`) and Romance elision (`d'Anvil`) are
+        // already matched by the base name via the non-alphanumeric boundary.
+        Lang::En | Lang::Es | Lang::Fr => {}
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// The common Russian singular case endings for a place name, by its final
+/// letter: feminine `-а`/`-я`, and masculine (consonant-final). The `-ы`/`-и`
+/// spelling rule (после к/г/х/ж/ч/ш/щ → `-и`) is applied for the feminine
+/// genitive.
+fn russian_cases(base: &str) -> Vec<String> {
+    let chars: Vec<char> = base.chars().collect();
+    let Some(&last) = chars.last() else { return Vec::new() };
+    let stem: String = chars[..chars.len() - 1].iter().collect();
+    let pre = if chars.len() >= 2 { chars[chars.len() - 2] } else { ' ' };
+    let hush = matches!(pre, 'к' | 'г' | 'х' | 'ж' | 'ч' | 'ш' | 'щ');
+    let mut v = Vec::new();
+    match last {
+        // Feminine 1st declension (Москва): gen -ы/-и, dat/prep -е, acc -у, ins -ой/-ою.
+        'а' => {
+            v.push(format!("{stem}{}", if hush { 'и' } else { 'ы' }));
+            for s in ["е", "у", "ой", "ою"] {
+                v.push(format!("{stem}{s}"));
+            }
+        }
+        // Feminine soft (-я): gen/dat/prep -и/-е, acc -ю, ins -ей/-ёй.
+        'я' => {
+            for s in ["и", "е", "ю", "ей", "ёй"] {
+                v.push(format!("{stem}{s}"));
+            }
+        }
+        // Masculine, consonant-final (Новгород): gen -а, dat -у, ins -ом, prep -е.
+        c if c.is_alphabetic() => {
+            for s in ["а", "у", "ом", "е"] {
+                v.push(format!("{base}{s}"));
+            }
+        }
+        _ => {}
+    }
+    v
+}
+
 // ── detection-backend capability (graceful degradation) ──────────────────────
 
 /// Which language-analysis backend the fact-checker is using. The `Heuristic`
@@ -528,6 +593,32 @@ mod tests {
         for s in ["", "   ", "🚀🚀🚀", "123 456 789", &"a".repeat(100_000), "中文字符", "Ω≈ç√∫"] {
             let _ = detect_with_confidence(s); // must not panic
         }
+    }
+
+    #[test]
+    fn russian_place_name_declines() {
+        let v = name_variants("Москва", Lang::Ru);
+        for form in ["москва", "москвы", "москве", "москву", "москвой"] {
+            assert!(v.contains(&form.to_string()), "missing {form} in {v:?}");
+        }
+        // Masculine consonant-final.
+        let v = name_variants("Новгород", Lang::Ru);
+        for form in ["новгорода", "новгороду", "новгородом", "новгороде"] {
+            assert!(v.contains(&form.to_string()), "missing {form} in {v:?}");
+        }
+        // Hush spelling rule: к before а → genitive -и, not -ы.
+        let v = name_variants("Лука", Lang::Ru);
+        assert!(v.contains(&"луки".to_string()));
+        assert!(!v.contains(&"лукы".to_string()));
+    }
+
+    #[test]
+    fn latin_names_minimal_variants() {
+        // Romance proper nouns are invariant here (boundary handles elision).
+        assert_eq!(name_variants("Anvilport", Lang::Es), vec!["anvilport".to_string()]);
+        // German adds the genitive -s/-es.
+        let v = name_variants("Eisenburg", Lang::De);
+        assert!(v.contains(&"eisenburgs".to_string()));
     }
 
     #[test]
