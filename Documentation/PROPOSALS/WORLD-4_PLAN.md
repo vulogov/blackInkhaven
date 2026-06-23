@@ -152,9 +152,27 @@
 >   → lakes (interior pits) → watersheds (memoised terminal trace) → settlement
 >   priors (river_mouth/confluence/fertile_valley, ranked, for Layer 5).
 >   Materializes `World/Hydrology/{River systems, Watersheds and settlement
->   priors}`. 3 tests. tests 1603→1606. *Next: DEM-import path (image; author
->   supplies a heightmap → skip generated geology) finishes P1; then **P2** —
->   demographics + the proposal queue + cross-refs + the `Ctrl+B W` sub-chords.*
+>   priors}`. 3 tests. tests 1603→1606.
+> - **P1.5 — DEM import (UNRELEASED) → P1 COMPLETE.** `compile_geology_dem(def,
+>   path)`: read an external heightmap (`image` `to_luma16`), nearest-neighbour
+>   resample to the grid, normalise, derive continents/sea/elevation; no tectonics
+>   (empty plates/boundaries, coal only). CLI `geology_for()` dispatcher picks DEM
+>   (path relative to project root) over generation, used by geology/climate/
+>   hydrology so downstream layers run on imported terrain. +1 test; round-trip
+>   smoke (generated heightmap PNG → DEM → same continents/ocean). tests 1606→1607.
+> - **P2.1 — demographics (UNRELEASED) → ALL FIVE MVP LAYERS COMPLETE.**
+>   `compile_demographics(climate, hydro)`: biome carrying-capacity (×2.5 on river
+>   cells) → total population over a ~625 km²/cell grid; hydrology priors become a
+>   Rank-Size (Zipf ~1/r^0.9) hierarchy with a small primate share (~0.3%, so the
+>   top sites span city/town/village, not all megacities); heuristic biome-driven
+>   role archetypes. Materializes `World/Demographics/{Settlement overview,
+>   Population distribution}`. CLI `--layer demographics`. 3 tests; smoke: Velmaron
+>   → 25.3M people, 9 cities/11 towns, primate 76k. tests 1607→1610. **Naming
+>   settlements into Place records is the proposal queue's job (P2.2), not direct
+>   materialization — Layer 5 is the first layer that *proposes*.** *Next: **P2.2**
+>   — the proposal queue (`world_compiler_proposal` → Output via PANE-1; cities →
+>   Place proposals; accept/reject/edit; the `Ctrl+B W P` sub-chord), then
+>   cross-references (Place/Character/Artefact ↔ World) + Facts↔World provenance.*
 >
 > **DEFERRED DELIVERABLE (user-requested 2026-06-25):** once WORLD-4 is *fully*
 > implemented (all five layers + magic), generate `./examples/realworld/Earth.hjson`
