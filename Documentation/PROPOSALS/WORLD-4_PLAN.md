@@ -213,11 +213,24 @@
 >   `--force` overrides), and retries transient LLM errors up to 3× with exponential
 >   backoff. +7 tests. tests 1642→1649. *Next: cross-paragraph coherence pass;
 >   `Ctrl+B W F` scope chords (book/paragraph/recent); `Ctrl+B W M` map chord.*
->
-> **DEFERRED DELIVERABLE (user-requested 2026-06-25):** once WORLD-4 is *fully*
-> implemented (all five layers + magic), generate `./examples/realworld/Earth.hjson`
-> — a complete real-Earth definition (every parameter) for authors starting in an
-> Earth setting. Tracked here so it isn't lost; do it at the P7 polish phase.
+> - **P3.3/P6.x — TUI world chords (UNRELEASED, 1.3.27-dev).** The `Ctrl+B W`
+>   overview gains `M` (render the map with plakat, refine Place coords) and an
+>   `F` scope sub-chord — `F` then `P` (open paragraph) / `B` (enclosing book) /
+>   `R` (12 most-recently-modified ¶). Extracted `build_fact_check_context` +
+>   `paragraph_text` (prefers the open editor buffer over on-disk). tests 1649.
+> - **P5.x — cross-paragraph coherence pass (UNRELEASED, 1.3.27-dev).**
+>   `COHERENCE_SYSTEM` + `build_coherence_prompt` (pure, tested) number a run of
+>   paragraphs (¶1, ¶2, …) and ask the LLM for contradictions *between* them
+>   (character in two places, fact reversed, timeline that doesn't add up).
+>   Extracted `slow_llm_call` (shared daily-cap/provider/preflight/retry/record)
+>   now backs both the per-paragraph track and `realworld coherence <node>
+>   [--max-cost] [--force]`. +2 tests. tests 1649→1651.
+> - **P7.1 — `examples/realworld/Earth.hjson` (UNRELEASED, 1.3.27-dev) → DEFERRED
+>   DELIVERABLE DONE.** A complete, heavily-commented real-Sun/Earth/Moon
+>   definition (exact astronomy; Earth-tuned procedural geology at `sea_level`
+>   0.40 for an ocean-dominant world with usable continents; magic disabled, with
+>   a commented DEM path for compiling the literal Earth). Verified end-to-end:
+>   validate → compile (6.1M people, 20 settlements) → plakat map (20 landmarks).
 
 ---
 
