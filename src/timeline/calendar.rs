@@ -329,6 +329,29 @@ impl Calendar {
         truncate_by_precision(&out, prec)
     }
 
+    /// WORLD-5 — the configured season covering a point, by its month-of-year.
+    /// `None` when no seasons are configured. Wraparound-safe (a season may span
+    /// the year boundary, e.g. winter Dec–Feb).
+    pub fn season_for(&self, p: TimelinePoint) -> Option<String> {
+        if self.cfg.seasons.is_empty() {
+            return None;
+        }
+        let midx = self.index_of("month");
+        let month = self.decompose(p).get(midx).copied().unwrap_or(1).max(1) as u32;
+        let mpy = match (self.ticks_per("year"), self.ticks_per("month")) {
+            (Some(y), Some(m)) if m > 0 => (y / m) as u32,
+            _ => 12,
+        };
+        if mpy == 0 {
+            return None;
+        }
+        self.cfg
+            .seasons
+            .iter()
+            .find(|s| season_covers_month(month, s.start_month, s.span_months, mpy))
+            .map(|s| s.name.clone())
+    }
+
     /// Decompose ticks into the unit stack, base-first.
     /// `out[0]` = base remainder, `out[len-1]` = top-level.
     /// For ticks_per_year arithmetic, top level is signed
@@ -687,6 +710,15 @@ fn split_year_and_label<'a>(
     (yseg, rest, is_before)
 }
 
+/// Does a season starting at `start_month` (1-based) spanning `span` months cover
+/// `month`, wrapping around a `mpy`-month year?
+fn season_covers_month(month: u32, start_month: u32, span: u32, mpy: u32) -> bool {
+    if mpy == 0 || span == 0 {
+        return false;
+    }
+    (0..span).any(|k| ((start_month.saturating_sub(1) + k) % mpy) + 1 == month)
+}
+
 fn default_display_format(cfg: &CalendarConfig) -> String {
     // Pick a format that covers every defined unit. If only
     // a base unit exists ("sols"-style), emit just that.
@@ -914,6 +946,17 @@ mod tests {
         let c = custom_aerin();
         let err = c.parse("1A.frosbun").unwrap_err();
         assert!(err.hint.contains("unknown month"));
+    }
+
+    #[test]
+    fn season_for_maps_months_with_wraparound() {
+        let c = gregorian();
+        // TimelinePoint(0) = year 1, month 1 (January) — winter spans Dec/Jan/Feb.
+        assert_eq!(c.season_for(TimelinePoint(0)).as_deref(), Some("winter"));
+        // +6 months → month 7 → summer (Jun/Jul/Aug).
+        assert_eq!(c.season_for(c.add_units(TimelinePoint(0), 6, "month")).as_deref(), Some("summer"));
+        // +3 months → month 4 → spring (Mar/Apr/May).
+        assert_eq!(c.season_for(c.add_units(TimelinePoint(0), 3, "month")).as_deref(), Some("spring"));
     }
 
     #[test]
