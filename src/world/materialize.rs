@@ -16,7 +16,7 @@ use crate::store::hierarchy::Hierarchy;
 use crate::store::node::Node;
 use crate::store::{InsertPosition, NodeKind, Store, SYSTEM_TAG_WORLD};
 use crate::world::types::{
-    AstronomyOutput, ClimateOutput, DemographicsOutput, GeologyOutput, HydrologyOutput,
+    AstronomyOutput, ClimateOutput, DemographicsOutput, GeologyOutput, HydrologyOutput, MagicLedger,
 };
 
 /// What a materialize pass did, for the CLI/TUI to report.
@@ -219,6 +219,28 @@ pub fn materialize_demographics(
             Outcome::Created => report.created.push(title.to_string()),
             Outcome::Updated => report.updated.push(title.to_string()),
         }
+    }
+    Ok(report)
+}
+
+/// Materialize the magic ledger into `World / Magic Ledger / Rules` so the
+/// declared exceptions to physics live in the book alongside the world.
+pub fn materialize_magic(
+    store: &Store,
+    cfg: &Config,
+    ledger: &MagicLedger,
+) -> Result<MaterializeReport> {
+    let world = world_book(store)?;
+    let chapter = ensure_chapter(store, cfg, &world, "Magic Ledger")?;
+    let body = serde_json::to_string_pretty(&serde_json::json!({
+        "enabled": ledger.enabled,
+        "rules": ledger.rules,
+    }))
+    .map_err(|e| Error::Store(format!("serializing magic ledger: {e}")))?;
+    let mut report = MaterializeReport { chapter: "Magic Ledger".into(), ..Default::default() };
+    match ensure_paragraph(store, cfg, &chapter, "Rules", &body)? {
+        Outcome::Created => report.created.push("Rules".into()),
+        Outcome::Updated => report.updated.push("Rules".into()),
     }
     Ok(report)
 }

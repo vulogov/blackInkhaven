@@ -24,6 +24,7 @@
 #![allow(dead_code, unused_imports)]
 
 pub mod compile;
+pub mod fact_check;
 pub mod materialize;
 pub mod proposals;
 pub mod storage;

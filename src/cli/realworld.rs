@@ -26,7 +26,115 @@ pub fn run(project: &Path, cmd: RealworldCommand) -> Result<()> {
         RealworldCommand::Propose => propose(project),
         RealworldCommand::Proposals { cmd } => proposals(project, cmd),
         RealworldCommand::Places => places(project),
+        RealworldCommand::Magic { materialize } => magic(project, materialize),
     }
+}
+
+/// Fact-check prose against the world (fast track). `--text` checks a literal
+/// string; `--paragraph` reads a paragraph's content from the store.
+pub fn fact_check(project: &Path, text: Option<String>, paragraph: Option<String>) -> Result<()> {
+    use crate::world::fact_check::check_paragraph;
+    // The magic ledger (if any) is consulted; a missing world.hjson is fine.
+    let def = load(project).ok();
+    let ledger = def.as_ref().and_then(|d| d.magic.clone()).unwrap_or_default();
+
+    let prose = match (text, paragraph) {
+        (Some(t), _) => t,
+        (None, Some(pid)) => {
+            use crate::config::Config;
+            use crate::project::ProjectLayout;
+            use crate::store::Store;
+            let id = uuid::Uuid::parse_str(&pid)
+                .map_err(|e| Error::Config(format!("bad paragraph id `{pid}`: {e}")))?;
+            let layout = ProjectLayout::new(project);
+            layout.require_initialized()?;
+            let cfg = Config::load_layered(&layout.config_path())?;
+            let store = Store::open(layout, &cfg)?;
+            let bytes = store
+                .get_content(id)
+                .map_err(|e| Error::Store(format!("reading paragraph: {e}")))?
+                .ok_or_else(|| Error::Config(format!("paragraph `{pid}` not found")))?;
+            String::from_utf8_lossy(&bytes).into_owned()
+        }
+        (None, None) => {
+            return Err(Error::Config("give --text \"…\" or --paragraph <id>".into()));
+        }
+    };
+
+    // Build the world context: the gazetteer (world-linked Places) lets the
+    // climate + demographics checks resolve place names; the moon names feed the
+    // astronomy check.
+    let places = crate::world::storage::WorldStore::open_for_project(project)
+        .ok()
+        .and_then(|ws| ws.list_place_links().ok())
+        .unwrap_or_default();
+    let moons: Vec<String> = def
+        .as_ref()
+        .map(|d| {
+            crate::world::compile::compile_astronomy(&d.astronomy)
+                .moons
+                .iter()
+                .map(|m| m.name.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    let world_ctx = if !places.is_empty() || !moons.is_empty() {
+        Some(crate::world::fact_check::WorldContext::new(
+            crate::world::fact_check::Gazetteer::new(places),
+            moons,
+        ))
+    } else {
+        None
+    };
+
+    let findings = check_paragraph(&prose, &ledger, &[], world_ctx.as_ref());
+    if findings.is_empty() {
+        println!("✓ no issues found");
+        return Ok(());
+    }
+    for f in &findings {
+        let icon = match f.severity.as_str() {
+            "contradiction" => "⊗",
+            "warning" => "⚠",
+            _ => "●",
+        };
+        let note = f.suppressed_by.as_deref().map(|r| format!(" (ok — magic rule `{r}`)")).unwrap_or_default();
+        println!("{icon} [{}] {}{note}", f.category, f.body);
+    }
+    println!("\n{} finding(s).", findings.len());
+    Ok(())
+}
+
+/// Show (and optionally materialize) the magic ledger.
+fn magic(project: &Path, materialize: bool) -> Result<()> {
+    let def = load(project)?;
+    let ledger = def.magic.clone().unwrap_or_default();
+    if ledger.rules.is_empty() {
+        println!("(no magic rules — add a `magic:` block to world.hjson)");
+    } else {
+        println!("magic ledger · {} ({})", def.name, if ledger.enabled { "enabled" } else { "DISABLED" });
+        for r in &ledger.rules {
+            println!("  {} · covers [{}]", r.kind, r.covers.join(", "));
+            if !r.description.is_empty() {
+                println!("      {}", r.description);
+            }
+            if let Some(roles) = &r.applicable_to.roles {
+                println!("      roles: {}", roles.join(", "));
+            }
+        }
+    }
+    if materialize {
+        use crate::config::Config;
+        use crate::project::ProjectLayout;
+        use crate::store::Store;
+        let layout = ProjectLayout::new(project);
+        layout.require_initialized()?;
+        let cfg = Config::load_layered(&layout.config_path())?;
+        let store = Store::open(layout, &cfg)?;
+        let r = crate::world::materialize::materialize_magic(&store, &cfg, &ledger)?;
+        println!("  → World/{}: {} created, {} updated", r.chapter, r.created.len(), r.updated.len());
+    }
+    Ok(())
 }
 
 /// List the Place ↔ World cross-references.

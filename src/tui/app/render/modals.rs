@@ -4805,7 +4805,7 @@ impl super::super::App {
         f.render_widget(Paragraph::new(lines), body_rect);
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                " ↑↓ scroll · C compile · P proposals · Esc ",
+                " ↑↓ · C compile · P proposals · F fact-check ¶ · Esc ",
                 Style::default().add_modifier(Modifier::DIM),
             ))),
             footer_rect,
