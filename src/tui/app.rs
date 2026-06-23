@@ -1598,6 +1598,9 @@ pub(crate) struct App {
     fc_last_fp: Option<(Uuid, u64)>,
     fc_activity_at: Option<std::time::Instant>,
     fc_needs_check: bool,
+    /// WORLD-4 — set when `Ctrl+B W` → `F` arms a scope sub-chord; the next key
+    /// (`P` paragraph / `B` book / `R` recent) picks the fact-check scope.
+    fc_scope_armed: bool,
     tree_cursor: usize,
     tree_scroll: usize,
 
@@ -2210,6 +2213,7 @@ impl App {
             fc_last_fp: None,
             fc_activity_at: None,
             fc_needs_check: false,
+            fc_scope_armed: false,
             output_expanded: std::collections::HashSet::new(),
             tree_cursor: 0,
             tree_scroll: 0,
@@ -10475,7 +10479,7 @@ impl App {
     fn open_world_overview(&mut self) {
         let rows = self.build_world_overview_rows();
         self.modal = Modal::WorldOverview { rows, cursor: 0 };
-        self.status = "World overview · ↑↓ scroll · Esc".into();
+        self.status = "World · ↑↓ scroll · C compile · P proposals · F fact-check · M map · Esc".into();
     }
 
     fn build_world_overview_rows(&self) -> Vec<String> {
@@ -10578,6 +10582,18 @@ impl App {
             Modal::WorldOverview { rows, .. } => rows.len(),
             _ => return false,
         };
+        // A pending F scope sub-chord intercepts the next key.
+        if self.fc_scope_armed {
+            self.fc_scope_armed = false;
+            match key.code {
+                KeyCode::Char('p') | KeyCode::Char('P') => self.fact_check_open_paragraph(),
+                KeyCode::Char('b') | KeyCode::Char('B') => self.fact_check_scope_book(),
+                KeyCode::Char('r') | KeyCode::Char('R') => self.fact_check_scope_recent(),
+                KeyCode::Esc => self.status = "fact-check: scope cancelled".into(),
+                _ => self.status = "fact-check: P paragraph · B book · R recent".into(),
+            }
+            return true;
+        }
         match key.code {
             KeyCode::Esc => {
                 self.modal = Modal::None;
@@ -10599,11 +10615,87 @@ impl App {
             KeyCode::Char('c') | KeyCode::Char('C') => self.run_world_compile(),
             // P: open the proposal queue.
             KeyCode::Char('p') | KeyCode::Char('P') => self.open_world_proposals(),
-            // F: fact-check the open paragraph → Output.
-            KeyCode::Char('f') | KeyCode::Char('F') => self.fact_check_open_paragraph(),
+            // F: arm the fact-check scope sub-chord (P paragraph / B book / R recent).
+            KeyCode::Char('f') | KeyCode::Char('F') => {
+                self.fc_scope_armed = true;
+                self.status = "fact-check scope · P paragraph · B book · R recent · Esc".into();
+            }
+            // M: render the world map with plakat.
+            KeyCode::Char('m') | KeyCode::Char('M') => self.run_world_map(),
             _ => {}
         }
         true
+    }
+
+    /// WORLD-4 — `Ctrl+B W` → `M`. Compile every layer, emit a plakat MapSpec, and
+    /// render the map (features PNG + GeoJSON) under `assets/maps/`, then read the
+    /// resolved landmark positions back to refine each Place's coordinates.
+    /// Synchronous (like compile); plakat is a subprocess, gracefully absent.
+    fn run_world_map(&mut self) {
+        use crate::world::compile::*;
+        use crate::world::plakat;
+        use crate::world::storage::WorldStore;
+        use crate::world::types::WorldDefinition;
+        let root = self.store.project_root().to_path_buf();
+        let raw = match std::fs::read_to_string(root.join("world.hjson")) {
+            Ok(r) => r,
+            Err(_) => {
+                self.status = "world: no world.hjson — `inkhaven realworld new <name>`".into();
+                return;
+            }
+        };
+        let def = match WorldDefinition::from_hjson(&raw) {
+            Ok(d) => d,
+            Err(e) => {
+                self.status = format!("world.hjson: {e}");
+                return;
+            }
+        };
+        if plakat::detect().is_none() {
+            self.status = "map: plakat not on PATH — `cargo install plakat` to render maps".into();
+            return;
+        }
+        let geo = match def.geology.as_ref().and_then(|g| g.dem.as_ref()) {
+            Some(dem) => match compile_geology_dem(&def, &root.join(&dem.path)) {
+                Ok(g) => g,
+                Err(e) => {
+                    self.status = format!("world geology: {e}");
+                    return;
+                }
+            },
+            None => compile_geology(&def),
+        };
+        let astro = compile_astronomy(&def.astronomy);
+        let climate = compile_climate(&def, &astro, &geo);
+        let hydro = compile_hydrology(&geo, &climate);
+        let demo = compile_demographics(&climate, &hydro);
+
+        let store = WorldStore::open_for_project(&root).ok();
+        let links = store.as_ref().and_then(|s| s.list_place_links().ok()).unwrap_or_default();
+        let spec = plakat::build_map_spec(&def.name, &geo, &climate, &hydro, &demo, &links);
+
+        self.status = "map: rendering with plakat…".into();
+        match plakat::render(&root, &spec, def.seed_u64(), geo.width, geo.height) {
+            Ok(art) => {
+                let mut refined = 0usize;
+                if let Some(s) = store.as_ref() {
+                    for lm in &art.landmarks {
+                        if let Some(pid) = lm.place_id() {
+                            if s.update_place_link_coords(pid, lm.x, lm.y).is_ok() {
+                                refined += 1;
+                            }
+                        }
+                    }
+                }
+                self.refresh_hierarchy_after_world_write();
+                self.status = format!(
+                    "map → {} · {} landmark(s), {refined} Place(s) refined",
+                    art.png_path.display(),
+                    art.landmarks.len()
+                );
+            }
+            Err(e) => self.status = format!("map: {e}"),
+        }
     }
 
     /// WORLD-4 — `Ctrl+B W` → `C`. Compile every MVP layer, materialize them into
@@ -10729,6 +10821,140 @@ impl App {
             .unwrap_or_default();
         let ctx = WorldContext::new(Gazetteer::new(places), moons, minerals);
         Some((doc.id, check_paragraph(&text, &ledger, &[], Some(&ctx))))
+    }
+
+    /// Build the fact-check world context (magic ledger + gazetteer/moons/minerals)
+    /// once, for the book/recent scope passes that check many paragraphs. Returns
+    /// `None` if there's no `world.hjson`.
+    fn build_fact_check_context(
+        &self,
+    ) -> Option<(crate::world::types::MagicLedger, crate::world::fact_check::WorldContext)> {
+        use crate::world::compile::compile_astronomy;
+        use crate::world::fact_check::{Gazetteer, WorldContext};
+        use crate::world::storage::WorldStore;
+        use crate::world::types::WorldDefinition;
+        let root = self.store.project_root().to_path_buf();
+        let def = std::fs::read_to_string(root.join("world.hjson"))
+            .ok()
+            .and_then(|raw| WorldDefinition::from_hjson(&raw).ok())?;
+        let ledger = def.magic.clone().unwrap_or_default();
+        let moons: Vec<String> =
+            compile_astronomy(&def.astronomy).moons.iter().map(|m| m.name.clone()).collect();
+        let minerals: Vec<String> = match def.geology.as_ref().and_then(|g| g.dem.as_ref()) {
+            Some(dem) => crate::world::compile::compile_geology_dem(&def, &root.join(&dem.path)).ok(),
+            None => Some(crate::world::compile::compile_geology(&def)),
+        }
+        .map(|g| g.minerals.iter().map(|m| m.mineral.clone()).collect())
+        .unwrap_or_default();
+        let places = WorldStore::open_for_project(&root)
+            .ok()
+            .and_then(|ws| ws.list_place_links().ok())
+            .unwrap_or_default();
+        Some((ledger, WorldContext::new(Gazetteer::new(places), moons, minerals)))
+    }
+
+    /// The paragraph's current text: the open editor buffer if it's the one open
+    /// (so unsaved edits count), else the on-disk content from the store.
+    fn paragraph_text(&self, id: Uuid) -> Option<String> {
+        if let Some(doc) = self.opened.as_ref() {
+            if doc.id == id {
+                return Some(doc.textarea.lines().join("\n"));
+            }
+        }
+        self.store
+            .get_content(id)
+            .ok()
+            .flatten()
+            .map(|b| String::from_utf8_lossy(&b).into_owned())
+    }
+
+    /// WORLD-4 — `Ctrl+B W` → `F` → `B`. Fact-check every paragraph in the book
+    /// that contains the open paragraph (fast track), surfacing all findings in
+    /// Output.
+    fn fact_check_scope_book(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "fact-check: open a paragraph in the target book first".into();
+            return;
+        };
+        let open_id = doc.id;
+        // Walk up to the book ancestor of the open paragraph.
+        let Some(node) = self.hierarchy.get(open_id) else {
+            self.status = "fact-check: paragraph not in the hierarchy".into();
+            return;
+        };
+        let book_id = self
+            .hierarchy
+            .ancestors(node)
+            .into_iter()
+            .find(|a| a.kind == crate::store::node::NodeKind::Book)
+            .map(|b| b.id)
+            .or_else(|| {
+                (node.kind == crate::store::node::NodeKind::Book).then_some(open_id)
+            });
+        let Some(book_id) = book_id else {
+            self.status = "fact-check: no enclosing book".into();
+            return;
+        };
+        let para_ids: Vec<Uuid> = self
+            .hierarchy
+            .collect_subtree(book_id)
+            .into_iter()
+            .filter(|id| {
+                self.hierarchy
+                    .get(*id)
+                    .map(|n| n.kind == crate::store::node::NodeKind::Paragraph)
+                    .unwrap_or(false)
+            })
+            .collect();
+        self.run_fact_check_over(&para_ids, "book");
+    }
+
+    /// WORLD-4 — `Ctrl+B W` → `F` → `R`. Fact-check the most recently modified
+    /// paragraphs (across all books), surfacing findings in Output.
+    fn fact_check_scope_recent(&mut self) {
+        const RECENT: usize = 12;
+        let mut paras: Vec<(&Node, chrono::DateTime<chrono::Utc>)> = self
+            .hierarchy
+            .iter()
+            .filter(|n| n.kind == crate::store::node::NodeKind::Paragraph)
+            .map(|n| (n, n.modified_at))
+            .collect();
+        paras.sort_by(|a, b| b.1.cmp(&a.1));
+        let para_ids: Vec<Uuid> = paras.into_iter().take(RECENT).map(|(n, _)| n.id).collect();
+        self.run_fact_check_over(&para_ids, "recent");
+    }
+
+    /// Run the fast fact-check over a set of paragraphs, replacing each one's prior
+    /// Output findings, and flip to Output with a per-scope summary.
+    fn run_fact_check_over(&mut self, para_ids: &[Uuid], scope: &str) {
+        use crate::world::fact_check::{check_paragraph, emit_finding};
+        let Some((ledger, ctx)) = self.build_fact_check_context() else {
+            self.status = "fact-check: no world.hjson — `inkhaven realworld new <name>`".into();
+            return;
+        };
+        let (mut checked, mut total) = (0usize, 0usize);
+        for &id in para_ids {
+            let Some(text) = self.paragraph_text(id) else { continue };
+            if text.trim().is_empty() {
+                continue;
+            }
+            checked += 1;
+            self.clear_paragraph_fact_warnings(id);
+            let findings = check_paragraph(&text, &ledger, &[], Some(&ctx));
+            for f in &findings {
+                emit_finding(f, Some(id));
+            }
+            total += findings.len();
+        }
+        if total == 0 {
+            self.status = format!("fact-check ({scope}): no issues in {checked} ¶");
+            return;
+        }
+        self.modal = Modal::None;
+        self.output_selected = 0;
+        self.change_focus(Focus::Ai);
+        self.right_pane = RightPane::Output;
+        self.status = format!("fact-check ({scope}): {total} finding(s) across {checked} ¶ → Output (^B Tab)");
     }
 
     /// Clear the Output pane's existing fact-check findings for a paragraph, so a

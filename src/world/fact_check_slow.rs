@@ -93,7 +93,7 @@ pub fn build_slow_prompt(
 /// Deliberately conservative and dependency-free — it only needs to be close
 /// enough to warn an author before a large call.
 pub fn estimate_tokens(text: &str) -> usize {
-    (text.chars().count() + 3) / 4
+    text.chars().count().div_ceil(4)
 }
 
 /// The numbers shown before a slow-track call.
