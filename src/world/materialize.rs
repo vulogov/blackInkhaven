@@ -15,7 +15,7 @@ use crate::error::{Error, Result};
 use crate::store::hierarchy::Hierarchy;
 use crate::store::node::Node;
 use crate::store::{InsertPosition, NodeKind, Store, SYSTEM_TAG_WORLD};
-use crate::world::types::{AstronomyOutput, GeologyOutput};
+use crate::world::types::{AstronomyOutput, ClimateOutput, GeologyOutput};
 
 /// What a materialize pass did, for the CLI/TUI to report.
 #[derive(Debug, Default, Clone)]
@@ -110,6 +110,37 @@ pub fn materialize_geology(
         ("Mountains and ranges", mountains),
         ("Mineral distribution", minerals),
     ] {
+        let body = serde_json::to_string_pretty(&payload)
+            .map_err(|e| Error::Store(format!("serializing {title}: {e}")))?;
+        match ensure_paragraph(store, cfg, &chapter, title, &body)? {
+            Outcome::Created => report.created.push(title.to_string()),
+            Outcome::Updated => report.updated.push(title.to_string()),
+        }
+    }
+    Ok(report)
+}
+
+/// Materialize a climate output into `World / Climate / *`: the biome zones +
+/// land means, and the prevailing-wind bands.
+pub fn materialize_climate(
+    store: &Store,
+    cfg: &Config,
+    out: &ClimateOutput,
+) -> Result<MaterializeReport> {
+    let world = world_book(store)?;
+    let chapter = ensure_chapter(store, cfg, &world, "Climate")?;
+
+    let zones = serde_json::json!({
+        "width": out.width,
+        "height": out.height,
+        "mean_land_temp_c": out.mean_land_temp_c,
+        "mean_land_precip_mm": out.mean_land_precip_mm,
+        "zones": out.zones,
+    });
+    let winds = serde_json::json!({ "winds": out.winds });
+
+    let mut report = MaterializeReport { chapter: "Climate".into(), ..Default::default() };
+    for (title, payload) in [("Climate zones", zones), ("Prevailing winds", winds)] {
         let body = serde_json::to_string_pretty(&payload)
             .map_err(|e| Error::Store(format!("serializing {title}: {e}")))?;
         match ensure_paragraph(store, cfg, &chapter, title, &body)? {
