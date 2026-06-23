@@ -32,6 +32,21 @@ const INIT_SQL: &str = "
     );
     CREATE INDEX IF NOT EXISTS idx_sf_para ON socratic_findings(paragraph_id);
 
+    -- Dismissals — each time the author dismisses a finding (the raw material the
+    -- promotion mechanism aggregates).
+    CREATE TABLE IF NOT EXISTS socratic_dismissals (
+        id           TEXT   NOT NULL PRIMARY KEY,
+        category     TEXT   NOT NULL,
+        chapter_id   TEXT   NOT NULL,
+        dismissed_at BIGINT NOT NULL
+    );
+    -- Promotion suggestions the author refused (won't re-suggest).
+    CREATE TABLE IF NOT EXISTS socratic_promotion_refused (
+        category   TEXT NOT NULL,
+        chapter_id TEXT NOT NULL,
+        PRIMARY KEY (category, chapter_id)
+    );
+
     -- The active Reader Persona for this project (one row).
     CREATE TABLE IF NOT EXISTS active_persona (
         singleton  INTEGER NOT NULL PRIMARY KEY DEFAULT 1,
@@ -73,6 +88,15 @@ fn opt_text(v: Option<&DuckValue>) -> Option<String> {
         Some(DuckValue::Text(s)) if !s.is_empty() => Some(s.clone()),
         _ => None,
     }
+}
+
+/// An accumulated dismissal pattern the author might want to declare as intent.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PromotionCandidate {
+    pub category: Category,
+    /// The chapter the dismissals clustered in (`""` = unknown).
+    pub chapter_id: String,
+    pub count: i64,
 }
 
 /// A persisted finding plus the paragraph it was emitted against.
@@ -229,6 +253,52 @@ impl InnerSocratesStore {
     /// The intent ledger, loaded for consultation.
     pub fn load_ledger(&self) -> Result<IntentLedger> {
         Ok(IntentLedger { entries: self.list_intents()? })
+    }
+
+    // ── dismissals + promotion ──────────────────────────────────────────────────
+
+    /// Record one dismissal of a `category` finding in `chapter_id` (empty when
+    /// the chapter is unknown — those aggregate under `""`).
+    pub fn record_dismissal(&self, category: Category, chapter_id: &str) -> Result<()> {
+        self.engine.execute_with(
+            "INSERT INTO socratic_dismissals (id, category, chapter_id, dismissed_at) VALUES (?,?,?,?)",
+            &[&Uuid::new_v4().to_string(), &category.id(), &chapter_id, &now_secs()],
+        )
+    }
+
+    /// Mark a `(category, chapter)` promotion suggestion as refused — it won't
+    /// re-surface as a candidate.
+    pub fn refuse_promotion(&self, category: Category, chapter_id: &str) -> Result<()> {
+        self.engine.execute_with(
+            "INSERT OR REPLACE INTO socratic_promotion_refused (category, chapter_id) VALUES (?,?)",
+            &[&category.id(), &chapter_id],
+        )
+    }
+
+    /// Promotion candidates: `(category, chapter, count)` groups whose dismissal
+    /// count is at least `threshold` and which the author hasn't refused.
+    pub fn promotion_candidates(&self, threshold: i64) -> Result<Vec<PromotionCandidate>> {
+        let rows = self.engine.select_all_with(
+            "SELECT d.category, d.chapter_id, COUNT(*) AS n \
+             FROM socratic_dismissals d \
+             WHERE NOT EXISTS ( \
+                 SELECT 1 FROM socratic_promotion_refused r \
+                 WHERE r.category = d.category AND r.chapter_id = d.chapter_id) \
+             GROUP BY d.category, d.chapter_id \
+             HAVING COUNT(*) >= ? \
+             ORDER BY n DESC",
+            &[&threshold],
+        )?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                Some(PromotionCandidate {
+                    category: Category::from_id(&text(r.first()))?,
+                    chapter_id: text(r.get(1)),
+                    count: int(r.get(2)),
+                })
+            })
+            .collect())
     }
 
     // ── active persona ──────────────────────────────────────────────────────────
@@ -410,6 +480,34 @@ mod tests {
 
         s.remove_intent("e1").unwrap();
         assert!(s.list_intents().unwrap().is_empty());
+    }
+
+    #[test]
+    fn dismissals_become_promotion_candidates() {
+        let s = store();
+        // Four dismissals of framing in ch12 — below the threshold of 5.
+        for _ in 0..4 {
+            s.record_dismissal(Category::FramingInterrogation, "ch12").unwrap();
+        }
+        assert!(s.promotion_candidates(5).unwrap().is_empty());
+        // The fifth crosses the threshold.
+        s.record_dismissal(Category::FramingInterrogation, "ch12").unwrap();
+        let cands = s.promotion_candidates(5).unwrap();
+        assert_eq!(cands.len(), 1);
+        assert_eq!(cands[0].category, Category::FramingInterrogation);
+        assert_eq!(cands[0].chapter_id, "ch12");
+        assert_eq!(cands[0].count, 5);
+        // Refusing it removes it from the candidate list.
+        s.refuse_promotion(Category::FramingInterrogation, "ch12").unwrap();
+        assert!(s.promotion_candidates(5).unwrap().is_empty());
+    }
+
+    #[test]
+    fn active_persona_roundtrips() {
+        let s = store();
+        assert_eq!(s.active_persona_id().unwrap(), None);
+        s.set_active_persona("skeptical-reader").unwrap();
+        assert_eq!(s.active_persona_id().unwrap().as_deref(), Some("skeptical-reader"));
     }
 
     #[test]

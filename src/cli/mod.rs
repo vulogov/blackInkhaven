@@ -3664,6 +3664,37 @@ pub enum InnerSocratesCommand {
     /// Reader Personas — the careful-reader perspectives you switch between.
     #[command(subcommand)]
     Persona(PersonaCommand),
+    /// Promotion candidates — patterns of repeated dismissal the system suggests
+    /// declaring as a deliberate intent.
+    #[command(subcommand)]
+    Suggestions(SuggestionsCommand),
+}
+
+/// INNER_SOCRATES-1 — the promotion-candidate surface.
+#[derive(Debug, Subcommand)]
+pub enum SuggestionsCommand {
+    /// List promotion candidates (categories dismissed ≥ threshold times).
+    List {
+        #[arg(long, default_value_t = 5)]
+        threshold: i64,
+    },
+    /// Promote a candidate into an intent-ledger entry that suppresses it.
+    Promote {
+        /// The Socratic category id (e.g. `framing_interrogation`).
+        category: String,
+        /// The chapter the entry scopes to (omit for project-wide).
+        #[arg(long)]
+        chapter: Option<String>,
+        /// The author's explanation of the deliberate choice.
+        #[arg(long)]
+        description: Option<String>,
+    },
+    /// Refuse a candidate so it won't re-suggest.
+    Dismiss {
+        category: String,
+        #[arg(long)]
+        chapter: Option<String>,
+    },
 }
 
 /// INNER_SOCRATES-1 — the Reader Persona surface.
