@@ -3668,6 +3668,30 @@ pub enum InnerSocratesCommand {
     /// declaring as a deliberate intent.
     #[command(subcommand)]
     Suggestions(SuggestionsCommand),
+    /// `.isl` ledger bundles — carry series-level intentions between books.
+    #[command(subcommand)]
+    Bundle(BundleCommand),
+}
+
+/// INNER_SOCRATES-1 — the `.isl` ledger-bundle surface.
+#[derive(Debug, Subcommand)]
+pub enum BundleCommand {
+    /// Export intent-ledger entries to an `.isl` bundle.
+    Export {
+        /// Which entries to include.
+        #[arg(long, value_parser = ["series", "project", "all"], default_value = "series")]
+        scope_level: String,
+        /// Output path (default: `<project>/intent-ledger.isl`).
+        #[arg(long)]
+        out: Option<String>,
+    },
+    /// Import intent-ledger entries from an `.isl` bundle.
+    Import {
+        path: String,
+        /// What to do when an entry id already exists.
+        #[arg(long, value_parser = ["skip", "override"], default_value = "skip")]
+        conflict: String,
+    },
 }
 
 /// INNER_SOCRATES-1 — the promotion-candidate surface.
