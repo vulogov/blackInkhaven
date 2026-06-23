@@ -10711,11 +10711,23 @@ impl App {
             .as_ref()
             .map(|d| compile_astronomy(&d.astronomy).moons.iter().map(|m| m.name.clone()).collect())
             .unwrap_or_default();
+        let minerals: Vec<String> = def
+            .as_ref()
+            .map(|d| {
+                let geo = match d.geology.as_ref().and_then(|g| g.dem.as_ref()) {
+                    Some(dem) => {
+                        crate::world::compile::compile_geology_dem(d, &root.join(&dem.path)).ok()
+                    }
+                    None => Some(crate::world::compile::compile_geology(d)),
+                };
+                geo.map(|g| g.minerals.iter().map(|m| m.mineral.clone()).collect()).unwrap_or_default()
+            })
+            .unwrap_or_default();
         let places = WorldStore::open_for_project(&root)
             .ok()
             .and_then(|ws| ws.list_place_links().ok())
             .unwrap_or_default();
-        let ctx = WorldContext::new(Gazetteer::new(places), moons);
+        let ctx = WorldContext::new(Gazetteer::new(places), moons, minerals);
         Some((doc.id, check_paragraph(&text, &ledger, &[], Some(&ctx))))
     }
 
