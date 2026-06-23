@@ -1590,6 +1590,14 @@ pub(crate) struct App {
     output_selected: usize,
     /// Output messages whose detail is expanded (`o`/Space).
     output_expanded: std::collections::HashSet<Uuid>,
+    /// WORLD-4 — the debounced fast fact-checker. Enabled when the project has a
+    /// `world.hjson` (set at open + after a compile). `fc_last_fp` fingerprints
+    /// the open paragraph; a change arms `fc_activity_at`, and 5 s of quiet fires
+    /// the fast check into Output.
+    fact_check_enabled: bool,
+    fc_last_fp: Option<(Uuid, u64)>,
+    fc_activity_at: Option<std::time::Instant>,
+    fc_needs_check: bool,
     tree_cursor: usize,
     tree_scroll: usize,
 
@@ -2169,6 +2177,8 @@ impl App {
         // host because the Piper stub always errors.
         let tts =
             super::tts::TtsEngine::resolve(&cfg.editor.tts, &layout.root);
+        // WORLD-4 — the debounced fact-checker is on when the project has a world.
+        let world_hjson_exists = layout.root.join("world.hjson").exists();
         Ok(Self {
             layout,
             store,
@@ -2196,6 +2206,10 @@ impl App {
             // from `.session.json` when a `right_pane` was saved.
             right_pane: RightPane::Output,
             output_selected: 0,
+            fact_check_enabled: world_hjson_exists,
+            fc_last_fp: None,
+            fc_activity_at: None,
+            fc_needs_check: false,
             output_expanded: std::collections::HashSet::new(),
             tree_cursor: 0,
             tree_scroll: 0,
@@ -2477,6 +2491,7 @@ impl App {
             self.tick_autosave();
             self.tick_crash_mirror();
             self.tick_health_pump();
+            self.tick_fact_check();
             // 1.2.9+ — close the TTS playback modal as
             // soon as the engine reports it's idle, so
             // the modal disappears when the paragraph
@@ -5656,6 +5671,17 @@ pub(super) enum BgJobKind {
 /// An in-flight background job: its progress/result channel + a label + which
 /// kind it is (for the completion handler) + a cancel flag the worker polls.
 /// One at a time.
+/// WORLD-4 — a cheap fingerprint of an open paragraph (id + content hash) so the
+/// debounced fact-checker can tell "the prose changed" from "the cursor moved".
+fn content_fingerprint(doc: &OpenedDoc) -> (Uuid, u64) {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for line in doc.textarea.lines() {
+        line.hash(&mut h);
+    }
+    (doc.id, h.finish())
+}
+
 pub(super) struct BgJob {
     pub rx: std::sync::mpsc::Receiver<BgMsg>,
     pub label: String,
@@ -10654,6 +10680,7 @@ impl App {
         })();
         match n_proposed {
             Ok(n) => {
+                self.fact_check_enabled = true; // a compiled world → live checking
                 self.refresh_hierarchy_after_world_write();
                 self.status = format!(
                     "world compiled — 5 layers materialized, {n} Place proposal(s) (Ctrl+B W → P)"
@@ -10663,52 +10690,112 @@ impl App {
         }
     }
 
-    /// WORLD-4 — `Ctrl+B W` → `F`. Fact-check the open paragraph against the
-    /// simulated world (fast track) and emit findings to the Output pane.
-    fn fact_check_open_paragraph(&mut self) {
-        use crate::world::fact_check::{check_paragraph, emit_finding, Gazetteer, WorldContext};
-        let Some(doc) = self.opened.as_ref() else {
-            self.status = "fact-check: no paragraph open".into();
-            return;
-        };
+    /// Build the world context and run the fast fact-check over the open
+    /// paragraph. Returns `(paragraph_id, findings)`; no side effects.
+    fn collect_fact_check_findings(
+        &self,
+    ) -> Option<(Uuid, Vec<crate::world::fact_check::Finding>)> {
+        use crate::world::compile::compile_astronomy;
+        use crate::world::fact_check::{check_paragraph, Gazetteer, WorldContext};
+        use crate::world::storage::WorldStore;
+        use crate::world::types::WorldDefinition;
+        let doc = self.opened.as_ref()?;
         let text = doc.textarea.lines().join("\n");
         let root = self.store.project_root().to_path_buf();
 
-        // World context: ledger + moons from world.hjson, places from world.db.
         let def = std::fs::read_to_string(root.join("world.hjson"))
             .ok()
-            .and_then(|raw| crate::world::types::WorldDefinition::from_hjson(&raw).ok());
+            .and_then(|raw| WorldDefinition::from_hjson(&raw).ok());
         let ledger = def.as_ref().and_then(|d| d.magic.clone()).unwrap_or_default();
         let moons: Vec<String> = def
             .as_ref()
-            .map(|d| {
-                crate::world::compile::compile_astronomy(&d.astronomy)
-                    .moons
-                    .iter()
-                    .map(|m| m.name.clone())
-                    .collect()
-            })
+            .map(|d| compile_astronomy(&d.astronomy).moons.iter().map(|m| m.name.clone()).collect())
             .unwrap_or_default();
-        let places = crate::world::storage::WorldStore::open_for_project(&root)
+        let places = WorldStore::open_for_project(&root)
             .ok()
             .and_then(|ws| ws.list_place_links().ok())
             .unwrap_or_default();
         let ctx = WorldContext::new(Gazetteer::new(places), moons);
+        Some((doc.id, check_paragraph(&text, &ledger, &[], Some(&ctx))))
+    }
 
-        let findings = check_paragraph(&text, &ledger, &[], Some(&ctx));
+    /// Clear the Output pane's existing fact-check findings for a paragraph, so a
+    /// re-check replaces them (resolved findings disappear; nothing duplicates).
+    fn clear_paragraph_fact_warnings(&self, para_id: Uuid) {
+        if let Some(s) = crate::pane::output::active() {
+            if let Ok(msgs) = s.by_kind(crate::pane::output::kinds::FACT_CHECK_WARNING) {
+                for m in msgs.iter().filter(|m| m.source_paragraph_id == Some(para_id)) {
+                    let _ = s.dismiss(m.id);
+                }
+            }
+        }
+    }
+
+    /// WORLD-4 — `Ctrl+B W` → `F`. Fact-check the open paragraph and surface the
+    /// findings in the Output pane (flips you there).
+    fn fact_check_open_paragraph(&mut self) {
+        use crate::world::fact_check::emit_finding;
+        let Some((id, findings)) = self.collect_fact_check_findings() else {
+            self.status = "fact-check: no paragraph open".into();
+            return;
+        };
+        self.clear_paragraph_fact_warnings(id);
         if findings.is_empty() {
             self.status = "fact-check: no issues found".into();
             return;
         }
         for f in &findings {
-            emit_finding(f);
+            emit_finding(f, Some(id));
         }
-        // Surface the findings in Output.
         self.modal = Modal::None;
         self.output_selected = 0;
         self.change_focus(Focus::Ai);
         self.right_pane = RightPane::Output;
         self.status = format!("fact-check: {} finding(s) → Output (^B Tab)", findings.len());
+    }
+
+    /// WORLD-4 — the debounced fast fact-checker. Each tick, fingerprint the open
+    /// paragraph; a change arms the timer, and 5 s of quiet runs the fast check
+    /// into Output without stealing focus (the author keeps writing).
+    fn tick_fact_check(&mut self) {
+        if !self.fact_check_enabled {
+            return;
+        }
+        let fp = self.opened.as_ref().map(content_fingerprint);
+        if fp != self.fc_last_fp {
+            self.fc_last_fp = fp;
+            self.fc_activity_at = fp.map(|_| std::time::Instant::now());
+            self.fc_needs_check = fp.is_some();
+            return;
+        }
+        if self.fc_needs_check && matches!(self.modal, Modal::None) {
+            if let Some(t) = self.fc_activity_at {
+                if t.elapsed() >= std::time::Duration::from_secs(5) {
+                    self.fc_needs_check = false;
+                    self.auto_fact_check();
+                }
+            }
+        }
+    }
+
+    /// Run the fast check silently into Output — no focus change (the author is
+    /// writing). Replaces this paragraph's prior findings.
+    fn auto_fact_check(&mut self) {
+        use crate::world::fact_check::emit_finding;
+        let Some((id, findings)) = self.collect_fact_check_findings() else {
+            return;
+        };
+        self.clear_paragraph_fact_warnings(id);
+        if findings.is_empty() {
+            return;
+        }
+        let actionable = findings.iter().filter(|f| f.severity != "info").count();
+        for f in &findings {
+            emit_finding(f, Some(id));
+        }
+        if actionable > 0 {
+            self.status = format!("⚠ fact-check: {actionable} finding(s) in this ¶ — ^B Tab → Output");
+        }
     }
 
     /// Reload the hierarchy after the compiler wrote into the World/Places books,
