@@ -9,7 +9,48 @@
 //! emitting, each candidate is run past the magic ledger — a declared exception
 //! to physics suppresses the warning with a note (lazy consultation, §8.21).
 
+use crate::world::proposals::PlaceLink;
 use crate::world::types::magic::{CheckContext, MagicLedger};
+
+/// A project gazetteer over the world-linked Places: resolves a place name in
+/// prose to its `PlaceLink` (climate zone / biome / modelled population), so the
+/// climate and demographics checks can compare a claim against the place's
+/// actual world data.
+pub struct Gazetteer {
+    places: Vec<PlaceLink>,
+}
+
+impl Gazetteer {
+    pub fn new(places: Vec<PlaceLink>) -> Self {
+        Self { places }
+    }
+
+    /// The world-linked places whose name appears (as a whole word) in `text`.
+    pub fn mentioned_in(&self, text: &str) -> Vec<&PlaceLink> {
+        let lower = text.to_lowercase();
+        self.places.iter().filter(|p| contains_word(&lower, &p.name.to_lowercase())).collect()
+    }
+}
+
+/// Whole-word containment (so "Or" doesn't match inside "Orenarm").
+fn contains_word(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+    let bytes = haystack.as_bytes();
+    let mut from = 0;
+    while let Some(pos) = haystack[from..].find(needle) {
+        let start = from + pos;
+        let end = start + needle.len();
+        let before_ok = start == 0 || !bytes[start - 1].is_ascii_alphanumeric();
+        let after_ok = end == bytes.len() || !bytes[end].is_ascii_alphanumeric();
+        if before_ok && after_ok {
+            return true;
+        }
+        from = start + 1;
+    }
+    false
+}
 
 /// A fact-check finding. `body` is the human message; `suppressed_by` is set
 /// when a magic rule covered it (the warning is informational, not a problem).
@@ -24,11 +65,170 @@ pub struct Finding {
 }
 
 /// Run the fast fact-check over a paragraph of prose. `roles` are any actor
-/// roles in scope (for magic-ledger consultation); empty is fine.
-pub fn check_paragraph(text: &str, ledger: &MagicLedger, roles: &[String]) -> Vec<Finding> {
+/// roles in scope (for magic-ledger consultation); `gaz` resolves place names to
+/// their world data (the climate + demographics checks need it; travel time
+/// doesn't). Both may be empty / `None`.
+pub fn check_paragraph(
+    text: &str,
+    ledger: &MagicLedger,
+    roles: &[String],
+    gaz: Option<&Gazetteer>,
+) -> Vec<Finding> {
     let mut findings = Vec::new();
     findings.extend(check_travel_time(text, ledger, roles));
+    if let Some(g) = gaz {
+        findings.extend(check_climate(text, g, ledger));
+        findings.extend(check_population(text, g, ledger));
+    }
     findings
+}
+
+/// Climate check: weather described at a place that contradicts the place's
+/// climate zone (snow in the tropics, jungle heat on the tundra).
+fn check_climate(text: &str, gaz: &Gazetteer, ledger: &MagicLedger) -> Vec<Finding> {
+    let mut out = Vec::new();
+    for sentence in split_sentences(text) {
+        let Some(weather) = detect_weather(sentence) else {
+            continue;
+        };
+        for p in gaz.mentioned_in(sentence) {
+            let Some(verdict) = climate_conflict(&p.climate_zone, weather) else {
+                continue;
+            };
+            let body = format!(
+                "{}: {} at {}, whose climate zone is {}.",
+                verdict, weather_label(weather), p.name, p.climate_zone.replace('_', " ")
+            );
+            let ctx = CheckContext {
+                category: "climate_anomaly",
+                roles: &[],
+                region: Some(&p.name),
+                ..Default::default()
+            };
+            let suppressed_by = ledger.find_suppressor(&ctx).map(|r| r.kind.clone());
+            let severity = if suppressed_by.is_some() { "info" } else { "warning" };
+            out.push(Finding {
+                category: "climate".into(),
+                severity: severity.into(),
+                body,
+                suppressed_by,
+            });
+        }
+    }
+    out
+}
+
+/// Demographics check: a population stated for a place that diverges sharply
+/// from the modelled population.
+fn check_population(text: &str, gaz: &Gazetteer, ledger: &MagicLedger) -> Vec<Finding> {
+    let mut out = Vec::new();
+    for sentence in split_sentences(text) {
+        let Some(claimed) = find_population(sentence) else {
+            continue;
+        };
+        let places: Vec<_> = gaz.mentioned_in(sentence).into_iter().filter(|p| p.population > 0).collect();
+        // Only compare when exactly one place is in the sentence (otherwise the
+        // number's owner is ambiguous — better to stay quiet than false-positive).
+        if places.len() != 1 {
+            continue;
+        }
+        let p = places[0];
+        let modeled = p.population as f32;
+        let ratio = claimed / modeled;
+        if ratio <= 3.0 && ratio >= 0.33 {
+            continue; // close enough
+        }
+        let body = format!(
+            "{} is described with ~{} people, but the world models ~{} for it.",
+            p.name, fmt_pop(claimed as u64), fmt_pop(p.population)
+        );
+        let ctx = CheckContext { category: "demographics", region: Some(&p.name), ..Default::default() };
+        let suppressed_by = ledger.find_suppressor(&ctx).map(|r| r.kind.clone());
+        let severity = if suppressed_by.is_some() { "info" } else { "warning" };
+        out.push(Finding {
+            category: "demographics".into(),
+            severity: severity.into(),
+            body,
+            suppressed_by,
+        });
+    }
+    out
+}
+
+fn split_sentences(text: &str) -> impl Iterator<Item = &str> {
+    text.split(|c| c == '.' || c == '!' || c == '?' || c == '\n')
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Weather {
+    Cold,
+    Hot,
+}
+
+fn weather_label(w: Weather) -> &'static str {
+    match w {
+        Weather::Cold => "freezing weather",
+        Weather::Hot => "tropical heat",
+    }
+}
+
+fn detect_weather(s: &str) -> Option<Weather> {
+    let l = s.to_lowercase();
+    let cold = ["snow", "snowed", "snowing", "frost", "freezing", "blizzard", "frozen", "ice storm"];
+    let hot = ["sweltering", "scorching", "tropical heat", "jungle heat", "blistering sun"];
+    if cold.iter().any(|w| l.contains(w)) {
+        Some(Weather::Cold)
+    } else if hot.iter().any(|w| l.contains(w)) {
+        Some(Weather::Hot)
+    } else {
+        None
+    }
+}
+
+/// Whether `weather` contradicts a climate zone — returns the severity verb.
+fn climate_conflict(zone: &str, weather: Weather) -> Option<&'static str> {
+    let warm_zones = ["hot_desert", "savanna", "tropical_rainforest", "tropical_seasonal"];
+    let cold_zones = ["tundra", "ice_cap", "taiga"];
+    match weather {
+        Weather::Cold if warm_zones.contains(&zone) => Some("Implausible"),
+        Weather::Hot if cold_zones.contains(&zone) => Some("Implausible"),
+        _ => None,
+    }
+}
+
+/// Extract a population figure ("100,000", "100000", "2 thousand", "1 million").
+fn find_population(s: &str) -> Option<f32> {
+    use std::sync::OnceLock;
+    static RE: OnceLock<regex::Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(r"(?i)(\d[\d,]*(?:\.\d+)?)\s*(thousand|million)?").unwrap()
+    });
+    // Find the largest number in the sentence (the population claim).
+    let mut best: Option<f32> = None;
+    for caps in re.captures_iter(s) {
+        let raw = caps.get(1)?.as_str().replace(',', "");
+        let Ok(mut n) = raw.parse::<f32>() else { continue };
+        match caps.get(2).map(|m| m.as_str().to_ascii_lowercase()) {
+            Some(ref u) if u == "thousand" => n *= 1_000.0,
+            Some(ref u) if u == "million" => n *= 1_000_000.0,
+            _ => {}
+        }
+        // Only plausibly-population numbers (avoid catching years / small counts).
+        if n >= 500.0 && best.map_or(true, |b| n > b) {
+            best = Some(n);
+        }
+    }
+    best
+}
+
+fn fmt_pop(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 10_000 {
+        format!("{:.0}k", n as f64 / 1_000.0)
+    } else {
+        n.to_string()
+    }
 }
 
 /// Travel-time check: a sentence that states both a distance and a duration
@@ -172,6 +372,7 @@ mod tests {
             "The messenger rode 612 km in three days to reach the capital.",
             &empty_ledger(),
             &[],
+            None,
         );
         assert_eq!(f.len(), 1);
         assert_eq!(f[0].category, "travel_time");
@@ -182,14 +383,14 @@ mod tests {
     #[test]
     fn passes_a_plausible_pace() {
         // 120 km in 3 days = 40 km/day → plausible → no finding.
-        let f = check_paragraph("They walked 120 km in three days.", &empty_ledger(), &[]);
+        let f = check_paragraph("They walked 120 km in three days.", &empty_ledger(), &[], None);
         assert!(f.is_empty(), "got {f:?}");
     }
 
     #[test]
     fn miles_are_converted() {
         // 300 miles ≈ 483 km in 2 days ≈ 241 km/day → contradiction.
-        let f = check_paragraph("She flew 300 miles in two days.", &empty_ledger(), &[]);
+        let f = check_paragraph("She flew 300 miles in two days.", &empty_ledger(), &[], None);
         assert_eq!(f.len(), 1);
         assert_eq!(f[0].severity, "contradiction");
     }
@@ -200,9 +401,66 @@ mod tests {
             r#"{ enabled: true, rules: [ { kind: "messenger_birds", covers: ["travel_time"], applicable_to: { roles: ["any"] } } ] }"#,
         )
         .unwrap();
-        let f = check_paragraph("The messenger rode 612 km in three days.", &ledger, &[]);
+        let f = check_paragraph("The messenger rode 612 km in three days.", &ledger, &[], None);
         assert_eq!(f.len(), 1);
         assert_eq!(f[0].severity, "info"); // downgraded
         assert_eq!(f[0].suppressed_by.as_deref(), Some("messenger_birds"));
+    }
+
+    fn gaz() -> Gazetteer {
+        Gazetteer::new(vec![
+            PlaceLink {
+                place_id: uuid::Uuid::nil(),
+                name: "Velmaril".into(),
+                biome: "tropical_seasonal".into(),
+                climate_zone: "tropical_seasonal".into(),
+                hydrology_basis: "river_mouth".into(),
+                population: 40_000,
+                x: 60,
+                y: 69,
+            },
+            PlaceLink {
+                place_id: uuid::Uuid::nil(),
+                name: "Korthun".into(),
+                biome: "tundra".into(),
+                climate_zone: "tundra".into(),
+                hydrology_basis: "confluence".into(),
+                population: 8_000,
+                x: 42,
+                y: 12,
+            },
+        ])
+    }
+
+    #[test]
+    fn flags_snow_in_the_tropics() {
+        let g = gaz();
+        let f = check_paragraph("A blizzard buried Velmaril overnight.", &empty_ledger(), &[], Some(&g));
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].category, "climate");
+        assert_eq!(f[0].severity, "warning");
+        // No false positive for cold weather at the tundra town.
+        let f2 = check_paragraph("A blizzard buried Korthun overnight.", &empty_ledger(), &[], Some(&g));
+        assert!(f2.is_empty(), "got {f2:?}");
+    }
+
+    #[test]
+    fn flags_a_population_mismatch() {
+        let g = gaz();
+        // Velmaril models ~40k; prose claims 2 million → off by 50× → warning.
+        let f = check_paragraph("Velmaril, a teeming city of 2 million souls.", &empty_ledger(), &[], Some(&g));
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].category, "demographics");
+        // A close figure passes.
+        let f2 = check_paragraph("Velmaril, a city of 45,000.", &empty_ledger(), &[], Some(&g));
+        assert!(f2.is_empty(), "got {f2:?}");
+    }
+
+    #[test]
+    fn gazetteer_matches_whole_words_only() {
+        let g = gaz();
+        // "Korthun" must not match inside another word.
+        assert_eq!(g.mentioned_in("the Korthuns").len(), 0);
+        assert_eq!(g.mentioned_in("near Korthun, north").len(), 1);
     }
 }
