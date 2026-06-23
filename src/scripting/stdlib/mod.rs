@@ -13,6 +13,7 @@ mod export;
 mod fs;
 pub mod helpers;
 mod ink;
+mod inner_socrates;
 pub mod io;
 mod keymap;
 mod lang;
@@ -31,6 +32,7 @@ use rust_multistackvm::multistackvm::VM;
 pub fn register_ink_stdlib(vm: &mut VM) -> Result<()> {
     ink::register(vm)?;
     io::register(vm)?;
+    inner_socrates::register(vm)?;
     keymap::register(vm)?;
     app::register(vm)?;
     fs::register(vm)?;

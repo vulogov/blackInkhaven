@@ -18,6 +18,7 @@ pub fn run(project: &Path, cmd: InnerSocratesCommand) -> Result<()> {
             check(project, text, paragraph, slow, max_cost, force)
         }
         InnerSocratesCommand::Timeline { max_cost, force } => timeline(project, max_cost, force),
+        InnerSocratesCommand::Findings(cmd) => findings(project, cmd),
         InnerSocratesCommand::Ledger => ledger(project),
         InnerSocratesCommand::Persona(cmd) => persona(project, cmd),
         InnerSocratesCommand::Suggestions(cmd) => suggestions(project, cmd),
@@ -425,6 +426,44 @@ fn resolve_prose(
             Ok((String::from_utf8_lossy(&bytes).into_owned(), Some(id)))
         }
         (None, None) => Err(Error::Config("give --text \"…\" or --paragraph <id>".into())),
+    }
+}
+
+/// Inspect persisted findings — `list` (all) / `history` (one paragraph, over time).
+fn findings(project: &Path, cmd: crate::cli::FindingsCommand) -> Result<()> {
+    use crate::cli::FindingsCommand;
+    let store = InnerSocratesStore::open_for_project(project)
+        .map_err(|e| Error::Store(format!("inner-socrates store: {e}")))?;
+    match cmd {
+        FindingsCommand::List => {
+            let all = store.list_findings().map_err(|e| Error::Store(format!("{e}")))?;
+            if all.is_empty() {
+                println!("(no findings recorded yet)");
+                return Ok(());
+            }
+            for sf in &all {
+                println!("  [{}] {}", sf.finding.category.label(), sf.finding.question);
+            }
+            println!("\n{} finding(s).", all.len());
+            Ok(())
+        }
+        FindingsCommand::History { paragraph } => {
+            let id = uuid::Uuid::parse_str(&paragraph)
+                .map_err(|e| Error::Config(format!("bad paragraph id `{paragraph}`: {e}")))?;
+            let hist = store.findings_history(id).map_err(|e| Error::Store(format!("{e}")))?;
+            if hist.is_empty() {
+                println!("(no findings recorded for that paragraph)");
+                return Ok(());
+            }
+            for (at, f) in &hist {
+                let when = chrono::DateTime::<chrono::Utc>::from_timestamp(*at, 0)
+                    .map(|d| d.format("%Y-%m-%d %H:%M").to_string())
+                    .unwrap_or_default();
+                println!("  {when}  [{}] {}", f.category.label(), f.question);
+            }
+            println!("\n{} finding(s) over time.", hist.len());
+            Ok(())
+        }
     }
 }
 

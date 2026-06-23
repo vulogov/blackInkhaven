@@ -3658,6 +3658,9 @@ pub enum InnerSocratesCommand {
         #[arg(long)]
         force: bool,
     },
+    /// Inspect persisted findings.
+    #[command(subcommand)]
+    Findings(FindingsCommand),
     /// List the intent ledger (the deliberate authorial choices the interrogator
     /// respects).
     Ledger,
@@ -3719,6 +3722,15 @@ pub enum SuggestionsCommand {
         #[arg(long)]
         chapter: Option<String>,
     },
+}
+
+/// INNER_SOCRATES-1 — inspecting persisted findings.
+#[derive(Debug, Subcommand)]
+pub enum FindingsCommand {
+    /// List all persisted findings (newest first).
+    List,
+    /// Show a paragraph's findings in chronological order (across re-checks).
+    History { paragraph: String },
 }
 
 /// INNER_SOCRATES-1 — the Reader Persona surface.

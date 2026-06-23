@@ -216,5 +216,15 @@ for §8 detailed design, Appendix A (schema), B (config), E (overlays).
   category to the natural declaration. Dismissing a `socratic_inquiry` in Output
   records it (with the paragraph's chapter) and hints at the threshold; CLI
   `suggestions list|promote|dismiss` promotes a pattern into an intent-ledger entry
-  that then suppresses it. +3 tests, 1710. *Next: P8 — bundle / snapshot / Bund /
-  docs; the deep AI-pane conversation scope + wizard remain.*
+  that then suppresses it. +3 tests, 1710.
+- **P8a — `.isl` ledger bundle (UNRELEASED, 1.3.28-dev).** `bundle` module (pure +
+  tested): `export` serializes matching intent entries to a single-file `.isl`
+  JSON archive (series by default); `parse` reads one back. CLI `bundle export
+  [--scope-level] [--out]` / `bundle import <path> [--conflict]`. +3 tests, 1713.
+- **P8 docs + P8b — Bund stdlib + findings history (UNRELEASED, 1.3.28-dev).**
+  `Documentation/INNER_SOCRATES.md` reference (linked from both indexes).
+  `ink.inner_socrates.*` read-only Bund words (`check.fast`, `findings.list`,
+  `personas.list`, `persona.active`, `ledger.list`, `usage.today`). Store
+  `findings_history(paragraph)` + CLI `findings list | history <paragraph>` (the
+  findings-over-time view; snapshots are per-paragraph, so ordered by emission).
+  1713. *Remaining: the AI-pane conversation/suggestion scopes + persona wizard.*
