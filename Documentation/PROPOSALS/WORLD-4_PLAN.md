@@ -185,6 +185,24 @@
 >   reusing the lexicon_proposal→promote template); then cross-references
 >   (Place/Character/Artefact ↔ World) + Facts↔World provenance; then **P3** (magic
 >   ledger + plakat).*
+> - **P3.2 — plakat map integration (UNRELEASED, 1.3.27-dev).** `src/world/plakat.rs`:
+>   `detect()` (`plakat --version`, graceful absence); `build_map_spec(name, geo,
+>   climate, hydro, demo, places)` emits a **plakat MapSpec v2** as a `serde_json::Value`
+>   (mirrored by shape, not by importing plakat's structs — zero new deps).
+>   Positions come from the compiled layers: mountain ranges from clustering the
+>   heightfield's high cells; rivers run their real D8 watercourse (mouth from
+>   hydrology, source traced upstream by max-inflow accumulation); regions anchor at
+>   each dominant biome's centroid; landmarks from the largest settlements (coastal
+>   cities → `port`), carrying `place_<uuid>` ids where a settlement coincides with an
+>   accepted Place link. `render()` writes the spec under `assets/maps/`, invokes
+>   `plakat map --map-spec … --map-dump-features <png> --map-export-geojson <geojson>
+>   --seed <world seed>` (loads our spec, skips plakat's LLM), then
+>   `parse_landmark_coords()` reads the resolved landmark Points back (north-up GeoJSON
+>   re-flipped to the row-0-north grid) → `WorldStore::update_place_link_coords` refines
+>   each accepted Place's coordinates. CLI `realworld map [--spec-only] [--no-ingest]`.
+>   End-to-end verified (Aldoria: 5 ranges, 8 rivers, 6 regions, 20 landmarks → PNG +
+>   GeoJSON, 20 Places refined). +7 tests. tests 1635→1642. *Next: `Ctrl+B W M` TUI
+>   chord; slow-track polish (coherence, scope chords, cost preflight).*
 >
 > **DEFERRED DELIVERABLE (user-requested 2026-06-25):** once WORLD-4 is *fully*
 > implemented (all five layers + magic), generate `./examples/realworld/Earth.hjson`

@@ -27,6 +27,7 @@ pub fn run(project: &Path, cmd: RealworldCommand) -> Result<()> {
         RealworldCommand::Proposals { cmd } => proposals(project, cmd),
         RealworldCommand::Places => places(project),
         RealworldCommand::Magic { materialize } => magic(project, materialize),
+        RealworldCommand::Map { spec_only, no_ingest } => map(project, spec_only, no_ingest),
     }
 }
 
@@ -229,6 +230,81 @@ fn places(project: &Path) -> Result<()> {
         );
     }
     println!("\n{} world-linked place(s).", links.len());
+    Ok(())
+}
+
+/// Render the world map with plakat. Compiles every layer, emits a MapSpec from
+/// the geology/climate/hydrology/demographics outputs, hands it to `plakat map`,
+/// and reads the resolved landmark positions back to refine Place coordinates.
+fn map(project: &Path, spec_only: bool, no_ingest: bool) -> Result<()> {
+    use crate::world::compile::{compile_astronomy, compile_climate, compile_demographics, compile_hydrology};
+    use crate::world::plakat;
+    use crate::world::storage::WorldStore;
+
+    let def = load(project)?;
+    let astro = compile_astronomy(&def.astronomy);
+    let geo = geology_for(project, &def)?;
+    let climate = compile_climate(&def, &astro, &geo);
+    let hydro = compile_hydrology(&geo, &climate);
+    let demo = compile_demographics(&climate, &hydro);
+
+    // Accepted Places give landmarks stable ids so we can ingest resolved
+    // positions back onto the right cross-reference. An absent store is fine.
+    let store = WorldStore::open_for_project(project).ok();
+    let links = store.as_ref().and_then(|s| s.list_place_links().ok()).unwrap_or_default();
+
+    let spec = plakat::build_map_spec(&def.name, &geo, &climate, &hydro, &demo, &links);
+    let (gw, gh) = (geo.width, geo.height);
+
+    if spec_only {
+        let dir = plakat::maps_dir(project);
+        std::fs::create_dir_all(&dir).map_err(|e| Error::Store(format!("creating {}: {e}", dir.display())))?;
+        let path = dir.join("world.mapspec.json");
+        let body = serde_json::to_string_pretty(&spec)
+            .map_err(|e| Error::Store(format!("serializing spec: {e}")))?;
+        crate::io_atomic::write(&path, body.as_bytes())
+            .map_err(|e| Error::Store(format!("writing {}: {e}", path.display())))?;
+        println!("map · {} ({}×{} grid)", def.name, gw, gh);
+        println!(
+            "  spec: {} ranges, {} rivers, {} regions, {} landmarks",
+            spec["terrain"]["mountain_ranges"].as_array().map(|a| a.len()).unwrap_or(0),
+            spec["water"]["rivers"].as_array().map(|a| a.len()).unwrap_or(0),
+            spec["regions"].as_array().map(|a| a.len()).unwrap_or(0),
+            spec["landmarks"].as_array().map(|a| a.len()).unwrap_or(0),
+        );
+        println!("  → {} (--spec-only; not rendered)", path.display());
+        return Ok(());
+    }
+
+    if let Some(v) = plakat::detect() {
+        println!("map · {} ({}×{} grid) · {v}", def.name, gw, gh);
+    }
+    let art = plakat::render(project, &spec, def.seed_u64(), gw, gh)
+        .map_err(|e| Error::Config(format!("rendering map: {e}")))?;
+
+    println!("  spec:     {}", art.spec_path.display());
+    println!("  features: {}", art.png_path.display());
+    println!("  geojson:  {}", art.geojson_path.display());
+
+    // Ingest: refine each accepted Place's coordinates from the landmark plakat
+    // resolved for it.
+    let mut updated = 0usize;
+    if !no_ingest {
+        if let Some(s) = store.as_ref() {
+            for lm in &art.landmarks {
+                if let Some(pid) = lm.place_id() {
+                    if s.update_place_link_coords(pid, lm.x, lm.y).is_ok() {
+                        updated += 1;
+                    }
+                }
+            }
+        }
+    }
+    println!(
+        "  {} landmark(s) resolved{}",
+        art.landmarks.len(),
+        if no_ingest { String::new() } else { format!(", {updated} Place coordinate(s) refined") }
+    );
     Ok(())
 }
 

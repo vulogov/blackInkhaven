@@ -167,6 +167,15 @@ impl WorldStore {
         )
     }
 
+    /// Update a place link's grid coordinates (used when plakat resolves a
+    /// landmark to a refined map position).
+    pub fn update_place_link_coords(&self, place_id: Uuid, x: usize, y: usize) -> Result<()> {
+        self.engine.execute_with(
+            "UPDATE world_place_links SET x = ?, y = ? WHERE place_id = ?",
+            &[&(x as i64), &(y as i64), &place_id.to_string()],
+        )
+    }
+
     /// Record one slow-track LLM call against today's tally; returns the new count.
     pub fn record_llm_call(&self, day: &str) -> Result<i64> {
         self.engine.execute_with(
