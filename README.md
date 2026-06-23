@@ -21,61 +21,51 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.3.27 — The world, mapped (and a deeper checker)
+## Latest release · 1.3.28 — Inner Socrates
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.3.27.md`](Documentation/RELEASE_NOTES/1.3.27.md)
-· Plan: [`Documentation/PROPOSALS/WORLD-4_PLAN.md`](Documentation/PROPOSALS/WORLD-4_PLAN.md)
-· Tutorials: [`76`](Documentation/Tutorials/76-building-a-world-realworld.md),
-[`77`](Documentation/Tutorials/77-world-maps-and-fact-checking.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.3.28.md`](Documentation/RELEASE_NOTES/1.3.28.md)
+· Reference: [`Documentation/INNER_SOCRATES.md`](Documentation/INNER_SOCRATES.md)
+· Plan: [`Documentation/PROPOSALS/INNER_SOCRATES-1_PLAN.md`](Documentation/PROPOSALS/INNER_SOCRATES-1_PLAN.md)
+· Tutorial: [`78`](Documentation/Tutorials/78-inner-socrates.md)
 
-1.3.25 built a world; 1.3.26 read your prose against it. 1.3.27 **draws** the
-world and makes the checker **deeper** — RFC WORLD-4, toward its P7 polish.
+A third examined-authorship pillar. The ConLang Suite examines your languages; the
+world simulator examines your world; **Inner Socrates examines your prose** —
+surfacing **questions** about its assumptions, framings, tensions, and significance.
+Non-prescriptive by structural commitment: every finding is a question, never a
+correction. RFC INNER_SOCRATES-1, built end to end.
 
-### Maps — `inkhaven realworld map`
+### Two tracks, fifteen questions
 
-Inkhaven emits a **MapSpec v2** from the compiled geology / climate / hydrology /
-demographics layers and renders it with [**plakat**](https://crates.io/crates/plakat)
-(`plakat map --map-spec` loads our spec and skips its own LLM). You get a
-**features PNG** and a **GeoJSON** under `assets/maps/` — mountains clustered from
-the heightfield, rivers on their real D8 course, settlements as landmarks
-(coastal cities become ports) — and plakat's resolved positions are read back to
-**refine each accepted Place's coordinates**. `--spec-only` / `--no-ingest`;
-`Ctrl+B W → M`; plakat is optional (a missing binary degrades to a notice).
+A **Fast track** (deterministic, instant, no LLM — seven categories, five
+languages, ambient on a writing pause or `Ctrl+B J → F`) and a **Slow track** (the
+configured LLM, cost-capped — five prose categories + three that read the prose
+against the project **timeline**). Three severities (Notice / Inquiry / Probe) map
+onto the Output pane; quiet by default.
 
-### A deeper fact-checker
+### Reader Personas & the intent ledger
 
-- **Slow track** — `fact-check --slow` asks the LLM for the subtle contradictions
-  patterns miss, with a **cost preflight**, a per-call soft cap (`--max-cost` /
-  `--force`), a daily ceiling, and retry-with-backoff. An opt-in **idle auto**
-  variant runs it in the background (`Ctrl+B W → S`).
-- **Coherence** — `realworld coherence <node>` checks a run of paragraphs
-  **against each other** (a character in two places, a fact reversed), citing the
-  `¶` numbers.
-- **Scope chords** — `Ctrl+B W → F` then `P` paragraph / `B` book / `R` recent.
-- **Economy** — a fifth fast category: a metal worked that the geology doesn't
-  yield.
+Five bundled **personas** read the same prose differently (Inner Socrates, the
+Careful Editor, the Skeptical Reader, the First-Time Reader, the Slow Reader);
+author your own (`persona new`, or `Ctrl+B J → N` for an AI-guided wizard). The
+**intent ledger** — the prose sibling of the world simulator's magic ledger —
+suppresses what you've declared deliberate; the **promotion mechanism** builds it
+from your own repeated dismissals, and `.isl` bundles carry it to the next book.
 
-### Multilingual, never-fail
+### Surfaces
 
-Place names resolve in their **grammatical cases** (`в Москве` matches `Москва`;
-German genitive). Language detection reports a **confidence** and degrades to
-English rather than guessing; the optional enhanced parser
-(`INKHAVEN_LANG_MODEL`) is never required, and detection never panics.
+- **`Ctrl+B J`** — the hub: `F` check · `C` converse · `N` new persona · `S` cycle
+  persona · `L` ledger · `A` ambient toggle. (`Ctrl+B I` stays book-info.)
+- **CLI** — `inkhaven inner-socrates check [--slow] · timeline · persona … ·
+  suggestions … · bundle … · findings …`; read-only `ink.inner_socrates.*` Bund
+  words. A new **Intent** system book (the 13th) seeds on init.
 
-### Author-declared setting & a ready-made Earth
-
-New optional `geography` / `hydrology` / `economy` blocks + expanded `geology`
-materialize into a **Setting** chapter — and **declared landmarks** become
-gazetteer entries the checker resolves by name, while **declared resources** join
-its known goods. The repo ships a complete
-[`examples/realworld/Earth.hjson`](examples/realworld/Earth.hjson) to start from.
+Also in this release: the **WORLDBUILDING.md** reference completes WORLD-4's docs.
 
 ### Dependencies & compatibility
 
-**Zero new dependencies** — plakat is an optional external binary (not a crate);
-the MapSpec and GeoJSON use `serde_json`; the slow track reuses the existing AI
-client and background-job harness. Non-breaking and opt-in throughout. Tests
-1625 → 1658.
+**Zero new dependencies** — everything is inherited from the Output pane and the
+world simulator (the language detector, the cost/retry helpers, the ledger pattern,
+the background-job harness). Non-breaking and opt-in throughout. Tests 1658 → 1713.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
