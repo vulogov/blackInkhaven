@@ -28,6 +28,7 @@ If you've never touched Bund: start with
 | HJSON bootstrap | `inkhaven.hjson` → `scripting.bootstrap: '''…'''` | Tiny inline rules. Runs once at project open. |
 | Save / rename / delete hooks | Lambda named `hook.on_save` etc. | Runs after the matching `Store::*` mutation. See tutorial. |
 | Chord rebinding | `ink.key.bind`, `ink.key.bind_lambda`, … | Sandbox-gated. See [KEYS_REASSIGNMENT.md](../KEYS_REASSIGNMENT.md). |
+| Output pane | `ink.io.print`, `ink.io.log`, `ink.io.notify`, `ink.io.message.*` | Post / read structured notices on the right-region Output pane (1.3.24+). Read words are `store_read`; write words are `fs_write`. See [OUTPUT_PANE.md](../OUTPUT_PANE.md#scripting-the-pane--inkio). |
 
 ## The "Adam" VM
 

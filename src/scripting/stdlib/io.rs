@@ -25,6 +25,10 @@ use crate::pane::output::{kinds, Lifetime, Message, OutputStore, Severity};
 
 thread_local! {
     static PRINT_BUFFER: RefCell<String> = const { RefCell::new(String::new()) };
+    /// PANE-1 — line-accumulator for mirroring bare `print` / `println` into the
+    /// Output pane. Fragments from successive `print` calls join until a newline,
+    /// so `"a" print "b" println` becomes ONE `bund_print` message, not three.
+    static OUTPUT_LINE: RefCell<String> = const { RefCell::new(String::new()) };
 }
 
 /// Register inkhaven's `print` / `println` overrides plus the `ink.io.*` Output
@@ -266,5 +270,42 @@ fn capture(vm: &mut VM, newline: bool) -> std::result::Result<&mut VM, BundError
             }
         });
     }
+    // PANE-1 — also mirror bare print into the persistent Output pane (a no-op
+    // unless an Output store is installed, i.e. the TUI), so script output is
+    // reliably visible there even without the floating Bund pane. The existing
+    // routing above is UNCHANGED: the Ctrl+Z E eval modal still drains
+    // PRINT_BUFFER, and the floating pane still shows live output.
+    mirror_bare_print_to_output(&text, newline);
     Ok(vm)
+}
+
+/// Accumulate bare-`print` fragments into whole lines and emit each completed
+/// line as a `bund_print` message on the Output pane. A no-op when no Output
+/// store is active, so plain-CLI `inkhaven bund "…"` is unaffected.
+fn mirror_bare_print_to_output(text: &str, newline: bool) {
+    if crate::pane::output::active().is_none() {
+        return;
+    }
+    OUTPUT_LINE.with(|b| {
+        let mut buf = b.borrow_mut();
+        buf.push_str(text);
+        if newline {
+            buf.push('\n');
+        }
+        // Emit every complete line; keep any trailing partial buffered until the
+        // next newline (most output is line-oriented, so this rarely lingers).
+        while let Some(nl) = buf.find('\n') {
+            let line: String = buf.drain(..=nl).collect();
+            let line = line.trim_end_matches(['\n', '\r']);
+            if !line.trim().is_empty() {
+                let msg = Message::new(
+                    kinds::BUND_PRINT,
+                    Severity::Info,
+                    Lifetime::Session(100),
+                    serde_json::json!({ "text": line }),
+                );
+                crate::pane::output::emit(&msg);
+            }
+        }
+    });
 }

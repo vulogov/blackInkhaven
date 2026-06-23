@@ -54,3 +54,33 @@ pub fn uninstall() {
 pub fn emit(message: &super::Message) -> Option<uuid::Uuid> {
     active().and_then(|s| s.emit(message).ok())
 }
+
+/// PANE-1 P5 — emit a single `ai_task_complete` notice for a finished
+/// long-running task (§8.10). `target` is an optional paragraph the Primary
+/// action jumps to. Shared by the TUI (deep refresh, fact-check) and any
+/// CLI/Bund batch builder so the envelope (Primary/Dismiss/Pin actions,
+/// `Hours(12)` lifetime) stays identical everywhere. A no-op when no store is
+/// installed.
+pub fn emit_task_complete(
+    task: &str,
+    summary: &str,
+    elapsed_secs: u64,
+    target: Option<uuid::Uuid>,
+) -> Option<uuid::Uuid> {
+    use super::types::{kinds, ActionId, Lifetime, Message, Severity};
+    let mut meta = serde_json::json!({
+        "text": summary,
+        "task": task,
+        "elapsed_seconds": elapsed_secs,
+        "summary": summary,
+    });
+    if let (Some(obj), Some(id)) = (meta.as_object_mut(), target) {
+        obj.insert("target_paragraph".into(), serde_json::Value::String(id.to_string()));
+    }
+    let mut msg = Message::new(kinds::AI_TASK_COMPLETE, Severity::Info, Lifetime::Hours(12.0), meta)
+        .with_actions(vec![ActionId::Primary, ActionId::Dismiss, ActionId::Pin]);
+    if let Some(id) = target {
+        msg = msg.with_source_paragraph(id);
+    }
+    emit(&msg)
+}

@@ -41,6 +41,7 @@ pub const SYSTEM_BOOKS: &[(&str, &str)] = &[
     ("places", "Places"),
     ("characters", "Characters"),
     ("artefacts", "Artefacts"),
+    ("world", "World"),
     ("threads", "Threads"),
     ("planning", "Planning"),
     ("language", "Language"),
@@ -61,6 +62,12 @@ pub const SYSTEM_TAG_PROMPTS: &str = "prompts";
 pub const SYSTEM_TAG_PLACES: &str = "places";
 pub const SYSTEM_TAG_CHARACTERS: &str = "characters";
 pub const SYSTEM_TAG_ARTEFACTS: &str = "artefacts";
+/// WORLD-4 — the world-simulation book (the 10th system book, after Artefacts).
+/// The `inkhaven realworld` compiler materializes its deterministic layer
+/// outputs here as structured paragraphs (astronomy / geology / climate /
+/// hydrology / demographics / magic ledger). Compiler-owned: re-compiling
+/// regenerates the structured leaves; author prose lives alongside.
+pub const SYSTEM_TAG_WORLD: &str = "world";
 /// 1.2.14+ — top-level container for narrative
 /// plot threads.  Each thread is an HJSON-fronted
 /// paragraph capturing one named arc (the
@@ -1751,6 +1758,19 @@ fn project_basename(project_root: &std::path::Path) -> String {
 mod tests {
     use super::*;
     use crate::store::node::EventData;
+
+    #[test]
+    fn world_system_book_is_registered_after_artefacts() {
+        // WORLD-4 — the World book is the 10th system book, seeded right after
+        // Artefacts (so the worldbuilding cluster Places/Characters/Artefacts/
+        // World sits together).
+        let tags: Vec<&str> = SYSTEM_BOOKS.iter().map(|(t, _)| *t).collect();
+        let artefacts = tags.iter().position(|t| *t == SYSTEM_TAG_ARTEFACTS).unwrap();
+        let world = tags.iter().position(|t| *t == SYSTEM_TAG_WORLD).unwrap();
+        assert_eq!(world, artefacts + 1, "World must immediately follow Artefacts");
+        // The const and the array entry agree, and the title is "World".
+        assert_eq!(SYSTEM_BOOKS[world], (SYSTEM_TAG_WORLD, "World"));
+    }
 
     fn make_event_node() -> Node {
         Node {

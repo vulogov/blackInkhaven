@@ -1572,6 +1572,32 @@ impl super::super::App {
                 let dim = Style::default().fg(Color::DarkGray);
                 let trace = m.metadata.get("trace").and_then(|v| v.as_array());
                 let alts = m.metadata.get("alternatives").and_then(|v| v.as_array());
+                // PANE-1 P3 — lexicon proposals: list every candidate word.
+                let proposals = m.metadata.get("proposals").and_then(|v| v.as_array());
+                // PANE-1 P3 — variety renderings: list each base→variety pair.
+                let renderings = m.metadata.get("renderings").and_then(|v| v.as_array());
+                if let Some(proposals) = proposals {
+                    for p in proposals {
+                        let form = p.get("form").and_then(|v| v.as_str()).unwrap_or("");
+                        let gloss = p.get("gloss").and_then(|v| v.as_str()).unwrap_or("");
+                        let pos = p.get("pos").and_then(|v| v.as_str()).unwrap_or("");
+                        lines.push(Line::from(Span::styled(
+                            format!("      {form:<16} {gloss} ({pos})"),
+                            dim,
+                        )));
+                    }
+                }
+                if let Some(renderings) = renderings {
+                    for r in renderings {
+                        let base = r.get("base").and_then(|v| v.as_str()).unwrap_or("");
+                        let rendered = r.get("rendered").and_then(|v| v.as_str()).unwrap_or("");
+                        let arrow = if base == rendered { " =" } else { "→" };
+                        lines.push(Line::from(Span::styled(
+                            format!("      {base}  {arrow}  {rendered}"),
+                            dim,
+                        )));
+                    }
+                }
                 if let Some(trace) = trace {
                     for e in trace {
                         let src = e.get("source").and_then(|v| v.as_str()).unwrap_or("");
@@ -1598,7 +1624,11 @@ impl super::super::App {
                         )));
                     }
                 }
-                if trace.is_none() && alts.is_none() {
+                if trace.is_none()
+                    && alts.is_none()
+                    && proposals.is_none()
+                    && renderings.is_none()
+                {
                     if let Some(obj) = m.metadata.as_object() {
                         for (k, v) in obj.iter().filter(|(k, _)| k.as_str() != "text") {
                             lines.push(Line::from(Span::styled(format!("      {k}: {v}"), dim)));
@@ -1626,8 +1656,24 @@ impl super::super::App {
                 width: inner.width,
                 height: 1,
             };
+            // The action row is context-aware: a lexicon proposal advertises
+            // its Enter→accept; a translation result, r→remember.
+            use crate::pane::output::kinds as k;
+            let sel_kind = msgs.get(self.output_selected).map(|m| m.kind.as_str());
+            let hint_text = match sel_kind {
+                Some(s) if s == k::LEXICON_PROPOSAL => {
+                    " ↑↓ · ⏎ accept · o expand · a ask AI · d dismiss · p pin · ^B Tab"
+                }
+                Some(s) if s == k::TRANSLATION_RESULT => {
+                    " ↑↓ · ⏎ insert · e edit+remember · r remember · a ask AI · d dismiss · ^B Tab"
+                }
+                Some(s) if s == k::AI_TASK_COMPLETE => {
+                    " ↑↓ · ⏎ open target · o expand · d dismiss · p pin · ^B Tab"
+                }
+                _ => " ↑↓ · o expand · r remember · a ask AI · d dismiss · p pin · ^B Tab",
+            };
             let hint = Paragraph::new(Line::from(Span::styled(
-                " ↑↓ · o expand · r remember · a ask AI · d dismiss · p pin · ^B Tab",
+                hint_text,
                 Style::default().fg(Color::DarkGray),
             )));
             f.render_widget(hint, footer);
@@ -2108,20 +2154,44 @@ impl super::super::App {
         // 1.3.12 DEEP-1 — background-job spinner chip (persists regardless of
         // what else writes the status line).
         spans.extend(self.bg_job_chip_spans());
-        spans.push(Span::raw("  "));
-        spans.push(Span::raw(self.status.clone()));
-
-        // Right-aligned progress widget — drawn on its own
-        // Paragraph with right alignment so it can't be pushed
-        // off-screen by a long status message; the left part
-        // truncates if the terminal is narrow.
-        let progress_spans = self.progress_widget_spans();
-        if !progress_spans.is_empty() {
-            let right = Paragraph::new(Line::from(progress_spans))
-                .alignment(ratatui::layout::Alignment::Right);
-            f.render_widget(right, area);
+        // PANE-1 P4 — a thin separator delimits the transient status text from
+        // the persistent state chips to its left, so the eye can tell
+        // "what just happened" apart from "what's always true".
+        if !self.status.is_empty() {
+            spans.push(Span::styled(" │ ", Style::default().fg(Color::DarkGray)));
+            spans.push(Span::raw(self.status.clone()));
+        } else {
+            spans.push(Span::raw("  "));
         }
-        f.render_widget(Paragraph::new(Line::from(spans)), area);
+
+        // PANE-1 P4 — split the bar into two non-overlapping regions instead of
+        // painting the left spans and the right-aligned progress widget onto the
+        // SAME rect (where a long status could overwrite the progress). The left
+        // region (chips + status) truncates within itself; the progress widget
+        // owns a reserved right column and is always visible.
+        let progress_spans = self.progress_widget_spans();
+        if progress_spans.is_empty() {
+            f.render_widget(Paragraph::new(Line::from(spans)), area);
+        } else {
+            let progress_w: u16 = progress_spans
+                .iter()
+                .map(|s| s.content.chars().count() as u16)
+                .sum::<u16>()
+                .saturating_add(1); // one column of breathing room
+            let chunks = ratatui::layout::Layout::default()
+                .direction(ratatui::layout::Direction::Horizontal)
+                .constraints([
+                    ratatui::layout::Constraint::Min(10),
+                    ratatui::layout::Constraint::Length(progress_w),
+                ])
+                .split(area);
+            f.render_widget(Paragraph::new(Line::from(spans)), chunks[0]);
+            f.render_widget(
+                Paragraph::new(Line::from(progress_spans))
+                    .alignment(ratatui::layout::Alignment::Right),
+                chunks[1],
+            );
+        }
     }
 
     pub(in crate::tui::app) fn draw_search_overlay(&self, f: &mut ratatui::Frame, area: Rect) {

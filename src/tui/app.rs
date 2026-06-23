@@ -2190,7 +2190,11 @@ impl App {
             bund_pending: false,
             view_pending: false,
             focus: Focus::Tree,
-            right_pane: RightPane::Ai,
+            // PANE-1 — Output is the default right-side pane on first launch
+            // (RFC §6, "Output (default on first launch)"). Returning users keep
+            // whichever pane they left active: `restore_session` overrides this
+            // from `.session.json` when a `right_pane` was saved.
+            right_pane: RightPane::Output,
             output_selected: 0,
             output_expanded: std::collections::HashSet::new(),
             tree_cursor: 0,
@@ -2779,7 +2783,8 @@ impl App {
         let worker_cancel = cancel.clone();
         std::thread::spawn(move || work(tx, worker_cancel));
         self.status = format!("⟳ {label}…");
-        self.bg_job = Some(BgJob { rx, label, kind, cancel });
+        self.bg_job =
+            Some(BgJob { rx, label, kind, cancel, started: std::time::Instant::now() });
         true
     }
 
@@ -2811,15 +2816,21 @@ impl App {
         match done {
             Some(result) => {
                 let kind = job.kind;
+                let elapsed = job.started.elapsed().as_secs();
                 drop(job);
-                self.on_bg_job_done(kind, result);
+                self.on_bg_job_done(kind, result, elapsed);
             }
             None => self.bg_job = Some(job),
         }
     }
 
     /// Completion dispatch for a finished background job.
-    fn on_bg_job_done(&mut self, kind: BgJobKind, result: std::result::Result<String, String>) {
+    fn on_bg_job_done(
+        &mut self,
+        kind: BgJobKind,
+        result: std::result::Result<String, String>,
+        elapsed_secs: u64,
+    ) {
         match kind {
             BgJobKind::DeepRefresh => match result {
                 // The Ok payload is the outcome verb ("done" / "cancelled").
@@ -2835,10 +2846,36 @@ impl App {
                     )
                     .summary();
                     self.status = format!("deep refresh {verb} — {summary}");
+                    // PANE-1 P5 — a single completion notification in Output, so an
+                    // author who switched panes during the (long) refresh is told.
+                    // Only on a real completion, not a cancellation.
+                    if verb != "cancelled" {
+                        self.emit_ai_task_complete(
+                            "deep_world_refresh",
+                            &format!("Deep world refresh {verb}. {summary}"),
+                            elapsed_secs,
+                            None,
+                        );
+                    }
                 }
                 Err(e) => self.status = format!("deep refresh failed: {e}"),
             },
         }
+    }
+
+    /// PANE-1 P5 — emit a single `ai_task_complete` Output message when a
+    /// long-running AI task finishes (§8.10). `target` is an optional paragraph
+    /// to jump to via the Primary action. Delegates to the shared
+    /// `pane::output::emit_task_complete` so the TUI and CLI/Bund builders post
+    /// an identical envelope. A no-op when no Output store is installed.
+    fn emit_ai_task_complete(
+        &self,
+        task: &str,
+        summary: &str,
+        elapsed_secs: u64,
+        target: Option<uuid::Uuid>,
+    ) {
+        crate::pane::output::emit_task_complete(task, summary, elapsed_secs, target);
     }
 
     /// 1.3.12 DEEP-1 P2 — kick off the deep AI world refresh (`Ctrl+V Shift+F`)
@@ -2941,6 +2978,11 @@ impl App {
                     .as_ref()
                     .map(|i| i.response.clone())
                     .unwrap_or_default();
+                let elapsed_secs = self
+                    .inference
+                    .as_ref()
+                    .map(|i| i.started_at.elapsed().as_secs())
+                    .unwrap_or(0);
                 let findings = crate::facts_scan::parse_findings(&resp, &title, 0);
                 if !findings.is_empty() {
                     self.status = format!(
@@ -2948,6 +2990,19 @@ impl App {
                         findings.len(),
                     );
                 }
+                // PANE-1 P5 — a full-chapter fact-check is a long AI task with a
+                // target paragraph (§8.10): post a completion notice so an author
+                // who switched panes during the check is told, and can jump to the
+                // checked paragraph via the Primary action.
+                let summary = if findings.is_empty() {
+                    format!("Fact check of \"{title}\": no contradictions.")
+                } else {
+                    format!(
+                        "Fact check of \"{title}\": {} contradiction(s).",
+                        findings.len()
+                    )
+                };
+                self.emit_ai_task_complete("fact_check", &summary, elapsed_secs, Some(target));
                 self.fact_check_nav = FactCheckNav {
                     target: Some(target),
                     findings,
@@ -4646,6 +4701,13 @@ impl App {
         if let Some(f) = restored_focus {
             self.focus = f;
         }
+
+        // PANE-1 — restore the active right-side pane.
+        match state.right_pane.as_str() {
+            "Output" => self.right_pane = RightPane::Output,
+            "Ai" => self.right_pane = RightPane::Ai,
+            _ => {}
+        }
     }
 
     fn handle_input_key(&mut self, key: KeyEvent, is_search: bool) -> Result<bool> {
@@ -5601,6 +5663,9 @@ pub(super) struct BgJob {
     /// Set by the UI (re-pressing the launch chord) to request cancellation;
     /// the worker checks it between/within scans and stops promptly.
     pub cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// PANE-1 P5 — when the job started, so completion can report elapsed time
+    /// in its `ai_task_complete` Output notification.
+    pub started: std::time::Instant,
 }
 
 /// Drain everything available on a background job's channel without blocking:
@@ -6615,12 +6680,18 @@ impl App {
     /// only Output and AI today both directions toggle; focus moves to the
     /// region so its keys (and the cycle chord) take effect immediately.
     fn cycle_right_pane(&mut self, _forward: bool) {
-        self.right_pane = match self.right_pane {
+        let target = match self.right_pane {
             RightPane::Output => RightPane::Ai,
             RightPane::Ai => RightPane::Output,
         };
         self.output_selected = 0;
+        // change_focus runs the editor-defocus bookkeeping and (for Focus::Ai)
+        // forces right_pane = Ai; re-assert the real target so cycling can land
+        // on the Output pane too.
         self.change_focus(Focus::Ai);
+        self.right_pane = target;
+        // PANE-1 — persist the pane choice so it survives a restart.
+        let _ = self.save_session();
         self.status = match self.right_pane {
             RightPane::Output => "pane → Output".into(),
             RightPane::Ai => "pane → AI".into(),
@@ -6680,9 +6751,239 @@ impl App {
                 }
             }
             KeyCode::Char('r') if plain => self.remember_output_translation(),
+            KeyCode::Char('e') if plain => self.edit_output_translation(),
+            KeyCode::Enter => self.output_primary_action(),
             _ => {}
         }
         Ok(false)
+    }
+
+    /// PANE-1 P5 — the per-kind **primary** action (`Enter`), §8.3. The primitive
+    /// `Primary` means different things per kind: a `translation_result` inserts
+    /// its target at the editor cursor; a `lexicon_proposal` promotes its words
+    /// into the Dictionary; an `ai_task_complete` jumps to its target paragraph.
+    /// Kinds without a primary action say so.
+    fn output_primary_action(&mut self) {
+        let kind = crate::pane::output::active()
+            .and_then(|s| s.active().ok())
+            .unwrap_or_default()
+            .get(self.output_selected)
+            .map(|m| m.kind.clone());
+        match kind.as_deref() {
+            Some(k) if k == crate::pane::output::kinds::TRANSLATION_RESULT => {
+                self.insert_output_translation();
+            }
+            Some(k) if k == crate::pane::output::kinds::LEXICON_PROPOSAL => {
+                self.promote_output_message();
+            }
+            Some(k) if k == crate::pane::output::kinds::AI_TASK_COMPLETE => {
+                self.jump_to_output_target();
+            }
+            Some(_) => self.status = "no primary action for this message".into(),
+            None => {}
+        }
+    }
+
+    /// PANE-1 P5 — insert a `translation_result`'s target text at the editor
+    /// cursor (the `Enter`/Primary "insert" action, §8.3). Returns whether it
+    /// landed, so the `e` edit+remember gesture can chain a Remember after.
+    fn insert_output_translation(&mut self) -> bool {
+        let target = crate::pane::output::active()
+            .and_then(|s| s.active().ok())
+            .unwrap_or_default()
+            .get(self.output_selected)
+            .filter(|m| m.kind == crate::pane::output::kinds::TRANSLATION_RESULT)
+            .and_then(|m| m.metadata.get("target").and_then(|v| v.as_str()).map(str::to_string));
+        let Some(target) = target else {
+            self.status = "insert: not a translation result".into();
+            return false;
+        };
+        if self.opened.is_none() {
+            self.status = "insert: no paragraph open".into();
+            return false;
+        }
+        let n = target.chars().count();
+        if let Some(doc) = self.opened.as_mut() {
+            doc.textarea.insert_str(&target);
+            doc.dirty = true;
+        }
+        self.refresh_search_after_edit();
+        self.status = format!("inserted translation ({n} chars)");
+        true
+    }
+
+    /// PANE-1 P5 — `e` on a `translation_result`: edit + remember in one gesture.
+    /// Insert the target at the cursor (so the author can edit it in place) AND
+    /// commit the source→target pair to translation memory, so the correction is
+    /// both in the manuscript and recalled next time. A no-op on other kinds.
+    fn edit_output_translation(&mut self) {
+        let is_translation = crate::pane::output::active()
+            .and_then(|s| s.active().ok())
+            .unwrap_or_default()
+            .get(self.output_selected)
+            .map(|m| m.kind == crate::pane::output::kinds::TRANSLATION_RESULT)
+            .unwrap_or(false);
+        if !is_translation {
+            self.status = "Edit: only for translation results".into();
+            return;
+        }
+        if self.insert_output_translation() {
+            // remember_output_translation sets its own status; follow with a
+            // combined one so the author sees both halves happened.
+            self.remember_output_translation();
+            self.status = format!("inserted + {}", self.status);
+        }
+    }
+
+    /// PANE-1 P5 — open the paragraph an `ai_task_complete` (or any message that
+    /// carries one) points at: the typed `source_paragraph_id`, else a
+    /// `target_paragraph` UUID string in metadata. The "jump to target" half of
+    /// the Primary action (§8.10).
+    fn jump_to_output_target(&mut self) {
+        let id = crate::pane::output::active()
+            .and_then(|s| s.active().ok())
+            .unwrap_or_default()
+            .get(self.output_selected)
+            .and_then(|m| {
+                m.source_paragraph_id.or_else(|| {
+                    m.metadata
+                        .get("target_paragraph")
+                        .and_then(|v| v.as_str())
+                        .and_then(|s| uuid::Uuid::parse_str(s).ok())
+                })
+            });
+        let Some(id) = id else {
+            self.status = "jump: this notification has no target paragraph".into();
+            return;
+        };
+        match self.open_paragraph_by_uuid(id) {
+            Ok(()) => self.status = "opened target paragraph".into(),
+            Err(e) => self.status = format!("jump: {e}"),
+        }
+    }
+
+    /// PANE-1 P3 — the promote action (`Enter`) on a `lexicon_proposal`: commit
+    /// every word the message carries (`metadata.proposals`) into the language's
+    /// Dictionary through the same rich-import path `generate-lexicon --yes`
+    /// uses, then dismiss the message and reindex. Advisory → committed, with no
+    /// second model call (the forms were already proposed + dedup-gated). A
+    /// no-op on other kinds.
+    fn promote_output_message(&mut self) {
+        let msgs = crate::pane::output::active()
+            .and_then(|s| s.active().ok())
+            .unwrap_or_default();
+        let Some(m) = msgs.get(self.output_selected) else { return };
+        if m.kind != crate::pane::output::kinds::LEXICON_PROPOSAL {
+            self.status = "Accept: only for lexicon proposals".into();
+            return;
+        }
+        let msg_id = m.id;
+        let language = m
+            .metadata
+            .get("language")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let era = m
+            .metadata
+            .get("era")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let Some(proposals) = m.metadata.get("proposals").and_then(|v| v.as_array()) else {
+            self.status = "Accept: proposal carries no words".into();
+            return;
+        };
+        // Build the import entries from the message metadata (no engine re-run).
+        let entries: Vec<crate::cli::language::ImportEntry> = proposals
+            .iter()
+            .filter_map(|p| {
+                let word = p.get("form").and_then(|v| v.as_str())?.trim().to_string();
+                if word.is_empty() {
+                    return None;
+                }
+                let s = |k: &str| {
+                    p.get(k).and_then(|v| v.as_str()).unwrap_or("").trim().to_string()
+                };
+                let pos = {
+                    let raw = s("pos");
+                    if raw.is_empty() { "noun".to_string() } else { raw }
+                };
+                let domain = p
+                    .get("domain")
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|d| d.as_str())
+                            .map(|d| d.trim().to_string())
+                            .filter(|d| !d.is_empty())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                Some(crate::cli::language::ImportEntry {
+                    word,
+                    pos,
+                    translation: s("gloss"),
+                    example: s("example"),
+                    register: s("register"),
+                    domain,
+                    era: era.clone(),
+                    ..Default::default()
+                })
+            })
+            .collect();
+        if entries.is_empty() {
+            self.status = "Accept: no valid words to add".into();
+            return;
+        }
+
+        // Resolve the language sub-book under the project's open hierarchy.
+        let lang_book = self
+            .hierarchy
+            .iter()
+            .find(|n| {
+                n.system_tag.as_deref()
+                    == Some(crate::store::SYSTEM_TAG_LANGUAGES)
+            })
+            .map(|n| n.id)
+            .map(|root| self.hierarchy.children_of(Some(root)))
+            .and_then(|books| {
+                books
+                    .into_iter()
+                    .find(|b| b.title.eq_ignore_ascii_case(&language))
+            });
+        let Some(lang_book) = lang_book else {
+            self.status = format!("Accept: language `{language}` not found");
+            return;
+        };
+
+        let cfg = match crate::config::Config::load_layered(
+            &crate::project::ProjectLayout::new(&self.layout.root).config_path(),
+        ) {
+            Ok(c) => c,
+            Err(e) => {
+                self.status = format!("Accept: {e}");
+                return;
+            }
+        };
+
+        let mut added = 0usize;
+        for entry in &entries {
+            match crate::cli::language::add_imported_dictionary_entry(
+                &self.store,
+                &cfg,
+                &lang_book,
+                entry,
+            ) {
+                Ok(_) => added += 1,
+                Err(_) => {}
+            }
+        }
+
+        if let Some(s) = crate::pane::output::active() {
+            let _ = s.dismiss(msg_id);
+        }
+        self.status = format!("accepted {added} word(s) into {language}'s Dictionary");
     }
 
     /// PANE-1 P2 — the `r` Remember action on a `translation_result`: commit its
@@ -6733,6 +7034,150 @@ impl App {
             Ok(()) => self.status = format!("remembered: {source} → {target}"),
             Err(e) => self.status = format!("Remember: save failed: {e}"),
         }
+    }
+
+    /// PANE-1 / LANG-3 — Ctrl+B D ("Deterministic"). Rule-based + translation-memory
+    /// translation of the open paragraph INTO an invented language, routed to the
+    /// Output pane. Sibling to Ctrl+B Q (AI prose → AI pane): same language
+    /// resolution, different engine + destination. No model call, fully
+    /// reproducible. The engine reuses the already-open project store + hierarchy
+    /// (no second DuckDB/bdslib handle on the same file), and emits the result,
+    /// confidence, per-word trace, and uncovered-word report via the shared
+    /// `emit_translation_output` path — so the message carries the same `o`/`r`/`a`
+    /// Output actions a CLI/Bund translation would.
+    fn translate_lang3_to_output(&mut self) {
+        use crate::conlang::translate;
+
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "translate: no paragraph open".into();
+            return;
+        };
+        let text = doc.textarea.lines().join("\n");
+        if text.trim().is_empty() {
+            self.status = "translate: paragraph is empty".into();
+            return;
+        }
+
+        // Resolve the target invented language — mirror Ctrl+B Q exactly:
+        // 0 sub-books → error, 1 → direct, 2+ → first (named on the status bar).
+        let Some(lang_root_id) = self
+            .hierarchy
+            .iter()
+            .find(|n| {
+                n.system_tag.as_deref()
+                    == Some(crate::store::SYSTEM_TAG_LANGUAGES)
+            })
+            .map(|n| n.id)
+        else {
+            self.status = "translate: Language system book missing — \
+                           re-open the project to seed it"
+                .into();
+            return;
+        };
+        let lang_books = self.hierarchy.children_of(Some(lang_root_id));
+        let multiple = lang_books.len() > 1;
+        let Some(lang_book) = lang_books.into_iter().next() else {
+            self.status = "translate: no invented languages defined — \
+                           run `inkhaven language init <name>` first"
+                .into();
+            return;
+        };
+        let language = lang_book.title.clone();
+
+        // Load the engine inputs against the project's open store/hierarchy.
+        // Phonology is optional (inflection/allophony only); the rest default
+        // cleanly so a half-built language still produces a best-effort map.
+        macro_rules! bail {
+            ($e:expr) => {{
+                self.status = format!("translate: {}", $e);
+                return;
+            }};
+        }
+        let phon = match crate::cli::language::load_phonology(
+            &self.store,
+            &self.hierarchy,
+            &lang_book,
+        ) {
+            Ok(p) => p.unwrap_or_default(),
+            Err(e) => bail!(e),
+        };
+        let morph = match crate::cli::language::load_morphology(
+            &self.store,
+            &self.hierarchy,
+            &lang_book,
+        ) {
+            Ok(m) => m.unwrap_or_default(),
+            Err(e) => bail!(e),
+        };
+        let grammar = match crate::cli::language::load_grammar_spec(
+            &self.store,
+            &self.hierarchy,
+            &lang_book,
+        ) {
+            Ok((spec, _)) => spec.grammar,
+            Err(e) => bail!(e),
+        };
+        let entries = match crate::cli::language::load_dictionary(
+            &self.store,
+            &self.hierarchy,
+            &lang_book,
+        ) {
+            Ok(e) => e,
+            Err(e) => bail!(e),
+        };
+
+        // Tier 2 (retrieval): layer translation memory over the rule-based
+        // result. A non-empty memory gets a semantic query embedding.
+        let mem = match translate::memory::TranslationMemory::load(
+            &self.layout.root,
+            &language,
+        ) {
+            Ok(m) => m,
+            Err(e) => bail!(e),
+        };
+        let query_embedding: Option<Vec<f32>> = if mem.is_empty() {
+            None
+        } else {
+            self.store
+                .embed_batch(&[text.as_str()])
+                .ok()
+                .and_then(|mut v| (!v.is_empty()).then(|| v.remove(0)))
+        };
+        let t = translate::apply_memory(
+            translate::translate(&phon, &morph, &grammar, &entries, &text),
+            &mem,
+            query_embedding.as_deref(),
+        );
+        let confidence = t.confidence;
+        let target = t.target.clone();
+        let trace = crate::cli::language::translation_trace_json(&t);
+        crate::cli::language::emit_translation_output(
+            &language,
+            &text,
+            &t.target,
+            t.confidence,
+            "forward",
+            &t.unresolved,
+            trace,
+        );
+
+        // Surface the result: focus the right region, then flip it to Output.
+        // change_focus(Focus::Ai) forces right_pane = Ai (it does the
+        // editor-defocus bookkeeping), so set Output *after* it — the Output pane
+        // shares Focus::Ai, disambiguated by `right_pane`.
+        self.output_selected = 0;
+        self.change_focus(Focus::Ai);
+        self.right_pane = RightPane::Output;
+        let note = if multiple {
+            format!(" · multiple languages — used {language}")
+        } else {
+            String::new()
+        };
+        let cov = if target.contains('«') { " (some words uncovered)" } else { "" };
+        self.status = format!(
+            "translated → {language} [{:.0}%]{cov} → Output (^B Tab){note}",
+            confidence * 100.0
+        );
     }
 
     /// PANE-1 — the ask-AI bridge (RFC §8.9). Take the selected Output message's
@@ -8817,6 +9262,7 @@ impl App {
             A::OpenEditorialPass => self.open_editorial_pass(),
             A::OpenStoryBible => self.open_story_bible(),
             A::OpenConlangHub => self.open_conlang_hub(),
+            A::OpenWorldOverview => self.open_world_overview(),
             A::RunDeepRefresh => self.start_deep_refresh(),
             A::OpenLlmPicker => self.open_llm_picker(),
             A::ToggleSound => self.toggle_sound(),
@@ -8876,6 +9322,7 @@ impl App {
             A::AiRewriteRhythm => self.start_sentence_rhythm_rewrite(),
             A::TranslateToInvented => self.start_translate_to_invented(),
             A::TranslateFromInvented => self.start_translate_from_invented(),
+            A::TranslateLang3 => self.translate_lang3_to_output(),
 
             // ── View prefix ───────────────────────────────────
             A::ViewExportMarkdownBuffer => self.view_export_markdown(ViewMdScope::Buffer),
@@ -9995,6 +10442,370 @@ impl App {
             _ => {}
         }
         true
+    }
+
+    /// WORLD-4 — `Ctrl+B W`. Build the read-only World overview: the world
+    /// definition + compiled astronomy + materialization status.
+    fn open_world_overview(&mut self) {
+        let rows = self.build_world_overview_rows();
+        self.modal = Modal::WorldOverview { rows, cursor: 0 };
+        self.status = "World overview · ↑↓ scroll · Esc".into();
+    }
+
+    fn build_world_overview_rows(&self) -> Vec<String> {
+        use crate::world::compile::compile_astronomy;
+        use crate::world::types::WorldDefinition;
+        let root = self.store.project_root();
+        let path = root.join("world.hjson");
+        let mut rows: Vec<String> = Vec::new();
+        let Ok(raw) = std::fs::read_to_string(&path) else {
+            rows.push("No world.hjson in this project.".into());
+            rows.push("".into());
+            rows.push("Create one with:  inkhaven realworld new <name>".into());
+            return rows;
+        };
+        let def = match WorldDefinition::from_hjson(&raw) {
+            Ok(d) => d,
+            Err(e) => {
+                rows.push("world.hjson failed to parse:".into());
+                rows.push(format!("  {e}"));
+                return rows;
+            }
+        };
+        rows.push(format!("World: {}", def.name));
+        rows.push(format!(
+            "  seed {:#x} · primary language {}",
+            def.seed_u64(),
+            def.primary_language
+        ));
+        rows.push("".into());
+
+        let a = &def.astronomy;
+        let out = compile_astronomy(a);
+        rows.push("Astronomy  ✓".into());
+        rows.push(format!(
+            "  star {} (L={} L☉, {:.2} M☉)",
+            a.star.class, a.star.luminosity_solar, out.stellar_mass_solar
+        ));
+        rows.push(format!(
+            "  planet {:.2} M⊕ · tilt {:.1}° · day {:.1} h",
+            a.planet.mass_earth, a.planet.axial_tilt_deg, a.planet.day_length_hours
+        ));
+        let div = out
+            .year_length_divergence_pct
+            .map(|d| format!(" ({d:+.1}% vs declared{})", if d.abs() > 1.0 { " ⚠" } else { "" }))
+            .unwrap_or_default();
+        rows.push(format!("  year {:.1} planet-days{}", out.year_length_planet_days, div));
+        for m in &out.moons {
+            rows.push(format!(
+                "  moon {} · synodic {:.1} planet-days · {:.1} lunations/yr",
+                m.name, m.synodic_period_planet_days, m.lunar_months_per_year
+            ));
+        }
+        if let Some(dom) = &out.tide.dominant_moon {
+            rows.push(format!(
+                "  tides {} dominant · sun {:.2}× the dominant moon",
+                dom, out.tide.solar_relative_to_dominant
+            ));
+        }
+        rows.push(format!(
+            "  calendar {:.0} declared vs {:.1} computed days ({})",
+            out.calendar_check.declared_days,
+            out.calendar_check.computed_days,
+            if out.calendar_check.consistent { "consistent" } else { "off >1 day ⚠" }
+        ));
+        rows.push("".into());
+
+        // The remaining MVP layers (not yet implemented).
+        for layer in ["Geology", "Climate", "Hydrology", "Demographics"] {
+            rows.push(format!("{layer}  · not yet implemented (WORLD-4 P1+)"));
+        }
+        rows.push("".into());
+
+        // Materialization status: is the astronomy in the World book?
+        let materialized = self
+            .hierarchy
+            .iter()
+            .find(|n| {
+                n.kind == crate::store::node::NodeKind::Book
+                    && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_WORLD)
+            })
+            .map(|world| {
+                self.hierarchy
+                    .children_of(Some(world.id))
+                    .iter()
+                    .any(|c| c.title.eq_ignore_ascii_case("Astronomy"))
+            })
+            .unwrap_or(false);
+        rows.push(if materialized {
+            "Materialized into World / Astronomy ✓".into()
+        } else {
+            "Not materialized — `inkhaven realworld compile --materialize`".into()
+        });
+        rows.push("".into());
+        rows.push("CLI: inkhaven realworld new / validate / compile [--materialize]".into());
+        rows
+    }
+
+    fn world_overview_handle_key(&mut self, key: KeyEvent) -> bool {
+        let n = match &self.modal {
+            Modal::WorldOverview { rows, .. } => rows.len(),
+            _ => return false,
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "World overview: closed".into();
+            }
+            KeyCode::Up => {
+                if let Modal::WorldOverview { cursor, .. } = &mut self.modal {
+                    *cursor = cursor.saturating_sub(1);
+                }
+            }
+            KeyCode::Down => {
+                if let Modal::WorldOverview { cursor, .. } = &mut self.modal {
+                    if n > 0 {
+                        *cursor = (*cursor + 1).min(n - 1);
+                    }
+                }
+            }
+            // C: compile the world (materialize all five layers + seed proposals).
+            KeyCode::Char('c') | KeyCode::Char('C') => self.run_world_compile(),
+            // P: open the proposal queue.
+            KeyCode::Char('p') | KeyCode::Char('P') => self.open_world_proposals(),
+            _ => {}
+        }
+        true
+    }
+
+    /// WORLD-4 — `Ctrl+B W` → `C`. Compile every MVP layer, materialize them into
+    /// the World book (+ heightmap asset), and seed the Place proposal queue.
+    /// Reuses the already-open project store (no second handle).
+    fn run_world_compile(&mut self) {
+        use crate::world::compile::*;
+        use crate::world::types::WorldDefinition;
+        let root = self.store.project_root().to_path_buf();
+        let raw = match std::fs::read_to_string(root.join("world.hjson")) {
+            Ok(r) => r,
+            Err(_) => {
+                self.status = "world: no world.hjson — `inkhaven realworld new <name>`".into();
+                return;
+            }
+        };
+        let def = match WorldDefinition::from_hjson(&raw) {
+            Ok(d) => d,
+            Err(e) => {
+                self.status = format!("world.hjson: {e}");
+                return;
+            }
+        };
+        // Geology: DEM if declared, else generated.
+        let geo = match def.geology.as_ref().and_then(|g| g.dem.as_ref()) {
+            Some(dem) => match compile_geology_dem(&def, &root.join(&dem.path)) {
+                Ok(g) => g,
+                Err(e) => {
+                    self.status = format!("world geology: {e}");
+                    return;
+                }
+            },
+            None => compile_geology(&def),
+        };
+        let astro = compile_astronomy(&def.astronomy);
+        let climate = compile_climate(&def, &astro, &geo);
+        let hydro = compile_hydrology(&geo, &climate);
+        let demo = compile_demographics(&climate, &hydro);
+
+        use crate::world::materialize as m;
+        let steps: Vec<crate::error::Result<m::MaterializeReport>> = vec![
+            m::materialize_astronomy(&self.store, &self.cfg, &astro),
+            m::materialize_geology(&self.store, &self.cfg, &geo),
+            m::materialize_climate(&self.store, &self.cfg, &climate),
+            m::materialize_hydrology(&self.store, &self.cfg, &hydro),
+            m::materialize_demographics(&self.store, &self.cfg, &demo),
+        ];
+        for s in &steps {
+            if let Err(e) = s {
+                self.status = format!("world materialize: {e}");
+                return;
+            }
+        }
+
+        // Seed the proposal queue, skipping already-resolved sites.
+        let n_proposed = (|| -> crate::error::Result<usize> {
+            use crate::world::proposals::place_proposals;
+            use crate::world::storage::WorldStore;
+            let ws = WorldStore::open_for_project(&root)
+                .map_err(|e| crate::error::Error::Store(format!("world store: {e}")))?;
+            let resolved = ws
+                .resolved_signatures()
+                .map_err(|e| crate::error::Error::Store(format!("{e}")))?;
+            ws.clear_pending().map_err(|e| crate::error::Error::Store(format!("{e}")))?;
+            let mut n = 0;
+            for p in place_proposals(&demo, def.seed_u64()) {
+                if !resolved.contains(&p.signature) {
+                    ws.insert(&p).map_err(|e| crate::error::Error::Store(format!("{e}")))?;
+                    n += 1;
+                }
+            }
+            Ok(n)
+        })();
+        match n_proposed {
+            Ok(n) => {
+                self.refresh_hierarchy_after_world_write();
+                self.status = format!(
+                    "world compiled — 5 layers materialized, {n} Place proposal(s) (Ctrl+B W → P)"
+                );
+            }
+            Err(e) => self.status = format!("world proposals: {e}"),
+        }
+    }
+
+    /// Reload the hierarchy after the compiler wrote into the World/Places books,
+    /// so the new paragraphs show in the tree without a restart.
+    fn refresh_hierarchy_after_world_write(&mut self) {
+        if let Ok(h) = crate::store::hierarchy::Hierarchy::load(&self.store) {
+            self.hierarchy = h;
+            self.rebuild_rows_preserving_cursor();
+        }
+    }
+
+    /// WORLD-4 — `Ctrl+B W` → `P`. Open the Place proposal queue.
+    fn open_world_proposals(&mut self) {
+        use crate::world::storage::WorldStore;
+        let root = self.store.project_root().to_path_buf();
+        let proposals = match WorldStore::open_for_project(&root).and_then(|ws| ws.list(Some("pending"))) {
+            Ok(p) => p,
+            Err(e) => {
+                self.status = format!("proposals: {e}");
+                return;
+            }
+        };
+        if proposals.is_empty() {
+            self.status = "no pending proposals — press C to compile + propose".into();
+            return;
+        }
+        self.status = format!("{} proposal(s) · ⏎ accept · r reject · Esc", proposals.len());
+        self.modal = Modal::WorldProposals { proposals, cursor: 0 };
+    }
+
+    fn world_proposals_handle_key(&mut self, key: KeyEvent) -> bool {
+        let n = match &self.modal {
+            Modal::WorldProposals { proposals, .. } => proposals.len(),
+            _ => return false,
+        };
+        match key.code {
+            KeyCode::Esc => self.open_world_overview(),
+            KeyCode::Up | KeyCode::Char('k') => {
+                if let Modal::WorldProposals { cursor, .. } = &mut self.modal {
+                    *cursor = cursor.saturating_sub(1);
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if let Modal::WorldProposals { cursor, .. } = &mut self.modal {
+                    if n > 0 {
+                        *cursor = (*cursor + 1).min(n - 1);
+                    }
+                }
+            }
+            KeyCode::Enter => self.resolve_selected_proposal(true),
+            KeyCode::Char('r') => self.resolve_selected_proposal(false),
+            _ => {}
+        }
+        true
+    }
+
+    /// Accept (create the Place) or reject the selected proposal, then refresh
+    /// the overlay from the store.
+    fn resolve_selected_proposal(&mut self, accept: bool) {
+        let (id, name) = match &self.modal {
+            Modal::WorldProposals { proposals, cursor } => match proposals.get(*cursor) {
+                Some(p) => (p.id, p.name.clone()),
+                None => return,
+            },
+            _ => return,
+        };
+        let result = if accept { self.accept_world_proposal(id) } else { self.reject_world_proposal(id) };
+        match result {
+            Ok(()) => {
+                self.status = if accept {
+                    format!("accepted {name} → Places")
+                } else {
+                    format!("rejected {name}")
+                };
+                // Reload pending proposals; close the overlay when none remain.
+                use crate::world::storage::WorldStore;
+                let root = self.store.project_root().to_path_buf();
+                let remaining =
+                    WorldStore::open_for_project(&root).and_then(|ws| ws.list(Some("pending"))).unwrap_or_default();
+                if remaining.is_empty() {
+                    self.refresh_hierarchy_after_world_write();
+                    self.modal = Modal::None;
+                    self.status = "proposal queue empty".into();
+                } else if let Modal::WorldProposals { proposals, cursor } = &mut self.modal {
+                    *cursor = (*cursor).min(remaining.len() - 1);
+                    *proposals = remaining;
+                }
+            }
+            Err(e) => self.status = format!("proposal: {e}"),
+        }
+    }
+
+    fn accept_world_proposal(&mut self, id: uuid::Uuid) -> crate::error::Result<()> {
+        use crate::store::hierarchy::Hierarchy;
+        use crate::store::{InsertPosition, NodeKind, SYSTEM_TAG_PLACES};
+        use crate::world::storage::WorldStore;
+        let root = self.store.project_root().to_path_buf();
+        let ws = WorldStore::open_for_project(&root)
+            .map_err(|e| crate::error::Error::Store(format!("world store: {e}")))?;
+        let p = ws
+            .get(id)
+            .map_err(|e| crate::error::Error::Store(format!("{e}")))?
+            .ok_or_else(|| crate::error::Error::Config("proposal not found".into()))?;
+
+        let places = self
+            .hierarchy
+            .iter()
+            .find(|n| n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(SYSTEM_TAG_PLACES))
+            .cloned()
+            .ok_or_else(|| crate::error::Error::Store("Places book missing".into()))?;
+        let pop = p.payload.get("population").and_then(|v| v.as_u64()).unwrap_or(0);
+        let class = p.payload.get("class").and_then(|v| v.as_str()).unwrap_or("settlement");
+        let basis = p.payload.get("basis").and_then(|v| v.as_str()).unwrap_or("").replace('_', " ");
+        let biome = p.payload.get("biome").and_then(|v| v.as_str()).unwrap_or("").replace('_', " ");
+        let prose = format!(
+            "{} is a {} of roughly {} people, set at a {} in a {} zone.\n\n// world-compiler proposal {}\n",
+            p.name, class, pop, basis, biome, p.signature
+        );
+        let h = Hierarchy::load(&self.store)?;
+        let mut node = self.store.create_node(
+            &self.cfg,
+            &h,
+            NodeKind::Paragraph,
+            &p.name,
+            Some(&places),
+            None,
+            InsertPosition::End,
+        )?;
+        if let Some(rel) = &node.file {
+            std::fs::write(self.store.project_root().join(rel), prose.as_bytes())
+                .map_err(|e| crate::error::Error::Store(format!("writing Place: {e}")))?;
+        }
+        self.store.update_paragraph_content(&mut node, prose.as_bytes())?;
+        // Record the Place ↔ World cross-reference (climate zone / biome /
+        // hydrology basis / coordinates), keyed to the new Place's node id.
+        ws.insert_place_link(&crate::world::proposals::PlaceLink::from_proposal(node.id, &p))
+            .map_err(|e| crate::error::Error::Store(format!("{e}")))?;
+        ws.set_status(id, "accepted").map_err(|e| crate::error::Error::Store(format!("{e}")))?;
+        Ok(())
+    }
+
+    fn reject_world_proposal(&mut self, id: uuid::Uuid) -> crate::error::Result<()> {
+        use crate::world::storage::WorldStore;
+        let root = self.store.project_root().to_path_buf();
+        let ws = WorldStore::open_for_project(&root)
+            .map_err(|e| crate::error::Error::Store(format!("world store: {e}")))?;
+        ws.set_status(id, "rejected").map_err(|e| crate::error::Error::Store(format!("{e}")))?;
+        Ok(())
     }
 
     /// LANG-1 P2.7c — after the closing `:` of a `:<lang>:` is typed in the
@@ -17679,6 +18490,14 @@ impl App {
             self.conlang_hub_handle_key(key);
             return Ok(false);
         }
+        if matches!(self.modal, Modal::WorldOverview { .. }) {
+            self.world_overview_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::WorldProposals { .. }) {
+            self.world_proposals_handle_key(key);
+            return Ok(false);
+        }
         if matches!(self.modal, Modal::LangInsert { .. }) {
             self.lang_insert_handle_key(key);
             return Ok(false);
@@ -21066,6 +21885,16 @@ impl App {
             if let Some(sp) = &self.sound {
                 sp.play_focus_out();
             }
+        }
+        // PANE-1 — focusing the AI region (prompt or pane) implies the AI pane
+        // should be the visible right-side pane (RFC §162: "focusing the AI
+        // prompt automatically switches the right-side pane to AI"). This is what
+        // makes one-shot AI ops (critique / grammar / fact-check) surface their
+        // streamed output even when Output is the active pane. `cycle_right_pane`
+        // re-asserts its own target right after calling here, so it can still
+        // focus the Output pane.
+        if matches!(new, Focus::Ai | Focus::AiPrompt) {
+            self.right_pane = RightPane::Ai;
         }
         self.focus = new;
     }

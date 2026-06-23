@@ -220,6 +220,14 @@ impl super::App {
             self.draw_conlang_hub_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::WorldOverview { .. }) {
+            self.draw_world_overview_modal(f, area);
+            return;
+        }
+        if matches!(self.modal, Modal::WorldProposals { .. }) {
+            self.draw_world_proposals_modal(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::LangInsert { .. }) {
             self.draw_lang_insert_modal(f, area);
             return;

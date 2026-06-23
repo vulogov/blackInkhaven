@@ -47,6 +47,7 @@ don't need them all up front.
 | [`PROMPTS.md`](PROMPTS.md)             | Writing reusable prompt templates: the `prompts.hjson` system library, the `Prompts` system book for project-local prompts, `{{selection}}` / `{{context}}` substitutions, and the picker UI. |
 | [`LOCATIONS.md`](LOCATIONS.md)         | Managing the **Places** system book: how to record locations, how the editor highlights them in your prose, and how to ask the AI about a place via `Ctrl+B P`. |
 | [`CHARACTERS.md`](CHARACTERS.md)       | Same model as `LOCATIONS.md` but for the **Characters** system book. Yellow-highlight overlay, `Ctrl+B C` RAG inference, multilingual stemming. |
+| [`OUTPUT_PANE.md`](OUTPUT_PANE.md)     | The **Output pane** (1.3.24+, RFC PANE-1) — the right-region notice board for structured one-way messages (translation results, lexicon proposals, Bund `print`, finished jobs). `Ctrl+B Tab` cycling, per-kind `Enter` actions, severities / lifetimes, the `ink.io.*` scripting surface, and the `inkhaven output` CLI. |
 
 ## Tutorials
 
