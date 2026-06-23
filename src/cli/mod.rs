@@ -22,6 +22,7 @@ pub mod doctor_scan;
 pub mod event;
 pub mod comments;
 pub mod language;
+pub mod inner_socrates;
 pub mod output;
 pub mod realworld;
 pub mod templates;
@@ -914,6 +915,12 @@ pub enum Command {
     /// `Documentation/PROPOSALS/WORLD-4_PLAN.md`.
     #[command(subcommand)]
     Realworld(RealworldCommand),
+
+    /// INNER_SOCRATES-1 — examined authorship: run the Socratic interrogator over
+    /// prose (questions, never corrections). See
+    /// `Documentation/PROPOSALS/INNER_SOCRATES-1_PLAN.md`.
+    #[command(subcommand)]
+    InnerSocrates(InnerSocratesCommand),
 
     /// WORLD-4 — fact-check prose against the simulated world (fast track):
     /// flag implausible world-assertions (travel time, …), respecting the
@@ -3616,6 +3623,26 @@ pub enum RealworldCommand {
     },
 }
 
+/// INNER_SOCRATES-1 — the examined-authorship CLI surface. P2 ships the Fast
+/// track (`check`) and the intent ledger (`ledger`); the Slow track, personas,
+/// and conversation land in later phases.
+#[derive(Debug, Subcommand)]
+pub enum InnerSocratesCommand {
+    /// Run the deterministic Fast track over prose and print the questions it
+    /// raises. Persists + emits to Output when the project is initialized.
+    Check {
+        /// Check this literal text.
+        #[arg(long)]
+        text: Option<String>,
+        /// Check a paragraph by id (reads its content from the store).
+        #[arg(long)]
+        paragraph: Option<String>,
+    },
+    /// List the intent ledger (the deliberate authorial choices the interrogator
+    /// respects).
+    Ledger,
+}
+
 /// WORLD-4 — the proposal queue surface (RFC §8.9). Accepting a proposal commits
 /// the proposed record (a Place) to its system book; rejecting records the
 /// decision so the compiler won't re-propose it.
@@ -4105,6 +4132,7 @@ impl Cli {
             }
             Command::Output(cmd) => output::run(&project, cmd).map_err(Into::into),
             Command::Realworld(cmd) => realworld::run(&project, cmd).map_err(Into::into),
+            Command::InnerSocrates(cmd) => inner_socrates::run(&project, cmd).map_err(Into::into),
             Command::FactCheck { text, paragraph, slow, max_cost, force } => {
                 realworld::fact_check(&project, text, paragraph, slow, max_cost, force).map_err(Into::into)
             }
