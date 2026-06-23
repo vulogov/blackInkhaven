@@ -2829,6 +2829,116 @@ pub(crate) fn emit_translation_output(
     }
 }
 
+/// PANE-1 P3 — route a `generate-lexicon` dry-run's surviving proposals into
+/// the Output pane as a single advisory `lexicon_proposal` message. The whole
+/// proposal list rides in `metadata.proposals` (form / gloss / pos / example /
+/// register / domain / era) so the pane's `Enter`/promote action can commit the
+/// batch to the Dictionary without re-running the model. A no-op when no Output
+/// store is installed (plain CLI) — it only surfaces in the TUI or a Bund run
+/// that has the pane active.
+pub(crate) fn emit_lexicon_proposal(
+    language: &str,
+    topic: Option<&str>,
+    era: Option<&str>,
+    proposals: &[crate::conlang::generate::lexicon::LexProposal],
+) {
+    use crate::pane::output::{kinds, ActionId, Lifetime, Message, Severity};
+    if proposals.is_empty() {
+        return;
+    }
+    let items: Vec<serde_json::Value> = proposals
+        .iter()
+        .map(|p| {
+            serde_json::json!({
+                "form": p.form.trim(),
+                "gloss": p.gloss.trim(),
+                "pos": if p.pos.trim().is_empty() { "noun" } else { p.pos.trim() },
+                "example": p.example.trim(),
+                "register": p.register.trim(),
+                "domain": p.domain.iter()
+                    .map(|d| d.trim().to_string())
+                    .filter(|d| !d.is_empty())
+                    .collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    let preview = proposals
+        .iter()
+        .take(4)
+        .map(|p| format!("{} ({})", p.form.trim(), p.gloss.trim()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let more = if proposals.len() > 4 {
+        format!(" +{} more", proposals.len() - 4)
+    } else {
+        String::new()
+    };
+    let topic_s = topic.map(|t| format!(" · {t}")).unwrap_or_default();
+    let meta = serde_json::json!({
+        "text": format!("{} proposed word(s){topic_s}: {preview}{more}", proposals.len()),
+        "language": language,
+        "topic": topic.unwrap_or(""),
+        "era": era.unwrap_or(""),
+        "count": proposals.len(),
+        "proposals": items,
+    });
+    let msg = Message::new(
+        kinds::LEXICON_PROPOSAL,
+        Severity::Info,
+        Lifetime::UntilActedOn,
+        meta,
+    )
+    .with_source_language(language)
+    // Promote (accept-into-Dictionary) leads; the defaults follow.
+    .with_actions(vec![
+        ActionId::Promote,
+        ActionId::Dismiss,
+        ActionId::Expand,
+        ActionId::Pin,
+    ]);
+    crate::pane::output::emit(&msg);
+}
+
+/// PANE-1 P3 — route a `lect` (render-in-variety) result into the Output pane as
+/// a `variety_rendering` message. Each base→variety pair rides in
+/// `metadata.renderings`; `o` expands the full list. A no-op outside the TUI /
+/// an active-pane Bund run.
+pub(crate) fn emit_variety_rendering(
+    language: &str,
+    variety: &str,
+    summary: &str,
+    items: &[(String, String)],
+) {
+    use crate::pane::output::{kinds, Lifetime, Message, Severity};
+    if items.is_empty() {
+        return;
+    }
+    let renderings: Vec<serde_json::Value> = items
+        .iter()
+        .map(|(base, rendered)| serde_json::json!({ "base": base, "rendered": rendered }))
+        .collect();
+    let preview = items
+        .iter()
+        .map(|(b, r)| if b == r { b.clone() } else { format!("{b}→{r}") })
+        .collect::<Vec<_>>()
+        .join("  ");
+    let meta = serde_json::json!({
+        "text": format!("{language} · {variety}: {preview}"),
+        "language": language,
+        "variety": variety,
+        "summary": summary,
+        "renderings": renderings,
+    });
+    let msg = Message::new(
+        kinds::VARIETY_RENDERING,
+        Severity::Info,
+        Lifetime::Session(500),
+        meta,
+    )
+    .with_source_language(language);
+    crate::pane::output::emit(&msg);
+}
+
 /// 1.3.23 LANG-3 P0 — translate English into the conlang (Tier 1, RBMT).
 fn translate(project: &Path, language: &str, text: &str, trace: bool, json: bool) -> Result<()> {
     use crate::conlang::translate::{self, Decision};
@@ -3647,18 +3757,24 @@ fn lect(
         ))
     })?;
     println!("{language} · {} ({})", v.id, v.summary());
+    let mut items: Vec<(String, String)> = Vec::new();
     if let Some(w) = word {
         let rendered = varengine::render_form(&phon, v, w);
         let mark = if rendered == w { "  (unchanged)" } else { "" };
         println!("  {w}  →  {rendered}{mark}");
+        items.push((w.to_string(), rendered));
     }
     if let Some(t) = text {
+        let rendered = varengine::render_text(&phon, v, t);
         println!("  base    {t}");
-        println!("  {:<7} {}", v.id, varengine::render_text(&phon, v, t));
+        println!("  {:<7} {}", v.id, rendered);
+        items.push((t.to_string(), rendered));
     }
     if word.is_none() && text.is_none() {
         return Err(Error::Config("give --word <form> or --text \"…\"".into()));
     }
+    // PANE-1 P3 — mirror the rendering into the Output pane.
+    emit_variety_rendering(language, &v.id, &v.summary(), &items);
     Ok(())
 }
 
@@ -4153,6 +4269,9 @@ fn generate_lexicon(
             "\n(dry run — re-run with --yes to add the {} kept entr(y/ies))",
             kept.len()
         );
+        // PANE-1 P3 — surface the advisory proposals in the Output pane with a
+        // promote-to-Dictionary action (no-op outside the TUI / active pane).
+        emit_lexicon_proposal(language, topic, era, &kept);
     }
     Ok(())
 }

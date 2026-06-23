@@ -21,49 +21,66 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.3.24 — The Output Pane
+## Latest release · 1.3.25 — World Simulation
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.3.24.md`](Documentation/RELEASE_NOTES/1.3.24.md)
-· Plan: [`Documentation/PROPOSALS/PANE-1_PLAN.md`](Documentation/PROPOSALS/PANE-1_PLAN.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.3.25.md`](Documentation/RELEASE_NOTES/1.3.25.md)
+· Plan: [`Documentation/PROPOSALS/WORLD-4_PLAN.md`](Documentation/PROPOSALS/WORLD-4_PLAN.md)
 
-A new right-side **Output** pane for structured, one-way notifications from every
-subsystem — the first slice of RFC PANE-1, the planned TUI rearchitecture. The AI
-pane stays a conversation; Output absorbs everything Inkhaven needs to *tell* you:
-translation results, Bund script output, and (later) lexicon proposals, variety
-renderings, world fact-checks. **Zero new dependencies** — it reuses the in-tree
-DuckDB, ratatui, Bund VM, and chord machinery.
+Inkhaven gains an actual simulated world. A new **`inkhaven realworld`** compiler
+turns a structured `world.hjson` into a coherent, physically-grounded world — sky,
+terrain, climate, rivers, and settlements — materialized into a new **World**
+system book, with a proposal queue that turns its cities into real Place records
+you accept one by one. The first slice of RFC WORLD-4 (the compiler; the
+fact-checker follows). It also **completes RFC PANE-1**.
 
-### The pane
+### The compiler
 
-- **`Ctrl+B Tab` / `Ctrl+B Shift+Tab`** cycle the right region between **Output**
-  and **AI** (default AI, so the launch view is unchanged). Messages carry a
-  severity icon (`●` / `⚠` / `⊗` / `↻`), kind, and summary; pinned on top.
-- Per-message actions: `o`/Space **expand** (a translation's per-word trace +
-  alternatives render inline), `d` dismiss, `p` pin, `r` **remember** (commit a
-  translation to memory), `a` **ask the AI** about it.
-- Persisted in a per-project DuckDB store; a headless CLI mirrors it
-  (`inkhaven output show | emit | dismiss | clear`).
+Five deterministic layers run in dependency order, each a pure function of
+`(definition, seed)`:
 
-### What flows in
+- **Astronomy** — Kepler year length, latitude insolation, lunar synodic periods,
+  tides, calendar-divergence flag.
+- **Geology** — seed → tectonic plates → procedural heightmap → continents,
+  mountains, minerals. Or **import a DEM** (your own heightmap PNG).
+- **Climate** — a zonal model: stellar-flux mean, latitude profile, elevation
+  lapse, rainfall belts + rain shadows → Köppen biomes + prevailing winds.
+- **Hydrology** — D8 flow → rivers (Strahler order) → lakes → watersheds →
+  settlement priors.
+- **Demographics** — biome carrying-capacity → a Rank-Size hierarchy of cities,
+  towns, and villages.
 
-- **Translation (LANG-3)** — a translation in the editor lands a
-  `translation_result` (expandable to the per-word trace); an uncovered word adds
-  a `⚠` report; `r` commits it to the language's memory.
-- **Bund `ink.io.*`** — a new stdlib family (`print` / `log` / `notify` /
-  `message.list` / `count` / `dismiss` / `pin` / `unpin`), so script output finally
-  has a reliable home inside the TUI.
+Each materializes into the **World** book (`World / Astronomy`, `Geology`, …),
+with the heightmap written as a PNG asset. Deterministic and idempotent.
 
-### The ask-AI bridge
+### The proposal queue — the author always wins
 
-`a` carries a message's full structured detail into the AI conversation **by
-reference, not value** — a short quote enters the input, the rich detail arms the
-next prompt as context, focus moves to the prompt. The model sees the derivation;
-the conversation stays clean.
+Settlements don't silently become Places; they enter a **proposal queue** with
+deterministic names. `inkhaven realworld propose` / `proposals list | accept |
+reject | accept-all`. Accepting creates a Place and records a **Place ↔ World
+cross-reference** (climate / biome / hydrology / coordinates). Re-running never
+re-proposes a resolved site.
 
-### Test stats
+### In the editor — `Ctrl+B W`
 
-Tests 1576 → 1582. **Zero new dependencies.** Non-breaking — every existing AI
-chord is preserved; the shell CLI is unaffected. PANE-1 continues next cycle.
+`Ctrl+B W` opens the **World overview** hub: **`C`** compiles + materializes every
+layer and seeds the queue, **`P`** opens the proposal queue (`Enter` accept, `r`
+reject). Build and curate a whole world without leaving the editor. *(Focus mode
+moved to `Ctrl+B Shift+W`.)*
+
+### PANE-1 completed
+
+The Output pane gains per-kind `Enter` (insert translation / promote lexicon /
+jump to task), `e` edit+remember, `ai_task_complete` notices, a bare-`print`
+mirror, and is now the **default launch pane**. New **`Ctrl+B D`** deterministic
+translation routes to Output; lexicon proposals and variety renderings route there
+too. Full docs ([`OUTPUT_PANE.md`](Documentation/OUTPUT_PANE.md) + tutorial 75).
+
+### Dependencies & compatibility
+
+Geology adds two pure-Rust crates — **`noise`** + **`delaunator`**; everything else
+is zero new deps (determinism uses an in-tree seeded PRNG, not `rand`).
+Non-breaking — the World book seeds into existing projects on open; `realworld`
+is opt-in. Tests 1582 → 1613.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

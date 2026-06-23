@@ -278,6 +278,7 @@ impl super::App {
             },
             editor: editor_session,
             focus: format!("{:?}", self.focus),
+            right_pane: format!("{:?}", self.right_pane),
             paragraph_cursors,
             visited_history,
             visited_cursor: self.visited_cursor,

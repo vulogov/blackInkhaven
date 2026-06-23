@@ -990,7 +990,10 @@ fn do_lect(vm: &mut VM) -> Result<&mut VM> {
     let v = vs
         .get(&variety)
         .ok_or_else(|| anyhow!("{tag}: language `{name}` has no variety `{variety}`"))?;
-    push(vm, Value::from_string(crate::conlang::variety::render_form(&phon, v, &word)));
+    let rendered = crate::conlang::variety::render_form(&phon, v, &word);
+    // PANE-1 P3 — mirror the rendering into the Output pane (no-op without one).
+    langapi::emit_variety_rendering(&name, &v.id, &v.summary(), &[(word, rendered.clone())]);
+    push(vm, Value::from_string(rendered));
     Ok(vm)
 }
 
@@ -1991,6 +1994,9 @@ fn do_generate_lexicon(vm: &mut VM) -> Result<&mut VM> {
         .map_err(|e| anyhow!("{tag}: could not parse model reply: {e}"))?;
     let (kept, _rejected) =
         crate::conlang::generate::lexicon::dedup(&phon, &existing, proposals);
+    // PANE-1 P3 — surface the survivors in the Output pane with a promote
+    // action (no-op without an installed pane).
+    langapi::emit_lexicon_proposal(&name, topic_opt, None, &kept);
     let out: Vec<Value> = kept
         .iter()
         .map(|p| {

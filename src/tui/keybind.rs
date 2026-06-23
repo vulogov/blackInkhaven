@@ -129,6 +129,10 @@ pub enum Action {
     /// LANG-1 P2.7b — `Ctrl+B X`. Open the ConLang hub overview.
     #[serde(rename = "view.open_conlang_hub")]
     OpenConlangHub,
+    /// WORLD-4 — `Ctrl+B W`. Open the World overview (the world definition +
+    /// compiled astronomy + materialization status).
+    #[serde(rename = "world.open_overview")]
+    OpenWorldOverview,
     #[serde(rename = "view.run_deep_refresh")]
     RunDeepRefresh,
     #[serde(rename = "global.open_llm_picker")]
@@ -799,6 +803,22 @@ pub enum Action {
     #[serde(rename = "ai.translate_from_invented")]
     TranslateFromInvented,
 
+    /// Ctrl+B D (PANE-1 / LANG-3, "Deterministic").  Translate
+    /// the open paragraph from the project's working language into an
+    /// invented language using the *deterministic* LANG-3
+    /// engine — rule-based morphology + syntax with a
+    /// translation-memory retrieval fallback — and route the
+    /// result, its per-word trace, and any uncovered-word
+    /// report into the **Output pane** (not the AI pane).  No
+    /// model call; reproducible.  Complements `Ctrl+B Q`
+    /// (AI-driven, streams prose into the AI pane): same
+    /// language-resolution (0 → error, 1 → direct, 2+ → first,
+    /// noted), different engine + destination.  In the Output
+    /// pane the result carries `r` remember / `a` ask-AI / `o`
+    /// expand-trace actions.
+    #[serde(rename = "lang.translate_to_output")]
+    TranslateLang3,
+
     /// Runtime-only: a Bund lambda registered under the given
     /// name via `ink.key.bind_lambda`. Dispatch routes to
     /// `scripting::hooks::fire(name, vec![])`. `#[serde(skip)]` —
@@ -843,6 +863,7 @@ impl Action {
             Action::OpenEditorialPass => "editorial".into(),
             Action::OpenStoryBible => "bible".into(),
             Action::OpenConlangHub => "conlang".into(),
+            Action::OpenWorldOverview => "world".into(),
             Action::RunDeepRefresh => "deep refresh".into(),
             Action::OpenLlmPicker => "LLM".into(),
             Action::ToggleSound => "sound".into(),
@@ -938,6 +959,7 @@ impl Action {
             Action::NextFactFinding => "next fact finding".into(),
             Action::TranslateToInvented => "translate →".into(),
             Action::TranslateFromInvented => "translate ←".into(),
+            Action::TranslateLang3 => "translate → out".into(),
             Action::ViewRenderParagraph => "render ¶".into(),
             Action::ViewNextDiagnostic => "next diag".into(),
             Action::ViewStoryGraph => "story view".into(),
@@ -1021,6 +1043,8 @@ impl Action {
                 "Open the story bible (1.3.8) — a consolidated, navigable view of the world you've built: every Character with the attributes the continuity bible has tracked across chapters (`eye_color: brown (ch.3)`), plus the Places, Artefacts, and Facts books. 1.3.10 adds semantic drift: under any entity `inkhaven drift scan` flagged, a ⚠ drift badge names the contradicting descriptions and shows the entity's chapter-ordered description trail (each row jumps to its source). 1.3.11 banners the world-consistency health line (the `inkhaven world` summary) at the top. `↑↓` navigate, `Enter` jumps to the entry's source paragraph, `Esc` closes. Run `inkhaven continuity extract` to populate the character attributes. Mnemonic: L for Lore.".into(),
             Action::OpenConlangHub =>
                 "Open the ConLang hub (LANG-1, Ctrl+B X) — a read-only overview of every constructed language under the Language system book: phoneme inventory (consonants / vowels), template + constraint + allophony counts, prosody (stress rule, tone), romanization schemes, lexicon size, and linked speakers (Places / Characters). `↑↓` scroll, `Esc` closes. The deep operations live on the CLI — `inkhaven language audit / generate-lexicon / query / scan-manuscript` — plus `Ctrl+B Q` to translate a paragraph into an invented language. Mnemonic: X for conlang.".into(),
+            Action::OpenWorldOverview =>
+                "Open the World overview (WORLD-4, Ctrl+B W) — a read-only summary of the project's world simulation: the `world.hjson` definition (name / seed / star / planet / moons), the compiled astronomy layer (year length in planet-days with the declared-vs-computed divergence flag, axial tilt, season markers, lunar synodic periods, dominant tide, calendar consistency), and whether it has been materialized into the World system book. `↑↓` scroll, `Esc` closes. The operations live on the CLI — `inkhaven realworld new / validate / compile [--materialize]`. Mnemonic: W for World. (Typewriter / focus mode moved to Ctrl+B Shift+W.)".into(),
             Action::RunDeepRefresh =>
                 "Run the deep AI world refresh (1.3.12) in the background — facts check, facts scan, semantic drift, and continuity extract, the same scans as `inkhaven world --deep`, in the manuscript's language. Runs off the main thread (a cloned, pool-shared store), so the editor stays fully responsive; a `⟳ deep refresh` status chip tracks progress. When it finishes, the open story bible / Editorial Pass rebuilds itself from the fresh sidecars and the status shows the new world-consistency summary. Needs an LLM provider; one job at a time. Mnemonic: F for reFresh.".into(),
             Action::OpenLlmPicker =>
@@ -1036,7 +1060,7 @@ impl Action {
             Action::BackupNow =>
                 "Run a project backup now (Ctrl+B Shift+B). Always fires — ignores the exit-hook recency cooldown.".into(),
             Action::ToggleTypewriter =>
-                "Toggle distraction-free / focus mode — hides every other pane (Tree, AI, Search, AI prompt) and gives the editor the full window. Re-press to restore the four-pane layout. Internally still called \"typewriter mode\" in some log strings + the HJSON config field; the chord serde key is `global.toggle_typewriter` for backward-compat.".into(),
+                "Toggle distraction-free / focus mode (Ctrl+B Shift+W) — hides every other pane (Tree, AI, Search, AI prompt) and gives the editor the full window. Re-press to restore the four-pane layout. Moved from Ctrl+B W to Ctrl+B Shift+W in WORLD-4 (Ctrl+B W now opens the World overview). Internally still called \"typewriter mode\" in some log strings + the HJSON config field; the chord serde key is `global.toggle_typewriter` for backward-compat.".into(),
             Action::ToggleAiFullscreen =>
                 "Toggle full-screen AI mode — AI pane | chat history + AI prompt.".into(),
             Action::StatusFilterReady =>
@@ -1210,6 +1234,8 @@ impl Action {
                 "AI-driven translation of the open paragraph from the project's working language INTO an invented language defined under the Language system book (1.2.13+, Ctrl+B Q). Composes a prompt envelope from the language's Dictionary (RAG-filtered to words present in the source), Grammar (all rules), Phonology (all rules), and Sample-text chapters, then streams the response into the AI pane. With zero Language sub-books the chord errors out; with exactly one it translates directly; with two or more it pops a picker — ↑↓ + Enter, or type the first letter to jump-and-commit (the proposal's Ctrl+B Q Q for Quenya sub-letter pattern, unbundled). The translation block is wrapped between <<<TRANSLATION>>> / <<<END>>> markers so the I apply chord in the AI pane lifts only the target-language prose, no gloss table or commentary.".into(),
             Action::TranslateFromInvented =>
                 "Reverse-direction AI translation (1.2.13+, Ctrl+B Shift+Q). Translate the open paragraph FROM an invented language defined under the Language system book back into the project's working language. Same prompt envelope shape and language-picker semantics as Ctrl+B Q. The natural roundtrip-test workflow is Ctrl+B Q → copy the translation into the next paragraph → Ctrl+B Shift+Q: when the resulting working-language text matches the original, the grammar rules and dictionary entries hold together end-to-end — exposes grammar drift before it bites in the manuscript.".into(),
+            Action::TranslateLang3 =>
+                "Deterministic translation of the open paragraph from the project's working language INTO an invented language using the LANG-3 engine — rule-based morphology + syntax with a translation-memory retrieval fallback — NO model call, fully reproducible (1.3.25+, Ctrl+B D — \"Deterministic\"). Unlike Ctrl+B Q (AI prose → AI pane), the result, its per-word trace, the confidence score, and any uncovered-word report land in the Output pane (^B Tab), where `o` expands the trace, `r` remembers the pair into translation memory, and `a` asks the AI about it. Same language resolution as Ctrl+B Q: zero Language sub-books → error, one → direct, two or more → first language (named on the status bar).".into(),
             Action::ViewRenderParagraph =>
                 "Render the open paragraph in-process and float the PNG preview on top of the editor. Esc closes; S opens a save-as picker for the full-DPI PNG.".into(),
             Action::ViewNextDiagnostic =>
@@ -1348,7 +1374,11 @@ impl KeyBindings {
                 // 1.2.7+ — Ctrl+B U undoes the most-recent
                 // paragraph delete (single-slot kill-ring).
                 entry("u", Action::UndoLastDelete, Scope::Any),
-                entry("w", Action::ToggleTypewriter, Scope::Any),
+                // WORLD-4 — Ctrl+B W opens the World overview; ToggleTypewriter
+                // moved to Ctrl+B Shift+W to free the W prefix for the world
+                // chord family (user-decided 2026-06-25).
+                entry("w", Action::OpenWorldOverview, Scope::Any),
+                entry("Shift+w", Action::ToggleTypewriter, Scope::Any),
                 entry("k", Action::ToggleAiFullscreen, Scope::Any),
                 // LANG-1 P2.7b — Ctrl+B X opens the ConLang hub overview.
                 entry("x", Action::OpenConlangHub, Scope::Any),
@@ -1444,6 +1474,15 @@ impl KeyBindings {
                 // invented back to the working
                 // language.  Roundtrip test.
                 entry("Shift+q", Action::TranslateFromInvented, Scope::Editor),
+                // 1.3.25+ PANE-1 / LANG-3 — Ctrl+B D
+                // ("Deterministic").  Rule-based translation
+                // of the open paragraph INTO an invented
+                // language; result + trace land in the
+                // Output pane.  Sibling to Ctrl+B Q (AI).
+                // Editor-scoped, so it's disjoint from the
+                // Tree's Ctrl+B D (DeleteNode) — same split
+                // pattern as Ctrl+B Q.
+                entry("d", Action::TranslateLang3, Scope::Editor),
             ],
             bund_sub: vec![
                 entry("r", Action::BundRunBuffer, Scope::Any),
@@ -2107,6 +2146,48 @@ mod tests {
             k.resolve_meta_sub(&ev('q'), Focus::Tree),
             Some(Action::OpenImpositionPreview),
             "tree Ctrl+B Q opens the imposition preview",
+        );
+    }
+
+    #[test]
+    fn meta_w_opens_world_overview_typewriter_moves_to_shift_w() {
+        // WORLD-4 — Ctrl+B W is now the World overview; ToggleTypewriter (focus
+        // mode) moved to Ctrl+B Shift+W to free the W prefix.
+        let k = KeyBindings::defaults();
+        assert_eq!(
+            k.resolve_meta_sub(&ev('w'), Focus::Editor),
+            Some(Action::OpenWorldOverview),
+            "Ctrl+B W opens the World overview",
+        );
+        let shift_w = KeyEvent::new(KeyCode::Char('w'), KeyModifiers::SHIFT);
+        assert_eq!(
+            k.resolve_meta_sub(&shift_w, Focus::Editor),
+            Some(Action::ToggleTypewriter),
+            "Ctrl+B Shift+W is now focus/typewriter mode",
+        );
+    }
+
+    #[test]
+    fn meta_d_resolves_to_lang3_translate_in_editor() {
+        // 1.3.25 PANE-1 / LANG-3: Ctrl+B D ("Deterministic") is the
+        // rule-based translate-to-Output chord, sibling to Ctrl+B Q (AI). It's
+        // editor-scoped, disjoint from the tree's Ctrl+B D (DeleteNode), and
+        // must not collide with Q.
+        let k = KeyBindings::defaults();
+        assert_eq!(
+            k.resolve_meta_sub(&ev('d'), Focus::Editor),
+            Some(Action::TranslateLang3),
+            "editor Ctrl+B D must be the LANG-3 translate-to-Output chord",
+        );
+        assert_eq!(
+            k.resolve_meta_sub(&ev('d'), Focus::Tree),
+            Some(Action::DeleteNode),
+            "tree Ctrl+B D must remain delete-node",
+        );
+        assert_ne!(
+            k.resolve_meta_sub(&ev('d'), Focus::Editor),
+            k.resolve_meta_sub(&ev('q'), Focus::Editor),
+            "D (deterministic→Output) and Q (AI→AI pane) must stay distinct",
         );
     }
 

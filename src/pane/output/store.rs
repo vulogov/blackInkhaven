@@ -356,4 +356,52 @@ mod tests {
         // Session(3) keeps the 3 most recent.
         assert_eq!(s.by_kind(kinds::BUND_PRINT).unwrap().len(), 3);
     }
+
+    #[test]
+    fn lexicon_proposal_envelope_round_trips() {
+        // PANE-1 P3 — a lexicon proposal carries its whole word list in
+        // metadata and a Promote action; both must survive persistence so the
+        // pane's Enter→promote can commit them.
+        use super::super::types::ActionId;
+        let s = store();
+        let meta = serde_json::json!({
+            "text": "2 proposed word(s)",
+            "language": "Avesha",
+            "proposals": [
+                { "form": "mara", "gloss": "ocean", "pos": "noun" },
+                { "form": "tuli", "gloss": "wave", "pos": "noun" },
+            ],
+        });
+        let m = Message::new(kinds::LEXICON_PROPOSAL, Severity::Info, Lifetime::UntilActedOn, meta)
+            .with_actions(vec![ActionId::Promote, ActionId::Dismiss]);
+        s.emit(&m).unwrap();
+        let back = &s.active().unwrap()[0];
+        assert_eq!(back.kind, kinds::LEXICON_PROPOSAL);
+        assert_eq!(back.metadata["proposals"].as_array().unwrap().len(), 2);
+        assert_eq!(back.metadata["proposals"][0]["form"], "mara");
+        assert!(back.actions.contains(&ActionId::Promote));
+    }
+
+    #[test]
+    fn ai_task_complete_carries_target_paragraph() {
+        // PANE-1 P5 — a completion notice persists its Hours lifetime and the
+        // target paragraph the Primary action jumps to.
+        use super::super::types::ActionId;
+        let s = store();
+        let target = uuid::Uuid::new_v4();
+        let m = Message::new(
+            kinds::AI_TASK_COMPLETE,
+            Severity::Info,
+            Lifetime::Hours(12.0),
+            serde_json::json!({ "text": "refresh done", "elapsed_seconds": 47 }),
+        )
+        .with_actions(vec![ActionId::Primary, ActionId::Dismiss, ActionId::Pin])
+        .with_source_paragraph(target);
+        s.emit(&m).unwrap();
+        let back = &s.active().unwrap()[0];
+        assert_eq!(back.kind, kinds::AI_TASK_COMPLETE);
+        assert_eq!(back.source_paragraph_id, Some(target));
+        assert!(back.actions.contains(&ActionId::Primary));
+        assert_eq!(back.metadata["elapsed_seconds"], 47);
+    }
 }
