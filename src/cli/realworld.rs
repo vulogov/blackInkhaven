@@ -26,7 +26,40 @@ pub fn run(project: &Path, cmd: RealworldCommand) -> Result<()> {
         RealworldCommand::Propose => propose(project),
         RealworldCommand::Proposals { cmd } => proposals(project, cmd),
         RealworldCommand::Places => places(project),
+        RealworldCommand::Magic { materialize } => magic(project, materialize),
     }
+}
+
+/// Show (and optionally materialize) the magic ledger.
+fn magic(project: &Path, materialize: bool) -> Result<()> {
+    let def = load(project)?;
+    let ledger = def.magic.clone().unwrap_or_default();
+    if ledger.rules.is_empty() {
+        println!("(no magic rules — add a `magic:` block to world.hjson)");
+    } else {
+        println!("magic ledger · {} ({})", def.name, if ledger.enabled { "enabled" } else { "DISABLED" });
+        for r in &ledger.rules {
+            println!("  {} · covers [{}]", r.kind, r.covers.join(", "));
+            if !r.description.is_empty() {
+                println!("      {}", r.description);
+            }
+            if let Some(roles) = &r.applicable_to.roles {
+                println!("      roles: {}", roles.join(", "));
+            }
+        }
+    }
+    if materialize {
+        use crate::config::Config;
+        use crate::project::ProjectLayout;
+        use crate::store::Store;
+        let layout = ProjectLayout::new(project);
+        layout.require_initialized()?;
+        let cfg = Config::load_layered(&layout.config_path())?;
+        let store = Store::open(layout, &cfg)?;
+        let r = crate::world::materialize::materialize_magic(&store, &cfg, &ledger)?;
+        println!("  → World/{}: {} created, {} updated", r.chapter, r.created.len(), r.updated.len());
+    }
+    Ok(())
 }
 
 /// List the Place ↔ World cross-references.

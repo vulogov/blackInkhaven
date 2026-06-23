@@ -10622,6 +10622,7 @@ impl App {
             m::materialize_climate(&self.store, &self.cfg, &climate),
             m::materialize_hydrology(&self.store, &self.cfg, &hydro),
             m::materialize_demographics(&self.store, &self.cfg, &demo),
+            m::materialize_magic(&self.store, &self.cfg, &def.magic.clone().unwrap_or_default()),
         ];
         for s in &steps {
             if let Err(e) = s {
