@@ -21,40 +21,44 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.3.29 — Inner Socrates, in conversation
+## Latest release · 1.3.30 — The fact-checker learns *when*
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.3.29.md`](Documentation/RELEASE_NOTES/1.3.29.md)
-· Reference: [`Documentation/INNER_SOCRATES.md`](Documentation/INNER_SOCRATES.md)
-· Plan: [`Documentation/PROPOSALS/INNER_SOCRATES-1_PLAN.md`](Documentation/PROPOSALS/INNER_SOCRATES-1_PLAN.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.3.30.md`](Documentation/RELEASE_NOTES/1.3.30.md)
+· Reference: [`Documentation/WORLDBUILDING.md`](Documentation/WORLDBUILDING.md)
+· Plan: [`Documentation/PROPOSALS/WORLD-5_PLAN.md`](Documentation/PROPOSALS/WORLD-5_PLAN.md)
+· Tutorial: [`80`](Documentation/Tutorials/80-timeline-aware-fact-checking.md)
 
-A focused follow-on to 1.3.28's [Inner Socrates](Documentation/INNER_SOCRATES.md):
-the Socratic interrogator becomes **interactive**, completing RFC INNER_SOCRATES-1's
-interactive layer.
+The world fact-checker knew *what* your world looks like; it didn't know **when**
+each scene happens. 1.3.30 connects it to your **timeline** — a paragraph linked to
+an event is now checked against ground truth, not prose inference. RFC WORLD-5,
+purely additive to WORLD-4.
 
-### The Socrates F9 scope
+### What the timeline adds
 
-The AI pane's **F9** scope cycle gains **Socrates** (after Facts): a sticky
-**conversation** scope that seeds the chat with the active Reader Persona's voice and
-the open paragraph's questions, then hands you the prompt. The persona discusses the
-work *with* you — it never drafts your prose. (Same conversation `Ctrl+B J → C`
-opens, now in the standard scope cycle.)
+When your project has a timeline, the fast checker gains four kinds of question —
+automatic (`Ctrl+B W → F` or the ambient check), in five languages, magic-ledger-
+respecting:
 
-### Per-finding outcomes
+- **Calendar-grounded season** — snow in a summer-dated scene is a contradiction,
+  not a guess.
+- **Event-derived travel time** — a prose "three days" against a 35-day event gap.
+- **`date_coherence`** — a *midsummer feast* in a winter-dated scene.
+- **`co_location`** — a character in two places at overlapping times
+  (`inkhaven realworld co-location`).
 
-A Socratic question in the **Output pane** gains the outcomes a careful reader's note
-deserves — select one and press:
+Timeline-derived findings carry a **📅** in the Output pane. CLI: `fact-check
+--timeline-aware auto|on|off` / `--timeline-only`; plus five read-only
+`ink.world.fact_check.timeline.*` Bund words. The legacy timeline critique (1.2.6+)
+runs unchanged alongside, for now.
 
-- **`i`** — *record as intent*: declare the category a deliberate choice (chapter
-  scoped); Inkhaven writes an intent-ledger entry and stops asking it here.
-- **`m`** — *make note*: turn the question into a **Socratic Notes** entry quoting the
-  question + the passage, with room for your response.
-- **`x`** — *mark addressed*; **`d`** — *dismiss* (still feeds the promotion
-  mechanism).
+Also in this release: a tutorial for [Inner Socrates'
+conversation](Documentation/Tutorials/79-socratic-conversation.md) (from 1.3.29).
 
 ### Dependencies & compatibility
 
-**Zero new dependencies.** Non-breaking and opt-in throughout. Every finding remains
-a question, never a correction. Tests 1713 (stable).
+**Zero new dependencies.** **Purely additive** — the compiler, plakat, every
+existing check, the CLI/TUI surface, and the schema are unchanged; projects without
+a timeline get exactly the 1.3.27 behavior. Tests 1713 → 1725.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
