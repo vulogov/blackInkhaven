@@ -26,9 +26,14 @@ free. (A `--slow` opt-in for the LLM tracks is a later enhancement.)
   a **summary table** (per-checker counts, paragraphs scanned). Each native finding
   also emits to the Output store (a no-op headless), so a future `--watch`/TUI path
   is free. **(this increment)**
-- **P1 — the TUI chord.** One chord runs the same orchestration over the open
-  paragraph / book / project, **emits to the Output pane** (where the new filtering
-  slices it), and shows a summary on the status line. Reuses the orchestration core.
+- **P1 — the TUI chord.** _Done._ `Action::RunCheck` bound to **`Ctrl+B Shift+C`**
+  (label "review pass"; self-lists in the palette + quickref). `run_unified_check`
+  runs fact-check + Inner Socrates over the **open paragraph** (reusing
+  `build_fact_check_context` / `collect_socratic_findings` / `persist_and_emit_socratic`)
+  and the timeline critique over the **project** (new `collect_and_emit_timeline_critique`,
+  which clears prior critique findings then re-emits), all into the Output pane, then
+  surfaces it with a `fact N · socrates N · timeline N` status summary. Binding
+  resolve-tested. Full suite 1796 → 1797.
 - **P2 — tree report-card badges.** Per-chapter open-finding counts from the Output
   store, rendered as a small badge in the tree so the manuscript shows where
   attention is needed at a glance.

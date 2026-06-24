@@ -9568,6 +9568,7 @@ impl App {
 
             // ── Global ────────────────────────────────────────
             A::OpenCommandPalette => self.open_command_palette(),
+            A::RunCheck => self.run_unified_check(),
             A::OpenCredits => self.open_credits(),
             A::OpenBookInfo => self.open_book_info(),
             A::OpenImpositionPreview => self.open_imposition_preview(),
@@ -11322,6 +11323,142 @@ impl App {
         out.extend(fc::check_date_coherence(&text, &ctx, &ledger));
         out.extend(fc::check_travel_timeline(&text, &ctx, &events, day, &ledger));
         out
+    }
+
+    /// 1.3.34+ — `Ctrl+B Shift+C`. The unified review pass: run the fast checkers
+    /// over the open paragraph (fact-check + Inner Socrates) and the timeline
+    /// critique over the project, emit everything to the Output pane, and surface it
+    /// with a one-line summary. Instant and LLM-free.
+    fn run_unified_check(&mut self) {
+        let (mut fact, mut soc, mut checked) = (0usize, 0usize, 0usize);
+
+        // Per-paragraph checkers over the open paragraph.
+        if let Some(id) = self.opened.as_ref().map(|d| d.id) {
+            if let Some(text) = self.paragraph_text(id) {
+                if !text.trim().is_empty() {
+                    checked = 1;
+                    if let Some((ledger, ctx)) = self.build_fact_check_context() {
+                        self.clear_paragraph_fact_warnings(id);
+                        let findings =
+                            crate::world::fact_check::check_paragraph(&text, &ledger, &[], Some(&ctx));
+                        for f in &findings {
+                            crate::world::fact_check::emit_finding(f, Some(id));
+                        }
+                        fact = findings.len();
+                    }
+                    if let Some((sid, sfindings)) = self.collect_socratic_findings() {
+                        self.persist_and_emit_socratic(sid, &sfindings);
+                        soc = sfindings.len();
+                    }
+                }
+            }
+        }
+
+        // Project-wide timeline critique.
+        let tl = self.collect_and_emit_timeline_critique();
+
+        let total = fact + soc + tl;
+        if total == 0 {
+            self.status = if checked == 0 {
+                "review pass: clean (no open paragraph; timeline included)".into()
+            } else {
+                format!("review pass: clean ({checked} ¶ + timeline)")
+            };
+            return;
+        }
+        self.output_selected = 0;
+        self.change_focus(Focus::Ai);
+        self.right_pane = RightPane::Output;
+        self.status = format!(
+            "review pass: {total} finding(s) — fact {fact} · socrates {soc} · timeline {tl} → Output (^B Tab)"
+        );
+    }
+
+    /// Run the orphan + fuzzy-overlap critique over the whole project's events,
+    /// clear the pane's prior critique findings, emit the fresh ones, return the
+    /// count. Honours `timeline.enabled` + `timeline.critique` config.
+    fn collect_and_emit_timeline_critique(&self) -> usize {
+        use crate::timeline::critique;
+        use crate::timeline::{Calendar, Precision, TimelinePoint};
+        if !self.cfg.timeline.enabled || !self.cfg.timeline.critique.enabled {
+            return 0;
+        }
+        let calendar = Calendar::from_config(self.cfg.timeline.calendar.clone());
+        let default_track = self.cfg.timeline.default_track.clone();
+        let now = chrono::Utc::now();
+        let events: Vec<critique::CritiqueEvent> = self
+            .hierarchy
+            .iter()
+            .filter_map(|n| n.event.as_ref().map(|e| (n, e)))
+            .map(|(n, ev)| critique::CritiqueEvent {
+                id: n.id,
+                title: n.title.clone(),
+                start_ticks: ev.start_ticks,
+                end_ticks: ev.end_ticks,
+                precision: ev.precision,
+                track: ev.track.clone().unwrap_or_else(|| default_track.clone()),
+                is_orphan: ev.is_orphan(&n.linked_paragraphs),
+                linked_paragraph_count: n.linked_paragraphs.len(),
+                characters: ev.characters.clone(),
+                places: ev.places.clone(),
+                age_days: Some((now - n.modified_at).num_days().max(0)),
+            })
+            .collect();
+        if events.is_empty() {
+            return 0;
+        }
+        let cc = &self.cfg.timeline.critique;
+        let fuzz = critique::fuzz_windows(&calendar);
+        let mut report = critique::run(
+            &events,
+            &fuzz,
+            cc.min_significance(),
+            cc.min_suspicion(),
+            cc.fuzzy_overlap.cluster_min_size.max(2),
+            critique::DEFAULT_STALENESS_DAYS,
+        );
+        if !cc.orphan.enabled {
+            report.orphans.clear();
+        }
+        if !cc.fuzzy_overlap.enabled {
+            report.overlaps.clear();
+        }
+        self.clear_timeline_critique_warnings();
+        let lang = critique::lang::lang_from_name(&self.active_prompt_language());
+        for f in &report.orphans {
+            let date = calendar.format(TimelinePoint::from_ticks(f.start_ticks), f.precision);
+            critique::pane::emit_orphan(f, &date, None, lang);
+        }
+        for f in &report.overlaps {
+            let window =
+                calendar.format(TimelinePoint::from_ticks(f.overlap_window.0), Precision::Season);
+            let char_names: Vec<String> = f
+                .shared_characters
+                .iter()
+                .filter_map(|id| self.hierarchy.get(*id).map(|n| n.title.clone()))
+                .collect();
+            let place_names: Vec<String> = f
+                .shared_places
+                .iter()
+                .filter_map(|id| self.hierarchy.get(*id).map(|n| n.title.clone()))
+                .collect();
+            critique::pane::emit_overlap(f, &window, &char_names, &place_names, None, lang);
+        }
+        report.total()
+    }
+
+    /// Clear the pane's prior timeline-critique findings so a re-run replaces them.
+    fn clear_timeline_critique_warnings(&self) {
+        use crate::pane::output::kinds;
+        if let Some(s) = crate::pane::output::active() {
+            for kind in [kinds::TIMELINE_ORPHAN_WARNING, kinds::TIMELINE_FUZZY_OVERLAP_WARNING] {
+                if let Ok(msgs) = s.by_kind(kind) {
+                    for m in &msgs {
+                        let _ = s.dismiss(m.id);
+                    }
+                }
+            }
+        }
     }
 
     fn fact_check_open_paragraph(&mut self) {
