@@ -110,6 +110,9 @@ pub enum Action {
     OpenQuickref,
 
     // ── Global meta ───────────────────────────────────────────
+    /// 1.3.33+ — the Ctrl+P command palette: fuzzy-find and run any command.
+    #[serde(rename = "global.command_palette")]
+    OpenCommandPalette,
     #[serde(rename = "global.open_credits")]
     OpenCredits,
     #[serde(rename = "global.open_book_info")]
@@ -859,6 +862,7 @@ impl Action {
             Action::LookupArtefacts => "artefacts".into(),
             Action::OpenQuickref => "help".into(),
 
+            Action::OpenCommandPalette => "command palette".into(),
             Action::OpenCredits => "credits".into(),
             Action::OpenBookInfo => "info".into(),
             Action::OpenImpositionPreview => "impose".into(),
@@ -1031,6 +1035,8 @@ impl Action {
                 "Open this Quick reference panel (live keymap + static cheatsheet).".into(),
 
             // ── Global / panels ───────────────────────────────
+            Action::OpenCommandPalette =>
+                "Open the command palette (Ctrl+Shift+P): fuzzy-find any command by name or chord and run it. Type to filter, ↑↓ to select, Enter to run, Esc to close.".into(),
             Action::OpenCredits =>
                 "Show inkhaven version, author, and bundled-component credits.".into(),
             Action::OpenBookInfo =>
@@ -1616,6 +1622,9 @@ impl KeyBindings {
                 entry("y", Action::AiStyleTransferRewrite, Scope::Editor),
             ],
             top_level: vec![
+                // 1.3.33+ — Ctrl+Shift+P anywhere: the command palette.
+                // Distinct from Ctrl+P (editor paste, which is gated `!shift`).
+                entry("Ctrl+Shift+p", Action::OpenCommandPalette, Scope::Any),
                 // F1 anywhere: Help-book RAG modal.
                 entry("F1", Action::HelpQuery, Scope::Any),
                 // F2: rename — pane-aware-content but bound in Tree
@@ -2261,5 +2270,25 @@ mod tests {
     fn unknown_chord_is_none() {
         let k = KeyBindings::defaults();
         assert_eq!(k.resolve_meta_sub(&ev('z'), Focus::Editor), None);
+    }
+
+    #[test]
+    fn command_palette_is_bound_top_level_and_resolves() {
+        let k = KeyBindings::defaults();
+        // The palette is bound at the top level, in any pane.
+        let bound = k
+            .top_level
+            .iter()
+            .find(|e| e.action == Action::OpenCommandPalette)
+            .expect("Ctrl+Shift+P is bound to the command palette");
+        // Re-synthesise the bound chord's event and confirm it resolves back —
+        // normalization-agnostic (uses whatever KeyChord the parser produced).
+        let synth = KeyEvent::new(bound.chord.code, bound.chord.modifiers);
+        assert_eq!(
+            k.resolve_top_level(&synth, Focus::Editor),
+            Some(Action::OpenCommandPalette)
+        );
+        // It carries the Shift modifier (so it never collides with Ctrl+P paste).
+        assert!(bound.chord.modifiers.contains(KeyModifiers::SHIFT));
     }
 }

@@ -9493,6 +9493,7 @@ impl App {
             A::OpenQuickref => self.open_quickref(),
 
             // ── Global ────────────────────────────────────────
+            A::OpenCommandPalette => self.open_command_palette(),
             A::OpenCredits => self.open_credits(),
             A::OpenBookInfo => self.open_book_info(),
             A::OpenImpositionPreview => self.open_imposition_preview(),
@@ -19545,6 +19546,7 @@ impl App {
         let is_backlink_picker = matches!(self.modal, Modal::BacklinkPicker { .. });
         let is_bookmark_picker = matches!(self.modal, Modal::BookmarkPicker { .. });
         let is_fuzzy_paragraph_picker = matches!(self.modal, Modal::FuzzyParagraphPicker { .. });
+        let is_command_palette = matches!(self.modal, Modal::CommandPalette { .. });
         let is_kill_ring_picker = matches!(self.modal, Modal::KillRingPicker { .. });
         let is_shell_pane = matches!(self.modal, Modal::ShellPane { .. });
         let is_hjson_editor = matches!(self.modal, Modal::HjsonEditor { .. });
@@ -19833,6 +19835,10 @@ impl App {
 
         if is_fuzzy_paragraph_picker {
             self.fuzzy_paragraph_picker_handle_key(key);
+            return Ok(false);
+        }
+        if is_command_palette {
+            self.command_palette_handle_key(key);
             return Ok(false);
         }
 
@@ -22586,6 +22592,70 @@ impl App {
                     self.status = format!("link remove: {e}");
                 }
             }
+        }
+    }
+
+    /// 1.3.33+ — open the Ctrl+Shift+P command palette over the live keybinding
+    /// registry. Entries are collected once at open; the input box fuzzy-filters.
+    fn open_command_palette(&mut self) {
+        let entries = super::palette::collect(&super::keybind::read());
+        self.modal = Modal::CommandPalette {
+            input: TextInput::new(),
+            entries,
+            cursor: 0,
+            scroll: 0,
+        };
+        self.status = "palette · type to filter · ↑↓ select · Enter run · Esc close".into();
+    }
+
+    /// 1.3.33+ — command-palette key handling: arrows/page to move, type to filter,
+    /// Enter runs the selected command via `run_action`. Esc closes generically.
+    fn command_palette_handle_key(&mut self, key: KeyEvent) {
+        let action_to_run = {
+            let Modal::CommandPalette { input, entries, cursor, scroll } = &mut self.modal
+            else {
+                return;
+            };
+            let matches = super::palette::fuzzy_filter(entries, input.as_str());
+            let total = matches.len();
+            let page: usize = 14;
+            let mut chosen: Option<super::keybind::Action> = None;
+            match key.code {
+                KeyCode::Up => {
+                    if *cursor > 0 {
+                        *cursor -= 1;
+                    }
+                }
+                KeyCode::Down => {
+                    if *cursor + 1 < total {
+                        *cursor += 1;
+                    }
+                }
+                KeyCode::PageUp => *cursor = cursor.saturating_sub(page),
+                KeyCode::PageDown => {
+                    *cursor = (*cursor + page).min(total.saturating_sub(1));
+                }
+                KeyCode::Enter => {
+                    if let Some(&idx) = matches.get(*cursor) {
+                        chosen = Some(entries[idx].action.clone());
+                    }
+                }
+                _ => {
+                    handle_text_input_key(input, key);
+                    *cursor = 0;
+                    *scroll = 0;
+                }
+            }
+            if *cursor < *scroll {
+                *scroll = *cursor;
+            } else if *cursor >= *scroll + page {
+                *scroll = *cursor + 1 - page;
+            }
+            chosen
+        };
+        if let Some(action) = action_to_run {
+            self.modal = Modal::None;
+            self.run_action(action);
         }
     }
 

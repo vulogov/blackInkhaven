@@ -25,6 +25,7 @@ use super::file_picker::FilePicker;
 use super::focus::Focus;
 use super::inference::InferenceAction;
 use super::input::TextInput;
+use super::palette::PaletteEntry;
 use super::timeline_state::TimelineViewState;
 
 /// One entry in the `/` prompt picker. Wraps both shipping HJSON prompts
@@ -327,6 +328,17 @@ pub(super) enum Modal {
     FuzzyParagraphPicker {
         input: TextInput,
         entries: Vec<ScriptPickerEntry>,
+        cursor: usize,
+        scroll: usize,
+    },
+    /// 1.3.33+ — Ctrl+Shift+P command palette. `entries` is the
+    /// projection of the live keybinding registry (see
+    /// `tui::palette::collect`); the input box fuzzy-filters by
+    /// command name / chord / description, Enter runs the
+    /// selection via `run_action`.
+    CommandPalette {
+        input: TextInput,
+        entries: Vec<PaletteEntry>,
         cursor: usize,
         scroll: usize,
     },
