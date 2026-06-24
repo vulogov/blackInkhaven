@@ -1513,12 +1513,20 @@ impl super::super::App {
         } else {
             Style::default().fg(Color::DarkGray)
         };
-        let msgs =
-            crate::pane::output::active().and_then(|s| s.active().ok()).unwrap_or_default();
+        // PANE-1 filtering — the same filtered view the key handler acts on.
+        let msgs = self.filtered_output_messages();
+        let title = if self.output_filter.is_active() {
+            let total = crate::pane::output::active()
+                .and_then(|s| s.count_active(None).ok())
+                .unwrap_or(msgs.len());
+            format!(" Output · {}/{} · {} ", msgs.len(), total, self.output_filter.summary())
+        } else {
+            format!(" Output · {} ", msgs.len())
+        };
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(border_style)
-            .title(format!(" Output · {} ", msgs.len()));
+            .title(title);
         let inner = block.inner(area);
         f.render_widget(block, area);
 
@@ -1695,8 +1703,15 @@ impl super::super::App {
                 }
                 _ => " ↑↓ · o expand · r remember · a ask AI · d dismiss · p pin · ^B Tab",
             };
+            // Compact filter cue: `f` cycles source, `S` severity, `t` this-¶,
+            // `c` clears. Full keys in the quick reference. Shown active when set.
+            let filter_cue = if self.output_filter.is_active() {
+                " · filter:f/S/t c:clr"
+            } else {
+                " · f:filter"
+            };
             let hint = Paragraph::new(Line::from(Span::styled(
-                hint_text,
+                format!("{hint_text}{filter_cue}"),
                 Style::default().fg(Color::DarkGray),
             )));
             f.render_widget(hint, footer);

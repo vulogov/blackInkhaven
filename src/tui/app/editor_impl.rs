@@ -279,6 +279,7 @@ impl super::App {
             editor: editor_session,
             focus: format!("{:?}", self.focus),
             right_pane: format!("{:?}", self.right_pane),
+            output_filter: self.output_filter.clone(),
             paragraph_cursors,
             visited_history,
             visited_cursor: self.visited_cursor,

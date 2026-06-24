@@ -1599,6 +1599,10 @@ pub(crate) struct App {
     output_selected: usize,
     /// Output messages whose detail is expanded (`o`/Space).
     output_expanded: std::collections::HashSet<Uuid>,
+    /// Output-pane filter (source / severity / open-paragraph). Applied as a
+    /// read-side view over `active()` so the pane and its key handler share one
+    /// filtered list.
+    output_filter: crate::pane::output::OutputFilter,
     /// WORLD-4 — the debounced fast fact-checker. Enabled when the project has a
     /// `world.hjson` (set at open + after a compile). `fc_last_fp` fingerprints
     /// the open paragraph; a change arms `fc_activity_at`, and 5 s of quiet fires
@@ -2247,6 +2251,7 @@ impl App {
             socr_activity_at: None,
             socr_needs_check: false,
             output_expanded: std::collections::HashSet::new(),
+            output_filter: crate::pane::output::OutputFilter::default(),
             tree_cursor: 0,
             tree_scroll: 0,
             search_input: TextInput::new(),
@@ -3482,6 +3487,17 @@ impl App {
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Result<bool> {
+        // 1.3.33+ — opt-in key tracer. Run `INKHAVEN_KEYLOG=1 inkhaven`, reproduce
+        // a chord, and read the exact `(code, modifiers, kind)` from `.inkhaven.log`.
+        // Used to diagnose terminal-specific chord reporting (e.g. Ctrl+Shift+P).
+        if std::env::var_os("INKHAVEN_KEYLOG").is_some() {
+            tracing::info!(
+                "KEY code={:?} mods={:?} kind={:?}",
+                key.code,
+                key.modifiers,
+                key.kind
+            );
+        }
         // 1.2.8+ — ConfirmQuit modal swallows its own keys:
         // Y / Enter proceed with the existing quit flow;
         // N / Esc cancel + close the modal.  Anything else
@@ -3647,6 +3663,15 @@ impl App {
             return Ok(false);
         }
 
+
+        // 1.3.33+ — `?` opens the quick reference from the Tree pane only. The tree
+        // is pure navigation (bare-letter chords, no text input), so the literal
+        // `?` isn't needed there; the editor / AI / search panes keep `?` as a
+        // typed character, and Ctrl+B H opens the quickref from anywhere.
+        if self.focus == Focus::Tree && matches!(key.code, KeyCode::Char('?')) {
+            self.open_quickref();
+            return Ok(false);
+        }
 
         // 1.2.4+: F-keys + every top-level (no-prefix) chord
         // flow through the `top_level` binding table. The table
@@ -4782,6 +4807,8 @@ impl App {
             "Ai" => self.right_pane = RightPane::Ai,
             _ => {}
         }
+        // PANE-1 filtering — restore the Output pane's saved filter.
+        self.output_filter = state.output_filter.clone();
     }
 
     fn handle_input_key(&mut self, key: KeyEvent, is_search: bool) -> Result<bool> {
@@ -6788,10 +6815,39 @@ impl App {
 
     /// PANE-1 — keys for the Output pane (active when the right region shows
     /// Output): ↑/↓ select, `d` dismiss, `p` pin/unpin, `g`/`G` first/last.
-    fn handle_output_key(&mut self, key: KeyEvent) -> Result<bool> {
-        let msgs = crate::pane::output::active()
+    /// The Output messages visible under the active filter — the single source of
+    /// truth shared by `draw_output` and `handle_output_key` so selection + actions
+    /// always agree with what's on screen.
+    pub(in crate::tui) fn filtered_output_messages(&self) -> Vec<crate::pane::output::Message> {
+        let open = self.opened.as_ref().map(|d| d.id);
+        crate::pane::output::active()
             .and_then(|s| s.active().ok())
-            .unwrap_or_default();
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|m| self.output_filter.matches(m, open))
+            .collect()
+    }
+
+    /// A status-line summary of the active Output filter (or "off").
+    fn output_filter_status(&self) -> String {
+        if self.output_filter.is_active() {
+            format!("output filter · {}", self.output_filter.summary())
+        } else {
+            "output filter · off".into()
+        }
+    }
+
+    /// Shared bookkeeping after any Output-filter change: reset the selection to the
+    /// top of the new view, set the status line, and persist the filter to the
+    /// session so it survives a restart.
+    fn after_output_filter_change(&mut self, status: String) {
+        self.output_selected = 0;
+        self.status = status;
+        let _ = self.save_session();
+    }
+
+    fn handle_output_key(&mut self, key: KeyEvent) -> Result<bool> {
+        let msgs = self.filtered_output_messages();
         let n = msgs.len();
         if n > 0 && self.output_selected >= n {
             self.output_selected = n - 1;
@@ -6800,6 +6856,24 @@ impl App {
             .modifiers
             .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER);
         match key.code {
+            // PANE-1 filtering (road to 1.4.0): narrow the pane by source / severity
+            // / the open paragraph. Filter changes reset the selection to the top.
+            KeyCode::Char('f') if plain => {
+                self.output_filter.cycle_source();
+                self.after_output_filter_change(self.output_filter_status());
+            }
+            KeyCode::Char('S') => {
+                self.output_filter.cycle_min_severity();
+                self.after_output_filter_change(self.output_filter_status());
+            }
+            KeyCode::Char('t') if plain => {
+                self.output_filter.only_open_paragraph = !self.output_filter.only_open_paragraph;
+                self.after_output_filter_change(self.output_filter_status());
+            }
+            KeyCode::Char('c') if plain => {
+                self.output_filter.clear();
+                self.after_output_filter_change("output filter cleared".into());
+            }
             KeyCode::Up | KeyCode::Char('k') if plain => {
                 self.output_selected = self.output_selected.saturating_sub(1);
             }
@@ -9493,6 +9567,7 @@ impl App {
             A::OpenQuickref => self.open_quickref(),
 
             // ── Global ────────────────────────────────────────
+            A::OpenCommandPalette => self.open_command_palette(),
             A::OpenCredits => self.open_credits(),
             A::OpenBookInfo => self.open_book_info(),
             A::OpenImpositionPreview => self.open_imposition_preview(),
@@ -19545,6 +19620,7 @@ impl App {
         let is_backlink_picker = matches!(self.modal, Modal::BacklinkPicker { .. });
         let is_bookmark_picker = matches!(self.modal, Modal::BookmarkPicker { .. });
         let is_fuzzy_paragraph_picker = matches!(self.modal, Modal::FuzzyParagraphPicker { .. });
+        let is_command_palette = matches!(self.modal, Modal::CommandPalette { .. });
         let is_kill_ring_picker = matches!(self.modal, Modal::KillRingPicker { .. });
         let is_shell_pane = matches!(self.modal, Modal::ShellPane { .. });
         let is_hjson_editor = matches!(self.modal, Modal::HjsonEditor { .. });
@@ -19833,6 +19909,10 @@ impl App {
 
         if is_fuzzy_paragraph_picker {
             self.fuzzy_paragraph_picker_handle_key(key);
+            return Ok(false);
+        }
+        if is_command_palette {
+            self.command_palette_handle_key(key);
             return Ok(false);
         }
 
@@ -22586,6 +22666,70 @@ impl App {
                     self.status = format!("link remove: {e}");
                 }
             }
+        }
+    }
+
+    /// 1.3.33+ — open the Ctrl+Shift+P command palette over the live keybinding
+    /// registry. Entries are collected once at open; the input box fuzzy-filters.
+    fn open_command_palette(&mut self) {
+        let entries = super::palette::collect(&super::keybind::read());
+        self.modal = Modal::CommandPalette {
+            input: TextInput::new(),
+            entries,
+            cursor: 0,
+            scroll: 0,
+        };
+        self.status = "palette · type to filter · ↑↓ select · Enter run · Esc close".into();
+    }
+
+    /// 1.3.33+ — command-palette key handling: arrows/page to move, type to filter,
+    /// Enter runs the selected command via `run_action`. Esc closes generically.
+    fn command_palette_handle_key(&mut self, key: KeyEvent) {
+        let action_to_run = {
+            let Modal::CommandPalette { input, entries, cursor, scroll } = &mut self.modal
+            else {
+                return;
+            };
+            let matches = super::palette::fuzzy_filter(entries, input.as_str());
+            let total = matches.len();
+            let page: usize = 14;
+            let mut chosen: Option<super::keybind::Action> = None;
+            match key.code {
+                KeyCode::Up => {
+                    if *cursor > 0 {
+                        *cursor -= 1;
+                    }
+                }
+                KeyCode::Down => {
+                    if *cursor + 1 < total {
+                        *cursor += 1;
+                    }
+                }
+                KeyCode::PageUp => *cursor = cursor.saturating_sub(page),
+                KeyCode::PageDown => {
+                    *cursor = (*cursor + page).min(total.saturating_sub(1));
+                }
+                KeyCode::Enter => {
+                    if let Some(&idx) = matches.get(*cursor) {
+                        chosen = Some(entries[idx].action.clone());
+                    }
+                }
+                _ => {
+                    handle_text_input_key(input, key);
+                    *cursor = 0;
+                    *scroll = 0;
+                }
+            }
+            if *cursor < *scroll {
+                *scroll = *cursor;
+            } else if *cursor >= *scroll + page {
+                *scroll = *cursor + 1 - page;
+            }
+            chosen
+        };
+        if let Some(action) = action_to_run {
+            self.modal = Modal::None;
+            self.run_action(action);
         }
     }
 
