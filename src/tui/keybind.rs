@@ -113,6 +113,11 @@ pub enum Action {
     /// 1.3.33+ — the Ctrl+P command palette: fuzzy-find and run any command.
     #[serde(rename = "global.command_palette")]
     OpenCommandPalette,
+    /// 1.3.34+ — the unified review pass (Ctrl+B Shift+C): every fast checker
+    /// (fact-check + Inner Socrates over the open paragraph, timeline critique over
+    /// the project) into the Output pane.
+    #[serde(rename = "global.run_check")]
+    RunCheck,
     #[serde(rename = "global.open_credits")]
     OpenCredits,
     #[serde(rename = "global.open_book_info")]
@@ -863,6 +868,7 @@ impl Action {
             Action::OpenQuickref => "help".into(),
 
             Action::OpenCommandPalette => "command palette".into(),
+            Action::RunCheck => "review pass".into(),
             Action::OpenCredits => "credits".into(),
             Action::OpenBookInfo => "info".into(),
             Action::OpenImpositionPreview => "impose".into(),
@@ -1037,6 +1043,8 @@ impl Action {
             // ── Global / panels ───────────────────────────────
             Action::OpenCommandPalette =>
                 "Open the command palette (Ctrl+V Space): fuzzy-find any command by name or chord and run it. Type to filter, ↑↓ to select, Enter to run, Esc to close.".into(),
+            Action::RunCheck =>
+                "Run the unified review pass (Ctrl+B Shift+C): every fast, deterministic checker at once — the world fact-checker + Inner Socrates over the open paragraph, plus the timeline critique over the project — emitting findings to the Output pane (filter them with f/S/t). Instant and LLM-free.".into(),
             Action::OpenCredits =>
                 "Show inkhaven version, author, and bundled-component credits.".into(),
             Action::OpenBookInfo =>
@@ -1384,6 +1392,8 @@ impl KeyBindings {
                 // Distinct chord from `Ctrl+B b` (lowercase build)
                 // because the matcher tracks SHIFT separately.
                 entry("Shift+b", Action::BackupNow, Scope::Any),
+                // 1.3.34+ — Ctrl+B Shift+C: the unified review pass.
+                entry("Shift+c", Action::RunCheck, Scope::Any),
                 entry("o", Action::ScheduleTake, Scope::Any),
                 // 1.2.7+ — Ctrl+B U undoes the most-recent
                 // paragraph delete (single-slot kill-ring).
@@ -2296,6 +2306,17 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn unified_check_is_bound_to_ctrl_b_shift_c() {
+        let k = KeyBindings::defaults();
+        let ev = KeyEvent::new(KeyCode::Char('C'), KeyModifiers::SHIFT);
+        assert_eq!(
+            k.resolve_meta_sub(&ev, Focus::Editor),
+            Some(Action::RunCheck),
+            "Ctrl+B Shift+C runs the unified review pass"
+        );
     }
 
     #[test]
