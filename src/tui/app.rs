@@ -4807,6 +4807,8 @@ impl App {
             "Ai" => self.right_pane = RightPane::Ai,
             _ => {}
         }
+        // PANE-1 filtering — restore the Output pane's saved filter.
+        self.output_filter = state.output_filter.clone();
     }
 
     fn handle_input_key(&mut self, key: KeyEvent, is_search: bool) -> Result<bool> {
@@ -6835,6 +6837,15 @@ impl App {
         }
     }
 
+    /// Shared bookkeeping after any Output-filter change: reset the selection to the
+    /// top of the new view, set the status line, and persist the filter to the
+    /// session so it survives a restart.
+    fn after_output_filter_change(&mut self, status: String) {
+        self.output_selected = 0;
+        self.status = status;
+        let _ = self.save_session();
+    }
+
     fn handle_output_key(&mut self, key: KeyEvent) -> Result<bool> {
         let msgs = self.filtered_output_messages();
         let n = msgs.len();
@@ -6849,23 +6860,19 @@ impl App {
             // / the open paragraph. Filter changes reset the selection to the top.
             KeyCode::Char('f') if plain => {
                 self.output_filter.cycle_source();
-                self.output_selected = 0;
-                self.status = self.output_filter_status();
+                self.after_output_filter_change(self.output_filter_status());
             }
             KeyCode::Char('S') => {
                 self.output_filter.cycle_min_severity();
-                self.output_selected = 0;
-                self.status = self.output_filter_status();
+                self.after_output_filter_change(self.output_filter_status());
             }
             KeyCode::Char('t') if plain => {
                 self.output_filter.only_open_paragraph = !self.output_filter.only_open_paragraph;
-                self.output_selected = 0;
-                self.status = self.output_filter_status();
+                self.after_output_filter_change(self.output_filter_status());
             }
             KeyCode::Char('c') if plain => {
                 self.output_filter.clear();
-                self.output_selected = 0;
-                self.status = "output filter cleared".into();
+                self.after_output_filter_change("output filter cleared".into());
             }
             KeyCode::Up | KeyCode::Char('k') if plain => {
                 self.output_selected = self.output_selected.saturating_sub(1);

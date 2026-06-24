@@ -32,8 +32,14 @@ clean group (`fact-check`, `socrates`, `timeline-critique`, `translation`,
   source, `S` cycle min-severity, `t` toggle this-paragraph, `c` clear — each resets
   the selection to top and reports via the status line; a compact `f:filter` cue in
   the footer. Full suite stable (1790).
-- **P2 — persistence.** Persist the active filter in `.session.json` next to
-  `right_pane`. Optional saved-filter presets.
+- **P2 — persistence.** _Done._ `SessionState` gains an `output_filter:
+  OutputFilter` (`#[serde(default)]` — legacy `.session.json` files default to
+  "off"). `save_session` writes it; `restore_session` reads it back after
+  `right_pane`. Filter changes persist immediately via a shared
+  `after_output_filter_change` (reset selection + status + `save_session`). Two
+  round-trip tests (full filter through session JSON; legacy file → off). Full
+  suite 1790 → 1792. (Saved-filter presets deferred — single active filter is the
+  MVP.)
 - **P3 — stability rider + docs.** Filter `matches` proptest; KEYBINDING/quickref
   rows. Then cut the bundled release.
 
