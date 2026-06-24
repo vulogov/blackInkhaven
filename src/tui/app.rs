@@ -167,6 +167,49 @@ pub fn run(project: &Path) -> Result<()> {
 
     let cfg = Config::load_layered(&layout.config_path()).map_err(anyhow::Error::from)?;
 
+    // 1.3.36 hardening — advisory single-instance lock. Acquired here,
+    // on a cooked terminal (before raw-mode), so the "already open"
+    // prompt can read a y/N from stdin. Held in `_project_lock` for
+    // the whole session; the OS releases it on exit or crash. Per the
+    // permissive principle this only *informs* — the author can always
+    // open anyway.
+    let _project_lock = match crate::project_lock::acquire(&layout.root) {
+        Ok(crate::project_lock::LockOutcome::Acquired(lock)) => Some(lock),
+        Ok(crate::project_lock::LockOutcome::Busy(info)) => {
+            use std::io::IsTerminal;
+            eprintln!(
+                "⚠ Another inkhaven session may already have this project open ({}).",
+                info.describe()
+            );
+            eprintln!(
+                "  Opening it twice at once can corrupt the project store."
+            );
+            if std::io::stdin().is_terminal() {
+                eprint!("  Open anyway? [y/N] ");
+                let _ = std::io::Write::flush(&mut std::io::stderr());
+                let mut answer = String::new();
+                let _ = std::io::stdin().read_line(&mut answer);
+                let yes = matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes");
+                if !yes {
+                    eprintln!("  Cancelled — left the existing session untouched.");
+                    return Ok(());
+                }
+                eprintln!("  Proceeding without the lock — mind concurrent edits.");
+            } else {
+                // Non-interactive launch can't be prompted. Permissive:
+                // warn loudly and proceed rather than refuse.
+                eprintln!("  (non-interactive launch — proceeding without the lock)");
+            }
+            None
+        }
+        Err(e) => {
+            // Couldn't even open the lockfile (read-only mount, etc.).
+            // Never block on infrastructure: log and carry on.
+            tracing::warn!(target: "inkhaven::lock", "project lock unavailable: {e}");
+            None
+        }
+    };
+
     // 1.2.5+: log the typst engine at startup so users can confirm
     // their HJSON setting took effect. Both engines are always
     // available — the in-process compiler ships in every 1.2.5
