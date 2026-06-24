@@ -53,8 +53,14 @@ hole, and it's cheap: the whole node set is already in memory after
   for manual profiling). Shipped: a referential-scan perf-budget test (1000 nodes
   < 500ms, guards against O(n²) regressions) + a proptest harness smoke (3
   `levenshtein`-is-a-metric properties). Full suite 1758 → 1762.
-- **P2 — parser property tests.** First property tests over the panic-prone parsers
-  (calendar `parse`, HJSON config layering) on the P1 spine.
+- **P2 — parser property tests.** _Done._ Property sweep over the three named
+  panic-prone parsers on the P1 spine: **calendar** (`parse` never-panics across all
+  presets; `format` never-panics on a wide tick range × every precision; `sols`
+  day-precision exact round-trip; `format` canonical-through-`parse` for all
+  presets), **HJSON config** (`serde_hjson::from_str::<Config>` never-panics on
+  arbitrary input *and* brace/quote soup), and **language detection** (`detect` /
+  `detect_with_confidence` never-panic + deterministic + survive empty / emoji /
+  100k-char inputs). 9 property tests; full suite 1762 → 1771.
 - **P3 — autofix for the safe classes.** Prune dangling `linked_paragraphs` /
   `event` refs and reconcile under `doctor --autofix` (store mutation; the existing
   autofix path). Detection-only in P0.

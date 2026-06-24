@@ -3826,3 +3826,33 @@ mod layering_tests {
         assert!(count >= 15, "expected >= 15 presets, found {count}");
     }
 }
+
+// 1.3.32+ (road to 1.4.0) — config parser property sweep.
+#[cfg(test)]
+mod prop_tests {
+    use super::Config;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// HJSON config parsing must return Ok|Err on arbitrary input — never panic.
+        /// The layered loader feeds untrusted `inkhaven.hjson` / `~/.config` files
+        /// through `serde_hjson::from_str`; a panic here would crash the editor at
+        /// open. Bounded length keeps the proptest fast.
+        #[test]
+        fn config_hjson_parse_never_panics(s in ".{0,256}") {
+            let _ = serde_hjson::from_str::<Config>(&s);
+        }
+
+        /// Even structurally-plausible HJSON (brace/quote soup) must not panic — only
+        /// fail cleanly. Exercises the parser's recovery paths, not just the reject.
+        #[test]
+        fn config_bracey_hjson_never_panics(
+            s in proptest::collection::vec(
+                proptest::sample::select(vec!["{", "}", "[", "]", ":", ",", "\"", "a", "1", " ", "\n"]),
+                0..64,
+            ).prop_map(|v| v.concat())
+        ) {
+            let _ = serde_hjson::from_str::<Config>(&s);
+        }
+    }
+}
