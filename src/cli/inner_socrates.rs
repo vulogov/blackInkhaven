@@ -310,14 +310,14 @@ fn socratic_llm_call(
     use crate::project::ProjectLayout;
     use crate::world::fact_check_slow::{backoff_delay, is_transient, slow_preflight, PreflightVerdict};
 
-    const DAILY_CAP: i64 = InnerSocratesStore::DAILY_CALL_CAP;
     const SUB_BUDGET: &str = InnerSocratesStore::SLOW_SUB_BUDGET;
-    let day = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
+    crate::dayclock::set_boundary(cfg.goals.day_boundary);
+    let day = crate::dayclock::today_key();
     let store = InnerSocratesStore::open_for_project(project)
         .map_err(|e| Error::Store(format!("inner-socrates store: {e}")))?;
     let used = store.llm_calls_today(&day, SUB_BUDGET).map_err(|e| Error::Store(format!("{e}")))?;
 
-    let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
     let ai = crate::ai::AiClient::from_config(&cfg.llm)
         .map_err(|e| Error::Config(format!("no LLM provider for the {label}: {e}")))?;
     let (model, _env) = ai
@@ -325,13 +325,14 @@ fn socratic_llm_call(
         .map_err(|e| Error::Config(format!("resolving provider: {e}")))?;
 
     let effective_soft = if force { 0 } else { soft_cap };
-    let (pf, verdict) = slow_preflight(system, &prompt, used, DAILY_CAP, effective_soft);
+    let daily_cap = cfg.cost.inner_socrates_daily_call_cap;
+    let (pf, verdict) = slow_preflight(system, &prompt, used, daily_cap, effective_soft);
     match verdict {
         // Informative, not a gate: warn past the daily budget and keep going.
         PreflightVerdict::DailyCapReached => {
             eprintln!(
                 "{label}: past today's slow-track budget ({}/{} calls) — continuing (the cap is informative, see `inkhaven cost`).",
-                pf.calls_used, DAILY_CAP
+                pf.calls_used, daily_cap
             );
         }
         PreflightVerdict::OverSoftCap { est_total_tokens, soft_cap } => {

@@ -51,6 +51,10 @@ pub struct Config {
     /// to show.
     #[serde(default)]
     pub goals: GoalsConfig,
+    #[serde(default)]
+    pub cost: CostConfig,
+    #[serde(default)]
+    pub project_lock: ProjectLockConfig,
     /// 1.2.6+ — AI-pane behaviour knobs that aren't tied to a
     /// specific provider (per-paragraph memory, future
     /// turn-history overrides, etc).
@@ -180,6 +184,8 @@ impl Default for Config {
             images: ImagesConfig::default(),
             output: OutputConfig::default(),
             goals: GoalsConfig::default(),
+            cost: CostConfig::default(),
+            project_lock: ProjectLockConfig::default(),
             ai: AiConfig::default(),
             timeline: TimelineConfig::default(),
             scrivener: ScrivenerConfig::default(),
@@ -234,10 +240,28 @@ pub struct BackupConfig {
     /// hard warning surfaces).
     #[serde(default = "default_amber_threshold")]
     pub amber_threshold: f32,
+    /// 1.3.37 — explicit toggle for the exit-hook auto-backup. `false`
+    /// disables it without the non-obvious side-effects of clearing
+    /// `out_dir` / setting `max_age = 0s`. Default `true`.
+    #[serde(default = "default_auto_backup_on_exit")]
+    pub auto_backup_on_exit: bool,
+    /// 1.3.37 — how many backup `.zip` snapshots to retain in `out_dir`;
+    /// after each backup the oldest beyond this count are deleted. `0`
+    /// (default) keeps all (prior behaviour — backups accumulate).
+    #[serde(default = "default_backup_keep_last")]
+    pub keep_last: usize,
 }
 
 fn default_backup_wait_for_key() -> bool {
     true
+}
+
+fn default_auto_backup_on_exit() -> bool {
+    true
+}
+
+fn default_backup_keep_last() -> usize {
+    0
 }
 
 fn default_amber_threshold() -> f32 {
@@ -260,6 +284,8 @@ impl Default for BackupConfig {
             max_age: std::time::Duration::from_secs(7 * 24 * 3600),
             wait_for_key_after_backup: default_backup_wait_for_key(),
             amber_threshold: default_amber_threshold(),
+            auto_backup_on_exit: default_auto_backup_on_exit(),
+            keep_last: default_backup_keep_last(),
         }
     }
 }
@@ -1485,6 +1511,31 @@ pub struct EditorConfig {
     /// to a 3-line indented block. Backspace at the inside of a freshly
     /// typed pair removes both halves. Disabled = nothing inserts.
     pub auto_close_pairs: bool,
+    /// 1.3.37 — seconds between crash-rescue mirrors of the dirty
+    /// buffer(s). Lower = a panic loses fewer keystrokes (more disk
+    /// churn); `0` mirrors every tick. Default 2.
+    #[serde(default = "default_crash_mirror_seconds")]
+    pub crash_mirror_seconds: u64,
+    /// 1.3.37 — how many deleted paragraphs the kill-ring keeps for
+    /// undelete (`Ctrl+V Shift+U`) before the oldest rolls off.
+    /// Default 10.
+    #[serde(default = "default_deleted_paragraph_history")]
+    pub deleted_paragraph_history: usize,
+    /// 1.3.37 — when the open file changes on disk and the buffer is
+    /// CLEAN: `true` (default) silently reloads it; `false` warns
+    /// instead, leaving your view/cursor untouched (useful when an
+    /// external `git pull` / script rewrites files).
+    #[serde(default = "default_external_change_auto_reload")]
+    pub external_change_auto_reload: bool,
+    /// 1.3.37 — idle seconds after editing before the background
+    /// fact-check fires. Default 5 (mirrors typst diagnostics idle).
+    #[serde(default = "default_fact_check_idle_seconds")]
+    pub fact_check_idle_seconds: u64,
+    /// 1.3.37 — cap on the browser-style visited-paragraph history
+    /// (persisted in `.session.json`). `0` (default) = unbounded,
+    /// preserving prior behaviour; set e.g. 200 to bound session growth.
+    #[serde(default = "default_visited_history_cap")]
+    pub visited_history_cap: usize,
     /// Snowball stemmer languages used to expand the Places/Characters
     /// highlight overlay so morphological variants light up too — e.g.
     /// "Москва" also matches "Москве", "Москвою". Each entry is one of the
@@ -1703,6 +1754,26 @@ fn default_paragraph_long_secs() -> u32 {
 
 fn default_disk_warn_mb() -> u64 {
     100
+}
+
+fn default_crash_mirror_seconds() -> u64 {
+    2
+}
+
+fn default_deleted_paragraph_history() -> usize {
+    10
+}
+
+fn default_external_change_auto_reload() -> bool {
+    true
+}
+
+fn default_fact_check_idle_seconds() -> u64 {
+    5
+}
+
+fn default_visited_history_cap() -> usize {
+    0
 }
 
 fn default_echo_window() -> usize {
@@ -2852,6 +2923,11 @@ impl Default for EditorConfig {
             wrap: true,
             autosave_seconds: 5,
             auto_close_pairs: true,
+            crash_mirror_seconds: default_crash_mirror_seconds(),
+            deleted_paragraph_history: default_deleted_paragraph_history(),
+            external_change_auto_reload: default_external_change_auto_reload(),
+            fact_check_idle_seconds: default_fact_check_idle_seconds(),
+            visited_history_cap: default_visited_history_cap(),
             stemming: StemmingConfig::default(),
             startup_splash: default_startup_splash(),
             mouse_captured: default_mouse_captured(),
@@ -3015,7 +3091,33 @@ impl Default for HierarchyConfig {
 impl Config {
     pub fn load(path: &Path) -> crate::error::Result<Self> {
         let raw = std::fs::read_to_string(path).map_err(crate::error::Error::Io)?;
-        serde_hjson::from_str(&raw).map_err(|e| crate::error::Error::Config(e.to_string()))
+        let mut cfg: Self = serde_hjson::from_str(&raw)
+            .map_err(|e| crate::error::Error::Config(e.to_string()))?;
+        cfg.harden_security_floor();
+        Ok(cfg)
+    }
+
+    /// M5 — re-assert the shipped security floor after config load /
+    /// merge. Setting `shell.blocked_externals` in a project or global
+    /// overlay REPLACES the list wholesale (deep-merge merges objects,
+    /// not arrays), so without this an overlay that means "also block
+    /// X" silently drops every shipped block (vim/ssh/sudo/…) that
+    /// guards the embedded shell against alt-screen corruption and
+    /// privilege escalation. Union the defaults back in: the user can
+    /// still ADD blocks, but can't accidentally wipe the floor. This is
+    /// the security carve-out to the otherwise-permissive config.
+    fn harden_security_floor(&mut self) {
+        let have: std::collections::HashSet<&str> = self
+            .shell
+            .blocked_externals
+            .iter()
+            .map(|s| s.as_str())
+            .collect();
+        let missing: Vec<String> = default_blocked_externals()
+            .into_iter()
+            .filter(|d| !have.contains(d.as_str()))
+            .collect();
+        self.shell.blocked_externals.extend(missing);
     }
 
     /// 1.2.20+ — load the project config, then layer any
@@ -3075,8 +3177,10 @@ impl Config {
             }
         }
 
-        serde_json::from_value(merged)
-            .map_err(|e| crate::error::Error::Config(e.to_string()))
+        let mut cfg: Self = serde_json::from_value(merged)
+            .map_err(|e| crate::error::Error::Config(e.to_string()))?;
+        cfg.harden_security_floor();
+        Ok(cfg)
     }
 
     #[allow(dead_code)]
@@ -3164,9 +3268,80 @@ fn global_config_files_in(dir: &Path) -> Vec<PathBuf> {
 /// live under `goals.books.<book-slug>` so the slug is the
 /// natural lookup key (case-insensitive in the
 /// hierarchy → snapshot mapping).
+/// AI-cost knobs surfaced in `inkhaven cost`. The daily caps are
+/// **informative, not gates** (the slow tracks warn and continue past
+/// them, per Inkhaven's permissive principle) — they drive the usage
+/// bars and the warning thresholds. Defaults match the values that
+/// shipped hardcoded through 1.3.36.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CostConfig {
+    /// Daily ceiling on world fact-check slow-track LLM calls.
+    pub world_daily_call_cap: i64,
+    /// Daily ceiling on Inner Socrates slow-track LLM calls.
+    pub inner_socrates_daily_call_cap: i64,
+    /// Trailing days of per-category AI-call tallies kept in
+    /// `.inkhaven/ai_usage.json` before the oldest are pruned.
+    pub usage_retention_days: usize,
+}
+
+impl Default for CostConfig {
+    fn default() -> Self {
+        Self {
+            world_daily_call_cap: 200,
+            inner_socrates_daily_call_cap: 150,
+            usage_retention_days: 30,
+        }
+    }
+}
+
+/// Advisory single-instance project lock (1.3.36). The data-safety
+/// carve-out to the permissive principle: it *informs*, and by default
+/// never hard-blocks.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ProjectLockConfig {
+    /// Acquire the lock at all. `false` disables single-instance
+    /// guarding entirely (e.g. if you knowingly run two read-mostly
+    /// sessions). Default `true`.
+    pub enabled: bool,
+    /// What to do when another *live* session already holds the lock:
+    /// `"prompt"` (default — interactive `y/N`; warn-and-proceed when
+    /// non-interactive), `"warn"` (always warn and proceed), or
+    /// `"refuse"` (never open a second session).
+    pub on_conflict: String,
+}
+
+impl Default for ProjectLockConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            on_conflict: "prompt".into(),
+        }
+    }
+}
+
+/// When the writing "day" rolls over for streaks, daily word/active
+/// totals, AI-usage tallies, and the slow-track daily caps. `Utc`
+/// (default, preserving prior behaviour) resets at 00:00 UTC; `Local`
+/// resets at the writer's local midnight — so an evening session in a
+/// far-from-UTC timezone isn't attributed to "tomorrow" and the streak
+/// doesn't flip mid-evening.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum DayBoundary {
+    #[default]
+    Utc,
+    Local,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GoalsConfig {
+    /// When the writing day rolls over (`utc` default, or `local`).
+    /// Governs the streak, daily word/active totals, AI-usage tallies,
+    /// and the slow-track daily caps so they all agree on "today".
+    pub day_boundary: DayBoundary,
     /// Project-wide daily word-count target. Status-bar shows
     /// `today X/daily_words`. `0` (default) hides the slash.
     pub daily_words: i64,
@@ -3201,6 +3376,7 @@ fn default_auto_promote_on_target() -> bool {
 impl Default for GoalsConfig {
     fn default() -> Self {
         Self {
+            day_boundary: DayBoundary::default(),
             daily_words: 0,
             active_minutes_daily: 0,
             streak_grace_per_week: 0,
@@ -3641,6 +3817,23 @@ mod layering_tests {
         assert_eq!(base["theme"]["modal_fg"], "#bbb");
         // …unrelated subtrees untouched.
         assert_eq!(base["editor"]["reading_wpm"], 200);
+    }
+
+    #[test]
+    fn security_floor_survives_a_block_list_override() {
+        // M5 — a project config that sets `shell.blocked_externals` to
+        // add one tool must NOT drop the shipped security blocks.
+        let tmp = tempfile::tempdir().unwrap();
+        let proj = tmp.path().join("inkhaven.hjson");
+        write(&proj, "{ shell: { blocked_externals: [\"mytool\"] } }");
+        let cfg = Config::load_layered_from(&proj, None).unwrap();
+        let blocked = &cfg.shell.blocked_externals;
+        // The user's addition is present…
+        assert!(blocked.iter().any(|b| b == "mytool"));
+        // …and the high-risk shipped blocks were NOT wiped.
+        for must in ["sudo", "ssh", "vim", "less", "passwd"] {
+            assert!(blocked.iter().any(|b| b == must), "floor lost `{must}`");
+        }
     }
 
     #[test]

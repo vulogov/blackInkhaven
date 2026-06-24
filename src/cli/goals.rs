@@ -104,7 +104,7 @@ fn hms(seconds: i64) -> String {
 /// Render the snapshot as plain lines (the CLI body; kept separate so it is
 /// unit-testable without a project on disk).
 pub fn render_lines(snap: &ProgressSnapshot, day: &str) -> Vec<String> {
-    let mut out = vec![format!("Writing goals — {day} (UTC)"), String::new()];
+    let mut out = vec![format!("Writing goals — {day}"), String::new()];
 
     // Project: total + today vs daily goal.
     let p = &snap.project;
@@ -192,7 +192,7 @@ pub fn render_lines(snap: &ProgressSnapshot, day: &str) -> Vec<String> {
     }
 
     out.push(String::new());
-    out.push("  Goals are informative. Resets at 00:00 UTC. (TUI: Ctrl+V g)".into());
+    out.push("  Goals are informative. Day resets per goals.day_boundary. (TUI: Ctrl+V g)".into());
     out
 }
 
@@ -210,6 +210,7 @@ pub fn run(project: &Path) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
     let cfg = Config::load_layered(&layout.config_path())?;
+    crate::dayclock::set_boundary(cfg.goals.day_boundary);
     let store = Store::open(layout.clone(), &cfg)?;
     let h = Hierarchy::load(&store)?;
 
@@ -219,7 +220,7 @@ pub fn run(project: &Path) -> Result<()> {
     let snap = build_snapshot(&progress, &cfg.goals, &live)
         .map_err(|e| Error::Store(format!("goals: build snapshot: {e}")))?;
 
-    let day = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    let day = crate::dayclock::today_key();
     for line in render_lines(&snap, &day) {
         println!("{line}");
     }

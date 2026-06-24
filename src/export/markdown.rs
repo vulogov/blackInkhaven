@@ -148,6 +148,36 @@ fn convert_emphasis(line: &str) -> String {
     out
 }
 
+/// If `line` is a complete single-line `#raw(...)` — parentheses
+/// balanced within the line — return its inner text with one pair of
+/// surrounding quotes stripped. Returns `None` when the `(` opens an
+/// unbalanced (multi-line) block, which the caller renders as a fence.
+fn single_line_raw_inner(line: &str) -> Option<String> {
+    let open = line.find('(')?;
+    let mut depth = 0i32;
+    let mut close = None;
+    for (i, c) in line.char_indices().skip_while(|&(i, _)| i < open) {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    close = Some(i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let close = close?;
+    let inner = line[open + 1..close].trim();
+    let inner = inner
+        .strip_prefix('"')
+        .and_then(|s| s.strip_suffix('"'))
+        .unwrap_or(inner);
+    Some(inner.to_string())
+}
+
 /// Public entry. See module docs for the supported subset.
 pub fn typst_to_markdown(input: &str) -> String {
     let mut out = String::with_capacity(input.len() + 64);
@@ -159,6 +189,27 @@ pub fn typst_to_markdown(input: &str) -> String {
         // surrounding `#raw(` / `)` wrapper.
         let trimmed = raw_line.trim();
         if !in_raw_block && (trimmed.starts_with("#raw(") || trimmed == "#raw(block:true)") {
+            // M2 — a *self-contained* single-line `#raw("…")` (parens
+            // balanced on this line) must NOT open a fenced block: the
+            // old code did, and since the close only matched a bare `)`
+            // line, every following chapter was swallowed into one code
+            // block. Render it as an inline span instead; only a genuine
+            // multi-line opener (`#raw(` / `#raw(block:true)`) enters
+            // block mode.
+            if let Some(inner) = single_line_raw_inner(trimmed) {
+                if inner.contains('`') {
+                    // A backtick in the content would close the span
+                    // early (markdown injection) — fence it wider.
+                    out.push_str("`` ");
+                    out.push_str(&inner);
+                    out.push_str(" ``\n");
+                } else {
+                    out.push('`');
+                    out.push_str(&inner);
+                    out.push_str("`\n");
+                }
+                continue;
+            }
             in_raw_block = true;
             out.push_str("```\n");
             continue;
@@ -230,6 +281,30 @@ pub fn typst_to_markdown(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn single_line_raw_does_not_swallow_following_content() {
+        // M2 regression — a self-contained `#raw("…")` must render as an
+        // inline span and NOT open a fence that eats the next heading.
+        let md = typst_to_markdown("#raw(\"x = 1\")\n= Chapter Two\nbody\n");
+        assert!(md.contains("`x = 1`"), "raw should be inline: {md:?}");
+        assert!(md.contains("# Chapter Two"), "heading must survive: {md:?}");
+        assert!(!md.contains("```"), "no fence should open: {md:?}");
+    }
+
+    #[test]
+    fn single_line_raw_escapes_inner_backtick() {
+        let md = typst_to_markdown("#raw(\"a`b\")\n");
+        assert!(md.contains("`` a`b ``"), "backtick must be fenced wider: {md:?}");
+    }
+
+    #[test]
+    fn multiline_raw_block_still_fences() {
+        // A bare `#raw(` opener (unbalanced on the line) keeps block mode.
+        let md = typst_to_markdown("#raw(\ncode line\n)\n");
+        assert!(md.contains("```"), "multi-line raw should fence: {md:?}");
+        assert!(md.contains("code line"));
+    }
 
     #[test]
     fn headings_three_levels() {

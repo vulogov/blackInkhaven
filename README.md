@@ -21,53 +21,54 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.3.36 — Every snapshot, and a lock on the door
+## Latest release · 1.4.0 — Consolidation & hardening
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.3.36.md`](Documentation/RELEASE_NOTES/1.3.36.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.4.0.md`](Documentation/RELEASE_NOTES/1.4.0.md)
 · Roadmap: [`Documentation/PROPOSALS/ROADMAP-1.4.0.md`](Documentation/PROPOSALS/ROADMAP-1.4.0.md)
-· Plan: [`SNAPSHOT_HARDENING_PLAN.md`](Documentation/PROPOSALS/SNAPSHOT_HARDENING_PLAN.md)
+· Tutorials: [82](Documentation/Tutorials/82-project-health-and-review.md)–[86](Documentation/Tutorials/86-epub-import.md)
 
-The snapshot **browser** lets you look across your whole project's history; the first
-slice of the road-to-1.4.0 **hardening sweep** lands beside it. Pure additions — the
-lock even reuses a dependency already in the tree.
+The **1.4.0 milestone** — a consolidation & hardening release that bundles the whole
+1.3.32 → 1.3.37 cycle: surface what was buried, complete what was hardcoded, harden the
+tree, and land the last marquee. **No external application or binary dependencies were
+added across the entire milestone.**
 
-### The project-wide snapshot browser
+### The marquee — EPUB import
 
-`F6` shows the open paragraph's snapshots; **`Ctrl+F6`** now opens a **project-wide
-browser** — every snapshot across *all* paragraphs, newest first, one row each
-(timestamp · words · paragraph · annotation). `/` filters by paragraph title or
-annotation, `V` diffs the selection against its paragraph's current text (the same
-diff modal `F6` uses), `Enter` opens that paragraph and its `F6` picker. Built on a
-new `Store::list_all_snapshots()` feeding the proven `compute_line_diff`.
+`inkhaven epub` has always *exported* a standards-compliant EPUB3. **`inkhaven
+import-epub <file.epub>`** now reads one back — container → OPF → spine, into a Book →
+a Chapter per spine document → paragraphs of converted prose (headings, `*strong*`,
+`_emph_`, lists), images extracted to a `<book-slug>-images/` sidecar. `--book-name` /
+`--dry-run`; exits non-zero on partial failure; built on the in-tree `zip` + `quick-xml`,
+every parser fuzz-hardened.
 
-### Hardening — parser fuzzing
+### Surfacing the analytics
 
-The importers that read **untrusted external files** now carry never-panic property
-tests: Scrivener **RTF**, the **Typst** syntax check, and the Scrivener **`.scrivx`**
-binder XML. Seven proptests, ~256 cases each — they surfaced **no panics**, locking
-in robustness against regressions.
+The road-to-1.4.0 work gave the buried subsystems a face: the **project doctor** scan
+(`inkhaven doctor --scan`), the **unified review pass** (`Ctrl+B Shift+C` / `inkhaven
+check`) with tree report-card badges, the **AI cost dashboard** (`Ctrl+B $` / `inkhaven
+cost`, informative not blocking), the **command palette** (`Ctrl+V Space`), **Output-pane
+filters**, **`inkhaven goals`** + lifetime-best streaks + the in-app goals editor, and the
+**project-wide snapshot browser** (`Ctrl+F6`).
 
-### Hardening — the advisory project lock
+### Completing the config
 
-Two sessions on one project both write `metadata.db` / `.session.json`; interleaved
-writes can corrupt the store. A new **OS advisory lock** (`flock` via the existing
-`fs2`) on `<project>/.inkhaven.lock` guards against that — and the kernel releases it
-on crash, so there's **no stale-lock cleanup**. True to the **permissive principle**,
-it *informs, never blocks*: on conflict you get a warning naming the other session and
-an **"Open anyway? [y/N]"** prompt; an unsupported filesystem just proceeds. CLI
-subcommands stay unlocked.
+Thirteen hardcoded behaviours became opt-in HJSON — every default preserving prior
+behaviour: new `cost:` and `project_lock:` blocks, `goals.day_boundary` (`utc` | `local`,
+so the streak rolls over at *your* midnight), five `editor` durability knobs, and `backup`
+retention.
 
-### Goals-editor fixes (from 1.3.35)
+### Hardening the spine
 
-**Backspace now deletes** in the goals editor (some terminals report the key as a
-control char — all encodings are accepted now), `0` fields seed **empty** so you type
-the new target cleanly, and the `Ctrl+B Shift+G` heatmap opens the editor on **`e`**.
+A pre-1.4.0 stability **audit** + **16 verified fixes** (focused-pane save, panicking-hook
+isolation, the typst pipe-deadlock, crash-safe store ordering, schema versioning, …),
+**fuzz coverage** for every untrusted parser, and the **advisory project lock** (informs,
+never blocks; kernel-released on crash).
 
 ### Dependencies & compatibility
 
-**No external application or binary dependencies; no new runtime crates** — the lock
-reuses `fs2`, already present. No on-disk shape moved; `.inkhaven.lock` is a new,
-self-managing dotfile. The fuzz tests are dev-only. Tests 1813 → 1825.
+**No external application or binary dependencies; no new runtime crates** across the whole
+1.3.32 → 1.4.0 milestone. No on-disk shape moved; every prior `inkhaven.hjson` keeps
+working (the new options are opt-in). See the per-release notes for the detailed logs.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

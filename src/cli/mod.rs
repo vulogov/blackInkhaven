@@ -9,6 +9,7 @@ pub mod export;
 pub mod export_concordance;
 pub mod export_timeline;
 pub mod import_help;
+pub mod import_epub;
 pub mod import_scrivener;
 pub mod import_typst_help;
 pub mod init;
@@ -360,6 +361,21 @@ pub enum Command {
         /// Characters, Places folders Scrivener defaults to).
         #[arg(long)]
         skip_research: bool,
+        /// Parse + report without creating any nodes.
+        #[arg(long)]
+        dry_run: bool,
+    },
+
+    /// Import a `.epub` as a user book — one chapter per spine
+    /// document, the converted prose as paragraphs, images
+    /// extracted to a sidecar folder. The inverse of `inkhaven epub`.
+    ImportEpub {
+        /// Path to the `.epub` file.
+        epub_path: PathBuf,
+        /// Override the title of the created book. None → the EPUB's
+        /// `dc:title`.
+        #[arg(long)]
+        book_name: Option<String>,
         /// Parse + report without creating any nodes.
         #[arg(long)]
         dry_run: bool,
@@ -4181,6 +4197,12 @@ impl Cli {
                 dry_run,
             )
             .map_err(Into::into),
+            Command::ImportEpub {
+                epub_path,
+                book_name,
+                dry_run,
+            } => import_epub::run(&project, &epub_path, book_name.as_deref(), dry_run)
+                .map_err(Into::into),
             Command::Backup { out } => backup::run(&project, out.as_deref()).map_err(Into::into),
             Command::Restore { archive, to } => {
                 restore::run(&archive, &to).map_err(Into::into)

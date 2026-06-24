@@ -1398,9 +1398,14 @@ impl super::super::App {
             .collect();
 
         let mut lines: Vec<Line> = Vec::with_capacity(h);
-        let row_end = (opened.scroll_row + h).min(visual.len());
-        for (i, v) in visual[opened.scroll_row..row_end].iter().enumerate() {
-            let visual_row_idx = opened.scroll_row + i;
+        // M6 — clamp the scroll origin into range before slicing. A
+        // stale `scroll_row` (e.g. a zero-height split pane whose scroll
+        // wasn't reset) could exceed `visual.len()`, making `start >
+        // row_end` and panicking the slice.
+        let start = opened.scroll_row.min(visual.len());
+        let row_end = (start + h).min(visual.len());
+        for (i, v) in visual[start..row_end].iter().enumerate() {
+            let visual_row_idx = start + i;
             let is_current = visual_row_idx == cursor_visual.0;
 
             // Line number only on the first visual row of each source row.

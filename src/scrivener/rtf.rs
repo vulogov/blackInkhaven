@@ -43,9 +43,19 @@ fn parse_structured(rtf_bytes: &[u8]) -> Result<String> {
     use rtf_parser_tt::lexer::Lexer;
     use rtf_parser_tt::parser::Parser;
 
-    let s = std::str::from_utf8(rtf_bytes)
-        .map_err(|e| anyhow::anyhow!("rtf: not UTF-8: {e}"))?;
-    let tokens = Lexer::scan(s)
+    // M4 — real Scrivener `.rtf` is frequently Windows-1252/Latin-1 with
+    // `\'xx` hex escapes for high bytes. Rejecting on the first non-UTF-8
+    // byte dropped ALL structure to the plain-text fallback. But the
+    // upstream RTF lexer byte-slices and panics on multi-byte chars, so
+    // we can't hand it raw lossy UTF-8 either — map every non-ASCII byte
+    // to `?` so it sees pure single-byte ASCII. Structure + the `\'xx`
+    // escapes (themselves ASCII, decoded by the parser) survive; only
+    // stray literal 8-bit bytes — rare in RTF — are flattened.
+    let ascii: String = rtf_bytes
+        .iter()
+        .map(|&b| if b < 0x80 { b as char } else { '?' })
+        .collect();
+    let tokens = Lexer::scan(&ascii)
         .map_err(|e| anyhow::anyhow!("rtf lex: {e}"))?;
     let mut parser = Parser::new(tokens);
     let doc = parser
@@ -105,7 +115,10 @@ fn emit_styled_line(
     let bold = painter.bold;
     let italic = painter.italic;
     if bold {
-        out.push_str("**");
+        // M3 — Typst's strong (bold) delimiter is a SINGLE `*`. `**`
+        // parses as an empty strong followed by literal asterisks, so
+        // every imported bold run rendered wrong.
+        out.push('*');
     }
     if italic {
         out.push('_');
@@ -126,7 +139,7 @@ fn emit_styled_line(
         out.push('_');
     }
     if bold {
-        out.push_str("**");
+        out.push('*');
     }
 }
 

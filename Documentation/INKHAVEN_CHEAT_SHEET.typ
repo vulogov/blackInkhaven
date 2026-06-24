@@ -386,6 +386,7 @@ Inside the AI diff modal (1.2.6, when `ai.diff_review_on_apply`):
   row([import-help --documents-directory DIR], [Wipe + import Help]),
   row([import-typst-help],           [Bundle Typst reference]),
   row([import-scrivener PATH.scriv], [Scrivener importer (keywords → tags 1.2.6)]),
+  row([import-epub FILE.epub `[--book-name] [--dry-run]`], [EPUB importer (1.3.37) — book → chapters → paragraphs; inverse of `epub`]),
   row([stats --book-name "Tides"], [Per-¶ stats table]),
   row([doctor],                      [Health report]),
   row([event add "Storm" --start "1A.2.3"], [(1.2.6) Add event]),

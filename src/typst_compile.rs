@@ -18,8 +18,10 @@
 //! setting (and a runtime gate that today always picks `external`
 //! when the in-process path isn't selected).
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::thread::JoinHandle;
 
 use crate::config::Config;
 use crate::error::{Error, Result};
@@ -91,8 +93,29 @@ pub struct CompileOutcome {
 /// the spinner loop in the TUI through the same `try_wait` /
 /// `finish` shape.
 pub enum CompileHandle {
-    External { child: Child, pdf_path: PathBuf },
+    External {
+        child: Child,
+        pdf_path: PathBuf,
+        // H3 — stdout/stderr are drained on dedicated threads from the
+        // moment of spawn. Without this, a compile that emits more than
+        // the OS pipe buffer (~64KB of diagnostics on a big book) blocks
+        // typst on `write()`, the child never exits, and `try_wait`
+        // returns `None` forever → the build hangs with no timeout.
+        // `finish` joins these to recover the captured output.
+        stdout_reader: Option<JoinHandle<Vec<u8>>>,
+        stderr_reader: Option<JoinHandle<Vec<u8>>>,
+    },
     Inprocess(InprocessHandle),
+}
+
+/// Spawn a thread that reads a child pipe to EOF into a buffer, so the
+/// child can never block on a full pipe.
+fn drain_pipe<R: Read + Send + 'static>(mut pipe: R) -> JoinHandle<Vec<u8>> {
+    std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = pipe.read_to_end(&mut buf);
+        buf
+    })
 }
 
 impl CompileHandle {
@@ -158,7 +181,7 @@ pub fn spawn_with_config(cfg: &Config, typ_path: &Path) -> Result<CompileHandle>
 
 fn spawn_external(typ_path: &Path) -> Result<CompileHandle> {
     let pdf_path = typ_path.with_extension("pdf");
-    let child = Command::new("typst")
+    let mut child = Command::new("typst")
         .arg("compile")
         .arg(typ_path)
         .stdout(Stdio::piped())
@@ -175,7 +198,16 @@ fn spawn_external(typ_path: &Path) -> Result<CompileHandle> {
                 Error::Store(format!("spawn `typst compile`: {e}"))
             }
         })?;
-    Ok(CompileHandle::External { child, pdf_path })
+    // Drain both pipes from spawn so the child can't deadlock on a full
+    // buffer (H3). `finish` joins these for the captured output.
+    let stdout_reader = child.stdout.take().map(drain_pipe);
+    let stderr_reader = child.stderr.take().map(drain_pipe);
+    Ok(CompileHandle::External {
+        child,
+        pdf_path,
+        stdout_reader,
+        stderr_reader,
+    })
 }
 
 #[cfg(test)]
@@ -226,14 +258,23 @@ mod tests {
 /// Pairs with `spawn` / `spawn_with_config`.
 pub fn finish(handle: CompileHandle) -> Result<CompileOutcome> {
     match handle {
-        CompileHandle::External { child, pdf_path } => {
-            let output = child
-                .wait_with_output()
-                .map_err(|e| Error::Store(format!("wait_with_output on `typst compile`: {e}")))?;
+        CompileHandle::External {
+            mut child,
+            pdf_path,
+            stdout_reader,
+            stderr_reader,
+        } => {
+            // The pipes are drained on threads (H3); wait for exit, then
+            // join the readers to recover the captured output.
+            let status = child
+                .wait()
+                .map_err(|e| Error::Store(format!("wait on `typst compile`: {e}")))?;
+            let stdout = stdout_reader.and_then(|h| h.join().ok()).unwrap_or_default();
+            let stderr = stderr_reader.and_then(|h| h.join().ok()).unwrap_or_default();
             Ok(CompileOutcome {
-                success: output.status.success(),
-                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-                stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+                success: status.success(),
+                stderr: String::from_utf8_lossy(&stderr).into_owned(),
+                stdout: String::from_utf8_lossy(&stdout).into_owned(),
                 pdf_path,
             })
         }

@@ -5,6 +5,8 @@ mod backup;
 mod cli;
 mod config;
 mod config_tui;
+mod dayclock;
+mod epub_import;
 mod conlang;
 mod continuity;
 mod continuity_bible;
