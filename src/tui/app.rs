@@ -1603,6 +1603,12 @@ pub(crate) struct App {
     /// read-side view over `active()` so the pane and its key handler share one
     /// filtered list.
     output_filter: crate::pane::output::OutputFilter,
+    /// 1.3.34+ — tree report-card badges: node id → (open-finding count under it,
+    /// worst severity). Aggregated up the hierarchy from each finding's source
+    /// paragraph. Refreshed on a throttle (see `tick_tree_badges`) + after a check.
+    tree_badges: std::collections::HashMap<Uuid, (usize, crate::pane::output::Severity)>,
+    /// When `tree_badges` was last recomputed (throttle clock).
+    tree_badges_at: std::time::Instant,
     /// WORLD-4 — the debounced fast fact-checker. Enabled when the project has a
     /// `world.hjson` (set at open + after a compile). `fc_last_fp` fingerprints
     /// the open paragraph; a change arms `fc_activity_at`, and 5 s of quiet fires
@@ -2252,6 +2258,8 @@ impl App {
             socr_needs_check: false,
             output_expanded: std::collections::HashSet::new(),
             output_filter: crate::pane::output::OutputFilter::default(),
+            tree_badges: std::collections::HashMap::new(),
+            tree_badges_at: std::time::Instant::now(),
             tree_cursor: 0,
             tree_scroll: 0,
             search_input: TextInput::new(),
@@ -2353,6 +2361,9 @@ impl App {
         if let Err(e) = crate::pane::output::install(&self.layout.root) {
             tracing::warn!(target: "inkhaven::pane", "output install: {e:#}");
         }
+        // 1.3.34+ — point the AI-cost usage tracker at this project so every
+        // inference tallies into `inkhaven cost` / the Ctrl+B $ panel.
+        crate::ai::usage::install(&self.layout.root);
         if let Err(e) = crate::progress::install(&self.layout.root) {
             tracing::warn!(target: "inkhaven::progress", "install: {e:#}");
             return;
@@ -2534,6 +2545,7 @@ impl App {
             self.tick_health_pump();
             self.tick_fact_check();
             self.tick_inner_socrates();
+            self.tick_tree_badges();
             // 1.2.9+ — close the TTS playback modal as
             // soon as the engine reports it's idle, so
             // the modal disappears when the paragraph
@@ -6890,6 +6902,7 @@ impl App {
                     if let Some(s) = crate::pane::output::active() {
                         let _ = s.dismiss(m.id);
                     }
+                    self.refresh_tree_badges();
                     self.status = "dismissed".into();
                 }
             }
@@ -9568,6 +9581,8 @@ impl App {
 
             // ── Global ────────────────────────────────────────
             A::OpenCommandPalette => self.open_command_palette(),
+            A::RunCheck => self.run_unified_check(),
+            A::OpenCostDashboard => self.open_cost_dashboard(),
             A::OpenCredits => self.open_credits(),
             A::OpenBookInfo => self.open_book_info(),
             A::OpenImpositionPreview => self.open_imposition_preview(),
@@ -10077,6 +10092,12 @@ impl App {
     /// Ctrl+B I — open the "current book info" panel. The content is
     /// rendered each frame in `draw_book_info_modal` so figures stay
     /// fresh as the user edits; we only stash the scroll offset here.
+    /// 1.3.34+ — `Ctrl+B $`: open the AI cost dashboard panel.
+    fn open_cost_dashboard(&mut self) {
+        self.modal = Modal::CostDashboard { scroll: 0 };
+        self.status = "AI cost · today's LLM call tallies — ↑↓ scroll · Esc close".into();
+    }
+
     fn open_book_info(&mut self) {
         self.modal = Modal::BookInfo { scroll: 0 };
         self.status =
@@ -11324,6 +11345,145 @@ impl App {
         out
     }
 
+    /// 1.3.34+ — `Ctrl+B Shift+C`. The unified review pass: run the fast checkers
+    /// over the open paragraph (fact-check + Inner Socrates) and the timeline
+    /// critique over the project, emit everything to the Output pane, and surface it
+    /// with a one-line summary. Instant and LLM-free.
+    fn run_unified_check(&mut self) {
+        let (mut fact, mut soc, mut checked) = (0usize, 0usize, 0usize);
+
+        // Per-paragraph checkers over the open paragraph.
+        if let Some(id) = self.opened.as_ref().map(|d| d.id) {
+            if let Some(text) = self.paragraph_text(id) {
+                if !text.trim().is_empty() {
+                    checked = 1;
+                    if let Some((ledger, ctx)) = self.build_fact_check_context() {
+                        self.clear_paragraph_fact_warnings(id);
+                        let findings =
+                            crate::world::fact_check::check_paragraph(&text, &ledger, &[], Some(&ctx));
+                        for f in &findings {
+                            crate::world::fact_check::emit_finding(f, Some(id));
+                        }
+                        fact = findings.len();
+                    }
+                    if let Some((sid, sfindings)) = self.collect_socratic_findings() {
+                        self.persist_and_emit_socratic(sid, &sfindings);
+                        soc = sfindings.len();
+                    }
+                }
+            }
+        }
+
+        // Project-wide timeline critique.
+        let tl = self.collect_and_emit_timeline_critique();
+
+        // Reflect the fresh findings in the tree report-card immediately.
+        self.refresh_tree_badges();
+
+        let total = fact + soc + tl;
+        if total == 0 {
+            self.status = if checked == 0 {
+                "review pass: clean (no open paragraph; timeline included)".into()
+            } else {
+                format!("review pass: clean ({checked} ¶ + timeline)")
+            };
+            return;
+        }
+        self.output_selected = 0;
+        self.change_focus(Focus::Ai);
+        self.right_pane = RightPane::Output;
+        self.status = format!(
+            "review pass: {total} finding(s) — fact {fact} · socrates {soc} · timeline {tl} → Output (^B Tab)"
+        );
+    }
+
+    /// Run the orphan + fuzzy-overlap critique over the whole project's events,
+    /// clear the pane's prior critique findings, emit the fresh ones, return the
+    /// count. Honours `timeline.enabled` + `timeline.critique` config.
+    fn collect_and_emit_timeline_critique(&self) -> usize {
+        use crate::timeline::critique;
+        use crate::timeline::{Calendar, Precision, TimelinePoint};
+        if !self.cfg.timeline.enabled || !self.cfg.timeline.critique.enabled {
+            return 0;
+        }
+        let calendar = Calendar::from_config(self.cfg.timeline.calendar.clone());
+        let default_track = self.cfg.timeline.default_track.clone();
+        let now = chrono::Utc::now();
+        let events: Vec<critique::CritiqueEvent> = self
+            .hierarchy
+            .iter()
+            .filter_map(|n| n.event.as_ref().map(|e| (n, e)))
+            .map(|(n, ev)| critique::CritiqueEvent {
+                id: n.id,
+                title: n.title.clone(),
+                start_ticks: ev.start_ticks,
+                end_ticks: ev.end_ticks,
+                precision: ev.precision,
+                track: ev.track.clone().unwrap_or_else(|| default_track.clone()),
+                is_orphan: ev.is_orphan(&n.linked_paragraphs),
+                linked_paragraph_count: n.linked_paragraphs.len(),
+                characters: ev.characters.clone(),
+                places: ev.places.clone(),
+                age_days: Some((now - n.modified_at).num_days().max(0)),
+            })
+            .collect();
+        if events.is_empty() {
+            return 0;
+        }
+        let cc = &self.cfg.timeline.critique;
+        let fuzz = critique::fuzz_windows(&calendar);
+        let mut report = critique::run(
+            &events,
+            &fuzz,
+            cc.min_significance(),
+            cc.min_suspicion(),
+            cc.fuzzy_overlap.cluster_min_size.max(2),
+            critique::DEFAULT_STALENESS_DAYS,
+        );
+        if !cc.orphan.enabled {
+            report.orphans.clear();
+        }
+        if !cc.fuzzy_overlap.enabled {
+            report.overlaps.clear();
+        }
+        self.clear_timeline_critique_warnings();
+        let lang = critique::lang::lang_from_name(&self.active_prompt_language());
+        for f in &report.orphans {
+            let date = calendar.format(TimelinePoint::from_ticks(f.start_ticks), f.precision);
+            critique::pane::emit_orphan(f, &date, None, lang);
+        }
+        for f in &report.overlaps {
+            let window =
+                calendar.format(TimelinePoint::from_ticks(f.overlap_window.0), Precision::Season);
+            let char_names: Vec<String> = f
+                .shared_characters
+                .iter()
+                .filter_map(|id| self.hierarchy.get(*id).map(|n| n.title.clone()))
+                .collect();
+            let place_names: Vec<String> = f
+                .shared_places
+                .iter()
+                .filter_map(|id| self.hierarchy.get(*id).map(|n| n.title.clone()))
+                .collect();
+            critique::pane::emit_overlap(f, &window, &char_names, &place_names, None, lang);
+        }
+        report.total()
+    }
+
+    /// Clear the pane's prior timeline-critique findings so a re-run replaces them.
+    fn clear_timeline_critique_warnings(&self) {
+        use crate::pane::output::kinds;
+        if let Some(s) = crate::pane::output::active() {
+            for kind in [kinds::TIMELINE_ORPHAN_WARNING, kinds::TIMELINE_FUZZY_OVERLAP_WARNING] {
+                if let Ok(msgs) = s.by_kind(kind) {
+                    for m in &msgs {
+                        let _ = s.dismiss(m.id);
+                    }
+                }
+            }
+        }
+    }
+
     fn fact_check_open_paragraph(&mut self) {
         use crate::world::fact_check::{emit_finding, emit_finding_timeline};
         let Some((id, findings)) = self.collect_fact_check_findings() else {
@@ -11831,6 +11991,24 @@ impl App {
                 }
             }
         }
+    }
+
+    /// 1.3.34+ — recompute the tree report-card badges no more than ~once a second.
+    /// Cheap eventual consistency: findings emitted by any checker / dismissed in the
+    /// Output pane show up in the tree within a second without a per-frame DB query.
+    fn tick_tree_badges(&mut self) {
+        if self.tree_badges_at.elapsed() >= std::time::Duration::from_millis(900) {
+            self.refresh_tree_badges();
+        }
+    }
+
+    /// Rebuild `tree_badges` from the active Output findings.
+    fn refresh_tree_badges(&mut self) {
+        let msgs = crate::pane::output::active()
+            .and_then(|s| s.active().ok())
+            .unwrap_or_default();
+        self.tree_badges = compute_tree_badges(&self.hierarchy, &msgs);
+        self.tree_badges_at = std::time::Instant::now();
     }
 
     /// Run the Socratic Fast track silently into Output (no focus change).
@@ -12503,6 +12681,7 @@ impl App {
             Some(system),
             Vec::new(),
             user_prompt.clone(),
+            "plan-analysis",
         );
         let started_at = std::time::Instant::now();
         self.inference = Some(Inference {
@@ -12580,6 +12759,7 @@ impl App {
             Some(system),
             Vec::new(),
             user_prompt.clone(),
+            "scene-scaffold",
         );
         let started_at = std::time::Instant::now();
         self.inference = Some(Inference {
@@ -12654,6 +12834,7 @@ impl App {
             Some(system),
             Vec::new(),
             user_prompt.clone(),
+            "submission",
         );
         let started_at = std::time::Instant::now();
         self.inference = Some(Inference {
@@ -12850,6 +13031,22 @@ impl App {
                 true
             }
             _ => false,
+        }
+    }
+
+    /// 1.3.34+ — scroll the AI cost dashboard (Esc closes generically).
+    fn cost_dashboard_handle_key(&mut self, key: KeyEvent) {
+        let Modal::CostDashboard { scroll } = &mut self.modal else {
+            return;
+        };
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => *scroll = scroll.saturating_sub(1),
+            KeyCode::Down | KeyCode::Char('j') => *scroll = scroll.saturating_add(1),
+            KeyCode::PageUp => *scroll = scroll.saturating_sub(10),
+            KeyCode::PageDown => *scroll = scroll.saturating_add(10),
+            KeyCode::Home => *scroll = 0,
+            KeyCode::End => *scroll = usize::MAX / 2,
+            _ => {}
         }
     }
 
@@ -19114,6 +19311,7 @@ impl App {
             Some(system_prompt),
             Vec::new(),
             user_prompt.clone(),
+            "typst-error",
         );
         self.inference = Some(Inference {
             provider: provider.clone(),
@@ -19652,6 +19850,10 @@ impl App {
         }
         if is_credits {
             self.credits_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::CostDashboard { .. }) {
+            self.cost_dashboard_handle_key(key);
             return Ok(false);
         }
         if is_book_info {
@@ -25365,6 +25567,39 @@ Rules:
 /// Inclusive on the top-left, exclusive on the bottom-right — matches
 /// ratatui's Rect semantics where width/height are spans (the column at
 /// `x + width` is one past the rect's last column).
+/// 1.3.34+ — aggregate Output findings into per-node tree report-card badges: each
+/// finding tied to a source paragraph tallies a count + worst severity onto that
+/// paragraph and every ancestor (so a chapter shows the sum of its paragraphs).
+fn compute_tree_badges(
+    hierarchy: &crate::store::hierarchy::Hierarchy,
+    msgs: &[crate::pane::output::Message],
+) -> std::collections::HashMap<Uuid, (usize, crate::pane::output::Severity)> {
+    use crate::pane::output::Severity;
+    fn rank(s: Severity) -> u8 {
+        match s {
+            Severity::Progress => 0,
+            Severity::Info => 1,
+            Severity::Warning => 2,
+            Severity::Contradiction => 3,
+        }
+    }
+    let mut badges: std::collections::HashMap<Uuid, (usize, Severity)> =
+        std::collections::HashMap::new();
+    for m in msgs {
+        let Some(pid) = m.source_paragraph_id else { continue };
+        let mut cur = Some(pid);
+        while let Some(id) = cur {
+            let entry = badges.entry(id).or_insert((0, Severity::Progress));
+            entry.0 += 1;
+            if rank(m.severity) > rank(entry.1) {
+                entry.1 = m.severity;
+            }
+            cur = hierarchy.get(id).and_then(|n| n.parent_id);
+        }
+    }
+    badges
+}
+
 fn rect_contains(rect: Rect, col: u16, row: u16) -> bool {
     if rect.width == 0 || rect.height == 0 {
         return false;
@@ -25762,5 +25997,63 @@ mod tests_split_view {
         let sys = super::facts_scope_system_prompt("en").to_lowercase();
         assert!(sys.contains("fact"));
         assert!(sys.contains("ground truth"));
+    }
+}
+
+#[cfg(test)]
+mod tests_tree_badges {
+    use super::compute_tree_badges;
+    use crate::pane::output::{Lifetime, Message, Severity};
+    use crate::store::hierarchy::Hierarchy;
+    use crate::store::node::Node;
+    use uuid::Uuid;
+
+    fn node(id: Uuid, kind: &str, slug: &str, parent: Option<Uuid>) -> Node {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "kind": kind, "title": slug, "slug": slug,
+            "path": [], "parent_id": parent, "order": 1, "file": null,
+            "modified_at": "2026-01-01T00:00:00Z",
+        }))
+        .expect("test node")
+    }
+
+    fn msg(sev: Severity, para: Uuid) -> Message {
+        Message::new("fact_check_warning", sev, Lifetime::UntilActedOn, serde_json::json!({}))
+            .with_source_paragraph(para)
+    }
+
+    #[test]
+    fn findings_aggregate_up_to_ancestors_with_worst_severity() {
+        let book = Uuid::now_v7();
+        let chapter = Uuid::now_v7();
+        let p1 = Uuid::now_v7();
+        let p2 = Uuid::now_v7();
+        let h = Hierarchy::from_nodes_for_test(vec![
+            node(book, "book", "velmaron", None),
+            node(chapter, "chapter", "ch1", Some(book)),
+            node(p1, "paragraph", "p1", Some(chapter)),
+            node(p2, "paragraph", "p2", Some(chapter)),
+        ]);
+        // p1: one Warning + one Contradiction; p2: one Info.
+        let msgs = vec![
+            msg(Severity::Warning, p1),
+            msg(Severity::Contradiction, p1),
+            msg(Severity::Info, p2),
+        ];
+        let badges = compute_tree_badges(&h, &msgs);
+        // Paragraph-level counts + worst severity.
+        assert_eq!(badges[&p1], (2, Severity::Contradiction));
+        assert_eq!(badges[&p2], (1, Severity::Info));
+        // Chapter aggregates all three; worst is the contradiction.
+        assert_eq!(badges[&chapter], (3, Severity::Contradiction));
+        // Book aggregates the whole subtree too.
+        assert_eq!(badges[&book], (3, Severity::Contradiction));
+    }
+
+    #[test]
+    fn messages_without_a_source_paragraph_are_ignored() {
+        let h = Hierarchy::from_nodes_for_test(vec![node(Uuid::now_v7(), "book", "b", None)]);
+        let m = Message::new("bund_print", Severity::Info, Lifetime::UntilActedOn, serde_json::json!({}));
+        assert!(compute_tree_badges(&h, &[m]).is_empty());
     }
 }

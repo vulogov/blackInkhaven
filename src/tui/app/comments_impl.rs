@@ -639,6 +639,7 @@ impl App {
             None,
             Vec::new(),
             envelope,
+            "comments",
         );
         self.inference = Some(super::super::inference::Inference {
             provider: provider.clone(),

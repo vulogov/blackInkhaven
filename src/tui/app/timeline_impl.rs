@@ -814,6 +814,7 @@ impl super::App {
             None,
             Vec::new(),
             prompt_text,
+            "timeline-critique",
         );
         self.inference = Some(Inference {
             provider: provider.clone(),

@@ -219,6 +219,60 @@ impl super::super::App {
         );
     }
 
+    /// 1.3.34+ — the AI cost dashboard panel (Ctrl+B $). Computes today's tallies on
+    /// render via the shared `cli::cost` aggregator.
+    pub(in crate::tui::app) fn draw_cost_dashboard_modal(
+        &self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+        scroll: usize,
+    ) {
+        let day = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let report = crate::cli::cost::gather(self.store.project_root(), &day);
+        let lines: Vec<Line<'_>> = crate::cli::cost::render_lines(&report)
+            .into_iter()
+            .map(Line::from)
+            .collect();
+        let total = lines.len();
+
+        let width = area.width.saturating_sub(8).max(56);
+        let height = area.height.saturating_sub(4).max(10);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" AI cost · Ctrl+B $ ")
+            .border_style(Style::default().fg(self.theme.modal_border).add_modifier(Modifier::BOLD))
+            .style(Style::default().bg(self.theme.modal_bg).fg(self.theme.modal_fg));
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let body_h = inner.height.saturating_sub(1) as usize;
+        let body_rect = Rect { x: inner.x, y: inner.y, width: inner.width, height: inner.height.saturating_sub(1) };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+
+        let max_scroll = total.saturating_sub(body_h);
+        let scroll = scroll.min(max_scroll);
+        let end = (scroll + body_h).min(total);
+        f.render_widget(Paragraph::new(lines[scroll..end].to_vec()), body_rect);
+
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                " ↑↓ scroll · Esc close · CLI: inkhaven cost ",
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
     pub(in crate::tui::app) fn draw_llm_picker_modal(&self, f: &mut ratatui::Frame, area: Rect) {
         let Modal::LlmPicker {
             providers,

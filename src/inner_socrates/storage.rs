@@ -346,6 +346,12 @@ impl InnerSocratesStore {
 
     // ── LLM usage (sub-budgeted) ────────────────────────────────────────────────
 
+    /// Daily ceiling on Inner Socrates slow-track LLM calls (shared by the
+    /// slow-track preflight and the cost dashboard).
+    pub const DAILY_CALL_CAP: i64 = 150;
+    /// The slow-track usage sub-budget key.
+    pub const SLOW_SUB_BUDGET: &'static str = "slow_track";
+
     /// Record one LLM call against `(day, sub_budget)`; returns the new count.
     pub fn record_llm_call(&self, day: &str, sub_budget: &str) -> Result<i64> {
         self.engine.execute_with(
@@ -363,6 +369,18 @@ impl InnerSocratesStore {
             &[&day, &sub_budget],
         )?;
         Ok(rows.first().map(|r| int(r.first())).unwrap_or(0))
+    }
+
+    /// Every `(sub_budget, calls)` recorded on `day`. Each analytical thread that
+    /// runs a cost-capped slow pass records under its own sub-budget key, so the
+    /// cost dashboard enumerates them all here without a hardcoded list — a new
+    /// thread shows up automatically once it records its first call.
+    pub fn llm_usage_today(&self, day: &str) -> Result<Vec<(String, i64)>> {
+        let rows = self.engine.select_all_with(
+            "SELECT sub_budget, calls FROM inner_socrates_llm_usage WHERE day = ? ORDER BY sub_budget",
+            &[&day],
+        )?;
+        Ok(rows.iter().map(|r| (text(r.get(0)), int(r.get(1)))).collect())
     }
 }
 

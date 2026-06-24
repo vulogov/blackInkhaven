@@ -176,6 +176,10 @@ impl WorldStore {
         )
     }
 
+    /// Daily ceiling on world slow-track LLM calls (shared by the slow-track
+    /// preflight and the cost dashboard, so the two never drift).
+    pub const DAILY_CALL_CAP: i64 = 200;
+
     /// Record one slow-track LLM call against today's tally; returns the new count.
     pub fn record_llm_call(&self, day: &str) -> Result<i64> {
         self.engine.execute_with(

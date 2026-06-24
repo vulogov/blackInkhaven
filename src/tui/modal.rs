@@ -331,6 +331,9 @@ pub(super) enum Modal {
         cursor: usize,
         scroll: usize,
     },
+    /// 1.3.34+ — Ctrl+B $ AI cost dashboard: a scrollable read-only panel of
+    /// today's LLM call tallies per capped subsystem (computed on render).
+    CostDashboard { scroll: usize },
     /// 1.3.33+ — Ctrl+Shift+P command palette. `entries` is the
     /// projection of the live keybinding registry (see
     /// `tui::palette::collect`); the input box fuzzy-filters by
