@@ -688,4 +688,34 @@ mod tests {
         assert!(note.starts_with("language:"));
         assert!(matches!(active_backend(), Backend::Heuristic | Backend::Enhanced));
     }
+
+    // 1.3.32+ (road to 1.4.0) — language-detection never-panics property.
+    mod prop {
+        use super::super::{detect, detect_with_confidence};
+        use proptest::prelude::*;
+
+        proptest! {
+            /// The docs promise detection never panics on any input. Codify it across
+            /// arbitrary unicode, including the claimed edge cases below.
+            #[test]
+            fn detect_never_panics(s in "\\PC{0,256}") {
+                let _ = detect(&s);
+                let _ = detect_with_confidence(&s);
+            }
+
+            /// Detection is deterministic.
+            #[test]
+            fn detect_is_deterministic(s in "\\PC{0,128}") {
+                prop_assert_eq!(detect(&s), detect(&s));
+            }
+        }
+
+        #[test]
+        fn detect_survives_pathological_inputs() {
+            let big = "a".repeat(100_000);
+            for s in ["", "\u{1f600}\u{1f600}\u{1f600}", big.as_str()] {
+                let _ = detect(s);
+            }
+        }
+    }
 }
