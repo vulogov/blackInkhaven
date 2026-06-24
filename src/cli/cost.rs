@@ -88,6 +88,13 @@ pub fn gather(project: &Path, day: &str) -> CostReport {
         });
     }
 
+    // Every other AI call, by category (chat / grammar / explain / …) — uncapped
+    // (`daily_cap` 0), recorded by the inference chokepoint. The slow tracks above
+    // aren't double-counted here (they opt out of the usage tally).
+    for (category, calls) in crate::ai::usage::usage_for(project, day) {
+        entries.push(CostEntry { name: category, calls_today: calls, daily_cap: 0 });
+    }
+
     CostReport { day: day.to_string(), entries }
 }
 
@@ -109,21 +116,37 @@ fn bar(used: i64, cap: i64) -> String {
 
 /// Render the report as lines (shared by the CLI + the TUI panel).
 pub fn render_lines(report: &CostReport) -> Vec<String> {
-    let mut out = vec![format!("AI cost — LLM calls today ({})", report.day), String::new()];
-    for e in &report.entries {
+    let mut out = vec![format!("AI cost — LLM calls today, UTC ({})", report.day), String::new()];
+
+    // Capped budgets (informative — see the note below).
+    out.push("  daily budgets (informative):".into());
+    for e in report.entries.iter().filter(|e| e.daily_cap > 0) {
         out.push(format!(
-            "  {:<26} {:>3} / {:<3}  {}",
+            "    {:<24} {:>3} / {:<3}  {}",
             e.name,
             e.calls_today,
             e.daily_cap,
             bar(e.calls_today, e.daily_cap)
         ));
     }
+
+    // Every other AI call, by category (uncapped) — count only.
+    let other: Vec<&CostEntry> = report.entries.iter().filter(|e| e.daily_cap <= 0).collect();
+    if other.is_empty() {
+        out.push("  other AI calls today: (none yet)".into());
+    } else {
+        out.push(String::new());
+        out.push("  other AI calls today:".into());
+        for e in other {
+            out.push(format!("    {:<24} {:>3}", e.name, e.calls_today));
+        }
+    }
+
     out.push(String::new());
-    out.push(format!("  {:<26} {:>3}", "total slow-track calls", report.total_calls()));
+    out.push(format!("  {:<24} {:>3}", "total AI calls today", report.total_calls()));
     out.push(String::new());
-    out.push("  caps are per calendar day (UTC) — the tally resets at 00:00 UTC.".into());
-    out.push("  timeline elaboration: per-run cap only (not a daily budget).".into());
+    out.push("  Budgets are informative, not limits — past a budget the slow tracks".into());
+    out.push("  warn and continue. The tally resets at 00:00 UTC. (CLI: inkhaven cost)".into());
     out
 }
 
@@ -156,16 +179,23 @@ mod tests {
         let r = CostReport {
             day: "2026-06-24".into(),
             entries: vec![
-                CostEntry { name: "a".into(), calls_today: 3, daily_cap: 200 },
-                // An arbitrary future analytical-thread sub-budget renders the same.
-                CostEntry { name: "inner socrates · drift".into(), calls_today: 7, daily_cap: 150 },
+                CostEntry { name: "world fact-check (slow)".into(), calls_today: 3, daily_cap: 200 },
+                // An uncapped per-category AI call (e.g. grammar) — count only.
+                CostEntry { name: "grammar".into(), calls_today: 7, daily_cap: 0 },
             ],
         };
         assert_eq!(r.total_calls(), 10);
         let lines = render_lines(&r);
         assert!(lines.iter().any(|l| l.contains("2026-06-24")));
-        assert!(lines.iter().any(|l| l.contains("total slow-track calls")));
+        assert!(lines.iter().any(|l| l.contains("daily budgets")));
+        assert!(lines.iter().any(|l| l.contains("other AI calls")));
+        assert!(lines.iter().any(|l| l.contains("grammar")));
+        assert!(lines.iter().any(|l| l.contains("total AI calls today")));
         assert!(lines.iter().any(|l| l.contains("10")));
-        assert!(lines.iter().any(|l| l.contains("elaboration")));
+        // The informative-not-a-limit framing must be present.
+        assert!(lines.iter().any(|l| l.to_lowercase().contains("informative")));
+        // An uncapped entry shows a count but no usage bar.
+        let grammar_line = lines.iter().find(|l| l.contains("grammar")).unwrap();
+        assert!(!grammar_line.contains('['), "uncapped entries have no bar");
     }
 }

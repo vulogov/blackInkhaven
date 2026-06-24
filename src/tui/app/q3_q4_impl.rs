@@ -64,6 +64,7 @@ impl App {
             None,
             Vec::new(),
             envelope,
+            "continuation",
         );
         self.inference = Some(Inference {
             provider: provider.clone(),
@@ -608,6 +609,7 @@ impl App {
             None,
             Vec::new(),
             envelope,
+            "style-transfer",
         );
         self.inference = Some(Inference {
             provider: provider.clone(),

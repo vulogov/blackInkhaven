@@ -561,6 +561,7 @@ impl super::App {
             system_prompt,
             history,
             prompt_text.clone(),
+            "chat",
         );
 
         self.inference = Some(Inference {
@@ -771,6 +772,7 @@ impl super::App {
             Some(GRAMMAR_CHECK_SYSTEM_PROMPT.to_string()),
             Vec::new(),
             prompt_text,
+            "grammar",
         );
         self.inference = Some(Inference {
             provider: provider.clone(),
@@ -883,6 +885,7 @@ impl super::App {
             Some(system_prompt),
             Vec::new(),
             user_prompt,
+            "help",
         );
         self.inference = Some(Inference {
             provider: provider.clone(),
@@ -955,6 +958,7 @@ impl super::App {
             Some(HJSON_REVIEW_SYSTEM_PROMPT.to_string()),
             Vec::new(),
             prompt_text,
+            "hjson-review",
         );
         self.inference = Some(Inference {
             provider: provider.clone(),
@@ -1056,6 +1060,7 @@ impl super::App {
             None,
             Vec::new(),
             prompt_text,
+            "explain",
         );
         self.inference = Some(Inference {
             provider: provider.clone(),
@@ -1175,6 +1180,7 @@ impl super::App {
             None,
             Vec::new(),
             prompt_text,
+            "critique",
         );
         self.inference = Some(Inference {
             provider: provider.clone(),
@@ -1239,6 +1245,7 @@ impl super::App {
             None,
             Vec::new(),
             prompt_text,
+            "show-dont-tell",
         );
         self.inference = Some(Inference {
             provider: provider.clone(),
@@ -1358,6 +1365,7 @@ impl super::App {
             Some(facts_scope_system_prompt(lang).to_string()),
             Vec::new(),
             prompt_text,
+            "fact-check",
         );
         self.inference = Some(Inference {
             provider: provider.clone(),
@@ -1457,6 +1465,7 @@ impl super::App {
             None,
             Vec::new(),
             prompt_text,
+            "rhythm",
         );
         self.inference = Some(Inference {
             provider: provider.clone(),
@@ -1540,7 +1549,7 @@ surrounding paragraph, no preamble.\n\n── Paragraph: {title} (for context) �
         };
         let model = model.to_string();
         let provider = self.ai.default_provider.clone();
-        let rx = spawn_chat_stream(self.ai.client.clone(), model.clone(), None, Vec::new(), prompt_text);
+        let rx = spawn_chat_stream(self.ai.client.clone(), model.clone(), None, Vec::new(), prompt_text, "editorial-rewrite");
         self.inference = Some(Inference {
             provider: provider.clone(),
             model,
@@ -1833,6 +1842,7 @@ surrounding paragraph, no preamble.\n\n── Paragraph: {title} (for context) �
             None,
             Vec::new(),
             envelope,
+            "translation",
         );
         self.inference = Some(Inference {
             provider: provider.clone(),

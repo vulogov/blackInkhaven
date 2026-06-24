@@ -21,6 +21,7 @@ pub fn run(project: &Path, prompt: &str, provider: Option<&str>) -> Result<()> {
         None,
         Vec::new(),
         prompt.to_string(),
+        "ai-cli",
     );
 
     let mut stdout = std::io::stdout().lock();

@@ -1,5 +1,6 @@
 pub mod prompts;
 pub mod stream;
+pub mod usage;
 
 use std::sync::Arc;
 

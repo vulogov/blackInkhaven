@@ -38,7 +38,15 @@ pub fn spawn_chat_stream(
     system_prompt: Option<String>,
     history: Vec<ChatTurn>,
     user_prompt: String,
+    category: &'static str,
 ) -> mpsc::UnboundedReceiver<StreamMsg> {
+    // Road to 1.4.0 — record the inference to the AI cost dashboard under its
+    // category (chat / grammar / explain / …). An empty category opts out (used by
+    // `collect_blocking`, whose slow-track callers are counted in their own stores).
+    // No-op headless.
+    if !category.is_empty() {
+        crate::ai::usage::record(category);
+    }
     let (tx, rx) = mpsc::unbounded_channel();
     tokio::spawn(async move {
         let mut messages: Vec<ChatMessage> = Vec::new();
@@ -106,7 +114,7 @@ pub fn collect_blocking(
     system_prompt: Option<String>,
     prompt: String,
 ) -> Result<String, String> {
-    let mut rx = spawn_chat_stream(client, model, system_prompt, Vec::new(), prompt);
+    let mut rx = spawn_chat_stream(client, model, system_prompt, Vec::new(), prompt, "");
     let mut raw = String::new();
     while let Some(msg) = rx.blocking_recv() {
         match msg {

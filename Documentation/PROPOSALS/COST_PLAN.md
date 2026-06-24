@@ -35,11 +35,24 @@ referenced by both the handlers and the dashboard.
   1801 → 1802.
 - **P2 — docs + cut.** KEYBINDING / quickref rows; then cut the bundled release.
 
+- **P3 — track every AI call + informative caps.** _Done._ Per Vladimir's
+  permissive principle (inkhaven informs, doesn't gate, except for security): the
+  daily slow-track caps now **warn and continue** instead of erroring
+  (`DailyCapReached` → eprintln + proceed in both preflights). A new `ai::usage`
+  tracker (global install + `record(category)` → `.inkhaven/ai_usage.json`, 30-day
+  prune) records **every** inference by category at the `spawn_chat_stream`
+  chokepoint (22 call sites tagged: chat / grammar / explain / critique /
+  continuation / …; `collect_blocking` opts out so the capped slow tracks aren't
+  double-counted). The dashboard now shows **daily budgets (informative)** + **other
+  AI calls today** (per-category counts) + total, with explicit "informative, not
+  limits · resets 00:00 UTC" framing. 4 tests. Full suite 1802 → 1804.
+
 ## Non-goals
 
-No new spend *enforcement* (the existing preflights/caps are unchanged), no token
-accounting beyond what the stores record (call counts), no new deps. The dashboard
-is a read-only aggregation.
+No spend *enforcement* — caps inform, never block (the permissive principle). No
+token accounting beyond call counts, no new deps. The dashboard is a read-only
+aggregation; the only behavioural change is making the previously-blocking daily cap
+a warning.
 
 ## Increment log
 
