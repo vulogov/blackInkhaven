@@ -165,6 +165,32 @@ pub enum ScanClass {
     /// severity — a nudge to follow up or move on.  No
     /// autofix.
     StaleSubmission,
+    /// 1.3.32+ — referential integrity: a node whose
+    /// `parent_id` points at a UUID that isn't in the
+    /// hierarchy.  The node is detached — unreachable from
+    /// the tree, invisible in the TUI.  **Critical** —
+    /// structural corruption (a partial delete / restore).
+    BrokenParentRef,
+    /// 1.3.32+ — referential integrity: a paragraph
+    /// `linked_paragraphs` entry whose target UUID no
+    /// longer exists (the linked paragraph was deleted).
+    /// Warning — the link dangles; prune it.
+    DanglingParagraphLink,
+    /// 1.3.32+ — referential integrity: an event's
+    /// `characters` / `places` reference whose target
+    /// node was deleted.  Warning — the event points at a
+    /// ghost; prune the ref.
+    DanglingEventRef,
+    /// 1.3.32+ — referential integrity: two children of
+    /// the same parent share a `slug`, so their on-disk
+    /// `fs_path`s collide (one overwrites the other on
+    /// save / assemble).  Warning — rename one.
+    SiblingSlugCollision,
+    /// 1.3.32+ — referential integrity: more than one Book
+    /// carries the same `system_tag` (e.g. two "Places").
+    /// System-book lookups resolve by tag, so a duplicate
+    /// makes resolution ambiguous.  Warning.
+    DuplicateSystemBook,
 }
 
 impl ScanClass {
@@ -187,6 +213,11 @@ impl ScanClass {
             ScanClass::UnresolvedTension => "unresolved-tension",
             ScanClass::ParagraphTooLong => "paragraph-too-long",
             ScanClass::StaleSubmission => "stale-submission",
+            ScanClass::BrokenParentRef => "broken-parent-ref",
+            ScanClass::DanglingParagraphLink => "dangling-paragraph-link",
+            ScanClass::DanglingEventRef => "dangling-event-ref",
+            ScanClass::SiblingSlugCollision => "sibling-slug-collision",
+            ScanClass::DuplicateSystemBook => "duplicate-system-book",
         }
     }
 
@@ -208,11 +239,16 @@ impl ScanClass {
             "unresolved-tension" => ScanClass::UnresolvedTension,
             "paragraph-too-long" => ScanClass::ParagraphTooLong,
             "stale-submission" => ScanClass::StaleSubmission,
+            "broken-parent-ref" => ScanClass::BrokenParentRef,
+            "dangling-paragraph-link" => ScanClass::DanglingParagraphLink,
+            "dangling-event-ref" => ScanClass::DanglingEventRef,
+            "sibling-slug-collision" => ScanClass::SiblingSlugCollision,
+            "duplicate-system-book" => ScanClass::DuplicateSystemBook,
             _ => return None,
         })
     }
 
-    pub const ALL: [ScanClass; 15] = [
+    pub const ALL: [ScanClass; 20] = [
         ScanClass::ZeroByteFile,
         ScanClass::OrphanParagraphRow,
         ScanClass::MissingReferencedFile,
@@ -228,6 +264,11 @@ impl ScanClass {
         ScanClass::UnresolvedTension,
         ScanClass::ParagraphTooLong,
         ScanClass::StaleSubmission,
+        ScanClass::BrokenParentRef,
+        ScanClass::DanglingParagraphLink,
+        ScanClass::DanglingEventRef,
+        ScanClass::SiblingSlugCollision,
+        ScanClass::DuplicateSystemBook,
     ];
 
     /// 1.2.19+ C.4 — classes excluded from the default
@@ -425,8 +466,190 @@ pub fn scan_project(
     if run(ScanClass::StaleSubmission) {
         report.findings.extend(scan_stale_submissions(&layout));
     }
+    // 1.3.32+ — referential integrity over the loaded hierarchy
+    // (pure, in-memory; no disk, no DB mutation).
+    if run(ScanClass::BrokenParentRef) {
+        report.findings.extend(scan_broken_parents(&hierarchy));
+    }
+    if run(ScanClass::DanglingParagraphLink) {
+        report.findings.extend(scan_dangling_paragraph_links(&hierarchy));
+    }
+    if run(ScanClass::DanglingEventRef) {
+        report.findings.extend(scan_dangling_event_refs(&hierarchy));
+    }
+    if run(ScanClass::SiblingSlugCollision) {
+        report.findings.extend(scan_sibling_slug_collisions(&hierarchy));
+    }
+    if run(ScanClass::DuplicateSystemBook) {
+        report.findings.extend(scan_duplicate_system_books(&hierarchy));
+    }
 
     Ok(report)
+}
+
+// ── 1.3.32+ referential integrity ────────────────────────────────────────────
+
+use crate::store::hierarchy::Hierarchy;
+use crate::store::node::Node;
+
+/// A readable slug-path for a node, for the finding's `path` field.
+fn node_slug_path(node: &Node) -> String {
+    if node.path.is_empty() {
+        node.slug.clone()
+    } else {
+        format!("{}/{}", node.path.join("/"), node.slug)
+    }
+}
+
+/// Nodes whose `parent_id` points at a UUID not in the hierarchy — detached and
+/// unreachable from the tree.
+fn scan_broken_parents(h: &Hierarchy) -> Vec<ScanFinding> {
+    let mut out = Vec::new();
+    for n in h.iter() {
+        if let Some(pid) = n.parent_id {
+            if h.get(pid).is_none() {
+                out.push(ScanFinding {
+                    class: ScanClass::BrokenParentRef,
+                    severity: ScanSeverity::Critical,
+                    path: Some(node_slug_path(n)),
+                    detail: format!(
+                        "`{}` (id {}) has parent_id {pid}, which doesn't exist — the node is detached from the tree",
+                        n.title, n.id
+                    ),
+                });
+            }
+        }
+    }
+    out
+}
+
+/// `linked_paragraphs` entries whose target node was deleted. One finding per node,
+/// listing the dead targets (capped).
+fn scan_dangling_paragraph_links(h: &Hierarchy) -> Vec<ScanFinding> {
+    const LIST_CAP: usize = 5;
+    let mut out = Vec::new();
+    for n in h.iter() {
+        let dead: Vec<uuid::Uuid> =
+            n.linked_paragraphs.iter().copied().filter(|id| h.get(*id).is_none()).collect();
+        if dead.is_empty() {
+            continue;
+        }
+        let shown: Vec<String> = dead.iter().take(LIST_CAP).map(|id| id.to_string()).collect();
+        let more = if dead.len() > LIST_CAP {
+            format!(" (and {} more)", dead.len() - LIST_CAP)
+        } else {
+            String::new()
+        };
+        out.push(ScanFinding {
+            class: ScanClass::DanglingParagraphLink,
+            severity: ScanSeverity::Warning,
+            path: Some(node_slug_path(n)),
+            detail: format!(
+                "`{}` links to {} deleted paragraph(s): {}{more}",
+                n.title,
+                dead.len(),
+                shown.join(", ")
+            ),
+        });
+    }
+    out
+}
+
+/// Event `characters` / `places` references whose target node was deleted.
+fn scan_dangling_event_refs(h: &Hierarchy) -> Vec<ScanFinding> {
+    let mut out = Vec::new();
+    for n in h.iter() {
+        let Some(ev) = n.event.as_ref() else { continue };
+        let dead_chars: Vec<uuid::Uuid> =
+            ev.characters.iter().copied().filter(|id| h.get(*id).is_none()).collect();
+        let dead_places: Vec<uuid::Uuid> =
+            ev.places.iter().copied().filter(|id| h.get(*id).is_none()).collect();
+        if dead_chars.is_empty() && dead_places.is_empty() {
+            continue;
+        }
+        let mut parts = Vec::new();
+        if !dead_chars.is_empty() {
+            parts.push(format!("{} character(s)", dead_chars.len()));
+        }
+        if !dead_places.is_empty() {
+            parts.push(format!("{} place(s)", dead_places.len()));
+        }
+        out.push(ScanFinding {
+            class: ScanClass::DanglingEventRef,
+            severity: ScanSeverity::Warning,
+            path: Some(node_slug_path(n)),
+            detail: format!(
+                "event `{}` references {} that no longer exist — prune the dead refs",
+                n.title,
+                parts.join(" and ")
+            ),
+        });
+    }
+    out
+}
+
+/// Two children of the same parent sharing a slug — their on-disk `fs_path`s
+/// collide. One finding per (parent, slug) collision.
+fn scan_sibling_slug_collisions(h: &Hierarchy) -> Vec<ScanFinding> {
+    use std::collections::BTreeMap;
+    // (parent_id, slug) → titles sharing it.
+    let mut groups: BTreeMap<(Option<uuid::Uuid>, String), Vec<String>> = BTreeMap::new();
+    for n in h.iter() {
+        groups
+            .entry((n.parent_id, n.slug.to_ascii_lowercase()))
+            .or_default()
+            .push(n.title.clone());
+    }
+    let mut out = Vec::new();
+    for ((parent_id, slug), titles) in groups {
+        if titles.len() < 2 {
+            continue;
+        }
+        let parent_label = parent_id
+            .and_then(|pid| h.get(pid))
+            .map(|p| p.title.clone())
+            .unwrap_or_else(|| "(root)".to_string());
+        out.push(ScanFinding {
+            class: ScanClass::SiblingSlugCollision,
+            severity: ScanSeverity::Warning,
+            path: Some(slug.clone()),
+            detail: format!(
+                "{} siblings under `{parent_label}` share slug `{slug}` ({}) — their files collide; rename one",
+                titles.len(),
+                titles.join(", ")
+            ),
+        });
+    }
+    out
+}
+
+/// More than one Book carrying the same `system_tag` — ambiguous system-book
+/// resolution.
+fn scan_duplicate_system_books(h: &Hierarchy) -> Vec<ScanFinding> {
+    use std::collections::BTreeMap;
+    let mut by_tag: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for n in h.iter() {
+        if let Some(tag) = n.system_tag.as_ref() {
+            by_tag.entry(tag.clone()).or_default().push(n.title.clone());
+        }
+    }
+    let mut out = Vec::new();
+    for (tag, titles) in by_tag {
+        if titles.len() < 2 {
+            continue;
+        }
+        out.push(ScanFinding {
+            class: ScanClass::DuplicateSystemBook,
+            severity: ScanSeverity::Warning,
+            path: Some(tag.clone()),
+            detail: format!(
+                "{} books carry system_tag `{tag}` ({}) — system-book lookups are ambiguous",
+                titles.len(),
+                titles.join(", ")
+            ),
+        });
+    }
+    out
 }
 
 /// 1.3.3+ — a submission still `sent` (no response) for more than 30 days.
@@ -1073,6 +1296,16 @@ pub fn apply_fix(
         | ScanClass::ParagraphTooLong
         | ScanClass::StaleSubmission => Err(Error::Store(format!(
             "no autofix for class `{}` — this is an author-judgment finding (review the prose / outline / threads)",
+            finding.class.slug(),
+        ))),
+        // 1.3.32+ — referential-integrity findings are detection-only in this
+        // release; safe autofixes (prune dangling links / refs) land in a follow-up.
+        ScanClass::BrokenParentRef
+        | ScanClass::DanglingParagraphLink
+        | ScanClass::DanglingEventRef
+        | ScanClass::SiblingSlugCollision
+        | ScanClass::DuplicateSystemBook => Err(Error::Store(format!(
+            "no autofix yet for class `{}` — referential-integrity repair is detection-only in this release",
             finding.class.slug(),
         ))),
     }
@@ -1932,5 +2165,173 @@ mod tests {
         let prose = "aerin stormbringer rode west.";
         let findings = super::classify_naming_inconsistencies(&canonical, prose);
         assert!(findings.is_empty());
+    }
+
+    // ── 1.3.32+ referential-integrity scans ───────────────
+
+    fn ri_node(v: serde_json::Value) -> crate::store::node::Node {
+        serde_json::from_value(v).expect("test node deserialises")
+    }
+
+    fn ri_hierarchy(nodes: Vec<crate::store::node::Node>) -> crate::store::hierarchy::Hierarchy {
+        crate::store::hierarchy::Hierarchy::from_nodes_for_test(nodes)
+    }
+
+    fn base(id: uuid::Uuid, kind: &str, slug: &str) -> serde_json::Value {
+        serde_json::json!({
+            "id": id, "kind": kind, "title": slug, "slug": slug,
+            "path": [], "parent_id": null, "order": 1, "file": null,
+            "modified_at": "2026-01-01T00:00:00Z",
+        })
+    }
+
+    #[test]
+    fn broken_parent_ref_is_critical() {
+        let ghost = uuid::Uuid::now_v7();
+        let mut n = base(uuid::Uuid::now_v7(), "paragraph", "lost");
+        n["parent_id"] = serde_json::json!(ghost);
+        let h = ri_hierarchy(vec![ri_node(n)]);
+        let f = super::scan_broken_parents(&h);
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].class, ScanClass::BrokenParentRef);
+        assert_eq!(f[0].severity, ScanSeverity::Critical);
+    }
+
+    #[test]
+    fn dangling_paragraph_link_flags_dead_target() {
+        let dead = uuid::Uuid::now_v7();
+        let live = uuid::Uuid::now_v7();
+        let mut p = base(uuid::Uuid::now_v7(), "paragraph", "p");
+        p["linked_paragraphs"] = serde_json::json!([dead, live]);
+        let target = base(live, "paragraph", "target");
+        let h = ri_hierarchy(vec![ri_node(p), ri_node(target)]);
+        let f = super::scan_dangling_paragraph_links(&h);
+        assert_eq!(f.len(), 1, "only the dead link is flagged");
+        assert!(f[0].detail.contains("1 deleted paragraph"));
+    }
+
+    #[test]
+    fn dangling_event_ref_flags_missing_character() {
+        let missing = uuid::Uuid::now_v7();
+        let mut ev = base(uuid::Uuid::now_v7(), "paragraph", "coronation");
+        ev["event"] = serde_json::json!({
+            "start_ticks": 0, "end_ticks": null, "precision": "day",
+            "characters": [missing], "places": [], "track": null,
+        });
+        let h = ri_hierarchy(vec![ri_node(ev)]);
+        let f = super::scan_dangling_event_refs(&h);
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].class, ScanClass::DanglingEventRef);
+        assert!(f[0].detail.contains("character"));
+    }
+
+    #[test]
+    fn sibling_slug_collision_flags_duplicate() {
+        let parent = uuid::Uuid::now_v7();
+        let book = base(parent, "book", "book-a");
+        let mut a = base(uuid::Uuid::now_v7(), "paragraph", "scene");
+        a["parent_id"] = serde_json::json!(parent);
+        a["title"] = serde_json::json!("Scene One");
+        let mut b = base(uuid::Uuid::now_v7(), "paragraph", "scene");
+        b["parent_id"] = serde_json::json!(parent);
+        b["title"] = serde_json::json!("Scene Two");
+        let h = ri_hierarchy(vec![ri_node(book), ri_node(a), ri_node(b)]);
+        let f = super::scan_sibling_slug_collisions(&h);
+        assert_eq!(f.len(), 1);
+        assert!(f[0].detail.contains("Scene One"));
+        assert!(f[0].detail.contains("Scene Two"));
+    }
+
+    #[test]
+    fn duplicate_system_book_flags_two_places() {
+        let mut a = base(uuid::Uuid::now_v7(), "book", "places");
+        a["system_tag"] = serde_json::json!("places");
+        let mut b = base(uuid::Uuid::now_v7(), "book", "places-2");
+        b["system_tag"] = serde_json::json!("places");
+        let h = ri_hierarchy(vec![ri_node(a), ri_node(b)]);
+        let f = super::scan_duplicate_system_books(&h);
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].class, ScanClass::DuplicateSystemBook);
+    }
+
+    #[test]
+    fn clean_tree_has_no_referential_findings() {
+        let parent = uuid::Uuid::now_v7();
+        let book = base(parent, "book", "book-a");
+        let mut p = base(uuid::Uuid::now_v7(), "paragraph", "p1");
+        p["parent_id"] = serde_json::json!(parent);
+        let h = ri_hierarchy(vec![ri_node(book), ri_node(p)]);
+        assert!(super::scan_broken_parents(&h).is_empty());
+        assert!(super::scan_dangling_paragraph_links(&h).is_empty());
+        assert!(super::scan_dangling_event_refs(&h).is_empty());
+        assert!(super::scan_sibling_slug_collisions(&h).is_empty());
+        assert!(super::scan_duplicate_system_books(&h).is_empty());
+    }
+
+    /// 1.3.32+ perf budget (road to 1.4.0): the referential scans are O(n) over the
+    /// node set — guard against an accidental O(n²) regression (e.g. a linear
+    /// `Hierarchy::get`). Runs in the normal release-gate suite; the budget is
+    /// generous so it doesn't flake on slow CI, but a quadratic blow-up at 1000
+    /// nodes would blow past it.
+    #[test]
+    fn referential_scans_meet_perf_budget() {
+        use std::time::Instant;
+        let n = 1000usize;
+        let book = uuid::Uuid::now_v7();
+        let ids: Vec<uuid::Uuid> = (0..n).map(|_| uuid::Uuid::now_v7()).collect();
+        let mut nodes = vec![ri_node(base(book, "book", "book-a"))];
+        for (i, id) in ids.iter().enumerate() {
+            let mut p = base(*id, "paragraph", &format!("p{i}"));
+            p["parent_id"] = serde_json::json!(book);
+            // Each links to the next; the last links to a ghost (one dangler).
+            let next = ids.get(i + 1).copied().unwrap_or_else(uuid::Uuid::now_v7);
+            p["linked_paragraphs"] = serde_json::json!([next]);
+            nodes.push(ri_node(p));
+        }
+        let h = ri_hierarchy(nodes);
+        let t = Instant::now();
+        let danglers = super::scan_dangling_paragraph_links(&h).len();
+        super::scan_broken_parents(&h);
+        super::scan_dangling_event_refs(&h);
+        super::scan_sibling_slug_collisions(&h);
+        super::scan_duplicate_system_books(&h);
+        let elapsed = t.elapsed();
+        assert_eq!(danglers, 1, "only the last paragraph's link dangles");
+        assert!(
+            elapsed.as_millis() < 500,
+            "referential scans over {n} nodes took {elapsed:?} (budget 500ms)"
+        );
+    }
+
+    /// 1.3.32+ — proptest harness smoke (road to 1.4.0). Proves the property-test
+    /// spine on a real invariant: `levenshtein` is a metric. The parser property
+    /// sweep (calendar / HJSON) builds on this in P2.
+    mod prop {
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn levenshtein_is_zero_on_identity(a in "[a-z]{0,24}") {
+                prop_assert_eq!(super::super::levenshtein(&a, &a), 0);
+            }
+
+            #[test]
+            fn levenshtein_is_symmetric(a in "[a-z]{0,24}", b in "[a-z]{0,24}") {
+                prop_assert_eq!(
+                    super::super::levenshtein(&a, &b),
+                    super::super::levenshtein(&b, &a)
+                );
+            }
+
+            #[test]
+            fn levenshtein_is_bounded(a in "[a-z]{0,24}", b in "[a-z]{0,24}") {
+                let d = super::super::levenshtein(&a, &b);
+                let la = a.chars().count();
+                let lb = b.chars().count();
+                // Bounded above by the longer string, below by the length gap.
+                prop_assert!(d <= la.max(lb));
+                prop_assert!(d >= la.abs_diff(lb));
+            }
+        }
     }
 }

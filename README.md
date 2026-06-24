@@ -21,47 +21,46 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.3.31 — The timeline critique, pruned
+## Latest release · 1.3.32 — Project doctor
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.3.31.md`](Documentation/RELEASE_NOTES/1.3.31.md)
-· Plan: [`Documentation/PROPOSALS/TIMELINE-2-INTEGRATION_PLAN.md`](Documentation/PROPOSALS/TIMELINE-2-INTEGRATION_PLAN.md)
-· Tutorial: [`81`](Documentation/Tutorials/81-timeline-critique-migration.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.3.32.md`](Documentation/RELEASE_NOTES/1.3.32.md)
+· Roadmap: [`Documentation/PROPOSALS/ROADMAP-1.4.0.md`](Documentation/PROPOSALS/ROADMAP-1.4.0.md)
+· Plan: [`Documentation/PROPOSALS/DOCTOR_PLAN.md`](Documentation/PROPOSALS/DOCTOR_PLAN.md)
 
-The timeline's AI critique shipped in 1.2.6 with a five-item audit streamed into the
-AI pane. WORLD-4, INNER_SOCRATES-1, and the Output pane have since arrived, and four
-of those five items belong to them now. 1.3.31 prunes the duplication and keeps the
-two checks that are genuinely **timeline-internal**. RFC TIMELINE-2-INTEGRATION —
-the close of the timeline-aware trilogy.
+1.3.32 opens the road to **1.4.0** — a consolidation & hardening milestone — and it
+opens with the stability bookend: a data-integrity safety net and the test spine
+every release after it leans on.
 
-### What's kept
+### Doctor learns referential integrity
 
-The `y` / `Y` / `Ctrl+Y` / `F12` chords (and `inkhaven event critique`) now run two
-pattern-based checks, emitting structured findings to the **Output pane**:
+`inkhaven doctor --scan` caught disk-side trouble; now it catches the **dangling
+UUIDs inside the hierarchy** that rot from deletes, partial restores, and hand-edits
+— five new classes over the in-memory tree:
 
-- **Orphan events** (`⊘`) — events linked to nothing, graded by **significance ×
-  staleness**: a detailed, long-orphaned event is a contradiction; a fresh stub is a
-  note.
-- **Fuzzy-precision overlap** (`⧉`) — `season` / `month` events whose windows collide
-  suspiciously (same track, shared character/place), with multi-event **clusters**.
+- **`broken-parent-ref`** *(Critical)* — a `parent_id` pointing at a non-existent
+  node; the node is detached and unreachable.
+- **`dangling-paragraph-link`** — a `linked_paragraphs` target was deleted.
+- **`dangling-event-ref`** — an event references a deleted character/place.
+- **`sibling-slug-collision`** — two children share a slug → their files collide.
+- **`duplicate-system-book`** — two Books share a `system_tag` → ambiguous lookup.
 
-Findings are localized to five languages, with optional cost-capped LLM
-**elaboration**.
+They run in the default scan (CI exit 2 on ≥ Warning), gate by `--class`, and emit
+to `--json`; detection-only this release.
 
-### What moved
+### A property-test spine
 
-Travel-time + co-location → the world fact-checker (`travel_time` / `co_location`);
-date mismatches → `date_coherence`; pacing → INNER_SOCRATES `temporal_density`.
-`inkhaven event critique --migration-check` / `--diff` map each to its new command;
-`--legacy` keeps the old audit behind a deprecation warning during the transition.
-
-New: a `timeline.critique` config block and five read-only `ink.event.critique.*`
-Bund words.
+`proptest` (a pure-Rust dev-dependency), perf budgets as ordinary `cargo test`
+assertions (the referential scans over 1,000 nodes run in well under half a second —
+an O(n²) guard), and a *never-panic* sweep over the three panic-prone parsers: the
+calendar (parse / format / round-trip across every preset), HJSON config loading
+(arbitrary input *and* brace/quote soup), and language detection (arbitrary unicode,
+empty / emoji / 100k-char inputs).
 
 ### Dependencies & compatibility
 
-**Zero new dependencies.** Timeline data, the `event` CLI, the calendar, the
-`Ctrl+V e` picker, the swim-lane view, and `ink.event.*` are all unchanged. Tests
-1725 → 1752.
+**No external application or binary dependencies** — one pure-Rust dev-crate
+(`proptest`), test-only, never in the shipped binary. No change to the data model,
+the CLI surface, or any existing scan class. Tests 1725 → 1771.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
