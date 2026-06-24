@@ -2798,10 +2798,12 @@ impl App {
     /// stays minimal: read field, check timer,
     /// maybe build a string and push.
     fn tick_crash_mirror(&mut self) {
-        let Some(doc) = self.opened.as_ref() else {
-            return;
-        };
-        if !doc.dirty {
+        // Mirror BOTH panes — a dirty split / similar secondary is just
+        // as much unsaved work as the primary (H1). Nothing dirty in
+        // either → nothing to do.
+        let any_dirty = self.opened.as_ref().is_some_and(|d| d.dirty)
+            || self.secondary.as_ref().is_some_and(|d| d.dirty);
+        if !any_dirty {
             return;
         }
         let now = std::time::Instant::now();
@@ -2810,12 +2812,20 @@ impl App {
                 return;
             }
         }
-        let content = doc.textarea.lines().join("\n");
-        let (cursor_row, cursor_col) = doc.textarea.cursor();
-        crate::crash::context().mirror_buffer(
-            doc.rel_path.clone(),
-            crate::crash::DirtyMirror::new(content, cursor_row, cursor_col),
-        );
+        for doc in [self.opened.as_ref(), self.secondary.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            if !doc.dirty {
+                continue;
+            }
+            let content = doc.textarea.lines().join("\n");
+            let (cursor_row, cursor_col) = doc.textarea.cursor();
+            crate::crash::context().mirror_buffer(
+                doc.rel_path.clone(),
+                crate::crash::DirtyMirror::new(content, cursor_row, cursor_col),
+            );
+        }
         self.last_crash_mirror_at = Some(now);
     }
 
@@ -3887,9 +3897,13 @@ impl App {
         // top_level binding-table dispatch above. The hardcoded
         // match arms were removed in the 1.2.4 F-key migration.
 
-        // Save works from anywhere as long as a doc is open.
-        if self.keymap.save.matches(&key) && self.opened.is_some() {
-            self.save_current()?;
+        // Save works from anywhere as long as a doc is open. Routes
+        // through the *focused* pane so split-view right-pane edits
+        // aren't silently dropped (H1).
+        if self.keymap.save.matches(&key)
+            && (self.opened.is_some() || self.secondary.is_some())
+        {
+            self.save_focused()?;
             return Ok(false);
         }
 
@@ -4741,6 +4755,16 @@ impl App {
     /// status message so the user can recover. Called from every quit chord
     /// (Ctrl+Q, plain q in Tree / Editor-empty / AI).
     fn request_quit(&mut self) -> bool {
+        // Flush a dirty editable secondary (split / similar right pane)
+        // first — it isn't `self.opened`, so the check below misses it,
+        // and depending on the swap state at quit time either pane can
+        // be the one in `opened` (H1). Read-only pins are skipped.
+        if self.secondary.as_ref().is_some_and(|d| d.dirty && !d.read_only) {
+            if let Some(mut sec) = self.secondary.take() {
+                let _ = self.save_doc(&mut sec);
+                self.secondary = Some(sec);
+            }
+        }
         if self.opened.as_ref().is_some_and(|d| d.dirty) {
             // save_current writes its own status. If it can't save, doc.dirty
             // stays true and we refuse to quit so the user can see the error
