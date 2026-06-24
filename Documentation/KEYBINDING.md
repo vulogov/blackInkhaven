@@ -568,6 +568,35 @@ Help (`F1` / `Help! …`) inferences are deliberately **one-shot** — they use
 a strict RAG system prompt and are not added to the chat history, so a
 prior set of chat turns won't dilute their grounding.
 
+### 4.1 Output pane
+
+`Ctrl+B Tab` / `Ctrl+B Shift+Tab` cycle the right region between the **AI** pane
+and the **Output** pane — structured one-way notifications from every subsystem
+(fact-check, Socratic, timeline critique, translation, lexicon, Bund, …). Active
+when the right region shows Output.
+
+| Key       | Action                                                                          |
+| --------- | ------------------------------------------------------------------------------- |
+| `↑` / `↓` (or `k` / `j`) | Select previous / next message.                                  |
+| `g` / `G` | First / last message.                                                           |
+| `o` / `Space` | Expand / collapse the selected message's structured detail.                 |
+| `a`       | Ask the AI about the selected message (carries its full detail by reference).   |
+| `d`       | Dismiss the selected message.                                                   |
+| `p`       | Pin / unpin (pinned messages sort to the top).                                  |
+| `Enter`   | Primary action — kind-specific (open target, accept proposal, jump to event, …).|
+| `r` / `e` | (translations) remember / edit+remember.                                        |
+| `i` / `m` / `x` | (Socratic) record-as-intent / make-note / mark-addressed.                 |
+
+**Filtering (1.3.33+)** — narrow a busy Output pane; the title shows
+`shown/total · <filter>` and the filter persists in `.session.json`:
+
+| Key | Action                                                                              |
+| --- | ----------------------------------------------------------------------------------- |
+| `f` | Cycle the **source** filter: off → fact-check → socrates → timeline-critique → world → translation → lexicon → variety → ai → bund → other → off. |
+| `S` | Cycle the **minimum severity**: off → Info → Warning → Contradiction → off (hides lower-severity *and* transient progress ticks). |
+| `t` | Toggle **this paragraph only** — show just the messages tied to the open paragraph. |
+| `c` | Clear all filters.                                                                  |
+
 ---
 
 ## 5. Search bar (top input)

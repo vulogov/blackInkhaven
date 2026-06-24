@@ -249,4 +249,60 @@ mod tests {
         assert!(s.contains("warning"));
         assert!(s.contains('¶'));
     }
+
+    // Road-to-1.4.0 stability rider — the filter runs over untrusted message data
+    // (arbitrary `kind` strings) every frame; it must never panic.
+    mod prop {
+        use super::super::{message_source, OutputFilter, SOURCES};
+        use crate::pane::output::{Lifetime, Message, Severity};
+        use proptest::prelude::*;
+
+        fn arb_severity() -> impl Strategy<Value = Severity> {
+            prop_oneof![
+                Just(Severity::Info),
+                Just(Severity::Warning),
+                Just(Severity::Contradiction),
+                Just(Severity::Progress),
+            ]
+        }
+
+        fn message(kind: &str, sev: Severity) -> Message {
+            Message::new(kind, sev, Lifetime::UntilActedOn, serde_json::json!({}))
+        }
+
+        proptest! {
+            /// Every message — including unknown kinds — classifies to a known source.
+            #[test]
+            fn source_is_always_in_the_known_set(kind in ".{0,24}", sev in arb_severity()) {
+                prop_assert!(SOURCES.contains(&message_source(&message(&kind, sev))));
+            }
+
+            /// `matches` never panics on any message / filter / open-paragraph combo.
+            #[test]
+            fn matches_never_panics(
+                kind in ".{0,24}",
+                sev in arb_severity(),
+                src in proptest::option::of("[a-z-]{0,16}"),
+                only in any::<bool>(),
+            ) {
+                let m = message(&kind, sev);
+                let f = OutputFilter { source: src, min_severity: Some(sev), only_open_paragraph: only };
+                let _ = f.matches(&m, None);
+                let _ = f.matches(&m, Some(uuid::Uuid::new_v4()));
+            }
+
+            /// A source filter passes a message iff it filters for that message's own
+            /// source; any other source rejects it.
+            #[test]
+            fn source_filter_is_exact(kind in ".{0,24}", sev in arb_severity()) {
+                let m = message(&kind, sev);
+                let own = message_source(&m).to_string();
+                let pass = OutputFilter { source: Some(own.clone()), ..Default::default() };
+                prop_assert!(pass.matches(&m, None));
+                let other = if own == "other" { "fact-check" } else { "other" };
+                let reject = OutputFilter { source: Some(other.to_string()), ..Default::default() };
+                prop_assert!(!reject.matches(&m, None));
+            }
+        }
+    }
 }
