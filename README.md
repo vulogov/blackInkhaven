@@ -21,44 +21,47 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.3.30 — The fact-checker learns *when*
+## Latest release · 1.3.31 — The timeline critique, pruned
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.3.30.md`](Documentation/RELEASE_NOTES/1.3.30.md)
-· Reference: [`Documentation/WORLDBUILDING.md`](Documentation/WORLDBUILDING.md)
-· Plan: [`Documentation/PROPOSALS/WORLD-5_PLAN.md`](Documentation/PROPOSALS/WORLD-5_PLAN.md)
-· Tutorial: [`80`](Documentation/Tutorials/80-timeline-aware-fact-checking.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.3.31.md`](Documentation/RELEASE_NOTES/1.3.31.md)
+· Plan: [`Documentation/PROPOSALS/TIMELINE-2-INTEGRATION_PLAN.md`](Documentation/PROPOSALS/TIMELINE-2-INTEGRATION_PLAN.md)
+· Tutorial: [`81`](Documentation/Tutorials/81-timeline-critique-migration.md)
 
-The world fact-checker knew *what* your world looks like; it didn't know **when**
-each scene happens. 1.3.30 connects it to your **timeline** — a paragraph linked to
-an event is now checked against ground truth, not prose inference. RFC WORLD-5,
-purely additive to WORLD-4.
+The timeline's AI critique shipped in 1.2.6 with a five-item audit streamed into the
+AI pane. WORLD-4, INNER_SOCRATES-1, and the Output pane have since arrived, and four
+of those five items belong to them now. 1.3.31 prunes the duplication and keeps the
+two checks that are genuinely **timeline-internal**. RFC TIMELINE-2-INTEGRATION —
+the close of the timeline-aware trilogy.
 
-### What the timeline adds
+### What's kept
 
-When your project has a timeline, the fast checker gains four kinds of question —
-automatic (`Ctrl+B W → F` or the ambient check), in five languages, magic-ledger-
-respecting:
+The `y` / `Y` / `Ctrl+Y` / `F12` chords (and `inkhaven event critique`) now run two
+pattern-based checks, emitting structured findings to the **Output pane**:
 
-- **Calendar-grounded season** — snow in a summer-dated scene is a contradiction,
-  not a guess.
-- **Event-derived travel time** — a prose "three days" against a 35-day event gap.
-- **`date_coherence`** — a *midsummer feast* in a winter-dated scene.
-- **`co_location`** — a character in two places at overlapping times
-  (`inkhaven realworld co-location`).
+- **Orphan events** (`⊘`) — events linked to nothing, graded by **significance ×
+  staleness**: a detailed, long-orphaned event is a contradiction; a fresh stub is a
+  note.
+- **Fuzzy-precision overlap** (`⧉`) — `season` / `month` events whose windows collide
+  suspiciously (same track, shared character/place), with multi-event **clusters**.
 
-Timeline-derived findings carry a **📅** in the Output pane. CLI: `fact-check
---timeline-aware auto|on|off` / `--timeline-only`; plus five read-only
-`ink.world.fact_check.timeline.*` Bund words. The legacy timeline critique (1.2.6+)
-runs unchanged alongside, for now.
+Findings are localized to five languages, with optional cost-capped LLM
+**elaboration**.
 
-Also in this release: a tutorial for [Inner Socrates'
-conversation](Documentation/Tutorials/79-socratic-conversation.md) (from 1.3.29).
+### What moved
+
+Travel-time + co-location → the world fact-checker (`travel_time` / `co_location`);
+date mismatches → `date_coherence`; pacing → INNER_SOCRATES `temporal_density`.
+`inkhaven event critique --migration-check` / `--diff` map each to its new command;
+`--legacy` keeps the old audit behind a deprecation warning during the transition.
+
+New: a `timeline.critique` config block and five read-only `ink.event.critique.*`
+Bund words.
 
 ### Dependencies & compatibility
 
-**Zero new dependencies.** **Purely additive** — the compiler, plakat, every
-existing check, the CLI/TUI surface, and the schema are unchanged; projects without
-a timeline get exactly the 1.3.27 behavior. Tests 1713 → 1725.
+**Zero new dependencies.** Timeline data, the `event` CLI, the calendar, the
+`Ctrl+V e` picker, the swim-lane view, and `ink.event.*` are all unchanged. Tests
+1725 → 1752.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
