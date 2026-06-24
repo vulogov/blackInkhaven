@@ -292,6 +292,10 @@ impl super::App {
             self.draw_tag_search_results_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::SnapshotBrowser { .. }) {
+            self.draw_snapshot_browser_modal(f, area);
+            return;
+        }
 
         let width = area.width.saturating_sub(8).clamp(30, 80);
         let height: u16 = 8;

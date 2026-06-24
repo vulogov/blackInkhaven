@@ -182,7 +182,11 @@ fn editor_entries() -> Vec<Entry> {
         entry("F5", "Snapshot the current paragraph (== Ctrl+B N)"),
         entry(
             "F6",
-            "Snapshot picker — ↑↓ navigate · Enter load · D / Del delete · Esc close",
+            "Snapshot picker (this paragraph) — ↑↓ · Enter load · V diff · D delete",
+        ),
+        entry(
+            "Ctrl+F6",
+            "Snapshot browser (whole project) — / filter · V diff · Enter open paragraph",
         ),
         entry("Ctrl+H / Ctrl+J", "(split only) scroll lower pane up / down"),
     ]

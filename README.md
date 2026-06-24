@@ -21,50 +21,53 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.3.35 — Keeping count
+## Latest release · 1.3.36 — Every snapshot, and a lock on the door
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.3.35.md`](Documentation/RELEASE_NOTES/1.3.35.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.3.36.md`](Documentation/RELEASE_NOTES/1.3.36.md)
 · Roadmap: [`Documentation/PROPOSALS/ROADMAP-1.4.0.md`](Documentation/PROPOSALS/ROADMAP-1.4.0.md)
-· Plan: [`GOALS_PLAN.md`](Documentation/PROPOSALS/GOALS_PLAN.md)
+· Plan: [`SNAPSHOT_HARDENING_PLAN.md`](Documentation/PROPOSALS/SNAPSHOT_HARDENING_PLAN.md)
 
-Writing goals were already **~90% built** — the streak engine, per-book pacing,
-daily targets, status-ladder, active-time, and the `Ctrl+V g` progress modal all
-shipped long ago. This release **surfaces**, **extends**, and makes them
-**editable** — three pure additions, zero new dependencies.
+The snapshot **browser** lets you look across your whole project's history; the first
+slice of the road-to-1.4.0 **hardening sweep** lands beside it. Pure additions — the
+lock even reuses a dependency already in the tree.
 
-### `inkhaven goals` — the terminal surface
+### The project-wide snapshot browser
 
-Every other analytic (`cost`, `check`, `stats`, `concordance`) had a terminal
-counterpart; the progress view did not. **`inkhaven goals`** prints what the
-`Ctrl+V g` modal shows — project + per-book totals, today vs `goals.daily_words`,
-current streak **and lifetime best**, per-book pace + deadline, weekly status-ladder,
-active time, 30-day sparkline — reusing the *exact* `build_snapshot` engine. Read-only.
+`F6` shows the open paragraph's snapshots; **`Ctrl+F6`** now opens a **project-wide
+browser** — every snapshot across *all* paragraphs, newest first, one row each
+(timestamp · words · paragraph · annotation). `/` filters by paragraph title or
+annotation, `V` diffs the selection against its paragraph's current text (the same
+diff modal `F6` uses), `Enter` opens that paragraph and its `F6` picker. Built on a
+new `Store::list_all_snapshots()` feeding the proven `compute_line_diff`.
 
-### The streak you keep — lifetime best + milestones
+### Hardening — parser fuzzing
 
-The streak knew only the trailing run, and the heatmap's "longest" was window-bound —
-it forgot. Now the snapshot computes a true **all-time best** over the full writing
-history (same grace rule), shown as `· best Nd` whenever it beats the current run. A
-new Bund hook **`hook.on_streak_milestone ( days -- )`** fires once when the streak
-crosses **7 / 30 / 100 / 365** upward — an informative celebration, **never
-blocking**, no re-fire on reopen.
+The importers that read **untrusted external files** now carry never-panic property
+tests: Scrivener **RTF**, the **Typst** syntax check, and the Scrivener **`.scrivx`**
+binder XML. Seven proptests, ~256 cases each — they surfaced **no panics**, locking
+in robustness against regressions.
 
-### Editing goals in-app — written back safely
+### Hardening — the advisory project lock
 
-Press **`e`** in the `Ctrl+V g` modal to edit `daily_words` / `active_minutes_daily` /
-`streak_grace_per_week` inline. Commit writes the changed keys back to
-`inkhaven.hjson` through Inkhaven's **comment-preserving surgical-splice** pipeline:
-a versioned backup lands in `.config-backups/` first, only changed keys are
-spliced/appended, and the file is written atomically. Every comment and unrelated
-stanza survives byte-for-byte — the **permissive principle** in practice: a writer's
-own config is never clobbered, and there's always a backup. Applied live, no restart.
+Two sessions on one project both write `metadata.db` / `.session.json`; interleaved
+writes can corrupt the store. A new **OS advisory lock** (`flock` via the existing
+`fs2`) on `<project>/.inkhaven.lock` guards against that — and the kernel releases it
+on crash, so there's **no stale-lock cleanup**. True to the **permissive principle**,
+it *informs, never blocks*: on conflict you get a warning naming the other session and
+an **"Open anyway? [y/N]"** prompt; an unsupported filesystem just proceeds. CLI
+subcommands stay unlocked.
+
+### Goals-editor fixes (from 1.3.35)
+
+**Backspace now deletes** in the goals editor (some terminals report the key as a
+control char — all encodings are accepted now), `0` fields seed **empty** so you type
+the new target cleanly, and the `Ctrl+B Shift+G` heatmap opens the editor on **`e`**.
 
 ### Dependencies & compatibility
 
-**No external application or binary dependencies; no new runtime crates.** All three
-increments build on the existing progress engine and config-TUI splice pipeline; no
-on-disk shape moved. Two dead symbols were removed to clear build warnings. Tests
-1804 → 1813.
+**No external application or binary dependencies; no new runtime crates** — the lock
+reuses `fs2`, already present. No on-disk shape moved; `.inkhaven.lock` is a new,
+self-managing dotfile. The fuzz tests are dev-only. Tests 1813 → 1825.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
