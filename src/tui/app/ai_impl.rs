@@ -470,12 +470,25 @@ impl super::App {
         // Prepend the AI scope context if one is set. Failures (no
         // selection, etc.) abort the submission with a status message; the
         // scope sticks around so the user can fix the cause and re-submit.
-        let prompt_text = match self.build_ai_mode_context() {
-            Ok(Some(prefix)) => format!("{prefix}\n\n{user_query}"),
-            Ok(None) => user_query,
-            Err(reason) => {
-                self.status = reason;
-                return;
+        // BOOK_RAG-1 — Book scope retrieves passages from the prompt and
+        // grounds the answer; every other scope keeps its existing per-query
+        // context prefix.
+        let prompt_text = if self.ai_mode == AiMode::Book {
+            match self.book_rag_context(&user_query) {
+                Ok(prefix) => format!("{prefix}\n\n{user_query}"),
+                Err(reason) => {
+                    self.status = reason;
+                    return;
+                }
+            }
+        } else {
+            match self.build_ai_mode_context() {
+                Ok(Some(prefix)) => format!("{prefix}\n\n{user_query}"),
+                Ok(None) => user_query,
+                Err(reason) => {
+                    self.status = reason;
+                    return;
+                }
             }
         };
         // Lift any pending Place/Character RAG prefix (set by Ctrl+B P / C
@@ -548,6 +561,10 @@ impl super::App {
             if mode_used == AiMode::Facts {
                 let lang = crate::ai::prompts::iso_from_long(&self.cfg.language);
                 Some(facts_scope_system_prompt(lang).to_string())
+            } else if mode_used == AiMode::Book {
+                // BOOK_RAG-1 — the citation-grounded contract.
+                let lang = crate::ai::prompts::iso_from_long(&self.cfg.language);
+                Some(crate::book_rag::system_prompt(lang).to_string())
             } else {
                 match self.inference_mode {
                     InferenceMode::Local => Some(LOCAL_SYSTEM_PROMPT.to_string()),

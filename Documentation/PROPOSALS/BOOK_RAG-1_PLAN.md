@@ -81,13 +81,18 @@ The RFC says "Target version 1.4.0" — but **1.4.0 is already cut** (we're on
   block; per-language default templates (EN/RU/ES/FR/DE); `inkhaven book-rag`
   CLI; `ink.book_rag.*` words; tutorial.
 
-## Decisions to confirm before P1
-- **Default ON vs OFF.** RFC defaults `enabled: true`, silently repurposing Book
-  scope for everyone on upgrade. Given the permissive-individual-tool ethos, an
-  explicit opt-in (or a one-time notice) may be safer. *Needs your call.*
-- **The legacy "entire book as context" fallback** — verify what Book scope
-  *currently* assembles (the RFC assumes whole-book; confirm in P1) so the
-  `enabled:false` fallback is faithful.
+## Decisions (resolved by the author)
+- **Always ON, no toggle.** Book scope **is** Book RAG — there is no
+  `book_rag.enabled` flag and **no legacy fallback**. The old "send the whole
+  book for inference" path is **removed entirely** and replaced: selecting `Book`
+  scope (F9) runs RAG, unconditionally. This is a deliberate change to inkhaven's
+  already-AI-centred Book-scope behaviour, not an opt-in feature. Accordingly:
+  drop RFC §8.8 (legacy fallback), the `enabled` config key, and the
+  enable/disable + round-trip tests; the "legacy behaviour" comparison in §E is
+  historical only.
+- **Replace, don't branch.** P1 locates the current `ai_mode == Book` context
+  assembly (whole-book) and replaces it with the RAG retrieval path — one code
+  path, not a runtime branch.
 
 ## Cut criteria
 Each phase signed with tests (retrieval/budget/citation-validation property

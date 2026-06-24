@@ -2180,6 +2180,7 @@ mod editor_impl;
 mod q3_q4_impl;
 mod render;
 mod snapshot_impl;
+mod book_rag_impl;
 mod tag_impl;
 mod threads_impl;
 mod timeline_impl;
@@ -17451,11 +17452,15 @@ impl App {
                 }
                 Ok(Some(out))
             }
-            AiMode::Subchapter | AiMode::Chapter | AiMode::Book => {
+            // BOOK_RAG-1 — Book scope no longer sends the whole book as a
+            // per-query prefix; the chat-submit path retrieves relevant
+            // passages from the prompt and grounds the answer (see
+            // `book_rag_context`). The other scopes are unchanged.
+            AiMode::Book => Ok(None),
+            AiMode::Subchapter | AiMode::Chapter => {
                 let scope_kind = match self.ai_mode {
                     AiMode::Subchapter => NodeKind::Subchapter,
                     AiMode::Chapter => NodeKind::Chapter,
-                    AiMode::Book => NodeKind::Book,
                     _ => unreachable!(),
                 };
                 let mode_label = self.ai_mode.label();
