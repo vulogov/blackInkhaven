@@ -25,6 +25,11 @@ pub(super) fn maybe_auto_backup<B: ratatui::backend::Backend>(
     // Auto-backup opts out only via `max_age = 0s` now — `out_dir` empty
     // means "use the per-user default" (see `default_user_backup_dir`).
     let bcfg = &cfg.backup;
+    // 1.3.37 — explicit opt-out, clearer than the max_age=0 / empty
+    // out_dir side-effects.
+    if !bcfg.auto_backup_on_exit {
+        return Ok(());
+    }
     if bcfg.max_age.as_secs() == 0 {
         return Ok(());
     }
@@ -90,6 +95,8 @@ pub(super) fn maybe_auto_backup<B: ratatui::backend::Backend>(
     let (done_n, total_n) = last_progress;
     match backup_result {
         Ok(out_path) => {
+            // 1.3.37 — enforce the retention cap (no-op when keep_last=0).
+            crate::backup::prune_backups(&abs_out, cfg.backup.keep_last);
             if wait {
                 wait_for_any_key_on_backup_splash(
                     terminal,
@@ -171,6 +178,8 @@ pub(super) fn run_manual_backup<B: ratatui::backend::Backend>(
     let (done_n, total_n) = last_progress;
     match backup_result {
         Ok(out_path) => {
+            // 1.3.37 — enforce the retention cap (no-op when keep_last=0).
+            crate::backup::prune_backups(&abs_out, cfg.backup.keep_last);
             if wait {
                 wait_for_any_key_on_backup_splash(
                     terminal,

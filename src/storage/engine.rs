@@ -279,6 +279,13 @@ const JSON_INIT_SQL: &str = "
         document   JSON   NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_json_docs_key ON json_docs (key);
+    -- 1.3.37 (M9) — schema version anchor. One row; lets an older
+    -- binary refuse a newer on-disk shape instead of silently dropping
+    -- rows it can't parse, and gives future migrations a checkpoint.
+    CREATE TABLE IF NOT EXISTS _inkhaven_schema (
+        singleton INTEGER NOT NULL PRIMARY KEY,
+        version   BIGINT  NOT NULL
+    );
 ";
 
 /// JSON document store keyed by UUID, with a `key` column used by
@@ -298,6 +305,38 @@ impl JsonStorage {
             engine: Arc::new(engine),
             default_key: Arc::new(default_key.to_string()),
         })
+    }
+
+    /// 1.3.37 (M9) — stamp or verify the on-disk schema version.
+    /// Returns Err when the store was written by a *newer* inkhaven
+    /// than this binary understands, so an old binary fails loudly
+    /// rather than silently dropping rows whose JSON shape it can't
+    /// parse. A store with no version row (pre-1.3.37 project) is
+    /// stamped with `current`. Future schema changes bump `current`
+    /// and add a migration step in the `v < current` arm.
+    pub fn ensure_schema_version(&self, current: i64) -> Result<()> {
+        let rows = self
+            .engine
+            .select_all("SELECT version FROM _inkhaven_schema WHERE singleton = 1")?;
+        let existing = rows.into_iter().next().and_then(|r| r.into_iter().next());
+        let on_disk = match existing {
+            Some(DuckValue::BigInt(v)) => Some(v),
+            Some(DuckValue::Int(v)) => Some(v as i64),
+            Some(DuckValue::HugeInt(v)) => Some(v as i64),
+            _ => None,
+        };
+        match on_disk {
+            Some(v) if v > current => Err(anyhow!(
+                "project store schema is v{v}, but this inkhaven only supports v{current} — \
+                 upgrade inkhaven to open this project"
+            )),
+            Some(_) => Ok(()), // v <= current: nothing to migrate yet
+            None => self.engine.execute_with(
+                "INSERT INTO _inkhaven_schema (singleton, version) VALUES (1, ?) \
+                 ON CONFLICT (singleton) DO UPDATE SET version = excluded.version",
+                &[&current],
+            ),
+        }
     }
 
     pub fn add_json_with_id(&self, id: Uuid, document: JsonValue) -> Result<()> {

@@ -599,10 +599,36 @@ impl super::App {
             if !already_current {
                 self.visited_history.truncate(cur + 1);
                 self.visited_history.push(node.id);
+                // 1.3.37 — bound the history (and thus .session.json
+                // growth) when `editor.visited_history_cap > 0`; drop
+                // the oldest entries from the front. `0` = unbounded.
+                let cap = self.cfg.editor.visited_history_cap;
+                if cap > 0 && self.visited_history.len() > cap {
+                    let overflow = self.visited_history.len() - cap;
+                    self.visited_history.drain(0..overflow);
+                }
                 self.visited_cursor = self.visited_history.len() - 1;
             }
         }
         Ok(())
+    }
+
+    /// Save whichever editor pane currently has keyboard focus. In
+    /// split / similar mode with the right pane focused, the live doc
+    /// is `self.secondary` — the save chord runs in `handle_key`
+    /// (above the `opened ↔ secondary` swap in `handle_editor_key`),
+    /// so without this it would save the *left* pane and silently drop
+    /// the right pane's edits. Read-only pins are no-ops via
+    /// `save_current`'s own guard.
+    pub(super) fn save_focused(&mut self) -> Result<()> {
+        if self.secondary_focused && self.secondary.is_some() {
+            std::mem::swap(&mut self.opened, &mut self.secondary);
+            let r = self.save_current();
+            std::mem::swap(&mut self.opened, &mut self.secondary);
+            r
+        } else {
+            self.save_current()
+        }
     }
 
     pub(super) fn save_current(&mut self) -> Result<()> {

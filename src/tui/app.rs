@@ -173,40 +173,61 @@ pub fn run(project: &Path) -> Result<()> {
     // the whole session; the OS releases it on exit or crash. Per the
     // permissive principle this only *informs* — the author can always
     // open anyway.
-    let _project_lock = match crate::project_lock::acquire(&layout.root) {
-        Ok(crate::project_lock::LockOutcome::Acquired(lock)) => Some(lock),
-        Ok(crate::project_lock::LockOutcome::Busy(info)) => {
-            use std::io::IsTerminal;
-            eprintln!(
-                "⚠ Another inkhaven session may already have this project open ({}).",
-                info.describe()
-            );
-            eprintln!(
-                "  Opening it twice at once can corrupt the project store."
-            );
-            if std::io::stdin().is_terminal() {
-                eprint!("  Open anyway? [y/N] ");
-                let _ = std::io::Write::flush(&mut std::io::stderr());
-                let mut answer = String::new();
-                let _ = std::io::stdin().read_line(&mut answer);
-                let yes = matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes");
-                if !yes {
-                    eprintln!("  Cancelled — left the existing session untouched.");
-                    return Ok(());
+    // `project_lock.enabled = false` disables single-instance guarding.
+    let _project_lock = if !cfg.project_lock.enabled {
+        None
+    } else {
+        match crate::project_lock::acquire(&layout.root) {
+            Ok(crate::project_lock::LockOutcome::Acquired(lock)) => Some(lock),
+            Ok(crate::project_lock::LockOutcome::Busy(info)) => {
+                use std::io::IsTerminal;
+                eprintln!(
+                    "⚠ Another inkhaven session may already have this project open ({}).",
+                    info.describe()
+                );
+                eprintln!("  Opening it twice at once can corrupt the project store.");
+                match cfg.project_lock.on_conflict.as_str() {
+                    // Never open a second session.
+                    "refuse" => {
+                        eprintln!(
+                            "  Refusing to open (project_lock.on_conflict = refuse)."
+                        );
+                        return Ok(());
+                    }
+                    // Always warn and proceed, no prompt.
+                    "warn" => {
+                        eprintln!("  Proceeding without the lock (on_conflict = warn).");
+                        None
+                    }
+                    // Default "prompt": interactive y/N; warn+proceed headless.
+                    _ => {
+                        if std::io::stdin().is_terminal() {
+                            eprint!("  Open anyway? [y/N] ");
+                            let _ = std::io::Write::flush(&mut std::io::stderr());
+                            let mut answer = String::new();
+                            let _ = std::io::stdin().read_line(&mut answer);
+                            let yes = matches!(
+                                answer.trim().to_ascii_lowercase().as_str(),
+                                "y" | "yes"
+                            );
+                            if !yes {
+                                eprintln!("  Cancelled — left the existing session untouched.");
+                                return Ok(());
+                            }
+                            eprintln!("  Proceeding without the lock — mind concurrent edits.");
+                        } else {
+                            eprintln!("  (non-interactive launch — proceeding without the lock)");
+                        }
+                        None
+                    }
                 }
-                eprintln!("  Proceeding without the lock — mind concurrent edits.");
-            } else {
-                // Non-interactive launch can't be prompted. Permissive:
-                // warn loudly and proceed rather than refuse.
-                eprintln!("  (non-interactive launch — proceeding without the lock)");
             }
-            None
-        }
-        Err(e) => {
-            // Couldn't even open the lockfile (read-only mount, etc.).
-            // Never block on infrastructure: log and carry on.
-            tracing::warn!(target: "inkhaven::lock", "project lock unavailable: {e}");
-            None
+            Err(e) => {
+                // Couldn't even open the lockfile (read-only mount, etc.).
+                // Never block on infrastructure: log and carry on.
+                tracing::warn!(target: "inkhaven::lock", "project lock unavailable: {e}");
+                None
+            }
         }
     };
 
@@ -1449,8 +1470,8 @@ fn strip_leading_typst_heading(body: &str) -> String {
 /// in `App.kill_ring`. Picked to be large enough that an
 /// accidental burst of single-¶ deletes doesn't clobber an
 /// earlier recovery, small enough that the picker fits on a
-/// 24-row terminal without scrolling.
-const KILL_RING_CAP: usize = 10;
+/// 24-row terminal without scrolling. 1.3.37 — configurable via
+/// `editor.deleted_paragraph_history` (default 10).
 
 // `is_scene_break` lives in `crate::manuscript` (imported
 // above) — one definition shared by the editor's scene-
@@ -2149,8 +2170,8 @@ pub(crate) struct App {
 /// dirty-buffer mirror push to the crash-report
 /// context.  Two seconds is enough that idle CPU is
 /// negligible while still bounding worst-case
-/// post-panic data loss to ~2 s of typing.
-const CRASH_MIRROR_DEBOUNCE_SECS: u64 = 2;
+/// post-panic data loss. 1.3.37 — now configurable via
+/// `editor.crash_mirror_seconds` (default 2).
 
 mod ai_impl;
 mod backup_impl;
@@ -2406,7 +2427,8 @@ impl App {
         }
         // 1.3.34+ — point the AI-cost usage tracker at this project so every
         // inference tallies into `inkhaven cost` / the Ctrl+B $ panel.
-        crate::ai::usage::install(&self.layout.root);
+        crate::ai::usage::install(&self.layout.root, self.cfg.cost.usage_retention_days);
+        crate::dayclock::set_boundary(self.cfg.goals.day_boundary);
         if let Err(e) = crate::progress::install(&self.layout.root) {
             tracing::warn!(target: "inkhaven::progress", "install: {e:#}");
             return;
@@ -2798,24 +2820,34 @@ impl App {
     /// stays minimal: read field, check timer,
     /// maybe build a string and push.
     fn tick_crash_mirror(&mut self) {
-        let Some(doc) = self.opened.as_ref() else {
-            return;
-        };
-        if !doc.dirty {
+        // Mirror BOTH panes — a dirty split / similar secondary is just
+        // as much unsaved work as the primary (H1). Nothing dirty in
+        // either → nothing to do.
+        let any_dirty = self.opened.as_ref().is_some_and(|d| d.dirty)
+            || self.secondary.as_ref().is_some_and(|d| d.dirty);
+        if !any_dirty {
             return;
         }
         let now = std::time::Instant::now();
         if let Some(last) = self.last_crash_mirror_at {
-            if now.duration_since(last).as_secs() < CRASH_MIRROR_DEBOUNCE_SECS {
+            if now.duration_since(last).as_secs() < self.cfg.editor.crash_mirror_seconds {
                 return;
             }
         }
-        let content = doc.textarea.lines().join("\n");
-        let (cursor_row, cursor_col) = doc.textarea.cursor();
-        crate::crash::context().mirror_buffer(
-            doc.rel_path.clone(),
-            crate::crash::DirtyMirror::new(content, cursor_row, cursor_col),
-        );
+        for doc in [self.opened.as_ref(), self.secondary.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            if !doc.dirty {
+                continue;
+            }
+            let content = doc.textarea.lines().join("\n");
+            let (cursor_row, cursor_col) = doc.textarea.cursor();
+            crate::crash::context().mirror_buffer(
+                doc.rel_path.clone(),
+                crate::crash::DirtyMirror::new(content, cursor_row, cursor_col),
+            );
+        }
         self.last_crash_mirror_at = Some(now);
     }
 
@@ -2850,7 +2882,17 @@ impl App {
             );
             return;
         }
-        // Clean buffer → silent reload.
+        // Clean buffer. By default reload silently; if the user opted
+        // out (`editor.external_change_auto_reload = false`) just warn,
+        // so an external rewrite never silently moves their view/cursor.
+        if !self.cfg.editor.external_change_auto_reload {
+            self.status = format!(
+                "↻ `{}` changed on disk — reopen the paragraph to load the new version",
+                doc.title
+            );
+            return;
+        }
+        // → silent reload.
         let body = match std::fs::read_to_string(&abs) {
             Ok(b) => b,
             Err(e) => {
@@ -3887,9 +3929,13 @@ impl App {
         // top_level binding-table dispatch above. The hardcoded
         // match arms were removed in the 1.2.4 F-key migration.
 
-        // Save works from anywhere as long as a doc is open.
-        if self.keymap.save.matches(&key) && self.opened.is_some() {
-            self.save_current()?;
+        // Save works from anywhere as long as a doc is open. Routes
+        // through the *focused* pane so split-view right-pane edits
+        // aren't silently dropped (H1).
+        if self.keymap.save.matches(&key)
+            && (self.opened.is_some() || self.secondary.is_some())
+        {
+            self.save_focused()?;
             return Ok(false);
         }
 
@@ -4741,6 +4787,16 @@ impl App {
     /// status message so the user can recover. Called from every quit chord
     /// (Ctrl+Q, plain q in Tree / Editor-empty / AI).
     fn request_quit(&mut self) -> bool {
+        // Flush a dirty editable secondary (split / similar right pane)
+        // first — it isn't `self.opened`, so the check below misses it,
+        // and depending on the swap state at quit time either pane can
+        // be the one in `opened` (H1). Read-only pins are skipped.
+        if self.secondary.as_ref().is_some_and(|d| d.dirty && !d.read_only) {
+            if let Some(mut sec) = self.secondary.take() {
+                let _ = self.save_doc(&mut sec);
+                self.secondary = Some(sec);
+            }
+        }
         if self.opened.as_ref().is_some_and(|d| d.dirty) {
             // save_current writes its own status. If it can't save, doc.dirty
             // stays true and we refuse to quit so the user can see the error
@@ -11589,7 +11645,7 @@ impl App {
         }
         if self.fc_needs_check && matches!(self.modal, Modal::None) {
             if let Some(t) = self.fc_activity_at {
-                if t.elapsed() >= std::time::Duration::from_secs(5) {
+                if t.elapsed() >= std::time::Duration::from_secs(self.cfg.editor.fact_check_idle_seconds) {
                     self.fc_needs_check = false;
                     self.auto_fact_check();
                 }
@@ -12046,7 +12102,7 @@ impl App {
         }
         if self.socr_needs_check && matches!(self.modal, Modal::None) {
             if let Some(t) = self.socr_activity_at {
-                if t.elapsed() >= std::time::Duration::from_secs(5) {
+                if t.elapsed() >= std::time::Duration::from_secs(self.cfg.editor.fact_check_idle_seconds) {
                     self.socr_needs_check = false;
                     self.auto_socratic_check();
                 }
@@ -13472,7 +13528,7 @@ impl App {
             content_type: node.content_type.clone(),
             event: node.event.clone(),
         });
-        while self.kill_ring.len() > KILL_RING_CAP {
+        while self.kill_ring.len() > self.cfg.editor.deleted_paragraph_history {
             self.kill_ring.pop_back();
         }
     }

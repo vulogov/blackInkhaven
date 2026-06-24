@@ -42,6 +42,11 @@
 
 use std::io::Write;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Per-process counter so concurrent writes — including two writes to
+/// the same target — never share a temp path (M8 / cross-cutting).
+static TMP_NONCE: AtomicU64 = AtomicU64::new(0);
 
 /// Atomic write.  See module docs for the durability
 /// guarantee.
@@ -49,8 +54,14 @@ pub fn write(target: &Path, body: &[u8]) -> std::io::Result<()> {
     let parent = target.parent().unwrap_or(Path::new("."));
     let tmp_name = match target.file_name() {
         Some(name) => {
+            // Unique temp name (`<name>.<pid>.<nonce>.tmp`) so two
+            // processes — or two concurrent in-process writes — to the
+            // same target can't interleave into one shared `.tmp` and
+            // corrupt the result. Kept ending in `.tmp` so the doctor
+            // scan still recognises a crash-orphaned temp.
+            let nonce = TMP_NONCE.fetch_add(1, Ordering::Relaxed);
             let mut s = name.to_os_string();
-            s.push(".tmp");
+            s.push(format!(".{}.{}.tmp", std::process::id(), nonce));
             s
         }
         None => return Err(std::io::Error::other("io_atomic: target has no file_name")),

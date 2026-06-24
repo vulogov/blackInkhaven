@@ -149,6 +149,28 @@ synthesis is a planned follow-up.
 | E-reader (Kindle, Kobo, Apple Books) | `inkhaven epub` |
 | Audiobook player (resumable, chaptered) | `inkhaven audiobook` |
 
+## Importing an EPUB back (1.3.37)
+
+`inkhaven epub` has an inverse: **`inkhaven import-epub <file.epub>`**
+reads any EPUB and materialises it as a new user book — one chapter per
+spine document, the converted prose as paragraphs (headings, `*strong*`,
+`_emph_`, lists), images extracted to a `<book-slug>-images/` sidecar.
+
+```text
+$ inkhaven import-epub my-novel.epub
+EPUB import complete — book `My Novel`:
+  chapters:   12
+  paragraphs: 12
+  images:     3
+```
+
+`--book-name` overrides the title (default: the EPUB's `dc:title`);
+`--dry-run` reports what would be created without writing. Like the
+other importers it exits non-zero if any chapter failed, so a scripted
+import can tell a clean run from a partial one. In-prose image references
+are left as comments for you to re-link from the extracted sidecar
+(full image-node import is a planned follow-up).
+
 ## See also
 
 * [Tutorial 56 — TTS Piper](56-tts-piper.md) — the

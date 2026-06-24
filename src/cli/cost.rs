@@ -43,14 +43,14 @@ impl CostReport {
 /// To surface a new analytical thread's AI cost, record its calls via
 /// `InnerSocratesStore::record_llm_call(day, "<thread-key>")` — no dashboard change
 /// needed.
-pub fn gather(project: &Path, day: &str) -> CostReport {
+pub fn gather(project: &Path, day: &str, world_cap: i64, inner_cap: i64) -> CostReport {
     let mut entries = vec![CostEntry {
         name: "world fact-check (slow)".to_string(),
         calls_today: WorldStore::open_for_project(project)
             .ok()
             .and_then(|s| s.llm_calls_today(day).ok())
             .unwrap_or(0),
-        daily_cap: WorldStore::DAILY_CALL_CAP,
+        daily_cap: world_cap,
     }];
 
     // Inner Socrates: the canonical slow track always shown, plus any other
@@ -67,7 +67,7 @@ pub fn gather(project: &Path, day: &str) -> CostReport {
             entries.push(CostEntry {
                 name: "inner socrates (slow)".to_string(),
                 calls_today: calls,
-                daily_cap: InnerSocratesStore::DAILY_CALL_CAP,
+                daily_cap: inner_cap,
             });
         } else {
             extra.push((sub, calls));
@@ -77,14 +77,14 @@ pub fn gather(project: &Path, day: &str) -> CostReport {
         entries.push(CostEntry {
             name: "inner socrates (slow)".to_string(),
             calls_today: 0,
-            daily_cap: InnerSocratesStore::DAILY_CALL_CAP,
+            daily_cap: inner_cap,
         });
     }
     for (sub, calls) in extra {
         entries.push(CostEntry {
             name: format!("inner socrates · {sub}"),
             calls_today: calls,
-            daily_cap: InnerSocratesStore::DAILY_CALL_CAP,
+            daily_cap: inner_cap,
         });
     }
 
@@ -116,7 +116,7 @@ fn bar(used: i64, cap: i64) -> String {
 
 /// Render the report as lines (shared by the CLI + the TUI panel).
 pub fn render_lines(report: &CostReport) -> Vec<String> {
-    let mut out = vec![format!("AI cost — LLM calls today, UTC ({})", report.day), String::new()];
+    let mut out = vec![format!("AI cost — LLM calls today ({})", report.day), String::new()];
 
     // Capped budgets (informative — see the note below).
     out.push("  daily budgets (informative):".into());
@@ -146,14 +146,23 @@ pub fn render_lines(report: &CostReport) -> Vec<String> {
     out.push(format!("  {:<24} {:>3}", "total AI calls today", report.total_calls()));
     out.push(String::new());
     out.push("  Budgets are informative, not limits — past a budget the slow tracks".into());
-    out.push("  warn and continue. The tally resets at 00:00 UTC. (CLI: inkhaven cost)".into());
+    out.push("  warn and continue. The tally resets per goals.day_boundary. (CLI: inkhaven cost)".into());
     out
 }
 
 pub fn run(project: &Path) -> Result<()> {
-    crate::project::ProjectLayout::new(project).require_initialized()?;
-    let day = chrono::Utc::now().format("%Y-%m-%d").to_string();
-    for line in render_lines(&gather(project, &day)) {
+    let layout = crate::project::ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = crate::config::Config::load_layered(&layout.config_path())?;
+    crate::dayclock::set_boundary(cfg.goals.day_boundary);
+    let day = crate::dayclock::today_key();
+    let report = gather(
+        project,
+        &day,
+        cfg.cost.world_daily_call_cap,
+        cfg.cost.inner_socrates_daily_call_cap,
+    );
+    for line in render_lines(&report) {
         println!("{line}");
     }
     Ok(())

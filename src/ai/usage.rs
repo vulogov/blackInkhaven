@@ -13,20 +13,25 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, RwLock};
 
 static ROOT: RwLock<Option<PathBuf>> = RwLock::new(None);
 /// Serialises the read-modify-write so concurrent inferences don't lose updates.
 static WRITE: Mutex<()> = Mutex::new(());
+/// Trailing days of tallies to keep (config-driven; `cost.usage_retention_days`).
+static RETENTION_DAYS: AtomicUsize = AtomicUsize::new(30);
 
 /// Per-day, per-category call tallies.
 type Usage = BTreeMap<String, BTreeMap<String, i64>>;
 
-/// Point the tracker at a project (call once at TUI / CLI startup).
-pub fn install(project_root: &Path) {
+/// Point the tracker at a project (call once at TUI / CLI startup) and
+/// set the retention window from config.
+pub fn install(project_root: &Path, retention_days: usize) {
     if let Ok(mut g) = ROOT.write() {
         *g = Some(project_root.to_path_buf());
     }
+    RETENTION_DAYS.store(retention_days.max(1), Ordering::Relaxed);
 }
 
 fn file(root: &Path) -> PathBuf {
@@ -41,7 +46,7 @@ fn load(root: &Path) -> Usage {
 }
 
 fn today() -> String {
-    chrono::Utc::now().format("%Y-%m-%d").to_string()
+    crate::dayclock::today_key()
 }
 
 /// Record one AI call under `category` for today. No-op when uninstalled.
@@ -51,15 +56,20 @@ pub fn record(category: &str) {
         Err(_) => None,
     };
     let Some(root) = root else { return };
-    let _guard = WRITE.lock();
+    // Recover the guard even if a prior holder panicked — dropping the
+    // PoisonError would otherwise proceed *unserialized* and lose
+    // concurrent tallies, the opposite of this lock's purpose (M8).
+    let _guard = WRITE.lock().unwrap_or_else(|e| e.into_inner());
     let mut usage = load(&root);
     *usage
         .entry(today())
         .or_default()
         .entry(category.to_string())
         .or_insert(0) += 1;
-    // Keep only the most recent 30 days (BTreeMap keys sort, so the front is oldest).
-    while usage.len() > 30 {
+    // Keep only the most recent `RETENTION_DAYS` days (BTreeMap keys sort,
+    // so the front is oldest).
+    let keep = RETENTION_DAYS.load(Ordering::Relaxed).max(1);
+    while usage.len() > keep {
         let Some(oldest) = usage.keys().next().cloned() else { break };
         usage.remove(&oldest);
     }
@@ -87,7 +97,7 @@ mod tests {
     #[test]
     fn record_tallies_by_category_and_reads_back() {
         let dir = tempfile::tempdir().unwrap();
-        install(dir.path());
+        install(dir.path(), 30);
         record("chat");
         record("chat");
         record("grammar");

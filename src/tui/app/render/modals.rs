@@ -228,7 +228,12 @@ impl super::super::App {
         scroll: usize,
     ) {
         let day = chrono::Utc::now().format("%Y-%m-%d").to_string();
-        let report = crate::cli::cost::gather(self.store.project_root(), &day);
+        let report = crate::cli::cost::gather(
+            self.store.project_root(),
+            &day,
+            self.cfg.cost.world_daily_call_cap,
+            self.cfg.cost.inner_socrates_daily_call_cap,
+        );
         let lines: Vec<Line<'_>> = crate::cli::cost::render_lines(&report)
             .into_iter()
             .map(Line::from)
@@ -3740,7 +3745,10 @@ impl super::super::App {
         let rect = Rect { x, y, width, height };
         f.render_widget(ratatui::widgets::Clear, rect);
 
-        let header = format!(" Kill-ring ({}/{}) ", len, super::super::KILL_RING_CAP);
+        let header = format!(
+            " Kill-ring ({}/{}) ",
+            len, self.cfg.editor.deleted_paragraph_history
+        );
         let block = Block::default()
             .borders(Borders::ALL)
             .title(header)
