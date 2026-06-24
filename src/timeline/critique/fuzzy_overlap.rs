@@ -163,7 +163,8 @@ pub fn detect(
         let shared_chars = shared_chars.unwrap_or_default();
         let shared_places = shared_places.unwrap_or_default();
 
-        let track = if group.iter().all(|e| e.track.eq_ignore_ascii_case(&group[0].track)) {
+        let same_track = group.iter().all(|e| e.track.eq_ignore_ascii_case(&group[0].track));
+        let track = if same_track {
             group[0].track.clone()
         } else {
             "(mixed tracks)".to_string()
@@ -171,31 +172,23 @@ pub fn detect(
         let listed: Vec<&&CritiqueEvent> = group.iter().take(CLUSTER_LIST_CAP).collect();
         let titles: Vec<String> = listed.iter().map(|e| e.title.clone()).collect();
         let ids: Vec<Uuid> = listed.iter().map(|e| e.id).collect();
-        let mut reasons = vec![format!(
-            "{} fuzzy-precision events share an overlapping window.",
-            group.len()
-        )];
-        if group.len() > CLUSTER_LIST_CAP {
-            reasons.push(format!("and {} more events", group.len() - CLUSTER_LIST_CAP));
-        }
-        if !shared_places.is_empty() {
-            reasons.push("All events share a common place.".to_string());
-        }
-        if !shared_chars.is_empty() {
-            reasons.push("All events share a common character.".to_string());
-        }
-        findings.push(FuzzyOverlapFinding {
+        let mut finding = FuzzyOverlapFinding {
             event_ids: ids,
             titles,
             track,
             overlap_window: window,
             suspicion: Suspicion::Cluster,
             is_cluster: true,
+            same_track,
+            precision: group[0].precision,
+            total_events: group.len(),
             shared_characters: shared_chars,
             shared_places,
             severity: Suspicion::Cluster.severity(),
-            reasons,
-        });
+            reasons: Vec::new(),
+        };
+        finding.reasons = super::lang::overlap_reasons(&finding, super::lang::Lang::En);
+        findings.push(finding);
     }
 
     // Pairwise findings for non-clustered pairs at/above the threshold.
@@ -213,35 +206,24 @@ pub fn detect(
                 continue;
             }
             let window = overlap_window(a, b, fw);
-            let mut reasons = vec![format!(
-                "Two {}-precision events have overlapping windows.",
-                a.precision.as_str()
-            )];
-            if a.track.eq_ignore_ascii_case(&b.track) {
-                reasons.push(format!("Both on the \"{}\" track.", a.track));
-            }
-            if !shared_chars.is_empty() {
-                reasons.push("They share a character.".to_string());
-            }
-            if !shared_places.is_empty() {
-                reasons.push("They share a place.".to_string());
-            }
-            findings.push(FuzzyOverlapFinding {
+            let same_track = a.track.eq_ignore_ascii_case(&b.track);
+            let mut finding = FuzzyOverlapFinding {
                 event_ids: vec![a.id, b.id],
                 titles: vec![a.title.clone(), b.title.clone()],
-                track: if a.track.eq_ignore_ascii_case(&b.track) {
-                    a.track.clone()
-                } else {
-                    "(mixed tracks)".to_string()
-                },
+                track: if same_track { a.track.clone() } else { "(mixed tracks)".to_string() },
                 overlap_window: window,
                 suspicion,
                 is_cluster: false,
+                same_track,
+                precision: a.precision,
+                total_events: 2,
                 shared_characters: shared_chars,
                 shared_places,
                 severity: suspicion.severity(),
-                reasons,
-            });
+                reasons: Vec::new(),
+            };
+            finding.reasons = super::lang::overlap_reasons(&finding, super::lang::Lang::En);
+            findings.push(finding);
         }
     }
 

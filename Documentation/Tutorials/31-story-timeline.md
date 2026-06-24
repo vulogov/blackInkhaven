@@ -10,9 +10,10 @@ the timeline enabled you can:
   POV / track.
 - Drill into a subtree (chapter / subchapter) to see only
   events visible from that scope.
-- Ask the AI to audit the timeline for travel-time conflicts,
-  fuzzy-precision overlaps, orphan signals, and pacing
-  outliers.
+- Run the timeline critique for orphan events and
+  fuzzy-precision overlaps (1.3.31+; travel-time, date, and
+  pacing concerns moved to the fact-checker and Socratic reader
+  — see [Tutorial 81](81-timeline-critique-migration.md)).
 - Drive everything from `inkhaven event` on the CLI or
   `ink.event.*` from Bund scripts.
 
@@ -271,46 +272,54 @@ book's Timeline chapter.
 | `Enter`  | Open the event closest to the cursor (prefers the highlighted track). Closes the modal, lands you on the event paragraph in the editor. |
 | `n` / `N`| Pop a one-line title prompt; on Enter creates a new event at the cursor's tick with the current track highlight. |
 
-## TUI — AI health critique
+## TUI — timeline critique
 
-Three chords inside the swim-lane view kick off an AI
-consistency audit. They differ in **scope**:
+> **Refactored in 1.3.31 (RFC TIMELINE-2-INTEGRATION).** The old
+> critique ran a five-item AI audit and streamed prose into the
+> AI pane. Four of those items moved to systems that do them
+> better — travel-time / co-location → the world fact-checker
+> (`travel_time` / `co_location`), paragraph-date mismatches →
+> `date_coherence`, pacing → INNER_SOCRATES `temporal_density`.
+> What remains is the genuinely **timeline-internal** specialty,
+> now structured and emitted to the **Output pane**. See
+> [Tutorial 81 — Migrating the timeline critique](81-timeline-critique-migration.md).
 
-| Chord            | Scope of events sent     | Tracks sent          |
+Three chords inside the swim-lane view (plus `F12`) run the two
+retained, pattern-based checks over a **scope**:
+
+| Chord            | Scope of events          | Tracks               |
 |------------------|---------------------------|-----------------------|
 | `y`              | Current view scope        | Highlighted track only |
 | `Y`              | Current view scope        | All tracks           |
 | `Ctrl+Y`         | **Book scope** (widens)   | All tracks           |
+| `F12`            | **Whole project**         | All tracks           |
 
-Each builds a normalised text payload — one event per bullet
-line with start (calendar-formatted), optional `→ end`,
-title, track, precision, and `[ORPHAN]` tag where applicable.
-Linked paragraphs resolve to slug-paths; characters / places
-resolve to titles. A trailing audit checklist instructs the
-model on what to look for:
+The two checks:
 
-> Audit checklist:
-> - Travel-time / co-location conflicts: a character at two
->   events whose start-to-start gap is shorter than the world
->   makes plausible.
-> - Paragraph mismatches: a manuscript paragraph referencing
->   an event by name but the event's date contradicts the
->   paragraph's setting.
-> - Fuzzy overlaps: two events with `season` / `month`
->   precision whose fuzz windows overlap suspiciously.
-> - Orphan signals: an event tagged ORPHAN that looks like
->   it should attach to a paragraph mentioned above.
-> - Pacing: long unexplained gaps or rushed sequences.
->   Comment only on outliers.
+- **Orphan events** (`⊘`) — events linked to nothing (no
+  paragraphs, characters, or places). Severity grades by
+  significance (precision concreteness × title richness × track
+  activity) and staleness, so a detailed long-orphaned event is a
+  contradiction while a fresh stub is a passing note.
+- **Fuzzy-precision overlap** (`⧉`) — `season` / `month`-precision
+  events whose fuzz windows collide *suspiciously* (same track,
+  shared character or place). Three-plus mutually overlapping
+  events emit one **cluster** finding rather than pairwise noise.
 
-Prompt resolves through the standard chain (Prompts book
-paragraph named `timeline-health` → `prompts.hjson` →
-embedded fallback). The seed file
-`05-timeline-health-example.typ` lands in your Prompts book
-on `inkhaven init`; rename to drop `.example` to take effect.
+Findings land in the Output pane (`Ctrl+B Tab` to view) alongside
+fact-check and Socratic findings — same severity model, `Enter`
+to jump to the event, `a` to ask the AI, `d` to dismiss. Text is
+localized to the project's working language (EN/RU/ES/FR/DE).
 
-The response streams into the AI pane like any one-shot
-inference. The modal closes so the AI pane is visible.
+Tune it under `timeline.critique` in `inkhaven.hjson`
+(per-category `enabled`, `min_significance`, `min_suspicion`,
+`cluster_min_size`, optional LLM `elaboration`).
+
+From the CLI: `inkhaven event critique [--track T | --book-name B]`
+prints the same findings (with optional LLM elaboration). The
+deprecated original behaviour survives as
+`inkhaven event critique --legacy`; `--migration-check` and
+`--diff` show where the removed categories went.
 
 ## Bund stdlib — `ink.event.*`
 
@@ -331,6 +340,16 @@ Each `list` / `list_orphans` returns a list of hashes with
 (NODATA when instant), `precision`, `track` (NODATA when
 default), `is_orphan`, `linked_paragraphs`, `characters`,
 `places`.
+
+Five critique words (1.3.31+, read-only):
+
+```bund
+ink.event.critique.orphan_check        ( -- list )  orphan finding dicts
+ink.event.critique.fuzzy_overlap_check ( -- list )  overlap finding dicts
+ink.event.critique.run                 ( -- dict )  { orphans overlaps total }
+ink.event.critique.config              ( -- dict )  enabled flags + thresholds
+ink.event.critique.custom              ( -- list )  RESERVED (empty list today)
+```
 
 Policy: reads under `store_read` (default-allowed). All
 mutations under `store_write` (default-denied — opt in via
@@ -500,16 +519,14 @@ zoom < 1 day / cell        stripes every 24 cells (~days at hour scale)
 The stripe colour comes from `theme.modal_subtle` — see
 [`11-theming.md`](11-theming.md).
 
-### F12 full-book critique
+### F12 full-project critique
 
-Inside the swim-lane view, `F12` triggers a project-wide AI
-audit — the same payload as `Ctrl+Y` (book-wide critique) but
-opt-in via the more direct chord. Routes through
-`crate::timeline::critique::build_health_payload` which lists
-every event chronologically with linked paragraphs +
-characters + places, then prompts the model for travel-time
-conflicts, fuzzy-precision overlaps, orphan signals, and
-pacing outliers.
+Inside the swim-lane view, `F12` runs the refactored timeline
+critique (orphan + fuzzy-overlap) over **every event in the
+project** — the widest scope, opt-in via the direct chord.
+Like the `y` / `Y` / `Ctrl+Y` chords it emits structured
+findings to the Output pane (see *TUI — timeline critique*
+above), not streaming prose to the AI pane.
 
 ### Quick-event from selection (any pane)
 

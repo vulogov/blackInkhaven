@@ -173,10 +173,16 @@ pub struct FuzzyOverlapFinding {
     pub overlap_window: (i64, i64),
     pub suspicion: Suspicion,
     pub is_cluster: bool,
+    /// All involved events share one track (vs. a cross-track collision).
+    pub same_track: bool,
+    /// The representative precision token (e.g. `"season"`) for the reason text.
+    pub precision: Precision,
+    /// The true number of events involved (`event_ids` may be list-capped).
+    pub total_events: usize,
     pub shared_characters: Vec<Uuid>,
     pub shared_places: Vec<Uuid>,
     pub severity: CritSeverity,
-    /// Pattern-detected reason lines (English; localized at emission).
+    /// Pattern-detected reason lines (English; the lang module localizes them).
     pub reasons: Vec<String>,
 }
 

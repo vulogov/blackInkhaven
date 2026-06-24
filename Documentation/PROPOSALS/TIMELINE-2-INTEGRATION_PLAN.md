@@ -88,7 +88,7 @@ them from AI-pane streaming to the PANE-1 Output pane.
 - **P4 — Bund stdlib.** `ink.event.critique.{orphan_check, fuzzy_overlap_check,
   run, config, custom(reserved no-op)}`. Tests.
 - **P5 — docs + polish.** Update `Documentation/Tutorials/31-story-timeline.md`;
-  new `32-timeline-critique-migration.md`; multilingual finding text (EN/RU/ES/FR/DE);
+  new `81-timeline-critique-migration.md`; multilingual finding text (EN/RU/ES/FR/DE);
   HJSON defaults; deprecation-warning wording.
 
 ## Non-goals (unchanged from RFC)
@@ -155,5 +155,13 @@ custom rules reserved (`ink.event.critique.custom` no-op) but not implemented.
   honour the config. Smoke-verified live via `inkhaven bund` against a fixture
   (run/config dicts, orphan_check=3, custom=0) — the same no-unit-test pattern as
   the sibling `world_timeline` adapters. Full suite green (1748).
-</content>
-</invoke>
+- **P5** — _done._ `critique/lang.rs` is the **single source** of reason wording in
+  all five baselines (EN/RU/ES/FR/DE), reusing `fact_check_lang::Lang` +
+  `lang_from_name`. The detectors render English through it (so `body_en` and the
+  pattern text never drift); `FuzzyOverlapFinding` gained `same_track` / `precision`
+  / `total_events` so it's self-describing for re-localization. Emission localizes
+  to the project language: `pane.rs` (TUI, via `active_prompt_language`) puts
+  localized text in `text` and English in `body_en`; the CLI localizes via
+  `cfg.language`. Docs: rewrote tutorial 31's critique + F12 + intro + Bund-list
+  sections, new tutorial **81** (migration guide) + index rows. Russian output
+  smoke-tested live. **TIMELINE-2-INTEGRATION complete.** Full suite green (1752).

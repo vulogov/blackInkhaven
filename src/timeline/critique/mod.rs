@@ -25,6 +25,7 @@
 
 pub mod elaboration;
 pub mod fuzzy_overlap;
+pub mod lang;
 pub mod legacy;
 pub mod orphan;
 pub mod pane;
