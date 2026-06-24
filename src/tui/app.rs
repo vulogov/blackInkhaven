@@ -2061,6 +2061,12 @@ pub(crate) struct App {
     /// (selection text, paragraph body, subchapter / chapter / book
     /// concatenation) to the user's query, then auto-resets to `None`.
     ai_mode: AiMode,
+    /// BOOK_RAG-1 — the passages retrieved for the last Book-scope prompt.
+    /// Kept for citation validation (P2) and the transparency section (P3).
+    book_rag_last_retrieval: Option<Vec<crate::book_rag::RetrievedPassage>>,
+    /// BOOK_RAG-1 — the valid citation ids for the in-flight Book-scope
+    /// response; consumed when the response finalises to flag invented cites.
+    pending_book_rag_cited: Option<std::collections::HashSet<String>>,
 
     /// How aggressively the model may draw on its own knowledge. Toggled
     /// globally by F10. Help inferences pin this to `Local` regardless of
@@ -2394,6 +2400,8 @@ impl App {
             layout_ai: Rect::default(),
             layout_ai_prompt: Rect::default(),
             ai_mode: AiMode::None,
+            book_rag_last_retrieval: None,
+            pending_book_rag_cited: None,
             inference_mode: InferenceMode::Full,
             pending_import: None,
             pending_assembly: None,
@@ -3211,6 +3219,13 @@ impl App {
                 .as_ref()
                 .map(|i| i.response.clone())
                 .unwrap_or_default();
+            // BOOK_RAG-1 — flag any citation the LLM invented (a paragraph
+            // id not in the retrieval) inline, so the author sees what's
+            // grounded vs. hallucinated.
+            let assistant_text = match self.pending_book_rag_cited.take() {
+                Some(valid) => crate::book_rag::validate_citations(&assistant_text, &valid),
+                None => assistant_text,
+            };
             if let Some(user_msg) = self.pending_chat_user_msg.take() {
                 if !assistant_text.trim().is_empty() {
                     // 1.2.6+ — stamp the turns onto the open

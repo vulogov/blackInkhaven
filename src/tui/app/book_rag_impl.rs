@@ -19,13 +19,13 @@ impl super::App {
     /// Build the retrieval-grounded context prefix for a Book-scope prompt.
     /// Replaces the old "send the whole book" assembly. Errors (no anchor,
     /// search failure) abort the submission with a status message.
-    pub(super) fn book_rag_context(&self, query: &str) -> Result<String, String> {
-        let cfg = &self.cfg.book_rag;
+    pub(super) fn book_rag_context(&mut self, query: &str) -> Result<String, String> {
         let book_id = self.book_rag_anchor_book()?;
         let scope = self.book_rag_scope_ids(book_id);
+        let top_k = self.cfg.book_rag.top_k;
 
         // Semantic search → over-fetch → keep in-scope paragraphs → top-K.
-        let pool = (cfg.top_k * 4 + 16).max(16);
+        let pool = (top_k * 4 + 16).max(16);
         let raw = self
             .store
             .search_text(query, pool)
@@ -40,13 +40,17 @@ impl super::App {
                 continue;
             }
             hits.push((hit.id, hit.score));
-            if hits.len() >= cfg.top_k {
+            if hits.len() >= top_k {
                 break;
             }
         }
 
-        let passages = self.book_rag_assemble(&hits, cfg);
-        Ok(crate::book_rag::compose_context_prefix(&passages))
+        let cfg = self.cfg.book_rag.clone();
+        let passages = self.book_rag_assemble(&hits, &cfg);
+        let prefix = crate::book_rag::compose_context_prefix(&passages);
+        // Keep the retrieval for citation validation (P2) + transparency (P3).
+        self.book_rag_last_retrieval = Some(passages);
+        Ok(prefix)
     }
 
     /// The user book containing the current anchor (open paragraph, else the

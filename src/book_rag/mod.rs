@@ -62,11 +62,41 @@ pub fn compose_context_prefix(passages: &[RetrievedPassage]) -> String {
     out
 }
 
-/// The set of paragraph ids cited by the retrieval — used by P2's citation
+/// The set of paragraph ids cited by the retrieval — used by the citation
 /// validator to flag any cited id the LLM invented.
-#[allow(dead_code)] // wired by P2 citation validation
 pub fn cited_ids(passages: &[RetrievedPassage]) -> std::collections::HashSet<String> {
     passages.iter().map(|p| p.id.to_string()).collect()
+}
+
+/// Flag hallucinated citations inline. Scans the LLM response for markdown
+/// fragment links — `](#id)` — and, for any `id` NOT in `valid_ids` (the
+/// retrieval set), appends a visible `[citation could not be validated: id]`
+/// after the link so the author sees what's grounded vs. invented. A
+/// structural commitment to grounding integrity (RFC §8.3).
+pub fn validate_citations(
+    response: &str,
+    valid_ids: &std::collections::HashSet<String>,
+) -> String {
+    const OPEN: &str = "](#";
+    let mut out = String::with_capacity(response.len() + 32);
+    let mut rest = response;
+    while let Some(pos) = rest.find(OPEN) {
+        let frag_start = pos + OPEN.len();
+        let after = &rest[frag_start..];
+        let Some(end) = after.find(')') else {
+            out.push_str(rest); // unterminated link — leave verbatim
+            return out;
+        };
+        let id = &after[..end];
+        // Copy through the closing ')'.
+        out.push_str(&rest[..frag_start + end + 1]);
+        if !id.is_empty() && !valid_ids.contains(id) {
+            out.push_str(&format!(" [citation could not be validated: {id}]"));
+        }
+        rest = &after[end + 1..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// The Book-RAG system prompt: ground answers in the retrieved passages,
@@ -135,6 +165,32 @@ mod tests {
     fn empty_retrieval_composes_a_no_match_notice() {
         let out = compose_context_prefix(&[]);
         assert!(out.to_lowercase().contains("no passages"));
+    }
+
+    #[test]
+    fn validate_flags_only_uncited_ids() {
+        let mut valid = std::collections::HashSet::new();
+        valid.insert("ch07-p042".to_string());
+        let resp = "She returned [here](#ch07-p042) and again [later](#ch15-p103).";
+        let out = validate_citations(resp, &valid);
+        // The valid citation is untouched…
+        assert!(out.contains("[here](#ch07-p042)"));
+        assert!(!out.contains("ch07-p042]"), "valid id must not be flagged");
+        // …the invented one is flagged inline.
+        assert!(out.contains("[later](#ch15-p103) [citation could not be validated: ch15-p103]"));
+    }
+
+    #[test]
+    fn validate_no_citations_is_unchanged() {
+        let valid = std::collections::HashSet::new();
+        assert_eq!(validate_citations("plain text, no links", &valid), "plain text, no links");
+    }
+
+    #[test]
+    fn validate_unterminated_link_does_not_panic() {
+        let valid = std::collections::HashSet::new();
+        let out = validate_citations("oops [x](#unterminated", &valid);
+        assert!(out.contains("#unterminated"));
     }
 
     #[test]
