@@ -69,11 +69,6 @@ pub const SYSTEM_TAG_ARTEFACTS: &str = "artefacts";
 /// hydrology / demographics / magic ledger). Compiler-owned: re-compiling
 /// regenerates the structured leaves; author prose lives alongside.
 pub const SYSTEM_TAG_WORLD: &str = "world";
-/// INNER_SOCRATES-1 — the examined-authorship book. Home for the Reader Persona
-/// configurations, the intent ledger (deliberate authorial choices the Socratic
-/// interrogator respects), and promotion candidates. Counterpart to the World
-/// book's magic ledger; see `Documentation/PROPOSALS/INNER_SOCRATES-1_PLAN.md`.
-pub const SYSTEM_TAG_INTENT: &str = "intent";
 /// 1.2.14+ — top-level container for narrative
 /// plot threads.  Each thread is an HJSON-fronted
 /// paragraph capturing one named arc (the

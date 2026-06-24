@@ -88,6 +88,25 @@ pub struct StreakStatus {
     pub days: i64,
     pub grace_used: i64,
     pub grace_per_week: i64,
+    /// Longest streak ever recorded, computed over the project's
+    /// full writing history (not just the recent window) with the
+    /// same grace rule. `0` when there is no history yet.
+    pub best: i64,
+}
+
+/// Streak-length milestones worth celebrating, ascending. A hook
+/// fires the first time the current streak crosses one upward.
+pub const STREAK_MILESTONES: [i64; 4] = [7, 30, 100, 365];
+
+/// The largest milestone newly crossed when the streak grows from
+/// `prev` to `now` (both current-streak lengths). `None` when no
+/// milestone boundary sits in `(prev, now]`.
+pub fn milestone_crossed(prev: i64, now: i64) -> Option<i64> {
+    STREAK_MILESTONES
+        .iter()
+        .rev()
+        .copied()
+        .find(|&m| prev < m && now >= m)
 }
 
 /// Caller-supplied "live" word counts (computed from the
@@ -167,9 +186,12 @@ pub fn build_snapshot(
     }
     books.sort_by(|a, b| a.label.cmp(&b.label));
 
-    // Streak.
-    let writing_days = store.writing_days_recent(60).unwrap_or_default();
-    let streak = compute_streak(&writing_days, today, goals.streak_grace_per_week);
+    // Streak. Query the full history (DISTINCT writing-days is one
+    // cheap row per day) so the current streak and the lifetime best
+    // both come from the same vector — no separate windowed query.
+    let writing_days = store.writing_days_recent(ALL_HISTORY_DAYS).unwrap_or_default();
+    let mut streak = compute_streak(&writing_days, today, goals.streak_grace_per_week);
+    streak.best = longest_streak(&writing_days, goals.streak_grace_per_week);
 
     // Status ladder.
     let recent = store.status_promotions_recent(7).unwrap_or_default();
@@ -225,6 +247,15 @@ fn parse_iso_date_days(s: &str) -> Option<i64> {
     Some(parsed.signed_duration_since(epoch).num_days())
 }
 
+/// "Since the beginning of the project" expressed as a look-back
+/// window, because `writing_days_recent` takes a `days_back` and
+/// derives its cutoff as `now − days_back·86400`. It's not a cap on
+/// how long anyone writes — it just has to land the cutoff before
+/// the first row, and the Unix epoch (1970) is only ~20k days back,
+/// so any value past that returns the whole history. 200 years is a
+/// round, overflow-safe pick comfortably below i64.
+const ALL_HISTORY_DAYS: i64 = 365 * 200;
+
 /// Streak length: trailing run of "writing days" (≥1 positive
 /// save event) ending today, allowing `grace_per_week` skipped
 /// days inside the rolling 7-day window. A skip beyond the
@@ -239,6 +270,7 @@ pub fn compute_streak(
             days: 0,
             grace_used: 0,
             grace_per_week,
+            best: 0,
         };
     }
     let writing: std::collections::HashSet<i64> =
@@ -277,7 +309,23 @@ pub fn compute_streak(
         days,
         grace_used: grace_used_window.max(0),
         grace_per_week,
+        best: 0,
     }
+}
+
+/// Longest streak ever, over the full writing-day history, with the
+/// same grace rule as `compute_streak`. A streak ending on a
+/// non-writing day is never longer than one ending on the previous
+/// writing day, so it suffices to take the max of the streaks
+/// ending at each writing-day. The candidate set is bounded (one
+/// entry per writing-day) and `compute_streak` self-caps its scan,
+/// so this stays cheap even for years of daily writing.
+pub fn longest_streak(writing_days_desc: &[i64], grace_per_week: i64) -> i64 {
+    writing_days_desc
+        .iter()
+        .map(|&d| compute_streak(writing_days_desc, d, grace_per_week).days)
+        .max()
+        .unwrap_or(0)
 }
 
 /// Required daily pace to hit `target_words` by the deadline.
@@ -326,6 +374,38 @@ mod tests {
         let days = vec![100, 99, 97, 96];
         let s = compute_streak(&days, today, 1);
         assert_eq!(s.days, 5);
+    }
+
+    #[test]
+    fn longest_streak_finds_best_run_not_trailing() {
+        // History (desc): a 3-day run, a gap, then today's 2-day run.
+        // Current streak is 2 but the lifetime best is 3.
+        let days = vec![100, 99, 95, 94, 93];
+        assert_eq!(compute_streak(&days, 100, 0).days, 2);
+        assert_eq!(longest_streak(&days, 0), 3);
+    }
+
+    #[test]
+    fn longest_streak_respects_grace() {
+        // 100,99, skip 98, 97,96 — with 1 grace/week it's one 5-run.
+        let days = vec![100, 99, 97, 96];
+        assert_eq!(longest_streak(&days, 0), 2); // strict: best is the 2-run
+        assert_eq!(longest_streak(&days, 1), 5); // grace bridges the gap
+    }
+
+    #[test]
+    fn longest_streak_empty_is_zero() {
+        assert_eq!(longest_streak(&[], 0), 0);
+    }
+
+    #[test]
+    fn milestone_crossings() {
+        assert_eq!(milestone_crossed(6, 7), Some(7));
+        assert_eq!(milestone_crossed(7, 8), None); // already past 7
+        assert_eq!(milestone_crossed(29, 31), Some(30));
+        // Jumping multiple milestones at once celebrates the highest.
+        assert_eq!(milestone_crossed(0, 100), Some(100));
+        assert_eq!(milestone_crossed(0, 0), None);
     }
 
     #[test]

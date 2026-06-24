@@ -21,47 +21,50 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.3.34 — The review pass, and where the money goes
+## Latest release · 1.3.35 — Keeping count
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.3.34.md`](Documentation/RELEASE_NOTES/1.3.34.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.3.35.md`](Documentation/RELEASE_NOTES/1.3.35.md)
 · Roadmap: [`Documentation/PROPOSALS/ROADMAP-1.4.0.md`](Documentation/PROPOSALS/ROADMAP-1.4.0.md)
-· Plans: [`CHECK_PLAN.md`](Documentation/PROPOSALS/CHECK_PLAN.md) · [`COST_PLAN.md`](Documentation/PROPOSALS/COST_PLAN.md)
+· Plan: [`GOALS_PLAN.md`](Documentation/PROPOSALS/GOALS_PLAN.md)
 
-Two road-to-**1.4.0** consolidation features.
+Writing goals were already **~90% built** — the streak engine, per-book pacing,
+daily targets, status-ladder, active-time, and the `Ctrl+V g` progress modal all
+shipped long ago. This release **surfaces**, **extends**, and makes them
+**editable** — three pure additions, zero new dependencies.
 
-### The unified review pass
+### `inkhaven goals` — the terminal surface
 
-**`Ctrl+B Shift+C`** (or `inkhaven check`) runs *every* fast, deterministic checker
-at once — the world fact-checker + Inner Socrates over the **open paragraph**, plus
-the timeline critique over the **project** — into the **Output pane** (where
-1.3.33's `f`/`S`/`t` filtering slices the combined findings), with a
-`fact N · socrates N · timeline N` summary. Instant and LLM-free.
+Every other analytic (`cost`, `check`, `stats`, `concordance`) had a terminal
+counterpart; the progress view did not. **`inkhaven goals`** prints what the
+`Ctrl+V g` modal shows — project + per-book totals, today vs `goals.daily_words`,
+current streak **and lifetime best**, per-book pace + deadline, weekly status-ladder,
+active time, 30-day sparkline — reusing the *exact* `build_snapshot` engine. Read-only.
 
-The tree shows you **where** to look: each node carries a **report-card badge**
-(`⊗`/`⚠`/`●` + count) aggregated up from the source paragraphs, colored by the worst
-severity. The count drops as you dismiss findings.
+### The streak you keep — lifetime best + milestones
 
-### The AI cost dashboard
+The streak knew only the trailing run, and the heatmap's "longest" was window-bound —
+it forgot. Now the snapshot computes a true **all-time best** over the full writing
+history (same grace rule), shown as `· best Nd` whenever it beats the current run. A
+new Bund hook **`hook.on_streak_milestone ( days -- )`** fires once when the streak
+crosses **7 / 30 / 100 / 365** upward — an informative celebration, **never
+blocking**, no re-fire on reopen.
 
-**`Ctrl+B $`** (or `inkhaven cost`) opens one view of today's LLM usage:
+### Editing goals in-app — written back safely
 
-- **Daily budgets** (the cost-capped slow tracks) with a usage bar.
-- **Other AI calls today, by category** — chat, grammar, explain, critique,
-  continuation, translation, … Every inference is recorded at the one chokepoint it
-  flows through, so it's the *whole* picture, not just the capped tracks.
-- Today's total. Counts are per UTC day (reset 00:00 UTC); extensible to new
-  analytical threads.
-
-**Cost control informs; it doesn't gate.** Per Inkhaven's design principle — a
-permissive individual tool, restricting only for security — past a daily budget the
-slow tracks **warn and continue**; the author decides.
+Press **`e`** in the `Ctrl+V g` modal to edit `daily_words` / `active_minutes_daily` /
+`streak_grace_per_week` inline. Commit writes the changed keys back to
+`inkhaven.hjson` through Inkhaven's **comment-preserving surgical-splice** pipeline:
+a versioned backup lands in `.config-backups/` first, only changed keys are
+spliced/appended, and the file is written atomically. Every comment and unrelated
+stanza survives byte-for-byte — the **permissive principle** in practice: a writer's
+own config is never clobbered, and there's always a backup. Applied live, no restart.
 
 ### Dependencies & compatibility
 
-**No external application or binary dependencies; no new runtime crates.** Both
-features are read-side views/orchestration over existing checkers and stores. The
-one behavioural change is making the previously-blocking daily slow-track cap a
-warning. Tests 1795 → 1804.
+**No external application or binary dependencies; no new runtime crates.** All three
+increments build on the existing progress engine and config-TUI splice pipeline; no
+on-disk shape moved. Two dead symbols were removed to clear build warnings. Tests
+1804 → 1813.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

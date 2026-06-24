@@ -5485,8 +5485,15 @@ impl super::super::App {
         };
         lines.push(Line::from(today_line));
         lines.push(Line::from(format!(
-            "   streak: {}d (grace {}/{} per week)",
-            snap.streak.days, snap.streak.grace_used, snap.streak.grace_per_week
+            "   streak: {}d{} (grace {}/{} per week)",
+            snap.streak.days,
+            if snap.streak.best > snap.streak.days {
+                format!(" · best {}d", snap.streak.best)
+            } else {
+                String::new()
+            },
+            snap.streak.grace_used,
+            snap.streak.grace_per_week
         )));
         lines.push(Line::from(format!(
             "   active: {} today · {} this week",
@@ -5669,11 +5676,78 @@ impl super::super::App {
         }
 
         // ── Footer ─────────────────────────────────────────────
-        let hint = " ↑↓ / PgUp/PgDn scroll · r refresh · Esc close ";
+        let hint = " ↑↓ / PgUp/PgDn scroll · r refresh · e edit goals · Esc close ";
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(hint, dim))),
             footer_rect,
         );
+    }
+
+    /// 1.3.35 — the in-app goals editor (opened with `e` from the
+    /// progress modal). A compact field list; the selected field
+    /// shows a caret and is highlighted. Commit writes the changed
+    /// `goals.*` keys back to `inkhaven.hjson`.
+    pub(in crate::tui::app) fn draw_goals_editor_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
+        let (values, cursor) = match &self.modal {
+            Modal::GoalsEditor { values, cursor, .. } => (values.clone(), *cursor),
+            _ => return,
+        };
+
+        let w = area.width.saturating_sub(6).min(60);
+        let h: u16 = 10;
+        let x = area.x + (area.width.saturating_sub(w)) / 2;
+        let y = area.y + (area.height.saturating_sub(h)) / 2;
+        let rect = Rect { x, y, width: w, height: h };
+
+        f.render_widget(ratatui::widgets::Clear, rect);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Writing goals — edit ")
+            .border_style(
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let dim = Style::default().add_modifier(Modifier::DIM);
+        let sel = Style::default()
+            .fg(Color::Black)
+            .bg(Color::Cyan)
+            .add_modifier(Modifier::BOLD);
+
+        let mut lines: Vec<Line> = vec![Line::from("")];
+        for (i, (_, label)) in Self::GOALS_EDITOR_FIELDS.iter().enumerate() {
+            let value = if values[i].is_empty() { "0" } else { values[i].as_str() };
+            let caret = if i == cursor { "▸ " } else { "  " };
+            let style = if i == cursor { sel } else { Style::default() };
+            lines.push(Line::from(vec![
+                Span::raw(caret),
+                Span::styled(format!(" {label:<26} ", ), style),
+                Span::raw("  "),
+                Span::styled(
+                    format!("{value}{}", if i == cursor { "_" } else { "" }),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+            ]));
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  0 = disabled. Writes to inkhaven.hjson (backup kept).",
+            dim,
+        )));
+        lines.push(Line::from(Span::styled(
+            "  ↑↓ field · digits edit · ⌫ delete · Enter save · Esc cancel",
+            dim,
+        )));
+
+        f.render_widget(Paragraph::new(lines), inner);
     }
 
     pub(in crate::tui::app) fn draw_snapshot_diff_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
