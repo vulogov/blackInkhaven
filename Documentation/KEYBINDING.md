@@ -62,6 +62,7 @@ These chords work from any focus except where noted. Chords marked
 | `Ctrl+4`             | Focus the **Search** bar (top).                             | no           |
 | `Ctrl+5`             | Focus the **AI prompt** bar (bottom).                       | no           |
 | `Ctrl+B`             | Enter **meta mode**. The next keystroke is the action selector (see §1.1). | `meta_prefix` |
+| `Ctrl+V Space`       | (1.3.33) Open the **command palette** — fuzzy-find any command by name / chord / description and run it. Type to filter, `↑↓` select, `Enter` runs, `Esc` closes. The fast way to reach any command without memorising its chord; rebindable in the `view` layer (see §1.2). | `global.command_palette` |
 | `Ctrl+B H`           | Open the pane-aware **Quick reference** floating pane. Works from every pane (Tree / Editor / AI). Scroll with arrows / PgUp / PgDn; close with `Esc`. Routed through the meta prefix so it never collides with the editor's `Ctrl+H` split-scroll. | no |
 | `Ctrl+B V`           | Open the **Version / author / credits** floating pane. Shows the running Inkhaven version, the author block, the repository / licence, and the curated list of direct dependencies with their licences. Scrollable; `Esc` closes. | no |
 | `Ctrl+B Q` (tree)    | (1.3.0) **Imposition preview** (*Q* for *quire*) — open the production-layout overlay for the selected book: the plan `inkhaven pdf impose --dry-run` prints (signatures / sheets / creep / first-sheet schematic) for the `imposition.default` profile, rendered over the book's already-built PDF (`<artefacts>/<slug>/<slug>.pdf` — build with `Ctrl+B B` first). `Enter` imposes to `…-imposed.pdf`; `Esc` cancels. **Tree-scoped on purpose**: in the editor `Ctrl+B Q` stays *translate-into-invented-language* (1.2.13), so the two never collide. See [Tutorial 65](Tutorials/65-hand-binding.md). | no |
@@ -175,6 +176,7 @@ full workflows.
 
 | Chord (after `Ctrl+V`) | Pane (focus filter)      | Action                                                                 |
 | ---------------------- | ------------------------ | ---------------------------------------------------------------------- |
+| `Space`                | any                      | (1.3.33) **Command palette** — fuzzy-find any command by name / chord / description and run it. Type to filter, `↑↓` select, `Enter` runs, `Esc` closes. The canonical palette chord (a two-key chord with no `Ctrl+Shift+<letter>` terminal ambiguity); also self-lists in the Quick reference. |
 | `1`                    | Editor / AI-prompt       | Write the **open paragraph's buffer** as markdown via the save-as picker (1.2.4 — default path pre-filled; bare Enter writes there). |
 | `2`                    | Editor / AI-prompt       | Write the **containing subchapter's subtree** as markdown via the save-as picker. |
 | `1`                    | Tree                     | Write the tree-cursor's **node and all descendants** as markdown via the save-as picker. |
@@ -271,6 +273,7 @@ confirmation.
 | `T` / `t` | (1.2.4) **Cycle node type** (`paragraph → json → script`). No marks: cursor row only (folders skipped). With marks: every marked leaf. |
 | `O` / `o` | (1.2.4) **Cycle status** one rung up the ladder (`napkin → first → … → ready → napkin`). No marks: cursor row. With marks: every marked paragraph. |
 | `G` / `g` | (1.2.5) **Tag the marked set** — open the floating tag picker scoped to every marked paragraph (or just the cursor row when no marks). Same modal as `Ctrl+B ]`; T applies the selected tag set across every target at once. |
+| `?`       | (1.3.33) **Quick reference** — open the pane-aware Quick reference overlay. Tree-pane only (the editor / AI / search panes keep `?` as a typed character); `Ctrl+B H` opens it from anywhere. |
 
 Empty paragraph titles are allowed for `+` and `P` — the first sentence of the body becomes the title on next save.
 

@@ -3659,6 +3659,15 @@ impl App {
         }
 
 
+        // 1.3.33+ — `?` opens the quick reference from the Tree pane only. The tree
+        // is pure navigation (bare-letter chords, no text input), so the literal
+        // `?` isn't needed there; the editor / AI / search panes keep `?` as a
+        // typed character, and Ctrl+B H opens the quickref from anywhere.
+        if self.focus == Focus::Tree && matches!(key.code, KeyCode::Char('?')) {
+            self.open_quickref();
+            return Ok(false);
+        }
+
         // 1.2.4+: F-keys + every top-level (no-prefix) chord
         // flow through the `top_level` binding table. The table
         // is pane-aware via Scope, so F-keys that only made
