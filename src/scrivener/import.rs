@@ -326,7 +326,7 @@ impl<'a> WalkCtx<'a> {
             // re-embed sees the right bytes.
             if let Some(rel) = node.file.as_ref() {
                 let abs = self.store.project_root().join(rel);
-                if let Err(e) = std::fs::write(&abs, body.as_bytes()) {
+                if let Err(e) = crate::io_atomic::write(&abs, body.as_bytes()) {
                     self.report.errors.push(format!(
                         "write {}: {e}",
                         abs.display()

@@ -302,7 +302,7 @@ pub fn apply_project(
             .map_err(|e| format!("snapshot `{}`: {e}", pm.title))?;
         report.snapshots += 1;
         let abs = store.project_root().join(&rel);
-        std::fs::write(&abs, new_body.as_bytes())
+        crate::io_atomic::write(&abs, new_body.as_bytes())
             .map_err(|e| format!("write `{}`: {e}", abs.display()))?;
         let mut node_mut = node.clone();
         store

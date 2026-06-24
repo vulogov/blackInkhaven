@@ -613,25 +613,14 @@ fn leaf_key(path: &str) -> String {
     }
 }
 
-/// Atomic write: write to `path.tmp` then rename.
-/// Returns the canonical path on success.
+/// Atomic config write. M7 — delegates to `crate::io_atomic::write`
+/// rather than reimplementing the idiom: that version fsyncs the file
+/// *and* the parent directory and surfaces (doesn't swallow) the sync
+/// error, so a config save can't be acked while not durable. Returns
+/// the canonical path on success.
 pub fn write_atomic(path: &Path, contents: &str) -> Result<PathBuf> {
-    let mut tmp_path = PathBuf::from(path);
-    let mut new_name = tmp_path
-        .file_name()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    new_name.push_str(".tmp");
-    tmp_path.set_file_name(&new_name);
-    {
-        let mut file = fs::File::create(&tmp_path)
-            .with_context(|| format!("create {}", tmp_path.display()))?;
-        file.write_all(contents.as_bytes())
-            .with_context(|| format!("write {}", tmp_path.display()))?;
-        file.sync_all().ok();
-    }
-    fs::rename(&tmp_path, path)
-        .with_context(|| format!("rename {} → {}", tmp_path.display(), path.display()))?;
+    crate::io_atomic::write(path, contents.as_bytes())
+        .with_context(|| format!("write {}", path.display()))?;
     Ok(path.to_path_buf())
 }
 
