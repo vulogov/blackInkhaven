@@ -1599,6 +1599,10 @@ pub(crate) struct App {
     output_selected: usize,
     /// Output messages whose detail is expanded (`o`/Space).
     output_expanded: std::collections::HashSet<Uuid>,
+    /// Output-pane filter (source / severity / open-paragraph). Applied as a
+    /// read-side view over `active()` so the pane and its key handler share one
+    /// filtered list.
+    output_filter: crate::pane::output::OutputFilter,
     /// WORLD-4 — the debounced fast fact-checker. Enabled when the project has a
     /// `world.hjson` (set at open + after a compile). `fc_last_fp` fingerprints
     /// the open paragraph; a change arms `fc_activity_at`, and 5 s of quiet fires
@@ -2247,6 +2251,7 @@ impl App {
             socr_activity_at: None,
             socr_needs_check: false,
             output_expanded: std::collections::HashSet::new(),
+            output_filter: crate::pane::output::OutputFilter::default(),
             tree_cursor: 0,
             tree_scroll: 0,
             search_input: TextInput::new(),
@@ -6808,10 +6813,30 @@ impl App {
 
     /// PANE-1 — keys for the Output pane (active when the right region shows
     /// Output): ↑/↓ select, `d` dismiss, `p` pin/unpin, `g`/`G` first/last.
-    fn handle_output_key(&mut self, key: KeyEvent) -> Result<bool> {
-        let msgs = crate::pane::output::active()
+    /// The Output messages visible under the active filter — the single source of
+    /// truth shared by `draw_output` and `handle_output_key` so selection + actions
+    /// always agree with what's on screen.
+    pub(in crate::tui) fn filtered_output_messages(&self) -> Vec<crate::pane::output::Message> {
+        let open = self.opened.as_ref().map(|d| d.id);
+        crate::pane::output::active()
             .and_then(|s| s.active().ok())
-            .unwrap_or_default();
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|m| self.output_filter.matches(m, open))
+            .collect()
+    }
+
+    /// A status-line summary of the active Output filter (or "off").
+    fn output_filter_status(&self) -> String {
+        if self.output_filter.is_active() {
+            format!("output filter · {}", self.output_filter.summary())
+        } else {
+            "output filter · off".into()
+        }
+    }
+
+    fn handle_output_key(&mut self, key: KeyEvent) -> Result<bool> {
+        let msgs = self.filtered_output_messages();
         let n = msgs.len();
         if n > 0 && self.output_selected >= n {
             self.output_selected = n - 1;
@@ -6820,6 +6845,28 @@ impl App {
             .modifiers
             .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER);
         match key.code {
+            // PANE-1 filtering (road to 1.4.0): narrow the pane by source / severity
+            // / the open paragraph. Filter changes reset the selection to the top.
+            KeyCode::Char('f') if plain => {
+                self.output_filter.cycle_source();
+                self.output_selected = 0;
+                self.status = self.output_filter_status();
+            }
+            KeyCode::Char('S') => {
+                self.output_filter.cycle_min_severity();
+                self.output_selected = 0;
+                self.status = self.output_filter_status();
+            }
+            KeyCode::Char('t') if plain => {
+                self.output_filter.only_open_paragraph = !self.output_filter.only_open_paragraph;
+                self.output_selected = 0;
+                self.status = self.output_filter_status();
+            }
+            KeyCode::Char('c') if plain => {
+                self.output_filter.clear();
+                self.output_selected = 0;
+                self.status = "output filter cleared".into();
+            }
             KeyCode::Up | KeyCode::Char('k') if plain => {
                 self.output_selected = self.output_selected.saturating_sub(1);
             }
