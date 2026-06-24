@@ -1449,8 +1449,8 @@ fn strip_leading_typst_heading(body: &str) -> String {
 /// in `App.kill_ring`. Picked to be large enough that an
 /// accidental burst of single-¶ deletes doesn't clobber an
 /// earlier recovery, small enough that the picker fits on a
-/// 24-row terminal without scrolling.
-const KILL_RING_CAP: usize = 10;
+/// 24-row terminal without scrolling. 1.3.37 — configurable via
+/// `editor.deleted_paragraph_history` (default 10).
 
 // `is_scene_break` lives in `crate::manuscript` (imported
 // above) — one definition shared by the editor's scene-
@@ -2149,8 +2149,8 @@ pub(crate) struct App {
 /// dirty-buffer mirror push to the crash-report
 /// context.  Two seconds is enough that idle CPU is
 /// negligible while still bounding worst-case
-/// post-panic data loss to ~2 s of typing.
-const CRASH_MIRROR_DEBOUNCE_SECS: u64 = 2;
+/// post-panic data loss. 1.3.37 — now configurable via
+/// `editor.crash_mirror_seconds` (default 2).
 
 mod ai_impl;
 mod backup_impl;
@@ -2808,7 +2808,7 @@ impl App {
         }
         let now = std::time::Instant::now();
         if let Some(last) = self.last_crash_mirror_at {
-            if now.duration_since(last).as_secs() < CRASH_MIRROR_DEBOUNCE_SECS {
+            if now.duration_since(last).as_secs() < self.cfg.editor.crash_mirror_seconds {
                 return;
             }
         }
@@ -2860,7 +2860,17 @@ impl App {
             );
             return;
         }
-        // Clean buffer → silent reload.
+        // Clean buffer. By default reload silently; if the user opted
+        // out (`editor.external_change_auto_reload = false`) just warn,
+        // so an external rewrite never silently moves their view/cursor.
+        if !self.cfg.editor.external_change_auto_reload {
+            self.status = format!(
+                "↻ `{}` changed on disk — reopen the paragraph to load the new version",
+                doc.title
+            );
+            return;
+        }
+        // → silent reload.
         let body = match std::fs::read_to_string(&abs) {
             Ok(b) => b,
             Err(e) => {
@@ -11613,7 +11623,7 @@ impl App {
         }
         if self.fc_needs_check && matches!(self.modal, Modal::None) {
             if let Some(t) = self.fc_activity_at {
-                if t.elapsed() >= std::time::Duration::from_secs(5) {
+                if t.elapsed() >= std::time::Duration::from_secs(self.cfg.editor.fact_check_idle_seconds) {
                     self.fc_needs_check = false;
                     self.auto_fact_check();
                 }
@@ -12070,7 +12080,7 @@ impl App {
         }
         if self.socr_needs_check && matches!(self.modal, Modal::None) {
             if let Some(t) = self.socr_activity_at {
-                if t.elapsed() >= std::time::Duration::from_secs(5) {
+                if t.elapsed() >= std::time::Duration::from_secs(self.cfg.editor.fact_check_idle_seconds) {
                     self.socr_needs_check = false;
                     self.auto_socratic_check();
                 }
@@ -13496,7 +13506,7 @@ impl App {
             content_type: node.content_type.clone(),
             event: node.event.clone(),
         });
-        while self.kill_ring.len() > KILL_RING_CAP {
+        while self.kill_ring.len() > self.cfg.editor.deleted_paragraph_history {
             self.kill_ring.pop_back();
         }
     }

@@ -3745,7 +3745,10 @@ impl super::super::App {
         let rect = Rect { x, y, width, height };
         f.render_widget(ratatui::widgets::Clear, rect);
 
-        let header = format!(" Kill-ring ({}/{}) ", len, super::super::KILL_RING_CAP);
+        let header = format!(
+            " Kill-ring ({}/{}) ",
+            len, self.cfg.editor.deleted_paragraph_history
+        );
         let block = Block::default()
             .borders(Borders::ALL)
             .title(header)

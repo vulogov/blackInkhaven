@@ -599,6 +599,14 @@ impl super::App {
             if !already_current {
                 self.visited_history.truncate(cur + 1);
                 self.visited_history.push(node.id);
+                // 1.3.37 — bound the history (and thus .session.json
+                // growth) when `editor.visited_history_cap > 0`; drop
+                // the oldest entries from the front. `0` = unbounded.
+                let cap = self.cfg.editor.visited_history_cap;
+                if cap > 0 && self.visited_history.len() > cap {
+                    let overflow = self.visited_history.len() - cap;
+                    self.visited_history.drain(0..overflow);
+                }
                 self.visited_cursor = self.visited_history.len() - 1;
             }
         }
