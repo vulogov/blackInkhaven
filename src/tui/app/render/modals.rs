@@ -228,7 +228,12 @@ impl super::super::App {
         scroll: usize,
     ) {
         let day = chrono::Utc::now().format("%Y-%m-%d").to_string();
-        let report = crate::cli::cost::gather(self.store.project_root(), &day);
+        let report = crate::cli::cost::gather(
+            self.store.project_root(),
+            &day,
+            self.cfg.cost.world_daily_call_cap,
+            self.cfg.cost.inner_socrates_daily_call_cap,
+        );
         let lines: Vec<Line<'_>> = crate::cli::cost::render_lines(&report)
             .into_iter()
             .map(Line::from)

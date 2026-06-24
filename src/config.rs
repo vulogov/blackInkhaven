@@ -51,6 +51,8 @@ pub struct Config {
     /// to show.
     #[serde(default)]
     pub goals: GoalsConfig,
+    #[serde(default)]
+    pub cost: CostConfig,
     /// 1.2.6+ — AI-pane behaviour knobs that aren't tied to a
     /// specific provider (per-paragraph memory, future
     /// turn-history overrides, etc).
@@ -180,6 +182,7 @@ impl Default for Config {
             images: ImagesConfig::default(),
             output: OutputConfig::default(),
             goals: GoalsConfig::default(),
+            cost: CostConfig::default(),
             ai: AiConfig::default(),
             timeline: TimelineConfig::default(),
             scrivener: ScrivenerConfig::default(),
@@ -3192,6 +3195,33 @@ fn global_config_files_in(dir: &Path) -> Vec<PathBuf> {
 /// live under `goals.books.<book-slug>` so the slug is the
 /// natural lookup key (case-insensitive in the
 /// hierarchy → snapshot mapping).
+/// AI-cost knobs surfaced in `inkhaven cost`. The daily caps are
+/// **informative, not gates** (the slow tracks warn and continue past
+/// them, per Inkhaven's permissive principle) — they drive the usage
+/// bars and the warning thresholds. Defaults match the values that
+/// shipped hardcoded through 1.3.36.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CostConfig {
+    /// Daily ceiling on world fact-check slow-track LLM calls.
+    pub world_daily_call_cap: i64,
+    /// Daily ceiling on Inner Socrates slow-track LLM calls.
+    pub inner_socrates_daily_call_cap: i64,
+    /// Trailing days of per-category AI-call tallies kept in
+    /// `.inkhaven/ai_usage.json` before the oldest are pruned.
+    pub usage_retention_days: usize,
+}
+
+impl Default for CostConfig {
+    fn default() -> Self {
+        Self {
+            world_daily_call_cap: 200,
+            inner_socrates_daily_call_cap: 150,
+            usage_retention_days: 30,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GoalsConfig {

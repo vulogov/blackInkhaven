@@ -277,7 +277,6 @@ fn slow_llm_call(
     };
     use crate::world::storage::WorldStore;
 
-    const DAILY_CAP: i64 = crate::world::storage::WorldStore::DAILY_CALL_CAP;
     let day = chrono::Utc::now().format("%Y-%m-%d").to_string();
     let store = WorldStore::open_for_project(project)
         .map_err(|e| Error::Store(format!("world store: {e}")))?;
@@ -294,14 +293,15 @@ fn slow_llm_call(
     // Preflight: estimate the cost and gate on the daily hard cap + per-call soft
     // cap (the soft cap is overridable with --force; 0 disables it).
     let effective_soft = if force { 0 } else { soft_cap };
-    let (pf, verdict) = slow_preflight(system, &prompt, used, DAILY_CAP, effective_soft);
+    let (pf, verdict) =
+        slow_preflight(system, &prompt, used, cfg.cost.world_daily_call_cap, effective_soft);
     match verdict {
         // Cost control is informative, not a gate: past the daily budget we warn
         // and proceed — the author decides whether to keep going.
         PreflightVerdict::DailyCapReached => {
             eprintln!(
                 "{label}: past today's slow-track budget ({}/{} calls) — continuing (the cap is informative, see `inkhaven cost`).",
-                pf.calls_used, DAILY_CAP
+                pf.calls_used, cfg.cost.world_daily_call_cap
             );
         }
         PreflightVerdict::OverSoftCap { est_total_tokens, soft_cap } => {
