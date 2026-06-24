@@ -101,9 +101,24 @@ pub fn fire(name: &str, args: Vec<Value>) {
         for arg in args {
             let _ = bund.vm.stack.push(arg);
         }
-        bund.eval(name.to_string())
-            .map(|_| ())
-            .map_err(|e| anyhow::anyhow!("eval: {e}"))
+        // H5 — a panic inside a user hook (VM stack underflow, an
+        // `ink.*` word that panics, arithmetic overflow) must not unwind
+        // through the save path and kill the editor. Catch it and
+        // convert to the same WARN-and-swallow path as an Err; the
+        // suppression flag keeps the crash hook from restoring the
+        // terminal for a fault we're recovering. The reborrow + moves
+        // let the FnOnce panic-closure take `bund` out of the enclosing
+        // FnMut without it escaping.
+        let bund_ref = &mut *bund;
+        let hook_name = name.to_string();
+        let evaluated = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            crate::crash::suppress_panic_report(move || bund_ref.eval(hook_name))
+        }));
+        match evaluated {
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(e)) => Err(anyhow::anyhow!("eval: {e}")),
+            Err(_) => Err(anyhow::anyhow!("hook panicked (isolated)")),
+        }
     });
     DEPTH.with(|c| c.set(depth));
     // Surface any print / println output the hook produced.

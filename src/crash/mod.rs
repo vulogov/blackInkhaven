@@ -47,6 +47,37 @@ pub use actions::{ActionRecord, ActionRing};
 pub use rescue::{DirtyMirror, RescueOutcome};
 pub use report::CrashReport;
 
+thread_local! {
+    /// When set, the panic hook treats a panic on THIS thread as
+    /// already-handled: it logs and returns without restoring the
+    /// terminal, flushing rescue, or writing a report. Set only by
+    /// `suppress_panic_report` around a `catch_unwind` that recovers
+    /// the panic (H5 — isolating user Bund hooks so a buggy hook can't
+    /// tear down the live editor).
+    static SUPPRESS_PANIC_REPORT: std::cell::Cell<bool> =
+        const { std::cell::Cell::new(false) };
+}
+
+/// Run `f` with the crash panic-hook suppressed on the current thread.
+/// The flag is reset even if `f` panics (RAII), so a real later panic
+/// on this thread is still reported normally. Pair with a
+/// `catch_unwind` at the call site to actually recover.
+pub(crate) fn suppress_panic_report<F: FnOnce() -> R, R>(f: F) -> R {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            SUPPRESS_PANIC_REPORT.with(|c| c.set(false));
+        }
+    }
+    SUPPRESS_PANIC_REPORT.with(|c| c.set(true));
+    let _reset = Reset;
+    f()
+}
+
+fn panic_report_suppressed() -> bool {
+    SUPPRESS_PANIC_REPORT.with(|c| c.get())
+}
+
 /// Maximum size of the recent-action ring.  Each entry
 /// is ~80 bytes typical, so 50 caps at ~4 KB — small
 /// enough to keep around forever, large enough to
@@ -220,6 +251,20 @@ pub fn install_panic_hook() {
                 }
             }
             std::process::exit(0);
+        }
+
+        // Step 0.5 (H5) — a panic inside a `suppress_panic_report`
+        // section is being recovered by a `catch_unwind` at the call
+        // site (a user Bund hook). Do NOT restore the terminal / flush
+        // rescue / write a report — that would tear down the live TUI
+        // for a fault the app is about to swallow. Just log and return;
+        // the caller resumes.
+        if panic_report_suppressed() {
+            tracing::warn!(
+                target: "inkhaven::crash",
+                "recovered panic (suppressed report): {msg}"
+            );
+            return;
         }
 
         // Step 1 — restore the terminal so anything we
