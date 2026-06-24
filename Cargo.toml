@@ -353,6 +353,10 @@ syn = { version = "2", features = ["full"] }
 
 [dev-dependencies]
 tempfile = "3"
+# 1.3.32+ (road to 1.4.0) — property-based testing for the panic-prone parsers
+# (calendar parse/format, HJSON config layering, language detection) + invariant
+# checks. Pure-Rust, test-only; never linked into the shipped binary.
+proptest = "1"
 # LANG-1 P5.3 — parse-round-trip validation of the TTFs emitted by
 # conlang::writing::compile. Already in the tree (via typst/krilla); test-only,
 # never linked into the shipped binary.
