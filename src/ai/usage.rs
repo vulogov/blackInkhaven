@@ -51,7 +51,10 @@ pub fn record(category: &str) {
         Err(_) => None,
     };
     let Some(root) = root else { return };
-    let _guard = WRITE.lock();
+    // Recover the guard even if a prior holder panicked — dropping the
+    // PoisonError would otherwise proceed *unserialized* and lose
+    // concurrent tallies, the opposite of this lock's purpose (M8).
+    let _guard = WRITE.lock().unwrap_or_else(|e| e.into_inner());
     let mut usage = load(&root);
     *usage
         .entry(today())

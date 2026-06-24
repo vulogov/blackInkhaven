@@ -39,7 +39,9 @@ impl BackupState {
     pub fn save(&self, project_root: &Path) -> std::io::Result<()> {
         let path = project_root.join(LAST_BACKUP_FILE);
         let json = serde_json::to_string_pretty(self)?;
-        std::fs::write(path, json)
+        // M7 — atomic so a crash mid-write can't truncate the sidecar
+        // to empty (→ "never backed up" → a needless full backup).
+        crate::io_atomic::write(&path, json.as_bytes())
     }
 }
 
