@@ -9579,6 +9579,7 @@ impl App {
             // ── Global ────────────────────────────────────────
             A::OpenCommandPalette => self.open_command_palette(),
             A::RunCheck => self.run_unified_check(),
+            A::OpenCostDashboard => self.open_cost_dashboard(),
             A::OpenCredits => self.open_credits(),
             A::OpenBookInfo => self.open_book_info(),
             A::OpenImpositionPreview => self.open_imposition_preview(),
@@ -10088,6 +10089,12 @@ impl App {
     /// Ctrl+B I — open the "current book info" panel. The content is
     /// rendered each frame in `draw_book_info_modal` so figures stay
     /// fresh as the user edits; we only stash the scroll offset here.
+    /// 1.3.34+ — `Ctrl+B $`: open the AI cost dashboard panel.
+    fn open_cost_dashboard(&mut self) {
+        self.modal = Modal::CostDashboard { scroll: 0 };
+        self.status = "AI cost · today's LLM call tallies — ↑↓ scroll · Esc close".into();
+    }
+
     fn open_book_info(&mut self) {
         self.modal = Modal::BookInfo { scroll: 0 };
         self.status =
@@ -13018,6 +13025,22 @@ impl App {
                 true
             }
             _ => false,
+        }
+    }
+
+    /// 1.3.34+ — scroll the AI cost dashboard (Esc closes generically).
+    fn cost_dashboard_handle_key(&mut self, key: KeyEvent) {
+        let Modal::CostDashboard { scroll } = &mut self.modal else {
+            return;
+        };
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => *scroll = scroll.saturating_sub(1),
+            KeyCode::Down | KeyCode::Char('j') => *scroll = scroll.saturating_add(1),
+            KeyCode::PageUp => *scroll = scroll.saturating_sub(10),
+            KeyCode::PageDown => *scroll = scroll.saturating_add(10),
+            KeyCode::Home => *scroll = 0,
+            KeyCode::End => *scroll = usize::MAX / 2,
+            _ => {}
         }
     }
 
@@ -19820,6 +19843,10 @@ impl App {
         }
         if is_credits {
             self.credits_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::CostDashboard { .. }) {
+            self.cost_dashboard_handle_key(key);
             return Ok(false);
         }
         if is_book_info {

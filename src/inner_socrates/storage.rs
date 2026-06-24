@@ -370,6 +370,18 @@ impl InnerSocratesStore {
         )?;
         Ok(rows.first().map(|r| int(r.first())).unwrap_or(0))
     }
+
+    /// Every `(sub_budget, calls)` recorded on `day`. Each analytical thread that
+    /// runs a cost-capped slow pass records under its own sub-budget key, so the
+    /// cost dashboard enumerates them all here without a hardcoded list — a new
+    /// thread shows up automatically once it records its first call.
+    pub fn llm_usage_today(&self, day: &str) -> Result<Vec<(String, i64)>> {
+        let rows = self.engine.select_all_with(
+            "SELECT sub_budget, calls FROM inner_socrates_llm_usage WHERE day = ? ORDER BY sub_budget",
+            &[&day],
+        )?;
+        Ok(rows.iter().map(|r| (text(r.get(0)), int(r.get(1)))).collect())
+    }
 }
 
 fn int(v: Option<&DuckValue>) -> i64 {
