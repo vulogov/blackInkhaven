@@ -53,10 +53,14 @@ filter input; an existing `fuzzy_filter_entries` shows the substring-scoring sty
   intercept; the description now reads "Ctrl+V Space"; the palette still self-lists
   via the registry (now from `view_sub`). Kept the opt-in `INKHAVEN_KEYLOG` tracer
   as general chord-debugging infra. Resolve-tested in multiple panes + the build.
-- **P2 — the `?` keybinding overlay + quick help/reference.** A pane-scoped,
-  read-only chord cheat-sheet (`?` when not in a text field), built from the same
-  registry. **Update the in-app quick help/reference and `Documentation/KEYBINDING.md`**
-  to mention `Ctrl+P` + `?` (the roadmap DoD regenerates KEYBINDING anyway).
+- **P2 — quick help/reference + `?` overlay.** _Done._ Inkhaven already has a
+  pane-aware **quickref** (`Ctrl+B H`) that renders the live binding tables, so the
+  palette auto-surfaced in its "View chords" section. Made it prominent: added the
+  palette + `Ctrl+V` prefix + the quickref-opener to the static global section, and
+  `?` to the tree section. Bound **`?` → quickref in the Tree pane only** (a
+  pure-navigation pane; editor / AI / search keep `?` literal; `Ctrl+B H` works
+  everywhere). Updated `KEYBINDING.md` (Global row, View-mode `Space` row, tree
+  `?` row). Added a quickref test asserting the palette lists in every pane.
 - **P3 — CLI-dispatch error pass (stability rider).** A small consistency pass on
   CLI command error messages touched alongside this work.
 
