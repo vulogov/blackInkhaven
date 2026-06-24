@@ -34,9 +34,14 @@ free. (A `--slow` opt-in for the LLM tracks is a later enhancement.)
   which clears prior critique findings then re-emits), all into the Output pane, then
   surfaces it with a `fact N · socrates N · timeline N` status summary. Binding
   resolve-tested. Full suite 1796 → 1797.
-- **P2 — tree report-card badges.** Per-chapter open-finding counts from the Output
-  store, rendered as a small badge in the tree so the manuscript shows where
-  attention is needed at a glance.
+- **P2 — tree report-card badges.** _Done._ Each tree node shows a badge
+  (`⊗`/`⚠`/`●` + count) for the open Output findings under it — `compute_tree_badges`
+  walks up from each finding's source paragraph, tallying a count + worst severity
+  onto the paragraph and every ancestor (so a chapter/book shows the subtree sum,
+  colored by its worst). Cached in `tree_badges`, refreshed on a ~900 ms throttle
+  (`tick_tree_badges`) to avoid per-frame DB queries, and force-refreshed right
+  after a review pass + on dismiss. Rendered as a trailing pip in `tree_row_lines`.
+  2 aggregation unit tests. Full suite 1797 → 1799.
 - **P3 — stability + docs.** Orchestration tests; KEYBINDING / quickref / a tutorial
   row. Then cut.
 
