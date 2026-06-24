@@ -240,10 +240,28 @@ pub struct BackupConfig {
     /// hard warning surfaces).
     #[serde(default = "default_amber_threshold")]
     pub amber_threshold: f32,
+    /// 1.3.37 — explicit toggle for the exit-hook auto-backup. `false`
+    /// disables it without the non-obvious side-effects of clearing
+    /// `out_dir` / setting `max_age = 0s`. Default `true`.
+    #[serde(default = "default_auto_backup_on_exit")]
+    pub auto_backup_on_exit: bool,
+    /// 1.3.37 — how many backup `.zip` snapshots to retain in `out_dir`;
+    /// after each backup the oldest beyond this count are deleted. `0`
+    /// (default) keeps all (prior behaviour — backups accumulate).
+    #[serde(default = "default_backup_keep_last")]
+    pub keep_last: usize,
 }
 
 fn default_backup_wait_for_key() -> bool {
     true
+}
+
+fn default_auto_backup_on_exit() -> bool {
+    true
+}
+
+fn default_backup_keep_last() -> usize {
+    0
 }
 
 fn default_amber_threshold() -> f32 {
@@ -266,6 +284,8 @@ impl Default for BackupConfig {
             max_age: std::time::Duration::from_secs(7 * 24 * 3600),
             wait_for_key_after_backup: default_backup_wait_for_key(),
             amber_threshold: default_amber_threshold(),
+            auto_backup_on_exit: default_auto_backup_on_exit(),
+            keep_last: default_backup_keep_last(),
         }
     }
 }

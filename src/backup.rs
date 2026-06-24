@@ -54,6 +54,38 @@ pub fn backup_filename(now: chrono::DateTime<chrono::Utc>) -> String {
     now.format("blackinkhaven_%Y%d%m_%H%M%S.zip").to_string()
 }
 
+/// 1.3.37 — retain only the newest `keep_last` backup zips in `dir`,
+/// deleting older ones by modification time (the `%Y%d%m` filename
+/// doesn't sort chronologically, so mtime is the reliable key). `0`
+/// keeps everything (prior behaviour). Best-effort: any error is
+/// ignored so a prune failure never aborts the backup that triggered it.
+pub fn prune_backups(dir: &Path, keep_last: usize) {
+    if keep_last == 0 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let mut zips: Vec<(std::time::SystemTime, PathBuf)> = entries
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with("blackinkhaven_") && n.ends_with(".zip"))
+                .unwrap_or(false)
+        })
+        .filter_map(|p| {
+            let mtime = std::fs::metadata(&p).and_then(|m| m.modified()).ok()?;
+            Some((mtime, p))
+        })
+        .collect();
+    if zips.len() <= keep_last {
+        return;
+    }
+    zips.sort_by(|a, b| b.0.cmp(&a.0)); // newest first
+    for (_, path) in zips.into_iter().skip(keep_last) {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
 /// Optional progress callback fired while the backup walker enumerates and
 /// streams files into the zip. `done` and `total` are file counts, not
 /// bytes — gives the splash-screen progress bar something sensible to draw.
@@ -210,4 +242,54 @@ pub fn restore_backup(archive: &Path, dest: &Path) -> Result<()> {
         std::io::copy(&mut entry, &mut out_file).map_err(Error::Io)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn count_zips(dir: &Path) -> usize {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("blackinkhaven_")
+            })
+            .count()
+    }
+
+    #[test]
+    fn prune_keeps_only_n_backups_and_spares_other_files() {
+        let dir = tempfile::tempdir().unwrap();
+        for n in [
+            "blackinkhaven_20260101_000000.zip",
+            "blackinkhaven_20260102_000000.zip",
+            "blackinkhaven_20260103_000000.zip",
+            "blackinkhaven_20260104_000000.zip",
+        ] {
+            std::fs::write(dir.path().join(n), b"zip").unwrap();
+        }
+        // A non-backup file must be left untouched.
+        std::fs::write(dir.path().join("notes.txt"), b"x").unwrap();
+
+        prune_backups(dir.path(), 2);
+
+        assert_eq!(count_zips(dir.path()), 2, "should retain exactly keep_last");
+        assert!(dir.path().join("notes.txt").exists(), "non-backup file spared");
+    }
+
+    #[test]
+    fn prune_zero_keeps_everything() {
+        let dir = tempfile::tempdir().unwrap();
+        for n in [
+            "blackinkhaven_20260101_000000.zip",
+            "blackinkhaven_20260102_000000.zip",
+        ] {
+            std::fs::write(dir.path().join(n), b"z").unwrap();
+        }
+        prune_backups(dir.path(), 0);
+        assert_eq!(count_zips(dir.path()), 2);
+    }
 }

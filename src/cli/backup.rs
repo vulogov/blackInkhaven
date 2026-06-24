@@ -38,6 +38,8 @@ pub fn run(project: &Path, out: Option<&Path>) -> Result<()> {
     let skip = skip_dirs_for(&abs_project, &abs_out);
 
     let archive = backup::create_backup(&abs_project, &abs_out, &skip, None)?;
+    // 1.3.37 — enforce the retention cap (no-op when keep_last=0).
+    backup::prune_backups(&abs_out, _cfg.backup.keep_last);
     eprintln!("wrote backup: {}", archive.display());
     Ok(())
 }
