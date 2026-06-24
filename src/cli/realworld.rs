@@ -277,7 +277,7 @@ fn slow_llm_call(
     };
     use crate::world::storage::WorldStore;
 
-    const DAILY_CAP: i64 = 200;
+    const DAILY_CAP: i64 = crate::world::storage::WorldStore::DAILY_CALL_CAP;
     let day = chrono::Utc::now().format("%Y-%m-%d").to_string();
     let store = WorldStore::open_for_project(project)
         .map_err(|e| Error::Store(format!("world store: {e}")))?;

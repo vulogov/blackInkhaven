@@ -346,6 +346,12 @@ impl InnerSocratesStore {
 
     // ── LLM usage (sub-budgeted) ────────────────────────────────────────────────
 
+    /// Daily ceiling on Inner Socrates slow-track LLM calls (shared by the
+    /// slow-track preflight and the cost dashboard).
+    pub const DAILY_CALL_CAP: i64 = 150;
+    /// The slow-track usage sub-budget key.
+    pub const SLOW_SUB_BUDGET: &'static str = "slow_track";
+
     /// Record one LLM call against `(day, sub_budget)`; returns the new count.
     pub fn record_llm_call(&self, day: &str, sub_budget: &str) -> Result<i64> {
         self.engine.execute_with(
