@@ -1488,6 +1488,31 @@ pub struct EditorConfig {
     /// to a 3-line indented block. Backspace at the inside of a freshly
     /// typed pair removes both halves. Disabled = nothing inserts.
     pub auto_close_pairs: bool,
+    /// 1.3.37 — seconds between crash-rescue mirrors of the dirty
+    /// buffer(s). Lower = a panic loses fewer keystrokes (more disk
+    /// churn); `0` mirrors every tick. Default 2.
+    #[serde(default = "default_crash_mirror_seconds")]
+    pub crash_mirror_seconds: u64,
+    /// 1.3.37 — how many deleted paragraphs the kill-ring keeps for
+    /// undelete (`Ctrl+V Shift+U`) before the oldest rolls off.
+    /// Default 10.
+    #[serde(default = "default_deleted_paragraph_history")]
+    pub deleted_paragraph_history: usize,
+    /// 1.3.37 — when the open file changes on disk and the buffer is
+    /// CLEAN: `true` (default) silently reloads it; `false` warns
+    /// instead, leaving your view/cursor untouched (useful when an
+    /// external `git pull` / script rewrites files).
+    #[serde(default = "default_external_change_auto_reload")]
+    pub external_change_auto_reload: bool,
+    /// 1.3.37 — idle seconds after editing before the background
+    /// fact-check fires. Default 5 (mirrors typst diagnostics idle).
+    #[serde(default = "default_fact_check_idle_seconds")]
+    pub fact_check_idle_seconds: u64,
+    /// 1.3.37 — cap on the browser-style visited-paragraph history
+    /// (persisted in `.session.json`). `0` (default) = unbounded,
+    /// preserving prior behaviour; set e.g. 200 to bound session growth.
+    #[serde(default = "default_visited_history_cap")]
+    pub visited_history_cap: usize,
     /// Snowball stemmer languages used to expand the Places/Characters
     /// highlight overlay so morphological variants light up too — e.g.
     /// "Москва" also matches "Москве", "Москвою". Each entry is one of the
@@ -1706,6 +1731,26 @@ fn default_paragraph_long_secs() -> u32 {
 
 fn default_disk_warn_mb() -> u64 {
     100
+}
+
+fn default_crash_mirror_seconds() -> u64 {
+    2
+}
+
+fn default_deleted_paragraph_history() -> usize {
+    10
+}
+
+fn default_external_change_auto_reload() -> bool {
+    true
+}
+
+fn default_fact_check_idle_seconds() -> u64 {
+    5
+}
+
+fn default_visited_history_cap() -> usize {
+    0
 }
 
 fn default_echo_window() -> usize {
@@ -2855,6 +2900,11 @@ impl Default for EditorConfig {
             wrap: true,
             autosave_seconds: 5,
             auto_close_pairs: true,
+            crash_mirror_seconds: default_crash_mirror_seconds(),
+            deleted_paragraph_history: default_deleted_paragraph_history(),
+            external_change_auto_reload: default_external_change_auto_reload(),
+            fact_check_idle_seconds: default_fact_check_idle_seconds(),
+            visited_history_cap: default_visited_history_cap(),
             stemming: StemmingConfig::default(),
             startup_splash: default_startup_splash(),
             mouse_captured: default_mouse_captured(),
