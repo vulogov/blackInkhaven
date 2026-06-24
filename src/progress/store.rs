@@ -107,7 +107,7 @@ impl ProgressStore {
         per_book: &[(Uuid, i64)],
         project_total: i64,
     ) -> Result<()> {
-        let day = today_utc_days();
+        let day = crate::dayclock::today_days();
         for (book, total) in per_book {
             let book_str = book.to_string();
             self.engine.execute_with(
@@ -151,7 +151,7 @@ impl ProgressStore {
     /// it has cheap access to the live hierarchy + paragraph word
     /// counts; the store doesn't shadow that data.
     pub fn today_words(&self, book_id: Uuid, current_total: i64) -> Result<i64> {
-        let day = today_utc_days();
+        let day = crate::dayclock::today_days();
         match self.baseline_for(day, book_id)? {
             Some(base) => Ok(current_total - base),
             None => Ok(0),
@@ -170,7 +170,7 @@ impl ProgressStore {
         current_total: i64,
         n: usize,
     ) -> Result<Vec<i64>> {
-        let today = today_utc_days();
+        let today = crate::dayclock::today_days();
         let mut out = Vec::with_capacity(n);
         // Pre-fetch every baseline in the range so we don't do
         // N round-trips. DuckDB handles small range scans
@@ -260,12 +260,15 @@ impl ProgressStore {
     /// streak computation.
     pub fn writing_days_recent(&self, days_back: i64) -> Result<Vec<i64>> {
         let cutoff_secs = now_unix_secs() - days_back * 86_400;
+        // Bin events into days under the active boundary (offset 0 = UTC)
+        // so the streak agrees with `today_days` (1.3.37 day_boundary).
+        let offset = crate::dayclock::offset_secs();
         let rows = self.engine.select_all_with(
-            "SELECT DISTINCT (ts / 86400) AS day
+            "SELECT DISTINCT ((ts + ?) / 86400) AS day
              FROM writing_events
              WHERE kind = 'save' AND word_delta > 0 AND ts >= ?
              ORDER BY day DESC",
-            &[&cutoff_secs],
+            &[&offset, &cutoff_secs],
         )?;
         let mut out = Vec::new();
         for row in rows {
@@ -323,12 +326,6 @@ impl ProgressStore {
             _ => 0,
         })
     }
-}
-
-/// Days since the Unix epoch, UTC.
-pub fn today_utc_days() -> i64 {
-    let secs = now_unix_secs();
-    secs / 86_400
 }
 
 fn now_unix_secs() -> i64 {

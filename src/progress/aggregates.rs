@@ -133,7 +133,7 @@ pub fn build_snapshot(
     goals: &GoalsConfig,
     live: &LiveTotals,
 ) -> Result<ProgressSnapshot> {
-    let today = super::store::today_utc_days();
+    let today = crate::dayclock::today_days();
 
     // Project-wide aggregates.
     let project_today = store
@@ -210,16 +210,17 @@ pub fn build_snapshot(
         .last_n_daily(PROJECT_SCOPE_BOOK_ID, live.project_total, 30)
         .unwrap_or_default();
 
-    // Active-time aggregates (1.2.4+). Today's window is from
-    // today-start (UTC) to now; week is last 7×86400s.
-    let today_start = today * 86_400;
+    // Active-time aggregates (1.2.4+). Today's window is from the
+    // boundary's day-start (local midnight or 00:00 UTC) to now; week is
+    // the trailing 7 such days.
+    let today_start = crate::dayclock::today_start_secs();
     let now_secs = today_start + 86_400; // future bound — saves can't
                                          // be in the future anyway
     const ACTIVE_GAP_CAP_SEC: i64 = 300; // 5 min per gap
     let active_seconds_today = store
         .active_seconds_in_range(today_start, now_secs, ACTIVE_GAP_CAP_SEC)
         .unwrap_or(0);
-    let week_start = (today - 6) * 86_400;
+    let week_start = today_start - 6 * 86_400;
     let active_seconds_week = store
         .active_seconds_in_range(week_start, now_secs, ACTIVE_GAP_CAP_SEC)
         .unwrap_or(0);
