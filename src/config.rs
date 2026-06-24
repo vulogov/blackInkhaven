@@ -3321,9 +3321,27 @@ impl Default for ProjectLockConfig {
     }
 }
 
+/// When the writing "day" rolls over for streaks, daily word/active
+/// totals, AI-usage tallies, and the slow-track daily caps. `Utc`
+/// (default, preserving prior behaviour) resets at 00:00 UTC; `Local`
+/// resets at the writer's local midnight — so an evening session in a
+/// far-from-UTC timezone isn't attributed to "tomorrow" and the streak
+/// doesn't flip mid-evening.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum DayBoundary {
+    #[default]
+    Utc,
+    Local,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GoalsConfig {
+    /// When the writing day rolls over (`utc` default, or `local`).
+    /// Governs the streak, daily word/active totals, AI-usage tallies,
+    /// and the slow-track daily caps so they all agree on "today".
+    pub day_boundary: DayBoundary,
     /// Project-wide daily word-count target. Status-bar shows
     /// `today X/daily_words`. `0` (default) hides the slash.
     pub daily_words: i64,
@@ -3358,6 +3376,7 @@ fn default_auto_promote_on_target() -> bool {
 impl Default for GoalsConfig {
     fn default() -> Self {
         Self {
+            day_boundary: DayBoundary::default(),
             daily_words: 0,
             active_minutes_daily: 0,
             streak_grace_per_week: 0,

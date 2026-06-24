@@ -116,7 +116,7 @@ fn bar(used: i64, cap: i64) -> String {
 
 /// Render the report as lines (shared by the CLI + the TUI panel).
 pub fn render_lines(report: &CostReport) -> Vec<String> {
-    let mut out = vec![format!("AI cost — LLM calls today, UTC ({})", report.day), String::new()];
+    let mut out = vec![format!("AI cost — LLM calls today ({})", report.day), String::new()];
 
     // Capped budgets (informative — see the note below).
     out.push("  daily budgets (informative):".into());
@@ -146,7 +146,7 @@ pub fn render_lines(report: &CostReport) -> Vec<String> {
     out.push(format!("  {:<24} {:>3}", "total AI calls today", report.total_calls()));
     out.push(String::new());
     out.push("  Budgets are informative, not limits — past a budget the slow tracks".into());
-    out.push("  warn and continue. The tally resets at 00:00 UTC. (CLI: inkhaven cost)".into());
+    out.push("  warn and continue. The tally resets per goals.day_boundary. (CLI: inkhaven cost)".into());
     out
 }
 
@@ -154,7 +154,8 @@ pub fn run(project: &Path) -> Result<()> {
     let layout = crate::project::ProjectLayout::new(project);
     layout.require_initialized()?;
     let cfg = crate::config::Config::load_layered(&layout.config_path())?;
-    let day = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    crate::dayclock::set_boundary(cfg.goals.day_boundary);
+    let day = crate::dayclock::today_key();
     let report = gather(
         project,
         &day,

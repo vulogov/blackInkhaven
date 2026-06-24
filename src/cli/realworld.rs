@@ -277,13 +277,15 @@ fn slow_llm_call(
     };
     use crate::world::storage::WorldStore;
 
-    let day = chrono::Utc::now().format("%Y-%m-%d").to_string();
+    // Load config first so the daily-cap day-key honors goals.day_boundary.
+    let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
+    crate::dayclock::set_boundary(cfg.goals.day_boundary);
+    let day = crate::dayclock::today_key();
     let store = WorldStore::open_for_project(project)
         .map_err(|e| Error::Store(format!("world store: {e}")))?;
     let used = store.llm_calls_today(&day).map_err(|e| Error::Store(format!("{e}")))?;
 
     // The LLM provider (errors cleanly when none is configured).
-    let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
     let ai = crate::ai::AiClient::from_config(&cfg.llm)
         .map_err(|e| Error::Config(format!("no LLM provider for the {label}: {e}")))?;
     let (model, _env) = ai

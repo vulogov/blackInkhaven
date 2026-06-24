@@ -2428,6 +2428,7 @@ impl App {
         // 1.3.34+ — point the AI-cost usage tracker at this project so every
         // inference tallies into `inkhaven cost` / the Ctrl+B $ panel.
         crate::ai::usage::install(&self.layout.root, self.cfg.cost.usage_retention_days);
+        crate::dayclock::set_boundary(self.cfg.goals.day_boundary);
         if let Err(e) = crate::progress::install(&self.layout.root) {
             tracing::warn!(target: "inkhaven::progress", "install: {e:#}");
             return;

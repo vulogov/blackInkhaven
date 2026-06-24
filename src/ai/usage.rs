@@ -46,7 +46,7 @@ fn load(root: &Path) -> Usage {
 }
 
 fn today() -> String {
-    chrono::Utc::now().format("%Y-%m-%d").to_string()
+    crate::dayclock::today_key()
 }
 
 /// Record one AI call under `category` for today. No-op when uninstalled.
