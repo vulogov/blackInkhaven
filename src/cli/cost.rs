@@ -13,9 +13,10 @@ use anyhow::Result;
 use crate::inner_socrates::storage::InnerSocratesStore;
 use crate::world::storage::WorldStore;
 
-/// One persisted daily-capped LLM budget.
+/// One persisted daily-capped LLM budget. The name is owned so the dashboard can
+/// enumerate dynamically-keyed analytical-thread sub-budgets, not just a fixed set.
 pub struct CostEntry {
-    pub name: &'static str,
+    pub name: String,
     pub calls_today: i64,
     pub daily_cap: i64,
 }
@@ -35,30 +36,59 @@ impl CostReport {
 /// Read each subsystem's call tally for `day` (gracefully zero when a store is
 /// absent). The caps come from the stores' shared consts, so they match the
 /// preflights exactly.
+///
+/// Extensible by design: the world slow track is a single budget, but the Inner
+/// Socrates store keys usage by **sub-budget**, so every analytical thread that
+/// records a cost-capped slow pass under its own key appears here automatically.
+/// To surface a new analytical thread's AI cost, record its calls via
+/// `InnerSocratesStore::record_llm_call(day, "<thread-key>")` — no dashboard change
+/// needed.
 pub fn gather(project: &Path, day: &str) -> CostReport {
-    let world_calls = WorldStore::open_for_project(project)
+    let mut entries = vec![CostEntry {
+        name: "world fact-check (slow)".to_string(),
+        calls_today: WorldStore::open_for_project(project)
+            .ok()
+            .and_then(|s| s.llm_calls_today(day).ok())
+            .unwrap_or(0),
+        daily_cap: WorldStore::DAILY_CALL_CAP,
+    }];
+
+    // Inner Socrates: the canonical slow track always shown, plus any other
+    // analytical-thread sub-budgets recorded today.
+    let usage = InnerSocratesStore::open_for_project(project)
         .ok()
-        .and_then(|s| s.llm_calls_today(day).ok())
-        .unwrap_or(0);
-    let soc_calls = InnerSocratesStore::open_for_project(project)
-        .ok()
-        .and_then(|s| s.llm_calls_today(day, InnerSocratesStore::SLOW_SUB_BUDGET).ok())
-        .unwrap_or(0);
-    CostReport {
-        day: day.to_string(),
-        entries: vec![
-            CostEntry {
-                name: "world fact-check (slow)",
-                calls_today: world_calls,
-                daily_cap: WorldStore::DAILY_CALL_CAP,
-            },
-            CostEntry {
-                name: "inner socrates (slow)",
-                calls_today: soc_calls,
+        .and_then(|s| s.llm_usage_today(day).ok())
+        .unwrap_or_default();
+    let mut have_slow = false;
+    let mut extra: Vec<(String, i64)> = Vec::new();
+    for (sub, calls) in usage {
+        if sub == InnerSocratesStore::SLOW_SUB_BUDGET {
+            have_slow = true;
+            entries.push(CostEntry {
+                name: "inner socrates (slow)".to_string(),
+                calls_today: calls,
                 daily_cap: InnerSocratesStore::DAILY_CALL_CAP,
-            },
-        ],
+            });
+        } else {
+            extra.push((sub, calls));
+        }
     }
+    if !have_slow {
+        entries.push(CostEntry {
+            name: "inner socrates (slow)".to_string(),
+            calls_today: 0,
+            daily_cap: InnerSocratesStore::DAILY_CALL_CAP,
+        });
+    }
+    for (sub, calls) in extra {
+        entries.push(CostEntry {
+            name: format!("inner socrates · {sub}"),
+            calls_today: calls,
+            daily_cap: InnerSocratesStore::DAILY_CALL_CAP,
+        });
+    }
+
+    CostReport { day: day.to_string(), entries }
 }
 
 /// A 20-cell usage bar + percentage for a `used / cap` budget.
@@ -125,8 +155,9 @@ mod tests {
         let r = CostReport {
             day: "2026-06-24".into(),
             entries: vec![
-                CostEntry { name: "a", calls_today: 3, daily_cap: 200 },
-                CostEntry { name: "b", calls_today: 7, daily_cap: 150 },
+                CostEntry { name: "a".into(), calls_today: 3, daily_cap: 200 },
+                // An arbitrary future analytical-thread sub-budget renders the same.
+                CostEntry { name: "inner socrates · drift".into(), calls_today: 7, daily_cap: 150 },
             ],
         };
         assert_eq!(r.total_calls(), 10);

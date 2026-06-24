@@ -23,8 +23,16 @@ referenced by both the handlers and the dashboard.
   `gather(project)` (reads both stores, gracefully zero when absent), a formatter
   (per-budget bar + today's totals + the per-run elaboration note), and the `Cost`
   command. Tested. **(this increment)**
-- **P1 — TUI panel.** `Action::OpenCostDashboard` (self-lists in the palette /
-  quickref) → a scrollable modal showing the same report. Reachable by a chord.
+- **Extensibility** — _done._ Prepared the dashboard for more analytical threads:
+  `InnerSocratesStore::llm_usage_today(day)` returns **all** recorded `(sub_budget,
+  calls)` pairs, and `gather` enumerates them — the canonical slow track plus any
+  other thread's sub-budget — so a new analytical thread appears automatically once
+  it records via `record_llm_call(day, "<key>")`. `CostEntry.name` is now owned.
+- **P1 — TUI panel.** _Done._ `Action::OpenCostDashboard` bound to **`Ctrl+B $`**
+  (label "AI cost"; self-lists in the palette + quickref) → `Modal::CostDashboard`,
+  a scrollable read-only panel (`draw_cost_dashboard_modal`) computing the report on
+  render via the shared `cli::cost` aggregator. Binding resolve-tested. Full suite
+  1801 → 1802.
 - **P2 — docs + cut.** KEYBINDING / quickref rows; then cut the bundled release.
 
 ## Non-goals

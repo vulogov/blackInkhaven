@@ -51,6 +51,10 @@ impl super::App {
             self.draw_book_info_modal(f, area, *scroll);
             return;
         }
+        if let Modal::CostDashboard { scroll } = &self.modal {
+            self.draw_cost_dashboard_modal(f, area, *scroll);
+            return;
+        }
         if let Modal::LlmPicker { .. } = &self.modal {
             self.draw_llm_picker_modal(f, area);
             return;
