@@ -475,7 +475,15 @@ impl super::App {
         // context prefix.
         let prompt_text = if self.ai_mode == AiMode::Book {
             match self.book_rag_context(&user_query) {
-                Ok(prefix) => format!("{prefix}\n\n{user_query}"),
+                Ok(prefix) => {
+                    // Remember the retrieval's valid citation ids so the
+                    // finalised response can flag any the LLM invents.
+                    self.pending_book_rag_cited = self
+                        .book_rag_last_retrieval
+                        .as_ref()
+                        .map(|p| crate::book_rag::cited_ids(p));
+                    format!("{prefix}\n\n{user_query}")
+                }
                 Err(reason) => {
                     self.status = reason;
                     return;
@@ -562,9 +570,16 @@ impl super::App {
                 let lang = crate::ai::prompts::iso_from_long(&self.cfg.language);
                 Some(facts_scope_system_prompt(lang).to_string())
             } else if mode_used == AiMode::Book {
-                // BOOK_RAG-1 — the citation-grounded contract.
-                let lang = crate::ai::prompts::iso_from_long(&self.cfg.language);
-                Some(crate::book_rag::system_prompt(lang).to_string())
+                // BOOK_RAG-1 — the citation-grounded contract, resolved
+                // through the standard chain (Prompts book `book-rag-system`
+                // → prompts.hjson → the bundled default) so it's customisable.
+                let want_lang = self.active_prompt_language();
+                Some(
+                    self.resolve_prompt("book-rag-system", &want_lang, || {
+                        crate::book_rag::system_prompt(&want_lang).to_string()
+                    })
+                    .template,
+                )
             } else {
                 match self.inference_mode {
                     InferenceMode::Local => Some(LOCAL_SYSTEM_PROMPT.to_string()),
