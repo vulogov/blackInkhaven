@@ -173,40 +173,61 @@ pub fn run(project: &Path) -> Result<()> {
     // the whole session; the OS releases it on exit or crash. Per the
     // permissive principle this only *informs* — the author can always
     // open anyway.
-    let _project_lock = match crate::project_lock::acquire(&layout.root) {
-        Ok(crate::project_lock::LockOutcome::Acquired(lock)) => Some(lock),
-        Ok(crate::project_lock::LockOutcome::Busy(info)) => {
-            use std::io::IsTerminal;
-            eprintln!(
-                "⚠ Another inkhaven session may already have this project open ({}).",
-                info.describe()
-            );
-            eprintln!(
-                "  Opening it twice at once can corrupt the project store."
-            );
-            if std::io::stdin().is_terminal() {
-                eprint!("  Open anyway? [y/N] ");
-                let _ = std::io::Write::flush(&mut std::io::stderr());
-                let mut answer = String::new();
-                let _ = std::io::stdin().read_line(&mut answer);
-                let yes = matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes");
-                if !yes {
-                    eprintln!("  Cancelled — left the existing session untouched.");
-                    return Ok(());
+    // `project_lock.enabled = false` disables single-instance guarding.
+    let _project_lock = if !cfg.project_lock.enabled {
+        None
+    } else {
+        match crate::project_lock::acquire(&layout.root) {
+            Ok(crate::project_lock::LockOutcome::Acquired(lock)) => Some(lock),
+            Ok(crate::project_lock::LockOutcome::Busy(info)) => {
+                use std::io::IsTerminal;
+                eprintln!(
+                    "⚠ Another inkhaven session may already have this project open ({}).",
+                    info.describe()
+                );
+                eprintln!("  Opening it twice at once can corrupt the project store.");
+                match cfg.project_lock.on_conflict.as_str() {
+                    // Never open a second session.
+                    "refuse" => {
+                        eprintln!(
+                            "  Refusing to open (project_lock.on_conflict = refuse)."
+                        );
+                        return Ok(());
+                    }
+                    // Always warn and proceed, no prompt.
+                    "warn" => {
+                        eprintln!("  Proceeding without the lock (on_conflict = warn).");
+                        None
+                    }
+                    // Default "prompt": interactive y/N; warn+proceed headless.
+                    _ => {
+                        if std::io::stdin().is_terminal() {
+                            eprint!("  Open anyway? [y/N] ");
+                            let _ = std::io::Write::flush(&mut std::io::stderr());
+                            let mut answer = String::new();
+                            let _ = std::io::stdin().read_line(&mut answer);
+                            let yes = matches!(
+                                answer.trim().to_ascii_lowercase().as_str(),
+                                "y" | "yes"
+                            );
+                            if !yes {
+                                eprintln!("  Cancelled — left the existing session untouched.");
+                                return Ok(());
+                            }
+                            eprintln!("  Proceeding without the lock — mind concurrent edits.");
+                        } else {
+                            eprintln!("  (non-interactive launch — proceeding without the lock)");
+                        }
+                        None
+                    }
                 }
-                eprintln!("  Proceeding without the lock — mind concurrent edits.");
-            } else {
-                // Non-interactive launch can't be prompted. Permissive:
-                // warn loudly and proceed rather than refuse.
-                eprintln!("  (non-interactive launch — proceeding without the lock)");
             }
-            None
-        }
-        Err(e) => {
-            // Couldn't even open the lockfile (read-only mount, etc.).
-            // Never block on infrastructure: log and carry on.
-            tracing::warn!(target: "inkhaven::lock", "project lock unavailable: {e}");
-            None
+            Err(e) => {
+                // Couldn't even open the lockfile (read-only mount, etc.).
+                // Never block on infrastructure: log and carry on.
+                tracing::warn!(target: "inkhaven::lock", "project lock unavailable: {e}");
+                None
+            }
         }
     };
 

@@ -53,6 +53,8 @@ pub struct Config {
     pub goals: GoalsConfig,
     #[serde(default)]
     pub cost: CostConfig,
+    #[serde(default)]
+    pub project_lock: ProjectLockConfig,
     /// 1.2.6+ — AI-pane behaviour knobs that aren't tied to a
     /// specific provider (per-paragraph memory, future
     /// turn-history overrides, etc).
@@ -183,6 +185,7 @@ impl Default for Config {
             output: OutputConfig::default(),
             goals: GoalsConfig::default(),
             cost: CostConfig::default(),
+            project_lock: ProjectLockConfig::default(),
             ai: AiConfig::default(),
             timeline: TimelineConfig::default(),
             scrivener: ScrivenerConfig::default(),
@@ -3268,6 +3271,32 @@ impl Default for CostConfig {
             world_daily_call_cap: 200,
             inner_socrates_daily_call_cap: 150,
             usage_retention_days: 30,
+        }
+    }
+}
+
+/// Advisory single-instance project lock (1.3.36). The data-safety
+/// carve-out to the permissive principle: it *informs*, and by default
+/// never hard-blocks.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ProjectLockConfig {
+    /// Acquire the lock at all. `false` disables single-instance
+    /// guarding entirely (e.g. if you knowingly run two read-mostly
+    /// sessions). Default `true`.
+    pub enabled: bool,
+    /// What to do when another *live* session already holds the lock:
+    /// `"prompt"` (default — interactive `y/N`; warn-and-proceed when
+    /// non-interactive), `"warn"` (always warn and proceed), or
+    /// `"refuse"` (never open a second session).
+    pub on_conflict: String,
+}
+
+impl Default for ProjectLockConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            on_conflict: "prompt".into(),
         }
     }
 }
