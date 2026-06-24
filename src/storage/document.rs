@@ -20,6 +20,12 @@ use crate::storage::engine::{BlobStorage, JsonStorage};
 use crate::storage::embedding::EmbeddingEngine;
 use crate::storage::vector::{SearchResult, VectorEngine};
 
+/// Current on-disk metadata schema version (M9). Bump when the node
+/// JSON shape changes incompatibly, and add a migration in
+/// `JsonStorage::ensure_schema_version`. v1 = the 1.3.37 baseline
+/// (every pre-existing project is stamped v1 on first open).
+const CURRENT_SCHEMA_VERSION: i64 = 1;
+
 /// One document = one JSON metadata row + one blob + two HNSW
 /// entries. Cloneable; every internal store is `Arc`-backed.
 #[derive(Clone)]
@@ -38,8 +44,14 @@ impl DocumentStorage {
     pub fn with_embedding(root: &str, engine: EmbeddingEngine, pool_size: usize) -> Result<Self> {
         let paths = Paths::from(root)?;
         let pool = pool_size as u32;
+        let meta = JsonStorage::new(&paths.metadata_db, pool, "doc")?;
+        // M9 — verify (or stamp) the metadata schema version. A store
+        // written by a newer inkhaven fails loudly here instead of
+        // silently dropping nodes whose JSON shape this binary can't
+        // parse.
+        meta.ensure_schema_version(CURRENT_SCHEMA_VERSION)?;
         Ok(Self {
-            meta:    JsonStorage::new(&paths.metadata_db, pool, "doc")?,
+            meta,
             blobs:   BlobStorage::new(&paths.blobs_db, pool)?,
             vectors: VectorEngine::with_embedding(&paths.vec, engine)?,
         })
@@ -53,8 +65,16 @@ impl DocumentStorage {
         let id = Uuid::now_v7();
         let id_str = id.to_string();
 
-        self.meta.add_json_with_id(id, metadata.clone())?;
+        // H2 — meta, blob, and the HNSW index are three separate stores
+        // with no shared transaction (a cross-DB transaction isn't
+        // possible). Order the writes so a crash between steps leaves
+        // the least-harmful state: blob first, then metadata, so a
+        // partial write is an orphan blob (invisible, swept by
+        // `inkhaven reindex`) rather than a metadata row pointing at
+        // missing content (a node that fails when opened). The vector
+        // slots are the rebuildable cache, written last.
         self.blobs.add_blob_with_key(id, content)?;
+        self.meta.add_json_with_id(id, metadata.clone())?;
 
         let content_text = String::from_utf8_lossy(content).into_owned();
         self.vectors.store_documents_batch(&[
@@ -69,8 +89,9 @@ impl DocumentStorage {
     /// shouldn't surface in semantic search.
     pub fn add_document_no_embed(&self, metadata: JsonValue, content: &[u8]) -> Result<Uuid> {
         let id = Uuid::now_v7();
-        self.meta.add_json_with_id(id, metadata)?;
+        // H2 — blob before metadata (see `add_document`).
         self.blobs.add_blob_with_key(id, content)?;
+        self.meta.add_json_with_id(id, metadata)?;
         Ok(id)
     }
 
@@ -85,10 +106,14 @@ impl DocumentStorage {
     /// Remove every trace of `id`: metadata, blob, both vector slots.
     pub fn delete_document(&self, id: Uuid) -> Result<()> {
         let id_str = id.to_string();
-        self.meta.drop_json(id)?;
-        self.blobs.drop_blob(id)?;
+        // H2 — drop the vector slots FIRST so a crash mid-delete can't
+        // leave stale entries that surface deleted content in search;
+        // then metadata (the node vanishes), then the blob last (a
+        // partial delete leaves only an orphan blob, swept by reindex).
         self.vectors.delete_vector(&format!("{id_str}:meta"))?;
         self.vectors.delete_vector(&format!("{id_str}:content"))?;
+        self.meta.drop_json(id)?;
+        self.blobs.drop_blob(id)?;
         Ok(())
     }
 
