@@ -216,6 +216,171 @@ impl super::App {
         }
     }
 
+    /// 1.3.36 — open the project-wide snapshot browser (Ctrl+F6).
+    pub(super) fn open_snapshot_browser(&mut self) {
+        match self.store.list_all_snapshots() {
+            Ok(entries) => {
+                if entries.is_empty() {
+                    self.status =
+                        "no snapshots in this project yet — press F5 on a paragraph".into();
+                    return;
+                }
+                let n = entries.len();
+                self.modal = Modal::SnapshotBrowser {
+                    entries,
+                    cursor: 0,
+                    scroll: 0,
+                    filter: String::new(),
+                    filter_focused: false,
+                };
+                self.status = format!(
+                    "snapshots: {n} across the project · ↑↓ move · / filter · V diff · Enter open · Esc close"
+                );
+            }
+            Err(e) => {
+                self.status = format!("snapshot browser failed: {e}");
+            }
+        }
+    }
+
+    /// Current text of an arbitrary paragraph by id: the live editor
+    /// buffer when it's the open one (so unsaved edits show in the
+    /// diff), otherwise the on-disk body. Empty string when the node
+    /// is gone or has no file.
+    fn paragraph_current_text(&self, parent_id: Uuid) -> String {
+        if let Some(doc) = self.opened.as_ref() {
+            if doc.id == parent_id {
+                return doc.textarea.lines().join("\n");
+            }
+        }
+        match self.hierarchy.get(parent_id).and_then(|n| n.file.clone()) {
+            Some(rel) => std::fs::read_to_string(self.layout.root.join(rel)).unwrap_or_default(),
+            None => String::new(),
+        }
+    }
+
+    /// Diff the browser's selected snapshot against its paragraph's
+    /// current text, reusing the `SnapshotDiff` modal. `Esc` returns
+    /// to the browser.
+    pub(super) fn open_snapshot_browser_diff(&mut self) {
+        let (snap_id, parent_id, when, title) = match &self.modal {
+            Modal::SnapshotBrowser {
+                entries, cursor, filter, ..
+            } => {
+                let visible = browser_visible_indices(entries, filter);
+                let Some(&abs) = visible.get(*cursor) else { return };
+                let Some((t, s)) = entries.get(abs) else { return };
+                (s.id, s.parent_id, s.created_at, t.clone())
+            }
+            _ => return,
+        };
+        let snapshot_text = match self.store.snapshot_content(snap_id) {
+            Ok(Some(b)) => String::from_utf8_lossy(&b).into_owned(),
+            Ok(None) => {
+                self.status = "snapshot has no body".into();
+                return;
+            }
+            Err(e) => {
+                self.status = format!("snapshot load failed: {e}");
+                return;
+            }
+        };
+        let current_text = self.paragraph_current_text(parent_id);
+        let rows = compute_line_diff(&snapshot_text, &current_text);
+        let when_str = when
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%d %H:%M:%S %z")
+            .to_string();
+        let return_to = Box::new(std::mem::replace(&mut self.modal, Modal::None));
+        self.modal = Modal::SnapshotDiff {
+            paragraph_title: title,
+            when: when_str,
+            rows,
+            scroll: 0,
+            return_to,
+        };
+        self.status = "diff: snapshot ← left · current → right · ↑↓ scroll · Esc back".into();
+    }
+
+    /// `Enter` in the browser: open the selected snapshot's paragraph
+    /// in the editor and drop straight into its F6 picker, where the
+    /// full per-paragraph history (load / restore / pin) lives.
+    pub(super) fn snapshot_browser_jump(&mut self) {
+        let parent_id = match &self.modal {
+            Modal::SnapshotBrowser {
+                entries, cursor, filter, ..
+            } => {
+                let visible = browser_visible_indices(entries, filter);
+                let Some(&abs) = visible.get(*cursor) else { return };
+                let Some((_, s)) = entries.get(abs) else { return };
+                s.parent_id
+            }
+            _ => return,
+        };
+        self.modal = Modal::None;
+        match self.open_paragraph_by_uuid(parent_id) {
+            Ok(()) => self.open_snapshot_picker(),
+            Err(e) => self.status = format!("snapshot browser: can't open paragraph — {e}"),
+        }
+    }
+
+    pub(super) fn snapshot_browser_handle_key(&mut self, key: crossterm::event::KeyEvent) {
+        use crossterm::event::KeyCode;
+        // Filter-focused mode: type into the filter, Enter/Esc leave it.
+        let filter_focused = matches!(
+            &self.modal,
+            Modal::SnapshotBrowser { filter_focused: true, .. }
+        );
+        if filter_focused {
+            if let Modal::SnapshotBrowser { filter, filter_focused, cursor, scroll, .. } =
+                &mut self.modal
+            {
+                match key.code {
+                    // Esc-while-filtering is intercepted upstream (it
+                    // unfocuses); Enter confirms the filter here.
+                    KeyCode::Enter => *filter_focused = false,
+                    KeyCode::Backspace => {
+                        filter.pop();
+                        *cursor = 0;
+                        *scroll = 0;
+                    }
+                    KeyCode::Char(c) => {
+                        filter.push(c);
+                        *cursor = 0;
+                        *scroll = 0;
+                    }
+                    _ => {}
+                }
+            }
+            return;
+        }
+        match key.code {
+            KeyCode::Char('/') => {
+                if let Modal::SnapshotBrowser { filter_focused, .. } = &mut self.modal {
+                    *filter_focused = true;
+                }
+            }
+            KeyCode::Char('V') | KeyCode::Char('v') => self.open_snapshot_browser_diff(),
+            KeyCode::Enter => self.snapshot_browser_jump(),
+            KeyCode::Up | KeyCode::Down | KeyCode::Home | KeyCode::End => {
+                if let Modal::SnapshotBrowser { entries, cursor, filter, .. } = &mut self.modal {
+                    let n = browser_visible_indices(entries, filter).len();
+                    if n == 0 {
+                        return;
+                    }
+                    match key.code {
+                        KeyCode::Up => *cursor = cursor.saturating_sub(1),
+                        KeyCode::Down => *cursor = (*cursor + 1).min(n - 1),
+                        KeyCode::Home => *cursor = 0,
+                        KeyCode::End => *cursor = n - 1,
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// 1.2.8+ — return indices into `snaps` that match the
     /// current annotation filter (case-insensitive substring
     /// against annotation text). Empty filter returns every
@@ -568,4 +733,68 @@ impl super::App {
         }
     }
 
+}
+
+/// Indices into `entries` matching the browser filter (case-
+/// insensitive substring against either the paragraph title or the
+/// snapshot annotation). Empty filter returns every index in order.
+pub(super) fn browser_visible_indices(
+    entries: &[(String, crate::store::Snapshot)],
+    filter: &str,
+) -> Vec<usize> {
+    if filter.is_empty() {
+        return (0..entries.len()).collect();
+    }
+    let needle = filter.to_lowercase();
+    entries
+        .iter()
+        .enumerate()
+        .filter(|(_, (title, s))| {
+            title.to_lowercase().contains(&needle)
+                || s.annotation.to_lowercase().contains(&needle)
+        })
+        .map(|(i, _)| i)
+        .collect()
+}
+
+#[cfg(test)]
+mod browser_tests {
+    use super::browser_visible_indices;
+    use crate::store::Snapshot;
+    use uuid::Uuid;
+
+    fn snap(annotation: &str) -> Snapshot {
+        Snapshot {
+            id: Uuid::new_v4(),
+            parent_id: Uuid::new_v4(),
+            created_at: chrono::Utc::now(),
+            word_count: 0,
+            preview: String::new(),
+            annotation: annotation.to_string(),
+        }
+    }
+
+    #[test]
+    fn empty_filter_returns_all_in_order() {
+        let entries = vec![
+            ("Chapter One".into(), snap("first draft")),
+            ("Chapter Two".into(), snap("revision")),
+        ];
+        assert_eq!(browser_visible_indices(&entries, ""), vec![0, 1]);
+    }
+
+    #[test]
+    fn filter_matches_title_or_annotation_case_insensitively() {
+        let entries = vec![
+            ("The Long Road".into(), snap("first draft")),
+            ("Opening".into(), snap("REVISION pass")),
+            ("Closing".into(), snap("typo fix")),
+        ];
+        // Title match.
+        assert_eq!(browser_visible_indices(&entries, "long"), vec![0]);
+        // Annotation match, case-insensitive.
+        assert_eq!(browser_visible_indices(&entries, "revision"), vec![1]);
+        // No match.
+        assert!(browser_visible_indices(&entries, "zzz").is_empty());
+    }
 }

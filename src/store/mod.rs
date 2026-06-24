@@ -1282,6 +1282,66 @@ impl Store {
             .map_err(|e| Error::Store(format!("snapshot_content: {e}")))
     }
 
+    /// Every snapshot in the project, paired with its parent
+    /// paragraph's title (captured in the metadata at snapshot time,
+    /// so this needs no hierarchy walk), newest first. Powers the
+    /// project-wide snapshot browser (Ctrl+F6) — the counterpart to
+    /// `list_snapshots`, which is scoped to one paragraph.
+    pub fn list_all_snapshots(&self) -> Result<Vec<(String, Snapshot)>> {
+        let raw = self
+            .inner
+            .list_metadata()
+            .map_err(|e| Error::Store(format!("list_metadata: {e}")))?;
+        let mut out: Vec<(String, Snapshot)> = raw
+            .into_iter()
+            .filter_map(|(id, meta)| {
+                let kind = meta.get("kind").and_then(|v| v.as_str())?;
+                if kind != "snapshot" {
+                    return None;
+                }
+                let parent_id = meta
+                    .get("parent_id")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| Uuid::parse_str(s).ok())?;
+                let parent_title = meta
+                    .get("parent_title")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("(untitled)")
+                    .to_string();
+                let created_at = meta
+                    .get("created_at")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                    .map(|dt| dt.with_timezone(&chrono::Utc))
+                    .unwrap_or_else(chrono::Utc::now);
+                let word_count = meta.get("word_count").and_then(|v| v.as_u64()).unwrap_or(0);
+                let preview = meta
+                    .get("preview")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let annotation = meta
+                    .get("annotation")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                Some((
+                    parent_title,
+                    Snapshot {
+                        id,
+                        parent_id,
+                        created_at,
+                        word_count,
+                        preview,
+                        annotation,
+                    },
+                ))
+            })
+            .collect();
+        out.sort_by(|a, b| b.1.created_at.cmp(&a.1.created_at));
+        Ok(out)
+    }
+
     /// Fetch the raw bytes of an Image node from bdslib. The on-disk
     /// copy under `books/<...>` is the working copy; bdslib is the
     /// source of truth (so a hand-edit on disk isn't re-ingested by

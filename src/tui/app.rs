@@ -167,6 +167,49 @@ pub fn run(project: &Path) -> Result<()> {
 
     let cfg = Config::load_layered(&layout.config_path()).map_err(anyhow::Error::from)?;
 
+    // 1.3.36 hardening — advisory single-instance lock. Acquired here,
+    // on a cooked terminal (before raw-mode), so the "already open"
+    // prompt can read a y/N from stdin. Held in `_project_lock` for
+    // the whole session; the OS releases it on exit or crash. Per the
+    // permissive principle this only *informs* — the author can always
+    // open anyway.
+    let _project_lock = match crate::project_lock::acquire(&layout.root) {
+        Ok(crate::project_lock::LockOutcome::Acquired(lock)) => Some(lock),
+        Ok(crate::project_lock::LockOutcome::Busy(info)) => {
+            use std::io::IsTerminal;
+            eprintln!(
+                "⚠ Another inkhaven session may already have this project open ({}).",
+                info.describe()
+            );
+            eprintln!(
+                "  Opening it twice at once can corrupt the project store."
+            );
+            if std::io::stdin().is_terminal() {
+                eprint!("  Open anyway? [y/N] ");
+                let _ = std::io::Write::flush(&mut std::io::stderr());
+                let mut answer = String::new();
+                let _ = std::io::stdin().read_line(&mut answer);
+                let yes = matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes");
+                if !yes {
+                    eprintln!("  Cancelled — left the existing session untouched.");
+                    return Ok(());
+                }
+                eprintln!("  Proceeding without the lock — mind concurrent edits.");
+            } else {
+                // Non-interactive launch can't be prompted. Permissive:
+                // warn loudly and proceed rather than refuse.
+                eprintln!("  (non-interactive launch — proceeding without the lock)");
+            }
+            None
+        }
+        Err(e) => {
+            // Couldn't even open the lockfile (read-only mount, etc.).
+            // Never block on infrastructure: log and carry on.
+            tracing::warn!(target: "inkhaven::lock", "project lock unavailable: {e}");
+            None
+        }
+    };
+
     // 1.2.5+: log the typst engine at startup so users can confirm
     // their HJSON setting took effect. Both engines are always
     // available — the in-process compiler ships in every 1.2.5
@@ -9722,6 +9765,7 @@ impl App {
             A::ViewProjectGoalModal => self.open_project_goal_modal(),
             A::AiStyleTransferRewrite => self.start_style_transfer_picker(),
             A::OpenSnapshotPicker => self.open_snapshot_picker(),
+            A::OpenSnapshotBrowser => self.open_snapshot_browser(),
             A::GrammarCheck => self.start_grammar_check(),
             A::CycleAiMode => self.cycle_ai_mode(),
             A::ToggleInferenceMode => self.toggle_inference_mode(),
@@ -19774,6 +19818,13 @@ impl App {
             if matches!(self.modal, Modal::TimelineView { .. }) {
                 self.timeline_capture_view_state();
             }
+            // Snapshot browser: Esc while the filter has focus just
+            // leaves the filter (stays in the browser); a second Esc
+            // closes it.
+            if let Modal::SnapshotBrowser { filter_focused: ff @ true, .. } = &mut self.modal {
+                *ff = false;
+                return Ok(false);
+            }
             self.modal = Modal::None;
             return Ok(false);
         }
@@ -19844,6 +19895,7 @@ impl App {
         let is_save_rendered_png = matches!(self.modal, Modal::SaveRenderedPng { .. });
         let is_tts_save_as_audio = matches!(self.modal, Modal::TtsSaveAsAudio { .. });
         let is_writing_streak_heatmap = matches!(self.modal, Modal::WritingStreakHeatmap { .. });
+        let is_snapshot_browser = matches!(self.modal, Modal::SnapshotBrowser { .. });
         let is_concordance = matches!(self.modal, Modal::Concordance { .. });
         let is_facts_search = matches!(self.modal, Modal::FactsSearch { .. });
         let is_sentence_rhythm = matches!(self.modal, Modal::SentenceRhythm { .. });
@@ -20430,11 +20482,21 @@ impl App {
             return Ok(false);
         }
 
+        if is_snapshot_browser {
+            self.snapshot_browser_handle_key(key);
+            return Ok(false);
+        }
+
         if is_writing_streak_heatmap {
-            // Any key closes — Esc, Enter, anything.
-            // No interactions inside; the modal is a
-            // read-only viewer.
-            self.modal = Modal::None;
+            // `e` jumps straight to the goals editor (the heatmap is
+            // a natural place to want to adjust the target). Any
+            // other key closes — the modal is otherwise a read-only
+            // viewer.
+            if matches!(key.code, KeyCode::Char('e') | KeyCode::Char('E')) {
+                self.open_goals_editor();
+            } else {
+                self.modal = Modal::None;
+            }
             return Ok(false);
         }
 
@@ -23327,12 +23389,16 @@ impl App {
     ];
 
     /// Open the in-app goals editor, seeded from the live config.
+    /// A value of 0 ("disabled") seeds as an empty buffer so the user
+    /// types the new target cleanly instead of fighting a stuck `0`
+    /// prefix; the renderer still shows `0` for an empty field.
     fn open_goals_editor(&mut self) {
         let g = &self.cfg.goals;
+        let seed_field = |n: i64| if n > 0 { n.to_string() } else { String::new() };
         let seed = vec![
-            g.daily_words.max(0).to_string(),
-            g.active_minutes_daily.max(0).to_string(),
-            g.streak_grace_per_week.max(0).to_string(),
+            seed_field(g.daily_words),
+            seed_field(g.active_minutes_daily),
+            seed_field(g.streak_grace_per_week),
         ];
         self.modal = Modal::GoalsEditor {
             values: seed.clone(),
@@ -23355,15 +23421,21 @@ impl App {
             KeyCode::Down | KeyCode::Tab => {
                 *cursor = (*cursor + 1) % n;
             }
+            // Delete handling tolerant of terminals that report the
+            // Backspace key as the DEL (0x7f) or BS (0x08) control
+            // char rather than KeyCode::Backspace.
+            KeyCode::Backspace | KeyCode::Delete => {
+                values[*cursor].pop();
+            }
+            KeyCode::Char('\u{7f}') | KeyCode::Char('\u{8}') => {
+                values[*cursor].pop();
+            }
             KeyCode::Char(c) if c.is_ascii_digit() => {
                 // Cap field width so a fat-fingered run can't grow
                 // an absurd integer; 7 digits is plenty for words.
                 if values[*cursor].len() < 7 {
                     values[*cursor].push(c);
                 }
-            }
-            KeyCode::Backspace => {
-                values[*cursor].pop();
             }
             KeyCode::Enter => {
                 self.commit_goals_edits();

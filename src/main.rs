@@ -37,6 +37,7 @@ mod replace;
 mod submission_gen;
 mod submissions;
 mod project;
+mod project_lock;
 mod scripting;
 mod scrivener;
 mod storage;

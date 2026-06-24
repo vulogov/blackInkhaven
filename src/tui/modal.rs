@@ -837,6 +837,22 @@ pub(super) enum Modal {
         snapshots: Vec<Snapshot>,
         cursor: usize,
     },
+    /// 1.3.36 — `Ctrl+F6` project-wide snapshot browser. Lists every
+    /// snapshot across all paragraphs (newest first), each paired
+    /// with its parent paragraph's title. `/` filters by annotation
+    /// or paragraph title; `V` diffs the selection against its
+    /// paragraph's current text; `Enter` opens that paragraph + its
+    /// F6 picker. The counterpart to the per-paragraph `SnapshotPicker`.
+    SnapshotBrowser {
+        /// (parent_title, snapshot), newest first.
+        entries: Vec<(String, Snapshot)>,
+        cursor: usize,
+        scroll: usize,
+        /// Annotation / title substring filter (case-insensitive).
+        filter: String,
+        /// Whether the `/` filter input has focus.
+        filter_focused: bool,
+    },
     /// 1.2.8+ — `Ctrl+V Shift+U` picker over the deleted-
     /// paragraph kill-ring. Renders each entry as title +
     /// original parent breadcrumb + first-line preview.

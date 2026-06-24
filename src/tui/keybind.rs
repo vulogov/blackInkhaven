@@ -367,6 +367,9 @@ pub enum Action {
     /// F6 in Editor — open the snapshot picker.
     #[serde(rename = "editor.snapshot_picker")]
     OpenSnapshotPicker,
+    /// Ctrl+F6 — open the project-wide snapshot browser (1.3.36).
+    #[serde(rename = "editor.snapshot_browser")]
+    OpenSnapshotBrowser,
     /// F7 in Editor — grammar check the open paragraph.
     #[serde(rename = "editor.grammar_check")]
     GrammarCheck,
@@ -930,6 +933,7 @@ impl Action {
             Action::ViewProjectGoalModal => "goal".into(),
             Action::AiStyleTransferRewrite => "style xfer".into(),
             Action::OpenSnapshotPicker => "snapshots".into(),
+            Action::OpenSnapshotBrowser => "snapshot browser".into(),
             Action::GrammarCheck => "grammar".into(),
             Action::DiagnosticsList => "diags".into(),
             Action::ExplainDiagnostic => "explain diag".into(),
@@ -1163,6 +1167,8 @@ impl Action {
                 "Style transfer rewrite (Ctrl+V y, 1.2.14+). Pops a paragraph picker scoped to the current book.  On selection, composes a prompt envelope asking the LLM to rewrite the open paragraph in the picked reference paragraph's style (sentence-length distribution, vocabulary register, rhythm, mood, narrative distance) while preserving literal meaning + named entities + plot facts.  Response wrapped in <<<REWRITE>>> / <<<END>>> markers; AI pane I apply extracts only the rewrite block.  Different from Ctrl+B Shift+M rhythm rewrite (which targets rhythm only with a prompt-defined style); this chord targets a CONCRETE EXAMPLE paragraph the author picks.".into(),
             Action::OpenSnapshotPicker =>
                 "Open the snapshot picker for the current paragraph (↑↓ navigate · Enter loads · V diff · D delete).".into(),
+            Action::OpenSnapshotBrowser =>
+                "Open the project-wide snapshot browser (Ctrl+F6, 1.3.36) — every snapshot across all paragraphs, newest first. `/` filters by paragraph title or annotation; `V` diffs the selection against its paragraph's current text; `Enter` opens that paragraph + its F6 picker.".into(),
             Action::GrammarCheck =>
                 "Grammar-check the open paragraph — runs the configured F7 prompt against the AI, applies via `g` in the AI pane.".into(),
             Action::DiagnosticsList =>
@@ -1669,6 +1675,10 @@ impl KeyBindings {
                 entry("F5", Action::CreateSnapshot, Scope::Editor),
                 // F6 — snapshot picker.
                 entry("F6", Action::OpenSnapshotPicker, Scope::Editor),
+                // Ctrl+F6 — project-wide snapshot browser (1.3.36).
+                // Any scope so it opens from the tree / search panes
+                // too, not just a focused editor.
+                entry("Ctrl+F6", Action::OpenSnapshotBrowser, Scope::Any),
                 // F7 — grammar check.
                 entry("F7", Action::GrammarCheck, Scope::Editor),
                 // F8 (1.2.6+) — typst diagnostics list modal.

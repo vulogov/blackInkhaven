@@ -3486,7 +3486,7 @@ impl super::super::App {
                 Span::raw(" 1000+"),
             ]),
             Line::from(Span::styled(
-                " Press any key to close",
+                " e edit goals · any other key closes",
                 Style::default().add_modifier(Modifier::DIM),
             )),
         ];
@@ -5746,6 +5746,114 @@ impl super::super::App {
             "  ↑↓ field · digits edit · ⌫ delete · Enter save · Esc cancel",
             dim,
         )));
+
+        f.render_widget(Paragraph::new(lines), inner);
+    }
+
+    /// 1.3.36 — the project-wide snapshot browser (Ctrl+F6). A roomy
+    /// scrollable list of every snapshot across all paragraphs, one
+    /// row each (timestamp · words · paragraph · annotation/preview),
+    /// with a `/` filter and a cursor-following window.
+    pub(in crate::tui::app) fn draw_snapshot_browser_modal(
+        &mut self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let (entries, cursor, filter, filter_focused) = match &self.modal {
+            Modal::SnapshotBrowser {
+                entries,
+                cursor,
+                filter,
+                filter_focused,
+                ..
+            } => (entries.clone(), *cursor, filter.clone(), *filter_focused),
+            _ => return,
+        };
+
+        let w = area.width.saturating_sub(6).min(110);
+        let h = area.height.saturating_sub(4).min(34);
+        let x = area.x + (area.width.saturating_sub(w)) / 2;
+        let y = area.y + (area.height.saturating_sub(h)) / 2;
+        let rect = Rect { x, y, width: w, height: h };
+
+        f.render_widget(ratatui::widgets::Clear, rect);
+        let visible = super::super::snapshot_impl::browser_visible_indices(&entries, &filter);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(format!(" Snapshots — project ({}) ", entries.len()))
+            .border_style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+            .style(Style::default().bg(self.theme.modal_bg).fg(self.theme.modal_fg));
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let dim = Style::default().add_modifier(Modifier::DIM);
+
+        // Header: filter row (+ match count) + a blank separator.
+        let filter_text = if filter.is_empty() {
+            "/ (filter by paragraph or annotation)".to_string()
+        } else {
+            format!("/ {filter}   ({} of {} match)", visible.len(), entries.len())
+        };
+        let filter_style = if filter_focused {
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        } else if filter.is_empty() {
+            dim
+        } else {
+            Style::default().fg(Color::Yellow)
+        };
+        let footer = if filter_focused {
+            " filter mode: type to narrow · ⌫ edits · Enter/Esc exit filter "
+        } else {
+            " ↑↓ move · / filter · V diff vs current · Enter open paragraph · Esc close "
+        };
+
+        // Body window: one row per visible entry, cursor-following.
+        let header_rows = 2u16;
+        let footer_rows = 2u16;
+        let body_h = inner.height.saturating_sub(header_rows + footer_rows).max(1) as usize;
+        let start = if cursor >= body_h { cursor - body_h + 1 } else { 0 };
+
+        let mut lines: Vec<Line> = Vec::with_capacity(body_h + 4);
+        lines.push(Line::from(Span::styled(filter_text, filter_style)));
+        lines.push(Line::from(""));
+        if visible.is_empty() {
+            lines.push(Line::from(Span::styled("  (nothing matches the filter)", dim)));
+        }
+        for (vis_i, &abs_i) in visible.iter().enumerate().skip(start).take(body_h) {
+            let (title, snap) = &entries[abs_i];
+            let selected = vis_i == cursor;
+            let ts = snap
+                .created_at
+                .with_timezone(&chrono::Local)
+                .format("%Y-%m-%d %H:%M");
+            let note = if !snap.annotation.trim().is_empty() {
+                format!("✎ {}", snap.annotation)
+            } else if !snap.preview.is_empty() {
+                snap.preview.clone()
+            } else {
+                "(no body)".to_string()
+            };
+            let row = format!(
+                " {ts}  {:>6}w  [{}]  {}",
+                snap.word_count,
+                truncate_to(title, 24),
+                truncate_to(&note, 40),
+            );
+            let style = if selected {
+                Style::default()
+                    .add_modifier(Modifier::REVERSED | Modifier::BOLD)
+                    .fg(Color::Cyan)
+            } else {
+                Style::default()
+            };
+            lines.push(Line::from(Span::styled(row, style)));
+        }
+        // Pad so the footer sits at the bottom edge.
+        while lines.len() < (header_rows as usize + body_h) {
+            lines.push(Line::from(""));
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(footer, dim)));
 
         f.render_widget(Paragraph::new(lines), inner);
     }
