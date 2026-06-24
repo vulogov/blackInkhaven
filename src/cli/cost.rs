@@ -122,7 +122,8 @@ pub fn render_lines(report: &CostReport) -> Vec<String> {
     out.push(String::new());
     out.push(format!("  {:<26} {:>3}", "total slow-track calls", report.total_calls()));
     out.push(String::new());
-    out.push("  timeline elaboration: per-run cap only (not a daily budget)".into());
+    out.push("  caps are per calendar day (UTC) — the tally resets at 00:00 UTC.".into());
+    out.push("  timeline elaboration: per-run cap only (not a daily budget).".into());
     out
 }
 
