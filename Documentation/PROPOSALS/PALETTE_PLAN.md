@@ -33,9 +33,16 @@ filter input; an existing `fuzzy_filter_entries` shows the substring-scoring sty
   chord, dedupes by `Action`, sorts by label), and `fuzzy_filter(&[PaletteEntry],
   query) -> Vec<usize>` (score by label/chord/description). Pure → unit-tested +
   the stability-rider **registry proptests**. **(this increment)**
-- **P1 — the `Ctrl+P` palette modal.** `Modal::CommandPalette`, `open_command_palette`,
-  the `render/modals.rs` painter, the `handle_modal_key` arm, and the top-level
-  `Ctrl+P` binding. Enter → `run_action(entry.action)`.
+- **P1 — the palette modal.** _Done._ Bound to **`Ctrl+Shift+P`** (the VS Code
+  convention) — **not** `Ctrl+P`, which is the editor paste (gated `!shift`, so no
+  collision). New `Action::OpenCommandPalette` (label/description + default top-level
+  binding) so the palette is itself rebindable + self-listing; `run_action` arm;
+  `Modal::CommandPalette { input, entries, cursor, scroll }`; `open_command_palette`
+  (collects from `keybind::read()`); `command_palette_handle_key` (arrows/page/type-
+  to-filter; Enter → `run_action(action)`; Esc closes generically); `handle_modal_key`
+  + render dispatch; `draw_command_palette_modal` painter (label · chord · description,
+  reversed cursor row). Binding-resolve test (normalization-agnostic) + the build.
+  Full suite 1779 → 1780.
 - **P2 — the `?` keybinding overlay + quick help/reference.** A pane-scoped,
   read-only chord cheat-sheet (`?` when not in a text field), built from the same
   registry. **Update the in-app quick help/reference and `Documentation/KEYBINDING.md`**

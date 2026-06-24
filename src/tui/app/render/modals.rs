@@ -2477,6 +2477,100 @@ impl super::super::App {
         );
     }
 
+    /// 1.3.33+ — the Ctrl+Shift+P command palette. Each row is
+    /// `label  chord  description`; the input box fuzzy-filters.
+    pub(in crate::tui::app) fn draw_command_palette_modal(
+        &mut self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::CommandPalette { input, entries, cursor, scroll } = &self.modal
+        else {
+            return;
+        };
+        let matches = crate::tui::palette::fuzzy_filter(entries, input.as_str());
+
+        let width = area.width.saturating_sub(8).max(72);
+        let height = area.height.saturating_sub(4).max(16);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let header = format!(" Command palette ({}/{}) ", matches.len(), entries.len());
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(header)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let input_rect = Rect { x: inner.x, y: inner.y, width: inner.width, height: 1 };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y + 1,
+            width: inner.width,
+            height: inner.height.saturating_sub(2),
+        };
+
+        f.render_widget(
+            Paragraph::new(Line::from(format!(" › {}", input.render_with_cursor('│')))),
+            input_rect,
+        );
+
+        let body_h = body_rect.height as usize;
+        let lines: Vec<Line<'_>> = matches
+            .iter()
+            .enumerate()
+            .skip(*scroll)
+            .take(body_h)
+            .filter_map(|(i, idx)| {
+                let e = entries.get(*idx)?;
+                let spans: Vec<Span> = vec![
+                    Span::raw(format!(" {:<26}", e.label)),
+                    Span::styled(
+                        format!(" {:<16}", e.chord),
+                        Style::default().fg(ratatui::style::Color::Cyan),
+                    ),
+                    Span::styled(
+                        format!(" {}", e.description),
+                        Style::default().add_modifier(Modifier::DIM),
+                    ),
+                ];
+                let mut line = Line::from(spans);
+                if i == *cursor {
+                    line = line.style(Style::default().add_modifier(Modifier::REVERSED));
+                }
+                Some(line)
+            })
+            .collect();
+        f.render_widget(Paragraph::new(lines), body_rect);
+
+        let hint = " type to filter · ↑↓ select · Enter run · Esc close ";
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                hint,
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
     /// Ctrl+B ] / `g` / Ctrl+B } — floating tag-picker pane.
     /// Each row shows `[ ] tag-name` or `[x] tag-name` (Search
     /// mode hides the brackets — selection has no meaning).
