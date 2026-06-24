@@ -605,6 +605,24 @@ impl super::App {
         Ok(())
     }
 
+    /// Save whichever editor pane currently has keyboard focus. In
+    /// split / similar mode with the right pane focused, the live doc
+    /// is `self.secondary` — the save chord runs in `handle_key`
+    /// (above the `opened ↔ secondary` swap in `handle_editor_key`),
+    /// so without this it would save the *left* pane and silently drop
+    /// the right pane's edits. Read-only pins are no-ops via
+    /// `save_current`'s own guard.
+    pub(super) fn save_focused(&mut self) -> Result<()> {
+        if self.secondary_focused && self.secondary.is_some() {
+            std::mem::swap(&mut self.opened, &mut self.secondary);
+            let r = self.save_current();
+            std::mem::swap(&mut self.opened, &mut self.secondary);
+            r
+        } else {
+            self.save_current()
+        }
+    }
+
     pub(super) fn save_current(&mut self) -> Result<()> {
         let Some(doc) = self.opened.as_mut() else {
             return Ok(());
