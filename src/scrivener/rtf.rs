@@ -211,4 +211,39 @@ mod tests {
         let out = strip_to_plain_text(rtf);
         assert!(out.contains("garbage") || out.contains("text"));
     }
+
+    use proptest::prelude::*;
+
+    proptest! {
+        /// 1.3.36 hardening — the RTF importer parses untrusted bytes
+        /// from a Scrivener `.rtf`. Arbitrary input must return
+        /// Ok|Err and never panic (no slice/UTF-8/brace-depth crash).
+        #[test]
+        fn rtf_to_typst_never_panics(bytes in proptest::collection::vec(any::<u8>(), 0..512)) {
+            let _ = rtf_to_typst(&bytes);
+        }
+
+        /// The plain-text fallback runs on the same bytes when the
+        /// structured parse bails; it must be panic-free too.
+        #[test]
+        fn strip_to_plain_text_never_panics(bytes in proptest::collection::vec(any::<u8>(), 0..512)) {
+            let _ = strip_to_plain_text(&bytes);
+        }
+
+        /// Token-salad of real RTF control words, braces, and prose —
+        /// drives the structured parser deeper than random bytes do.
+        #[test]
+        fn rtf_to_typst_never_panics_on_control_salad(
+            toks in proptest::collection::vec(
+                proptest::sample::select(vec![
+                    "{", "}", "\\rtf1", "\\ansi", "\\b", "\\i", "\\par", "\\pard",
+                    "\\u8217", "\\'92", "\\fonttbl", "\\*", " ", "word", "\n",
+                ]),
+                0..160,
+            ),
+        ) {
+            let joined = toks.concat();
+            let _ = rtf_to_typst(joined.as_bytes());
+        }
+    }
 }

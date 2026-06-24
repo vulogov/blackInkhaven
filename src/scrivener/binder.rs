@@ -790,4 +790,35 @@ character</Keywords>
         assert_eq!(only.custom_meta[0].0, "Date");
         assert_eq!(only.custom_meta[0].1, "2026-01-01");
     }
+
+    use proptest::prelude::*;
+
+    proptest! {
+        /// 1.3.36 hardening — the `.scrivx` binder parser reads
+        /// untrusted external XML. Arbitrary bytes must return Ok|Err
+        /// and never panic (no quick_xml unwrap, depth, or UTF-8
+        /// crash on a malformed package).
+        #[test]
+        fn parse_scrivx_never_panics(bytes in proptest::collection::vec(any::<u8>(), 0..512)) {
+            let _ = parse_scrivx(&bytes);
+        }
+
+        /// XML token-salad of the tags/attrs the parser keys on —
+        /// drives the element/attribute/nesting paths deeper than
+        /// random bytes do, including unbalanced and mis-nested tags.
+        #[test]
+        fn parse_scrivx_never_panics_on_xml_salad(
+            toks in proptest::collection::vec(
+                proptest::sample::select(vec![
+                    "<Binder>", "</Binder>", "<BinderItem ", ">", "</BinderItem>",
+                    "<Title>", "</Title>", "<Children>", "</Children>",
+                    "UUID=\"x\"", "Type=\"Text\"", "Type=\"Folder\"", "<MetaData>",
+                    "Chapter", " ", "\n", "<?xml version=\"1.0\"?>", "&amp;",
+                ]),
+                0..200,
+            ),
+        ) {
+            let _ = parse_scrivx(toks.concat().as_bytes());
+        }
+    }
 }
