@@ -43,13 +43,16 @@ filter input; an existing `fuzzy_filter_entries` shows the substring-scoring sty
   + render dispatch; `draw_command_palette_modal` painter (label · chord · description,
   reversed cursor row). Binding-resolve test (normalization-agnostic) + the build.
   Full suite 1779 → 1780.
-- **P1-fix** — _done._ Two follow-ups from live testing: (1) `Ctrl+Shift+P` lagged
-  (opened only on the *next* key) because `Ctrl+Shift+<letter>` terminal reporting
-  is erratic through the binding table — added an **early hardcoded intercept** (the
-  same pattern the `Ctrl+1..5` jumps use) accepting every encoding (`p`/`P` +
-  CONTROL+SHIFT, and `P`+CONTROL where case carries the Shift), distinct from
-  `Ctrl+P` paste. (2) Added a reliable **`Ctrl+V Space`** two-key alternative
-  (`view_sub`, `Scope::Any`) with no Shift+letter ambiguity. Both resolve-tested.
+- **P1-fix** — _superseded._ First tried `Ctrl+Shift+P` (top-level + a hardcoded
+  intercept). Live testing showed its terminal reporting is too erratic — on the
+  user's terminal the first press never matched (the modal opened but painted a key
+  late, swallowing the next keystroke into its filter).
+- **P1-final** — _done._ **Standardized on `Ctrl+V Space`** as the canonical palette
+  chord (`view_sub`, `Scope::Any`) — a two-key chord with no Shift+letter terminal
+  ambiguity. Removed the `Ctrl+Shift+P` top-level binding and its hardcoded
+  intercept; the description now reads "Ctrl+V Space"; the palette still self-lists
+  via the registry (now from `view_sub`). Kept the opt-in `INKHAVEN_KEYLOG` tracer
+  as general chord-debugging infra. Resolve-tested in multiple panes + the build.
 - **P2 — the `?` keybinding overlay + quick help/reference.** A pane-scoped,
   read-only chord cheat-sheet (`?` when not in a text field), built from the same
   registry. **Update the in-app quick help/reference and `Documentation/KEYBINDING.md`**

@@ -1036,7 +1036,7 @@ impl Action {
 
             // ── Global / panels ───────────────────────────────
             Action::OpenCommandPalette =>
-                "Open the command palette (Ctrl+Shift+P): fuzzy-find any command by name or chord and run it. Type to filter, ↑↓ to select, Enter to run, Esc to close.".into(),
+                "Open the command palette (Ctrl+V Space): fuzzy-find any command by name or chord and run it. Type to filter, ↑↓ to select, Enter to run, Esc to close.".into(),
             Action::OpenCredits =>
                 "Show inkhaven version, author, and bundled-component credits.".into(),
             Action::OpenBookInfo =>
@@ -1514,7 +1514,8 @@ impl KeyBindings {
             ],
             view_sub: vec![
                 // 1.3.33+ — Ctrl+V Space: the command palette. A reliable two-key
-                // alternative to Ctrl+Shift+P (no Shift+letter terminal ambiguity).
+                // chord with no Shift+letter terminal ambiguity (Ctrl+Shift+P was
+                // tried first but its reporting varies too much across terminals).
                 entry("Space", Action::OpenCommandPalette, Scope::Any),
                 // Editor / AI-prompt: 1 = buffer markdown, 2 =
                 // containing-subchapter subtree markdown.
@@ -1625,9 +1626,6 @@ impl KeyBindings {
                 entry("y", Action::AiStyleTransferRewrite, Scope::Editor),
             ],
             top_level: vec![
-                // 1.3.33+ — Ctrl+Shift+P anywhere: the command palette.
-                // Distinct from Ctrl+P (editor paste, which is gated `!shift`).
-                entry("Ctrl+Shift+p", Action::OpenCommandPalette, Scope::Any),
                 // F1 anywhere: Help-book RAG modal.
                 entry("F1", Action::HelpQuery, Scope::Any),
                 // F2: rename — pane-aware-content but bound in Tree
@@ -2276,28 +2274,24 @@ mod tests {
     }
 
     #[test]
-    fn command_palette_is_bound_top_level_and_resolves() {
+    fn command_palette_is_bound_to_ctrl_v_space() {
         let k = KeyBindings::defaults();
-        // The palette is bound at the top level, in any pane.
-        let bound = k
-            .top_level
-            .iter()
-            .find(|e| e.action == Action::OpenCommandPalette)
-            .expect("Ctrl+Shift+P is bound to the command palette");
-        // Re-synthesise the bound chord's event and confirm it resolves back —
-        // normalization-agnostic (uses whatever KeyChord the parser produced).
-        let synth = KeyEvent::new(bound.chord.code, bound.chord.modifiers);
-        assert_eq!(
-            k.resolve_top_level(&synth, Focus::Editor),
-            Some(Action::OpenCommandPalette)
-        );
-        // It carries the Shift modifier (so it never collides with Ctrl+P paste).
-        assert!(bound.chord.modifiers.contains(KeyModifiers::SHIFT));
-        // And the reliable two-key alternative: Ctrl+V Space.
+        // The palette's canonical chord is Ctrl+V Space (any pane) — no Shift+letter
+        // terminal ambiguity.
         assert_eq!(
             k.resolve_view_sub(&ev(' '), Focus::Editor),
             Some(Action::OpenCommandPalette),
             "Ctrl+V Space opens the palette"
+        );
+        assert_eq!(
+            k.resolve_view_sub(&ev(' '), Focus::Tree),
+            Some(Action::OpenCommandPalette),
+            "…in any pane"
+        );
+        // It is no longer bound at the top level (Ctrl+Shift+P was abandoned).
+        assert!(
+            !k.top_level.iter().any(|e| e.action == Action::OpenCommandPalette),
+            "no top-level palette binding remains"
         );
     }
 }
