@@ -327,8 +327,12 @@ fn socratic_llm_call(
     let effective_soft = if force { 0 } else { soft_cap };
     let (pf, verdict) = slow_preflight(system, &prompt, used, DAILY_CAP, effective_soft);
     match verdict {
+        // Informative, not a gate: warn past the daily budget and keep going.
         PreflightVerdict::DailyCapReached => {
-            return Err(Error::Config(format!("daily slow-track cap reached ({DAILY_CAP} calls)")));
+            eprintln!(
+                "{label}: past today's slow-track budget ({}/{} calls) — continuing (the cap is informative, see `inkhaven cost`).",
+                pf.calls_used, DAILY_CAP
+            );
         }
         PreflightVerdict::OverSoftCap { est_total_tokens, soft_cap } => {
             return Err(Error::Config(format!(

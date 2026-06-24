@@ -2361,6 +2361,9 @@ impl App {
         if let Err(e) = crate::pane::output::install(&self.layout.root) {
             tracing::warn!(target: "inkhaven::pane", "output install: {e:#}");
         }
+        // 1.3.34+ — point the AI-cost usage tracker at this project so every
+        // inference tallies into `inkhaven cost` / the Ctrl+B $ panel.
+        crate::ai::usage::install(&self.layout.root);
         if let Err(e) = crate::progress::install(&self.layout.root) {
             tracing::warn!(target: "inkhaven::progress", "install: {e:#}");
             return;
@@ -12678,6 +12681,7 @@ impl App {
             Some(system),
             Vec::new(),
             user_prompt.clone(),
+            "plan-analysis",
         );
         let started_at = std::time::Instant::now();
         self.inference = Some(Inference {
@@ -12755,6 +12759,7 @@ impl App {
             Some(system),
             Vec::new(),
             user_prompt.clone(),
+            "scene-scaffold",
         );
         let started_at = std::time::Instant::now();
         self.inference = Some(Inference {
@@ -12829,6 +12834,7 @@ impl App {
             Some(system),
             Vec::new(),
             user_prompt.clone(),
+            "submission",
         );
         let started_at = std::time::Instant::now();
         self.inference = Some(Inference {
@@ -19305,6 +19311,7 @@ impl App {
             Some(system_prompt),
             Vec::new(),
             user_prompt.clone(),
+            "typst-error",
         );
         self.inference = Some(Inference {
             provider: provider.clone(),
