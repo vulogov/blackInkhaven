@@ -116,7 +116,27 @@ pub fn run(report_path: &Path, yes: bool, keep: bool) -> Result<()> {
             // path.  Same outcome as the explicit
             // rel-path join in the normal case.
             None => match rescue_path.to_string_lossy().strip_suffix(".inkhaven-rescue") {
-                Some(s) => PathBuf::from(s),
+                Some(s) => {
+                    // H6 — even without a project root to resolve
+                    // against, reject any `..` in the derived target so
+                    // a crafted report can't escape the cwd (e.g. a
+                    // tarball shipping `../../etc/cron.d/x.inkhaven-rescue`
+                    // + a matching rescue file). A no-project report
+                    // normally has no rescued buffers at all, so this
+                    // path is already degenerate.
+                    let p = PathBuf::from(s);
+                    if p.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+                        eprintln!(
+                            "  [{}/{}] {}: rejected (path traversal in rescue path) — skipping",
+                            idx + 1,
+                            report.rescued_buffers.len(),
+                            b.paragraph_rel_path,
+                        );
+                        errors += 1;
+                        continue;
+                    }
+                    p
+                }
                 None => {
                     eprintln!(
                         "  [{}/{}] {}: rescue file name doesn't match the .inkhaven-rescue convention — skipping",
@@ -208,6 +228,15 @@ pub fn run(report_path: &Path, yes: bool, keep: bool) -> Result<()> {
     println!(
         "\nDone: {applied} applied, {skipped} skipped, {errors} error(s).",
     );
+
+    // Any failure leaves the report + rescue files in place so the user
+    // can retry, and exits non-zero so `recover … && rm report` can't
+    // silently discard unrecovered work on a failed run (H4).
+    if errors > 0 {
+        return Err(anyhow!(
+            "{errors} buffer(s) failed to apply — report left in place for retry"
+        ));
+    }
 
     if !keep {
         let dest_dir = recovered_directory(project_root, report_path)?;

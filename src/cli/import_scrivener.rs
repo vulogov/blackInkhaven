@@ -53,6 +53,16 @@ pub fn run(
         for err in &report.errors {
             println!("    · {err}");
         }
+        // H4 — exit non-zero so a scripted import can detect that some
+        // items failed (a locked store, bad charset, unreadable Docs).
+        // Successfully-created nodes are kept; the error tells the user
+        // to review rather than assume a clean import.
+        if !dry_run {
+            return Err(Error::Store(format!(
+                "import-scrivener: {} item(s) failed — see errors above",
+                report.errors.len()
+            )));
+        }
     }
     Ok(())
 }
