@@ -17,6 +17,7 @@ mod inner_socrates;
 pub mod io;
 mod keymap;
 mod world_timeline;
+mod event_critique;
 mod lang;
 mod pdf;
 mod review;
@@ -35,6 +36,7 @@ pub fn register_ink_stdlib(vm: &mut VM) -> Result<()> {
     io::register(vm)?;
     inner_socrates::register(vm)?;
     world_timeline::register(vm)?;
+    event_critique::register(vm)?;
     keymap::register(vm)?;
     app::register(vm)?;
     fs::register(vm)?;

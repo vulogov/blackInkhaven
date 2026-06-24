@@ -1561,9 +1561,17 @@ impl super::super::App {
                 ""
             };
             let marker = if sel { "▌" } else { " " };
+            // TIMELINE-2-INTEGRATION — a kind glyph distinguishes the two
+            // timeline-critique findings (orphan ⊘ / fuzzy overlap ⧉) without
+            // colliding with the severity icons.
+            let kind_glyph = match m.kind.as_str() {
+                crate::pane::output::kinds::TIMELINE_ORPHAN_WARNING => "⊘ ",
+                crate::pane::output::kinds::TIMELINE_FUZZY_OVERLAP_WARNING => "⧉ ",
+                _ => "",
+            };
             lines.push(Line::from(vec![
                 Span::styled(format!("{marker}{icon} "), Style::default().fg(color)),
-                Span::styled(format!("{}{timeline}{pin}", m.kind), Style::default().fg(Color::DarkGray)),
+                Span::styled(format!("{kind_glyph}{}{timeline}{pin}", m.kind), Style::default().fg(Color::DarkGray)),
             ]));
             let text_style = if sel {
                 Style::default().add_modifier(Modifier::BOLD)
@@ -1678,6 +1686,12 @@ impl super::super::App {
                 }
                 Some(s) if s == k::SOCRATIC_INQUIRY => {
                     " ↑↓ · i intent · m note · x addressed · a ask AI · d dismiss · ^B Tab"
+                }
+                Some(s)
+                    if s == k::TIMELINE_ORPHAN_WARNING
+                        || s == k::TIMELINE_FUZZY_OVERLAP_WARNING =>
+                {
+                    " ↑↓ · ⏎ jump to event · o expand · a ask AI · d dismiss · s snooze · ^B Tab"
                 }
                 _ => " ↑↓ · o expand · r remember · a ask AI · d dismiss · p pin · ^B Tab",
             };

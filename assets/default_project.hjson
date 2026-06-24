@@ -321,6 +321,32 @@
     calendar: {
       preset: "gregorian"
     }
+    // TIMELINE-2-INTEGRATION — the refactored timeline critique
+    // (y / Y / Ctrl+Y / F12 chords, `inkhaven event critique`).
+    // Two retained, timeline-internal checks emit to the Output pane;
+    // travel-time / date / pacing now live in WORLD-4/5 +
+    // INNER_SOCRATES-1. See Documentation/Tutorials/31-story-timeline.md.
+    critique: {
+      enabled: true
+      orphan: {
+        enabled: true
+        min_orphan_age_days: 0          // emit immediately
+        min_significance: "low"         // 'low' | 'moderate' | 'high'
+      }
+      fuzzy_overlap: {
+        enabled: true
+        min_suspicion: "moderate"       // 'low' | 'moderate' | 'high'
+        cluster_min_size: 3
+      }
+      elaboration: {
+        enabled: true                   // LLM elaboration when a provider exists
+        max_calls_per_run: 20
+        confirm_above_calls: 10
+      }
+      legacy_flag_deprecation: {
+        warn_on_use: true               // warn when `critique --legacy` is used
+      }
+    }
   }
 
   // Typst wrap function templates used by Book assembly (Ctrl+B A).

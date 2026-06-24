@@ -32,6 +32,10 @@ pub mod kinds {
     pub const WORLD_COMPILER_PROPOSAL: &str = "world_compiler_proposal";
     /// INNER_SOCRATES-1 — a Socratic question about the prose (Fast or Slow track).
     pub const SOCRATIC_INQUIRY: &str = "socratic_inquiry";
+    /// TIMELINE-2-INTEGRATION — an orphaned timeline event (links to nothing).
+    pub const TIMELINE_ORPHAN_WARNING: &str = "timeline_orphan_warning";
+    /// TIMELINE-2-INTEGRATION — fuzzy-precision events whose windows collide.
+    pub const TIMELINE_FUZZY_OVERLAP_WARNING: &str = "timeline_fuzzy_overlap_warning";
 }
 
 /// Visual / priority class (RFC §7.4).
