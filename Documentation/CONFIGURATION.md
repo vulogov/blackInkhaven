@@ -1831,3 +1831,84 @@ language. An uncurated language falls back to the English prompt **with a
 warning**. Each prompt is overridable through the 3-tier cascade — a `Prompts`
 book entry (`{slug}-{lang}` → `{slug}`) → `prompts.hjson` → the localized
 built-in (see [`PROMPTS.md`](PROMPTS.md)).
+
+## 1.3.32–1.3.37 — config additions
+
+The road to 1.4.0 added several user-facing knobs. All default to the
+behaviour that shipped hardcoded, so an existing `inkhaven.hjson` keeps
+working unchanged; set any of these to opt in.
+
+### `cost` (1.3.34/1.3.37) — AI-cost dashboard
+
+Surfaced by `Ctrl+B $` / `inkhaven cost`. The daily caps are **informative,
+not gates** — past a budget the slow tracks warn and continue (the permissive
+principle), so these tune the bars + warning thresholds rather than blocking
+anything.
+
+```hjson
+cost: {
+  world_daily_call_cap: 200            // world fact-check slow-track ceiling
+  inner_socrates_daily_call_cap: 150   // Inner Socrates slow-track ceiling
+  usage_retention_days: 30             // days of per-category tallies kept in
+                                       // .inkhaven/ai_usage.json before pruning
+}
+```
+
+### `goals.day_boundary` (1.3.37) — when the writing day rolls over
+
+Governs the streak, daily word/active totals, AI-usage tallies, and the
+slow-track caps so they all agree on "today". `utc` (default) resets at
+00:00 UTC; `local` resets at the writer's local midnight — so an evening
+session far from UTC isn't attributed to "tomorrow" and the streak doesn't
+flip mid-evening. (Uses the current UTC offset as a fixed shift — exact except
+across a DST transition.)
+
+```hjson
+goals: { day_boundary: local }
+```
+
+### `project_lock` (1.3.36) — single-instance advisory lock
+
+Two sessions on one project both write `metadata.db` / `.session.json`;
+interleaved writes can corrupt the store. The lock (an OS advisory `flock` on
+`<project>/.inkhaven.lock`, auto-released on crash) guards against that —
+**informing, never hard-blocking** by default.
+
+```hjson
+project_lock: {
+  enabled: true            // false disables single-instance guarding entirely
+  on_conflict: "prompt"    // when another live session holds the lock:
+                           //   "prompt" — interactive y/N (warn+proceed headless)
+                           //   "warn"   — always warn and proceed
+                           //   "refuse" — never open a second session
+}
+```
+
+### `editor` — durability & behaviour knobs (1.3.37)
+
+```hjson
+editor: {
+  crash_mirror_seconds: 2           // cadence of crash-rescue buffer mirrors
+                                    //   (lower = fewer keystrokes lost on a panic)
+  deleted_paragraph_history: 10     // kill-ring depth for Ctrl+V Shift+U undelete
+  external_change_auto_reload: true // false → warn instead of silently reloading
+                                    //   a CLEAN buffer when its file changes on disk
+  fact_check_idle_seconds: 5        // idle delay before the auto fact-check fires
+  visited_history_cap: 0            // 0 = unbounded; cap the back/forward visit
+                                    //   list (and .session.json growth)
+}
+```
+
+### `backup` — retention & explicit toggle (1.3.37)
+
+In addition to the existing `out_dir` / `max_age` / `wait_for_key_after_backup`
+/ `amber_threshold`:
+
+```hjson
+backup: {
+  auto_backup_on_exit: true   // clear toggle for the exit-hook backup (vs the
+                              //   non-obvious out_dir=""/max_age=0s side-effects)
+  keep_last: 0                // 0 = keep all (prior behaviour); otherwise the
+                              //   oldest backup zips beyond this count are pruned
+}
+```
