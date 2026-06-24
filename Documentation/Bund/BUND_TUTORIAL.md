@@ -220,6 +220,7 @@ step succeeds:
 | `hook.on_status_promoted` | `( uuid from_status to_status -- )` | 1.2.4+: paragraph status changes (`Ctrl+B R` cycle OR auto-promote on goal hit). Status strings are lowercased (`napkin`, `first`, …, `ready`, `none`). |
 | `hook.on_goal_hit` | `( today_words daily_goal -- )` | 1.2.4+: project-wide `today_words` crosses `goals.daily_words` on the current day. Doesn't re-fire while still above the line — self-resets if the user dips back below. |
 | `hook.on_streak_break` | `( prev_streak_days -- )` | 1.2.4+: writing streak transitions from positive to zero (grace exhausted). Arg is the streak length at the moment of the break. |
+| `hook.on_streak_milestone` | `( milestone_days -- )` | 1.3.35+: current streak crosses 7 / 30 / 100 / 365 days upward. Fires once per crossing (the highest milestone newly reached); reopening a project already past a milestone doesn't re-fire. Informative celebration, never blocking. |
 | `hook.on_assemble` | `( uuid slug root_typ_path files_written -- )` | 1.2.4+: successful `Ctrl+B A` Book assembly. `root_typ_path` is the absolute path the user feeds to `typst compile`. |
 | `hook.on_take` | `( uuid slug pdf_dest -- )` | 1.2.4+: PDF copied to launch cwd by `Ctrl+B O` (extra formats may or may not have succeeded; `on_take` fires once the PDF lands). |
 

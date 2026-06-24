@@ -5485,8 +5485,15 @@ impl super::super::App {
         };
         lines.push(Line::from(today_line));
         lines.push(Line::from(format!(
-            "   streak: {}d (grace {}/{} per week)",
-            snap.streak.days, snap.streak.grace_used, snap.streak.grace_per_week
+            "   streak: {}d{} (grace {}/{} per week)",
+            snap.streak.days,
+            if snap.streak.best > snap.streak.days {
+                format!(" · best {}d", snap.streak.best)
+            } else {
+                String::new()
+            },
+            snap.streak.grace_used,
+            snap.streak.grace_per_week
         )));
         lines.push(Line::from(format!(
             "   active: {} today · {} this week",
