@@ -1909,6 +1909,58 @@ impl super::super::App {
     /// pinned to the bottom of the pane — old history scrolls up off-
     /// screen, matching the natural chat-window UX. `Paragraph::scroll`
     /// handles the offset so we don't have to track per-pane state.
+    /// BOOK_RAG-1 P3 — the collapsible "Retrieved passages" transparency
+    /// section, prepended to the chat history so the author can always see
+    /// the evidence behind a Book-scope answer. Collapsed by default;
+    /// toggled with `p` in the AI pane. Empty when no retrieval is held.
+    fn book_rag_transparency_lines(&self) -> Vec<Line<'static>> {
+        let Some(passages) = self.book_rag_last_retrieval.as_ref() else {
+            return Vec::new();
+        };
+        if passages.is_empty() {
+            return Vec::new();
+        }
+        let dim = Style::default().add_modifier(Modifier::DIM);
+        let n = passages.len();
+        let mut out: Vec<Line<'static>> = Vec::new();
+        if !self.book_rag_passages_expanded {
+            out.push(Line::from(Span::styled(
+                format!("▶ Retrieved passages ({n}) · p to expand"),
+                dim,
+            )));
+        } else {
+            out.push(Line::from(Span::styled(
+                format!("▼ Retrieved passages ({n}) · p to collapse"),
+                dim,
+            )));
+            for p in passages {
+                let star = if p.is_hit { "★" } else { " " };
+                out.push(Line::from(vec![
+                    Span::styled(
+                        format!("  {:.2} {} ", p.score, star),
+                        Style::default().fg(self.theme.ai_scope_fg),
+                    ),
+                    Span::styled(format!("[{}] {}", p.id, p.breadcrumb), dim),
+                ]));
+                // First non-empty prose line, markup-stripped + truncated.
+                let opening: String = p
+                    .body
+                    .lines()
+                    .map(|l| l.trim_start_matches(['=', ' ', '#', '*', '_']).trim())
+                    .find(|l| !l.is_empty())
+                    .unwrap_or("")
+                    .chars()
+                    .take(72)
+                    .collect();
+                if !opening.is_empty() {
+                    out.push(Line::from(Span::styled(format!("      {opening}"), dim)));
+                }
+            }
+        }
+        out.push(Line::from("")); // separator before the conversation
+        out
+    }
+
     pub(in crate::tui::app) fn draw_chat_history(&self, f: &mut ratatui::Frame, area: Rect) {
         let scroll_tag = if self.chat_history_scroll > 0 {
             format!(" · ↑ {} line(s)", self.chat_history_scroll)
@@ -1937,7 +1989,22 @@ impl super::super::App {
             return;
         }
 
-        let (mut lines, turn_ranges) = self.build_chat_history_lines();
+        let (mut lines, mut turn_ranges) = self.build_chat_history_lines();
+
+        // BOOK_RAG-1 — prepend the "Retrieved passages" transparency section
+        // and shift the turn ranges so chat-selection highlighting still
+        // lands on the right lines.
+        let section = self.book_rag_transparency_lines();
+        if !section.is_empty() {
+            let k = section.len();
+            for r in turn_ranges.iter_mut() {
+                r.start += k;
+                r.end += k;
+            }
+            let mut combined = section;
+            combined.append(&mut lines);
+            lines = combined;
+        }
 
         // Chat-selection mode: paint the selected turn's lines with
         // a block bg + clamp the turn index against the live
