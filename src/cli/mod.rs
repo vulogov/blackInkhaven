@@ -20,6 +20,7 @@ pub mod search;
 pub mod doctor;
 pub mod doctor_scan;
 pub mod event;
+pub mod event_critique;
 pub mod comments;
 pub mod language;
 pub mod inner_socrates;
@@ -1169,6 +1170,33 @@ pub enum EventCommand {
     Show {
         /// Slug-path of the event paragraph.
         path: String,
+    },
+    /// TIMELINE-2-INTEGRATION — run the timeline-internal critique (orphan +
+    /// fuzzy-precision overlap). Travel-time / date / pacing concerns now live in
+    /// `realworld fact-check` and `inner-socrates check`.
+    Critique {
+        /// Restrict to one track (case-insensitive exact match).
+        #[arg(long)]
+        track: Option<String>,
+        /// Restrict to a single book (slug or title). Default: the whole project.
+        #[arg(long)]
+        book_name: Option<String>,
+        /// Use the deprecated original critique (the five-item AI audit). Prints a
+        /// deprecation notice; slated for removal in a later release.
+        #[arg(long)]
+        legacy: bool,
+        /// Show how the new infrastructure's coverage maps to the legacy critique.
+        #[arg(long = "migration-check")]
+        migration_check: bool,
+        /// Show which legacy categories moved where (and to which command).
+        #[arg(long)]
+        diff: bool,
+        /// Skip LLM elaboration of findings (pattern-only output).
+        #[arg(long = "no-elaborate")]
+        no_elaborate: bool,
+        /// Bypass the elaboration soft confirm cap.
+        #[arg(long)]
+        force: bool,
     },
 }
 

@@ -1,11 +1,16 @@
-//! Normalised payload builder for the Phase 3 AI critique
-//! chords (y / Y / Ctrl+Y inside the swim-lane view).
+//! Legacy timeline AI critique — the original (1.2.6) payload builder.
 //!
-//! The model never sees raw calendar config or
-//! `Node`-shaped objects — it sees a flat, human-readable
-//! summary one event per line + their links. Keeps the prompt
-//! token-economical and lets the model focus on inconsistency
-//! detection rather than schema interpretation.
+//! TIMELINE-2-INTEGRATION refactors the live critique into pattern-based
+//! orphan + fuzzy-overlap detection emitting to the PANE-1 Output pane (see the
+//! sibling modules). This file preserves the *original* behaviour verbatim — the
+//! flat event summary + five-item audit checklist streamed to the AI pane — for
+//! the deprecated `inkhaven event critique --legacy` escape hatch. It is a frozen
+//! artifact: not refactored, maintained only until the `--legacy` flag is removed.
+//!
+//! The model never sees raw calendar config or `Node`-shaped objects — it sees a
+//! flat, human-readable summary one event per line + their links. Keeps the prompt
+//! token-economical and lets the model focus on inconsistency detection rather
+//! than schema interpretation.
 
 use uuid::Uuid;
 
@@ -15,7 +20,7 @@ use crate::timeline::{Calendar, TimelinePoint};
 use crate::timeline::Precision;
 use crate::tui::timeline_state::TimelineEvent;
 
-/// Build the prompt body for a timeline health check.
+/// Build the prompt body for a timeline health check (legacy behaviour).
 ///
 /// `scope_crumb` is the human-readable scope path (e.g.
 /// `"Aerin Saga ▸ Chapter 4"`). `track_filter` set means

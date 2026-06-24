@@ -580,15 +580,15 @@ impl super::App {
         }
     }
 
-    /// 1.2.6+ Phase 3 — kick off the timeline health
-    /// critique. `widen_to_book` ignores the current
-    /// sub-scope and uses the whole book's event set;
-    /// `widen_to_all_tracks` ignores `track_highlight`.
-    pub(super) fn timeline_start_health_critique(
+    /// Collect the events + track filter + scope crumb for a critique run from the
+    /// open swim-lane view. `widen_to_book` sidesteps the sub-scope filter (whole
+    /// book / project); `widen_to_all_tracks` ignores the highlighted track.
+    /// Returns `None` (with a status set) when there's nothing to critique.
+    fn timeline_critique_scope(
         &mut self,
         widen_to_book: bool,
         widen_to_all_tracks: bool,
-    ) {
+    ) -> Option<(Vec<TimelineEvent>, Option<String>, String)> {
         let (book_id, project, scope_id, track_highlight, scope_events) =
             match &self.modal {
                 Modal::TimelineView { state } => (
@@ -598,20 +598,16 @@ impl super::App {
                     state.track_highlight.clone(),
                     state.events.clone(),
                 ),
-                _ => return,
+                _ => return None,
             };
-        // Build the event set for the critique. When
-        // widen_to_book is true we sidestep the scope filter
-        // and grab everything in the book (or project).
         let critique_events: Vec<TimelineEvent> = if widen_to_book {
             self.collect_book_events(book_id, project)
         } else {
             scope_events
         };
         if critique_events.is_empty() {
-            self.status =
-                "timeline critique: no events in this scope".into();
-            return;
+            self.status = "timeline critique: no events in this scope".into();
+            return None;
         }
         let track_filter: Option<String> = if widen_to_all_tracks {
             None
@@ -641,6 +637,146 @@ impl super::App {
                 descent: None,
             };
             self.timeline_scope_crumb(&snapshot)
+        };
+        Some((critique_events, track_filter, crumb))
+    }
+
+    /// TIMELINE-2-INTEGRATION — the refactored timeline critique behind the
+    /// `y` / `Y` / `Ctrl+Y` / F12 chords. Runs the two retained, timeline-internal
+    /// checks (orphan + fuzzy-precision overlap) over the scope and emits structured
+    /// findings to the **Output pane** — the travel-time / date / pacing items the
+    /// old critique covered now live in WORLD-4/5 and INNER_SOCRATES-1. The original
+    /// AI-pane behaviour survives in `timeline_run_legacy_critique`
+    /// (`inkhaven event critique --legacy`).
+    pub(super) fn timeline_start_health_critique(
+        &mut self,
+        widen_to_book: bool,
+        widen_to_all_tracks: bool,
+    ) {
+        let crit_cfg = self.cfg.timeline.critique.clone();
+        if !crit_cfg.enabled {
+            self.status = "timeline critique is disabled (timeline.critique.enabled)".into();
+            return;
+        }
+        let Some((critique_events, track_filter, _crumb)) =
+            self.timeline_critique_scope(widen_to_book, widen_to_all_tracks)
+        else {
+            return;
+        };
+        let calendar = crate::timeline::Calendar::from_config(
+            self.cfg.timeline.calendar.clone(),
+        );
+        let default_track = self.cfg.timeline.default_track.clone();
+
+        // Project the view's events into the detectors' calendar/Node-free input,
+        // applying the track filter. No creation timestamp is carried by the data
+        // model, so orphan age is unknown (→ treated as Recent).
+        use crate::timeline::critique;
+        let events: Vec<critique::CritiqueEvent> = critique_events
+            .iter()
+            .filter(|e| match &track_filter {
+                Some(t) => e.track.as_deref().unwrap_or(&default_track).eq_ignore_ascii_case(t),
+                None => true,
+            })
+            .map(|e| critique::CritiqueEvent {
+                id: e.id,
+                title: e.title.clone(),
+                start_ticks: e.start_ticks,
+                end_ticks: e.end_ticks,
+                precision: e.precision,
+                track: e.track.clone().unwrap_or_else(|| default_track.clone()),
+                is_orphan: e.is_orphan,
+                linked_paragraph_count: e.linked_paragraphs.len(),
+                characters: e.characters.clone(),
+                places: e.places.clone(),
+                age_days: None,
+            })
+            .collect();
+
+        let fuzz = critique::fuzz_windows(&calendar);
+        // Honour the per-category enable switches + thresholds. The chord path is
+        // instant/pattern-only — LLM elaboration is a CLI concern (it blocks).
+        let mut report = critique::run(
+            &events,
+            &fuzz,
+            crit_cfg.min_significance(),
+            crit_cfg.min_suspicion(),
+            crit_cfg.fuzzy_overlap.cluster_min_size.max(2),
+            critique::DEFAULT_STALENESS_DAYS,
+        );
+        if !crit_cfg.orphan.enabled {
+            report.orphans.clear();
+        }
+        if !crit_cfg.fuzzy_overlap.enabled {
+            report.overlaps.clear();
+        }
+
+        if report.is_empty() {
+            self.status = "timeline critique: no orphan or overlap issues found".into();
+            return;
+        }
+
+        // Emit each finding to the Output pane, formatting dates + entity names
+        // (the detectors are name-free; resolution lives here). The finding text is
+        // localized to the project's working language.
+        let lang = critique::lang::lang_from_name(&self.active_prompt_language());
+        for f in &report.orphans {
+            let date = calendar.format(
+                crate::timeline::TimelinePoint::from_ticks(f.start_ticks),
+                f.precision,
+            );
+            critique::pane::emit_orphan(f, &date, None, lang);
+        }
+        for f in &report.overlaps {
+            let window = calendar.format(
+                crate::timeline::TimelinePoint::from_ticks(f.overlap_window.0),
+                crate::timeline::Precision::Season,
+            );
+            let char_names: Vec<String> = f
+                .shared_characters
+                .iter()
+                .filter_map(|id| self.hierarchy.get(*id).map(|n| n.title.clone()))
+                .collect();
+            let place_names: Vec<String> = f
+                .shared_places
+                .iter()
+                .filter_map(|id| self.hierarchy.get(*id).map(|n| n.title.clone()))
+                .collect();
+            critique::pane::emit_overlap(f, &window, &char_names, &place_names, None, lang);
+        }
+
+        let total = report.total();
+        // Surface the Output pane (it shares Focus::Ai, disambiguated by right_pane;
+        // change_focus forces Ai, so flip to Output after).
+        self.output_selected = 0;
+        self.modal = Modal::None;
+        self.change_focus(Focus::Ai);
+        self.right_pane = crate::tui::app::RightPane::Output;
+        let scope_label = if widen_to_book {
+            "book"
+        } else if widen_to_all_tracks {
+            "scope · all tracks"
+        } else {
+            "scope · current track"
+        };
+        self.status = format!(
+            "timeline critique ({scope_label}) · {total} finding(s) → Output (^B Tab)"
+        );
+    }
+
+    /// The original (1.2.6) AI-pane streaming critique, preserved verbatim for the
+    /// deprecated `inkhaven event critique --legacy` flag (wired in P3). Not reached
+    /// from the chords any more.
+    #[allow(dead_code)]
+    pub(super) fn timeline_run_legacy_critique(
+        &mut self,
+        widen_to_book: bool,
+        widen_to_all_tracks: bool,
+    ) {
+        let Some((critique_events, track_filter, crumb)) =
+            self.timeline_critique_scope(widen_to_book, widen_to_all_tracks)
+        else {
+            return;
         };
         let calendar = crate::timeline::Calendar::from_config(
             self.cfg.timeline.calendar.clone(),
