@@ -7,8 +7,7 @@
 
 use std::collections::HashSet;
 
-use super::focus::Focus;
-use super::keybind::{Action, BindingEntry, KeyBindings, Scope};
+use super::keybind::{Action, BindingEntry, KeyBindings};
 
 /// One selectable command in the palette.
 #[derive(Debug, Clone)]
@@ -20,14 +19,6 @@ pub struct PaletteEntry {
     pub description: String,
     /// The rendered chord, prefixed by its layer (e.g. `"Ctrl+B W"`, `"F2"`).
     pub chord: String,
-    pub scope: Scope,
-}
-
-impl PaletteEntry {
-    /// Whether this command applies in `focus` (for optional pane filtering).
-    pub fn applies_in(&self, focus: Focus) -> bool {
-        self.scope.matches(focus)
-    }
 }
 
 fn push_table(
@@ -59,7 +50,6 @@ fn push_table(
             label,
             description: e.action.description(),
             chord,
-            scope: e.scope,
         });
     }
 }
