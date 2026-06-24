@@ -31,6 +31,7 @@ mod inference;
 pub(crate) mod input;
 pub(crate) mod keybind;
 pub(crate) mod keymap;
+pub(crate) mod palette;
 mod lexicon;
 mod lexicon_build;
 mod markdown;
