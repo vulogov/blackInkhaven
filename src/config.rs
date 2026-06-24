@@ -3015,7 +3015,33 @@ impl Default for HierarchyConfig {
 impl Config {
     pub fn load(path: &Path) -> crate::error::Result<Self> {
         let raw = std::fs::read_to_string(path).map_err(crate::error::Error::Io)?;
-        serde_hjson::from_str(&raw).map_err(|e| crate::error::Error::Config(e.to_string()))
+        let mut cfg: Self = serde_hjson::from_str(&raw)
+            .map_err(|e| crate::error::Error::Config(e.to_string()))?;
+        cfg.harden_security_floor();
+        Ok(cfg)
+    }
+
+    /// M5 — re-assert the shipped security floor after config load /
+    /// merge. Setting `shell.blocked_externals` in a project or global
+    /// overlay REPLACES the list wholesale (deep-merge merges objects,
+    /// not arrays), so without this an overlay that means "also block
+    /// X" silently drops every shipped block (vim/ssh/sudo/…) that
+    /// guards the embedded shell against alt-screen corruption and
+    /// privilege escalation. Union the defaults back in: the user can
+    /// still ADD blocks, but can't accidentally wipe the floor. This is
+    /// the security carve-out to the otherwise-permissive config.
+    fn harden_security_floor(&mut self) {
+        let have: std::collections::HashSet<&str> = self
+            .shell
+            .blocked_externals
+            .iter()
+            .map(|s| s.as_str())
+            .collect();
+        let missing: Vec<String> = default_blocked_externals()
+            .into_iter()
+            .filter(|d| !have.contains(d.as_str()))
+            .collect();
+        self.shell.blocked_externals.extend(missing);
     }
 
     /// 1.2.20+ — load the project config, then layer any
@@ -3075,8 +3101,10 @@ impl Config {
             }
         }
 
-        serde_json::from_value(merged)
-            .map_err(|e| crate::error::Error::Config(e.to_string()))
+        let mut cfg: Self = serde_json::from_value(merged)
+            .map_err(|e| crate::error::Error::Config(e.to_string()))?;
+        cfg.harden_security_floor();
+        Ok(cfg)
     }
 
     #[allow(dead_code)]
@@ -3641,6 +3669,23 @@ mod layering_tests {
         assert_eq!(base["theme"]["modal_fg"], "#bbb");
         // …unrelated subtrees untouched.
         assert_eq!(base["editor"]["reading_wpm"], 200);
+    }
+
+    #[test]
+    fn security_floor_survives_a_block_list_override() {
+        // M5 — a project config that sets `shell.blocked_externals` to
+        // add one tool must NOT drop the shipped security blocks.
+        let tmp = tempfile::tempdir().unwrap();
+        let proj = tmp.path().join("inkhaven.hjson");
+        write(&proj, "{ shell: { blocked_externals: [\"mytool\"] } }");
+        let cfg = Config::load_layered_from(&proj, None).unwrap();
+        let blocked = &cfg.shell.blocked_externals;
+        // The user's addition is present…
+        assert!(blocked.iter().any(|b| b == "mytool"));
+        // …and the high-risk shipped blocks were NOT wiped.
+        for must in ["sudo", "ssh", "vim", "less", "passwd"] {
+            assert!(blocked.iter().any(|b| b == must), "floor lost `{must}`");
+        }
     }
 
     #[test]

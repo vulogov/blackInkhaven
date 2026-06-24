@@ -631,12 +631,15 @@ impl Calendar {
             + ticks_per_hour.saturating_mul(h0);
 
         if top_value > 0 {
-            Ok(top_ticks.saturating_mul(top_value - 1) + within)
+            // M10 — saturating_add: a large year × a multi-unit calendar
+            // (big `ticks_per`) could otherwise overflow the plain `+`
+            // (debug panic / release wrap to a wrong tick).
+            Ok(top_ticks.saturating_mul(top_value - 1).saturating_add(within))
         } else {
             // Negative top: ticks fall in
             // [-top_ticks*|n|, -top_ticks*(|n|-1) )
             let base = -(top_ticks.saturating_mul(top_value.abs()));
-            Ok(base + within)
+            Ok(base.saturating_add(within))
         }
     }
 }
