@@ -275,14 +275,31 @@ pub fn compute_streak(
     }
     let writing: std::collections::HashSet<i64> =
         writing_days_desc.iter().copied().collect();
+    let (days, grace_used) = streak_len_at(&writing, today, grace_per_week);
+    StreakStatus {
+        days,
+        grace_used: grace_used.max(0),
+        grace_per_week,
+        best: 0,
+    }
+}
+
+/// Core streak scan: trailing run of writing-days ending at `today`,
+/// allowing `grace_per_week` skips inside the rolling 7-day window.
+/// Returns `(days, grace_used_in_window)`. Takes a prebuilt set so
+/// callers that probe many endpoints don't rebuild it each time (M1).
+fn streak_len_at(
+    writing: &std::collections::HashSet<i64>,
+    today: i64,
+    grace_per_week: i64,
+) -> (i64, i64) {
     let mut days: i64 = 0;
     let mut grace_used_window: i64 = 0;
     let mut window: std::collections::VecDeque<bool> =
         std::collections::VecDeque::with_capacity(7); // true = skipped
     let mut d = today;
     loop {
-        let wrote = writing.contains(&d);
-        let skipped = !wrote;
+        let skipped = !writing.contains(&d);
         // Slide the rolling 7-day window forward.
         if window.len() == 7 {
             if let Some(old) = window.pop_front() {
@@ -305,25 +322,28 @@ pub fn compute_streak(
             break;
         }
     }
-    StreakStatus {
-        days,
-        grace_used: grace_used_window.max(0),
-        grace_per_week,
-        best: 0,
-    }
+    (days, grace_used_window)
 }
 
 /// Longest streak ever, over the full writing-day history, with the
 /// same grace rule as `compute_streak`. A streak ending on a
 /// non-writing day is never longer than one ending on the previous
-/// writing day, so it suffices to take the max of the streaks
-/// ending at each writing-day. The candidate set is bounded (one
-/// entry per writing-day) and `compute_streak` self-caps its scan,
-/// so this stays cheap even for years of daily writing.
+/// writing day, so it suffices to take the max of the streaks ending
+/// at each writing-day.
+///
+/// M1 — builds the writing-day set ONCE and reuses it across every
+/// candidate endpoint. The previous version rebuilt a full HashSet per
+/// candidate (O(D²) allocation churn), which stalled the progress modal
+/// for years-old daily-writing projects.
 pub fn longest_streak(writing_days_desc: &[i64], grace_per_week: i64) -> i64 {
+    if writing_days_desc.is_empty() {
+        return 0;
+    }
+    let writing: std::collections::HashSet<i64> =
+        writing_days_desc.iter().copied().collect();
     writing_days_desc
         .iter()
-        .map(|&d| compute_streak(writing_days_desc, d, grace_per_week).days)
+        .map(|&d| streak_len_at(&writing, d, grace_per_week).0)
         .max()
         .unwrap_or(0)
 }
