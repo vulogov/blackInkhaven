@@ -284,6 +284,22 @@ pub(super) enum Modal {
     ParagraphTarget {
         input: TextInput,
     },
+    /// 1.3.35 — in-app editor for the project-wide writing goals
+    /// (`goals.daily_words` / `goals.active_minutes_daily` /
+    /// `goals.streak_grace_per_week`). Opened with `e` from the
+    /// Ctrl+V g progress modal. Commit writes only the changed keys
+    /// back into `inkhaven.hjson` through the comment-preserving
+    /// surgical-splice pipeline (versioned backup + atomic write),
+    /// so hand-written comments and unrelated stanzas survive.
+    GoalsEditor {
+        /// Editable digit buffers, one per field, in field order
+        /// (see `GOALS_EDITOR_FIELDS` in app.rs).
+        values: Vec<String>,
+        /// Values as loaded, so commit writes only what changed.
+        original: Vec<String>,
+        /// Selected field index.
+        cursor: usize,
+    },
     /// Ctrl+V 1/2 save-as modal (1.2.4+). Pre-filled with the
     /// default markdown destination — Enter writes; Esc cancels.
     /// `body` is the markdown bytes computed before the modal

@@ -21,6 +21,7 @@ pub mod doctor;
 pub mod doctor_scan;
 pub mod check;
 pub mod cost;
+pub mod goals;
 pub mod event;
 pub mod event_critique;
 pub mod comments;
@@ -949,6 +950,11 @@ pub enum Command {
     /// each capped subsystem (world slow track, Inner Socrates slow track) vs their
     /// daily caps.
     Cost,
+    /// Road to 1.4.0 — the writing-goals report: project + per-book word totals,
+    /// today vs the daily goal, current streak (with grace), per-book pace +
+    /// deadline, weekly status promotions, and active time. The terminal
+    /// counterpart to the `Ctrl+V g` progress modal. Read-only.
+    Goals,
     /// WORLD-4 — fact-check prose against the simulated world (fast track):
     /// flag implausible world-assertions (travel time, …), respecting the
     /// `magic:` ledger's declared exceptions.
@@ -4317,6 +4323,7 @@ impl Cli {
                 .map_err(Into::into)
             }
             Command::Cost => cost::run(&project).map_err(Into::into),
+            Command::Goals => goals::run(&project).map_err(Into::into),
             Command::FactCheck { text, paragraph, slow, max_cost, force, timeline_aware, timeline_only } => {
                 realworld::fact_check(&project, text, paragraph, slow, max_cost, force, &timeline_aware, timeline_only)
                     .map_err(Into::into)

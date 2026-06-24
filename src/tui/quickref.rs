@@ -105,6 +105,7 @@ fn global_entries() -> Vec<Entry> {
         entry("Ctrl+V Space", "Command palette — fuzzy-find & run any command"),
         entry("Ctrl+B Shift+C", "Unified review pass — all fast checkers → Output (tree badges show counts)"),
         entry("Ctrl+B $", "AI cost dashboard — today's LLM calls vs daily caps"),
+        entry("Ctrl+V g  ·  e", "Writing progress — today/streak/best/pace; press e to edit goals → inkhaven.hjson"),
         entry("Ctrl+B H  ·  ? (tree)", "This quick reference"),
         entry("F1", "Help-manual question (RAG over the Help book)"),
         entry("F7", "Grammar check the open paragraph (→ AI pane)"),
