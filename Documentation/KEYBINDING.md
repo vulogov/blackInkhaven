@@ -488,6 +488,7 @@ Edit them and Enter to re-run.
 | `F4` | Toggle **split-edit** mode — see §3.9. |
 | `F5` | Save a versioned **snapshot** of the open paragraph's current body (stored as a bdslib document with `kind:"snapshot"` and a `parent_id` back-reference; doesn't appear in vector search). |
 | `F6` | Open the **snapshot picker** overlay listing every snapshot for the open paragraph, newest first. `↑↓` navigates, `Enter` loads the selected snapshot (1.2.4: takes a **pre-restore safety snapshot** of the live buffer first), `V` opens a **side-by-side diff** of the snapshot vs current (1.2.4 — Esc returns to picker), `D` / `Del` removes the snapshot, `Esc` cancels. |
+| `Ctrl+F6` | (1.3.36) Open the **project-wide snapshot browser** — every snapshot across *all* paragraphs, newest first, one row each (timestamp · words · paragraph · annotation). `↑↓` navigates, `/` filters by paragraph title or annotation (Enter/Esc leaves the filter; a second Esc closes), `V` diffs the selection against its paragraph's current text (reuses the same diff modal — Esc returns to the browser), `Enter` opens that paragraph and drops into its `F6` picker, `Esc` closes. Available from any pane. |
 
 Snapshots are independent documents — they survive paragraph saves and aren't
 deleted when their parent is deleted, so they can act as a recovery hatch.
