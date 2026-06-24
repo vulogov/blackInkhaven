@@ -155,6 +155,12 @@ cancels with a status hint telling you which pane's table it consulted.
 | `C` / `c`  | **Clear** the current inference (cancel streaming or discard a finished result). |
 | `H` / `h`  | Open the pane-aware **Quick reference** overlay.    |
 
+**Any pane** — these meta chords work from every pane (`Scope::Any`):
+
+| Second key | Action                                                                 |
+| ---------- | ---------------------------------------------------------------------- |
+| `Shift+C`  | (1.3.34) **Unified review pass** — run every fast, deterministic checker at once: the world fact-checker + Inner Socrates over the **open paragraph**, plus the timeline critique over the **project**. Findings emit to the **Output pane** (filter them with `f`/`S`/`t`); the tree shows a per-node report-card badge (`⊗`/`⚠`/`●` + count). Instant and LLM-free. The CLI equivalent is `inkhaven check` (`--paragraph` / `--book-name` / `--no-fact` / `--no-socrates` / `--no-timeline`). |
+
 The Tree pane's plain-letter shortcuts (`B`, `C`, `V`, `A`, `S`, `+`, `P`,
 `D`, `-`) still work directly without the meta prefix when Tree has focus —
 see §2.2. To run a tree action from the Editor, switch focus first
