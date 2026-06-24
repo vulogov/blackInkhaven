@@ -2067,6 +2067,9 @@ pub(crate) struct App {
     /// BOOK_RAG-1 — the valid citation ids for the in-flight Book-scope
     /// response; consumed when the response finalises to flag invented cites.
     pending_book_rag_cited: Option<std::collections::HashSet<String>>,
+    /// BOOK_RAG-1 — whether the "Retrieved passages" transparency section is
+    /// expanded in the chat pane. Collapsed by default; toggled with `p`.
+    book_rag_passages_expanded: bool,
 
     /// How aggressively the model may draw on its own knowledge. Toggled
     /// globally by F10. Help inferences pin this to `Local` regardless of
@@ -2402,6 +2405,7 @@ impl App {
             ai_mode: AiMode::None,
             book_rag_last_retrieval: None,
             pending_book_rag_cited: None,
+            book_rag_passages_expanded: false,
             inference_mode: InferenceMode::Full,
             pending_import: None,
             pending_assembly: None,
@@ -4739,6 +4743,19 @@ impl App {
         // bounce in handle_input_key.
         if self.focus == Focus::Ai && matches!(key.code, KeyCode::Esc) {
             self.change_focus(Focus::AiPrompt);
+            return Ok(false);
+        }
+        // BOOK_RAG-1 — `p` toggles the "Retrieved passages" transparency
+        // section (the evidence behind a Book-scope answer).
+        if self.focus == Focus::Ai
+            && matches!(key.code, KeyCode::Char('p') | KeyCode::Char('P'))
+        {
+            self.book_rag_passages_expanded = !self.book_rag_passages_expanded;
+            self.status = if self.book_rag_passages_expanded {
+                "retrieved passages: expanded".into()
+            } else {
+                "retrieved passages: collapsed".into()
+            };
             return Ok(false);
         }
         // When the AI pane has a completed inference and is focused, single-

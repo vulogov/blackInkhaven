@@ -23,9 +23,8 @@ pub struct RetrievedPassage {
     /// The paragraph's prose (`.typ` body).
     pub body: String,
     /// Vecstore similarity score (0..1). Expansion paragraphs carry the
-    /// score of the hit that pulled them in. Surfaced by the P3 transparency
+    /// score of the hit that pulled them in. Surfaced by the transparency
     /// section.
-    #[allow(dead_code)] // read by P3 "Retrieved passages" UI
     pub score: f64,
     /// True for a direct semantic hit; false for a context-expansion
     /// neighbour pulled in around a hit.
