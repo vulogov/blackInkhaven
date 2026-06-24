@@ -21,47 +21,47 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.3.33 — Command palette + a filterable Output pane
+## Latest release · 1.3.34 — The review pass, and where the money goes
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.3.33.md`](Documentation/RELEASE_NOTES/1.3.33.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.3.34.md`](Documentation/RELEASE_NOTES/1.3.34.md)
 · Roadmap: [`Documentation/PROPOSALS/ROADMAP-1.4.0.md`](Documentation/PROPOSALS/ROADMAP-1.4.0.md)
-· Plans: [`PALETTE_PLAN.md`](Documentation/PROPOSALS/PALETTE_PLAN.md) · [`OUTPUT_FILTER_PLAN.md`](Documentation/PROPOSALS/OUTPUT_FILTER_PLAN.md)
+· Plans: [`CHECK_PLAN.md`](Documentation/PROPOSALS/CHECK_PLAN.md) · [`COST_PLAN.md`](Documentation/PROPOSALS/COST_PLAN.md)
 
-Two road-to-**1.4.0** quality-of-life features, both about finding things fast.
+Two road-to-**1.4.0** consolidation features.
 
-### The command palette
+### The unified review pass
 
-`Ctrl+B`'s chord tree has grown large. **`Ctrl+V Space`** opens a fuzzy finder over
-**every** command — type to filter by name / chord / description, `↑↓` select,
-`Enter` run, `Esc` close.
+**`Ctrl+B Shift+C`** (or `inkhaven check`) runs *every* fast, deterministic checker
+at once — the world fact-checker + Inner Socrates over the **open paragraph**, plus
+the timeline critique over the **project** — into the **Output pane** (where
+1.3.33's `f`/`S`/`t` filtering slices the combined findings), with a
+`fact N · socrates N · timeline N` summary. Instant and LLM-free.
 
-- A projection of the live keybinding registry, so it reflects your actual bindings
-  (HJSON / `ink.key.*` overrides included) and **self-lists**.
-- Bound to `Ctrl+V Space` — a two-key chord with no `Ctrl+Shift+<letter>` terminal
-  ambiguity (`Ctrl+P` stays editor-paste).
-- Surfaced in the Quick reference (`Ctrl+B H`), which also gains `?` from the Tree
-  pane.
+The tree shows you **where** to look: each node carries a **report-card badge**
+(`⊗`/`⚠`/`●` + count) aggregated up from the source paragraphs, colored by the worst
+severity. The count drops as you dismiss findings.
 
-### A filterable Output pane
+### The AI cost dashboard
 
-The Output pane gathers findings from the world fact-checker, Inner Socrates, the
-timeline critique, translation, the lexicon, Bund, and more. Narrow it — the title
-shows `shown/total · <filter>`, and the filter **persists** across restarts:
+**`Ctrl+B $`** (or `inkhaven cost`) opens one view of today's LLM usage:
 
-- **`f`** — by **source** (fact-check / socrates / timeline-critique / world /
-  translation / lexicon / variety / ai / bund / other).
-- **`S`** — by **minimum severity** (also hides transient progress ticks).
-- **`t`** — **this paragraph only**.
-- **`c`** — clear.
+- **Daily budgets** (the cost-capped slow tracks) with a usage bar.
+- **Other AI calls today, by category** — chat, grammar, explain, critique,
+  continuation, translation, … Every inference is recorded at the one chokepoint it
+  flows through, so it's the *whole* picture, not just the capped tracks.
+- Today's total. Counts are per UTC day (reset 00:00 UTC); extensible to new
+  analytical threads.
 
-Also documents the Output pane's keys for the first time (KEYBINDING §4.1).
+**Cost control informs; it doesn't gate.** Per Inkhaven's design principle — a
+permissive individual tool, restricting only for security — past a daily budget the
+slow tracks **warn and continue**; the author decides.
 
 ### Dependencies & compatibility
 
 **No external application or binary dependencies; no new runtime crates.** Both
-features are read-side views over existing infrastructure — the keybinding registry
-and the Output message store are unchanged. Legacy `.session.json` files load cleanly
-with filtering off. Tests 1771 → 1795.
+features are read-side views/orchestration over existing checkers and stores. The
+one behavioural change is making the previously-blocking daily slow-track cap a
+warning. Tests 1795 → 1804.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
