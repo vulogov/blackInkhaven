@@ -6,8 +6,6 @@
 //! `--legacy` flag preserves the original five-item AI audit (deprecated);
 //! `--migration-check` / `--diff` show where the removed categories now live.
 
-use std::path::Path;
-
 use anyhow::{anyhow, Result};
 
 use crate::config::Config;
@@ -28,7 +26,6 @@ const MIGRATION_MAP: &[(&str, &str, &str)] = &[
 
 #[allow(clippy::too_many_arguments)]
 pub fn run(
-    project: &Path,
     cfg: &Config,
     store: &Store,
     calendar: &Calendar,
@@ -56,7 +53,7 @@ pub fn run(
     }
 
     if legacy {
-        return run_legacy(project, cfg, &hierarchy, calendar, book_filter_id, track);
+        return run_legacy(cfg, &hierarchy, calendar, book_filter_id, track);
     }
 
     if !cfg.timeline.critique.enabled {
@@ -260,7 +257,6 @@ fn node_in_book(hierarchy: &Hierarchy, node: &Node, book_id: uuid::Uuid) -> bool
 /// The deprecated original critique: build the legacy five-item AI payload and
 /// stream a synchronous completion to stdout.
 fn run_legacy(
-    project: &Path,
     cfg: &Config,
     hierarchy: &Hierarchy,
     calendar: &Calendar,

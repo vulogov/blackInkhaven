@@ -110,6 +110,9 @@ pub enum Action {
     OpenQuickref,
 
     // ── Global meta ───────────────────────────────────────────
+    /// 1.3.33+ — the Ctrl+P command palette: fuzzy-find and run any command.
+    #[serde(rename = "global.command_palette")]
+    OpenCommandPalette,
     #[serde(rename = "global.open_credits")]
     OpenCredits,
     #[serde(rename = "global.open_book_info")]
@@ -859,6 +862,7 @@ impl Action {
             Action::LookupArtefacts => "artefacts".into(),
             Action::OpenQuickref => "help".into(),
 
+            Action::OpenCommandPalette => "command palette".into(),
             Action::OpenCredits => "credits".into(),
             Action::OpenBookInfo => "info".into(),
             Action::OpenImpositionPreview => "impose".into(),
@@ -1031,6 +1035,8 @@ impl Action {
                 "Open this Quick reference panel (live keymap + static cheatsheet).".into(),
 
             // ── Global / panels ───────────────────────────────
+            Action::OpenCommandPalette =>
+                "Open the command palette (Ctrl+V Space): fuzzy-find any command by name or chord and run it. Type to filter, ↑↓ to select, Enter to run, Esc to close.".into(),
             Action::OpenCredits =>
                 "Show inkhaven version, author, and bundled-component credits.".into(),
             Action::OpenBookInfo =>
@@ -1507,6 +1513,10 @@ impl KeyBindings {
                 entry("h", Action::BundShellSelection, Scope::Any),
             ],
             view_sub: vec![
+                // 1.3.33+ — Ctrl+V Space: the command palette. A reliable two-key
+                // chord with no Shift+letter terminal ambiguity (Ctrl+Shift+P was
+                // tried first but its reporting varies too much across terminals).
+                entry("Space", Action::OpenCommandPalette, Scope::Any),
                 // Editor / AI-prompt: 1 = buffer markdown, 2 =
                 // containing-subchapter subtree markdown.
                 entry("1", Action::ViewExportMarkdownBuffer, Scope::Editor),
@@ -2261,5 +2271,52 @@ mod tests {
     fn unknown_chord_is_none() {
         let k = KeyBindings::defaults();
         assert_eq!(k.resolve_meta_sub(&ev('z'), Focus::Editor), None);
+    }
+
+    #[test]
+    fn every_labeled_binding_has_a_description() {
+        // The command palette and the quick reference render `label` + `description`
+        // for every bound command — a labeled-but-undescribed action would show a
+        // blank help line. Guard the registry against that.
+        let k = KeyBindings::defaults();
+        for table in [&k.top_level, &k.meta_sub, &k.bund_sub, &k.view_sub] {
+            for be in table {
+                if matches!(be.action, Action::None) {
+                    continue;
+                }
+                let label = be.action.label();
+                if label.is_empty() {
+                    continue;
+                }
+                assert!(
+                    !be.action.description().trim().is_empty(),
+                    "action {:?} is labeled {:?} but has an empty description",
+                    be.action,
+                    label
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn command_palette_is_bound_to_ctrl_v_space() {
+        let k = KeyBindings::defaults();
+        // The palette's canonical chord is Ctrl+V Space (any pane) — no Shift+letter
+        // terminal ambiguity.
+        assert_eq!(
+            k.resolve_view_sub(&ev(' '), Focus::Editor),
+            Some(Action::OpenCommandPalette),
+            "Ctrl+V Space opens the palette"
+        );
+        assert_eq!(
+            k.resolve_view_sub(&ev(' '), Focus::Tree),
+            Some(Action::OpenCommandPalette),
+            "…in any pane"
+        );
+        // It is no longer bound at the top level (Ctrl+Shift+P was abandoned).
+        assert!(
+            !k.top_level.iter().any(|e| e.action == Action::OpenCommandPalette),
+            "no top-level palette binding remains"
+        );
     }
 }

@@ -26,6 +26,10 @@ pub struct SessionState {
     /// keeps the launch default on restore.
     #[serde(default)]
     pub right_pane: String,
+    /// PANE-1 filtering (road to 1.4.0) — the Output pane's active filter
+    /// (source / severity / open-paragraph). Default = show everything.
+    #[serde(default)]
+    pub output_filter: crate::pane::output::OutputFilter,
     /// Cursor/scroll positions per paragraph UUID. Updated whenever the
     /// editor loses focus, the user switches paragraphs, or the app exits —
     /// so re-opening any paragraph drops the cursor back where the user
@@ -118,5 +122,34 @@ impl SessionState {
         // know — atomic write avoids the data loss
         // entirely.
         crate::io_atomic::write(&path, json.as_bytes())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pane::output::{OutputFilter, Severity};
+
+    #[test]
+    fn output_filter_round_trips_through_session_json() {
+        let s = SessionState {
+            output_filter: OutputFilter {
+                source: Some("socrates".into()),
+                min_severity: Some(Severity::Warning),
+                only_open_paragraph: true,
+            },
+            ..SessionState::default()
+        };
+        let json = serde_json::to_string(&s).expect("serialize");
+        let back: SessionState = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.output_filter, s.output_filter);
+    }
+
+    #[test]
+    fn legacy_session_without_filter_defaults_to_off() {
+        // Old `.session.json` files predate the filter key — must default to "off".
+        let back: SessionState =
+            serde_json::from_str(r#"{"right_pane":"Output"}"#).expect("deserialize legacy");
+        assert!(!back.output_filter.is_active());
     }
 }

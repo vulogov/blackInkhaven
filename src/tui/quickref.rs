@@ -100,7 +100,10 @@ fn global_entries() -> Vec<Entry> {
         entry("Ctrl+/", "Focus Search bar"),
         entry("Ctrl+I", "Focus AI prompt"),
         entry("Ctrl+B", "Meta prefix (next key = action — see live section below)"),
+        entry("Ctrl+V", "View prefix (next key = view action — see live section below)"),
         entry("Ctrl+Z", "Bund prefix (next key = bund action — see live section below)"),
+        entry("Ctrl+V Space", "Command palette — fuzzy-find & run any command"),
+        entry("Ctrl+B H  ·  ? (tree)", "This quick reference"),
         entry("F1", "Help-manual question (RAG over the Help book)"),
         entry("F7", "Grammar check the open paragraph (→ AI pane)"),
         entry("F9", "Cycle AI scope: None→Sel→Para→Sub→Chap→Book→Facts→None"),
@@ -132,6 +135,7 @@ fn tree_entries() -> Vec<Entry> {
         entry("← / →", "Collapse / expand cursor's branch"),
         entry("Z", "Collapse cursor's enclosing subchapter"),
         entry("X", "Collapse every expanded branch"),
+        entry("?", "This quick reference"),
         entry("q", "Quit (autosaves if dirty)"),
     ]
 }
@@ -202,6 +206,13 @@ fn ai_entries() -> Vec<Entry> {
         header("─ Chat session ─"),
         entry("F9", "Cycle scope: None / Sel / Para / Sub / Chap / Book / Facts"),
         entry("F10", "Toggle inference: Local ↔ Full (Help locked to Local)"),
+        blank(),
+        header("─ Output pane (Ctrl+B Tab to reach it) ─"),
+        entry("↑↓ · o · a · d · p", "Select · expand · ask AI · dismiss · pin"),
+        entry("f", "Filter by source (fact-check / socrates / timeline-critique / …)"),
+        entry("S", "Filter by minimum severity (Info / Warning / Contradiction)"),
+        entry("t", "Filter: this paragraph only"),
+        entry("c", "Clear Output filters"),
     ]
 }
 
@@ -269,4 +280,23 @@ fn live_chord_entries(layer: keybind::Layer, focus: Focus) -> Vec<Entry> {
         out.push(entry("—", "no chords active in this pane"));
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_palette_appears_in_quickref() {
+        // The palette is discoverable in every pane: statically in the global
+        // section and live from the view layer (Ctrl+V Space).
+        for focus in [Focus::Tree, Focus::Editor, Focus::Ai, Focus::SearchBar, Focus::AiPrompt] {
+            let entries = entries_for(focus);
+            let listed = entries.iter().any(|e| {
+                e.desc.to_lowercase().contains("command palette")
+                    || e.key.contains("Ctrl+V Space")
+            });
+            assert!(listed, "command palette listed in quickref for {focus:?}");
+        }
+    }
 }

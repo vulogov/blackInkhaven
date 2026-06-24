@@ -21,46 +21,47 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.3.32 — Project doctor
+## Latest release · 1.3.33 — Command palette + a filterable Output pane
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.3.32.md`](Documentation/RELEASE_NOTES/1.3.32.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.3.33.md`](Documentation/RELEASE_NOTES/1.3.33.md)
 · Roadmap: [`Documentation/PROPOSALS/ROADMAP-1.4.0.md`](Documentation/PROPOSALS/ROADMAP-1.4.0.md)
-· Plan: [`Documentation/PROPOSALS/DOCTOR_PLAN.md`](Documentation/PROPOSALS/DOCTOR_PLAN.md)
+· Plans: [`PALETTE_PLAN.md`](Documentation/PROPOSALS/PALETTE_PLAN.md) · [`OUTPUT_FILTER_PLAN.md`](Documentation/PROPOSALS/OUTPUT_FILTER_PLAN.md)
 
-1.3.32 opens the road to **1.4.0** — a consolidation & hardening milestone — and it
-opens with the stability bookend: a data-integrity safety net and the test spine
-every release after it leans on.
+Two road-to-**1.4.0** quality-of-life features, both about finding things fast.
 
-### Doctor learns referential integrity
+### The command palette
 
-`inkhaven doctor --scan` caught disk-side trouble; now it catches the **dangling
-UUIDs inside the hierarchy** that rot from deletes, partial restores, and hand-edits
-— five new classes over the in-memory tree:
+`Ctrl+B`'s chord tree has grown large. **`Ctrl+V Space`** opens a fuzzy finder over
+**every** command — type to filter by name / chord / description, `↑↓` select,
+`Enter` run, `Esc` close.
 
-- **`broken-parent-ref`** *(Critical)* — a `parent_id` pointing at a non-existent
-  node; the node is detached and unreachable.
-- **`dangling-paragraph-link`** — a `linked_paragraphs` target was deleted.
-- **`dangling-event-ref`** — an event references a deleted character/place.
-- **`sibling-slug-collision`** — two children share a slug → their files collide.
-- **`duplicate-system-book`** — two Books share a `system_tag` → ambiguous lookup.
+- A projection of the live keybinding registry, so it reflects your actual bindings
+  (HJSON / `ink.key.*` overrides included) and **self-lists**.
+- Bound to `Ctrl+V Space` — a two-key chord with no `Ctrl+Shift+<letter>` terminal
+  ambiguity (`Ctrl+P` stays editor-paste).
+- Surfaced in the Quick reference (`Ctrl+B H`), which also gains `?` from the Tree
+  pane.
 
-They run in the default scan (CI exit 2 on ≥ Warning), gate by `--class`, and emit
-to `--json`; detection-only this release.
+### A filterable Output pane
 
-### A property-test spine
+The Output pane gathers findings from the world fact-checker, Inner Socrates, the
+timeline critique, translation, the lexicon, Bund, and more. Narrow it — the title
+shows `shown/total · <filter>`, and the filter **persists** across restarts:
 
-`proptest` (a pure-Rust dev-dependency), perf budgets as ordinary `cargo test`
-assertions (the referential scans over 1,000 nodes run in well under half a second —
-an O(n²) guard), and a *never-panic* sweep over the three panic-prone parsers: the
-calendar (parse / format / round-trip across every preset), HJSON config loading
-(arbitrary input *and* brace/quote soup), and language detection (arbitrary unicode,
-empty / emoji / 100k-char inputs).
+- **`f`** — by **source** (fact-check / socrates / timeline-critique / world /
+  translation / lexicon / variety / ai / bund / other).
+- **`S`** — by **minimum severity** (also hides transient progress ticks).
+- **`t`** — **this paragraph only**.
+- **`c`** — clear.
+
+Also documents the Output pane's keys for the first time (KEYBINDING §4.1).
 
 ### Dependencies & compatibility
 
-**No external application or binary dependencies** — one pure-Rust dev-crate
-(`proptest`), test-only, never in the shipped binary. No change to the data model,
-the CLI surface, or any existing scan class. Tests 1725 → 1771.
+**No external application or binary dependencies; no new runtime crates.** Both
+features are read-side views over existing infrastructure — the keybinding registry
+and the Output message store are unchanged. Legacy `.session.json` files load cleanly
+with filtering off. Tests 1771 → 1795.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
