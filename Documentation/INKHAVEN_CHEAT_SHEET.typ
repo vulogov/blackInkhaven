@@ -482,6 +482,7 @@ timeline: {
   row([hook.on_status_promoted], [`( uuid from to -- )`]),
   row([hook.on_goal_hit],  [`( today goal -- )`]),
   row([hook.on_streak_break], [`( prev_days -- )`]),
+  row([hook.on_streak_milestone], [`( milestone_days -- )`]),
   row([hook.on_assemble],  [`( uuid slug root files -- )`]),
   row([hook.on_take],      [`( uuid slug pdf -- )`]),
   row([hook.on_diagnostic], [`( uuid count first-message -- )` · 1.2.6]),

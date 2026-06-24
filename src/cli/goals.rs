@@ -129,7 +129,12 @@ pub fn render_lines(snap: &ProgressSnapshot, day: &str) -> Vec<String> {
     } else {
         String::new()
     };
-    out.push(format!("  streak              {:>8} days{grace}", s.days));
+    let best = if s.best > s.days {
+        format!("  ·  best {} days", s.best)
+    } else {
+        String::new()
+    };
+    out.push(format!("  streak              {:>8} days{best}{grace}", s.days));
 
     // Active time.
     out.push(format!(
@@ -250,7 +255,7 @@ mod tests {
                 recent: vec![("ready".into(), 3)],
                 goals: vec![("ready".into(), 5)],
             },
-            streak: StreakStatus { days: 12, grace_used: 1, grace_per_week: 1 },
+            streak: StreakStatus { days: 12, grace_used: 1, grace_per_week: 1, best: 30 },
             sparkline: vec![0, 100, 250, 0, 480, 600, 300],
             active_seconds_today: 5_400,
             active_seconds_week: 26_000,
@@ -265,6 +270,7 @@ mod tests {
         assert!(blob.contains("project total"));
         assert!(blob.contains("450 / 500")); // today vs daily goal
         assert!(blob.contains("streak                    12 days"));
+        assert!(blob.contains("best 30 days"));
         assert!(blob.contains("grace 1/1"));
         assert!(blob.contains("The Long Road"));
         assert!(blob.contains("need 633/day, 60d left"));

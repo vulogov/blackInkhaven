@@ -2455,6 +2455,23 @@ impl App {
                 vec![rust_dynamic::value::Value::from_int(prev_streak)],
             );
         }
+        // on_streak_milestone — fired the first time the current
+        // streak crosses 7 / 30 / 100 / 365 days upward. Informative
+        // celebration, never blocking. Only on a real transition
+        // (prev present): reopening the project already at a high
+        // streak must not re-celebrate a crossing that happened on a
+        // prior session.
+        if prev.is_some() {
+            if let Some(m) = crate::progress::aggregates::milestone_crossed(
+                prev_streak,
+                new.streak.days,
+            ) {
+                crate::scripting::hooks::fire(
+                    "hook.on_streak_milestone",
+                    vec![rust_dynamic::value::Value::from_int(m)],
+                );
+            }
+        }
         // on_active_goal_hit — same transitional semantics as
         // on_goal_hit but against `goals.active_minutes_daily`.
         let active_goal_secs = self.cfg.goals.active_minutes_daily.max(0) * 60;
