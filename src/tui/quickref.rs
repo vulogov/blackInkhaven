@@ -206,6 +206,13 @@ fn ai_entries() -> Vec<Entry> {
         header("─ Chat session ─"),
         entry("F9", "Cycle scope: None / Sel / Para / Sub / Chap / Book / Facts"),
         entry("F10", "Toggle inference: Local ↔ Full (Help locked to Local)"),
+        blank(),
+        header("─ Output pane (Ctrl+B Tab to reach it) ─"),
+        entry("↑↓ · o · a · d · p", "Select · expand · ask AI · dismiss · pin"),
+        entry("f", "Filter by source (fact-check / socrates / timeline-critique / …)"),
+        entry("S", "Filter by minimum severity (Info / Warning / Contradiction)"),
+        entry("t", "Filter: this paragraph only"),
+        entry("c", "Clear Output filters"),
     ]
 }
 

@@ -40,8 +40,11 @@ clean group (`fact-check`, `socrates`, `timeline-critique`, `translation`,
   round-trip tests (full filter through session JSON; legacy file → off). Full
   suite 1790 → 1792. (Saved-filter presets deferred — single active filter is the
   MVP.)
-- **P3 — stability rider + docs.** Filter `matches` proptest; KEYBINDING/quickref
-  rows. Then cut the bundled release.
+- **P3 — stability rider + docs.** _Done._ Three filter proptests (`message_source`
+  always returns a known group; `matches` never panics over arbitrary
+  kind/severity/filter; a source filter is exact). Docs: new **KEYBINDING.md §4.1
+  Output pane** (the previously-undocumented pane keys + the filter keys), and an
+  **Output-pane subsection in the quickref** `ai_entries`. Full suite 1792 → 1795.
 
 ## Non-goals
 
