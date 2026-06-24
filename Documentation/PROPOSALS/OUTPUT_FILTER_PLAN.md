@@ -24,11 +24,14 @@ clean group (`fact-check`, `socrates`, `timeline-critique`, `translation`,
   `OutputFilter { source, min_severity, only_open_paragraph }`, `matches(msg,
   open_paragraph)`, `is_active`, a one-line `summary()` for the header, and the
   `SOURCES` cycle list. Pure → unit-tested. **(this increment)**
-- **P1 — wire into the pane.** Filter in-memory in `draw_output` (the pane already
-  fetches `active()` each frame — no SQL change), a **filter header** showing the
-  active filter + `shown/total`, and keys in `handle_output_key` (cycle source,
-  cycle min-severity, toggle "this paragraph only", clear). Keep `output_selected`
-  clamped to the filtered list.
+- **P1 — wire into the pane.** _Done._ `output_filter: OutputFilter` field on `App`
+  (default). One shared `filtered_output_messages(&self)` (fetch `active()` → filter
+  by `output_filter` + open-paragraph id) used by **both** `draw_output` and
+  `handle_output_key`, so selection and actions always match the screen. Title shows
+  `shown/total · <summary>` when active. Keys in `handle_output_key`: `f` cycle
+  source, `S` cycle min-severity, `t` toggle this-paragraph, `c` clear — each resets
+  the selection to top and reports via the status line; a compact `f:filter` cue in
+  the footer. Full suite stable (1790).
 - **P2 — persistence.** Persist the active filter in `.session.json` next to
   `right_pane`. Optional saved-filter presets.
 - **P3 — stability rider + docs.** Filter `matches` proptest; KEYBINDING/quickref
