@@ -42,8 +42,11 @@ free. (A `--slow` opt-in for the LLM tracks is a later enhancement.)
   (`tick_tree_badges`) to avoid per-frame DB queries, and force-refreshed right
   after a review pass + on dismiss. Rendered as a trailing pip in `tree_row_lines`.
   2 aggregation unit tests. Full suite 1797 → 1799.
-- **P3 — stability + docs.** Orchestration tests; KEYBINDING / quickref / a tutorial
-  row. Then cut.
+- **P3 — stability + docs.** _Done._ Warning-clean build (the orchestration's pure
+  pieces — scope helpers, badge aggregation, binding resolve — are unit-tested in
+  P0–P2). Docs: KEYBINDING §1.1 gains an **"Any pane"** meta table with `Ctrl+B Shift+C`
+  (review pass + the `inkhaven check` CLI equivalent + the tree-badge note); the
+  quickref global section lists the review pass. Full suite stable (1799).
 
 ## Design notes
 
