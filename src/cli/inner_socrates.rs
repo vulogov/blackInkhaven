@@ -310,8 +310,8 @@ fn socratic_llm_call(
     use crate::project::ProjectLayout;
     use crate::world::fact_check_slow::{backoff_delay, is_transient, slow_preflight, PreflightVerdict};
 
-    const DAILY_CAP: i64 = 150;
-    const SUB_BUDGET: &str = "slow_track";
+    const DAILY_CAP: i64 = InnerSocratesStore::DAILY_CALL_CAP;
+    const SUB_BUDGET: &str = InnerSocratesStore::SLOW_SUB_BUDGET;
     let day = chrono::Utc::now().format("%Y-%m-%d").to_string();
     let store = InnerSocratesStore::open_for_project(project)
         .map_err(|e| Error::Store(format!("inner-socrates store: {e}")))?;

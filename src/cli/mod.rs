@@ -20,6 +20,7 @@ pub mod search;
 pub mod doctor;
 pub mod doctor_scan;
 pub mod check;
+pub mod cost;
 pub mod event;
 pub mod event_critique;
 pub mod comments;
@@ -944,6 +945,10 @@ pub enum Command {
         #[arg(long = "no-timeline")]
         no_timeline: bool,
     },
+    /// Road to 1.4.0 — the unified AI cost dashboard: today's LLM call tallies for
+    /// each capped subsystem (world slow track, Inner Socrates slow track) vs their
+    /// daily caps.
+    Cost,
     /// WORLD-4 — fact-check prose against the simulated world (fast track):
     /// flag implausible world-assertions (travel time, …), respecting the
     /// `magic:` ledger's declared exceptions.
@@ -4311,6 +4316,7 @@ impl Cli {
                 )
                 .map_err(Into::into)
             }
+            Command::Cost => cost::run(&project).map_err(Into::into),
             Command::FactCheck { text, paragraph, slow, max_cost, force, timeline_aware, timeline_only } => {
                 realworld::fact_check(&project, text, paragraph, slow, max_cost, force, &timeline_aware, timeline_only)
                     .map_err(Into::into)
