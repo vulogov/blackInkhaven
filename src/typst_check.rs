@@ -147,4 +147,34 @@ broken
         assert!(s.contains("line 12:5"));
         assert!(s.contains("unexpected token"));
     }
+
+    use proptest::prelude::*;
+
+    proptest! {
+        /// 1.3.36 hardening — `check` parses arbitrary editor source
+        /// (the user's prose + Typst markup). It must return a
+        /// diagnostics Vec and never panic, including on lone
+        /// surrogates-free Unicode, unbalanced delimiters, and the
+        /// byte-offset → line/col mapping over multibyte input.
+        #[test]
+        fn check_never_panics(src in "\\PC{0,400}") {
+            let _ = check(&src);
+        }
+
+        /// Token-salad of Typst markup delimiters + prose — exercises
+        /// the parser's bracket/brace/dollar paths past what random
+        /// printable strings reach.
+        #[test]
+        fn check_never_panics_on_markup_salad(
+            toks in proptest::collection::vec(
+                proptest::sample::select(vec![
+                    "$", "#", "[", "]", "{", "}", "(", ")", "*", "_", "=",
+                    "\\", "/*", "*/", "let", "x", " ", "\n", "café", "—",
+                ]),
+                0..200,
+            ),
+        ) {
+            let _ = check(&toks.concat());
+        }
+    }
 }
