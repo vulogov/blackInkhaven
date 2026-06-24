@@ -3482,6 +3482,17 @@ impl App {
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Result<bool> {
+        // 1.3.33+ — opt-in key tracer. Run `INKHAVEN_KEYLOG=1 inkhaven`, reproduce
+        // a chord, and read the exact `(code, modifiers, kind)` from `.inkhaven.log`.
+        // Used to diagnose terminal-specific chord reporting (e.g. Ctrl+Shift+P).
+        if std::env::var_os("INKHAVEN_KEYLOG").is_some() {
+            tracing::info!(
+                "KEY code={:?} mods={:?} kind={:?}",
+                key.code,
+                key.modifiers,
+                key.kind
+            );
+        }
         // 1.2.8+ — ConfirmQuit modal swallows its own keys:
         // Y / Enter proceed with the existing quit flow;
         // N / Esc cancel + close the modal.  Anything else
