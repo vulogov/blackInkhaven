@@ -60,7 +60,6 @@ pub fn run(project: &Path, cmd: EventCommand) -> Result<()> {
             no_elaborate,
             force,
         } => crate::cli::event_critique::run(
-            project,
             &cfg,
             &store,
             &calendar,

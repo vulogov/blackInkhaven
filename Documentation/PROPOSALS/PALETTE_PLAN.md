@@ -61,8 +61,13 @@ filter input; an existing `fuzzy_filter_entries` shows the substring-scoring sty
   pure-navigation pane; editor / AI / search keep `?` literal; `Ctrl+B H` works
   everywhere). Updated `KEYBINDING.md` (Global row, View-mode `Space` row, tree
   `?` row). Added a quickref test asserting the palette lists in every pane.
-- **P3 — CLI-dispatch error pass (stability rider).** A small consistency pass on
-  CLI command error messages touched alongside this work.
+- **P3 — stability rider.** _Done._ (Registry proptests already landed in P0.)
+  Build-hygiene + invariant pass: removed the dead `project` param from
+  `event_critique::run`/`run_legacy` (+ the now-unused `Path` import), and the unused
+  `scope` field / `applies_in` method from `PaletteEntry` — the build is now
+  warning-clean except one pre-existing unrelated const. Added a registry invariant
+  test: **every *labeled* bound command has a non-empty description**, so the palette
+  and quick reference can never render a blank help line. Full suite 1781 → 1782.
 
 ## Non-goals
 

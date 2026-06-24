@@ -2274,6 +2274,31 @@ mod tests {
     }
 
     #[test]
+    fn every_labeled_binding_has_a_description() {
+        // The command palette and the quick reference render `label` + `description`
+        // for every bound command — a labeled-but-undescribed action would show a
+        // blank help line. Guard the registry against that.
+        let k = KeyBindings::defaults();
+        for table in [&k.top_level, &k.meta_sub, &k.bund_sub, &k.view_sub] {
+            for be in table {
+                if matches!(be.action, Action::None) {
+                    continue;
+                }
+                let label = be.action.label();
+                if label.is_empty() {
+                    continue;
+                }
+                assert!(
+                    !be.action.description().trim().is_empty(),
+                    "action {:?} is labeled {:?} but has an empty description",
+                    be.action,
+                    label
+                );
+            }
+        }
+    }
+
+    #[test]
     fn command_palette_is_bound_to_ctrl_v_space() {
         let k = KeyBindings::defaults();
         // The palette's canonical chord is Ctrl+V Space (any pane) — no Shift+letter
