@@ -1603,6 +1603,12 @@ pub(crate) struct App {
     /// read-side view over `active()` so the pane and its key handler share one
     /// filtered list.
     output_filter: crate::pane::output::OutputFilter,
+    /// 1.3.34+ — tree report-card badges: node id → (open-finding count under it,
+    /// worst severity). Aggregated up the hierarchy from each finding's source
+    /// paragraph. Refreshed on a throttle (see `tick_tree_badges`) + after a check.
+    tree_badges: std::collections::HashMap<Uuid, (usize, crate::pane::output::Severity)>,
+    /// When `tree_badges` was last recomputed (throttle clock).
+    tree_badges_at: std::time::Instant,
     /// WORLD-4 — the debounced fast fact-checker. Enabled when the project has a
     /// `world.hjson` (set at open + after a compile). `fc_last_fp` fingerprints
     /// the open paragraph; a change arms `fc_activity_at`, and 5 s of quiet fires
@@ -2252,6 +2258,8 @@ impl App {
             socr_needs_check: false,
             output_expanded: std::collections::HashSet::new(),
             output_filter: crate::pane::output::OutputFilter::default(),
+            tree_badges: std::collections::HashMap::new(),
+            tree_badges_at: std::time::Instant::now(),
             tree_cursor: 0,
             tree_scroll: 0,
             search_input: TextInput::new(),
@@ -2534,6 +2542,7 @@ impl App {
             self.tick_health_pump();
             self.tick_fact_check();
             self.tick_inner_socrates();
+            self.tick_tree_badges();
             // 1.2.9+ — close the TTS playback modal as
             // soon as the engine reports it's idle, so
             // the modal disappears when the paragraph
@@ -6890,6 +6899,7 @@ impl App {
                     if let Some(s) = crate::pane::output::active() {
                         let _ = s.dismiss(m.id);
                     }
+                    self.refresh_tree_badges();
                     self.status = "dismissed".into();
                 }
             }
@@ -11357,6 +11367,9 @@ impl App {
         // Project-wide timeline critique.
         let tl = self.collect_and_emit_timeline_critique();
 
+        // Reflect the fresh findings in the tree report-card immediately.
+        self.refresh_tree_badges();
+
         let total = fact + soc + tl;
         if total == 0 {
             self.status = if checked == 0 {
@@ -11968,6 +11981,24 @@ impl App {
                 }
             }
         }
+    }
+
+    /// 1.3.34+ — recompute the tree report-card badges no more than ~once a second.
+    /// Cheap eventual consistency: findings emitted by any checker / dismissed in the
+    /// Output pane show up in the tree within a second without a per-frame DB query.
+    fn tick_tree_badges(&mut self) {
+        if self.tree_badges_at.elapsed() >= std::time::Duration::from_millis(900) {
+            self.refresh_tree_badges();
+        }
+    }
+
+    /// Rebuild `tree_badges` from the active Output findings.
+    fn refresh_tree_badges(&mut self) {
+        let msgs = crate::pane::output::active()
+            .and_then(|s| s.active().ok())
+            .unwrap_or_default();
+        self.tree_badges = compute_tree_badges(&self.hierarchy, &msgs);
+        self.tree_badges_at = std::time::Instant::now();
     }
 
     /// Run the Socratic Fast track silently into Output (no focus change).
@@ -25502,6 +25533,39 @@ Rules:
 /// Inclusive on the top-left, exclusive on the bottom-right — matches
 /// ratatui's Rect semantics where width/height are spans (the column at
 /// `x + width` is one past the rect's last column).
+/// 1.3.34+ — aggregate Output findings into per-node tree report-card badges: each
+/// finding tied to a source paragraph tallies a count + worst severity onto that
+/// paragraph and every ancestor (so a chapter shows the sum of its paragraphs).
+fn compute_tree_badges(
+    hierarchy: &crate::store::hierarchy::Hierarchy,
+    msgs: &[crate::pane::output::Message],
+) -> std::collections::HashMap<Uuid, (usize, crate::pane::output::Severity)> {
+    use crate::pane::output::Severity;
+    fn rank(s: Severity) -> u8 {
+        match s {
+            Severity::Progress => 0,
+            Severity::Info => 1,
+            Severity::Warning => 2,
+            Severity::Contradiction => 3,
+        }
+    }
+    let mut badges: std::collections::HashMap<Uuid, (usize, Severity)> =
+        std::collections::HashMap::new();
+    for m in msgs {
+        let Some(pid) = m.source_paragraph_id else { continue };
+        let mut cur = Some(pid);
+        while let Some(id) = cur {
+            let entry = badges.entry(id).or_insert((0, Severity::Progress));
+            entry.0 += 1;
+            if rank(m.severity) > rank(entry.1) {
+                entry.1 = m.severity;
+            }
+            cur = hierarchy.get(id).and_then(|n| n.parent_id);
+        }
+    }
+    badges
+}
+
 fn rect_contains(rect: Rect, col: u16, row: u16) -> bool {
     if rect.width == 0 || rect.height == 0 {
         return false;
@@ -25899,5 +25963,63 @@ mod tests_split_view {
         let sys = super::facts_scope_system_prompt("en").to_lowercase();
         assert!(sys.contains("fact"));
         assert!(sys.contains("ground truth"));
+    }
+}
+
+#[cfg(test)]
+mod tests_tree_badges {
+    use super::compute_tree_badges;
+    use crate::pane::output::{Lifetime, Message, Severity};
+    use crate::store::hierarchy::Hierarchy;
+    use crate::store::node::Node;
+    use uuid::Uuid;
+
+    fn node(id: Uuid, kind: &str, slug: &str, parent: Option<Uuid>) -> Node {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "kind": kind, "title": slug, "slug": slug,
+            "path": [], "parent_id": parent, "order": 1, "file": null,
+            "modified_at": "2026-01-01T00:00:00Z",
+        }))
+        .expect("test node")
+    }
+
+    fn msg(sev: Severity, para: Uuid) -> Message {
+        Message::new("fact_check_warning", sev, Lifetime::UntilActedOn, serde_json::json!({}))
+            .with_source_paragraph(para)
+    }
+
+    #[test]
+    fn findings_aggregate_up_to_ancestors_with_worst_severity() {
+        let book = Uuid::now_v7();
+        let chapter = Uuid::now_v7();
+        let p1 = Uuid::now_v7();
+        let p2 = Uuid::now_v7();
+        let h = Hierarchy::from_nodes_for_test(vec![
+            node(book, "book", "velmaron", None),
+            node(chapter, "chapter", "ch1", Some(book)),
+            node(p1, "paragraph", "p1", Some(chapter)),
+            node(p2, "paragraph", "p2", Some(chapter)),
+        ]);
+        // p1: one Warning + one Contradiction; p2: one Info.
+        let msgs = vec![
+            msg(Severity::Warning, p1),
+            msg(Severity::Contradiction, p1),
+            msg(Severity::Info, p2),
+        ];
+        let badges = compute_tree_badges(&h, &msgs);
+        // Paragraph-level counts + worst severity.
+        assert_eq!(badges[&p1], (2, Severity::Contradiction));
+        assert_eq!(badges[&p2], (1, Severity::Info));
+        // Chapter aggregates all three; worst is the contradiction.
+        assert_eq!(badges[&chapter], (3, Severity::Contradiction));
+        // Book aggregates the whole subtree too.
+        assert_eq!(badges[&book], (3, Severity::Contradiction));
+    }
+
+    #[test]
+    fn messages_without_a_source_paragraph_are_ignored() {
+        let h = Hierarchy::from_nodes_for_test(vec![node(Uuid::now_v7(), "book", "b", None)]);
+        let m = Message::new("bund_print", Severity::Info, Lifetime::UntilActedOn, serde_json::json!({}));
+        assert!(compute_tree_badges(&h, &[m]).is_empty());
     }
 }
