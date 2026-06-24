@@ -1513,6 +1513,9 @@ impl KeyBindings {
                 entry("h", Action::BundShellSelection, Scope::Any),
             ],
             view_sub: vec![
+                // 1.3.33+ — Ctrl+V Space: the command palette. A reliable two-key
+                // alternative to Ctrl+Shift+P (no Shift+letter terminal ambiguity).
+                entry("Space", Action::OpenCommandPalette, Scope::Any),
                 // Editor / AI-prompt: 1 = buffer markdown, 2 =
                 // containing-subchapter subtree markdown.
                 entry("1", Action::ViewExportMarkdownBuffer, Scope::Editor),
@@ -2290,5 +2293,11 @@ mod tests {
         );
         // It carries the Shift modifier (so it never collides with Ctrl+P paste).
         assert!(bound.chord.modifiers.contains(KeyModifiers::SHIFT));
+        // And the reliable two-key alternative: Ctrl+V Space.
+        assert_eq!(
+            k.resolve_view_sub(&ev(' '), Focus::Editor),
+            Some(Action::OpenCommandPalette),
+            "Ctrl+V Space opens the palette"
+        );
     }
 }

@@ -43,6 +43,13 @@ filter input; an existing `fuzzy_filter_entries` shows the substring-scoring sty
   + render dispatch; `draw_command_palette_modal` painter (label · chord · description,
   reversed cursor row). Binding-resolve test (normalization-agnostic) + the build.
   Full suite 1779 → 1780.
+- **P1-fix** — _done._ Two follow-ups from live testing: (1) `Ctrl+Shift+P` lagged
+  (opened only on the *next* key) because `Ctrl+Shift+<letter>` terminal reporting
+  is erratic through the binding table — added an **early hardcoded intercept** (the
+  same pattern the `Ctrl+1..5` jumps use) accepting every encoding (`p`/`P` +
+  CONTROL+SHIFT, and `P`+CONTROL where case carries the Shift), distinct from
+  `Ctrl+P` paste. (2) Added a reliable **`Ctrl+V Space`** two-key alternative
+  (`view_sub`, `Scope::Any`) with no Shift+letter ambiguity. Both resolve-tested.
 - **P2 — the `?` keybinding overlay + quick help/reference.** A pane-scoped,
   read-only chord cheat-sheet (`?` when not in a text field), built from the same
   registry. **Update the in-app quick help/reference and `Documentation/KEYBINDING.md`**

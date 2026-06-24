@@ -3586,6 +3586,33 @@ impl App {
                 return Ok(false);
             }
         }
+        // 1.3.33+ — Ctrl+Shift+P opens the command palette. Hardcoded here (like
+        // the Ctrl+1..5 jumps above) because Ctrl+Shift+<letter> reporting varies
+        // across terminals and the binding-table path proved unreliable for it
+        // (the first press could be swallowed, opening only on the next key).
+        // Distinct from Ctrl+P paste, which carries no Shift. Accepts every
+        // encoding terminals use: 'p'/'P' with an explicit CONTROL+SHIFT, and 'P'
+        // with CONTROL where the uppercase itself encodes the Shift (no SHIFT bit).
+        // The OpenCommandPalette table binding is kept so the command still
+        // self-lists (with its chord) in the palette + quick reference.
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && !key.modifiers.intersects(KeyModifiers::ALT | KeyModifiers::SUPER)
+        {
+            let is_palette = match key.code {
+                KeyCode::Char('p') | KeyCode::Char('P')
+                    if key.modifiers.contains(KeyModifiers::SHIFT) =>
+                {
+                    true
+                }
+                KeyCode::Char('P') => true,
+                _ => false,
+            };
+            if is_palette {
+                self.open_command_palette();
+                return Ok(false);
+            }
+        }
+
         // KeyCode::Null with no modifiers is what some terminals report for
         // Ctrl+2 / Ctrl+Space. Catch that separately because the inner block
         // requires the CONTROL modifier flag.
