@@ -153,6 +153,53 @@ pub fn fact_check(
     Ok(())
 }
 
+/// Build the fact-checker's magic ledger + world context for a project (the world
+/// half of `inkhaven check`). Returns a default ledger + `None` context when there's
+/// no `world.hjson`; `check_paragraph` still runs the prose-only checks (travel
+/// time) against an absent context.
+pub(crate) fn build_world_context(
+    project: &Path,
+) -> (
+    crate::world::types::MagicLedger,
+    Option<crate::world::fact_check::WorldContext>,
+) {
+    let def = load(project).ok();
+    let ledger = def.as_ref().and_then(|d| d.magic.clone()).unwrap_or_default();
+    let mut places = crate::world::storage::WorldStore::open_for_project(project)
+        .ok()
+        .and_then(|ws| ws.list_place_links().ok())
+        .unwrap_or_default();
+    let moons: Vec<String> = def
+        .as_ref()
+        .map(|d| {
+            crate::world::compile::compile_astronomy(&d.astronomy)
+                .moons
+                .iter()
+                .map(|m| m.name.clone())
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut minerals: Vec<String> = def
+        .as_ref()
+        .and_then(|d| geology_for(project, d).ok())
+        .map(|g| g.minerals.iter().map(|m| m.mineral.clone()).collect())
+        .unwrap_or_default();
+    if let Some(d) = def.as_ref() {
+        places.extend(crate::world::fact_check::declared_places(d));
+        minerals.extend(d.declared_minerals());
+    }
+    let ctx = if !places.is_empty() || !moons.is_empty() || !minerals.is_empty() {
+        Some(crate::world::fact_check::WorldContext::new(
+            crate::world::fact_check::Gazetteer::new(places),
+            moons,
+            minerals,
+        ))
+    } else {
+        None
+    };
+    (ledger, ctx)
+}
+
 /// The slow track: an LLM pass for subtle contradictions the patterns miss.
 /// Cost-capped (daily call ceiling). Returns its findings; the fast findings are
 /// passed in as the seam (the prompt tells the model not to repeat them).

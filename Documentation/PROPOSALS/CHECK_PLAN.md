@@ -1,0 +1,58 @@
+# `inkhaven check` — the unified review pass (road to 1.4.0)
+
+The consolidation centrepiece ([ROADMAP-1.4.0.md](ROADMAP-1.4.0.md)). Today each
+checker is a separate command/chord: `realworld fact-check`, `inner-socrates check`,
+`event critique`. `inkhaven check` runs **every applicable fast/deterministic
+checker over one scope** in a single gesture and reports a consolidated summary —
+the "examined authorship" promise as one pass.
+
+## The three checkers (all reuse existing per-scope entry points)
+
+| Checker | Function | Scope | Gate |
+|---|---|---|---|
+| **fact-check** (WORLD-4/5 fast) | `world::fact_check::check_paragraph(text, ledger, roles, ctx)` | per paragraph | `world.hjson` exists |
+| **socrates** (INNER_SOCRATES fast) | `inner_socrates::fast::check_paragraph(text, persona, ledger, ctx)` | per paragraph | always (deterministic, no LLM) |
+| **timeline-critique** (TIMELINE-2) | `timeline::critique::run(events, …)` | whole project | `timeline.enabled` |
+
+The fast tracks are deterministic and LLM-free, so a default `check` is instant and
+free. (A `--slow` opt-in for the LLM tracks is a later enhancement.)
+
+## Phases
+
+- **P0 — the CLI `inkhaven check`.** `src/cli/check.rs` + a `Check` command. Resolve
+  scope (`--paragraph` / `--book` / default project) → paragraphs; build each
+  checker's context once (skip the gated ones cleanly); run fact-check + socrates
+  per paragraph and the timeline critique once; print findings grouped by checker +
+  a **summary table** (per-checker counts, paragraphs scanned). Each native finding
+  also emits to the Output store (a no-op headless), so a future `--watch`/TUI path
+  is free. **(this increment)**
+- **P1 — the TUI chord.** One chord runs the same orchestration over the open
+  paragraph / book / project, **emits to the Output pane** (where the new filtering
+  slices it), and shows a summary on the status line. Reuses the orchestration core.
+- **P2 — tree report-card badges.** Per-chapter open-finding counts from the Output
+  store, rendered as a small badge in the tree so the manuscript shows where
+  attention is needed at a glance.
+- **P3 — stability + docs.** Orchestration tests; KEYBINDING / quickref / a tutorial
+  row. Then cut.
+
+## Design notes
+
+- **Normalized finding.** The three native finding types differ; the orchestration
+  collects a `CheckFinding { checker, severity, category, body, paragraph }` for the
+  summary + CLI display, *and* emits the native finding (so the Output pane keeps
+  full per-kind metadata + actions). Dual collect+emit.
+- **No new subsystem.** `check` is pure orchestration over existing checkers; no new
+  checker logic, no schema change, no new deps.
+
+## Increment log
+
+- **P0** — _done._ `src/cli/check.rs` + `Command::Check` (`--paragraph` / `--book-name`
+  / `--no-fact` / `--no-socrates` / `--no-timeline`). Scope resolution (one paragraph,
+  or every non-event prose paragraph under a book / all user books — system books
+  skipped via `node_under_user_book`). Per-paragraph fact-check + socrates; project-wide
+  timeline critique once; each native finding emits to the Output store (no-op headless)
+  + collects a normalized `CheckFinding`. Prints findings grouped + a per-checker summary
+  table. Extracted `realworld::build_world_context` as the reusable world-context helper.
+  Smoke-tested end to end (socratic `modal_claims` caught, summary table, gating). 1 unit
+  test for the scope helpers. Full suite 1795 → 1796.
+</content>

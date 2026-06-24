@@ -19,6 +19,7 @@ pub mod restore;
 pub mod search;
 pub mod doctor;
 pub mod doctor_scan;
+pub mod check;
 pub mod event;
 pub mod event_critique;
 pub mod comments;
@@ -923,6 +924,26 @@ pub enum Command {
     #[command(subcommand)]
     InnerSocrates(InnerSocratesCommand),
 
+    /// Road to 1.4.0 — the unified review pass: run every applicable fast,
+    /// deterministic checker (fact-check + Inner Socrates + timeline critique)
+    /// over a scope and print a consolidated summary.
+    Check {
+        /// Check one paragraph by id (reads its content from the store).
+        #[arg(long)]
+        paragraph: Option<String>,
+        /// Restrict to a single book (slug or title). Default: the whole project.
+        #[arg(long)]
+        book_name: Option<String>,
+        /// Skip the world fact-checker.
+        #[arg(long = "no-fact")]
+        no_fact: bool,
+        /// Skip the Inner Socrates fast track.
+        #[arg(long = "no-socrates")]
+        no_socrates: bool,
+        /// Skip the timeline critique.
+        #[arg(long = "no-timeline")]
+        no_timeline: bool,
+    },
     /// WORLD-4 — fact-check prose against the simulated world (fast track):
     /// flag implausible world-assertions (travel time, …), respecting the
     /// `magic:` ledger's declared exceptions.
@@ -4279,6 +4300,17 @@ impl Cli {
             Command::Output(cmd) => output::run(&project, cmd).map_err(Into::into),
             Command::Realworld(cmd) => realworld::run(&project, cmd).map_err(Into::into),
             Command::InnerSocrates(cmd) => inner_socrates::run(&project, cmd).map_err(Into::into),
+            Command::Check { paragraph, book_name, no_fact, no_socrates, no_timeline } => {
+                check::run(
+                    &project,
+                    paragraph.as_deref(),
+                    book_name.as_deref(),
+                    no_fact,
+                    no_socrates,
+                    no_timeline,
+                )
+                .map_err(Into::into)
+            }
             Command::FactCheck { text, paragraph, slow, max_cost, force, timeline_aware, timeline_only } => {
                 realworld::fact_check(&project, text, paragraph, slow, max_cost, force, &timeline_aware, timeline_only)
                     .map_err(Into::into)
