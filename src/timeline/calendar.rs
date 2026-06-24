@@ -1003,4 +1003,64 @@ mod tests {
         assert_eq!(c.format(p, Precision::Month), "1A.3");
         assert_eq!(c.format(p, Precision::Day), "1A.3.15");
     }
+
+    // 1.3.32+ (road to 1.4.0) — calendar parser property sweep.
+    mod prop {
+        use super::{custom_aerin, gregorian, sols};
+        use crate::timeline::{Precision, TimelinePoint};
+        use proptest::prelude::*;
+
+        const PRECISIONS: [Precision; 7] = [
+            Precision::Tick,
+            Precision::Hour,
+            Precision::Day,
+            Precision::Week,
+            Precision::Month,
+            Precision::Season,
+            Precision::Year,
+        ];
+
+        proptest! {
+            /// Arbitrary input must return Ok|Err — never panic — across all presets.
+            #[test]
+            fn parse_never_panics(s in ".{0,48}") {
+                let _ = sols().parse(&s);
+                let _ = gregorian().parse(&s);
+                let _ = custom_aerin().parse(&s);
+            }
+
+            /// `format` must not panic on any tick / precision. Ticks are bounded to a
+            /// wide-but-overflow-safe window (decompose multiplies by unit sizes).
+            #[test]
+            fn format_never_panics(t in -1_000_000_000_000i64..1_000_000_000_000) {
+                for p in PRECISIONS {
+                    let _ = sols().format(TimelinePoint::from_ticks(t), p);
+                    let _ = gregorian().format(TimelinePoint::from_ticks(t), p);
+                    let _ = custom_aerin().format(TimelinePoint::from_ticks(t), p);
+                }
+            }
+
+            /// The `sols` preset is single-unit ("Sol N"), so day-precision is an exact
+            /// round-trip: parse∘format recovers the tick.
+            #[test]
+            fn sols_day_roundtrips(t in 0i64..1_000_000) {
+                let cal = sols();
+                let s = cal.format(TimelinePoint::from_ticks(t), Precision::Day);
+                let parsed = cal.parse(&s).expect("sols formats a parseable canonical form");
+                prop_assert_eq!(parsed.0.ticks(), t);
+            }
+
+            /// For any preset, `format` is stable through `parse`: re-parsing a
+            /// formatted day-precision string and re-formatting yields the same string.
+            #[test]
+            fn format_is_canonical_through_parse(t in 0i64..500_000) {
+                for cal in [sols(), gregorian(), custom_aerin()] {
+                    let s = cal.format(TimelinePoint::from_ticks(t), Precision::Day);
+                    if let Ok((p, _)) = cal.parse(&s) {
+                        prop_assert_eq!(cal.format(p, Precision::Day), s);
+                    }
+                }
+            }
+        }
+    }
 }
