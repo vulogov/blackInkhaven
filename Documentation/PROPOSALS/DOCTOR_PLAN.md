@@ -45,13 +45,14 @@ hole, and it's cheap: the whole node set is already in memory after
     slug → their on-disk `fs_path`s collide.
   - `DuplicateSystemBook` *(Warning)* — more than one Book carries the same
     `system_tag`.
-- **P1 — the test/bench spine.** Stand up the harness the roadmap's stability track
-  needs. **Decision required:** add `proptest` + `criterion` dev-dependencies
-  (standing constraint: explicit OK before adding — even dev-deps), *or* a dep-free
-  spine (`std::time::Instant` budget assertions as normal `#[test]`s; property
-  loops over the already-present RNG). Recommendation: dep-free first — it runs
-  inside the existing release-gate `cargo test` with no new surface — and only reach
-  for `proptest`/`criterion` if shrinking / statistical timing prove worth it.
+- **P1 — the test/bench spine.** _Done._ Decision: crate dev-deps are fine (only
+  external *application/binary* deps are off-limits). **criterion was already wired**
+  (`benches/` + `[[bench]]` startup/search), so P1 only added **`proptest`**. Perf
+  budgets land as in-process `#[test]`s with an `Instant` assertion (the right tool
+  for CI regression gates — runs in the release-gate `cargo test`; criterion stays
+  for manual profiling). Shipped: a referential-scan perf-budget test (1000 nodes
+  < 500ms, guards against O(n²) regressions) + a proptest harness smoke (3
+  `levenshtein`-is-a-metric properties). Full suite 1758 → 1762.
 - **P2 — parser property tests.** First property tests over the panic-prone parsers
   (calendar `parse`, HJSON config layering) on the P1 spine.
 - **P3 — autofix for the safe classes.** Prune dangling `linked_paragraphs` /

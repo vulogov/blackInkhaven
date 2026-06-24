@@ -2267,4 +2267,71 @@ mod tests {
         assert!(super::scan_sibling_slug_collisions(&h).is_empty());
         assert!(super::scan_duplicate_system_books(&h).is_empty());
     }
+
+    /// 1.3.32+ perf budget (road to 1.4.0): the referential scans are O(n) over the
+    /// node set — guard against an accidental O(n²) regression (e.g. a linear
+    /// `Hierarchy::get`). Runs in the normal release-gate suite; the budget is
+    /// generous so it doesn't flake on slow CI, but a quadratic blow-up at 1000
+    /// nodes would blow past it.
+    #[test]
+    fn referential_scans_meet_perf_budget() {
+        use std::time::Instant;
+        let n = 1000usize;
+        let book = uuid::Uuid::now_v7();
+        let ids: Vec<uuid::Uuid> = (0..n).map(|_| uuid::Uuid::now_v7()).collect();
+        let mut nodes = vec![ri_node(base(book, "book", "book-a"))];
+        for (i, id) in ids.iter().enumerate() {
+            let mut p = base(*id, "paragraph", &format!("p{i}"));
+            p["parent_id"] = serde_json::json!(book);
+            // Each links to the next; the last links to a ghost (one dangler).
+            let next = ids.get(i + 1).copied().unwrap_or_else(uuid::Uuid::now_v7);
+            p["linked_paragraphs"] = serde_json::json!([next]);
+            nodes.push(ri_node(p));
+        }
+        let h = ri_hierarchy(nodes);
+        let t = Instant::now();
+        let danglers = super::scan_dangling_paragraph_links(&h).len();
+        super::scan_broken_parents(&h);
+        super::scan_dangling_event_refs(&h);
+        super::scan_sibling_slug_collisions(&h);
+        super::scan_duplicate_system_books(&h);
+        let elapsed = t.elapsed();
+        assert_eq!(danglers, 1, "only the last paragraph's link dangles");
+        assert!(
+            elapsed.as_millis() < 500,
+            "referential scans over {n} nodes took {elapsed:?} (budget 500ms)"
+        );
+    }
+
+    /// 1.3.32+ — proptest harness smoke (road to 1.4.0). Proves the property-test
+    /// spine on a real invariant: `levenshtein` is a metric. The parser property
+    /// sweep (calendar / HJSON) builds on this in P2.
+    mod prop {
+        use proptest::prelude::*;
+
+        proptest! {
+            #[test]
+            fn levenshtein_is_zero_on_identity(a in "[a-z]{0,24}") {
+                prop_assert_eq!(super::super::levenshtein(&a, &a), 0);
+            }
+
+            #[test]
+            fn levenshtein_is_symmetric(a in "[a-z]{0,24}", b in "[a-z]{0,24}") {
+                prop_assert_eq!(
+                    super::super::levenshtein(&a, &b),
+                    super::super::levenshtein(&b, &a)
+                );
+            }
+
+            #[test]
+            fn levenshtein_is_bounded(a in "[a-z]{0,24}", b in "[a-z]{0,24}") {
+                let d = super::super::levenshtein(&a, &b);
+                let la = a.chars().count();
+                let lb = b.chars().count();
+                // Bounded above by the longer string, below by the length gap.
+                prop_assert!(d <= la.max(lb));
+                prop_assert!(d >= la.abs_diff(lb));
+            }
+        }
+    }
 }
