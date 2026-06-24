@@ -1393,6 +1393,7 @@ fn send_ai_prompt(app: &mut App) {
         Some(ANALYSIS_SYSTEM_PROMPT.to_string()),
         Vec::new(),
         rendered,
+        "prompts-tui",
     );
     app.last_send = Some(Send {
         prompt_name,

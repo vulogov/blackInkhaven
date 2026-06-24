@@ -286,6 +286,24 @@ impl super::App {
                 ));
             }
         }
+        // 1.3.34+ — report-card badge: open Output findings under this node (a
+        // count + worst-severity glyph), aggregated up from the source paragraphs.
+        if let Some((count, sev)) = self.tree_badges.get(&node.id) {
+            if *count > 0 {
+                use crate::pane::output::Severity;
+                let (glyph, color) = match sev {
+                    Severity::Contradiction => ("⊗", Color::Red),
+                    Severity::Warning => ("⚠", Color::Yellow),
+                    Severity::Progress => ("↻", Color::Cyan),
+                    _ => ("●", Color::Gray),
+                };
+                pip_spans.push(Span::raw(" "));
+                pip_spans.push(Span::styled(
+                    format!("{glyph}{count}"),
+                    Style::default().fg(color),
+                ));
+            }
+        }
         let pip_width: usize = pip_spans
             .iter()
             .map(|s| s.content.chars().count())
