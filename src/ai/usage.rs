@@ -29,13 +29,6 @@ pub fn install(project_root: &Path) {
     }
 }
 
-/// Detach the tracker (`record` becomes a no-op again).
-pub fn uninstall() {
-    if let Ok(mut g) = ROOT.write() {
-        *g = None;
-    }
-}
-
 fn file(root: &Path) -> PathBuf {
     root.join(".inkhaven").join("ai_usage.json")
 }
@@ -102,12 +95,6 @@ mod tests {
         let mut got = usage_for(dir.path(), &day);
         got.sort();
         assert_eq!(got, vec![("chat".to_string(), 2), ("grammar".to_string(), 1)]);
-        uninstall();
-        // After uninstall, record is a silent no-op.
-        record("chat");
-        let mut after = usage_for(dir.path(), &day);
-        after.sort();
-        assert_eq!(after, vec![("chat".to_string(), 2), ("grammar".to_string(), 1)]);
     }
 
     #[test]
