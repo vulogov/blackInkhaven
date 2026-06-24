@@ -141,28 +141,9 @@ pub fn detect(
         }
         let stale = staleness(e, threshold);
         let severity = compute_severity(sig, stale);
-        let mut reasons = vec![
-            "No paragraphs, characters, or places are linked to this event.".to_string(),
-        ];
-        match sig {
-            Significance::High => reasons.push(
-                "A concrete date and detailed title suggest a significant event."
-                    .to_string(),
-            ),
-            Significance::Moderate => reasons
-                .push("Has some detail but sits unconnected.".to_string()),
-            Significance::Low => reasons
-                .push("Stub event with minimal metadata.".to_string()),
-        }
-        match (stale, e.age_days) {
-            (Staleness::Old, Some(age)) => {
-                reasons.push(format!("Orphaned for {age} days."))
-            }
-            (Staleness::Recent, Some(age)) if age >= 0 => {
-                reasons.push(format!("Recently added ({age} days ago)."))
-            }
-            _ => {}
-        }
+        // English reasons come from the lang module (single source; the emission
+        // layer re-renders these same lines in the project language).
+        let reasons = super::lang::orphan_reasons(sig, stale, e.age_days, super::lang::Lang::En);
         out.push(OrphanFinding {
             event_id: e.id,
             title: e.title.clone(),

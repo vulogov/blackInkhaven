@@ -116,26 +116,30 @@ pub fn run(
         );
     }
 
+    // Localize finding text to the project's working language.
+    let lang = critique::lang::lang_from_name(&cfg.language);
     for f in &report.orphans {
         let date = calendar.format(TimelinePoint::from_ticks(f.start_ticks), f.precision);
-        let prompt = elaboration::orphan_prompt(&f.title, &date, &f.track, &f.reasons);
+        let reasons = critique::lang::localize_orphan(f, lang);
+        let prompt = elaboration::orphan_prompt(&f.title, &date, &f.track, &reasons);
         let extra = elaborate_one(cfg, &mut budget, &prompt);
         let icon = sev_icon(f.severity);
         println!("{icon} ⊘ [orphan] \"{}\" ({date}, {} track)", f.title, f.track);
-        println!("    {}", f.reasons.join(" "));
+        println!("    {}", reasons.join(" "));
         if let Some(text) = extra {
             println!("    ↳ {text}");
         }
     }
     for f in &report.overlaps {
         let window = calendar.format(TimelinePoint::from_ticks(f.overlap_window.0), Precision::Season);
+        let reasons = critique::lang::overlap_reasons(f, lang);
         let prompt =
-            elaboration::overlap_prompt(&f.titles, &window, f.is_cluster, &f.reasons);
+            elaboration::overlap_prompt(&f.titles, &window, f.is_cluster, &reasons);
         let extra = elaborate_one(cfg, &mut budget, &prompt);
         let icon = sev_icon(f.severity);
         let tag = if f.is_cluster { "cluster" } else { "overlap" };
         println!("{icon} ⧉ [fuzzy_{tag}] {}", f.titles.join(" + "));
-        println!("    {} · window ~{window}", f.reasons.join(" "));
+        println!("    {} · window ~{window}", reasons.join(" "));
         if let Some(text) = extra {
             println!("    ↳ {text}");
         }

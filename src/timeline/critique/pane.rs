@@ -9,6 +9,7 @@
 //! + hierarchy needed to turn ticks → dates and UUIDs → names). Localization of the
 //! text lands in P5; for now `body_en` mirrors `text`.
 
+use super::lang::{self, Lang};
 use super::types::{CritSeverity, FuzzyOverlapFinding, OrphanFinding, Significance, Staleness, Suspicion};
 use crate::pane::output::{kinds, Lifetime, Message, Severity};
 
@@ -47,11 +48,19 @@ fn suspicion_str(s: Suspicion) -> &'static str {
     }
 }
 
-/// Emit an orphan finding. `date_label` is the event's start formatted by the
-/// caller's calendar (e.g. `"year 120"`). `elaboration` is the optional LLM text
-/// (P2); when present it's appended to the headline and stored in metadata.
-pub fn emit_orphan(f: &OrphanFinding, date_label: &str, elaboration: Option<&str>) {
+/// Emit an orphan finding in `lang` (the project's language). `date_label` is the
+/// event's start formatted by the caller's calendar (e.g. `"year 120"`).
+/// `elaboration` is the optional LLM text (P2); when present it's appended.
+pub fn emit_orphan(f: &OrphanFinding, date_label: &str, elaboration: Option<&str>, lang: Lang) {
+    let reasons = lang::localize_orphan(f, lang);
     let mut headline = format!(
+        "\"{}\" ({}, \"{}\" track) — {}",
+        f.title,
+        date_label,
+        f.track,
+        reasons.join(" ")
+    );
+    let body_en = format!(
         "\"{}\" ({}, \"{}\" track) — {}",
         f.title,
         date_label,
@@ -64,7 +73,7 @@ pub fn emit_orphan(f: &OrphanFinding, date_label: &str, elaboration: Option<&str
     }
     let meta = serde_json::json!({
         "text": headline,
-        "body_en": headline,
+        "body_en": body_en,
         "category": "orphan",
         "provenance": PROVENANCE,
         "timeline": true,
@@ -95,6 +104,7 @@ pub fn emit_overlap(
     char_names: &[String],
     place_names: &[String],
     elaboration: Option<&str>,
+    lang: Lang,
 ) {
     let titles = f
         .titles
@@ -102,24 +112,28 @@ pub fn emit_overlap(
         .map(|t| format!("\"{t}\""))
         .collect::<Vec<_>>()
         .join(" + ");
-    let mut headline = if f.is_cluster {
-        format!(
-            "Cluster of {} fuzzy events overlapping {}: {} — {}",
-            f.event_ids.len(),
-            window_label,
-            titles,
-            f.reasons.join(" ")
-        )
-    } else {
-        format!("{} overlap {} — {}", titles, window_label, f.reasons.join(" "))
+    let line = |reasons: &[String]| {
+        if f.is_cluster {
+            format!(
+                "Cluster of {} fuzzy events overlapping {}: {} — {}",
+                f.total_events,
+                window_label,
+                titles,
+                reasons.join(" ")
+            )
+        } else {
+            format!("{} overlap {} — {}", titles, window_label, reasons.join(" "))
+        }
     };
+    let mut headline = line(&lang::overlap_reasons(f, lang));
+    let body_en = line(&f.reasons);
     if let Some(extra) = elaboration {
         headline.push(' ');
         headline.push_str(extra);
     }
     let meta = serde_json::json!({
         "text": headline,
-        "body_en": headline,
+        "body_en": body_en,
         "category": "fuzzy_overlap",
         "provenance": PROVENANCE,
         "timeline": true,

@@ -717,13 +717,15 @@ impl super::App {
         }
 
         // Emit each finding to the Output pane, formatting dates + entity names
-        // (the detectors are name-free; resolution lives here).
+        // (the detectors are name-free; resolution lives here). The finding text is
+        // localized to the project's working language.
+        let lang = critique::lang::lang_from_name(&self.active_prompt_language());
         for f in &report.orphans {
             let date = calendar.format(
                 crate::timeline::TimelinePoint::from_ticks(f.start_ticks),
                 f.precision,
             );
-            critique::pane::emit_orphan(f, &date, None);
+            critique::pane::emit_orphan(f, &date, None, lang);
         }
         for f in &report.overlaps {
             let window = calendar.format(
@@ -740,7 +742,7 @@ impl super::App {
                 .iter()
                 .filter_map(|id| self.hierarchy.get(*id).map(|n| n.title.clone()))
                 .collect();
-            critique::pane::emit_overlap(f, &window, &char_names, &place_names, None);
+            critique::pane::emit_overlap(f, &window, &char_names, &place_names, None, lang);
         }
 
         let total = report.total();
