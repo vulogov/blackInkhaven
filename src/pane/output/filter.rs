@@ -1,0 +1,252 @@
+//! Output-pane filtering (road to 1.4.0).
+//!
+//! The Output pane gathers findings from every subsystem onto one surface. This is
+//! the read-side view that narrows it by **source** (which subsystem), **severity**
+//! (hide the low-signal noise), and **the open paragraph**. Pure: a predicate over
+//! a [`Message`] plus the optional open-paragraph id. The pane filters its
+//! `active()` fetch through [`OutputFilter::matches`] each frame (P1); no schema or
+//! store change.
+
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+use super::types::{kinds, Message, Severity};
+
+/// The human-facing **source** groups, in cycle order. `message_source` maps every
+/// message kind onto one of these.
+pub const SOURCES: &[&str] = &[
+    "fact-check",
+    "socrates",
+    "timeline-critique",
+    "world",
+    "translation",
+    "lexicon",
+    "variety",
+    "ai",
+    "bund",
+    "other",
+];
+
+/// Classify a message into one human source group (stable; the filter's primary
+/// dimension). Keyed off `kind` — the single reliable discriminator (provenance in
+/// `metadata` is inconsistent across kinds).
+pub fn message_source(msg: &Message) -> &'static str {
+    match msg.kind.as_str() {
+        kinds::FACT_CHECK_WARNING => "fact-check",
+        kinds::SOCRATIC_INQUIRY => "socrates",
+        kinds::TIMELINE_ORPHAN_WARNING | kinds::TIMELINE_FUZZY_OVERLAP_WARNING => {
+            "timeline-critique"
+        }
+        kinds::WORLD_COMPILER_PROPOSAL => "world",
+        kinds::TRANSLATION_RESULT
+        | kinds::TRANSLATION_MEMORY_LISTING
+        | kinds::TRANSLATION_CORPUS_PROGRESS
+        | kinds::TRANSLATION_EVAL_RESULT
+        | kinds::TRANSLATION_EXPORT_RESULT
+        | kinds::TRANSLATION_UNCOVERED_WORD_REPORT => "translation",
+        kinds::LEXICON_PROPOSAL => "lexicon",
+        kinds::VARIETY_RENDERING => "variety",
+        kinds::AI_TASK_COMPLETE => "ai",
+        kinds::BUND_PRINT | kinds::BUND_LOG => "bund",
+        _ => "other",
+    }
+}
+
+/// A linear rank for the severity filter. `Progress` (transient task ticks) ranks
+/// lowest so a "warnings and up" filter hides it along with `Info`.
+fn severity_rank(s: Severity) -> u8 {
+    match s {
+        Severity::Progress => 0,
+        Severity::Info => 1,
+        Severity::Warning => 2,
+        Severity::Contradiction => 3,
+    }
+}
+
+/// The active Output-pane filter. All-`None`/`false` means "show everything"
+/// ([`is_active`] is then false). Serializable for session persistence (P2).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OutputFilter {
+    /// Show only this source group (see [`SOURCES`]); `None` = every source.
+    pub source: Option<String>,
+    /// Show only messages at or above this severity; `None` = every severity.
+    pub min_severity: Option<Severity>,
+    /// Show only messages about the currently-open paragraph.
+    pub only_open_paragraph: bool,
+}
+
+impl OutputFilter {
+    /// Whether any narrowing is in effect.
+    pub fn is_active(&self) -> bool {
+        self.source.is_some() || self.min_severity.is_some() || self.only_open_paragraph
+    }
+
+    /// Reset to "show everything".
+    pub fn clear(&mut self) {
+        *self = OutputFilter::default();
+    }
+
+    /// Does `msg` pass the filter? `open_paragraph` is the id of the paragraph the
+    /// editor currently has open (for the `only_open_paragraph` dimension).
+    pub fn matches(&self, msg: &Message, open_paragraph: Option<Uuid>) -> bool {
+        if let Some(src) = self.source.as_deref() {
+            if message_source(msg) != src {
+                return false;
+            }
+        }
+        if let Some(min) = self.min_severity {
+            if severity_rank(msg.severity) < severity_rank(min) {
+                return false;
+            }
+        }
+        if self.only_open_paragraph
+            && (open_paragraph.is_none() || msg.source_paragraph_id != open_paragraph)
+        {
+            return false;
+        }
+        true
+    }
+
+    /// A compact one-line description for the pane header (empty when inactive).
+    pub fn summary(&self) -> String {
+        if !self.is_active() {
+            return String::new();
+        }
+        let mut parts = Vec::new();
+        if let Some(src) = &self.source {
+            parts.push(format!("src:{src}"));
+        }
+        if let Some(min) = self.min_severity {
+            parts.push(format!("≥{}", min.as_str()));
+        }
+        if self.only_open_paragraph {
+            parts.push("¶ this paragraph".to_string());
+        }
+        parts.join(" · ")
+    }
+
+    /// Cycle the source dimension: None → SOURCES[0] → … → last → None.
+    pub fn cycle_source(&mut self) {
+        self.source = match &self.source {
+            None => Some(SOURCES[0].to_string()),
+            Some(cur) => {
+                let idx = SOURCES.iter().position(|s| s == cur);
+                match idx {
+                    Some(i) if i + 1 < SOURCES.len() => Some(SOURCES[i + 1].to_string()),
+                    _ => None,
+                }
+            }
+        };
+    }
+
+    /// Cycle the min-severity dimension: None → Info → Warning → Contradiction → None.
+    pub fn cycle_min_severity(&mut self) {
+        self.min_severity = match self.min_severity {
+            None => Some(Severity::Info),
+            Some(Severity::Info) => Some(Severity::Warning),
+            Some(Severity::Warning) => Some(Severity::Contradiction),
+            Some(Severity::Contradiction) => None,
+            // Progress is never a target; collapse to None.
+            Some(Severity::Progress) => None,
+        };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::pane::output::{Lifetime, Message};
+
+    fn msg(kind: &str, severity: Severity, para: Option<Uuid>) -> Message {
+        let mut m = Message::new(kind, severity, Lifetime::UntilActedOn, serde_json::json!({}));
+        if let Some(p) = para {
+            m = m.with_source_paragraph(p);
+        }
+        m
+    }
+
+    #[test]
+    fn source_classification_covers_known_kinds() {
+        assert_eq!(message_source(&msg(kinds::FACT_CHECK_WARNING, Severity::Warning, None)), "fact-check");
+        assert_eq!(message_source(&msg(kinds::SOCRATIC_INQUIRY, Severity::Info, None)), "socrates");
+        assert_eq!(message_source(&msg(kinds::TIMELINE_ORPHAN_WARNING, Severity::Warning, None)), "timeline-critique");
+        assert_eq!(message_source(&msg(kinds::TRANSLATION_RESULT, Severity::Info, None)), "translation");
+        assert_eq!(message_source(&msg("something_unknown", Severity::Info, None)), "other");
+    }
+
+    #[test]
+    fn empty_filter_matches_everything() {
+        let f = OutputFilter::default();
+        assert!(!f.is_active());
+        assert!(f.matches(&msg(kinds::FACT_CHECK_WARNING, Severity::Info, None), None));
+        assert!(f.summary().is_empty());
+    }
+
+    #[test]
+    fn source_filter_narrows() {
+        let mut f = OutputFilter::default();
+        f.source = Some("socrates".into());
+        assert!(f.is_active());
+        assert!(f.matches(&msg(kinds::SOCRATIC_INQUIRY, Severity::Info, None), None));
+        assert!(!f.matches(&msg(kinds::FACT_CHECK_WARNING, Severity::Info, None), None));
+    }
+
+    #[test]
+    fn min_severity_hides_lower_and_progress() {
+        let mut f = OutputFilter::default();
+        f.min_severity = Some(Severity::Warning);
+        assert!(f.matches(&msg(kinds::FACT_CHECK_WARNING, Severity::Warning, None), None));
+        assert!(f.matches(&msg(kinds::FACT_CHECK_WARNING, Severity::Contradiction, None), None));
+        assert!(!f.matches(&msg(kinds::FACT_CHECK_WARNING, Severity::Info, None), None));
+        assert!(!f.matches(&msg(kinds::AI_TASK_COMPLETE, Severity::Progress, None), None));
+    }
+
+    #[test]
+    fn only_open_paragraph_requires_a_match() {
+        let para = Uuid::new_v4();
+        let other = Uuid::new_v4();
+        let mut f = OutputFilter::default();
+        f.only_open_paragraph = true;
+        assert!(f.matches(&msg(kinds::FACT_CHECK_WARNING, Severity::Info, Some(para)), Some(para)));
+        assert!(!f.matches(&msg(kinds::FACT_CHECK_WARNING, Severity::Info, Some(other)), Some(para)));
+        // No paragraph open, or message not tied to a paragraph → hidden.
+        assert!(!f.matches(&msg(kinds::FACT_CHECK_WARNING, Severity::Info, Some(para)), None));
+        assert!(!f.matches(&msg(kinds::BUND_PRINT, Severity::Info, None), Some(para)));
+    }
+
+    #[test]
+    fn cycle_source_wraps_through_all_then_off() {
+        let mut f = OutputFilter::default();
+        for expected in SOURCES {
+            f.cycle_source();
+            assert_eq!(f.source.as_deref(), Some(*expected));
+        }
+        f.cycle_source();
+        assert_eq!(f.source, None, "cycles back to off after the last source");
+    }
+
+    #[test]
+    fn cycle_min_severity_loops() {
+        let mut f = OutputFilter::default();
+        f.cycle_min_severity();
+        assert_eq!(f.min_severity, Some(Severity::Info));
+        f.cycle_min_severity();
+        assert_eq!(f.min_severity, Some(Severity::Warning));
+        f.cycle_min_severity();
+        assert_eq!(f.min_severity, Some(Severity::Contradiction));
+        f.cycle_min_severity();
+        assert_eq!(f.min_severity, None);
+    }
+
+    #[test]
+    fn summary_is_compact_and_nonempty_when_active() {
+        let mut f = OutputFilter { source: Some("fact-check".into()), ..Default::default() };
+        f.min_severity = Some(Severity::Warning);
+        f.only_open_paragraph = true;
+        let s = f.summary();
+        assert!(s.contains("fact-check"));
+        assert!(s.contains("warning"));
+        assert!(s.contains('¶'));
+    }
+}

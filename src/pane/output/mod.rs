@@ -7,10 +7,12 @@
 //! per-project DuckDB-backed [`OutputStore`]. The ratatui pane widget, the
 //! `Ctrl+B Tab` cycling chord, and the `ink.io.*` Bund surface build on it.
 
+pub mod filter;
 pub mod install;
 pub mod store;
 pub mod types;
 
+pub use filter::{message_source, OutputFilter};
 pub use install::{active, emit, emit_task_complete, install, uninstall};
 pub use store::OutputStore;
 pub use types::{kinds, ActionId, Lifetime, Message, Severity};
