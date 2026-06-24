@@ -19828,6 +19828,7 @@ impl App {
         let is_bund_input = matches!(self.modal, Modal::BundInput { .. });
         let is_similar_picker = matches!(self.modal, Modal::SimilarPicker { .. });
         let is_progress = matches!(self.modal, Modal::Progress { .. });
+        let is_goals_editor = matches!(self.modal, Modal::GoalsEditor { .. });
         let is_paragraph_target = matches!(self.modal, Modal::ParagraphTarget { .. });
         let is_save_markdown = matches!(self.modal, Modal::SaveMarkdown { .. });
         let is_snapshot_diff = matches!(self.modal, Modal::SnapshotDiff { .. });
@@ -20108,6 +20109,11 @@ impl App {
 
         if is_progress {
             self.progress_modal_handle_key(key);
+            return Ok(false);
+        }
+
+        if is_goals_editor {
+            self.goals_editor_handle_key(key);
             return Ok(false);
         }
 
@@ -23304,7 +23310,125 @@ impl App {
                 self.refresh_progress_cache();
                 self.status = "progress: refreshed".into();
             }
+            KeyCode::Char('e') | KeyCode::Char('E') => {
+                self.open_goals_editor();
+            }
             _ => {}
+        }
+    }
+
+    /// Field table for the goals editor: (HJSON path, label,
+    /// `cfg.goals` accessor as a closure-free index). The order is
+    /// the on-screen order and the index used by the modal buffers.
+    const GOALS_EDITOR_FIELDS: [(&'static str, &'static str); 3] = [
+        ("goals.daily_words", "daily words"),
+        ("goals.active_minutes_daily", "active minutes / day"),
+        ("goals.streak_grace_per_week", "streak grace days / week"),
+    ];
+
+    /// Open the in-app goals editor, seeded from the live config.
+    fn open_goals_editor(&mut self) {
+        let g = &self.cfg.goals;
+        let seed = vec![
+            g.daily_words.max(0).to_string(),
+            g.active_minutes_daily.max(0).to_string(),
+            g.streak_grace_per_week.max(0).to_string(),
+        ];
+        self.modal = Modal::GoalsEditor {
+            values: seed.clone(),
+            original: seed,
+            cursor: 0,
+        };
+        self.status =
+            "goals: ↑↓ field · digits edit · Enter save → inkhaven.hjson · Esc cancel".into();
+    }
+
+    fn goals_editor_handle_key(&mut self, key: KeyEvent) {
+        let Modal::GoalsEditor { values, cursor, .. } = &mut self.modal else {
+            return;
+        };
+        let n = values.len();
+        match key.code {
+            KeyCode::Up | KeyCode::BackTab => {
+                *cursor = (*cursor + n - 1) % n;
+            }
+            KeyCode::Down | KeyCode::Tab => {
+                *cursor = (*cursor + 1) % n;
+            }
+            KeyCode::Char(c) if c.is_ascii_digit() => {
+                // Cap field width so a fat-fingered run can't grow
+                // an absurd integer; 7 digits is plenty for words.
+                if values[*cursor].len() < 7 {
+                    values[*cursor].push(c);
+                }
+            }
+            KeyCode::Backspace => {
+                values[*cursor].pop();
+            }
+            KeyCode::Enter => {
+                self.commit_goals_edits();
+            }
+            _ => {}
+        }
+    }
+
+    /// Write the changed goal fields back to `inkhaven.hjson` via the
+    /// comment-preserving in-place patch (versioned backup + atomic),
+    /// then apply them to the live config so the change takes effect
+    /// without a restart. Unchanged fields are never written.
+    fn commit_goals_edits(&mut self) {
+        let (values, original) = match &self.modal {
+            Modal::GoalsEditor { values, original, .. } => {
+                (values.clone(), original.clone())
+            }
+            _ => return,
+        };
+        let mut updates: Vec<(String, serde_json::Value)> = Vec::new();
+        for (i, (path, _)) in Self::GOALS_EDITOR_FIELDS.iter().enumerate() {
+            if values[i] == original[i] {
+                continue;
+            }
+            // Empty buffer means "0" (goal disabled).
+            let parsed: i64 = values[i].parse().unwrap_or(0).max(0);
+            updates.push(((*path).to_string(), serde_json::json!(parsed)));
+        }
+        self.modal = Modal::None;
+        if updates.is_empty() {
+            self.status = "goals: no changes".into();
+            return;
+        }
+        match crate::config_tui::apply_in_place_edits(&self.layout.root, &updates) {
+            Ok(outcome) => {
+                // Mirror the write into the live config so the
+                // status bar + snapshot update immediately.
+                for (path, value) in &updates {
+                    let v = value.as_i64().unwrap_or(0);
+                    match path.as_str() {
+                        "goals.daily_words" => self.cfg.goals.daily_words = v,
+                        "goals.active_minutes_daily" => {
+                            self.cfg.goals.active_minutes_daily = v
+                        }
+                        "goals.streak_grace_per_week" => {
+                            self.cfg.goals.streak_grace_per_week = v
+                        }
+                        _ => {}
+                    }
+                }
+                self.refresh_progress_cache();
+                let backup = outcome
+                    .backup
+                    .file_name()
+                    .map(|s| s.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                self.status = format!(
+                    "goals: saved {} field(s) → inkhaven.hjson (backup {})",
+                    updates.len(),
+                    backup
+                );
+            }
+            Err(e) => {
+                self.status = format!("goals: save failed — {e}");
+            }
         }
     }
 

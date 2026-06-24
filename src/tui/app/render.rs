@@ -147,6 +147,10 @@ impl super::App {
             self.draw_progress_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::GoalsEditor { .. }) {
+            self.draw_goals_editor_modal(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::SnapshotDiff { .. }) {
             self.draw_snapshot_diff_modal(f, area);
             return;

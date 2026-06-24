@@ -112,3 +112,43 @@ pub fn apply_in_place_edits(
         backup,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The goals editor (1.3.35) commits through this path. Verify
+    /// it patches the targeted `goals.*` leaves while every comment,
+    /// the surrounding stanza, and unrelated keys survive — and that
+    /// a pre-patch backup is written.
+    #[test]
+    fn goals_edit_patches_in_place_and_preserves_comments() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = "// my project\n{\n  language: english\n  // writing goals\n  goals: {\n    daily_words: 0\n    streak_grace_per_week: 1\n  }\n}\n";
+        std::fs::write(dir.path().join("inkhaven.hjson"), src).unwrap();
+
+        let outcome = apply_in_place_edits(
+            dir.path(),
+            &[
+                ("goals.daily_words".into(), serde_json::json!(750)),
+                // active_minutes_daily is absent → Append inside the
+                // existing `goals` stanza.
+                ("goals.active_minutes_daily".into(), serde_json::json!(30)),
+            ],
+        )
+        .unwrap();
+
+        let out = std::fs::read_to_string(dir.path().join("inkhaven.hjson")).unwrap();
+        assert!(out.contains("daily_words: 750"));
+        assert!(out.contains("active_minutes_daily: 30"));
+        assert!(out.contains("// my project"));
+        assert!(out.contains("// writing goals"));
+        assert!(out.contains("language: english"));
+        assert!(out.contains("streak_grace_per_week: 1"));
+        // Backup of the pre-patch file exists and still says 0.
+        let backup = std::fs::read_to_string(&outcome.backup).unwrap();
+        assert!(backup.contains("daily_words: 0"));
+        // Result re-parses as valid HJSON.
+        serde_hjson::from_str::<serde_json::Value>(&out).expect("valid HJSON");
+    }
+}
