@@ -254,6 +254,40 @@ impl InnerSocratesStore {
         )
     }
 
+    /// Write an intent entry with **string** coverage ids — for a cross-feature
+    /// declarer (Inner Editor) whose category ids are not Socratic `Category`
+    /// values, so [`add_intent`](Self::add_intent)'s typed coverage can't hold
+    /// them. Additive; the entry reads back through
+    /// [`list_intent_rows_raw`](Self::list_intent_rows_raw).
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_intent_raw(
+        &self,
+        id: &str,
+        kind: &IntentKind,
+        description: &str,
+        scope: &IntentScope,
+        coverage: &[String],
+        scope_level: ScopeLevel,
+    ) -> Result<()> {
+        let (scope_type, scope_data) = scope_to_row(scope);
+        let coverage = serde_json::to_string(coverage).unwrap_or_else(|_| "[]".into());
+        self.engine.execute_with(
+            "INSERT OR REPLACE INTO intent_entries \
+             (id, kind, description, scope_type, scope_data, coverage, scope_level, created_at) \
+             VALUES (?,?,?,?,?,?,?,?)",
+            &[
+                &id,
+                &kind.id(),
+                &description,
+                &scope_type,
+                &scope_data,
+                &coverage,
+                &scope_level_id(scope_level),
+                &now_secs(),
+            ],
+        )
+    }
+
     pub fn remove_intent(&self, id: &str) -> Result<()> {
         self.engine.execute_with("DELETE FROM intent_entries WHERE id = ?", &[&id])
     }

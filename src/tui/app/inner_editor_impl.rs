@@ -230,6 +230,61 @@ impl super::App {
         };
     }
 
+    /// `i` on a selected `inner_editor_observation` Output row — declare that
+    /// finding's category a deliberate choice (chapter-scoped), writing an intent
+    /// ledger entry that suppresses future ones like it, then dismiss the row.
+    /// (Routed from `handle_output_key`'s `i`, which otherwise records a Socratic
+    /// intent.) Uses the chapter **id** so the scope matches the engine's
+    /// `FindingContext.chapter_id`.
+    pub(super) fn inner_editor_record_intent_action(&mut self) {
+        let Some(m) = crate::pane::output::active()
+            .and_then(|s| s.active().ok())
+            .unwrap_or_default()
+            .get(self.output_selected)
+            .cloned()
+        else {
+            return;
+        };
+        if m.kind != crate::pane::output::kinds::INNER_EDITOR_OBSERVATION {
+            return;
+        }
+        let Some(cat) = m
+            .metadata
+            .get("category")
+            .and_then(|c| c.as_str())
+            .and_then(crate::inner_editor::EditorCategory::from_id)
+        else {
+            return;
+        };
+        let chapter = self.inner_editor_chapter_of(m.source_paragraph_id);
+        match crate::inner_editor::intent_declare::declare_intent(
+            self.store.project_root(),
+            cat,
+            chapter.as_deref(),
+            None,
+        ) {
+            Ok(()) => {
+                self.status = format!("declared intent — {} won't be re-noted here", cat.label());
+                if let Some(s) = crate::pane::output::active() {
+                    let _ = s.dismiss(m.id);
+                }
+            }
+            Err(e) => self.status = format!("Inner Editor intent failed: {e}"),
+        }
+    }
+
+    /// The enclosing chapter's **id** (UUID string) for a paragraph — matches
+    /// what the engine puts in `FindingContext.chapter_id`. `None` when unknown.
+    fn inner_editor_chapter_of(&self, paragraph_id: Option<uuid::Uuid>) -> Option<String> {
+        let pid = paragraph_id?;
+        let node = self.hierarchy.get(pid)?;
+        self.hierarchy
+            .ancestors(node)
+            .into_iter()
+            .find(|a| a.kind == crate::store::node::NodeKind::Chapter)
+            .map(|c| c.id.to_string())
+    }
+
     /// Filter the Output pane to the Editor's findings and focus it.
     fn inner_editor_jump_to_findings(&mut self) {
         self.modal = Modal::None;
@@ -282,6 +337,9 @@ impl super::App {
             .template;
         let threshold = self.cfg.inner_editor.output.severity_threshold.clone();
         let root = self.store.project_root().to_path_buf();
+        // The paragraph's current (newest) snapshot, so a finding records which
+        // draft it was made against (findings-over-time across F6 snapshots).
+        let snapshot_id = self.store.list_snapshots(id).ok().and_then(|s| s.first().map(|x| x.id));
 
         self.ie_engage_para = Some(id);
         self.start_bg_job(
@@ -297,6 +355,7 @@ impl super::App {
                     want_lang,
                     system_override,
                     threshold,
+                    snapshot_id,
                 );
                 let _ = tx.send(super::BgMsg::Done(result));
             },
@@ -360,6 +419,7 @@ fn run_engagement(
     language: String,
     system_override: String,
     threshold: String,
+    snapshot_id: Option<Uuid>,
 ) -> std::result::Result<String, String> {
     use crate::inner_editor::output::{emit_finding, meets_threshold};
     let outcome = crate::inner_editor::engage(crate::inner_editor::EngageInput {
@@ -369,7 +429,7 @@ fn run_engagement(
         prose,
         preceding,
         language,
-        snapshot_id: None,
+        snapshot_id,
         system_override: Some(system_override),
         force: false,
     })

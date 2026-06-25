@@ -19,6 +19,13 @@ pub enum IntentKind {
     StructuralEcho,
     StylisticChoice,
     DeliberateTemporalAmbiguity,
+    // INNER_EDITOR-1 — additive kinds for declared *style* intentions the Editor
+    // should respect (the ledger is the shared examined-authorship surface).
+    DeliberateRepetition,
+    DeliberateTautology,
+    VoiceInstabilityIntentional,
+    ProseBeliefIntentionalDistance,
+    StylisticPatternDeliberate,
 }
 
 impl IntentKind {
@@ -29,6 +36,11 @@ impl IntentKind {
             IntentKind::StructuralEcho => "structural_echo",
             IntentKind::StylisticChoice => "stylistic_choice",
             IntentKind::DeliberateTemporalAmbiguity => "deliberate_temporal_ambiguity",
+            IntentKind::DeliberateRepetition => "deliberate_repetition",
+            IntentKind::DeliberateTautology => "deliberate_tautology",
+            IntentKind::VoiceInstabilityIntentional => "voice_instability_intentional",
+            IntentKind::ProseBeliefIntentionalDistance => "prose_belief_intentional_distance",
+            IntentKind::StylisticPatternDeliberate => "stylistic_pattern_deliberate",
         }
     }
 
@@ -39,6 +51,11 @@ impl IntentKind {
             "structural_echo" => IntentKind::StructuralEcho,
             "stylistic_choice" => IntentKind::StylisticChoice,
             "deliberate_temporal_ambiguity" => IntentKind::DeliberateTemporalAmbiguity,
+            "deliberate_repetition" => IntentKind::DeliberateRepetition,
+            "deliberate_tautology" => IntentKind::DeliberateTautology,
+            "voice_instability_intentional" => IntentKind::VoiceInstabilityIntentional,
+            "prose_belief_intentional_distance" => IntentKind::ProseBeliefIntentionalDistance,
+            "stylistic_pattern_deliberate" => IntentKind::StylisticPatternDeliberate,
             _ => return None,
         })
     }
