@@ -150,6 +150,9 @@ pub enum Action {
     /// so the family lives on `J` (user-decided 2026-06-26).
     #[serde(rename = "inner_socrates.open_overview")]
     OpenInnerSocratesOverview,
+    /// INNER_EDITOR-1 — the Inner Editor overview (`Ctrl+B E`).
+    #[serde(rename = "inner_editor.open_overview")]
+    OpenInnerEditorOverview,
     #[serde(rename = "view.run_deep_refresh")]
     RunDeepRefresh,
     #[serde(rename = "global.open_llm_picker")]
@@ -888,6 +891,7 @@ impl Action {
             Action::OpenConlangHub => "conlang".into(),
             Action::OpenWorldOverview => "world".into(),
             Action::OpenInnerSocratesOverview => "inner socrates".into(),
+            Action::OpenInnerEditorOverview => "inner editor".into(),
             Action::RunDeepRefresh => "deep refresh".into(),
             Action::OpenLlmPicker => "LLM".into(),
             Action::ToggleSound => "sound".into(),
@@ -1078,6 +1082,8 @@ impl Action {
                 "Open the World overview (WORLD-4, Ctrl+B W) — a read-only summary of the project's world simulation: the `world.hjson` definition (name / seed / star / planet / moons), the compiled astronomy layer (year length in planet-days with the declared-vs-computed divergence flag, axial tilt, season markers, lunar synodic periods, dominant tide, calendar consistency), and whether it has been materialized into the World system book. `↑↓` scroll, `Esc` closes. The operations live on the CLI — `inkhaven realworld new / validate / compile [--materialize]`. Mnemonic: W for World. (Typewriter / focus mode moved to Ctrl+B Shift+W.)".into(),
             Action::OpenInnerSocratesOverview =>
                 "Open the Inner Socrates overview (INNER_SOCRATES-1, Ctrl+B J) — examined authorship: the active Reader Persona, recent Socratic questions about your prose, and the intent ledger (deliberate authorial choices the interrogator respects). Sub-keys: `S` select persona, `L` view ledger, `F` fast-check the open paragraph. `↑↓` scroll, `Esc` closes. Inner Socrates produces questions, never corrections. The CLI surface is `inkhaven inner-socrates check / ledger`. Mnemonic: J (I was taken by book-info).".into(),
+            Action::OpenInnerEditorOverview =>
+                "Open the Inner Editor overview (INNER_EDITOR-1, Ctrl+V O) — the second Inner-family member: a thoughtful editor that OBSERVES literary craft (richness, tautology, style, vocabulary, belief stance, praise, suggestions) as Praise/Note/Concern, never prescribing. Sub-keys: `E` engage the open paragraph (an LLM pass), `A` toggle the ambient paragraph-pause auto-engage (opt-in; LLM cost), `F` jump to the findings in Output. `↑↓` scroll, `Esc` closes. The CLI surface is `inkhaven inner-editor engage / findings / config / usage`. Mnemonic: O for Observe (Ctrl+B E was taken).".into(),
             Action::RunDeepRefresh =>
                 "Run the deep AI world refresh (1.3.12) in the background — facts check, facts scan, semantic drift, and continuity extract, the same scans as `inkhaven world --deep`, in the manuscript's language. Runs off the main thread (a cloned, pool-shared store), so the editor stays fully responsive; a `⟳ deep refresh` status chip tracks progress. When it finishes, the open story bible / Editorial Pass rebuilds itself from the fresh sidecars and the status shows the new world-consistency summary. Needs an LLM provider; one job at a time. Mnemonic: F for reFresh.".into(),
             Action::OpenLlmPicker =>
@@ -1599,6 +1605,10 @@ impl KeyBindings {
                 entry("Shift+j", Action::OpenJournal, Scope::Any),
                 // 1.2.6+ — timeline event picker.
                 entry("e", Action::ViewEventPicker, Scope::Any),
+                // INNER_EDITOR-1 — the Inner Editor overview. `Ctrl+B E` was
+                // taken (ToggleSound) so the family lives on `Ctrl+V O`
+                // (O = Observe, the Editor's defining act; user-directed).
+                entry("o", Action::OpenInnerEditorOverview, Scope::Any),
                 // 1.2.6+ — new event from any pane. Opens the
                 // timeline view and immediately triggers the
                 // new-event prompt, so a fresh project (zero
@@ -2232,6 +2242,18 @@ mod tests {
             k.resolve_meta_sub(&ev('i'), Focus::Editor),
             Some(Action::OpenBookInfo),
             "Ctrl+B I remains book-info",
+        );
+    }
+
+    #[test]
+    fn view_o_opens_inner_editor() {
+        // INNER_EDITOR-1 — Ctrl+B E was taken (ToggleSound); the Inner Editor
+        // family lives on Ctrl+V O (O = Observe; user-directed namespace).
+        let k = KeyBindings::defaults();
+        assert_eq!(
+            k.resolve_view_sub(&ev('o'), Focus::Editor),
+            Some(Action::OpenInnerEditorOverview),
+            "Ctrl+V O opens the Inner Editor overview",
         );
     }
 

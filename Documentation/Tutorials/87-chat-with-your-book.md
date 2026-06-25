@@ -38,12 +38,14 @@ every claim it makes about the book is a citation:
 ```
 She does, twice. Her first real doubt surfaces on the crossing, when the
 captain orders the night run despite the glass falling — she calls it
-"a wager with other men's lives" [the night run](#019efc…). By the storm
-chapter that doubt has hardened into open defiance [storm at sea](#019efc…).
+"a wager with other men's lives" [act-two/the-night-run]. By the storm
+chapter that doubt has hardened into open defiance [act-three/storm-at-sea].
 ```
 
-Each `[label](#id)` points at the paragraph it came from. If the model ever
-cites an id that **wasn't** in what it was given, inkhaven flags it inline —
+Each citation is the passage's **location path** — `[chapter-slug/scene-slug]`
+— so you can see *where* in the book a claim comes from and jump straight to
+it, rather than reading an opaque id. If the model ever cites a location that
+**wasn't** in what it was given, inkhaven flags it inline —
 `[citation could not be validated: …]` — so a hallucinated reference can't pass
 as grounded. An answer with clean citations is an answer you can trust to the
 paragraph.
@@ -64,7 +66,7 @@ collapsed line shows how many passages grounded the answer:
 
 Press **`p`** to expand it (and again to collapse). Each passage lists its
 similarity score, a **★** for a direct hit (versus a context-expansion
-neighbour pulled in around one), its `[id]`, its breadcrumb, and its opening:
+neighbour pulled in around one), its `[location path]`, and its opening:
 
 ```
 ▼ Retrieved passages (6) · p to collapse

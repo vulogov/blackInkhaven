@@ -32,6 +32,8 @@ pub mod kinds {
     pub const WORLD_COMPILER_PROPOSAL: &str = "world_compiler_proposal";
     /// INNER_SOCRATES-1 — a Socratic question about the prose (Fast or Slow track).
     pub const SOCRATIC_INQUIRY: &str = "socratic_inquiry";
+    /// INNER_EDITOR-1 — an Inner Editor literary/stylistic observation (Praise/Note/Concern).
+    pub const INNER_EDITOR_OBSERVATION: &str = "inner_editor_observation";
     /// TIMELINE-2-INTEGRATION — an orphaned timeline event (links to nothing).
     pub const TIMELINE_ORPHAN_WARNING: &str = "timeline_orphan_warning";
     /// TIMELINE-2-INTEGRATION — fuzzy-precision events whose windows collide.

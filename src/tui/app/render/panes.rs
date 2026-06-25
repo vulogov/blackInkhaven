@@ -1558,12 +1558,23 @@ impl super::super::App {
             if i == self.output_selected {
                 sel_line_idx = lines.len();
             }
-            let (icon, color) = match m.severity {
+            let (icon, mut color) = match m.severity {
                 Severity::Info => ('●', Color::Gray),
                 Severity::Warning => ('⚠', Color::Yellow),
                 Severity::Contradiction => ('⊗', Color::Red),
                 Severity::Progress => ('↻', Color::Cyan),
             };
+            // INNER_EDITOR-1 — warm-earth palette by severity (Praise muted gold,
+            // Note terracotta, Concern deep ochre), distinct from the contemplative
+            // purple/grey of the other companions.
+            if m.kind == crate::pane::output::kinds::INNER_EDITOR_OBSERVATION {
+                color = match m.severity {
+                    Severity::Info => Color::Rgb(198, 156, 70),       // muted gold
+                    Severity::Warning => Color::Rgb(188, 110, 78),    // terracotta
+                    Severity::Contradiction => Color::Rgb(160, 96, 40), // deep ochre
+                    Severity::Progress => color,
+                };
+            }
             let text =
                 m.metadata.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string();
             let pin = if m.pinned { " 📌" } else { "" };
@@ -1580,6 +1591,7 @@ impl super::super::App {
             let kind_glyph = match m.kind.as_str() {
                 crate::pane::output::kinds::TIMELINE_ORPHAN_WARNING => "⊘ ",
                 crate::pane::output::kinds::TIMELINE_FUZZY_OVERLAP_WARNING => "⧉ ",
+                crate::pane::output::kinds::INNER_EDITOR_OBSERVATION => "✎ ",
                 _ => "",
             };
             lines.push(Line::from(vec![
@@ -1699,6 +1711,9 @@ impl super::super::App {
                 }
                 Some(s) if s == k::SOCRATIC_INQUIRY => {
                     " ↑↓ · i intent · m note · x addressed · a ask AI · d dismiss · ^B Tab"
+                }
+                Some(s) if s == k::INNER_EDITOR_OBSERVATION => {
+                    " ↑↓ · o expand · a ask AI · d dismiss · p pin · ^B Tab"
                 }
                 Some(s)
                     if s == k::TIMELINE_ORPHAN_WARNING
@@ -1834,6 +1849,17 @@ impl super::super::App {
         let inner = block.inner(area);
         f.render_widget(block, area);
 
+        // BOOK_RAG-1 — Book scope is a conversation: render the running
+        // transcript (retrieved-passages panel + prior turns + the streaming
+        // turn) so the author sees the whole chat, not just the latest reply.
+        // Other scopes keep the single-response + action-hints view.
+        if self.ai_mode == AiMode::Book
+            && (!self.chat_history.is_empty() || self.inference.is_some())
+        {
+            self.draw_ai_book_conversation(f, inner);
+            return;
+        }
+
         match &self.inference {
             None => {
                 let hint = Paragraph::new(
@@ -1904,6 +1930,69 @@ impl super::super::App {
         }
     }
 
+    /// BOOK_RAG-1 — render the Book-scope conversation inline in the AI pane:
+    /// the collapsible retrieved-passages panel, every finalised User/Assistant
+    /// turn, then the in-flight turn (the author's question + the streaming
+    /// answer) which hasn't folded into `chat_history` yet. Newest content is
+    /// pinned to the bottom; `chat_history_scroll` (PageUp) lifts the window.
+    fn draw_ai_book_conversation(&self, f: &mut ratatui::Frame, inner: Rect) {
+        let user_style = Style::default()
+            .fg(self.theme.ai_scope_fg)
+            .add_modifier(Modifier::BOLD);
+        let assistant_style = Style::default()
+            .fg(self.theme.ai_infer_fg)
+            .add_modifier(Modifier::BOLD);
+        let dim = Style::default().add_modifier(Modifier::DIM);
+
+        let mut lines = self.book_rag_transparency_lines();
+        let (history_lines, _) = self.build_chat_history_lines();
+        lines.extend(history_lines);
+
+        // The in-flight turn: present only while streaming (or on error) —
+        // once done it folds into `chat_history` and `pending_chat_user_msg`
+        // clears, so this never double-renders the latest answer.
+        if let (Some(pending), Some(inf)) =
+            (self.pending_chat_user_msg.as_ref(), self.inference.as_ref())
+        {
+            if !self.chat_history.is_empty() {
+                lines.push(Line::from(""));
+            }
+            lines.push(Line::from(Span::styled("❯ User".to_string(), user_style)));
+            for l in pending.lines() {
+                lines.push(Line::from(format!("  {l}")));
+            }
+            lines.push(Line::from(Span::styled(
+                "← Assistant".to_string(),
+                assistant_style,
+            )));
+            match &inf.status {
+                InferenceStatus::Error(e) => lines.push(Line::from(Span::styled(
+                    format!("  {e}"),
+                    Style::default().fg(Color::Red),
+                ))),
+                _ => {
+                    let rendered = super::super::super::markdown::render(&inf.response);
+                    if rendered.is_empty() {
+                        lines.push(Line::from(Span::styled("  ▌streaming…".to_string(), dim)));
+                    } else {
+                        lines.extend(rendered);
+                    }
+                }
+            }
+        }
+
+        // Bottom-pinned scroll: newest turn sits at the bottom; PageUp
+        // (`chat_history_scroll`) lifts the window toward older turns.
+        let body_h = inner.height as usize;
+        let total = lines.len();
+        let auto_scroll = total.saturating_sub(body_h);
+        let scroll_offset = auto_scroll.saturating_sub(self.chat_history_scroll);
+        let p = Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((scroll_offset as u16, 0));
+        f.render_widget(p, inner);
+    }
+
     /// Render the accumulated chat history (User / Assistant turns).
     /// Used by the `Ctrl+B K` AI-fullscreen layout. The newest turn is
     /// pinned to the bottom of the pane — old history scrolls up off-
@@ -1940,7 +2029,9 @@ impl super::super::App {
                         format!("  {:.2} {} ", p.score, star),
                         Style::default().fg(self.theme.ai_scope_fg),
                     ),
-                    Span::styled(format!("[{}] {}", p.id, p.breadcrumb), dim),
+                    // The location path is the citation token the answer uses —
+                    // show it, not the author-useless UUID.
+                    Span::styled(format!("[{}]", p.breadcrumb), dim),
                 ]));
                 // First non-empty prose line, markup-stripped + truncated.
                 let opening: String = p

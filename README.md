@@ -21,54 +21,51 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.4.1 — Chat with your book
+## Latest release · 1.4.2 — The Inner Editor (Part A)
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.4.1.md`](Documentation/RELEASE_NOTES/1.4.1.md)
-· Plan: [`Documentation/PROPOSALS/BOOK_RAG-1_PLAN.md`](Documentation/PROPOSALS/BOOK_RAG-1_PLAN.md)
-· Tutorial: [87](Documentation/Tutorials/87-chat-with-your-book.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.4.2.md`](Documentation/RELEASE_NOTES/1.4.2.md)
+· Plan: [`Documentation/PROPOSALS/INNER_EDITOR-1_PLAN.md`](Documentation/PROPOSALS/INNER_EDITOR-1_PLAN.md)
 
-The AI pane's **Book** scope is now **retrieval-augmented** (BOOK_RAG-1). Instead of
-shipping the whole manuscript with every question, a Book-scope question retrieves the
-paragraphs that actually bear on it, grounds the answer in them, and makes the model
-**cite** them — built entirely on the on-save vector index already in the tree, with **no
-new dependencies**.
+The second member of the **Inner family** arrives. Where Inner Socrates interrogates facts and
+structure, **Inner Editor** observes *literacy and style* through a single configurable persona —
+reading your prose paragraph by paragraph and offering brief, grounded, **non-prescriptive**
+observations. Built entirely on infrastructure already in the tree, with **no new dependencies**.
+This is **Part A** (the editorial core); conversation mode, snapshot history, and the Bund stdlib
+land in 1.4.3.
 
-### Chat with your book
+### Observe, never prescribe
 
-Cycle the AI pane to **Book** scope (**F9**) and ask. Inkhaven retrieves the most relevant
-paragraphs (the same vecstore HNSW index every semantic search uses), expands each with a
-little surrounding context, token-budgets them into a focused grounding block, and asks
-the model to answer **citing** those passages as `[label](#id)`. Citations the model
-invents are flagged inline; when the book doesn't address a question, it says so rather
-than confabulate. **Always on for Book scope** — the other scopes (Selection / Paragraph /
-Subchapter / Chapter) are unchanged.
+The Editor returns observations across eight categories — literary richness, tautology, style,
+style instability, vocabulary, belief stance, craft praise, suggestions — each graded **Praise /
+Note / Concern** and grounded in specific textual evidence. The discipline is structural: it
+**never commands** ("should"/"must" are not in its vocabulary), **praise must be earned** (generic
+encouragement is forbidden), and **silence is fine** (nothing notable → nothing surfaced). It is not
+the Socratic reader and not the fact-checker — it attends to the texture of the prose. It consults
+the shared **intent ledger** to suppress what you've declared deliberate, and is **multilingual**
+(EN / RU / ES / FR / DE).
 
-Press **`p`** to expand the *Retrieved passages* transparency panel and see exactly what
-grounded the answer. Retrieval happens **once per chat session** (clear history to
-re-ground); a curated set of system books (Notes / Research / Places / Characters /
-Artefacts / World / Language) joins the manuscript in scope. All tunable in the new
-`book_rag:` config block.
+### Engaging it
 
-### From the terminal & from a script
+**`Ctrl+V O`** (O = *Observe*) opens the Inner Editor overview; from there **`E`** engages the open
+paragraph, **`A`** toggles the opt-in ambient paragraph-pause auto-engage (with a cooldown so it
+never fires mid-edit), **`F`** jumps to the findings. They land in the Output pane with a **✎ glyph**
+and a warm-earth palette, distinct from Inner Socrates' purple; both companions coexist on the same
+paragraph. From the terminal: **`inkhaven inner-editor engage / findings / config / usage`**. A new
+`inner_editor:` config block tunes the persona (tone / verbosity / praise frequency / genre / belief
+stance / per-category) and the caps — which, as everywhere, **inform but never block**.
 
-**`inkhaven book-rag retrieve <query>`** inspects what Book-scope chat would ground on —
-no LLM call (`--book-name` / `--top-k` / `--context`). Eight read-only **`ink.book_rag.*`**
-Bund words (`retrieve`, `context`, `scope`, `config`, `system_prompt`, `estimate_tokens`,
-`cited_ids`, `validate_citations`) expose the same retrieval core to scripts. The pane,
-the CLI, and Bund all share one core, so they never disagree.
+### Also in 1.4.2 — Book-RAG polish
 
-### Multilingual & cost
-
-The grounding contract ships localized for the five baseline languages (EN / RU / ES / FR
-/ DE), English fallback. Book answers are tagged under the **`book_rag`** category in
-`inkhaven cost` / **`Ctrl+B $`** — informative, never blocking.
+Two fixes to 1.4.1's Chat with Your Book: the Book-scope conversation now renders **inline as a
+transcript** (not just the latest reply), and citations are **readable location paths**
+(`[chapter/scene]`) end to end instead of opaque UUIDs.
 
 ### Dependencies & compatibility
 
-**No external application or binary dependencies; no new runtime crates** — BOOK_RAG-1 is
-built on the existing `.typ` prose, DuckDB store, Fastembed embeddings, and vecstore index.
-The one behavioural change: **Book scope no longer sends the whole book** — it retrieves
-and grounds instead. No on-disk shape moved; the `book_rag:` block is optional.
+**No external application or binary dependencies; no new runtime crates** — Inner Editor is built on
+the existing per-feature DuckDB store, the Output pane, the multilingual prompt chain, the intent
+ledger, and `ai::usage`. No on-disk shape moved; the `inner_editor:` block and project `genre` are
+optional.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

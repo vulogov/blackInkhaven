@@ -41,8 +41,10 @@ pub fn estimate_tokens(s: &str) -> usize {
 }
 
 /// Compose the retrieved passages into the context block prepended to the
-/// user's prompt. Each passage is labelled with its breadcrumb and citation
-/// id so the LLM can cite it as `[id](#id)`.
+/// user's prompt. Each passage is labelled with its **location path**
+/// (`chapter-slug/scene-slug`) in brackets — that bracketed path is the
+/// citation token the LLM repeats, so the author sees a readable location
+/// rather than an opaque id.
 pub fn compose_context_prefix(passages: &[RetrievedPassage]) -> String {
     if passages.is_empty() {
         return "── Retrieved passages ──\n(No passages in this book matched the \
@@ -53,8 +55,7 @@ pub fn compose_context_prefix(passages: &[RetrievedPassage]) -> String {
     for p in passages {
         let marker = if p.is_hit { " ★" } else { "" };
         out.push_str(&format!(
-            "\n[{id}] {breadcrumb}{marker}\n{body}\n",
-            id = p.id,
+            "\n[{breadcrumb}]{marker}\n{body}\n",
             breadcrumb = p.breadcrumb,
             marker = marker,
             body = p.body.trim(),
@@ -64,40 +65,52 @@ pub fn compose_context_prefix(passages: &[RetrievedPassage]) -> String {
     out
 }
 
-/// The set of paragraph ids cited by the retrieval — used by the citation
-/// validator to flag any cited id the LLM invented.
+/// The set of citation tokens (the passages' location paths) the retrieval
+/// makes available — used by the citation validator to flag any the LLM
+/// invented. (The paragraph's UUID stays in `RetrievedPassage::id` for
+/// programmatic use; it is deliberately NOT a citation token — it's useless
+/// to the author.)
 pub fn cited_ids(passages: &[RetrievedPassage]) -> std::collections::HashSet<String> {
-    passages.iter().map(|p| p.id.to_string()).collect()
+    passages.iter().map(|p| p.breadcrumb.clone()).collect()
 }
 
-/// Flag hallucinated citations inline. Scans the LLM response for markdown
-/// fragment links — `](#id)` — and, for any `id` NOT in `valid_ids` (the
-/// retrieval set), appends a visible `[citation could not be validated: id]`
-/// after the link so the author sees what's grounded vs. invented. A
-/// structural commitment to grounding integrity (RFC §8.3).
+/// Flag hallucinated citations inline. Scans the LLM response for bracketed
+/// citation tokens — `[chapter/scene]` — and, for any path-shaped token NOT
+/// in `valid` (the retrieval's location paths), appends a visible
+/// `[citation could not be validated: …]` after it so the author sees what's
+/// grounded vs. invented. "Path-shaped" (contains `/`, no spaces) keeps the
+/// scan from touching ordinary bracketed prose. A markdown link form
+/// `[path](#path)` validates on its `[path]` label too. A structural
+/// commitment to grounding integrity (RFC §8.3).
 pub fn validate_citations(
     response: &str,
-    valid_ids: &std::collections::HashSet<String>,
+    valid: &std::collections::HashSet<String>,
 ) -> String {
-    const OPEN: &str = "](#";
     let mut out = String::with_capacity(response.len() + 32);
     let mut rest = response;
-    while let Some(pos) = rest.find(OPEN) {
-        let frag_start = pos + OPEN.len();
-        let after = &rest[frag_start..];
-        let Some(end) = after.find(')') else {
-            out.push_str(rest); // unterminated link — leave verbatim
-            return out;
+    loop {
+        let Some(open) = rest.find('[') else {
+            out.push_str(rest);
+            break;
         };
-        let id = &after[..end];
-        // Copy through the closing ')'.
-        out.push_str(&rest[..frag_start + end + 1]);
-        if !id.is_empty() && !valid_ids.contains(id) {
-            out.push_str(&format!(" [citation could not be validated: {id}]"));
+        out.push_str(&rest[..open]);
+        let after = &rest[open + 1..];
+        let Some(close) = after.find(']') else {
+            // Unterminated bracket — copy the rest verbatim.
+            out.push('[');
+            out.push_str(after);
+            break;
+        };
+        let token = &after[..close];
+        out.push('[');
+        out.push_str(token);
+        out.push(']');
+        let looks_like_citation = token.contains('/') && !token.contains(' ');
+        if looks_like_citation && !valid.contains(token) {
+            out.push_str(&format!(" [citation could not be validated: {token}]"));
         }
-        rest = &after[end + 1..];
+        rest = &after[close + 1..];
     }
-    out.push_str(rest);
     out
 }
 
@@ -120,14 +133,17 @@ pub fn system_prompt(lang: &str) -> &'static str {
 const EN_SYSTEM_PROMPT: &str = "\
 You are helping the author of this book think about their own work. You have \
 been given relevant passages from the book, retrieved by semantic similarity \
-to the author's question and marked with a citation id like [ch07-p042]. The \
-passages are the book's prose in Typst markup — `= heading`, `*strong*`, \
-`_emphasis_`, `#footnote[…]` — read through the markup to the prose beneath it.
+to the author's question. Each passage is labelled with its location in the \
+book in square brackets, like [act-two/the-storm]. The passages are the \
+book's prose in Typst markup — `= heading`, `*strong*`, `_emphasis_`, \
+`#footnote[…]` — read through the markup to the prose beneath it.
 
 Answer the author's question using the retrieved passages as primary \
 evidence. Every claim about the book MUST cite at least one retrieved \
-passage as a markdown link: [ch07-p042](#ch07-p042). Cite multiple passages \
-when a claim spans them. Never state something about the book without citing.
+passage by repeating its bracketed location label exactly — for example \
+[act-two/the-storm]. Cite multiple passages when a claim spans them. Never \
+state something about the book without citing, and never invent a location \
+label that wasn't given to you.
 
 When the retrieved passages don't address the question, say so plainly — \
 \"The retrieved passages don't address that directly\" — then either ask the \
@@ -140,15 +156,17 @@ not asking you to invent it. Answer in the language of the author's question.";
 const RU_SYSTEM_PROMPT: &str = "\
 Вы помогаете автору этой книги размышлять над его собственным произведением. \
 Вам даны релевантные фрагменты книги, отобранные по семантическому сходству с \
-вопросом автора и помеченные идентификатором цитирования вида [ch07-p042]. \
-Фрагменты — это проза книги в разметке Typst (`= заголовок`, `*полужирный*`, \
-`_курсив_`, `#footnote[…]`); читайте сквозь разметку саму прозу под ней.
+вопросом автора. Каждый фрагмент помечен меткой его расположения в книге в \
+квадратных скобках, например [act-two/the-storm]. Фрагменты — это проза книги \
+в разметке Typst (`= заголовок`, `*полужирный*`, `_курсив_`, `#footnote[…]`); \
+читайте сквозь разметку саму прозу под ней.
 
 Отвечайте на вопрос автора, опираясь на отобранные фрагменты как на основное \
 свидетельство. Каждое утверждение о книге ДОЛЖНО ссылаться хотя бы на один \
-отобранный фрагмент в виде markdown-ссылки: [ch07-p042](#ch07-p042). \
-Ссылайтесь на несколько фрагментов, когда утверждение охватывает их. Никогда \
-не утверждайте ничего о книге без ссылки.
+отобранный фрагмент, дословно повторяя его метку расположения в скобках — \
+например [act-two/the-storm]. Ссылайтесь на несколько фрагментов, когда \
+утверждение охватывает их. Никогда не утверждайте ничего о книге без ссылки и \
+не выдумывайте метку расположения, которая вам не была дана.
 
 Если отобранные фрагменты не отвечают на вопрос, прямо скажите об этом — \
 «Отобранные фрагменты не затрагивают это напрямую» — и либо попросите автора \
@@ -161,16 +179,17 @@ const RU_SYSTEM_PROMPT: &str = "\
 const ES_SYSTEM_PROMPT: &str = "\
 Estás ayudando al autor de este libro a reflexionar sobre su propia obra. Se \
 te han dado pasajes relevantes del libro, recuperados por similitud semántica \
-con la pregunta del autor y marcados con un identificador de cita como \
-[ch07-p042]. Los pasajes son la prosa del libro en marcado Typst (`= título`, \
-`*fuerte*`, `_énfasis_`, `#footnote[…]`); lee a través del marcado la prosa \
-que hay debajo.
+con la pregunta del autor. Cada pasaje está etiquetado con su ubicación en el \
+libro entre corchetes, como [act-two/the-storm]. Los pasajes son la prosa del \
+libro en marcado Typst (`= título`, `*fuerte*`, `_énfasis_`, `#footnote[…]`); \
+lee a través del marcado la prosa que hay debajo.
 
 Responde a la pregunta del autor usando los pasajes recuperados como \
 evidencia principal. Toda afirmación sobre el libro DEBE citar al menos un \
-pasaje recuperado como enlace markdown: [ch07-p042](#ch07-p042). Cita varios \
-pasajes cuando una afirmación los abarque. Nunca afirmes algo sobre el libro \
-sin citarlo.
+pasaje recuperado repitiendo exactamente su etiqueta de ubicación entre \
+corchetes — por ejemplo [act-two/the-storm]. Cita varios pasajes cuando una \
+afirmación los abarque. Nunca afirmes algo sobre el libro sin citarlo, y \
+nunca inventes una etiqueta de ubicación que no se te haya dado.
 
 Cuando los pasajes recuperados no aborden la pregunta, dilo con claridad — \
 «Los pasajes recuperados no tratan eso directamente» — y luego pide al autor \
@@ -183,16 +202,17 @@ pide que la inventes. Responde en el idioma de la pregunta del autor.";
 const FR_SYSTEM_PROMPT: &str = "\
 Vous aidez l'auteur de ce livre à réfléchir à sa propre œuvre. On vous a donné \
 des passages pertinents du livre, retrouvés par similarité sémantique avec la \
-question de l'auteur et marqués d'un identifiant de citation comme \
-[ch07-p042]. Les passages sont la prose du livre en balisage Typst \
-(`= titre`, `*gras*`, `_emphase_`, `#footnote[…]`) ; lisez au-delà du balisage \
-la prose qui se trouve dessous.
+question de l'auteur. Chaque passage est étiqueté avec son emplacement dans le \
+livre entre crochets, comme [act-two/the-storm]. Les passages sont la prose du \
+livre en balisage Typst (`= titre`, `*gras*`, `_emphase_`, `#footnote[…]`) ; \
+lisez au-delà du balisage la prose qui se trouve dessous.
 
 Répondez à la question de l'auteur en vous appuyant sur les passages retrouvés \
 comme preuve principale. Toute affirmation sur le livre DOIT citer au moins un \
-passage retrouvé sous forme de lien markdown : [ch07-p042](#ch07-p042). Citez \
-plusieurs passages lorsqu'une affirmation les traverse. N'affirmez jamais rien \
-sur le livre sans citation.
+passage retrouvé en répétant exactement son étiquette d'emplacement entre \
+crochets — par exemple [act-two/the-storm]. Citez plusieurs passages lorsqu'une \
+affirmation les traverse. N'affirmez jamais rien sur le livre sans citation, et \
+n'inventez jamais une étiquette d'emplacement qui ne vous a pas été donnée.
 
 Lorsque les passages retrouvés ne répondent pas à la question, dites-le \
 clairement — « Les passages retrouvés n'abordent pas cela directement » — puis \
@@ -206,16 +226,19 @@ demande pas de l'inventer. Répondez dans la langue de la question de l'auteur."
 const DE_SYSTEM_PROMPT: &str = "\
 Sie helfen dem Autor dieses Buches, über sein eigenes Werk nachzudenken. Sie \
 haben relevante Passagen des Buches erhalten, die per semantischer Ähnlichkeit \
-zur Frage des Autors abgerufen und mit einer Zitat-Kennung wie [ch07-p042] \
-markiert sind. Die Passagen sind die Prosa des Buches in Typst-Auszeichnung \
-(`= Überschrift`, `*stark*`, `_Betonung_`, `#footnote[…]`); lesen Sie durch \
-die Auszeichnung hindurch die darunterliegende Prosa.
+zur Frage des Autors abgerufen wurden. Jede Passage ist mit ihrem Fundort im \
+Buch in eckigen Klammern beschriftet, etwa [act-two/the-storm]. Die Passagen \
+sind die Prosa des Buches in Typst-Auszeichnung (`= Überschrift`, `*stark*`, \
+`_Betonung_`, `#footnote[…]`); lesen Sie durch die Auszeichnung hindurch die \
+darunterliegende Prosa.
 
 Beantworten Sie die Frage des Autors, indem Sie die abgerufenen Passagen als \
 primäre Belege nutzen. Jede Aussage über das Buch MUSS mindestens eine \
-abgerufene Passage als Markdown-Link zitieren: [ch07-p042](#ch07-p042). \
-Zitieren Sie mehrere Passagen, wenn eine Aussage sie umspannt. Behaupten Sie \
-niemals etwas über das Buch ohne Zitat.
+abgerufene Passage zitieren, indem Sie ihre Fundort-Beschriftung in Klammern \
+exakt wiederholen — zum Beispiel [act-two/the-storm]. Zitieren Sie mehrere \
+Passagen, wenn eine Aussage sie umspannt. Behaupten Sie niemals etwas über das \
+Buch ohne Zitat und erfinden Sie nie eine Fundort-Beschriftung, die Ihnen \
+nicht gegeben wurde.
 
 Wenn die abgerufenen Passagen die Frage nicht behandeln, sagen Sie es \
 unumwunden — „Die abgerufenen Passagen behandeln das nicht direkt“ — und \
@@ -232,10 +255,10 @@ mod tests {
     use super::*;
     use uuid::Uuid;
 
-    fn passage(body: &str, is_hit: bool) -> RetrievedPassage {
+    fn passage(crumb: &str, body: &str, is_hit: bool) -> RetrievedPassage {
         RetrievedPassage {
             id: Uuid::new_v4(),
-            breadcrumb: "ch1/opening".into(),
+            breadcrumb: crumb.into(),
             body: body.into(),
             score: 0.8,
             is_hit,
@@ -249,11 +272,16 @@ mod tests {
     }
 
     #[test]
-    fn compose_labels_passages_with_id_and_hit_marker() {
-        let ps = vec![passage("the road was long", true), passage("it rained", false)];
+    fn compose_labels_passages_with_path_token_and_hit_marker() {
+        let ps = vec![
+            passage("act-two/the-storm", "the road was long", true),
+            passage("act-one/the-harbour", "it rained", false),
+        ];
         let out = compose_context_prefix(&ps);
         assert!(out.contains("Retrieved passages"));
-        assert!(out.contains(&format!("[{}]", ps[0].id)));
+        // The citation token is the readable location path, never the UUID.
+        assert!(out.contains("[act-two/the-storm]"));
+        assert!(!out.contains(&ps[0].id.to_string()), "UUID must not leak into context");
         assert!(out.contains("★"), "hit should be starred");
         assert!(out.contains("the road was long"));
         assert!(out.contains("it rained"));
@@ -266,29 +294,36 @@ mod tests {
     }
 
     #[test]
-    fn validate_flags_only_uncited_ids() {
+    fn validate_flags_only_uncited_path_tokens() {
         let mut valid = std::collections::HashSet::new();
-        valid.insert("ch07-p042".to_string());
-        let resp = "She returned [here](#ch07-p042) and again [later](#ch15-p103).";
+        valid.insert("act-two/the-storm".to_string());
+        let resp = "She returns in [act-two/the-storm] and later in [act-three/the-reckoning].";
         let out = validate_citations(resp, &valid);
-        // The valid citation is untouched…
-        assert!(out.contains("[here](#ch07-p042)"));
-        assert!(!out.contains("ch07-p042]"), "valid id must not be flagged");
+        // The valid path token is untouched…
+        assert!(out.contains("[act-two/the-storm]"));
+        assert!(
+            !out.contains("the-storm] [citation"),
+            "valid token must not be flagged"
+        );
         // …the invented one is flagged inline.
-        assert!(out.contains("[later](#ch15-p103) [citation could not be validated: ch15-p103]"));
+        assert!(out.contains(
+            "[act-three/the-reckoning] [citation could not be validated: act-three/the-reckoning]"
+        ));
     }
 
     #[test]
-    fn validate_no_citations_is_unchanged() {
+    fn validate_leaves_ordinary_brackets_alone() {
+        // No path-shaped tokens → nothing flagged, even with brackets present.
         let valid = std::collections::HashSet::new();
-        assert_eq!(validate_citations("plain text, no links", &valid), "plain text, no links");
+        let resp = "Plain text with a [note] and an [aside], no citations.";
+        assert_eq!(validate_citations(resp, &valid), resp);
     }
 
     #[test]
-    fn validate_unterminated_link_does_not_panic() {
+    fn validate_unterminated_bracket_does_not_panic() {
         let valid = std::collections::HashSet::new();
-        let out = validate_citations("oops [x](#unterminated", &valid);
-        assert!(out.contains("#unterminated"));
+        let out = validate_citations("oops [act-two/the-storm and on", &valid);
+        assert!(out.contains("act-two/the-storm and on"));
     }
 
     #[test]
@@ -307,10 +342,13 @@ mod tests {
     }
 
     #[test]
-    fn cited_ids_collects_every_passage_id() {
-        let ps = vec![passage("a", true), passage("b", false)];
-        let ids = cited_ids(&ps);
-        assert!(ids.contains(&ps[0].id.to_string()));
-        assert!(ids.contains(&ps[1].id.to_string()));
+    fn cited_ids_collects_every_passage_path_token() {
+        let ps = vec![
+            passage("act-one/the-harbour", "a", true),
+            passage("act-two/the-storm", "b", false),
+        ];
+        let tokens = cited_ids(&ps);
+        assert!(tokens.contains("act-one/the-harbour"));
+        assert!(tokens.contains("act-two/the-storm"));
     }
 }
