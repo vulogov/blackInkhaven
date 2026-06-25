@@ -538,8 +538,8 @@ author-content system books (Notes / Research / Places / Characters
 | `ink.book_rag.config` | `( -- hash )` | the active `book_rag` config block |
 | `ink.book_rag.system_prompt` | `( lang -- string )` | the localized grounding system prompt (EN/RU/ES/FR/DE; EN fallback) |
 | `ink.book_rag.estimate_tokens` | `( text -- n )` | rough token estimate (≈ chars/4) |
-| `ink.book_rag.cited_ids` | `( passages -- list )` | the `id` of each passage dict — the valid-citation set |
-| `ink.book_rag.validate_citations` | `( response ids -- string )` | flag any `](#id)` citation whose id isn't in `ids` |
+| `ink.book_rag.cited_ids` | `( passages -- list )` | the `breadcrumb` (location path) of each passage dict — the valid-citation set |
+| `ink.book_rag.validate_citations` | `( response tokens -- string )` | flag any `[chapter/scene]` citation whose path isn't in `tokens` |
 
 Every word is **read-only** (`store_read`, default-allowed): the
 retrieval is local (embeddings + vecstore), nothing mutates, and no
@@ -552,10 +552,10 @@ was actually retrieved:
 ```bund
 "manuscript" "what does Mara fear about the voyage?"
 book_rag.retrieve              // ( -- passages )
-dup book_rag.cited_ids         // ( passages -- passages ids )
+dup book_rag.cited_ids         // ( passages -- passages tokens )
 // … generate `answer` from the passages via ink.ai.send_blocking …
-swap drop                      // keep ids; pretend `answer` is on the stack
-// answer ids book_rag.validate_citations  → flagged answer
+swap drop                      // keep tokens; pretend `answer` is on the stack
+// answer tokens book_rag.validate_citations  → flagged answer
 ```
 
 `inkhaven --project ~/my-book bund '"manuscript" "the storm"

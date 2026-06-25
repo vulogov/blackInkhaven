@@ -55,6 +55,14 @@ pub struct Config {
     pub cost: CostConfig,
     #[serde(default)]
     pub book_rag: BookRagConfig,
+    /// INNER_EDITOR-1 (1.4.2+) — the Inner Editor companion.
+    #[serde(default)]
+    pub inner_editor: InnerEditorConfig,
+    /// The project's declared genre (e.g. `literary_realism`, `fantasy`).
+    /// Project-wide; consumed by Inner Editor's genre-aware prompting and open
+    /// to other features later. `None` = genre-blind.
+    #[serde(default)]
+    pub genre: Option<String>,
     #[serde(default)]
     pub project_lock: ProjectLockConfig,
     /// 1.2.6+ — AI-pane behaviour knobs that aren't tied to a
@@ -188,6 +196,8 @@ impl Default for Config {
             goals: GoalsConfig::default(),
             cost: CostConfig::default(),
             book_rag: BookRagConfig::default(),
+            inner_editor: InnerEditorConfig::default(),
+            genre: None,
             project_lock: ProjectLockConfig::default(),
             ai: AiConfig::default(),
             timeline: TimelineConfig::default(),
@@ -3336,6 +3346,195 @@ impl Default for BookRagConfig {
                 .iter()
                 .map(|s| s.to_string())
                 .collect(),
+        }
+    }
+}
+
+/// INNER_EDITOR-1 (1.4.2+) — the Inner Editor literary/stylistic companion.
+/// All knobs default to behaviour-preserving values; the feature is enabled by
+/// default but only engages when an LLM provider is configured. Cost caps are
+/// **informative, never blocking** (Inkhaven's permissive principle).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct InnerEditorConfig {
+    /// Master switch. `false` fully disables; the manual chord then shows an
+    /// informational message. Requires an LLM provider regardless.
+    pub enabled: bool,
+    pub engagement: InnerEditorEngagement,
+    pub context: InnerEditorContext,
+    pub persona: InnerEditorPersona,
+    pub output: InnerEditorOutput,
+    pub llm: InnerEditorLlm,
+}
+
+impl Default for InnerEditorConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            engagement: InnerEditorEngagement::default(),
+            context: InnerEditorContext::default(),
+            persona: InnerEditorPersona::default(),
+            output: InnerEditorOutput::default(),
+            llm: InnerEditorLlm::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct InnerEditorEngagement {
+    /// Paragraph-pause idle threshold before auto-engaging (seconds).
+    pub idle_threshold_seconds: u64,
+    /// Same-paragraph cooldown from the last engagement (seconds). Edits during
+    /// the window reset the timer.
+    pub cooldown_seconds: u64,
+    /// Cap on findings surfaced per paragraph per engagement.
+    pub max_findings_per_paragraph: usize,
+}
+
+impl Default for InnerEditorEngagement {
+    fn default() -> Self {
+        Self { idle_threshold_seconds: 60, cooldown_seconds: 120, max_findings_per_paragraph: 3 }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct InnerEditorContext {
+    /// Preceding paragraphs included as interpretation context.
+    pub preceding_paragraphs: usize,
+    /// Following paragraphs (default 0 — the Editor reads as you write).
+    pub following_paragraphs: usize,
+}
+
+impl Default for InnerEditorContext {
+    fn default() -> Self {
+        Self { preceding_paragraphs: 3, following_paragraphs: 0 }
+    }
+}
+
+/// The single Editor persona's tuning. Strings are parsed tolerantly into the
+/// `inner_editor::types` enums (a bad value falls back to the default, never a
+/// config-parse failure).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct InnerEditorPersona {
+    pub tone: String,             // critical | balanced | encouraging
+    pub verbosity: String,        // concise | standard | detailed
+    pub praise_frequency: String, // rare | moderate | frequent
+    pub genre_aware: bool,
+    pub belief_stance_enabled: bool,
+    pub categories: InnerEditorCategories,
+}
+
+impl Default for InnerEditorPersona {
+    fn default() -> Self {
+        Self {
+            tone: "balanced".into(),
+            verbosity: "concise".into(),
+            praise_frequency: "moderate".into(),
+            genre_aware: true,
+            belief_stance_enabled: true,
+            categories: InnerEditorCategories::default(),
+        }
+    }
+}
+
+/// Per-category enable/disable. All eight on by default.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct InnerEditorCategories {
+    pub literary_richness: bool,
+    pub tautology: bool,
+    pub style_observation: bool,
+    pub style_instability: bool,
+    pub dictionary_richness: bool,
+    pub belief_stance: bool,
+    pub craft_praise: bool,
+    pub editorial_suggestions: bool,
+}
+
+impl Default for InnerEditorCategories {
+    fn default() -> Self {
+        Self {
+            literary_richness: true,
+            tautology: true,
+            style_observation: true,
+            style_instability: true,
+            dictionary_richness: true,
+            belief_stance: true,
+            craft_praise: true,
+            editorial_suggestions: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct InnerEditorOutput {
+    /// Minimum severity shown by default. `note` hides Praise (filter to reveal).
+    pub severity_threshold: String, // praise | note | concern
+    pub group_by_paragraph: bool,
+    pub always_show_persona_label: bool,
+}
+
+impl Default for InnerEditorOutput {
+    fn default() -> Self {
+        Self {
+            severity_threshold: "note".into(),
+            group_by_paragraph: true,
+            always_show_persona_label: true,
+        }
+    }
+}
+
+/// LLM cost knobs. The caps inform the preflight; they never gate a request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct InnerEditorLlm {
+    pub editor_engagement: InnerEditorCap,
+    pub conversation: InnerEditorCap,
+    pub backoff_max_retries: usize,
+    pub backoff_initial_seconds: u64,
+}
+
+impl Default for InnerEditorLlm {
+    fn default() -> Self {
+        Self {
+            editor_engagement: InnerEditorCap {
+                max_calls_per_session: 80,
+                confirm_above_calls: 40,
+                max_calls_per_day: 200,
+                max_calls_per_month: 4000,
+            },
+            conversation: InnerEditorCap {
+                max_calls_per_session: 30,
+                confirm_above_calls: 1,
+                max_calls_per_day: 80,
+                max_calls_per_month: 1500,
+            },
+            backoff_max_retries: 3,
+            backoff_initial_seconds: 30,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct InnerEditorCap {
+    pub max_calls_per_session: i64,
+    pub confirm_above_calls: i64,
+    pub max_calls_per_day: i64,
+    pub max_calls_per_month: i64,
+}
+
+impl Default for InnerEditorCap {
+    fn default() -> Self {
+        Self {
+            max_calls_per_session: 80,
+            confirm_above_calls: 40,
+            max_calls_per_day: 200,
+            max_calls_per_month: 4000,
         }
     }
 }

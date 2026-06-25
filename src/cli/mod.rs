@@ -28,6 +28,7 @@ pub mod event_critique;
 pub mod comments;
 pub mod language;
 pub mod inner_socrates;
+pub mod inner_editor;
 pub mod output;
 pub mod realworld;
 pub mod templates;
@@ -947,6 +948,13 @@ pub enum Command {
     /// `Documentation/PROPOSALS/INNER_SOCRATES-1_PLAN.md`.
     #[command(subcommand)]
     InnerSocrates(InnerSocratesCommand),
+
+    /// 1.4.2+ INNER_EDITOR-1 — the Inner Editor literary/stylistic companion
+    /// (the second Inner-family member). Engage on a paragraph, inspect
+    /// findings, config, and usage. See
+    /// `Documentation/PROPOSALS/INNER_EDITOR-1_PLAN.md`.
+    #[command(subcommand)]
+    InnerEditor(InnerEditorCommand),
 
     /// Road to 1.4.0 — the unified review pass: run every applicable fast,
     /// deterministic checker (fact-check + Inner Socrates + timeline critique)
@@ -3793,6 +3801,57 @@ pub enum InnerSocratesCommand {
     Bundle(BundleCommand),
 }
 
+/// INNER_EDITOR-1 (1.4.2+) — `inkhaven inner-editor …`, the Inner Editor
+/// literary/stylistic companion's terminal surface.
+#[derive(Debug, Subcommand)]
+pub enum InnerEditorCommand {
+    /// Run one Editor pass over a paragraph and print its observations (the same
+    /// engine the TUI chord uses). Needs an LLM provider; cost recorded under
+    /// the `inner_editor` budget (informative).
+    Engage {
+        /// Observe this literal text (no preceding context).
+        #[arg(long)]
+        text: Option<String>,
+        /// Observe a paragraph by id (reads it + its preceding context from the store).
+        #[arg(long)]
+        paragraph: Option<String>,
+        /// Skip the informative daily-cap warning.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Inspect persisted Editor findings.
+    #[command(subcommand)]
+    Findings(EditorFindingsCommand),
+    /// Inspect the Inner Editor configuration.
+    #[command(subcommand)]
+    Config(EditorConfigCommand),
+    /// Today's Inner Editor LLM usage by sub-budget.
+    Usage,
+}
+
+/// `inkhaven inner-editor findings …`.
+#[derive(Debug, Subcommand)]
+pub enum EditorFindingsCommand {
+    /// List persisted findings (newest first), optionally filtered by severity.
+    List {
+        /// `praise` | `note` | `concern`.
+        #[arg(long)]
+        severity: Option<String>,
+    },
+    /// A paragraph's findings across re-engagements (oldest first).
+    History {
+        #[arg(long)]
+        paragraph: String,
+    },
+}
+
+/// `inkhaven inner-editor config …`.
+#[derive(Debug, Subcommand)]
+pub enum EditorConfigCommand {
+    /// Show the active Inner Editor configuration (tuning, categories, caps).
+    Show,
+}
+
 /// INNER_SOCRATES-1 — the `.isl` ledger-bundle surface.
 #[derive(Debug, Subcommand)]
 pub enum BundleCommand {
@@ -4378,6 +4437,7 @@ impl Cli {
             Command::Output(cmd) => output::run(&project, cmd).map_err(Into::into),
             Command::Realworld(cmd) => realworld::run(&project, cmd).map_err(Into::into),
             Command::InnerSocrates(cmd) => inner_socrates::run(&project, cmd).map_err(Into::into),
+            Command::InnerEditor(cmd) => inner_editor::run(&project, cmd).map_err(Into::into),
             Command::Check { paragraph, book_name, no_fact, no_socrates, no_timeline } => {
                 check::run(
                     &project,

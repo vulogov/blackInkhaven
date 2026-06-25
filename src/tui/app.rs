@@ -1700,6 +1700,19 @@ pub(crate) struct App {
     socr_last_fp: Option<(Uuid, u64)>,
     socr_activity_at: Option<std::time::Instant>,
     socr_needs_check: bool,
+    /// INNER_EDITOR-1 — ambient paragraph-pause auto-engage (opt-in, toggled
+    /// with `Ctrl+B E` → `A`; default off for cost safety, like the Socratic /
+    /// WORLD-4 slow-LLM ambients). `ie_last_fp` debounces the activity timer;
+    /// `ie_last_engaged_fp` dedups the same content version; `ie_last_engage_at`
+    /// is the in-memory cooldown floor (an edit re-arms the idle timer).
+    ie_auto: bool,
+    ie_last_fp: Option<(Uuid, u64)>,
+    ie_activity_at: Option<std::time::Instant>,
+    ie_needs_check: bool,
+    ie_last_engaged_fp: Option<(Uuid, u64)>,
+    ie_last_engage_at: Option<std::time::Instant>,
+    /// The paragraph a spawned engagement targets, for the completion report.
+    ie_engage_para: Option<Uuid>,
     tree_cursor: usize,
     tree_scroll: usize,
 
@@ -2194,6 +2207,7 @@ mod q3_q4_impl;
 mod render;
 mod snapshot_impl;
 mod book_rag_impl;
+mod inner_editor_impl;
 mod tag_impl;
 mod threads_impl;
 mod timeline_impl;
@@ -2334,6 +2348,13 @@ impl App {
             socr_last_fp: None,
             socr_activity_at: None,
             socr_needs_check: false,
+            ie_auto: false,
+            ie_last_fp: None,
+            ie_activity_at: None,
+            ie_needs_check: false,
+            ie_last_engaged_fp: None,
+            ie_last_engage_at: None,
+            ie_engage_para: None,
             output_expanded: std::collections::HashSet::new(),
             output_filter: crate::pane::output::OutputFilter::default(),
             tree_badges: std::collections::HashMap::new(),
@@ -2645,6 +2666,7 @@ impl App {
             self.tick_health_pump();
             self.tick_fact_check();
             self.tick_inner_socrates();
+            self.tick_inner_editor();
             self.tick_tree_badges();
             // 1.2.9+ — close the TTS playback modal as
             // soon as the engine reports it's idle, so
@@ -3069,6 +3091,28 @@ impl App {
                         }
                     }
                     Err(e) => self.status = format!("slow fact-check skipped: {e}"),
+                }
+            }
+            BgJobKind::InnerEditorEngage => {
+                let target = self.ie_engage_para.take();
+                match result {
+                    Ok(n) => {
+                        let count: usize = n.parse().unwrap_or(0);
+                        self.status = if count == 0 {
+                            "Inner Editor: nothing notable in this ¶".into()
+                        } else {
+                            format!("✎ Inner Editor: {count} observation(s) in this ¶ — ^B Tab → Output")
+                        };
+                        if count > 0 {
+                            self.emit_ai_task_complete(
+                                "inner_editor_engage",
+                                &format!("Inner Editor noted {count} observation(s)."),
+                                elapsed_secs,
+                                target,
+                            );
+                        }
+                    }
+                    Err(e) => self.status = format!("Inner Editor skipped: {e}"),
                 }
             }
         }
@@ -5921,6 +5965,10 @@ pub(super) enum BgJobKind {
     /// WORLD-4 — an idle-triggered slow-track fact check (LLM). The worker emits
     /// its findings to Output directly; the `Ok` payload is the finding count.
     SlowFactCheck,
+    /// INNER_EDITOR-1 — a manual / ambient Editor engagement (LLM). The worker
+    /// runs the engine + emits the (thresholded) observations to Output; the
+    /// `Ok` payload is the emitted count.
+    InnerEditorEngage,
 }
 
 /// An in-flight background job: its progress/result channel + a label + which
@@ -9748,6 +9796,7 @@ impl App {
             A::OpenConlangHub => self.open_conlang_hub(),
             A::OpenWorldOverview => self.open_world_overview(),
             A::OpenInnerSocratesOverview => self.open_inner_socrates_overview(),
+            A::OpenInnerEditorOverview => self.open_inner_editor_overview(),
             A::RunDeepRefresh => self.start_deep_refresh(),
             A::OpenLlmPicker => self.open_llm_picker(),
             A::ToggleSound => self.toggle_sound(),
@@ -20062,6 +20111,10 @@ impl App {
         }
         if matches!(self.modal, Modal::InnerSocratesOverview { .. }) {
             self.inner_socrates_overview_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::InnerEditorOverview { .. }) {
+            self.inner_editor_overview_handle_key(key);
             return Ok(false);
         }
         if matches!(self.modal, Modal::WorldProposals { .. }) {

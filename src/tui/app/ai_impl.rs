@@ -467,6 +467,12 @@ impl super::App {
             raw
         };
 
+        // BOOK_RAG-1 — the chat transcript records the author's *question*
+        // (clean), not the multi-thousand-token retrieval prefix we send to
+        // the model. So the Book conversation reads naturally and the replayed
+        // history stays lean; the grounding is re-attached to each new prompt.
+        let recorded_user_msg = user_query.clone();
+
         // Prepend the AI scope context if one is set. Failures (no
         // selection, etc.) abort the submission with a status message; the
         // scope sticks around so the user can fix the cause and re-submit.
@@ -608,8 +614,14 @@ impl super::App {
             started_at: std::time::Instant::now(),
         });
         // Remember the user message so we can pair it with the assistant
-        // turn once the stream finishes.
-        self.pending_chat_user_msg = Some(prompt_text);
+        // turn once the stream finishes. Book scope records the clean question
+        // (the prefix is sent to the model but not shown in the transcript);
+        // every other scope records what it sent, unchanged.
+        self.pending_chat_user_msg = Some(if mode_used == AiMode::Book {
+            recorded_user_msg
+        } else {
+            prompt_text
+        });
         // Reset chat-history scroll so the user always sees the
         // streaming reply (if they'd PageUp'd to look at earlier turns
         // before sending, the new turn would otherwise land off-screen).

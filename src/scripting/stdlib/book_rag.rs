@@ -210,7 +210,9 @@ fn do_estimate_tokens(vm: &mut VM) -> Result<&mut VM> {
     Ok(vm)
 }
 
-// ( passages -- ids )  the `id` field of each passage dict — the valid-citation set.
+// ( passages -- tokens )  the `breadcrumb` (location path) of each passage dict
+// — the valid-citation set. (The UUID `id` field is for programmatic use, not
+// citation: answers cite the readable path, never the UUID.)
 fn w_cited_ids(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
     do_cited_ids(vm).map_err(to_bund_err)
 }
@@ -220,19 +222,20 @@ fn do_cited_ids(vm: &mut VM) -> Result<&mut VM> {
     let passages = pull(vm, tag)?
         .cast_list()
         .map_err(|e| anyhow!("{tag} passages list cast failed: {e}"))?;
-    let mut ids = Vec::new();
+    let mut tokens = Vec::new();
     for p in &passages {
         if let Ok(dict) = p.cast_dict() {
-            if let Some(id) = dict.get("id").and_then(|v| v.cast_string().ok()) {
-                ids.push(Value::from_string(id));
+            if let Some(crumb) = dict.get("breadcrumb").and_then(|v| v.cast_string().ok()) {
+                tokens.push(Value::from_string(crumb));
             }
         }
     }
-    push(vm, Value::from_list(ids));
+    push(vm, Value::from_list(tokens));
     Ok(vm)
 }
 
-// ( response ids -- text )  flag any markdown citation `](#id)` whose id is not in `ids`.
+// ( response tokens -- text )  flag any bracketed `[chapter/scene]` citation
+// whose location path is not in `tokens`.
 fn w_validate_citations(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
     do_validate_citations(vm).map_err(to_bund_err)
 }
