@@ -25,9 +25,11 @@
 //! `dead_code` allow covers items not yet wired; it tightens as phases land.
 #![allow(dead_code, unused_imports)]
 
+pub mod prompt;
 pub mod storage;
 pub mod types;
 
+pub use prompt::{resolve_tuning, system_prompt, ResolvedTuning, SYSTEM_PROMPT_NAME};
 pub use storage::{CooldownRow, InnerEditorStore, StoredEditorFinding};
 pub use types::{
     EditorCategory, EditorFinding, EditorSeverity, PraiseFrequency, Tone, Verbosity,
