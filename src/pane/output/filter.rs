@@ -15,6 +15,10 @@ use super::types::{kinds, Message, Severity};
 /// The human-facing **source** groups, in cycle order. `message_source` maps every
 /// message kind onto one of these.
 pub const SOURCES: &[&str] = &[
+    // COMPANIONS-1 — a meta-source: the examined-authorship companions together
+    // (fact-check + socrates + inner-editor + timeline-critique). Not a real
+    // `message_source` output; `Filter::matches` expands it.
+    "companions",
     "fact-check",
     "socrates",
     "inner-editor",
@@ -27,6 +31,14 @@ pub const SOURCES: &[&str] = &[
     "bund",
     "other",
 ];
+
+/// The examined-authorship companion sources the `companions` meta-filter shows.
+pub const COMPANION_SOURCES: &[&str] = &["fact-check", "socrates", "inner-editor", "timeline-critique"];
+
+/// Whether a `message_source` group is one of the examined-authorship companions.
+pub fn is_companion_source(source: &str) -> bool {
+    COMPANION_SOURCES.contains(&source)
+}
 
 /// Classify a message into one human source group (stable; the filter's primary
 /// dimension). Keyed off `kind` — the single reliable discriminator (provenance in
@@ -93,7 +105,11 @@ impl OutputFilter {
     /// editor currently has open (for the `only_open_paragraph` dimension).
     pub fn matches(&self, msg: &Message, open_paragraph: Option<Uuid>) -> bool {
         if let Some(src) = self.source.as_deref() {
-            if message_source(msg) != src {
+            if src == "companions" {
+                if !is_companion_source(message_source(msg)) {
+                    return false;
+                }
+            } else if message_source(msg) != src {
                 return false;
             }
         }
@@ -192,6 +208,27 @@ mod tests {
         assert!(f.is_active());
         assert!(f.matches(&msg(kinds::SOCRATIC_INQUIRY, Severity::Info, None), None));
         assert!(!f.matches(&msg(kinds::FACT_CHECK_WARNING, Severity::Info, None), None));
+    }
+
+    // COMPANIONS-1 — the `companions` meta-source shows all four examined-
+    // authorship companions and nothing else.
+    #[test]
+    fn companions_meta_source_matches_all_companions() {
+        let mut f = OutputFilter::default();
+        f.source = Some("companions".into());
+        for k in [
+            kinds::FACT_CHECK_WARNING,
+            kinds::SOCRATIC_INQUIRY,
+            kinds::INNER_EDITOR_OBSERVATION,
+            kinds::TIMELINE_ORPHAN_WARNING,
+        ] {
+            assert!(f.matches(&msg(k, Severity::Warning, None), None), "{k} should match companions");
+        }
+        // Non-companion kinds are excluded.
+        assert!(!f.matches(&msg(kinds::TRANSLATION_RESULT, Severity::Info, None), None));
+        assert!(!f.matches(&msg(kinds::BUND_PRINT, Severity::Info, None), None));
+        // `companions` is in the cycle (so `f` reaches it).
+        assert!(SOURCES.contains(&"companions"));
     }
 
     #[test]
