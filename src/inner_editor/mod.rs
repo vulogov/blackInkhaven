@@ -25,10 +25,14 @@
 //! `dead_code` allow covers items not yet wired; it tightens as phases land.
 #![allow(dead_code, unused_imports)]
 
+pub mod engage;
+pub mod intent_consult;
+pub mod parse;
 pub mod prompt;
 pub mod storage;
 pub mod types;
 
+pub use engage::{engage, gather_context, EngageInput, EngageOutcome, GatheredContext};
 pub use prompt::{resolve_tuning, system_prompt, ResolvedTuning, SYSTEM_PROMPT_NAME};
 pub use storage::{CooldownRow, InnerEditorStore, StoredEditorFinding};
 pub use types::{
