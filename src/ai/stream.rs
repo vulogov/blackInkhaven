@@ -114,18 +114,70 @@ pub fn collect_blocking(
     system_prompt: Option<String>,
     prompt: String,
 ) -> Result<String, String> {
+    // The per-token `.` progress ticks are friendly on the CLI, but in the TUI
+    // they'd corrupt the raw-mode screen (the terminal is owned by the renderer —
+    // background slow-track workers must not write to it). The Output store is
+    // installed ONLY by the TUI, so its presence is a reliable "don't touch the
+    // terminal" signal. (Fixes the Inner Editor engage producing a row of dots
+    // in the editor pane.)
+    let quiet = crate::pane::output::active().is_some();
     let mut rx = spawn_chat_stream(client, model, system_prompt, Vec::new(), prompt, "");
     let mut raw = String::new();
     while let Some(msg) = rx.blocking_recv() {
         match msg {
             StreamMsg::Token(t) => {
                 raw.push_str(&t);
-                let _ = std::io::stderr().write_all(b".");
-                let _ = std::io::stderr().flush();
+                if !quiet {
+                    let _ = std::io::stderr().write_all(b".");
+                    let _ = std::io::stderr().flush();
+                }
             }
             StreamMsg::Done => break,
             StreamMsg::Error(e) => return Err(e),
         }
     }
     Ok(raw)
+}
+
+#[cfg(test)]
+mod runtime_context_tests {
+    //! Regression for the INNER_EDITOR-1 engage crash: `collect_blocking`
+    //! (`spawn_chat_stream` → `tokio::spawn`, then `blocking_recv`) panics with
+    //! "there is no reactor running" when run on a plain OS thread with no Tokio
+    //! runtime context. `App::start_bg_job` fixes that by capturing the main
+    //! thread's runtime handle and entering it in the worker. This test pins the
+    //! mechanism the fix relies on: an *entered* multi-thread handle lets a plain
+    //! `std::thread` both `tokio::spawn` AND block on the result.
+
+    #[test]
+    fn entered_handle_lets_a_plain_thread_spawn_and_block() {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        let _guard = rt.enter();
+        // Captured on a thread that holds the runtime context (as start_bg_job
+        // does on the main thread).
+        let handle = tokio::runtime::Handle::try_current().ok();
+        assert!(handle.is_some(), "must capture a runtime handle inside the runtime");
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _g = handle.as_ref().map(|h| h.enter());
+            // Without the entered handle this `tokio::spawn` would panic — the
+            // same failure mode as collect_blocking.
+            let (otx, orx) = tokio::sync::oneshot::channel();
+            tokio::spawn(async move {
+                let _ = otx.send(7u8);
+            });
+            // The multi-thread runtime drives the task while we block here.
+            let v = orx.blocking_recv().unwrap();
+            tx.send(v).unwrap();
+        })
+        .join()
+        .unwrap();
+
+        assert_eq!(rx.recv().unwrap(), 7, "the spawned task ran and we received its result");
+    }
 }

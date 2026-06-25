@@ -19,7 +19,7 @@ impl super::App {
     pub(super) fn open_inner_editor_overview(&mut self) {
         let rows = self.build_inner_editor_rows();
         self.modal = Modal::InnerEditorOverview { rows, cursor: 0 };
-        self.status = "Inner Editor · E engage ¶ · A ambient · F findings · Esc".into();
+        self.status = "Inner Editor · E engage ¶ · C converse · A ambient · F findings · Esc".into();
     }
 
     fn build_inner_editor_rows(&self) -> Vec<String> {
@@ -109,9 +109,114 @@ impl super::App {
                 }
             }
             KeyCode::Char('f') | KeyCode::Char('F') => self.inner_editor_jump_to_findings(),
+            KeyCode::Char('c') | KeyCode::Char('C') => {
+                self.modal = Modal::None;
+                self.seed_editor_session();
+                self.right_pane = RightPane::Ai;
+                self.change_focus(Focus::AiPrompt);
+            }
             _ => {}
         }
         true
+    }
+
+    // ── conversation mode (Ctrl+V O → C, or F9 → Editor scope) ───────────────
+
+    /// Seed an Editor conversation about the open paragraph and make it the
+    /// sticky `EditorConversation` AI scope (re-cycling F9 refreshes the seed).
+    /// Shared by the `Ctrl+V O → C` chord and the F9 scope.
+    pub(super) fn seed_editor_session(&mut self) {
+        use crate::tui::inference::AiMode;
+        if !self.cfg.inner_editor.enabled {
+            self.status = "Inner Editor is disabled (inner_editor.enabled: false)".into();
+            return;
+        }
+        let findings = self.collect_open_editor_findings();
+        let (prologue, opening) = self.editor_conversation_seed(&findings);
+        self.seed_editor_chat(prologue, opening);
+        self.ai_mode = AiMode::EditorConversation;
+        self.status = if findings.is_empty() {
+            "Editor scope · ask about this paragraph's craft (F9 to exit)".into()
+        } else {
+            format!(
+                "Editor scope · {} observation(s) queued (F9 to exit)",
+                findings.len()
+            )
+        };
+    }
+
+    /// The open paragraph's current Editor findings (the latest engagement's —
+    /// a re-engagement clears the prior set).
+    fn collect_open_editor_findings(&self) -> Vec<crate::inner_editor::EditorFinding> {
+        let Some(doc) = self.opened.as_ref() else {
+            return Vec::new();
+        };
+        let id = doc.id;
+        crate::inner_editor::InnerEditorStore::open_for_project(self.store.project_root())
+            .ok()
+            .map(|s| {
+                s.list_findings()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|sf| sf.paragraph_id == Some(id))
+                    .map(|sf| sf.finding)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Build the `(prologue, opening)` for an Editor conversation.
+    fn editor_conversation_seed(
+        &self,
+        findings: &[crate::inner_editor::EditorFinding],
+    ) -> (String, String) {
+        let obs = if findings.is_empty() {
+            "(no observations recorded on this paragraph yet)".to_string()
+        } else {
+            findings
+                .iter()
+                .map(|f| format!("- [{} · {}] {}", f.severity.label(), f.category.label(), f.observation))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let prologue = format!(
+            "{EDITOR_SEED_MARKER}You are the Inner Editor — a thoughtful editor discussing your \
+             observations about the author's open paragraph. You OBSERVE craft; you never \
+             prescribe, never rewrite, never command (the words \"should\" / \"must\" / \"need \
+             to\" are not in your vocabulary — only \"I notice\", \"you might consider\", \"this \
+             could\"). When an observation implies a change, frame it conditionally. Praise must \
+             be specific and earned. Discuss these observations one at a time, helping the author \
+             think about whether each applies and what (if anything) they want to do — the choice \
+             is theirs.\n\nObservations on the open paragraph:\n{obs}",
+            EDITOR_SEED_MARKER = super::EDITOR_SEED_MARKER,
+        );
+        let opening = match findings.first() {
+            Some(f) => format!("A couple of things I noticed. {}", f.observation),
+            None => "I'm reading for craft — rhythm, texture, what's working and what could be \
+                     sharper. What would you like to look at?"
+                .to_string(),
+        };
+        (prologue, opening)
+    }
+
+    /// Seed the chat with the Editor prologue + opening, replacing any prior
+    /// Editor seed (re-entering swaps rather than stacks).
+    fn seed_editor_chat(&mut self, prologue: String, opening: String) {
+        use crate::ai::stream::ChatTurn;
+        if let Some(i) = self
+            .chat_history
+            .iter()
+            .position(|t| matches!(t, ChatTurn::User(s) if s.starts_with(super::EDITOR_SEED_MARKER)))
+        {
+            if self.chat_history.get(i + 1).is_some_and(|t| matches!(t, ChatTurn::Assistant(_))) {
+                self.chat_history.remove(i + 1);
+            }
+            self.chat_history.remove(i);
+        }
+        let mut seeded = vec![ChatTurn::User(prologue), ChatTurn::Assistant(opening)];
+        seeded.append(&mut self.chat_history);
+        self.chat_history = seeded;
+        self.chat_history_scroll = 0;
     }
 
     fn toggle_inner_editor_auto(&mut self) {
@@ -123,6 +228,61 @@ impl super::App {
         } else {
             "Inner Editor ambient auto-engage off".into()
         };
+    }
+
+    /// `i` on a selected `inner_editor_observation` Output row — declare that
+    /// finding's category a deliberate choice (chapter-scoped), writing an intent
+    /// ledger entry that suppresses future ones like it, then dismiss the row.
+    /// (Routed from `handle_output_key`'s `i`, which otherwise records a Socratic
+    /// intent.) Uses the chapter **id** so the scope matches the engine's
+    /// `FindingContext.chapter_id`.
+    pub(super) fn inner_editor_record_intent_action(&mut self) {
+        let Some(m) = crate::pane::output::active()
+            .and_then(|s| s.active().ok())
+            .unwrap_or_default()
+            .get(self.output_selected)
+            .cloned()
+        else {
+            return;
+        };
+        if m.kind != crate::pane::output::kinds::INNER_EDITOR_OBSERVATION {
+            return;
+        }
+        let Some(cat) = m
+            .metadata
+            .get("category")
+            .and_then(|c| c.as_str())
+            .and_then(crate::inner_editor::EditorCategory::from_id)
+        else {
+            return;
+        };
+        let chapter = self.inner_editor_chapter_of(m.source_paragraph_id);
+        match crate::inner_editor::intent_declare::declare_intent(
+            self.store.project_root(),
+            cat,
+            chapter.as_deref(),
+            None,
+        ) {
+            Ok(()) => {
+                self.status = format!("declared intent — {} won't be re-noted here", cat.label());
+                if let Some(s) = crate::pane::output::active() {
+                    let _ = s.dismiss(m.id);
+                }
+            }
+            Err(e) => self.status = format!("Inner Editor intent failed: {e}"),
+        }
+    }
+
+    /// The enclosing chapter's **id** (UUID string) for a paragraph — matches
+    /// what the engine puts in `FindingContext.chapter_id`. `None` when unknown.
+    fn inner_editor_chapter_of(&self, paragraph_id: Option<uuid::Uuid>) -> Option<String> {
+        let pid = paragraph_id?;
+        let node = self.hierarchy.get(pid)?;
+        self.hierarchy
+            .ancestors(node)
+            .into_iter()
+            .find(|a| a.kind == crate::store::node::NodeKind::Chapter)
+            .map(|c| c.id.to_string())
     }
 
     /// Filter the Output pane to the Editor's findings and focus it.
@@ -177,6 +337,9 @@ impl super::App {
             .template;
         let threshold = self.cfg.inner_editor.output.severity_threshold.clone();
         let root = self.store.project_root().to_path_buf();
+        // The paragraph's current (newest) snapshot, so a finding records which
+        // draft it was made against (findings-over-time across F6 snapshots).
+        let snapshot_id = self.store.list_snapshots(id).ok().and_then(|s| s.first().map(|x| x.id));
 
         self.ie_engage_para = Some(id);
         self.start_bg_job(
@@ -192,6 +355,7 @@ impl super::App {
                     want_lang,
                     system_override,
                     threshold,
+                    snapshot_id,
                 );
                 let _ = tx.send(super::BgMsg::Done(result));
             },
@@ -255,6 +419,7 @@ fn run_engagement(
     language: String,
     system_override: String,
     threshold: String,
+    snapshot_id: Option<Uuid>,
 ) -> std::result::Result<String, String> {
     use crate::inner_editor::output::{emit_finding, meets_threshold};
     let outcome = crate::inner_editor::engage(crate::inner_editor::EngageInput {
@@ -264,7 +429,7 @@ fn run_engagement(
         prose,
         preceding,
         language,
-        snapshot_id: None,
+        snapshot_id,
         system_override: Some(system_override),
         force: false,
     })

@@ -233,6 +233,7 @@ impl super::super::App {
             &day,
             self.cfg.cost.world_daily_call_cap,
             self.cfg.cost.inner_socrates_daily_call_cap,
+            self.cfg.inner_editor.llm.editor_engagement.max_calls_per_day,
         );
         let lines: Vec<Line<'_>> = crate::cli::cost::render_lines(&report)
             .into_iter()
@@ -5074,7 +5075,7 @@ impl super::super::App {
         f.render_widget(Paragraph::new(lines), body_rect);
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                " ↑↓ · E engage ¶ · A ambient auto · F findings · Esc ",
+                " ↑↓ · E engage ¶ · C converse · A ambient auto · F findings · Esc ",
                 Style::default().add_modifier(Modifier::DIM),
             ))),
             footer_rect,

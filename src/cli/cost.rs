@@ -10,6 +10,7 @@ use std::path::Path;
 
 use anyhow::Result;
 
+use crate::inner_editor::InnerEditorStore;
 use crate::inner_socrates::storage::InnerSocratesStore;
 use crate::world::storage::WorldStore;
 
@@ -43,7 +44,13 @@ impl CostReport {
 /// To surface a new analytical thread's AI cost, record its calls via
 /// `InnerSocratesStore::record_llm_call(day, "<thread-key>")` — no dashboard change
 /// needed.
-pub fn gather(project: &Path, day: &str, world_cap: i64, inner_cap: i64) -> CostReport {
+pub fn gather(
+    project: &Path,
+    day: &str,
+    world_cap: i64,
+    inner_cap: i64,
+    editor_cap: i64,
+) -> CostReport {
     let mut entries = vec![CostEntry {
         name: "world fact-check (slow)".to_string(),
         calls_today: WorldStore::open_for_project(project)
@@ -86,6 +93,18 @@ pub fn gather(project: &Path, day: &str, world_cap: i64, inner_cap: i64) -> Cost
             calls_today: calls,
             daily_cap: inner_cap,
         });
+    }
+
+    // INNER_EDITOR-1 — the Editor's own per-feature store sub-budgets
+    // (editor_engagement / conversation), parallel to Inner Socrates. The
+    // engagement cap is informative; conversation rides the ai::usage tally too.
+    for (sub, calls) in InnerEditorStore::open_for_project(project)
+        .ok()
+        .and_then(|s| s.llm_usage_today(day).ok())
+        .unwrap_or_default()
+    {
+        let cap = if sub == InnerEditorStore::ENGAGEMENT_SUB_BUDGET { editor_cap } else { 0 };
+        entries.push(CostEntry { name: format!("inner editor · {sub}"), calls_today: calls, daily_cap: cap });
     }
 
     // Every other AI call, by category (chat / grammar / explain / …) — uncapped
@@ -161,6 +180,7 @@ pub fn run(project: &Path) -> Result<()> {
         &day,
         cfg.cost.world_daily_call_cap,
         cfg.cost.inner_socrates_daily_call_cap,
+        cfg.inner_editor.llm.editor_engagement.max_calls_per_day,
     );
     for line in render_lines(&report) {
         println!("{line}");
