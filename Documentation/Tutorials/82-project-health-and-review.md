@@ -111,7 +111,20 @@ Everything lands in the Output pane with a one-line summary:
 Because it all goes to the Output pane, the **`f` / `S` / `t`**
 filters from Tutorial 75 slice the combined board down to just the
 fact, Socrates, or timeline findings — handy when one checker is
-noisy and you want to clear another class first.
+noisy and you want to clear another class first. The `f` cycle now
+has a **`companions`** stop that shows all four examined-authorship
+sources at once (fact-check + Socrates + Inner Editor + timeline).
+
+### …and the Inner Editor, asynchronously
+
+The three checkers above are deterministic and instant. **Inner
+Editor** (Tutorial 88) is LLM-only, so the review pass spawns it in
+the **background** on the open paragraph rather than blocking the
+instant pass: its craft observations (✎) arrive in the Output pane a
+few seconds later and re-badge the tree. The status line reads
+`… · editor running…` while it works, and won't claim "clean" until
+it's done. It's gated on `inner_editor.enabled` and the single
+background slot (if another job is running, the pass just skips it).
 
 ### Report-card badges in the tree
 
@@ -208,6 +221,39 @@ cost: {
 The "day" the dashboard counts against resets per
 `goals.day_boundary` — `utc` by default, or set it to `local` to
 roll over on your own midnight.
+
+## The companions cockpit — `inkhaven companions`
+
+Inkhaven's three examined-authorship companions — **World**
+(consistency), **Inner Socrates** (structure), **Inner Editor**
+(craft) — each have their own surface. `inkhaven companions` is the
+one view that puts them together:
+
+```sh
+$ inkhaven companions
+Examined authorship — ~/my-book
+
+Open findings:
+  Inner Socrates  ◇  Notice 1 · Inquiry 4 · Probe 0   (total 5)
+  Inner Editor    ✎  Praise 2 · Note 6 · Concern 1     (total 9)
+  World           ●  fact-check is advisory (live in Output; see `inkhaven world`)
+
+Intent ledger:    7 entr(ies) · 2 promotion candidate(s) pending (socrates 1, editor 1)
+
+AI cost — LLM calls today (2026-06-29)
+  daily budgets (informative):
+    inner socrates (slow)              0 / 150  […]
+    inner editor · editor_engagement  12 / 200  […]
+  …
+```
+
+Three sections: the **open findings** each companion currently holds
+(persisted — the latest pass per paragraph), the **shared intent
+ledger** size plus how many dismissal patterns are waiting to be
+declared deliberate (`inner-socrates suggestions` / `inner-editor
+suggestions`), and **today's LLM cost** per companion (the same tally
+as `inkhaven cost`). Read-only — a glance at where your attention,
+and your token budget, are going.
 
 ## See also
 
