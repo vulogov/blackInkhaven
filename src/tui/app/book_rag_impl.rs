@@ -13,6 +13,7 @@ use uuid::Uuid;
 use crate::book_rag::RetrievedPassage;
 use crate::config::BookRagConfig;
 use crate::store::node::NodeKind;
+use crate::tui::inference::AiMode;
 use crate::tui::search_results::SearchHit;
 
 impl super::App {
@@ -61,7 +62,29 @@ impl super::App {
         let prefix = crate::book_rag::compose_context_prefix(&passages);
         // Keep the retrieval for citation validation (P2) + transparency (P3).
         self.book_rag_last_retrieval = Some(passages);
+        // A fresh retrieval grounds on the current text — clear the
+        // staleness nudge so it can fire again after the next edit.
+        self.book_rag_nudged_stale = false;
         Ok(prefix)
+    }
+
+    /// Called after a paragraph save (which re-embeds it): if a Book-scope
+    /// conversation is active, its cached retrieval is now grounded in
+    /// pre-edit text, so nudge the author — once — to clear chat and
+    /// re-ground. Non-blocking; the existing conversation stays valid.
+    pub(super) fn book_rag_note_possible_staleness(&mut self) {
+        if self.book_rag_nudged_stale {
+            return;
+        }
+        let active = self.ai_mode == AiMode::Book
+            && self.book_rag_last_retrieval.is_some()
+            && !self.chat_history.is_empty();
+        if !active {
+            return;
+        }
+        self.book_rag_nudged_stale = true;
+        self.status =
+            "book changed since retrieval — clear chat to re-ground on the new text".into();
     }
 
     /// The user book containing the current anchor (open paragraph, else the
