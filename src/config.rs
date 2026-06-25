@@ -58,6 +58,9 @@ pub struct Config {
     /// INNER_EDITOR-1 (1.4.2+) — the Inner Editor companion.
     #[serde(default)]
     pub inner_editor: InnerEditorConfig,
+    /// SOURCES-1 (1.4.5+) — the bibliography & citation engine.
+    #[serde(default)]
+    pub sources: SourcesConfig,
     /// The project's declared genre (e.g. `literary_realism`, `fantasy`).
     /// Project-wide; consumed by Inner Editor's genre-aware prompting and open
     /// to other features later. `None` = genre-blind.
@@ -197,6 +200,7 @@ impl Default for Config {
             cost: CostConfig::default(),
             book_rag: BookRagConfig::default(),
             inner_editor: InnerEditorConfig::default(),
+            sources: SourcesConfig::default(),
             genre: None,
             project_lock: ProjectLockConfig::default(),
             ai: AiConfig::default(),
@@ -3342,7 +3346,7 @@ impl Default for BookRagConfig {
             .iter()
             .map(|s| s.to_string())
             .collect(),
-            exclude_system_books: ["scripts", "prompts", "typst", "help", "intent"]
+            exclude_system_books: ["scripts", "prompts", "typst", "help", "intent", "sources"]
                 .iter()
                 .map(|s| s.to_string())
                 .collect(),
@@ -3536,6 +3540,31 @@ impl Default for InnerEditorCap {
             max_calls_per_day: 200,
             max_calls_per_month: 4000,
         }
+    }
+}
+
+/// SOURCES-1 (1.4.5+) — the bibliography & citation engine. HJSON entries in the
+/// `Sources` book compile to `sources.bib` at assembly; Typst renders the
+/// bibliography. Optional block; defaults give a shared citation pool with the
+/// IEEE style, auto-appended.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SourcesConfig {
+    /// `true` (default): every HJSON entry in the Sources book feeds a shared
+    /// `.bib`. `false`: only the `Sources/<BookTitle>` chapter for the assembled
+    /// book (per-book scoping).
+    pub all: bool,
+    /// Typst bibliography style name (`ieee`, `apa`, `chicago-author-date`,
+    /// `mla`, …).
+    pub bibliography_style: String,
+    /// `true` (default): the assembler appends `#bibliography(...)` after
+    /// `#wrap_book(...)`. `false`: place it manually (e.g. in `globals.typ`).
+    pub auto_bibliography: bool,
+}
+
+impl Default for SourcesConfig {
+    fn default() -> Self {
+        Self { all: true, bibliography_style: "ieee".into(), auto_bibliography: true }
     }
 }
 
