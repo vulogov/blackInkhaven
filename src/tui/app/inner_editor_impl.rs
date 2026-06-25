@@ -273,6 +273,40 @@ impl super::App {
         }
     }
 
+    /// COMPANIONS-1 — record a dismissal of the selected `inner_editor_observation`
+    /// row (no-op for any other kind), feeding promotion-from-dismissal. Returns
+    /// whether it set a promotion nudge (so the caller keeps it on the status
+    /// line). Mirrors `record_socratic_dismissal`.
+    pub(super) fn record_editor_dismissal(&mut self, m: &crate::pane::output::Message) -> bool {
+        use crate::inner_editor::InnerEditorStore;
+        if m.kind != crate::pane::output::kinds::INNER_EDITOR_OBSERVATION {
+            return false;
+        }
+        let Some(cat) = m
+            .metadata
+            .get("category")
+            .and_then(|c| c.as_str())
+            .and_then(crate::inner_editor::EditorCategory::from_id)
+        else {
+            return false;
+        };
+        let chapter = self.inner_editor_chapter_of(m.source_paragraph_id).unwrap_or_default();
+        let Ok(store) = InnerEditorStore::open_for_project(self.store.project_root()) else {
+            return false;
+        };
+        let _ = store.record_dismissal(cat, &chapter);
+        if let Ok(cands) = store.promotion_candidates(5) {
+            if cands.iter().any(|c| c.category == cat && c.chapter_id == chapter) {
+                self.status = format!(
+                    "You've dismissed several ✎ {} observations — `inkhaven inner-editor suggestions` can declare it deliberate",
+                    cat.label()
+                );
+                return true;
+            }
+        }
+        false
+    }
+
     /// The enclosing chapter's **id** (UUID string) for a paragraph — matches
     /// what the engine puts in `FindingContext.chapter_id`. `None` when unknown.
     fn inner_editor_chapter_of(&self, paragraph_id: Option<uuid::Uuid>) -> Option<String> {

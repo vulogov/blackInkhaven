@@ -16,7 +16,76 @@ use crate::project::ProjectLayout;
 use crate::store::hierarchy::Hierarchy;
 use crate::store::Store;
 
-use super::{EditorConfigCommand, EditorFindingsCommand, InnerEditorCommand};
+use super::{
+    EditorConfigCommand, EditorFindingsCommand, EditorSuggestionsCommand, InnerEditorCommand,
+};
+
+fn parse_category(category: &str) -> Result<crate::inner_editor::types::EditorCategory> {
+    use crate::inner_editor::types::EditorCategory;
+    EditorCategory::from_id(category).ok_or_else(|| {
+        let all: Vec<&str> = EditorCategory::ALL.iter().map(|c| c.id()).collect();
+        Error::Config(format!("unknown category `{category}`. One of: {}", all.join(", ")))
+    })
+}
+
+fn suggestions_list(project: &Path, threshold: i64) -> Result<()> {
+    let store = crate::inner_editor::InnerEditorStore::open_for_project(project)
+        .map_err(|e| Error::Store(format!("inner-editor store: {e}")))?;
+    let cands = store
+        .promotion_candidates(threshold)
+        .map_err(|e| Error::Store(format!("{e}")))?;
+    if cands.is_empty() {
+        println!("no promotion candidates (threshold {threshold})");
+        return Ok(());
+    }
+    for c in &cands {
+        let scope = if c.chapter_id.is_empty() {
+            "project-wide".to_string()
+        } else {
+            format!("chapter {}", c.chapter_id)
+        };
+        println!("✎ [{}] dismissed {}× ({scope})", c.category.label(), c.count);
+    }
+    println!(
+        "\n{} candidate(s) — `inner-editor suggestions promote <category>` to declare deliberate",
+        cands.len()
+    );
+    Ok(())
+}
+
+fn suggestions_promote(
+    project: &Path,
+    category: String,
+    chapter: Option<String>,
+    description: Option<String>,
+) -> Result<()> {
+    let cat = parse_category(&category)?;
+    crate::inner_editor::intent_declare::declare_intent(
+        project,
+        cat,
+        chapter.as_deref(),
+        description.as_deref(),
+    )
+    .map_err(|e| Error::Store(format!("{e}")))?;
+    // Stop re-suggesting this pattern.
+    let store = crate::inner_editor::InnerEditorStore::open_for_project(project)
+        .map_err(|e| Error::Store(format!("inner-editor store: {e}")))?;
+    let _ = store.refuse_promotion(cat, chapter.as_deref().unwrap_or(""));
+    let scope = chapter.as_deref().map(|c| format!("chapter {c}")).unwrap_or_else(|| "project-wide".into());
+    println!("✓ promoted [{}] to a declared intent ({scope}) — future findings suppressed", cat.label());
+    Ok(())
+}
+
+fn suggestions_dismiss(project: &Path, category: String, chapter: Option<String>) -> Result<()> {
+    let cat = parse_category(&category)?;
+    let store = crate::inner_editor::InnerEditorStore::open_for_project(project)
+        .map_err(|e| Error::Store(format!("inner-editor store: {e}")))?;
+    store
+        .refuse_promotion(cat, chapter.as_deref().unwrap_or(""))
+        .map_err(|e| Error::Store(format!("{e}")))?;
+    println!("✓ won't suggest promoting [{}] again", cat.label());
+    Ok(())
+}
 
 pub fn run(project: &Path, cmd: InnerEditorCommand) -> Result<()> {
     match cmd {
@@ -30,6 +99,15 @@ pub fn run(project: &Path, cmd: InnerEditorCommand) -> Result<()> {
         InnerEditorCommand::Intent { category, chapter, description } => {
             declare_intent(project, category, chapter, description)
         }
+        InnerEditorCommand::Suggestions(c) => match c {
+            EditorSuggestionsCommand::List { threshold } => suggestions_list(project, threshold),
+            EditorSuggestionsCommand::Promote { category, chapter, description } => {
+                suggestions_promote(project, category, chapter, description)
+            }
+            EditorSuggestionsCommand::Dismiss { category, chapter } => {
+                suggestions_dismiss(project, category, chapter)
+            }
+        },
         InnerEditorCommand::Config(c) => match c {
             EditorConfigCommand::Show => config_show(project),
         },

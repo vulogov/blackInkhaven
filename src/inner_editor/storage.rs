@@ -49,6 +49,21 @@ const INIT_SQL: &str = "
         calls      BIGINT NOT NULL,
         PRIMARY KEY (day, sub_budget)
     );
+
+    -- COMPANIONS-1 — dismissal tally feeding promotion-from-dismissal (parallel
+    -- to Inner Socrates' `socratic_dismissals`; the Editor's category ids are
+    -- not Socratic categories so it needs its own table).
+    CREATE TABLE IF NOT EXISTS editor_dismissals (
+        id           TEXT   NOT NULL PRIMARY KEY,
+        category     TEXT   NOT NULL,
+        chapter_id   TEXT   NOT NULL,
+        dismissed_at BIGINT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS editor_promotion_refused (
+        category   TEXT NOT NULL,
+        chapter_id TEXT NOT NULL,
+        PRIMARY KEY (category, chapter_id)
+    );
 ";
 
 fn text(v: Option<&DuckValue>) -> String {
@@ -87,6 +102,15 @@ pub struct StoredEditorFinding {
 pub struct CooldownRow {
     pub last_engagement_at: i64,
     pub last_edit_at: i64,
+}
+
+/// An accumulated dismissal pattern the author might want to declare deliberate.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EditorPromotionCandidate {
+    pub category: EditorCategory,
+    /// The chapter the dismissals clustered in (`""` = unknown).
+    pub chapter_id: String,
+    pub count: i64,
 }
 
 /// Per-project Inner Editor store. Cloneable; clones share the pool.
@@ -277,6 +301,52 @@ impl InnerEditorStore {
         )?;
         Ok(rows.iter().map(|r| (text(r.get(0)), int(r.get(1)))).collect())
     }
+
+    // ── dismissals + promotion (COMPANIONS-1) ────────────────────────────────
+
+    /// Record one dismissal of a `category` finding in `chapter_id` (empty when
+    /// the chapter is unknown — those aggregate under `""`).
+    pub fn record_dismissal(&self, category: EditorCategory, chapter_id: &str) -> Result<()> {
+        self.engine.execute_with(
+            "INSERT INTO editor_dismissals (id, category, chapter_id, dismissed_at) VALUES (?,?,?,?)",
+            &[&Uuid::new_v4().to_string(), &category.id(), &chapter_id, &now_secs()],
+        )
+    }
+
+    /// Mark a `(category, chapter)` promotion suggestion refused — it won't
+    /// re-surface as a candidate.
+    pub fn refuse_promotion(&self, category: EditorCategory, chapter_id: &str) -> Result<()> {
+        self.engine.execute_with(
+            "INSERT OR REPLACE INTO editor_promotion_refused (category, chapter_id) VALUES (?,?)",
+            &[&category.id(), &chapter_id],
+        )
+    }
+
+    /// Promotion candidates: `(category, chapter, count)` groups whose dismissal
+    /// count is at least `threshold` and which the author hasn't refused.
+    pub fn promotion_candidates(&self, threshold: i64) -> Result<Vec<EditorPromotionCandidate>> {
+        let rows = self.engine.select_all_with(
+            "SELECT d.category, d.chapter_id, COUNT(*) AS n \
+             FROM editor_dismissals d \
+             WHERE NOT EXISTS ( \
+                 SELECT 1 FROM editor_promotion_refused r \
+                 WHERE r.category = d.category AND r.chapter_id = d.chapter_id) \
+             GROUP BY d.category, d.chapter_id \
+             HAVING COUNT(*) >= ? \
+             ORDER BY n DESC",
+            &[&threshold],
+        )?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                Some(EditorPromotionCandidate {
+                    category: EditorCategory::from_id(&text(r.first()))?,
+                    chapter_id: text(r.get(1)),
+                    count: int(r.get(2)),
+                })
+            })
+            .collect())
+    }
 }
 
 #[cfg(test)]
@@ -351,6 +421,31 @@ mod tests {
         let c = store.cooldown(pid).unwrap().unwrap();
         assert_eq!(c.last_engagement_at, 1000);
         assert_eq!(c.last_edit_at, 1050);
+    }
+
+    #[test]
+    fn promotion_candidates_cross_threshold_and_respect_refusal() {
+        let (store, _d) = temp_store();
+        // Three dismissals of dictionary_richness in ch07, two of tautology there.
+        for _ in 0..3 {
+            store.record_dismissal(EditorCategory::DictionaryRichness, "ch07").unwrap();
+        }
+        for _ in 0..2 {
+            store.record_dismissal(EditorCategory::Tautology, "ch07").unwrap();
+        }
+        // Threshold 3 → only dictionary_richness qualifies.
+        let cands = store.promotion_candidates(3).unwrap();
+        assert_eq!(cands.len(), 1);
+        assert_eq!(cands[0].category, EditorCategory::DictionaryRichness);
+        assert_eq!(cands[0].count, 3);
+
+        // Refusing it removes it from candidates.
+        store.refuse_promotion(EditorCategory::DictionaryRichness, "ch07").unwrap();
+        assert!(store.promotion_candidates(3).unwrap().is_empty());
+        // Threshold 2 now surfaces tautology (not refused).
+        let cands = store.promotion_candidates(2).unwrap();
+        assert_eq!(cands.len(), 1);
+        assert_eq!(cands[0].category, EditorCategory::Tautology);
     }
 
     #[test]
