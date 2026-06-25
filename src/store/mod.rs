@@ -36,6 +36,10 @@ pub use node::NodeKind;
 pub const SYSTEM_BOOKS: &[(&str, &str)] = &[
     ("notes", "Notes"),
     ("research", "Research"),
+    // SOURCES-1 (1.4.5+) — bibliography entries (HJSON paragraphs), beside the
+    // other reference material. ensure_system_books bumps existing books down on
+    // first open after upgrade.
+    ("sources", "Sources"),
     ("facts", "Facts"),
     ("prompts", "Prompts"),
     ("places", "Places"),
@@ -53,6 +57,11 @@ pub const SYSTEM_BOOKS: &[(&str, &str)] = &[
 ];
 
 pub const SYSTEM_TAG_NOTES: &str = "notes";
+/// SOURCES-1 (1.4.5+) — the bibliography book: citation entries as HJSON
+/// paragraphs, compiled to `sources.bib` at assembly. See
+/// `Documentation/PROPOSALS/SOURCES-1_PLAN.md`. (Consumed from S-P1.)
+#[allow(dead_code)]
+pub const SYSTEM_TAG_SOURCES: &str = "sources";
 /// 1.2.21+ — top-level container for a world's invariants
 /// (climate, geography, seasons, distances, chronology).
 /// Free-form prose like Notes; the AI `Facts` scope loads
