@@ -183,6 +183,36 @@ pub const ENTRY_TEMPLATE: &str = "{
 }
 ";
 
+/// Derive a citation key from a free-text paragraph title. Keeps ASCII
+/// alphanumerics plus `_ : -`, lowercases, and must begin with a letter (the
+/// `@([a-zA-Z][a-zA-Z0-9_:-]*)` cite-token grammar). Falls back to the template
+/// placeholder when nothing usable survives (e.g. a CJK-only title).
+fn slugify_key(title: &str) -> String {
+    let mut key = String::new();
+    for ch in title.trim().chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '_' | ':' | '-') {
+            key.push(ch.to_ascii_lowercase());
+        } else if ch.is_whitespace() {
+            // collapse runs of separators — drop them, keys are unspaced
+            continue;
+        }
+    }
+    // Strip any leading non-letters so the key matches the cite grammar.
+    while key.chars().next().is_some_and(|c| !c.is_ascii_alphabetic()) {
+        key.remove(0);
+    }
+    if key.is_empty() { "change-me".to_string() } else { key }
+}
+
+/// Seed body for a citation paragraph created in the TUI under the Sources
+/// book. The typed paragraph title becomes the citation `key`; the rest of the
+/// authoring template is preserved verbatim. Mirrors
+/// `cli::thread::seed_thread_body_for_tui`.
+pub fn seed_sources_body_for_tui(title: &str) -> String {
+    let key = slugify_key(title);
+    ENTRY_TEMPLATE.replacen("key: change-me", &format!("key: {key}"), 1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -255,5 +285,23 @@ mod tests {
         let e = BibEntry::from_hjson(ENTRY_TEMPLATE).expect("template parses");
         assert_eq!(e.key, "change-me");
         assert_eq!(e.entry_type, "article");
+    }
+
+    #[test]
+    fn tui_seed_uses_title_as_key_and_stays_valid() {
+        let body = seed_sources_body_for_tui("Smith 2024");
+        let e = BibEntry::from_hjson(&body).expect("seeded body parses");
+        assert_eq!(e.key, "smith2024");
+        assert_eq!(e.entry_type, "article");
+    }
+
+    #[test]
+    fn slugify_key_handles_edge_cases() {
+        assert_eq!(slugify_key("Smith, Jane 2024"), "smithjane2024");
+        assert_eq!(slugify_key("doe:2023"), "doe:2023");
+        // Leading digits are stripped (must start with a letter)…
+        assert_eq!(slugify_key("2024 review"), "review");
+        // …and a non-Latin-only title falls back to the placeholder.
+        assert_eq!(slugify_key("Влади"), "change-me");
     }
 }

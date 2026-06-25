@@ -6401,6 +6401,30 @@ impl App {
         false
     }
 
+    /// Whether `parent` is the Sources system book or a chapter nested under
+    /// it — used to seed a new paragraph with the citation HJSON template.
+    fn parent_is_under_sources(
+        &self,
+        parent: Option<&crate::store::node::Node>,
+    ) -> bool {
+        let Some(sources_root_id) =
+            self.system_book_id(crate::store::SYSTEM_TAG_SOURCES)
+        else {
+            return false;
+        };
+        let Some(parent) = parent else {
+            return false;
+        };
+        let mut cur: Option<&crate::store::node::Node> = Some(parent);
+        while let Some(node) = cur {
+            if node.id == sources_root_id {
+                return true;
+            }
+            cur = node.parent_id.and_then(|id| self.hierarchy.get(id));
+        }
+        false
+    }
+
     /// Insert-after variant: walks up from the tree cursor to find a node of
     /// the same `kind` as the one being added; if found, the new node will be
     /// placed immediately after it. Falls back to append-at-end if no
@@ -21252,6 +21276,13 @@ impl App {
                     .or_else(|| {
                         if self.parent_is_under_threads(parent.as_ref()) {
                             Some(crate::cli::thread::seed_thread_body_for_tui(
+                                &title,
+                            ))
+                        } else if self.parent_is_under_sources(parent.as_ref()) {
+                            // SOURCES-1: a paragraph added under the Sources
+                            // book (or one of its chapters) is a citation
+                            // entry — seed the HJSON schema, key = the title.
+                            Some(crate::sources::seed_sources_body_for_tui(
                                 &title,
                             ))
                         } else {
