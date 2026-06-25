@@ -27,6 +27,7 @@
 
 pub mod engage;
 pub mod intent_consult;
+pub mod output;
 pub mod parse;
 pub mod prompt;
 pub mod storage;
