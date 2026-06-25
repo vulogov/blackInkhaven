@@ -21,54 +21,54 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.4.0 — Consolidation & hardening
+## Latest release · 1.4.1 — Chat with your book
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.4.0.md`](Documentation/RELEASE_NOTES/1.4.0.md)
-· Roadmap: [`Documentation/PROPOSALS/ROADMAP-1.4.0.md`](Documentation/PROPOSALS/ROADMAP-1.4.0.md)
-· Tutorials: [82](Documentation/Tutorials/82-project-health-and-review.md)–[86](Documentation/Tutorials/86-epub-import.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.4.1.md`](Documentation/RELEASE_NOTES/1.4.1.md)
+· Plan: [`Documentation/PROPOSALS/BOOK_RAG-1_PLAN.md`](Documentation/PROPOSALS/BOOK_RAG-1_PLAN.md)
+· Tutorial: [87](Documentation/Tutorials/87-chat-with-your-book.md)
 
-The **1.4.0 milestone** — a consolidation & hardening release that bundles the whole
-1.3.32 → 1.3.37 cycle: surface what was buried, complete what was hardcoded, harden the
-tree, and land the last marquee. **No external application or binary dependencies were
-added across the entire milestone.**
+The AI pane's **Book** scope is now **retrieval-augmented** (BOOK_RAG-1). Instead of
+shipping the whole manuscript with every question, a Book-scope question retrieves the
+paragraphs that actually bear on it, grounds the answer in them, and makes the model
+**cite** them — built entirely on the on-save vector index already in the tree, with **no
+new dependencies**.
 
-### The marquee — EPUB import
+### Chat with your book
 
-`inkhaven epub` has always *exported* a standards-compliant EPUB3. **`inkhaven
-import-epub <file.epub>`** now reads one back — container → OPF → spine, into a Book →
-a Chapter per spine document → paragraphs of converted prose (headings, `*strong*`,
-`_emph_`, lists), images extracted to a `<book-slug>-images/` sidecar. `--book-name` /
-`--dry-run`; exits non-zero on partial failure; built on the in-tree `zip` + `quick-xml`,
-every parser fuzz-hardened.
+Cycle the AI pane to **Book** scope (**F9**) and ask. Inkhaven retrieves the most relevant
+paragraphs (the same vecstore HNSW index every semantic search uses), expands each with a
+little surrounding context, token-budgets them into a focused grounding block, and asks
+the model to answer **citing** those passages as `[label](#id)`. Citations the model
+invents are flagged inline; when the book doesn't address a question, it says so rather
+than confabulate. **Always on for Book scope** — the other scopes (Selection / Paragraph /
+Subchapter / Chapter) are unchanged.
 
-### Surfacing the analytics
+Press **`p`** to expand the *Retrieved passages* transparency panel and see exactly what
+grounded the answer. Retrieval happens **once per chat session** (clear history to
+re-ground); a curated set of system books (Notes / Research / Places / Characters /
+Artefacts / World / Language) joins the manuscript in scope. All tunable in the new
+`book_rag:` config block.
 
-The road-to-1.4.0 work gave the buried subsystems a face: the **project doctor** scan
-(`inkhaven doctor --scan`), the **unified review pass** (`Ctrl+B Shift+C` / `inkhaven
-check`) with tree report-card badges, the **AI cost dashboard** (`Ctrl+B $` / `inkhaven
-cost`, informative not blocking), the **command palette** (`Ctrl+V Space`), **Output-pane
-filters**, **`inkhaven goals`** + lifetime-best streaks + the in-app goals editor, and the
-**project-wide snapshot browser** (`Ctrl+F6`).
+### From the terminal & from a script
 
-### Completing the config
+**`inkhaven book-rag retrieve <query>`** inspects what Book-scope chat would ground on —
+no LLM call (`--book-name` / `--top-k` / `--context`). Eight read-only **`ink.book_rag.*`**
+Bund words (`retrieve`, `context`, `scope`, `config`, `system_prompt`, `estimate_tokens`,
+`cited_ids`, `validate_citations`) expose the same retrieval core to scripts. The pane,
+the CLI, and Bund all share one core, so they never disagree.
 
-Thirteen hardcoded behaviours became opt-in HJSON — every default preserving prior
-behaviour: new `cost:` and `project_lock:` blocks, `goals.day_boundary` (`utc` | `local`,
-so the streak rolls over at *your* midnight), five `editor` durability knobs, and `backup`
-retention.
+### Multilingual & cost
 
-### Hardening the spine
-
-A pre-1.4.0 stability **audit** + **16 verified fixes** (focused-pane save, panicking-hook
-isolation, the typst pipe-deadlock, crash-safe store ordering, schema versioning, …),
-**fuzz coverage** for every untrusted parser, and the **advisory project lock** (informs,
-never blocks; kernel-released on crash).
+The grounding contract ships localized for the five baseline languages (EN / RU / ES / FR
+/ DE), English fallback. Book answers are tagged under the **`book_rag`** category in
+`inkhaven cost` / **`Ctrl+B $`** — informative, never blocking.
 
 ### Dependencies & compatibility
 
-**No external application or binary dependencies; no new runtime crates** across the whole
-1.3.32 → 1.4.0 milestone. No on-disk shape moved; every prior `inkhaven.hjson` keeps
-working (the new options are opt-in). See the per-release notes for the detailed logs.
+**No external application or binary dependencies; no new runtime crates** — BOOK_RAG-1 is
+built on the existing `.typ` prose, DuckDB store, Fastembed embeddings, and vecstore index.
+The one behavioural change: **Book scope no longer sends the whole book** — it retrieves
+and grounds instead. No on-disk shape moved; the `book_rag:` block is optional.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
