@@ -85,6 +85,9 @@ pub(super) enum AiMode {
     /// INNER_SOCRATES-1 — a sticky conversation scope: the AI reads the open
     /// paragraph as the active Reader Persona and discusses its questions.
     Socratic,
+    /// INNER_EDITOR-1 — a sticky conversation scope: the AI is the Inner Editor,
+    /// discussing its literary/stylistic observations about the open paragraph.
+    EditorConversation,
 }
 
 impl AiMode {
@@ -98,6 +101,7 @@ impl AiMode {
             AiMode::Book => "Book",
             AiMode::Facts => "Facts",
             AiMode::Socratic => "Socrates",
+            AiMode::EditorConversation => "Editor",
         }
     }
     pub(super) fn next(self) -> Self {
@@ -109,7 +113,8 @@ impl AiMode {
             AiMode::Chapter => AiMode::Book,
             AiMode::Book => AiMode::Facts,
             AiMode::Facts => AiMode::Socratic,
-            AiMode::Socratic => AiMode::None,
+            AiMode::Socratic => AiMode::EditorConversation,
+            AiMode::EditorConversation => AiMode::None,
         }
     }
 }
@@ -191,12 +196,14 @@ mod ai_mode_tests {
             order,
             vec![
                 "None", "Selection", "Paragraph", "Subchapter", "Chapter", "Book", "Facts",
-                "Socrates",
+                "Socrates", "Editor",
             ],
         );
         // Explicit: the new edges.
         assert_eq!(AiMode::Book.next(), AiMode::Facts);
         assert_eq!(AiMode::Facts.next(), AiMode::Socratic);
-        assert_eq!(AiMode::Socratic.next(), AiMode::None);
+        // INNER_EDITOR-1 — the Editor conversation scope cycles after Socrates.
+        assert_eq!(AiMode::Socratic.next(), AiMode::EditorConversation);
+        assert_eq!(AiMode::EditorConversation.next(), AiMode::None);
     }
 }

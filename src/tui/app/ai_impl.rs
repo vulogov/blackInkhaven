@@ -593,9 +593,14 @@ impl super::App {
                 }
             }
         });
-        // BOOK_RAG-1 — tag Book-scope inferences under their own usage
-        // category so they show in `inkhaven cost` separately from chat.
-        let usage_category = if mode_used == AiMode::Book { "book_rag" } else { "chat" };
+        // BOOK_RAG-1 / INNER_EDITOR-1 — tag scope-specific inferences under
+        // their own usage category so they show in `inkhaven cost` separately
+        // from plain chat.
+        let usage_category = match mode_used {
+            AiMode::Book => "book_rag",
+            AiMode::EditorConversation => "inner_editor",
+            _ => "chat",
+        };
         let rx = spawn_chat_stream(
             self.ai.client.clone(),
             model.clone(),
