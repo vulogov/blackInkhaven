@@ -17463,6 +17463,9 @@ impl App {
             // INNER_SOCRATES-1 — a sticky conversation scope: entering seeds the
             // chat with the active persona + the open paragraph's questions.
             AiMode::Socratic => self.seed_socratic_session(),
+            // INNER_EDITOR-1 — entering seeds the chat with the Editor's voice +
+            // the open paragraph's observations.
+            AiMode::EditorConversation => self.seed_editor_session(),
             other => {
                 self.status = format!(
                     "AI scope: {} (will prepend matching context to next prompt)",
@@ -17640,6 +17643,9 @@ impl App {
             // Socratic is a sticky session scope like Facts — the persona +
             // questions are seeded into the chat; no per-query prefix.
             AiMode::Socratic => Ok(None),
+            // INNER_EDITOR-1 — likewise a seeded session scope (the Editor's
+            // voice + observations are in the chat prologue); no per-query prefix.
+            AiMode::EditorConversation => Ok(None),
         }
     }
 
@@ -25419,6 +25425,9 @@ pub(crate) const FACTS_SEED_MARKER: &str = "⟦Facts⟧ ";
 /// INNER_SOCRATES-1 — marks the seed turn of a Socratic conversation / persona
 /// wizard, so re-entering swaps the seed rather than stacking another.
 pub(crate) const SOCRATIC_SEED_MARKER: &str = "⟦Socrates⟧ ";
+/// INNER_EDITOR-1 — marks the Editor conversation seed turn, so re-entering the
+/// scope swaps the seed rather than stacking it (mirrors the Socratic marker).
+pub(crate) const EDITOR_SEED_MARKER: &str = "⟦Editor⟧ ";
 
 /// 1.2.21+ — one-line framing prepended to the seeded Facts user turn.
 pub(crate) fn facts_seed_intro(lang_iso: &str) -> &'static str {
