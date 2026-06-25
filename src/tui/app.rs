@@ -2992,7 +2992,20 @@ impl App {
         let label = label.into();
         let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let worker_cancel = cancel.clone();
-        std::thread::spawn(move || work(tx, worker_cancel));
+        // The worker is a plain OS thread, so it does NOT inherit the Tokio
+        // runtime context the main thread holds (main.rs enters the runtime).
+        // Jobs that call into the async AI client (`collect_blocking` →
+        // `tokio::spawn`) would otherwise panic with "there is no reactor
+        // running". Capture the current runtime handle here (we're on the main
+        // thread, inside the runtime) and enter it in the worker so the
+        // multi-thread runtime drives the spawned tasks while the worker blocks
+        // on the result. Fixes the INNER_EDITOR-1 engage crash (and the latent
+        // WORLD-4 slow-auto one).
+        let rt_handle = tokio::runtime::Handle::try_current().ok();
+        std::thread::spawn(move || {
+            let _rt_guard = rt_handle.as_ref().map(|h| h.enter());
+            work(tx, worker_cancel);
+        });
         self.status = format!("⟳ {label}…");
         self.bg_job =
             Some(BgJob { rx, label, kind, cancel, started: std::time::Instant::now() });
@@ -7132,7 +7145,21 @@ impl App {
             KeyCode::Char('e') if plain => self.edit_output_translation(),
             // INNER_SOCRATES-1 — per-finding outcomes on a socratic_inquiry message:
             // `i` record-as-intent, `m` make-note, `x` mark addressed.
-            KeyCode::Char('i') if plain => self.socratic_outcome(SocraticOutcome::RecordIntent),
+            // INNER_EDITOR-1 — `i` also records intent on an inner_editor row.
+            KeyCode::Char('i') if plain => {
+                let editor_row = crate::pane::output::active()
+                    .and_then(|s| s.active().ok())
+                    .unwrap_or_default()
+                    .get(self.output_selected)
+                    .is_some_and(|m| {
+                        m.kind == crate::pane::output::kinds::INNER_EDITOR_OBSERVATION
+                    });
+                if editor_row {
+                    self.inner_editor_record_intent_action();
+                } else {
+                    self.socratic_outcome(SocraticOutcome::RecordIntent);
+                }
+            }
             KeyCode::Char('m') if plain => self.socratic_outcome(SocraticOutcome::MakeNote),
             KeyCode::Char('x') if plain => self.socratic_outcome(SocraticOutcome::Addressed),
             KeyCode::Enter => self.output_primary_action(),
@@ -17450,6 +17477,9 @@ impl App {
             // INNER_SOCRATES-1 — a sticky conversation scope: entering seeds the
             // chat with the active persona + the open paragraph's questions.
             AiMode::Socratic => self.seed_socratic_session(),
+            // INNER_EDITOR-1 — entering seeds the chat with the Editor's voice +
+            // the open paragraph's observations.
+            AiMode::EditorConversation => self.seed_editor_session(),
             other => {
                 self.status = format!(
                     "AI scope: {} (will prepend matching context to next prompt)",
@@ -17627,6 +17657,9 @@ impl App {
             // Socratic is a sticky session scope like Facts — the persona +
             // questions are seeded into the chat; no per-query prefix.
             AiMode::Socratic => Ok(None),
+            // INNER_EDITOR-1 — likewise a seeded session scope (the Editor's
+            // voice + observations are in the chat prologue); no per-query prefix.
+            AiMode::EditorConversation => Ok(None),
         }
     }
 
@@ -25406,6 +25439,9 @@ pub(crate) const FACTS_SEED_MARKER: &str = "⟦Facts⟧ ";
 /// INNER_SOCRATES-1 — marks the seed turn of a Socratic conversation / persona
 /// wizard, so re-entering swaps the seed rather than stacking another.
 pub(crate) const SOCRATIC_SEED_MARKER: &str = "⟦Socrates⟧ ";
+/// INNER_EDITOR-1 — marks the Editor conversation seed turn, so re-entering the
+/// scope swaps the seed rather than stacking it (mirrors the Socratic marker).
+pub(crate) const EDITOR_SEED_MARKER: &str = "⟦Editor⟧ ";
 
 /// 1.2.21+ — one-line framing prepended to the seeded Facts user turn.
 pub(crate) fn facts_seed_intro(lang_iso: &str) -> &'static str {

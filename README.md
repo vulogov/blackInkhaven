@@ -21,51 +21,45 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.4.2 — The Inner Editor (Part A)
+## Latest release · 1.4.3 — The Inner Editor (Part B)
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.4.2.md`](Documentation/RELEASE_NOTES/1.4.2.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.4.3.md`](Documentation/RELEASE_NOTES/1.4.3.md)
 · Plan: [`Documentation/PROPOSALS/INNER_EDITOR-1_PLAN.md`](Documentation/PROPOSALS/INNER_EDITOR-1_PLAN.md)
+· Tutorial: [88](Documentation/Tutorials/88-inner-editor.md)
 
-The second member of the **Inner family** arrives. Where Inner Socrates interrogates facts and
-structure, **Inner Editor** observes *literacy and style* through a single configurable persona —
-reading your prose paragraph by paragraph and offering brief, grounded, **non-prescriptive**
-observations. Built entirely on infrastructure already in the tree, with **no new dependencies**.
-This is **Part A** (the editorial core); conversation mode, snapshot history, and the Bund stdlib
-land in 1.4.3.
+Completes **INNER_EDITOR-1**. Part A (1.4.2) shipped the editorial core — the engine, the Output
+surface, the ambient trigger. **Part B** makes the Editor **conversational** and **teachable**, adds
+a Bund surface and cost-dashboard integration, and lands **two crash/display fixes** from the Part A
+feedback. Built on the same in-tree infrastructure, with **no new dependencies**.
 
-### Observe, never prescribe
+### Two fixes first
 
-The Editor returns observations across eight categories — literary richness, tautology, style,
-style instability, vocabulary, belief stance, craft praise, suggestions — each graded **Praise /
-Note / Concern** and grounded in specific textual evidence. The discipline is structural: it
-**never commands** ("should"/"must" are not in its vocabulary), **praise must be earned** (generic
-encouragement is forbidden), and **silence is fine** (nothing notable → nothing surfaced). It is not
-the Socratic reader and not the fact-checker — it attends to the texture of the prose. It consults
-the shared **intent ledger** to suppress what you've declared deliberate, and is **multilingual**
-(EN / RU / ES / FR / DE).
+- **Background AI jobs no longer crash the TUI.** The job runner spawned a thread without the Tokio
+  runtime, so any background LLM call panicked *"no reactor running"* — exactly what Inner Editor's
+  engage hit. The worker now inherits the runtime (one fix for every background job).
+- **No more stray `.` in the editor pane** — `collect_blocking`'s per-token progress dots are
+  suppressed inside the TUI (the terminal is owned by the renderer).
 
-### Engaging it
+### Talk to it, teach it
 
-**`Ctrl+V O`** (O = *Observe*) opens the Inner Editor overview; from there **`E`** engages the open
-paragraph, **`A`** toggles the opt-in ambient paragraph-pause auto-engage (with a cooldown so it
-never fires mid-edit), **`F`** jumps to the findings. They land in the Output pane with a **✎ glyph**
-and a warm-earth palette, distinct from Inner Socrates' purple; both companions coexist on the same
-paragraph. From the terminal: **`inkhaven inner-editor engage / findings / config / usage`**. A new
-`inner_editor:` config block tunes the persona (tone / verbosity / praise frequency / genre / belief
-stance / per-category) and the caps — which, as everywhere, **inform but never block**.
+Press **`C`** in the `Ctrl+V O` overview (or F9 → **Editor** scope) to **discuss** the Editor's
+observations in the AI pane — its voice, non-prescriptive as ever. And **teach** it: press **`i`** on
+a finding (or `inkhaven inner-editor intent <category>`) to declare a craft choice deliberate, and it
+stops raising that category — written into the **shared intent ledger** Inner Socrates also consults.
+Findings record the paragraph's snapshot id, so `findings history` reads as a cross-draft timeline.
 
-### Also in 1.4.2 — Book-RAG polish
+### Script it, cost it
 
-Two fixes to 1.4.1's Chat with Your Book: the Book-scope conversation now renders **inline as a
-transcript** (not just the latest reply), and citations are **readable location paths**
-(`[chapter/scene]`) end to end instead of opaque UUIDs.
+Seven **`ink.inner_editor.*`** Bund words (`findings.list` / `usage.today` / `config` / `categories`
+/ `system_prompt` read-only; `intent.declare` store-write; `engage` ai-write). And **`inkhaven cost`**
+/ **`Ctrl+B $`** now surface the `inner editor · editor_engagement` budget alongside World and Inner
+Socrates — informative, never blocking.
 
 ### Dependencies & compatibility
 
-**No external application or binary dependencies; no new runtime crates** — Inner Editor is built on
-the existing per-feature DuckDB store, the Output pane, the multilingual prompt chain, the intent
-ledger, and `ai::usage`. No on-disk shape moved; the `inner_editor:` block and project `genre` are
-optional.
+**No external application or binary dependencies; no new runtime crates.** The new intent kinds are
+additive (existing ledger entries + `.isl` bundles keep working); no on-disk shape moved. The Inner
+Editor family lives on **`Ctrl+V O`** (`Ctrl+B E` was taken; no existing binding is displaced).
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

@@ -20,6 +20,7 @@ mod world_timeline;
 mod event_critique;
 mod lang;
 mod book_rag;
+mod inner_editor;
 mod pdf;
 mod review;
 
@@ -46,5 +47,6 @@ pub fn register_ink_stdlib(vm: &mut VM) -> Result<()> {
     export::register(vm)?;
     lang::register(vm)?;
     book_rag::register(vm)?;
+    inner_editor::register(vm)?;
     Ok(())
 }

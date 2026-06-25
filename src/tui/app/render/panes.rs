@@ -1713,7 +1713,7 @@ impl super::super::App {
                     " ↑↓ · i intent · m note · x addressed · a ask AI · d dismiss · ^B Tab"
                 }
                 Some(s) if s == k::INNER_EDITOR_OBSERVATION => {
-                    " ↑↓ · o expand · a ask AI · d dismiss · p pin · ^B Tab"
+                    " ↑↓ · i intent · o expand · a ask AI · d dismiss · ^B Tab"
                 }
                 Some(s)
                     if s == k::TIMELINE_ORPHAN_WARNING

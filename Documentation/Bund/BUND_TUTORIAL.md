@@ -562,3 +562,37 @@ swap drop                      // keep tokens; pretend `answer` is on the stack
 book_rag.context'` prints the grounding block for that query —
 the fastest way to see, from the terminal, what Book-scope chat
 would feed the model.
+
+## 1.4.3 — `ink.inner_editor.*` words (the Inner Editor)
+
+The Inner Editor (INNER_EDITOR-1) observes literary craft as
+Praise/Note/Concern. Its Bund surface lets a script inspect the
+companion, declare an observation deliberate, and run an
+engagement.
+
+| Word | Sandbox | Stack | What it does |
+|------|---------|-------|--------------|
+| `ink.inner_editor.findings.list` | `store_read` | `( -- list )` | persisted findings as `{id, paragraph_id, severity, category, observation}` dicts |
+| `ink.inner_editor.usage.today` | `store_read` | `( -- n )` | today's engagement LLM calls |
+| `ink.inner_editor.config` | `store_read` | `( -- dict )` | the active `inner_editor` config (tuning, active categories, caps) |
+| `ink.inner_editor.categories` | `store_read` | `( -- list )` | the eight category ids |
+| `ink.inner_editor.system_prompt` | `store_read` | `( lang -- text )` | the localized Editor system prompt |
+| `ink.inner_editor.intent.declare` | `store_write` | `( category chapter -- )` | declare a category deliberate (empty chapter = project-wide); writes the shared ledger |
+| `ink.inner_editor.engage` | `ai_write` | `( paragraph_id -- list )` | run one engagement; push its findings as dicts |
+
+The inspectors are read-only (default-allowed). `intent.declare`
+mutates the shared intent ledger (`store_write`); `engage` calls
+the LLM (`ai_write`). Both are default-denied — opt in with
+`scripting: { enabled_categories: ["store_write", "ai_write"] }`.
+
+Example — silence a deliberate motif everywhere, then engage a
+paragraph and read what survives:
+
+```bund
+"dictionary_richness" "" ink.inner_editor.intent.declare   // project-wide
+"019efc4b-…paragraph-id…" ink.inner_editor.engage          // ( -- findings )
+```
+
+`inkhaven --project ~/my-book bund 'ink.inner_editor.config'`
+prints the active tuning + the categories the Editor will use —
+handy in a hook that adjusts behaviour per book.
