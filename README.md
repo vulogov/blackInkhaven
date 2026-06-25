@@ -21,45 +21,40 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.4.3 — The Inner Editor (Part B)
+## Latest release · 1.4.4 — Unify the companions
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.4.3.md`](Documentation/RELEASE_NOTES/1.4.3.md)
-· Plan: [`Documentation/PROPOSALS/INNER_EDITOR-1_PLAN.md`](Documentation/PROPOSALS/INNER_EDITOR-1_PLAN.md)
-· Tutorial: [88](Documentation/Tutorials/88-inner-editor.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.4.4.md`](Documentation/RELEASE_NOTES/1.4.4.md)
+· Plan: [`Documentation/PROPOSALS/COMPANIONS-1_PLAN.md`](Documentation/PROPOSALS/COMPANIONS-1_PLAN.md)
 
-Completes **INNER_EDITOR-1**. Part A (1.4.2) shipped the editorial core — the engine, the Output
-surface, the ambient trigger. **Part B** makes the Editor **conversational** and **teachable**, adds
-a Bund surface and cost-dashboard integration, and lands **two crash/display fixes** from the Part A
-feedback. Built on the same in-tree infrastructure, with **no new dependencies**.
+The examined-authorship triad — **World** (consistency), **Inner Socrates** (structure), **Inner
+Editor** (craft) — shipped as three parallel features. 1.4.4 (COMPANIONS-1) makes them feel like
+one system. Almost entirely reuse, with **no new dependencies**.
 
-### Two fixes first
+### The Editor joins the review pass
 
-- **Background AI jobs no longer crash the TUI.** The job runner spawned a thread without the Tokio
-  runtime, so any background LLM call panicked *"no reactor running"* — exactly what Inner Editor's
-  engage hit. The worker now inherits the runtime (one fix for every background job).
-- **No more stray `.` in the editor pane** — `collect_blocking`'s per-token progress dots are
-  suppressed inside the TUI (the terminal is owned by the renderer).
+**`Ctrl+B Shift+C`** now includes Inner Editor. The instant, LLM-free checkers (world fact-check +
+Socrates + timeline) run as before; the LLM-only Editor is spawned in the **background** on the open
+paragraph, so the pass stays instant — its ✎ observations arrive in Output a few seconds later and
+re-badge the tree. (Tree badges already counted the Editor; the badge computation is kind-agnostic.)
 
-### Talk to it, teach it
+### The Editor's intent loop closes
 
-Press **`C`** in the `Ctrl+V O` overview (or F9 → **Editor** scope) to **discuss** the Editor's
-observations in the AI pane — its voice, non-prescriptive as ever. And **teach** it: press **`i`** on
-a finding (or `inkhaven inner-editor intent <category>`) to declare a craft choice deliberate, and it
-stops raising that category — written into the **shared intent ledger** Inner Socrates also consults.
-Findings record the paragraph's snapshot id, so `findings history` reads as a cross-draft timeline.
+Dismiss the same category enough and Inner Editor nudges you to declare it deliberate — the same
+promotion mechanism Socrates uses. **`inkhaven inner-editor suggestions list / promote / dismiss`**;
+`promote` writes into the **shared intent ledger** both companions consult. (This also fixed a latent
+bug where Socrates' own nudge was being clobbered.)
 
-### Script it, cost it
+### One view of the whole board
 
-Seven **`ink.inner_editor.*`** Bund words (`findings.list` / `usage.today` / `config` / `categories`
-/ `system_prompt` read-only; `intent.declare` store-write; `engage` ai-write). And **`inkhaven cost`**
-/ **`Ctrl+B $`** now surface the `inner editor · editor_engagement` budget alongside World and Inner
-Socrates — informative, never blocking.
+A new **`companions`** stop in the Output `f` filter shows all four examined-authorship sources at
+once. And **`inkhaven companions`** is a terminal cockpit: open findings per Inner-family member, the
+shared intent ledger + pending promotions, and today's LLM cost per companion — a glance at where
+your attention and token budget are going. Plus a new **`ink.inner_editor.suggestions`** Bund word.
 
 ### Dependencies & compatibility
 
-**No external application or binary dependencies; no new runtime crates.** The new intent kinds are
-additive (existing ledger entries + `.isl` bundles keep working); no on-disk shape moved. The Inner
-Editor family lives on **`Ctrl+V O`** (`Ctrl+B E` was taken; no existing binding is displaced).
+**No external application or binary dependencies; no new runtime crates.** The only new storage is
+the Editor's `editor_dismissals` tally (additive); no on-disk shape moved.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
