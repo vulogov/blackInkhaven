@@ -23,6 +23,7 @@ pub fn register(vm: &mut VM) -> Result<()> {
         ("ink.inner_editor.usage.today", w_usage_today),
         ("ink.inner_editor.config", w_config),
         ("ink.inner_editor.categories", w_categories),
+        ("ink.inner_editor.suggestions", w_suggestions),
         ("ink.inner_editor.system_prompt", w_system_prompt),
         ("ink.inner_editor.intent.declare", w_intent_declare),
         ("ink.inner_editor.engage", w_engage),
@@ -114,6 +115,30 @@ fn do_config(vm: &mut VM) -> Result<&mut VM> {
         h.insert("genre".to_string(), Value::from_string(g));
     }
     push(vm, Value::from_dict(h));
+    Ok(vm)
+}
+
+// ( -- list )  promotion candidates (dismissed >= 5×) as {category, chapter, count} dicts.
+fn w_suggestions(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_suggestions(vm).map_err(to_bund_err)
+}
+fn do_suggestions(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.inner_editor.suggestions";
+    let store = InnerEditorStore::open_for_project(active_store(tag)?.project_root())
+        .map_err(|e| anyhow!("{tag}: {e}"))?;
+    let items: Vec<Value> = store
+        .promotion_candidates(5)
+        .unwrap_or_default()
+        .iter()
+        .map(|c| {
+            let mut h = HashMap::new();
+            h.insert("category".to_string(), Value::from_string(c.category.id()));
+            h.insert("chapter".to_string(), Value::from_string(c.chapter_id.clone()));
+            h.insert("count".to_string(), Value::from_int(c.count));
+            Value::from_dict(h)
+        })
+        .collect();
+    push(vm, Value::from_list(items));
     Ok(vm)
 }
 
