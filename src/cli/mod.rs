@@ -3822,6 +3822,19 @@ pub enum InnerEditorCommand {
     /// Inspect persisted Editor findings.
     #[command(subcommand)]
     Findings(EditorFindingsCommand),
+    /// Declare an observation category a deliberate choice — writes an intent
+    /// ledger entry that suppresses future Editor findings of that category
+    /// (project-wide, or scoped to a chapter).
+    Intent {
+        /// The category id (e.g. `tautology`, `dictionary_richness`, `style_instability`).
+        category: String,
+        /// Limit the declaration to a chapter id.
+        #[arg(long)]
+        chapter: Option<String>,
+        /// A note explaining the choice (shown when a finding is suppressed).
+        #[arg(long)]
+        description: Option<String>,
+    },
     /// Inspect the Inner Editor configuration.
     #[command(subcommand)]
     Config(EditorConfigCommand),

@@ -7145,7 +7145,21 @@ impl App {
             KeyCode::Char('e') if plain => self.edit_output_translation(),
             // INNER_SOCRATES-1 — per-finding outcomes on a socratic_inquiry message:
             // `i` record-as-intent, `m` make-note, `x` mark addressed.
-            KeyCode::Char('i') if plain => self.socratic_outcome(SocraticOutcome::RecordIntent),
+            // INNER_EDITOR-1 — `i` also records intent on an inner_editor row.
+            KeyCode::Char('i') if plain => {
+                let editor_row = crate::pane::output::active()
+                    .and_then(|s| s.active().ok())
+                    .unwrap_or_default()
+                    .get(self.output_selected)
+                    .is_some_and(|m| {
+                        m.kind == crate::pane::output::kinds::INNER_EDITOR_OBSERVATION
+                    });
+                if editor_row {
+                    self.inner_editor_record_intent_action();
+                } else {
+                    self.socratic_outcome(SocraticOutcome::RecordIntent);
+                }
+            }
             KeyCode::Char('m') if plain => self.socratic_outcome(SocraticOutcome::MakeNote),
             KeyCode::Char('x') if plain => self.socratic_outcome(SocraticOutcome::Addressed),
             KeyCode::Enter => self.output_primary_action(),

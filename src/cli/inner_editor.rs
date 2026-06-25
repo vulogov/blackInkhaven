@@ -27,6 +27,9 @@ pub fn run(project: &Path, cmd: InnerEditorCommand) -> Result<()> {
             EditorFindingsCommand::List { severity } => findings_list(project, severity),
             EditorFindingsCommand::History { paragraph } => findings_history(project, paragraph),
         },
+        InnerEditorCommand::Intent { category, chapter, description } => {
+            declare_intent(project, category, chapter, description)
+        }
         InnerEditorCommand::Config(c) => match c {
             EditorConfigCommand::Show => config_show(project),
         },
@@ -98,6 +101,29 @@ fn engage(
         String::new()
     };
     println!("\n{} observation(s){supp}", outcome.findings.len());
+    Ok(())
+}
+
+fn declare_intent(
+    project: &Path,
+    category: String,
+    chapter: Option<String>,
+    description: Option<String>,
+) -> Result<()> {
+    use crate::inner_editor::types::EditorCategory;
+    let cat = EditorCategory::from_id(&category).ok_or_else(|| {
+        let all: Vec<&str> = EditorCategory::ALL.iter().map(|c| c.id()).collect();
+        Error::Config(format!("unknown category `{category}`. One of: {}", all.join(", ")))
+    })?;
+    crate::inner_editor::intent_declare::declare_intent(
+        project,
+        cat,
+        chapter.as_deref(),
+        description.as_deref(),
+    )
+    .map_err(|e| Error::Store(format!("{e}")))?;
+    let scope = chapter.as_deref().map(|c| format!("chapter {c}")).unwrap_or_else(|| "project-wide".into());
+    println!("✓ declared [{}] a deliberate choice ({scope}) — future findings suppressed", cat.label());
     Ok(())
 }
 
