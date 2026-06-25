@@ -117,6 +117,45 @@ impl BibEntry {
         !self.key.trim().is_empty()
     }
 
+    /// Serialise to an HJSON paragraph body (the on-disk citation format).
+    /// Values are quoted + escaped so any content round-trips through
+    /// [`BibEntry::from_hjson`] regardless of commas, colons, or `#`. Empty
+    /// fields are omitted. Used by `sources import` to materialise paragraphs.
+    pub fn to_hjson(&self) -> String {
+        let mut out = String::from("{\n");
+        let mut push = |name: &str, value: &str| {
+            let v = value.trim();
+            if !v.is_empty() {
+                out.push_str(&format!("  {name}: {}\n", hjson_quote(v)));
+            }
+        };
+        let entry_type = {
+            let t = self.entry_type.trim();
+            if t.is_empty() { "misc" } else { t }
+        };
+        push("key", &self.key);
+        push("entry_type", entry_type);
+        push("author", &self.author);
+        push("title", &self.title);
+        push("year", &self.year);
+        push("journal", self.journal.as_deref().unwrap_or(""));
+        push("volume", self.volume.as_deref().unwrap_or(""));
+        push("number", self.number.as_deref().unwrap_or(""));
+        push("pages", self.pages.as_deref().unwrap_or(""));
+        push("publisher", self.publisher.as_deref().unwrap_or(""));
+        push("booktitle", self.booktitle.as_deref().unwrap_or(""));
+        push("editor", self.editor.as_deref().unwrap_or(""));
+        push("edition", self.edition.as_deref().unwrap_or(""));
+        push("url", self.url.as_deref().unwrap_or(""));
+        push("doi", self.doi.as_deref().unwrap_or(""));
+        push("isbn", self.isbn.as_deref().unwrap_or(""));
+        push("note", self.note.as_deref().unwrap_or(""));
+        push("abstract", self.abstract_.as_deref().unwrap_or(""));
+        push("keywords", self.keywords.as_deref().unwrap_or(""));
+        out.push_str("}\n");
+        out
+    }
+
     /// Serialise to a BibTeX entry. Fields with empty/absent values are omitted;
     /// the entry type defaults to `misc` when blank.
     pub fn to_bibtex(&self) -> String {
@@ -213,6 +252,242 @@ pub fn seed_sources_body_for_tui(title: &str) -> String {
     ENTRY_TEMPLATE.replacen("key: change-me", &format!("key: {key}"), 1)
 }
 
+/// Quote + escape a value for an HJSON string literal (`"…"`). Backslash and
+/// double-quote are escaped; control chars are collapsed to spaces (values are
+/// whitespace-normalised before this, so this is belt-and-braces).
+fn hjson_quote(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('"');
+    for ch in value.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' | '\r' | '\t' => out.push(' '),
+            other => out.push(other),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// Collapse internal whitespace runs (BibTeX values routinely span lines) to a
+/// single space and trim the ends.
+fn normalize_ws(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Extract Typst-style `@key` citation tokens from prose. A key starts with an
+/// ASCII letter and continues with `[A-Za-z0-9_:-]`. The `@` must not be
+/// preceded by an alphanumeric (so e-mail addresses like `a@b.com` are NOT
+/// matched). Returns keys in first-seen order, with duplicates preserved (the
+/// caller dedups as needed — call sites want per-occurrence reporting).
+pub fn extract_cite_keys(prose: &str) -> Vec<String> {
+    let chars: Vec<char> = prose.chars().collect();
+    let mut keys = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '@' {
+            let prev_ok = i == 0 || !chars[i - 1].is_alphanumeric();
+            let starts_letter =
+                i + 1 < chars.len() && chars[i + 1].is_ascii_alphabetic();
+            if prev_ok && starts_letter {
+                let mut j = i + 1;
+                let mut key = String::new();
+                while j < chars.len()
+                    && (chars[j].is_ascii_alphanumeric()
+                        || matches!(chars[j], '_' | ':' | '-'))
+                {
+                    key.push(chars[j]);
+                    j += 1;
+                }
+                keys.push(key);
+                i = j;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    keys
+}
+
+/// A minimal, dependency-free BibTeX reader. Handles `@type{key, field = …}`
+/// with brace-`{…}`, quote-`"…"`, and bare (numeric/word) values; nested
+/// braces are balanced; `@comment` / `@string` / `@preamble` blocks are
+/// skipped. String macros (`field = abbrev # " more"`) are NOT expanded — they
+/// pass through as the literal token. Good enough to import real-world `.bib`
+/// files exported by Zotero, JabRef, Google Scholar, etc.
+pub fn parse_bibtex(input: &str) -> Vec<BibEntry> {
+    let chars: Vec<char> = input.chars().collect();
+    let mut entries = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] != '@' {
+            i += 1;
+            continue;
+        }
+        // entry type: letters after '@', up to the opening delimiter.
+        let mut j = i + 1;
+        let mut etype = String::new();
+        while j < chars.len() && chars[j] != '{' && chars[j] != '(' {
+            // A stray '@' or whitespace before any delimiter → not an entry.
+            if chars[j] == '@' || chars[j] == '\n' {
+                break;
+            }
+            etype.push(chars[j]);
+            j += 1;
+        }
+        if j >= chars.len() || (chars[j] != '{' && chars[j] != '(') {
+            i += 1;
+            continue;
+        }
+        let open = chars[j];
+        let close = if open == '{' { '}' } else { ')' };
+        j += 1;
+        let start = j;
+        let mut depth = 1;
+        while j < chars.len() && depth > 0 {
+            if chars[j] == open {
+                depth += 1;
+            } else if chars[j] == close {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            j += 1;
+        }
+        let inner: String = chars[start..j.min(chars.len())].iter().collect();
+        let etype = etype.trim().to_lowercase();
+        if !matches!(etype.as_str(), "comment" | "string" | "preamble") {
+            if let Some(e) = parse_bibtex_entry(&etype, &inner) {
+                entries.push(e);
+            }
+        }
+        i = j + 1;
+    }
+    entries
+}
+
+/// Parse the inside of one `@type{ … }` block: `key, name = value, …`.
+fn parse_bibtex_entry(etype: &str, inner: &str) -> Option<BibEntry> {
+    let chars: Vec<char> = inner.chars().collect();
+    let mut i = 0;
+    // Citation key — everything up to the first comma.
+    let mut key = String::new();
+    while i < chars.len() && chars[i] != ',' {
+        key.push(chars[i]);
+        i += 1;
+    }
+    let key = key.trim().to_string();
+    if key.is_empty() {
+        return None;
+    }
+    i += 1; // skip the comma
+
+    let mut e = BibEntry {
+        key,
+        entry_type: etype.to_string(),
+        ..Default::default()
+    };
+
+    while i < chars.len() {
+        while i < chars.len() && (chars[i].is_whitespace() || chars[i] == ',') {
+            i += 1;
+        }
+        if i >= chars.len() {
+            break;
+        }
+        // Field name up to '='.
+        let mut name = String::new();
+        while i < chars.len() && chars[i] != '=' && chars[i] != ',' {
+            name.push(chars[i]);
+            i += 1;
+        }
+        if i >= chars.len() || chars[i] != '=' {
+            break;
+        }
+        i += 1; // skip '='
+        while i < chars.len() && chars[i].is_whitespace() {
+            i += 1;
+        }
+        // Value: {braced} | "quoted" | bare.
+        let value = if i < chars.len() && chars[i] == '{' {
+            let mut depth = 0;
+            let mut v = String::new();
+            while i < chars.len() {
+                match chars[i] {
+                    '{' => {
+                        depth += 1;
+                        if depth == 1 {
+                            i += 1;
+                            continue;
+                        }
+                    }
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            i += 1;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                v.push(chars[i]);
+                i += 1;
+            }
+            v
+        } else if i < chars.len() && chars[i] == '"' {
+            i += 1;
+            let mut v = String::new();
+            while i < chars.len() && chars[i] != '"' {
+                v.push(chars[i]);
+                i += 1;
+            }
+            if i < chars.len() {
+                i += 1; // closing quote
+            }
+            v
+        } else {
+            let mut v = String::new();
+            while i < chars.len() && chars[i] != ',' {
+                v.push(chars[i]);
+                i += 1;
+            }
+            v
+        };
+        let name = name.trim().to_lowercase();
+        let value = normalize_ws(&value);
+        if value.is_empty() {
+            continue;
+        }
+        match name.as_str() {
+            "author" => e.author = value,
+            "title" => e.title = value,
+            "year" => e.year = value,
+            "date" if e.year.is_empty() => {
+                // biblatex `date = {2024-01-02}` → take the year.
+                e.year = value.split('-').next().unwrap_or("").to_string();
+            }
+            "journal" | "journaltitle" => e.journal = Some(value),
+            "volume" => e.volume = Some(value),
+            "number" | "issue" => e.number = Some(value),
+            "pages" => e.pages = Some(value),
+            "publisher" => e.publisher = Some(value),
+            "booktitle" => e.booktitle = Some(value),
+            "editor" => e.editor = Some(value),
+            "edition" => e.edition = Some(value),
+            "url" => e.url = Some(value),
+            "doi" => e.doi = Some(value),
+            "isbn" => e.isbn = Some(value),
+            "note" => e.note = Some(value),
+            "abstract" => e.abstract_ = Some(value),
+            "keywords" => e.keywords = Some(value),
+            _ => {}
+        }
+    }
+    Some(e)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -293,6 +568,73 @@ mod tests {
         let e = BibEntry::from_hjson(&body).expect("seeded body parses");
         assert_eq!(e.key, "smith2024");
         assert_eq!(e.entry_type, "article");
+    }
+
+    #[test]
+    fn extract_cite_keys_finds_tokens_and_skips_emails() {
+        let prose = "As shown by @smith2024 and @doe:2023b, but mail me at a@b.com. \
+                     See also @nguyen-1999.";
+        let keys = extract_cite_keys(prose);
+        assert_eq!(keys, vec!["smith2024", "doe:2023b", "nguyen-1999"]);
+        // `b@c` inside the email is not a citation (preceded by alnum).
+        assert!(!keys.iter().any(|k| k == "b"));
+    }
+
+    #[test]
+    fn extract_cite_keys_handles_unicode_prose() {
+        // Russian prose with a citation — the @ must still be found.
+        let keys = extract_cite_keys("Как показано в @ivanov2020, текст продолжается.");
+        assert_eq!(keys, vec!["ivanov2020"]);
+    }
+
+    #[test]
+    fn parse_bibtex_reads_braced_and_quoted_and_bare() {
+        let bib = r#"
+        @article{smith2024,
+          author = {Smith, Jane and Doe, John},
+          title  = "On {Nested} Braces",
+          journal= {Journal of Things},
+          year   = 2024,
+          volume = 12,
+          pages  = {1--9},
+        }
+        @comment{ this is ignored }
+        @book{ulanov2021,
+          author = {Ulánov, Владимир},
+          title  = {Системы},
+          year   = {2021}
+        }
+        "#;
+        let entries = parse_bibtex(bib);
+        assert_eq!(entries.len(), 2);
+        let a = &entries[0];
+        assert_eq!(a.key, "smith2024");
+        assert_eq!(a.entry_type, "article");
+        assert_eq!(a.author, "Smith, Jane and Doe, John");
+        assert_eq!(a.title, "On {Nested} Braces");
+        assert_eq!(a.year, "2024");
+        assert_eq!(a.volume.as_deref(), Some("12"));
+        assert_eq!(a.pages.as_deref(), Some("1--9"));
+        let b = &entries[1];
+        assert_eq!(b.key, "ulanov2021");
+        assert_eq!(b.entry_type, "book");
+        assert_eq!(b.author, "Ulánov, Владимир");
+    }
+
+    #[test]
+    fn bibtex_import_round_trips_through_hjson() {
+        // parse_bibtex → to_hjson → from_hjson must preserve the fields, even
+        // with commas and colons in values.
+        let bib = "@inproceedings{x:1, author = {Last, First}, title = {A, B: C}, year = 2020 }";
+        let parsed = parse_bibtex(bib);
+        assert_eq!(parsed.len(), 1);
+        let hjson = parsed[0].to_hjson();
+        let back = BibEntry::from_hjson(&hjson).expect("hjson round-trips");
+        assert_eq!(back.key, "x:1");
+        assert_eq!(back.entry_type, "inproceedings");
+        assert_eq!(back.author, "Last, First");
+        assert_eq!(back.title, "A, B: C");
+        assert_eq!(back.year, "2020");
     }
 
     #[test]

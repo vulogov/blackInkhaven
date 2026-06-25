@@ -34,6 +34,7 @@ pub mod output;
 pub mod realworld;
 pub mod templates;
 pub mod thread;
+pub mod sources;
 pub mod tts;
 pub mod gen_fixture;
 pub mod bench_load;
@@ -934,6 +935,13 @@ pub enum Command {
     #[command(subcommand)]
     Thread(ThreadCommand),
 
+    /// 1.4.5+ SOURCES-1 — `inkhaven sources <subcommand>`.
+    /// Bibliography & citation surface: validate `@key`
+    /// references, list defined entries, import a `.bib`
+    /// file into the `Sources` system book.
+    #[command(subcommand)]
+    Sources(SourcesCommand),
+
     /// 1.3.24 PANE-1 — the Output message channel (CLI surface; the pane is TUI).
     #[command(subcommand)]
     Output(OutputCommand),
@@ -1735,6 +1743,39 @@ pub enum SubmissionCommand {
         book_name: Option<String>,
         #[arg(long)]
         provider: Option<String>,
+    },
+}
+
+/// 1.4.5+ SOURCES-1 — `inkhaven sources …` sub-subcommands.
+#[derive(Debug, Subcommand)]
+pub enum SourcesCommand {
+    /// Validate every `@key` cited in prose against the entries defined in the
+    /// Sources book (honouring `sources.all` scope). Exits non-zero when any
+    /// key is undefined — drop it into a pre-build check.
+    Check {
+        /// Limit the scan to one user book (default: all user books).
+        #[arg(long)]
+        book_name: Option<String>,
+        /// Machine-readable JSON report.
+        #[arg(long)]
+        json: bool,
+    },
+    /// List the citation entries defined in the Sources book.
+    List {
+        /// Limit to the chapter named after this book.
+        #[arg(long)]
+        book_name: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Import a `.bib` file: each entry becomes an HJSON paragraph under the
+    /// Sources chapter for the target book. Existing keys are skipped.
+    Import {
+        /// Path to the BibTeX `.bib` file.
+        file: std::path::PathBuf,
+        /// Target user book (defaults to the sole user book).
+        #[arg(long)]
+        book_name: Option<String>,
     },
 }
 
@@ -4506,6 +4547,9 @@ impl Cli {
             }
             Command::Thread(cmd) => {
                 thread::run(&project, cmd).map_err(Into::into)
+            }
+            Command::Sources(cmd) => {
+                sources::run(&project, cmd).map_err(Into::into)
             }
             Command::Template(TemplateCommand::List) => {
                 templates::list_templates();
