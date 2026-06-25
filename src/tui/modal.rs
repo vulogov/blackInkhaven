@@ -347,6 +347,16 @@ pub(super) enum Modal {
         cursor: usize,
         scroll: usize,
     },
+    /// 1.4.5+ SOURCES-1 — Ctrl+V @ cite picker. Reuses
+    /// `ScriptPickerEntry`: `title` holds the `@key`, `slug_path`
+    /// the "year · author — title" descriptor; `id` is unused
+    /// (`Uuid::nil()`). Enter inserts `@<title>` into the editor.
+    CitePicker {
+        input: TextInput,
+        entries: Vec<ScriptPickerEntry>,
+        cursor: usize,
+        scroll: usize,
+    },
     /// 1.3.34+ — Ctrl+B $ AI cost dashboard: a scrollable read-only panel of
     /// today's LLM call tallies per capped subsystem (computed on render).
     CostDashboard { scroll: usize },
