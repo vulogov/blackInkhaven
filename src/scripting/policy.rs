@@ -359,6 +359,15 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.book_rag.estimate_tokens", category::STORE_READ),
     ("ink.book_rag.cited_ids", category::STORE_READ),
     ("ink.book_rag.validate_citations", category::STORE_READ),
+    // 1.4.3 INNER_EDITOR-1 — read-only inspectors (store_read), the ledger
+    // mutator (store_write), and the LLM engage pass (ai_write).
+    ("ink.inner_editor.findings.list", category::STORE_READ),
+    ("ink.inner_editor.usage.today", category::STORE_READ),
+    ("ink.inner_editor.config", category::STORE_READ),
+    ("ink.inner_editor.categories", category::STORE_READ),
+    ("ink.inner_editor.system_prompt", category::STORE_READ),
+    ("ink.inner_editor.intent.declare", category::STORE_WRITE),
+    ("ink.inner_editor.engage", category::AI_WRITE),
 ];
 
 /// Policy loaded from `inkhaven.hjson`'s `scripting` stanza. All
@@ -758,6 +767,30 @@ mod tests {
             assert_eq!(cat(w), Some(category::STORE_READ), "{w} must be store_read");
             assert!(!denied.contains(cat(w).unwrap()), "{w} must be allowed by default");
         }
+    }
+
+    // 1.4.3 INNER_EDITOR-1 — pin the ink.inner_editor.* gates: inspectors stay
+    // store_read (allowed), the ledger mutator store_write + engage ai_write
+    // (both denied by default).
+    #[test]
+    fn inner_editor_words_classified() {
+        let cat = |w: &str| WORD_CATEGORIES.iter().find(|(n, _)| *n == w).map(|(_, c)| *c);
+        let policy = Policy::default();
+        let denied = policy.effective_denied_categories();
+        for w in [
+            "ink.inner_editor.findings.list",
+            "ink.inner_editor.usage.today",
+            "ink.inner_editor.config",
+            "ink.inner_editor.categories",
+            "ink.inner_editor.system_prompt",
+        ] {
+            assert_eq!(cat(w), Some(category::STORE_READ), "{w} must be store_read");
+            assert!(!denied.contains(cat(w).unwrap()), "{w} allowed by default");
+        }
+        assert_eq!(cat("ink.inner_editor.intent.declare"), Some(category::STORE_WRITE));
+        assert!(denied.contains(category::STORE_WRITE));
+        assert_eq!(cat("ink.inner_editor.engage"), Some(category::AI_WRITE));
+        assert!(denied.contains(category::AI_WRITE));
     }
 
     #[test]
