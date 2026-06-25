@@ -53,9 +53,13 @@ pub fn run(project: &Path) -> Result<()> {
             fs.len()
         );
     }
-    // WORLD fact-check findings are advisory — they run live into the Output pane
-    // and aren't persisted; `inkhaven world` reports the world-consistency health.
-    println!("  World           \u{25cf}  fact-check is advisory (live in Output; see `inkhaven world`)");
+    // WORLD: the consistency health line (facts conflicts + prose contradictions
+    // + drift), reusing the same summary the story-bible banner shows. Fact-check
+    // findings themselves are advisory (live in Output, not persisted).
+    match crate::cli::world::gather(project) {
+        Ok(r) => println!("  World           \u{25cf}  {}", r.summary()),
+        Err(_) => println!("  World           \u{25cf}  (no world configured)"),
+    }
     println!();
 
     // ── shared intent ledger + pending promotions ──
