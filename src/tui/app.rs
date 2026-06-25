@@ -2070,6 +2070,10 @@ pub(crate) struct App {
     /// BOOK_RAG-1 — whether the "Retrieved passages" transparency section is
     /// expanded in the chat pane. Collapsed by default; toggled with `p`.
     book_rag_passages_expanded: bool,
+    /// BOOK_RAG-1 — set once after a save makes the active Book-scope
+    /// retrieval stale, so the "clear chat to re-ground" nudge fires only
+    /// once per stale event (reset on the next fresh retrieval).
+    book_rag_nudged_stale: bool,
 
     /// How aggressively the model may draw on its own knowledge. Toggled
     /// globally by F10. Help inferences pin this to `Local` regardless of
@@ -2406,6 +2410,7 @@ impl App {
             book_rag_last_retrieval: None,
             pending_book_rag_cited: None,
             book_rag_passages_expanded: false,
+            book_rag_nudged_stale: false,
             inference_mode: InferenceMode::Full,
             pending_import: None,
             pending_assembly: None,

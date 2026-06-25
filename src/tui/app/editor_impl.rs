@@ -336,6 +336,9 @@ impl super::App {
         let book_id = self.book_of_node(doc.id);
         crate::progress::record_save(doc.id, book_id, prev_words, new_words);
         self.refresh_progress_cache();
+        // The save re-embedded this paragraph; an active Book-scope
+        // retrieval is now grounded in pre-edit text (BOOK_RAG-1 P5).
+        self.book_rag_note_possible_staleness();
         Ok(())
     }
 
@@ -773,6 +776,9 @@ impl super::App {
         self.maybe_auto_promote_on_target(node.id, new_words);
         self.reload_hierarchy();
         self.refresh_progress_cache();
+        // The save re-embedded this paragraph; an active Book-scope
+        // retrieval is now grounded in pre-edit text (BOOK_RAG-1 P5).
+        self.book_rag_note_possible_staleness();
         // 1.2.5+: refresh typst-syntax diagnostics on save. Pulls
         // the most-recently-saved body straight from the editor's
         // mutable doc so the next render reflects errors the user
