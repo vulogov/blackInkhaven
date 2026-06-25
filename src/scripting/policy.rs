@@ -146,6 +146,11 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     // review (read).
     ("ink.thread.list", category::STORE_READ),
     ("ink.review.list", category::STORE_READ),
+    // 1.4.5 SOURCES-1 — bibliography reads (all read-only).
+    ("ink.sources.list", category::STORE_READ),
+    ("ink.sources.get", category::STORE_READ),
+    ("ink.sources.check", category::STORE_READ),
+    ("ink.sources.bibtex", category::STORE_READ),
 
     // ── store_write (default-denied) ──────────────────────────
     // 1.2.3+: Bund scripts can mutate the project tree, status

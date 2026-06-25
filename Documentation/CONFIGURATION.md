@@ -2084,3 +2084,44 @@ suppressed. Scripts get the read-only `ink.inner_editor.*` inspectors plus
 `intent.declare` (store_write) and `engage` (ai_write); see
 [BUND_TUTORIAL.md](Bund/BUND_TUTORIAL.md). See
 [Tutorial 88 — Inner Editor](Tutorials/88-inner-editor.md).
+
+## 1.4.5 — Bibliography & citations (SOURCES-1)
+
+### `sources` (1.4.5+) — the citation engine
+
+Citations live in a system book — **Sources** — as structured **HJSON
+paragraphs** (no new content type; the editor highlights them as HJSON). Each
+new user book gets a matching Sources chapter, auto-seeded with one placeholder
+entry. Cite in prose with Typst's `@key` syntax; at Book assembly (`Ctrl+B A`
+or `inkhaven build`) every entry is compiled to `sources.bib` and a
+`#bibliography(...)` line is appended, so `typst compile` resolves the
+citations and renders the bibliography. The `sources` block tunes it:
+
+```hjson
+sources: {
+  all: true                    // collect every entry, regardless of chapter
+  bibliography_style: ieee     // Typst #bibliography style (CSL name)
+  auto_bibliography: true      // append #bibliography(...) automatically
+}
+```
+
+- `all` (default `true`) — when `true`, **all** entries under the Sources book
+  are written to every assembled book's `sources.bib`. Set `false` to scope
+  citations per book: only the Sources chapter **named after the assembled
+  book** is collected (so a multi-book project keeps separate bibliographies).
+  `inkhaven sources check` and the `Ctrl+V @` picker honour the same scope.
+- `bibliography_style` (default `ieee`) — the style passed to Typst's
+  `#bibliography(..., style: "…")`. Any CSL style name Typst accepts works
+  (`apa`, `chicago-author-date`, `mla`, …).
+- `auto_bibliography` (default `true`) — append the `#bibliography(...)` line
+  during assembly. Set `false` if you'd rather place it by hand in your Typst
+  setup (the `sources.bib` file is still written whenever entries exist).
+
+An entry is **valid** once it has a non-empty `key`; keyless drafts are skipped
+at compile time. Authoring paths: add a paragraph under Sources in the TUI
+(its title becomes the cite key, body pre-seeded with the schema), or
+`inkhaven sources import <file.bib>` to bulk-import BibTeX. Validate before a
+build with `inkhaven sources check` (exits non-zero on any undefined `@key`).
+Scripts get the read-only `ink.sources.{list,get,check,bibtex}` inspectors
+(all `store_read`). See
+[Tutorial 89 — Bibliography & Citations](Tutorials/89-bibliography-and-citations.md).
