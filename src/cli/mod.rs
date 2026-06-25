@@ -29,6 +29,7 @@ pub mod comments;
 pub mod language;
 pub mod inner_socrates;
 pub mod inner_editor;
+pub mod companions;
 pub mod output;
 pub mod realworld;
 pub mod templates;
@@ -955,6 +956,11 @@ pub enum Command {
     /// `Documentation/PROPOSALS/INNER_EDITOR-1_PLAN.md`.
     #[command(subcommand)]
     InnerEditor(InnerEditorCommand),
+
+    /// 1.4.4+ COMPANIONS-1 — the examined-authorship cockpit: open findings
+    /// across the Inner family, the shared intent ledger + pending promotions,
+    /// and today's LLM cost per companion, in one view.
+    Companions,
 
     /// Road to 1.4.0 — the unified review pass: run every applicable fast,
     /// deterministic checker (fact-check + Inner Socrates + timeline critique)
@@ -3835,11 +3841,40 @@ pub enum InnerEditorCommand {
         #[arg(long)]
         description: Option<String>,
     },
+    /// Promotion candidates — categories you've dismissed enough that declaring
+    /// them deliberate (an intent) would quiet the noise.
+    #[command(subcommand)]
+    Suggestions(EditorSuggestionsCommand),
     /// Inspect the Inner Editor configuration.
     #[command(subcommand)]
     Config(EditorConfigCommand),
     /// Today's Inner Editor LLM usage by sub-budget.
     Usage,
+}
+
+/// `inkhaven inner-editor suggestions …`.
+#[derive(Debug, Subcommand)]
+pub enum EditorSuggestionsCommand {
+    /// List `(category, chapter)` dismissal patterns at or above the threshold.
+    List {
+        #[arg(long, default_value_t = 5)]
+        threshold: i64,
+    },
+    /// Promote a pattern — declare the category deliberate (writes the ledger)
+    /// and stop suggesting it.
+    Promote {
+        category: String,
+        #[arg(long)]
+        chapter: Option<String>,
+        #[arg(long)]
+        description: Option<String>,
+    },
+    /// Refuse a suggestion — don't propose this `(category, chapter)` again.
+    Dismiss {
+        category: String,
+        #[arg(long)]
+        chapter: Option<String>,
+    },
 }
 
 /// `inkhaven inner-editor findings …`.
@@ -4451,6 +4486,7 @@ impl Cli {
             Command::Realworld(cmd) => realworld::run(&project, cmd).map_err(Into::into),
             Command::InnerSocrates(cmd) => inner_socrates::run(&project, cmd).map_err(Into::into),
             Command::InnerEditor(cmd) => inner_editor::run(&project, cmd).map_err(Into::into),
+            Command::Companions => companions::run(&project).map_err(Into::into),
             Command::Check { paragraph, book_name, no_fact, no_socrates, no_timeline } => {
                 check::run(
                     &project,

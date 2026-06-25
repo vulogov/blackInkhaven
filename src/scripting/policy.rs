@@ -365,6 +365,7 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.inner_editor.usage.today", category::STORE_READ),
     ("ink.inner_editor.config", category::STORE_READ),
     ("ink.inner_editor.categories", category::STORE_READ),
+    ("ink.inner_editor.suggestions", category::STORE_READ),
     ("ink.inner_editor.system_prompt", category::STORE_READ),
     ("ink.inner_editor.intent.declare", category::STORE_WRITE),
     ("ink.inner_editor.engage", category::AI_WRITE),
@@ -782,6 +783,7 @@ mod tests {
             "ink.inner_editor.usage.today",
             "ink.inner_editor.config",
             "ink.inner_editor.categories",
+            "ink.inner_editor.suggestions",
             "ink.inner_editor.system_prompt",
         ] {
             assert_eq!(cat(w), Some(category::STORE_READ), "{w} must be store_read");

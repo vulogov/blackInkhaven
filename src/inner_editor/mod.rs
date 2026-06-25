@@ -36,7 +36,7 @@ pub mod types;
 
 pub use engage::{engage, gather_context, EngageInput, EngageOutcome, GatheredContext};
 pub use prompt::{resolve_tuning, system_prompt, ResolvedTuning, SYSTEM_PROMPT_NAME};
-pub use storage::{CooldownRow, InnerEditorStore, StoredEditorFinding};
+pub use storage::{CooldownRow, EditorPromotionCandidate, InnerEditorStore, StoredEditorFinding};
 pub use types::{
     EditorCategory, EditorFinding, EditorSeverity, PraiseFrequency, Tone, Verbosity,
 };
