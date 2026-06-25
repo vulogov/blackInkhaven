@@ -109,6 +109,12 @@ consults — so the declaration is a first-class part of your examined-authorshi
 record. Future Editor findings of that category (project-wide, or scoped to the
 chapter) are suppressed.
 
+You don't have to notice the pattern yourself. When you **dismiss** the same
+category enough times, the Editor nudges you toward declaring it — and
+`inkhaven inner-editor suggestions` lists those dismissal patterns so you can
+`promote` one to an intent (or `dismiss` the suggestion to stop being asked).
+It's the same promotion mechanism Inner Socrates uses.
+
 ## 5. Tune the persona
 
 One persona, several knobs — in `inkhaven.hjson` under `inner_editor.persona`:
