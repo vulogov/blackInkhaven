@@ -1980,3 +1980,107 @@ inkhaven book-rag retrieve "the harbour market" --top-k 8 --context
 the config for that run only; `--context` prints the composed grounding block
 the model would receive instead of the human-readable passage listing. See
 [Tutorial 87 — Chat with Your Book](Tutorials/87-chat-with-your-book.md).
+
+## 1.4.2–1.4.3 — Inner Editor (INNER_EDITOR-1)
+
+### `inner_editor` (1.4.2+) — the literary/stylistic companion
+
+The second **Inner-family** member. Where Inner Socrates interrogates facts and
+structure, **Inner Editor** *observes* literacy and style through a single
+configurable persona — brief, grounded, **non-prescriptive** observations
+graded **Praise / Note / Concern**. LLM-only, paragraph scope. The whole block
+is optional; every default preserves good behaviour, and the feature only
+engages when an LLM provider is configured. Cost caps **inform, never block**.
+
+```hjson
+inner_editor: {
+  enabled: true                 // false fully disables (manual chord then just informs)
+
+  engagement: {
+    idle_threshold_seconds: 60  // ambient paragraph-pause wait before auto-engaging
+    cooldown_seconds: 120       // same-¶ cooldown; an edit re-arms the timer
+    max_findings_per_paragraph: 3
+  }
+
+  context: {
+    preceding_paragraphs: 3     // interpretation context sent with the paragraph
+    following_paragraphs: 0
+  }
+
+  persona: {
+    tone: balanced              // critical | balanced | encouraging
+    verbosity: concise          // concise | standard | detailed
+    praise_frequency: moderate  // rare | moderate | frequent
+    genre_aware: true           // fold the project `genre` into the prompt
+    belief_stance_enabled: true // allow the "does the prose believe itself?" category
+    categories: {               // turn any of the eight off individually
+      literary_richness: true
+      tautology: true
+      style_observation: true
+      style_instability: true
+      dictionary_richness: true
+      belief_stance: true
+      craft_praise: true
+      editorial_suggestions: true
+    }
+  }
+
+  output: {
+    severity_threshold: note    // praise | note | concern — the visible floor;
+                                //   at `note`, Praise is persisted but not pushed
+                                //   to Output (filter / `findings list` to see it)
+    group_by_paragraph: true
+    always_show_persona_label: true
+  }
+
+  llm: {
+    editor_engagement: {        // caps INFORM (warn + continue), never block
+      max_calls_per_session: 80
+      confirm_above_calls: 40
+      max_calls_per_day: 200    // shown in `inkhaven cost` / Ctrl+B $
+      max_calls_per_month: 4000
+    }
+    conversation: { max_calls_per_session: 30, max_calls_per_day: 80 }
+    backoff_max_retries: 3
+    backoff_initial_seconds: 30
+  }
+}
+
+// Project-wide, consumed by `genre_aware` (and open to other features later):
+genre: literary_realism         // literary_realism | fantasy | scifi | mystery |
+                                //   memoir | historical | romance | horror | ya | comedy
+```
+
+- **`tone` / `verbosity` / `praise_frequency`** are parsed tolerantly — a bad
+  value falls back to its default rather than failing the whole config. The
+  persona's character is fixed; these knobs modulate how it manifests.
+- **`severity_threshold: note`** keeps Praise out of the default Output view (it
+  is still recorded — `inkhaven inner-editor findings list --severity praise`,
+  or lower the threshold). Praise must be *earned* by the prose; generic
+  encouragement is forbidden by prompt design.
+- The grounding prompt is localized **EN/RU/ES/FR/DE** (English fallback) and is
+  overridable through the standard chain — a `Prompts` book entry named
+  `inner-editor-system` (optionally tagged `lang:<code>`) wins over the bundled
+  default. See [PROMPTS.md](PROMPTS.md).
+
+**Engaging it.** `Ctrl+V O` (O = *Observe*) opens the overview → `E` engage the
+open paragraph, `C` open an Editor conversation (also F9 → Editor scope), `A`
+toggle the opt-in ambient auto-engage, `F` jump to the findings. From the
+terminal:
+
+```sh
+inkhaven inner-editor engage --paragraph <id>     # or --text "…"
+inkhaven inner-editor findings list [--severity praise|note|concern]
+inkhaven inner-editor findings history --paragraph <id>
+inkhaven inner-editor intent <category> [--chapter <id>] [--description "…"]
+inkhaven inner-editor config show
+inkhaven inner-editor usage
+```
+
+`inner-editor intent <category>` declares an observation category a deliberate
+choice — it writes into the **shared intent ledger** (the same one Inner
+Socrates uses), and future Editor findings of that category in scope are
+suppressed. Scripts get the read-only `ink.inner_editor.*` inspectors plus
+`intent.declare` (store_write) and `engage` (ai_write); see
+[BUND_TUTORIAL.md](Bund/BUND_TUTORIAL.md). See
+[Tutorial 88 — Inner Editor](Tutorials/88-inner-editor.md).
