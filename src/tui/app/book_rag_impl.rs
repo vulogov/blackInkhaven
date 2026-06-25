@@ -20,6 +20,17 @@ impl super::App {
     /// Replaces the old "send the whole book" assembly. Errors (no anchor,
     /// search failure) abort the submission with a status message.
     pub(super) fn book_rag_context(&mut self, query: &str) -> Result<String, String> {
+        // Retrieve ONCE per chat session. A follow-up in the same
+        // conversation reuses the cached retrieval; clearing chat history
+        // (which empties `chat_history`, the session signal) makes the next
+        // Book prompt retrieve fresh. So: reuse only when the conversation is
+        // ongoing AND a retrieval is already cached.
+        if !self.chat_history.is_empty() {
+            if let Some(passages) = self.book_rag_last_retrieval.as_ref() {
+                return Ok(crate::book_rag::compose_context_prefix(passages));
+            }
+        }
+
         let book_id = self.book_rag_anchor_book()?;
         let scope = self.book_rag_scope_ids(book_id);
         let top_k = self.cfg.book_rag.top_k;
