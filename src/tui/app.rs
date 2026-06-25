@@ -3562,6 +3562,12 @@ impl App {
                 scroll,
                 entries,
                 ..
+            }
+            | Modal::CitePicker {
+                cursor,
+                scroll,
+                entries,
+                ..
             } => {
                 let len = entries.len();
                 if len == 0 {
@@ -6401,6 +6407,30 @@ impl App {
         false
     }
 
+    /// Whether `parent` is the Sources system book or a chapter nested under
+    /// it — used to seed a new paragraph with the citation HJSON template.
+    fn parent_is_under_sources(
+        &self,
+        parent: Option<&crate::store::node::Node>,
+    ) -> bool {
+        let Some(sources_root_id) =
+            self.system_book_id(crate::store::SYSTEM_TAG_SOURCES)
+        else {
+            return false;
+        };
+        let Some(parent) = parent else {
+            return false;
+        };
+        let mut cur: Option<&crate::store::node::Node> = Some(parent);
+        while let Some(node) = cur {
+            if node.id == sources_root_id {
+                return true;
+            }
+            cur = node.parent_id.and_then(|id| self.hierarchy.get(id));
+        }
+        false
+    }
+
     /// Insert-after variant: walks up from the tree cursor to find a node of
     /// the same `kind` as the one being added; if found, the new node will be
     /// placed immediately after it. Falls back to append-at-end if no
@@ -8369,6 +8399,126 @@ impl App {
             "recent ¶: most-recently-modified first · ↑↓ select · Enter opens · Shift+Enter pins to split · Esc".into();
     }
 
+    /// 1.4.5+ SOURCES-1 — Ctrl+V @. Open the cite picker over every citation
+    /// defined in the Sources book. Enter inserts `@key` at the editor cursor.
+    fn open_cite_picker(&mut self) {
+        if self.opened.is_none() {
+            self.status = "cite: open a paragraph first (Ctrl+V @ inserts into the editor)".into();
+            return;
+        }
+        let entries = self.collect_cite_entries();
+        if entries.is_empty() {
+            self.status =
+                "cite: no citation entries — add them to the Sources book (or `inkhaven sources import`)".into();
+            return;
+        }
+        self.modal = Modal::CitePicker {
+            input: TextInput::new(),
+            entries,
+            cursor: 0,
+            scroll: 0,
+        };
+        self.status =
+            "cite: type to filter · ↑↓ select · Enter inserts @key · Esc".into();
+    }
+
+    /// Gather every valid citation entry under the Sources book as picker rows
+    /// (`title` = the @key, `slug_path` = a human descriptor). Sorted by key.
+    fn collect_cite_entries(&self) -> Vec<ScriptPickerEntry> {
+        let Some(sources) = self.hierarchy.iter().find(|n| {
+            n.kind == NodeKind::Book
+                && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_SOURCES)
+        }) else {
+            return Vec::new();
+        };
+        let mut out: Vec<ScriptPickerEntry> = Vec::new();
+        for id in self.hierarchy.collect_subtree(sources.id) {
+            let Some(node) = self.hierarchy.get(id) else { continue };
+            if node.kind != NodeKind::Paragraph {
+                continue;
+            }
+            let Ok(Some(bytes)) = self.store.get_content(id) else { continue };
+            let Ok(text) = std::str::from_utf8(&bytes) else { continue };
+            // Defensive: strip a leading `= Title` heading.
+            let body = if text.trim_start().starts_with("= ") {
+                text.splitn(2, '\n').nth(1).unwrap_or("")
+            } else {
+                text
+            };
+            let Some(e) = crate::sources::BibEntry::from_hjson(body) else { continue };
+            if !e.is_valid() {
+                continue;
+            }
+            let year = if e.year.is_empty() { "----" } else { e.year.as_str() };
+            let who = if e.author.is_empty() { "(no author)" } else { e.author.as_str() };
+            let label = format!("{year} · {who} — {}", e.title);
+            out.push(ScriptPickerEntry {
+                id: uuid::Uuid::nil(),
+                title: e.key,
+                slug_path: label,
+            });
+        }
+        out.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+        out
+    }
+
+    /// Cite-picker key handling — mirrors the fuzzy paragraph picker, but Enter
+    /// inserts `@<key>` into the editor buffer instead of opening a paragraph.
+    fn cite_picker_handle_key(&mut self, key: KeyEvent) {
+        let to_insert = {
+            let Modal::CitePicker { input, entries, cursor, scroll } = &mut self.modal
+            else {
+                return;
+            };
+            let matches = fuzzy_filter_entries(entries, input.as_str());
+            let total = matches.len();
+            let page: usize = 12;
+            let mut chosen: Option<String> = None;
+            match key.code {
+                KeyCode::Up => {
+                    if *cursor > 0 {
+                        *cursor -= 1;
+                    }
+                }
+                KeyCode::Down => {
+                    if *cursor + 1 < total {
+                        *cursor += 1;
+                    }
+                }
+                KeyCode::PageUp => *cursor = cursor.saturating_sub(page),
+                KeyCode::PageDown => {
+                    *cursor = (*cursor + page).min(total.saturating_sub(1));
+                }
+                KeyCode::Enter => {
+                    if let Some(idx) = matches.get(*cursor).copied() {
+                        if let Some(e) = entries.get(idx) {
+                            chosen = Some(e.title.clone());
+                        }
+                    }
+                }
+                _ => {
+                    handle_text_input_key(input, key);
+                    *cursor = 0;
+                    *scroll = 0;
+                }
+            }
+            if *cursor < *scroll {
+                *scroll = *cursor;
+            } else if *cursor >= *scroll + page {
+                *scroll = *cursor + 1 - page;
+            }
+            chosen
+        };
+
+        if let Some(key_str) = to_insert {
+            self.modal = Modal::None;
+            match self.ink_editor_insert(&format!("@{key_str}")) {
+                Ok(()) => self.status = format!("inserted @{key_str}"),
+                Err(e) => self.status = format!("cite insert failed: {e}"),
+            }
+        }
+    }
+
     /// Collect every paragraph in the project (excluding
     /// system-book content) as picker entries.
     fn collect_all_paragraph_entries(&self) -> Vec<ScriptPickerEntry> {
@@ -9905,6 +10055,7 @@ impl App {
             A::ViewListBacklinks => self.open_backlink_picker_modal(),
             A::ViewToggleBookmark => self.toggle_bookmark(),
             A::ViewListBookmarks => self.open_bookmark_picker_modal(),
+            A::ViewCitePicker => self.open_cite_picker(),
             A::ViewFuzzyParagraphPicker => self.open_fuzzy_paragraph_picker(),
             A::ViewRecentParagraphPicker => self.open_recent_paragraph_picker(),
             A::ViewKillRingPicker => self.open_kill_ring_picker(),
@@ -18859,9 +19010,15 @@ impl App {
 
         match report {
             Ok(r) => {
+                let cites = if r.bibliography_entries > 0 {
+                    format!(" · {} citation(s) → sources.bib", r.bibliography_entries)
+                } else {
+                    String::new()
+                };
                 self.status = format!(
-                    "Book assembly: wrote {} files · root: {}  (typst compile `{}`)",
+                    "Book assembly: wrote {} files{} · root: {}  (typst compile `{}`)",
                     r.files_written,
+                    cites,
                     r.root_typ.display(),
                     r.root_typ.display(),
                 );
@@ -20107,6 +20264,7 @@ impl App {
         let is_backlink_picker = matches!(self.modal, Modal::BacklinkPicker { .. });
         let is_bookmark_picker = matches!(self.modal, Modal::BookmarkPicker { .. });
         let is_fuzzy_paragraph_picker = matches!(self.modal, Modal::FuzzyParagraphPicker { .. });
+        let is_cite_picker = matches!(self.modal, Modal::CitePicker { .. });
         let is_command_palette = matches!(self.modal, Modal::CommandPalette { .. });
         let is_kill_ring_picker = matches!(self.modal, Modal::KillRingPicker { .. });
         let is_shell_pane = matches!(self.modal, Modal::ShellPane { .. });
@@ -20410,6 +20568,10 @@ impl App {
 
         if is_fuzzy_paragraph_picker {
             self.fuzzy_paragraph_picker_handle_key(key);
+            return Ok(false);
+        }
+        if is_cite_picker {
+            self.cite_picker_handle_key(key);
             return Ok(false);
         }
         if is_command_palette {
@@ -21252,6 +21414,13 @@ impl App {
                     .or_else(|| {
                         if self.parent_is_under_threads(parent.as_ref()) {
                             Some(crate::cli::thread::seed_thread_body_for_tui(
+                                &title,
+                            ))
+                        } else if self.parent_is_under_sources(parent.as_ref()) {
+                            // SOURCES-1: a paragraph added under the Sources
+                            // book (or one of its chapters) is a citation
+                            // entry — seed the HJSON schema, key = the title.
+                            Some(crate::sources::seed_sources_body_for_tui(
                                 &title,
                             ))
                         } else {

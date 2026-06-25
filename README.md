@@ -21,40 +21,44 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.4.4 — Unify the companions
+## Latest release · 1.4.5 — Bibliography & citations
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.4.4.md`](Documentation/RELEASE_NOTES/1.4.4.md)
-· Plan: [`Documentation/PROPOSALS/COMPANIONS-1_PLAN.md`](Documentation/PROPOSALS/COMPANIONS-1_PLAN.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.4.5.md`](Documentation/RELEASE_NOTES/1.4.5.md)
+· Plan: [`Documentation/PROPOSALS/SOURCES-1_PLAN.md`](Documentation/PROPOSALS/SOURCES-1_PLAN.md)
 
-The examined-authorship triad — **World** (consistency), **Inner Socrates** (structure), **Inner
-Editor** (craft) — shipped as three parallel features. 1.4.4 (COMPANIONS-1) makes them feel like
-one system. Almost entirely reuse, with **no new dependencies**.
+inkhaven compiles to Typst, which has a real bibliography engine — 1.4.5 (SOURCES-1) wires the two
+together. Keep your references **inside the project**, cite them in prose, and let assembly render
+the reference list. **No external reference manager, no new content type, no new dependencies.**
 
-### The Editor joins the review pass
+### A home for your sources
 
-**`Ctrl+B Shift+C`** now includes Inner Editor. The instant, LLM-free checkers (world fact-check +
-Socrates + timeline) run as before; the LLM-only Editor is spawned in the **background** on the open
-paragraph, so the pass stays instant — its ✎ observations arrive in Output a few seconds later and
-re-badge the tree. (Tree badges already counted the Editor; the badge computation is kind-agnostic.)
+A new **Sources** system book holds citations as **HJSON entries** (the editor highlights them as
+HJSON). Each user book gets a matching Sources chapter, auto-seeded with the schema. The only
+required field is `key`. Author them by pressing **`P`** under the Sources book (the title becomes
+the cite key, the body is pre-seeded) or bulk-import BibTeX with **`inkhaven sources import
+<file.bib>`** — a dependency-free reader (nested braces, `@comment`/`@string` skipped, biblatex
+`date→year`) that eats what Zotero / JabRef / Google Scholar export.
 
-### The Editor's intent loop closes
+### Cite in prose, render at assembly
 
-Dismiss the same category enough and Inner Editor nudges you to declare it deliberate — the same
-promotion mechanism Socrates uses. **`inkhaven inner-editor suggestions list / promote / dismiss`**;
-`promote` writes into the **shared intent ledger** both companions consult. (This also fixed a latent
-bug where Socrates' own nudge was being clobbered.)
+Write `@key` as in Typst; press **`Ctrl+V @`** for a fuzzy **cite picker** that inserts the key for
+you. At Book assembly (**`Ctrl+B A`** / `inkhaven build`) inkhaven writes `sources.bib` and appends
+`#bibliography("sources.bib", style: "ieee")`, so `typst compile` renders the bibliography and
+resolves every citation.
 
-### One view of the whole board
+### Validate before you build
 
-A new **`companions`** stop in the Output `f` filter shows all four examined-authorship sources at
-once. And **`inkhaven companions`** is a terminal cockpit: open findings per Inner-family member, the
-shared intent ledger + pending promotions, and today's LLM cost per companion — a glance at where
-your attention and token budget are going. Plus a new **`ink.inner_editor.suggestions`** Bund word.
+**`inkhaven sources check`** scans prose `@key` tokens against the defined entries — reading the same
+files assembly compiles — and **exits non-zero** on any undefined key, so it drops into a pre-build
+step or CI (`--json` / `--book-name`; `sources list` lists entries). Scope one shared bibliography or
+one per book with `sources.all`; change the rendered style with `bibliography_style`. Scripts get
+four read-only `ink.sources.{list,get,check,bibtex}` Bund words.
 
 ### Dependencies & compatibility
 
-**No external application or binary dependencies; no new runtime crates.** The only new storage is
-the Editor's `editor_dismissals` tally (additive); no on-disk shape moved.
+**No external application or binary dependencies; no new runtime crates** — built on the existing
+`.typ` + DuckDB + serde-hjson stack. Existing projects gain the Sources book on first open after
+upgrade (the system-book order-bump handles insertion; one-time, idempotent).
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
