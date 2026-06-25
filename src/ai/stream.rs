@@ -114,14 +114,23 @@ pub fn collect_blocking(
     system_prompt: Option<String>,
     prompt: String,
 ) -> Result<String, String> {
+    // The per-token `.` progress ticks are friendly on the CLI, but in the TUI
+    // they'd corrupt the raw-mode screen (the terminal is owned by the renderer —
+    // background slow-track workers must not write to it). The Output store is
+    // installed ONLY by the TUI, so its presence is a reliable "don't touch the
+    // terminal" signal. (Fixes the Inner Editor engage producing a row of dots
+    // in the editor pane.)
+    let quiet = crate::pane::output::active().is_some();
     let mut rx = spawn_chat_stream(client, model, system_prompt, Vec::new(), prompt, "");
     let mut raw = String::new();
     while let Some(msg) = rx.blocking_recv() {
         match msg {
             StreamMsg::Token(t) => {
                 raw.push_str(&t);
-                let _ = std::io::stderr().write_all(b".");
-                let _ = std::io::stderr().flush();
+                if !quiet {
+                    let _ = std::io::stderr().write_all(b".");
+                    let _ = std::io::stderr().flush();
+                }
             }
             StreamMsg::Done => break,
             StreamMsg::Error(e) => return Err(e),
