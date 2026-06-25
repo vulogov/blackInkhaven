@@ -7115,12 +7115,17 @@ impl App {
             KeyCode::Char('G') => self.output_selected = n.saturating_sub(1),
             KeyCode::Char('d') if plain => {
                 if let Some(m) = msgs.get(self.output_selected) {
-                    self.record_socratic_dismissal(m);
+                    // Both record methods no-op for the wrong kind; either may set
+                    // a promotion nudge we don't want to clobber.
+                    let nudged_s = self.record_socratic_dismissal(m);
+                    let nudged_e = self.record_editor_dismissal(m);
                     if let Some(s) = crate::pane::output::active() {
                         let _ = s.dismiss(m.id);
                     }
                     self.refresh_tree_badges();
-                    self.status = "dismissed".into();
+                    if !nudged_s && !nudged_e {
+                        self.status = "dismissed".into();
+                    }
                 }
             }
             KeyCode::Char('p') if plain => {
@@ -12028,20 +12033,22 @@ impl App {
     /// When the author dismisses a `socratic_inquiry` Output message, record the
     /// dismissal so the promotion mechanism can suggest declaring it as intent
     /// once a pattern accumulates. Surfaces a hint at the threshold.
-    fn record_socratic_dismissal(&mut self, m: &crate::pane::output::Message) {
+    /// Record a Socratic dismissal; returns whether it set a promotion nudge
+    /// (so the caller doesn't overwrite it with the generic "dismissed").
+    fn record_socratic_dismissal(&mut self, m: &crate::pane::output::Message) -> bool {
         use crate::inner_socrates::storage::InnerSocratesStore;
         use crate::inner_socrates::types::Category;
         if m.kind != crate::pane::output::kinds::SOCRATIC_INQUIRY {
-            return;
+            return false;
         }
         let Some(category) =
             m.metadata.get("category").and_then(|c| c.as_str()).and_then(Category::from_id)
         else {
-            return;
+            return false;
         };
         let chapter = self.socratic_chapter_of(m.source_paragraph_id);
         let Ok(store) = InnerSocratesStore::open_for_project(self.store.project_root()) else {
-            return;
+            return false;
         };
         let _ = store.record_dismissal(category, &chapter);
         if let Ok(cands) = store.promotion_candidates(5) {
@@ -12050,8 +12057,10 @@ impl App {
                     "You've dismissed several {} findings — `inner-socrates suggestions` can declare it as intent",
                     category.label()
                 );
+                return true;
             }
         }
+        false
     }
 
     /// The chapter slug containing a paragraph (`""` if none / unknown).

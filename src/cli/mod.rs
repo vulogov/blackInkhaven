@@ -3835,11 +3835,40 @@ pub enum InnerEditorCommand {
         #[arg(long)]
         description: Option<String>,
     },
+    /// Promotion candidates — categories you've dismissed enough that declaring
+    /// them deliberate (an intent) would quiet the noise.
+    #[command(subcommand)]
+    Suggestions(EditorSuggestionsCommand),
     /// Inspect the Inner Editor configuration.
     #[command(subcommand)]
     Config(EditorConfigCommand),
     /// Today's Inner Editor LLM usage by sub-budget.
     Usage,
+}
+
+/// `inkhaven inner-editor suggestions …`.
+#[derive(Debug, Subcommand)]
+pub enum EditorSuggestionsCommand {
+    /// List `(category, chapter)` dismissal patterns at or above the threshold.
+    List {
+        #[arg(long, default_value_t = 5)]
+        threshold: i64,
+    },
+    /// Promote a pattern — declare the category deliberate (writes the ledger)
+    /// and stop suggesting it.
+    Promote {
+        category: String,
+        #[arg(long)]
+        chapter: Option<String>,
+        #[arg(long)]
+        description: Option<String>,
+    },
+    /// Refuse a suggestion — don't propose this `(category, chapter)` again.
+    Dismiss {
+        category: String,
+        #[arg(long)]
+        chapter: Option<String>,
+    },
 }
 
 /// `inkhaven inner-editor findings …`.
