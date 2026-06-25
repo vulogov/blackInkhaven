@@ -35,6 +35,9 @@ pub type ProgressFn<'a> = dyn FnMut(usize, usize, &Path) + 'a;
 pub struct AssemblyReport {
     pub files_written: usize,
     pub root_typ: PathBuf,
+    /// Number of citation entries written to `sources.bib` (0 → no .bib file
+    /// and no `#bibliography(...)` line in the root .typ). SOURCES-1.
+    pub bibliography_entries: usize,
 }
 
 /// Assemble `book_node` (must be a root-level Book that isn't a system
@@ -108,12 +111,22 @@ pub fn assemble_book(
     let typst_root_index_body =
         copy_typst_skeleton_files(store, cfg, layout, &hierarchy, book_node, &out_book, &artefacts_root, &mut done, total, progress)?;
 
+    // SOURCES-1: collect citation entries from the Sources system book into
+    // `<out_book>/sources.bib`. Scope honours `cfg.sources.all`.
+    let bibliography_entries =
+        collect_and_emit_sources(store, layout, cfg, &hierarchy, book_node, &out_book)?;
+
     // Root .typ for the book — applies settings, calls wrap_book on
     // the assembled subtree. The Typst chapter's index.typ body is
     // appended so any user setup (image search paths, imports of
     // additional helpers) flows through.
     let root_typ = out_book.join(format!("{}.typ", book_node.slug));
-    let root_body = build_root_typ(book_node, &typst_root_index_body);
+    // Emit `#bibliography(...)` only when we actually wrote entries AND the
+    // user hasn't disabled the auto-line (they may prefer to place it by hand
+    // inside their Typst setup).
+    let bib_style = (bibliography_entries > 0 && cfg.sources.auto_bibliography)
+        .then(|| cfg.sources.bibliography_style.as_str());
+    let root_body = build_root_typ(book_node, &typst_root_index_body, bib_style);
     std::fs::write(&root_typ, root_body.as_bytes()).map_err(Error::Io)?;
     done += 1;
     progress(done, total, &PathBuf::from(format!("{}.typ", book_node.slug)));
@@ -121,7 +134,76 @@ pub fn assemble_book(
     Ok(AssemblyReport {
         files_written: done,
         root_typ,
+        bibliography_entries,
     })
+}
+
+/// Collect citation entries from the **Sources** system book and write them to
+/// `<out_book>/sources.bib`. Scope is set by `cfg.sources.all`: `true` →
+/// every entry under Sources; `false` → only the chapter whose title matches
+/// the assembled book (graceful — an absent/empty chapter just yields zero).
+/// Returns the count of valid entries written; `0` writes no file.
+fn collect_and_emit_sources(
+    store: &Store,
+    layout: &ProjectLayout,
+    cfg: &Config,
+    hierarchy: &Hierarchy,
+    book_node: &Node,
+    out_book: &Path,
+) -> Result<usize> {
+    let _ = store; // bodies are read from disk via layout.root, like paragraphs
+    let Some(sources_book) = hierarchy.iter().find(|n| {
+        n.kind == NodeKind::Book
+            && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_SOURCES)
+    }) else {
+        return Ok(0);
+    };
+
+    let mut entries: Vec<crate::sources::BibEntry> = Vec::new();
+    for id in hierarchy.collect_subtree(sources_book.id) {
+        let Some(n) = hierarchy.get(id) else { continue };
+        if n.kind != NodeKind::Paragraph {
+            continue;
+        }
+        // When not collecting everything, keep only paragraphs whose
+        // top-of-Sources chapter is named after this book.
+        if !cfg.sources.all {
+            let chapter_title = {
+                let mut cur: Option<&Node> = Some(n);
+                let mut found: Option<&str> = None;
+                while let Some(node) = cur {
+                    if node.parent_id == Some(sources_book.id) {
+                        found = Some(node.title.as_str());
+                        break;
+                    }
+                    cur = node.parent_id.and_then(|pid| hierarchy.get(pid));
+                }
+                found
+            };
+            if chapter_title != Some(book_node.title.as_str()) {
+                continue;
+            }
+        }
+        let Some(rel) = &n.file else { continue };
+        let Ok(raw) = std::fs::read_to_string(layout.root.join(rel)) else {
+            continue;
+        };
+        // Defensive: a hand-created paragraph may carry the `= Title` editor
+        // heading; strip it before parsing HJSON.
+        let body = strip_leading_heading(&raw);
+        if let Some(e) = crate::sources::BibEntry::from_hjson(&body) {
+            if e.is_valid() {
+                entries.push(e);
+            }
+        }
+    }
+
+    let (text, count) = crate::sources::compile_bibtex(&entries);
+    if count == 0 {
+        return Ok(0);
+    }
+    std::fs::write(out_book.join("sources.bib"), text.as_bytes()).map_err(Error::Io)?;
+    Ok(count)
 }
 
 /// Count files the assembler will write. Used to pre-size the progress
@@ -606,7 +688,11 @@ fn copy_typst_skeleton_files(
     Ok(index_body)
 }
 
-fn build_root_typ(book: &Node, typst_chapter_index_body: &str) -> String {
+fn build_root_typ(
+    book: &Node,
+    typst_chapter_index_body: &str,
+    bibliography_style: Option<&str>,
+) -> String {
     let mut out = String::new();
     out.push_str("// Auto-generated by inkhaven Book assembly.\n");
     out.push_str(&format!("// Book: {}\n\n", book.title));
@@ -621,6 +707,14 @@ fn build_root_typ(book: &Node, typst_chapter_index_body: &str) -> String {
         out.push_str("\n\n");
     }
     out.push_str("#wrap_book(include \"book/index.typ\")\n");
+    // SOURCES-1: render the bibliography from the assembled sources.bib. Typst
+    // resolves @key cite tokens in the prose against this file.
+    if let Some(style) = bibliography_style {
+        out.push_str(&format!(
+            "\n#bibliography(\"sources.bib\", style: \"{}\")\n",
+            escape_typst_string(style)
+        ));
+    }
     out
 }
 
@@ -691,6 +785,23 @@ mod tests {
             ai_memory: Vec::new(),
             event: None,
         }
+    }
+
+    #[test]
+    fn build_root_typ_bibliography_line_is_style_gated() {
+        let book = mk_node(NodeKind::Book, "My Book", "my-book", 0);
+        let with = build_root_typ(&book, "", Some("ieee"));
+        assert!(
+            with.contains("#bibliography(\"sources.bib\", style: \"ieee\")"),
+            "{with}"
+        );
+        // The bibliography sits after wrap_book.
+        let wrap = with.find("#wrap_book").unwrap();
+        let bib = with.find("#bibliography").unwrap();
+        assert!(bib > wrap, "bibliography must follow wrap_book");
+
+        let without = build_root_typ(&book, "", None);
+        assert!(!without.contains("#bibliography"), "{without}");
     }
 
     #[test]
