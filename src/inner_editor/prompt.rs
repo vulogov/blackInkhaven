@@ -130,6 +130,51 @@ pub fn tuning_block(t: &ResolvedTuning, genre: Option<&str>) -> String {
     )
 }
 
+/// Assemble the per-engagement **user** prompt: the tuning directives, the
+/// declared intents, the preceding paragraphs as interpretation context, and
+/// the paragraph itself. The localized system prompt carries the voice and the
+/// output contract; this carries the per-paragraph material. (English
+/// scaffolding labels, matching Inner Socrates.)
+pub fn build_user_prompt(
+    tuning: &str,
+    intent_summary: &str,
+    preceding: &[String],
+    paragraph: &str,
+    language: &str,
+) -> String {
+    let context = if preceding.is_empty() {
+        "(none — this is the opening)".to_string()
+    } else {
+        preceding
+            .iter()
+            .map(|p| format!("- {}", p.trim()))
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    };
+    format!(
+        "{tuning}\n\n\
+         DECLARED INTENTIONS (respect these — do not raise what they cover):\n{intent_summary}\n\n\
+         PRECEDING CONTEXT (for interpretation only — observe ONLY the paragraph below):\n{context}\n\n\
+         The paragraph is in {language}; write each `observation` in {language} and its \
+         `observation_en` in English.\n\n\
+         PARAGRAPH:\n{paragraph}\n\n\
+         Return the JSON array of observations."
+    )
+}
+
+/// The display name for an ISO-639-1 code (the five baseline languages; the
+/// code itself for anything else).
+pub fn language_name(code: &str) -> &str {
+    match code {
+        "en" => "English",
+        "ru" => "Russian",
+        "es" => "Spanish",
+        "fr" => "French",
+        "de" => "German",
+        other => other,
+    }
+}
+
 /// A minimal genre fragment (R1 — a handful of hints; the full set lands in R2).
 /// Matched on the lowercased genre with a few aliases. `None` for unknown.
 pub fn genre_fragment(genre: Option<&str>) -> Option<&'static str> {

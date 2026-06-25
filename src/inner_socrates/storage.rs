@@ -99,6 +99,16 @@ pub struct PromotionCandidate {
     pub count: i64,
 }
 
+/// A ledger entry with `coverage` left as raw category-id strings — for
+/// cross-feature consultation (see [`InnerSocratesStore::list_intent_rows_raw`]).
+#[derive(Debug, Clone)]
+pub struct RawIntentRow {
+    pub kind: String,
+    pub description: String,
+    pub scope: IntentScope,
+    pub coverage: Vec<String>,
+}
+
 /// A persisted finding plus the paragraph it was emitted against.
 #[derive(Debug, Clone)]
 pub struct StoredFinding {
@@ -280,6 +290,34 @@ impl InnerSocratesStore {
     /// The intent ledger, loaded for consultation.
     pub fn load_ledger(&self) -> Result<IntentLedger> {
         Ok(IntentLedger { entries: self.list_intents()? })
+    }
+
+    /// Raw ledger rows with `coverage` kept as **strings**. The typed
+    /// [`list_intents`](Self::list_intents) parses coverage into the Socratic
+    /// `Category` enum and silently drops ids it doesn't recognise — so a
+    /// cross-feature consumer (Inner Editor, whose category ids are not Socratic
+    /// categories) must read the coverage strings directly. Additive, read-only;
+    /// it does not change Inner Socrates' own behaviour. The intent ledger is
+    /// the shared examined-authorship surface (RFC §3.7).
+    pub fn list_intent_rows_raw(&self) -> Result<Vec<RawIntentRow>> {
+        let rows = self.engine.select_all(
+            "SELECT kind, description, scope_type, scope_data, coverage \
+             FROM intent_entries ORDER BY created_at DESC, id",
+        )?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                let scope = row_to_scope(&text(r.get(2)), &text(r.get(3)))?;
+                let coverage =
+                    serde_json::from_str::<Vec<String>>(&text(r.get(4))).unwrap_or_default();
+                Some(RawIntentRow {
+                    kind: text(r.first()),
+                    description: text(r.get(1)),
+                    scope,
+                    coverage,
+                })
+            })
+            .collect())
     }
 
     // ── dismissals + promotion ──────────────────────────────────────────────────
