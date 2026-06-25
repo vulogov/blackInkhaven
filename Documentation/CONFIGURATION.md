@@ -1922,7 +1922,8 @@ Book scope no longer ships the whole manuscript: it retrieves the
 semantically relevant paragraphs (via the same on-save vector index every
 other semantic feature uses), expands each with a little surrounding context,
 composes a focused, token-budgeted grounding block, and asks the model to
-answer **citing** those passages as markdown links. This is always on for Book
+answer **citing** those passages by their location path (`[chapter/scene]`).
+This is always on for Book
 scope — there is no enable/disable toggle and no "send the whole book"
 fallback. **The other scopes (Selection / Paragraph / Subchapter / Chapter)
 are unchanged.** The `book_rag` block tunes the retrieval:
