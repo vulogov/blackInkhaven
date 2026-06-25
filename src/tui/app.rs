@@ -18883,9 +18883,15 @@ impl App {
 
         match report {
             Ok(r) => {
+                let cites = if r.bibliography_entries > 0 {
+                    format!(" · {} citation(s) → sources.bib", r.bibliography_entries)
+                } else {
+                    String::new()
+                };
                 self.status = format!(
-                    "Book assembly: wrote {} files · root: {}  (typst compile `{}`)",
+                    "Book assembly: wrote {} files{} · root: {}  (typst compile `{}`)",
                     r.files_written,
+                    cites,
                     r.root_typ.display(),
                     r.root_typ.display(),
                 );
