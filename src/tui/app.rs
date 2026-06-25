@@ -2992,7 +2992,20 @@ impl App {
         let label = label.into();
         let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let worker_cancel = cancel.clone();
-        std::thread::spawn(move || work(tx, worker_cancel));
+        // The worker is a plain OS thread, so it does NOT inherit the Tokio
+        // runtime context the main thread holds (main.rs enters the runtime).
+        // Jobs that call into the async AI client (`collect_blocking` →
+        // `tokio::spawn`) would otherwise panic with "there is no reactor
+        // running". Capture the current runtime handle here (we're on the main
+        // thread, inside the runtime) and enter it in the worker so the
+        // multi-thread runtime drives the spawned tasks while the worker blocks
+        // on the result. Fixes the INNER_EDITOR-1 engage crash (and the latent
+        // WORLD-4 slow-auto one).
+        let rt_handle = tokio::runtime::Handle::try_current().ok();
+        std::thread::spawn(move || {
+            let _rt_guard = rt_handle.as_ref().map(|h| h.enter());
+            work(tx, worker_cancel);
+        });
         self.status = format!("⟳ {label}…");
         self.bg_job =
             Some(BgJob { rx, label, kind, cancel, started: std::time::Instant::now() });
