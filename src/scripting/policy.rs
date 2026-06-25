@@ -347,6 +347,18 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.lang.grammar_book", category::FS_WRITE),
     ("ink.lang.font_build", category::FS_WRITE),
     ("ink.lang.glyph_draft", category::FS_WRITE),
+    // 1.4.1 BOOK_RAG-1 — Book-scope retrieval. All read-only: the store-backed
+    // words retrieve/compose/inspect; the pure helpers don't touch the store
+    // but stay under store_read so the whole surface disables in one category.
+    // Nothing mutates and nothing calls the LLM (retrieval is local).
+    ("ink.book_rag.retrieve", category::STORE_READ),
+    ("ink.book_rag.context", category::STORE_READ),
+    ("ink.book_rag.scope", category::STORE_READ),
+    ("ink.book_rag.config", category::STORE_READ),
+    ("ink.book_rag.system_prompt", category::STORE_READ),
+    ("ink.book_rag.estimate_tokens", category::STORE_READ),
+    ("ink.book_rag.cited_ids", category::STORE_READ),
+    ("ink.book_rag.validate_citations", category::STORE_READ),
 ];
 
 /// Policy loaded from `inkhaven.hjson`'s `scripting` stanza. All
@@ -721,6 +733,30 @@ mod tests {
         ] {
             assert_eq!(cat(w), Some(category::FS_WRITE), "{w} must be fs_write");
             assert!(denied.contains(cat(w).unwrap()), "{w} denied by default");
+        }
+    }
+
+    // 1.4.1 BOOK_RAG-1 — the whole `ink.book_rag.*` surface is read-only and
+    // available by default; pin it so a refactor can't silently re-gate it
+    // (it would break Book-scope scripting) or wrongly mark it destructive.
+    #[test]
+    fn book_rag_words_classified() {
+        let cat = |w: &str| WORD_CATEGORIES.iter().find(|(n, _)| *n == w).map(|(_, c)| *c);
+        let words = [
+            "ink.book_rag.retrieve",
+            "ink.book_rag.context",
+            "ink.book_rag.scope",
+            "ink.book_rag.config",
+            "ink.book_rag.system_prompt",
+            "ink.book_rag.estimate_tokens",
+            "ink.book_rag.cited_ids",
+            "ink.book_rag.validate_citations",
+        ];
+        let policy = Policy::default();
+        let denied = policy.effective_denied_categories();
+        for w in words {
+            assert_eq!(cat(w), Some(category::STORE_READ), "{w} must be store_read");
+            assert!(!denied.contains(cat(w).unwrap()), "{w} must be allowed by default");
         }
     }
 

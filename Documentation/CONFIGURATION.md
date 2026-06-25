@@ -1912,3 +1912,70 @@ backup: {
                               //   oldest backup zips beyond this count are pruned
 }
 ```
+
+## 1.4.1 — Book-RAG ("Chat with Your Book")
+
+### `book_rag` (1.4.1+) — AI-pane Book-scope retrieval
+
+The AI pane's **Book scope** is retrieval-augmented (BOOK_RAG-1). A prompt in
+Book scope no longer ships the whole manuscript: it retrieves the
+semantically relevant paragraphs (via the same on-save vector index every
+other semantic feature uses), expands each with a little surrounding context,
+composes a focused, token-budgeted grounding block, and asks the model to
+answer **citing** those passages as markdown links. This is always on for Book
+scope — there is no enable/disable toggle and no "send the whole book"
+fallback. **The other scopes (Selection / Paragraph / Subchapter / Chapter)
+are unchanged.** The `book_rag` block tunes the retrieval:
+
+```hjson
+book_rag: {
+  top_k: 5                   // direct semantic hits retrieved per query
+  context_expansion: 1       // ± sibling paragraphs included around each hit
+  max_context_tokens: 8000   // budget for the composed context (≈ chars/4)
+  include_system_books: [    // author-content system books also searched,
+    notes, research, places,  //   by system_tag — so a Book-scope answer can
+    characters, artefacts,    //   draw on your notes, world, and character
+    world, language           //   bibles, not just the manuscript prose
+  ]
+  exclude_system_books: [    // meta/internal system books never searched
+    scripts, prompts, typst, help, intent
+  ]
+}
+```
+
+- `top_k` (default `5`) — how many directly-matching paragraphs ground each
+  answer. Raise it for broader, more synthesis-heavy questions; lower it to
+  keep answers tightly sourced.
+- `context_expansion` (default `1`) — the number of paragraphs kept on each
+  side of a hit, so a retrieved passage reads in context rather than mid-scene.
+  `0` retrieves hits only.
+- `max_context_tokens` (default `8000`) — the ceiling on the composed
+  grounding block (estimated as characters ÷ 4; there is no tokenizer in-tree).
+  Best hits are admitted first; once the budget is reached the rest are
+  dropped, but at least the top passage always survives.
+- `include_system_books` / `exclude_system_books` (defaults above) — which
+  system books join the manuscript in the retrieval pool, addressed by their
+  `system_tag`. A tag in **both** lists is excluded. The retrieval is always
+  anchored to the user book containing the cursor; these lists only add the
+  author's reference material around it.
+
+Retrieval happens **once per chat session** — follow-up questions reuse the
+same passages, and clearing the chat history (which also ends the session)
+makes the next Book prompt retrieve afresh. After you save an edited paragraph
+while a Book-scope conversation is open, inkhaven nudges you once to clear the
+chat and re-ground on the new text. Every Book-scope call is tagged in the
+cost dashboard under the `book_rag` category — **informative only; it never
+blocks a request.**
+
+Inspect exactly what a query would retrieve from the terminal, without an LLM
+call:
+
+```sh
+inkhaven book-rag retrieve "what does Mara fear about the voyage?"
+inkhaven book-rag retrieve "the harbour market" --top-k 8 --context
+```
+
+`--book-name` selects the book in a multi-book project; `--top-k` overrides
+the config for that run only; `--context` prints the composed grounding block
+the model would receive instead of the human-readable passage listing. See
+[Tutorial 87 — Chat with Your Book](Tutorials/87-chat-with-your-book.md).
