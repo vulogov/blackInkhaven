@@ -29,6 +29,7 @@ pub mod comments;
 pub mod language;
 pub mod inner_socrates;
 pub mod inner_editor;
+pub mod companions;
 pub mod output;
 pub mod realworld;
 pub mod templates;
@@ -955,6 +956,11 @@ pub enum Command {
     /// `Documentation/PROPOSALS/INNER_EDITOR-1_PLAN.md`.
     #[command(subcommand)]
     InnerEditor(InnerEditorCommand),
+
+    /// 1.4.4+ COMPANIONS-1 — the examined-authorship cockpit: open findings
+    /// across the Inner family, the shared intent ledger + pending promotions,
+    /// and today's LLM cost per companion, in one view.
+    Companions,
 
     /// Road to 1.4.0 — the unified review pass: run every applicable fast,
     /// deterministic checker (fact-check + Inner Socrates + timeline critique)
@@ -4480,6 +4486,7 @@ impl Cli {
             Command::Realworld(cmd) => realworld::run(&project, cmd).map_err(Into::into),
             Command::InnerSocrates(cmd) => inner_socrates::run(&project, cmd).map_err(Into::into),
             Command::InnerEditor(cmd) => inner_editor::run(&project, cmd).map_err(Into::into),
+            Command::Companions => companions::run(&project).map_err(Into::into),
             Command::Check { paragraph, book_name, no_fact, no_socrates, no_timeline } => {
                 check::run(
                     &project,
