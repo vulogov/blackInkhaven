@@ -17,6 +17,7 @@ use super::types::{kinds, Message, Severity};
 pub const SOURCES: &[&str] = &[
     "fact-check",
     "socrates",
+    "inner-editor",
     "timeline-critique",
     "world",
     "translation",
@@ -34,6 +35,7 @@ pub fn message_source(msg: &Message) -> &'static str {
     match msg.kind.as_str() {
         kinds::FACT_CHECK_WARNING => "fact-check",
         kinds::SOCRATIC_INQUIRY => "socrates",
+        kinds::INNER_EDITOR_OBSERVATION => "inner-editor",
         kinds::TIMELINE_ORPHAN_WARNING | kinds::TIMELINE_FUZZY_OVERLAP_WARNING => {
             "timeline-critique"
         }

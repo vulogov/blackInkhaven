@@ -1558,12 +1558,23 @@ impl super::super::App {
             if i == self.output_selected {
                 sel_line_idx = lines.len();
             }
-            let (icon, color) = match m.severity {
+            let (icon, mut color) = match m.severity {
                 Severity::Info => ('●', Color::Gray),
                 Severity::Warning => ('⚠', Color::Yellow),
                 Severity::Contradiction => ('⊗', Color::Red),
                 Severity::Progress => ('↻', Color::Cyan),
             };
+            // INNER_EDITOR-1 — warm-earth palette by severity (Praise muted gold,
+            // Note terracotta, Concern deep ochre), distinct from the contemplative
+            // purple/grey of the other companions.
+            if m.kind == crate::pane::output::kinds::INNER_EDITOR_OBSERVATION {
+                color = match m.severity {
+                    Severity::Info => Color::Rgb(198, 156, 70),       // muted gold
+                    Severity::Warning => Color::Rgb(188, 110, 78),    // terracotta
+                    Severity::Contradiction => Color::Rgb(160, 96, 40), // deep ochre
+                    Severity::Progress => color,
+                };
+            }
             let text =
                 m.metadata.get("text").and_then(|v| v.as_str()).unwrap_or("").to_string();
             let pin = if m.pinned { " 📌" } else { "" };
@@ -1580,6 +1591,7 @@ impl super::super::App {
             let kind_glyph = match m.kind.as_str() {
                 crate::pane::output::kinds::TIMELINE_ORPHAN_WARNING => "⊘ ",
                 crate::pane::output::kinds::TIMELINE_FUZZY_OVERLAP_WARNING => "⧉ ",
+                crate::pane::output::kinds::INNER_EDITOR_OBSERVATION => "✎ ",
                 _ => "",
             };
             lines.push(Line::from(vec![
@@ -1699,6 +1711,9 @@ impl super::super::App {
                 }
                 Some(s) if s == k::SOCRATIC_INQUIRY => {
                     " ↑↓ · i intent · m note · x addressed · a ask AI · d dismiss · ^B Tab"
+                }
+                Some(s) if s == k::INNER_EDITOR_OBSERVATION => {
+                    " ↑↓ · o expand · a ask AI · d dismiss · p pin · ^B Tab"
                 }
                 Some(s)
                     if s == k::TIMELINE_ORPHAN_WARNING
