@@ -10,8 +10,11 @@
 //! from the Facts book to the manuscript.
 //!
 //! This module holds the pure pieces (passage type, token estimate,
-//! context composition, system prompt). The retrieval itself lives on the
-//! `App` (`book_rag_impl.rs`) because it needs the live store + hierarchy.
+//! context composition, system prompt) plus the retrieval core
+//! ([`retrieval::retrieve`]), shared by the TUI Book scope
+//! (`book_rag_impl.rs`) and the `inkhaven book-rag` CLI.
+
+pub mod retrieval;
 
 /// One retrieved paragraph, ready to compose into the LLM context.
 #[derive(Debug, Clone)]
@@ -100,10 +103,16 @@ pub fn validate_citations(
 
 /// The Book-RAG system prompt: ground answers in the retrieved passages,
 /// cite with markdown links, and be honest when the passages don't address
-/// the question. Per-language variants land in P6; English is the baseline.
+/// the question. Localised to the multilingual baseline (EN/RU/ES/FR/DE);
+/// any other language falls back to English. The language code is matched on
+/// its leading two letters, so `en-US`, `ru`, `pt-BR` all resolve correctly.
 pub fn system_prompt(lang: &str) -> &'static str {
-    match lang {
-        // P6 fills RU/ES/FR/DE; until then they share the English contract.
+    let code: String = lang.chars().take(2).flat_map(|c| c.to_lowercase()).collect();
+    match code.as_str() {
+        "ru" => RU_SYSTEM_PROMPT,
+        "es" => ES_SYSTEM_PROMPT,
+        "fr" => FR_SYSTEM_PROMPT,
+        "de" => DE_SYSTEM_PROMPT,
         _ => EN_SYSTEM_PROMPT,
     }
 }
@@ -127,6 +136,96 @@ not from the book (\"Setting the book aside, in general…\").
 
 Tone: helpful, grounded, specific. The author is consulting their own work, \
 not asking you to invent it. Answer in the language of the author's question.";
+
+const RU_SYSTEM_PROMPT: &str = "\
+Вы помогаете автору этой книги размышлять над его собственным произведением. \
+Вам даны релевантные фрагменты книги, отобранные по семантическому сходству с \
+вопросом автора и помеченные идентификатором цитирования вида [ch07-p042]. \
+Фрагменты — это проза книги в разметке Typst (`= заголовок`, `*полужирный*`, \
+`_курсив_`, `#footnote[…]`); читайте сквозь разметку саму прозу под ней.
+
+Отвечайте на вопрос автора, опираясь на отобранные фрагменты как на основное \
+свидетельство. Каждое утверждение о книге ДОЛЖНО ссылаться хотя бы на один \
+отобранный фрагмент в виде markdown-ссылки: [ch07-p042](#ch07-p042). \
+Ссылайтесь на несколько фрагментов, когда утверждение охватывает их. Никогда \
+не утверждайте ничего о книге без ссылки.
+
+Если отобранные фрагменты не отвечают на вопрос, прямо скажите об этом — \
+«Отобранные фрагменты не затрагивают это напрямую» — и либо попросите автора \
+уточнить вопрос, либо предложите общие знания, чётко помеченные как взятые не \
+из книги («Если отложить книгу в сторону, в общем случае…»).
+
+Тон: полезный, обоснованный, конкретный. Автор обращается к собственному \
+произведению, а не просит вас его сочинить. Отвечайте на языке вопроса автора.";
+
+const ES_SYSTEM_PROMPT: &str = "\
+Estás ayudando al autor de este libro a reflexionar sobre su propia obra. Se \
+te han dado pasajes relevantes del libro, recuperados por similitud semántica \
+con la pregunta del autor y marcados con un identificador de cita como \
+[ch07-p042]. Los pasajes son la prosa del libro en marcado Typst (`= título`, \
+`*fuerte*`, `_énfasis_`, `#footnote[…]`); lee a través del marcado la prosa \
+que hay debajo.
+
+Responde a la pregunta del autor usando los pasajes recuperados como \
+evidencia principal. Toda afirmación sobre el libro DEBE citar al menos un \
+pasaje recuperado como enlace markdown: [ch07-p042](#ch07-p042). Cita varios \
+pasajes cuando una afirmación los abarque. Nunca afirmes algo sobre el libro \
+sin citarlo.
+
+Cuando los pasajes recuperados no aborden la pregunta, dilo con claridad — \
+«Los pasajes recuperados no tratan eso directamente» — y luego pide al autor \
+que precise la pregunta u ofrece conocimiento general claramente marcado como \
+ajeno al libro («Dejando el libro a un lado, en general…»).
+
+Tono: útil, fundamentado, concreto. El autor consulta su propia obra, no te \
+pide que la inventes. Responde en el idioma de la pregunta del autor.";
+
+const FR_SYSTEM_PROMPT: &str = "\
+Vous aidez l'auteur de ce livre à réfléchir à sa propre œuvre. On vous a donné \
+des passages pertinents du livre, retrouvés par similarité sémantique avec la \
+question de l'auteur et marqués d'un identifiant de citation comme \
+[ch07-p042]. Les passages sont la prose du livre en balisage Typst \
+(`= titre`, `*gras*`, `_emphase_`, `#footnote[…]`) ; lisez au-delà du balisage \
+la prose qui se trouve dessous.
+
+Répondez à la question de l'auteur en vous appuyant sur les passages retrouvés \
+comme preuve principale. Toute affirmation sur le livre DOIT citer au moins un \
+passage retrouvé sous forme de lien markdown : [ch07-p042](#ch07-p042). Citez \
+plusieurs passages lorsqu'une affirmation les traverse. N'affirmez jamais rien \
+sur le livre sans citation.
+
+Lorsque les passages retrouvés ne répondent pas à la question, dites-le \
+clairement — « Les passages retrouvés n'abordent pas cela directement » — puis \
+demandez à l'auteur de préciser la question ou proposez des connaissances \
+générales clairement signalées comme extérieures au livre (« En laissant le \
+livre de côté, de manière générale… »).
+
+Ton : utile, fondé, précis. L'auteur consulte sa propre œuvre, il ne vous \
+demande pas de l'inventer. Répondez dans la langue de la question de l'auteur.";
+
+const DE_SYSTEM_PROMPT: &str = "\
+Sie helfen dem Autor dieses Buches, über sein eigenes Werk nachzudenken. Sie \
+haben relevante Passagen des Buches erhalten, die per semantischer Ähnlichkeit \
+zur Frage des Autors abgerufen und mit einer Zitat-Kennung wie [ch07-p042] \
+markiert sind. Die Passagen sind die Prosa des Buches in Typst-Auszeichnung \
+(`= Überschrift`, `*stark*`, `_Betonung_`, `#footnote[…]`); lesen Sie durch \
+die Auszeichnung hindurch die darunterliegende Prosa.
+
+Beantworten Sie die Frage des Autors, indem Sie die abgerufenen Passagen als \
+primäre Belege nutzen. Jede Aussage über das Buch MUSS mindestens eine \
+abgerufene Passage als Markdown-Link zitieren: [ch07-p042](#ch07-p042). \
+Zitieren Sie mehrere Passagen, wenn eine Aussage sie umspannt. Behaupten Sie \
+niemals etwas über das Buch ohne Zitat.
+
+Wenn die abgerufenen Passagen die Frage nicht behandeln, sagen Sie es \
+unumwunden — „Die abgerufenen Passagen behandeln das nicht direkt“ — und \
+bitten Sie den Autor dann, die Frage zu präzisieren, oder bieten Sie \
+Allgemeinwissen an, das klar als nicht aus dem Buch stammend gekennzeichnet \
+ist („Lassen wir das Buch beiseite, im Allgemeinen…“).
+
+Ton: hilfreich, fundiert, konkret. Der Autor konsultiert sein eigenes Werk \
+und bittet Sie nicht, es zu erfinden. Antworten Sie in der Sprache der Frage \
+des Autors.";
 
 #[cfg(test)]
 mod tests {
@@ -190,6 +289,21 @@ mod tests {
         let valid = std::collections::HashSet::new();
         let out = validate_citations("oops [x](#unterminated", &valid);
         assert!(out.contains("#unterminated"));
+    }
+
+    #[test]
+    fn system_prompt_localises_on_two_letter_code() {
+        // Each baseline language gets its own contract…
+        assert_ne!(system_prompt("ru"), EN_SYSTEM_PROMPT);
+        assert_ne!(system_prompt("es"), EN_SYSTEM_PROMPT);
+        assert_ne!(system_prompt("fr"), EN_SYSTEM_PROMPT);
+        assert_ne!(system_prompt("de"), EN_SYSTEM_PROMPT);
+        // …region/case suffixes resolve to the same variant…
+        assert_eq!(system_prompt("ru-RU"), system_prompt("ru"));
+        assert_eq!(system_prompt("DE"), DE_SYSTEM_PROMPT);
+        // …and anything outside the baseline falls back to English.
+        assert_eq!(system_prompt("ja"), EN_SYSTEM_PROMPT);
+        assert_eq!(system_prompt(""), EN_SYSTEM_PROMPT);
     }
 
     #[test]
