@@ -817,6 +817,14 @@ pub(super) enum Modal {
         rows: Vec<String>,
         cursor: usize,
     },
+    /// INNER_EDITOR-1 — the Inner Editor overview (`Ctrl+V O`): status, tuning,
+    /// active categories, today's usage, recent observations. `↑↓` scroll,
+    /// `Esc` closes; `E` engages the open paragraph, `A` toggles the ambient
+    /// auto-engage, `F` jumps to the findings in Output.
+    InnerEditorOverview {
+        rows: Vec<String>,
+        cursor: usize,
+    },
     /// LANG-1 P2.7c — the `:lang:` inline-insertion picker. Typing `:<lang>:`
     /// in the editor opens it; type to filter, `↑↓` move, `Enter` inserts the
     /// word in place of the trigger, `Esc` leaves the literal text.
