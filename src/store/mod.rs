@@ -353,6 +353,70 @@ impl Store {
 
         // (b) Typst-book chapter + three starter paragraphs.
         self.ensure_typst_skeleton(cfg, &book_node.title)?;
+        // (c) Sources chapter + a placeholder citation entry (SOURCES-1).
+        self.ensure_sources_chapter(cfg, &book_node.title)?;
+        Ok(())
+    }
+
+    /// Ensure a chapter named after `book_title` exists inside the **Sources**
+    /// system book, seeded — on first creation only — with one placeholder
+    /// citation paragraph carrying the HJSON authoring template. Mirrors
+    /// `ensure_typst_skeleton`: chapter-per-book, idempotent, safe to call
+    /// repeatedly. The placeholder is seeded ONLY when the chapter is freshly
+    /// created, so deleting it won't make it reappear on the next open.
+    fn ensure_sources_chapter(&self, cfg: &Config, book_title: &str) -> Result<()> {
+        let hierarchy = Hierarchy::load(self)?;
+        let Some(sources_book) = hierarchy
+            .iter()
+            .find(|n| n.kind == NK::Book
+                && n.system_tag.as_deref() == Some(SYSTEM_TAG_SOURCES))
+            .cloned()
+        else {
+            // Sources book missing — ensure_system_books seeds it on every
+            // open, so this only happens on an unusual hierarchy. Bail cleanly.
+            return Ok(());
+        };
+
+        // An existing chapter for this book → nothing to do. Never re-seed.
+        if hierarchy.iter().any(|n| n.kind == NK::Chapter
+            && n.parent_id == Some(sources_book.id)
+            && n.title == book_title)
+        {
+            return Ok(());
+        }
+
+        let chapter = self.create_node(
+            cfg,
+            &hierarchy,
+            NK::Chapter,
+            book_title,
+            Some(&sources_book),
+            None,
+            InsertPosition::End,
+        )?;
+
+        // One placeholder citation entry so the author sees the schema. The
+        // `.typ` file already exists from create_node's paragraph branch;
+        // overwrite it with the HJSON template and flip content_type so the
+        // editor highlights it as HJSON.
+        let h = Hierarchy::load(self)?;
+        let mut created = self.create_node(
+            cfg,
+            &h,
+            NK::Paragraph,
+            "example",
+            Some(&chapter),
+            None,
+            InsertPosition::End,
+        )?;
+        created.content_type = Some("hjson".to_string());
+        let body = crate::sources::ENTRY_TEMPLATE.as_bytes();
+        if let Some(rel) = &created.file {
+            let abs = self.layout.root.join(rel);
+            crate::io_atomic::write(&abs, body).map_err(Error::Io)?;
+        }
+        // Persists content_type via to_json() + writes content to bdslib.
+        self.update_paragraph_content(&mut created, body)?;
         Ok(())
     }
 
