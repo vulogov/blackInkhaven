@@ -56,6 +56,7 @@ pub mod world_prompts;
 pub mod prompts;
 pub mod show_dont_tell;
 pub mod stats;
+pub mod book_rag;
 pub(crate) mod book_walk;
 
 use std::path::PathBuf;
@@ -270,6 +271,11 @@ pub enum Command {
         #[arg(short, long, default_value_t = 10)]
         limit: usize,
     },
+
+    /// 1.4.1+ BOOK_RAG-1 — "Chat with Your Book" retrieval from the
+    /// terminal: inspect the passages Book-scope chat would ground on.
+    #[command(subcommand)]
+    BookRag(BookRagCommand),
 
     /// Re-index all `.typ` files from disk into the document store.
     Reindex {
@@ -1715,6 +1721,30 @@ pub enum SubmissionCommand {
         book_name: Option<String>,
         #[arg(long)]
         provider: Option<String>,
+    },
+}
+
+/// 1.4.1+ BOOK_RAG-1 — `inkhaven book-rag …` sub-subcommands. The terminal
+/// counterpart to the AI pane's Book scope ("Chat with Your Book").
+#[derive(Debug, Subcommand)]
+pub enum BookRagCommand {
+    /// Inspect what Book-scope retrieval would feed the model for a query:
+    /// the semantically relevant paragraphs (expanded + token-budgeted),
+    /// exactly as the TUI grounds its Book chat. No LLM call.
+    Retrieve {
+        /// The question to retrieve grounding passages for.
+        query: String,
+        /// User-book name (title or slug). Optional when the project has
+        /// exactly one user book.
+        #[arg(long)]
+        book_name: Option<String>,
+        /// Override `book_rag.top_k` for this run only (config untouched).
+        #[arg(long)]
+        top_k: Option<usize>,
+        /// Print the composed grounding context block the model receives,
+        /// rather than the human-readable passage listing.
+        #[arg(long)]
+        context: bool,
     },
 }
 
@@ -4157,6 +4187,21 @@ impl Cli {
             Command::Search { query, limit } => {
                 search::run(&project, &query, limit).map_err(Into::into)
             }
+            Command::BookRag(cmd) => match cmd {
+                BookRagCommand::Retrieve {
+                    query,
+                    book_name,
+                    top_k,
+                    context,
+                } => book_rag::retrieve(
+                    &project,
+                    &query,
+                    book_name.as_deref(),
+                    top_k,
+                    context,
+                )
+                .map_err(Into::into),
+            },
             Command::Reindex { prune, adopt } => {
                 reindex::run(&project, prune, adopt).map_err(Into::into)
             }

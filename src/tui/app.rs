@@ -2061,6 +2061,19 @@ pub(crate) struct App {
     /// (selection text, paragraph body, subchapter / chapter / book
     /// concatenation) to the user's query, then auto-resets to `None`.
     ai_mode: AiMode,
+    /// BOOK_RAG-1 — the passages retrieved for the last Book-scope prompt.
+    /// Kept for citation validation (P2) and the transparency section (P3).
+    book_rag_last_retrieval: Option<Vec<crate::book_rag::RetrievedPassage>>,
+    /// BOOK_RAG-1 — the valid citation ids for the in-flight Book-scope
+    /// response; consumed when the response finalises to flag invented cites.
+    pending_book_rag_cited: Option<std::collections::HashSet<String>>,
+    /// BOOK_RAG-1 — whether the "Retrieved passages" transparency section is
+    /// expanded in the chat pane. Collapsed by default; toggled with `p`.
+    book_rag_passages_expanded: bool,
+    /// BOOK_RAG-1 — set once after a save makes the active Book-scope
+    /// retrieval stale, so the "clear chat to re-ground" nudge fires only
+    /// once per stale event (reset on the next fresh retrieval).
+    book_rag_nudged_stale: bool,
 
     /// How aggressively the model may draw on its own knowledge. Toggled
     /// globally by F10. Help inferences pin this to `Local` regardless of
@@ -2180,6 +2193,7 @@ mod editor_impl;
 mod q3_q4_impl;
 mod render;
 mod snapshot_impl;
+mod book_rag_impl;
 mod tag_impl;
 mod threads_impl;
 mod timeline_impl;
@@ -2393,6 +2407,10 @@ impl App {
             layout_ai: Rect::default(),
             layout_ai_prompt: Rect::default(),
             ai_mode: AiMode::None,
+            book_rag_last_retrieval: None,
+            pending_book_rag_cited: None,
+            book_rag_passages_expanded: false,
+            book_rag_nudged_stale: false,
             inference_mode: InferenceMode::Full,
             pending_import: None,
             pending_assembly: None,
@@ -3210,6 +3228,13 @@ impl App {
                 .as_ref()
                 .map(|i| i.response.clone())
                 .unwrap_or_default();
+            // BOOK_RAG-1 — flag any citation the LLM invented (a paragraph
+            // id not in the retrieval) inline, so the author sees what's
+            // grounded vs. hallucinated.
+            let assistant_text = match self.pending_book_rag_cited.take() {
+                Some(valid) => crate::book_rag::validate_citations(&assistant_text, &valid),
+                None => assistant_text,
+            };
             if let Some(user_msg) = self.pending_chat_user_msg.take() {
                 if !assistant_text.trim().is_empty() {
                     // 1.2.6+ — stamp the turns onto the open
@@ -4723,6 +4748,19 @@ impl App {
         // bounce in handle_input_key.
         if self.focus == Focus::Ai && matches!(key.code, KeyCode::Esc) {
             self.change_focus(Focus::AiPrompt);
+            return Ok(false);
+        }
+        // BOOK_RAG-1 — `p` toggles the "Retrieved passages" transparency
+        // section (the evidence behind a Book-scope answer).
+        if self.focus == Focus::Ai
+            && matches!(key.code, KeyCode::Char('p') | KeyCode::Char('P'))
+        {
+            self.book_rag_passages_expanded = !self.book_rag_passages_expanded;
+            self.status = if self.book_rag_passages_expanded {
+                "retrieved passages: expanded".into()
+            } else {
+                "retrieved passages: collapsed".into()
+            };
             return Ok(false);
         }
         // When the AI pane has a completed inference and is focused, single-
@@ -17451,11 +17489,15 @@ impl App {
                 }
                 Ok(Some(out))
             }
-            AiMode::Subchapter | AiMode::Chapter | AiMode::Book => {
+            // BOOK_RAG-1 — Book scope no longer sends the whole book as a
+            // per-query prefix; the chat-submit path retrieves relevant
+            // passages from the prompt and grounds the answer (see
+            // `book_rag_context`). The other scopes are unchanged.
+            AiMode::Book => Ok(None),
+            AiMode::Subchapter | AiMode::Chapter => {
                 let scope_kind = match self.ai_mode {
                     AiMode::Subchapter => NodeKind::Subchapter,
                     AiMode::Chapter => NodeKind::Chapter,
-                    AiMode::Book => NodeKind::Book,
                     _ => unreachable!(),
                 };
                 let mode_label = self.ai_mode.label();

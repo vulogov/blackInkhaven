@@ -54,6 +54,8 @@ pub struct Config {
     #[serde(default)]
     pub cost: CostConfig,
     #[serde(default)]
+    pub book_rag: BookRagConfig,
+    #[serde(default)]
     pub project_lock: ProjectLockConfig,
     /// 1.2.6+ — AI-pane behaviour knobs that aren't tied to a
     /// specific provider (per-paragraph memory, future
@@ -185,6 +187,7 @@ impl Default for Config {
             output: OutputConfig::default(),
             goals: GoalsConfig::default(),
             cost: CostConfig::default(),
+            book_rag: BookRagConfig::default(),
             project_lock: ProjectLockConfig::default(),
             ai: AiConfig::default(),
             timeline: TimelineConfig::default(),
@@ -3291,6 +3294,48 @@ impl Default for CostConfig {
             world_daily_call_cap: 200,
             inner_socrates_daily_call_cap: 150,
             usage_retention_days: 30,
+        }
+    }
+}
+
+/// BOOK_RAG-1 (1.4.x) — the AI pane's **Book scope is retrieval-augmented**:
+/// a prompt in Book scope retrieves the semantically relevant paragraphs
+/// (current book + the included author-content system books) and grounds
+/// the answer in them with markdown citations, instead of sending the whole
+/// book. There is no on/off — Book scope *is* RAG; this only tunes it.
+/// System books are listed by their lowercase `system_tag`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BookRagConfig {
+    /// Top-K paragraphs retrieved by semantic similarity.
+    pub top_k: usize,
+    /// ± this many surrounding paragraphs included around each hit.
+    pub context_expansion: usize,
+    /// Hard cap on the composed context (estimated tokens ≈ chars/4).
+    pub max_context_tokens: usize,
+    /// Author-content system books also searched, by `system_tag`.
+    pub include_system_books: Vec<String>,
+    /// Meta system books never searched, by `system_tag`.
+    pub exclude_system_books: Vec<String>,
+}
+
+impl Default for BookRagConfig {
+    fn default() -> Self {
+        Self {
+            top_k: 5,
+            context_expansion: 1,
+            max_context_tokens: 8000,
+            include_system_books: [
+                "notes", "research", "places", "characters",
+                "artefacts", "world", "language",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+            exclude_system_books: ["scripts", "prompts", "typst", "help", "intent"]
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
         }
     }
 }
