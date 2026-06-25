@@ -451,6 +451,10 @@ pub enum Action {
     /// Ctrl+V M — open the bookmark picker.
     #[serde(rename = "view.list_bookmarks")]
     ViewListBookmarks,
+    /// Ctrl+V @ (1.4.5+ SOURCES-1) — cite picker. Fuzzy-find a
+    /// defined citation key and insert `@key` at the editor cursor.
+    #[serde(rename = "view.cite_picker")]
+    ViewCitePicker,
     /// Ctrl+V P — fuzzy paragraph picker (1.2.4+).
     #[serde(rename = "view.fuzzy_paragraph_picker")]
     ViewFuzzyParagraphPicker,
@@ -957,6 +961,7 @@ impl Action {
             Action::ViewListBacklinks => "backlinks".into(),
             Action::ViewToggleBookmark => "bookmark".into(),
             Action::ViewListBookmarks => "bookmarks".into(),
+            Action::ViewCitePicker => "cite".into(),
             Action::ViewFuzzyParagraphPicker => "find ¶".into(),
             Action::ViewRecentParagraphPicker => "recent ¶".into(),
             Action::ViewKillRingPicker => "kill-ring".into(),
@@ -1213,6 +1218,8 @@ impl Action {
                 "Toggle bookmark on the open paragraph. Bookmarks are surfaced by the Ctrl+V M picker; survive restart via metadata.".into(),
             Action::ViewListBookmarks =>
                 "Open the bookmark picker — every bookmarked paragraph in the project. Enter opens; D removes the bookmark.".into(),
+            Action::ViewCitePicker =>
+                "Cite picker (1.4.5+ SOURCES-1, Ctrl+V @) — fuzzy-find a citation defined in the Sources book by key / author / title, Enter inserts `@key` at the editor cursor. Empty list → add entries to the Sources book first.".into(),
             Action::ViewFuzzyParagraphPicker =>
                 "Fuzzy paragraph picker — type any substring of the title or slug path, Enter opens the highlighted hit.".into(),
             Action::ViewRecentParagraphPicker =>
@@ -1570,6 +1577,9 @@ impl KeyBindings {
                 entry("Shift+b", Action::ViewSiblingBookLookup, Scope::Any),
                 entry("m", Action::ViewListBookmarks, Scope::Any),
                 entry("p", Action::ViewFuzzyParagraphPicker, Scope::Any),
+                // 1.4.5+ SOURCES-1 — Ctrl+V @ cite picker (insert @key).
+                // Editor-scoped: the pick lands in the open buffer.
+                entry("@", Action::ViewCitePicker, Scope::Editor),
                 // 1.2.7+ — same picker sorted by modified_at desc.
                 entry("Shift+p", Action::ViewRecentParagraphPicker, Scope::Any),
                 // 1.2.8+ — kill-ring picker (paragraph undelete history).
@@ -2125,6 +2135,26 @@ mod tests {
             k.resolve_view_sub(&upper, Focus::Editor),
             Some(Action::ViewTimeline)
         );
+    }
+
+    #[test]
+    fn view_at_opens_cite_picker_on_any_terminal() {
+        // SOURCES-1 — Ctrl+V @ → cite picker. `@` is Shift+2 on US layouts;
+        // modern terminals report Char('@')+SHIFT, legacy ones Char('@') bare.
+        // Both must resolve (the matcher strips SHIFT off non-alpha glyphs).
+        let k = KeyBindings::defaults();
+        let shifted = KeyEvent::new(KeyCode::Char('@'), KeyModifiers::SHIFT);
+        let bare = KeyEvent::new(KeyCode::Char('@'), KeyModifiers::NONE);
+        assert_eq!(
+            k.resolve_view_sub(&shifted, Focus::Editor),
+            Some(Action::ViewCitePicker)
+        );
+        assert_eq!(
+            k.resolve_view_sub(&bare, Focus::Editor),
+            Some(Action::ViewCitePicker)
+        );
+        // Editor-scoped — not bound in the tree pane.
+        assert_eq!(k.resolve_view_sub(&bare, Focus::Tree), None);
     }
 
     #[test]

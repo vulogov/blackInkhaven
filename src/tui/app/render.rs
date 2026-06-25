@@ -171,6 +171,10 @@ impl super::App {
             self.draw_fuzzy_paragraph_picker_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::CitePicker { .. }) {
+            self.draw_cite_picker_modal(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::CommandPalette { .. }) {
             self.draw_command_palette_modal(f, area);
             return;
