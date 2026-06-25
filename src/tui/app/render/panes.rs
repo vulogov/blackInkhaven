@@ -1956,6 +1956,11 @@ impl super::super::App {
                     out.push(Line::from(Span::styled(format!("      {opening}"), dim)));
                 }
             }
+            // Once-per-conversation: surface how to refresh.
+            out.push(Line::from(Span::styled(
+                "  (retrieved once for this chat — clear history to retrieve again)",
+                dim,
+            )));
         }
         out.push(Line::from("")); // separator before the conversation
         out
