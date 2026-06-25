@@ -44,6 +44,12 @@ pub fn run(project: &Path, book_name: Option<&str>, compile: bool) -> Result<()>
         report.root_typ.display(),
         report.files_written,
     );
+    if report.bibliography_entries > 0 {
+        eprintln!(
+            "  bibliography: {} citation(s) -> sources.bib",
+            report.bibliography_entries,
+        );
+    }
 
     if !compile {
         return Ok(());
