@@ -3117,6 +3117,8 @@ impl App {
                             format!("✎ Inner Editor: {count} observation(s) in this ¶ — ^B Tab → Output")
                         };
                         if count > 0 {
+                            // COMPANIONS-1 — fresh observations re-badge the tree.
+                            self.refresh_tree_badges();
                             self.emit_ai_task_complete(
                                 "inner_editor_engage",
                                 &format!("Inner Editor noted {count} observation(s)."),
@@ -11608,11 +11610,18 @@ impl App {
         // Project-wide timeline critique.
         let tl = self.collect_and_emit_timeline_critique();
 
-        // Reflect the fresh findings in the tree report-card immediately.
+        // Reflect the instant findings in the tree report-card immediately.
         self.refresh_tree_badges();
 
+        // COMPANIONS-1 — the Editor joins the review pass, but it's LLM-only, so
+        // it runs ASYNC: spawn the engage on the open paragraph in the background
+        // (the instant checkers above already emitted). Gated on the single bg
+        // slot + `inner_editor.enabled`; its observations arrive in Output a few
+        // seconds later (and re-badge the tree on completion).
+        let editor_spawned = self.maybe_spawn_check_editor();
+
         let total = fact + soc + tl;
-        if total == 0 {
+        if total == 0 && !editor_spawned {
             self.status = if checked == 0 {
                 "review pass: clean (no open paragraph; timeline included)".into()
             } else {
@@ -11620,12 +11629,34 @@ impl App {
             };
             return;
         }
+        // Land on Output so the instant findings — and the Editor's, when they
+        // arrive — are in view.
         self.output_selected = 0;
         self.change_focus(Focus::Ai);
         self.right_pane = RightPane::Output;
-        self.status = format!(
-            "review pass: {total} finding(s) — fact {fact} · socrates {soc} · timeline {tl} → Output (^B Tab)"
-        );
+        let editor_note = if editor_spawned { " · editor running…" } else { "" };
+        self.status = if total == 0 {
+            format!("review pass: instant checks clean{editor_note}")
+        } else {
+            format!(
+                "review pass: {total} finding(s) — fact {fact} · socrates {soc} · timeline {tl}{editor_note} → Output (^B Tab)"
+            )
+        };
+    }
+
+    /// COMPANIONS-1 — spawn the Inner Editor engage on the open paragraph as part
+    /// of the review pass, if it's enabled and the single background slot is free.
+    /// Quiet (no editor-specific status — the review pass owns the line). Returns
+    /// whether an engagement actually started.
+    fn maybe_spawn_check_editor(&mut self) -> bool {
+        if !self.cfg.inner_editor.enabled || self.bg_job.is_some() {
+            return false;
+        }
+        if self.opened.is_none() {
+            return false;
+        }
+        self.inner_editor_engage_open_paragraph(true);
+        self.bg_job.is_some()
     }
 
     /// Run the orphan + fuzzy-overlap critique over the whole project's events,
@@ -26455,5 +26486,32 @@ mod tests_tree_badges {
         let h = Hierarchy::from_nodes_for_test(vec![node(Uuid::now_v7(), "book", "b", None)]);
         let m = Message::new("bund_print", Severity::Info, Lifetime::UntilActedOn, serde_json::json!({}));
         assert!(compute_tree_badges(&h, &[m]).is_empty());
+    }
+
+    // COMPANIONS-1 — the badge computation is kind-agnostic, so Inner Editor's
+    // observations (like every companion's findings) already badge the tree.
+    // Pin that so a future kind filter can't silently drop them.
+    #[test]
+    fn inner_editor_observations_badge_the_tree() {
+        use crate::pane::output::kinds;
+        let book = Uuid::now_v7();
+        let chapter = Uuid::now_v7();
+        let p1 = Uuid::now_v7();
+        let h = Hierarchy::from_nodes_for_test(vec![
+            node(book, "book", "b", None),
+            node(chapter, "chapter", "ch1", Some(book)),
+            node(p1, "paragraph", "p1", Some(chapter)),
+        ]);
+        let editor = Message::new(
+            kinds::INNER_EDITOR_OBSERVATION,
+            Severity::Warning,
+            Lifetime::UntilActedOn,
+            serde_json::json!({}),
+        )
+        .with_source_paragraph(p1);
+        let badges = compute_tree_badges(&h, &[editor]);
+        assert_eq!(badges[&p1], (1, Severity::Warning));
+        assert_eq!(badges[&chapter], (1, Severity::Warning));
+        assert_eq!(badges[&book], (1, Severity::Warning));
     }
 }
