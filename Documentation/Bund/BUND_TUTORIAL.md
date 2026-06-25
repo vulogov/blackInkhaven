@@ -514,3 +514,51 @@ scripting: {
 `store_write` enables `ink.tag.add/remove` and every
 `ink.event.*` writer. `fs_write` enables
 `ink.story.render` writing a PNG path.
+
+## 1.4.1 — `ink.book_rag.*` words (Chat with Your Book)
+
+The AI pane's **Book** scope is retrieval-augmented (BOOK_RAG-1):
+it retrieves the semantically relevant paragraphs, expands them
+with surrounding context, token-budgets them, and grounds the
+answer in them with citations. The `ink.book_rag.*` words expose
+that exact retrieval to a script — the same core the pane and the
+`inkhaven book-rag` CLI use, so all three agree.
+
+An **anchor** is any node's slug-path; retrieval is run against the
+**user book** that node belongs to (the anchor may be the book
+itself). The retrieval pool is that book's subtree plus the curated
+author-content system books (Notes / Research / Places / Characters
+/ Artefacts / World / Language by default).
+
+| Word | Stack | What it does |
+|------|-------|--------------|
+| `ink.book_rag.retrieve` | `( anchor query -- list )` | retrieved passages as `{id, breadcrumb, body, score, is_hit}` dicts |
+| `ink.book_rag.context` | `( anchor query -- string )` | the composed grounding block the model would receive |
+| `ink.book_rag.scope` | `( anchor -- list )` | the node ids in the retrieval pool, sorted |
+| `ink.book_rag.config` | `( -- hash )` | the active `book_rag` config block |
+| `ink.book_rag.system_prompt` | `( lang -- string )` | the localized grounding system prompt (EN/RU/ES/FR/DE; EN fallback) |
+| `ink.book_rag.estimate_tokens` | `( text -- n )` | rough token estimate (≈ chars/4) |
+| `ink.book_rag.cited_ids` | `( passages -- list )` | the `id` of each passage dict — the valid-citation set |
+| `ink.book_rag.validate_citations` | `( response ids -- string )` | flag any `](#id)` citation whose id isn't in `ids` |
+
+Every word is **read-only** (`store_read`, default-allowed): the
+retrieval is local (embeddings + vecstore), nothing mutates, and no
+LLM is called — generating the answer is the script's job. Each
+also answers to the short alias `book_rag.X`.
+
+Example — retrieve, then validate a generated answer against what
+was actually retrieved:
+
+```bund
+"manuscript" "what does Mara fear about the voyage?"
+book_rag.retrieve              // ( -- passages )
+dup book_rag.cited_ids         // ( passages -- passages ids )
+// … generate `answer` from the passages via ink.ai.send_blocking …
+swap drop                      // keep ids; pretend `answer` is on the stack
+// answer ids book_rag.validate_citations  → flagged answer
+```
+
+`inkhaven --project ~/my-book bund '"manuscript" "the storm"
+book_rag.context'` prints the grounding block for that query —
+the fastest way to see, from the terminal, what Book-scope chat
+would feed the model.

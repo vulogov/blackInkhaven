@@ -58,7 +58,7 @@ pub fn retrieve(
 }
 
 /// Pool = the book's subtree ∪ the included system books' subtrees.
-fn scope_ids(hierarchy: &Hierarchy, cfg: &BookRagConfig, book_id: Uuid) -> HashSet<Uuid> {
+pub fn scope_ids(hierarchy: &Hierarchy, cfg: &BookRagConfig, book_id: Uuid) -> HashSet<Uuid> {
     let mut ids: HashSet<Uuid> = hierarchy.collect_subtree(book_id).into_iter().collect();
     for tag in &cfg.include_system_books {
         if cfg.exclude_system_books.contains(tag) {
