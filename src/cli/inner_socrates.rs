@@ -285,11 +285,19 @@ fn run_slow(
     force: bool,
 ) -> Result<Vec<crate::inner_socrates::types::SocraticFinding>> {
     use crate::inner_socrates::slow::{
-        apply_persona_and_ledger, build_slow_prompt, intent_summary, parse_slow_findings, SLOW_SYSTEM,
+        apply_persona_and_ledger, build_slow_prompt, intent_summary, parse_slow_findings, slow_system,
     };
     let lang = crate::world::fact_check_lang::detect(prose);
     let prompt = build_slow_prompt(persona, prose, &intent_summary(ledger), fast_findings, lang);
-    let raw = socratic_llm_call(project, "slow track", SLOW_SYSTEM, prompt, soft_cap, force)?;
+    // AUDIENCE-1: the Socratic framing is genre-aware. A nonfiction / technical
+    // genre swaps the fiction assumption for a calibrated context line.
+    let genre = crate::config::Config::load_layered(
+        &crate::project::ProjectLayout::new(project).config_path(),
+    )
+    .ok()
+    .and_then(|c| c.genre);
+    let system = slow_system(genre.as_deref());
+    let raw = socratic_llm_call(project, "slow track", &system, prompt, soft_cap, force)?;
     let parsed = parse_slow_findings(&raw, &persona.id);
     Ok(apply_persona_and_ledger(parsed, persona, ledger, ctx))
 }
