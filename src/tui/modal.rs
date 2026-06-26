@@ -171,6 +171,16 @@ pub(super) struct ConlangHubRow {
     pub header: bool,
 }
 
+/// 1.4.9+ REUSE-1 — one row in the snippets overview.
+#[derive(Debug, Clone)]
+pub(super) struct SnippetsOverviewRow {
+    pub slug: String,
+    pub preview: String,
+    pub reference_count: usize,
+    /// The snippet's source paragraph (Enter jumps here).
+    pub jump: Uuid,
+}
+
 /// 1.3.8 — one rendered line in the story-bible view.
 #[derive(Debug, Clone)]
 pub(super) struct BibleRow {
@@ -354,6 +364,25 @@ pub(super) enum Modal {
     CitePicker {
         input: TextInput,
         entries: Vec<ScriptPickerEntry>,
+        cursor: usize,
+        scroll: usize,
+    },
+    /// 1.4.9+ REUSE-1 — Ctrl+V x snippet `#include` insert/replace picker
+    /// (distinct from the text-expansion `SnippetPicker`). Reuses
+    /// `ScriptPickerEntry`: `title` holds the snippet slug, `slug_path` the
+    /// description preview. Enter inserts (or replaces) a `#include` for the
+    /// chosen snippet; `mode` carries Insert vs Replace-span.
+    SnippetIncludePicker {
+        input: TextInput,
+        entries: Vec<ScriptPickerEntry>,
+        cursor: usize,
+        scroll: usize,
+        mode: super::state::SnippetPickerMode,
+    },
+    /// 1.4.9+ REUSE-1 — Ctrl+V Shift+X snippets overview: every defined snippet
+    /// with its reference count, Enter jumps to the source paragraph.
+    SnippetsOverview {
+        rows: Vec<SnippetsOverviewRow>,
         cursor: usize,
         scroll: usize,
     },

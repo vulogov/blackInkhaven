@@ -155,6 +155,10 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.terms.list", category::STORE_READ),
     ("ink.terms.get", category::STORE_READ),
     ("ink.terms.check", category::STORE_READ),
+    // 1.4.9 REUSE-1 — snippet reads (all read-only).
+    ("ink.snippets.list", category::STORE_READ),
+    ("ink.snippets.get", category::STORE_READ),
+    ("ink.snippets.check", category::STORE_READ),
 
     // ── store_write (default-denied) ──────────────────────────
     // 1.2.3+: Bund scripts can mutate the project tree, status

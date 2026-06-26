@@ -175,6 +175,14 @@ impl super::App {
             self.draw_cite_picker_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::SnippetIncludePicker { .. }) {
+            self.draw_snippet_include_picker_modal(f, area);
+            return;
+        }
+        if matches!(self.modal, Modal::SnippetsOverview { .. }) {
+            self.draw_snippets_overview_modal(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::CommandPalette { .. }) {
             self.draw_command_palette_modal(f, area);
             return;

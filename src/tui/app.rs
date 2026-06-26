@@ -3589,6 +3589,12 @@ impl App {
                 scroll,
                 entries,
                 ..
+            }
+            | Modal::SnippetIncludePicker {
+                cursor,
+                scroll,
+                entries,
+                ..
             } => {
                 let len = entries.len();
                 if len == 0 {
@@ -8568,6 +8574,305 @@ impl App {
         }
     }
 
+    /// 1.4.9+ REUSE-1 — Ctrl+V x. Open the snippet picker. If the cursor sits
+    /// inside an existing `#include "…"` path, opens in Replace mode (pre-selecting
+    /// the current snippet); otherwise Insert mode.
+    fn open_snippet_insert_picker(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "snippet: open a paragraph first".into();
+            return;
+        };
+        let entries = self.collect_snippet_entries();
+        if entries.is_empty() {
+            self.status =
+                "snippet: no snippets — add paragraphs to the Snippets book".into();
+            return;
+        }
+        let (row, col) = doc.textarea.cursor();
+        let line = doc.textarea.lines().get(row).cloned().unwrap_or_default();
+        let (mode, preselect) = match detect_include_context(&line, col) {
+            Some(ctx) => (
+                super::state::SnippetPickerMode::Replace {
+                    row,
+                    quote_start_col: ctx.quote_start_col,
+                    quote_end_col: ctx.quote_end_col,
+                },
+                ctx.snippet_slug,
+            ),
+            None => (super::state::SnippetPickerMode::Insert, None),
+        };
+        let cursor = preselect
+            .and_then(|slug| entries.iter().position(|e| e.title == slug))
+            .unwrap_or(0);
+        self.status = match mode {
+            super::state::SnippetPickerMode::Replace { .. } => {
+                "snippet: type to filter · ↑↓ select · Enter replaces the include path · Esc".into()
+            }
+            super::state::SnippetPickerMode::Insert => {
+                "snippet: type to filter · ↑↓ select · Enter inserts #include · Esc".into()
+            }
+        };
+        self.modal = Modal::SnippetIncludePicker {
+            input: TextInput::new(),
+            entries,
+            cursor,
+            scroll: 0,
+            mode,
+        };
+    }
+
+    /// Snippets book paragraphs as picker rows: `title` = the slug (the value
+    /// that goes into the include path), `slug_path` = a one-line preview.
+    fn collect_snippet_entries(&self) -> Vec<ScriptPickerEntry> {
+        let Some(book) = self.hierarchy.iter().find(|n| {
+            n.kind == NodeKind::Book
+                && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_SNIPPETS)
+        }) else {
+            return Vec::new();
+        };
+        let mut out: Vec<ScriptPickerEntry> = Vec::new();
+        for id in self.hierarchy.collect_subtree(book.id) {
+            let Some(node) = self.hierarchy.get(id) else { continue };
+            if node.kind != NodeKind::Paragraph {
+                continue;
+            }
+            let preview = self
+                .store
+                .get_content(id)
+                .ok()
+                .flatten()
+                .and_then(|b| String::from_utf8(b).ok())
+                .map(|text| {
+                    text.lines()
+                        .map(str::trim)
+                        .find(|l| !l.is_empty() && !l.starts_with("= "))
+                        .unwrap_or("")
+                        .chars()
+                        .take(60)
+                        .collect::<String>()
+                })
+                .unwrap_or_default();
+            out.push(ScriptPickerEntry {
+                id: uuid::Uuid::nil(),
+                title: node.slug.clone(),
+                slug_path: preview,
+            });
+        }
+        out.sort_by(|a, b| a.title.cmp(&b.title));
+        out
+    }
+
+    /// The depth-relative `#include` path for a snippet from the open paragraph.
+    /// Depth = `book/` + one level per chapter/subchapter ancestor; the snippets
+    /// sidecar sits at `<book>/snippets/`, so e.g. a paragraph under a chapter
+    /// (assembled at `<book>/book/<chapter>/`) needs `../../snippets/<slug>.typ`.
+    fn snippet_include_path_for_open_paragraph(&self, slug: &str) -> String {
+        let depth = self
+            .opened
+            .as_ref()
+            .and_then(|d| self.hierarchy.get(d.id))
+            .map(|para| {
+                1 + self
+                    .hierarchy
+                    .ancestors(para)
+                    .iter()
+                    .filter(|a| a.kind != NodeKind::Book)
+                    .count()
+            })
+            .unwrap_or(2);
+        format!("{}snippets/{slug}.typ", "../".repeat(depth))
+    }
+
+    fn snippet_include_picker_handle_key(&mut self, key: KeyEvent) {
+        let chosen = {
+            let Modal::SnippetIncludePicker { input, entries, cursor, scroll, mode } =
+                &mut self.modal
+            else {
+                return;
+            };
+            let matches = fuzzy_filter_entries(entries, input.as_str());
+            let total = matches.len();
+            let page: usize = 12;
+            let mut chosen: Option<(String, super::state::SnippetPickerMode)> = None;
+            match key.code {
+                KeyCode::Up => {
+                    if *cursor > 0 {
+                        *cursor -= 1;
+                    }
+                }
+                KeyCode::Down => {
+                    if *cursor + 1 < total {
+                        *cursor += 1;
+                    }
+                }
+                KeyCode::PageUp => *cursor = cursor.saturating_sub(page),
+                KeyCode::PageDown => {
+                    *cursor = (*cursor + page).min(total.saturating_sub(1));
+                }
+                KeyCode::Enter => {
+                    if let Some(idx) = matches.get(*cursor).copied() {
+                        if let Some(e) = entries.get(idx) {
+                            chosen = Some((e.title.clone(), *mode));
+                        }
+                    }
+                }
+                _ => {
+                    handle_text_input_key(input, key);
+                    *cursor = 0;
+                    *scroll = 0;
+                }
+            }
+            if *cursor < *scroll {
+                *scroll = *cursor;
+            } else if *cursor >= *scroll + page {
+                *scroll = *cursor + 1 - page;
+            }
+            chosen
+        };
+        if let Some((slug, mode)) = chosen {
+            self.modal = Modal::None;
+            let path = self.snippet_include_path_for_open_paragraph(&slug);
+            self.commit_snippet(&path, mode);
+        }
+    }
+
+    fn commit_snippet(&mut self, path: &str, mode: super::state::SnippetPickerMode) {
+        use super::state::SnippetPickerMode;
+        let Some(doc) = self.opened.as_mut() else { return };
+        match mode {
+            SnippetPickerMode::Insert => {
+                doc.textarea.insert_str(format!("#include \"{path}\""));
+                doc.dirty = true;
+                self.status = format!("inserted #include \"{path}\"");
+            }
+            SnippetPickerMode::Replace { row, quote_start_col, quote_end_col } => {
+                use tui_textarea::CursorMove;
+                doc.textarea
+                    .move_cursor(CursorMove::Jump(row as u16, quote_start_col as u16));
+                doc.textarea.start_selection();
+                doc.textarea
+                    .move_cursor(CursorMove::Jump(row as u16, quote_end_col as u16));
+                doc.textarea.cut();
+                doc.textarea.insert_str(format!("\"{path}\""));
+                doc.dirty = true;
+                self.status = format!("replaced include path → \"{path}\"");
+            }
+        }
+    }
+
+    /// 1.4.9+ REUSE-1 — Ctrl+V Shift+X. Open the snippets overview: every defined
+    /// snippet with its project-wide reference count.
+    fn open_snippets_overview(&mut self) {
+        let Some(book) = self.hierarchy.iter().find(|n| {
+            n.kind == NodeKind::Book
+                && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_SNIPPETS)
+        }) else {
+            self.status = "snippets: no Snippets book".into();
+            return;
+        };
+        // Reference counts: scan every user-book paragraph for snippet includes.
+        let mut counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        for ub in self.hierarchy.children_of(None) {
+            if ub.kind != NodeKind::Book || ub.system_tag.is_some() {
+                continue;
+            }
+            for id in self.hierarchy.collect_subtree(ub.id) {
+                let Some(n) = self.hierarchy.get(id) else { continue };
+                if n.kind != NodeKind::Paragraph {
+                    continue;
+                }
+                if let Ok(Some(bytes)) = self.store.get_content(id) {
+                    if let Ok(text) = std::str::from_utf8(&bytes) {
+                        for slug in crate::typst_check::snippet_references(text) {
+                            *counts.entry(slug).or_insert(0) += 1;
+                        }
+                    }
+                }
+            }
+        }
+        let mut rows: Vec<crate::tui::modal::SnippetsOverviewRow> = Vec::new();
+        for id in self.hierarchy.collect_subtree(book.id) {
+            let Some(n) = self.hierarchy.get(id) else { continue };
+            if n.kind != NodeKind::Paragraph {
+                continue;
+            }
+            let preview = self
+                .store
+                .get_content(id)
+                .ok()
+                .flatten()
+                .and_then(|b| String::from_utf8(b).ok())
+                .map(|text| {
+                    text.lines()
+                        .map(str::trim)
+                        .find(|l| !l.is_empty() && !l.starts_with("= "))
+                        .unwrap_or("")
+                        .chars()
+                        .take(56)
+                        .collect::<String>()
+                })
+                .unwrap_or_default();
+            rows.push(crate::tui::modal::SnippetsOverviewRow {
+                slug: n.slug.clone(),
+                preview,
+                reference_count: counts.get(&n.slug).copied().unwrap_or(0),
+                jump: n.id,
+            });
+        }
+        if rows.is_empty() {
+            self.status = "snippets: no snippets defined — add paragraphs to the Snippets book".into();
+            return;
+        }
+        rows.sort_by(|a, b| a.slug.cmp(&b.slug));
+        let total: usize = rows.iter().map(|r| r.reference_count).sum();
+        self.status = format!("{} snippet(s), {total} reference(s) · ↑↓ · Enter jumps · Esc", rows.len());
+        self.modal = Modal::SnippetsOverview { rows, cursor: 0, scroll: 0 };
+    }
+
+    fn snippets_overview_handle_key(&mut self, key: KeyEvent) {
+        let (n, cursor, jump) = {
+            let Modal::SnippetsOverview { rows, cursor, .. } = &self.modal else {
+                return;
+            };
+            (rows.len(), *cursor, rows.get(*cursor).map(|r| r.jump))
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "snippets overview: closed".into();
+            }
+            KeyCode::Up => self.set_snippets_overview_cursor(cursor.saturating_sub(1)),
+            KeyCode::Down => {
+                if n > 0 {
+                    self.set_snippets_overview_cursor((cursor + 1).min(n - 1));
+                }
+            }
+            KeyCode::Enter => {
+                if let Some(pid) = jump {
+                    self.modal = Modal::None;
+                    match self.open_paragraph_by_uuid(pid) {
+                        Ok(()) => self.status = "→ jumped to snippet".into(),
+                        Err(e) => self.status = format!("snippets: {e}"),
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn set_snippets_overview_cursor(&mut self, v: usize) {
+        if let Modal::SnippetsOverview { cursor, scroll, .. } = &mut self.modal {
+            *cursor = v;
+            let page = 14usize;
+            if *cursor < *scroll {
+                *scroll = *cursor;
+            } else if *cursor >= *scroll + page {
+                *scroll = *cursor + 1 - page;
+            }
+        }
+    }
+
     /// Collect every paragraph in the project (excluding
     /// system-book content) as picker entries.
     fn collect_all_paragraph_entries(&self) -> Vec<ScriptPickerEntry> {
@@ -10105,6 +10410,8 @@ impl App {
             A::ViewToggleBookmark => self.toggle_bookmark(),
             A::ViewListBookmarks => self.open_bookmark_picker_modal(),
             A::ViewCitePicker => self.open_cite_picker(),
+            A::InsertSnippetInclude => self.open_snippet_insert_picker(),
+            A::OpenSnippetsOverview => self.open_snippets_overview(),
             A::ViewToggleTermsOverlay => self.toggle_terms_overlay(),
             A::ViewDeclareTermIntent => self.declare_term_intent_at_cursor(),
             A::ViewFuzzyParagraphPicker => self.open_fuzzy_paragraph_picker(),
@@ -20461,6 +20768,7 @@ impl App {
         let is_bookmark_picker = matches!(self.modal, Modal::BookmarkPicker { .. });
         let is_fuzzy_paragraph_picker = matches!(self.modal, Modal::FuzzyParagraphPicker { .. });
         let is_cite_picker = matches!(self.modal, Modal::CitePicker { .. });
+        let is_snippet_include_picker = matches!(self.modal, Modal::SnippetIncludePicker { .. });
         let is_command_palette = matches!(self.modal, Modal::CommandPalette { .. });
         let is_kill_ring_picker = matches!(self.modal, Modal::KillRingPicker { .. });
         let is_shell_pane = matches!(self.modal, Modal::ShellPane { .. });
@@ -20530,6 +20838,10 @@ impl App {
         }
         if matches!(self.modal, Modal::ConlangHub { .. }) {
             self.conlang_hub_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::SnippetsOverview { .. }) {
+            self.snippets_overview_handle_key(key);
             return Ok(false);
         }
         if matches!(self.modal, Modal::WorldOverview { .. }) {
@@ -20768,6 +21080,10 @@ impl App {
         }
         if is_cite_picker {
             self.cite_picker_handle_key(key);
+            return Ok(false);
+        }
+        if is_snippet_include_picker {
+            self.snippet_include_picker_handle_key(key);
             return Ok(false);
         }
         if is_command_palette {
@@ -21998,6 +22314,30 @@ impl App {
             let semantic =
                 crate::typst_inprocess::check_semantic(&body, settings);
             diags.extend(semantic);
+        }
+        // REUSE-1: validate snippet `#include` references against the live
+        // Snippets book (slug existence) — only when the buffer has includes, so
+        // it's zero-cost otherwise. Field accesses keep the borrow disjoint from
+        // the `doc` mutable borrow above.
+        if body.contains("#include") {
+            let known: std::collections::HashSet<String> = self
+                .hierarchy
+                .iter()
+                .find(|n| {
+                    n.kind == crate::store::NodeKind::Book
+                        && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_SNIPPETS)
+                })
+                .map(|book| {
+                    self.hierarchy
+                        .collect_subtree(book.id)
+                        .into_iter()
+                        .filter_map(|id| self.hierarchy.get(id))
+                        .filter(|n| n.kind == crate::store::NodeKind::Paragraph)
+                        .map(|n| n.slug.clone())
+                        .collect()
+                })
+                .unwrap_or_default();
+            diags.extend(crate::typst_check::check_includes(&body, &known));
         }
         doc.typst_diagnostics = diags;
         doc.typst_diagnostics_checked_at = std::time::Instant::now();
@@ -25544,6 +25884,32 @@ fn detect_image_call_context(line: &str, cursor_col: usize) -> Option<ImageCallC
     })
 }
 
+/// 1.4.9+ REUSE-1 — is the cursor inside the quoted path of an `#include "…"`
+/// on this line? Returns the quote span (char cols) + the snippet slug if it's a
+/// `…/snippets/<slug>.typ` include. `None` when the cursor is outside the string
+/// or there's no `#include`.
+fn detect_include_context(line: &str, cursor_col: usize) -> Option<super::state::IncludeContext> {
+    let cursor_byte = char_offset_to_byte(line, cursor_col);
+    let prefix = &line[..cursor_byte];
+    let inc = prefix.rfind("#include")?;
+    let after_inc = inc + "#include".len();
+    let q1_rel = line[after_inc..].find('"')?;
+    let q1_byte = after_inc + q1_rel; // opening quote
+    let path_start = q1_byte + 1;
+    let q2_rel = line.get(path_start..)?.find('"')?;
+    let q2_byte = path_start + q2_rel; // closing quote
+    // Cursor must be inside the quotes (after the opening, at-or-before closing).
+    if cursor_byte <= q1_byte || cursor_byte > q2_byte {
+        return None;
+    }
+    let current_path = &line[path_start..q2_byte];
+    Some(super::state::IncludeContext {
+        quote_start_col: line[..q1_byte].chars().count(),
+        quote_end_col: line[..=q2_byte].chars().count(), // char col just after closing "
+        snippet_slug: crate::typst_check::snippet_slug_of(current_path),
+    })
+}
+
 fn find_image_open(prefix: &str) -> Option<usize> {
     // Iterate in reverse to find the LAST `#image[whitespace]?(`.
     let bytes = prefix.as_bytes();
@@ -26893,5 +27259,40 @@ mod tests_tree_badges {
         assert_eq!(badges[&p1], (1, Severity::Warning));
         assert_eq!(badges[&chapter], (1, Severity::Warning));
         assert_eq!(badges[&book], (1, Severity::Warning));
+    }
+}
+
+#[cfg(test)]
+mod tests_snippet_include {
+    use super::*;
+
+    #[test]
+    fn detect_include_inside_snippet_path() {
+        let line = "#include \"../../snippets/warn.typ\"";
+        // Cursor inside the path (on "warn").
+        let col = line.chars().take_while(|&c| c != 'w').count();
+        let ctx = detect_include_context(line, col).expect("inside the include string");
+        assert_eq!(ctx.snippet_slug.as_deref(), Some("warn"));
+        // The quote span covers `"../../snippets/warn.typ"` exactly.
+        assert_eq!(ctx.quote_start_col, "#include ".chars().count());
+        assert_eq!(ctx.quote_end_col, line.chars().count());
+    }
+
+    #[test]
+    fn detect_include_outside_string_is_none() {
+        let line = "#include \"../snippets/x.typ\" trailing text";
+        // Cursor in the trailing text, after the closing quote.
+        let col = line.chars().count() - 2;
+        assert!(detect_include_context(line, col).is_none());
+        // No #include at all.
+        assert!(detect_include_context("just prose here", 4).is_none());
+    }
+
+    #[test]
+    fn detect_include_non_snippet_has_no_slug() {
+        let line = "#include \"globals.typ\"";
+        let col = line.chars().take_while(|&c| c != 'g').count();
+        let ctx = detect_include_context(line, col).expect("inside the string");
+        assert!(ctx.snippet_slug.is_none(), "globals.typ is not a snippet");
     }
 }

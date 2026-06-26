@@ -455,6 +455,14 @@ pub enum Action {
     /// defined citation key and insert `@key` at the editor cursor.
     #[serde(rename = "view.cite_picker")]
     ViewCitePicker,
+    /// Ctrl+V x (1.4.9+ REUSE-1) — insert/replace a snippet `#include` via a
+    /// fuzzy picker over the Snippets book.
+    #[serde(rename = "view.insert_snippet_include")]
+    InsertSnippetInclude,
+    /// Ctrl+V Shift+X (1.4.9+ REUSE-1) — snippets overview (slug + reference
+    /// count; Enter jumps to the source).
+    #[serde(rename = "view.snippets_overview")]
+    OpenSnippetsOverview,
     /// Ctrl+V z (1.4.8+ TERMS-1) — toggle the banned-synonym (Glossary)
     /// overlay in the editor.
     #[serde(rename = "view.toggle_terms_overlay")]
@@ -970,6 +978,8 @@ impl Action {
             Action::ViewToggleBookmark => "bookmark".into(),
             Action::ViewListBookmarks => "bookmarks".into(),
             Action::ViewCitePicker => "cite".into(),
+            Action::InsertSnippetInclude => "snippet".into(),
+            Action::OpenSnippetsOverview => "snippets".into(),
             Action::ViewToggleTermsOverlay => "terms overlay".into(),
             Action::ViewDeclareTermIntent => "term deliberate".into(),
             Action::ViewFuzzyParagraphPicker => "find ¶".into(),
@@ -1230,6 +1240,10 @@ impl Action {
                 "Open the bookmark picker — every bookmarked paragraph in the project. Enter opens; D removes the bookmark.".into(),
             Action::ViewCitePicker =>
                 "Cite picker (1.4.5+ SOURCES-1, Ctrl+V @) — fuzzy-find a citation defined in the Sources book by key / author / title, Enter inserts `@key` at the editor cursor. Empty list → add entries to the Sources book first.".into(),
+            Action::InsertSnippetInclude =>
+                "Snippet include (1.4.9+ REUSE-1, Ctrl+V x) — fuzzy-pick a reusable snippet from the Snippets book and insert a Typst `#include` for it at the cursor (depth-relative path computed automatically). With the cursor inside an existing `#include \"…/snippets/…\"` path, it replaces that path in place (pre-selecting the current snippet). Define snippets as paragraphs under the Snippets book; assembly copies them to a `snippets/` sidecar so the include resolves.".into(),
+            Action::OpenSnippetsOverview =>
+                "Snippets overview (1.4.9+ REUSE-1, Ctrl+V Shift+X) — every snippet defined in the Snippets book with how many times it's referenced (`#include`) across the project. ↑↓ navigate, Enter jumps to the snippet's source paragraph, Esc closes.".into(),
             Action::ViewToggleTermsOverlay =>
                 "Toggle the terminology overlay (1.4.8+ TERMS-1, Ctrl+V z) — red-underlines banned synonyms of Glossary canonical terms in the editor. Default on (within the master style toggle); flip it off when it distracts. Define terms in the Glossary system book.".into(),
             Action::ViewDeclareTermIntent =>
@@ -1594,6 +1608,10 @@ impl KeyBindings {
                 // 1.4.5+ SOURCES-1 — Ctrl+V @ cite picker (insert @key).
                 // Editor-scoped: the pick lands in the open buffer.
                 entry("@", Action::ViewCitePicker, Scope::Editor),
+                // 1.4.9+ REUSE-1 — Ctrl+V x snippet insert/replace picker;
+                // Ctrl+V Shift+X the snippets overview.
+                entry("x", Action::InsertSnippetInclude, Scope::Editor),
+                entry("Shift+x", Action::OpenSnippetsOverview, Scope::Any),
                 // 1.4.8+ TERMS-1 — Ctrl+V z toggle the banned-synonym overlay;
                 // Ctrl+V Shift+Z declares the term under the cursor deliberate.
                 entry("z", Action::ViewToggleTermsOverlay, Scope::Any),
