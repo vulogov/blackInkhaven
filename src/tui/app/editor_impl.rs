@@ -1289,7 +1289,6 @@ impl super::App {
             &self.store,
             &self.hierarchy,
             None,
-            Default::default(),
         );
         if detector.is_empty() {
             return None;
