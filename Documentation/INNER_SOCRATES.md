@@ -65,15 +65,36 @@ The default visible threshold is **Inquiry** — quiet by default.
 ## Reader Personas
 
 A persona is a distinct careful-reader perspective. Its per-category **emphasis
-weights** scale salience (`0.0` mutes a category). Five ship bundled:
+weights** scale salience (`0.0` mutes a category). **Nine** ship bundled — five
+for fiction, and (1.4.6 AUDIENCE-1) four for nonfiction / technical /
+documentation authors:
 
-| Persona | Voice |
-|---|---|
-| **Inner Socrates** (default) | "Every question opens what the prose has closed." |
-| **The Careful Editor** | "Notice what the prose is doing — to itself and the reader." |
-| **The Skeptical Reader** | "What's not being said is often louder than what is." |
-| **The First-Time Reader** | "Pretend you've read nothing of this book before this scene." |
-| **The Slow Reader** | "The rhythm of prose is doing something. What?" |
+| Persona | Audience | Voice |
+|---|---|---|
+| **Inner Socrates** (default) | fiction | "Every question opens what the prose has closed." |
+| **The Careful Editor** | fiction | "Notice what the prose is doing — to itself and the reader." |
+| **The Skeptical Reader** | fiction | "What's not being said is often louder than what is." |
+| **The First-Time Reader** | fiction | "Pretend you've read nothing of this book before this scene." |
+| **The Slow Reader** | fiction | "The rhythm of prose is doing something. What?" |
+| **The Skeptical Practitioner** | IT / technical | "Every procedure is a reproduction attempt; what did you leave out?" |
+| **The Domain Newcomer** | general nonfiction | "Every undefined term is a door that won't open for me." |
+| **The Expert Reviewer** | academic / peer review | "Does the evidence support the claim, and is the scope stated?" |
+| **The End User** | documentation | "What do I do next, and how will I know when I'm done?" |
+
+The four nonfiction personas mute the narrative-only categories
+(`dramatization_gap`, `temporal_density`, `unattributed_dialogue`) and lean on
+assumption-surfacing, framing, and significance — so an interrogator stops
+hunting for scene-time density in a procedure and starts asking what a step
+assumes the reader already knows. The default persona is always **Inner
+Socrates** (fiction) unless you set `inner_socrates_default_persona` in
+`inkhaven.hjson` (e.g. `skeptical-practitioner` for a technical book) or
+`persona activate` one explicitly — an explicit activation always wins. See
+[Tutorial 90 — Nonfiction reader personas](Tutorials/90-nonfiction-personas.md).
+
+The **Socratic system prompt is genre-aware** (1.4.6): an explicitly declared
+`genre` (e.g. `technical`, `documentation`, `academic`) reframes the
+interrogator for that form. With no genre declared, the prompt keeps its
+original fiction framing — AUDIENCE-1 is purely additive.
 
 Author your own as an HJSON file in `~/.config/inkhaven/personas/` (cross-project)
 or `<project>/books/intent/01-personas/` (project-only); project wins over user
