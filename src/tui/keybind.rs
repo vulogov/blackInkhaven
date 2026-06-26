@@ -75,6 +75,9 @@ pub enum Action {
     AddSubchapter,
     #[serde(rename = "tree.add_paragraph")]
     AddParagraph,
+    /// STRUCT-1 — add a Jinja template paragraph at the tree cursor.
+    #[serde(rename = "tree.add_jinja_template")]
+    AddJinjaTemplate,
     #[serde(rename = "tree.delete_node")]
     DeleteNode,
     #[serde(rename = "tree.morph_type")]
@@ -881,6 +884,7 @@ impl Action {
             Action::AddChapter => "add chapter".into(),
             Action::AddSubchapter => "add subchapter".into(),
             Action::AddParagraph => "add paragraph".into(),
+            Action::AddJinjaTemplate => "add jinja template".into(),
             Action::DeleteNode => "delete".into(),
             Action::MorphType => "morph-type".into(),
             Action::ReorderUp => "↑ reorder".into(),
@@ -1047,6 +1051,12 @@ impl Action {
                 "Add a Subchapter under the current chapter / subchapter.".into(),
             Action::AddParagraph =>
                 "Add a Paragraph leaf under the current branch (typst content).".into(),
+            Action::AddJinjaTemplate =>
+                "Add a Jinja template paragraph (STRUCT-1, `t` in Tree pane). Creates a \
+                 `.jinja` paragraph rendered to Typst at book assembly time. Under the \
+                 Snippets book: seeds a reusable template fragment available to {% include %}. \
+                 Under a user book: seeds a manuscript template with access to project \
+                 metadata and linked HJSON paragraph data. See Documentation/JINJA_TEMPLATES.md.".into(),
             Action::DeleteNode =>
                 "Delete the node under the tree cursor (asks for confirmation).".into(),
             Action::MorphType =>
@@ -1400,6 +1410,8 @@ impl KeyBindings {
                 entry("c", Action::AddChapter, Scope::Tree),
                 entry("s", Action::AddSubchapter, Scope::Tree),
                 entry("p", Action::AddParagraph, Scope::Tree),
+                // STRUCT-1 — `t` in the Tree pane adds a Jinja template paragraph.
+                entry("t", Action::AddJinjaTemplate, Scope::Tree),
                 entry("d", Action::DeleteNode, Scope::Tree),
                 entry("m", Action::MorphType, Scope::Tree),
                 entry("Up", Action::ReorderUp, Scope::Tree),
@@ -2151,6 +2163,23 @@ mod tests {
         assert_eq!(
             k.resolve_meta_sub(&ev('v'), Focus::Editor),
             Some(Action::OpenCredits)
+        );
+    }
+
+    #[test]
+    fn tree_t_adds_jinja_template() {
+        // STRUCT-1 — `t` in the Tree pane adds a Jinja template paragraph; the
+        // same key in the Editor pane is the unrelated view-target chord (only
+        // reachable through the view_sub layer, not meta_sub).
+        let k = KeyBindings::defaults();
+        assert_eq!(
+            k.resolve_meta_sub(&ev('t'), Focus::Tree),
+            Some(Action::AddJinjaTemplate)
+        );
+        // `p` (plain paragraph) and `t` (jinja) are distinct Tree adds.
+        assert_eq!(
+            k.resolve_meta_sub(&ev('p'), Focus::Tree),
+            Some(Action::AddParagraph)
         );
     }
 
