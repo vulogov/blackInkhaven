@@ -21,44 +21,49 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.4.5 — Bibliography & citations
+## Latest release · 1.4.6 — Nonfiction reader personas
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.4.5.md`](Documentation/RELEASE_NOTES/1.4.5.md)
-· Plan: [`Documentation/PROPOSALS/SOURCES-1_PLAN.md`](Documentation/PROPOSALS/SOURCES-1_PLAN.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.4.6.md`](Documentation/RELEASE_NOTES/1.4.6.md)
+· Plan: [`Documentation/PROPOSALS/AUDIENCE-1_PLAN.md`](Documentation/PROPOSALS/AUDIENCE-1_PLAN.md)
 
-inkhaven compiles to Typst, which has a real bibliography engine — 1.4.5 (SOURCES-1) wires the two
-together. Keep your references **inside the project**, cite them in prose, and let assembly render
-the reference list. **No external reference manager, no new content type, no new dependencies.**
+Inner Socrates asks **questions** about your prose — never corrections. Its five bundled personas
+all read for *fiction*, so on a manual or a paper the questions were coherent but miscalibrated.
+1.4.6 (AUDIENCE-1) adds **four nonfiction readers** and makes the framing genre-aware —
+**purely additively**: with no genre and no default set, fiction authors see exactly the prior
+behaviour. **No new dependencies, no new storage.**
 
-### A home for your sources
+### Four nonfiction readers
 
-A new **Sources** system book holds citations as **HJSON entries** (the editor highlights them as
-HJSON). Each user book gets a matching Sources chapter, auto-seeded with the schema. The only
-required field is `key`. Author them by pressing **`P`** under the Sources book (the title becomes
-the cite key, the body is pre-seeded) or bulk-import BibTeX with **`inkhaven sources import
-<file.bib>`** — a dependency-free reader (nested braces, `@comment`/`@string` skipped, biblatex
-`date→year`) that eats what Zotero / JabRef / Google Scholar export.
+The bundled set grows from five to **nine**: `skeptical-practitioner` (IT/technical),
+`domain-newcomer` (general nonfiction), `expert-reviewer` (academic/peer-review), and `end-user`
+(documentation). Each mutes the narrative-only categories (dramatization gap, temporal density,
+unattributed dialogue) and leans on assumption-surfacing, framing, and significance — so the
+interrogator stops hunting for scene-time density in a procedure and starts asking what a step
+assumes the reader already knows. `inkhaven inner-socrates persona list / show / activate`, or
+cycle all nine with **`Ctrl+B J → S`**.
 
-### Cite in prose, render at assembly
+### A project default
 
-Write `@key` as in Typst; press **`Ctrl+V @`** for a fuzzy **cite picker** that inserts the key for
-you. At Book assembly (**`Ctrl+B A`** / `inkhaven build`) inkhaven writes `sources.bib` and appends
-`#bibliography("sources.bib", style: "ieee")`, so `typst compile` renders the bibliography and
-resolves every citation.
+Nonfiction projects can default to a nonfiction reader instead of fiction `inner-socrates`:
 
-### Validate before you build
+```hjson
+inner_socrates_default_persona: skeptical-practitioner
+```
 
-**`inkhaven sources check`** scans prose `@key` tokens against the defined entries — reading the same
-files assembly compiles — and **exits non-zero** on any undefined key, so it drops into a pre-build
-step or CI (`--json` / `--book-name`; `sources list` lists entries). Scope one shared bibliography or
-one per book with `sources.all`; change the rendered style with `bibliography_style`. Scripts get
-four read-only `ink.sources.{list,get,check,bibtex}` Bund words.
+Consulted only when no persona is explicitly set; an explicit `persona activate` always wins.
+
+### Genre-aware framing — both companions
+
+Declaring a nonfiction `genre` (`technical` / `documentation` / `academic` / `science` /
+`business`) reframes the *system prompt* of both examined-authorship companions — Inner Socrates
+(procedures as reproduction attempts, claims needing support) and Inner Editor (clarity and
+completeness as the craft). With no genre declared, both keep their original fiction framing.
 
 ### Dependencies & compatibility
 
-**No external application or binary dependencies; no new runtime crates** — built on the existing
-`.typ` + DuckDB + serde-hjson stack. Existing projects gain the Sources book on first open after
-upgrade (the system-book order-bump handles insertion; one-time, idempotent).
+**No external application or binary dependencies; no new runtime crates; no new DB tables** (one
+`Option<String>` config field) — built on the existing persona machinery. The five fiction
+personas, the category set, and the `Ctrl+B J` chords are unchanged.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
