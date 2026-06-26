@@ -21,49 +21,48 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.4.6 — Nonfiction reader personas
+## Latest release · 1.4.7 — More readers, and two adversaries
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.4.6.md`](Documentation/RELEASE_NOTES/1.4.6.md)
-· Plan: [`Documentation/PROPOSALS/AUDIENCE-1_PLAN.md`](Documentation/PROPOSALS/AUDIENCE-1_PLAN.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.4.7.md`](Documentation/RELEASE_NOTES/1.4.7.md)
+· Plan: [`Documentation/PROPOSALS/AUDIENCE-1.1_PLAN.md`](Documentation/PROPOSALS/AUDIENCE-1.1_PLAN.md)
 
-Inner Socrates asks **questions** about your prose — never corrections. Its five bundled personas
-all read for *fiction*, so on a manual or a paper the questions were coherent but miscalibrated.
-1.4.6 (AUDIENCE-1) adds **four nonfiction readers** and makes the framing genre-aware —
-**purely additively**: with no genre and no default set, fiction authors see exactly the prior
-behaviour. **No new dependencies, no new storage.**
+A follow-on to 1.4.6's nonfiction personas. Inner Socrates grows from nine bundled readers to
+**fourteen**, the Slow pass becomes reachable from the editor, and targeting a paragraph gets
+easier. **Purely additive** — `inner-socrates` and every existing persona are untouched. **No new
+dependencies, no new storage.**
 
-### Four nonfiction readers
+### Three readers for ideas-driven work
 
-The bundled set grows from five to **nine**: `skeptical-practitioner` (IT/technical),
-`domain-newcomer` (general nonfiction), `expert-reviewer` (academic/peer-review), and `end-user`
-(documentation). Each mutes the narrative-only categories (dramatization gap, temporal density,
-unattributed dialogue) and leans on assumption-surfacing, framing, and significance — so the
-interrogator stops hunting for scene-time density in a procedure and starts asking what a step
-assumes the reader already knows. `inkhaven inner-socrates persona list / show / activate`, or
-cycle all nine with **`Ctrl+B J → S`**.
+For prose that's neither plain fiction nor empirical nonfiction: **the Dialectician**
+(`philosophical-reader` — argument structure), **the Theological Reader** (`theological-reader` —
+deliberately *non-empiricist*: coherence, fidelity, and scope, never "show your evidence"), and
+**the Utopian Architect** (`utopian-architect` — a hybrid that keeps the narrative live while
+interrogating the imagined society). Matching `philosophy` / `theology` / `utopian` genres reframe
+both companions.
 
-### A project default
+### Two adversaries — the verdict personas
 
-Nonfiction projects can default to a nonfiction reader instead of fiction `inner-socrates`:
+Inner Socrates is a neutral questioner by design. Two new personas break that on purpose, as a
+steelman / devil's-advocate pair:
 
-```hjson
-inner_socrates_default_persona: skeptical-practitioner
-```
+- **The Defender** — states **only praise** (counsel for the defense: what works, what to protect).
+- **The Prosecutor** — states **only concern** (the charge: the weak line, the unearned beat).
 
-Consulted only when no persona is explicitly set; an explicit `persona activate` always wins.
+They're LLM-only and bilingual; the neutral interrogator and every other persona are untouched
+(asserted byte-for-byte). Your own persona file can opt in with `stance: praise | concern`.
 
-### Genre-aware framing — both companions
+### The Slow pass, from the editor
 
-Declaring a nonfiction `genre` (`technical` / `documentation` / `academic` / `science` /
-`business`) reframes the *system prompt* of both examined-authorship companions — Inner Socrates
-(procedures as reproduction attempts, claims needing support) and Inner Editor (clarity and
-completeness as the craft). With no genre declared, both keep their original fiction framing.
+**`Ctrl+B J → E`** (Engage) runs the LLM deep-questions — or the verdict — over the open paragraph
+in the **background**, dropping findings into the Output pane (mirrors the Inner Editor's
+`Ctrl+V O → E`). And `inkhaven list` now prints full, copy-pasteable slug paths so
+**`inner-socrates check --path essay/ch1/opening`** targets a paragraph with no UUID lookup.
 
 ### Dependencies & compatibility
 
 **No external application or binary dependencies; no new runtime crates; no new DB tables** (one
-`Option<String>` config field) — built on the existing persona machinery. The five fiction
-personas, the category set, and the `Ctrl+B J` chords are unchanged.
+`stance` field on the persona struct) — built on the existing persona machinery + background-job
+harness. The Category enum, the Fast track, the wizard, and the chord family are unchanged.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

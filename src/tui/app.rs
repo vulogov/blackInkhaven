@@ -3130,6 +3130,22 @@ impl App {
                     Err(e) => self.status = format!("Inner Editor skipped: {e}"),
                 }
             }
+            BgJobKind::InnerSocratesSlow => {
+                match result {
+                    Ok(n) => {
+                        let count: usize = n.parse().unwrap_or(0);
+                        self.status = if count == 0 {
+                            "Inner Socrates: nothing rose for this ¶".into()
+                        } else {
+                            format!("◇ Inner Socrates: {count} finding(s) in this ¶ — ^B Tab → Output")
+                        };
+                        if count > 0 {
+                            self.refresh_tree_badges();
+                        }
+                    }
+                    Err(e) => self.status = format!("Inner Socrates skipped: {e}"),
+                }
+            }
         }
     }
 
@@ -5990,6 +6006,10 @@ pub(super) enum BgJobKind {
     /// runs the engine + emits the (thresholded) observations to Output; the
     /// `Ok` payload is the emitted count.
     InnerEditorEngage,
+    /// AUDIENCE-1 — the Inner Socrates Slow pass (LLM), `Ctrl+B J → E`. The
+    /// worker runs the deep questions / verdict over the open paragraph and
+    /// emits to Output; the `Ok` payload is the finding count.
+    InnerSocratesSlow,
 }
 
 /// An in-flight background job: its progress/result channel + a label + which
@@ -12037,7 +12057,7 @@ impl App {
         let rows = self.build_inner_socrates_rows();
         self.modal = Modal::InnerSocratesOverview { rows, cursor: 0 };
         self.status =
-            "Inner Socrates · F fast-check ¶ · S persona · L ledger · A auto · Esc".into();
+            "Inner Socrates · F fast-check ¶ · E engage (slow/LLM) · S persona · L ledger · A auto · Esc".into();
     }
 
     fn build_inner_socrates_rows(&self) -> Vec<String> {
@@ -12109,6 +12129,7 @@ impl App {
                 }
             }
             KeyCode::Char('f') | KeyCode::Char('F') => self.socratic_check_open_paragraph(),
+            KeyCode::Char('e') | KeyCode::Char('E') => self.inner_socrates_engage_open_paragraph(),
             KeyCode::Char('l') | KeyCode::Char('L') => self.socratic_view_ledger(),
             KeyCode::Char('s') | KeyCode::Char('S') => self.socratic_cycle_persona(),
             KeyCode::Char('c') | KeyCode::Char('C') => self.socratic_open_conversation(),
@@ -12135,6 +12156,17 @@ impl App {
     /// `Ctrl+B J` → `F` — run the Socratic Fast track over the open paragraph and
     /// surface the questions in Output (flips you there).
     fn socratic_check_open_paragraph(&mut self) {
+        // The verdict personas (Defender/Prosecutor) can't speak through the
+        // neutral Fast track — point the author at the LLM verdict path.
+        if crate::inner_socrates::personas::active(self.store.project_root())
+            .stance
+            .is_verdict()
+        {
+            self.status = "Defender / Prosecutor speak via the LLM verdict — run \
+                           `inkhaven inner-socrates check --slow`, or F9 → Socrates to converse"
+                .into();
+            return;
+        }
         let Some((id, findings)) = self.collect_socratic_findings() else {
             self.status = "Inner Socrates: no paragraph open".into();
             return;
@@ -12149,6 +12181,46 @@ impl App {
         self.change_focus(Focus::Ai);
         self.right_pane = RightPane::Output;
         self.status = format!("Inner Socrates: {} question(s) → Output (^B Tab)", findings.len());
+    }
+
+    /// `Ctrl+B J → E` (Engage) — run the Inner Socrates **Slow pass** (LLM) over
+    /// the open paragraph in the background, mirroring the Inner Editor engage
+    /// (`Ctrl+V O → E`). Neutral personas get the deep questions; the Defender /
+    /// Prosecutor get their verdict. Findings emit to the Output pane; the
+    /// neutral interrogator is unchanged (the worker shares the CLI code path).
+    fn inner_socrates_engage_open_paragraph(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "Inner Socrates: no paragraph open".into();
+            return;
+        };
+        let prose = doc.textarea.lines().join("\n");
+        if prose.trim().is_empty() {
+            self.status = "Inner Socrates: the paragraph is empty".into();
+            return;
+        }
+        let id = doc.id;
+        // Pre-flight a provider so a missing LLM is a clear status, not a silent
+        // background failure.
+        if let Err(e) = self.ai.resolve_provider(&self.cfg.llm, None) {
+            self.status = format!("Inner Socrates Slow pass needs an LLM provider: {e}");
+            return;
+        }
+        let root = self.store.project_root().to_path_buf();
+        self.modal = Modal::None;
+        self.right_pane = RightPane::Output;
+        self.status = "⟳ Inner Socrates: thinking…".into();
+        self.start_bg_job(
+            BgJobKind::InnerSocratesSlow,
+            "inner socrates",
+            move |tx, _cancel| {
+                let result = crate::cli::inner_socrates::run_socratic_pass(
+                    &root, &prose, Some(id), true, 6000, false,
+                )
+                .map(|(findings, _persona)| findings.len().to_string())
+                .map_err(|e| e.to_string());
+                let _ = tx.send(BgMsg::Done(result));
+            },
+        );
     }
 
     /// Build the world-ledger context and run the Socratic Fast track over the
@@ -12451,6 +12523,13 @@ impl App {
 
     /// Run the Socratic Fast track silently into Output (no focus change).
     fn auto_socratic_check(&mut self) {
+        // Verdict personas don't auto-run the neutral Fast track.
+        if crate::inner_socrates::personas::active(self.store.project_root())
+            .stance
+            .is_verdict()
+        {
+            return;
+        }
         let Some((id, findings)) = self.collect_socratic_findings() else {
             return;
         };

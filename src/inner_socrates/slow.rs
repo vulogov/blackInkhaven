@@ -11,7 +11,7 @@
 //! corrections, and the parser keeps only the five prose categories.
 
 use super::intent::{ConsultationResult, FindingContext, IntentLedger};
-use super::types::{Category, Persona, Severity, SocraticFinding};
+use super::types::{Category, Persona, Severity, SocraticFinding, Stance};
 
 /// The Socratic system prompt — a careful reader who asks, never prescribes.
 /// **Genre-aware** (1.4.6 AUDIENCE-1): the fiction framing is replaced by a
@@ -85,8 +85,92 @@ pub fn slow_genre_context(genre: Option<&str>) -> Option<&'static str> {
             "science writing — evidence must support each claim; analogies must not overstep",
         "business" | "management" =>
             "business or management book — practical claims must be testable; assumptions must be named",
+        // ── Ideas genres (1.4.7 AUDIENCE-1.1) ──
+        "utopian" | "utopia" | "dystopian" | "dystopia" =>
+            "utopian or dystopian work — the imagined society is an argument; attend to what it assumes about human nature, the alternative it forecloses, and the cost it elides",
+        "philosophy" | "philosophical" =>
+            "philosophical work — the argument's structure is the substance; attend to unstated premises, terms that shift meaning, and objections left unanswered, not to empirical proof",
+        "theology" | "theological" | "religious" =>
+            "theological work — claims rest on revelation and tradition as much as reason; attend to internal coherence, fidelity to the source, and the scope of each claim, not empirical evidence",
         _ => return None,
     })
+}
+
+/// Stance-aware system prompt. The Socratic default (`Stance::Question`) is
+/// returned **unchanged** — the neutral interrogator is never altered. Only the
+/// two verdict personas (Defender = `Praise`, Prosecutor = `Concern`) get an
+/// advocacy / prosecution prompt; every other persona stays neutral.
+pub fn slow_system_for(stance: Stance, genre: Option<&str>) -> String {
+    match stance {
+        Stance::Question => slow_system(genre),
+        Stance::Praise => verdict_system(genre, true),
+        Stance::Concern => verdict_system(genre, false),
+    }
+}
+
+/// The verdict system prompt — Defender (`praise = true`) / Prosecutor
+/// (`praise = false`). Deliberately drops the never-praise / never-prescribe
+/// clause for these two personas only. **Bilingual exactly like the neutral
+/// track**: the `question` field carries the verdict in the paragraph's
+/// language, `question_en` the English fallback — so it works in en/ru/fr/de/es.
+fn verdict_system(genre: Option<&str>, praise: bool) -> String {
+    let context = match slow_genre_context(genre) {
+        Some(ctx) => format!(" You are reading a {ctx}."),
+        None => String::new(),
+    };
+    let (role, task, item, vague, act) = if praise {
+        (
+            "counsel for the defense",
+            "state ONLY what works — the strengths, the effects the prose achieves, and the \
+             choices that earn their place and should be protected. You raise no concerns, \
+             propose no changes, and ask no questions; you make the case for the writing as it \
+             stands",
+            "a one-sentence statement of a genuine strength",
+            "a generic compliment",
+            "defend",
+        )
+    } else {
+        (
+            "the prosecution",
+            "state ONLY what fails — the weak claim, the lazy line, the unearned beat, the soft \
+             generalization, the image that overstates. You offer no praise and no remedy (you \
+             accuse, you do not repair) and you ask no questions; you state the charge and let \
+             it stand",
+            "a one-sentence statement of a real weakness",
+            "a vague dissatisfaction",
+            "charge",
+        )
+    };
+    format!(
+        "You are {role} examining a paragraph of prose.{context} Your task is to {task}. Be \
+         specific and grounded — point at an actual phrase or move in the text, never {vague}. \
+         Respect the author's declared choices (listed below). Respond ONLY with a JSON array; \
+         each item is {{\"category\": one of \
+         assumption_surfacing|tension_detection|framing_interrogation|significance_probing|\
+         implicit_comparison, \"severity\": notice|inquiry|probe, \"question\": {item} in your \
+         voice in the paragraph's language, \"question_en\": the same in English}}. Return [] if \
+         there is nothing to {act}."
+    )
+}
+
+/// The verdict user-prompt (Defender / Prosecutor). No fast-pass seam (verdict
+/// personas skip the Fast track). Bilingual like [`build_slow_prompt`].
+pub fn build_verdict_prompt(
+    persona: &Persona,
+    paragraph: &str,
+    intent_summary: &str,
+    lang: super::lang::Lang,
+) -> String {
+    let language = super::lang::language_name(lang);
+    format!(
+        "{persona}\n\nDECLARED CHOICES (the author owns these — do not re-litigate what they \
+         cover):\n{intent_summary}\n\n\
+         The paragraph is in {language}; write each `question` in {language} and its \
+         `question_en` in English.\n\n\
+         PARAGRAPH:\n{paragraph}\n\n\
+         Return the JSON array.",
+        persona = persona_summary(persona),
+    )
 }
 
 /// A compact description of the active persona for the prompt — its character and
@@ -325,16 +409,66 @@ mod tests {
     }
 
     #[test]
+    fn question_stance_leaves_the_neutral_prompt_untouched() {
+        // The guardrail: inner-socrates (and every non-verdict persona) is ALWAYS
+        // neutral — slow_system_for(Question, …) must be byte-identical to the
+        // pre-existing slow_system(…) for every genre.
+        for g in [None, Some("technical"), Some("fantasy"), Some("theology")] {
+            assert_eq!(slow_system_for(Stance::Question, g), slow_system(g), "genre {g:?}");
+        }
+    }
+
+    #[test]
+    fn verdict_prompts_state_not_question_and_stay_bilingual() {
+        let defend = slow_system_for(Stance::Praise, None);
+        assert!(defend.contains("counsel for the defense"), "{defend}");
+        assert!(defend.contains("state ONLY what works"));
+        assert!(!defend.contains("never praise"), "verdict drops the never-praise clause");
+        // Multilingual: same bilingual contract as the neutral track.
+        assert!(defend.contains("in the paragraph's language"));
+        assert!(defend.contains("question_en"));
+        assert!(defend.contains("assumption_surfacing|tension_detection"));
+
+        let charge = slow_system_for(Stance::Concern, None);
+        assert!(charge.contains("the prosecution"), "{charge}");
+        assert!(charge.contains("state ONLY what fails"));
+        assert!(charge.contains("you accuse, you do not repair"));
+        assert!(charge.contains("question_en"));
+
+        // Defense and prosecution are genuinely different prompts.
+        assert_ne!(defend, charge);
+    }
+
+    #[test]
+    fn verdict_user_prompt_is_multilingual() {
+        let p = Persona { stance: Stance::Praise, ..Persona::default_inner_socrates() };
+        // A Russian paragraph → the prompt instructs Russian output + English fallback.
+        let prompt = build_verdict_prompt(&p, "Текст.", "None.", super::super::lang::Lang::Ru);
+        assert!(prompt.contains("Russian"), "{prompt}");
+        assert!(prompt.contains("question_en"));
+        // No fast-pass seam in verdict mode.
+        assert!(!prompt.contains("ALREADY ASKED"));
+    }
+
+    #[test]
     fn slow_genre_context_aliases_and_unknown() {
         // Aliases and case/separator normalisation resolve.
         assert!(slow_genre_context(Some("IT")).unwrap().contains("technical document"));
         assert!(slow_genre_context(Some("popular science")).unwrap().contains("science writing"));
         assert!(slow_genre_context(Some("Literary-Fiction")).unwrap().contains("literary fiction"));
+        // 1.4.7 — ideas genres + their aliases.
+        assert!(slow_genre_context(Some("dystopian")).unwrap().contains("imagined society is an argument"));
+        assert!(slow_genre_context(Some("religious")).unwrap().contains("revelation and tradition"));
+        // Non-empiricist framing: theology and philosophy explicitly disclaim empirical proof.
+        assert!(slow_genre_context(Some("theology")).unwrap().contains("not empirical evidence"));
+        assert!(slow_genre_context(Some("philosophy")).unwrap().contains("not to empirical proof"));
         // Every known genre yields a distinct, non-empty clause.
         let keys = [
             "literary", "fantasy", "scifi", "mystery", "memoir", "historical", "romance",
             "horror", "ya", "comedy", "nonfiction", "technical", "documentation", "academic",
             "science", "business",
+            // 1.4.7 AUDIENCE-1.1 — ideas genres.
+            "utopian", "philosophy", "theology",
         ];
         let mut seen = std::collections::BTreeSet::new();
         for k in keys {
