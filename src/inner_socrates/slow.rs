@@ -19,9 +19,12 @@ use super::types::{Category, Persona, Severity, SocraticFinding};
 /// technical / documentation authors get a calibrated interrogator. Call
 /// `slow_system(cfg.genre.as_deref())` at the call site.
 pub fn slow_system(genre: Option<&str>) -> String {
+    // Default (no genre, or an unknown one) preserves the pre-AUDIENCE-1 framing:
+    // a fiction reader. AUDIENCE-1 is purely additive — only an explicitly
+    // declared genre changes the framing.
     let context_line = match slow_genre_context(genre) {
         Some(ctx) => format!("You are reading a {ctx}."),
-        None => "You are reading a prose manuscript.".to_string(),
+        None => "You are reading a fiction manuscript.".to_string(),
     };
     format!(
         "You are a Socratic reader — a careful interlocutor in the classical sense. {context_line} \
@@ -299,23 +302,23 @@ mod tests {
 
     #[test]
     fn slow_system_is_genre_aware() {
-        // No genre → neutral framing, never the old hardcoded "fiction".
-        let neutral = slow_system(None);
-        assert!(neutral.contains("prose manuscript"), "{neutral}");
-        assert!(!neutral.to_lowercase().contains("fiction"), "neutral must not assume fiction");
-        // Nonfiction genres swap the framing entirely.
+        // No genre → the pre-AUDIENCE-1 fiction framing (purely additive: an
+        // author who never sets a genre sees exactly the old behaviour).
+        let default = slow_system(None);
+        assert!(default.contains("fiction manuscript"), "{default}");
+        // Nonfiction genres swap the framing entirely (no "fiction").
         let tech = slow_system(Some("technical"));
         assert!(tech.contains("technical document"), "{tech}");
         assert!(!tech.to_lowercase().contains("fiction"));
         let docs = slow_system(Some("documentation"));
         assert!(docs.contains("instruction must be followable"), "{docs}");
-        // Fiction genres still get a (more specific) fiction framing.
+        // Fiction genres get a (more specific) fiction framing.
         let fant = slow_system(Some("fantasy"));
         assert!(fant.contains("fantasy manuscript"), "{fant}");
-        // Unknown genre degrades to neutral.
-        assert!(slow_system(Some("interpretive-dance")).contains("prose manuscript"));
+        // An unknown genre degrades to the fiction default, not a nonfiction one.
+        assert!(slow_system(Some("interpretive-dance")).contains("fiction manuscript"));
         // The JSON contract (5 prose categories) survives in every framing.
-        for s in [&neutral, &tech, &fant] {
+        for s in [&default, &tech, &fant] {
             assert!(s.contains("assumption_surfacing|tension_detection"), "category list missing");
             assert!(s.contains("question_en"));
         }
