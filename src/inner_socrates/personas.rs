@@ -203,6 +203,77 @@ pub fn bundled() -> Vec<Persona> {
                 (UnattributedDialogue, 0.0),
             ],
         ),
+        // ── Ideas personas (1.4.7 AUDIENCE-1.1) — utopia / philosophy / theology ──
+        p(
+            "philosophical-reader",
+            "The Dialectician",
+            "An argument is only as sound as the premise it won't name.",
+            "You read philosophical prose for the structure of its argument. You are not an \
+             empiricist demanding data — you attend to logic: the premise asserted without \
+             being stated, the term that quietly shifts meaning between sentences, the \
+             counterexample the author did not address, the conclusion that is valid but \
+             rests on an unsound step. You never correct and never rewrite; you ask the \
+             question that the argument must answer to stand.",
+            &[
+                (AssumptionSurfacing, 1.5),
+                (FramingInterrogation, 1.4),
+                (ImplicitComparison, 1.3),
+                (TensionDetection, 1.2),
+                (SignificanceProbing, 1.1),
+                (ModalClaims, 1.1),
+                (DramatizationGap, 0.0),
+                (TemporalDensity, 0.0),
+                (UnattributedDialogue, 0.0),
+            ],
+        ),
+        p(
+            "theological-reader",
+            "The Theological Reader",
+            "Within the tradition, does it cohere — and does the claim know its own scope?",
+            "You read theological prose with care and respect for its own terms. You do NOT \
+             demand empirical evidence — the claims rest on revelation, scripture, and \
+             tradition, and you take that ground seriously. You attend instead to internal \
+             coherence (does this sit with what was said earlier and with the tradition it \
+             invokes), to fidelity (is the source represented faithfully), and to the scope \
+             of each claim (what is offered as revealed, what as reasoned, what as analogy). \
+             You never correct and never prescribe; you ask the question that clarifies, not \
+             the one that disputes the faith.",
+            &[
+                (FramingInterrogation, 1.4),
+                (AssumptionSurfacing, 1.3),
+                (TensionDetection, 1.2),
+                (SignificanceProbing, 1.2),
+                (ImplicitComparison, 1.0),
+                // Attenuated empirical fast-categories: theology asserts with
+                // conviction by nature — don't read that as overclaiming/hedging.
+                (ModalClaims, 0.7),
+                (HedgedUncertainty, 0.8),
+                (DramatizationGap, 0.0),
+                (TemporalDensity, 0.0),
+                (UnattributedDialogue, 0.0),
+            ],
+        ),
+        p(
+            "utopian-architect",
+            "The Utopian Architect",
+            "The society is an argument. What does it assume, and what does it cost?",
+            "You read utopian and dystopian fiction as both a story and a designed argument \
+             about how people could live. The narrative still matters — you read it as \
+             fiction — but you also press on the society it imagines: what does this world \
+             assume about human nature, what alternative arrangement does it quietly \
+             foreclose, and what cost does the ideal elide or the dystopia exaggerate. You \
+             never correct and never rewrite; you ask what the imagined order presupposes.",
+            &[
+                // Argument weighting — heavy on what the society assumes / forecloses…
+                (AssumptionSurfacing, 1.5),
+                (ImplicitComparison, 1.4),
+                (SignificanceProbing, 1.3),
+                (FramingInterrogation, 1.2),
+                (TensionDetection, 1.1),
+                // …but the narrative categories stay at DEFAULT (1.0): this is the
+                // hybrid invariant — a utopia is still fiction, so it is NOT muted.
+            ],
+        ),
     ]
 }
 
@@ -312,12 +383,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn nine_distinct_bundled_personas() {
+    fn twelve_distinct_bundled_personas() {
         let ps = bundled();
-        // 5 fiction (1.3.x) + 4 nonfiction (1.4.6 AUDIENCE-1).
-        assert_eq!(ps.len(), 9);
+        // 5 fiction (1.3.x) + 4 nonfiction (1.4.6 AUDIENCE-1)
+        // + 3 ideas (1.4.7 AUDIENCE-1.1).
+        assert_eq!(ps.len(), 12);
         let ids: std::collections::BTreeSet<_> = ps.iter().map(|p| p.id.as_str()).collect();
-        assert_eq!(ids.len(), 9);
+        assert_eq!(ids.len(), 12);
         assert!(ids.contains("inner-socrates"));
         // Personas weight different categories (they read differently).
         let socr = ps.iter().find(|p| p.id == "inner-socrates").unwrap();
@@ -339,6 +411,38 @@ mod tests {
             assert!(p.mutes(Category::TemporalDensity), "{id} should mute TemporalDensity");
             assert!(p.mutes(Category::UnattributedDialogue), "{id} should mute UnattributedDialogue");
         }
+    }
+
+    #[test]
+    fn ideas_personas_calibrate_correctly() {
+        let ps = bundled();
+        let get = |id: &str| ps.iter().find(|p| p.id == id)
+            .unwrap_or_else(|| panic!("missing ideas persona `{id}`")).clone();
+
+        // philosophical-reader: argument-structure reader, narrative muted.
+        let phil = get("philosophical-reader");
+        assert_eq!(phil.emphasis_for(Category::AssumptionSurfacing), 1.5);
+        assert!(phil.emphasis_for(Category::ImplicitComparison) > 1.0); // counterarguments
+        assert!(phil.mutes(Category::DramatizationGap));
+        assert!(phil.mutes(Category::TemporalDensity));
+
+        // theological-reader: non-empiricist — the empirical fast categories are
+        // ATTENUATED (not hammered), narrative muted, coherence/framing lead.
+        let theo = get("theological-reader");
+        assert_eq!(theo.emphasis_for(Category::FramingInterrogation), 1.4);
+        assert!(theo.emphasis_for(Category::ModalClaims) < 1.0, "modal must be attenuated, not boosted");
+        assert!(theo.emphasis_for(Category::HedgedUncertainty) < 1.0);
+        assert!(theo.mutes(Category::DramatizationGap));
+
+        // utopian-architect: HYBRID — argument-weighted but narrative stays LIVE.
+        let uto = get("utopian-architect");
+        assert_eq!(uto.emphasis_for(Category::AssumptionSurfacing), 1.5);
+        assert!(uto.emphasis_for(Category::ImplicitComparison) > 1.0); // foreclosed alternatives
+        // The hybrid invariant: a utopia is still fiction — narrative NOT muted.
+        assert!(!uto.mutes(Category::DramatizationGap), "utopian-architect must keep narrative live");
+        assert!(!uto.mutes(Category::TemporalDensity));
+        assert!(!uto.mutes(Category::UnattributedDialogue));
+        assert_eq!(uto.emphasis_for(Category::DramatizationGap), 1.0); // default, untouched
     }
 
     #[test]
