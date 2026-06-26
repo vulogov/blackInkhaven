@@ -460,10 +460,12 @@ impl Node {
             NodeKind::Book => self.slug.clone(),
             NodeKind::Paragraph => {
                 // content_type drives the extension. Default / None /
-                // `"typst"` → `.typ`; `"hjson"` → `.hjson`. Future
-                // values gain their own arms.
+                // `"typst"` → `.typ`; `"hjson"` → `.hjson`;
+                // `"jinja"` → `.jinja` (STRUCT-1, rendered to `.typ` at
+                // assembly time). Future values gain their own arms.
                 let ext = match self.content_type.as_deref() {
                     Some("hjson") => "hjson",
+                    Some("jinja") => "jinja",
                     _ => "typ",
                 };
                 format!("{:02}-{}.{}", self.order, self.slug, ext)
