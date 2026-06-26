@@ -2123,6 +2123,32 @@ inner_socrates_default_persona: skeptical-practitioner
 
 See [Tutorial 90 — Nonfiction reader personas](Tutorials/90-nonfiction-personas.md).
 
+## 1.4.9 — Reusable content blocks (REUSE-1)
+
+Write a warning, a procedure note, or an admonition once and reference it from
+many places. Reusable prose lives as ordinary Typst paragraphs in a **Snippets**
+system book; elsewhere you reference it with a standard Typst
+`#include "../../snippets/<slug>.typ"`. At Book assembly inkhaven copies every
+snippet to a `snippets/` sidecar next to the assembled book, so the include
+resolves at `typst compile` — **no new Typst syntax**.
+
+- **Authoring:** add a paragraph under the **Snippets** book (its slug is the
+  include target); write any Typst. There is **no enable flag** — the feature is
+  self-gating, and a project with no Snippets book pays nothing.
+- **Insert/replace:** `Ctrl+V x` fuzzy-picks a snippet and inserts a
+  depth-correct `#include` (or replaces the path of the include under the
+  cursor). `Ctrl+V Shift+X` lists snippets + reference counts.
+- **Validation:** a save-time check flags any `#include` whose snippet slug isn't
+  defined (status bar / F8 / `Ctrl+V N`), gated on `typst_compile.diagnostics`
+  (default on). `inkhaven snippets check` validates the whole project (exit 1 on
+  a missing reference; orphaned snippets are warnings).
+- **Scripting:** read-only `ink.snippets.{list,get,check}`.
+
+The Snippets book is excluded from BOOK-RAG by default (reusable boilerplate is
+not retrieval-useful prose); add `"snippets"` to `book_rag.include_system_books`
+if you want snippet text searchable in Book-scope chat. See
+[Tutorial 92 — Reusable snippets](Tutorials/92-reusable-snippets.md).
+
 ## 1.4.8 — Terminology governance (TERMS-1)
 
 A **Glossary** system book holds canonical terms with their **banned synonyms**
