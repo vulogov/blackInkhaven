@@ -100,6 +100,28 @@ pub fn check_includes(
 /// The snippet slug of an include path shaped `…/snippets/<slug>.typ`, else
 /// `None`. Requires `snippets` to be the second-to-last path segment, so a
 /// `mysnippets/x.typ` does not match.
+/// REUSE-1 — every snippet slug referenced by an `#include "…/snippets/<slug>.typ"`
+/// in `source`, in order (duplicates kept — the caller tallies). Used for
+/// reference counts and `snippets check`.
+pub fn snippet_references(source: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for line in source.lines() {
+        let mut search = 0usize;
+        while let Some(rel) = line[search..].find("#include") {
+            let after = search + rel + "#include".len();
+            let Some(q1_rel) = line[after..].find('"') else { break };
+            let path_start = after + q1_rel + 1;
+            let Some(q2_rel) = line[path_start..].find('"') else { break };
+            let path_end = path_start + q2_rel;
+            if let Some(slug) = snippet_slug_of(&line[path_start..path_end]) {
+                out.push(slug);
+            }
+            search = path_end + 1;
+        }
+    }
+    out
+}
+
 pub fn snippet_slug_of(path: &str) -> Option<String> {
     let segs: Vec<&str> = path.trim().split('/').collect();
     if segs.len() < 2 || segs[segs.len() - 2] != "snippets" {
@@ -235,6 +257,18 @@ broken
         assert!(check_includes("#include \"../other/foo.typ\"", &known).is_empty());
         // `mysnippets/` is not the snippets dir (segment must equal `snippets`).
         assert!(check_includes("#include \"mysnippets/x.typ\"", &known).is_empty());
+    }
+
+    #[test]
+    fn snippet_references_extracts_slugs() {
+        let src = "#include \"../snippets/a.typ\"\ntext\n#include \"../../snippets/b.typ\" #include \"globals.typ\"\n";
+        assert_eq!(snippet_references(src), vec!["a", "b"]);
+        // Duplicates are kept (callers tally).
+        assert_eq!(
+            snippet_references("#include \"../snippets/x.typ\"\n#include \"../snippets/x.typ\""),
+            vec!["x", "x"]
+        );
+        assert!(snippet_references("no includes here").is_empty());
     }
 
     #[test]
