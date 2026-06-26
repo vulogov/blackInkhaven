@@ -2123,6 +2123,47 @@ inner_socrates_default_persona: skeptical-practitioner
 
 See [Tutorial 90 — Nonfiction reader personas](Tutorials/90-nonfiction-personas.md).
 
+## 1.4.8 — Terminology governance (TERMS-1)
+
+A **Glossary** system book holds canonical terms with their **banned synonyms**
+as HJSON paragraphs. The editor red-underlines the synonyms in prose (so
+"auth token" is flagged while the canonical "access token" is clean), and
+`inkhaven terms check` scans the whole project for them. There is **no enable
+flag** — the overlay is self-gating: an empty Glossary flags nothing.
+
+A glossary entry (one HJSON paragraph under the Glossary book — press `P` there
+and the title becomes the `term`):
+
+```hjson
+{
+  term: access token
+  definition: A short-lived credential.
+  synonyms: [
+    auth token
+    authentication token
+  ]
+  // scope: global   // or a book slug to enforce only in that book
+  // note: chosen for clarity
+}
+```
+
+- `term` (required) — the canonical form to standardise on.
+- `synonyms` — the banned forms, flagged in prose (1–3 words each).
+- `scope` — `global` (default) or a book slug; `inkhaven terms check --book`
+  honours it precisely (the live overlay applies the whole Glossary).
+
+**Toggle:** `Ctrl+V z` flips the overlay; `Ctrl+V Shift+Z`, with the cursor on a
+flagged synonym, declares its canonical term a **deliberate variant** (an intent
+that stops flagging it). **Colour:** the theme key `style_warning_banned_synonym_fg`
+(default red `#e05a5a`) sets the underline hue.
+
+**CLI:** `inkhaven terms check [--book <slug>] [--json]` (exits non-zero on
+findings — CI-ready); `inkhaven terms suggest [--book] [--auto-create]` proposes
+glossary entries via the LLM. **Scripting:** read-only `ink.terms.{list,get,check}`
+plus `ink.terms.declare_intent` (store_write). The Glossary book is excluded
+from BOOK-RAG. See
+[Tutorial 91 — Terminology governance](Tutorials/91-terminology-governance.md).
+
 ## 1.4.5 — Bibliography & citations (SOURCES-1)
 
 ### `sources` (1.4.5+) — the citation engine

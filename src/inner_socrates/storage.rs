@@ -548,6 +548,31 @@ mod tests {
     }
 
     #[test]
+    fn terms_deliberate_variant_intent_round_trips() {
+        // TERMS-1 — a declared deliberate variant writes a raw intent row with
+        // `banned_synonym` coverage; the canonical term is the description, so
+        // the detector can read it back for suppression.
+        use crate::inner_socrates::intent::{IntentKind, IntentScope, ScopeLevel};
+        let s = store();
+        s.add_intent_raw(
+            "t1",
+            &IntentKind::DeliberateVariant,
+            "access token",
+            &IntentScope::Project,
+            &["banned_synonym".to_string()],
+            ScopeLevel::Project,
+        )
+        .unwrap();
+        let rows = s.list_intent_rows_raw().unwrap();
+        let row = rows
+            .iter()
+            .find(|r| r.coverage.iter().any(|c| c == "banned_synonym"))
+            .expect("banned_synonym intent row present");
+        assert_eq!(row.kind, "deliberate_variant");
+        assert_eq!(row.description, "access token");
+    }
+
+    #[test]
     fn findings_roundtrip_and_clear() {
         let s = store();
         let p = Uuid::new_v4();

@@ -455,6 +455,14 @@ pub enum Action {
     /// defined citation key and insert `@key` at the editor cursor.
     #[serde(rename = "view.cite_picker")]
     ViewCitePicker,
+    /// Ctrl+V z (1.4.8+ TERMS-1) — toggle the banned-synonym (Glossary)
+    /// overlay in the editor.
+    #[serde(rename = "view.toggle_terms_overlay")]
+    ViewToggleTermsOverlay,
+    /// Ctrl+V Shift+Z (1.4.8+ TERMS-1) — declare the banned synonym under the
+    /// cursor a deliberate variant (suppresses the overlay for its canonical).
+    #[serde(rename = "view.declare_term_intent")]
+    ViewDeclareTermIntent,
     /// Ctrl+V P — fuzzy paragraph picker (1.2.4+).
     #[serde(rename = "view.fuzzy_paragraph_picker")]
     ViewFuzzyParagraphPicker,
@@ -962,6 +970,8 @@ impl Action {
             Action::ViewToggleBookmark => "bookmark".into(),
             Action::ViewListBookmarks => "bookmarks".into(),
             Action::ViewCitePicker => "cite".into(),
+            Action::ViewToggleTermsOverlay => "terms overlay".into(),
+            Action::ViewDeclareTermIntent => "term deliberate".into(),
             Action::ViewFuzzyParagraphPicker => "find ¶".into(),
             Action::ViewRecentParagraphPicker => "recent ¶".into(),
             Action::ViewKillRingPicker => "kill-ring".into(),
@@ -1220,6 +1230,10 @@ impl Action {
                 "Open the bookmark picker — every bookmarked paragraph in the project. Enter opens; D removes the bookmark.".into(),
             Action::ViewCitePicker =>
                 "Cite picker (1.4.5+ SOURCES-1, Ctrl+V @) — fuzzy-find a citation defined in the Sources book by key / author / title, Enter inserts `@key` at the editor cursor. Empty list → add entries to the Sources book first.".into(),
+            Action::ViewToggleTermsOverlay =>
+                "Toggle the terminology overlay (1.4.8+ TERMS-1, Ctrl+V z) — red-underlines banned synonyms of Glossary canonical terms in the editor. Default on (within the master style toggle); flip it off when it distracts. Define terms in the Glossary system book.".into(),
+            Action::ViewDeclareTermIntent =>
+                "Declare deliberate (1.4.8+ TERMS-1, Ctrl+V Shift+Z) — with the cursor on a red-underlined banned synonym, record its canonical term as a deliberate variant in the intent ledger, so the overlay and `inkhaven terms check` stop flagging it. The inverse of fixing it.".into(),
             Action::ViewFuzzyParagraphPicker =>
                 "Fuzzy paragraph picker — type any substring of the title or slug path, Enter opens the highlighted hit.".into(),
             Action::ViewRecentParagraphPicker =>
@@ -1580,6 +1594,10 @@ impl KeyBindings {
                 // 1.4.5+ SOURCES-1 — Ctrl+V @ cite picker (insert @key).
                 // Editor-scoped: the pick lands in the open buffer.
                 entry("@", Action::ViewCitePicker, Scope::Editor),
+                // 1.4.8+ TERMS-1 — Ctrl+V z toggle the banned-synonym overlay;
+                // Ctrl+V Shift+Z declares the term under the cursor deliberate.
+                entry("z", Action::ViewToggleTermsOverlay, Scope::Any),
+                entry("Shift+z", Action::ViewDeclareTermIntent, Scope::Editor),
                 // 1.2.7+ — same picker sorted by modified_at desc.
                 entry("Shift+p", Action::ViewRecentParagraphPicker, Scope::Any),
                 // 1.2.8+ — kill-ring picker (paragraph undelete history).
@@ -2134,6 +2152,24 @@ mod tests {
         assert_eq!(
             k.resolve_view_sub(&upper, Focus::Editor),
             Some(Action::ViewTimeline)
+        );
+    }
+
+    #[test]
+    fn view_z_toggles_terms_overlay() {
+        // TERMS-1 — Ctrl+V z is the banned-synonym overlay toggle (the one
+        // remaining free lowercase view chord).
+        let k = KeyBindings::defaults();
+        let z = KeyEvent::new(KeyCode::Char('z'), KeyModifiers::NONE);
+        assert_eq!(
+            k.resolve_view_sub(&z, Focus::Editor),
+            Some(Action::ViewToggleTermsOverlay)
+        );
+        // Shift+Z declares the term under the cursor deliberate (distinct chord).
+        let shift_z = KeyEvent::new(KeyCode::Char('Z'), KeyModifiers::SHIFT);
+        assert_eq!(
+            k.resolve_view_sub(&shift_z, Focus::Editor),
+            Some(Action::ViewDeclareTermIntent)
         );
     }
 

@@ -1794,6 +1794,10 @@ pub(crate) struct App {
     /// `editor.echo_overlay` (`Ctrl+B Shift+K`); same
     /// three-state semantics as `style_warnings_toggle`.
     echo_overlay_toggle: Option<bool>,
+    /// 1.4.8+ TERMS-1 — session-local override for the banned-synonym overlay
+    /// (`Ctrl+V z`). `None` (default) = follow the master style toggle (on);
+    /// `Some(false)` hides it, `Some(true)` forces it on.
+    terms_overlay_toggle: Option<bool>,
     /// 1.2.20+ C.1.b — cached set of stems echoing near
     /// the open paragraph, recomputed by
     /// `refresh_echo_overlay`.  The render path turns this
@@ -2377,6 +2381,7 @@ impl App {
             tts,
             style_warnings_toggle: None,
             echo_overlay_toggle: None,
+            terms_overlay_toggle: None,
             echo_overlay_stems: std::collections::HashSet::new(),
             echo_overlay_chapter: None,
             echo_overlay_last_key: None,
@@ -6451,6 +6456,30 @@ impl App {
         false
     }
 
+    /// Whether `parent` is the Glossary system book or nested under it — used to
+    /// seed a new paragraph with the glossary-entry HJSON template (TERMS-1).
+    fn parent_is_under_glossary(
+        &self,
+        parent: Option<&crate::store::node::Node>,
+    ) -> bool {
+        let Some(glossary_root_id) =
+            self.system_book_id(crate::store::SYSTEM_TAG_GLOSSARY)
+        else {
+            return false;
+        };
+        let Some(parent) = parent else {
+            return false;
+        };
+        let mut cur: Option<&crate::store::node::Node> = Some(parent);
+        while let Some(node) = cur {
+            if node.id == glossary_root_id {
+                return true;
+            }
+            cur = node.parent_id.and_then(|id| self.hierarchy.get(id));
+        }
+        false
+    }
+
     /// Insert-after variant: walks up from the tree cursor to find a node of
     /// the same `kind` as the one being added; if found, the new node will be
     /// placed immediately after it. Falls back to append-at-end if no
@@ -10076,6 +10105,8 @@ impl App {
             A::ViewToggleBookmark => self.toggle_bookmark(),
             A::ViewListBookmarks => self.open_bookmark_picker_modal(),
             A::ViewCitePicker => self.open_cite_picker(),
+            A::ViewToggleTermsOverlay => self.toggle_terms_overlay(),
+            A::ViewDeclareTermIntent => self.declare_term_intent_at_cursor(),
             A::ViewFuzzyParagraphPicker => self.open_fuzzy_paragraph_picker(),
             A::ViewRecentParagraphPicker => self.open_recent_paragraph_picker(),
             A::ViewKillRingPicker => self.open_kill_ring_picker(),
@@ -11023,6 +11054,8 @@ impl App {
         self.bible_section(&mut rows, SYSTEM_TAG_PLACES, "PLACES", None, Some(&dv));
         self.bible_section(&mut rows, SYSTEM_TAG_ARTEFACTS, "ARTEFACTS", None, Some(&dv));
         self.bible_section(&mut rows, SYSTEM_TAG_FACTS, "FACTS", None, None);
+        // TERMS-1 — the Glossary's canonical terms, jumpable to their entries.
+        self.bible_section(&mut rows, crate::store::SYSTEM_TAG_GLOSSARY, "GLOSSARY", None, None);
         rows
     }
 
@@ -14214,6 +14247,74 @@ impl App {
     fn echo_overlay_active(&self) -> bool {
         self.echo_overlay_toggle
             .unwrap_or(self.cfg.editor.echo_overlay)
+    }
+
+    /// 1.4.8+ TERMS-1 — flip the banned-synonym overlay (`Ctrl+V z`). Default is
+    /// on (within the master style toggle), so the first press hides it.
+    fn toggle_terms_overlay(&mut self) {
+        let new_state = match self.terms_overlay_toggle {
+            None => Some(false), // default-on → first press turns it off
+            Some(true) => Some(false),
+            Some(false) => Some(true),
+        };
+        self.terms_overlay_toggle = new_state;
+        let effective = new_state.unwrap_or(true);
+        self.status = if effective {
+            "terminology overlay: ON · banned synonyms underlined in red".into()
+        } else {
+            "terminology overlay: off".into()
+        };
+    }
+
+    /// 1.4.8+ TERMS-1 (`Ctrl+V Shift+Z`) — with the cursor on a banned synonym,
+    /// declare its canonical term a deliberate variant in the intent ledger, so
+    /// the overlay + `terms check` stop flagging it.
+    fn declare_term_intent_at_cursor(&mut self) {
+        // Find the canonical term under the cursor (field accesses only).
+        let canonical = {
+            let Some(doc) = self.opened.as_ref() else {
+                self.status = "no paragraph open".into();
+                return;
+            };
+            let (row, col) = doc.textarea.cursor();
+            let lines = doc.textarea.lines();
+            let Some(line) = lines.get(row) else { return };
+            let detector = crate::tui::style_warnings::BannedSynonymDetector::from_store(
+                &self.store,
+                &self.hierarchy,
+                None,
+            );
+            match detector.hint_at(line, col) {
+                Some((_synonym, canonical)) => canonical,
+                None => {
+                    self.status =
+                        "terms: cursor is not on a banned synonym (move onto the red underline)".into();
+                    return;
+                }
+            }
+        };
+        use crate::inner_socrates::intent::{IntentKind, IntentScope, ScopeLevel};
+        use crate::inner_socrates::storage::InnerSocratesStore;
+        match InnerSocratesStore::open_for_project(self.store.project_root()) {
+            Ok(is) => {
+                let id = uuid::Uuid::new_v4().to_string();
+                let res = is.add_intent_raw(
+                    &id,
+                    &IntentKind::DeliberateVariant,
+                    &canonical,
+                    &IntentScope::Project,
+                    &["banned_synonym".to_string()],
+                    ScopeLevel::Project,
+                );
+                self.status = match res {
+                    Ok(()) => format!(
+                        "terms: declared \"{canonical}\" deliberate — its synonyms are no longer flagged"
+                    ),
+                    Err(e) => format!("terms: could not declare intent: {e}"),
+                };
+            }
+            Err(e) => self.status = format!("terms: inner-socrates store: {e}"),
+        }
     }
 
     /// The nearest `Chapter` ancestor of the open
@@ -21516,6 +21617,12 @@ impl App {
                             // book (or one of its chapters) is a citation
                             // entry — seed the HJSON schema, key = the title.
                             Some(crate::sources::seed_sources_body_for_tui(
+                                &title,
+                            ))
+                        } else if self.parent_is_under_glossary(parent.as_ref()) {
+                            // TERMS-1: a paragraph under the Glossary book is a
+                            // glossary entry — seed the schema, term = the title.
+                            Some(crate::glossary::seed_glossary_body_for_tui(
                                 &title,
                             ))
                         } else {

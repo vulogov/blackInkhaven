@@ -1191,6 +1191,10 @@ pub struct ThemeConfig {
     /// reads as "wrong era" caution, distinct from the show-don't-tell teal.
     #[serde(default)]
     pub style_warning_anachronism_fg: String,
+    /// 1.4.8+ TERMS-1 — colour for banned-synonym warnings (the Glossary
+    /// overlay). Default red `#e05a5a`.
+    #[serde(default)]
+    pub style_warning_banned_synonym_fg: String,
     /// 1.2.20+ — colour for the live echo overlay
     /// (`Ctrl+B Shift+K`).  Distinct from the
     /// repeated-phrase magenta so a within-paragraph
@@ -1326,6 +1330,8 @@ impl Default for ThemeConfig {
             // distinct from the filter-word gold and the
             // show-don't-tell teal.
             style_warning_anachronism_fg: "#eba672".into(),
+            // 1.4.8+ TERMS-1 — clear red "wrong term" caution.
+            style_warning_banned_synonym_fg: "#e05a5a".into(),
             // 1.2.20+ — muted purple, distinct from the
             // repeated-phrase magenta so the two
             // repetition overlays don't read as one.
@@ -3354,7 +3360,7 @@ impl Default for BookRagConfig {
             .iter()
             .map(|s| s.to_string())
             .collect(),
-            exclude_system_books: ["scripts", "prompts", "typst", "help", "intent", "sources"]
+            exclude_system_books: ["scripts", "prompts", "typst", "help", "intent", "sources", "glossary"]
                 .iter()
                 .map(|s| s.to_string())
                 .collect(),

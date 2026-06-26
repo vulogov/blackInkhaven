@@ -48,6 +48,9 @@ pub struct Theme {
     /// A warm amber-orange "wrong era" caution,
     /// distinct from the other style-warning hues.
     pub style_warning_anachronism_fg: Color,
+    /// 1.4.8+ TERMS-1 — colour for banned-synonym warnings (the Glossary
+    /// overlay). A clear red "wrong term" caution, distinct from the other hues.
+    pub style_warning_banned_synonym_fg: Color,
     /// 1.2.20+ — colour for the live echo overlay
     /// (`Ctrl+B Shift+K`).  Distinct from the
     /// repeated-phrase magenta so a within-paragraph
@@ -193,6 +196,12 @@ impl Theme {
                 // the show-don't-tell teal.
                 Color::Rgb(0xeb, 0xa6, 0x72),
             ),
+            style_warning_banned_synonym_fg: color_or(
+                &cfg.style_warning_banned_synonym_fg,
+                // Clear red — "wrong term" caution (TERMS-1), distinct from the
+                // anachronism amber and the filter-word gold.
+                Color::Rgb(0xe0, 0x5a, 0x5a),
+            ),
             style_warning_echo_fg: color_or(
                 &cfg.style_warning_echo_fg,
                 // Muted purple — its own hue, distinct
@@ -325,6 +334,7 @@ impl Theme {
             "style_warning_repeated_phrase_fg" => self.style_warning_repeated_phrase_fg = parsed,
             "style_warning_show_dont_tell_fg" => self.style_warning_show_dont_tell_fg = parsed,
             "style_warning_anachronism_fg" => self.style_warning_anachronism_fg = parsed,
+            "style_warning_banned_synonym_fg" => self.style_warning_banned_synonym_fg = parsed,
             "style_warning_echo_fg" => self.style_warning_echo_fg = parsed,
             "language_word_fg" => self.language_word_fg = parsed,
             "pov_chip_bg" => self.pov_chip_bg = parsed,
