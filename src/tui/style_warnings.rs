@@ -767,18 +767,39 @@ impl BannedSynonymDetector {
                 synonyms.insert(words.join(" "), canonical.clone());
             }
         }
+        // Suppression is matched case-insensitively against the canonical term.
+        let suppressed = suppressed.into_iter().map(|s| s.to_lowercase()).collect();
         Self { synonyms, suppressed, max_words }
     }
 
-    /// Convenience: build directly from the store (the render path).
+    /// Convenience: build directly from the store (the render path). Reads the
+    /// **declared deliberate-variant intents** (TERMS-1) so a canonical term the
+    /// author marked deliberate is not flagged.
     pub fn from_store(
         store: &crate::store::Store,
         hierarchy: &crate::store::hierarchy::Hierarchy,
         book_scope: Option<&str>,
-        suppressed: std::collections::HashSet<String>,
     ) -> Self {
         let entries = crate::glossary::glossary_entries_from_store(store, hierarchy, book_scope);
-        Self::from_entries(&entries, suppressed)
+        Self::from_entries(&entries, Self::suppressed_terms(store))
+    }
+
+    /// The canonical terms an author declared deliberate (intent rows whose
+    /// coverage includes `banned_synonym`). Lowercased.
+    pub fn suppressed_terms(
+        store: &crate::store::Store,
+    ) -> std::collections::HashSet<String> {
+        crate::inner_socrates::storage::InnerSocratesStore::open_for_project(store.project_root())
+            .ok()
+            .and_then(|s| s.list_intent_rows_raw().ok())
+            .map(|rows| {
+                rows.into_iter()
+                    .filter(|r| r.coverage.iter().any(|c| c == "banned_synonym"))
+                    .map(|r| r.description.trim().to_lowercase())
+                    .filter(|s| !s.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -819,7 +840,7 @@ impl BannedSynonymDetector {
                     .collect::<Vec<_>>()
                     .join(" ");
                 if let Some(canonical) = self.synonyms.get(&phrase) {
-                    if !self.suppressed.contains(canonical) {
+                    if !self.suppressed.contains(&canonical.to_lowercase()) {
                         let byte_start = words[i].0;
                         let (last_start, last_word) = words[i + n - 1];
                         let byte_end = last_start + last_word.len();

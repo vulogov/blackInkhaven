@@ -986,7 +986,6 @@ impl super::super::App {
                     &self.store,
                     &self.hierarchy,
                     None,
-                    Default::default(),
                 ),
             )
         } else {
@@ -1355,7 +1354,6 @@ impl super::super::App {
                     &self.store,
                     &self.hierarchy,
                     None,
-                    Default::default(),
                 ),
             )
         } else {

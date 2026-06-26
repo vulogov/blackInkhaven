@@ -75,7 +75,7 @@ fn check(project: &Path, book: Option<&str>, json: bool) -> Result<()> {
         // The detector is scoped to this book (global + this book's entries).
         // Suppression set is empty until T-P4 wires the intent ledger.
         let detector =
-            BannedSynonymDetector::from_store(&store, &h, Some(&book.slug), Default::default());
+            BannedSynonymDetector::from_store(&store, &h, Some(&book.slug));
         if detector.is_empty() {
             continue; // no glossary entries apply — nothing to flag in this book
         }

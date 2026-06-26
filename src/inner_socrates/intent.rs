@@ -26,6 +26,9 @@ pub enum IntentKind {
     VoiceInstabilityIntentional,
     ProseBeliefIntentionalDistance,
     StylisticPatternDeliberate,
+    // TERMS-1 (1.4.8+) — a deliberately-kept terminology variant (suppresses the
+    // banned-synonym overlay for one canonical term).
+    DeliberateVariant,
 }
 
 impl IntentKind {
@@ -41,6 +44,7 @@ impl IntentKind {
             IntentKind::VoiceInstabilityIntentional => "voice_instability_intentional",
             IntentKind::ProseBeliefIntentionalDistance => "prose_belief_intentional_distance",
             IntentKind::StylisticPatternDeliberate => "stylistic_pattern_deliberate",
+            IntentKind::DeliberateVariant => "deliberate_variant",
         }
     }
 
@@ -56,6 +60,7 @@ impl IntentKind {
             "voice_instability_intentional" => IntentKind::VoiceInstabilityIntentional,
             "prose_belief_intentional_distance" => IntentKind::ProseBeliefIntentionalDistance,
             "stylistic_pattern_deliberate" => IntentKind::StylisticPatternDeliberate,
+            "deliberate_variant" => IntentKind::DeliberateVariant,
             _ => return None,
         })
     }
