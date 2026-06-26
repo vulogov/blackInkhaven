@@ -2046,10 +2046,18 @@ inner_editor: {
   }
 }
 
-// Project-wide, consumed by `genre_aware` (and open to other features later):
-genre: literary_realism         // literary_realism | fantasy | scifi | mystery |
-                                //   memoir | historical | romance | horror | ya | comedy
+// Project-wide, consumed by Inner Editor's `genre_aware` AND (1.4.6) the
+// genre-aware Inner Socrates system prompt:
+genre: literary_realism         // fiction: literary_realism | fantasy | scifi |
+                                //   mystery | memoir | historical | romance | horror | ya | comedy
+                                // nonfiction (1.4.6): nonfiction | technical |
+                                //   documentation | academic | science | business
 ```
+
+With no `genre` declared, both companions keep their original fiction framing —
+the nonfiction genres are purely additive. A declared nonfiction genre reframes
+the Inner Socrates interrogator (procedures as reproduction attempts, claims
+needing support) and the Inner Editor (clarity/completeness as the craft).
 
 - **`tone` / `verbosity` / `praise_frequency`** are parsed tolerantly — a bad
   value falls back to its default rather than failing the whole config. The
@@ -2084,6 +2092,31 @@ suppressed. Scripts get the read-only `ink.inner_editor.*` inspectors plus
 `intent.declare` (store_write) and `engage` (ai_write); see
 [BUND_TUTORIAL.md](Bund/BUND_TUTORIAL.md). See
 [Tutorial 88 — Inner Editor](Tutorials/88-inner-editor.md).
+
+## 1.4.6 — Nonfiction reader personas (AUDIENCE-1)
+
+### `inner_socrates_default_persona` (1.4.6+) — project default persona
+
+A top-level project key naming the Inner Socrates persona a project should start
+with — useful for nonfiction/technical books that want a nonfiction reader by
+default instead of the fiction `inner-socrates`:
+
+```hjson
+// Top-level, beside `genre`:
+inner_socrates_default_persona: skeptical-practitioner
+```
+
+- The value is any persona id — bundled (`inner-socrates`, `careful-editor`,
+  `skeptical-reader`, `first-time-reader`, `slow-reader`, `skeptical-practitioner`,
+  `domain-newcomer`, `expert-reviewer`, `end-user`) or one of your own.
+- It is consulted **only** when no persona has been explicitly set for the
+  project. The moment you run `inner-socrates persona activate <id>` (or cycle
+  with `Ctrl+B J → S`), that explicit choice is stored and wins over this key.
+- `None` (the default) keeps the bundled fiction `inner-socrates`.
+- The Inner Socrates overview marks the active persona `(project default from
+  config)` while it comes from this key rather than an explicit activation.
+
+See [Tutorial 90 — Nonfiction reader personas](Tutorials/90-nonfiction-personas.md).
 
 ## 1.4.5 — Bibliography & citations (SOURCES-1)
 

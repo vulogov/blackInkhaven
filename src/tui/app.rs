@@ -12042,9 +12042,25 @@ impl App {
 
     fn build_inner_socrates_rows(&self) -> Vec<String> {
         use crate::inner_socrates::storage::InnerSocratesStore;
-        let persona = crate::inner_socrates::personas::active(self.store.project_root());
+        let root = self.store.project_root();
+        let persona = crate::inner_socrates::personas::active(root);
+        // AUDIENCE-1: flag when the active persona is the project config default
+        // rather than an explicit `persona set` — no DB row, config default
+        // resolves to this persona.
+        let explicit_set = InnerSocratesStore::open_for_project(root)
+            .ok()
+            .and_then(|s| s.active_persona_id().ok().flatten())
+            .is_some();
+        let from_config = !explicit_set
+            && crate::inner_socrates::personas::config_default_persona(root).as_deref()
+                == Some(persona.id.as_str());
+        let active_line = if from_config {
+            format!("Active persona: {} (project default from config)", persona.name)
+        } else {
+            format!("Active persona: {}", persona.name)
+        };
         let mut rows = vec![
-            format!("Active persona: {}", persona.name),
+            active_line,
             format!("  {}", persona.voice_summary),
             String::new(),
             format!("Ambient auto-check: {}", if self.socratic_auto { "ON" } else { "off (A toggles)" }),

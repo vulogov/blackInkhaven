@@ -14,18 +14,80 @@ use super::intent::{ConsultationResult, FindingContext, IntentLedger};
 use super::types::{Category, Persona, Severity, SocraticFinding};
 
 /// The Socratic system prompt — a careful reader who asks, never prescribes.
-pub const SLOW_SYSTEM: &str = "You are a Socratic reader of a fiction manuscript — a careful \
-interlocutor in the classical sense. Your task is to surface QUESTIONS about a paragraph of prose: \
-the assumptions it treats as given, the tensions inside it, the stance its framing presupposes, what \
-the scene does for the work, and the echoes it carries of earlier scenes. You never correct, never \
-suggest changes, never rewrite, never praise. Every finding is a question that helps the author see \
-what they have chosen. Be conservative: only raise a question when there is something genuinely worth \
-examining; if the paragraph is plain and self-aware, return nothing. Respect the author's declared \
-intentions (listed below) and do not re-raise what the fast pass already found. Respond ONLY with a \
-JSON array; each item is {\"category\": one of \
-assumption_surfacing|tension_detection|framing_interrogation|significance_probing|implicit_comparison, \
-\"severity\": notice|inquiry|probe, \"question\": a one-sentence question in your voice in the \
-paragraph's language, \"question_en\": the same question in English}. Return [] if nothing rises.";
+/// **Genre-aware** (1.4.6 AUDIENCE-1): the fiction framing is replaced by a
+/// neutral "prose" framing plus a genre-specific context line, so nonfiction /
+/// technical / documentation authors get a calibrated interrogator. Call
+/// `slow_system(cfg.genre.as_deref())` at the call site.
+pub fn slow_system(genre: Option<&str>) -> String {
+    // Default (no genre, or an unknown one) preserves the pre-AUDIENCE-1 framing:
+    // a fiction reader. AUDIENCE-1 is purely additive — only an explicitly
+    // declared genre changes the framing.
+    let context_line = match slow_genre_context(genre) {
+        Some(ctx) => format!("You are reading a {ctx}."),
+        None => "You are reading a fiction manuscript.".to_string(),
+    };
+    format!(
+        "You are a Socratic reader — a careful interlocutor in the classical sense. {context_line} \
+         Your task is to surface QUESTIONS about a paragraph of prose: \
+         the assumptions it treats as given, the tensions inside it, the stance its \
+         framing presupposes, what the passage does for the work, and the echoes it \
+         carries of earlier passages. You never correct, never suggest changes, never \
+         rewrite, never praise. Every finding is a question that helps the author see \
+         what they have chosen. Be conservative: only raise a question when there is \
+         something genuinely worth examining; if the paragraph is plain and self-aware, \
+         return nothing. Respect the author's declared intentions (listed below) and do \
+         not re-raise what the fast pass already found. Respond ONLY with a JSON array; \
+         each item is {{\"category\": one of \
+         assumption_surfacing|tension_detection|framing_interrogation|significance_probing|\
+         implicit_comparison, \
+         \"severity\": notice|inquiry|probe, \"question\": a one-sentence question in your \
+         voice in the paragraph's language, \"question_en\": the same question in English}}. \
+         Return [] if nothing rises."
+    )
+}
+
+/// A short genre context string for the Slow-track system prompt — the clause
+/// that follows "You are reading a …". Returns `None` for unknown / unset genre
+/// (the prompt degrades to neutral "prose manuscript" framing). The key set
+/// mirrors Inner Editor's `genre_fragment()`; the text differs (this primes the
+/// *interrogator*, that primes the *editor*).
+pub fn slow_genre_context(genre: Option<&str>) -> Option<&'static str> {
+    let g = genre?.trim().to_ascii_lowercase().replace([' ', '-'], "_");
+    Some(match g.as_str() {
+        // ── Fiction genres — "fiction manuscript" framing, now with specificity ──
+        "literary" | "literary_realism" | "literary_fiction" | "realism" =>
+            "literary fiction manuscript — attend to psychological depth and the texture of the ordinary",
+        "fantasy" | "high_fantasy" | "epic_fantasy" =>
+            "fantasy manuscript — invented registers and world-rules are conventional",
+        "scifi" | "sci_fi" | "science_fiction" =>
+            "science fiction manuscript — technical and speculative registers are expected",
+        "mystery" | "thriller" | "crime" =>
+            "mystery or thriller manuscript — pace and concealment are structural concerns",
+        "memoir" | "creative_nonfiction" | "essay" =>
+            "memoir or essay — the first-person voice and reflective stance are the craft",
+        "historical" | "historical_fiction" =>
+            "historical fiction manuscript — period register and anachronism are live questions",
+        "romance" => "romance manuscript — emotional interiority and dialogue carry the genre",
+        "horror" => "horror manuscript — dread lives in rhythm and restraint",
+        "ya" | "young_adult" => "young adult manuscript — immediacy of voice is central",
+        "comedy" | "humor" | "humour" | "satire" =>
+            "comedy or satire — timing and sentence rhythm are craft",
+        // ── Nonfiction / technical genres — the fiction framing is replaced entirely ──
+        "nonfiction" | "general_nonfiction" =>
+            "nonfiction book — arguments must be supported, assumptions surfaced, scope stated",
+        "technical" | "technical_writing" | "it" | "software" | "engineering" =>
+            "technical document — procedures must be complete, claims testable, prerequisites explicit",
+        "documentation" | "docs" | "api_docs" | "reference" =>
+            "documentation — each instruction must be followable; success criteria must be clear",
+        "academic" | "scholarly" | "research" =>
+            "academic or scholarly text — claims require support, scope must be stated, logic must hold",
+        "science" | "popular_science" | "science_writing" =>
+            "science writing — evidence must support each claim; analogies must not overstep",
+        "business" | "management" =>
+            "business or management book — practical claims must be testable; assumptions must be named",
+        _ => return None,
+    })
+}
 
 /// A compact description of the active persona for the prompt — its character and
 /// the categories it leans into.
@@ -236,6 +298,52 @@ mod tests {
 
     fn socrates() -> Persona {
         Persona::default_inner_socrates()
+    }
+
+    #[test]
+    fn slow_system_is_genre_aware() {
+        // No genre → the pre-AUDIENCE-1 fiction framing (purely additive: an
+        // author who never sets a genre sees exactly the old behaviour).
+        let default = slow_system(None);
+        assert!(default.contains("fiction manuscript"), "{default}");
+        // Nonfiction genres swap the framing entirely (no "fiction").
+        let tech = slow_system(Some("technical"));
+        assert!(tech.contains("technical document"), "{tech}");
+        assert!(!tech.to_lowercase().contains("fiction"));
+        let docs = slow_system(Some("documentation"));
+        assert!(docs.contains("instruction must be followable"), "{docs}");
+        // Fiction genres get a (more specific) fiction framing.
+        let fant = slow_system(Some("fantasy"));
+        assert!(fant.contains("fantasy manuscript"), "{fant}");
+        // An unknown genre degrades to the fiction default, not a nonfiction one.
+        assert!(slow_system(Some("interpretive-dance")).contains("fiction manuscript"));
+        // The JSON contract (5 prose categories) survives in every framing.
+        for s in [&default, &tech, &fant] {
+            assert!(s.contains("assumption_surfacing|tension_detection"), "category list missing");
+            assert!(s.contains("question_en"));
+        }
+    }
+
+    #[test]
+    fn slow_genre_context_aliases_and_unknown() {
+        // Aliases and case/separator normalisation resolve.
+        assert!(slow_genre_context(Some("IT")).unwrap().contains("technical document"));
+        assert!(slow_genre_context(Some("popular science")).unwrap().contains("science writing"));
+        assert!(slow_genre_context(Some("Literary-Fiction")).unwrap().contains("literary fiction"));
+        // Every known genre yields a distinct, non-empty clause.
+        let keys = [
+            "literary", "fantasy", "scifi", "mystery", "memoir", "historical", "romance",
+            "horror", "ya", "comedy", "nonfiction", "technical", "documentation", "academic",
+            "science", "business",
+        ];
+        let mut seen = std::collections::BTreeSet::new();
+        for k in keys {
+            let c = slow_genre_context(Some(k)).unwrap_or_else(|| panic!("no context for {k}"));
+            assert!(!c.is_empty());
+            assert!(seen.insert(c), "duplicate context for {k}");
+        }
+        assert_eq!(slow_genre_context(None), None);
+        assert_eq!(slow_genre_context(Some("nonsense")), None);
     }
 
     #[test]

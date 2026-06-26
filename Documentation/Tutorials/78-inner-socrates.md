@@ -69,10 +69,16 @@ $ inkhaven inner-socrates persona list
 $ inkhaven inner-socrates persona activate skeptical-reader
 ```
 
-In the TUI, **`Ctrl+B J → S`** cycles the active persona. Author your own with
-`persona new <id>` (scaffolds an editable HJSON file) or **`Ctrl+B J → N`** for an
-AI-guided wizard — adjust its voice and per-category emphasis weights, and it reads
-your prose with that attention.
+Those five read for *fiction*. Since 1.4.6 four more ship for nonfiction,
+technical, and documentation authors — `skeptical-practitioner`,
+`domain-newcomer`, `expert-reviewer`, `end-user` — and a project can default to
+one with `inner_socrates_default_persona` in `inkhaven.hjson`. See
+[Tutorial 90 — Nonfiction reader personas](90-nonfiction-personas.md).
+
+In the TUI, **`Ctrl+B J → S`** cycles the active persona (all nine). Author your
+own with `persona new <id>` (scaffolds an editable HJSON file) or **`Ctrl+B J →
+N`** for an AI-guided wizard — adjust its voice and per-category emphasis weights,
+and it reads your prose with that attention.
 
 ## Declaring intent
 

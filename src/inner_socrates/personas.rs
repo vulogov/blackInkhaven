@@ -110,6 +110,99 @@ pub fn bundled() -> Vec<Persona> {
              notice how the prose moves rather than only what it claims.",
             &[(StructuralPatterns, 1.3), (SentenceLengthAnomalies, 1.2), (TemporalDensity, 1.3), (ImplicitComparison, 1.2)],
         ),
+        // ── Nonfiction personas (1.4.6 AUDIENCE-1) ──
+        // All four mute DramatizationGap + TemporalDensity (narrative/scene-time,
+        // meaningless in expository prose) and UnattributedDialogue (no dialogue
+        // runs). Absent categories default to 1.0, so the mutes are explicit 0.0.
+        p(
+            "skeptical-practitioner",
+            "The Skeptical Practitioner",
+            "Every procedure is a reproduction attempt; what did you leave out?",
+            "You are a practising engineer who has been burned by incomplete documentation. \
+             You read technical prose as a reproduction attempt: every procedure must be \
+             complete, every claim must be testable, every assumption must be surfaced. \
+             You ask about what is omitted — the error case not mentioned, the prerequisite \
+             silently assumed, the configuration value not explained. You never correct; \
+             you ask the author what they decided to leave out and why.",
+            &[
+                (AssumptionSurfacing, 1.4),
+                (FramingInterrogation, 1.3),
+                (SignificanceProbing, 1.2),
+                (ImplicitComparison, 1.1),
+                (ModalClaims, 1.2),
+                (DramatizationGap, 0.0),
+                (TemporalDensity, 0.0),
+                (UnattributedDialogue, 0.0),
+            ],
+        ),
+        p(
+            "domain-newcomer",
+            "The Domain Newcomer",
+            "Every undefined term is a door that won't open for me.",
+            "You are a careful, motivated reader encountering this subject for the first \
+             time. You have no prior knowledge except what the prose has built. Every \
+             undefined term is a door that won't open for you. Every concept introduced by \
+             example without definition is a guess you must make. You ask about what the \
+             author assumed you already know — not to criticise, but to find the place where \
+             you, the newcomer, would stop following.",
+            &[
+                (AssumptionSurfacing, 1.5),
+                (SignificanceProbing, 1.1),
+                (FramingInterrogation, 1.0),
+                (StructuralPatterns, 1.1),
+                (ModalClaims, 0.9),
+                (TensionDetection, 0.4),
+                (DramatizationGap, 0.0),
+                (TemporalDensity, 0.0),
+                (UnattributedDialogue, 0.0),
+            ],
+        ),
+        p(
+            "expert-reviewer",
+            "The Expert Reviewer",
+            "Does the evidence support the claim, and is the scope stated?",
+            "You are a peer reviewer for an academic or technical publication. You are a \
+             domain expert who reads for logical rigour: the evidence must support the \
+             claim, the scope must be stated, the limitations must be acknowledged. You \
+             ask about assertions made without support, comparisons made without stated \
+             criteria, causal language applied to correlational evidence, and conclusions \
+             that exceed what the evidence establishes. You never suggest how to fix — \
+             you ask the question the author must answer before publication.",
+            &[
+                (AssumptionSurfacing, 1.3),
+                (FramingInterrogation, 1.5),
+                (SignificanceProbing, 1.3),
+                (ImplicitComparison, 1.4),
+                (ModalClaims, 1.4),
+                (HedgedUncertainty, 1.2),
+                (TensionDetection, 0.2),
+                (DramatizationGap, 0.0),
+                (TemporalDensity, 0.0),
+                (UnattributedDialogue, 0.0),
+            ],
+        ),
+        p(
+            "end-user",
+            "The End User",
+            "What do I do next, and how will I know when I'm done?",
+            "You are a user following this documentation to complete a task. You are not \
+             reading to learn the theory — you need to know what to do, in what order, \
+             and what success looks like. You ask where the next step is, what to do when \
+             the stated outcome does not happen, whether this step's output is the next \
+             step's input, and whether you will know when you are done. You never critique \
+             the writing — you ask whether you could follow it.",
+            &[
+                (SignificanceProbing, 1.5),
+                (AssumptionSurfacing, 1.3),
+                (StructuralPatterns, 1.3),
+                (FramingInterrogation, 1.1),
+                (ImplicitComparison, 0.5),
+                (TensionDetection, 0.0),
+                (DramatizationGap, 0.0),
+                (TemporalDensity, 0.0),
+                (UnattributedDialogue, 0.0),
+            ],
+        ),
     ]
 }
 
@@ -160,16 +253,34 @@ pub fn by_id(project: &Path, id: &str) -> Persona {
     load_all(project).into_iter().find(|p| p.id == id).unwrap_or_else(Persona::default_inner_socrates)
 }
 
-/// The active persona for a project: the one the store records as active, else the
-/// default (Inner Socrates).
+/// The active persona for a project: the one the store records as active; else
+/// the project config's `inner_socrates_default_persona` (AUDIENCE-1, e.g. a
+/// technical book defaulting to `skeptical-practitioner`); else the bundled
+/// `inner-socrates`. An explicit `set_active_persona` always wins over config.
 pub fn active(project: &Path) -> Persona {
     let id = super::storage::InnerSocratesStore::open_for_project(project)
         .ok()
         .and_then(|s| s.active_persona_id().ok().flatten());
     match id {
         Some(id) => by_id(project, &id),
-        None => Persona::default_inner_socrates(),
+        None => match config_default_persona(project) {
+            Some(id) => by_id(project, &id),
+            None => Persona::default_inner_socrates(),
+        },
     }
+}
+
+/// The `inner_socrates_default_persona` config value for a project, trimmed and
+/// non-empty, if set. Best-effort — a missing / unreadable config yields `None`.
+/// Public so the TUI overview can flag when the active persona came from config.
+pub fn config_default_persona(project: &Path) -> Option<String> {
+    crate::config::Config::load_layered(
+        &crate::project::ProjectLayout::new(project).config_path(),
+    )
+    .ok()
+    .and_then(|c| c.inner_socrates_default_persona)
+    .map(|s| s.trim().to_string())
+    .filter(|s| !s.is_empty())
 }
 
 /// A tiny insertion-ordered map (avoids a new dependency on `indexmap`).
@@ -201,11 +312,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn five_distinct_bundled_personas() {
+    fn nine_distinct_bundled_personas() {
         let ps = bundled();
-        assert_eq!(ps.len(), 5);
+        // 5 fiction (1.3.x) + 4 nonfiction (1.4.6 AUDIENCE-1).
+        assert_eq!(ps.len(), 9);
         let ids: std::collections::BTreeSet<_> = ps.iter().map(|p| p.id.as_str()).collect();
-        assert_eq!(ids.len(), 5);
+        assert_eq!(ids.len(), 9);
         assert!(ids.contains("inner-socrates"));
         // Personas weight different categories (they read differently).
         let socr = ps.iter().find(|p| p.id == "inner-socrates").unwrap();
@@ -213,6 +325,42 @@ mod tests {
         assert!(socr.emphasis_for(Category::AssumptionSurfacing) > 1.0);
         assert!(slow.emphasis_for(Category::StructuralPatterns) > 1.0);
         assert!(socr.emphasis_for(Category::StructuralPatterns) < slow.emphasis_for(Category::StructuralPatterns));
+    }
+
+    #[test]
+    fn nonfiction_personas_mute_narrative_categories() {
+        let ps = bundled();
+        // The four nonfiction personas exist…
+        for id in ["skeptical-practitioner", "domain-newcomer", "expert-reviewer", "end-user"] {
+            let p = ps.iter().find(|p| p.id == id)
+                .unwrap_or_else(|| panic!("missing nonfiction persona `{id}`"));
+            // …and each mutes the fiction-only categories.
+            assert!(p.mutes(Category::DramatizationGap), "{id} should mute DramatizationGap");
+            assert!(p.mutes(Category::TemporalDensity), "{id} should mute TemporalDensity");
+            assert!(p.mutes(Category::UnattributedDialogue), "{id} should mute UnattributedDialogue");
+        }
+    }
+
+    #[test]
+    fn nonfiction_persona_emphasis_matches_character_sheets() {
+        let ps = bundled();
+        let get = |id: &str| ps.iter().find(|p| p.id == id).unwrap().clone();
+        // skeptical-practitioner leans hardest on surfacing what's omitted.
+        let prac = get("skeptical-practitioner");
+        assert_eq!(prac.emphasis_for(Category::AssumptionSurfacing), 1.4);
+        assert_eq!(prac.emphasis_for(Category::FramingInterrogation), 1.3);
+        // domain-newcomer: assumptions about the reader are paramount.
+        let newc = get("domain-newcomer");
+        assert_eq!(newc.emphasis_for(Category::AssumptionSurfacing), 1.5);
+        assert!(newc.emphasis_for(Category::TensionDetection) < 1.0); // attenuated, not muted
+        // expert-reviewer: scope precision dominates.
+        let rev = get("expert-reviewer");
+        assert_eq!(rev.emphasis_for(Category::FramingInterrogation), 1.5);
+        assert_eq!(rev.emphasis_for(Category::ImplicitComparison), 1.4);
+        // end-user: "what does this step accomplish?" leads.
+        let usr = get("end-user");
+        assert_eq!(usr.emphasis_for(Category::SignificanceProbing), 1.5);
+        assert!(usr.mutes(Category::TensionDetection)); // task-followers don't read for tension
     }
 
     #[test]
@@ -238,5 +386,44 @@ mod tests {
     #[test]
     fn rejects_persona_without_id() {
         assert!(parse_persona(r#"{ name: "Nameless" }"#).is_err());
+    }
+
+    // ── AUDIENCE-1: config-default persona resolution ──
+
+    #[test]
+    fn active_falls_back_to_config_default_then_inner_socrates() {
+        // No config, no DB row → bundled inner-socrates.
+        let bare = tempfile::tempdir().unwrap();
+        assert_eq!(active(bare.path()).id, "inner-socrates");
+
+        // Config default set, no explicit DB row → the config default persona.
+        let cfg_dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            cfg_dir.path().join("inkhaven.hjson"),
+            "{\n  inner_socrates_default_persona: skeptical-practitioner\n}\n",
+        )
+        .unwrap();
+        assert_eq!(active(cfg_dir.path()).id, "skeptical-practitioner");
+        assert_eq!(
+            config_default_persona(cfg_dir.path()).as_deref(),
+            Some("skeptical-practitioner")
+        );
+    }
+
+    #[test]
+    fn explicit_active_persona_beats_config_default() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("inkhaven.hjson"),
+            "{\n  inner_socrates_default_persona: skeptical-practitioner\n}\n",
+        )
+        .unwrap();
+        // An explicit `persona set` writes the DB singleton…
+        super::super::storage::InnerSocratesStore::open_for_project(dir.path())
+            .unwrap()
+            .set_active_persona("expert-reviewer")
+            .unwrap();
+        // …and wins over the config default.
+        assert_eq!(active(dir.path()).id, "expert-reviewer");
     }
 }

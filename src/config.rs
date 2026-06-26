@@ -66,6 +66,13 @@ pub struct Config {
     /// to other features later. `None` = genre-blind.
     #[serde(default)]
     pub genre: Option<String>,
+    /// AUDIENCE-1 (1.4.6+) — the project's **default** Inner Socrates persona id
+    /// (e.g. `skeptical-practitioner` for a technical book). Used only when no
+    /// persona has been explicitly set for the project; an explicit
+    /// `inner-socrates persona set` always wins. `None` = the bundled
+    /// `inner-socrates` default.
+    #[serde(default)]
+    pub inner_socrates_default_persona: Option<String>,
     #[serde(default)]
     pub project_lock: ProjectLockConfig,
     /// 1.2.6+ — AI-pane behaviour knobs that aren't tied to a
@@ -202,6 +209,7 @@ impl Default for Config {
             inner_editor: InnerEditorConfig::default(),
             sources: SourcesConfig::default(),
             genre: None,
+            inner_socrates_default_persona: None,
             project_lock: ProjectLockConfig::default(),
             ai: AiConfig::default(),
             timeline: TimelineConfig::default(),
