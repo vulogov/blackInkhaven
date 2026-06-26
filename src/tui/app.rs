@@ -76,8 +76,9 @@ use super::state::{
 };
 use super::status_helpers::{display_status, next_status, prev_status};
 use super::text_utils::{
-    PARAGRAPH_PLACEHOLDER_TITLE, body_to_lines, extract_first_sentence,
-    format_active_duration, format_age_humantime, pad_or_trim, truncate_to_chars,
+    JINJA_MANUSCRIPT_SEED_BODY, JINJA_SNIPPET_SEED_BODY, PARAGRAPH_PLACEHOLDER_TITLE,
+    body_to_lines, extract_first_sentence, format_active_duration, format_age_humantime,
+    pad_or_trim, truncate_to_chars,
 };
 #[cfg(test)]
 use super::text_utils::format_reading_time;
@@ -2055,6 +2056,13 @@ pub(crate) struct App {
     /// lift only the `<<<REWRITE>>>` block.
     pub(super) pending_style_transfer: bool,
 
+    /// STRUCT-1 — the in-flight Add modal is for a Jinja template paragraph
+    /// (`t` in the Tree pane). Set by `open_add_jinja_template_modal`, consumed
+    /// by `commit_add` (which stamps `content_type: "jinja"` + the right seed
+    /// body). Cleared by `open_add_modal_inner` so a cancelled jinja add never
+    /// leaks into the next ordinary paragraph add.
+    pub(super) pending_jinja_template: bool,
+
     /// RAG context block (e.g. a place/character lookup) that the next
     /// AI-prompt submission should prepend to the user's typed query.
     /// Used by the Ctrl+B P / Ctrl+B C editor flows when the AI prompt is
@@ -2426,6 +2434,7 @@ impl App {
             pending_translation: false,
             pending_continuation_draft: false,
             pending_style_transfer: false,
+            pending_jinja_template: false,
             pending_rag_prefix: None,
             layout_search: Rect::default(),
             layout_tree: Rect::default(),
@@ -6486,6 +6495,72 @@ impl App {
         false
     }
 
+    /// Whether `parent` is the Snippets system book or nested under it — used to
+    /// pick the snippet (vs manuscript) Jinja seed body (STRUCT-1).
+    fn parent_is_under_snippets(
+        &self,
+        parent: Option<&crate::store::node::Node>,
+    ) -> bool {
+        let Some(snippets_root_id) =
+            self.system_book_id(crate::store::SYSTEM_TAG_SNIPPETS)
+        else {
+            return false;
+        };
+        let Some(parent) = parent else {
+            return false;
+        };
+        let mut cur: Option<&crate::store::node::Node> = Some(parent);
+        while let Some(node) = cur {
+            if node.id == snippets_root_id {
+                return true;
+            }
+            cur = node.parent_id.and_then(|id| self.hierarchy.get(id));
+        }
+        false
+    }
+
+    /// STRUCT-1 — open the Add modal for a Jinja template paragraph (`t` in the
+    /// Tree pane). Only valid when the cursor sits in (or on) a user book or the
+    /// Snippets system book; other system books reject it. Arms
+    /// `pending_jinja_template` so `commit_add` stamps `content_type: "jinja"`
+    /// and the context-appropriate seed body.
+    fn open_add_jinja_template_modal(&mut self) {
+        let cursor_id = self.rows.get(self.tree_cursor).map(|(id, _)| *id);
+        // Resolve the root book of the cursor (inclusive of a book node itself).
+        let root_book = cursor_id.and_then(|id| {
+            let node = self.hierarchy.get(id)?;
+            if node.kind == NodeKind::Book {
+                Some(node)
+            } else {
+                self.hierarchy
+                    .ancestors(node)
+                    .into_iter()
+                    .find(|a| a.kind == NodeKind::Book)
+            }
+        });
+        let valid = root_book
+            .map(|b| {
+                b.system_tag.is_none()
+                    || b.system_tag.as_deref()
+                        == Some(crate::store::SYSTEM_TAG_SNIPPETS)
+            })
+            .unwrap_or(false);
+        if !valid {
+            self.status =
+                "jinja template: move the cursor into a user book or the Snippets book first"
+                    .into();
+            return;
+        }
+        self.open_add_modal_inner(NodeKind::Paragraph, InsertPosition::End);
+        // Only arm + relabel if the modal actually opened (parent resolution can
+        // fail and leave an error status instead).
+        if matches!(self.modal, Modal::Adding { .. }) {
+            self.pending_jinja_template = true;
+            self.status =
+                "jinja template — type a name · Enter to create · Esc cancel".into();
+        }
+    }
+
     /// Insert-after variant: walks up from the tree cursor to find a node of
     /// the same `kind` as the one being added; if found, the new node will be
     /// placed immediately after it. Falls back to append-at-end if no
@@ -6511,6 +6586,10 @@ impl App {
     }
 
     fn open_add_modal_inner(&mut self, kind: NodeKind, position: InsertPosition) {
+        // Clear any stale Jinja-add intent; `open_add_jinja_template_modal`
+        // re-arms it after calling through here. Keeps a cancelled jinja add
+        // from leaking into the next ordinary paragraph add.
+        self.pending_jinja_template = false;
         // For After(anchor), the parent is anchor.parent_id (always valid
         // because the anchor's a same-kind node). For End, walk up to find a
         // valid parent.
@@ -10292,6 +10371,7 @@ impl App {
             A::AddChapter => self.open_add_modal(NodeKind::Chapter),
             A::AddSubchapter => self.open_add_modal(NodeKind::Subchapter),
             A::AddParagraph => self.open_add_modal(NodeKind::Paragraph),
+            A::AddJinjaTemplate => self.open_add_jinja_template_modal(),
             A::DeleteNode => self.open_delete_modal(),
             A::MorphType => self.cycle_leaf_type(),
             A::ReorderUp => self.move_current(MoveDir::Up),
@@ -21838,6 +21918,10 @@ impl App {
             _ => return,
         };
 
+        // STRUCT-1 — consume the Jinja-add intent up front so it's always
+        // cleared regardless of which early-return path this add takes.
+        let jinja_add = std::mem::take(&mut self.pending_jinja_template);
+
         // Paragraphs can be added with an empty title — they'll be given a
         // placeholder ("Untitled paragraph") that the next save replaces with
         // the first sentence of the body. Branches still require a title
@@ -21919,9 +22003,22 @@ impl App {
         // Language-rule detector takes precedence
         // because the Language subtree carries its own
         // chapter-specific templates.
-        let seed_body_after_create: Option<String> =
-            if kind == crate::store::NodeKind::Paragraph {
-                self.language_rule_chapter_for_paragraph(parent.as_ref())
+        // The seed body to write after create, paired with the `content_type`
+        // it implies. STRUCT-1 Jinja adds take precedence and stamp `"jinja"`;
+        // every other seeded template is HJSON.
+        let (seed_body_after_create, seed_content_type): (Option<String>, &str) =
+            if kind == crate::store::NodeKind::Paragraph && jinja_add {
+                // STRUCT-1: a Jinja template paragraph. Snippet fragment vs
+                // manuscript template depends on whether it lands under Snippets.
+                let body = if self.parent_is_under_snippets(parent.as_ref()) {
+                    JINJA_SNIPPET_SEED_BODY
+                } else {
+                    JINJA_MANUSCRIPT_SEED_BODY
+                };
+                (Some(body.to_string()), "jinja")
+            } else if kind == crate::store::NodeKind::Paragraph {
+                let body = self
+                    .language_rule_chapter_for_paragraph(parent.as_ref())
                     .map(|s| s.to_string())
                     .or_else(|| {
                         if self.parent_is_under_threads(parent.as_ref()) {
@@ -21944,9 +22041,10 @@ impl App {
                         } else {
                             None
                         }
-                    })
+                    });
+                (body, "hjson")
             } else {
-                None
+                (None, "hjson")
             };
 
         match self.store.create_node(
@@ -21973,7 +22071,7 @@ impl App {
                 // either way; the author can re-edit if
                 // the seed fails.
                 if let Some(body) = seed_body_after_create.as_deref() {
-                    node.content_type = Some("hjson".to_string());
+                    node.content_type = Some(seed_content_type.to_string());
                     if let Some(rel) = &node.file {
                         let abs = self.layout.root.join(rel);
                         let _ = std::fs::write(&abs, body.as_bytes());
