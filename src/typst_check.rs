@@ -50,6 +50,65 @@ impl TypstDiagnostic {
 /// ownership of a `String`, so we copy. Buffers are typically
 /// a few KB to a few hundred KB; the cost is dominated by the
 /// parser itself, not the clone.
+/// REUSE-1 — validate snippet `#include "…/snippets/<slug>.typ"` references in
+/// `source` against `known_slugs` (the slugs defined in the Snippets book).
+/// Returns one diagnostic per snippet include whose slug is **not** defined —
+/// catching typos and references to renamed/deleted snippets the moment you save.
+///
+/// Only *snippet* includes are checked (those ending `…/snippets/<slug>.typ`);
+/// generic Typst `#include`s resolve against arbitrary paths and are left alone.
+/// Validating against the live Snippets book (not the assembled artefacts) means
+/// it works **before** assembly and never produces "assemble first" noise.
+pub fn check_includes(
+    source: &str,
+    known_slugs: &std::collections::HashSet<String>,
+) -> Vec<TypstDiagnostic> {
+    let mut out = Vec::new();
+    let mut line_start = 0usize; // byte offset of the current line within `source`
+    for (i, line) in source.lines().enumerate() {
+        let mut search = 0usize;
+        while let Some(rel) = line[search..].find("#include") {
+            let after = search + rel + "#include".len();
+            // The opening quote must follow `#include` (allowing whitespace).
+            let Some(q1_rel) = line[after..].find('"') else { break };
+            let path_start = after + q1_rel + 1;
+            let Some(q2_rel) = line[path_start..].find('"') else { break };
+            let path_end = path_start + q2_rel;
+            let path = &line[path_start..path_end];
+            if let Some(slug) = snippet_slug_of(path) {
+                if !known_slugs.contains(&slug) {
+                    let col = line[..path_start].chars().count() + 1;
+                    out.push(TypstDiagnostic {
+                        line: i + 1,
+                        col,
+                        byte_start: line_start + path_start,
+                        byte_end: line_start + path_end,
+                        message: format!("#include: no snippet `{slug}` in the Snippets book"),
+                        hints: vec![format!(
+                            "add `{slug}` to the Snippets book, or fix the include path"
+                        )],
+                    });
+                }
+            }
+            search = path_end + 1;
+        }
+        line_start += line.len() + 1; // + the '\n' that `lines()` stripped
+    }
+    out
+}
+
+/// The snippet slug of an include path shaped `…/snippets/<slug>.typ`, else
+/// `None`. Requires `snippets` to be the second-to-last path segment, so a
+/// `mysnippets/x.typ` does not match.
+fn snippet_slug_of(path: &str) -> Option<String> {
+    let segs: Vec<&str> = path.trim().split('/').collect();
+    if segs.len() < 2 || segs[segs.len() - 2] != "snippets" {
+        return None;
+    }
+    let slug = segs.last()?.strip_suffix(".typ")?;
+    (!slug.is_empty()).then(|| slug.to_string())
+}
+
 pub fn check(source: &str) -> Vec<TypstDiagnostic> {
     let source = Source::detached(source.to_owned());
     let root = source.root();
@@ -148,9 +207,58 @@ broken
         assert!(s.contains("unexpected token"));
     }
 
+    fn slugs(s: &[&str]) -> std::collections::HashSet<String> {
+        s.iter().map(|x| x.to_string()).collect()
+    }
+
+    #[test]
+    fn check_includes_flags_unknown_snippet_slug() {
+        let known = slugs(&["warning-box"]);
+        // A known slug → clean.
+        assert!(check_includes(
+            "text\n#include \"../../snippets/warning-box.typ\"\n",
+            &known
+        )
+        .is_empty());
+        // An unknown slug → one diagnostic on the right line.
+        let d = check_includes("line one\n#include \"../snippets/missing.typ\"\n", &known);
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0].line, 2);
+        assert!(d[0].message.contains("missing"), "{}", d[0].message);
+    }
+
+    #[test]
+    fn check_includes_ignores_non_snippet_includes() {
+        let known = slugs(&[]);
+        // Generic includes resolve against arbitrary paths — not our concern.
+        assert!(check_includes("#include \"globals.typ\"", &known).is_empty());
+        assert!(check_includes("#include \"../other/foo.typ\"", &known).is_empty());
+        // `mysnippets/` is not the snippets dir (segment must equal `snippets`).
+        assert!(check_includes("#include \"mysnippets/x.typ\"", &known).is_empty());
+    }
+
+    #[test]
+    fn check_includes_two_on_one_line_flags_only_the_unknown() {
+        let known = slugs(&["a"]);
+        let src = "#include \"../snippets/a.typ\" then #include \"../snippets/b.typ\"";
+        let d = check_includes(src, &known);
+        assert_eq!(d.len(), 1);
+        assert_eq!(d[0].line, 1);
+        assert!(d[0].message.contains("`b`"), "{}", d[0].message);
+    }
+
     use proptest::prelude::*;
 
     proptest! {
+        /// REUSE-1 — the include scanner must never panic on arbitrary source
+        /// (multibyte, unbalanced quotes, stray `#include` fragments).
+        #[test]
+        fn check_includes_never_panics(src in "\\PC{0,400}") {
+            let known: std::collections::HashSet<String> =
+                ["a", "b"].iter().map(|s| s.to_string()).collect();
+            let _ = check_includes(&src, &known);
+        }
+
         /// 1.3.36 hardening — `check` parses arbitrary editor source
         /// (the user's prose + Typst markup). It must return a
         /// diagnostics Vec and never panic, including on lone
