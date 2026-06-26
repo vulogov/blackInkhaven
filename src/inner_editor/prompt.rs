@@ -218,6 +218,33 @@ pub fn genre_fragment(genre: Option<&str>) -> Option<&'static str> {
         "comedy" | "humor" | "humour" | "satire" => {
             "comedy/satire — timing is craft; note where sentence rhythm sets up or fumbles a beat."
         }
+        // ── Nonfiction / technical genres (1.4.6 AUDIENCE-1) ──
+        // Same key set as inner_socrates::slow::slow_genre_context; the text here
+        // primes the *Editor* (prose craft for the genre), not the interrogator.
+        "nonfiction" | "general_nonfiction" => {
+            "nonfiction — the argumentative structure is the craft; note where claims \
+             outrun evidence or where the thesis loses its thread."
+        }
+        "technical" | "technical_writing" | "it" | "software" | "engineering" => {
+            "technical writing — clarity and completeness are the craft; note where \
+             ambiguity or omission would stop a practitioner."
+        }
+        "documentation" | "docs" | "api_docs" | "reference" => {
+            "documentation — procedural completeness is the craft; note where a step \
+             is ambiguous or a success criterion is absent."
+        }
+        "academic" | "scholarly" | "research" => {
+            "academic writing — precision and economy are the craft; note where hedging \
+             weakens a valid claim or where jargon gates comprehension unnecessarily."
+        }
+        "science" | "popular_science" | "science_writing" => {
+            "science writing — the analogy and the transition are the craft; note where \
+             an image overstates or where the logic gap is papered over."
+        }
+        "business" | "management" => {
+            "business writing — directness and the actionable claim are the craft; note \
+             where vagueness displaces a concrete point."
+        }
         _ => return None,
     })
 }
@@ -474,6 +501,30 @@ mod tests {
         assert!(genre_fragment(Some("young adult")).is_some());
         assert!(genre_fragment(Some("cookbook")).is_none());
         assert!(genre_fragment(None).is_none());
+    }
+
+    #[test]
+    fn genre_fragment_covers_nonfiction_genres() {
+        // 1.4.6 AUDIENCE-1 — each nonfiction key resolves to Editor-craft text.
+        let cases = [
+            ("nonfiction", "argumentative"),
+            ("technical", "completeness"),
+            ("IT", "completeness"),         // alias + case normalisation
+            ("documentation", "procedural"),
+            ("api-docs", "procedural"),     // alias + separator normalisation
+            ("academic", "precision"),
+            ("popular science", "science writing"),
+            ("business", "actionable"),
+        ];
+        for (genre, needle) in cases {
+            let frag = genre_fragment(Some(genre))
+                .unwrap_or_else(|| panic!("no fragment for {genre}"));
+            assert!(frag.contains(needle), "{genre}: expected `{needle}` in `{frag}`");
+            // The Editor never prescribes — fragments say "note where", not "fix".
+            assert!(frag.contains("note where"), "{genre}: fragment should be observational");
+        }
+        // Still rejects genuinely unknown genres.
+        assert!(genre_fragment(Some("interpretive dance")).is_none());
     }
 
     #[test]
