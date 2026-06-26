@@ -3809,6 +3809,11 @@ pub enum InnerSocratesCommand {
         /// Check a paragraph by id (reads its content from the store).
         #[arg(long)]
         paragraph: Option<String>,
+        /// Check a paragraph by its slug path as shown in `inkhaven list`
+        /// (e.g. `essay/ch1/opening`). The convenient alternative to
+        /// `--paragraph <uuid>`; `NN-` order prefixes are tolerated.
+        #[arg(long)]
+        path: Option<String>,
         /// Also run the Slow track — an LLM pass for the deep Socratic questions
         /// patterns miss (needs an LLM provider; cost-capped).
         #[arg(long)]

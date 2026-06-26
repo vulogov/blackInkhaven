@@ -14,8 +14,8 @@ use crate::inner_socrates::types::Persona;
 
 pub fn run(project: &Path, cmd: InnerSocratesCommand) -> Result<()> {
     match cmd {
-        InnerSocratesCommand::Check { text, paragraph, slow, max_cost, force } => {
-            check(project, text, paragraph, slow, max_cost, force)
+        InnerSocratesCommand::Check { text, paragraph, path, slow, max_cost, force } => {
+            check(project, text, paragraph, path, slow, max_cost, force)
         }
         InnerSocratesCommand::Timeline { max_cost, force } => timeline(project, max_cost, force),
         InnerSocratesCommand::Findings(cmd) => findings(project, cmd),
@@ -209,10 +209,12 @@ fn persona(project: &Path, cmd: crate::cli::PersonaCommand) -> Result<()> {
 /// Run the Fast track over prose and surface its questions. When the project has
 /// an Inner Socrates store, the intent ledger is consulted, findings persist (a
 /// re-check replaces a paragraph's prior ones), and they emit to Output.
+#[allow(clippy::too_many_arguments)]
 fn check(
     project: &Path,
     text: Option<String>,
     paragraph: Option<String>,
+    path: Option<String>,
     slow: bool,
     max_cost: usize,
     force: bool,
@@ -223,7 +225,7 @@ fn check(
         .and_then(|s| s.load_ledger().ok())
         .unwrap_or_default();
 
-    let (prose, paragraph_id) = resolve_prose(project, text, paragraph)?;
+    let (prose, paragraph_id) = resolve_prose(project, text, paragraph, path)?;
     let persona = crate::inner_socrates::personas::active(project);
     let ctx = FindingContext { paragraph_id: paragraph_id.map(|p| p.to_string()), ..Default::default() };
 
@@ -437,32 +439,57 @@ fn timeline(project: &Path, soft_cap: usize, force: bool) -> Result<()> {
     Ok(())
 }
 
-/// Resolve `(prose, paragraph_id)` from `--text` or `--paragraph <id>`.
+/// Resolve `(prose, paragraph_id)` from `--text`, `--paragraph <uuid>`, or
+/// `--path <slug-path>` (the path shown in `inkhaven list`).
 fn resolve_prose(
     project: &Path,
     text: Option<String>,
     paragraph: Option<String>,
+    path: Option<String>,
 ) -> Result<(String, Option<uuid::Uuid>)> {
-    match (text, paragraph) {
-        (Some(t), _) => Ok((t, None)),
-        (None, Some(pid)) => {
-            use crate::config::Config;
-            use crate::project::ProjectLayout;
-            use crate::store::Store;
-            let id = uuid::Uuid::parse_str(&pid)
-                .map_err(|e| Error::Config(format!("bad paragraph id `{pid}`: {e}")))?;
-            let layout = ProjectLayout::new(project);
-            layout.require_initialized()?;
-            let cfg = Config::load_layered(&layout.config_path())?;
-            let store = Store::open(layout, &cfg)?;
-            let bytes = store
-                .get_content(id)
-                .map_err(|e| Error::Store(format!("reading paragraph: {e}")))?
-                .ok_or_else(|| Error::Config(format!("paragraph `{pid}` not found")))?;
-            Ok((String::from_utf8_lossy(&bytes).into_owned(), Some(id)))
-        }
-        (None, None) => Err(Error::Config("give --text \"…\" or --paragraph <id>".into())),
+    if let Some(t) = text {
+        return Ok((t, None));
     }
+    use crate::config::Config;
+    use crate::project::ProjectLayout;
+    use crate::store::Store;
+    use crate::store::hierarchy::Hierarchy;
+
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout, &cfg)?;
+
+    // Resolve the target paragraph id from --paragraph (uuid) or --path (slug).
+    let id = match (paragraph, path) {
+        (Some(pid), _) => uuid::Uuid::parse_str(&pid)
+            .map_err(|e| Error::Config(format!("bad paragraph id `{pid}`: {e}")))?,
+        (None, Some(p)) => {
+            let hierarchy =
+                Hierarchy::load(&store).map_err(|e| Error::Store(format!("hierarchy: {e}")))?;
+            crate::scripting::stdlib::helpers::resolve_path(
+                &hierarchy,
+                &p,
+                "inner-socrates check --path",
+            )
+            .map_err(|e| Error::Config(format!("{e}")))?
+            .ok_or_else(|| Error::Config(format!("no node at path `{p}`")))?
+        }
+        (None, None) => {
+            return Err(Error::Config(
+                "give --text \"…\", --paragraph <id>, or --path <book/chapter/paragraph>".into(),
+            ));
+        }
+    };
+    let bytes = store
+        .get_content(id)
+        .map_err(|e| Error::Store(format!("reading paragraph: {e}")))?
+        .ok_or_else(|| {
+            Error::Config(format!(
+                "no readable paragraph at `{id}` (is the path a paragraph, not a book/chapter?)"
+            ))
+        })?;
+    Ok((String::from_utf8_lossy(&bytes).into_owned(), Some(id)))
 }
 
 /// Inspect persisted findings — `list` (all) / `history` (one paragraph, over time).
