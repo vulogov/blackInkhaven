@@ -100,7 +100,7 @@ pub fn check_includes(
 /// The snippet slug of an include path shaped `…/snippets/<slug>.typ`, else
 /// `None`. Requires `snippets` to be the second-to-last path segment, so a
 /// `mysnippets/x.typ` does not match.
-fn snippet_slug_of(path: &str) -> Option<String> {
+pub fn snippet_slug_of(path: &str) -> Option<String> {
     let segs: Vec<&str> = path.trim().split('/').collect();
     if segs.len() < 2 || segs[segs.len() - 2] != "snippets" {
         return None;
