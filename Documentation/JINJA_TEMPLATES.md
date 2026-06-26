@@ -37,18 +37,24 @@ system book (the same book REUSE-1 introduced).
 
 ---
 
-## Create one — `t` in the Tree pane
+## Create one — `e` in the Tree pane
 
 Put the tree cursor inside a **user book** (or one of its chapters) and press
-**`t`**. Type a name, Enter. You get a `.jinja` paragraph seeded with a
-documented starter template (it lists the variables available to you).
+**`e`** (mnemonic: t**e**mplate). Type a name, Enter. You get a `.jinja`
+paragraph seeded with a documented starter template (it lists the variables
+available to you).
 
-Put the cursor inside the **Snippets** system book instead, and `t` seeds a
+Put the cursor inside the **Snippets** system book instead, and `e` seeds a
 **reusable fragment** — a template meant to be `{% include %}`-d from elsewhere
 rather than rendered on its own.
 
-`t` is rejected (with a status hint) anywhere else — other system books (Notes,
+`e` is rejected (with a status hint) anywhere else — other system books (Notes,
 Characters, Glossary, …) don't take Jinja templates.
+
+**Already have a paragraph?** `e` *creates* a fresh seeded template; to *convert*
+an existing leaf, cycle its type with **`t`** / **`T`** (the node-type morph:
+`typst → hjson → jinja → bund`). The morph just flips the type — it doesn't
+seed — so reach for `e` when you want the documented starter.
 
 In the tree a Jinja paragraph shows a **`⟡`** glyph (vs `¶` prose, `❴` HJSON);
 the editor header carries a **`[jinja]`** badge and the buffer is syntax-
@@ -199,5 +205,5 @@ Russian/French/German/Spanish Characters entry renders exactly as written.
 ---
 
 **See also:** [Tutorial 93 — Jinja templates](Tutorials/93-jinja-templates.md) ·
-[CONFIGURATION.md](CONFIGURATION.md) · [KEYBINDING.md → `t` (Tree)](KEYBINDING.md) ·
+[CONFIGURATION.md](CONFIGURATION.md) · [KEYBINDING.md → `e` (Tree)](KEYBINDING.md) ·
 [Reusable snippets (REUSE-1)](Tutorials/92-reusable-snippets.md).

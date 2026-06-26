@@ -16,10 +16,10 @@ It's self-gating: with no Jinja paragraphs, nothing about your project changes.
 
 ## Create a template
 
-Put the tree cursor inside one of your books (or a chapter) and press **`t`**.
-Type a name, Enter. You get a `.jinja` paragraph — note the **`⟡`** glyph in the
-tree and the **`[jinja]`** badge in the editor header — seeded with a starter
-that documents the variables you can use:
+Put the tree cursor inside one of your books (or a chapter) and press **`e`**
+(mnemonic: t**e**mplate). Type a name, Enter. You get a `.jinja` paragraph — note
+the **`⟡`** glyph in the tree and the **`[jinja]`** badge in the editor header —
+seeded with a starter that documents the variables you can use:
 
 ```jinja
 {#- Template paragraph — rendered to Typst at Ctrl+B A (Book assembly). -#}
@@ -120,5 +120,5 @@ structured Typst *at assembly*. Different jobs; use both.
 
 **See also:** [JINJA_TEMPLATES.md](../JINJA_TEMPLATES.md) ·
 [Reusable snippets (Tutorial 92)](92-reusable-snippets.md) ·
-[KEYBINDING.md → `t` (Tree)](../KEYBINDING.md) ·
+[KEYBINDING.md → `e` (Tree)](../KEYBINDING.md) ·
 [CONFIGURATION.md → Jinja templates](../CONFIGURATION.md).

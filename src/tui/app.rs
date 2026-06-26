@@ -4282,13 +4282,21 @@ impl App {
             // 1.2.4+: tree T cycles the type of the cursor row
             // (or every marked paragraph, when multi-select is
             // active). Same ladder as Ctrl+B M:
-            // Paragraph(typst) → Paragraph(hjson) → Script(bund).
+            // Paragraph(typst) → Paragraph(hjson) → Paragraph(jinja)
+            // → Script(bund). (STRUCT-1 added the jinja rung.)
             KeyCode::Char('T') | KeyCode::Char('t') if plain => {
                 if !self.tree_marked.is_empty() {
                     self.cycle_leaf_type_bulk();
                 } else {
                     self.cycle_leaf_type();
                 }
+            }
+            // STRUCT-1: tree `e` creates a new Jinja t`e`mplate paragraph
+            // (seeded; manuscript vs snippet by location). Dedicated create
+            // shortcut alongside the `t`/`T` morph that converts an existing
+            // leaf. Valid under a user book or the Snippets book.
+            KeyCode::Char('E') | KeyCode::Char('e') if plain => {
+                self.open_add_jinja_template_modal();
             }
             // 1.2.4+: tree O cycles paragraph status. Mirrors
             // Ctrl+B R; honours multi-select for bulk status
@@ -10622,6 +10630,10 @@ impl App {
                 (NodeKind::Paragraph, Some("hjson"), "hjson")
             }
             (NodeKind::Paragraph, Some("hjson")) => {
+                // STRUCT-1 — jinja sits between hjson and bund in the cycle.
+                (NodeKind::Paragraph, Some("jinja"), "jinja")
+            }
+            (NodeKind::Paragraph, Some("jinja")) => {
                 (NodeKind::Script, Some("bund"), "bund")
             }
             (NodeKind::Script, _) => (NodeKind::Paragraph, None, "typst"),

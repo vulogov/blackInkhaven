@@ -134,7 +134,6 @@ cancels with a status hint telling you which pane's table it consulted.
 | `C` / `c`  | Open Add modal — new **chapter**.                   |
 | `S` / `s`  | Open Add modal — new **subchapter**.                |
 | `P` / `p`  | Open Add modal — new **paragraph**.                 |
-| `t`        | Open Add modal — new **Jinja template** paragraph (STRUCT-1). Valid under a user book (data-driven manuscript template) or the **Snippets** book (reusable `{% include %}` fragment); rejected elsewhere. Renders to Typst at assembly. See [JINJA_TEMPLATES.md](JINJA_TEMPLATES.md). |
 | `D` / `d`  | Open Delete confirm modal for the cursor's node.    |
 | `↑`        | Swap the cursor's node with its previous sibling.   |
 | `↓`        | Swap the cursor's node with its next sibling.       |
@@ -283,7 +282,8 @@ confirmation.
 | `Z` / `z` | **Collapse subchapter** — folds the cursor's enclosing Subchapter (or the cursor's node itself if it IS a Subchapter). Lands the tree cursor on the folded row. |
 | `X` / `x` | **Collapse all** — folds every expanded branch in the tree. Empty branches and paragraphs are untouched. |
 | `Space`   | (1.2.4) **Mark / unmark** the cursor row for multi-select. Status bar shows `marked N`. `Esc` clears all marks. |
-| `T` / `t` | (1.2.4) **Cycle node type** (`paragraph → json → script`). No marks: cursor row only (folders skipped). With marks: every marked leaf. |
+| `T` / `t` | (1.2.4) **Cycle node type** (`paragraph(typst) → paragraph(hjson) → paragraph(jinja) → script`; STRUCT-1 added the **jinja** rung). No marks: cursor row only (folders skipped). With marks: every marked leaf. |
+| `E` / `e` | (1.4.10) **New Jinja template** — open the Add modal for a `.jinja` paragraph (rendered to Typst at assembly). Seeds a manuscript template under a user book, or a reusable `{% include %}` fragment under the **Snippets** book; rejected elsewhere. (`t`/`T` *converts* an existing paragraph; `e` *creates* a fresh seeded one.) See [JINJA_TEMPLATES.md](JINJA_TEMPLATES.md). |
 | `O` / `o` | (1.2.4) **Cycle status** one rung up the ladder (`napkin → first → … → ready → napkin`). No marks: cursor row. With marks: every marked paragraph. |
 | `G` / `g` | (1.2.5) **Tag the marked set** — open the floating tag picker scoped to every marked paragraph (or just the cursor row when no marks). Same modal as `Ctrl+B ]`; T applies the selected tag set across every target at once. |
 | `?`       | (1.3.33) **Quick reference** — open the pane-aware Quick reference overlay. Tree-pane only (the editor / AI / search panes keep `?` as a typed character); `Ctrl+B H` opens it from anywhere. |
