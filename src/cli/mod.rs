@@ -1767,6 +1767,27 @@ pub enum TermsCommand {
         #[arg(long)]
         json: bool,
     },
+    /// LLM-assisted canonicalisation: cluster terms appearing in multiple
+    /// surface forms in a book and propose Glossary entries for the genuine
+    /// terminology drift. Needs an LLM provider; cost-capped.
+    Suggest {
+        /// The book to analyse (defaults to the sole user book).
+        #[arg(long)]
+        book: Option<String>,
+        /// Override the LLM provider for this call.
+        #[arg(long)]
+        provider: Option<String>,
+        /// Per-call soft cap (estimated tokens); skipped with a notice unless
+        /// `--force`.
+        #[arg(long, default_value_t = 8000)]
+        max_cost: usize,
+        /// Run past the soft cap.
+        #[arg(long)]
+        force: bool,
+        /// Create the proposed entries as draft paragraphs in the Glossary book.
+        #[arg(long)]
+        auto_create: bool,
+    },
 }
 
 /// 1.4.5+ SOURCES-1 — `inkhaven sources …` sub-subcommands.
