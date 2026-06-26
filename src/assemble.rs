@@ -116,6 +116,10 @@ pub fn assemble_book(
     let bibliography_entries =
         collect_and_emit_sources(store, layout, cfg, &hierarchy, book_node, &out_book)?;
 
+    // REUSE-1: copy reusable snippets to `<out_book>/snippets/` so prose
+    // `#include "…/snippets/…"` calls resolve. No-op when no Snippets book.
+    let _snippets_written = emit_snippets_directory(layout, &hierarchy, &out_book)?;
+
     // Root .typ for the book — applies settings, calls wrap_book on
     // the assembled subtree. The Typst chapter's index.typ body is
     // appended so any user setup (image search paths, imports of
@@ -204,6 +208,50 @@ fn collect_and_emit_sources(
     }
     std::fs::write(out_book.join("sources.bib"), text.as_bytes()).map_err(Error::Io)?;
     Ok(count)
+}
+
+/// REUSE-1: copy every paragraph in the **Snippets** system book to
+/// `<out_book>/snippets/<slug>.typ`, so a `#include "…/snippets/<slug>.typ"`
+/// anywhere in the prose resolves at `typst compile`. Mirrors
+/// `collect_and_emit_sources`: read bodies from disk, strip the editor heading,
+/// write verbatim. Returns the count written; `0` (absent/empty book) writes no
+/// directory — a complete fast-path for projects not using snippets.
+fn emit_snippets_directory(
+    layout: &ProjectLayout,
+    hierarchy: &Hierarchy,
+    out_book: &Path,
+) -> Result<usize> {
+    let Some(snippets_book) = hierarchy.iter().find(|n| {
+        n.kind == NodeKind::Book
+            && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_SNIPPETS)
+    }) else {
+        return Ok(0);
+    };
+    // Collect (slug, body) first so we only create the dir when there's content.
+    let mut written: Vec<(String, String)> = Vec::new();
+    for id in hierarchy.collect_subtree(snippets_book.id) {
+        let Some(n) = hierarchy.get(id) else { continue };
+        if n.kind != NodeKind::Paragraph {
+            continue;
+        }
+        let Some(rel) = &n.file else { continue };
+        let Ok(raw) = std::fs::read_to_string(layout.root.join(rel)) else {
+            continue;
+        };
+        // Strip the `= Title` editor heading — the snippet is included as raw
+        // Typst, the title is inkhaven chrome (same as `copy_paragraph_file`).
+        let body = strip_leading_heading(&raw);
+        written.push((n.slug.clone(), body));
+    }
+    if written.is_empty() {
+        return Ok(0);
+    }
+    let dir = out_book.join("snippets");
+    std::fs::create_dir_all(&dir).map_err(Error::Io)?;
+    for (slug, body) in &written {
+        std::fs::write(dir.join(format!("{slug}.typ")), body.as_bytes()).map_err(Error::Io)?;
+    }
+    Ok(written.len())
 }
 
 /// Count files the assembler will write. Used to pre-size the progress
@@ -785,6 +833,60 @@ mod tests {
             ai_memory: Vec::new(),
             event: None,
         }
+    }
+
+    #[test]
+    fn emit_snippets_writes_sidecar_and_strips_heading() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let book_id = uuid::Uuid::new_v4();
+        // A Snippets book + one paragraph whose source file lives under root.
+        let book = Node {
+            id: book_id,
+            system_tag: Some("snippets".into()),
+            ..mk_node(NodeKind::Book, "Snippets", "snippets", 0)
+        };
+        let rel = "books/snippets/01-warn.typ".to_string();
+        std::fs::create_dir_all(root.join("books/snippets")).unwrap();
+        std::fs::write(root.join(&rel), "= warn\n\n#block[Careful here.]\n").unwrap();
+        let para = Node {
+            id: uuid::Uuid::new_v4(),
+            parent_id: Some(book_id),
+            file: Some(rel),
+            ..mk_node(NodeKind::Paragraph, "warn", "warn", 0)
+        };
+        let h = Hierarchy::from_nodes_for_test(vec![book, para]);
+        let out = root.join("out");
+        let n = emit_snippets_directory(&ProjectLayout::new(root), &h, &out).unwrap();
+        assert_eq!(n, 1);
+        let written = std::fs::read_to_string(out.join("snippets/warn.typ")).unwrap();
+        assert!(written.contains("#block[Careful here.]"), "{written}");
+        assert!(!written.contains("= warn"), "heading must be stripped: {written}");
+    }
+
+    #[test]
+    fn emit_snippets_absent_or_empty_book_is_noop() {
+        let tmp = tempfile::tempdir().unwrap();
+        let out = tmp.path().join("out");
+        // No Snippets book at all.
+        let h = Hierarchy::from_nodes_for_test(vec![]);
+        assert_eq!(
+            emit_snippets_directory(&ProjectLayout::new(tmp.path()), &h, &out).unwrap(),
+            0
+        );
+        assert!(!out.join("snippets").exists(), "no dir when no snippets");
+        // An empty Snippets book (no paragraphs) is also a no-op.
+        let book = Node {
+            id: uuid::Uuid::new_v4(),
+            system_tag: Some("snippets".into()),
+            ..mk_node(NodeKind::Book, "Snippets", "snippets", 0)
+        };
+        let h2 = Hierarchy::from_nodes_for_test(vec![book]);
+        assert_eq!(
+            emit_snippets_directory(&ProjectLayout::new(tmp.path()), &h2, &out).unwrap(),
+            0
+        );
+        assert!(!out.join("snippets").exists());
     }
 
     #[test]
