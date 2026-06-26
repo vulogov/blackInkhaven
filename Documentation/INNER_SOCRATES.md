@@ -65,9 +65,9 @@ The default visible threshold is **Inquiry** — quiet by default.
 ## Reader Personas
 
 A persona is a distinct careful-reader perspective. Its per-category **emphasis
-weights** scale salience (`0.0` mutes a category). **Nine** ship bundled — five
-for fiction, and (1.4.6 AUDIENCE-1) four for nonfiction / technical /
-documentation authors:
+weights** scale salience (`0.0` mutes a category). **Twelve** ship bundled — five
+for fiction, four (1.4.6 AUDIENCE-1) for nonfiction / technical / documentation
+authors, and three (1.4.7 AUDIENCE-1.1) for ideas-driven work:
 
 | Persona | Audience | Voice |
 |---|---|---|
@@ -80,21 +80,37 @@ documentation authors:
 | **The Domain Newcomer** | general nonfiction | "Every undefined term is a door that won't open for me." |
 | **The Expert Reviewer** | academic / peer review | "Does the evidence support the claim, and is the scope stated?" |
 | **The End User** | documentation | "What do I do next, and how will I know when I'm done?" |
+| **The Dialectician** | philosophy | "An argument is only as sound as the premise it won't name." |
+| **The Theological Reader** | theology | "Within the tradition, does it cohere — and does the claim know its own scope?" |
+| **The Utopian Architect** | utopia / dystopia | "The society is an argument. What does it assume, and what does it cost?" |
 
 The four nonfiction personas mute the narrative-only categories
 (`dramatization_gap`, `temporal_density`, `unattributed_dialogue`) and lean on
 assumption-surfacing, framing, and significance — so an interrogator stops
 hunting for scene-time density in a procedure and starts asking what a step
-assumes the reader already knows. The default persona is always **Inner
-Socrates** (fiction) unless you set `inner_socrates_default_persona` in
-`inkhaven.hjson` (e.g. `skeptical-practitioner` for a technical book) or
-`persona activate` one explicitly — an explicit activation always wins. See
-[Tutorial 90 — Nonfiction reader personas](Tutorials/90-nonfiction-personas.md).
+assumes the reader already knows.
 
-The **Socratic system prompt is genre-aware** (1.4.6): an explicitly declared
-`genre` (e.g. `technical`, `documentation`, `academic`) reframes the
-interrogator for that form. With no genre declared, the prompt keeps its
-original fiction framing — AUDIENCE-1 is purely additive.
+The three **ideas personas** (1.4.7) cover work that is neither plain fiction nor
+empirical nonfiction. The **Dialectician** reads philosophy for logical structure
+— the unstated premise, the equivocation, the unanswered objection. The
+**Theological Reader** is deliberately **non-empiricist**: it respects revelation
+and tradition as grounds and probes coherence, fidelity, and scope rather than
+demanding proof (its empirical fast categories are attenuated, not boosted). The
+**Utopian Architect** is a **hybrid** — it reads the narrative *as* fiction (the
+narrative categories stay live, not muted) while pressing hard on what the
+imagined society assumes and what it costs.
+
+The default persona is always **Inner Socrates** (fiction) unless you set
+`inner_socrates_default_persona` in `inkhaven.hjson` (e.g. `skeptical-practitioner`
+for a technical book, `theological-reader` for a theology one) or `persona
+activate` one explicitly — an explicit activation always wins. See
+[Tutorial 90 — Nonfiction & ideas reader personas](Tutorials/90-nonfiction-personas.md).
+
+The **Socratic system prompt is genre-aware** (1.4.6+): an explicitly declared
+`genre` — `technical`, `documentation`, `academic`, or (1.4.7) `philosophy`,
+`theology`, `utopian` — reframes the interrogator for that form. With no genre
+declared, the prompt keeps its original fiction framing — AUDIENCE-1 is purely
+additive.
 
 Author your own as an HJSON file in `~/.config/inkhaven/personas/` (cross-project)
 or `<project>/books/intent/01-personas/` (project-only); project wins over user
