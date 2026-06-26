@@ -1794,6 +1794,10 @@ pub(crate) struct App {
     /// `editor.echo_overlay` (`Ctrl+B Shift+K`); same
     /// three-state semantics as `style_warnings_toggle`.
     echo_overlay_toggle: Option<bool>,
+    /// 1.4.8+ TERMS-1 — session-local override for the banned-synonym overlay
+    /// (`Ctrl+V z`). `None` (default) = follow the master style toggle (on);
+    /// `Some(false)` hides it, `Some(true)` forces it on.
+    terms_overlay_toggle: Option<bool>,
     /// 1.2.20+ C.1.b — cached set of stems echoing near
     /// the open paragraph, recomputed by
     /// `refresh_echo_overlay`.  The render path turns this
@@ -2377,6 +2381,7 @@ impl App {
             tts,
             style_warnings_toggle: None,
             echo_overlay_toggle: None,
+            terms_overlay_toggle: None,
             echo_overlay_stems: std::collections::HashSet::new(),
             echo_overlay_chapter: None,
             echo_overlay_last_key: None,
@@ -10100,6 +10105,7 @@ impl App {
             A::ViewToggleBookmark => self.toggle_bookmark(),
             A::ViewListBookmarks => self.open_bookmark_picker_modal(),
             A::ViewCitePicker => self.open_cite_picker(),
+            A::ViewToggleTermsOverlay => self.toggle_terms_overlay(),
             A::ViewFuzzyParagraphPicker => self.open_fuzzy_paragraph_picker(),
             A::ViewRecentParagraphPicker => self.open_recent_paragraph_picker(),
             A::ViewKillRingPicker => self.open_kill_ring_picker(),
@@ -14238,6 +14244,23 @@ impl App {
     fn echo_overlay_active(&self) -> bool {
         self.echo_overlay_toggle
             .unwrap_or(self.cfg.editor.echo_overlay)
+    }
+
+    /// 1.4.8+ TERMS-1 — flip the banned-synonym overlay (`Ctrl+V z`). Default is
+    /// on (within the master style toggle), so the first press hides it.
+    fn toggle_terms_overlay(&mut self) {
+        let new_state = match self.terms_overlay_toggle {
+            None => Some(false), // default-on → first press turns it off
+            Some(true) => Some(false),
+            Some(false) => Some(true),
+        };
+        self.terms_overlay_toggle = new_state;
+        let effective = new_state.unwrap_or(true);
+        self.status = if effective {
+            "terminology overlay: ON · banned synonyms underlined in red".into()
+        } else {
+            "terminology overlay: off".into()
+        };
     }
 
     /// The nearest `Chapter` ancestor of the open
