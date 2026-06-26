@@ -45,10 +45,14 @@ a framing, what a scene *does* for the book — add `--slow` (this calls your
 configured LLM, and is cost-capped):
 
 ```
-$ inkhaven inner-socrates check --paragraph <id> --slow
+$ inkhaven inner-socrates check --path manuscript/03-rain/01-opening --slow
 slow track · model: … · ~900 tokens · 1/150 calls today · reading…
 ◇ Inquiry [Framing] The battle is described entirely from the regent's vantage. What does that framing emphasize, and what does it leave unseen?
 ```
+
+`--path` (1.4.7) takes the slug path printed in the bracket by `inkhaven list` —
+the easy way to target a paragraph. (`--paragraph <uuid>` and `--text "…"` still
+work.)
 
 If your project has a **timeline**, `inkhaven inner-socrates timeline` reads the
 prose against it — asking about events the timeline declares but no paragraph

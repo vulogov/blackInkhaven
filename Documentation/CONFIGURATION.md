@@ -2052,12 +2052,17 @@ genre: literary_realism         // fiction: literary_realism | fantasy | scifi |
                                 //   mystery | memoir | historical | romance | horror | ya | comedy
                                 // nonfiction (1.4.6): nonfiction | technical |
                                 //   documentation | academic | science | business
+                                // ideas (1.4.7): utopian | philosophy | theology
 ```
 
 With no `genre` declared, both companions keep their original fiction framing —
-the nonfiction genres are purely additive. A declared nonfiction genre reframes
-the Inner Socrates interrogator (procedures as reproduction attempts, claims
-needing support) and the Inner Editor (clarity/completeness as the craft).
+the nonfiction and ideas genres are purely additive. A declared nonfiction genre
+reframes the Inner Socrates interrogator (procedures as reproduction attempts,
+claims needing support) and the Inner Editor (clarity/completeness as the craft).
+The **ideas genres** (1.4.7) go further: `philosophy` and `theology` frame the
+interrogator to probe argument and coherence rather than empirical evidence (a
+theology reader respects revelation/tradition as ground, never demanding proof);
+`utopian` frames the imagined society as an argument to interrogate.
 
 - **`tone` / `verbosity` / `praise_frequency`** are parsed tolerantly — a bad
   value falls back to its default rather than failing the whole config. The

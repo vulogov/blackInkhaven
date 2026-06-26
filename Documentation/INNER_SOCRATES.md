@@ -65,9 +65,10 @@ The default visible threshold is **Inquiry** — quiet by default.
 ## Reader Personas
 
 A persona is a distinct careful-reader perspective. Its per-category **emphasis
-weights** scale salience (`0.0` mutes a category). **Nine** ship bundled — five
-for fiction, and (1.4.6 AUDIENCE-1) four for nonfiction / technical /
-documentation authors:
+weights** scale salience (`0.0` mutes a category). **Fourteen** ship bundled —
+five for fiction, four (1.4.6 AUDIENCE-1) for nonfiction / technical /
+documentation authors, three (1.4.7) for ideas-driven work, and two (1.4.7)
+adversarial **verdict** personas:
 
 | Persona | Audience | Voice |
 |---|---|---|
@@ -80,21 +81,63 @@ documentation authors:
 | **The Domain Newcomer** | general nonfiction | "Every undefined term is a door that won't open for me." |
 | **The Expert Reviewer** | academic / peer review | "Does the evidence support the claim, and is the scope stated?" |
 | **The End User** | documentation | "What do I do next, and how will I know when I'm done?" |
+| **The Dialectician** | philosophy | "An argument is only as sound as the premise it won't name." |
+| **The Theological Reader** | theology | "Within the tradition, does it cohere — and does the claim know its own scope?" |
+| **The Utopian Architect** | utopia / dystopia | "The society is an argument. What does it assume, and what does it cost?" |
+| **The Defender** ⚖ | any (advocacy) | "Counsel for the defense — only what works, and why to protect it." |
+| **The Prosecutor** ⚖ | any (critique) | "The prosecution — only what fails, stated as the charge." |
 
 The four nonfiction personas mute the narrative-only categories
 (`dramatization_gap`, `temporal_density`, `unattributed_dialogue`) and lean on
 assumption-surfacing, framing, and significance — so an interrogator stops
 hunting for scene-time density in a procedure and starts asking what a step
-assumes the reader already knows. The default persona is always **Inner
-Socrates** (fiction) unless you set `inner_socrates_default_persona` in
-`inkhaven.hjson` (e.g. `skeptical-practitioner` for a technical book) or
-`persona activate` one explicitly — an explicit activation always wins. See
-[Tutorial 90 — Nonfiction reader personas](Tutorials/90-nonfiction-personas.md).
+assumes the reader already knows.
 
-The **Socratic system prompt is genre-aware** (1.4.6): an explicitly declared
-`genre` (e.g. `technical`, `documentation`, `academic`) reframes the
-interrogator for that form. With no genre declared, the prompt keeps its
-original fiction framing — AUDIENCE-1 is purely additive.
+The three **ideas personas** (1.4.7) cover work that is neither plain fiction nor
+empirical nonfiction. The **Dialectician** reads philosophy for logical structure
+— the unstated premise, the equivocation, the unanswered objection. The
+**Theological Reader** is deliberately **non-empiricist**: it respects revelation
+and tradition as grounds and probes coherence, fidelity, and scope rather than
+demanding proof (its empirical fast categories are attenuated, not boosted). The
+**Utopian Architect** is a **hybrid** — it reads the narrative *as* fiction (the
+narrative categories stay live, not muted) while pressing hard on what the
+imagined society assumes and what it costs.
+
+### Verdict personas — the two adversaries (1.4.7)
+
+The **Defender** and **Prosecutor** are deliberately one-sided. Inner Socrates is
+otherwise *always* a neutral questioner — it never praises, never prescribes,
+only asks. These two break that spine on purpose: the Defender states **only
+praise** (counsel for the defense — what works and what to protect), the
+Prosecutor states **only concern** (the charge — what fails). They are the
+steelman and the devil's advocate.
+
+This is governed by a persona **`stance`**: `question` (the default — every other
+persona), `praise` (Defender), or `concern` (Prosecutor). Three things follow:
+
+- **The neutral interrogator is untouched.** The verdict prompt is reached *only*
+  for a `praise`/`concern` persona; `inner-socrates` and all twelve other
+  personas use the exact same neutral question prompt they always did.
+- **Verdicts are LLM-only.** The deterministic Fast track can neither praise nor
+  charge, so it's skipped for these two — they need the **Slow track**
+  (`--slow`, or `Ctrl+B J → E`). Activate one and the Fast chord points you there.
+- **Still bilingual.** A verdict is written in the paragraph's language with an
+  English fallback, exactly like a question.
+
+You can give your **own** persona a stance — add `stance: praise` (or `concern`)
+to its HJSON file to author a one-sided reader.
+
+The default persona is always **Inner Socrates** (fiction) unless you set
+`inner_socrates_default_persona` in `inkhaven.hjson` (e.g. `skeptical-practitioner`
+for a technical book, `theological-reader` for a theology one) or `persona
+activate` one explicitly — an explicit activation always wins. See
+[Tutorial 90 — Nonfiction & ideas reader personas](Tutorials/90-nonfiction-personas.md).
+
+The **Socratic system prompt is genre-aware** (1.4.6+): an explicitly declared
+`genre` — `technical`, `documentation`, `academic`, or (1.4.7) `philosophy`,
+`theology`, `utopian` — reframes the interrogator for that form. With no genre
+declared, the prompt keeps its original fiction framing — AUDIENCE-1 is purely
+additive.
 
 Author your own as an HJSON file in `~/.config/inkhaven/personas/` (cross-project)
 or `<project>/books/intent/01-personas/` (project-only); project wins over user
@@ -106,6 +149,7 @@ wins over bundled. A persona file:
     name: "My Skeptical Grandmother"
     voice_summary: "She has read everything and believes none of it."
     voice_notes: "You are warm but unfooled. You ask about what the prose hopes you won't notice."
+    stance: question            // question (default) | praise | concern  (1.4.7)
     emphasis: {
         framing_interrogation: 1.5
         assumption_surfacing: 1.3
@@ -113,6 +157,10 @@ wins over bundled. A persona file:
     }
 }
 ```
+
+`stance` is optional and defaults to `question` (the neutral Socratic spine); set
+`praise` or `concern` to author your own one-sided verdict reader. An unknown
+value falls back to `question` rather than failing the file.
 
 `inner-socrates persona list | show <id> | activate <id>`; in the TUI,
 `Ctrl+B J → S` cycles the active persona.
@@ -157,7 +205,7 @@ events — silently doing nothing when there's no timeline.
 ### CLI
 
 ```
-inkhaven inner-socrates check [--text "…" | --paragraph <id>] [--slow] [--max-cost <n>] [--force]
+inkhaven inner-socrates check [--text "…" | --paragraph <uuid> | --path <slug-path>] [--slow] [--max-cost <n>] [--force]
 inkhaven inner-socrates timeline [--max-cost <n>] [--force]
 inkhaven inner-socrates ledger
 inkhaven inner-socrates persona list | show <id> | activate <id>
@@ -166,18 +214,35 @@ inkhaven inner-socrates bundle export [--scope-level series|project|all] [--out 
 inkhaven inner-socrates bundle import <path> [--conflict skip|override]
 ```
 
+Pick a paragraph three ways: `--text "…"` for literal prose, `--paragraph <uuid>`
+for an explicit id, or **`--path <slug-path>`** (1.4.7) — the path shown in the
+bracket by **`inkhaven list`** (e.g. `manuscript/03-rain/01-opening`), the
+convenient way to target a paragraph without looking up its UUID (`NN-` order
+prefixes are tolerated):
+
+```
+$ inkhaven list
+  …
+  │  └─ ¶ Opening  [paragraph, manuscript/03-rain/01-opening]
+$ inkhaven inner-socrates check --slow --path manuscript/03-rain/01-opening
+```
+
 ### TUI — `Ctrl+B J`
 
 | Key | Action |
 |---|---|
 | `Ctrl+B J` | the Inner Socrates overview (active persona, recent questions, ledger) |
-| → `F` | fast-check the open paragraph → Output |
-| → `L` | view the intent ledger |
+| → `F` | **Fast-check** the open paragraph (deterministic, instant) → Output |
+| → `E` | **Engage the Slow pass** (1.4.7) — the LLM deep questions / verdict over the open paragraph, run in the **background** → Output. The interactive counterpart to `inner-socrates check --slow`; needs an LLM provider. Skipped Fast track? a verdict persona is active — `E` is how you hear it. |
 | → `S` | cycle the active persona |
+| → `C` | open a **conversation** with the persona (AI pane; it discusses, never rewrites) |
+| → `N` | AI **wizard** to author a new persona |
+| → `L` | view the intent ledger |
 | → `A` | toggle the ambient auto-check (off by default — it runs on a writing pause) |
 
 (`Ctrl+B I` is book-info; the Socratic family lives on `J`.) Findings reach the
-**Output pane**; dismissing one there (`d`) feeds the promotion mechanism.
+**Output pane**; dismissing one there (`d`) feeds the promotion mechanism. `F` is
+instant and LLM-free; `E` calls your provider (cost-capped, background).
 
 ## Compatibility
 

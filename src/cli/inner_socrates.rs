@@ -10,12 +10,12 @@ use crate::inner_socrates::fast;
 use crate::inner_socrates::intent::{FindingContext, IntentLedger};
 use crate::inner_socrates::output::emit_finding;
 use crate::inner_socrates::storage::InnerSocratesStore;
-use crate::inner_socrates::types::Persona;
+use crate::inner_socrates::types::{Persona, SocraticFinding, Stance};
 
 pub fn run(project: &Path, cmd: InnerSocratesCommand) -> Result<()> {
     match cmd {
-        InnerSocratesCommand::Check { text, paragraph, slow, max_cost, force } => {
-            check(project, text, paragraph, slow, max_cost, force)
+        InnerSocratesCommand::Check { text, paragraph, path, slow, max_cost, force } => {
+            check(project, text, paragraph, path, slow, max_cost, force)
         }
         InnerSocratesCommand::Timeline { max_cost, force } => timeline(project, max_cost, force),
         InnerSocratesCommand::Findings(cmd) => findings(project, cmd),
@@ -209,32 +209,54 @@ fn persona(project: &Path, cmd: crate::cli::PersonaCommand) -> Result<()> {
 /// Run the Fast track over prose and surface its questions. When the project has
 /// an Inner Socrates store, the intent ledger is consulted, findings persist (a
 /// re-check replaces a paragraph's prior ones), and they emit to Output.
-fn check(
+/// Run the Socratic pass over `prose`: the Fast track (skipped for verdict
+/// personas — they can neither praise nor charge deterministically), then the
+/// LLM Slow track when `slow`, then persist + emit every finding to the Output
+/// pane. Returns the findings + the active persona. Shared by the CLI `check`
+/// command and the TUI background engage (`Ctrl+B J → E`), so both run one code
+/// path. Quiet-safe: the only stderr notice is suppressed when an Output store
+/// is installed (the TUI).
+pub(crate) fn run_socratic_pass(
     project: &Path,
-    text: Option<String>,
-    paragraph: Option<String>,
+    prose: &str,
+    paragraph_id: Option<uuid::Uuid>,
     slow: bool,
     max_cost: usize,
     force: bool,
-) -> Result<()> {
+) -> Result<(Vec<SocraticFinding>, Persona)> {
     let store = InnerSocratesStore::open_for_project(project).ok();
     let ledger = store
         .as_ref()
         .and_then(|s| s.load_ledger().ok())
         .unwrap_or_default();
-
-    let (prose, paragraph_id) = resolve_prose(project, text, paragraph)?;
     let persona = crate::inner_socrates::personas::active(project);
-    let ctx = FindingContext { paragraph_id: paragraph_id.map(|p| p.to_string()), ..Default::default() };
+    let ctx = FindingContext {
+        paragraph_id: paragraph_id.map(|p| p.to_string()),
+        ..Default::default()
+    };
 
-    let mut findings = fast::check_paragraph(&prose, &persona, &ledger, &ctx);
+    // The two verdict personas (Defender/Prosecutor) speak only via the LLM
+    // verdict — the deterministic Fast track can neither praise nor charge.
+    let mut findings = if persona.stance.is_verdict() {
+        Vec::new()
+    } else {
+        fast::check_paragraph(prose, &persona, &ledger, &ctx)
+    };
 
     // The Slow track (LLM) adds the deep questions patterns miss; the fast
     // findings are the seam (the prompt tells the model not to repeat them).
     if slow {
-        match run_slow(project, &prose, &persona, &ledger, &ctx, &findings, max_cost, force) {
+        match run_slow(project, prose, &persona, &ledger, &ctx, &findings, max_cost, force) {
             Ok(mut deep) => findings.append(&mut deep),
-            Err(e) => eprintln!("slow track skipped: {e}"),
+            // Quiet in the TUI (Output store installed) — a stray stderr write
+            // would corrupt the frame; visible on the CLI.
+            Err(e) => {
+                if crate::pane::output::active().is_none() {
+                    eprintln!("slow track skipped: {e}");
+                } else {
+                    tracing::warn!("socratic slow track skipped: {e}");
+                }
+            }
         }
     }
 
@@ -246,9 +268,45 @@ fn check(
             emit_finding(f, Some(pid));
         }
     }
+    Ok((findings, persona))
+}
 
+#[allow(clippy::too_many_arguments)]
+fn check(
+    project: &Path,
+    text: Option<String>,
+    paragraph: Option<String>,
+    path: Option<String>,
+    slow: bool,
+    max_cost: usize,
+    force: bool,
+) -> Result<()> {
+    let (prose, paragraph_id) = resolve_prose(project, text, paragraph, path)?;
+    let (findings, persona) =
+        run_socratic_pass(project, &prose, paragraph_id, slow, max_cost, force)?;
+
+    // Verdict personas need --slow to say anything (Fast track is skipped).
+    if persona.stance.is_verdict() && !slow {
+        eprintln!(
+            "{} delivers an LLM verdict — re-run with --slow",
+            persona.name
+        );
+    }
+
+    // Stance-aware nouns: the verdict personas state praise / concern, the rest ask.
+    let noun = match persona.stance {
+        Stance::Praise => "point(s) of praise",
+        Stance::Concern => "concern(s)",
+        Stance::Question => "question(s)",
+    };
     if findings.is_empty() {
-        println!("\u{2713} no questions raised (fast track)");
+        let empty = match persona.stance {
+            Stance::Praise => "nothing to defend".to_string(),
+            Stance::Concern => "no charges to bring".to_string(),
+            Stance::Question if slow => "no questions raised".to_string(),
+            Stance::Question => "no questions raised (fast track)".to_string(),
+        };
+        println!("\u{2713} {empty}");
         return Ok(());
     }
     for f in &findings {
@@ -264,7 +322,7 @@ fn check(
             f.question
         );
     }
-    println!("\n{} question(s) · persona: {}", findings.len(), persona.name);
+    println!("\n{} {noun} · persona: {}", findings.len(), persona.name);
     Ok(())
 }
 
@@ -285,10 +343,10 @@ fn run_slow(
     force: bool,
 ) -> Result<Vec<crate::inner_socrates::types::SocraticFinding>> {
     use crate::inner_socrates::slow::{
-        apply_persona_and_ledger, build_slow_prompt, intent_summary, parse_slow_findings, slow_system,
+        apply_persona_and_ledger, build_slow_prompt, build_verdict_prompt, intent_summary,
+        parse_slow_findings, slow_system_for,
     };
     let lang = crate::world::fact_check_lang::detect(prose);
-    let prompt = build_slow_prompt(persona, prose, &intent_summary(ledger), fast_findings, lang);
     // AUDIENCE-1: the Socratic framing is genre-aware. A nonfiction / technical
     // genre swaps the fiction assumption for a calibrated context line.
     let genre = crate::config::Config::load_layered(
@@ -296,7 +354,15 @@ fn run_slow(
     )
     .ok()
     .and_then(|c| c.genre);
-    let system = slow_system(genre.as_deref());
+    // The two verdict personas (Defender/Prosecutor) get a verdict system prompt
+    // + a seam-free user prompt; every other persona keeps the neutral question
+    // path unchanged. Output stays bilingual in both modes.
+    let system = slow_system_for(persona.stance, genre.as_deref());
+    let prompt = if persona.stance.is_verdict() {
+        build_verdict_prompt(persona, prose, &intent_summary(ledger), lang)
+    } else {
+        build_slow_prompt(persona, prose, &intent_summary(ledger), fast_findings, lang)
+    };
     let raw = socratic_llm_call(project, "slow track", &system, prompt, soft_cap, force)?;
     let parsed = parse_slow_findings(&raw, &persona.id);
     Ok(apply_persona_and_ledger(parsed, persona, ledger, ctx))
@@ -335,13 +401,19 @@ fn socratic_llm_call(
     let effective_soft = if force { 0 } else { soft_cap };
     let daily_cap = cfg.cost.inner_socrates_daily_call_cap;
     let (pf, verdict) = slow_preflight(system, &prompt, used, daily_cap, effective_soft);
+    // Quiet on the TUI background path (an Output store is installed): stray
+    // stderr writes from a worker thread would corrupt the ratatui frame. The
+    // CLI keeps the informative preflight notices.
+    let quiet = crate::pane::output::active().is_some();
     match verdict {
         // Informative, not a gate: warn past the daily budget and keep going.
         PreflightVerdict::DailyCapReached => {
-            eprintln!(
-                "{label}: past today's slow-track budget ({}/{} calls) — continuing (the cap is informative, see `inkhaven cost`).",
-                pf.calls_used, daily_cap
-            );
+            if !quiet {
+                eprintln!(
+                    "{label}: past today's slow-track budget ({}/{} calls) — continuing (the cap is informative, see `inkhaven cost`).",
+                    pf.calls_used, daily_cap
+                );
+            }
         }
         PreflightVerdict::OverSoftCap { est_total_tokens, soft_cap } => {
             return Err(Error::Config(format!(
@@ -351,10 +423,12 @@ fn socratic_llm_call(
         }
         PreflightVerdict::Proceed => {}
     }
-    eprintln!(
-        "{label} · model: {model} · ~{} tokens · {}/{} calls today · reading…",
-        pf.est_total_tokens, pf.calls_used, pf.daily_cap
-    );
+    if !quiet {
+        eprintln!(
+            "{label} · model: {model} · ~{} tokens · {}/{} calls today · reading…",
+            pf.est_total_tokens, pf.calls_used, pf.daily_cap
+        );
+    }
 
     const MAX_ATTEMPTS: u32 = 3;
     let mut last_err = String::new();
@@ -373,7 +447,9 @@ fn socratic_llm_call(
                 last_err = e.to_string();
                 if attempt + 1 < MAX_ATTEMPTS && is_transient(&last_err) {
                     let d = backoff_delay(attempt);
-                    eprintln!("  transient error ({last_err}); retrying in {:.1}s…", d.as_secs_f32());
+                    if !quiet {
+                        eprintln!("  transient error ({last_err}); retrying in {:.1}s…", d.as_secs_f32());
+                    }
                     std::thread::sleep(d);
                     continue;
                 }
@@ -437,32 +513,57 @@ fn timeline(project: &Path, soft_cap: usize, force: bool) -> Result<()> {
     Ok(())
 }
 
-/// Resolve `(prose, paragraph_id)` from `--text` or `--paragraph <id>`.
+/// Resolve `(prose, paragraph_id)` from `--text`, `--paragraph <uuid>`, or
+/// `--path <slug-path>` (the path shown in `inkhaven list`).
 fn resolve_prose(
     project: &Path,
     text: Option<String>,
     paragraph: Option<String>,
+    path: Option<String>,
 ) -> Result<(String, Option<uuid::Uuid>)> {
-    match (text, paragraph) {
-        (Some(t), _) => Ok((t, None)),
-        (None, Some(pid)) => {
-            use crate::config::Config;
-            use crate::project::ProjectLayout;
-            use crate::store::Store;
-            let id = uuid::Uuid::parse_str(&pid)
-                .map_err(|e| Error::Config(format!("bad paragraph id `{pid}`: {e}")))?;
-            let layout = ProjectLayout::new(project);
-            layout.require_initialized()?;
-            let cfg = Config::load_layered(&layout.config_path())?;
-            let store = Store::open(layout, &cfg)?;
-            let bytes = store
-                .get_content(id)
-                .map_err(|e| Error::Store(format!("reading paragraph: {e}")))?
-                .ok_or_else(|| Error::Config(format!("paragraph `{pid}` not found")))?;
-            Ok((String::from_utf8_lossy(&bytes).into_owned(), Some(id)))
-        }
-        (None, None) => Err(Error::Config("give --text \"…\" or --paragraph <id>".into())),
+    if let Some(t) = text {
+        return Ok((t, None));
     }
+    use crate::config::Config;
+    use crate::project::ProjectLayout;
+    use crate::store::Store;
+    use crate::store::hierarchy::Hierarchy;
+
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout, &cfg)?;
+
+    // Resolve the target paragraph id from --paragraph (uuid) or --path (slug).
+    let id = match (paragraph, path) {
+        (Some(pid), _) => uuid::Uuid::parse_str(&pid)
+            .map_err(|e| Error::Config(format!("bad paragraph id `{pid}`: {e}")))?,
+        (None, Some(p)) => {
+            let hierarchy =
+                Hierarchy::load(&store).map_err(|e| Error::Store(format!("hierarchy: {e}")))?;
+            crate::scripting::stdlib::helpers::resolve_path(
+                &hierarchy,
+                &p,
+                "inner-socrates check --path",
+            )
+            .map_err(|e| Error::Config(format!("{e}")))?
+            .ok_or_else(|| Error::Config(format!("no node at path `{p}`")))?
+        }
+        (None, None) => {
+            return Err(Error::Config(
+                "give --text \"…\", --paragraph <id>, or --path <book/chapter/paragraph>".into(),
+            ));
+        }
+    };
+    let bytes = store
+        .get_content(id)
+        .map_err(|e| Error::Store(format!("reading paragraph: {e}")))?
+        .ok_or_else(|| {
+            Error::Config(format!(
+                "no readable paragraph at `{id}` (is the path a paragraph, not a book/chapter?)"
+            ))
+        })?;
+    Ok((String::from_utf8_lossy(&bytes).into_owned(), Some(id)))
 }
 
 /// Inspect persisted findings — `list` (all) / `history` (one paragraph, over time).
