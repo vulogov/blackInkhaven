@@ -75,20 +75,35 @@ pub fn check_includes(
             let Some(q2_rel) = line[path_start..].find('"') else { break };
             let path_end = path_start + q2_rel;
             let path = &line[path_start..path_end];
-            if let Some(slug) = snippet_slug_of(path) {
-                if !known_slugs.contains(&slug) {
-                    let col = line[..path_start].chars().count() + 1;
-                    out.push(TypstDiagnostic {
-                        line: i + 1,
-                        col,
-                        byte_start: line_start + path_start,
-                        byte_end: line_start + path_end,
-                        message: format!("#include: no snippet `{slug}` in the Snippets book"),
-                        hints: vec![format!(
-                            "add `{slug}` to the Snippets book, or fix the include path"
-                        )],
-                    });
-                }
+            // Two failure modes:
+            //  (1) a proper `…/snippets/<slug>.typ` whose slug isn't defined;
+            //  (2) an include whose *filename* matches a known snippet slug but
+            //      whose path isn't a proper snippets path (a typo'd directory,
+            //      e.g. `../nippets/<slug>.typ`).
+            let message = match snippet_slug_of(path) {
+                Some(slug) if !known_slugs.contains(&slug) => Some(format!(
+                    "#include: no snippet `{slug}` in the Snippets book"
+                )),
+                Some(_) => None, // a defined snippet — fine
+                None => basename_slug(path)
+                    .filter(|base| known_slugs.contains(base))
+                    .map(|base| {
+                        format!(
+                            "#include: path does not point at the snippets directory — \
+                             did you mean a `snippets/{base}.typ` include?"
+                        )
+                    }),
+            };
+            if let Some(message) = message {
+                let col = line[..path_start].chars().count() + 1;
+                out.push(TypstDiagnostic {
+                    line: i + 1,
+                    col,
+                    byte_start: line_start + path_start,
+                    byte_end: line_start + path_end,
+                    message,
+                    hints: vec!["snippet includes resolve as `…/snippets/<slug>.typ`".into()],
+                });
             }
             search = path_end + 1;
         }
@@ -97,9 +112,6 @@ pub fn check_includes(
     out
 }
 
-/// The snippet slug of an include path shaped `…/snippets/<slug>.typ`, else
-/// `None`. Requires `snippets` to be the second-to-last path segment, so a
-/// `mysnippets/x.typ` does not match.
 /// REUSE-1 — every snippet slug referenced by an `#include "…/snippets/<slug>.typ"`
 /// in `source`, in order (duplicates kept — the caller tallies). Used for
 /// reference counts and `snippets check`.
@@ -122,12 +134,24 @@ pub fn snippet_references(source: &str) -> Vec<String> {
     out
 }
 
+/// The snippet slug of an include path shaped `…/snippets/<slug>.typ`, else
+/// `None`. Requires `snippets` to be the second-to-last path segment, so a
+/// `mysnippets/x.typ` does not match.
 pub fn snippet_slug_of(path: &str) -> Option<String> {
     let segs: Vec<&str> = path.trim().split('/').collect();
     if segs.len() < 2 || segs[segs.len() - 2] != "snippets" {
         return None;
     }
     let slug = segs.last()?.strip_suffix(".typ")?;
+    (!slug.is_empty()).then(|| slug.to_string())
+}
+
+/// The filename of an include path minus `.typ`, regardless of directory — used
+/// to spot a typo'd snippets directory (`../nippets/<slug>.typ`) by matching the
+/// basename against the known snippet slugs.
+fn basename_slug(path: &str) -> Option<String> {
+    let file = path.trim().rsplit('/').next()?;
+    let slug = file.strip_suffix(".typ")?;
     (!slug.is_empty()).then(|| slug.to_string())
 }
 
@@ -247,6 +271,20 @@ broken
         assert_eq!(d.len(), 1);
         assert_eq!(d[0].line, 2);
         assert!(d[0].message.contains("missing"), "{}", d[0].message);
+    }
+
+    #[test]
+    fn check_includes_flags_typoed_snippets_directory() {
+        // The reported bug: `../nippets/<slug>.typ` (typo in the directory) —
+        // the filename matches a known snippet, so flag it as a likely misspell.
+        let known = slugs(&["this-is-the-snippet-1"]);
+        let d = check_includes("#include \"../nippets/this-is-the-snippet-1.typ\"", &known);
+        assert_eq!(d.len(), 1);
+        assert!(d[0].message.contains("snippets directory"), "{}", d[0].message);
+        // But a non-snippet include whose basename isn't a known slug is left alone.
+        assert!(check_includes("#include \"../lib/helpers.typ\"", &known).is_empty());
+        // And the correct path is clean.
+        assert!(check_includes("#include \"../snippets/this-is-the-snippet-1.typ\"", &known).is_empty());
     }
 
     #[test]
