@@ -2127,9 +2127,11 @@ See [Tutorial 90 — Nonfiction reader personas](Tutorials/90-nonfiction-persona
 
 A paragraph with `content_type: "jinja"` is a [minijinja](https://docs.rs/minijinja)
 template the **assembler renders to Typst** before `typst compile` runs (two
-layers, never nested). Add one with **`t`** in the Tree pane — under a user book
+layers, never nested). Add one with **`e`** in the Tree pane — under a user book
 for a data-driven manuscript template, or under the **Snippets** system book for
 a reusable fragment that other templates `{% include "snippets/<path>.jinja" %}`.
+(To convert an existing paragraph instead, cycle its type with `t`/`T`:
+`typst → hjson → jinja → bund`.)
 
 - **Context:** the template sees `title`, `slug`, `book.{title,slug,genre}`,
   `chapter.{title,slug}`, `language`, `genre`, and `linked["<slug>"].<field>` —
