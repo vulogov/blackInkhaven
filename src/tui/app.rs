@@ -12135,6 +12135,17 @@ impl App {
     /// `Ctrl+B J` → `F` — run the Socratic Fast track over the open paragraph and
     /// surface the questions in Output (flips you there).
     fn socratic_check_open_paragraph(&mut self) {
+        // The verdict personas (Defender/Prosecutor) can't speak through the
+        // neutral Fast track — point the author at the LLM verdict path.
+        if crate::inner_socrates::personas::active(self.store.project_root())
+            .stance
+            .is_verdict()
+        {
+            self.status = "Defender / Prosecutor speak via the LLM verdict — run \
+                           `inkhaven inner-socrates check --slow`, or F9 → Socrates to converse"
+                .into();
+            return;
+        }
         let Some((id, findings)) = self.collect_socratic_findings() else {
             self.status = "Inner Socrates: no paragraph open".into();
             return;
@@ -12451,6 +12462,13 @@ impl App {
 
     /// Run the Socratic Fast track silently into Output (no focus change).
     fn auto_socratic_check(&mut self) {
+        // Verdict personas don't auto-run the neutral Fast track.
+        if crate::inner_socrates::personas::active(self.store.project_root())
+            .stance
+            .is_verdict()
+        {
+            return;
+        }
         let Some((id, findings)) = self.collect_socratic_findings() else {
             return;
         };
