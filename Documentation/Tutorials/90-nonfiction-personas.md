@@ -67,6 +67,39 @@ Two design notes worth knowing:
   categories — it reads the prose as a story *and* presses on the society it
   imagines. It's the one persona that sits in both camps at once.
 
+## Two adversaries — the verdict personas (1.4.7)
+
+Everything above still *asks questions* — that's Inner Socrates' whole nature: it
+never praises, never prescribes. Two personas deliberately break that, for the
+times you want a one-sided read:
+
+| Persona | Says |
+|---|---|
+| `defender` | **only praise** — counsel for the defense: what works, and what to protect. |
+| `prosecutor` | **only concern** — the prosecution: the weak line, the unearned beat, the soft claim. |
+
+Use them as a steelman / devil's-advocate pair: run the Defender to see what the
+passage is getting right (and shouldn't lose in revision), then the Prosecutor to
+hear every charge against it.
+
+Two things to know:
+
+- **They're LLM-only.** A verdict can't come from the deterministic Fast track, so
+  these two run only on the **Slow track** — `inkhaven inner-socrates check --slow`
+  or, in the editor, **`Ctrl+B J → E`** (Engage), which runs the pass in the
+  background and drops the verdict into the Output pane. With a verdict persona
+  active, the Fast chord (`Ctrl+B J → F`) just points you to `E`.
+- **They don't change anyone else.** `inner-socrates` and every other persona stay
+  the neutral questioner they always were — only these two speak in verdicts. (You
+  can give your *own* persona a one-sided voice with `stance: praise` / `concern`
+  in its HJSON file.)
+
+```sh
+$ inkhaven inner-socrates persona activate prosecutor
+$ inkhaven inner-socrates check --slow --path manuscript/03-rain/01-opening
+◆ Concern [Framing] "The rain fell like tears" leans on a simile the paragraph hasn't earned.
+```
+
 ## Picking one
 
 Per session, activate one — in the terminal or by cycling in the TUI:
