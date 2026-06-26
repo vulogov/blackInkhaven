@@ -85,6 +85,13 @@ pub fn slow_genre_context(genre: Option<&str>) -> Option<&'static str> {
             "science writing — evidence must support each claim; analogies must not overstep",
         "business" | "management" =>
             "business or management book — practical claims must be testable; assumptions must be named",
+        // ── Ideas genres (1.4.7 AUDIENCE-1.1) ──
+        "utopian" | "utopia" | "dystopian" | "dystopia" =>
+            "utopian or dystopian work — the imagined society is an argument; attend to what it assumes about human nature, the alternative it forecloses, and the cost it elides",
+        "philosophy" | "philosophical" =>
+            "philosophical work — the argument's structure is the substance; attend to unstated premises, terms that shift meaning, and objections left unanswered, not to empirical proof",
+        "theology" | "theological" | "religious" =>
+            "theological work — claims rest on revelation and tradition as much as reason; attend to internal coherence, fidelity to the source, and the scope of each claim, not empirical evidence",
         _ => return None,
     })
 }
@@ -330,11 +337,19 @@ mod tests {
         assert!(slow_genre_context(Some("IT")).unwrap().contains("technical document"));
         assert!(slow_genre_context(Some("popular science")).unwrap().contains("science writing"));
         assert!(slow_genre_context(Some("Literary-Fiction")).unwrap().contains("literary fiction"));
+        // 1.4.7 — ideas genres + their aliases.
+        assert!(slow_genre_context(Some("dystopian")).unwrap().contains("imagined society is an argument"));
+        assert!(slow_genre_context(Some("religious")).unwrap().contains("revelation and tradition"));
+        // Non-empiricist framing: theology and philosophy explicitly disclaim empirical proof.
+        assert!(slow_genre_context(Some("theology")).unwrap().contains("not empirical evidence"));
+        assert!(slow_genre_context(Some("philosophy")).unwrap().contains("not to empirical proof"));
         // Every known genre yields a distinct, non-empty clause.
         let keys = [
             "literary", "fantasy", "scifi", "mystery", "memoir", "historical", "romance",
             "horror", "ya", "comedy", "nonfiction", "technical", "documentation", "academic",
             "science", "business",
+            // 1.4.7 AUDIENCE-1.1 — ideas genres.
+            "utopian", "philosophy", "theology",
         ];
         let mut seen = std::collections::BTreeSet::new();
         for k in keys {
