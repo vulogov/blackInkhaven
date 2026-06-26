@@ -43,6 +43,9 @@ pub const SYSTEM_BOOKS: &[(&str, &str)] = &[
     // TERMS-1 (1.4.8+) — terminology governance: canonical terms + banned
     // synonyms (HJSON paragraphs), beside the other reference material.
     ("glossary", "Glossary"),
+    // REUSE-1 (1.4.9+) — reusable content blocks: Typst paragraphs referenced
+    // elsewhere via `#include`, copied to a `snippets/` sidecar at assembly.
+    ("snippets", "Snippets"),
     ("facts", "Facts"),
     ("prompts", "Prompts"),
     ("places", "Places"),
@@ -69,6 +72,10 @@ pub const SYSTEM_TAG_SOURCES: &str = "sources";
 /// HJSON paragraphs, flagged in prose by the editor overlay + `terms check`.
 #[allow(dead_code)]
 pub const SYSTEM_TAG_GLOSSARY: &str = "glossary";
+/// REUSE-1 (1.4.9+) — the Snippets book: reusable Typst paragraphs copied to a
+/// `snippets/` sidecar at assembly, referenced from prose via `#include`.
+#[allow(dead_code)]
+pub const SYSTEM_TAG_SNIPPETS: &str = "snippets";
 /// 1.2.21+ — top-level container for a world's invariants
 /// (climate, geography, seasons, distances, chronology).
 /// Free-form prose like Notes; the AI `Facts` scope loads

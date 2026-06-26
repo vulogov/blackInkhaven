@@ -3360,7 +3360,7 @@ impl Default for BookRagConfig {
             .iter()
             .map(|s| s.to_string())
             .collect(),
-            exclude_system_books: ["scripts", "prompts", "typst", "help", "intent", "sources", "glossary"]
+            exclude_system_books: ["scripts", "prompts", "typst", "help", "intent", "sources", "glossary", "snippets"]
                 .iter()
                 .map(|s| s.to_string())
                 .collect(),
