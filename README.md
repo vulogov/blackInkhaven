@@ -21,41 +21,39 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.4.8 — Terminology governance
+## Latest release · 1.4.9 — Reusable content blocks
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.4.8.md`](Documentation/RELEASE_NOTES/1.4.8.md)
-· Plan: [`Documentation/PROPOSALS/TERMS-1_PLAN.md`](Documentation/PROPOSALS/TERMS-1_PLAN.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.4.9.md`](Documentation/RELEASE_NOTES/1.4.9.md)
+· Plan: [`Documentation/PROPOSALS/REUSE-1_PLAN.md`](Documentation/PROPOSALS/REUSE-1_PLAN.md)
 
-The quiet trust-killer in long nonfiction and technical writing is **terminology drift** — "access
-token" in chapter one, "auth token" in chapter seven. 1.4.8 (TERMS-1) adds a **Glossary** of
-canonical terms + banned synonyms, and flags the drift as you write. **Self-gating** (an empty
-Glossary changes nothing); **no new dependencies, no new storage.**
+Documentation repeats itself — the same warning, the same procedure note, written again everywhere
+and drifting each time. 1.4.9 (REUSE-1) lets you write that prose **once** as a Typst paragraph in a
+**Snippets** book and reference it anywhere with a standard `#include`. **Self-gating** (no snippets,
+no change); **no new content type, no new dependencies.**
 
-### A Glossary, and a live overlay
+### Write once, include anywhere
 
-A new **Glossary** system book holds canonical terms with their **banned synonyms** as HJSON
-entries. The editor **red-underlines** the synonyms in prose — "auth token" lights up while the
-canonical "access token" stays clean (the inverse of a normal highlight: the *wrong* form is
-flagged). The footer shows the fix: `terms: "auth token" → use "access token"`. **`Ctrl+V z`**
-toggles it; matching is 1–3 words and Unicode-aware.
+Reusable prose lives in a new **Snippets** system book. Reference it with a normal Typst
+`#include "../../snippets/<slug>.typ"` — but let inkhaven write the path: **`Ctrl+V x`** fuzzy-picks a
+snippet and inserts a **depth-correct** include (the `../…/snippets/` prefix is computed from the
+paragraph's place in the tree). With the cursor inside an existing snippet include, it **replaces**
+the path in place. At Book assembly the snippets are copied to a `snippets/` sidecar, so the include
+resolves at `typst compile` — no new syntax.
 
-### Sometimes you mean it
+### Never ship a broken reference
 
-With the cursor on a flag, **`Ctrl+V Shift+Z`** declares that term a **deliberate variant** — an
-intent that stops the overlay and the scan from flagging it.
-
-### Scan, and let the model help
-
-**`inkhaven terms check [--book] [--json]`** scans the whole project and **exits non-zero** on
-findings (CI-ready). No glossary yet? **`inkhaven terms suggest --book <slug>`** clusters words
-appearing in multiple surface forms and proposes Glossary entries via the LLM (`--auto-create`
-drafts them). Scripts get read-only `ink.terms.{list,get,check}` + `declare_intent`.
+A **save-time validator** flags any `#include` pointing at an undefined snippet (status bar, `F8`,
+`Ctrl+V N`) — validated against the live Snippets book, so it works *before* you assemble.
+**`inkhaven snippets check`** validates the whole project and **exits non-zero** on a missing
+reference (CI-ready); it also reports orphaned snippets. **`Ctrl+V Shift+X`** is the overview — every
+snippet with its reference count, Enter jumps to source.
 
 ### Dependencies & compatibility
 
-**No external application or binary dependencies; no new runtime crates; no new DB tables** (one
-additive `Glossary` system book + one `IntentKind`) — built on the existing style-warning + intent
-machinery. Projects that don't use TERMS-1 pay nothing (the detector is empty and short-circuits).
+**No new content type, no new `NodeKind`, no new DB tables; no external or runtime crates** — built
+on inline Typst `#include` + the existing diagnostics pipeline + assembler. Projects without a
+Snippets book pay nothing (`emit_snippets_directory` is a no-op; the validator runs only on buffers
+with an `#include`).
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
