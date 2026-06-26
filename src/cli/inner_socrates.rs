@@ -10,7 +10,7 @@ use crate::inner_socrates::fast;
 use crate::inner_socrates::intent::{FindingContext, IntentLedger};
 use crate::inner_socrates::output::emit_finding;
 use crate::inner_socrates::storage::InnerSocratesStore;
-use crate::inner_socrates::types::Persona;
+use crate::inner_socrates::types::{Persona, SocraticFinding, Stance};
 
 pub fn run(project: &Path, cmd: InnerSocratesCommand) -> Result<()> {
     match cmd {
@@ -209,48 +209,54 @@ fn persona(project: &Path, cmd: crate::cli::PersonaCommand) -> Result<()> {
 /// Run the Fast track over prose and surface its questions. When the project has
 /// an Inner Socrates store, the intent ledger is consulted, findings persist (a
 /// re-check replaces a paragraph's prior ones), and they emit to Output.
-#[allow(clippy::too_many_arguments)]
-fn check(
+/// Run the Socratic pass over `prose`: the Fast track (skipped for verdict
+/// personas — they can neither praise nor charge deterministically), then the
+/// LLM Slow track when `slow`, then persist + emit every finding to the Output
+/// pane. Returns the findings + the active persona. Shared by the CLI `check`
+/// command and the TUI background engage (`Ctrl+B J → E`), so both run one code
+/// path. Quiet-safe: the only stderr notice is suppressed when an Output store
+/// is installed (the TUI).
+pub(crate) fn run_socratic_pass(
     project: &Path,
-    text: Option<String>,
-    paragraph: Option<String>,
-    path: Option<String>,
+    prose: &str,
+    paragraph_id: Option<uuid::Uuid>,
     slow: bool,
     max_cost: usize,
     force: bool,
-) -> Result<()> {
+) -> Result<(Vec<SocraticFinding>, Persona)> {
     let store = InnerSocratesStore::open_for_project(project).ok();
     let ledger = store
         .as_ref()
         .and_then(|s| s.load_ledger().ok())
         .unwrap_or_default();
-
-    let (prose, paragraph_id) = resolve_prose(project, text, paragraph, path)?;
     let persona = crate::inner_socrates::personas::active(project);
-    let ctx = FindingContext { paragraph_id: paragraph_id.map(|p| p.to_string()), ..Default::default() };
+    let ctx = FindingContext {
+        paragraph_id: paragraph_id.map(|p| p.to_string()),
+        ..Default::default()
+    };
 
     // The two verdict personas (Defender/Prosecutor) speak only via the LLM
-    // verdict — the deterministic Fast track can neither praise nor charge, so
-    // it's skipped for them; they need `--slow`.
-    let is_verdict = persona.stance.is_verdict();
-    let mut findings = if is_verdict {
+    // verdict — the deterministic Fast track can neither praise nor charge.
+    let mut findings = if persona.stance.is_verdict() {
         Vec::new()
     } else {
-        fast::check_paragraph(&prose, &persona, &ledger, &ctx)
+        fast::check_paragraph(prose, &persona, &ledger, &ctx)
     };
-    if is_verdict && !slow {
-        eprintln!(
-            "{} delivers an LLM verdict — re-run with --slow",
-            persona.name
-        );
-    }
 
     // The Slow track (LLM) adds the deep questions patterns miss; the fast
     // findings are the seam (the prompt tells the model not to repeat them).
     if slow {
-        match run_slow(project, &prose, &persona, &ledger, &ctx, &findings, max_cost, force) {
+        match run_slow(project, prose, &persona, &ledger, &ctx, &findings, max_cost, force) {
             Ok(mut deep) => findings.append(&mut deep),
-            Err(e) => eprintln!("slow track skipped: {e}"),
+            // Quiet in the TUI (Output store installed) — a stray stderr write
+            // would corrupt the frame; visible on the CLI.
+            Err(e) => {
+                if crate::pane::output::active().is_none() {
+                    eprintln!("slow track skipped: {e}");
+                } else {
+                    tracing::warn!("socratic slow track skipped: {e}");
+                }
+            }
         }
     }
 
@@ -262,9 +268,32 @@ fn check(
             emit_finding(f, Some(pid));
         }
     }
+    Ok((findings, persona))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn check(
+    project: &Path,
+    text: Option<String>,
+    paragraph: Option<String>,
+    path: Option<String>,
+    slow: bool,
+    max_cost: usize,
+    force: bool,
+) -> Result<()> {
+    let (prose, paragraph_id) = resolve_prose(project, text, paragraph, path)?;
+    let (findings, persona) =
+        run_socratic_pass(project, &prose, paragraph_id, slow, max_cost, force)?;
+
+    // Verdict personas need --slow to say anything (Fast track is skipped).
+    if persona.stance.is_verdict() && !slow {
+        eprintln!(
+            "{} delivers an LLM verdict — re-run with --slow",
+            persona.name
+        );
+    }
 
     // Stance-aware nouns: the verdict personas state praise / concern, the rest ask.
-    use crate::inner_socrates::types::Stance;
     let noun = match persona.stance {
         Stance::Praise => "point(s) of praise",
         Stance::Concern => "concern(s)",
@@ -372,13 +401,19 @@ fn socratic_llm_call(
     let effective_soft = if force { 0 } else { soft_cap };
     let daily_cap = cfg.cost.inner_socrates_daily_call_cap;
     let (pf, verdict) = slow_preflight(system, &prompt, used, daily_cap, effective_soft);
+    // Quiet on the TUI background path (an Output store is installed): stray
+    // stderr writes from a worker thread would corrupt the ratatui frame. The
+    // CLI keeps the informative preflight notices.
+    let quiet = crate::pane::output::active().is_some();
     match verdict {
         // Informative, not a gate: warn past the daily budget and keep going.
         PreflightVerdict::DailyCapReached => {
-            eprintln!(
-                "{label}: past today's slow-track budget ({}/{} calls) — continuing (the cap is informative, see `inkhaven cost`).",
-                pf.calls_used, daily_cap
-            );
+            if !quiet {
+                eprintln!(
+                    "{label}: past today's slow-track budget ({}/{} calls) — continuing (the cap is informative, see `inkhaven cost`).",
+                    pf.calls_used, daily_cap
+                );
+            }
         }
         PreflightVerdict::OverSoftCap { est_total_tokens, soft_cap } => {
             return Err(Error::Config(format!(
@@ -388,10 +423,12 @@ fn socratic_llm_call(
         }
         PreflightVerdict::Proceed => {}
     }
-    eprintln!(
-        "{label} · model: {model} · ~{} tokens · {}/{} calls today · reading…",
-        pf.est_total_tokens, pf.calls_used, pf.daily_cap
-    );
+    if !quiet {
+        eprintln!(
+            "{label} · model: {model} · ~{} tokens · {}/{} calls today · reading…",
+            pf.est_total_tokens, pf.calls_used, pf.daily_cap
+        );
+    }
 
     const MAX_ATTEMPTS: u32 = 3;
     let mut last_err = String::new();
@@ -410,7 +447,9 @@ fn socratic_llm_call(
                 last_err = e.to_string();
                 if attempt + 1 < MAX_ATTEMPTS && is_transient(&last_err) {
                     let d = backoff_delay(attempt);
-                    eprintln!("  transient error ({last_err}); retrying in {:.1}s…", d.as_secs_f32());
+                    if !quiet {
+                        eprintln!("  transient error ({last_err}); retrying in {:.1}s…", d.as_secs_f32());
+                    }
                     std::thread::sleep(d);
                     continue;
                 }
