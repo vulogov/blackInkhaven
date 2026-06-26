@@ -253,16 +253,34 @@ pub fn by_id(project: &Path, id: &str) -> Persona {
     load_all(project).into_iter().find(|p| p.id == id).unwrap_or_else(Persona::default_inner_socrates)
 }
 
-/// The active persona for a project: the one the store records as active, else the
-/// default (Inner Socrates).
+/// The active persona for a project: the one the store records as active; else
+/// the project config's `inner_socrates_default_persona` (AUDIENCE-1, e.g. a
+/// technical book defaulting to `skeptical-practitioner`); else the bundled
+/// `inner-socrates`. An explicit `set_active_persona` always wins over config.
 pub fn active(project: &Path) -> Persona {
     let id = super::storage::InnerSocratesStore::open_for_project(project)
         .ok()
         .and_then(|s| s.active_persona_id().ok().flatten());
     match id {
         Some(id) => by_id(project, &id),
-        None => Persona::default_inner_socrates(),
+        None => match config_default_persona(project) {
+            Some(id) => by_id(project, &id),
+            None => Persona::default_inner_socrates(),
+        },
     }
+}
+
+/// The `inner_socrates_default_persona` config value for a project, trimmed and
+/// non-empty, if set. Best-effort — a missing / unreadable config yields `None`.
+/// Public so the TUI overview can flag when the active persona came from config.
+pub fn config_default_persona(project: &Path) -> Option<String> {
+    crate::config::Config::load_layered(
+        &crate::project::ProjectLayout::new(project).config_path(),
+    )
+    .ok()
+    .and_then(|c| c.inner_socrates_default_persona)
+    .map(|s| s.trim().to_string())
+    .filter(|s| !s.is_empty())
 }
 
 /// A tiny insertion-ordered map (avoids a new dependency on `indexmap`).
@@ -368,5 +386,44 @@ mod tests {
     #[test]
     fn rejects_persona_without_id() {
         assert!(parse_persona(r#"{ name: "Nameless" }"#).is_err());
+    }
+
+    // ── AUDIENCE-1: config-default persona resolution ──
+
+    #[test]
+    fn active_falls_back_to_config_default_then_inner_socrates() {
+        // No config, no DB row → bundled inner-socrates.
+        let bare = tempfile::tempdir().unwrap();
+        assert_eq!(active(bare.path()).id, "inner-socrates");
+
+        // Config default set, no explicit DB row → the config default persona.
+        let cfg_dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            cfg_dir.path().join("inkhaven.hjson"),
+            "{\n  inner_socrates_default_persona: skeptical-practitioner\n}\n",
+        )
+        .unwrap();
+        assert_eq!(active(cfg_dir.path()).id, "skeptical-practitioner");
+        assert_eq!(
+            config_default_persona(cfg_dir.path()).as_deref(),
+            Some("skeptical-practitioner")
+        );
+    }
+
+    #[test]
+    fn explicit_active_persona_beats_config_default() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("inkhaven.hjson"),
+            "{\n  inner_socrates_default_persona: skeptical-practitioner\n}\n",
+        )
+        .unwrap();
+        // An explicit `persona set` writes the DB singleton…
+        super::super::storage::InnerSocratesStore::open_for_project(dir.path())
+            .unwrap()
+            .set_active_persona("expert-reviewer")
+            .unwrap();
+        // …and wins over the config default.
+        assert_eq!(active(dir.path()).id, "expert-reviewer");
     }
 }
