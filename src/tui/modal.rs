@@ -357,6 +357,18 @@ pub(super) enum Modal {
         cursor: usize,
         scroll: usize,
     },
+    /// 1.4.9+ REUSE-1 — Ctrl+V x snippet `#include` insert/replace picker
+    /// (distinct from the text-expansion `SnippetPicker`). Reuses
+    /// `ScriptPickerEntry`: `title` holds the snippet slug, `slug_path` the
+    /// description preview. Enter inserts (or replaces) a `#include` for the
+    /// chosen snippet; `mode` carries Insert vs Replace-span.
+    SnippetIncludePicker {
+        input: TextInput,
+        entries: Vec<ScriptPickerEntry>,
+        cursor: usize,
+        scroll: usize,
+        mode: super::state::SnippetPickerMode,
+    },
     /// 1.3.34+ — Ctrl+B $ AI cost dashboard: a scrollable read-only panel of
     /// today's LLM call tallies per capped subsystem (computed on render).
     CostDashboard { scroll: usize },

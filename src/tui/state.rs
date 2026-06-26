@@ -255,6 +255,31 @@ pub(super) struct ImageCallContext {
     pub closing_quote_present: bool,
 }
 
+/// REUSE-1 — detection result for "the cursor sits inside the quoted path of an
+/// `#include "…"` call on this line".
+#[derive(Debug, Clone)]
+pub(super) struct IncludeContext {
+    /// Char col of the opening `"`.
+    pub quote_start_col: usize,
+    /// Char col just after the closing `"`.
+    pub quote_end_col: usize,
+    /// The snippet slug if this is a `…/snippets/<slug>.typ` include, else `None`
+    /// (a generic include — the picker still inserts, but can't pre-select).
+    pub snippet_slug: Option<String>,
+}
+
+/// REUSE-1 — whether the snippet picker inserts a new `#include` at the cursor
+/// or replaces the path of an existing include in-place.
+#[derive(Debug, Clone, Copy)]
+pub(super) enum SnippetPickerMode {
+    Insert,
+    Replace {
+        row: usize,
+        quote_start_col: usize,
+        quote_end_col: usize,
+    },
+}
+
 /// Aggregate counts for one root Book, computed by walking its subtree.
 /// Words come from each Paragraph's stored `word_count` (kept up to date
 /// at save time); sentences are derived by re-reading paragraph bodies
