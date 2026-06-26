@@ -6451,6 +6451,30 @@ impl App {
         false
     }
 
+    /// Whether `parent` is the Glossary system book or nested under it — used to
+    /// seed a new paragraph with the glossary-entry HJSON template (TERMS-1).
+    fn parent_is_under_glossary(
+        &self,
+        parent: Option<&crate::store::node::Node>,
+    ) -> bool {
+        let Some(glossary_root_id) =
+            self.system_book_id(crate::store::SYSTEM_TAG_GLOSSARY)
+        else {
+            return false;
+        };
+        let Some(parent) = parent else {
+            return false;
+        };
+        let mut cur: Option<&crate::store::node::Node> = Some(parent);
+        while let Some(node) = cur {
+            if node.id == glossary_root_id {
+                return true;
+            }
+            cur = node.parent_id.and_then(|id| self.hierarchy.get(id));
+        }
+        false
+    }
+
     /// Insert-after variant: walks up from the tree cursor to find a node of
     /// the same `kind` as the one being added; if found, the new node will be
     /// placed immediately after it. Falls back to append-at-end if no
@@ -21516,6 +21540,12 @@ impl App {
                             // book (or one of its chapters) is a citation
                             // entry — seed the HJSON schema, key = the title.
                             Some(crate::sources::seed_sources_body_for_tui(
+                                &title,
+                            ))
+                        } else if self.parent_is_under_glossary(parent.as_ref()) {
+                            // TERMS-1: a paragraph under the Glossary book is a
+                            // glossary entry — seed the schema, term = the title.
+                            Some(crate::glossary::seed_glossary_body_for_tui(
                                 &title,
                             ))
                         } else {

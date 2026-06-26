@@ -40,6 +40,9 @@ pub const SYSTEM_BOOKS: &[(&str, &str)] = &[
     // other reference material. ensure_system_books bumps existing books down on
     // first open after upgrade.
     ("sources", "Sources"),
+    // TERMS-1 (1.4.8+) — terminology governance: canonical terms + banned
+    // synonyms (HJSON paragraphs), beside the other reference material.
+    ("glossary", "Glossary"),
     ("facts", "Facts"),
     ("prompts", "Prompts"),
     ("places", "Places"),
@@ -62,6 +65,10 @@ pub const SYSTEM_TAG_NOTES: &str = "notes";
 /// `Documentation/PROPOSALS/SOURCES-1_PLAN.md`. (Consumed from S-P1.)
 #[allow(dead_code)]
 pub const SYSTEM_TAG_SOURCES: &str = "sources";
+/// TERMS-1 (1.4.8+) — the Glossary book: canonical terms + banned synonyms as
+/// HJSON paragraphs, flagged in prose by the editor overlay + `terms check`.
+#[allow(dead_code)]
+pub const SYSTEM_TAG_GLOSSARY: &str = "glossary";
 /// 1.2.21+ — top-level container for a world's invariants
 /// (climate, geography, seasons, distances, chronology).
 /// Free-form prose like Notes; the AI `Facts` scope loads
