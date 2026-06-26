@@ -2123,6 +2123,40 @@ inner_socrates_default_persona: skeptical-practitioner
 
 See [Tutorial 90 — Nonfiction reader personas](Tutorials/90-nonfiction-personas.md).
 
+## 1.4.10 — Jinja template paragraphs (STRUCT-1)
+
+A paragraph with `content_type: "jinja"` is a [minijinja](https://docs.rs/minijinja)
+template the **assembler renders to Typst** before `typst compile` runs (two
+layers, never nested). Add one with **`t`** in the Tree pane — under a user book
+for a data-driven manuscript template, or under the **Snippets** system book for
+a reusable fragment that other templates `{% include "snippets/<path>.jinja" %}`.
+
+- **Context:** the template sees `title`, `slug`, `book.{title,slug,genre}`,
+  `chapter.{title,slug}`, `language`, `genre`, and `linked["<slug>"].<field>` —
+  HJSON data from paragraphs linked with `Ctrl+V a`. It is **self-gating**: no
+  Jinja paragraphs, no behaviour change, no enable flag.
+- **Editor:** tree glyph `⟡`, header badge `[jinja]`, Jinja syntax highlighting.
+  Jinja paragraphs are skipped by the Inner Editor, Inner Socrates, and the idle
+  fact-checker (markup, not prose).
+- **Errors:** a render failure (bad syntax, missing include, typo'd variable)
+  **aborts the whole assembly** by default with the offending paragraph + error —
+  CI-safe, no silently-dropped content. Opt into continue-and-flag mode with:
+
+  ```hjson
+  jinja: {
+    // false (default): a render error aborts Book assembly. true: write a
+    // visible Typst error block into the paragraph's place and keep going,
+    // so you can fix broken templates one at a time.
+    continue_on_error: false
+  }
+  ```
+
+  - `continue_on_error` (default `false`) — abort vs. visible-error-block-and-
+    continue on a Jinja render failure.
+
+See [JINJA_TEMPLATES.md](JINJA_TEMPLATES.md) and
+[Tutorial 93 — Jinja templates](Tutorials/93-jinja-templates.md).
+
 ## 1.4.9 — Reusable content blocks (REUSE-1)
 
 Write a warning, a procedure note, or an admonition once and reference it from
