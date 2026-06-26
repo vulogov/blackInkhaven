@@ -346,6 +346,16 @@ impl super::App {
             }
             return;
         };
+        // STRUCT-1 — Jinja templates aren't prose; style analysis doesn't apply
+        // (and the body is mostly Typst markup + Jinja tags).
+        if doc.content_type.as_deref() == Some("jinja") {
+            if !ambient {
+                self.status = "Inner Editor: jinja template paragraphs are skipped \
+                               (style analysis does not apply to templates)"
+                    .into();
+            }
+            return;
+        }
         let id = doc.id;
         let prose = doc.textarea.lines().join("\n");
         if prose.trim().is_empty() {

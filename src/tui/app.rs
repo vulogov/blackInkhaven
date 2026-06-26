@@ -12415,6 +12415,10 @@ impl App {
     /// completion against.
     fn maybe_spawn_slow_check(&mut self) {
         let Some(doc) = self.opened.as_ref() else { return };
+        // STRUCT-1 — never fact-check a Jinja template (it's markup, not prose).
+        if doc.content_type.as_deref() == Some("jinja") {
+            return;
+        }
         let id = doc.id;
         let prose = doc.textarea.lines().join("\n");
         if prose.trim().is_empty() {
@@ -12613,6 +12617,13 @@ impl App {
             self.status = "Inner Socrates: no paragraph open".into();
             return;
         };
+        // STRUCT-1 — Jinja templates aren't prose; the Socratic pass doesn't apply.
+        if doc.content_type.as_deref() == Some("jinja") {
+            self.status = "Inner Socrates: jinja template paragraphs are skipped \
+                           (not prose)"
+                .into();
+            return;
+        }
         let prose = doc.textarea.lines().join("\n");
         if prose.trim().is_empty() {
             self.status = "Inner Socrates: the paragraph is empty".into();
@@ -25821,6 +25832,8 @@ pub(super) fn highlight_for_content(
 ) -> Vec<Vec<super::highlight::StyledRun>> {
     match content_type {
         Some("hjson") => super::hjson_highlight::highlight_hjson_lines(source, theme),
+        // STRUCT-1 — Jinja template paragraphs.
+        Some("jinja") => super::jinja_highlight::highlight_jinja_lines(source, theme),
         Some("bund") => super::bund_highlight::highlight_bund_lines(source, theme),
         // 1.2.8+ — Help-book paragraphs default to markdown
         // and use the hand-rolled CommonMark-subset lexer

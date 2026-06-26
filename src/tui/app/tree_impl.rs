@@ -168,6 +168,8 @@ impl super::App {
                     } else {
                         match node.content_type.as_deref() {
                             Some("hjson") => "❴ ",
+                            // STRUCT-1 — Jinja template paragraph.
+                            Some("jinja") => "⟡ ",
                             _ => "¶ ",
                         }
                     }
