@@ -125,9 +125,13 @@ pub fn glossary_entries_from_store(
         if node.kind != NodeKind::Paragraph {
             continue;
         }
-        let Ok(Some(bytes)) = store.get_content(id) else { continue };
-        let Ok(text) = std::str::from_utf8(&bytes) else { continue };
-        let body = strip_heading(text);
+        // Read from disk (the saved file), consistent with how the bibliography
+        // and assembly read paragraphs.
+        let Some(rel) = node.file.as_ref() else { continue };
+        let Ok(text) = std::fs::read_to_string(store.project_root().join(rel)) else {
+            continue;
+        };
+        let body = strip_heading(&text);
         if let Some(e) = GlossaryEntry::from_hjson(body) {
             if e.is_valid() && e.applies_to(book_scope) {
                 out.push(e);

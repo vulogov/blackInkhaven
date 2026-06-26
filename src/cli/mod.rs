@@ -35,6 +35,7 @@ pub mod realworld;
 pub mod templates;
 pub mod thread;
 pub mod sources;
+pub mod terms;
 pub mod tts;
 pub mod gen_fixture;
 pub mod bench_load;
@@ -942,6 +943,12 @@ pub enum Command {
     #[command(subcommand)]
     Sources(SourcesCommand),
 
+    /// 1.4.8+ TERMS-1 — `inkhaven terms <subcommand>`.
+    /// Terminology governance: scan prose for banned synonyms
+    /// of canonical terms defined in the `Glossary` system book.
+    #[command(subcommand)]
+    Terms(TermsCommand),
+
     /// 1.3.24 PANE-1 — the Output message channel (CLI surface; the pane is TUI).
     #[command(subcommand)]
     Output(OutputCommand),
@@ -1743,6 +1750,22 @@ pub enum SubmissionCommand {
         book_name: Option<String>,
         #[arg(long)]
         provider: Option<String>,
+    },
+}
+
+/// 1.4.8+ TERMS-1 — `inkhaven terms …` sub-subcommands.
+#[derive(Debug, Subcommand)]
+pub enum TermsCommand {
+    /// Scan prose for banned synonyms of Glossary canonical terms and report
+    /// every occurrence with its location. Exits non-zero when any are found —
+    /// drop it into a pre-build / CI check.
+    Check {
+        /// Limit the scan to one user book (default: all user books).
+        #[arg(long)]
+        book: Option<String>,
+        /// Machine-readable JSON report.
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -4552,6 +4575,9 @@ impl Cli {
             }
             Command::Thread(cmd) => {
                 thread::run(&project, cmd).map_err(Into::into)
+            }
+            Command::Terms(cmd) => {
+                terms::run(&project, cmd).map_err(Into::into)
             }
             Command::Sources(cmd) => {
                 sources::run(&project, cmd).map_err(Into::into)
