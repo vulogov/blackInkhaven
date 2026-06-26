@@ -179,6 +179,40 @@ impl SocraticFinding {
     }
 }
 
+/// How a persona delivers its Slow-track findings. The default is the classical
+/// Socratic discipline — questions only, never praise, never prescribe. The
+/// **verdict** stances (1.4.7) deliberately relax that for the two adversarial
+/// bundled personas: the **Defender** speaks only praise, the **Prosecutor**
+/// only concern. User-authored personas may opt in via `stance:` in HJSON.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Stance {
+    /// Questions only — the Socratic spine shared by every other persona.
+    #[default]
+    Question,
+    /// Praise only — "counsel for the defense" (the Defender).
+    Praise,
+    /// Concern only — "the prosecution" (the Prosecutor).
+    Concern,
+}
+
+impl Stance {
+    /// A verdict stance *states* findings (praise / concern); the default *asks*.
+    pub fn is_verdict(self) -> bool {
+        !matches!(self, Stance::Question)
+    }
+
+    /// Parse a `stance:` id from a persona HJSON file. Accepts the canonical
+    /// `question` / `praise` / `concern` plus the role aliases.
+    pub fn from_id(s: &str) -> Option<Stance> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "" | "question" | "socratic" => Some(Stance::Question),
+            "praise" | "defend" | "defender" | "defence" | "defense" => Some(Stance::Praise),
+            "concern" | "prosecute" | "prosecutor" | "prosecution" => Some(Stance::Concern),
+            _ => None,
+        }
+    }
+}
+
 /// A reader persona — a distinct careful-reader perspective. Category **emphasis
 /// weights** scale a category's salience for this persona; `0.0` mutes the
 /// category entirely. Voice notes are the LLM-facing character (used by the Slow
@@ -194,6 +228,9 @@ pub struct Persona {
     pub voice_notes: String,
     /// Per-category emphasis; absent categories default to `1.0`.
     pub emphasis: HashMap<Category, f32>,
+    /// How the Slow track delivers findings (questions by default; praise /
+    /// concern for the verdict personas). 1.4.7 AUDIENCE-1.
+    pub stance: Stance,
 }
 
 impl Persona {
@@ -223,6 +260,7 @@ impl Persona {
             voice_summary: "Every question opens what the prose has closed.".into(),
             voice_notes: String::new(),
             emphasis,
+            stance: Stance::Question,
         }
     }
 }
