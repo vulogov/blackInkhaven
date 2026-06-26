@@ -229,7 +229,21 @@ fn check(
     let persona = crate::inner_socrates::personas::active(project);
     let ctx = FindingContext { paragraph_id: paragraph_id.map(|p| p.to_string()), ..Default::default() };
 
-    let mut findings = fast::check_paragraph(&prose, &persona, &ledger, &ctx);
+    // The two verdict personas (Defender/Prosecutor) speak only via the LLM
+    // verdict — the deterministic Fast track can neither praise nor charge, so
+    // it's skipped for them; they need `--slow`.
+    let is_verdict = persona.stance.is_verdict();
+    let mut findings = if is_verdict {
+        Vec::new()
+    } else {
+        fast::check_paragraph(&prose, &persona, &ledger, &ctx)
+    };
+    if is_verdict && !slow {
+        eprintln!(
+            "{} delivers an LLM verdict — re-run with --slow",
+            persona.name
+        );
+    }
 
     // The Slow track (LLM) adds the deep questions patterns miss; the fast
     // findings are the seam (the prompt tells the model not to repeat them).
@@ -249,8 +263,21 @@ fn check(
         }
     }
 
+    // Stance-aware nouns: the verdict personas state praise / concern, the rest ask.
+    use crate::inner_socrates::types::Stance;
+    let noun = match persona.stance {
+        Stance::Praise => "point(s) of praise",
+        Stance::Concern => "concern(s)",
+        Stance::Question => "question(s)",
+    };
     if findings.is_empty() {
-        println!("\u{2713} no questions raised (fast track)");
+        let empty = match persona.stance {
+            Stance::Praise => "nothing to defend".to_string(),
+            Stance::Concern => "no charges to bring".to_string(),
+            Stance::Question if slow => "no questions raised".to_string(),
+            Stance::Question => "no questions raised (fast track)".to_string(),
+        };
+        println!("\u{2713} {empty}");
         return Ok(());
     }
     for f in &findings {
@@ -266,7 +293,7 @@ fn check(
             f.question
         );
     }
-    println!("\n{} question(s) · persona: {}", findings.len(), persona.name);
+    println!("\n{} {noun} · persona: {}", findings.len(), persona.name);
     Ok(())
 }
 
@@ -287,10 +314,10 @@ fn run_slow(
     force: bool,
 ) -> Result<Vec<crate::inner_socrates::types::SocraticFinding>> {
     use crate::inner_socrates::slow::{
-        apply_persona_and_ledger, build_slow_prompt, intent_summary, parse_slow_findings, slow_system,
+        apply_persona_and_ledger, build_slow_prompt, build_verdict_prompt, intent_summary,
+        parse_slow_findings, slow_system_for,
     };
     let lang = crate::world::fact_check_lang::detect(prose);
-    let prompt = build_slow_prompt(persona, prose, &intent_summary(ledger), fast_findings, lang);
     // AUDIENCE-1: the Socratic framing is genre-aware. A nonfiction / technical
     // genre swaps the fiction assumption for a calibrated context line.
     let genre = crate::config::Config::load_layered(
@@ -298,7 +325,15 @@ fn run_slow(
     )
     .ok()
     .and_then(|c| c.genre);
-    let system = slow_system(genre.as_deref());
+    // The two verdict personas (Defender/Prosecutor) get a verdict system prompt
+    // + a seam-free user prompt; every other persona keeps the neutral question
+    // path unchanged. Output stays bilingual in both modes.
+    let system = slow_system_for(persona.stance, genre.as_deref());
+    let prompt = if persona.stance.is_verdict() {
+        build_verdict_prompt(persona, prose, &intent_summary(ledger), lang)
+    } else {
+        build_slow_prompt(persona, prose, &intent_summary(ledger), fast_findings, lang)
+    };
     let raw = socratic_llm_call(project, "slow track", &system, prompt, soft_cap, force)?;
     let parsed = parse_slow_findings(&raw, &persona.id);
     Ok(apply_persona_and_ledger(parsed, persona, ledger, ctx))
