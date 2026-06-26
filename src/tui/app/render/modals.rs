@@ -2728,6 +2728,85 @@ impl super::super::App {
         );
     }
 
+    /// 1.4.9+ REUSE-1 — the Ctrl+V Shift+X snippets overview: `slug  (N refs)
+    /// preview`, Enter jumps to the source.
+    pub(in crate::tui::app) fn draw_snippets_overview_modal(
+        &mut self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::SnippetsOverview { rows, cursor, scroll } = &self.modal else {
+            return;
+        };
+        let width = area.width.saturating_sub(8).max(60);
+        let height = area.height.saturating_sub(4).max(14);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(format!(" Snippets ({}) ", rows.len()))
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(Style::default().bg(self.theme.modal_bg).fg(self.theme.modal_fg));
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: inner.height.saturating_sub(1),
+        };
+        let body_h = body_rect.height as usize;
+        let lines: Vec<Line<'_>> = rows
+            .iter()
+            .enumerate()
+            .skip(*scroll)
+            .take(body_h)
+            .map(|(i, r)| {
+                let refs = if r.reference_count == 0 {
+                    "  (unused)".to_string()
+                } else {
+                    format!("  ({} ref)", r.reference_count)
+                };
+                let spans: Vec<Span> = vec![
+                    Span::raw(format!(" {}", r.slug)),
+                    Span::styled(refs, Style::default().add_modifier(Modifier::DIM)),
+                    Span::styled(
+                        format!("   {}", r.preview),
+                        Style::default().add_modifier(Modifier::DIM),
+                    ),
+                ];
+                let mut line = Line::from(spans);
+                if i == *cursor {
+                    line = line.style(Style::default().add_modifier(Modifier::REVERSED));
+                }
+                line
+            })
+            .collect();
+        f.render_widget(Paragraph::new(lines), body_rect);
+
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                " ↑↓ select · Enter jumps to source · Esc closes ",
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
     /// 1.3.33+ — the Ctrl+Shift+P command palette. Each row is
     /// `label  chord  description`; the input box fuzzy-filters.
     pub(in crate::tui::app) fn draw_command_palette_modal(

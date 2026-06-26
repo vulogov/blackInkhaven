@@ -8760,6 +8760,119 @@ impl App {
         }
     }
 
+    /// 1.4.9+ REUSE-1 — Ctrl+V Shift+X. Open the snippets overview: every defined
+    /// snippet with its project-wide reference count.
+    fn open_snippets_overview(&mut self) {
+        let Some(book) = self.hierarchy.iter().find(|n| {
+            n.kind == NodeKind::Book
+                && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_SNIPPETS)
+        }) else {
+            self.status = "snippets: no Snippets book".into();
+            return;
+        };
+        // Reference counts: scan every user-book paragraph for snippet includes.
+        let mut counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        for ub in self.hierarchy.children_of(None) {
+            if ub.kind != NodeKind::Book || ub.system_tag.is_some() {
+                continue;
+            }
+            for id in self.hierarchy.collect_subtree(ub.id) {
+                let Some(n) = self.hierarchy.get(id) else { continue };
+                if n.kind != NodeKind::Paragraph {
+                    continue;
+                }
+                if let Ok(Some(bytes)) = self.store.get_content(id) {
+                    if let Ok(text) = std::str::from_utf8(&bytes) {
+                        for slug in crate::typst_check::snippet_references(text) {
+                            *counts.entry(slug).or_insert(0) += 1;
+                        }
+                    }
+                }
+            }
+        }
+        let mut rows: Vec<crate::tui::modal::SnippetsOverviewRow> = Vec::new();
+        for id in self.hierarchy.collect_subtree(book.id) {
+            let Some(n) = self.hierarchy.get(id) else { continue };
+            if n.kind != NodeKind::Paragraph {
+                continue;
+            }
+            let preview = self
+                .store
+                .get_content(id)
+                .ok()
+                .flatten()
+                .and_then(|b| String::from_utf8(b).ok())
+                .map(|text| {
+                    text.lines()
+                        .map(str::trim)
+                        .find(|l| !l.is_empty() && !l.starts_with("= "))
+                        .unwrap_or("")
+                        .chars()
+                        .take(56)
+                        .collect::<String>()
+                })
+                .unwrap_or_default();
+            rows.push(crate::tui::modal::SnippetsOverviewRow {
+                slug: n.slug.clone(),
+                preview,
+                reference_count: counts.get(&n.slug).copied().unwrap_or(0),
+                jump: n.id,
+            });
+        }
+        if rows.is_empty() {
+            self.status = "snippets: no snippets defined — add paragraphs to the Snippets book".into();
+            return;
+        }
+        rows.sort_by(|a, b| a.slug.cmp(&b.slug));
+        let total: usize = rows.iter().map(|r| r.reference_count).sum();
+        self.status = format!("{} snippet(s), {total} reference(s) · ↑↓ · Enter jumps · Esc", rows.len());
+        self.modal = Modal::SnippetsOverview { rows, cursor: 0, scroll: 0 };
+    }
+
+    fn snippets_overview_handle_key(&mut self, key: KeyEvent) {
+        let (n, cursor, jump) = {
+            let Modal::SnippetsOverview { rows, cursor, .. } = &self.modal else {
+                return;
+            };
+            (rows.len(), *cursor, rows.get(*cursor).map(|r| r.jump))
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "snippets overview: closed".into();
+            }
+            KeyCode::Up => self.set_snippets_overview_cursor(cursor.saturating_sub(1)),
+            KeyCode::Down => {
+                if n > 0 {
+                    self.set_snippets_overview_cursor((cursor + 1).min(n - 1));
+                }
+            }
+            KeyCode::Enter => {
+                if let Some(pid) = jump {
+                    self.modal = Modal::None;
+                    match self.open_paragraph_by_uuid(pid) {
+                        Ok(()) => self.status = "→ jumped to snippet".into(),
+                        Err(e) => self.status = format!("snippets: {e}"),
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn set_snippets_overview_cursor(&mut self, v: usize) {
+        if let Modal::SnippetsOverview { cursor, scroll, .. } = &mut self.modal {
+            *cursor = v;
+            let page = 14usize;
+            if *cursor < *scroll {
+                *scroll = *cursor;
+            } else if *cursor >= *scroll + page {
+                *scroll = *cursor + 1 - page;
+            }
+        }
+    }
+
     /// Collect every paragraph in the project (excluding
     /// system-book content) as picker entries.
     fn collect_all_paragraph_entries(&self) -> Vec<ScriptPickerEntry> {
@@ -10298,6 +10411,7 @@ impl App {
             A::ViewListBookmarks => self.open_bookmark_picker_modal(),
             A::ViewCitePicker => self.open_cite_picker(),
             A::InsertSnippetInclude => self.open_snippet_insert_picker(),
+            A::OpenSnippetsOverview => self.open_snippets_overview(),
             A::ViewToggleTermsOverlay => self.toggle_terms_overlay(),
             A::ViewDeclareTermIntent => self.declare_term_intent_at_cursor(),
             A::ViewFuzzyParagraphPicker => self.open_fuzzy_paragraph_picker(),
@@ -20724,6 +20838,10 @@ impl App {
         }
         if matches!(self.modal, Modal::ConlangHub { .. }) {
             self.conlang_hub_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::SnippetsOverview { .. }) {
+            self.snippets_overview_handle_key(key);
             return Ok(false);
         }
         if matches!(self.modal, Modal::WorldOverview { .. }) {

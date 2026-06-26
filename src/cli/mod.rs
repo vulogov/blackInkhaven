@@ -36,6 +36,7 @@ pub mod templates;
 pub mod thread;
 pub mod sources;
 pub mod terms;
+pub mod snippets;
 pub mod tts;
 pub mod gen_fixture;
 pub mod bench_load;
@@ -949,6 +950,12 @@ pub enum Command {
     #[command(subcommand)]
     Terms(TermsCommand),
 
+    /// 1.4.9+ REUSE-1 — `inkhaven snippets <subcommand>`.
+    /// Reusable content blocks: list snippets + reference counts,
+    /// validate `#include` references against the `Snippets` book.
+    #[command(subcommand)]
+    Snippets(SnippetsCommand),
+
     /// 1.3.24 PANE-1 — the Output message channel (CLI surface; the pane is TUI).
     #[command(subcommand)]
     Output(OutputCommand),
@@ -1750,6 +1757,26 @@ pub enum SubmissionCommand {
         book_name: Option<String>,
         #[arg(long)]
         provider: Option<String>,
+    },
+}
+
+/// 1.4.9+ REUSE-1 — `inkhaven snippets …` sub-subcommands.
+#[derive(Debug, Subcommand)]
+pub enum SnippetsCommand {
+    /// List the snippets defined in the Snippets book + how many times each is
+    /// referenced across the project.
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Validate every `#include "…/snippets/<slug>.typ"` against the defined
+    /// snippets. Missing references → error (exit 1); orphaned snippets → warning.
+    Check {
+        /// Limit the scan to one user book (default: all).
+        #[arg(long)]
+        book: Option<String>,
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -4599,6 +4626,9 @@ impl Cli {
             }
             Command::Terms(cmd) => {
                 terms::run(&project, cmd).map_err(Into::into)
+            }
+            Command::Snippets(cmd) => {
+                snippets::run(&project, cmd).map_err(Into::into)
             }
             Command::Sources(cmd) => {
                 sources::run(&project, cmd).map_err(Into::into)

@@ -171,6 +171,16 @@ pub(super) struct ConlangHubRow {
     pub header: bool,
 }
 
+/// 1.4.9+ REUSE-1 — one row in the snippets overview.
+#[derive(Debug, Clone)]
+pub(super) struct SnippetsOverviewRow {
+    pub slug: String,
+    pub preview: String,
+    pub reference_count: usize,
+    /// The snippet's source paragraph (Enter jumps here).
+    pub jump: Uuid,
+}
+
 /// 1.3.8 — one rendered line in the story-bible view.
 #[derive(Debug, Clone)]
 pub(super) struct BibleRow {
@@ -368,6 +378,13 @@ pub(super) enum Modal {
         cursor: usize,
         scroll: usize,
         mode: super::state::SnippetPickerMode,
+    },
+    /// 1.4.9+ REUSE-1 — Ctrl+V Shift+X snippets overview: every defined snippet
+    /// with its reference count, Enter jumps to the source paragraph.
+    SnippetsOverview {
+        rows: Vec<SnippetsOverviewRow>,
+        cursor: usize,
+        scroll: usize,
     },
     /// 1.3.34+ — Ctrl+B $ AI cost dashboard: a scrollable read-only panel of
     /// today's LLM call tallies per capped subsystem (computed on render).
