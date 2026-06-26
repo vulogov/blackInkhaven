@@ -12,7 +12,7 @@ use std::path::Path;
 
 use serde::Deserialize;
 
-use super::types::{Category, Persona};
+use super::types::{Category, Persona, Stance};
 use super::{Result, SocratesError};
 
 /// The on-disk persona format (HJSON). `emphasis` keys are category ids.
@@ -28,6 +28,10 @@ struct PersonaFile {
     voice_notes: String,
     #[serde(default)]
     emphasis: HashMap<String, f32>,
+    /// Optional delivery stance (`question` | `praise` | `concern`). Absent →
+    /// the Socratic default. 1.4.7 AUDIENCE-1.
+    #[serde(default)]
+    stance: Option<String>,
 }
 
 /// Parse a persona from an HJSON string. Unknown emphasis keys are ignored.
@@ -42,6 +46,12 @@ pub fn parse_persona(body: &str) -> Result<Persona> {
         .into_iter()
         .filter_map(|(k, v)| Category::from_id(&k).map(|c| (c, v)))
         .collect();
+    // Unknown stance strings fall back to the Socratic default rather than failing.
+    let stance = f
+        .stance
+        .as_deref()
+        .and_then(Stance::from_id)
+        .unwrap_or_default();
     Ok(Persona {
         id: f.id,
         name: f.name,
@@ -49,6 +59,7 @@ pub fn parse_persona(body: &str) -> Result<Persona> {
         voice_summary: f.voice_summary,
         voice_notes: f.voice_notes,
         emphasis,
+        stance,
     })
 }
 
@@ -63,6 +74,7 @@ pub fn bundled() -> Vec<Persona> {
         voice_summary: summary.into(),
         voice_notes: notes.into(),
         emphasis: emph.iter().copied().collect(),
+        stance: Stance::Question,
     };
     vec![
         p(
@@ -274,6 +286,40 @@ pub fn bundled() -> Vec<Persona> {
                 // hybrid invariant — a utopia is still fiction, so it is NOT muted.
             ],
         ),
+        // ── Verdict personas (1.4.7 AUDIENCE-1) — the two adversaries ──
+        // These deliberately break the Socratic "questions only, never praise /
+        // prescribe" spine (see `Stance`): the Defender speaks ONLY praise, the
+        // Prosecutor ONLY concern. Emphasis is left empty (every category live —
+        // they may praise or charge any dimension); the stance drives the verdict.
+        Persona {
+            stance: Stance::Praise,
+            ..p(
+                "defender",
+                "The Defender",
+                "Counsel for the defense — only what works, and why to protect it.",
+                "You are counsel for the defense for this passage. You read for what works and \
+                 speak only of that — the strength, the effect the prose achieves, the choice \
+                 that earns its place and should be protected. You raise no concerns and \
+                 propose no changes; you make the case for the writing as it stands. Be \
+                 specific and grounded — praise an actual move in the text, never a generic \
+                 compliment.",
+                &[],
+            )
+        },
+        Persona {
+            stance: Stance::Concern,
+            ..p(
+                "prosecutor",
+                "The Prosecutor",
+                "The prosecution — only what fails, stated as the charge.",
+                "You are the prosecution. You read for what fails and name only that — the weak \
+                 claim, the lazy line, the unearned beat, the soft generalization, the image \
+                 that overstates. You offer no praise and no remedy; you state the charge and \
+                 let it stand. Be specific and grounded — point at an actual phrase or move, \
+                 never a vague dissatisfaction.",
+                &[],
+            )
+        },
     ]
 }
 
@@ -383,13 +429,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn twelve_distinct_bundled_personas() {
+    fn fourteen_distinct_bundled_personas() {
         let ps = bundled();
         // 5 fiction (1.3.x) + 4 nonfiction (1.4.6 AUDIENCE-1)
-        // + 3 ideas (1.4.7 AUDIENCE-1.1).
-        assert_eq!(ps.len(), 12);
+        // + 3 ideas (1.4.7 AUDIENCE-1.1) + 2 verdict adversaries (1.4.7).
+        assert_eq!(ps.len(), 14);
         let ids: std::collections::BTreeSet<_> = ps.iter().map(|p| p.id.as_str()).collect();
-        assert_eq!(ids.len(), 12);
+        assert_eq!(ids.len(), 14);
         assert!(ids.contains("inner-socrates"));
         // Personas weight different categories (they read differently).
         let socr = ps.iter().find(|p| p.id == "inner-socrates").unwrap();
@@ -411,6 +457,43 @@ mod tests {
             assert!(p.mutes(Category::TemporalDensity), "{id} should mute TemporalDensity");
             assert!(p.mutes(Category::UnattributedDialogue), "{id} should mute UnattributedDialogue");
         }
+    }
+
+    #[test]
+    fn verdict_personas_carry_their_stance() {
+        use super::super::types::Stance;
+        let ps = bundled();
+        let get = |id: &str| ps.iter().find(|p| p.id == id)
+            .unwrap_or_else(|| panic!("missing verdict persona `{id}`")).clone();
+
+        let def = get("defender");
+        assert_eq!(def.stance, Stance::Praise);
+        assert!(def.stance.is_verdict());
+
+        let pros = get("prosecutor");
+        assert_eq!(pros.stance, Stance::Concern);
+        assert!(pros.stance.is_verdict());
+
+        // Every OTHER bundled persona keeps the Socratic question stance.
+        for p in ps.iter().filter(|p| p.id != "defender" && p.id != "prosecutor") {
+            assert_eq!(p.stance, Stance::Question, "{} must stay Socratic", p.id);
+            assert!(!p.stance.is_verdict());
+        }
+    }
+
+    #[test]
+    fn stance_parses_from_hjson_with_aliases_and_default() {
+        use super::super::types::Stance;
+        // Explicit stance + alias forms.
+        let praise = parse_persona(r#"{ id: "x" name: "X" stance: "praise" }"#).unwrap();
+        assert_eq!(praise.stance, Stance::Praise);
+        let pros = parse_persona(r#"{ id: "y" name: "Y" stance: "prosecution" }"#).unwrap();
+        assert_eq!(pros.stance, Stance::Concern);
+        // Absent → Socratic default; unknown → falls back to default, not an error.
+        let none = parse_persona(r#"{ id: "z" name: "Z" }"#).unwrap();
+        assert_eq!(none.stance, Stance::Question);
+        let bogus = parse_persona(r#"{ id: "w" name: "W" stance: "shouting" }"#).unwrap();
+        assert_eq!(bogus.stance, Stance::Question);
     }
 
     #[test]
