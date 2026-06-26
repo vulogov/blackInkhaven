@@ -22272,10 +22272,71 @@ impl App {
     /// first error so the user sees the line number at a glance;
     /// the rest stay cached on the doc for any future "next error"
     /// chord.
+    /// The slugs of every paragraph in the Snippets system book — the set of
+    /// valid `snippets/<slug>.typ` include targets. Empty when the book is
+    /// absent. Used by the `#include` validator (REUSE-1).
+    fn snippet_slugs(&self) -> std::collections::HashSet<String> {
+        self.hierarchy
+            .iter()
+            .find(|n| {
+                n.kind == crate::store::NodeKind::Book
+                    && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_SNIPPETS)
+            })
+            .map(|book| {
+                self.hierarchy
+                    .collect_subtree(book.id)
+                    .into_iter()
+                    .filter_map(|id| self.hierarchy.get(id))
+                    .filter(|n| n.kind == crate::store::NodeKind::Paragraph)
+                    .map(|n| n.slug.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The directory a paragraph's assembled `.typ` lands in:
+    /// `<artefacts>/<book-slug>/book/<chapter fs_name>/…`. Relative `#include`
+    /// paths resolve against this. Returns `None` when the paragraph isn't in a
+    /// book or the book hasn't been assembled yet (dir doesn't exist) — generic
+    /// includes can only be verified post-assembly.
+    fn assembled_base_dir(&self, para_id: uuid::Uuid) -> Option<std::path::PathBuf> {
+        let para = self.hierarchy.get(para_id)?;
+        let book_id = self.book_of_node(para_id)?;
+        let book = self.hierarchy.get(book_id)?;
+        let mut dir = self
+            .store
+            .resolve_artefacts_dir(&self.cfg)
+            .join(&book.slug)
+            .join("book");
+        // Chapter/subchapter ancestors, root-first, each as its `NN-slug` dir.
+        for anc in self.hierarchy.ancestors(para) {
+            if anc.kind == crate::store::NodeKind::Book {
+                continue;
+            }
+            dir.push(anc.fs_name());
+        }
+        dir.exists().then_some(dir)
+    }
+
     fn refresh_typst_diagnostics_for_opened(&mut self) {
         if !self.cfg.typst_compile.diagnostics {
             return;
         }
+        // REUSE-1 / generic-include validation context — computed *before* the
+        // mutable `doc` borrow so the `&self` helpers (book lookup, artefacts
+        // resolution) don't conflict. Gated on a cheap immutable peek for
+        // `#include`, so it's zero-cost for the common no-includes paragraph.
+        let open_id = self.opened.as_ref().map(|d| d.id);
+        let has_include = self
+            .opened
+            .as_ref()
+            .is_some_and(|d| d.textarea.lines().iter().any(|l| l.contains("#include")));
+        let (known_slugs, include_base_dir) = if has_include {
+            let base = open_id.and_then(|id| self.assembled_base_dir(id));
+            (self.snippet_slugs(), base)
+        } else {
+            (std::collections::HashSet::new(), None)
+        };
         let Some(doc) = self.opened.as_mut() else {
             return;
         };
@@ -22315,29 +22376,17 @@ impl App {
                 crate::typst_inprocess::check_semantic(&body, settings);
             diags.extend(semantic);
         }
-        // REUSE-1: validate snippet `#include` references against the live
-        // Snippets book (slug existence) — only when the buffer has includes, so
-        // it's zero-cost otherwise. Field accesses keep the borrow disjoint from
-        // the `doc` mutable borrow above.
-        if body.contains("#include") {
-            let known: std::collections::HashSet<String> = self
-                .hierarchy
-                .iter()
-                .find(|n| {
-                    n.kind == crate::store::NodeKind::Book
-                        && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_SNIPPETS)
-                })
-                .map(|book| {
-                    self.hierarchy
-                        .collect_subtree(book.id)
-                        .into_iter()
-                        .filter_map(|id| self.hierarchy.get(id))
-                        .filter(|n| n.kind == crate::store::NodeKind::Paragraph)
-                        .map(|n| n.slug.clone())
-                        .collect()
-                })
-                .unwrap_or_default();
-            diags.extend(crate::typst_check::check_includes(&body, &known));
+        // REUSE-1: validate `#include` references. Snippet includes are checked
+        // against the live Snippets book (slug existence, works pre-assembly);
+        // generic Typst includes are resolved against the paragraph's assembled
+        // chapter dir (when the book has been assembled). Computed above, gated on
+        // `has_include`, so it's zero-cost for paragraphs without includes.
+        if has_include {
+            diags.extend(crate::typst_check::check_includes(
+                &body,
+                &known_slugs,
+                include_base_dir.as_deref(),
+            ));
         }
         doc.typst_diagnostics = diags;
         doc.typst_diagnostics_checked_at = std::time::Instant::now();
