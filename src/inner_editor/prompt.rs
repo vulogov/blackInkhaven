@@ -245,6 +245,19 @@ pub fn genre_fragment(genre: Option<&str>) -> Option<&'static str> {
             "business writing — directness and the actionable claim are the craft; note \
              where vagueness displaces a concrete point."
         }
+        // ── Ideas genres (1.4.7 AUDIENCE-1.1) ──
+        "utopian" | "utopia" | "dystopian" | "dystopia" => {
+            "utopian/dystopian — the imagined world carries the argument; note where the \
+             social premise strains the story or the prose tips into preaching."
+        }
+        "philosophy" | "philosophical" => {
+            "philosophy — precision of term and the clean move from premise to claim are \
+             the craft; note where a definition wobbles or a transition smuggles a premise."
+        }
+        "theology" | "theological" | "religious" => {
+            "theology — clarity and reverence of register are the craft; note where \
+             abstraction loses the reader or rhetoric outpaces the argument."
+        }
         _ => return None,
     })
 }
@@ -515,6 +528,12 @@ mod tests {
             ("academic", "precision"),
             ("popular science", "science writing"),
             ("business", "actionable"),
+            // 1.4.7 AUDIENCE-1.1 — ideas genres.
+            ("utopian", "imagined world"),
+            ("dystopian", "imagined world"),     // alias
+            ("philosophy", "premise"),
+            ("theology", "register"),
+            ("religious", "register"),           // alias
         ];
         for (genre, needle) in cases {
             let frag = genre_fragment(Some(genre))
