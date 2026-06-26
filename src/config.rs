@@ -61,6 +61,9 @@ pub struct Config {
     /// SOURCES-1 (1.4.5+) — the bibliography & citation engine.
     #[serde(default)]
     pub sources: SourcesConfig,
+    /// STRUCT-1 — Jinja template paragraph rendering.
+    #[serde(default)]
+    pub jinja: JinjaConfig,
     /// The project's declared genre (e.g. `literary_realism`, `fantasy`).
     /// Project-wide; consumed by Inner Editor's genre-aware prompting and open
     /// to other features later. `None` = genre-blind.
@@ -208,6 +211,7 @@ impl Default for Config {
             book_rag: BookRagConfig::default(),
             inner_editor: InnerEditorConfig::default(),
             sources: SourcesConfig::default(),
+            jinja: JinjaConfig::default(),
             genre: None,
             inner_socrates_default_persona: None,
             project_lock: ProjectLockConfig::default(),
@@ -3579,6 +3583,27 @@ pub struct SourcesConfig {
 impl Default for SourcesConfig {
     fn default() -> Self {
         Self { all: true, bibliography_style: "ieee".into(), auto_bibliography: true }
+    }
+}
+
+/// STRUCT-1 — Jinja template paragraphs (`content_type: "jinja"`). The assembler
+/// renders these to `.typ` before `typst compile`. Optional block; the default
+/// aborts assembly on the first render error so a broken template can't silently
+/// drop content from the PDF.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct JinjaConfig {
+    /// `false` (default): a Jinja render failure aborts the whole book assembly
+    /// with the offending paragraph + error in the message — broken templates
+    /// stop the build until fixed (CI-safe). `true`: write a visible Typst error
+    /// block into the paragraph's output and keep assembling the rest, so the
+    /// author can fix templates one at a time.
+    pub continue_on_error: bool,
+}
+
+impl Default for JinjaConfig {
+    fn default() -> Self {
+        Self { continue_on_error: false }
     }
 }
 

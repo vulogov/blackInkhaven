@@ -82,6 +82,11 @@ pub fn assemble_book(
     let total = count_work(&hierarchy, book_node);
     let mut done: usize = 0;
 
+    // STRUCT-1: register every `.jinja` paragraph in the Snippets book as a named
+    // template *before* any rendering, so manuscript and snippet Jinja templates
+    // can `{% include "snippets/…" %}` each other. Empty when no Jinja snippets.
+    let jinja_env = build_jinja_environment(layout, &hierarchy)?;
+
     // Wipe the entire `<artefacts>/<book-slug>/` directory and start
     // fresh. The user asked for a clean slate every time so stale
     // chapters, paragraphs, or PDFs from previous runs don't linger
@@ -96,6 +101,8 @@ pub fn assemble_book(
         store,
         layout,
         &hierarchy,
+        cfg,
+        &jinja_env,
         book_node,
         &out_book_subtree,
         BranchLevel::BookRoot,
@@ -118,7 +125,8 @@ pub fn assemble_book(
 
     // REUSE-1: copy reusable snippets to `<out_book>/snippets/` so prose
     // `#include "…/snippets/…"` calls resolve. No-op when no Snippets book.
-    let _snippets_written = emit_snippets_directory(layout, &hierarchy, &out_book)?;
+    let _snippets_written =
+        emit_snippets_directory(layout, &hierarchy, &out_book, cfg, &jinja_env)?;
 
     // Root .typ for the book — applies settings, calls wrap_book on
     // the assembled subtree. The Typst chapter's index.typ body is
@@ -220,6 +228,8 @@ fn emit_snippets_directory(
     layout: &ProjectLayout,
     hierarchy: &Hierarchy,
     out_book: &Path,
+    cfg: &Config,
+    jinja_env: &minijinja::Environment<'static>,
 ) -> Result<usize> {
     let Some(snippets_book) = hierarchy.iter().find(|n| {
         n.kind == NodeKind::Book
@@ -227,31 +237,210 @@ fn emit_snippets_directory(
     }) else {
         return Ok(0);
     };
-    // Collect (slug, body) first so we only create the dir when there's content.
-    let mut written: Vec<(String, String)> = Vec::new();
+    // Collect the snippet paragraph nodes first so we only create the dir when
+    // there's content.
+    let nodes: Vec<&Node> = hierarchy
+        .collect_subtree(snippets_book.id)
+        .into_iter()
+        .filter_map(|id| hierarchy.get(id))
+        .filter(|n| n.kind == NodeKind::Paragraph && n.file.is_some())
+        .collect();
+    if nodes.is_empty() {
+        return Ok(0);
+    }
+    let dir = out_book.join("snippets");
+    std::fs::create_dir_all(&dir).map_err(Error::Io)?;
+    let mut count = 0usize;
+    for n in nodes {
+        // The output is always `<slug>.typ` so prose `#include "…/snippets/<slug>.typ"`
+        // resolves regardless of whether the source was `.typ` or `.jinja`.
+        let dst = dir.join(format!("{}.typ", n.slug));
+        if n.content_type.as_deref() == Some("jinja") {
+            // STRUCT-1: render the snippet template standalone (its own minimal
+            // context, no linked data) so REUSE-1 Typst-level includes resolve.
+            // Jinja-level `{% include %}` uses the registered template instead.
+            render_jinja_paragraph(layout, hierarchy, cfg, jinja_env, n, &dst)?;
+        } else {
+            let Some(rel) = &n.file else { continue };
+            let Ok(raw) = std::fs::read_to_string(layout.root.join(rel)) else {
+                continue;
+            };
+            // Strip the `= Title` editor heading — the snippet is included as raw
+            // Typst, the title is inkhaven chrome (same as `copy_paragraph_file`).
+            let body = strip_leading_heading(&raw);
+            std::fs::write(&dst, body.as_bytes()).map_err(Error::Io)?;
+        }
+        count += 1;
+    }
+    Ok(count)
+}
+
+/// STRUCT-1 — build the `minijinja` environment from the Snippets system book.
+/// Every `content_type: "jinja"` paragraph in the Snippets subtree is registered
+/// as a named template so manuscript Jinja paragraphs (and other snippet
+/// templates) can `{% include "snippets/<path>.jinja" %}` them. Template names
+/// come from the hierarchy slug path, lowercased — `Snippets/Macros/warning` →
+/// `snippets/macros/warning.jinja`. Returns an empty environment when the
+/// Snippets book is absent or has no Jinja paragraphs (standalone rendering still
+/// works). Q2: duplicate template names are first-write-wins with a warning.
+fn build_jinja_environment(
+    layout: &ProjectLayout,
+    hierarchy: &Hierarchy,
+) -> Result<minijinja::Environment<'static>> {
+    let mut env = minijinja::Environment::new();
+    let Some(snippets_book) = hierarchy.iter().find(|n| {
+        n.kind == NodeKind::Book
+            && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_SNIPPETS)
+    }) else {
+        return Ok(env);
+    };
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for id in hierarchy.collect_subtree(snippets_book.id) {
         let Some(n) = hierarchy.get(id) else { continue };
-        if n.kind != NodeKind::Paragraph {
+        if n.kind != NodeKind::Paragraph || n.content_type.as_deref() != Some("jinja") {
             continue;
         }
         let Some(rel) = &n.file else { continue };
         let Ok(raw) = std::fs::read_to_string(layout.root.join(rel)) else {
             continue;
         };
-        // Strip the `= Title` editor heading — the snippet is included as raw
-        // Typst, the title is inkhaven chrome (same as `copy_paragraph_file`).
         let body = strip_leading_heading(&raw);
-        written.push((n.slug.clone(), body));
+        let name = jinja_template_name(hierarchy, n);
+        if !seen.insert(name.clone()) {
+            tracing::warn!(
+                target: "inkhaven::assemble",
+                "jinja: duplicate template name `{name}` — keeping first, ignoring `{}`",
+                n.title
+            );
+            continue; // Q2 — first-write-wins.
+        }
+        env.add_template_owned(name.clone(), body).map_err(|e| {
+            Error::Store(format!(
+                "jinja: failed to register snippet template `{name}` ({}): {e}",
+                n.title
+            ))
+        })?;
     }
-    if written.is_empty() {
-        return Ok(0);
+    Ok(env)
+}
+
+/// The `minijinja` template name for a Snippets-book paragraph: its hierarchy
+/// slug path, lowercased, with a `.jinja` suffix — e.g.
+/// `snippets/macros/warning.jinja`. The leading `snippets/` comes from the book
+/// slug, so `{% include %}` paths match the registered names exactly.
+fn jinja_template_name(hierarchy: &Hierarchy, node: &Node) -> String {
+    format!("{}.jinja", hierarchy.slug_path(node).to_lowercase())
+}
+
+/// STRUCT-1 — build the render context for a Jinja paragraph. Exposes the
+/// paragraph's own `title`/`slug`, its enclosing `book` + `chapter`, the project
+/// `language`/`genre`, and a `linked` map of HJSON data keyed by each linked
+/// paragraph's slug. Non-HJSON links are skipped — their prose isn't meaningful
+/// template context (raw-text access is deferred to STRUCT-2's `linked_text`).
+fn jinja_context_for_node(
+    layout: &ProjectLayout,
+    hierarchy: &Hierarchy,
+    cfg: &Config,
+    node: &Node,
+) -> minijinja::Value {
+    let ancestors = hierarchy.ancestors(node); // root-first, excludes `node`
+    let book = ancestors.iter().find(|n| n.kind == NodeKind::Book);
+    let chapter = ancestors.iter().find(|n| n.kind == NodeKind::Chapter);
+
+    let mut linked = serde_json::Map::new();
+    for lid in &node.linked_paragraphs {
+        let Some(ln) = hierarchy.get(*lid) else { continue };
+        if ln.content_type.as_deref() != Some("hjson") {
+            continue;
+        }
+        let Some(rel) = &ln.file else { continue };
+        let Ok(raw) = std::fs::read_to_string(layout.root.join(rel)) else {
+            continue;
+        };
+        match serde_hjson::from_str::<serde_json::Value>(&raw) {
+            Ok(v) => {
+                linked.insert(ln.slug.clone(), v);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target: "inkhaven::assemble",
+                    "jinja: linked HJSON `{}` did not parse — skipped: {e}",
+                    ln.title
+                );
+            }
+        }
     }
-    let dir = out_book.join("snippets");
-    std::fs::create_dir_all(&dir).map_err(Error::Io)?;
-    for (slug, body) in &written {
-        std::fs::write(dir.join(format!("{slug}.typ")), body.as_bytes()).map_err(Error::Io)?;
+
+    let ctx = serde_json::json!({
+        "title": node.title,
+        "slug": node.slug,
+        "book": book.map(|b| serde_json::json!({
+            "title": b.title,
+            "slug": b.slug,
+            "genre": cfg.genre,
+        })),
+        "chapter": chapter.map(|c| serde_json::json!({
+            "title": c.title,
+            "slug": c.slug,
+        })),
+        "linked": serde_json::Value::Object(linked),
+        "language": cfg.language,
+        "genre": cfg.genre,
+    });
+    minijinja::Value::from_serialize(&ctx)
+}
+
+/// STRUCT-1 — render a `content_type: "jinja"` paragraph to Typst at `dst`
+/// (always a `.typ` path). Strips the editor heading, builds the context, and
+/// renders against `env` so `{% include "snippets/…" %}` resolves to the
+/// pre-registered snippet templates. On render failure: abort assembly by
+/// default (Q1), or — when `cfg.jinja.continue_on_error` — write a visible Typst
+/// error block and continue so the author can fix templates one at a time.
+fn render_jinja_paragraph(
+    layout: &ProjectLayout,
+    hierarchy: &Hierarchy,
+    cfg: &Config,
+    env: &minijinja::Environment<'static>,
+    node: &Node,
+    dst: &Path,
+) -> Result<()> {
+    let Some(rel) = &node.file else {
+        return Err(Error::Store(format!(
+            "assemble: jinja paragraph `{}` has no file on disk",
+            node.title
+        )));
+    };
+    let raw = std::fs::read_to_string(layout.root.join(rel)).map_err(Error::Io)?;
+    let body = strip_leading_heading(&raw);
+    let ctx = jinja_context_for_node(layout, hierarchy, cfg, node);
+    match env.render_str(&body, ctx) {
+        Ok(rendered) => {
+            std::fs::write(dst, rendered.as_bytes()).map_err(Error::Io)?;
+            Ok(())
+        }
+        Err(e) if cfg.jinja.continue_on_error => {
+            // Visible in the PDF so the failure can't be silently swallowed.
+            let block = format!(
+                "// JINJA RENDER ERROR in {title}: {e}\n\
+                 #block(fill: rgb(\"#ffdddd\"), inset: 8pt, radius: 4pt, width: 100%)[\
+                 *JINJA RENDER ERROR* — {title_lit}: {err_lit}]\n",
+                title = node.title,
+                title_lit = escape_typst_string(&node.title),
+                err_lit = escape_typst_string(&e.to_string()),
+            );
+            std::fs::write(dst, block.as_bytes()).map_err(Error::Io)?;
+            tracing::warn!(
+                target: "inkhaven::assemble",
+                "jinja render error in `{}` (continuing): {e}",
+                node.title
+            );
+            Ok(())
+        }
+        Err(e) => Err(Error::Store(format!(
+            "jinja render failed in `{}`: {e}",
+            node.title
+        ))),
     }
-    Ok(written.len())
 }
 
 /// Count files the assembler will write. Used to pre-size the progress
@@ -291,6 +480,8 @@ fn write_branch(
     store: &Store,
     layout: &ProjectLayout,
     hierarchy: &Hierarchy,
+    cfg: &Config,
+    jinja_env: &minijinja::Environment<'static>,
     branch: &Node,
     out_dir: &Path,
     level: BranchLevel,
@@ -324,13 +515,26 @@ fn write_branch(
         }
         match child.kind {
             NodeKind::Paragraph => {
-                let fname = child.fs_name(); // "NN-slug.typ"
-                let dst = out_dir.join(&fname);
-                copy_paragraph_file(layout, child, &dst)?;
-                *done += 1;
-                let rel = dst.strip_prefix(artefacts_root).unwrap_or(&dst);
-                progress(*done, total, rel);
-                child_refs.push(ChildRef::Paragraph { fname });
+                if child.content_type.as_deref() == Some("jinja") {
+                    // STRUCT-1: render Jinja → Typst. The artefact is always
+                    // `.typ` — a `.jinja` filename in the `include` would break
+                    // `typst compile`, so the `ChildRef` carries the `.typ` name.
+                    let out_fname = format!("{:02}-{}.typ", child.order, child.slug);
+                    let dst = out_dir.join(&out_fname);
+                    render_jinja_paragraph(layout, hierarchy, cfg, jinja_env, child, &dst)?;
+                    *done += 1;
+                    let rel = dst.strip_prefix(artefacts_root).unwrap_or(&dst);
+                    progress(*done, total, rel);
+                    child_refs.push(ChildRef::Paragraph { fname: out_fname });
+                } else {
+                    let fname = child.fs_name(); // "NN-slug.typ"
+                    let dst = out_dir.join(&fname);
+                    copy_paragraph_file(layout, child, &dst)?;
+                    *done += 1;
+                    let rel = dst.strip_prefix(artefacts_root).unwrap_or(&dst);
+                    progress(*done, total, rel);
+                    child_refs.push(ChildRef::Paragraph { fname });
+                }
             }
             NodeKind::Chapter | NodeKind::Subchapter => {
                 let dname = child.fs_name(); // "NN-slug"
@@ -344,6 +548,8 @@ fn write_branch(
                     store,
                     layout,
                     hierarchy,
+                    cfg,
+                    jinja_env,
                     child,
                     &dst_dir,
                     next_level,
@@ -857,7 +1063,14 @@ mod tests {
         };
         let h = Hierarchy::from_nodes_for_test(vec![book, para]);
         let out = root.join("out");
-        let n = emit_snippets_directory(&ProjectLayout::new(root), &h, &out).unwrap();
+        let n = emit_snippets_directory(
+            &ProjectLayout::new(root),
+            &h,
+            &out,
+            &Config::default(),
+            &minijinja::Environment::new(),
+        )
+        .unwrap();
         assert_eq!(n, 1);
         let written = std::fs::read_to_string(out.join("snippets/warn.typ")).unwrap();
         assert!(written.contains("#block[Careful here.]"), "{written}");
@@ -871,7 +1084,14 @@ mod tests {
         // No Snippets book at all.
         let h = Hierarchy::from_nodes_for_test(vec![]);
         assert_eq!(
-            emit_snippets_directory(&ProjectLayout::new(tmp.path()), &h, &out).unwrap(),
+            emit_snippets_directory(
+                &ProjectLayout::new(tmp.path()),
+                &h,
+                &out,
+                &Config::default(),
+                &minijinja::Environment::new(),
+            )
+            .unwrap(),
             0
         );
         assert!(!out.join("snippets").exists(), "no dir when no snippets");
@@ -883,10 +1103,129 @@ mod tests {
         };
         let h2 = Hierarchy::from_nodes_for_test(vec![book]);
         assert_eq!(
-            emit_snippets_directory(&ProjectLayout::new(tmp.path()), &h2, &out).unwrap(),
+            emit_snippets_directory(
+                &ProjectLayout::new(tmp.path()),
+                &h2,
+                &out,
+                &Config::default(),
+                &minijinja::Environment::new(),
+            )
+            .unwrap(),
             0
         );
         assert!(!out.join("snippets").exists());
+    }
+
+    #[test]
+    fn jinja_renders_includes_linked_and_metadata() {
+        // A Snippets book with one `.jinja` macro, plus a user book whose chapter
+        // holds a `.jinja` manuscript paragraph that includes the macro and reads
+        // a linked HJSON paragraph's fields.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let l = ProjectLayout::new(root);
+        std::fs::create_dir_all(root.join("books/snippets")).unwrap();
+        std::fs::create_dir_all(root.join("books/mybook/intro")).unwrap();
+
+        // Snippets/warning.jinja → template name "snippets/warning.jinja".
+        let sb_id = uuid::Uuid::new_v4();
+        let sb = Node {
+            id: sb_id,
+            system_tag: Some("snippets".into()),
+            ..mk_node(NodeKind::Book, "Snippets", "snippets", 0)
+        };
+        let warn_rel = "books/snippets/01-warning.jinja".to_string();
+        std::fs::write(root.join(&warn_rel), "= warning\n#block[Heads up.]\n").unwrap();
+        let warn = Node {
+            id: uuid::Uuid::new_v4(),
+            parent_id: Some(sb_id),
+            file: Some(warn_rel),
+            content_type: Some("jinja".into()),
+            ..mk_node(NodeKind::Paragraph, "warning", "warning", 0)
+        };
+
+        // User book → chapter → linked HJSON + manuscript jinja paragraph.
+        let ub_id = uuid::Uuid::new_v4();
+        let ub = mk_node(NodeKind::Book, "My Book", "mybook", 0);
+        let ub = Node { id: ub_id, ..ub };
+        let ch_id = uuid::Uuid::new_v4();
+        let ch = Node {
+            id: ch_id,
+            parent_id: Some(ub_id),
+            ..mk_node(NodeKind::Chapter, "Intro", "intro", 0)
+        };
+        let aria_rel = "books/mybook/intro/01-aria.hjson".to_string();
+        std::fs::write(root.join(&aria_rel), "{ name: \"Aria\", species: \"fox\" }").unwrap();
+        let aria_id = uuid::Uuid::new_v4();
+        let aria = Node {
+            id: aria_id,
+            parent_id: Some(ch_id),
+            file: Some(aria_rel),
+            content_type: Some("hjson".into()),
+            ..mk_node(NodeKind::Paragraph, "aria", "aria", 0)
+        };
+        let side_rel = "books/mybook/intro/02-sidebar.jinja".to_string();
+        std::fs::write(
+            root.join(&side_rel),
+            "= Sidebar\n{% include \"snippets/warning.jinja\" %}\nName: {{ linked[\"aria\"].name }} ({{ linked[\"aria\"].species }})\nBook: {{ book.title }}\nLang: {{ language }}\n",
+        )
+        .unwrap();
+        let side = Node {
+            id: uuid::Uuid::new_v4(),
+            parent_id: Some(ch_id),
+            file: Some(side_rel),
+            content_type: Some("jinja".into()),
+            linked_paragraphs: vec![aria_id],
+            ..mk_node(NodeKind::Paragraph, "sidebar", "sidebar", 1)
+        };
+
+        let side_id = side.id;
+        let h = Hierarchy::from_nodes_for_test(vec![sb, warn, ub, ch, aria, side]);
+        let env = build_jinja_environment(&l, &h).unwrap();
+        let cfg = Config::default();
+
+        let out = root.join("02-sidebar.typ");
+        let side_node = h.get(side_id).unwrap();
+        render_jinja_paragraph(&l, &h, &cfg, &env, side_node, &out).unwrap();
+        let r = std::fs::read_to_string(&out).unwrap();
+        assert!(r.contains("#block[Heads up.]"), "include not resolved: {r}");
+        assert!(r.contains("Name: Aria (fox)"), "linked HJSON not injected: {r}");
+        assert!(r.contains("Book: My Book"), "book metadata missing: {r}");
+        assert!(r.contains("Lang: english"), "language missing: {r}");
+        assert!(!r.contains("= Sidebar"), "heading must be stripped: {r}");
+    }
+
+    #[test]
+    fn jinja_render_error_aborts_by_default_and_continues_when_opted_in() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let l = ProjectLayout::new(root);
+        std::fs::create_dir_all(root.join("books/mybook")).unwrap();
+        let bad_rel = "books/mybook/01-bad.jinja".to_string();
+        // Unterminated expression → minijinja syntax error.
+        std::fs::write(root.join(&bad_rel), "= bad\n{{ oops").unwrap();
+        let node = Node {
+            id: uuid::Uuid::new_v4(),
+            file: Some(bad_rel),
+            content_type: Some("jinja".into()),
+            ..mk_node(NodeKind::Paragraph, "bad", "bad", 0)
+        };
+        let h = Hierarchy::from_nodes_for_test(vec![node.clone()]);
+        let env = minijinja::Environment::new();
+        let out = root.join("01-bad.typ");
+
+        // Default: abort.
+        let cfg = Config::default();
+        assert!(cfg.jinja.continue_on_error == false);
+        let err = render_jinja_paragraph(&l, &h, &cfg, &env, &node, &out).unwrap_err();
+        assert!(err.to_string().contains("jinja render failed"), "{err}");
+
+        // Opt-in: continue, writing a visible error block.
+        let mut cfg2 = Config::default();
+        cfg2.jinja.continue_on_error = true;
+        render_jinja_paragraph(&l, &h, &cfg2, &env, &node, &out).unwrap();
+        let r = std::fs::read_to_string(&out).unwrap();
+        assert!(r.contains("JINJA RENDER ERROR"), "{r}");
     }
 
     #[test]

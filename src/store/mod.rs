@@ -1659,7 +1659,7 @@ impl Store {
         }
         // Validate content_type vs new kind.
         match (new_kind, new_content_type) {
-            (NodeKind::Paragraph, None | Some("typst") | Some("hjson")) => {}
+            (NodeKind::Paragraph, None | Some("typst") | Some("hjson") | Some("jinja")) => {}
             (NodeKind::Script, Some("bund")) => {}
             (k, ct) => {
                 return Err(Error::Store(format!(
