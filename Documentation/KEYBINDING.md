@@ -134,6 +134,7 @@ cancels with a status hint telling you which pane's table it consulted.
 | `C` / `c`  | Open Add modal — new **chapter**.                   |
 | `S` / `s`  | Open Add modal — new **subchapter**.                |
 | `P` / `p`  | Open Add modal — new **paragraph**.                 |
+| `t`        | Open Add modal — new **Jinja template** paragraph (STRUCT-1). Valid under a user book (data-driven manuscript template) or the **Snippets** book (reusable `{% include %}` fragment); rejected elsewhere. Renders to Typst at assembly. See [JINJA_TEMPLATES.md](JINJA_TEMPLATES.md). |
 | `D` / `d`  | Open Delete confirm modal for the cursor's node.    |
 | `↑`        | Swap the cursor's node with its previous sibling.   |
 | `↓`        | Swap the cursor's node with its next sibling.       |

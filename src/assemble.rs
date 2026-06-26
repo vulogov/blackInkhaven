@@ -1229,6 +1229,54 @@ mod tests {
     }
 
     #[test]
+    fn jinja_passes_through_non_ascii_linked_values() {
+        // Multilingual requirement — "does it work in Russian?". A linked HJSON
+        // entry with Cyrillic values must render through the pipeline verbatim
+        // (serde_hjson -> serde_json -> minijinja -> UTF-8 on disk).
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let l = ProjectLayout::new(root);
+        std::fs::create_dir_all(root.join("books/kniga")).unwrap();
+        // English schema keys (the realistic case), Cyrillic values — plus one
+        // Cyrillic key reached by subscript (`.attr` access is ASCII-only in Jinja).
+        let geroy_rel = "books/kniga/01-geroy.hjson".to_string();
+        std::fs::write(
+            root.join(&geroy_rel),
+            "{ name: \"Ария\", species: \"лиса\", роль: \"разведчик\" }",
+        )
+        .unwrap();
+        let geroy_id = uuid::Uuid::new_v4();
+        let geroy = Node {
+            id: geroy_id,
+            file: Some(geroy_rel),
+            content_type: Some("hjson".into()),
+            ..mk_node(NodeKind::Paragraph, "geroy", "geroy", 0)
+        };
+        let card_rel = "books/kniga/02-card.jinja".to_string();
+        std::fs::write(
+            root.join(&card_rel),
+            "Имя: {{ linked[\"geroy\"].name }} ({{ linked[\"geroy\"].species }}, {{ linked[\"geroy\"][\"роль\"] }})\n",
+        )
+        .unwrap();
+        let card_id = uuid::Uuid::new_v4();
+        let card = Node {
+            id: card_id,
+            file: Some(card_rel),
+            content_type: Some("jinja".into()),
+            linked_paragraphs: vec![geroy_id],
+            ..mk_node(NodeKind::Paragraph, "card", "card", 1)
+        };
+        let h = Hierarchy::from_nodes_for_test(vec![geroy, card]);
+        let env = minijinja::Environment::new();
+        let cfg = Config::default();
+        let out = root.join("02-card.typ");
+        let card_node = h.get(card_id).unwrap();
+        render_jinja_paragraph(&l, &h, &cfg, &env, card_node, &out).unwrap();
+        let r = std::fs::read_to_string(&out).unwrap();
+        assert!(r.contains("Имя: Ария (лиса, разведчик)"), "cyrillic mangled: {r}");
+    }
+
+    #[test]
     fn build_root_typ_bibliography_line_is_style_gated() {
         let book = mk_node(NodeKind::Book, "My Book", "my-book", 0);
         let with = build_root_typ(&book, "", Some("ieee"));
