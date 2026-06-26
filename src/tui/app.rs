@@ -10106,6 +10106,7 @@ impl App {
             A::ViewListBookmarks => self.open_bookmark_picker_modal(),
             A::ViewCitePicker => self.open_cite_picker(),
             A::ViewToggleTermsOverlay => self.toggle_terms_overlay(),
+            A::ViewDeclareTermIntent => self.declare_term_intent_at_cursor(),
             A::ViewFuzzyParagraphPicker => self.open_fuzzy_paragraph_picker(),
             A::ViewRecentParagraphPicker => self.open_recent_paragraph_picker(),
             A::ViewKillRingPicker => self.open_kill_ring_picker(),
@@ -11053,6 +11054,8 @@ impl App {
         self.bible_section(&mut rows, SYSTEM_TAG_PLACES, "PLACES", None, Some(&dv));
         self.bible_section(&mut rows, SYSTEM_TAG_ARTEFACTS, "ARTEFACTS", None, Some(&dv));
         self.bible_section(&mut rows, SYSTEM_TAG_FACTS, "FACTS", None, None);
+        // TERMS-1 — the Glossary's canonical terms, jumpable to their entries.
+        self.bible_section(&mut rows, crate::store::SYSTEM_TAG_GLOSSARY, "GLOSSARY", None, None);
         rows
     }
 
@@ -14261,6 +14264,57 @@ impl App {
         } else {
             "terminology overlay: off".into()
         };
+    }
+
+    /// 1.4.8+ TERMS-1 (`Ctrl+V Shift+Z`) — with the cursor on a banned synonym,
+    /// declare its canonical term a deliberate variant in the intent ledger, so
+    /// the overlay + `terms check` stop flagging it.
+    fn declare_term_intent_at_cursor(&mut self) {
+        // Find the canonical term under the cursor (field accesses only).
+        let canonical = {
+            let Some(doc) = self.opened.as_ref() else {
+                self.status = "no paragraph open".into();
+                return;
+            };
+            let (row, col) = doc.textarea.cursor();
+            let lines = doc.textarea.lines();
+            let Some(line) = lines.get(row) else { return };
+            let detector = crate::tui::style_warnings::BannedSynonymDetector::from_store(
+                &self.store,
+                &self.hierarchy,
+                None,
+            );
+            match detector.hint_at(line, col) {
+                Some((_synonym, canonical)) => canonical,
+                None => {
+                    self.status =
+                        "terms: cursor is not on a banned synonym (move onto the red underline)".into();
+                    return;
+                }
+            }
+        };
+        use crate::inner_socrates::intent::{IntentKind, IntentScope, ScopeLevel};
+        use crate::inner_socrates::storage::InnerSocratesStore;
+        match InnerSocratesStore::open_for_project(self.store.project_root()) {
+            Ok(is) => {
+                let id = uuid::Uuid::new_v4().to_string();
+                let res = is.add_intent_raw(
+                    &id,
+                    &IntentKind::DeliberateVariant,
+                    &canonical,
+                    &IntentScope::Project,
+                    &["banned_synonym".to_string()],
+                    ScopeLevel::Project,
+                );
+                self.status = match res {
+                    Ok(()) => format!(
+                        "terms: declared \"{canonical}\" deliberate — its synonyms are no longer flagged"
+                    ),
+                    Err(e) => format!("terms: could not declare intent: {e}"),
+                };
+            }
+            Err(e) => self.status = format!("terms: inner-socrates store: {e}"),
+        }
     }
 
     /// The nearest `Chapter` ancestor of the open
