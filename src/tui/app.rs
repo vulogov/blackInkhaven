@@ -21999,6 +21999,30 @@ impl App {
                 crate::typst_inprocess::check_semantic(&body, settings);
             diags.extend(semantic);
         }
+        // REUSE-1: validate snippet `#include` references against the live
+        // Snippets book (slug existence) — only when the buffer has includes, so
+        // it's zero-cost otherwise. Field accesses keep the borrow disjoint from
+        // the `doc` mutable borrow above.
+        if body.contains("#include") {
+            let known: std::collections::HashSet<String> = self
+                .hierarchy
+                .iter()
+                .find(|n| {
+                    n.kind == crate::store::NodeKind::Book
+                        && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_SNIPPETS)
+                })
+                .map(|book| {
+                    self.hierarchy
+                        .collect_subtree(book.id)
+                        .into_iter()
+                        .filter_map(|id| self.hierarchy.get(id))
+                        .filter(|n| n.kind == crate::store::NodeKind::Paragraph)
+                        .map(|n| n.slug.clone())
+                        .collect()
+                })
+                .unwrap_or_default();
+            diags.extend(crate::typst_check::check_includes(&body, &known));
+        }
         doc.typst_diagnostics = diags;
         doc.typst_diagnostics_checked_at = std::time::Instant::now();
         if let Some(first) = doc.typst_diagnostics.first() {
