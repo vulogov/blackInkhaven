@@ -1271,6 +1271,33 @@ impl super::App {
         Some(format!("[{}]", parts.join(" · ")))
     }
 
+    /// 1.4.8+ TERMS-1 — footer chip when the cursor sits on a banned synonym:
+    /// `terms: "auth token" → use "access token"`. Honours the overlay toggle.
+    pub(super) fn terms_hit_chip(&self) -> Option<String> {
+        // The overlay must be active (master style toggle on + terms toggle on).
+        let style_on = self
+            .style_warnings_toggle
+            .unwrap_or(self.cfg.editor.style_warnings.enabled);
+        if !style_on || !self.terms_overlay_toggle.unwrap_or(true) {
+            return None;
+        }
+        let doc = self.opened.as_ref()?;
+        let (row, col) = doc.textarea.cursor();
+        let lines = doc.textarea.lines();
+        let line = lines.get(row)?;
+        let detector = crate::tui::style_warnings::BannedSynonymDetector::from_store(
+            &self.store,
+            &self.hierarchy,
+            None,
+            Default::default(),
+        );
+        if detector.is_empty() {
+            return None;
+        }
+        let (synonym, canonical) = detector.hint_at(line, col)?;
+        Some(format!("terms: \"{synonym}\" → use \"{canonical}\""))
+    }
+
     /// Compute the editor-pane goal footer text from the open
     /// doc + its node metadata. Returns `(breadcrumb, words,
     /// target)` when a goal is set, otherwise `None`. The

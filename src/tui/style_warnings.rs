@@ -62,6 +62,9 @@ pub enum StyleWarningKind {
     /// 1.3.8 — a term that postdates the manuscript's setting year
     /// (`editor.style_warnings.anachronism`).  See `AnachronismDetector`.
     Anachronism,
+    /// 1.4.8+ TERMS-1 — a banned synonym of a Glossary canonical term, flagged
+    /// with a red underline. See `BannedSynonymDetector`.
+    BannedSynonym,
 }
 
 /// One stylistic-warning hit on a row of editor text.
@@ -724,9 +727,214 @@ impl AnachronismDetector {
     }
 }
 
+/// 1.4.8+ TERMS-1 — flags **banned synonyms** of Glossary canonical terms. Built
+/// from the Glossary system book (not config): a `synonym_lc → canonical` map.
+/// Unlike [`AnachronismDetector`], synonyms may be **multi-word** (1–3 grams),
+/// matched longest-first via a sliding window over UAX-#29 word tokens. Empty
+/// (and silent) until the Glossary has entries with synonyms — so it costs
+/// nothing on projects that don't use it. Intent-suppressed canonicals (T-P4)
+/// are skipped.
+pub struct BannedSynonymDetector {
+    /// Normalised (single-spaced, lowercased) banned synonym → canonical term.
+    synonyms: std::collections::HashMap<String, String>,
+    /// Canonical terms with a declared "deliberate variant" intent — skipped.
+    suppressed: std::collections::HashSet<String>,
+    /// The longest synonym's word count (1..=3), bounding the sliding window.
+    max_words: usize,
+}
+
+impl BannedSynonymDetector {
+    /// Build from the Glossary book, scoped to `book_scope` (the book being
+    /// edited, or `None` for the whole project). `suppressed` is the set of
+    /// canonical terms an author has declared deliberate (TERMS-1 intent rows);
+    /// pass an empty set until T-P4 wires the ledger.
+    pub fn from_entries(
+        entries: &[crate::glossary::GlossaryEntry],
+        suppressed: std::collections::HashSet<String>,
+    ) -> Self {
+        let mut synonyms = std::collections::HashMap::new();
+        let mut max_words = 1usize;
+        for e in entries {
+            let canonical = e.term.trim().to_string();
+            for syn in e.banned_synonyms() {
+                // Non-goal: phrases longer than 3 words (TERMS-2). Normalise
+                // internal whitespace so the key matches `detect`'s join.
+                let words: Vec<&str> = syn.split_whitespace().collect();
+                if words.is_empty() || words.len() > 3 {
+                    continue;
+                }
+                max_words = max_words.max(words.len());
+                synonyms.insert(words.join(" "), canonical.clone());
+            }
+        }
+        Self { synonyms, suppressed, max_words }
+    }
+
+    /// Convenience: build directly from the store (the render path).
+    pub fn from_store(
+        store: &crate::store::Store,
+        hierarchy: &crate::store::hierarchy::Hierarchy,
+        book_scope: Option<&str>,
+        suppressed: std::collections::HashSet<String>,
+    ) -> Self {
+        let entries = crate::glossary::glossary_entries_from_store(store, hierarchy, book_scope);
+        Self::from_entries(&entries, suppressed)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.synonyms.is_empty()
+    }
+
+    /// Internal: every banned-synonym match in `line` as
+    /// `(char_start, char_end, canonical)`, longest-match-first, non-overlapping.
+    /// Suppressed canonicals are still consumed (so a shorter sub-phrase isn't
+    /// re-flagged) but not reported.
+    fn matches(&self, line: &str) -> Vec<(usize, usize, String)> {
+        if self.synonyms.is_empty() || line.is_empty() {
+            return Vec::new();
+        }
+        let mut byte_to_char: Vec<usize> = Vec::with_capacity(line.len() + 1);
+        let mut char_count = 0usize;
+        for (b, _) in line.char_indices() {
+            while byte_to_char.len() < b {
+                byte_to_char.push(char_count);
+            }
+            byte_to_char.push(char_count);
+            char_count += 1;
+        }
+        while byte_to_char.len() <= line.len() {
+            byte_to_char.push(char_count);
+        }
+
+        let words: Vec<(usize, &str)> = line.unicode_word_indices().collect();
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i < words.len() {
+            let max_n = self.max_words.min(words.len() - i);
+            let mut consumed = 1;
+            for n in (1..=max_n).rev() {
+                let phrase = words[i..i + n]
+                    .iter()
+                    .map(|(_, w)| w.to_lowercase())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                if let Some(canonical) = self.synonyms.get(&phrase) {
+                    if !self.suppressed.contains(canonical) {
+                        let byte_start = words[i].0;
+                        let (last_start, last_word) = words[i + n - 1];
+                        let byte_end = last_start + last_word.len();
+                        out.push((
+                            byte_to_char[byte_start],
+                            byte_to_char.get(byte_end).copied().unwrap_or(char_count),
+                            canonical.clone(),
+                        ));
+                    }
+                    consumed = n;
+                    break;
+                }
+            }
+            i += consumed;
+        }
+        out
+    }
+
+    /// Every banned synonym in `line`, at char columns.
+    pub fn detect(&self, line: &str) -> Vec<StyleHit> {
+        self.matches(line)
+            .into_iter()
+            .map(|(col_start, col_end, _)| StyleHit {
+                col_start,
+                col_end,
+                kind: StyleWarningKind::BannedSynonym,
+            })
+            .collect()
+    }
+
+    /// The `(synonym text, canonical term)` for a banned synonym at char column
+    /// `col` in `line`, if any — for the editor footer hint
+    /// (`"auth token" → use "access token"`). The synonym text is sliced from
+    /// the line (preserving its actual casing).
+    pub fn hint_at(&self, line: &str, col: usize) -> Option<(String, String)> {
+        let (start, end, canonical) = self
+            .matches(line)
+            .into_iter()
+            .find(|(s, e, _)| col >= *s && col < *e)?;
+        let synonym: String = line.chars().skip(start).take(end - start).collect();
+        Some((synonym, canonical))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── TERMS-1 BannedSynonymDetector ──
+
+    fn glossary(term: &str, synonyms: &[&str]) -> crate::glossary::GlossaryEntry {
+        crate::glossary::GlossaryEntry {
+            term: term.into(),
+            synonyms: synonyms.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn banned_synonym_empty_is_silent() {
+        let d = BannedSynonymDetector::from_entries(&[], Default::default());
+        assert!(d.is_empty());
+        assert!(d.detect("auth token everywhere").is_empty());
+    }
+
+    #[test]
+    fn banned_synonym_flags_synonym_not_canonical() {
+        let entries = [glossary("access token", &["auth token"])];
+        let d = BannedSynonymDetector::from_entries(&entries, Default::default());
+        // The canonical form is clean…
+        assert!(d.detect("the access token expires").is_empty());
+        // …the synonym is flagged, at the right columns.
+        let line = "the auth token expires";
+        let hits = d.detect(line);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(&line[..], "the auth token expires");
+        // chars 4..14 = "auth token"
+        assert_eq!(hits[0].col_start, 4);
+        assert_eq!(hits[0].col_end, 14);
+        assert_eq!(hits[0].kind, StyleWarningKind::BannedSynonym);
+        let (syn, canonical) = d.hint_at(line, 5).unwrap();
+        assert_eq!(syn, "auth token");
+        assert_eq!(canonical, "access token");
+    }
+
+    #[test]
+    fn banned_synonym_matches_hyphenated_and_single_word() {
+        let entries = [
+            glossary("access token", &["auth token"]),
+            glossary("frontend", &["front end"]),
+        ];
+        let d = BannedSynonymDetector::from_entries(&entries, Default::default());
+        // "auth-token" tokenises to ["auth","token"] → matches the 2-gram.
+        assert_eq!(d.detect("use auth-token here").len(), 1);
+        // single-word phrase still works.
+        assert_eq!(d.detect("the front end code").len(), 1);
+    }
+
+    #[test]
+    fn banned_synonym_cyrillic() {
+        let entries = [glossary("токен", &["аутентификатор"])];
+        let d = BannedSynonymDetector::from_entries(&entries, Default::default());
+        let hits = d.detect("используйте Аутентификатор сейчас");
+        assert_eq!(hits.len(), 1);
+    }
+
+    #[test]
+    fn banned_synonym_intent_suppresses() {
+        let entries = [glossary("frontend", &["front end"])];
+        let mut suppressed = std::collections::HashSet::new();
+        suppressed.insert("frontend".to_string());
+        let d = BannedSynonymDetector::from_entries(&entries, suppressed);
+        // The author declared "frontend" deliberate → no flag.
+        assert!(d.detect("the front end team").is_empty());
+    }
 
     fn cfg_default() -> FilterWordsConfig {
         FilterWordsConfig::default()

@@ -403,6 +403,11 @@ fn style_warning_style_at(
         StyleWarningKind::Anachronism => Style::default()
             .fg(theme.style_warning_anachronism_fg)
             .add_modifier(theme.style_warning_show_dont_tell_modifier),
+        // 1.4.8+ TERMS-1 — banned synonym: a red "wrong term" underline,
+        // distinct from the anachronism amber.
+        StyleWarningKind::BannedSynonym => Style::default()
+            .fg(theme.style_warning_banned_synonym_fg)
+            .add_modifier(theme.style_warning_show_dont_tell_modifier),
     })
 }
 

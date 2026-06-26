@@ -555,14 +555,18 @@ impl super::super::App {
         // cursor moves off.
         let goal_footer = self.editor_goal_footer_text();
         let language_chip = self.language_hit_chip();
+        // 1.4.8+ TERMS-1 — banned-synonym-at-cursor chip.
+        let terms_chip = self.terms_hit_chip();
         // 1.2.14+ Phase C.1 — comment-at-cursor
         // chip.  Takes priority over the Language
         // chip and the goal gauge — comments are
         // explicit reviewer attention the author
         // should see first.
         let comment_chip = self.comment_at_cursor_chip();
-        let need_footer =
-            goal_footer.is_some() || language_chip.is_some() || comment_chip.is_some();
+        let need_footer = goal_footer.is_some()
+            || language_chip.is_some()
+            || comment_chip.is_some()
+            || terms_chip.is_some();
         let (editor_rect, footer_rect) = if need_footer {
             let footer_h: u16 = 1;
             let er = Rect {
@@ -630,6 +634,11 @@ impl super::super::App {
                     Span::raw(" "),
                     Span::styled(chip, style),
                 ]);
+                f.render_widget(Paragraph::new(line), rect);
+            } else if let Some(chip) = terms_chip {
+                // TERMS-1 — red, matching the banned-synonym overlay hue.
+                let style = Style::default().fg(self.theme.style_warning_banned_synonym_fg);
+                let line = Line::from(vec![Span::raw(" "), Span::styled(chip, style)]);
                 f.render_widget(Paragraph::new(line), rect);
             } else if let Some((gauge, words, target)) = goal_footer {
                 let pct = (words.max(0) * 100 / target.max(1)).clamp(0, 999);
@@ -963,6 +972,26 @@ impl super::super::App {
         } else {
             None
         };
+        // 1.4.8+ TERMS-1 — banned-synonym overlay from the Glossary book. Gated
+        // on the master style toggle; defaults on within it (`Ctrl+V z` flips
+        // `terms_overlay_toggle`). Self-gating: an empty Glossary → empty
+        // detector → short-circuited line scan. Store/hierarchy field accesses
+        // keep the borrow disjoint from the `self.opened` borrow above. The live
+        // overlay applies the whole Glossary; `terms check --book` scopes per book.
+        let glossary_detector = if style_enabled
+            && self.terms_overlay_toggle.unwrap_or(true)
+        {
+            Some(
+                super::super::super::style_warnings::BannedSynonymDetector::from_store(
+                    &self.store,
+                    &self.hierarchy,
+                    None,
+                    Default::default(),
+                ),
+            )
+        } else {
+            None
+        };
         let style_per_row: Vec<Vec<super::super::super::style_warnings::StyleHit>> =
             current_lines
                 .iter()
@@ -990,6 +1019,11 @@ impl super::super::App {
                         }
                     }
                     if let Some(d) = &echo_detector {
+                        if !d.is_empty() {
+                            hits.extend(d.detect(line));
+                        }
+                    }
+                    if let Some(d) = &glossary_detector {
                         if !d.is_empty() {
                             hits.extend(d.detect(line));
                         }
@@ -1307,6 +1341,26 @@ impl super::super::App {
         } else {
             None
         };
+        // 1.4.8+ TERMS-1 — banned-synonym overlay from the Glossary book. Gated
+        // on the master style toggle; defaults on within it (`Ctrl+V z` flips
+        // `terms_overlay_toggle`). Self-gating: an empty Glossary → empty
+        // detector → short-circuited line scan. Store/hierarchy field accesses
+        // keep the borrow disjoint from the `self.opened` borrow above. The live
+        // overlay applies the whole Glossary; `terms check --book` scopes per book.
+        let glossary_detector = if style_enabled
+            && self.terms_overlay_toggle.unwrap_or(true)
+        {
+            Some(
+                super::super::super::style_warnings::BannedSynonymDetector::from_store(
+                    &self.store,
+                    &self.hierarchy,
+                    None,
+                    Default::default(),
+                ),
+            )
+        } else {
+            None
+        };
         let style_per_row: Vec<Vec<super::super::super::style_warnings::StyleHit>> =
             current_lines
                 .iter()
@@ -1334,6 +1388,11 @@ impl super::super::App {
                         }
                     }
                     if let Some(d) = &echo_detector {
+                        if !d.is_empty() {
+                            hits.extend(d.detect(line));
+                        }
+                    }
+                    if let Some(d) = &glossary_detector {
                         if !d.is_empty() {
                             hits.extend(d.detect(line));
                         }
