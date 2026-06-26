@@ -22,6 +22,7 @@ mod lang;
 mod book_rag;
 mod inner_editor;
 mod sources;
+mod terms;
 mod pdf;
 mod review;
 
@@ -50,5 +51,6 @@ pub fn register_ink_stdlib(vm: &mut VM) -> Result<()> {
     book_rag::register(vm)?;
     inner_editor::register(vm)?;
     sources::register(vm)?;
+    terms::register(vm)?;
     Ok(())
 }

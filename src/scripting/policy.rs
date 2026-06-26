@@ -151,6 +151,10 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.sources.get", category::STORE_READ),
     ("ink.sources.check", category::STORE_READ),
     ("ink.sources.bibtex", category::STORE_READ),
+    // 1.4.8 TERMS-1 — glossary reads (store_read); declare_intent writes.
+    ("ink.terms.list", category::STORE_READ),
+    ("ink.terms.get", category::STORE_READ),
+    ("ink.terms.check", category::STORE_READ),
 
     // ── store_write (default-denied) ──────────────────────────
     // 1.2.3+: Bund scripts can mutate the project tree, status
@@ -184,6 +188,9 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.db.sync", category::STORE_WRITE),
     ("ink.db.checkpoint", category::STORE_WRITE),
     ("ink.db.reindex", category::STORE_WRITE),
+    // 1.4.8 TERMS-1 — declaring a deliberate terminology variant writes an
+    // intent-ledger row.
+    ("ink.terms.declare_intent", category::STORE_WRITE),
 
     // ── keymap (default-denied) ───────────────────────────────
     ("ink.key.bind", category::KEYMAP),

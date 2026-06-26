@@ -21,48 +21,41 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.4.7 — More readers, and two adversaries
+## Latest release · 1.4.8 — Terminology governance
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.4.7.md`](Documentation/RELEASE_NOTES/1.4.7.md)
-· Plan: [`Documentation/PROPOSALS/AUDIENCE-1.1_PLAN.md`](Documentation/PROPOSALS/AUDIENCE-1.1_PLAN.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.4.8.md`](Documentation/RELEASE_NOTES/1.4.8.md)
+· Plan: [`Documentation/PROPOSALS/TERMS-1_PLAN.md`](Documentation/PROPOSALS/TERMS-1_PLAN.md)
 
-A follow-on to 1.4.6's nonfiction personas. Inner Socrates grows from nine bundled readers to
-**fourteen**, the Slow pass becomes reachable from the editor, and targeting a paragraph gets
-easier. **Purely additive** — `inner-socrates` and every existing persona are untouched. **No new
-dependencies, no new storage.**
+The quiet trust-killer in long nonfiction and technical writing is **terminology drift** — "access
+token" in chapter one, "auth token" in chapter seven. 1.4.8 (TERMS-1) adds a **Glossary** of
+canonical terms + banned synonyms, and flags the drift as you write. **Self-gating** (an empty
+Glossary changes nothing); **no new dependencies, no new storage.**
 
-### Three readers for ideas-driven work
+### A Glossary, and a live overlay
 
-For prose that's neither plain fiction nor empirical nonfiction: **the Dialectician**
-(`philosophical-reader` — argument structure), **the Theological Reader** (`theological-reader` —
-deliberately *non-empiricist*: coherence, fidelity, and scope, never "show your evidence"), and
-**the Utopian Architect** (`utopian-architect` — a hybrid that keeps the narrative live while
-interrogating the imagined society). Matching `philosophy` / `theology` / `utopian` genres reframe
-both companions.
+A new **Glossary** system book holds canonical terms with their **banned synonyms** as HJSON
+entries. The editor **red-underlines** the synonyms in prose — "auth token" lights up while the
+canonical "access token" stays clean (the inverse of a normal highlight: the *wrong* form is
+flagged). The footer shows the fix: `terms: "auth token" → use "access token"`. **`Ctrl+V z`**
+toggles it; matching is 1–3 words and Unicode-aware.
 
-### Two adversaries — the verdict personas
+### Sometimes you mean it
 
-Inner Socrates is a neutral questioner by design. Two new personas break that on purpose, as a
-steelman / devil's-advocate pair:
+With the cursor on a flag, **`Ctrl+V Shift+Z`** declares that term a **deliberate variant** — an
+intent that stops the overlay and the scan from flagging it.
 
-- **The Defender** — states **only praise** (counsel for the defense: what works, what to protect).
-- **The Prosecutor** — states **only concern** (the charge: the weak line, the unearned beat).
+### Scan, and let the model help
 
-They're LLM-only and bilingual; the neutral interrogator and every other persona are untouched
-(asserted byte-for-byte). Your own persona file can opt in with `stance: praise | concern`.
-
-### The Slow pass, from the editor
-
-**`Ctrl+B J → E`** (Engage) runs the LLM deep-questions — or the verdict — over the open paragraph
-in the **background**, dropping findings into the Output pane (mirrors the Inner Editor's
-`Ctrl+V O → E`). And `inkhaven list` now prints full, copy-pasteable slug paths so
-**`inner-socrates check --path essay/ch1/opening`** targets a paragraph with no UUID lookup.
+**`inkhaven terms check [--book] [--json]`** scans the whole project and **exits non-zero** on
+findings (CI-ready). No glossary yet? **`inkhaven terms suggest --book <slug>`** clusters words
+appearing in multiple surface forms and proposes Glossary entries via the LLM (`--auto-create`
+drafts them). Scripts get read-only `ink.terms.{list,get,check}` + `declare_intent`.
 
 ### Dependencies & compatibility
 
 **No external application or binary dependencies; no new runtime crates; no new DB tables** (one
-`stance` field on the persona struct) — built on the existing persona machinery + background-job
-harness. The Category enum, the Fast track, the wizard, and the chord family are unchanged.
+additive `Glossary` system book + one `IntentKind`) — built on the existing style-warning + intent
+machinery. Projects that don't use TERMS-1 pay nothing (the detector is empty and short-circuits).
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
