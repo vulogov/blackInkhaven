@@ -173,13 +173,26 @@ events — silently doing nothing when there's no timeline.
 ### CLI
 
 ```
-inkhaven inner-socrates check [--text "…" | --paragraph <id>] [--slow] [--max-cost <n>] [--force]
+inkhaven inner-socrates check [--text "…" | --paragraph <uuid> | --path <slug-path>] [--slow] [--max-cost <n>] [--force]
 inkhaven inner-socrates timeline [--max-cost <n>] [--force]
 inkhaven inner-socrates ledger
 inkhaven inner-socrates persona list | show <id> | activate <id>
 inkhaven inner-socrates suggestions list | promote <category> [--chapter <id>] | dismiss <category>
 inkhaven inner-socrates bundle export [--scope-level series|project|all] [--out <path>]
 inkhaven inner-socrates bundle import <path> [--conflict skip|override]
+```
+
+Pick a paragraph three ways: `--text "…"` for literal prose, `--paragraph <uuid>`
+for an explicit id, or **`--path <slug-path>`** (1.4.7) — the path shown in the
+bracket by **`inkhaven list`** (e.g. `manuscript/03-rain/01-opening`), the
+convenient way to target a paragraph without looking up its UUID (`NN-` order
+prefixes are tolerated):
+
+```
+$ inkhaven list
+  …
+  │  └─ ¶ Opening  [paragraph, manuscript/03-rain/01-opening]
+$ inkhaven inner-socrates check --slow --path manuscript/03-rain/01-opening
 ```
 
 ### TUI — `Ctrl+B J`
