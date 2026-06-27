@@ -8,6 +8,8 @@
 //! metric passes build on. Metric formulas land in N-P1/N-P2.
 
 mod lexicon;
+mod metrics;
+mod segment;
 
 use std::collections::{HashMap, HashSet};
 
