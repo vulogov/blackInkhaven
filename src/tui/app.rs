@@ -20911,11 +20911,19 @@ impl App {
         }
         let ids = self.hierarchy.collect_subtree(id);
         let descendant_count = ids.len().saturating_sub(1);
+        // STRUCT-2 (B-1) — total words across the paragraph leaves to be deleted.
+        let word_count: u64 = ids
+            .iter()
+            .filter_map(|id| self.hierarchy.get(*id))
+            .filter(|n| n.kind == NodeKind::Paragraph)
+            .map(|n| n.word_count)
+            .sum();
         self.modal = Modal::Deleting {
             root_id: id,
             root_kind: node.kind,
             title: node.title.clone(),
             descendant_count,
+            word_count,
             ids,
         };
     }
