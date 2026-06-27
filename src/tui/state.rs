@@ -291,6 +291,10 @@ pub(super) struct BookStats {
     pub chapters: usize,
     pub subchapters: usize,
     pub paragraphs: usize,
+    /// STRUCT-2 — paragraphs carrying a `para:*` structural tag (code /
+    /// admonition / math / procedure / table). Counted separately and excluded
+    /// from `paragraphs` / `words` / `sentences` (they aren't prose).
+    pub structural: usize,
     pub images: usize,
     pub sentences: usize,
     pub words: u64,
