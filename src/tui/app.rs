@@ -2225,6 +2225,33 @@ mod threads_impl;
 mod timeline_impl;
 mod tree_impl;
 
+/// The next rung in the leaf-type morph cycle (`t`/`T` in the Tree pane, and
+/// `Ctrl+B M`). Single source of truth for both the single-node and bulk paths
+/// so the ladder can't drift between them.
+///
+/// `Paragraph(typst) → Paragraph(hjson) → Paragraph(jinja) → Script(bund) →
+/// Paragraph(typst)`. STRUCT-1 added the `jinja` rung. Returns
+/// `(new_kind, new_content_type, label)`, or `None` when the node isn't a
+/// cyclable text leaf.
+fn next_leaf_type(
+    kind: NodeKind,
+    content_type: Option<&str>,
+) -> Option<(NodeKind, Option<&'static str>, &'static str)> {
+    match (kind, content_type) {
+        (NodeKind::Paragraph, None | Some("typst")) => {
+            Some((NodeKind::Paragraph, Some("hjson"), "hjson"))
+        }
+        (NodeKind::Paragraph, Some("hjson")) => {
+            Some((NodeKind::Paragraph, Some("jinja"), "jinja"))
+        }
+        (NodeKind::Paragraph, Some("jinja")) => {
+            Some((NodeKind::Script, Some("bund"), "bund"))
+        }
+        (NodeKind::Script, _) => Some((NodeKind::Paragraph, None, "typst")),
+        _ => None,
+    }
+}
+
 impl App {
     fn new(layout: ProjectLayout, cfg: Config, store: Store) -> Result<Self> {
         let keymap = Keymap::from_config(&cfg).map_err(anyhow::Error::from)?;
@@ -10625,20 +10652,9 @@ impl App {
             .get(node_id)
             .cloned()
             .ok_or_else(|| format!("node {node_id} not in hierarchy"))?;
-        let (new_kind, new_ct, _label) = match (node.kind, node.content_type.as_deref()) {
-            (NodeKind::Paragraph, None | Some("typst")) => {
-                (NodeKind::Paragraph, Some("hjson"), "hjson")
-            }
-            (NodeKind::Paragraph, Some("hjson")) => {
-                // STRUCT-1 — jinja sits between hjson and bund in the cycle.
-                (NodeKind::Paragraph, Some("jinja"), "jinja")
-            }
-            (NodeKind::Paragraph, Some("jinja")) => {
-                (NodeKind::Script, Some("bund"), "bund")
-            }
-            (NodeKind::Script, _) => (NodeKind::Paragraph, None, "typst"),
-            _ => return Err("not a text leaf".into()),
-        };
+        let (new_kind, new_ct, _label) =
+            next_leaf_type(node.kind, node.content_type.as_deref())
+                .ok_or_else(|| "not a text leaf".to_string())?;
         self.store
             .convert_leaf(&self.hierarchy, node_id, new_kind, new_ct)
             .map_err(|e| format!("convert: {e}"))?;
@@ -10664,22 +10680,18 @@ impl App {
             self.status = "type-cycle: node missing from hierarchy".into();
             return;
         };
-        let (new_kind, new_ct, label) = match (node.kind, node.content_type.as_deref()) {
-            (NodeKind::Paragraph, None | Some("typst")) => {
-                (NodeKind::Paragraph, Some("hjson"), "hjson")
-            }
-            (NodeKind::Paragraph, Some("hjson")) => {
-                (NodeKind::Script, Some("bund"), "bund")
-            }
-            (NodeKind::Script, _) => (NodeKind::Paragraph, None, "typst"),
-            (k, ct) => {
-                self.status = format!(
-                    "type-cycle: {} ({ct:?}) is not a text leaf — only paragraphs / scripts cycle",
-                    k.as_str()
-                );
-                return;
-            }
-        };
+        let (new_kind, new_ct, label) =
+            match next_leaf_type(node.kind, node.content_type.as_deref()) {
+                Some(t) => t,
+                None => {
+                    self.status = format!(
+                        "type-cycle: {} ({:?}) is not a text leaf — only paragraphs / scripts cycle",
+                        node.kind.as_str(),
+                        node.content_type.as_deref()
+                    );
+                    return;
+                }
+            };
 
         // Snapshot whether the buffer is open on this node + the
         // focus we should be on when we return. `load_paragraph`
@@ -27346,6 +27358,37 @@ mod tests_split_view {
         let sys = super::facts_scope_system_prompt("en").to_lowercase();
         assert!(sys.contains("fact"));
         assert!(sys.contains("ground truth"));
+    }
+}
+
+#[cfg(test)]
+mod tests_leaf_cycle {
+    use super::next_leaf_type;
+    use crate::store::node::NodeKind;
+
+    #[test]
+    fn morph_cycle_includes_jinja_and_loops() {
+        // STRUCT-1 — the t/T morph cycle must pass through the jinja rung.
+        // Single source of truth (next_leaf_type) drives both the single and
+        // bulk paths, so this guards against the two ladders drifting again.
+        let steps = [
+            (NodeKind::Paragraph, None, (NodeKind::Paragraph, Some("hjson"))),
+            (NodeKind::Paragraph, Some("hjson"), (NodeKind::Paragraph, Some("jinja"))),
+            (NodeKind::Paragraph, Some("jinja"), (NodeKind::Script, Some("bund"))),
+            (NodeKind::Script, Some("bund"), (NodeKind::Paragraph, None)),
+        ];
+        for (kind, ct, (want_kind, want_ct)) in steps {
+            let (k, c, _label) = next_leaf_type(kind, ct).expect("cyclable leaf");
+            assert_eq!((k, c), (want_kind, want_ct), "from {kind:?}/{ct:?}");
+        }
+        // Explicit-typst behaves like None (start of the cycle).
+        assert_eq!(
+            next_leaf_type(NodeKind::Paragraph, Some("typst")).map(|t| (t.0, t.1)),
+            Some((NodeKind::Paragraph, Some("hjson")))
+        );
+        // Non-leaf kinds don't cycle.
+        assert!(next_leaf_type(NodeKind::Book, None).is_none());
+        assert!(next_leaf_type(NodeKind::Chapter, None).is_none());
     }
 }
 
