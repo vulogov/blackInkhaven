@@ -170,7 +170,10 @@ impl super::App {
                             Some("hjson") => "❴ ",
                             // STRUCT-1 — Jinja template paragraph.
                             Some("jinja") => "⟡ ",
-                            _ => "¶ ",
+                            // STRUCT-2 — `para:*` structural subtype glyph
+                            // (code / admonition / math / procedure / table),
+                            // else prose `¶`.
+                            _ => super::structural_glyph(node).unwrap_or("¶ "),
                         }
                     }
                 }
