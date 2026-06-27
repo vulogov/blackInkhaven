@@ -75,6 +75,9 @@ pub enum Action {
     AddSubchapter,
     #[serde(rename = "tree.add_paragraph")]
     AddParagraph,
+    /// STRUCT-1 — add a Jinja template paragraph at the tree cursor.
+    #[serde(rename = "tree.add_jinja_template")]
+    AddJinjaTemplate,
     #[serde(rename = "tree.delete_node")]
     DeleteNode,
     #[serde(rename = "tree.morph_type")]
@@ -881,6 +884,7 @@ impl Action {
             Action::AddChapter => "add chapter".into(),
             Action::AddSubchapter => "add subchapter".into(),
             Action::AddParagraph => "add paragraph".into(),
+            Action::AddJinjaTemplate => "add jinja template".into(),
             Action::DeleteNode => "delete".into(),
             Action::MorphType => "morph-type".into(),
             Action::ReorderUp => "↑ reorder".into(),
@@ -1047,10 +1051,17 @@ impl Action {
                 "Add a Subchapter under the current chapter / subchapter.".into(),
             Action::AddParagraph =>
                 "Add a Paragraph leaf under the current branch (typst content).".into(),
+            Action::AddJinjaTemplate =>
+                "Add a Jinja template paragraph (STRUCT-1, `e` in the Tree pane — t`e`mplate). \
+                 Creates a `.jinja` paragraph rendered to Typst at book assembly time. Under the \
+                 Snippets book: seeds a reusable template fragment available to {% include %}. \
+                 Under a user book: seeds a manuscript template with access to project \
+                 metadata and linked HJSON paragraph data. (To convert an existing paragraph \
+                 instead, cycle its type with `t`/`T`.) See Documentation/JINJA_TEMPLATES.md.".into(),
             Action::DeleteNode =>
                 "Delete the node under the tree cursor (asks for confirmation).".into(),
             Action::MorphType =>
-                "Cycle the selected leaf's flavour: Paragraph(typst) → Paragraph(hjson) → Script(bund).".into(),
+                "Cycle the selected leaf's flavour: Paragraph(typst) → Paragraph(hjson) → Paragraph(jinja) → Script(bund). (Also `t`/`T` directly in the Tree pane.)".into(),
             Action::ReorderUp =>
                 "Move the current node up among its siblings.".into(),
             Action::ReorderDown =>

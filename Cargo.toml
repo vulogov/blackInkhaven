@@ -1,6 +1,6 @@
 [package]
 name = "inkhaven"
-version = "1.4.9"
+version = "1.4.10"
 edition = "2024"
 # Rust 1.85 stabilised edition 2024. Bump alongside any toolchain-only
 # feature usage (let-else / chained-comparisons / etc. are already stable).
@@ -111,6 +111,13 @@ clap = { version = "4", features = ["derive", "wrap_help"] }
 serde-hjson = "1.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# STRUCT-1 — Jinja template rendering for content_type: "jinja" paragraphs.
+# Environment built at book assembly time; templates registered from the
+# Snippets system book; manuscript Jinja paragraphs rendered to .typ before
+# typst compile runs. minijinja chosen over tera for in-memory template
+# registration (no filesystem glob needed).
+minijinja = "2"
 
 # Async runtime (required by genai)
 tokio = { version = "1", features = [

@@ -27,6 +27,7 @@ mod focus;
 mod highlight;
 mod hjson_edit;
 mod hjson_highlight;
+mod jinja_highlight;
 mod inference;
 pub(crate) mod input;
 pub(crate) mod keybind;
