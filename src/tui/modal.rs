@@ -237,6 +237,9 @@ pub(super) enum Modal {
         root_kind: NodeKind,
         title: String,
         descendant_count: usize,
+        /// STRUCT-2 (B-1) — total words across the paragraph leaves being
+        /// deleted, surfaced in the confirmation so the author sees what's lost.
+        word_count: u64,
         ids: Vec<Uuid>,
     },
     Renaming {
