@@ -2252,6 +2252,107 @@ fn next_leaf_type(
     }
 }
 
+// ── STRUCT-2: structural paragraph subtypes (`para:*` tags) ──────────────────
+// A structural paragraph is an ordinary `.typ` paragraph carrying a `para:*`
+// tag (code / admonition / math / procedure / table). The tag — not a new
+// content_type — drives the tree glyph, the prose-companion gates, and the
+// word-count split. Seed bodies are written at creation; the `= Title` header
+// is added separately by `create_node`.
+
+const SEED_CODE: &str = r#"#figure(
+  caption: [Caption here.],
+)[
+```rust
+// your code here
+```
+]
+"#;
+
+const SEED_ADMONITION_NOTE: &str = r#"#block(
+  stroke: 0.5pt + blue,
+  inset: (x: 12pt, y: 8pt),
+  radius: 4pt,
+  width: 100%,
+)[
+  *NOTE:* Body of the note here.
+]
+"#;
+
+const SEED_ADMONITION_WARNING: &str = r#"#block(
+  stroke: 0.5pt + orange,
+  inset: (x: 12pt, y: 8pt),
+  radius: 4pt,
+  width: 100%,
+)[
+  *WARNING:* Body of the warning here.
+]
+"#;
+
+const SEED_ADMONITION_TIP: &str = r#"#block(
+  stroke: 0.5pt + green,
+  inset: (x: 12pt, y: 8pt),
+  radius: 4pt,
+  width: 100%,
+)[
+  *TIP:* Body of the tip here.
+]
+"#;
+
+const SEED_ADMONITION_CAUTION: &str = r#"#block(
+  stroke: 0.5pt + red,
+  inset: (x: 12pt, y: 8pt),
+  radius: 4pt,
+  width: 100%,
+)[
+  *CAUTION:* Body of the caution here.
+]
+"#;
+
+const SEED_MATH: &str = r#"$
+  f(x) = x^2
+$
+"#;
+
+const SEED_PROCEDURE: &str = r#"+ Step one.
++ Step two.
++ Step three.
+"#;
+
+const SEED_TABLE: &str = r#"#table(
+  columns: (auto, 1fr, 1fr),
+  table.header(
+    [*Column A*], [*Column B*], [*Column C*],
+  ),
+  [Row 1 A], [Row 1 B], [Row 1 C],
+  [Row 2 A], [Row 2 B], [Row 2 C],
+)
+"#;
+
+/// Single source of truth for the `para:*` structural subtypes — the tree glyph
+/// dispatch ([`structural_glyph`]), the `i`-in-Tree type picker, and the
+/// creation seed all read from here. Columns: `(tag, tree-glyph, picker-label,
+/// seed-body)`.
+const STRUCTURAL_TYPES: &[(&str, &str, &str, &str)] = &[
+    ("para:code", "⌨ ", "code listing", SEED_CODE),
+    ("para:admonition-note", "⚠ ", "admonition: note", SEED_ADMONITION_NOTE),
+    ("para:admonition-warning", "⚠ ", "admonition: warning", SEED_ADMONITION_WARNING),
+    ("para:admonition-tip", "⚠ ", "admonition: tip", SEED_ADMONITION_TIP),
+    ("para:admonition-caution", "⚠ ", "admonition: caution", SEED_ADMONITION_CAUTION),
+    ("para:math", "∫ ", "math", SEED_MATH),
+    ("para:procedure", "≡ ", "procedure", SEED_PROCEDURE),
+    ("para:table", "⊞ ", "table", SEED_TABLE),
+];
+
+/// The tree glyph for a paragraph's `para:*` structural subtype, if it carries
+/// one this table knows. `None` → the caller falls back to the prose `¶`.
+fn structural_glyph(node: &Node) -> Option<&'static str> {
+    let tag = node.tags.iter().find(|t| t.starts_with("para:"))?;
+    STRUCTURAL_TYPES
+        .iter()
+        .find(|(t, ..)| *t == tag.as_str())
+        .map(|(_, glyph, ..)| *glyph)
+}
+
 impl App {
     fn new(layout: ProjectLayout, cfg: Config, store: Store) -> Result<Self> {
         let keymap = Keymap::from_config(&cfg).map_err(anyhow::Error::from)?;
@@ -27389,6 +27490,53 @@ mod tests_leaf_cycle {
         // Non-leaf kinds don't cycle.
         assert!(next_leaf_type(NodeKind::Book, None).is_none());
         assert!(next_leaf_type(NodeKind::Chapter, None).is_none());
+    }
+}
+
+#[cfg(test)]
+mod tests_structural {
+    use super::{STRUCTURAL_TYPES, structural_glyph};
+    use crate::store::node::Node;
+
+    fn para_with_tags(tags: &[&str]) -> Node {
+        serde_json::from_value(serde_json::json!({
+            "id": uuid::Uuid::nil(), "kind": "paragraph", "title": "p", "slug": "p",
+            "path": [], "parent_id": null, "order": 1, "file": null,
+            "modified_at": "2026-01-01T00:00:00Z",
+            "tags": tags,
+        }))
+        .expect("test node")
+    }
+
+    #[test]
+    fn structural_glyph_maps_known_tags_only() {
+        // STRUCT-2 — every table tag resolves to its glyph; prose / unknown
+        // para: tags fall through to None (caller uses ¶).
+        for (tag, glyph, _label, _seed) in STRUCTURAL_TYPES {
+            assert_eq!(structural_glyph(&para_with_tags(&[tag])), Some(*glyph), "{tag}");
+        }
+        assert_eq!(structural_glyph(&para_with_tags(&[])), None);
+        assert_eq!(structural_glyph(&para_with_tags(&["draft"])), None);
+        assert_eq!(structural_glyph(&para_with_tags(&["para:unknown"])), None);
+        // A user tag alongside the structural one still resolves.
+        assert_eq!(
+            structural_glyph(&para_with_tags(&["draft", "para:math"])),
+            Some("∫ ")
+        );
+    }
+
+    #[test]
+    fn structural_table_is_well_formed() {
+        // All tags para:-prefixed + unique; every glyph carries a trailing space
+        // (matches the tree's "¶ " / "❴ " convention).
+        let mut seen = std::collections::HashSet::new();
+        for (tag, glyph, label, seed) in STRUCTURAL_TYPES {
+            assert!(tag.starts_with("para:"), "{tag}");
+            assert!(seen.insert(*tag), "duplicate {tag}");
+            assert!(glyph.ends_with(' '), "glyph for {tag} needs trailing space");
+            assert!(!label.is_empty() && !seed.is_empty(), "{tag}");
+        }
+        assert_eq!(STRUCTURAL_TYPES.len(), 8);
     }
 }
 
