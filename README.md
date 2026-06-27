@@ -21,39 +21,40 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.4.9 — Reusable content blocks
+## Latest release · 1.4.10 — Jinja template paragraphs
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.4.9.md`](Documentation/RELEASE_NOTES/1.4.9.md)
-· Plan: [`Documentation/PROPOSALS/REUSE-1_PLAN.md`](Documentation/PROPOSALS/REUSE-1_PLAN.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.4.10.md`](Documentation/RELEASE_NOTES/1.4.10.md)
+· Plan: [`Documentation/PROPOSALS/STRUCT-1_PLAN.md`](Documentation/PROPOSALS/STRUCT-1_PLAN.md)
 
-Documentation repeats itself — the same warning, the same procedure note, written again everywhere
-and drifting each time. 1.4.9 (REUSE-1) lets you write that prose **once** as a Typst paragraph in a
-**Snippets** book and reference it anywhere with a standard `#include`. **Self-gating** (no snippets,
-no change); **no new content type, no new dependencies.**
+Some content isn't free prose — it's **structured** and **data-driven**: a character sidebar that
+reads the character's actual name and species, a table built from a list of fields. 1.4.10 (STRUCT-1)
+adds **Jinja template paragraphs**: a paragraph with `content_type: "jinja"` is a
+[minijinja](https://docs.rs/minijinja) template the assembler renders to **Typst** before
+`typst compile` — two layers, strictly sequential, never nested. **Self-gating** (no Jinja
+paragraphs, no change); **one new crate**.
 
-### Write once, include anywhere
+### Write a data-driven template
 
-Reusable prose lives in a new **Snippets** system book. Reference it with a normal Typst
-`#include "../../snippets/<slug>.typ"` — but let inkhaven write the path: **`Ctrl+V x`** fuzzy-picks a
-snippet and inserts a **depth-correct** include (the `../…/snippets/` prefix is computed from the
-paragraph's place in the tree). With the cursor inside an existing snippet include, it **replaces**
-the path in place. At Book assembly the snippets are copied to a `snippets/` sidecar, so the include
-resolves at `typst compile` — no new syntax.
+Press **`e`** in the Tree pane (t**e**mplate) for a `.jinja` paragraph — `⟡` glyph, `[jinja]` badge,
+Jinja syntax highlighting. Link an HJSON paragraph with **`Ctrl+V a`** and read its fields:
+`{{ linked["01-aria"].name }}`. The context also exposes `title`, `book`, `chapter`, `language`, and
+`genre`. (To convert an existing paragraph instead, cycle its type with **`t`/`T`**:
+`typst → hjson → jinja → bund`.)
 
-### Never ship a broken reference
+### Share fragments, assemble to Typst
 
-A **save-time validator** flags any `#include` pointing at an undefined snippet (status bar, `F8`,
-`Ctrl+V N`) — validated against the live Snippets book, so it works *before* you assemble.
-**`inkhaven snippets check`** validates the whole project and **exits non-zero** on a missing
-reference (CI-ready); it also reports orphaned snippets. **`Ctrl+V Shift+X`** is the overview — every
-snippet with its reference count, Enter jumps to source.
+A `.jinja` paragraph in the **Snippets** book registers as a named template, so manuscript templates
+pull it in with `{% include "snippets/<path>.jinja" %}` — everything is registered before any
+rendering, so includes always resolve. At Book assembly inkhaven renders each Jinja paragraph to a
+`.typ` and then runs `typst compile`. A render error **aborts assembly** by default (CI-safe);
+`jinja.continue_on_error: true` writes a visible error block and continues.
 
 ### Dependencies & compatibility
 
-**No new content type, no new `NodeKind`, no new DB tables; no external or runtime crates** — built
-on inline Typst `#include` + the existing diagnostics pipeline + assembler. Projects without a
-Snippets book pay nothing (`emit_snippets_directory` is a no-op; the validator runs only on buffers
-with an `#include`).
+**One new crate** (`minijinja` — in-memory template registration; its transitive deps were already in
+the tree). **No new `NodeKind`, no `ChildRef` variant, no DB tables** — `content_type: "jinja"` on an
+ordinary paragraph, `.jinja` on disk. Jinja paragraphs are skipped by the prose companions (Inner
+Editor / Socrates / fact-check). Projects without Jinja paragraphs pay nothing.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
