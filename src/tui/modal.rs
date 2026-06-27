@@ -244,6 +244,13 @@ pub(super) enum Modal {
         kind: NodeKind,
         input: TextInput,
     },
+    /// STRUCT-2 — `i` in the Tree pane: pick a structural paragraph subtype
+    /// (code / admonition / math / procedure / table). On Enter the chosen
+    /// index is stashed in `App.pending_structural_type` and the standard
+    /// `Adding` title prompt opens. `cursor` indexes `STRUCTURAL_TYPES`.
+    StructuralTypePicker {
+        cursor: usize,
+    },
     /// Ctrl+Z E — one-shot Bund eval. The user types an
     /// expression; Enter runs it against Adam and pops the
     /// result onto the status bar. Esc cancels.

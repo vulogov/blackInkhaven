@@ -78,6 +78,9 @@ pub enum Action {
     /// STRUCT-1 — add a Jinja template paragraph at the tree cursor.
     #[serde(rename = "tree.add_jinja_template")]
     AddJinjaTemplate,
+    /// STRUCT-2 — add a structural paragraph subtype at the tree cursor.
+    #[serde(rename = "tree.add_structural_paragraph")]
+    AddStructuralParagraph,
     #[serde(rename = "tree.delete_node")]
     DeleteNode,
     #[serde(rename = "tree.morph_type")]
@@ -885,6 +888,7 @@ impl Action {
             Action::AddSubchapter => "add subchapter".into(),
             Action::AddParagraph => "add paragraph".into(),
             Action::AddJinjaTemplate => "add jinja template".into(),
+            Action::AddStructuralParagraph => "add structural paragraph".into(),
             Action::DeleteNode => "delete".into(),
             Action::MorphType => "morph-type".into(),
             Action::ReorderUp => "↑ reorder".into(),
@@ -1058,6 +1062,13 @@ impl Action {
                  Under a user book: seeds a manuscript template with access to project \
                  metadata and linked HJSON paragraph data. (To convert an existing paragraph \
                  instead, cycle its type with `t`/`T`.) See Documentation/JINJA_TEMPLATES.md.".into(),
+            Action::AddStructuralParagraph =>
+                "Add a structural paragraph (STRUCT-2, `i` in the Tree pane). Opens a picker of \
+                 structural subtypes — code listing, admonition (note/warning/tip/caution), math, \
+                 procedure, table — and creates a `.typ` paragraph tagged `para:*` with the matching \
+                 Typst boilerplate seeded. Structural paragraphs get a type-specific tree glyph, are \
+                 skipped by the prose companions, and are excluded from prose word counts (except \
+                 procedure, which is still prose). Add/remove the tag later via `Ctrl+B ]`.".into(),
             Action::DeleteNode =>
                 "Delete the node under the tree cursor (asks for confirmation).".into(),
             Action::MorphType =>
