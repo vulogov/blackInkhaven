@@ -21,40 +21,39 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.4.10 — Jinja template paragraphs
+## Latest release · 1.4.11 — Structural paragraphs & deletion hardening
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.4.10.md`](Documentation/RELEASE_NOTES/1.4.10.md)
-· Plan: [`Documentation/PROPOSALS/STRUCT-1_PLAN.md`](Documentation/PROPOSALS/STRUCT-1_PLAN.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.4.11.md`](Documentation/RELEASE_NOTES/1.4.11.md)
+· Plan: [`Documentation/PROPOSALS/STRUCT-2_PLAN.md`](Documentation/PROPOSALS/STRUCT-2_PLAN.md)
 
-Some content isn't free prose — it's **structured** and **data-driven**: a character sidebar that
-reads the character's actual name and species, a table built from a list of fields. 1.4.10 (STRUCT-1)
-adds **Jinja template paragraphs**: a paragraph with `content_type: "jinja"` is a
-[minijinja](https://docs.rs/minijinja) template the assembler renders to **Typst** before
-`typst compile` — two layers, strictly sequential, never nested. **Self-gating** (no Jinja
-paragraphs, no change); **one new crate**.
+Technical chapters mix prose with **code listings, admonition boxes, math, procedures, and tables** —
+which used to read as `¶`, draw style notes, and inflate the word count. 1.4.11 (STRUCT-2) lets you
+mark them for what they are, and hardens deletion. **Purely additive — no new content type, no store
+change, no new dependencies.**
 
-### Write a data-driven template
+### Structural paragraph subtypes
 
-Press **`e`** in the Tree pane (t**e**mplate) for a `.jinja` paragraph — `⟡` glyph, `[jinja]` badge,
-Jinja syntax highlighting. Link an HJSON paragraph with **`Ctrl+V a`** and read its fields:
-`{{ linked["01-aria"].name }}`. The context also exposes `title`, `book`, `chapter`, `language`, and
-`genre`. (To convert an existing paragraph instead, cycle its type with **`t`/`T`**:
-`typst → hjson → jinja → bund`.)
+Press **`i`** in the Tree pane and pick a subtype (code · admonition · math · procedure · table). You
+get a `.typ` paragraph with a type-specific glyph (`⌨ ⚠ ∫ ≡ ⊞`) and the matching Typst boilerplate
+seeded. The marker is a **`para:*` tag**, not a content type — so it's addable/removable via
+**`Ctrl+B ]`** without a morph. Structural paragraphs are **skipped by the Inner Editor / Inner
+Socrates** (except procedures — steps are prose) and **excluded from prose word counts** (Book Info
+shows a separate `structural: N` line).
 
-### Share fragments, assemble to Typst
+### Deletion hardening
 
-A `.jinja` paragraph in the **Snippets** book registers as a named template, so manuscript templates
-pull it in with `{% include "snippets/<path>.jinja" %}` — everything is registered before any
-rendering, so includes always resolve. At Book assembly inkhaven renders each Jinja paragraph to a
-`.typ` and then runs `typst compile`. A render error **aborts assembly** by default (CI-safe);
-`jinja.continue_on_error: true` writes a visible error block and continues.
+The delete confirmation now shows the **word count** about to be lost. **Branch deletes** stash every
+paragraph leaf into the kill-ring — **`Ctrl+B U`** restores them one at a time, in order — and take a
+**pre-delete snapshot** of every paragraph so you can recover any of them from the **`F6`** picker
+long after the kill-ring cycles. Three layers: you see what you'll lose, you get instant undo, and you
+have a durable safety net.
 
 ### Dependencies & compatibility
 
-**One new crate** (`minijinja` — in-memory template registration; its transitive deps were already in
-the tree). **No new `NodeKind`, no `ChildRef` variant, no DB tables** — `content_type: "jinja"` on an
-ordinary paragraph, `.jinja` on disk. Jinja paragraphs are skipped by the prose companions (Inner
-Editor / Socrates / fact-check). Projects without Jinja paragraphs pay nothing.
+**No new dependencies.** Structural type is a `para:*` tag on an ordinary `.typ` paragraph — **no new
+content type, no new `NodeKind`, no `ChildRef`, no DB tables.** Built on the existing tag system, the
+kill-ring, and the annotated-snapshot API. A paragraph can be both `content_type: "jinja"` and
+`para:code`; single-paragraph delete behaviour is unchanged.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
