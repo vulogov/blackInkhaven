@@ -279,6 +279,67 @@ impl super::super::App {
         );
     }
 
+    /// STRUCT-2 — the structural paragraph type picker (`i` in the Tree pane).
+    /// A simple vertical list over `STRUCTURAL_TYPES`; layout mirrors the LLM
+    /// picker.
+    pub(in crate::tui::app) fn draw_structural_type_picker_modal(
+        &self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::StructuralTypePicker { cursor } = &self.modal else {
+            return;
+        };
+        let types = super::super::STRUCTURAL_TYPES;
+        let header_lines = 1;
+        let footer_lines = 2;
+        let height = (header_lines + types.len() + footer_lines + 2) as u16;
+        let height = height.clamp(8, area.height.saturating_sub(2));
+        let width = 48u16.clamp(40, area.width.saturating_sub(6));
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Add structural paragraph · i ")
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        lines.push(Line::from(""));
+        for (i, (_tag, glyph, label, _seed)) in types.iter().enumerate() {
+            let marker = if i == *cursor { "›" } else { " " };
+            let row = format!("  {marker} {glyph} {label}");
+            let style = if i == *cursor {
+                Style::default()
+                    .add_modifier(Modifier::REVERSED)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            lines.push(Line::from(Span::styled(row, style)));
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  ↑↓ select · Enter create · Esc cancel".to_string(),
+            Style::default().add_modifier(Modifier::DIM),
+        )));
+
+        f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+    }
+
     pub(in crate::tui::app) fn draw_llm_picker_modal(&self, f: &mut ratatui::Frame, area: Rect) {
         let Modal::LlmPicker {
             providers,

@@ -2063,6 +2063,13 @@ pub(crate) struct App {
     /// leaks into the next ordinary paragraph add.
     pub(super) pending_jinja_template: bool,
 
+    /// STRUCT-2 — the in-flight Add modal is for a structural paragraph (`i` in
+    /// the Tree pane); the value indexes `STRUCTURAL_TYPES`. Set by
+    /// `commit_structural_type_pick`, consumed by `commit_add` (which seeds the
+    /// boilerplate + stamps the `para:*` tag). Cleared by `open_add_modal_inner`
+    /// so a cancelled structural add never leaks into the next paragraph add.
+    pub(super) pending_structural_type: Option<usize>,
+
     /// RAG context block (e.g. a place/character lookup) that the next
     /// AI-prompt submission should prepend to the user's typed query.
     /// Used by the Ctrl+B P / Ctrl+B C editor flows when the AI prompt is
@@ -2563,6 +2570,7 @@ impl App {
             pending_continuation_draft: false,
             pending_style_transfer: false,
             pending_jinja_template: false,
+            pending_structural_type: None,
             pending_rag_prefix: None,
             layout_search: Rect::default(),
             layout_tree: Rect::default(),
@@ -4425,6 +4433,12 @@ impl App {
             // leaf. Valid under a user book or the Snippets book.
             KeyCode::Char('E') | KeyCode::Char('e') if plain => {
                 self.open_add_jinja_template_modal();
+            }
+            // STRUCT-2: tree `i` opens the structural-paragraph type picker
+            // (code / admonition / math / procedure / table); the chosen type
+            // tags the new paragraph `para:*` and seeds its Typst boilerplate.
+            KeyCode::Char('I') | KeyCode::Char('i') if plain => {
+                self.open_structural_type_picker();
             }
             // 1.2.4+: tree O cycles paragraph status. Mirrors
             // Ctrl+B R; honours multi-select for bulk status
@@ -6697,6 +6711,70 @@ impl App {
         }
     }
 
+    /// STRUCT-2 — open the structural-paragraph type picker (`i` in the Tree
+    /// pane). A vertical list over `STRUCTURAL_TYPES`; Enter transitions to the
+    /// standard title prompt with the chosen type armed.
+    fn open_structural_type_picker(&mut self) {
+        if self.focus != Focus::Tree {
+            self.status = "structural paragraph: switch to the Tree pane first".into();
+            return;
+        }
+        self.modal = Modal::StructuralTypePicker { cursor: 0 };
+        self.status =
+            "structural paragraph — ↑↓ select · Enter to create · Esc cancel".into();
+    }
+
+    fn structural_type_picker_handle_key(&mut self, key: KeyEvent) -> bool {
+        let Modal::StructuralTypePicker { cursor } = &mut self.modal else {
+            return false;
+        };
+        let total = STRUCTURAL_TYPES.len();
+        match key.code {
+            KeyCode::Up => {
+                if *cursor > 0 {
+                    *cursor -= 1;
+                }
+                true
+            }
+            KeyCode::Down => {
+                if *cursor + 1 < total {
+                    *cursor += 1;
+                }
+                true
+            }
+            KeyCode::Home => {
+                *cursor = 0;
+                true
+            }
+            KeyCode::End => {
+                *cursor = total.saturating_sub(1);
+                true
+            }
+            KeyCode::Enter => {
+                self.commit_structural_type_pick();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Stash the chosen structural type and open the title prompt. Mirrors the
+    /// Jinja flow: `open_add_modal_inner` clears the pending flags, so we arm
+    /// `pending_structural_type` *after* it — and only if the modal opened.
+    fn commit_structural_type_pick(&mut self) {
+        let idx = match &self.modal {
+            Modal::StructuralTypePicker { cursor } => *cursor,
+            _ => return,
+        };
+        self.open_add_modal_inner(NodeKind::Paragraph, InsertPosition::End);
+        if matches!(self.modal, Modal::Adding { .. }) {
+            self.pending_structural_type = Some(idx);
+            let label = STRUCTURAL_TYPES[idx].2;
+            self.status =
+                format!("structural: {label} — type a name · Enter to create · Esc cancel");
+        }
+    }
+
     /// Insert-after variant: walks up from the tree cursor to find a node of
     /// the same `kind` as the one being added; if found, the new node will be
     /// placed immediately after it. Falls back to append-at-end if no
@@ -6722,10 +6800,11 @@ impl App {
     }
 
     fn open_add_modal_inner(&mut self, kind: NodeKind, position: InsertPosition) {
-        // Clear any stale Jinja-add intent; `open_add_jinja_template_modal`
-        // re-arms it after calling through here. Keeps a cancelled jinja add
-        // from leaking into the next ordinary paragraph add.
+        // Clear any stale Jinja / structural-add intent; the dedicated openers
+        // re-arm after calling through here. Keeps a cancelled special add from
+        // leaking into the next ordinary paragraph add.
         self.pending_jinja_template = false;
+        self.pending_structural_type = None;
         // For After(anchor), the parent is anchor.parent_id (always valid
         // because the anchor's a same-kind node). For End, walk up to find a
         // valid parent.
@@ -10508,6 +10587,7 @@ impl App {
             A::AddSubchapter => self.open_add_modal(NodeKind::Subchapter),
             A::AddParagraph => self.open_add_modal(NodeKind::Paragraph),
             A::AddJinjaTemplate => self.open_add_jinja_template_modal(),
+            A::AddStructuralParagraph => self.open_structural_type_picker(),
             A::DeleteNode => self.open_delete_modal(),
             A::MorphType => self.cycle_leaf_type(),
             A::ReorderUp => self.move_current(MoveDir::Up),
@@ -21080,6 +21160,10 @@ impl App {
             self.lang_insert_handle_key(key);
             return Ok(false);
         }
+        if matches!(self.modal, Modal::StructuralTypePicker { .. }) {
+            self.structural_type_picker_handle_key(key);
+            return Ok(false);
+        }
         if is_llm_picker {
             self.llm_picker_handle_key(key);
             return Ok(false);
@@ -22054,9 +22138,10 @@ impl App {
             _ => return,
         };
 
-        // STRUCT-1 — consume the Jinja-add intent up front so it's always
-        // cleared regardless of which early-return path this add takes.
+        // STRUCT-1 / STRUCT-2 — consume the special-add intents up front so
+        // they're always cleared regardless of which early-return path runs.
         let jinja_add = std::mem::take(&mut self.pending_jinja_template);
+        let structural_pick = std::mem::take(&mut self.pending_structural_type);
 
         // Paragraphs can be added with an empty title — they'll be given a
         // placeholder ("Untitled paragraph") that the next save replaces with
@@ -22143,7 +22228,11 @@ impl App {
         // it implies. STRUCT-1 Jinja adds take precedence and stamp `"jinja"`;
         // every other seeded template is HJSON.
         let (seed_body_after_create, seed_content_type): (Option<String>, &str) =
-            if kind == crate::store::NodeKind::Paragraph && jinja_add {
+            if structural_pick.is_some() {
+                // STRUCT-2: structural paragraph — seeded + tagged separately
+                // below (content_type stays typst), so skip this path entirely.
+                (None, "typst")
+            } else if kind == crate::store::NodeKind::Paragraph && jinja_add {
                 // STRUCT-1: a Jinja template paragraph. Snippet fragment vs
                 // manuscript template depends on whether it lands under Snippets.
                 let body = if self.parent_is_under_snippets(parent.as_ref()) {
@@ -22215,6 +22304,19 @@ impl App {
                     let _ = self
                         .store
                         .update_paragraph_content(&mut node, body.as_bytes());
+                }
+                // STRUCT-2: structural paragraph — seed the Typst boilerplate
+                // (content_type stays typst; the `para:*` tag, stamped after the
+                // reload below, is what marks it structural).
+                if let Some(idx) = structural_pick {
+                    let seed = STRUCTURAL_TYPES[idx].3;
+                    if let Some(rel) = &node.file {
+                        let abs = self.layout.root.join(rel);
+                        let _ = std::fs::write(&abs, seed.as_bytes());
+                    }
+                    let _ = self
+                        .store
+                        .update_paragraph_content(&mut node, seed.as_bytes());
                 }
                 // 1.2.13+ Phase D.1 — when the new book lands
                 // directly under the `Language` system book the
@@ -22300,6 +22402,17 @@ impl App {
                 }
                 self.modal = Modal::None;
                 self.reload_hierarchy();
+                // STRUCT-2: now the node is in the hierarchy, stamp its `para:*`
+                // structural tag and reload again so the tree glyph + gates pick
+                // it up. Overrides the generic "added paragraph" status.
+                if let Some(idx) = structural_pick {
+                    let (tag, _glyph, label, _seed) = STRUCTURAL_TYPES[idx];
+                    if self.add_tags_to_node(new_id, &[tag.to_string()]) {
+                        self.reload_hierarchy();
+                    }
+                    self.status =
+                        format!("added structural paragraph `{title}` ({label})");
+                }
                 if let Some(i) = self.rows.iter().position(|(id, _)| *id == new_id) {
                     self.tree_cursor = i;
                 }

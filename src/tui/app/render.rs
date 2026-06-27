@@ -59,6 +59,10 @@ impl super::App {
             self.draw_llm_picker_modal(f, area);
             return;
         }
+        if let Modal::StructuralTypePicker { .. } = &self.modal {
+            self.draw_structural_type_picker_modal(f, area);
+            return;
+        }
         if let Modal::TranslationLanguagePicker { .. } = &self.modal {
             self.draw_translation_picker_modal(f, area);
             return;
