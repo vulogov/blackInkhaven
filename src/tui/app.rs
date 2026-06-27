@@ -2360,6 +2360,20 @@ fn structural_glyph(node: &Node) -> Option<&'static str> {
         .map(|(_, glyph, ..)| *glyph)
 }
 
+/// True when the paragraph carries any `para:*` structural subtype tag. Gates
+/// the prose-companion skips and the prose word-count split.
+fn is_structural_paragraph(node: &Node) -> bool {
+    node.tags.iter().any(|t| t.starts_with("para:"))
+}
+
+/// True when the paragraph is structural **and not** a `para:procedure` — i.e.
+/// non-prose content (code / admonition / math / table) the Inner Editor and
+/// Inner Socrates should skip. Procedure steps are prose the author writes, so
+/// the companions still run on them.
+fn is_structural_nonprose(node: &Node) -> bool {
+    is_structural_paragraph(node) && !node.tags.iter().any(|t| t == "para:procedure")
+}
+
 impl App {
     fn new(layout: ProjectLayout, cfg: Config, store: Store) -> Result<Self> {
         let keymap = Keymap::from_config(&cfg).map_err(anyhow::Error::from)?;
@@ -12829,6 +12843,17 @@ impl App {
                 .into();
             return;
         }
+        // STRUCT-2 — non-prose structural paragraphs are skipped (procedure runs).
+        if self
+            .hierarchy
+            .get(doc.id)
+            .is_some_and(is_structural_nonprose)
+        {
+            self.status = "Inner Socrates: structural paragraphs are skipped \
+                           (code / math / table — not prose)"
+                .into();
+            return;
+        }
         let prose = doc.textarea.lines().join("\n");
         if prose.trim().is_empty() {
             self.status = "Inner Socrates: the paragraph is empty".into();
@@ -14306,6 +14331,14 @@ impl App {
             "    paragraphs:   {}",
             stats.paragraphs
         )));
+        // STRUCT-2 — only surface the structural count when there is one, so
+        // prose-only projects keep a quiet panel.
+        if stats.structural > 0 {
+            out.push(Line::from(format!(
+                "    structural:   {}   (code / math / table / admonition / procedure)",
+                stats.structural
+            )));
+        }
         out.push(Line::from(""));
 
         out.push(Line::from(Span::styled(
@@ -26371,13 +26404,20 @@ fn compute_book_stats(
             NodeKind::Chapter => stats.chapters += 1,
             NodeKind::Subchapter => stats.subchapters += 1,
             NodeKind::Paragraph => {
-                stats.paragraphs += 1;
-                stats.words += node.word_count;
-                if let Some(rel) = node.file.as_ref() {
-                    if let Ok(body) =
-                        std::fs::read_to_string(project_root.join(rel))
-                    {
-                        stats.sentences += count_sentences(&body);
+                // STRUCT-2 — structural paragraphs (code / math / table / …)
+                // aren't prose: count them on their own and keep them out of the
+                // prose word / sentence / paragraph totals.
+                if is_structural_paragraph(node) {
+                    stats.structural += 1;
+                } else {
+                    stats.paragraphs += 1;
+                    stats.words += node.word_count;
+                    if let Some(rel) = node.file.as_ref() {
+                        if let Ok(body) =
+                            std::fs::read_to_string(project_root.join(rel))
+                        {
+                            stats.sentences += count_sentences(&body);
+                        }
                     }
                 }
             }
@@ -27608,7 +27648,9 @@ mod tests_leaf_cycle {
 
 #[cfg(test)]
 mod tests_structural {
-    use super::{STRUCTURAL_TYPES, structural_glyph};
+    use super::{
+        STRUCTURAL_TYPES, is_structural_nonprose, is_structural_paragraph, structural_glyph,
+    };
     use crate::store::node::Node;
 
     fn para_with_tags(tags: &[&str]) -> Node {
@@ -27636,6 +27678,24 @@ mod tests_structural {
             structural_glyph(&para_with_tags(&["draft", "para:math"])),
             Some("∫ ")
         );
+    }
+
+    #[test]
+    fn structural_gates_split_prose_from_nonprose() {
+        // is_structural_paragraph = any para:* tag; the companions' skip gate
+        // (is_structural_nonprose) excludes everything EXCEPT para:procedure.
+        assert!(!is_structural_paragraph(&para_with_tags(&[])));
+        assert!(!is_structural_paragraph(&para_with_tags(&["draft"])));
+        assert!(is_structural_paragraph(&para_with_tags(&["para:code"])));
+        assert!(is_structural_paragraph(&para_with_tags(&["para:procedure"])));
+
+        // Non-prose structural → companions skip.
+        assert!(is_structural_nonprose(&para_with_tags(&["para:code"])));
+        assert!(is_structural_nonprose(&para_with_tags(&["para:math"])));
+        // Procedure is prose → companions still run (excluded from the skip).
+        assert!(!is_structural_nonprose(&para_with_tags(&["para:procedure"])));
+        // Plain prose → not skipped.
+        assert!(!is_structural_nonprose(&para_with_tags(&["draft"])));
     }
 
     #[test]

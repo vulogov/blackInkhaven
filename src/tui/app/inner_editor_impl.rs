@@ -356,6 +356,20 @@ impl super::App {
             }
             return;
         }
+        // STRUCT-2 — non-prose structural paragraphs (code / admonition / math /
+        // table) are skipped; `para:procedure` is prose and still runs.
+        if self
+            .hierarchy
+            .get(doc.id)
+            .is_some_and(super::is_structural_nonprose)
+        {
+            if !ambient {
+                self.status = "Inner Editor: structural paragraphs are skipped \
+                               (code / math / table — not prose)"
+                    .into();
+            }
+            return;
+        }
         let id = doc.id;
         let prose = doc.textarea.lines().join("\n");
         if prose.trim().is_empty() {
