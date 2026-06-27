@@ -237,12 +237,22 @@ pub(super) enum Modal {
         root_kind: NodeKind,
         title: String,
         descendant_count: usize,
+        /// STRUCT-2 (B-1) — total words across the paragraph leaves being
+        /// deleted, surfaced in the confirmation so the author sees what's lost.
+        word_count: u64,
         ids: Vec<Uuid>,
     },
     Renaming {
         node_id: Uuid,
         kind: NodeKind,
         input: TextInput,
+    },
+    /// STRUCT-2 — `i` in the Tree pane: pick a structural paragraph subtype
+    /// (code / admonition / math / procedure / table). On Enter the chosen
+    /// index is stashed in `App.pending_structural_type` and the standard
+    /// `Adding` title prompt opens. `cursor` indexes `STRUCTURAL_TYPES`.
+    StructuralTypePicker {
+        cursor: usize,
     },
     /// Ctrl+Z E — one-shot Bund eval. The user types an
     /// expression; Enter runs it against Adam and pops the

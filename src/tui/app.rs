@@ -2063,6 +2063,13 @@ pub(crate) struct App {
     /// leaks into the next ordinary paragraph add.
     pub(super) pending_jinja_template: bool,
 
+    /// STRUCT-2 — the in-flight Add modal is for a structural paragraph (`i` in
+    /// the Tree pane); the value indexes `STRUCTURAL_TYPES`. Set by
+    /// `commit_structural_type_pick`, consumed by `commit_add` (which seeds the
+    /// boilerplate + stamps the `para:*` tag). Cleared by `open_add_modal_inner`
+    /// so a cancelled structural add never leaks into the next paragraph add.
+    pub(super) pending_structural_type: Option<usize>,
+
     /// RAG context block (e.g. a place/character lookup) that the next
     /// AI-prompt submission should prepend to the user's typed query.
     /// Used by the Ctrl+B P / Ctrl+B C editor flows when the AI prompt is
@@ -2250,6 +2257,121 @@ fn next_leaf_type(
         (NodeKind::Script, _) => Some((NodeKind::Paragraph, None, "typst")),
         _ => None,
     }
+}
+
+// ── STRUCT-2: structural paragraph subtypes (`para:*` tags) ──────────────────
+// A structural paragraph is an ordinary `.typ` paragraph carrying a `para:*`
+// tag (code / admonition / math / procedure / table). The tag — not a new
+// content_type — drives the tree glyph, the prose-companion gates, and the
+// word-count split. Seed bodies are written at creation; the `= Title` header
+// is added separately by `create_node`.
+
+const SEED_CODE: &str = r#"#figure(
+  caption: [Caption here.],
+)[
+```rust
+// your code here
+```
+]
+"#;
+
+const SEED_ADMONITION_NOTE: &str = r#"#block(
+  stroke: 0.5pt + blue,
+  inset: (x: 12pt, y: 8pt),
+  radius: 4pt,
+  width: 100%,
+)[
+  *NOTE:* Body of the note here.
+]
+"#;
+
+const SEED_ADMONITION_WARNING: &str = r#"#block(
+  stroke: 0.5pt + orange,
+  inset: (x: 12pt, y: 8pt),
+  radius: 4pt,
+  width: 100%,
+)[
+  *WARNING:* Body of the warning here.
+]
+"#;
+
+const SEED_ADMONITION_TIP: &str = r#"#block(
+  stroke: 0.5pt + green,
+  inset: (x: 12pt, y: 8pt),
+  radius: 4pt,
+  width: 100%,
+)[
+  *TIP:* Body of the tip here.
+]
+"#;
+
+const SEED_ADMONITION_CAUTION: &str = r#"#block(
+  stroke: 0.5pt + red,
+  inset: (x: 12pt, y: 8pt),
+  radius: 4pt,
+  width: 100%,
+)[
+  *CAUTION:* Body of the caution here.
+]
+"#;
+
+const SEED_MATH: &str = r#"$
+  f(x) = x^2
+$
+"#;
+
+const SEED_PROCEDURE: &str = r#"+ Step one.
++ Step two.
++ Step three.
+"#;
+
+const SEED_TABLE: &str = r#"#table(
+  columns: (auto, 1fr, 1fr),
+  table.header(
+    [*Column A*], [*Column B*], [*Column C*],
+  ),
+  [Row 1 A], [Row 1 B], [Row 1 C],
+  [Row 2 A], [Row 2 B], [Row 2 C],
+)
+"#;
+
+/// Single source of truth for the `para:*` structural subtypes — the tree glyph
+/// dispatch ([`structural_glyph`]), the `i`-in-Tree type picker, and the
+/// creation seed all read from here. Columns: `(tag, tree-glyph, picker-label,
+/// seed-body)`.
+const STRUCTURAL_TYPES: &[(&str, &str, &str, &str)] = &[
+    ("para:code", "⌨ ", "code listing", SEED_CODE),
+    ("para:admonition-note", "⚠ ", "admonition: note", SEED_ADMONITION_NOTE),
+    ("para:admonition-warning", "⚠ ", "admonition: warning", SEED_ADMONITION_WARNING),
+    ("para:admonition-tip", "⚠ ", "admonition: tip", SEED_ADMONITION_TIP),
+    ("para:admonition-caution", "⚠ ", "admonition: caution", SEED_ADMONITION_CAUTION),
+    ("para:math", "∫ ", "math", SEED_MATH),
+    ("para:procedure", "≡ ", "procedure", SEED_PROCEDURE),
+    ("para:table", "⊞ ", "table", SEED_TABLE),
+];
+
+/// The tree glyph for a paragraph's `para:*` structural subtype, if it carries
+/// one this table knows. `None` → the caller falls back to the prose `¶`.
+fn structural_glyph(node: &Node) -> Option<&'static str> {
+    let tag = node.tags.iter().find(|t| t.starts_with("para:"))?;
+    STRUCTURAL_TYPES
+        .iter()
+        .find(|(t, ..)| *t == tag.as_str())
+        .map(|(_, glyph, ..)| *glyph)
+}
+
+/// True when the paragraph carries any `para:*` structural subtype tag. Gates
+/// the prose-companion skips and the prose word-count split.
+fn is_structural_paragraph(node: &Node) -> bool {
+    node.tags.iter().any(|t| t.starts_with("para:"))
+}
+
+/// True when the paragraph is structural **and not** a `para:procedure` — i.e.
+/// non-prose content (code / admonition / math / table) the Inner Editor and
+/// Inner Socrates should skip. Procedure steps are prose the author writes, so
+/// the companions still run on them.
+fn is_structural_nonprose(node: &Node) -> bool {
+    is_structural_paragraph(node) && !node.tags.iter().any(|t| t == "para:procedure")
 }
 
 impl App {
@@ -2462,6 +2584,7 @@ impl App {
             pending_continuation_draft: false,
             pending_style_transfer: false,
             pending_jinja_template: false,
+            pending_structural_type: None,
             pending_rag_prefix: None,
             layout_search: Rect::default(),
             layout_tree: Rect::default(),
@@ -4324,6 +4447,12 @@ impl App {
             // leaf. Valid under a user book or the Snippets book.
             KeyCode::Char('E') | KeyCode::Char('e') if plain => {
                 self.open_add_jinja_template_modal();
+            }
+            // STRUCT-2: tree `i` opens the structural-paragraph type picker
+            // (code / admonition / math / procedure / table); the chosen type
+            // tags the new paragraph `para:*` and seeds its Typst boilerplate.
+            KeyCode::Char('I') | KeyCode::Char('i') if plain => {
+                self.open_structural_type_picker();
             }
             // 1.2.4+: tree O cycles paragraph status. Mirrors
             // Ctrl+B R; honours multi-select for bulk status
@@ -6596,6 +6725,70 @@ impl App {
         }
     }
 
+    /// STRUCT-2 — open the structural-paragraph type picker (`i` in the Tree
+    /// pane). A vertical list over `STRUCTURAL_TYPES`; Enter transitions to the
+    /// standard title prompt with the chosen type armed.
+    fn open_structural_type_picker(&mut self) {
+        if self.focus != Focus::Tree {
+            self.status = "structural paragraph: switch to the Tree pane first".into();
+            return;
+        }
+        self.modal = Modal::StructuralTypePicker { cursor: 0 };
+        self.status =
+            "structural paragraph — ↑↓ select · Enter to create · Esc cancel".into();
+    }
+
+    fn structural_type_picker_handle_key(&mut self, key: KeyEvent) -> bool {
+        let Modal::StructuralTypePicker { cursor } = &mut self.modal else {
+            return false;
+        };
+        let total = STRUCTURAL_TYPES.len();
+        match key.code {
+            KeyCode::Up => {
+                if *cursor > 0 {
+                    *cursor -= 1;
+                }
+                true
+            }
+            KeyCode::Down => {
+                if *cursor + 1 < total {
+                    *cursor += 1;
+                }
+                true
+            }
+            KeyCode::Home => {
+                *cursor = 0;
+                true
+            }
+            KeyCode::End => {
+                *cursor = total.saturating_sub(1);
+                true
+            }
+            KeyCode::Enter => {
+                self.commit_structural_type_pick();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Stash the chosen structural type and open the title prompt. Mirrors the
+    /// Jinja flow: `open_add_modal_inner` clears the pending flags, so we arm
+    /// `pending_structural_type` *after* it — and only if the modal opened.
+    fn commit_structural_type_pick(&mut self) {
+        let idx = match &self.modal {
+            Modal::StructuralTypePicker { cursor } => *cursor,
+            _ => return,
+        };
+        self.open_add_modal_inner(NodeKind::Paragraph, InsertPosition::End);
+        if matches!(self.modal, Modal::Adding { .. }) {
+            self.pending_structural_type = Some(idx);
+            let label = STRUCTURAL_TYPES[idx].2;
+            self.status =
+                format!("structural: {label} — type a name · Enter to create · Esc cancel");
+        }
+    }
+
     /// Insert-after variant: walks up from the tree cursor to find a node of
     /// the same `kind` as the one being added; if found, the new node will be
     /// placed immediately after it. Falls back to append-at-end if no
@@ -6621,10 +6814,11 @@ impl App {
     }
 
     fn open_add_modal_inner(&mut self, kind: NodeKind, position: InsertPosition) {
-        // Clear any stale Jinja-add intent; `open_add_jinja_template_modal`
-        // re-arms it after calling through here. Keeps a cancelled jinja add
-        // from leaking into the next ordinary paragraph add.
+        // Clear any stale Jinja / structural-add intent; the dedicated openers
+        // re-arm after calling through here. Keeps a cancelled special add from
+        // leaking into the next ordinary paragraph add.
         self.pending_jinja_template = false;
+        self.pending_structural_type = None;
         // For After(anchor), the parent is anchor.parent_id (always valid
         // because the anchor's a same-kind node). For End, walk up to find a
         // valid parent.
@@ -10407,6 +10601,7 @@ impl App {
             A::AddSubchapter => self.open_add_modal(NodeKind::Subchapter),
             A::AddParagraph => self.open_add_modal(NodeKind::Paragraph),
             A::AddJinjaTemplate => self.open_add_jinja_template_modal(),
+            A::AddStructuralParagraph => self.open_structural_type_picker(),
             A::DeleteNode => self.open_delete_modal(),
             A::MorphType => self.cycle_leaf_type(),
             A::ReorderUp => self.move_current(MoveDir::Up),
@@ -12648,6 +12843,17 @@ impl App {
                 .into();
             return;
         }
+        // STRUCT-2 — non-prose structural paragraphs are skipped (procedure runs).
+        if self
+            .hierarchy
+            .get(doc.id)
+            .is_some_and(is_structural_nonprose)
+        {
+            self.status = "Inner Socrates: structural paragraphs are skipped \
+                           (code / math / table — not prose)"
+                .into();
+            return;
+        }
         let prose = doc.textarea.lines().join("\n");
         if prose.trim().is_empty() {
             self.status = "Inner Socrates: the paragraph is empty".into();
@@ -14125,6 +14331,14 @@ impl App {
             "    paragraphs:   {}",
             stats.paragraphs
         )));
+        // STRUCT-2 — only surface the structural count when there is one, so
+        // prose-only projects keep a quiet panel.
+        if stats.structural > 0 {
+            out.push(Line::from(format!(
+                "    structural:   {}   (code / math / table / admonition / procedure)",
+                stats.structural
+            )));
+        }
         out.push(Line::from(""));
 
         out.push(Line::from(Span::styled(
@@ -14375,6 +14589,7 @@ impl App {
             anchor_id,
             title: node.title.clone(),
             slug: node.slug.clone(),
+            word_count: node.word_count,
             content,
             tags: node.tags.clone(),
             linked_paragraphs: node.linked_paragraphs.clone(),
@@ -14398,6 +14613,7 @@ impl App {
             self.status = "undo: kill-ring is empty".into();
             return;
         };
+        let restored_words = stash.word_count;
         let parent = stash
             .parent_id
             .and_then(|id| self.hierarchy.get(id).cloned());
@@ -14460,8 +14676,17 @@ impl App {
                 "metadata restore failed for {}: {e}", updated.id);
         }
         self.reload_hierarchy();
+        let word_str = if restored_words > 0 {
+            format!(
+                " ({} word{})",
+                restored_words,
+                if restored_words == 1 { "" } else { "s" }
+            )
+        } else {
+            String::new()
+        };
         self.status = format!(
-            "↺ restored `{}` (new uuid {} — cross-refs to old uuid stay broken)",
+            "↺ restored `{}`{word_str} (new uuid {} — cross-refs to old uuid stay broken)",
             updated.title,
             updated.id.simple()
         );
@@ -20697,11 +20922,19 @@ impl App {
         }
         let ids = self.hierarchy.collect_subtree(id);
         let descendant_count = ids.len().saturating_sub(1);
+        // STRUCT-2 (B-1) — total words across the paragraph leaves to be deleted.
+        let word_count: u64 = ids
+            .iter()
+            .filter_map(|id| self.hierarchy.get(*id))
+            .filter(|n| n.kind == NodeKind::Paragraph)
+            .map(|n| n.word_count)
+            .sum();
         self.modal = Modal::Deleting {
             root_id: id,
             root_kind: node.kind,
             title: node.title.clone(),
             descendant_count,
+            word_count,
             ids,
         };
     }
@@ -20977,6 +21210,10 @@ impl App {
         }
         if matches!(self.modal, Modal::LangInsert { .. }) {
             self.lang_insert_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::StructuralTypePicker { .. }) {
+            self.structural_type_picker_handle_key(key);
             return Ok(false);
         }
         if is_llm_picker {
@@ -21953,9 +22190,10 @@ impl App {
             _ => return,
         };
 
-        // STRUCT-1 — consume the Jinja-add intent up front so it's always
-        // cleared regardless of which early-return path this add takes.
+        // STRUCT-1 / STRUCT-2 — consume the special-add intents up front so
+        // they're always cleared regardless of which early-return path runs.
         let jinja_add = std::mem::take(&mut self.pending_jinja_template);
+        let structural_pick = std::mem::take(&mut self.pending_structural_type);
 
         // Paragraphs can be added with an empty title — they'll be given a
         // placeholder ("Untitled paragraph") that the next save replaces with
@@ -22042,7 +22280,11 @@ impl App {
         // it implies. STRUCT-1 Jinja adds take precedence and stamp `"jinja"`;
         // every other seeded template is HJSON.
         let (seed_body_after_create, seed_content_type): (Option<String>, &str) =
-            if kind == crate::store::NodeKind::Paragraph && jinja_add {
+            if structural_pick.is_some() {
+                // STRUCT-2: structural paragraph — seeded + tagged separately
+                // below (content_type stays typst), so skip this path entirely.
+                (None, "typst")
+            } else if kind == crate::store::NodeKind::Paragraph && jinja_add {
                 // STRUCT-1: a Jinja template paragraph. Snippet fragment vs
                 // manuscript template depends on whether it lands under Snippets.
                 let body = if self.parent_is_under_snippets(parent.as_ref()) {
@@ -22114,6 +22356,19 @@ impl App {
                     let _ = self
                         .store
                         .update_paragraph_content(&mut node, body.as_bytes());
+                }
+                // STRUCT-2: structural paragraph — seed the Typst boilerplate
+                // (content_type stays typst; the `para:*` tag, stamped after the
+                // reload below, is what marks it structural).
+                if let Some(idx) = structural_pick {
+                    let seed = STRUCTURAL_TYPES[idx].3;
+                    if let Some(rel) = &node.file {
+                        let abs = self.layout.root.join(rel);
+                        let _ = std::fs::write(&abs, seed.as_bytes());
+                    }
+                    let _ = self
+                        .store
+                        .update_paragraph_content(&mut node, seed.as_bytes());
                 }
                 // 1.2.13+ Phase D.1 — when the new book lands
                 // directly under the `Language` system book the
@@ -22199,6 +22454,17 @@ impl App {
                 }
                 self.modal = Modal::None;
                 self.reload_hierarchy();
+                // STRUCT-2: now the node is in the hierarchy, stamp its `para:*`
+                // structural tag and reload again so the tree glyph + gates pick
+                // it up. Overrides the generic "added paragraph" status.
+                if let Some(idx) = structural_pick {
+                    let (tag, _glyph, label, _seed) = STRUCTURAL_TYPES[idx];
+                    if self.add_tags_to_node(new_id, &[tag.to_string()]) {
+                        self.reload_hierarchy();
+                    }
+                    self.status =
+                        format!("added structural paragraph `{title}` ({label})");
+                }
                 if let Some(i) = self.rows.iter().position(|(id, _)| *id == new_id) {
                     self.tree_cursor = i;
                 }
@@ -22239,31 +22505,68 @@ impl App {
             _ => self.hierarchy.fs_path(&root_node, &self.layout),
         };
 
-        // 1.2.7+ — stash a single-paragraph delete into the
-        // kill-ring so Ctrl+B U can recover the content
-        // afterwards. Skipped for branch deletes (chapters /
-        // books) because subtree restoration without UUID
-        // preservation is too risky to ship without store
-        // API support.
-        if root_kind == NodeKind::Paragraph && ids.len() == 1 {
+        // 1.2.7+ — stash a single-paragraph delete into the kill-ring so Ctrl+B U
+        // can recover the content afterwards.
+        // STRUCT-2 (B-2) — branch deletes now stash every paragraph LEAF too, so a
+        // chapter/book delete is recoverable one paragraph at a time. Stashed in
+        // reverse tree order: the kill-ring is LIFO, so successive Ctrl+B U restore
+        // pops them back in original order. Bodies are read from disk here, before
+        // `delete_subtree` removes them. `stashed` = how many we pushed (for the
+        // rollback below + the status hint).
+        let stashed: usize = if root_kind == NodeKind::Paragraph && ids.len() == 1 {
             self.stash_deleted_paragraph(&root_node);
+            1
+        } else if root_kind != NodeKind::Paragraph {
+            let mut para_nodes: Vec<Node> = ids
+                .iter()
+                .filter_map(|id| self.hierarchy.get(*id).cloned())
+                .filter(|n| n.kind == NodeKind::Paragraph)
+                .collect();
+            para_nodes.reverse();
+            for para in &para_nodes {
+                self.stash_deleted_paragraph(para);
+            }
+            para_nodes.len()
+        } else {
+            0
+        };
+
+        // STRUCT-2 (B-3) — pre-delete snapshot of every paragraph leaf in a
+        // branch, taken BEFORE delete_subtree so it's safe even if the delete
+        // partially fails. The annotation surfaces in the F6 snapshot picker, so
+        // the author can find and restore any paragraph from the deleted branch —
+        // the durable recovery when a large branch overflows the kill-ring cap.
+        // Branch-only: snapshotting every single-paragraph delete would pollute
+        // the snapshot list.
+        if root_kind != NodeKind::Paragraph && ids.len() > 1 {
+            let annotation = format!(
+                "pre-delete: {title} · {}",
+                chrono::Utc::now().format("%Y-%m-%d")
+            );
+            for id in &ids {
+                let Some(node) = self.hierarchy.get(*id) else {
+                    continue;
+                };
+                if node.kind != NodeKind::Paragraph {
+                    continue;
+                }
+                if let Some(rel) = &node.file {
+                    let abs = self.layout.root.join(rel);
+                    if let Ok(bytes) = std::fs::read(&abs) {
+                        let _ = self
+                            .store
+                            .create_snapshot_annotated(node, &bytes, &annotation);
+                    }
+                }
+            }
         }
-        // 1.2.8+: branch deletes no longer clear the
-        // kill-ring. Older single-¶ entries in the ring
-        // are still valid recoveries — they reference paths
-        // that may or may not exist after the branch went,
-        // but the restore flow handles "parent gone" by
-        // falling back to InsertPosition::End. Keeping the
-        // entries is strictly more useful than dropping them.
 
         if let Err(e) = self.store.delete_subtree(&fs_rel, &ids) {
             self.status = format!("delete failed: {e}");
-            // The push-front above already happened for a
-            // single-¶ stash; drop it again since the delete
-            // didn't actually fire — the on-disk paragraph
-            // still exists and the front-stash would create
-            // a duplicate on the next Ctrl+B U.
-            if root_kind == NodeKind::Paragraph && ids.len() == 1 {
+            // The delete didn't fire — the on-disk paragraphs still exist, so drop
+            // the stashes we just pushed (front of the ring) to avoid duplicates on
+            // the next Ctrl+B U. pop_front on an empty ring is a harmless no-op.
+            for _ in 0..stashed {
                 self.kill_ring.pop_front();
             }
             return;
@@ -22278,19 +22581,23 @@ impl App {
 
         self.modal = Modal::None;
         let ring_len = self.kill_ring.len();
-        let undo_hint = if root_kind == NodeKind::Paragraph
-            && ids.len() == 1
-            && ring_len > 0
-        {
+        let undo_hint = if stashed == 0 || ring_len == 0 {
+            String::new()
+        } else if root_kind == NodeKind::Paragraph {
+            // Single-paragraph delete.
             if ring_len == 1 {
                 " · Ctrl+B U to restore (new uuid — paragraph links to old id stay broken)".to_string()
             } else {
-                format!(
-                    " · Ctrl+B U restore · Ctrl+V Shift+U picker ({ring_len} in ring)",
-                )
+                format!(" · Ctrl+B U restore · Ctrl+V Shift+U picker ({ring_len} in ring)")
             }
         } else {
-            String::new()
+            // STRUCT-2 (B-2 + B-3) — branch delete: report the two recovery
+            // paths — the kill-ring (immediate, capped) and the F6 pre-delete
+            // snapshots (durable, unbounded).
+            format!(
+                " · {stashed} paragraph{} stashed + F6-snapshotted → Ctrl+B U restore · Ctrl+V Shift+U picker ({ring_len} in ring)",
+                if stashed == 1 { "" } else { "s" }
+            )
         };
         self.status = format!(
             "deleted {} `{}` ({} other node{} removed){undo_hint}",
@@ -26157,13 +26464,20 @@ fn compute_book_stats(
             NodeKind::Chapter => stats.chapters += 1,
             NodeKind::Subchapter => stats.subchapters += 1,
             NodeKind::Paragraph => {
-                stats.paragraphs += 1;
-                stats.words += node.word_count;
-                if let Some(rel) = node.file.as_ref() {
-                    if let Ok(body) =
-                        std::fs::read_to_string(project_root.join(rel))
-                    {
-                        stats.sentences += count_sentences(&body);
+                // STRUCT-2 — structural paragraphs (code / math / table / …)
+                // aren't prose: count them on their own and keep them out of the
+                // prose word / sentence / paragraph totals.
+                if is_structural_paragraph(node) {
+                    stats.structural += 1;
+                } else {
+                    stats.paragraphs += 1;
+                    stats.words += node.word_count;
+                    if let Some(rel) = node.file.as_ref() {
+                        if let Ok(body) =
+                            std::fs::read_to_string(project_root.join(rel))
+                        {
+                            stats.sentences += count_sentences(&body);
+                        }
                     }
                 }
             }
@@ -27389,6 +27703,73 @@ mod tests_leaf_cycle {
         // Non-leaf kinds don't cycle.
         assert!(next_leaf_type(NodeKind::Book, None).is_none());
         assert!(next_leaf_type(NodeKind::Chapter, None).is_none());
+    }
+}
+
+#[cfg(test)]
+mod tests_structural {
+    use super::{
+        STRUCTURAL_TYPES, is_structural_nonprose, is_structural_paragraph, structural_glyph,
+    };
+    use crate::store::node::Node;
+
+    fn para_with_tags(tags: &[&str]) -> Node {
+        serde_json::from_value(serde_json::json!({
+            "id": uuid::Uuid::nil(), "kind": "paragraph", "title": "p", "slug": "p",
+            "path": [], "parent_id": null, "order": 1, "file": null,
+            "modified_at": "2026-01-01T00:00:00Z",
+            "tags": tags,
+        }))
+        .expect("test node")
+    }
+
+    #[test]
+    fn structural_glyph_maps_known_tags_only() {
+        // STRUCT-2 — every table tag resolves to its glyph; prose / unknown
+        // para: tags fall through to None (caller uses ¶).
+        for (tag, glyph, _label, _seed) in STRUCTURAL_TYPES {
+            assert_eq!(structural_glyph(&para_with_tags(&[tag])), Some(*glyph), "{tag}");
+        }
+        assert_eq!(structural_glyph(&para_with_tags(&[])), None);
+        assert_eq!(structural_glyph(&para_with_tags(&["draft"])), None);
+        assert_eq!(structural_glyph(&para_with_tags(&["para:unknown"])), None);
+        // A user tag alongside the structural one still resolves.
+        assert_eq!(
+            structural_glyph(&para_with_tags(&["draft", "para:math"])),
+            Some("∫ ")
+        );
+    }
+
+    #[test]
+    fn structural_gates_split_prose_from_nonprose() {
+        // is_structural_paragraph = any para:* tag; the companions' skip gate
+        // (is_structural_nonprose) excludes everything EXCEPT para:procedure.
+        assert!(!is_structural_paragraph(&para_with_tags(&[])));
+        assert!(!is_structural_paragraph(&para_with_tags(&["draft"])));
+        assert!(is_structural_paragraph(&para_with_tags(&["para:code"])));
+        assert!(is_structural_paragraph(&para_with_tags(&["para:procedure"])));
+
+        // Non-prose structural → companions skip.
+        assert!(is_structural_nonprose(&para_with_tags(&["para:code"])));
+        assert!(is_structural_nonprose(&para_with_tags(&["para:math"])));
+        // Procedure is prose → companions still run (excluded from the skip).
+        assert!(!is_structural_nonprose(&para_with_tags(&["para:procedure"])));
+        // Plain prose → not skipped.
+        assert!(!is_structural_nonprose(&para_with_tags(&["draft"])));
+    }
+
+    #[test]
+    fn structural_table_is_well_formed() {
+        // All tags para:-prefixed + unique; every glyph carries a trailing space
+        // (matches the tree's "¶ " / "❴ " convention).
+        let mut seen = std::collections::HashSet::new();
+        for (tag, glyph, label, seed) in STRUCTURAL_TYPES {
+            assert!(tag.starts_with("para:"), "{tag}");
+            assert!(seen.insert(*tag), "duplicate {tag}");
+            assert!(glyph.ends_with(' '), "glyph for {tag} needs trailing space");
+            assert!(!label.is_empty() && !seed.is_empty(), "{tag}");
+        }
+        assert_eq!(STRUCTURAL_TYPES.len(), 8);
     }
 }
 

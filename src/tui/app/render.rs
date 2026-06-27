@@ -59,6 +59,10 @@ impl super::App {
             self.draw_llm_picker_modal(f, area);
             return;
         }
+        if let Modal::StructuralTypePicker { .. } = &self.modal {
+            self.draw_structural_type_picker_modal(f, area);
+            return;
+        }
         if let Modal::TranslationLanguagePicker { .. } = &self.modal {
             self.draw_translation_picker_modal(f, area);
             return;
@@ -862,18 +866,30 @@ impl super::App {
                 root_kind,
                 title,
                 descendant_count,
+                word_count,
                 ..
             } => {
+                // STRUCT-2 (B-1) — show how many words are about to be lost.
+                let word_str = if *word_count > 0 {
+                    format!(
+                        " ({} word{})",
+                        word_count,
+                        if *word_count == 1 { "" } else { "s" }
+                    )
+                } else {
+                    String::new()
+                };
                 let prompt = if *descendant_count > 0 {
                     format!(
-                        " Delete {} `{}` and {} descendant{}?",
+                        " Delete {} `{}` and {} descendant{}{}?",
                         root_kind.as_str(),
                         title,
                         descendant_count,
-                        if *descendant_count == 1 { "" } else { "s" }
+                        if *descendant_count == 1 { "" } else { "s" },
+                        word_str
                     )
                 } else {
-                    format!(" Delete {} `{}`?", root_kind.as_str(), title)
+                    format!(" Delete {} `{}`{}?", root_kind.as_str(), title, word_str)
                 };
                 let body = vec![
                     Line::from(""),
