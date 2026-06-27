@@ -22531,6 +22531,36 @@ impl App {
             0
         };
 
+        // STRUCT-2 (B-3) — pre-delete snapshot of every paragraph leaf in a
+        // branch, taken BEFORE delete_subtree so it's safe even if the delete
+        // partially fails. The annotation surfaces in the F6 snapshot picker, so
+        // the author can find and restore any paragraph from the deleted branch —
+        // the durable recovery when a large branch overflows the kill-ring cap.
+        // Branch-only: snapshotting every single-paragraph delete would pollute
+        // the snapshot list.
+        if root_kind != NodeKind::Paragraph && ids.len() > 1 {
+            let annotation = format!(
+                "pre-delete: {title} · {}",
+                chrono::Utc::now().format("%Y-%m-%d")
+            );
+            for id in &ids {
+                let Some(node) = self.hierarchy.get(*id) else {
+                    continue;
+                };
+                if node.kind != NodeKind::Paragraph {
+                    continue;
+                }
+                if let Some(rel) = &node.file {
+                    let abs = self.layout.root.join(rel);
+                    if let Ok(bytes) = std::fs::read(&abs) {
+                        let _ = self
+                            .store
+                            .create_snapshot_annotated(node, &bytes, &annotation);
+                    }
+                }
+            }
+        }
+
         if let Err(e) = self.store.delete_subtree(&fs_rel, &ids) {
             self.status = format!("delete failed: {e}");
             // The delete didn't fire — the on-disk paragraphs still exist, so drop
@@ -22561,9 +22591,11 @@ impl App {
                 format!(" · Ctrl+B U restore · Ctrl+V Shift+U picker ({ring_len} in ring)")
             }
         } else {
-            // STRUCT-2 (B-2) — branch delete: report how many leaves were stashed.
+            // STRUCT-2 (B-2 + B-3) — branch delete: report the two recovery
+            // paths — the kill-ring (immediate, capped) and the F6 pre-delete
+            // snapshots (durable, unbounded).
             format!(
-                " · {stashed} paragraph{} stashed → Ctrl+B U restore one at a time · Ctrl+V Shift+U picker ({ring_len} in ring)",
+                " · {stashed} paragraph{} stashed + F6-snapshotted → Ctrl+B U restore · Ctrl+V Shift+U picker ({ring_len} in ring)",
                 if stashed == 1 { "" } else { "s" }
             )
         };
