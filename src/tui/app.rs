@@ -14589,6 +14589,7 @@ impl App {
             anchor_id,
             title: node.title.clone(),
             slug: node.slug.clone(),
+            word_count: node.word_count,
             content,
             tags: node.tags.clone(),
             linked_paragraphs: node.linked_paragraphs.clone(),
@@ -14612,6 +14613,7 @@ impl App {
             self.status = "undo: kill-ring is empty".into();
             return;
         };
+        let restored_words = stash.word_count;
         let parent = stash
             .parent_id
             .and_then(|id| self.hierarchy.get(id).cloned());
@@ -14674,8 +14676,17 @@ impl App {
                 "metadata restore failed for {}: {e}", updated.id);
         }
         self.reload_hierarchy();
+        let word_str = if restored_words > 0 {
+            format!(
+                " ({} word{})",
+                restored_words,
+                if restored_words == 1 { "" } else { "s" }
+            )
+        } else {
+            String::new()
+        };
         self.status = format!(
-            "↺ restored `{}` (new uuid {} — cross-refs to old uuid stay broken)",
+            "↺ restored `{}`{word_str} (new uuid {} — cross-refs to old uuid stay broken)",
             updated.title,
             updated.id.simple()
         );
@@ -22494,31 +22505,38 @@ impl App {
             _ => self.hierarchy.fs_path(&root_node, &self.layout),
         };
 
-        // 1.2.7+ — stash a single-paragraph delete into the
-        // kill-ring so Ctrl+B U can recover the content
-        // afterwards. Skipped for branch deletes (chapters /
-        // books) because subtree restoration without UUID
-        // preservation is too risky to ship without store
-        // API support.
-        if root_kind == NodeKind::Paragraph && ids.len() == 1 {
+        // 1.2.7+ — stash a single-paragraph delete into the kill-ring so Ctrl+B U
+        // can recover the content afterwards.
+        // STRUCT-2 (B-2) — branch deletes now stash every paragraph LEAF too, so a
+        // chapter/book delete is recoverable one paragraph at a time. Stashed in
+        // reverse tree order: the kill-ring is LIFO, so successive Ctrl+B U restore
+        // pops them back in original order. Bodies are read from disk here, before
+        // `delete_subtree` removes them. `stashed` = how many we pushed (for the
+        // rollback below + the status hint).
+        let stashed: usize = if root_kind == NodeKind::Paragraph && ids.len() == 1 {
             self.stash_deleted_paragraph(&root_node);
-        }
-        // 1.2.8+: branch deletes no longer clear the
-        // kill-ring. Older single-¶ entries in the ring
-        // are still valid recoveries — they reference paths
-        // that may or may not exist after the branch went,
-        // but the restore flow handles "parent gone" by
-        // falling back to InsertPosition::End. Keeping the
-        // entries is strictly more useful than dropping them.
+            1
+        } else if root_kind != NodeKind::Paragraph {
+            let mut para_nodes: Vec<Node> = ids
+                .iter()
+                .filter_map(|id| self.hierarchy.get(*id).cloned())
+                .filter(|n| n.kind == NodeKind::Paragraph)
+                .collect();
+            para_nodes.reverse();
+            for para in &para_nodes {
+                self.stash_deleted_paragraph(para);
+            }
+            para_nodes.len()
+        } else {
+            0
+        };
 
         if let Err(e) = self.store.delete_subtree(&fs_rel, &ids) {
             self.status = format!("delete failed: {e}");
-            // The push-front above already happened for a
-            // single-¶ stash; drop it again since the delete
-            // didn't actually fire — the on-disk paragraph
-            // still exists and the front-stash would create
-            // a duplicate on the next Ctrl+B U.
-            if root_kind == NodeKind::Paragraph && ids.len() == 1 {
+            // The delete didn't fire — the on-disk paragraphs still exist, so drop
+            // the stashes we just pushed (front of the ring) to avoid duplicates on
+            // the next Ctrl+B U. pop_front on an empty ring is a harmless no-op.
+            for _ in 0..stashed {
                 self.kill_ring.pop_front();
             }
             return;
@@ -22533,19 +22551,21 @@ impl App {
 
         self.modal = Modal::None;
         let ring_len = self.kill_ring.len();
-        let undo_hint = if root_kind == NodeKind::Paragraph
-            && ids.len() == 1
-            && ring_len > 0
-        {
+        let undo_hint = if stashed == 0 || ring_len == 0 {
+            String::new()
+        } else if root_kind == NodeKind::Paragraph {
+            // Single-paragraph delete.
             if ring_len == 1 {
                 " · Ctrl+B U to restore (new uuid — paragraph links to old id stay broken)".to_string()
             } else {
-                format!(
-                    " · Ctrl+B U restore · Ctrl+V Shift+U picker ({ring_len} in ring)",
-                )
+                format!(" · Ctrl+B U restore · Ctrl+V Shift+U picker ({ring_len} in ring)")
             }
         } else {
-            String::new()
+            // STRUCT-2 (B-2) — branch delete: report how many leaves were stashed.
+            format!(
+                " · {stashed} paragraph{} stashed → Ctrl+B U restore one at a time · Ctrl+V Shift+U picker ({ring_len} in ring)",
+                if stashed == 1 { "" } else { "s" }
+            )
         };
         self.status = format!(
             "deleted {} `{}` ({} other node{} removed){undo_hint}",

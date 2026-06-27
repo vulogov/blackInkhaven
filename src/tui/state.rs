@@ -139,6 +139,9 @@ pub(super) struct DeletedParagraphStash {
     pub anchor_id: Option<Uuid>, // sibling to insert after; None = end of parent
     pub title: String,
     pub slug: String,
+    /// STRUCT-2 (B-4) — the deleted paragraph's word count, surfaced when it's
+    /// restored so the author sees what came back.
+    pub word_count: u64,
     pub content: Vec<u8>,
     pub tags: Vec<String>,
     pub linked_paragraphs: Vec<Uuid>,
