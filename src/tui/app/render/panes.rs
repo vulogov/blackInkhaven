@@ -380,6 +380,7 @@ impl super::super::App {
                 let lang_tag = match d.content_type.as_deref() {
                     Some("hjson") => " [hjson]",
                     Some("bund") => " [bund]",
+                    Some("jinja") => " [jinja]",
                     _ => "",
                 };
                 // Status badge: hidden when None to keep the header

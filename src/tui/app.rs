@@ -76,8 +76,9 @@ use super::state::{
 };
 use super::status_helpers::{display_status, next_status, prev_status};
 use super::text_utils::{
-    PARAGRAPH_PLACEHOLDER_TITLE, body_to_lines, extract_first_sentence,
-    format_active_duration, format_age_humantime, pad_or_trim, truncate_to_chars,
+    JINJA_MANUSCRIPT_SEED_BODY, JINJA_SNIPPET_SEED_BODY, PARAGRAPH_PLACEHOLDER_TITLE,
+    body_to_lines, extract_first_sentence, format_active_duration, format_age_humantime,
+    pad_or_trim, truncate_to_chars,
 };
 #[cfg(test)]
 use super::text_utils::format_reading_time;
@@ -2055,6 +2056,13 @@ pub(crate) struct App {
     /// lift only the `<<<REWRITE>>>` block.
     pub(super) pending_style_transfer: bool,
 
+    /// STRUCT-1 — the in-flight Add modal is for a Jinja template paragraph
+    /// (`t` in the Tree pane). Set by `open_add_jinja_template_modal`, consumed
+    /// by `commit_add` (which stamps `content_type: "jinja"` + the right seed
+    /// body). Cleared by `open_add_modal_inner` so a cancelled jinja add never
+    /// leaks into the next ordinary paragraph add.
+    pub(super) pending_jinja_template: bool,
+
     /// RAG context block (e.g. a place/character lookup) that the next
     /// AI-prompt submission should prepend to the user's typed query.
     /// Used by the Ctrl+B P / Ctrl+B C editor flows when the AI prompt is
@@ -2216,6 +2224,33 @@ mod tag_impl;
 mod threads_impl;
 mod timeline_impl;
 mod tree_impl;
+
+/// The next rung in the leaf-type morph cycle (`t`/`T` in the Tree pane, and
+/// `Ctrl+B M`). Single source of truth for both the single-node and bulk paths
+/// so the ladder can't drift between them.
+///
+/// `Paragraph(typst) → Paragraph(hjson) → Paragraph(jinja) → Script(bund) →
+/// Paragraph(typst)`. STRUCT-1 added the `jinja` rung. Returns
+/// `(new_kind, new_content_type, label)`, or `None` when the node isn't a
+/// cyclable text leaf.
+fn next_leaf_type(
+    kind: NodeKind,
+    content_type: Option<&str>,
+) -> Option<(NodeKind, Option<&'static str>, &'static str)> {
+    match (kind, content_type) {
+        (NodeKind::Paragraph, None | Some("typst")) => {
+            Some((NodeKind::Paragraph, Some("hjson"), "hjson"))
+        }
+        (NodeKind::Paragraph, Some("hjson")) => {
+            Some((NodeKind::Paragraph, Some("jinja"), "jinja"))
+        }
+        (NodeKind::Paragraph, Some("jinja")) => {
+            Some((NodeKind::Script, Some("bund"), "bund"))
+        }
+        (NodeKind::Script, _) => Some((NodeKind::Paragraph, None, "typst")),
+        _ => None,
+    }
+}
 
 impl App {
     fn new(layout: ProjectLayout, cfg: Config, store: Store) -> Result<Self> {
@@ -2426,6 +2461,7 @@ impl App {
             pending_translation: false,
             pending_continuation_draft: false,
             pending_style_transfer: false,
+            pending_jinja_template: false,
             pending_rag_prefix: None,
             layout_search: Rect::default(),
             layout_tree: Rect::default(),
@@ -4273,13 +4309,21 @@ impl App {
             // 1.2.4+: tree T cycles the type of the cursor row
             // (or every marked paragraph, when multi-select is
             // active). Same ladder as Ctrl+B M:
-            // Paragraph(typst) → Paragraph(hjson) → Script(bund).
+            // Paragraph(typst) → Paragraph(hjson) → Paragraph(jinja)
+            // → Script(bund). (STRUCT-1 added the jinja rung.)
             KeyCode::Char('T') | KeyCode::Char('t') if plain => {
                 if !self.tree_marked.is_empty() {
                     self.cycle_leaf_type_bulk();
                 } else {
                     self.cycle_leaf_type();
                 }
+            }
+            // STRUCT-1: tree `e` creates a new Jinja t`e`mplate paragraph
+            // (seeded; manuscript vs snippet by location). Dedicated create
+            // shortcut alongside the `t`/`T` morph that converts an existing
+            // leaf. Valid under a user book or the Snippets book.
+            KeyCode::Char('E') | KeyCode::Char('e') if plain => {
+                self.open_add_jinja_template_modal();
             }
             // 1.2.4+: tree O cycles paragraph status. Mirrors
             // Ctrl+B R; honours multi-select for bulk status
@@ -6486,6 +6530,72 @@ impl App {
         false
     }
 
+    /// Whether `parent` is the Snippets system book or nested under it — used to
+    /// pick the snippet (vs manuscript) Jinja seed body (STRUCT-1).
+    fn parent_is_under_snippets(
+        &self,
+        parent: Option<&crate::store::node::Node>,
+    ) -> bool {
+        let Some(snippets_root_id) =
+            self.system_book_id(crate::store::SYSTEM_TAG_SNIPPETS)
+        else {
+            return false;
+        };
+        let Some(parent) = parent else {
+            return false;
+        };
+        let mut cur: Option<&crate::store::node::Node> = Some(parent);
+        while let Some(node) = cur {
+            if node.id == snippets_root_id {
+                return true;
+            }
+            cur = node.parent_id.and_then(|id| self.hierarchy.get(id));
+        }
+        false
+    }
+
+    /// STRUCT-1 — open the Add modal for a Jinja template paragraph (`t` in the
+    /// Tree pane). Only valid when the cursor sits in (or on) a user book or the
+    /// Snippets system book; other system books reject it. Arms
+    /// `pending_jinja_template` so `commit_add` stamps `content_type: "jinja"`
+    /// and the context-appropriate seed body.
+    fn open_add_jinja_template_modal(&mut self) {
+        let cursor_id = self.rows.get(self.tree_cursor).map(|(id, _)| *id);
+        // Resolve the root book of the cursor (inclusive of a book node itself).
+        let root_book = cursor_id.and_then(|id| {
+            let node = self.hierarchy.get(id)?;
+            if node.kind == NodeKind::Book {
+                Some(node)
+            } else {
+                self.hierarchy
+                    .ancestors(node)
+                    .into_iter()
+                    .find(|a| a.kind == NodeKind::Book)
+            }
+        });
+        let valid = root_book
+            .map(|b| {
+                b.system_tag.is_none()
+                    || b.system_tag.as_deref()
+                        == Some(crate::store::SYSTEM_TAG_SNIPPETS)
+            })
+            .unwrap_or(false);
+        if !valid {
+            self.status =
+                "jinja template: move the cursor into a user book or the Snippets book first"
+                    .into();
+            return;
+        }
+        self.open_add_modal_inner(NodeKind::Paragraph, InsertPosition::End);
+        // Only arm + relabel if the modal actually opened (parent resolution can
+        // fail and leave an error status instead).
+        if matches!(self.modal, Modal::Adding { .. }) {
+            self.pending_jinja_template = true;
+            self.status =
+                "jinja template — type a name · Enter to create · Esc cancel".into();
+        }
+    }
+
     /// Insert-after variant: walks up from the tree cursor to find a node of
     /// the same `kind` as the one being added; if found, the new node will be
     /// placed immediately after it. Falls back to append-at-end if no
@@ -6511,6 +6621,10 @@ impl App {
     }
 
     fn open_add_modal_inner(&mut self, kind: NodeKind, position: InsertPosition) {
+        // Clear any stale Jinja-add intent; `open_add_jinja_template_modal`
+        // re-arms it after calling through here. Keeps a cancelled jinja add
+        // from leaking into the next ordinary paragraph add.
+        self.pending_jinja_template = false;
         // For After(anchor), the parent is anchor.parent_id (always valid
         // because the anchor's a same-kind node). For End, walk up to find a
         // valid parent.
@@ -10292,6 +10406,7 @@ impl App {
             A::AddChapter => self.open_add_modal(NodeKind::Chapter),
             A::AddSubchapter => self.open_add_modal(NodeKind::Subchapter),
             A::AddParagraph => self.open_add_modal(NodeKind::Paragraph),
+            A::AddJinjaTemplate => self.open_add_jinja_template_modal(),
             A::DeleteNode => self.open_delete_modal(),
             A::MorphType => self.cycle_leaf_type(),
             A::ReorderUp => self.move_current(MoveDir::Up),
@@ -10537,16 +10652,9 @@ impl App {
             .get(node_id)
             .cloned()
             .ok_or_else(|| format!("node {node_id} not in hierarchy"))?;
-        let (new_kind, new_ct, _label) = match (node.kind, node.content_type.as_deref()) {
-            (NodeKind::Paragraph, None | Some("typst")) => {
-                (NodeKind::Paragraph, Some("hjson"), "hjson")
-            }
-            (NodeKind::Paragraph, Some("hjson")) => {
-                (NodeKind::Script, Some("bund"), "bund")
-            }
-            (NodeKind::Script, _) => (NodeKind::Paragraph, None, "typst"),
-            _ => return Err("not a text leaf".into()),
-        };
+        let (new_kind, new_ct, _label) =
+            next_leaf_type(node.kind, node.content_type.as_deref())
+                .ok_or_else(|| "not a text leaf".to_string())?;
         self.store
             .convert_leaf(&self.hierarchy, node_id, new_kind, new_ct)
             .map_err(|e| format!("convert: {e}"))?;
@@ -10572,22 +10680,18 @@ impl App {
             self.status = "type-cycle: node missing from hierarchy".into();
             return;
         };
-        let (new_kind, new_ct, label) = match (node.kind, node.content_type.as_deref()) {
-            (NodeKind::Paragraph, None | Some("typst")) => {
-                (NodeKind::Paragraph, Some("hjson"), "hjson")
-            }
-            (NodeKind::Paragraph, Some("hjson")) => {
-                (NodeKind::Script, Some("bund"), "bund")
-            }
-            (NodeKind::Script, _) => (NodeKind::Paragraph, None, "typst"),
-            (k, ct) => {
-                self.status = format!(
-                    "type-cycle: {} ({ct:?}) is not a text leaf — only paragraphs / scripts cycle",
-                    k.as_str()
-                );
-                return;
-            }
-        };
+        let (new_kind, new_ct, label) =
+            match next_leaf_type(node.kind, node.content_type.as_deref()) {
+                Some(t) => t,
+                None => {
+                    self.status = format!(
+                        "type-cycle: {} ({:?}) is not a text leaf — only paragraphs / scripts cycle",
+                        node.kind.as_str(),
+                        node.content_type.as_deref()
+                    );
+                    return;
+                }
+            };
 
         // Snapshot whether the buffer is open on this node + the
         // focus we should be on when we return. `load_paragraph`
@@ -12335,6 +12439,10 @@ impl App {
     /// completion against.
     fn maybe_spawn_slow_check(&mut self) {
         let Some(doc) = self.opened.as_ref() else { return };
+        // STRUCT-1 — never fact-check a Jinja template (it's markup, not prose).
+        if doc.content_type.as_deref() == Some("jinja") {
+            return;
+        }
         let id = doc.id;
         let prose = doc.textarea.lines().join("\n");
         if prose.trim().is_empty() {
@@ -12533,6 +12641,13 @@ impl App {
             self.status = "Inner Socrates: no paragraph open".into();
             return;
         };
+        // STRUCT-1 — Jinja templates aren't prose; the Socratic pass doesn't apply.
+        if doc.content_type.as_deref() == Some("jinja") {
+            self.status = "Inner Socrates: jinja template paragraphs are skipped \
+                           (not prose)"
+                .into();
+            return;
+        }
         let prose = doc.textarea.lines().join("\n");
         if prose.trim().is_empty() {
             self.status = "Inner Socrates: the paragraph is empty".into();
@@ -21838,6 +21953,10 @@ impl App {
             _ => return,
         };
 
+        // STRUCT-1 — consume the Jinja-add intent up front so it's always
+        // cleared regardless of which early-return path this add takes.
+        let jinja_add = std::mem::take(&mut self.pending_jinja_template);
+
         // Paragraphs can be added with an empty title — they'll be given a
         // placeholder ("Untitled paragraph") that the next save replaces with
         // the first sentence of the body. Branches still require a title
@@ -21919,9 +22038,22 @@ impl App {
         // Language-rule detector takes precedence
         // because the Language subtree carries its own
         // chapter-specific templates.
-        let seed_body_after_create: Option<String> =
-            if kind == crate::store::NodeKind::Paragraph {
-                self.language_rule_chapter_for_paragraph(parent.as_ref())
+        // The seed body to write after create, paired with the `content_type`
+        // it implies. STRUCT-1 Jinja adds take precedence and stamp `"jinja"`;
+        // every other seeded template is HJSON.
+        let (seed_body_after_create, seed_content_type): (Option<String>, &str) =
+            if kind == crate::store::NodeKind::Paragraph && jinja_add {
+                // STRUCT-1: a Jinja template paragraph. Snippet fragment vs
+                // manuscript template depends on whether it lands under Snippets.
+                let body = if self.parent_is_under_snippets(parent.as_ref()) {
+                    JINJA_SNIPPET_SEED_BODY
+                } else {
+                    JINJA_MANUSCRIPT_SEED_BODY
+                };
+                (Some(body.to_string()), "jinja")
+            } else if kind == crate::store::NodeKind::Paragraph {
+                let body = self
+                    .language_rule_chapter_for_paragraph(parent.as_ref())
                     .map(|s| s.to_string())
                     .or_else(|| {
                         if self.parent_is_under_threads(parent.as_ref()) {
@@ -21944,9 +22076,10 @@ impl App {
                         } else {
                             None
                         }
-                    })
+                    });
+                (body, "hjson")
             } else {
-                None
+                (None, "hjson")
             };
 
         match self.store.create_node(
@@ -21973,7 +22106,7 @@ impl App {
                 // either way; the author can re-edit if
                 // the seed fails.
                 if let Some(body) = seed_body_after_create.as_deref() {
-                    node.content_type = Some("hjson".to_string());
+                    node.content_type = Some(seed_content_type.to_string());
                     if let Some(rel) = &node.file {
                         let abs = self.layout.root.join(rel);
                         let _ = std::fs::write(&abs, body.as_bytes());
@@ -22272,10 +22405,71 @@ impl App {
     /// first error so the user sees the line number at a glance;
     /// the rest stay cached on the doc for any future "next error"
     /// chord.
+    /// The slugs of every paragraph in the Snippets system book — the set of
+    /// valid `snippets/<slug>.typ` include targets. Empty when the book is
+    /// absent. Used by the `#include` validator (REUSE-1).
+    fn snippet_slugs(&self) -> std::collections::HashSet<String> {
+        self.hierarchy
+            .iter()
+            .find(|n| {
+                n.kind == crate::store::NodeKind::Book
+                    && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_SNIPPETS)
+            })
+            .map(|book| {
+                self.hierarchy
+                    .collect_subtree(book.id)
+                    .into_iter()
+                    .filter_map(|id| self.hierarchy.get(id))
+                    .filter(|n| n.kind == crate::store::NodeKind::Paragraph)
+                    .map(|n| n.slug.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The directory a paragraph's assembled `.typ` lands in:
+    /// `<artefacts>/<book-slug>/book/<chapter fs_name>/…`. Relative `#include`
+    /// paths resolve against this. Returns `None` when the paragraph isn't in a
+    /// book or the book hasn't been assembled yet (dir doesn't exist) — generic
+    /// includes can only be verified post-assembly.
+    fn assembled_base_dir(&self, para_id: uuid::Uuid) -> Option<std::path::PathBuf> {
+        let para = self.hierarchy.get(para_id)?;
+        let book_id = self.book_of_node(para_id)?;
+        let book = self.hierarchy.get(book_id)?;
+        let mut dir = self
+            .store
+            .resolve_artefacts_dir(&self.cfg)
+            .join(&book.slug)
+            .join("book");
+        // Chapter/subchapter ancestors, root-first, each as its `NN-slug` dir.
+        for anc in self.hierarchy.ancestors(para) {
+            if anc.kind == crate::store::NodeKind::Book {
+                continue;
+            }
+            dir.push(anc.fs_name());
+        }
+        dir.exists().then_some(dir)
+    }
+
     fn refresh_typst_diagnostics_for_opened(&mut self) {
         if !self.cfg.typst_compile.diagnostics {
             return;
         }
+        // REUSE-1 / generic-include validation context — computed *before* the
+        // mutable `doc` borrow so the `&self` helpers (book lookup, artefacts
+        // resolution) don't conflict. Gated on a cheap immutable peek for
+        // `#include`, so it's zero-cost for the common no-includes paragraph.
+        let open_id = self.opened.as_ref().map(|d| d.id);
+        let has_include = self
+            .opened
+            .as_ref()
+            .is_some_and(|d| d.textarea.lines().iter().any(|l| l.contains("#include")));
+        let (known_slugs, include_base_dir) = if has_include {
+            let base = open_id.and_then(|id| self.assembled_base_dir(id));
+            (self.snippet_slugs(), base)
+        } else {
+            (std::collections::HashSet::new(), None)
+        };
         let Some(doc) = self.opened.as_mut() else {
             return;
         };
@@ -22315,29 +22509,17 @@ impl App {
                 crate::typst_inprocess::check_semantic(&body, settings);
             diags.extend(semantic);
         }
-        // REUSE-1: validate snippet `#include` references against the live
-        // Snippets book (slug existence) — only when the buffer has includes, so
-        // it's zero-cost otherwise. Field accesses keep the borrow disjoint from
-        // the `doc` mutable borrow above.
-        if body.contains("#include") {
-            let known: std::collections::HashSet<String> = self
-                .hierarchy
-                .iter()
-                .find(|n| {
-                    n.kind == crate::store::NodeKind::Book
-                        && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_SNIPPETS)
-                })
-                .map(|book| {
-                    self.hierarchy
-                        .collect_subtree(book.id)
-                        .into_iter()
-                        .filter_map(|id| self.hierarchy.get(id))
-                        .filter(|n| n.kind == crate::store::NodeKind::Paragraph)
-                        .map(|n| n.slug.clone())
-                        .collect()
-                })
-                .unwrap_or_default();
-            diags.extend(crate::typst_check::check_includes(&body, &known));
+        // REUSE-1: validate `#include` references. Snippet includes are checked
+        // against the live Snippets book (slug existence, works pre-assembly);
+        // generic Typst includes are resolved against the paragraph's assembled
+        // chapter dir (when the book has been assembled). Computed above, gated on
+        // `has_include`, so it's zero-cost for paragraphs without includes.
+        if has_include {
+            diags.extend(crate::typst_check::check_includes(
+                &body,
+                &known_slugs,
+                include_base_dir.as_deref(),
+            ));
         }
         doc.typst_diagnostics = diags;
         doc.typst_diagnostics_checked_at = std::time::Instant::now();
@@ -25674,6 +25856,8 @@ pub(super) fn highlight_for_content(
 ) -> Vec<Vec<super::highlight::StyledRun>> {
     match content_type {
         Some("hjson") => super::hjson_highlight::highlight_hjson_lines(source, theme),
+        // STRUCT-1 — Jinja template paragraphs.
+        Some("jinja") => super::jinja_highlight::highlight_jinja_lines(source, theme),
         Some("bund") => super::bund_highlight::highlight_bund_lines(source, theme),
         // 1.2.8+ — Help-book paragraphs default to markdown
         // and use the hand-rolled CommonMark-subset lexer
@@ -27174,6 +27358,37 @@ mod tests_split_view {
         let sys = super::facts_scope_system_prompt("en").to_lowercase();
         assert!(sys.contains("fact"));
         assert!(sys.contains("ground truth"));
+    }
+}
+
+#[cfg(test)]
+mod tests_leaf_cycle {
+    use super::next_leaf_type;
+    use crate::store::node::NodeKind;
+
+    #[test]
+    fn morph_cycle_includes_jinja_and_loops() {
+        // STRUCT-1 — the t/T morph cycle must pass through the jinja rung.
+        // Single source of truth (next_leaf_type) drives both the single and
+        // bulk paths, so this guards against the two ladders drifting again.
+        let steps = [
+            (NodeKind::Paragraph, None, (NodeKind::Paragraph, Some("hjson"))),
+            (NodeKind::Paragraph, Some("hjson"), (NodeKind::Paragraph, Some("jinja"))),
+            (NodeKind::Paragraph, Some("jinja"), (NodeKind::Script, Some("bund"))),
+            (NodeKind::Script, Some("bund"), (NodeKind::Paragraph, None)),
+        ];
+        for (kind, ct, (want_kind, want_ct)) in steps {
+            let (k, c, _label) = next_leaf_type(kind, ct).expect("cyclable leaf");
+            assert_eq!((k, c), (want_kind, want_ct), "from {kind:?}/{ct:?}");
+        }
+        // Explicit-typst behaves like None (start of the cycle).
+        assert_eq!(
+            next_leaf_type(NodeKind::Paragraph, Some("typst")).map(|t| (t.0, t.1)),
+            Some((NodeKind::Paragraph, Some("hjson")))
+        );
+        // Non-leaf kinds don't cycle.
+        assert!(next_leaf_type(NodeKind::Book, None).is_none());
+        assert!(next_leaf_type(NodeKind::Chapter, None).is_none());
     }
 }
 

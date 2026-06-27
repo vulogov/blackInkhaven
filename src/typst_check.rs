@@ -62,6 +62,7 @@ impl TypstDiagnostic {
 pub fn check_includes(
     source: &str,
     known_slugs: &std::collections::HashSet<String>,
+    base_dir: Option<&std::path::Path>,
 ) -> Vec<TypstDiagnostic> {
     let mut out = Vec::new();
     let mut line_start = 0usize; // byte offset of the current line within `source`
@@ -75,20 +76,46 @@ pub fn check_includes(
             let Some(q2_rel) = line[path_start..].find('"') else { break };
             let path_end = path_start + q2_rel;
             let path = &line[path_start..path_end];
-            if let Some(slug) = snippet_slug_of(path) {
-                if !known_slugs.contains(&slug) {
-                    let col = line[..path_start].chars().count() + 1;
-                    out.push(TypstDiagnostic {
-                        line: i + 1,
-                        col,
-                        byte_start: line_start + path_start,
-                        byte_end: line_start + path_end,
-                        message: format!("#include: no snippet `{slug}` in the Snippets book"),
-                        hints: vec![format!(
-                            "add `{slug}` to the Snippets book, or fix the include path"
-                        )],
-                    });
+            // Three failure modes:
+            //  (1) a proper `…/snippets/<slug>.typ` whose slug isn't defined;
+            //  (2) a path whose *filename* matches a known snippet slug but isn't
+            //      a proper snippets path (a typo'd directory, `../nippets/…`);
+            //  (3) a generic `#include` whose target file doesn't exist in the
+            //      assembled output (only checkable when `base_dir` is set, i.e.
+            //      the book has been assembled).
+            let message = match snippet_slug_of(path) {
+                Some(slug) if !known_slugs.contains(&slug) => Some(format!(
+                    "#include: no snippet `{slug}` in the Snippets book"
+                )),
+                Some(_) => None, // a defined snippet — fine (resolves once assembled)
+                None => {
+                    if let Some(base) = basename_slug(path).filter(|b| known_slugs.contains(b)) {
+                        Some(format!(
+                            "#include: path does not point at the snippets directory — \
+                             did you mean a `snippets/{base}.typ` include?"
+                        ))
+                    } else if let Some(dir) = base_dir {
+                        // Generic include — resolve against the assembled chapter
+                        // dir and check the file exists.
+                        let resolved = normalize_join(dir, path);
+                        (!resolved.exists())
+                            .then(|| format!("#include \"{path}\": file not found"))
+                    } else {
+                        // Unassembled + not a snippet reference: can't verify.
+                        None
+                    }
                 }
+            };
+            if let Some(message) = message {
+                let col = line[..path_start].chars().count() + 1;
+                out.push(TypstDiagnostic {
+                    line: i + 1,
+                    col,
+                    byte_start: line_start + path_start,
+                    byte_end: line_start + path_end,
+                    message,
+                    hints: vec!["snippet includes resolve as `…/snippets/<slug>.typ`".into()],
+                });
             }
             search = path_end + 1;
         }
@@ -97,9 +124,6 @@ pub fn check_includes(
     out
 }
 
-/// The snippet slug of an include path shaped `…/snippets/<slug>.typ`, else
-/// `None`. Requires `snippets` to be the second-to-last path segment, so a
-/// `mysnippets/x.typ` does not match.
 /// REUSE-1 — every snippet slug referenced by an `#include "…/snippets/<slug>.typ"`
 /// in `source`, in order (duplicates kept — the caller tallies). Used for
 /// reference counts and `snippets check`.
@@ -122,6 +146,9 @@ pub fn snippet_references(source: &str) -> Vec<String> {
     out
 }
 
+/// The snippet slug of an include path shaped `…/snippets/<slug>.typ`, else
+/// `None`. Requires `snippets` to be the second-to-last path segment, so a
+/// `mysnippets/x.typ` does not match.
 pub fn snippet_slug_of(path: &str) -> Option<String> {
     let segs: Vec<&str> = path.trim().split('/').collect();
     if segs.len() < 2 || segs[segs.len() - 2] != "snippets" {
@@ -129,6 +156,32 @@ pub fn snippet_slug_of(path: &str) -> Option<String> {
     }
     let slug = segs.last()?.strip_suffix(".typ")?;
     (!slug.is_empty()).then(|| slug.to_string())
+}
+
+/// The filename of an include path minus `.typ`, regardless of directory — used
+/// to spot a typo'd snippets directory (`../nippets/<slug>.typ`) by matching the
+/// basename against the known snippet slugs.
+fn basename_slug(path: &str) -> Option<String> {
+    let file = path.trim().rsplit('/').next()?;
+    let slug = file.strip_suffix(".typ")?;
+    (!slug.is_empty()).then(|| slug.to_string())
+}
+
+/// Resolve a relative include `path` against `base` **lexically** (`..` pops a
+/// component, `.` is a no-op) — no filesystem access, so it works even when
+/// intermediate dirs don't exist.
+fn normalize_join(base: &std::path::Path, path: &str) -> std::path::PathBuf {
+    let mut out = base.to_path_buf();
+    for comp in path.trim().split('/') {
+        match comp {
+            "" | "." => {}
+            ".." => {
+                out.pop();
+            }
+            seg => out.push(seg),
+        }
+    }
+    out
 }
 
 pub fn check(source: &str) -> Vec<TypstDiagnostic> {
@@ -239,24 +292,69 @@ broken
         // A known slug → clean.
         assert!(check_includes(
             "text\n#include \"../../snippets/warning-box.typ\"\n",
-            &known
+            &known,
+            None
         )
         .is_empty());
         // An unknown slug → one diagnostic on the right line.
-        let d = check_includes("line one\n#include \"../snippets/missing.typ\"\n", &known);
+        let d = check_includes("line one\n#include \"../snippets/missing.typ\"\n", &known, None);
         assert_eq!(d.len(), 1);
         assert_eq!(d[0].line, 2);
         assert!(d[0].message.contains("missing"), "{}", d[0].message);
     }
 
     #[test]
+    fn check_includes_flags_typoed_snippets_directory() {
+        // The reported bug: `../nippets/<slug>.typ` (typo in the directory) —
+        // the filename matches a known snippet, so flag it as a likely misspell.
+        let known = slugs(&["this-is-the-snippet-1"]);
+        let d = check_includes("#include \"../nippets/this-is-the-snippet-1.typ\"", &known, None);
+        assert_eq!(d.len(), 1);
+        assert!(d[0].message.contains("snippets directory"), "{}", d[0].message);
+        // But a non-snippet include whose basename isn't a known slug is left alone
+        // pre-assembly (no base dir to resolve against).
+        assert!(check_includes("#include \"../lib/helpers.typ\"", &known, None).is_empty());
+        // And the correct path is clean.
+        assert!(check_includes("#include \"../snippets/this-is-the-snippet-1.typ\"", &known, None).is_empty());
+    }
+
+    #[test]
     fn check_includes_ignores_non_snippet_includes() {
         let known = slugs(&[]);
-        // Generic includes resolve against arbitrary paths — not our concern.
-        assert!(check_includes("#include \"globals.typ\"", &known).is_empty());
-        assert!(check_includes("#include \"../other/foo.typ\"", &known).is_empty());
+        // Pre-assembly (base_dir = None) generic includes can't be resolved, so
+        // they're left alone rather than false-flagged.
+        assert!(check_includes("#include \"globals.typ\"", &known, None).is_empty());
+        assert!(check_includes("#include \"../other/foo.typ\"", &known, None).is_empty());
         // `mysnippets/` is not the snippets dir (segment must equal `snippets`).
-        assert!(check_includes("#include \"mysnippets/x.typ\"", &known).is_empty());
+        assert!(check_includes("#include \"mysnippets/x.typ\"", &known, None).is_empty());
+    }
+
+    #[test]
+    fn check_includes_resolves_generic_includes_against_assembled_dir() {
+        let known = slugs(&["warning-box"]);
+        let root = std::env::temp_dir().join(format!("inkhaven-incl-{}", std::process::id()));
+        // Lay out an assembled chapter dir with a sibling `lib/` and a `globals.typ`
+        // one level up — the shape a generic Typst include would target.
+        let chapter = root.join("book").join("01-intro");
+        std::fs::create_dir_all(chapter.join("..").join("lib")).unwrap();
+        std::fs::write(root.join("book").join("globals.typ"), "// globals").unwrap();
+        std::fs::write(root.join("book").join("lib").join("helpers.typ"), "// h").unwrap();
+        let base = Some(chapter.as_path());
+
+        // A generic include that resolves to a real file → clean.
+        assert!(check_includes("#include \"../globals.typ\"", &known, base).is_empty());
+        assert!(check_includes("#include \"../lib/helpers.typ\"", &known, base).is_empty());
+        // A generic include to a missing file → flagged "file not found".
+        let d = check_includes("#include \"../lib/missing.typ\"", &known, base);
+        assert_eq!(d.len(), 1, "{d:?}");
+        assert!(d[0].message.contains("file not found"), "{}", d[0].message);
+        // Snippet checks still win over the generic path: an unknown snippet slug
+        // is reported as a snippet error, not a generic "file not found".
+        let d = check_includes("#include \"../snippets/nope.typ\"", &known, base);
+        assert_eq!(d.len(), 1);
+        assert!(d[0].message.contains("Snippets book"), "{}", d[0].message);
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -275,7 +373,7 @@ broken
     fn check_includes_two_on_one_line_flags_only_the_unknown() {
         let known = slugs(&["a"]);
         let src = "#include \"../snippets/a.typ\" then #include \"../snippets/b.typ\"";
-        let d = check_includes(src, &known);
+        let d = check_includes(src, &known, None);
         assert_eq!(d.len(), 1);
         assert_eq!(d[0].line, 1);
         assert!(d[0].message.contains("`b`"), "{}", d[0].message);
@@ -290,7 +388,7 @@ broken
         fn check_includes_never_panics(src in "\\PC{0,400}") {
             let known: std::collections::HashSet<String> =
                 ["a", "b"].iter().map(|s| s.to_string()).collect();
-            let _ = check_includes(&src, &known);
+            let _ = check_includes(&src, &known, None);
         }
 
         /// 1.3.36 hardening — `check` parses arbitrary editor source

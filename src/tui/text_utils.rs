@@ -17,6 +17,35 @@ pub(super) const TITLE_MAX_DISPLAY: usize = 60;
 /// next save replaces it with the first sentence of the body.
 pub(super) const PARAGRAPH_PLACEHOLDER_TITLE: &str = "Untitled paragraph";
 
+/// STRUCT-1 — seed body for a manuscript Jinja template paragraph (created under
+/// a user book via `t` in the Tree pane). Documents the available render context
+/// and renders a placeholder block the author replaces.
+pub(super) const JINJA_MANUSCRIPT_SEED_BODY: &str = r#"{#- Template paragraph — rendered to Typst at Ctrl+B A (Book assembly).  -#}
+{#- Variables available:                                                   -#}
+{#-   title, slug, book.title, book.slug, chapter.title                   -#}
+{#-   language, genre                                                      -#}
+{#-   linked["paragraph-slug"].field_name  (from linked HJSON paragraphs) -#}
+{#- Jinja2 syntax: https://jinja.palletsprojects.com/en/stable/templates/ -#}
+
+= {{ title }}
+
+#block[
+  Edit this template. Link HJSON paragraphs with Ctrl+V a to populate `linked`.
+]
+"#;
+
+/// STRUCT-1 — seed body for a reusable snippet Jinja template (created under the
+/// Snippets system book). Available to manuscript templates via
+/// `{% include "snippets/<path>.jinja" %}`.
+pub(super) const JINJA_SNIPPET_SEED_BODY: &str = r#"{#- Snippet template — available as {% include "snippets/<path>.jinja" %}   -#}
+{#- from any Jinja template paragraph.                                       -#}
+{#- Parameters are passed via Jinja `set` or `with` in the calling template. -#}
+
+#block[
+  Reusable block — edit and include from manuscript Jinja paragraphs.
+]
+"#;
+
 /// Greedy word-wrap (`text` over a `width`-wide column),
 /// falling back to char-break when a single word doesn't fit.
 /// Empty input returns one empty line; zero width returns the
