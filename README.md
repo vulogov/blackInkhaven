@@ -120,8 +120,17 @@ Every prior release lives under
   + open-paragraph marker.
 - Plain-letter shortcuts for add (`B`/`C`/`V`/`A`/`S`/`+`/`P`),
   delete (`D`/`-`), reorder (`U`/`J`).
+- **Paragraph flavours** beyond prose: `e` adds a **Jinja template** (`⟡`,
+  rendered to Typst at assembly), `i` opens the **structural-subtype** picker
+  (`⌨ ⚠ ∫ ≡ ⊞` — code / admonition / math / procedure / table), and `t`/`T`
+  cycles a leaf's type (`typst → hjson → jinja → bund`).
 - **Document status badge** column — one character per row colour-
   coded to the workflow stage (`n` / `1` / `2` / `3` / `F` / `R`).
+- **Reusable snippets** — write a block once in the Snippets book, `#include`
+  it anywhere (`Ctrl+V x`); broken references are flagged at save.
+- Deletion safety: the confirm shows the **word count** lost; branch deletes
+  stash every paragraph into the kill-ring (`Ctrl+B U`) **and** pre-delete
+  snapshots (`F6`).
 - Mouse: click to focus + select; scroll wheel scrolls.
 
 ### AI pane
@@ -144,6 +153,24 @@ Every prior release lives under
 - **F7 Grammar check** with deterministic correction extraction (`g`
   replaces the buffer with just the corrected text, preserving Typst
   markup).
+
+### Examined authorship & analysis
+- **The companions** — a triad that observes craft without rewriting your prose:
+  the **World fact-checker** (`Ctrl+B W`, checks scenes against your worldbuilding
+  + timeline), **Inner Socrates** (`Ctrl+B J`, Socratic questions about content
+  and structure — fourteen reader personas), and **Inner Editor** (`Ctrl+V O`,
+  style observations: richness, filter words, show-don't-tell). `Ctrl+B Shift+C`
+  runs them all at once into the Output pane.
+- **Narrative voice profiling** (`inkhaven prose` / `Ctrl+V V`) — a
+  **deterministic, zero-AI** voice fingerprint per chapter (sentence rhythm,
+  lexical diversity, hedging, interiority, sensory balance, passive ratio) in
+  five languages; chapter-level drift surfaces as informational findings.
+- **Terminology governance** — a **Glossary** book of canonical terms + banned
+  synonyms; the editor red-underlines drift (`Ctrl+V z`), `inkhaven terms check`
+  is CI-ready.
+- **Bibliography & citations** — references as HJSON in a **Sources** book,
+  `@key` citations, compiled to `sources.bib` at assembly (`inkhaven sources`).
+- Findings land in a filterable, navigable **Output pane** (`Ctrl+B Tab`).
 
 ### Storage and backup
 - DuckDB metadata + DuckDB blobs + HNSW semantic vectors.  No
@@ -170,8 +197,16 @@ Every prior release lives under
   built PDF.
 - `import-help --documents-directory <dir>` — populate the Help book from
   a directory of markdown / text / typst files (wipes Help first).
+- `prose profile` / `drift` / `suggest` — deterministic narrative-voice
+  metrics (NARR-1; zero-AI, five languages).
+- `snippets` / `terms` / `sources` — reusable-block, glossary, and
+  bibliography checks (CI-ready; exit non-zero on a problem).
+- `inner-socrates` / `inner-editor` / `realworld` — the companions from the
+  shell; `check` runs the fast deterministic pass over the project.
+- `import-epub` / `import-scrivener` — bring an existing manuscript in.
 - `backup` / `restore` — see above.
 - `ai "prompt"` — one-shot inference from the shell (no TUI).
+- `inkhaven <cmd> --help` for the full surface; most checks take `--json`.
 
 ### Configuration
 A single `inkhaven.hjson` in each project root drives every knob:
@@ -292,6 +327,14 @@ Reference:
   `realworld` world simulator and fact-checker (RFC WORLD-4).
 - [`Documentation/INNER_SOCRATES.md`](Documentation/INNER_SOCRATES.md) — the
   Socratic interrogator for examined authorship (RFC INNER_SOCRATES-1).
+- [`Documentation/PROSE_VOICE.md`](Documentation/PROSE_VOICE.md) — deterministic
+  narrative-voice profiling (`inkhaven prose`, RFC NARR-1).
+- [`Documentation/JINJA_TEMPLATES.md`](Documentation/JINJA_TEMPLATES.md) — Jinja
+  template paragraphs (RFC STRUCT-1).
+- [`Documentation/STRUCTURAL_PARAGRAPHS.md`](Documentation/STRUCTURAL_PARAGRAPHS.md)
+  — structural paragraph subtypes + deletion hardening (RFC STRUCT-2).
+- [`Documentation/OUTPUT_PANE.md`](Documentation/OUTPUT_PANE.md) — the Output
+  message channel: findings, filters, navigation.
 
 ## Built with
 
