@@ -11,7 +11,10 @@ mod lang_metrics;
 mod lexicon;
 mod metrics;
 mod passive;
+mod pipeline;
+mod profile;
 mod segment;
+mod store;
 
 use std::collections::{HashMap, HashSet};
 
