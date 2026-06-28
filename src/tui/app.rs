@@ -2074,6 +2074,12 @@ pub(crate) struct App {
     /// so a cancelled structural add never leaks into the next paragraph add.
     pub(super) pending_structural_type: Option<usize>,
 
+    /// OUTLINE-1 — the full-screen Outline pane's persisted view state (expand
+    /// flags, cursor, scroll, filter). `None` until the pane is first opened
+    /// (`Ctrl+2` / `Ctrl+B Shift+O`); loaded from `.inkhaven/outline-state.json`.
+    #[allow(dead_code)] // consumed by the renderer/keys in O-P1/O-P2
+    pub(super) outline_state: Option<super::outline::OutlineState>,
+
     /// RAG context block (e.g. a place/character lookup) that the next
     /// AI-prompt submission should prepend to the user's typed query.
     /// Used by the Ctrl+B P / Ctrl+B C editor flows when the AI prompt is
@@ -2663,6 +2669,7 @@ impl App {
             pending_style_transfer: false,
             pending_jinja_template: false,
             pending_structural_type: None,
+            outline_state: None,
             pending_rag_prefix: None,
             layout_search: Rect::default(),
             layout_tree: Rect::default(),
