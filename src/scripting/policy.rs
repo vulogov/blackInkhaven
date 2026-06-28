@@ -166,6 +166,9 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.prose.drift", category::STORE_READ),
     ("ink.prose.violations", category::STORE_READ),
     ("ink.prose.refresh", category::STORE_READ),
+    // OUTLINE-1 — reading the outline is store_read; the paragraph copy/move
+    // mutators are store_write (below).
+    ("ink.outline.print", category::STORE_READ),
 
     // ── store_write (default-denied) ──────────────────────────
     // 1.2.3+: Bund scripts can mutate the project tree, status
@@ -177,6 +180,9 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.tree.move_up", category::STORE_WRITE),
     ("ink.tree.move_down", category::STORE_WRITE),
     ("ink.tree.morph", category::STORE_WRITE),
+    // OUTLINE-1 — cross-parent paragraph copy/move.
+    ("ink.outline.paragraph_copy", category::STORE_WRITE),
+    ("ink.outline.paragraph_move", category::STORE_WRITE),
     ("ink.paragraph.set_status", category::STORE_WRITE),
     ("ink.paragraph.set_target", category::STORE_WRITE),
     ("ink.paragraph.save", category::STORE_WRITE),
