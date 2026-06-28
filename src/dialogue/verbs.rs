@@ -94,6 +94,35 @@ static ES: DialogueLexicon = DialogueLexicon {
     stem_fallback: false,
 };
 
+/// Like [`lexicon_for`], but with the config's genre verb extras folded in
+/// (`dialogue.extra_neutral_verbs` / `extra_said_bookisms`). Leaks the folded
+/// lists to `'static` — the same pattern `prose`'s lexicon uses; called once
+/// per refresh, so the leak is bounded by the (tiny) config size. Falls back to
+/// the static lexicon when there are no extras.
+pub(crate) fn lexicon_for_with(
+    lang: &ProseLanguage,
+    extra_neutral: &[String],
+    extra_bookism: &[String],
+) -> &'static DialogueLexicon {
+    let base = lexicon_for(lang);
+    if extra_neutral.is_empty() && extra_bookism.is_empty() {
+        return base;
+    }
+    let mut neutral: Vec<&'static str> = base.neutral.to_vec();
+    for v in extra_neutral {
+        neutral.push(Box::leak(v.to_lowercase().into_boxed_str()));
+    }
+    let mut bookism: Vec<&'static str> = base.said_bookism.to_vec();
+    for v in extra_bookism {
+        bookism.push(Box::leak(v.to_lowercase().into_boxed_str()));
+    }
+    Box::leak(Box::new(DialogueLexicon {
+        neutral: Box::leak(neutral.into_boxed_slice()),
+        said_bookism: Box::leak(bookism.into_boxed_slice()),
+        stem_fallback: base.stem_fallback,
+    }))
+}
+
 /// The verb lexicon for a language. `Other` falls back to the EN lists (per
 /// RFC §17 language fallback).
 pub(crate) fn lexicon_for(lang: &ProseLanguage) -> &'static DialogueLexicon {

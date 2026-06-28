@@ -20,15 +20,18 @@ use crate::store::node::Node;
 use super::store::DialogueStore;
 use super::{
     AttributionConfidence, AttributionWindows, ChapterDialogueStats, DialogueFinding,
-    DialogueFindingKind, DialogueSpan, TagVerbClass, attribute_spans, detect_spans,
-    dialogue_convention,
+    DialogueFindingKind, DialogueLexicon, TagVerbClass, attribute_spans, detect_spans,
+    dialogue_convention, lexicon_for_with,
 };
 
-// Defaults (RFC §13). The `dialogue:` config block threads overrides in D-P10.
-const BEAT_MIN_WORDS: u32 = 8;
-const TALKING_HEAD_THRESHOLD: u32 = 6;
-const UNATTRIBUTED_RUN_THRESHOLD: u32 = 8;
-const SAID_BOOKISM_THRESHOLD: f32 = 0.15;
+/// The per-book detection knobs resolved from the `dialogue:` config block.
+#[derive(Clone, Copy)]
+struct DialogueTuning {
+    beat_min_words: u32,
+    talking_head_threshold: u32,
+    unattributed_run_threshold: u32,
+    said_bookism_threshold: f32,
+}
 
 /// The character roster — titles of the direct children of the Characters
 /// system book (one entry per character). Empty when there is no Characters
@@ -95,10 +98,23 @@ pub(crate) fn refresh_book(
     explicit_lang: Option<&str>,
     now: &str,
 ) -> Result<Vec<DialogueFinding>> {
-    let (lang, _note) = resolve_prose_language(explicit_lang, &cfg.language);
+    let dc = &cfg.dialogue;
+    let lang_override = explicit_lang.or(dc.language.as_deref());
+    let (lang, _note) = resolve_prose_language(lang_override, &cfg.language);
     let convention = dialogue_convention(&lang);
     let names = character_names(h);
-    let windows = AttributionWindows::default();
+    let windows = AttributionWindows {
+        name: dc.attribution_window,
+        verb: 15,
+        beat: 30,
+    };
+    let lex = lexicon_for_with(&lang, &dc.extra_neutral_verbs, &dc.extra_said_bookisms);
+    let tuning = DialogueTuning {
+        beat_min_words: dc.beat_min_words,
+        talking_head_threshold: dc.talking_head_threshold,
+        unattributed_run_threshold: dc.unattributed_run_threshold,
+        said_bookism_threshold: dc.said_bookism_threshold,
+    };
 
     let chapters: Vec<&Node> = h
         .children_of(Some(book.id))
@@ -123,7 +139,8 @@ pub(crate) fn refresh_book(
         }
         store.clear_chapter(&book.slug, ord)?;
         let (stats, mut chap_findings) = detect_chapter(
-            store, &book.slug, ord, &paras, &names, &convention, &lang, windows, now, hash,
+            store, &book.slug, ord, &paras, &names, &convention, lex, &lang, windows, tuning,
+            now, hash,
         )?;
         tag_counts.push((ord, stats.neutral_tag_count, stats.said_bookism_count));
         findings.append(&mut chap_findings);
@@ -150,7 +167,7 @@ pub(crate) fn refresh_book(
             continue;
         }
         let density = *bookism as f32 / chtags as f32;
-        if density - baseline > SAID_BOOKISM_THRESHOLD {
+        if density - baseline > tuning.said_bookism_threshold {
             findings.push(DialogueFinding {
                 kind: DialogueFindingKind::SaidBookism,
                 chapter_ord: *ord,
@@ -174,8 +191,10 @@ fn detect_chapter(
     paras: &[(String, String)],
     names: &[String],
     convention: &super::DialogueConvention,
+    lex: &DialogueLexicon,
     lang: &crate::prose::ProseLanguage,
     windows: AttributionWindows,
+    tuning: DialogueTuning,
     now: &str,
     hash: u64,
 ) -> Result<(ChapterDialogueStats, Vec<DialogueFinding>)> {
@@ -193,7 +212,7 @@ fn detect_chapter(
     for (para_id, text) in paras {
         total_words += text.split_whitespace().count() as u32;
         let mut spans = detect_spans(para_id, text, *convention, lang);
-        attribute_spans(&mut spans, text, names, prev_named.as_deref(), lang, windows);
+        attribute_spans(&mut spans, text, names, prev_named.as_deref(), lex, lang, windows);
 
         let mut para_attributed: Option<String> = None;
         let mut zero_in_para = 0u32;
@@ -236,7 +255,7 @@ fn detect_chapter(
             if para_attributed.is_none() {
                 zero_run += 1;
                 let in_established_run =
-                    established.len() >= 2 && zero_run <= UNATTRIBUTED_RUN_THRESHOLD;
+                    established.len() >= 2 && zero_run <= tuning.unattributed_run_threshold;
                 if !in_established_run {
                     findings.push(DialogueFinding {
                         kind: DialogueFindingKind::ZeroAttribution,
@@ -262,20 +281,21 @@ fn detect_chapter(
         let has_dialogue = !spans.is_empty();
         let non_span_words =
             (text.split_whitespace().count() as u32).saturating_sub(span_words);
-        let dialogue_only = has_dialogue && non_span_words < BEAT_MIN_WORDS;
+        let dialogue_only = has_dialogue && non_span_words < tuning.beat_min_words;
         if dialogue_only {
             th_run += 1;
             if th_first_para.is_none() {
                 th_first_para = Some(para_id.clone());
             }
-            if th_run == TALKING_HEAD_THRESHOLD {
+            if th_run == tuning.talking_head_threshold {
                 th_sequences += 1;
                 findings.push(DialogueFinding {
                     kind: DialogueFindingKind::TalkingHead,
                     chapter_ord: ord,
                     para_id: th_first_para.clone(),
                     detail: format!(
-                        "talking-head sequence: {TALKING_HEAD_THRESHOLD}+ paragraphs with no action beat"
+                        "talking-head sequence: {}+ paragraphs with no action beat",
+                        tuning.talking_head_threshold
                     ),
                 });
             }

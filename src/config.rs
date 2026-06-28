@@ -67,6 +67,8 @@ pub struct Config {
     /// NARR-1 — narrative-voice (`prose`) profiling.
     #[serde(default)]
     pub prose: ProseConfig,
+    #[serde(default)]
+    pub dialogue: DialogueConfig,
     /// The project's declared genre (e.g. `literary_realism`, `fantasy`).
     /// Project-wide; consumed by Inner Editor's genre-aware prompting and open
     /// to other features later. `None` = genre-blind.
@@ -216,6 +218,7 @@ impl Default for Config {
             sources: SourcesConfig::default(),
             jinja: JinjaConfig::default(),
             prose: ProseConfig::default(),
+            dialogue: DialogueConfig::default(),
             genre: None,
             inner_socrates_default_persona: None,
             project_lock: ProjectLockConfig::default(),
@@ -3656,6 +3659,53 @@ impl Default for ProseConfig {
             extra_interiority_phrases: Vec::new(),
             ambient: false,
             ambient_cooldown_secs: 90,
+        }
+    }
+}
+
+/// DIALOG-1 — `dialogue:` block. Tunes the dialogue detection windows,
+/// finding thresholds, and the genre-specific verb extras. All optional;
+/// omitting the block uses these defaults (RFC §13).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DialogueConfig {
+    /// Token window for the attribution name search around a span boundary.
+    pub attribution_window: usize,
+    /// Consecutive unattributed turns tolerated in an established two-speaker
+    /// exchange before the zero-attribution finding fires.
+    pub unattributed_run_threshold: u32,
+    /// Consecutive dialogue-only paragraphs before the talking-head finding.
+    pub talking_head_threshold: u32,
+    /// Minimum word count for a non-speech sentence to count as an action beat
+    /// (and clear the talking-head counter).
+    pub beat_min_words: u32,
+    /// Said-bookism density delta (above the book baseline) that triggers the
+    /// finding.
+    pub said_bookism_threshold: f32,
+    /// Minimum attributed utterances for a character fingerprint to be shown.
+    pub fingerprint_min_utterances: u32,
+    /// Dialogue language override (`en`/`ru`/`de`/`fr`/`es`); `null` → project
+    /// language → English fallback.
+    pub language: Option<String>,
+    /// Verbs appended to the active language's *neutral* tag list (e.g. SF
+    /// `transmitted`, `intoned`) so they are not counted as said-bookisms.
+    pub extra_neutral_verbs: Vec<String>,
+    /// Verbs appended to the active language's said-bookism list.
+    pub extra_said_bookisms: Vec<String>,
+}
+
+impl Default for DialogueConfig {
+    fn default() -> Self {
+        Self {
+            attribution_window: 60,
+            unattributed_run_threshold: 8,
+            talking_head_threshold: 6,
+            beat_min_words: 8,
+            said_bookism_threshold: 0.15,
+            fingerprint_min_utterances: 5,
+            language: None,
+            extra_neutral_verbs: Vec::new(),
+            extra_said_bookisms: Vec::new(),
         }
     }
 }

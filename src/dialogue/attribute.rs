@@ -17,7 +17,7 @@
 //! the pipeline threads config overrides in D-P4.
 
 use super::{
-    AttributionConfidence, DialogueSpan, TagVerbClass, classify_tag_verb, lexicon_for,
+    AttributionConfidence, DialogueLexicon, DialogueSpan, TagVerbClass, classify_tag_verb,
 };
 use crate::prose::ProseLanguage;
 
@@ -43,11 +43,11 @@ pub(crate) fn attribute_spans(
     paragraph: &str,
     names: &[String],
     prev_named: Option<&str>,
+    lex: &DialogueLexicon,
     lang: &ProseLanguage,
     win: AttributionWindows,
 ) {
     let toks = tokenize(paragraph);
-    let lex = lexicon_for(lang);
     let pronouns = pronouns_for(lang);
     let names_lc: Vec<(String, Vec<String>)> = names
         .iter()
@@ -241,7 +241,8 @@ mod tests {
         let conv = dialogue_convention(&lang);
         let mut spans = detect_spans("p", text, conv, &lang);
         let names: Vec<String> = names.iter().map(|s| s.to_string()).collect();
-        attribute_spans(&mut spans, text, &names, prev, &lang, AttributionWindows::default());
+        let lex = super::super::verbs::lexicon_for(&lang);
+        attribute_spans(&mut spans, text, &names, prev, lex, &lang, AttributionWindows::default());
         spans
     }
 
