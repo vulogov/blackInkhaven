@@ -12,12 +12,14 @@
 
 mod attribute;
 mod detect;
+mod store;
 mod verbs;
 
 use crate::prose::ProseLanguage;
 
 pub(crate) use attribute::{AttributionWindows, attribute_spans};
 pub(crate) use detect::detect_spans;
+pub(crate) use store::DialogueStore;
 pub(crate) use verbs::{DialogueLexicon, classify_tag_verb, lexicon_for};
 
 /// The three structurally distinct dialogue-quotation conventions. Detection
@@ -52,6 +54,14 @@ impl SpanForm {
             SpanForm::EmDash => "em_dash",
         }
     }
+
+    pub(crate) fn from_code(s: &str) -> SpanForm {
+        match s {
+            "guillemet" => SpanForm::Guillemet,
+            "em_dash" => SpanForm::EmDash,
+            _ => SpanForm::QuotePair,
+        }
+    }
 }
 
 /// Confidence that a detected span was spoken by a particular character. Only
@@ -72,6 +82,14 @@ impl AttributionConfidence {
             AttributionConfidence::None => "none",
         }
     }
+
+    pub(crate) fn from_code(s: &str) -> AttributionConfidence {
+        match s {
+            "certain" => AttributionConfidence::Certain,
+            "inferred" => AttributionConfidence::Inferred,
+            _ => AttributionConfidence::None,
+        }
+    }
 }
 
 /// Whether a dialogue-tag verb is an invisible "neutral" tag (said/asked) or a
@@ -87,6 +105,14 @@ impl TagVerbClass {
         match self {
             TagVerbClass::Neutral => "neutral",
             TagVerbClass::SaidBookism => "said_bookism",
+        }
+    }
+
+    pub(crate) fn from_code(s: &str) -> Option<TagVerbClass> {
+        match s {
+            "neutral" => Some(TagVerbClass::Neutral),
+            "said_bookism" => Some(TagVerbClass::SaidBookism),
+            _ => None,
         }
     }
 }
@@ -119,6 +145,21 @@ pub(crate) struct DialogueSpan {
     pub tag_verb_class: Option<TagVerbClass>,
     pub ends_question: bool,
     pub ends_exclamation: bool,
+}
+
+/// Per-chapter dialogue aggregates (RFC §8.2 `dialogue_chapter_stats`).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ChapterDialogueStats {
+    pub chapter_ord: u32,
+    pub total_spans: u32,
+    pub zero_attribution_count: u32,
+    pub said_bookism_count: u32,
+    pub neutral_tag_count: u32,
+    pub said_bookism_density: f32,
+    pub dialogue_word_count: u32,
+    pub total_word_count: u32,
+    pub dialogue_density_ratio: f32,
+    pub talking_head_sequences: u32,
 }
 
 /// Six measurable properties of a named character's speech, built from all
