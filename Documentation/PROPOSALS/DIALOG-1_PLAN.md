@@ -4,7 +4,7 @@
 |---|---|
 | **RFC** | DIALOG-1 |
 | **Title** | Language-aware dialogue detection; zero-attribution / said-bookism / talking-head findings; per-character dialogue fingerprint; `theatergoer` Inner Socrates persona; CLI + Bund parity |
-| **Status** | In progress — 1.4.14 |
+| **Status** | Shipped — 1.4.14 |
 | **Author** | Vladimir Ulogov |
 | **Depends on** | NARR-1 (1.4.12) — imports `crate::prose::ProseLanguage` + the modal word lists |
 | **New dependency** | none |
