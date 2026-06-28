@@ -27,6 +27,25 @@ pub(super) struct OutlineRow {
     pub depth: usize,
 }
 
+/// OUTLINE-1 (O-P4) — whether a clipboarded paragraph is being copied
+/// (duplicated) or moved (relocated) on the next affix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ClipMode {
+    Copy,
+    Move,
+}
+
+/// OUTLINE-1 (O-P4) — the cross-pane paragraph clipboard. Set by `y` (copy) or
+/// `m` (move) in either the Outline or the Tree pane; consumed by `f` (affix),
+/// which lands the paragraph as the last child of the target's effective
+/// parent. A `Copy` clipboard survives the affix (paste again); a `Move`
+/// clipboard is cleared once the relocation lands.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct ParaClipboard {
+    pub id: Uuid,
+    pub mode: ClipMode,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub(super) struct OutlineState {
     /// Per-node expand flag. Absent → collapsed; `apply_default_view` seeds a

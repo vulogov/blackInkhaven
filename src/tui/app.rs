@@ -2079,6 +2079,11 @@ pub(crate) struct App {
     /// (`Ctrl+2` / `Ctrl+B Shift+O`); loaded from `.inkhaven/outline-state.json`.
     pub(super) outline_state: Option<super::outline::OutlineState>,
 
+    /// OUTLINE-1 (O-P4) — the cross-pane paragraph copy/move clipboard, shared
+    /// by the Outline and Tree panes (`y` copy · `m` move · `f` affix). `None`
+    /// when nothing is held. Session-only (not persisted).
+    pub(super) para_clipboard: Option<super::outline::ParaClipboard>,
+
     /// RAG context block (e.g. a place/character lookup) that the next
     /// AI-prompt submission should prepend to the user's typed query.
     /// Used by the Ctrl+B P / Ctrl+B C editor flows when the AI prompt is
@@ -2669,6 +2674,7 @@ impl App {
             pending_jinja_template: false,
             pending_structural_type: None,
             outline_state: None,
+            para_clipboard: None,
             pending_rag_prefix: None,
             layout_search: Rect::default(),
             layout_tree: Rect::default(),
@@ -4600,6 +4606,24 @@ impl App {
             // tags across every selected paragraph at once.
             KeyCode::Char('G') | KeyCode::Char('g') if plain => {
                 self.open_tag_picker_for_tree_selection();
+            }
+            // OUTLINE-1 (O-P4) — cross-parent paragraph clipboard, shared with
+            // the Outline pane: y copy · m move · f affix. Operates on the
+            // cursor row (paragraphs only for y/m; f lands into/after the row).
+            KeyCode::Char('y') | KeyCode::Char('Y') if plain => {
+                if let Some(&(id, _)) = self.rows.get(self.tree_cursor) {
+                    self.clipboard_set(id, super::outline::ClipMode::Copy);
+                }
+            }
+            KeyCode::Char('m') | KeyCode::Char('M') if plain => {
+                if let Some(&(id, _)) = self.rows.get(self.tree_cursor) {
+                    self.clipboard_set(id, super::outline::ClipMode::Move);
+                }
+            }
+            KeyCode::Char('f') | KeyCode::Char('F') if plain => {
+                if let Some(&(id, _)) = self.rows.get(self.tree_cursor) {
+                    self.clipboard_affix_into(id);
+                }
             }
 
             _ if self.keymap.page_up.matches(&key) => self.move_cursor(-10),
@@ -12068,6 +12092,28 @@ impl App {
                 self.outline_demote();
                 return true;
             }
+            // Cross-parent paragraph clipboard: y copy · m move · f affix.
+            KeyCode::Char('y') => {
+                if let Some(id) = cur_id {
+                    self.outline_state = Some(state);
+                    self.clipboard_set(id, super::outline::ClipMode::Copy);
+                    return true;
+                }
+            }
+            KeyCode::Char('m') => {
+                if let Some(id) = cur_id {
+                    self.outline_state = Some(state);
+                    self.clipboard_set(id, super::outline::ClipMode::Move);
+                    return true;
+                }
+            }
+            KeyCode::Char('f') => {
+                if let Some(id) = cur_id {
+                    self.outline_state = Some(state);
+                    self.clipboard_affix_into(id);
+                    return true;
+                }
+            }
             KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
                 if let Some(id) = cur_id {
                     if self.hierarchy.has_children(id) {
@@ -12231,6 +12277,156 @@ impl App {
                 self.status = format!("outline: {verb} `{slug}`");
             }
             Err(e) => self.status = format!("outline: {verb} failed — {e}"),
+        }
+    }
+
+    /// OUTLINE-1 (O-P4) — stash a paragraph on the cross-pane clipboard for a
+    /// copy (`y`) or move (`m`). Shared by the Outline and Tree panes. Only
+    /// paragraphs are clipboardable — branch restructuring is reorder/promote.
+    fn clipboard_set(&mut self, id: Uuid, mode: super::outline::ClipMode) {
+        use super::outline::ClipMode;
+        let Some(node) = self.hierarchy.get(id) else {
+            return;
+        };
+        if node.kind != NodeKind::Paragraph {
+            self.status =
+                "copy/move: paragraphs only — use J/K to reorder, </> to promote/demote".into();
+            return;
+        }
+        let slug = node.slug.clone();
+        self.para_clipboard = Some(super::outline::ParaClipboard { id, mode });
+        self.status = match mode {
+            ClipMode::Copy => format!("copied `{slug}` · press f on a target to affix"),
+            ClipMode::Move => format!("cut `{slug}` · press f on a target to affix"),
+        };
+    }
+
+    /// OUTLINE-1 (O-P4) — affix the clipboard paragraph as the last child of
+    /// `target`'s effective parent (into `target` when it's a branch, alongside
+    /// it when it's a paragraph). Copy duplicates (keeping the clipboard for
+    /// repeat pastes); move relocates and clears the clipboard. Shared by both
+    /// panes. Caller passes the cursor node it wants to affix relative to.
+    fn clipboard_affix_into(&mut self, target_id: Uuid) {
+        use super::outline::ClipMode;
+        let Some(clip) = self.para_clipboard else {
+            self.status = "affix: nothing held — y to copy or m to move a paragraph first".into();
+            return;
+        };
+        if self.hierarchy.get(clip.id).is_none() {
+            self.para_clipboard = None;
+            self.status = "affix: the held paragraph no longer exists".into();
+            return;
+        }
+        let Some(target) = self.hierarchy.get(target_id) else {
+            return;
+        };
+        // Effective parent: append INTO a branch, or alongside a paragraph.
+        let dest_parent = if target.kind == NodeKind::Paragraph {
+            target.parent_id
+        } else {
+            Some(target_id)
+        };
+        match clip.mode {
+            ClipMode::Move => {
+                let slug = self
+                    .hierarchy
+                    .get(clip.id)
+                    .map(|n| n.slug.clone())
+                    .unwrap_or_default();
+                if self.hierarchy.get(clip.id).and_then(|n| n.parent_id) == dest_parent {
+                    self.status =
+                        format!("affix: `{slug}` is already in that parent (J/K to reorder)");
+                    return;
+                }
+                match self
+                    .store
+                    .move_node_to_parent(&self.cfg, &self.hierarchy, clip.id, dest_parent)
+                {
+                    Ok(()) => {
+                        let moved = clip.id;
+                        self.para_clipboard = None;
+                        self.reload_hierarchy();
+                        self.focus_node_after_affix(dest_parent, moved);
+                        self.status = format!("affixed (moved) `{slug}`");
+                    }
+                    Err(e) => self.status = format!("affix (move) failed — {e}"),
+                }
+            }
+            ClipMode::Copy => match self.copy_paragraph_into(clip.id, dest_parent) {
+                Ok(new_id) => {
+                    self.reload_hierarchy();
+                    self.focus_node_after_affix(dest_parent, new_id);
+                    self.status = "affixed (copied) paragraph · f again to paste another".into();
+                }
+                Err(e) => self.status = format!("affix (copy) failed — {e}"),
+            },
+        }
+    }
+
+    /// Duplicate paragraph `src_id` as a new paragraph (fresh uuid) appended to
+    /// `dest_parent`, carrying the prose metadata (tags, status, target,
+    /// content-type, outgoing links) but NOT the timeline event — copying a
+    /// node should never mint a duplicate timeline event. Body is written to
+    /// disk exactly like the delete-undo path. Returns the new node's id.
+    fn copy_paragraph_into(
+        &mut self,
+        src_id: Uuid,
+        dest_parent: Option<Uuid>,
+    ) -> std::result::Result<Uuid, String> {
+        let src = self
+            .hierarchy
+            .get(src_id)
+            .cloned()
+            .ok_or_else(|| "source paragraph missing".to_string())?;
+        let content = self
+            .store
+            .get_content(src_id)
+            .map_err(|e| e.to_string())?
+            .unwrap_or_default();
+        let parent_node = dest_parent.and_then(|id| self.hierarchy.get(id).cloned());
+        let created = self
+            .store
+            .create_node(
+                &self.cfg,
+                &self.hierarchy,
+                NodeKind::Paragraph,
+                &src.title,
+                parent_node.as_ref(),
+                None,
+                crate::store::InsertPosition::End,
+            )
+            .map_err(|e| e.to_string())?;
+        if let Some(rel) = created.file.as_ref() {
+            let abs = self.layout.root.join(rel);
+            std::fs::write(&abs, &content).map_err(|e| e.to_string())?;
+        }
+        let mut updated = created.clone();
+        updated.tags = src.tags.clone();
+        updated.status = src.status.clone();
+        updated.target_words = src.target_words;
+        updated.content_type = src.content_type.clone();
+        updated.linked_paragraphs = src.linked_paragraphs.clone();
+        updated.word_count =
+            String::from_utf8_lossy(&content).split_whitespace().count() as u64;
+        updated.modified_at = chrono::Utc::now();
+        self.store
+            .raw()
+            .update_metadata(updated.id, updated.to_json())
+            .map_err(|e| e.to_string())?;
+        Ok(updated.id)
+    }
+
+    /// After an affix, expand the destination parent + land both the Outline
+    /// and Tree cursors on the affixed node (when each surface can see it).
+    fn focus_node_after_affix(&mut self, dest_parent: Option<Uuid>, id: Uuid) {
+        if let Some(state) = self.outline_state.as_mut() {
+            if let Some(pid) = dest_parent {
+                state.set_expanded(pid, true);
+            }
+            state.cursor_uuid = Some(id);
+        }
+        if let Some(i) = self.rows.iter().position(|(rid, _)| *rid == id) {
+            self.tree_cursor = i;
         }
     }
 

@@ -5421,8 +5421,23 @@ impl super::super::App {
         f.render_widget(Paragraph::new(lines), body_rect);
 
         let total = rows.len();
+        let held = match self.para_clipboard.as_ref() {
+            Some(c) => {
+                let verb = match c.mode {
+                    super::super::super::outline::ClipMode::Copy => "copy",
+                    super::super::super::outline::ClipMode::Move => "move",
+                };
+                let slug = self
+                    .hierarchy
+                    .get(c.id)
+                    .map(|n| n.slug.as_str())
+                    .unwrap_or("?");
+                format!(" · [{verb}: {slug}]")
+            }
+            None => String::new(),
+        };
         let footer = format!(
-            " {}/{} · jk move · l/h fold · JK reorder · </> promote/demote · g/G ends · Esc ",
+            " {}/{} · jk move · l/h fold · JK reorder · </> promote · ym copy/move · f affix · Esc{held} ",
             cur + 1,
             total
         );
