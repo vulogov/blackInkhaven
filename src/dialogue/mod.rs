@@ -10,10 +10,12 @@
 //! attribution types, and the embedded neutral + said-bookism verb lists
 //! (`verbs`). Detectors land in D-P1, attribution in D-P2.
 
+mod detect;
 mod verbs;
 
 use crate::prose::ProseLanguage;
 
+pub(crate) use detect::detect_spans;
 pub(crate) use verbs::{DialogueLexicon, classify_tag_verb, lexicon_for};
 
 /// The three structurally distinct dialogue-quotation conventions. Detection
@@ -26,6 +28,28 @@ pub(crate) enum DialogueConvention {
     GuillemetsAndDash,
     /// All three forms may appear; detectors run additively (ES).
     Hybrid,
+}
+
+/// How an individual span was detected (finer than the book-level
+/// [`DialogueConvention`]): which mark form bracketed this particular span.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SpanForm {
+    /// Between paired quotation marks (`"…"`, `“…”`, `„…“`).
+    QuotePair,
+    /// Between guillemets (`«…»`).
+    Guillemet,
+    /// Introduced by an em-dash paragraph opener (`— …`).
+    EmDash,
+}
+
+impl SpanForm {
+    pub(crate) fn as_code(&self) -> &'static str {
+        match self {
+            SpanForm::QuotePair => "quote_pair",
+            SpanForm::Guillemet => "guillemet",
+            SpanForm::EmDash => "em_dash",
+        }
+    }
 }
 
 /// Confidence that a detected span was spoken by a particular character. Only
@@ -71,7 +95,8 @@ pub(crate) struct DialogueSpan {
     pub para_id: String,
     /// Ordinal within the paragraph (0-based).
     pub span_index: u32,
-    pub convention: DialogueConvention,
+    /// Which mark form bracketed this span.
+    pub form: SpanForm,
     /// Content inside the marks, stripped of any inline tag (FR `dit-il`).
     pub speech_text: String,
     pub word_count: u32,
