@@ -21,39 +21,37 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.4.11 — Structural paragraphs & deletion hardening
+## Latest release · 1.4.12 — Narrative voice profiling
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.4.11.md`](Documentation/RELEASE_NOTES/1.4.11.md)
-· Plan: [`Documentation/PROPOSALS/STRUCT-2_PLAN.md`](Documentation/PROPOSALS/STRUCT-2_PLAN.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.4.12.md`](Documentation/RELEASE_NOTES/1.4.12.md)
+· Plan: [`Documentation/PROPOSALS/NARR-1_PLAN.md`](Documentation/PROPOSALS/NARR-1_PLAN.md)
 
-Technical chapters mix prose with **code listings, admonition boxes, math, procedures, and tables** —
-which used to read as `¶`, draw style notes, and inflate the word count. 1.4.11 (STRUCT-2) lets you
-mark them for what they are, and hardens deletion. **Purely additive — no new content type, no store
-change, no new dependencies.**
+Does chapter 40 read like the person who wrote chapter 1? 1.4.12 (NARR-1) adds **`inkhaven prose`** —
+which measures voice as a statistical property of the whole book, **deterministically, with no LLM, no
+parser, and no external dependency**. It **measures; it never prescribes.** Five first-class languages
+(EN/RU/DE/FR/ES). **No new runtime crates.**
 
-### Structural paragraph subtypes
+### A deterministic voice fingerprint
 
-Press **`i`** in the Tree pane and pick a subtype (code · admonition · math · procedure · table). You
-get a `.typ` paragraph with a type-specific glyph (`⌨ ⚠ ∫ ≡ ⊞`) and the matching Typst boilerplate
-seeded. The marker is a **`para:*` tag**, not a content type — so it's addable/removable via
-**`Ctrl+B ]`** without a morph. Structural paragraphs are **skipped by the Inner Editor / Inner
-Socrates** (except procedures — steps are prose) and **excluded from prose word counts** (Book Info
-shows a separate `structural: N` line).
+`prose profile` reports sentence-rhythm (**CV** / burstiness / **MATTR**), epistemic-hedging **modal
+density**, free-indirect-discourse **interiority**, and (with `--deep`) sensory channel balance + a
+per-language active/passive ratio — per chapter. Every language-sensitive metric has a curated word
+list for all five languages; an unsupported language still gets the full rhythm tier.
 
-### Deletion hardening
+### See the drift, in the editor
 
-The delete confirmation now shows the **word count** about to be lost. **Branch deletes** stash every
-paragraph leaf into the kill-ring — **`Ctrl+B U`** restores them one at a time, in order — and take a
-**pre-delete snapshot** of every paragraph so you can recover any of them from the **`F6`** picker
-long after the kill-ring cycles. Three layers: you see what you'll lose, you get instant undo, and you
-have a durable safety net.
+`prose drift` lists each chapter's deltas and threshold crossings vs the baseline (or `--reference`
+another project, for a series). In the editor, **`Ctrl+V V`** (Voice) runs the same check in the
+**background** — content-hash lazy (only edited chapters recompute), **zero-AI / zero-cost** — and
+drops threshold crossings into the **Output pane** as informational, navigable findings. **`Ctrl+V
+Shift+V`** toggles ambient.
 
 ### Dependencies & compatibility
 
-**No new dependencies.** Structural type is a `para:*` tag on an ordinary `.typ` paragraph — **no new
-content type, no new `NodeKind`, no `ChildRef`, no DB tables.** Built on the existing tag system, the
-kill-ring, and the annotated-snapshot API. A paragraph can be both `content_type: "jinja"` and
-`para:code`; single-paragraph delete behaviour is unchanged.
+**No new runtime crates.** Built on the existing `.typ` + DuckDB + `regex` stack. Profiles live in a
+new `.inkhaven/prose.duckdb`, invalidated by a content hash; the `prose:` config block tunes the
+window / thresholds / language and takes `extra_modal_tokens`. Read-only `ink.prose.*` Bund words.
+Nothing runs until you ask, and it never calls an LLM.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
