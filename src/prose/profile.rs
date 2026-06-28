@@ -82,6 +82,10 @@ pub(crate) fn hash_text(text: &str) -> u64 {
 /// Compute the full profile for a unit of stripped prose `text`. `deep` enables
 /// the Tier-2 sensory + active/passive metrics (only meaningful for a supported
 /// language). Language-agnostic rhythm metrics are always computed.
+/// Convenience wrapper that builds a default (no-extras) lexicon. Test-only —
+/// the production path is [`compute_profile_with`] with a lexicon the pipeline
+/// builds once (folding in `prose.extra_*`).
+#[cfg(test)]
 pub(crate) fn compute_profile(
     text: &str,
     scope: VoiceScope,

@@ -37,9 +37,7 @@ mod glossary;
 mod planning;
 mod editorial;
 mod drift;
-// NARR-1 — narrative-voice (`prose`) profiling. Built bottom-up across
-// N-P0…N-P6; reachable from the CLI at N-P4, so allow dead_code until then.
-#[allow(dead_code)]
+// NARR-1 — narrative-voice (`prose`) profiling (CLI / Bund / TUI).
 mod prose;
 mod world_report;
 mod progress;

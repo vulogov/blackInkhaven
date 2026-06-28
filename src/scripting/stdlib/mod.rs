@@ -24,6 +24,7 @@ mod inner_editor;
 mod sources;
 mod terms;
 mod snippets;
+mod prose;
 mod pdf;
 mod review;
 
@@ -54,5 +55,6 @@ pub fn register_ink_stdlib(vm: &mut VM) -> Result<()> {
     sources::register(vm)?;
     terms::register(vm)?;
     snippets::register(vm)?;
+    prose::register(vm)?;
     Ok(())
 }
