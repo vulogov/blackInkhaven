@@ -19,8 +19,6 @@ use crate::store::{NodeKind, Store};
 
 use super::ProseCommand;
 
-const DEFAULT_WINDOW: usize = 100;
-
 pub fn run(project: &Path, cmd: ProseCommand) -> Result<()> {
     match cmd {
         ProseCommand::Profile { book, deep, json, language } => {
@@ -67,7 +65,7 @@ fn refresh_profiles(
     deep: bool,
 ) -> Result<Vec<VoiceProfile>> {
     let pstore = ProseStore::open(store.project_root()).map_err(|e| Error::Store(e.to_string()))?;
-    refresh_book(&pstore, layout, h, cfg, book, language, deep, DEFAULT_WINDOW, &computed_now())
+    refresh_book(&pstore, layout, h, cfg, book, language, deep, cfg.prose.mattr_window, &computed_now())
         .map_err(|e| Error::Store(e.to_string()))
 }
 
@@ -76,8 +74,10 @@ fn profile(project: &Path, book_name: Option<&str>, deep: bool, json: bool, lang
     let book = super::resolve_user_book(&h, book_name, "prose")
         .map_err(Error::Store)?
         .clone();
-    let profiles = refresh_profiles(&layout, &cfg, &store, &h, &book, language, deep)?;
-    let (lang, note) = resolve_prose_language(language, &cfg.language);
+    let lang_override = language.or(cfg.prose.language.as_deref());
+    let deep = deep || cfg.prose.deep_metrics;
+    let profiles = refresh_profiles(&layout, &cfg, &store, &h, &book, lang_override, deep)?;
+    let (lang, note) = resolve_prose_language(lang_override, &cfg.language);
     let n_chapters = h
         .children_of(Some(book.id))
         .iter()
@@ -106,8 +106,10 @@ fn refresh(project: &Path, book_name: Option<&str>, deep: bool, language: Option
     let book = super::resolve_user_book(&h, book_name, "prose")
         .map_err(Error::Store)?
         .clone();
-    let profiles = refresh_profiles(&layout, &cfg, &store, &h, &book, language, deep)?;
-    let (lang, _) = resolve_prose_language(language, &cfg.language);
+    let lang_override = language.or(cfg.prose.language.as_deref());
+    let deep = deep || cfg.prose.deep_metrics;
+    let profiles = refresh_profiles(&layout, &cfg, &store, &h, &book, lang_override, deep)?;
+    let (lang, _) = resolve_prose_language(lang_override, &cfg.language);
     println!(
         "prose: refreshed {} profile(s) for `{}` [{}]",
         profiles.len(),
@@ -129,8 +131,10 @@ fn drift(
     let book = super::resolve_user_book(&h, book_name, "prose")
         .map_err(Error::Store)?
         .clone();
-    let profiles = refresh_profiles(&layout, &cfg, &store, &h, &book, language, false)?;
-    let (lang, _) = resolve_prose_language(language, &cfg.language);
+    let lang_override = language.or(cfg.prose.language.as_deref());
+    let profiles = refresh_profiles(&layout, &cfg, &store, &h, &book, lang_override, cfg.prose.deep_metrics)?;
+    let (lang, _) = resolve_prose_language(lang_override, &cfg.language);
+    let baseline_ord = cfg.prose.baseline_chapter;
 
     // Cross-project reference: current book aggregate vs the reference book.
     if let Some(ref_root) = reference {
@@ -169,16 +173,37 @@ fn drift(
             }
         }
         _ => {
-            // baseline: each chapter vs chapter 1.
-            if let Some(base) = chapters.first().copied() {
-                for c in chapters.iter().skip(1) {
+            // baseline: each chapter vs the configured baseline chapter.
+            if let Some(base) = chapters
+                .iter()
+                .find(|p| p.scope == VoiceScope::Chapter(baseline_ord))
+                .copied()
+            {
+                for c in &chapters {
                     let n = c.scope.chapter_ord().unwrap();
-                    rows.push((format!("ch.{n} vs ch.1"), delta(c, base)));
+                    if n == baseline_ord {
+                        continue;
+                    }
+                    rows.push((format!("ch.{n} vs ch.{baseline_ord}"), delta(c, base)));
                 }
             }
         }
     }
     print_drift(&book.title, &lang, &rows, json);
+
+    // Threshold crossings (the informational `prose` findings) — baseline mode.
+    if !json && mode != "rolling" {
+        let v = crate::prose::violations::violations(&profiles, baseline_ord, &cfg.prose.thresholds);
+        if !v.is_empty() {
+            println!("\nThreshold crossings (info — descriptive, not prescriptive):");
+            for x in &v {
+                println!(
+                    "  ch.{:<3} {:<34} {:+.3}  (baseline {:.3} → {:.3})",
+                    x.chapter, x.metric, x.delta, x.baseline, x.value
+                );
+            }
+        }
+    }
     Ok(())
 }
 

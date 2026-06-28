@@ -90,6 +90,20 @@ pub(crate) fn compute_profile(
     mattr_window: usize,
 ) -> VoiceProfile {
     let lx = CompiledLexicon::for_language(lang);
+    compute_profile_with(text, scope, lang, &lx, deep, mattr_window)
+}
+
+/// As [`compute_profile`], but with a caller-supplied [`CompiledLexicon`] — the
+/// pipeline builds it once per refresh with the project's `prose.extra_*`
+/// tokens folded in.
+pub(crate) fn compute_profile_with(
+    text: &str,
+    scope: VoiceScope,
+    lang: &ProseLanguage,
+    lx: &CompiledLexicon,
+    deep: bool,
+    mattr_window: usize,
+) -> VoiceProfile {
     let sentences = segment::split_sentences(text, lang);
 
     let mut lengths: Vec<usize> = sentences
@@ -105,14 +119,14 @@ pub(crate) fn compute_profile(
     let token_refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
 
     let (modal_density, interiority_ratio, de_density) = {
-        let m = lang_metrics::modal_density(text, lang, &lx);
-        let (i, d) = lang_metrics::interiority(&sentences, lang, &lx);
+        let m = lang_metrics::modal_density(text, lang, lx);
+        let (i, d) = lang_metrics::interiority(&sentences, lang, lx);
         (m, i, d)
     };
 
     let tier2 = (deep && lang.is_supported()).then(|| VoiceTier2 {
-        sensory: lang_metrics::sensory_balance(text, lang, &lx).unwrap_or([0.0; 5]),
-        active_passive_ratio: passive::passive_ratio(&sentences, lang, &lx).unwrap_or(0.0),
+        sensory: lang_metrics::sensory_balance(text, lang, lx).unwrap_or([0.0; 5]),
+        active_passive_ratio: passive::passive_ratio(&sentences, lang, lx).unwrap_or(0.0),
     });
 
     VoiceProfile {
