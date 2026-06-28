@@ -2084,6 +2084,11 @@ pub(crate) struct App {
     /// when nothing is held. Session-only (not persisted).
     pub(super) para_clipboard: Option<super::outline::ParaClipboard>,
 
+    /// OUTLINE-1 (O-P5) — true while the Outline's inline `/` filter is being
+    /// typed (the filter text itself lives in `outline_state.filter_str`).
+    /// Transient: Esc exits editing (keeping the filter), a second Esc closes.
+    pub(super) outline_editing_filter: bool,
+
     /// RAG context block (e.g. a place/character lookup) that the next
     /// AI-prompt submission should prepend to the user's typed query.
     /// Used by the Ctrl+B P / Ctrl+B C editor flows when the AI prompt is
@@ -2675,6 +2680,7 @@ impl App {
             pending_structural_type: None,
             outline_state: None,
             para_clipboard: None,
+            outline_editing_filter: false,
             pending_rag_prefix: None,
             layout_search: Rect::default(),
             layout_tree: Rect::default(),
@@ -12044,9 +12050,39 @@ impl App {
         let Some(mut state) = self.outline_state.take() else {
             return true;
         };
+        // O-P5 — inline `/` filter editing: keystrokes edit `filter_str` and
+        // re-anchor the cursor onto a still-visible row. Enter applies and
+        // exits editing; Esc is handled in the top-level modal Esc branch.
+        if self.outline_editing_filter {
+            match key.code {
+                KeyCode::Enter => {
+                    self.outline_editing_filter = false;
+                    let n = state.visible_rows(&self.hierarchy).len();
+                    self.status = format!("outline: filter `{}` · {n} match(es)", state.filter_str);
+                }
+                KeyCode::Backspace => {
+                    state.filter_str.pop();
+                }
+                KeyCode::Char(c) => {
+                    state.filter_str.push(c);
+                }
+                _ => {}
+            }
+            let rows = state.visible_rows(&self.hierarchy);
+            state.reanchor_cursor(&rows, 0);
+            self.outline_state = Some(state);
+            return true;
+        }
         let rows = state.visible_rows(&self.hierarchy);
         let cur_id = rows.get(state.cursor_index(&rows)).map(|r| r.id);
         match key.code {
+            // Enter filter-edit mode.
+            KeyCode::Char('/') => {
+                self.outline_editing_filter = true;
+                self.outline_state = Some(state);
+                self.status = "outline filter: type to narrow · Enter apply · Esc exit".into();
+                return true;
+            }
             KeyCode::Down | KeyCode::Char('j') => {
                 state.move_cursor(&rows, 1);
             }
@@ -21656,9 +21692,28 @@ impl App {
                 *ff = false;
                 return Ok(false);
             }
-            // OUTLINE-1 — persist the Outline view state before closing so
-            // expand flags / cursor / scroll survive to the next open.
+            // OUTLINE-1 — staged Esc: exit filter-editing first, then clear an
+            // active filter, then persist the view state and close.
             if matches!(self.modal, Modal::Outline) {
+                if self.outline_editing_filter {
+                    self.outline_editing_filter = false;
+                    self.status = "outline filter: editing cancelled".into();
+                    return Ok(false);
+                }
+                let has_filter = self
+                    .outline_state
+                    .as_ref()
+                    .is_some_and(|s| !s.filter_str.trim().is_empty());
+                if has_filter {
+                    if let Some(mut state) = self.outline_state.take() {
+                        state.filter_str.clear();
+                        let rows = state.visible_rows(&self.hierarchy);
+                        state.reanchor_cursor(&rows, 0);
+                        self.outline_state = Some(state);
+                    }
+                    self.status = "outline: filter cleared".into();
+                    return Ok(false);
+                }
                 if let Some(state) = &self.outline_state {
                     if let Err(e) = state.save(&self.layout.root) {
                         self.status = format!("outline: state not saved — {e}");
