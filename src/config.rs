@@ -64,6 +64,9 @@ pub struct Config {
     /// STRUCT-1 — Jinja template paragraph rendering.
     #[serde(default)]
     pub jinja: JinjaConfig,
+    /// NARR-1 — narrative-voice (`prose`) profiling.
+    #[serde(default)]
+    pub prose: ProseConfig,
     /// The project's declared genre (e.g. `literary_realism`, `fantasy`).
     /// Project-wide; consumed by Inner Editor's genre-aware prompting and open
     /// to other features later. `None` = genre-blind.
@@ -212,6 +215,7 @@ impl Default for Config {
             inner_editor: InnerEditorConfig::default(),
             sources: SourcesConfig::default(),
             jinja: JinjaConfig::default(),
+            prose: ProseConfig::default(),
             genre: None,
             inner_socrates_default_persona: None,
             project_lock: ProjectLockConfig::default(),
@@ -3604,6 +3608,84 @@ pub struct JinjaConfig {
 impl Default for JinjaConfig {
     fn default() -> Self {
         Self { continue_on_error: false }
+    }
+}
+
+/// NARR-1 — narrative-voice (`prose`) profiling. Deterministic, zero-AI voice
+/// metrics per chapter, stored in `.inkhaven/prose.duckdb`. All optional; the
+/// defaults give a shallow (Tier-1 + language-sensitive) pass with thresholds
+/// tuned to English fiction.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ProseConfig {
+    /// Include Tier-2 metrics (sensory balance + active/passive ratio).
+    pub deep_metrics: bool,
+    /// MATTR sliding-window size in tokens.
+    pub mattr_window: usize,
+    /// Chapter that drift / violations are measured against.
+    pub baseline_chapter: u32,
+    /// Prose language override (`en`/`ru`/`de`/`fr`/`es`); `null` → project
+    /// language → English with a note.
+    pub language: Option<String>,
+    /// Drift thresholds — a chapter metric crossing its threshold vs the
+    /// baseline emits an informational `prose` finding.
+    pub thresholds: ProseThresholds,
+    /// Tokens appended to the active language's modal/epistemic list (e.g.
+    /// genre-specific subjunctive collocations). Single words are unigrams;
+    /// two/three-word entries are bigrams/trigrams.
+    pub extra_modal_tokens: Vec<String>,
+    /// Phrases appended to the active language's interiority (FID) list.
+    pub extra_interiority_phrases: Vec<String>,
+    /// TUI ambient auto-check: re-run the background prose check after an
+    /// editing pause. Off by default (manual `Ctrl+V V` only).
+    pub ambient: bool,
+    /// Cooldown floor (seconds) between ambient prose checks — a whole-book
+    /// scan, so longer than the per-paragraph companions.
+    pub ambient_cooldown_secs: u64,
+}
+
+impl Default for ProseConfig {
+    fn default() -> Self {
+        Self {
+            deep_metrics: false,
+            mattr_window: 100,
+            baseline_chapter: 1,
+            language: None,
+            thresholds: ProseThresholds::default(),
+            extra_modal_tokens: Vec::new(),
+            extra_interiority_phrases: Vec::new(),
+            ambient: false,
+            ambient_cooldown_secs: 90,
+        }
+    }
+}
+
+/// Per-metric drift thresholds for the `prose` finding category.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ProseThresholds {
+    pub sent_len_cv: f32,
+    pub burstiness_b: f32,
+    pub mattr: f32,
+    pub modal_density: f32,
+    pub interiority_ratio: f32,
+    pub de_erlebte_rede_particle_density: f32,
+    pub sensory_channel_max: f32,
+    pub active_passive_ratio: f32,
+}
+
+impl Default for ProseThresholds {
+    fn default() -> Self {
+        Self {
+            sent_len_cv: 0.15,
+            burstiness_b: 0.15,
+            mattr: 0.05,
+            modal_density: 0.020,
+            interiority_ratio: 0.10,
+            de_erlebte_rede_particle_density: 0.05,
+            sensory_channel_max: 0.15,
+            active_passive_ratio: 1.5,
+        }
     }
 }
 

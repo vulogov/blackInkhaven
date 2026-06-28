@@ -81,6 +81,12 @@ pub enum Action {
     /// STRUCT-2 — add a structural paragraph subtype at the tree cursor.
     #[serde(rename = "tree.add_structural_paragraph")]
     AddStructuralParagraph,
+    /// NARR-1 — run the narrative-voice (prose) background check now.
+    #[serde(rename = "view.prose_voice_engage")]
+    ProseVoiceEngage,
+    /// NARR-1 — toggle ambient (editing-pause) prose checks.
+    #[serde(rename = "view.prose_toggle_ambient")]
+    ProseToggleAmbient,
     #[serde(rename = "tree.delete_node")]
     DeleteNode,
     #[serde(rename = "tree.morph_type")]
@@ -889,6 +895,8 @@ impl Action {
             Action::AddParagraph => "add paragraph".into(),
             Action::AddJinjaTemplate => "add jinja template".into(),
             Action::AddStructuralParagraph => "add structural paragraph".into(),
+            Action::ProseVoiceEngage => "prose voice check".into(),
+            Action::ProseToggleAmbient => "prose ambient toggle".into(),
             Action::DeleteNode => "delete".into(),
             Action::MorphType => "morph-type".into(),
             Action::ReorderUp => "↑ reorder".into(),
@@ -1069,6 +1077,17 @@ impl Action {
                  Typst boilerplate seeded. Structural paragraphs get a type-specific tree glyph, are \
                  skipped by the prose companions, and are excluded from prose word counts (except \
                  procedure, which is still prose). Add/remove the tag later via `Ctrl+B ]`.".into(),
+            Action::ProseVoiceEngage =>
+                "Run the narrative-voice (`prose`) background check now (NARR-1, `Ctrl+V V` — Voice). \
+                 Deterministic, zero-AI: refreshes the book's per-chapter voice profiles (rhythm, \
+                 lexical diversity, epistemic hedging, interiority, …) — content-hash lazy, so only \
+                 edited chapters recompute — then emits any chapter metrics that drifted past their \
+                 threshold vs the baseline chapter to the Output pane as informational findings. \
+                 No LLM, no cost. See Documentation/PROSE_VOICE.md.".into(),
+            Action::ProseToggleAmbient =>
+                "Toggle ambient prose checks (NARR-1, `Ctrl+V Shift+V`). When on, the prose check \
+                 re-runs after an editing pause, gated by a cooldown floor (`prose.ambient_cooldown_secs`, \
+                 default 90s — it's a whole-book scan). Off by default; `Ctrl+V V` always runs it manually.".into(),
             Action::DeleteNode =>
                 "Delete the node under the tree cursor (asks for confirmation).".into(),
             Action::MorphType =>
@@ -1605,6 +1624,10 @@ impl KeyBindings {
                 // chord with no Shift+letter terminal ambiguity (Ctrl+Shift+P was
                 // tried first but its reporting varies too much across terminals).
                 entry("Space", Action::OpenCommandPalette, Scope::Any),
+                // NARR-1 — Ctrl+V V runs the prose voice check; Ctrl+V Shift+V
+                // toggles ambient. `v`/`Shift+v` were the only free view_sub slots.
+                entry("v", Action::ProseVoiceEngage, Scope::Any),
+                entry("Shift+v", Action::ProseToggleAmbient, Scope::Any),
                 // Editor / AI-prompt: 1 = buffer markdown, 2 =
                 // containing-subchapter subtree markdown.
                 entry("1", Action::ViewExportMarkdownBuffer, Scope::Editor),
@@ -2173,6 +2196,19 @@ mod tests {
         assert_eq!(
             k.resolve_meta_sub(&ev('v'), Focus::Editor),
             Some(Action::OpenCredits)
+        );
+    }
+
+    #[test]
+    fn view_sub_v_and_shift_v_drive_prose() {
+        // NARR-1 — Ctrl+V V engages the prose check; Ctrl+V Shift+V toggles ambient.
+        let k = KeyBindings::defaults();
+        let v = KeyEvent::new(KeyCode::Char('v'), KeyModifiers::NONE);
+        assert_eq!(k.resolve_view_sub(&v, Focus::Editor), Some(Action::ProseVoiceEngage));
+        let shift_v = KeyEvent::new(KeyCode::Char('V'), KeyModifiers::SHIFT);
+        assert_eq!(
+            k.resolve_view_sub(&shift_v, Focus::Editor),
+            Some(Action::ProseToggleAmbient)
         );
     }
 
