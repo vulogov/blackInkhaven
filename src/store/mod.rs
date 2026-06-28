@@ -1228,6 +1228,114 @@ impl Store {
         Ok(())
     }
 
+    /// OUTLINE-1 (O-P3/O-P4) — relocate a **childless** node (paragraph / image
+    /// / script, or an empty branch) to become the last child of
+    /// `new_parent_id` (`None` = a top-level book slot). Filesystem-aware:
+    /// renames the on-disk entry into the destination parent's directory with a
+    /// fresh `NN-` order prefix, uniquifies the slug against the destination's
+    /// siblings, and rewrites the node's `parent_id` / `order` / `slug` / `path`
+    /// / `file` metadata.
+    ///
+    /// Restricted to childless nodes on purpose: a branch move would also have
+    /// to rewrite every descendant's stored `path` chain (the load-time depth
+    /// sort key) and `file`, which is the Tree pane's domain. Promote/demote and
+    /// the Outline's cross-parent paragraph *move* are all childless, so this
+    /// covers them safely. Callers reload `Hierarchy` afterward.
+    pub fn move_node_to_parent(
+        &self,
+        cfg: &Config,
+        hierarchy: &Hierarchy,
+        node_id: Uuid,
+        new_parent_id: Option<Uuid>,
+    ) -> Result<()> {
+        let node = hierarchy
+            .get(node_id)
+            .cloned()
+            .ok_or_else(|| Error::Store(format!("move: missing node {node_id}")))?;
+        if hierarchy.has_children(node_id) {
+            return Err(Error::Store(
+                "move: node has children — restructure branches in the Tree pane".into(),
+            ));
+        }
+        if node.parent_id == new_parent_id {
+            return Ok(()); // already there — reorder, not reparent
+        }
+        let new_parent = match new_parent_id {
+            Some(id) => Some(
+                hierarchy
+                    .get(id)
+                    .cloned()
+                    .ok_or_else(|| Error::Store(format!("move: missing parent {id}")))?,
+            ),
+            None => None,
+        };
+        hierarchy.validate_placement(cfg, new_parent.as_ref(), node.kind)?;
+
+        // Uniquify the slug against the destination's existing children.
+        let dest_siblings = hierarchy.children_of(new_parent_id);
+        let mut slug = node.slug.clone();
+        if dest_siblings.iter().any(|s| s.slug == slug) {
+            let base = slug.clone();
+            let mut n = 2;
+            while dest_siblings.iter().any(|s| s.slug == slug) {
+                slug = format!("{base}-{n}");
+                n += 1;
+            }
+        }
+
+        let old_rel = hierarchy.fs_path(&node, &self.layout);
+        let old_abs = self.layout.root.join(&old_rel);
+
+        let mut new_node = node.clone();
+        new_node.parent_id = new_parent_id;
+        new_node.slug = slug;
+        new_node.order = hierarchy.next_order(new_parent_id);
+        new_node.path = match new_parent.as_ref() {
+            None => Vec::new(),
+            Some(p) => {
+                let mut chain: Vec<String> = hierarchy
+                    .ancestors(p)
+                    .into_iter()
+                    .map(|a| a.slug.clone())
+                    .collect();
+                chain.push(p.slug.clone());
+                chain
+            }
+        };
+        new_node.modified_at = chrono::Utc::now();
+
+        let dest_dir_rel = match new_parent.as_ref() {
+            None => std::path::PathBuf::from(BOOKS_DIR),
+            Some(p) => hierarchy.fs_path(p, &self.layout),
+        };
+        let new_rel = dest_dir_rel.join(new_node.fs_name());
+        let new_abs = self.layout.root.join(&new_rel);
+        if new_abs.exists() {
+            return Err(Error::Store(format!(
+                "move: target `{}` already exists",
+                new_abs.display()
+            )));
+        }
+        if let Some(parent_dir) = new_abs.parent() {
+            std::fs::create_dir_all(parent_dir)?;
+        }
+        std::fs::rename(&old_abs, &new_abs)?;
+
+        let new_rel_str = new_rel
+            .strip_prefix(&self.layout.root)
+            .unwrap_or(&new_rel)
+            .to_string_lossy()
+            .into_owned();
+        if new_node.file.is_some() {
+            new_node.file = Some(new_rel_str);
+        }
+        self.inner
+            .update_metadata(new_node.id, new_node.to_json())
+            .map_err(|e| Error::Store(format!("update_metadata: {e}")))?;
+        self.sync()?;
+        Ok(())
+    }
+
     /// Walk descendants of `moved` and rewrite each paragraph's `file` field
     /// so the prefix that used to be `old_rel` becomes `new_rel`.
     fn rewrite_descendant_files(

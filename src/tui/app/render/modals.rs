@@ -5422,7 +5422,7 @@ impl super::super::App {
 
         let total = rows.len();
         let footer = format!(
-            " {}/{} · ↑↓/jk move · Enter/l expand · h collapse · Space fold · g/G ends · Esc ",
+            " {}/{} · jk move · l/h fold · JK reorder · </> promote/demote · g/G ends · Esc ",
             cur + 1,
             total
         );
