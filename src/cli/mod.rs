@@ -15,6 +15,8 @@ pub mod import_typst_help;
 pub mod init;
 pub mod list;
 pub mod mv;
+pub mod outline;
+pub mod paragraph;
 pub mod reindex;
 pub mod restore;
 pub mod search;
@@ -270,6 +272,18 @@ pub enum Command {
         #[arg(value_enum)]
         direction: mv::Direction,
     },
+
+    /// OUTLINE-1 — print the manuscript outline as an indented text tree
+    /// (terminal counterpart to the `Ctrl+2` Outline pane).
+    Outline {
+        /// Only show nodes whose title or slug-path matches (case-insensitive).
+        #[arg(long)]
+        filter: Option<String>,
+    },
+
+    /// OUTLINE-1 — copy or move a paragraph across parents.
+    #[command(subcommand)]
+    Paragraph(ParagraphCommand),
 
     /// Run a semantic search across the project.
     Search {
@@ -1168,6 +1182,28 @@ pub enum Command {
         /// `<project>/.inkhaven/recovered/`.
         #[arg(long)]
         keep: bool,
+    },
+}
+
+/// OUTLINE-1 — sub-subcommands under `inkhaven paragraph …`. `src` / `dest`
+/// are slash-separated slug paths (as printed by `inkhaven outline`).
+#[derive(Debug, Subcommand)]
+pub enum ParagraphCommand {
+    /// Duplicate a paragraph under a destination node (fresh uuid; the
+    /// timeline event, if any, is not copied).
+    Copy {
+        /// Slug path of the paragraph to copy.
+        src: String,
+        /// Slug path of the destination node (a branch to nest into, or a
+        /// paragraph to land alongside).
+        dest: String,
+    },
+    /// Relocate a paragraph under a destination node.
+    Move {
+        /// Slug path of the paragraph to move.
+        src: String,
+        /// Slug path of the destination node.
+        dest: String,
     },
 }
 
@@ -4466,6 +4502,17 @@ impl Cli {
             Command::Mv { path, direction } => {
                 mv::run(&project, &path, direction).map_err(Into::into)
             }
+            Command::Outline { filter } => {
+                outline::run(&project, filter.as_deref()).map_err(Into::into)
+            }
+            Command::Paragraph(cmd) => match cmd {
+                ParagraphCommand::Copy { src, dest } => {
+                    paragraph::copy(&project, &src, &dest).map_err(Into::into)
+                }
+                ParagraphCommand::Move { src, dest } => {
+                    paragraph::move_(&project, &src, &dest).map_err(Into::into)
+                }
+            },
             Command::Search { query, limit } => {
                 search::run(&project, &query, limit).map_err(Into::into)
             }
