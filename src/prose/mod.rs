@@ -7,8 +7,10 @@
 //! (`lexicon`), and the lookup primitives ([`CompiledLexicon`]) + tokenizer the
 //! metric passes build on. Metric formulas land in N-P1/N-P2.
 
+mod lang_metrics;
 mod lexicon;
 mod metrics;
+mod passive;
 mod segment;
 
 use std::collections::{HashMap, HashSet};
