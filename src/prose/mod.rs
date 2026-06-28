@@ -22,6 +22,16 @@ pub(crate) use pipeline::refresh_book;
 pub(crate) use profile::{VoiceProfile, VoiceScope};
 pub(crate) use store::ProseStore;
 
+// DIALOG-1 reuse seam (NARR-1 §15): the moving-average TTR metric and the
+// per-language modal (hedging) unigram list, for the dialogue fingerprint.
+pub(crate) use metrics::mattr;
+
+/// The modal (epistemic-hedging) unigram list for a language — the word list
+/// the dialogue `hedge_density` metric matches against.
+pub(crate) fn modal_unigrams(lang: &ProseLanguage) -> &'static [&'static str] {
+    lexicon::lexicon(lang).modal_unigrams
+}
+
 use std::collections::{HashMap, HashSet};
 
 /// The language key every language-sensitive metric is dispatched on. `Other`
