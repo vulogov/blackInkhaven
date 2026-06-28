@@ -9,11 +9,23 @@
 //! filter string, persisted per-project to `.inkhaven/outline-state.json`
 //! (ephemeral UI state; not backed up, not snapshot-versioned).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+use crate::store::hierarchy::Hierarchy;
+use crate::store::node::NodeKind;
+
+/// One visible row in the Outline pane: the node and its indent depth (root
+/// books at depth 0). Built by [`OutlineState::visible_rows`] honoring the
+/// expand map (and, from O-P5, the inline filter).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct OutlineRow {
+    pub id: Uuid,
+    pub depth: usize,
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub(super) struct OutlineState {
@@ -68,11 +80,180 @@ impl OutlineState {
         let now = self.is_expanded(&id);
         self.expanded.insert(id, !now);
     }
+
+    /// On first open (no persisted expand flags), seed a structural-overview
+    /// default: Books and Chapters expanded, everything deeper (Subchapters,
+    /// hence their paragraphs) collapsed. Drill-down is one keystroke from
+    /// there. No-op once the user has toggled anything (the map is non-empty).
+    pub(super) fn seed_default_expansion(&mut self, h: &Hierarchy) {
+        if !self.expanded.is_empty() {
+            return;
+        }
+        for n in h.iter() {
+            if h.has_children(n.id) && matches!(n.kind, NodeKind::Book | NodeKind::Chapter) {
+                self.expanded.insert(n.id, true);
+            }
+        }
+    }
+
+    /// The set of branch nodes (have children) that are *collapsed* — i.e. not
+    /// expanded — for feeding [`Hierarchy::flatten_with_collapsed`]. Leaves and
+    /// childless branches are never in the set (they don't fold).
+    pub(super) fn collapsed_set(&self, h: &Hierarchy) -> HashSet<Uuid> {
+        h.iter()
+            .filter(|n| h.has_children(n.id) && !self.is_expanded(&n.id))
+            .map(|n| n.id)
+            .collect()
+    }
+
+    /// The currently-visible rows, top to bottom, honoring the expand map.
+    /// (The inline filter narrows this further from O-P5.)
+    pub(super) fn visible_rows(&self, h: &Hierarchy) -> Vec<OutlineRow> {
+        let collapsed = self.collapsed_set(h);
+        h.flatten_with_collapsed(&collapsed)
+            .into_iter()
+            .map(|(n, depth)| OutlineRow { id: n.id, depth })
+            .collect()
+    }
+
+    /// Index of the cursor within `rows`, or 0 when the cursor uuid is unset or
+    /// no longer visible (e.g. its parent was collapsed). The caller clamps.
+    pub(super) fn cursor_index(&self, rows: &[OutlineRow]) -> usize {
+        self.cursor_uuid
+            .and_then(|c| rows.iter().position(|r| r.id == c))
+            .unwrap_or(0)
+    }
+
+    /// Move the cursor by `delta` rows (saturating at both ends) and update
+    /// `cursor_uuid`. Returns the new index. No-op on an empty outline.
+    pub(super) fn move_cursor(&mut self, rows: &[OutlineRow], delta: isize) -> usize {
+        if rows.is_empty() {
+            self.cursor_uuid = None;
+            return 0;
+        }
+        let cur = self.cursor_index(rows) as isize;
+        let next = (cur + delta).clamp(0, rows.len() as isize - 1) as usize;
+        self.cursor_uuid = Some(rows[next].id);
+        next
+    }
+
+    /// Snap the cursor onto a visible row after a structural change. If the
+    /// current cursor uuid is still visible it is kept; otherwise it lands on
+    /// the row at (clamped) `fallback_idx`. Clears it on an empty outline.
+    pub(super) fn reanchor_cursor(&mut self, rows: &[OutlineRow], fallback_idx: usize) {
+        if rows.is_empty() {
+            self.cursor_uuid = None;
+            return;
+        }
+        let still_visible = self
+            .cursor_uuid
+            .is_some_and(|c| rows.iter().any(|r| r.id == c));
+        if !still_visible {
+            let idx = fallback_idx.min(rows.len() - 1);
+            self.cursor_uuid = Some(rows[idx].id);
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::node::Node;
+
+    fn node(id: Uuid, kind: &str, slug: &str, parent: Option<Uuid>, order: u32) -> Node {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "kind": kind, "title": slug, "slug": slug,
+            "path": [], "parent_id": parent, "order": order, "file": null,
+            "modified_at": "2026-01-01T00:00:00Z",
+        }))
+        .expect("test node")
+    }
+
+    /// book ─ chapter ─ subchapter ─ {p1, p2}; ids returned in that order.
+    fn sample() -> (Hierarchy, [Uuid; 5]) {
+        let book = Uuid::now_v7();
+        let ch = Uuid::now_v7();
+        let sub = Uuid::now_v7();
+        let p1 = Uuid::now_v7();
+        let p2 = Uuid::now_v7();
+        let h = Hierarchy::from_nodes_for_test(vec![
+            node(book, "book", "b", None, 1),
+            node(ch, "chapter", "ch1", Some(book), 1),
+            node(sub, "subchapter", "sub1", Some(ch), 1),
+            node(p1, "paragraph", "p1", Some(sub), 1),
+            node(p2, "paragraph", "p2", Some(sub), 2),
+        ]);
+        (h, [book, ch, sub, p1, p2])
+    }
+
+    #[test]
+    fn default_view_expands_book_and_chapter_only() {
+        let (h, [book, ch, sub, _p1, _p2]) = sample();
+        let mut s = OutlineState::default();
+        s.seed_default_expansion(&h);
+        // Book + chapter expanded; the subchapter (a branch) is collapsed, so
+        // its paragraphs don't show.
+        let rows = s.visible_rows(&h);
+        let ids: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
+        assert_eq!(ids, vec![book, ch, sub]);
+        assert_eq!(rows[0].depth, 0);
+        assert_eq!(rows[2].depth, 2);
+    }
+
+    #[test]
+    fn expanding_subchapter_reveals_paragraphs() {
+        let (h, [book, ch, sub, p1, p2]) = sample();
+        let mut s = OutlineState::default();
+        s.seed_default_expansion(&h);
+        s.set_expanded(sub, true);
+        let ids: Vec<Uuid> = s.visible_rows(&h).iter().map(|r| r.id).collect();
+        assert_eq!(ids, vec![book, ch, sub, p1, p2]);
+    }
+
+    #[test]
+    fn seed_is_noop_once_user_has_toggled() {
+        let (h, [book, ch, _sub, _p1, _p2]) = sample();
+        let mut s = OutlineState::default();
+        s.set_expanded(book, true); // prior persisted state ...
+        s.set_expanded(ch, false); // ... user had collapsed the chapter
+        s.seed_default_expansion(&h); // must not re-expand the chapter
+        let ids: Vec<Uuid> = s.visible_rows(&h).iter().map(|r| r.id).collect();
+        assert_eq!(ids, vec![book, ch]); // chapter collapsed -> sub hidden
+    }
+
+    #[test]
+    fn cursor_navigation_clamps_and_tracks_uuid() {
+        let (h, [book, ch, sub, _p1, _p2]) = sample();
+        let mut s = OutlineState::default();
+        s.seed_default_expansion(&h);
+        let rows = s.visible_rows(&h); // [book, ch, sub]
+        assert_eq!(s.cursor_index(&rows), 0); // unset -> 0
+        assert_eq!(s.move_cursor(&rows, 1), 1);
+        assert_eq!(s.cursor_uuid, Some(ch));
+        assert_eq!(s.move_cursor(&rows, 5), 2); // clamps at end
+        assert_eq!(s.cursor_uuid, Some(sub));
+        assert_eq!(s.move_cursor(&rows, -9), 0); // clamps at start
+        assert_eq!(s.cursor_uuid, Some(book));
+    }
+
+    #[test]
+    fn reanchor_keeps_visible_cursor_else_falls_back() {
+        let (h, [book, ch, sub, _p1, _p2]) = sample();
+        let mut s = OutlineState::default();
+        s.seed_default_expansion(&h);
+        let rows = s.visible_rows(&h);
+        s.cursor_uuid = Some(ch);
+        s.reanchor_cursor(&rows, 0);
+        assert_eq!(s.cursor_uuid, Some(ch)); // still visible -> kept
+        // Cursor on a now-hidden node -> falls back to clamped index.
+        s.cursor_uuid = Some(Uuid::now_v7());
+        s.reanchor_cursor(&rows, 99);
+        assert_eq!(s.cursor_uuid, Some(sub)); // clamped to last row
+        // Empty outline clears the cursor.
+        s.reanchor_cursor(&[], 0);
+        assert_eq!(s.cursor_uuid, None);
+        let _ = book;
+    }
 
     #[test]
     fn round_trips_through_sidecar() {
