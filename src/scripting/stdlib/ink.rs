@@ -47,6 +47,19 @@ pub fn register(vm: &mut VM) -> Result<()> {
         .map_err(|e| anyhow!("register ink.tree.move_up: {e}"))?;
     vm.register_inline("ink.tree.move_down".to_string(), ink_tree_move_down)
         .map_err(|e| anyhow!("register ink.tree.move_down: {e}"))?;
+    // OUTLINE-1 — outline read + cross-parent paragraph copy/move.
+    vm.register_inline("ink.outline.print".to_string(), ink_outline_print)
+        .map_err(|e| anyhow!("register ink.outline.print: {e}"))?;
+    vm.register_inline(
+        "ink.outline.paragraph_copy".to_string(),
+        ink_outline_paragraph_copy,
+    )
+    .map_err(|e| anyhow!("register ink.outline.paragraph_copy: {e}"))?;
+    vm.register_inline(
+        "ink.outline.paragraph_move".to_string(),
+        ink_outline_paragraph_move,
+    )
+    .map_err(|e| anyhow!("register ink.outline.paragraph_move: {e}"))?;
     vm.register_inline("ink.tree.morph".to_string(), ink_tree_morph)
         .map_err(|e| anyhow!("register ink.tree.morph: {e}"))?;
 
@@ -546,6 +559,86 @@ fn do_ink_tree_move(vm: &mut VM, dir: MoveDir) -> Result<&mut VM> {
     store
         .swap_siblings(&hierarchy, node.id, neighbour_id)
         .map_err(|e| anyhow!("{tag}: {e}"))?;
+    Ok(vm)
+}
+
+// ── ink.outline.print ────────────────────────────────────────────────
+// Stack: ( -- text )
+// Push the manuscript outline as an indented text tree (same render as the
+// `inkhaven outline` CLI). store_read.
+
+fn ink_outline_print(vm: &mut VM) -> BundResult<'_> {
+    do_ink_outline_print(vm).map_err(to_bund_err)
+}
+
+fn do_ink_outline_print(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.outline.print";
+    let store = active_store(tag)?;
+    let hierarchy = Hierarchy::load(store).map_err(|e| anyhow!("{tag} hierarchy: {e}"))?;
+    let text = crate::cli::outline::render(&hierarchy, None);
+    push(vm, Value::from_string(text));
+    Ok(vm)
+}
+
+// ── ink.outline.paragraph_copy / paragraph_move ──────────────────────
+// Stack: ( src_path dest_path -- uuid )  for copy (uuid of the new paragraph)
+//        ( src_path dest_path -- )       for move
+// Cross-parent paragraph relocation by slug path; the paragraph lands as the
+// last child of dest's effective parent (INTO a branch, alongside a
+// paragraph). store_write. Shared store primitives back both these and the
+// `inkhaven paragraph copy|move` CLI.
+
+fn ink_outline_paragraph_copy(vm: &mut VM) -> BundResult<'_> {
+    do_ink_outline_paragraph(vm, true).map_err(to_bund_err)
+}
+
+fn ink_outline_paragraph_move(vm: &mut VM) -> BundResult<'_> {
+    do_ink_outline_paragraph(vm, false).map_err(to_bund_err)
+}
+
+fn do_ink_outline_paragraph(vm: &mut VM, is_copy: bool) -> Result<&mut VM> {
+    let tag = if is_copy {
+        "ink.outline.paragraph_copy"
+    } else {
+        "ink.outline.paragraph_move"
+    };
+    require_depth(vm, 2, tag)?;
+    // Pushed src then dest, so dest pops first.
+    let dest_path = value_to_string(pull(vm, tag)?, "dest_path", tag)?;
+    let src_path = value_to_string(pull(vm, tag)?, "src_path", tag)?;
+    let store = active_store(tag)?;
+    let cfg = active_config(tag)?;
+    let hierarchy = Hierarchy::load(store).map_err(|e| anyhow!("{tag} hierarchy: {e}"))?;
+
+    let src_id = resolve_path(&hierarchy, &src_path, tag)?
+        .ok_or_else(|| anyhow!("{tag}: source not found `{src_path}`"))?;
+    let src = hierarchy
+        .get(src_id)
+        .ok_or_else(|| anyhow!("{tag}: source missing"))?;
+    if src.kind != NodeKind::Paragraph {
+        return Err(anyhow!("{tag}: `{src_path}` is not a paragraph"));
+    }
+    let dest_id = resolve_path(&hierarchy, &dest_path, tag)?
+        .ok_or_else(|| anyhow!("{tag}: destination not found `{dest_path}`"))?;
+    let dest = hierarchy
+        .get(dest_id)
+        .ok_or_else(|| anyhow!("{tag}: destination missing"))?;
+    let dest_parent = if dest.kind == NodeKind::Paragraph {
+        dest.parent_id
+    } else {
+        Some(dest_id)
+    };
+
+    if is_copy {
+        let new_id = store
+            .copy_paragraph_to_parent(cfg, &hierarchy, src_id, dest_parent)
+            .map_err(|e| anyhow!("{tag}: {e}"))?;
+        push(vm, Value::from_string(new_id.to_string()));
+    } else {
+        store
+            .move_node_to_parent(cfg, &hierarchy, src_id, dest_parent)
+            .map_err(|e| anyhow!("{tag}: {e}"))?;
+    }
     Ok(vm)
 }
 

@@ -13,15 +13,14 @@ use crate::store::Store;
 use crate::store::hierarchy::Hierarchy;
 use crate::store::node::NodeKind;
 
-pub fn run(project: &Path, filter: Option<&str>) -> Result<()> {
-    let layout = ProjectLayout::new(project);
-    layout.require_initialized()?;
-    let cfg = Config::load_layered(&layout.config_path())?;
-    let store = Store::open(layout.clone(), &cfg)?;
-    let h = Hierarchy::load(&store)?;
-
+/// Render the manuscript outline as an indented text tree. Each node yields two
+/// lines: a titled/glyphed row, then its slash-separated slug path (the path
+/// the `paragraph` subcommands and `ink.outline.*` take). `filter` narrows to
+/// rows whose title or slug-path contains the needle (case-insensitive). Shared
+/// by the `inkhaven outline` CLI and the `ink.outline.print` Bund word.
+pub fn render(h: &Hierarchy, filter: Option<&str>) -> String {
     let needle = filter.map(|s| s.to_lowercase());
-    let mut shown = 0usize;
+    let mut out = String::new();
     for (node, depth) in h.flatten() {
         let mut full = node.path.clone();
         full.push(node.slug.clone());
@@ -34,7 +33,6 @@ pub fn run(project: &Path, filter: Option<&str>) -> Result<()> {
                 continue;
             }
         }
-        shown += 1;
 
         let indent = "  ".repeat(depth);
         let glyph = match node.kind {
@@ -56,12 +54,18 @@ pub fn run(project: &Path, filter: Option<&str>) -> Result<()> {
         } else {
             String::new()
         };
-        println!("{indent}{glyph} {}{detail}", node.title);
-        println!("{indent}   {full_path}");
+        out.push_str(&format!("{indent}{glyph} {}{detail}\n", node.title));
+        out.push_str(&format!("{indent}   {full_path}\n"));
     }
+    out
+}
 
-    if let Some(n) = needle {
-        eprintln!("\n{shown} node(s) match `{n}`");
-    }
+pub fn run(project: &Path, filter: Option<&str>) -> Result<()> {
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout.clone(), &cfg)?;
+    let h = Hierarchy::load(&store)?;
+    print!("{}", render(&h, filter));
     Ok(())
 }
