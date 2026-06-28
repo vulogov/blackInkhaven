@@ -21,37 +21,38 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.4.12 — Narrative voice profiling
+## Latest release · 1.4.13 — The manuscript Outline
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.4.12.md`](Documentation/RELEASE_NOTES/1.4.12.md)
-· Plan: [`Documentation/PROPOSALS/NARR-1_PLAN.md`](Documentation/PROPOSALS/NARR-1_PLAN.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.4.13.md`](Documentation/RELEASE_NOTES/1.4.13.md)
+· Plan: [`Documentation/PROPOSALS/OUTLINE-1_PLAN.md`](Documentation/PROPOSALS/OUTLINE-1_PLAN.md)
 
-Does chapter 40 read like the person who wrote chapter 1? 1.4.12 (NARR-1) adds **`inkhaven prose`** —
-which measures voice as a statistical property of the whole book, **deterministically, with no LLM, no
-parser, and no external dependency**. It **measures; it never prescribes.** Five first-class languages
-(EN/RU/DE/FR/ES). **No new runtime crates.**
+The side Tree pane navigates; it doesn't restructure comfortably. 1.4.13 (OUTLINE-1) adds a
+**full-screen, foldable Outline** of the whole manuscript with structural editing built in — reorder,
+promote/demote, and **cross-parent paragraph copy/move** — with CLI and Bund parity. **No new runtime
+crates.**
 
-### A deterministic voice fingerprint
+### Open it, fold it, move things
 
-`prose profile` reports sentence-rhythm (**CV** / burstiness / **MATTR**), epistemic-hedging **modal
-density**, free-indirect-discourse **interiority**, and (with `--deep`) sensory channel balance + a
-per-language active/passive ratio — per chapter. Every language-sensitive metric has a curated word
-list for all five languages; an unsupported language still gets the full rhythm tier.
+Press **`Ctrl+2`** (backup **`Ctrl+B Shift+O`**; `Ctrl+T` now focuses the side Tree pane). Navigate
+`j`/`k`/`g`/`G`, fold `Enter`/`l`/`h`/`Space`. **Restructure:** `Shift+J`/`Shift+K` reorder siblings,
+`<`/`>` promote/demote one level. View state (folds / cursor / filter) persists per project; a
+right-hand detail panel shows the cursor node's breadcrumb, status, words-vs-target, tags, and date.
 
-### See the drift, in the editor
+### Copy and move paragraphs across chapters
 
-`prose drift` lists each chapter's deltas and threshold crossings vs the baseline (or `--reference`
-another project, for a series). In the editor, **`Ctrl+V V`** (Voice) runs the same check in the
-**background** — content-hash lazy (only edited chapters recompute), **zero-AI / zero-cost** — and
-drops threshold crossings into the **Output pane** as informational, navigable findings. **`Ctrl+V
-Shift+V`** toggles ambient.
+A clipboard shared with the Tree pane: **`y`** copy · **`m`** move · **`f`** affix (INTO a branch, or
+alongside a paragraph). Copy duplicates with a fresh uuid (prose metadata carried, no timeline event)
+and stays held for repeat pastes; move relocates and clears it. **`/`** filters to the path-to-match
+tree (case-insensitive, Unicode-aware).
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Built on the existing `.typ` + DuckDB + `regex` stack. Profiles live in a
-new `.inkhaven/prose.duckdb`, invalidated by a content hash; the `prose:` config block tunes the
-window / thresholds / language and takes `extra_modal_tokens`. Read-only `ink.prose.*` Bund words.
-Nothing runs until you ask, and it never calls an LLM.
+**No new runtime crates; no new `NodeKind` / `ChildRef` / DB tables** — one additive sidecar
+(`.inkhaven/outline-state.json`) and two store methods. CLI parity: **`inkhaven outline [--filter]`**,
+**`inkhaven paragraph copy|move <src> <dest>`** (slug paths). Bund: `ink.outline.{print,
+paragraph_copy, paragraph_move}` (mutators need `store_write`). The pane, the Tree clipboard, the CLI,
+and Bund all share one set of filesystem-aware store primitives, so however you reach for a move, it
+behaves identically.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
