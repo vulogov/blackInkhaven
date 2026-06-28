@@ -38,6 +38,9 @@ pub mod kinds {
     pub const TIMELINE_ORPHAN_WARNING: &str = "timeline_orphan_warning";
     /// TIMELINE-2-INTEGRATION — fuzzy-precision events whose windows collide.
     pub const TIMELINE_FUZZY_OVERLAP_WARNING: &str = "timeline_fuzzy_overlap_warning";
+    /// NARR-1 — a narrative-voice drift finding (a chapter metric crossed its
+    /// threshold vs the baseline). Always informational.
+    pub const PROSE_DRIFT: &str = "prose_drift";
 }
 
 /// Visual / priority class (RFC §7.4).

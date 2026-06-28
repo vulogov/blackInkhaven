@@ -37,6 +37,8 @@ mod glossary;
 mod planning;
 mod editorial;
 mod drift;
+// NARR-1 — narrative-voice (`prose`) profiling (CLI / Bund / TUI).
+mod prose;
 mod world_report;
 mod progress;
 mod replace;
