@@ -166,6 +166,13 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.prose.drift", category::STORE_READ),
     ("ink.prose.violations", category::STORE_READ),
     ("ink.prose.refresh", category::STORE_READ),
+    // DIALOG-1 — dialogue read words; `refresh` writes only the derived
+    // dialogue.duckdb cache (not the manuscript), so it stays store_read too.
+    ("ink.dialogue.stats", category::STORE_READ),
+    ("ink.dialogue.fingerprint", category::STORE_READ),
+    ("ink.dialogue.violations", category::STORE_READ),
+    ("ink.dialogue.spans", category::STORE_READ),
+    ("ink.dialogue.refresh", category::STORE_READ),
     // OUTLINE-1 — reading the outline is store_read; the paragraph copy/move
     // mutators are store_write (below).
     ("ink.outline.print", category::STORE_READ),
