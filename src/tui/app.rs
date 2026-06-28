@@ -2074,6 +2074,21 @@ pub(crate) struct App {
     /// so a cancelled structural add never leaks into the next paragraph add.
     pub(super) pending_structural_type: Option<usize>,
 
+    /// OUTLINE-1 — the full-screen Outline pane's persisted view state (expand
+    /// flags, cursor, scroll, filter). `None` until the pane is first opened
+    /// (`Ctrl+2` / `Ctrl+B Shift+O`); loaded from `.inkhaven/outline-state.json`.
+    pub(super) outline_state: Option<super::outline::OutlineState>,
+
+    /// OUTLINE-1 (O-P4) — the cross-pane paragraph copy/move clipboard, shared
+    /// by the Outline and Tree panes (`y` copy · `m` move · `f` affix). `None`
+    /// when nothing is held. Session-only (not persisted).
+    pub(super) para_clipboard: Option<super::outline::ParaClipboard>,
+
+    /// OUTLINE-1 (O-P5) — true while the Outline's inline `/` filter is being
+    /// typed (the filter text itself lives in `outline_state.filter_str`).
+    /// Transient: Esc exits editing (keeping the filter), a second Esc closes.
+    pub(super) outline_editing_filter: bool,
+
     /// RAG context block (e.g. a place/character lookup) that the next
     /// AI-prompt submission should prepend to the user's typed query.
     /// Used by the Ctrl+B P / Ctrl+B C editor flows when the AI prompt is
@@ -2663,6 +2678,9 @@ impl App {
             pending_style_transfer: false,
             pending_jinja_template: false,
             pending_structural_type: None,
+            outline_state: None,
+            para_clipboard: None,
+            outline_editing_filter: false,
             pending_rag_prefix: None,
             layout_search: Rect::default(),
             layout_tree: Rect::default(),
@@ -4100,10 +4118,15 @@ impl App {
                 .modifiers
                 .intersects(KeyModifiers::ALT | KeyModifiers::SUPER)
         {
+            // OUTLINE-1 — Ctrl+2 (and its US-layout re-encoding Ctrl+@) opens
+            // the full-screen manuscript Outline pane. Ctrl+T keeps focusing
+            // the side Tree pane (mnemonic + not terminal-eaten).
+            if matches!(key.code, KeyCode::Char('2') | KeyCode::Char('@')) {
+                self.open_outline();
+                return Ok(false);
+            }
             let target = match key.code {
                 KeyCode::Char('1') => Some(Focus::Editor),
-                // Ctrl+2 alternates:
-                KeyCode::Char('2') | KeyCode::Char('@') => Some(Focus::Tree),
                 KeyCode::Char('3') => Some(Focus::Ai),
                 KeyCode::Char('4') => Some(Focus::SearchBar),
                 KeyCode::Char('5') => Some(Focus::AiPrompt),
@@ -4117,10 +4140,9 @@ impl App {
             }
         }
         // KeyCode::Null with no modifiers is what some terminals report for
-        // Ctrl+2 / Ctrl+Space. Catch that separately because the inner block
-        // requires the CONTROL modifier flag.
+        // Ctrl+2 / Ctrl+Space — also opens the Outline (OUTLINE-1).
         if matches!(key.code, KeyCode::Null) {
-            self.change_focus(Focus::Tree);
+            self.open_outline();
             return Ok(false);
         }
 
@@ -4590,6 +4612,24 @@ impl App {
             // tags across every selected paragraph at once.
             KeyCode::Char('G') | KeyCode::Char('g') if plain => {
                 self.open_tag_picker_for_tree_selection();
+            }
+            // OUTLINE-1 (O-P4) — cross-parent paragraph clipboard, shared with
+            // the Outline pane: y copy · m move · f affix. Operates on the
+            // cursor row (paragraphs only for y/m; f lands into/after the row).
+            KeyCode::Char('y') | KeyCode::Char('Y') if plain => {
+                if let Some(&(id, _)) = self.rows.get(self.tree_cursor) {
+                    self.clipboard_set(id, super::outline::ClipMode::Copy);
+                }
+            }
+            KeyCode::Char('m') | KeyCode::Char('M') if plain => {
+                if let Some(&(id, _)) = self.rows.get(self.tree_cursor) {
+                    self.clipboard_set(id, super::outline::ClipMode::Move);
+                }
+            }
+            KeyCode::Char('f') | KeyCode::Char('F') if plain => {
+                if let Some(&(id, _)) = self.rows.get(self.tree_cursor) {
+                    self.clipboard_affix_into(id);
+                }
             }
 
             _ if self.keymap.page_up.matches(&key) => self.move_cursor(-10),
@@ -10791,6 +10831,7 @@ impl App {
             A::OpenEditorialPass => self.open_editorial_pass(),
             A::OpenStoryBible => self.open_story_bible(),
             A::OpenConlangHub => self.open_conlang_hub(),
+            A::OpenOutline => self.open_outline(),
             A::OpenWorldOverview => self.open_world_overview(),
             A::OpenInnerSocratesOverview => self.open_inner_socrates_overview(),
             A::OpenInnerEditorOverview => self.open_inner_editor_overview(),
@@ -11976,6 +12017,413 @@ impl App {
             _ => {}
         }
         true
+    }
+
+    /// OUTLINE-1 — open the full-screen manuscript Outline pane (`Ctrl+2` /
+    /// `Ctrl+B Shift+O`). Loads the persisted view state on first open, seeds
+    /// the structural-overview default expansion, and anchors the cursor onto a
+    /// visible row. Reopening within a session reuses the in-memory state.
+    fn open_outline(&mut self) {
+        let root = self.layout.root.clone();
+        let mut state = self
+            .outline_state
+            .take()
+            .unwrap_or_else(|| super::outline::OutlineState::load(&root));
+        state.seed_default_expansion(&self.hierarchy);
+        let rows = state.visible_rows(&self.hierarchy);
+        if rows.is_empty() {
+            self.outline_state = Some(state);
+            self.status = "outline: manuscript is empty — add a Book first".into();
+            return;
+        }
+        state.reanchor_cursor(&rows, 0);
+        self.outline_state = Some(state);
+        self.modal = Modal::Outline;
+        self.status =
+            "Outline · ↑↓/jk move · Enter/l expand · h collapse · g/G ends · Esc".into();
+    }
+
+    /// OUTLINE-1 — navigation + fold keys for the Outline pane. Always returns
+    /// true (the modal consumes the key). `Esc` is handled at the top of
+    /// `handle_modal_key`, which saves the view state before closing.
+    fn outline_handle_key(&mut self, key: KeyEvent) -> bool {
+        let Some(mut state) = self.outline_state.take() else {
+            return true;
+        };
+        // O-P5 — inline `/` filter editing: keystrokes edit `filter_str` and
+        // re-anchor the cursor onto a still-visible row. Enter applies and
+        // exits editing; Esc is handled in the top-level modal Esc branch.
+        if self.outline_editing_filter {
+            match key.code {
+                KeyCode::Enter => {
+                    self.outline_editing_filter = false;
+                    let n = state.visible_rows(&self.hierarchy).len();
+                    self.status = format!("outline: filter `{}` · {n} match(es)", state.filter_str);
+                }
+                KeyCode::Backspace => {
+                    state.filter_str.pop();
+                }
+                KeyCode::Char(c) => {
+                    state.filter_str.push(c);
+                }
+                _ => {}
+            }
+            let rows = state.visible_rows(&self.hierarchy);
+            state.reanchor_cursor(&rows, 0);
+            self.outline_state = Some(state);
+            return true;
+        }
+        let rows = state.visible_rows(&self.hierarchy);
+        let cur_id = rows.get(state.cursor_index(&rows)).map(|r| r.id);
+        match key.code {
+            // Enter filter-edit mode.
+            KeyCode::Char('/') => {
+                self.outline_editing_filter = true;
+                self.outline_state = Some(state);
+                self.status = "outline filter: type to narrow · Enter apply · Esc exit".into();
+                return true;
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                state.move_cursor(&rows, 1);
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                state.move_cursor(&rows, -1);
+            }
+            KeyCode::Char('g') => {
+                state.move_cursor(&rows, isize::MIN / 2);
+            }
+            KeyCode::Char('G') => {
+                state.move_cursor(&rows, isize::MAX / 2);
+            }
+            KeyCode::Char(' ') => {
+                if let Some(id) = cur_id {
+                    if self.hierarchy.has_children(id) {
+                        state.toggle_expanded(id);
+                    }
+                }
+            }
+            // Reorder among siblings (Shift+J/K) — reuses the Tree pane's
+            // filesystem-aware sibling swap. Persist the (possibly mutated)
+            // view state first so the reload+reanchor sees the live cursor.
+            KeyCode::Char('K') => {
+                self.outline_state = Some(state);
+                self.outline_reorder(MoveDir::Up);
+                return true;
+            }
+            KeyCode::Char('J') => {
+                self.outline_state = Some(state);
+                self.outline_reorder(MoveDir::Down);
+                return true;
+            }
+            // Promote (`<`, shift-left) / demote (`>`, shift-right) one nesting
+            // level — childless nodes only. Persist the view state first so the
+            // reload+reanchor sees the live cursor.
+            KeyCode::Char('<') => {
+                self.outline_state = Some(state);
+                self.outline_promote();
+                return true;
+            }
+            KeyCode::Char('>') => {
+                self.outline_state = Some(state);
+                self.outline_demote();
+                return true;
+            }
+            // Cross-parent paragraph clipboard: y copy · m move · f affix.
+            KeyCode::Char('y') => {
+                if let Some(id) = cur_id {
+                    self.outline_state = Some(state);
+                    self.clipboard_set(id, super::outline::ClipMode::Copy);
+                    return true;
+                }
+            }
+            KeyCode::Char('m') => {
+                if let Some(id) = cur_id {
+                    self.outline_state = Some(state);
+                    self.clipboard_set(id, super::outline::ClipMode::Move);
+                    return true;
+                }
+            }
+            KeyCode::Char('f') => {
+                if let Some(id) = cur_id {
+                    self.outline_state = Some(state);
+                    self.clipboard_affix_into(id);
+                    return true;
+                }
+            }
+            KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
+                if let Some(id) = cur_id {
+                    if self.hierarchy.has_children(id) {
+                        if state.is_expanded(&id) {
+                            // Already open — step in to the first child.
+                            if let Some(child) =
+                                self.hierarchy.children_of(Some(id)).first()
+                            {
+                                state.cursor_uuid = Some(child.id);
+                            }
+                        } else {
+                            state.set_expanded(id, true);
+                        }
+                    }
+                }
+            }
+            KeyCode::Char('h') | KeyCode::Left => {
+                if let Some(id) = cur_id {
+                    let expanded_branch =
+                        self.hierarchy.has_children(id) && state.is_expanded(&id);
+                    if expanded_branch {
+                        state.set_expanded(id, false);
+                    } else if let Some(pid) =
+                        self.hierarchy.get(id).and_then(|n| n.parent_id)
+                    {
+                        // Step out to the parent when it's a visible row.
+                        if rows.iter().any(|r| r.id == pid) {
+                            state.cursor_uuid = Some(pid);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        self.outline_state = Some(state);
+        true
+    }
+
+    /// OUTLINE-1 (O-P3) — reorder the cursor node among its siblings, the same
+    /// filesystem-aware swap the Tree pane uses (`store::swap_siblings`). The
+    /// cursor tracks the node by uuid, so it stays put across the reload.
+    fn outline_reorder(&mut self, dir: MoveDir) {
+        let id = match self.outline_state.as_ref().and_then(|s| s.cursor_uuid) {
+            Some(id) => id,
+            None => return,
+        };
+        let Some(node) = self.hierarchy.get(id) else {
+            return;
+        };
+        let slug = node.slug.clone();
+        let siblings = self.hierarchy.children_of(node.parent_id);
+        let Some(pos) = siblings.iter().position(|n| n.id == id) else {
+            return;
+        };
+        let other_pos = match dir {
+            MoveDir::Up => {
+                if pos == 0 {
+                    self.status = format!("outline: `{slug}` is already first");
+                    return;
+                }
+                pos - 1
+            }
+            MoveDir::Down => {
+                if pos + 1 >= siblings.len() {
+                    self.status = format!("outline: `{slug}` is already last");
+                    return;
+                }
+                pos + 1
+            }
+        };
+        let other_id = siblings[other_pos].id;
+        match self.store.swap_siblings(&self.hierarchy, id, other_id) {
+            Ok(()) => {
+                self.reload_hierarchy();
+                if let Some(mut state) = self.outline_state.take() {
+                    let rows = state.visible_rows(&self.hierarchy);
+                    state.reanchor_cursor(&rows, 0);
+                    self.outline_state = Some(state);
+                }
+                self.status = format!(
+                    "outline: moved `{slug}` {}",
+                    match dir {
+                        MoveDir::Up => "up",
+                        MoveDir::Down => "down",
+                    }
+                );
+            }
+            Err(e) => self.status = format!("outline: move failed: {e}"),
+        }
+    }
+
+    /// OUTLINE-1 (O-P3) — promote the cursor node one nesting level: re-home it
+    /// under its grandparent (appended at the end), the classic outliner
+    /// "shift left". Childless nodes only (paragraphs / leaves); branch
+    /// restructuring stays in the Tree pane.
+    fn outline_promote(&mut self) {
+        let id = match self.outline_state.as_ref().and_then(|s| s.cursor_uuid) {
+            Some(id) => id,
+            None => return,
+        };
+        let Some(node) = self.hierarchy.get(id) else {
+            return;
+        };
+        let Some(parent_id) = node.parent_id else {
+            self.status = "outline: already at the top level".into();
+            return;
+        };
+        // The grandparent (the parent's parent) becomes the new parent.
+        let grandparent_id = self.hierarchy.get(parent_id).and_then(|p| p.parent_id);
+        self.outline_apply_reparent(id, grandparent_id, "promoted");
+    }
+
+    /// OUTLINE-1 (O-P3) — demote the cursor node one level: make it the last
+    /// child of its immediately-preceding sibling (which must be able to
+    /// contain it). The outliner "shift right".
+    fn outline_demote(&mut self) {
+        let id = match self.outline_state.as_ref().and_then(|s| s.cursor_uuid) {
+            Some(id) => id,
+            None => return,
+        };
+        let Some(node) = self.hierarchy.get(id) else {
+            return;
+        };
+        let siblings = self.hierarchy.children_of(node.parent_id);
+        let Some(pos) = siblings.iter().position(|n| n.id == id) else {
+            return;
+        };
+        if pos == 0 {
+            self.status = "outline: no preceding sibling to demote into".into();
+            return;
+        }
+        let target_id = siblings[pos - 1].id;
+        self.outline_apply_reparent(id, Some(target_id), "demoted");
+    }
+
+    /// Shared tail for promote/demote: run the childless-node reparent, reload,
+    /// reanchor the cursor onto the moved node, and report. On a placement-rule
+    /// rejection the manuscript is untouched and the message explains why.
+    fn outline_apply_reparent(&mut self, id: Uuid, new_parent: Option<Uuid>, verb: &str) {
+        let slug = self
+            .hierarchy
+            .get(id)
+            .map(|n| n.slug.clone())
+            .unwrap_or_default();
+        match self
+            .store
+            .move_node_to_parent(&self.cfg, &self.hierarchy, id, new_parent)
+        {
+            Ok(()) => {
+                self.reload_hierarchy();
+                if let Some(mut state) = self.outline_state.take() {
+                    // Keep the moved node's ancestors expanded + cursor on it.
+                    if let Some(pid) = self.hierarchy.get(id).and_then(|n| n.parent_id) {
+                        state.set_expanded(pid, true);
+                    }
+                    state.cursor_uuid = Some(id);
+                    let rows = state.visible_rows(&self.hierarchy);
+                    state.reanchor_cursor(&rows, 0);
+                    self.outline_state = Some(state);
+                }
+                self.status = format!("outline: {verb} `{slug}`");
+            }
+            Err(e) => self.status = format!("outline: {verb} failed — {e}"),
+        }
+    }
+
+    /// OUTLINE-1 (O-P4) — stash a paragraph on the cross-pane clipboard for a
+    /// copy (`y`) or move (`m`). Shared by the Outline and Tree panes. Only
+    /// paragraphs are clipboardable — branch restructuring is reorder/promote.
+    fn clipboard_set(&mut self, id: Uuid, mode: super::outline::ClipMode) {
+        use super::outline::ClipMode;
+        let Some(node) = self.hierarchy.get(id) else {
+            return;
+        };
+        if node.kind != NodeKind::Paragraph {
+            self.status =
+                "copy/move: paragraphs only — use J/K to reorder, </> to promote/demote".into();
+            return;
+        }
+        let slug = node.slug.clone();
+        self.para_clipboard = Some(super::outline::ParaClipboard { id, mode });
+        self.status = match mode {
+            ClipMode::Copy => format!("copied `{slug}` · press f on a target to affix"),
+            ClipMode::Move => format!("cut `{slug}` · press f on a target to affix"),
+        };
+    }
+
+    /// OUTLINE-1 (O-P4) — affix the clipboard paragraph as the last child of
+    /// `target`'s effective parent (into `target` when it's a branch, alongside
+    /// it when it's a paragraph). Copy duplicates (keeping the clipboard for
+    /// repeat pastes); move relocates and clears the clipboard. Shared by both
+    /// panes. Caller passes the cursor node it wants to affix relative to.
+    fn clipboard_affix_into(&mut self, target_id: Uuid) {
+        use super::outline::ClipMode;
+        let Some(clip) = self.para_clipboard else {
+            self.status = "affix: nothing held — y to copy or m to move a paragraph first".into();
+            return;
+        };
+        if self.hierarchy.get(clip.id).is_none() {
+            self.para_clipboard = None;
+            self.status = "affix: the held paragraph no longer exists".into();
+            return;
+        }
+        let Some(target) = self.hierarchy.get(target_id) else {
+            return;
+        };
+        // Effective parent: append INTO a branch, or alongside a paragraph.
+        let dest_parent = if target.kind == NodeKind::Paragraph {
+            target.parent_id
+        } else {
+            Some(target_id)
+        };
+        match clip.mode {
+            ClipMode::Move => {
+                let slug = self
+                    .hierarchy
+                    .get(clip.id)
+                    .map(|n| n.slug.clone())
+                    .unwrap_or_default();
+                if self.hierarchy.get(clip.id).and_then(|n| n.parent_id) == dest_parent {
+                    self.status =
+                        format!("affix: `{slug}` is already in that parent (J/K to reorder)");
+                    return;
+                }
+                match self
+                    .store
+                    .move_node_to_parent(&self.cfg, &self.hierarchy, clip.id, dest_parent)
+                {
+                    Ok(()) => {
+                        let moved = clip.id;
+                        self.para_clipboard = None;
+                        self.reload_hierarchy();
+                        self.focus_node_after_affix(dest_parent, moved);
+                        self.status = format!("affixed (moved) `{slug}`");
+                    }
+                    Err(e) => self.status = format!("affix (move) failed — {e}"),
+                }
+            }
+            ClipMode::Copy => match self.copy_paragraph_into(clip.id, dest_parent) {
+                Ok(new_id) => {
+                    self.reload_hierarchy();
+                    self.focus_node_after_affix(dest_parent, new_id);
+                    self.status = "affixed (copied) paragraph · f again to paste another".into();
+                }
+                Err(e) => self.status = format!("affix (copy) failed — {e}"),
+            },
+        }
+    }
+
+    /// Duplicate paragraph `src_id` into `dest_parent` via the shared store
+    /// primitive (fresh uuid; prose metadata carried, timeline event not).
+    /// Returns the new node's id.
+    fn copy_paragraph_into(
+        &mut self,
+        src_id: Uuid,
+        dest_parent: Option<Uuid>,
+    ) -> std::result::Result<Uuid, String> {
+        self.store
+            .copy_paragraph_to_parent(&self.cfg, &self.hierarchy, src_id, dest_parent)
+            .map_err(|e| e.to_string())
+    }
+
+    /// After an affix, expand the destination parent + land both the Outline
+    /// and Tree cursors on the affixed node (when each surface can see it).
+    fn focus_node_after_affix(&mut self, dest_parent: Option<Uuid>, id: Uuid) {
+        if let Some(state) = self.outline_state.as_mut() {
+            if let Some(pid) = dest_parent {
+                state.set_expanded(pid, true);
+            }
+            state.cursor_uuid = Some(id);
+        }
+        if let Some(i) = self.rows.iter().position(|(rid, _)| *rid == id) {
+            self.tree_cursor = i;
+        }
     }
 
     /// WORLD-4 — `Ctrl+B W`. Build the read-only World overview: the world
@@ -21204,6 +21652,38 @@ impl App {
                 *ff = false;
                 return Ok(false);
             }
+            // OUTLINE-1 — staged Esc: exit filter-editing first, then clear an
+            // active filter, then persist the view state and close.
+            if matches!(self.modal, Modal::Outline) {
+                if self.outline_editing_filter {
+                    self.outline_editing_filter = false;
+                    self.status = "outline filter: editing cancelled".into();
+                    return Ok(false);
+                }
+                let has_filter = self
+                    .outline_state
+                    .as_ref()
+                    .is_some_and(|s| !s.filter_str.trim().is_empty());
+                if has_filter {
+                    if let Some(mut state) = self.outline_state.take() {
+                        state.filter_str.clear();
+                        let rows = state.visible_rows(&self.hierarchy);
+                        state.reanchor_cursor(&rows, 0);
+                        self.outline_state = Some(state);
+                    }
+                    self.status = "outline: filter cleared".into();
+                    return Ok(false);
+                }
+                if let Some(state) = &self.outline_state {
+                    if let Err(e) = state.save(&self.layout.root) {
+                        self.status = format!("outline: state not saved — {e}");
+                    } else {
+                        self.status = "outline: closed".into();
+                    }
+                }
+                self.modal = Modal::None;
+                return Ok(false);
+            }
             self.modal = Modal::None;
             return Ok(false);
         }
@@ -21278,6 +21758,7 @@ impl App {
         let is_writing_streak_heatmap = matches!(self.modal, Modal::WritingStreakHeatmap { .. });
         let is_snapshot_browser = matches!(self.modal, Modal::SnapshotBrowser { .. });
         let is_concordance = matches!(self.modal, Modal::Concordance { .. });
+        let is_outline = matches!(self.modal, Modal::Outline);
         let is_facts_search = matches!(self.modal, Modal::FactsSearch { .. });
         let is_sentence_rhythm = matches!(self.modal, Modal::SentenceRhythm { .. });
         let is_diagnostics_list = matches!(self.modal, Modal::DiagnosticsList { .. });
@@ -21903,6 +22384,11 @@ impl App {
 
         if is_concordance {
             self.concordance_handle_key(key);
+            return Ok(false);
+        }
+
+        if is_outline {
+            self.outline_handle_key(key);
             return Ok(false);
         }
 

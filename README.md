@@ -21,37 +21,38 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.4.12 — Narrative voice profiling
+## Latest release · 1.4.13 — The manuscript Outline
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.4.12.md`](Documentation/RELEASE_NOTES/1.4.12.md)
-· Plan: [`Documentation/PROPOSALS/NARR-1_PLAN.md`](Documentation/PROPOSALS/NARR-1_PLAN.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.4.13.md`](Documentation/RELEASE_NOTES/1.4.13.md)
+· Plan: [`Documentation/PROPOSALS/OUTLINE-1_PLAN.md`](Documentation/PROPOSALS/OUTLINE-1_PLAN.md)
 
-Does chapter 40 read like the person who wrote chapter 1? 1.4.12 (NARR-1) adds **`inkhaven prose`** —
-which measures voice as a statistical property of the whole book, **deterministically, with no LLM, no
-parser, and no external dependency**. It **measures; it never prescribes.** Five first-class languages
-(EN/RU/DE/FR/ES). **No new runtime crates.**
+The side Tree pane navigates; it doesn't restructure comfortably. 1.4.13 (OUTLINE-1) adds a
+**full-screen, foldable Outline** of the whole manuscript with structural editing built in — reorder,
+promote/demote, and **cross-parent paragraph copy/move** — with CLI and Bund parity. **No new runtime
+crates.**
 
-### A deterministic voice fingerprint
+### Open it, fold it, move things
 
-`prose profile` reports sentence-rhythm (**CV** / burstiness / **MATTR**), epistemic-hedging **modal
-density**, free-indirect-discourse **interiority**, and (with `--deep`) sensory channel balance + a
-per-language active/passive ratio — per chapter. Every language-sensitive metric has a curated word
-list for all five languages; an unsupported language still gets the full rhythm tier.
+Press **`Ctrl+2`** (backup **`Ctrl+B Shift+O`**; `Ctrl+T` now focuses the side Tree pane). Navigate
+`j`/`k`/`g`/`G`, fold `Enter`/`l`/`h`/`Space`. **Restructure:** `Shift+J`/`Shift+K` reorder siblings,
+`<`/`>` promote/demote one level. View state (folds / cursor / filter) persists per project; a
+right-hand detail panel shows the cursor node's breadcrumb, status, words-vs-target, tags, and date.
 
-### See the drift, in the editor
+### Copy and move paragraphs across chapters
 
-`prose drift` lists each chapter's deltas and threshold crossings vs the baseline (or `--reference`
-another project, for a series). In the editor, **`Ctrl+V V`** (Voice) runs the same check in the
-**background** — content-hash lazy (only edited chapters recompute), **zero-AI / zero-cost** — and
-drops threshold crossings into the **Output pane** as informational, navigable findings. **`Ctrl+V
-Shift+V`** toggles ambient.
+A clipboard shared with the Tree pane: **`y`** copy · **`m`** move · **`f`** affix (INTO a branch, or
+alongside a paragraph). Copy duplicates with a fresh uuid (prose metadata carried, no timeline event)
+and stays held for repeat pastes; move relocates and clears it. **`/`** filters to the path-to-match
+tree (case-insensitive, Unicode-aware).
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Built on the existing `.typ` + DuckDB + `regex` stack. Profiles live in a
-new `.inkhaven/prose.duckdb`, invalidated by a content hash; the `prose:` config block tunes the
-window / thresholds / language and takes `extra_modal_tokens`. Read-only `ink.prose.*` Bund words.
-Nothing runs until you ask, and it never calls an LLM.
+**No new runtime crates; no new `NodeKind` / `ChildRef` / DB tables** — one additive sidecar
+(`.inkhaven/outline-state.json`) and two store methods. CLI parity: **`inkhaven outline [--filter]`**,
+**`inkhaven paragraph copy|move <src> <dest>`** (slug paths). Bund: `ink.outline.{print,
+paragraph_copy, paragraph_move}` (mutators need `store_write`). The pane, the Tree clipboard, the CLI,
+and Bund all share one set of filesystem-aware store primitives, so however you reach for a move, it
+behaves identically.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
@@ -120,8 +121,17 @@ Every prior release lives under
   + open-paragraph marker.
 - Plain-letter shortcuts for add (`B`/`C`/`V`/`A`/`S`/`+`/`P`),
   delete (`D`/`-`), reorder (`U`/`J`).
+- **Paragraph flavours** beyond prose: `e` adds a **Jinja template** (`⟡`,
+  rendered to Typst at assembly), `i` opens the **structural-subtype** picker
+  (`⌨ ⚠ ∫ ≡ ⊞` — code / admonition / math / procedure / table), and `t`/`T`
+  cycles a leaf's type (`typst → hjson → jinja → bund`).
 - **Document status badge** column — one character per row colour-
   coded to the workflow stage (`n` / `1` / `2` / `3` / `F` / `R`).
+- **Reusable snippets** — write a block once in the Snippets book, `#include`
+  it anywhere (`Ctrl+V x`); broken references are flagged at save.
+- Deletion safety: the confirm shows the **word count** lost; branch deletes
+  stash every paragraph into the kill-ring (`Ctrl+B U`) **and** pre-delete
+  snapshots (`F6`).
 - Mouse: click to focus + select; scroll wheel scrolls.
 
 ### AI pane
@@ -144,6 +154,24 @@ Every prior release lives under
 - **F7 Grammar check** with deterministic correction extraction (`g`
   replaces the buffer with just the corrected text, preserving Typst
   markup).
+
+### Examined authorship & analysis
+- **The companions** — a triad that observes craft without rewriting your prose:
+  the **World fact-checker** (`Ctrl+B W`, checks scenes against your worldbuilding
+  + timeline), **Inner Socrates** (`Ctrl+B J`, Socratic questions about content
+  and structure — fourteen reader personas), and **Inner Editor** (`Ctrl+V O`,
+  style observations: richness, filter words, show-don't-tell). `Ctrl+B Shift+C`
+  runs them all at once into the Output pane.
+- **Narrative voice profiling** (`inkhaven prose` / `Ctrl+V V`) — a
+  **deterministic, zero-AI** voice fingerprint per chapter (sentence rhythm,
+  lexical diversity, hedging, interiority, sensory balance, passive ratio) in
+  five languages; chapter-level drift surfaces as informational findings.
+- **Terminology governance** — a **Glossary** book of canonical terms + banned
+  synonyms; the editor red-underlines drift (`Ctrl+V z`), `inkhaven terms check`
+  is CI-ready.
+- **Bibliography & citations** — references as HJSON in a **Sources** book,
+  `@key` citations, compiled to `sources.bib` at assembly (`inkhaven sources`).
+- Findings land in a filterable, navigable **Output pane** (`Ctrl+B Tab`).
 
 ### Storage and backup
 - DuckDB metadata + DuckDB blobs + HNSW semantic vectors.  No
@@ -170,8 +198,16 @@ Every prior release lives under
   built PDF.
 - `import-help --documents-directory <dir>` — populate the Help book from
   a directory of markdown / text / typst files (wipes Help first).
+- `prose profile` / `drift` / `suggest` — deterministic narrative-voice
+  metrics (NARR-1; zero-AI, five languages).
+- `snippets` / `terms` / `sources` — reusable-block, glossary, and
+  bibliography checks (CI-ready; exit non-zero on a problem).
+- `inner-socrates` / `inner-editor` / `realworld` — the companions from the
+  shell; `check` runs the fast deterministic pass over the project.
+- `import-epub` / `import-scrivener` — bring an existing manuscript in.
 - `backup` / `restore` — see above.
 - `ai "prompt"` — one-shot inference from the shell (no TUI).
+- `inkhaven <cmd> --help` for the full surface; most checks take `--json`.
 
 ### Configuration
 A single `inkhaven.hjson` in each project root drives every knob:
@@ -292,6 +328,14 @@ Reference:
   `realworld` world simulator and fact-checker (RFC WORLD-4).
 - [`Documentation/INNER_SOCRATES.md`](Documentation/INNER_SOCRATES.md) — the
   Socratic interrogator for examined authorship (RFC INNER_SOCRATES-1).
+- [`Documentation/PROSE_VOICE.md`](Documentation/PROSE_VOICE.md) — deterministic
+  narrative-voice profiling (`inkhaven prose`, RFC NARR-1).
+- [`Documentation/JINJA_TEMPLATES.md`](Documentation/JINJA_TEMPLATES.md) — Jinja
+  template paragraphs (RFC STRUCT-1).
+- [`Documentation/STRUCTURAL_PARAGRAPHS.md`](Documentation/STRUCTURAL_PARAGRAPHS.md)
+  — structural paragraph subtypes + deletion hardening (RFC STRUCT-2).
+- [`Documentation/OUTPUT_PANE.md`](Documentation/OUTPUT_PANE.md) — the Output
+  message channel: findings, filters, navigation.
 
 ## Built with
 

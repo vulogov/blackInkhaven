@@ -57,7 +57,8 @@ These chords work from any focus except where noted. Chords marked
 | `Ctrl+S`             | Save current paragraph + re-embed (no-op if nothing open).  | `save`       |
 | `Ctrl+Q`             | Hard quit. Auto-saves the open paragraph first if dirty; if the save fails, refuses to quit so the error stays visible. | no |
 | `Ctrl+1`             | Focus the **Editor** pane.                                  | no           |
-| `Ctrl+2` / `Ctrl+T`  | Focus the **Tree** pane. Use `Ctrl+T` if your terminal re-encodes `Ctrl+2` as NUL or `Ctrl+@`. | no |
+| `Ctrl+2` / `Ctrl+B Shift+O` | (1.4.13, OUTLINE-1) Open the full-screen **Outline** pane (see §9). `Ctrl+B Shift+O` is the reliable backup if your terminal re-encodes `Ctrl+2` as NUL / `Ctrl+@`. | `outline.open` |
+| `Ctrl+T`             | Focus the side **Tree** pane.                               | no           |
 | `Ctrl+3`             | Focus the **AI** pane.                                      | no           |
 | `Ctrl+4`             | Focus the **Search** bar (top).                             | no           |
 | `Ctrl+5`             | Focus the **AI prompt** bar (bottom).                       | no           |
@@ -289,6 +290,9 @@ confirmation.
 | `I` / `i` | (1.4.11) **New structural paragraph** — open a picker of structural subtypes (code listing · admonition note/warning/tip/caution · math · procedure · table) and create a `.typ` paragraph tagged `para:*` with the matching Typst boilerplate seeded. Structural paragraphs get a type-specific tree glyph (`⌨ ⚠ ∫ ≡ ⊞`), are skipped by the prose companions, and are excluded from prose word counts (except procedure). Add/remove the tag later via `Ctrl+B ]`. See [STRUCTURAL_PARAGRAPHS.md](STRUCTURAL_PARAGRAPHS.md). |
 | `O` / `o` | (1.2.4) **Cycle status** one rung up the ladder (`napkin → first → … → ready → napkin`). No marks: cursor row. With marks: every marked paragraph. |
 | `G` / `g` | (1.2.5) **Tag the marked set** — open the floating tag picker scoped to every marked paragraph (or just the cursor row when no marks). Same modal as `Ctrl+B ]`; T applies the selected tag set across every target at once. |
+| `y`       | (1.4.13, OUTLINE-1) **Copy** the cursor paragraph onto the cross-pane clipboard (shared with the Outline pane). |
+| `m`       | (1.4.13, OUTLINE-1) **Move** (cut) the cursor paragraph onto the clipboard. |
+| `f`       | (1.4.13, OUTLINE-1) **Affix** the clipboard paragraph as the last child of the cursor's effective parent (INTO it when the cursor is a branch, alongside it when a paragraph). Copy duplicates (fresh uuid, keeps the clipboard); move relocates and clears it. |
 | `?`       | (1.3.33) **Quick reference** — open the pane-aware Quick reference overlay. Tree-pane only (the editor / AI / search panes keep `?` as a typed character); `Ctrl+B H` opens it from anywhere. |
 
 Empty paragraph titles are allowed for `+` and `P` — the first sentence of the body becomes the title on next save.
@@ -753,6 +757,44 @@ Triggered by `Ctrl+B` followed by `B`/`C`/`S`/`P` (or by the Tree pane's plain-l
 Empty title shows a status hint and keeps the modal open. Validation errors
 (e.g. trying to add a subchapter under a paragraph) close the modal and
 display the error in the status line.
+
+---
+
+## 9. Outline pane (1.4.13, OUTLINE-1)
+
+A full-screen, foldable view of the whole manuscript over the live hierarchy
+— the structural counterpart to the side Tree pane. Open it with `Ctrl+2`
+(or `Ctrl+B Shift+O` if your terminal eats `Ctrl+2`). The view state (expand
+flags, cursor, scroll, filter) persists per project to
+`.inkhaven/outline-state.json`, so it reopens where you left it. On first
+open Books and Chapters are expanded and everything deeper is collapsed — a
+structural overview you drill into.
+
+When the pane is ≥ 80 columns wide, a right-hand **detail panel** shows the
+cursor node's title, kind, ancestor breadcrumb, status, word count vs target
+(or child count for branches), tags, and last-modified date.
+
+| Key                | Action                                                                                 |
+| ------------------ | -------------------------------------------------------------------------------------- |
+| `j` / `↓`, `k` / `↑` | Move the cursor down / up.                                                            |
+| `g` / `G`          | Jump to the first / last visible row.                                                   |
+| `Enter` / `l` / `→` | Expand a collapsed branch; on an already-open branch, step in to the first child.      |
+| `h` / `←`          | Collapse an open branch; otherwise step out to the parent.                              |
+| `Space`            | Toggle the fold on a branch (no cursor move).                                            |
+| `Shift+K` / `Shift+J` | **Reorder** — swap the cursor node with its previous / next sibling (filesystem-aware). |
+| `<` / `>`          | **Promote / demote** one nesting level (childless nodes only): promote appends under the grandparent, demote nests into the preceding sibling. Placement-rule violations leave the manuscript untouched. |
+| `y` / `m`          | **Copy / move** the cursor paragraph onto the cross-pane clipboard (shared with the Tree pane). |
+| `f`                | **Affix** the clipboard paragraph as the last child of the cursor's effective parent (INTO a branch, alongside a paragraph). Copy duplicates (fresh uuid, keeps the clipboard); move relocates and clears it. |
+| `/`                | **Filter** — type to narrow to the path-to-match tree (every node whose title or slug matches, plus its ancestors; case-insensitive, Unicode-aware). `Enter` applies. |
+| `Esc`              | Staged: exit filter editing → clear an active filter → save the view state and close. |
+
+CLI parity: `inkhaven outline [--filter <s>]` prints the same tree as text;
+`inkhaven paragraph copy|move <src> <dest>` does the cross-parent relocation
+by slug path. Bund: `ink.outline.print`, `ink.outline.paragraph_copy`,
+`ink.outline.paragraph_move` (the mutators need the `store_write` category).
+
+Reorder, promote/demote, and copy/move all reuse the same filesystem-aware
+store primitives as the Tree pane, so the two panes stay in lock-step.
 
 ---
 
