@@ -5300,6 +5300,141 @@ impl super::super::App {
         );
     }
 
+    /// OUTLINE-1 — the full-screen manuscript Outline pane (`Ctrl+2` /
+    /// `Ctrl+B Shift+O`). The whole book as a foldable tree over the live
+    /// hierarchy: depth indent, a fold marker (`▾`/`▸`) on branches, a kind
+    /// glyph on leaves, the title, and the paragraph status letter. The cursor
+    /// row is reversed. Unlike the centered overview modals this fills the
+    /// screen — it's a primary navigation surface, not a small overlay.
+    pub(in crate::tui::app) fn draw_outline_modal(
+        &mut self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        use crate::store::node::NodeKind;
+        use super::super::super::status_helpers::{display_status, status_letter};
+        let Some(state) = self.outline_state.as_ref() else {
+            return;
+        };
+
+        f.render_widget(ratatui::widgets::Clear, area);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Outline ")
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(Style::default().bg(self.theme.modal_bg).fg(self.theme.modal_fg));
+        let inner = block.inner(area);
+        f.render_widget(block, area);
+
+        let list_h = inner.height.saturating_sub(1).max(1) as usize;
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: list_h as u16,
+        };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height - 1,
+            width: inner.width,
+            height: 1,
+        };
+
+        let rows = state.visible_rows(&self.hierarchy);
+        if rows.is_empty() {
+            f.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    "  manuscript is empty — add a Book in the Tree pane first",
+                    Style::default().add_modifier(Modifier::DIM),
+                ))),
+                body_rect,
+            );
+            return;
+        }
+        let cur = state.cursor_index(&rows);
+        let start = if cur >= list_h { cur + 1 - list_h } else { 0 };
+        let width = inner.width as usize;
+
+        let mut lines: Vec<Line> = Vec::new();
+        for (i, r) in rows.iter().enumerate().skip(start).take(list_h) {
+            let Some(node) = self.hierarchy.get(r.id) else {
+                continue;
+            };
+            let has_children = self.hierarchy.has_children(r.id);
+            let marker = if has_children {
+                if state.is_expanded(&r.id) { "▾ " } else { "▸ " }
+            } else {
+                match node.kind {
+                    NodeKind::Paragraph => {
+                        if node.event.is_some() {
+                            "◆ "
+                        } else {
+                            match node.content_type.as_deref() {
+                                Some("hjson") => "❴ ",
+                                Some("jinja") => "⟡ ",
+                                _ => super::super::structural_glyph(node).unwrap_or("¶ "),
+                            }
+                        }
+                    }
+                    NodeKind::Image => "▣ ",
+                    NodeKind::Script => "λ ",
+                    _ => "  ",
+                }
+            };
+            let kind_fg = match node.kind {
+                NodeKind::Book => self.theme.tree_book_fg,
+                NodeKind::Chapter => self.theme.tree_chapter_fg,
+                NodeKind::Subchapter => self.theme.tree_subchapter_fg,
+                NodeKind::Paragraph => self.theme.tree_paragraph_fg,
+                NodeKind::Image => self.theme.tree_image_fg,
+                NodeKind::Script => self.theme.tree_script_fg,
+            };
+            let mut row_style = Style::default().fg(kind_fg);
+            if matches!(node.kind, NodeKind::Book | NodeKind::Chapter) {
+                row_style = row_style.add_modifier(Modifier::BOLD);
+            }
+            if i == cur {
+                row_style = row_style.add_modifier(Modifier::REVERSED);
+            }
+
+            let indent = "  ".repeat(r.depth);
+            // Status letter for paragraphs (matches the Tree pane's badge).
+            let status = if matches!(node.kind, NodeKind::Paragraph) {
+                let label = display_status(node.status.as_deref());
+                if label == "None" {
+                    String::new()
+                } else {
+                    format!("[{}] ", status_letter(label))
+                }
+            } else {
+                String::new()
+            };
+            let prefix = format!("{indent}{marker}{status}");
+            let title_budget = width.saturating_sub(prefix.chars().count()).max(1);
+            let title = truncate_to(&node.title, title_budget);
+            lines.push(Line::from(Span::styled(format!("{prefix}{title}"), row_style)));
+        }
+        f.render_widget(Paragraph::new(lines), body_rect);
+
+        let total = rows.len();
+        let footer = format!(
+            " {}/{} · ↑↓/jk move · Enter/l expand · h collapse · Space fold · g/G ends · Esc ",
+            cur + 1,
+            total
+        );
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                footer,
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
     /// INNER_SOCRATES-1 — the `Ctrl+B J` overview (active persona, recent
     /// questions, the intent ledger). Same scrollable shape as the World overview.
     pub(in crate::tui::app) fn draw_inner_socrates_overview_modal(

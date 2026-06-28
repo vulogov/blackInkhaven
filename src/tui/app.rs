@@ -2077,7 +2077,6 @@ pub(crate) struct App {
     /// OUTLINE-1 — the full-screen Outline pane's persisted view state (expand
     /// flags, cursor, scroll, filter). `None` until the pane is first opened
     /// (`Ctrl+2` / `Ctrl+B Shift+O`); loaded from `.inkhaven/outline-state.json`.
-    #[allow(dead_code)] // consumed by the renderer/keys in O-P1/O-P2
     pub(super) outline_state: Option<super::outline::OutlineState>,
 
     /// RAG context block (e.g. a place/character lookup) that the next
@@ -4107,10 +4106,15 @@ impl App {
                 .modifiers
                 .intersects(KeyModifiers::ALT | KeyModifiers::SUPER)
         {
+            // OUTLINE-1 — Ctrl+2 (and its US-layout re-encoding Ctrl+@) opens
+            // the full-screen manuscript Outline pane. Ctrl+T keeps focusing
+            // the side Tree pane (mnemonic + not terminal-eaten).
+            if matches!(key.code, KeyCode::Char('2') | KeyCode::Char('@')) {
+                self.open_outline();
+                return Ok(false);
+            }
             let target = match key.code {
                 KeyCode::Char('1') => Some(Focus::Editor),
-                // Ctrl+2 alternates:
-                KeyCode::Char('2') | KeyCode::Char('@') => Some(Focus::Tree),
                 KeyCode::Char('3') => Some(Focus::Ai),
                 KeyCode::Char('4') => Some(Focus::SearchBar),
                 KeyCode::Char('5') => Some(Focus::AiPrompt),
@@ -4124,10 +4128,9 @@ impl App {
             }
         }
         // KeyCode::Null with no modifiers is what some terminals report for
-        // Ctrl+2 / Ctrl+Space. Catch that separately because the inner block
-        // requires the CONTROL modifier flag.
+        // Ctrl+2 / Ctrl+Space — also opens the Outline (OUTLINE-1).
         if matches!(key.code, KeyCode::Null) {
-            self.change_focus(Focus::Tree);
+            self.open_outline();
             return Ok(false);
         }
 
@@ -10798,6 +10801,7 @@ impl App {
             A::OpenEditorialPass => self.open_editorial_pass(),
             A::OpenStoryBible => self.open_story_bible(),
             A::OpenConlangHub => self.open_conlang_hub(),
+            A::OpenOutline => self.open_outline(),
             A::OpenWorldOverview => self.open_world_overview(),
             A::OpenInnerSocratesOverview => self.open_inner_socrates_overview(),
             A::OpenInnerEditorOverview => self.open_inner_editor_overview(),
@@ -11982,6 +11986,97 @@ impl App {
             }
             _ => {}
         }
+        true
+    }
+
+    /// OUTLINE-1 — open the full-screen manuscript Outline pane (`Ctrl+2` /
+    /// `Ctrl+B Shift+O`). Loads the persisted view state on first open, seeds
+    /// the structural-overview default expansion, and anchors the cursor onto a
+    /// visible row. Reopening within a session reuses the in-memory state.
+    fn open_outline(&mut self) {
+        let root = self.layout.root.clone();
+        let mut state = self
+            .outline_state
+            .take()
+            .unwrap_or_else(|| super::outline::OutlineState::load(&root));
+        state.seed_default_expansion(&self.hierarchy);
+        let rows = state.visible_rows(&self.hierarchy);
+        if rows.is_empty() {
+            self.outline_state = Some(state);
+            self.status = "outline: manuscript is empty — add a Book first".into();
+            return;
+        }
+        state.reanchor_cursor(&rows, 0);
+        self.outline_state = Some(state);
+        self.modal = Modal::Outline;
+        self.status =
+            "Outline · ↑↓/jk move · Enter/l expand · h collapse · g/G ends · Esc".into();
+    }
+
+    /// OUTLINE-1 — navigation + fold keys for the Outline pane. Always returns
+    /// true (the modal consumes the key). `Esc` is handled at the top of
+    /// `handle_modal_key`, which saves the view state before closing.
+    fn outline_handle_key(&mut self, key: KeyEvent) -> bool {
+        let Some(mut state) = self.outline_state.take() else {
+            return true;
+        };
+        let rows = state.visible_rows(&self.hierarchy);
+        let cur_id = rows.get(state.cursor_index(&rows)).map(|r| r.id);
+        match key.code {
+            KeyCode::Down | KeyCode::Char('j') => {
+                state.move_cursor(&rows, 1);
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                state.move_cursor(&rows, -1);
+            }
+            KeyCode::Char('g') => {
+                state.move_cursor(&rows, isize::MIN / 2);
+            }
+            KeyCode::Char('G') => {
+                state.move_cursor(&rows, isize::MAX / 2);
+            }
+            KeyCode::Char(' ') => {
+                if let Some(id) = cur_id {
+                    if self.hierarchy.has_children(id) {
+                        state.toggle_expanded(id);
+                    }
+                }
+            }
+            KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
+                if let Some(id) = cur_id {
+                    if self.hierarchy.has_children(id) {
+                        if state.is_expanded(&id) {
+                            // Already open — step in to the first child.
+                            if let Some(child) =
+                                self.hierarchy.children_of(Some(id)).first()
+                            {
+                                state.cursor_uuid = Some(child.id);
+                            }
+                        } else {
+                            state.set_expanded(id, true);
+                        }
+                    }
+                }
+            }
+            KeyCode::Char('h') | KeyCode::Left => {
+                if let Some(id) = cur_id {
+                    let expanded_branch =
+                        self.hierarchy.has_children(id) && state.is_expanded(&id);
+                    if expanded_branch {
+                        state.set_expanded(id, false);
+                    } else if let Some(pid) =
+                        self.hierarchy.get(id).and_then(|n| n.parent_id)
+                    {
+                        // Step out to the parent when it's a visible row.
+                        if rows.iter().any(|r| r.id == pid) {
+                            state.cursor_uuid = Some(pid);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        self.outline_state = Some(state);
         true
     }
 
@@ -21211,6 +21306,19 @@ impl App {
                 *ff = false;
                 return Ok(false);
             }
+            // OUTLINE-1 — persist the Outline view state before closing so
+            // expand flags / cursor / scroll survive to the next open.
+            if matches!(self.modal, Modal::Outline) {
+                if let Some(state) = &self.outline_state {
+                    if let Err(e) = state.save(&self.layout.root) {
+                        self.status = format!("outline: state not saved — {e}");
+                    } else {
+                        self.status = "outline: closed".into();
+                    }
+                }
+                self.modal = Modal::None;
+                return Ok(false);
+            }
             self.modal = Modal::None;
             return Ok(false);
         }
@@ -21285,6 +21393,7 @@ impl App {
         let is_writing_streak_heatmap = matches!(self.modal, Modal::WritingStreakHeatmap { .. });
         let is_snapshot_browser = matches!(self.modal, Modal::SnapshotBrowser { .. });
         let is_concordance = matches!(self.modal, Modal::Concordance { .. });
+        let is_outline = matches!(self.modal, Modal::Outline);
         let is_facts_search = matches!(self.modal, Modal::FactsSearch { .. });
         let is_sentence_rhythm = matches!(self.modal, Modal::SentenceRhythm { .. });
         let is_diagnostics_list = matches!(self.modal, Modal::DiagnosticsList { .. });
@@ -21910,6 +22019,11 @@ impl App {
 
         if is_concordance {
             self.concordance_handle_key(key);
+            return Ok(false);
+        }
+
+        if is_outline {
+            self.outline_handle_key(key);
             return Ok(false);
         }
 
