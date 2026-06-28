@@ -39,6 +39,11 @@ mod editorial;
 mod drift;
 // NARR-1 — narrative-voice (`prose`) profiling (CLI / Bund / TUI).
 mod prose;
+// DIALOG-1 — dialogue quality & attribution engine. Built across D-P0…D-P10;
+// the detectors / store / pipeline consume the types, so allow dead_code until
+// they land.
+#[allow(dead_code, unused_imports)]
+mod dialogue;
 mod world_report;
 mod progress;
 mod replace;
