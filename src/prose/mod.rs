@@ -16,6 +16,11 @@ mod profile;
 mod segment;
 mod store;
 
+// Public (in-crate) surface for the `inkhaven prose` CLI / Bund layer.
+pub(crate) use pipeline::refresh_book;
+pub(crate) use profile::{VoiceProfile, VoiceScope};
+pub(crate) use store::ProseStore;
+
 use std::collections::{HashMap, HashSet};
 
 /// The language key every language-sensitive metric is dispatched on. `Other`

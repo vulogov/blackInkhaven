@@ -37,6 +37,7 @@ pub mod thread;
 pub mod sources;
 pub mod terms;
 pub mod snippets;
+pub mod prose;
 pub mod tts;
 pub mod gen_fixture;
 pub mod bench_load;
@@ -956,6 +957,13 @@ pub enum Command {
     #[command(subcommand)]
     Snippets(SnippetsCommand),
 
+    /// 1.4.12+ NARR-1 — `inkhaven prose <subcommand>`. Narrative-voice
+    /// profiling: deterministic, zero-AI voice metrics per chapter (rhythm,
+    /// lexical diversity, epistemic hedging, interiority, sensory balance,
+    /// passive ratio) stored in `.inkhaven/prose.duckdb`.
+    #[command(subcommand)]
+    Prose(ProseCommand),
+
     /// 1.3.24 PANE-1 — the Output message channel (CLI surface; the pane is TUI).
     #[command(subcommand)]
     Output(OutputCommand),
@@ -1777,6 +1785,56 @@ pub enum SnippetsCommand {
         book: Option<String>,
         #[arg(long)]
         json: bool,
+    },
+}
+
+/// 1.4.12+ NARR-1 — `inkhaven prose …` sub-subcommands.
+#[derive(Debug, Subcommand)]
+pub enum ProseCommand {
+    /// (Re)compute and print a book's narrative-voice profile.
+    Profile {
+        /// User book (default: the single user book).
+        #[arg(long)]
+        book: Option<String>,
+        /// Include Tier-2 metrics (sensory balance + active/passive ratio).
+        #[arg(long)]
+        deep: bool,
+        #[arg(long)]
+        json: bool,
+        /// Override the prose language (en/ru/de/fr/es).
+        #[arg(long)]
+        language: Option<String>,
+    },
+    /// Recompute stale profiles for a book (summary only).
+    Refresh {
+        #[arg(long)]
+        book: Option<String>,
+        #[arg(long)]
+        deep: bool,
+        #[arg(long)]
+        language: Option<String>,
+    },
+    /// Chapter-to-chapter (or vs a `--reference` project) voice drift.
+    Drift {
+        #[arg(long)]
+        book: Option<String>,
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        language: Option<String>,
+        /// `baseline` (every chapter vs chapter 1) or `rolling` (adjacent).
+        #[arg(long, default_value = "baseline")]
+        mode: String,
+        /// Another project's root to compare against (reads its prose.duckdb).
+        #[arg(long)]
+        reference: Option<std::path::PathBuf>,
+    },
+    /// Print the per-metric interpretation guide.
+    Suggest {
+        #[arg(long)]
+        book: Option<String>,
+        #[arg(long)]
+        language: Option<String>,
     },
 }
 
@@ -4629,6 +4687,9 @@ impl Cli {
             }
             Command::Snippets(cmd) => {
                 snippets::run(&project, cmd).map_err(Into::into)
+            }
+            Command::Prose(cmd) => {
+                prose::run(&project, cmd).map_err(Into::into)
             }
             Command::Sources(cmd) => {
                 sources::run(&project, cmd).map_err(Into::into)
