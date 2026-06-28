@@ -1336,6 +1336,66 @@ impl Store {
         Ok(())
     }
 
+    /// OUTLINE-1 (O-P4/O-P6) — duplicate paragraph `src_id` as a new paragraph
+    /// (fresh uuid) appended to `new_parent_id`, carrying the prose metadata
+    /// (tags / status / target / content-type / outgoing links) but NOT the
+    /// timeline event — a copy must never mint a duplicate event. Body is read
+    /// from the source and written to the new on-disk file. Returns the new id.
+    /// Shared by the Outline/Tree `y`+`f` clipboard and the `inkhaven paragraph
+    /// copy` CLI. Caller reloads `Hierarchy` afterward.
+    pub fn copy_paragraph_to_parent(
+        &self,
+        cfg: &Config,
+        hierarchy: &Hierarchy,
+        src_id: Uuid,
+        new_parent_id: Option<Uuid>,
+    ) -> Result<Uuid> {
+        let src = hierarchy
+            .get(src_id)
+            .cloned()
+            .ok_or_else(|| Error::Store(format!("copy: missing source {src_id}")))?;
+        if src.kind != NK::Paragraph {
+            return Err(Error::Store("copy: only paragraphs can be copied".into()));
+        }
+        let content = self.get_content(src_id)?.unwrap_or_default();
+        let parent_node = match new_parent_id {
+            Some(id) => Some(
+                hierarchy
+                    .get(id)
+                    .cloned()
+                    .ok_or_else(|| Error::Store(format!("copy: missing parent {id}")))?,
+            ),
+            None => None,
+        };
+        let created = self.create_node(
+            cfg,
+            hierarchy,
+            NK::Paragraph,
+            &src.title,
+            parent_node.as_ref(),
+            None,
+            InsertPosition::End,
+        )?;
+        if let Some(rel) = created.file.as_ref() {
+            let abs = self.layout.root.join(rel);
+            crate::io_atomic::write(&abs, &content)?;
+        }
+        let mut updated = created.clone();
+        updated.tags = src.tags.clone();
+        updated.status = src.status.clone();
+        updated.target_words = src.target_words;
+        updated.content_type = src.content_type.clone();
+        updated.linked_paragraphs = src.linked_paragraphs.clone();
+        updated.word_count =
+            String::from_utf8_lossy(&content).split_whitespace().count() as u64;
+        updated.modified_at = chrono::Utc::now();
+        self.inner
+            .update_metadata(updated.id, updated.to_json())
+            .map_err(|e| Error::Store(format!("update_metadata: {e}")))?;
+        self.sync()?;
+        Ok(updated.id)
+    }
+
     /// Walk descendants of `moved` and rewrite each paragraph's `file` field
     /// so the prefix that used to be `old_rel` becomes `new_rel`.
     fn rewrite_descendant_files(

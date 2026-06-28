@@ -12399,57 +12399,17 @@ impl App {
         }
     }
 
-    /// Duplicate paragraph `src_id` as a new paragraph (fresh uuid) appended to
-    /// `dest_parent`, carrying the prose metadata (tags, status, target,
-    /// content-type, outgoing links) but NOT the timeline event — copying a
-    /// node should never mint a duplicate timeline event. Body is written to
-    /// disk exactly like the delete-undo path. Returns the new node's id.
+    /// Duplicate paragraph `src_id` into `dest_parent` via the shared store
+    /// primitive (fresh uuid; prose metadata carried, timeline event not).
+    /// Returns the new node's id.
     fn copy_paragraph_into(
         &mut self,
         src_id: Uuid,
         dest_parent: Option<Uuid>,
     ) -> std::result::Result<Uuid, String> {
-        let src = self
-            .hierarchy
-            .get(src_id)
-            .cloned()
-            .ok_or_else(|| "source paragraph missing".to_string())?;
-        let content = self
-            .store
-            .get_content(src_id)
-            .map_err(|e| e.to_string())?
-            .unwrap_or_default();
-        let parent_node = dest_parent.and_then(|id| self.hierarchy.get(id).cloned());
-        let created = self
-            .store
-            .create_node(
-                &self.cfg,
-                &self.hierarchy,
-                NodeKind::Paragraph,
-                &src.title,
-                parent_node.as_ref(),
-                None,
-                crate::store::InsertPosition::End,
-            )
-            .map_err(|e| e.to_string())?;
-        if let Some(rel) = created.file.as_ref() {
-            let abs = self.layout.root.join(rel);
-            std::fs::write(&abs, &content).map_err(|e| e.to_string())?;
-        }
-        let mut updated = created.clone();
-        updated.tags = src.tags.clone();
-        updated.status = src.status.clone();
-        updated.target_words = src.target_words;
-        updated.content_type = src.content_type.clone();
-        updated.linked_paragraphs = src.linked_paragraphs.clone();
-        updated.word_count =
-            String::from_utf8_lossy(&content).split_whitespace().count() as u64;
-        updated.modified_at = chrono::Utc::now();
         self.store
-            .raw()
-            .update_metadata(updated.id, updated.to_json())
-            .map_err(|e| e.to_string())?;
-        Ok(updated.id)
+            .copy_paragraph_to_parent(&self.cfg, &self.hierarchy, src_id, dest_parent)
+            .map_err(|e| e.to_string())
     }
 
     /// After an affix, expand the destination parent + land both the Outline
