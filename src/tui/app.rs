@@ -7469,6 +7469,8 @@ impl App {
     }
 
     fn handle_output_key(&mut self, key: KeyEvent) -> Result<bool> {
+        /// Selection step for PageUp/PageDown in the Output pane.
+        const OUTPUT_PAGE: usize = 10;
         let msgs = self.filtered_output_messages();
         let n = msgs.len();
         if n > 0 && self.output_selected >= n {
@@ -7506,6 +7508,16 @@ impl App {
             }
             KeyCode::Char('g') if plain => self.output_selected = 0,
             KeyCode::Char('G') => self.output_selected = n.saturating_sub(1),
+            // Viewport-scale navigation. The list view follows the selection, so
+            // moving the selection by a page / to the ends scrolls the pane.
+            KeyCode::Home if plain => self.output_selected = 0,
+            KeyCode::End if plain => self.output_selected = n.saturating_sub(1),
+            KeyCode::PageUp if plain => {
+                self.output_selected = self.output_selected.saturating_sub(OUTPUT_PAGE);
+            }
+            KeyCode::PageDown if plain => {
+                self.output_selected = (self.output_selected + OUTPUT_PAGE).min(n.saturating_sub(1));
+            }
             KeyCode::Char('d') if plain => {
                 if let Some(m) = msgs.get(self.output_selected) {
                     // Both record methods no-op for the wrong kind; either may set
