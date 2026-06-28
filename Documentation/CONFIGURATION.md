@@ -2166,6 +2166,48 @@ prose: {
 See [PROSE_VOICE.md](PROSE_VOICE.md) and
 [Tutorial 95 — Narrative voice](Tutorials/95-narrative-voice.md).
 
+## 1.4.14 — Dialogue quality & attribution (DIALOG-1)
+
+The optional `dialogue:` block tunes dialogue detection. Omit it entirely for
+the defaults below.
+
+```hjson
+dialogue: {
+  // Token window for the attribution name search around a span boundary.
+  attribution_window: 60
+  // Consecutive unattributed turns tolerated in an established two-speaker
+  // exchange before the zero-attribution finding fires.
+  unattributed_run_threshold: 8
+  // Consecutive dialogue-only paragraphs before the talking-head finding.
+  talking_head_threshold: 6
+  // Minimum words for a non-speech sentence to count as an action beat.
+  beat_min_words: 8
+  // Said-bookism density delta (above the book baseline) that triggers a finding.
+  said_bookism_threshold: 0.15
+  // Minimum attributed utterances for a character fingerprint to be shown.
+  fingerprint_min_utterances: 5
+  // Dialogue language override (en/ru/de/fr/es); null → project language → en.
+  language: null
+  // Verbs added to the active language's NEUTRAL list, so genre speech verbs
+  // (SF/fantasy) aren't counted as said-bookisms.
+  extra_neutral_verbs: ["transmitted", "sent"]
+  // Verbs added to the said-bookism list.
+  extra_said_bookisms: []
+}
+```
+
+- **Deterministic, zero-AI, zero new crates.** Five languages (EN/RU/DE/FR/ES)
+  across three quotation conventions. Profiles live in `.inkhaven/dialogue.duckdb`,
+  invalidated by a content hash (only edited chapters re-detect).
+- **`extra_neutral_verbs`** is the key knob for science fiction / fantasy:
+  `transmitted`, `intoned`, `decreed`, `sent` (telepathy) are intentional speech
+  verbs, not said-bookisms — listing them here removes them from the density
+  metric without disabling detection of the rest.
+- The dialogue findings ride the `Ctrl+B Shift+C` review pass; `Ctrl+V Shift+Q`
+  opens the per-character fingerprint view. Read-only `ink.dialogue.*` Bund.
+
+See [Tutorial 97 — Dialogue quality](Tutorials/97-dialogue-quality.md).
+
 ## 1.4.10 — Jinja template paragraphs (STRUCT-1)
 
 A paragraph with `content_type: "jinja"` is a [minijinja](https://docs.rs/minijinja)

@@ -41,6 +41,9 @@ pub mod kinds {
     /// NARR-1 — a narrative-voice drift finding (a chapter metric crossed its
     /// threshold vs the baseline). Always informational.
     pub const PROSE_DRIFT: &str = "prose_drift";
+    /// DIALOG-1 — a dialogue finding (zero-attribution / said-bookism density /
+    /// talking-head sequence). Always informational.
+    pub const DIALOGUE: &str = "dialogue";
 }
 
 /// Visual / priority class (RFC §7.4).

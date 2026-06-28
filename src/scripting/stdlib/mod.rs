@@ -25,6 +25,7 @@ mod sources;
 mod terms;
 mod snippets;
 mod prose;
+mod dialogue;
 mod pdf;
 mod review;
 
@@ -56,5 +57,6 @@ pub fn register_ink_stdlib(vm: &mut VM) -> Result<()> {
     terms::register(vm)?;
     snippets::register(vm)?;
     prose::register(vm)?;
+    dialogue::register(vm)?;
     Ok(())
 }
