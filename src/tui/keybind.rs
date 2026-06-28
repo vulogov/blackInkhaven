@@ -157,6 +157,10 @@ pub enum Action {
     /// full-screen manuscript Outline pane.
     #[serde(rename = "outline.open")]
     OpenOutline,
+    /// DIALOG-1 — `Ctrl+V Shift+Q`. Open the per-character dialogue fingerprint
+    /// view for the nearest character.
+    #[serde(rename = "dialogue.open_view")]
+    OpenDialogueView,
     /// WORLD-4 — `Ctrl+B W`. Open the World overview (the world definition +
     /// compiled astronomy + materialization status).
     #[serde(rename = "world.open_overview")]
@@ -928,6 +932,7 @@ impl Action {
             Action::OpenPlanOutline => "structure".into(),
             Action::OpenEditorialPass => "editorial".into(),
             Action::OpenStoryBible => "bible".into(),
+            Action::OpenDialogueView => "dialogue".into(),
             Action::OpenConlangHub => "conlang".into(),
             Action::OpenOutline => "outline".into(),
             Action::OpenWorldOverview => "world".into(),
@@ -1147,6 +1152,8 @@ impl Action {
                 "Open the Editorial Pass (1.3.6) — one ranked revision worklist unifying every detector (the editorial `doctor` classes + `plan check`'s structural findings + the Facts-scan sidecar + the prose-style detectors), errors first. `↑↓` navigate, `[` / `]` cycle the category filter, `Enter` jumps to the finding's location in the editor, `f` streams an AI rewrite of a rewritable finding marked `✎` — echo / pacing rewrite the whole paragraph; show-don't-tell / filter-word rewrite just the flagged phrase (1.3.9) — and pops the diff-review to accept (snapshot-first) or reject, `F` walks every rewritable finding in the current filter through that same review (batch fix-all; `Esc` in the diff stops it), `s` skips it for the session, `d` defers it (persisted — won't resurface until the prose changes), `D` clears all deferrals, `Esc` closes. Same as `inkhaven edit`; deterministic (reads computed sidecars, no live AI). Mnemonic: R for Revision pass.".into(),
             Action::OpenStoryBible =>
                 "Open the story bible (1.3.8) — a consolidated, navigable view of the world you've built: every Character with the attributes the continuity bible has tracked across chapters (`eye_color: brown (ch.3)`), plus the Places, Artefacts, and Facts books. 1.3.10 adds semantic drift: under any entity `inkhaven drift scan` flagged, a ⚠ drift badge names the contradicting descriptions and shows the entity's chapter-ordered description trail (each row jumps to its source). 1.3.11 banners the world-consistency health line (the `inkhaven world` summary) at the top. `↑↓` navigate, `Enter` jumps to the entry's source paragraph, `Esc` closes. Run `inkhaven continuity extract` to populate the character attributes. Mnemonic: L for Lore.".into(),
+            Action::OpenDialogueView =>
+                "Open the dialogue fingerprint view (DIALOG-1, Ctrl+V Shift+Q) — the per-character speech signature for the nearest character (or the most-speaking character if none is named in the current paragraph): utterance count, average length, vocabulary diversity (MATTR), question / exclamation ratios, and hedge density, as ASCII bars, with a compare line for the next two speakers. Read-only; `↑↓` scroll, `Esc` closes. Built from `Certain`-attributed dialogue; run `inkhaven dialogue scan` (or the `Ctrl+B Shift+C` review pass) to populate it. Mnemonic: Q for Quote.".into(),
             Action::OpenConlangHub =>
                 "Open the ConLang hub (LANG-1, Ctrl+B X) — a read-only overview of every constructed language under the Language system book: phoneme inventory (consonants / vowels), template + constraint + allophony counts, prosody (stress rule, tone), romanization schemes, lexicon size, and linked speakers (Places / Characters). `↑↓` scroll, `Esc` closes. The deep operations live on the CLI — `inkhaven language audit / generate-lexicon / query / scan-manuscript` — plus `Ctrl+B Q` to translate a paragraph into an invented language. Mnemonic: X for conlang.".into(),
             Action::OpenOutline =>
@@ -1667,6 +1674,9 @@ impl KeyBindings {
                 // Ctrl+V Shift+X the snippets overview.
                 entry("x", Action::InsertSnippetInclude, Scope::Editor),
                 entry("Shift+x", Action::OpenSnippetsOverview, Scope::Any),
+                // DIALOG-1 — Ctrl+V Shift+Q opens the dialogue fingerprint view
+                // (Q = Quote; Ctrl+V D was taken).
+                entry("Shift+q", Action::OpenDialogueView, Scope::Any),
                 // 1.4.8+ TERMS-1 — Ctrl+V z toggle the banned-synonym overlay;
                 // Ctrl+V Shift+Z declares the term under the cursor deliberate.
                 entry("z", Action::ViewToggleTermsOverlay, Scope::Any),
