@@ -64,9 +64,6 @@ mod theme;
 mod typst_funcs;
 mod search_replace;
 mod search_results;
-// OUTLINE-1 — built across O-P0…O-P8; the renderer/keys (O-P1/O-P2) consume the
-// state, so allow dead_code until then.
-#[allow(dead_code)]
 mod outline;
 mod session;
 mod shell;

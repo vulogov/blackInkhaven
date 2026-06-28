@@ -153,6 +153,10 @@ pub enum Action {
     /// LANG-1 P2.7b — `Ctrl+B X`. Open the ConLang hub overview.
     #[serde(rename = "view.open_conlang_hub")]
     OpenConlangHub,
+    /// OUTLINE-1 — `Ctrl+B Shift+O` (backup chord for `Ctrl+2`). Open the
+    /// full-screen manuscript Outline pane.
+    #[serde(rename = "outline.open")]
+    OpenOutline,
     /// WORLD-4 — `Ctrl+B W`. Open the World overview (the world definition +
     /// compiled astronomy + materialization status).
     #[serde(rename = "world.open_overview")]
@@ -925,6 +929,7 @@ impl Action {
             Action::OpenEditorialPass => "editorial".into(),
             Action::OpenStoryBible => "bible".into(),
             Action::OpenConlangHub => "conlang".into(),
+            Action::OpenOutline => "outline".into(),
             Action::OpenWorldOverview => "world".into(),
             Action::OpenInnerSocratesOverview => "inner socrates".into(),
             Action::OpenInnerEditorOverview => "inner editor".into(),
@@ -1144,6 +1149,8 @@ impl Action {
                 "Open the story bible (1.3.8) — a consolidated, navigable view of the world you've built: every Character with the attributes the continuity bible has tracked across chapters (`eye_color: brown (ch.3)`), plus the Places, Artefacts, and Facts books. 1.3.10 adds semantic drift: under any entity `inkhaven drift scan` flagged, a ⚠ drift badge names the contradicting descriptions and shows the entity's chapter-ordered description trail (each row jumps to its source). 1.3.11 banners the world-consistency health line (the `inkhaven world` summary) at the top. `↑↓` navigate, `Enter` jumps to the entry's source paragraph, `Esc` closes. Run `inkhaven continuity extract` to populate the character attributes. Mnemonic: L for Lore.".into(),
             Action::OpenConlangHub =>
                 "Open the ConLang hub (LANG-1, Ctrl+B X) — a read-only overview of every constructed language under the Language system book: phoneme inventory (consonants / vowels), template + constraint + allophony counts, prosody (stress rule, tone), romanization schemes, lexicon size, and linked speakers (Places / Characters). `↑↓` scroll, `Esc` closes. The deep operations live on the CLI — `inkhaven language audit / generate-lexicon / query / scan-manuscript` — plus `Ctrl+B Q` to translate a paragraph into an invented language. Mnemonic: X for conlang.".into(),
+            Action::OpenOutline =>
+                "Open the full-screen manuscript Outline (OUTLINE-1, Ctrl+2 or Ctrl+B Shift+O) — the whole book as a foldable tree of books / chapters / subchapters / paragraphs over the live hierarchy, with its own persisted view state (expand flags, cursor, scroll). `↑↓` / `j` `k` move, `Enter` / `l` / `→` expand (or step in), `h` / `←` collapse (or step out), `g` / `G` jump to top / bottom, `Esc` closes (state is saved). Reorder, promote/demote, and cross-parent paragraph copy/move land in later phases. Mnemonic: O for Outline.".into(),
             Action::OpenWorldOverview =>
                 "Open the World overview (WORLD-4, Ctrl+B W) — a read-only summary of the project's world simulation: the `world.hjson` definition (name / seed / star / planet / moons), the compiled astronomy layer (year length in planet-days with the declared-vs-computed divergence flag, axial tilt, season markers, lunar synodic periods, dominant tide, calendar consistency), and whether it has been materialized into the World system book. `↑↓` scroll, `Esc` closes. The operations live on the CLI — `inkhaven realworld new / validate / compile [--materialize]`. Mnemonic: W for World. (Typewriter / focus mode moved to Ctrl+B Shift+W.)".into(),
             Action::OpenInnerSocratesOverview =>
@@ -1507,6 +1514,9 @@ impl KeyBindings {
                 entry("k", Action::ToggleAiFullscreen, Scope::Any),
                 // LANG-1 P2.7b — Ctrl+B X opens the ConLang hub overview.
                 entry("x", Action::OpenConlangHub, Scope::Any),
+                // OUTLINE-1 — Ctrl+B Shift+O opens the full-screen Outline pane
+                // (reliable backup for the terminal-flaky Ctrl+2).
+                entry("Shift+o", Action::OpenOutline, Scope::Any),
                 entry("1", Action::StatusFilterReady, Scope::Any),
                 entry("2", Action::StatusFilterFinal, Scope::Any),
                 entry("3", Action::StatusFilterThird, Scope::Any),

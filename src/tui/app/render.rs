@@ -236,6 +236,10 @@ impl super::App {
             self.draw_plan_outline_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::Outline) {
+            self.draw_outline_modal(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::EditorialPass { .. }) {
             self.draw_editorial_pass_modal(f, area);
             return;

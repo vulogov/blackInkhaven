@@ -1385,6 +1385,12 @@ pub(super) enum Modal {
         scroll_col: usize,
         return_to: Box<Modal>,
     },
+    /// OUTLINE-1 — the full-screen manuscript Outline pane (`Ctrl+2` /
+    /// `Ctrl+B Shift+O`). A lightweight open/closed marker: the persisted view
+    /// state (expand flags, cursor, scroll, filter) lives on `App.outline_state`
+    /// so it survives close/reopen and round-trips to the sidecar. (The inline
+    /// `/` filter editing state lands in O-P5.)
+    Outline,
 }
 
 /// 1.2.14+ Phase C.2 — one row of the project-
