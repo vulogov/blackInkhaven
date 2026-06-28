@@ -39,6 +39,8 @@ mod editorial;
 mod drift;
 // NARR-1 — narrative-voice (`prose`) profiling (CLI / Bund / TUI).
 mod prose;
+// DIALOG-1 — dialogue quality & attribution engine.
+mod dialogue;
 mod world_report;
 mod progress;
 mod replace;

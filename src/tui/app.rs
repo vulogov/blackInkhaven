@@ -2444,6 +2444,117 @@ fn run_prose_check_worker(
     Ok(viols.len().to_string())
 }
 
+/// DIALOG-1 — run the deterministic dialogue check over the single user book,
+/// replace this book's prior dialogue findings, and emit the current set to the
+/// Output pane. Returns the finding count. Lazy (hash-cached) — only chapters
+/// whose prose changed since last run are re-detected, so it's cheap to fold
+/// into the unified review pass.
+fn run_dialogue_check(
+    store: &Store,
+    cfg: &Config,
+    layout: &ProjectLayout,
+) -> std::result::Result<usize, String> {
+    use crate::pane::output::{Lifetime, Message, Severity, kinds};
+    let h = crate::store::hierarchy::Hierarchy::load(store).map_err(|e| e.to_string())?;
+    let book = crate::cli::resolve_user_book(&h, None, "dialogue")?.clone();
+    let dstore =
+        crate::dialogue::DialogueStore::open(store.project_root()).map_err(|e| e.to_string())?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let findings = crate::dialogue::refresh_book(&dstore, layout, &h, cfg, &book, None, &now)
+        .map_err(|e| e.to_string())?;
+
+    // Replace this book's prior dialogue findings, then emit the current set.
+    if let Some(s) = crate::pane::output::active() {
+        if let Ok(msgs) = s.by_kind(kinds::DIALOGUE) {
+            for m in &msgs {
+                let _ = s.dismiss(m.id);
+            }
+        }
+    }
+    for f in &findings {
+        let text = format!("[ch.{}] {}", f.chapter_ord, f.detail);
+        let mut msg = Message::new(
+            kinds::DIALOGUE,
+            Severity::Info,
+            Lifetime::UntilActedOn,
+            serde_json::json!({
+                "text": text,
+                "category": "dialogue",
+                "kind": f.kind.as_code(),
+                "chapter": f.chapter_ord,
+            }),
+        );
+        if let Some(id) = f.para_id.as_ref().and_then(|p| uuid::Uuid::parse_str(p).ok()) {
+            msg = msg.with_source_paragraph(id);
+        }
+        crate::pane::output::emit(&msg);
+    }
+    Ok(findings.len())
+}
+
+/// DIALOG-1 — render the dialogue fingerprint view rows for `focus` (ASCII
+/// metric bars + a compare line for the next two speakers).
+fn build_dialogue_fingerprint_rows(
+    fps: &[crate::dialogue::CharacterDialogueFingerprint],
+    focus: &str,
+) -> Vec<String> {
+    let Some(f) = fps.iter().find(|x| x.character_name == focus).or_else(|| fps.first()) else {
+        return vec!["No dialogue fingerprints yet.".into()];
+    };
+    let mut rows = Vec::new();
+    rows.push(format!(
+        "{} — Dialogue fingerprint  ({} utterances)",
+        f.character_name.to_uppercase(),
+        f.utterance_count
+    ));
+    rows.push(String::new());
+    if f.utterance_count < 5 {
+        rows.push(format!(
+            "  Insufficient attributed utterances ({} found, 5 recommended).",
+            f.utterance_count
+        ));
+        rows.push(String::new());
+    }
+    rows.push(dialogue_bar_row("Avg utterance length", f.mean_utterance_words, 0.0, 20.0, "terse", "expansive", &format!("{:.1} words", f.mean_utterance_words)));
+    rows.push(dialogue_bar_row("Vocabulary diversity", f.utterance_mattr, 0.0, 1.0, "plain", "rich", &format!("{:.2} MATTR", f.utterance_mattr)));
+    rows.push(dialogue_bar_row("Question ratio", f.question_ratio, 0.0, 1.0, "declarative", "questioning", &format!("{:.2}", f.question_ratio)));
+    rows.push(dialogue_bar_row("Exclamation ratio", f.exclamation_ratio, 0.0, 1.0, "flat", "intense", &format!("{:.2}", f.exclamation_ratio)));
+    rows.push(dialogue_bar_row("Hedge density", f.hedge_density, 0.0, 0.1, "assertive", "hedged", &format!("{:.3}", f.hedge_density)));
+    rows.push(String::new());
+    let others: Vec<String> = fps
+        .iter()
+        .filter(|x| x.character_name != f.character_name)
+        .take(2)
+        .map(|o| {
+            format!(
+                "{} ({:.1}w · {:.2} · q{:.2} · h{:.3})",
+                o.character_name, o.mean_utterance_words, o.utterance_mattr, o.question_ratio, o.hedge_density
+            )
+        })
+        .collect();
+    if !others.is_empty() {
+        rows.push(format!("  Compare with:  {}", others.join("   |   ")));
+    }
+    rows
+}
+
+/// One `[left ─────●──── right]` metric bar with the value pinned in front.
+fn dialogue_bar_row(
+    label: &str,
+    value: f32,
+    min: f32,
+    max: f32,
+    left: &str,
+    right: &str,
+    valstr: &str,
+) -> String {
+    const CELLS: usize = 10;
+    let frac = if max > min { ((value - min) / (max - min)).clamp(0.0, 1.0) } else { 0.0 };
+    let pos = (frac * (CELLS - 1) as f32).round() as usize;
+    let bar: String = (0..CELLS).map(|i| if i == pos { '●' } else { '─' }).collect();
+    format!("  {label:<20} {valstr:<12} [{left} {bar} {right}]")
+}
+
 /// The first paragraph id of each chapter (1-based), for Output finding
 /// navigation.
 fn chapter_first_paragraphs(
@@ -10832,6 +10943,7 @@ impl App {
             A::OpenStoryBible => self.open_story_bible(),
             A::OpenConlangHub => self.open_conlang_hub(),
             A::OpenOutline => self.open_outline(),
+            A::OpenDialogueView => self.open_dialogue_view(),
             A::OpenWorldOverview => self.open_world_overview(),
             A::OpenInnerSocratesOverview => self.open_inner_socrates_overview(),
             A::OpenInnerEditorOverview => self.open_inner_editor_overview(),
@@ -12426,6 +12538,88 @@ impl App {
         }
     }
 
+    /// DIALOG-1 — `Ctrl+V Shift+Q`. Open the dialogue fingerprint view for the
+    /// nearest character (one named in the open paragraph, else the
+    /// most-speaking). Lazily refreshes so the fingerprints are current.
+    fn open_dialogue_view(&mut self) {
+        let book = match crate::cli::resolve_user_book(&self.hierarchy, None, "dialogue") {
+            Ok(b) => b.clone(),
+            Err(e) => {
+                self.status = format!("dialogue: {e}");
+                return;
+            }
+        };
+        let ds = match crate::dialogue::DialogueStore::open(self.store.project_root()) {
+            Ok(d) => d,
+            Err(e) => {
+                self.status = format!("dialogue: {e}");
+                return;
+            }
+        };
+        let now = chrono::Utc::now().to_rfc3339();
+        let _ = crate::dialogue::refresh_book(
+            &ds,
+            &self.layout,
+            &self.hierarchy,
+            &self.cfg,
+            &book,
+            None,
+            &now,
+        );
+        let fps = ds.all_fingerprints(&book.slug).unwrap_or_default();
+        if fps.is_empty() {
+            self.status =
+                "dialogue: no attributed dialogue yet — run the review pass (Ctrl+B Shift+C)".into();
+            return;
+        }
+        // Nearest character: one named in the open paragraph, else most-speaking
+        // (all_fingerprints is ordered by utterance_count desc).
+        let focus = {
+            let opened_text = self
+                .opened
+                .as_ref()
+                .map(|d| d.textarea.lines().join(" ").to_lowercase());
+            opened_text
+                .as_ref()
+                .and_then(|lc| {
+                    fps.iter()
+                        .find(|fp| lc.contains(&fp.character_name.to_lowercase()))
+                        .map(|fp| fp.character_name.clone())
+                })
+                .unwrap_or_else(|| fps[0].character_name.clone())
+        };
+        let rows = build_dialogue_fingerprint_rows(&fps, &focus);
+        self.modal = Modal::DialogueFingerprint { rows, cursor: 0 };
+        self.status = "dialogue fingerprint · ↑↓ scroll · Esc".into();
+    }
+
+    fn dialogue_fingerprint_handle_key(&mut self, key: KeyEvent) -> bool {
+        let n = match &self.modal {
+            Modal::DialogueFingerprint { rows, .. } => rows.len(),
+            _ => return false,
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "dialogue fingerprint: closed".into();
+            }
+            KeyCode::Up => {
+                if let Modal::DialogueFingerprint { cursor, .. } = &mut self.modal {
+                    *cursor = cursor.saturating_sub(1);
+                }
+            }
+            KeyCode::Down => {
+                if let Modal::DialogueFingerprint { cursor, .. } = &mut self.modal {
+                    if n > 0 {
+                        *cursor = (*cursor + 1).min(n - 1);
+                    }
+                }
+            }
+            _ => {}
+        }
+        true
+    }
+
     /// WORLD-4 — `Ctrl+B W`. Build the read-only World overview: the world
     /// definition + compiled astronomy + materialization status.
     fn open_world_overview(&mut self) {
@@ -13022,6 +13216,11 @@ impl App {
         // Project-wide timeline critique.
         let tl = self.collect_and_emit_timeline_critique();
 
+        // DIALOG-1 — the deterministic dialogue check joins the instant
+        // checkers (zero-AI; lazy/hash-cached, so it only re-detects edited
+        // chapters). Findings land in Output alongside fact/socrates/timeline.
+        let dlg = run_dialogue_check(&self.store, &self.cfg, &self.layout).unwrap_or(0);
+
         // Reflect the instant findings in the tree report-card immediately.
         self.refresh_tree_badges();
 
@@ -13032,12 +13231,12 @@ impl App {
         // seconds later (and re-badge the tree on completion).
         let editor_spawned = self.maybe_spawn_check_editor();
 
-        let total = fact + soc + tl;
+        let total = fact + soc + tl + dlg;
         if total == 0 && !editor_spawned {
             self.status = if checked == 0 {
-                "review pass: clean (no open paragraph; timeline included)".into()
+                "review pass: clean (no open paragraph; timeline + dialogue included)".into()
             } else {
-                format!("review pass: clean ({checked} ¶ + timeline)")
+                format!("review pass: clean ({checked} ¶ + timeline + dialogue)")
             };
             return;
         }
@@ -13051,7 +13250,7 @@ impl App {
             format!("review pass: instant checks clean{editor_note}")
         } else {
             format!(
-                "review pass: {total} finding(s) — fact {fact} · socrates {soc} · timeline {tl}{editor_note} → Output (^B Tab)"
+                "review pass: {total} finding(s) — fact {fact} · socrates {soc} · timeline {tl} · dialogue {dlg}{editor_note} → Output (^B Tab)"
             )
         };
     }
@@ -22389,6 +22588,11 @@ impl App {
 
         if is_outline {
             self.outline_handle_key(key);
+            return Ok(false);
+        }
+
+        if matches!(self.modal, Modal::DialogueFingerprint { .. }) {
+            self.dialogue_fingerprint_handle_key(key);
             return Ok(false);
         }
 

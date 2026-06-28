@@ -1391,6 +1391,13 @@ pub(super) enum Modal {
     /// so it survives close/reopen and round-trips to the sidecar. (The inline
     /// `/` filter editing state lands in O-P5.)
     Outline,
+    /// DIALOG-1 — the per-character dialogue fingerprint view (`Ctrl+V Shift+Q`).
+    /// `rows` are pre-rendered text lines (header + ASCII metric bars + a
+    /// compare line); scrollable, read-only.
+    DialogueFingerprint {
+        rows: Vec<String>,
+        cursor: usize,
+    },
 }
 
 /// 1.2.14+ Phase C.2 — one row of the project-

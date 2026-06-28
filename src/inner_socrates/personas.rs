@@ -320,6 +320,32 @@ pub fn bundled() -> Vec<Persona> {
                 &[],
             )
         },
+        // ── theatergoer (1.4.14 DIALOG-1) — dialogue subtext legibility ──
+        // A Question-stance Slow persona for dialogue scenes: it cannot read the
+        // narrator's private glosses, only what characters say + visibly do, and
+        // asks whether the subtext survives without interiority tags. Emphasises
+        // the dramatization gap (told vs shown emotion), tension, and who-speaks.
+        p(
+            "theatergoer",
+            "The Theatergoer",
+            "If you couldn't read the narrator's glosses, would the scene still play?",
+            "You are a theatergoer who arrived mid-performance with no programme notes. \
+             You cannot read the narrator's private glosses — 'she said, feeling betrayed', \
+             'he smiled, hiding his anger' are invisible to you. You hear only what the \
+             characters say and see only what they physically do. Ask whether each \
+             character's want is visible in their words or only in the narrator's access; \
+             what they are NOT saying, and whether that gap is perceptible to a listener; \
+             whether the scene's emotional shape would survive with every interiority tag \
+             removed; which line carries the most weight, and where the tension actually \
+             lives — in the words, the silences, or only the framing. You ask; you never \
+             score and never prescribe.",
+            &[
+                (DramatizationGap, 1.4),
+                (TensionDetection, 1.3),
+                (UnattributedDialogue, 1.2),
+                (ImplicitComparison, 1.1),
+            ],
+        ),
     ]
 }
 
@@ -432,11 +458,13 @@ mod tests {
     fn fourteen_distinct_bundled_personas() {
         let ps = bundled();
         // 5 fiction (1.3.x) + 4 nonfiction (1.4.6 AUDIENCE-1)
-        // + 3 ideas (1.4.7 AUDIENCE-1.1) + 2 verdict adversaries (1.4.7).
-        assert_eq!(ps.len(), 14);
+        // + 3 ideas (1.4.7 AUDIENCE-1.1) + 2 verdict adversaries (1.4.7)
+        // + 1 theatergoer (1.4.14 DIALOG-1).
+        assert_eq!(ps.len(), 15);
         let ids: std::collections::BTreeSet<_> = ps.iter().map(|p| p.id.as_str()).collect();
-        assert_eq!(ids.len(), 14);
+        assert_eq!(ids.len(), 15);
         assert!(ids.contains("inner-socrates"));
+        assert!(ids.contains("theatergoer"));
         // Personas weight different categories (they read differently).
         let socr = ps.iter().find(|p| p.id == "inner-socrates").unwrap();
         let slow = ps.iter().find(|p| p.id == "slow-reader").unwrap();

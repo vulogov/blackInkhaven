@@ -21,38 +21,39 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.4.13 — The manuscript Outline
+## Latest release · 1.4.14 — Dialogue quality & attribution
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.4.13.md`](Documentation/RELEASE_NOTES/1.4.13.md)
-· Plan: [`Documentation/PROPOSALS/OUTLINE-1_PLAN.md`](Documentation/PROPOSALS/OUTLINE-1_PLAN.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.4.14.md`](Documentation/RELEASE_NOTES/1.4.14.md)
+· Plan: [`Documentation/PROPOSALS/DIALOG-1_PLAN.md`](Documentation/PROPOSALS/DIALOG-1_PLAN.md)
 
-The side Tree pane navigates; it doesn't restructure comfortably. 1.4.13 (OUTLINE-1) adds a
-**full-screen, foldable Outline** of the whole manuscript with structural editing built in — reorder,
-promote/demote, and **cross-parent paragraph copy/move** — with CLI and Bund parity. **No new runtime
-crates.**
+Dialogue is the most technically demanding prose mode, and nothing measured it as a mode. 1.4.14
+(DIALOG-1) adds a deterministic dialogue engine — **no LLM, no parser, no external dependency** — in
+five languages (EN/RU/DE/FR/ES) across three quotation conventions. It **measures; it never
+prescribes.** **No new runtime crates.**
 
-### Open it, fold it, move things
+### Scan, and find three things
 
-Press **`Ctrl+2`** (backup **`Ctrl+B Shift+O`**; `Ctrl+T` now focuses the side Tree pane). Navigate
-`j`/`k`/`g`/`G`, fold `Enter`/`l`/`h`/`Space`. **Restructure:** `Shift+J`/`Shift+K` reorder siblings,
-`<`/`>` promote/demote one level. View state (folds / cursor / filter) persists per project; a
-right-hand detail panel shows the cursor node's breadcrumb, status, words-vs-target, tags, and date.
+`inkhaven dialogue scan` flags **zero-attribution** speech (no tag or nearby character name),
+**said-bookism density** (a chapter's `whispered`/`growled` rate above the book baseline), and
+**talking-head sequences** (dialogue-only runs with no action beat) — and exits non-zero on any
+zero-attribution span, so it doubles as a pre-submission gate. Detection handles paired quotes (EN/DE),
+guillemets + em-dash (FR/RU, French inline `, dit-il,` stripped), and the Spanish hybrid.
 
-### Copy and move paragraphs across chapters
+### A voice signature per character
 
-A clipboard shared with the Tree pane: **`y`** copy · **`m`** move · **`f`** affix (INTO a branch, or
-alongside a paragraph). Copy duplicates with a fresh uuid (prose metadata carried, no timeline event)
-and stays held for repeat pastes; move relocates and clears it. **`/`** filters to the path-to-match
-tree (case-insensitive, Unicode-aware).
+`inkhaven dialogue profile` builds a six-metric fingerprint for each character — utterance count,
+average length, MATTR, question / exclamation ratios, hedge density — from confidently-attributed
+lines. **`Ctrl+V Shift+Q`** opens the fingerprint view for the nearest character. The findings ride
+the **`Ctrl+B Shift+C`** review pass into the Output pane (zero-AI, hash-lazy). A new Inner Socrates
+**`theatergoer`** persona reads a scene as if the narrator's glosses were invisible.
 
 ### Dependencies & compatibility
 
-**No new runtime crates; no new `NodeKind` / `ChildRef` / DB tables** — one additive sidecar
-(`.inkhaven/outline-state.json`) and two store methods. CLI parity: **`inkhaven outline [--filter]`**,
-**`inkhaven paragraph copy|move <src> <dest>`** (slug paths). Bund: `ink.outline.{print,
-paragraph_copy, paragraph_move}` (mutators need `store_write`). The pane, the Tree clipboard, the CLI,
-and Bund all share one set of filesystem-aware store primitives, so however you reach for a move, it
-behaves identically.
+**No new runtime crates; no new system books; no new `NodeKind`** — one new `.inkhaven/dialogue.duckdb`,
+one new persona (15 total), one new chord, one `dialogue:` config block (windows / thresholds, plus
+`extra_neutral_verbs` so SF/fantasy speech verbs aren't counted as said-bookisms). CLI:
+**`inkhaven dialogue scan|profile|refresh|suggest`**. Read-only `ink.dialogue.*` Bund. Imports NARR-1's
+`ProseLanguage` + modal lists; the pipeline, CLI, Bund, and TUI share one detection/attribution core.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
