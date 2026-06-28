@@ -40,6 +40,7 @@ pub mod sources;
 pub mod terms;
 pub mod snippets;
 pub mod prose;
+pub mod dialogue;
 pub mod tts;
 pub mod gen_fixture;
 pub mod bench_load;
@@ -978,6 +979,12 @@ pub enum Command {
     #[command(subcommand)]
     Prose(ProseCommand),
 
+    /// 1.4.14 DIALOG-1 — dialogue quality & attribution: detect speech spans,
+    /// flag zero-attribution / said-bookism / talking-head findings, and build
+    /// per-character dialogue fingerprints. Stored in `.inkhaven/dialogue.duckdb`.
+    #[command(subcommand)]
+    Dialogue(DialogueCommand),
+
     /// 1.3.24 PANE-1 — the Output message channel (CLI surface; the pane is TUI).
     #[command(subcommand)]
     Output(OutputCommand),
@@ -1871,6 +1878,47 @@ pub enum ProseCommand {
         book: Option<String>,
         #[arg(long)]
         language: Option<String>,
+    },
+}
+
+/// DIALOG-1 — sub-subcommands under `inkhaven dialogue …`.
+#[derive(Debug, Subcommand)]
+pub enum DialogueCommand {
+    /// Detect dialogue + print findings. Exits non-zero if any zero-attribution
+    /// span is found (a CI pre-submission gate).
+    Scan {
+        #[arg(long)]
+        book: Option<String>,
+        /// Filter: `zero-attribution` | `said-bookism` | `talking-heads` | `all`.
+        #[arg(long)]
+        findings: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print per-character dialogue fingerprints.
+    Profile {
+        #[arg(long)]
+        book: Option<String>,
+        /// A single character (default: all).
+        #[arg(long)]
+        character: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Force full recomputation, bypassing the content-hash cache.
+    Refresh {
+        #[arg(long)]
+        book: Option<String>,
+        /// Only this chapter ordinal (1-based).
+        #[arg(long)]
+        chapter: Option<u32>,
+    },
+    /// Deterministic, template-driven chapter dialogue summary (no LLM).
+    Suggest {
+        #[arg(long)]
+        book: Option<String>,
+        #[arg(long)]
+        chapter: Option<u32>,
     },
 }
 
@@ -4734,6 +4782,9 @@ impl Cli {
             }
             Command::Snippets(cmd) => {
                 snippets::run(&project, cmd).map_err(Into::into)
+            }
+            Command::Dialogue(cmd) => {
+                dialogue::run(&project, cmd).map_err(Into::into)
             }
             Command::Prose(cmd) => {
                 prose::run(&project, cmd).map_err(Into::into)
