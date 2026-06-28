@@ -4,29 +4,6 @@
 
 use std::collections::HashSet;
 
-use super::{ProseLanguage, segment, tokenize};
-
-/// Sentence-length percentile spread for a chapter.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct LengthDist {
-    pub p10: f32,
-    pub p25: f32,
-    pub p50: f32,
-    pub p75: f32,
-    pub p90: f32,
-}
-
-/// The full Tier-1 result for a unit of text (chapter or whole book).
-#[derive(Debug, Clone)]
-pub(crate) struct Tier1 {
-    pub word_count: u32,
-    pub sentence_count: u32,
-    pub dist: LengthDist,
-    pub cv: f32,
-    pub burstiness: f32,
-    pub mattr: f32,
-}
-
 /// Linear-interpolated percentile (`p` in 0..=100) over a **sorted** slice.
 pub(crate) fn percentile(sorted: &[usize], p: f64) -> f32 {
     match sorted.len() {
@@ -103,39 +80,6 @@ pub(crate) fn mattr(tokens: &[&str], window: usize) -> f32 {
     (sum / windows as f64) as f32
 }
 
-/// Compute the full Tier-1 metric set for a unit of stripped prose text.
-pub(crate) fn compute_tier1(text: &str, lang: &ProseLanguage, mattr_window: usize) -> Tier1 {
-    let sentences = segment::split_sentences(text, lang);
-    let mut lengths: Vec<usize> = sentences
-        .iter()
-        .map(|s| s.split_whitespace().count())
-        .filter(|&n| n > 0)
-        .collect();
-    let word_count: u32 = lengths.iter().map(|&n| n as u32).sum();
-    let sentence_count = lengths.len() as u32;
-
-    lengths.sort_unstable();
-    let dist = LengthDist {
-        p10: percentile(&lengths, 10.0),
-        p25: percentile(&lengths, 25.0),
-        p50: percentile(&lengths, 50.0),
-        p75: percentile(&lengths, 75.0),
-        p90: percentile(&lengths, 90.0),
-    };
-
-    let tokens = tokenize(text);
-    let token_refs: Vec<&str> = tokens.iter().map(String::as_str).collect();
-
-    Tier1 {
-        word_count,
-        sentence_count,
-        dist,
-        cv: coefficient_of_variation(&lengths),
-        burstiness: burstiness(&lengths),
-        mattr: mattr(&token_refs, mattr_window),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -177,13 +121,15 @@ mod tests {
 
     #[test]
     fn tier1_integration() {
+        use crate::prose::VoiceScope;
+        use crate::prose::profile::compute_profile;
         let text = "The cat sat. The dog ran fast across the wide green field today. Up.";
-        let t = compute_tier1(text, &En, 100);
+        let t = compute_profile(text, VoiceScope::Book, &En, false, 100);
         assert_eq!(t.sentence_count, 3);
         // 3 + 10 + 1 = 14 words.
         assert_eq!(t.word_count, 14);
         assert!(t.cv > 0.0);
-        assert!(t.dist.p50 >= t.dist.p10);
+        assert!(t.p50 >= t.p10);
         assert!(t.mattr > 0.0 && t.mattr <= 1.0);
     }
 }

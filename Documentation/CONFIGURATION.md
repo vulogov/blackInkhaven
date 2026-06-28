@@ -2123,6 +2123,49 @@ inner_socrates_default_persona: skeptical-practitioner
 
 See [Tutorial 90 — Nonfiction reader personas](Tutorials/90-nonfiction-personas.md).
 
+## 1.4.12 — Narrative voice profiling (NARR-1)
+
+`inkhaven prose` measures voice as a statistical property of the whole book —
+**deterministically, zero-AI, zero-cost** — per chapter, in five embedded
+languages (EN/RU/DE/FR/ES). **`prose profile`** / **`prose drift`** print it;
+**`Ctrl+V V`** runs a background check whose threshold crossings land in the
+Output pane as informational findings; **`Ctrl+V Shift+V`** toggles ambient.
+Profiles live in `.inkhaven/prose.duckdb`.
+
+```hjson
+prose: {
+  deep_metrics: false        // include Tier-2 (sensory balance + active/passive ratio)
+  mattr_window: 100          // MATTR sliding-window size (tokens)
+  baseline_chapter: 1        // drift / violations are measured against this chapter
+  language: null             // override (en/ru/de/fr/es); null → project language → EN + note
+  ambient: false             // Ctrl+V Shift+V default; re-run after an editing pause
+  ambient_cooldown_secs: 90  // floor between ambient runs (it's a whole-book scan)
+  thresholds: {              // a chapter metric crossing its threshold vs baseline → finding
+    sent_len_cv: 0.15
+    burstiness_b: 0.15
+    mattr: 0.05
+    modal_density: 0.020
+    interiority_ratio: 0.10
+    de_erlebte_rede_particle_density: 0.05   // DE only
+    sensory_channel_max: 0.15
+    active_passive_ratio: 1.5
+  }
+  extra_modal_tokens: []         // appended to the active language's modal/hedging list
+  extra_interiority_phrases: []  // appended to the active language's FID phrase list
+}
+```
+
+- **Self-gating / zero-cost:** nothing runs until you ask (`prose` CLI / `Ctrl+V V`
+  / ambient); the background check is content-hash lazy, so only edited chapters
+  recompute, and it never calls an LLM.
+- **Multilingual:** every language-sensitive metric has a curated list for all
+  five languages; an unsupported language gets the Tier-1 rhythm metrics + a note.
+  FR/ES authors can add subjunctive hedging collocations via `extra_modal_tokens`.
+- **Findings are informational only** — they tell you *where* the voice moved.
+
+See [PROSE_VOICE.md](PROSE_VOICE.md) and
+[Tutorial 95 — Narrative voice](Tutorials/95-narrative-voice.md).
+
 ## 1.4.10 — Jinja template paragraphs (STRUCT-1)
 
 A paragraph with `content_type: "jinja"` is a [minijinja](https://docs.rs/minijinja)

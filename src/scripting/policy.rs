@@ -159,6 +159,13 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.snippets.list", category::STORE_READ),
     ("ink.snippets.get", category::STORE_READ),
     ("ink.snippets.check", category::STORE_READ),
+    // NARR-1 — narrative-voice profiling. All read/compute; `refresh` writes only
+    // the derived `.inkhaven/prose.duckdb` cache (not the manuscript), so it stays
+    // store_read (default-allowed) rather than store_write.
+    ("ink.prose.profile", category::STORE_READ),
+    ("ink.prose.drift", category::STORE_READ),
+    ("ink.prose.violations", category::STORE_READ),
+    ("ink.prose.refresh", category::STORE_READ),
 
     // ── store_write (default-denied) ──────────────────────────
     // 1.2.3+: Bund scripts can mutate the project tree, status

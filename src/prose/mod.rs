@@ -156,6 +156,9 @@ fn leak(s: &str) -> &'static str {
 }
 
 impl CompiledLexicon {
+    /// Default lexicon (no config extras). Test-only — production builds the
+    /// lexicon via [`CompiledLexicon::for_language_with`] with `prose.extra_*`.
+    #[cfg(test)]
     pub(crate) fn for_language(lang: &ProseLanguage) -> CompiledLexicon {
         Self::for_language_with(lang, &[], &[])
     }
