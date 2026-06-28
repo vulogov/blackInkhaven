@@ -5318,9 +5318,15 @@ impl super::super::App {
         };
 
         f.render_widget(ratatui::widgets::Clear, area);
+        // Title reflects an active `/` filter.
+        let title = if state.filter_str.trim().is_empty() {
+            " Outline ".to_string()
+        } else {
+            format!(" Outline · /{} ", state.filter_str)
+        };
         let block = Block::default()
             .borders(Borders::ALL)
-            .title(" Outline ")
+            .title(title)
             .border_style(
                 Style::default()
                     .fg(self.theme.modal_border)
@@ -5331,10 +5337,17 @@ impl super::super::App {
         f.render_widget(block, area);
 
         let list_h = inner.height.saturating_sub(1).max(1) as usize;
+        // Carve a right-hand detail panel when the pane is wide enough.
+        let detail_w: u16 = if inner.width >= 80 {
+            (inner.width / 3).clamp(28, 44)
+        } else {
+            0
+        };
+        let list_w = inner.width - detail_w;
         let body_rect = Rect {
             x: inner.x,
             y: inner.y,
-            width: inner.width,
+            width: list_w,
             height: list_h as u16,
         };
         let footer_rect = Rect {
@@ -5346,9 +5359,14 @@ impl super::super::App {
 
         let rows = state.visible_rows(&self.hierarchy);
         if rows.is_empty() {
+            let msg = if state.filter_str.trim().is_empty() {
+                "  manuscript is empty — add a Book in the Tree pane first"
+            } else {
+                "  no matches — Esc clears the filter"
+            };
             f.render_widget(
                 Paragraph::new(Line::from(Span::styled(
-                    "  manuscript is empty — add a Book in the Tree pane first",
+                    msg,
                     Style::default().add_modifier(Modifier::DIM),
                 ))),
                 body_rect,
@@ -5357,7 +5375,26 @@ impl super::super::App {
         }
         let cur = state.cursor_index(&rows);
         let start = if cur >= list_h { cur + 1 - list_h } else { 0 };
-        let width = inner.width as usize;
+        let width = list_w as usize;
+
+        // Right-hand detail panel for the cursor node (O-P5).
+        if detail_w > 0 {
+            let detail_rect = Rect {
+                x: inner.x + list_w,
+                y: inner.y,
+                width: detail_w,
+                height: list_h as u16,
+            };
+            let detail = self.outline_detail_lines(rows[cur].id, detail_w as usize);
+            f.render_widget(
+                Paragraph::new(detail).block(
+                    Block::default()
+                        .borders(Borders::LEFT)
+                        .border_style(Style::default().fg(self.theme.modal_border)),
+                ),
+                detail_rect,
+            );
+        }
 
         let mut lines: Vec<Line> = Vec::new();
         for (i, r) in rows.iter().enumerate().skip(start).take(list_h) {
@@ -5436,18 +5473,102 @@ impl super::super::App {
             }
             None => String::new(),
         };
-        let footer = format!(
-            " {}/{} · jk move · l/h fold · JK reorder · </> promote · ym copy/move · f affix · Esc{held} ",
-            cur + 1,
-            total
-        );
-        f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                footer,
+        let footer_line = if self.outline_editing_filter {
+            Line::from(vec![
+                Span::styled(
+                    " filter: ",
+                    Style::default().fg(self.theme.modal_border).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(format!("{}\u{2588}", state.filter_str), Style::default()),
+                Span::styled(
+                    "  · Enter apply · Esc exit ",
+                    Style::default().add_modifier(Modifier::DIM),
+                ),
+            ])
+        } else {
+            Line::from(Span::styled(
+                format!(
+                    " {}/{} · jk move · l/h fold · JK reorder · </> promote · ymf copy/move/affix · / filter · Esc{held} ",
+                    cur + 1,
+                    total
+                ),
                 Style::default().add_modifier(Modifier::DIM),
-            ))),
-            footer_rect,
+            ))
+        };
+        f.render_widget(Paragraph::new(footer_line), footer_rect);
+    }
+
+    /// OUTLINE-1 (O-P5) — the right-hand detail panel lines for the cursor
+    /// node: title, kind + breadcrumb, status, word count (vs target), tags,
+    /// and last-modified date. Read-only; mirrors the data the Tree pane pips
+    /// expose, gathered in one place.
+    fn outline_detail_lines(&self, id: uuid::Uuid, width: usize) -> Vec<Line<'_>> {
+        use crate::store::node::NodeKind;
+        use super::super::super::status_helpers::display_status;
+        let inner_w = width.saturating_sub(2).max(8); // minus the LEFT border + pad
+        let Some(node) = self.hierarchy.get(id) else {
+            return vec![Line::from("")];
+        };
+        let label = |s: &str| Span::styled(
+            format!(" {s}: "),
+            Style::default().fg(self.theme.tree_subchapter_fg).add_modifier(Modifier::DIM),
         );
+        let mut out: Vec<Line> = Vec::new();
+        out.push(Line::from(Span::styled(
+            format!(" {}", truncate_to(&node.title, inner_w)),
+            Style::default().add_modifier(Modifier::BOLD),
+        )));
+        out.push(Line::from(Span::styled(
+            format!(" {}", node.kind.as_str()),
+            Style::default().fg(self.theme.tree_chapter_fg),
+        )));
+        // Breadcrumb of ancestor slugs.
+        let crumb: Vec<String> = self
+            .hierarchy
+            .ancestors(node)
+            .into_iter()
+            .map(|a| a.slug.clone())
+            .collect();
+        if !crumb.is_empty() {
+            out.push(Line::from(vec![
+                label("in"),
+                Span::raw(truncate_to(&crumb.join(" › "), inner_w.saturating_sub(5))),
+            ]));
+        }
+        if matches!(node.kind, NodeKind::Paragraph) {
+            out.push(Line::from(vec![
+                label("status"),
+                Span::raw(display_status(node.status.as_deref()).to_string()),
+            ]));
+            let words = match node.target_words.filter(|t| *t > 0) {
+                Some(t) => format!("{} / {}", node.word_count, t),
+                None => node.word_count.to_string(),
+            };
+            out.push(Line::from(vec![label("words"), Span::raw(words)]));
+        } else {
+            let kids = self.hierarchy.children_of(Some(node.id)).len();
+            out.push(Line::from(vec![
+                label("children"),
+                Span::raw(kids.to_string()),
+            ]));
+        }
+        if !node.tags.is_empty() {
+            let tags: String = node
+                .tags
+                .iter()
+                .map(|t| format!("#{t}"))
+                .collect::<Vec<_>>()
+                .join(" ");
+            out.push(Line::from(vec![
+                label("tags"),
+                Span::raw(truncate_to(&tags, inner_w.saturating_sub(7))),
+            ]));
+        }
+        out.push(Line::from(vec![
+            label("modified"),
+            Span::raw(node.modified_at.format("%Y-%m-%d").to_string()),
+        ]));
+        out
     }
 
     /// INNER_SOCRATES-1 — the `Ctrl+B J` overview (active persona, recent

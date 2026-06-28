@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::store::hierarchy::Hierarchy;
-use crate::store::node::NodeKind;
+use crate::store::node::{Node, NodeKind};
 
 /// One visible row in the Outline pane: the node and its indent depth (root
 /// books at depth 0). Built by [`OutlineState::visible_rows`] honoring the
@@ -125,14 +125,53 @@ impl OutlineState {
             .collect()
     }
 
-    /// The currently-visible rows, top to bottom, honoring the expand map.
-    /// (The inline filter narrows this further from O-P5.)
+    /// The currently-visible rows, top to bottom. With no filter this honors
+    /// the expand map; with an active `/` filter it ignores folding and shows
+    /// the pruned path-to-match tree — every node whose title or slug matches
+    /// (case-insensitive, Unicode-aware) plus all of its ancestors.
     pub(super) fn visible_rows(&self, h: &Hierarchy) -> Vec<OutlineRow> {
-        let collapsed = self.collapsed_set(h);
-        h.flatten_with_collapsed(&collapsed)
-            .into_iter()
-            .map(|(n, depth)| OutlineRow { id: n.id, depth })
-            .collect()
+        let needle = self.filter_str.trim().to_lowercase();
+        if needle.is_empty() {
+            let collapsed = self.collapsed_set(h);
+            return h
+                .flatten_with_collapsed(&collapsed)
+                .into_iter()
+                .map(|(n, depth)| OutlineRow { id: n.id, depth })
+                .collect();
+        }
+        let mut out = Vec::new();
+        for root in h.children_of(None) {
+            Self::collect_filtered(h, root, 0, &needle, &mut out);
+        }
+        out
+    }
+
+    /// DFS helper for the filtered view. Pushes `node` (before its children)
+    /// iff it matches `needle` or has any matching descendant; returns whether
+    /// it was kept. Literary scale keeps the `insert`-at-front cost negligible.
+    fn collect_filtered(
+        h: &Hierarchy,
+        node: &Node,
+        depth: usize,
+        needle: &str,
+        out: &mut Vec<OutlineRow>,
+    ) -> bool {
+        let start = out.len();
+        let mut any_child = false;
+        for child in h.children_of(Some(node.id)) {
+            if Self::collect_filtered(h, child, depth + 1, needle, out) {
+                any_child = true;
+            }
+        }
+        let self_match = node.title.to_lowercase().contains(needle)
+            || node.slug.to_lowercase().contains(needle);
+        if self_match || any_child {
+            out.insert(start, OutlineRow { id: node.id, depth });
+            true
+        } else {
+            out.truncate(start);
+            false
+        }
     }
 
     /// Index of the cursor within `rows`, or 0 when the cursor uuid is unset or
@@ -227,6 +266,29 @@ mod tests {
         s.set_expanded(sub, true);
         let ids: Vec<Uuid> = s.visible_rows(&h).iter().map(|r| r.id).collect();
         assert_eq!(ids, vec![book, ch, sub, p1, p2]);
+    }
+
+    #[test]
+    fn filter_keeps_matches_and_their_ancestors() {
+        let (h, [book, ch, sub, p1, p2]) = sample();
+        let mut s = OutlineState::default();
+        // A leaf match pulls in its whole ancestor chain, excludes the sibling.
+        s.filter_str = "p1".into();
+        let ids: Vec<Uuid> = s.visible_rows(&h).iter().map(|r| r.id).collect();
+        assert_eq!(ids, vec![book, ch, sub, p1]);
+        assert!(!ids.contains(&p2));
+        // A branch match shows the path to it; non-matching descendants drop.
+        s.filter_str = "ch1".into();
+        let ids: Vec<Uuid> = s.visible_rows(&h).iter().map(|r| r.id).collect();
+        assert_eq!(ids, vec![book, ch]);
+        // Filtering ignores the expand map (folding is bypassed).
+        s.set_expanded(ch, false);
+        s.filter_str = "p2".into();
+        let ids: Vec<Uuid> = s.visible_rows(&h).iter().map(|r| r.id).collect();
+        assert_eq!(ids, vec![book, ch, sub, p2]);
+        // No match -> empty.
+        s.filter_str = "zzz-nope".into();
+        assert!(s.visible_rows(&h).is_empty());
     }
 
     #[test]
