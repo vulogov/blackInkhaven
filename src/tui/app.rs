@@ -1710,6 +1710,10 @@ pub(crate) struct App {
     ie_last_fp: Option<(Uuid, u64)>,
     ie_activity_at: Option<std::time::Instant>,
     ie_needs_check: bool,
+    /// NARR-1 — ambient prose check toggle (`Ctrl+V Shift+V`); seeded from
+    /// `prose.ambient`. `prose_last_run` is the cooldown floor.
+    prose_auto: bool,
+    prose_last_run: Option<std::time::Instant>,
     ie_last_engaged_fp: Option<(Uuid, u64)>,
     ie_last_engage_at: Option<std::time::Instant>,
     /// The paragraph a spawned engagement targets, for the completion report.
@@ -2374,8 +2378,80 @@ fn is_structural_nonprose(node: &Node) -> bool {
     is_structural_paragraph(node) && !node.tags.iter().any(|t| t == "para:procedure")
 }
 
+/// NARR-1 background worker: refresh the single user book's voice profiles, then
+/// emit any threshold-crossing drift to the Output pane. Returns the finding
+/// count (the `BgMsg::Done` payload). Runs off the main thread on a pool-shared
+/// store clone — deterministic, no LLM.
+fn run_prose_check_worker(
+    store: &Store,
+    cfg: &Config,
+    layout: &ProjectLayout,
+) -> std::result::Result<String, String> {
+    let h = crate::store::hierarchy::Hierarchy::load(store).map_err(|e| e.to_string())?;
+    let book = crate::cli::resolve_user_book(&h, None, "prose")?.clone();
+    let pstore =
+        crate::prose::ProseStore::open(store.project_root()).map_err(|e| e.to_string())?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let profiles = crate::prose::refresh_book(
+        &pstore,
+        layout,
+        &h,
+        cfg,
+        &book,
+        cfg.prose.language.as_deref(),
+        cfg.prose.deep_metrics,
+        cfg.prose.mattr_window,
+        &now,
+    )
+    .map_err(|e| e.to_string())?;
+    let viols = crate::prose::violations::violations(
+        &profiles,
+        cfg.prose.baseline_chapter,
+        &cfg.prose.thresholds,
+    );
+
+    // Replace this book's prior prose findings, then emit the current set.
+    if let Some(s) = crate::pane::output::active() {
+        if let Ok(msgs) = s.by_kind(crate::pane::output::kinds::PROSE_DRIFT) {
+            for m in &msgs {
+                let _ = s.dismiss(m.id);
+            }
+        }
+    }
+    let firsts = chapter_first_paragraphs(&h, &book);
+    for v in &viols {
+        let src = firsts
+            .get((v.chapter as usize).saturating_sub(1))
+            .copied()
+            .flatten();
+        crate::prose::violations::emit_violation(v, src);
+    }
+    Ok(viols.len().to_string())
+}
+
+/// The first paragraph id of each chapter (1-based), for Output finding
+/// navigation.
+fn chapter_first_paragraphs(
+    h: &crate::store::hierarchy::Hierarchy,
+    book: &Node,
+) -> Vec<Option<uuid::Uuid>> {
+    h.children_of(Some(book.id))
+        .into_iter()
+        .filter(|n| n.kind == NodeKind::Chapter)
+        .map(|ch| {
+            h.collect_subtree(ch.id)
+                .into_iter()
+                .filter_map(|id| h.get(id))
+                .find(|n| n.kind == NodeKind::Paragraph)
+                .map(|n| n.id)
+        })
+        .collect()
+}
+
 impl App {
     fn new(layout: ProjectLayout, cfg: Config, store: Store) -> Result<Self> {
+        // NARR-1 — captured before `cfg` is moved into the struct.
+        let prose_ambient = cfg.prose.ambient;
         let keymap = Keymap::from_config(&cfg).map_err(anyhow::Error::from)?;
         // Build the chord-action table from the user's HJSON
         // overlay. Defaults first, then `keys.bindings` rewrites.
@@ -2502,6 +2578,8 @@ impl App {
             fc_activity_at: None,
             fc_needs_check: false,
             fc_scope_armed: false,
+            prose_auto: prose_ambient,
+            prose_last_run: None,
             slow_auto: false,
             slow_auto_para: None,
             fc_slow_last_fp: None,
@@ -3310,6 +3388,20 @@ impl App {
                     Err(e) => self.status = format!("Inner Socrates skipped: {e}"),
                 }
             }
+            BgJobKind::ProseCheck => match result {
+                Ok(n) => {
+                    let count: usize = n.parse().unwrap_or(0);
+                    self.status = if count == 0 {
+                        "prose check: voice steady — no drift past thresholds".into()
+                    } else {
+                        format!("prose check: {count} drift finding(s) → Output (^B Tab)")
+                    };
+                    if count > 0 {
+                        self.refresh_tree_badges();
+                    }
+                }
+                Err(e) => self.status = format!("prose check failed: {e}"),
+            },
         }
     }
 
@@ -3360,6 +3452,38 @@ impl App {
             };
             let _ = tx.send(BgMsg::Done(result.map(|()| verb.to_string()).map_err(|e| e.to_string())));
         });
+    }
+
+    /// NARR-1 — run the prose voice check on the background-job harness
+    /// (`Ctrl+V V`, or ambient). Deterministic + content-hash lazy, so no
+    /// provider preflight and no cost. `ambient` suppresses the "busy" status.
+    fn start_prose_check(&mut self, ambient: bool) {
+        if self.bg_job.is_some() {
+            if !ambient {
+                self.status = "prose check: a background job is already running".into();
+            }
+            return;
+        }
+        self.prose_last_run = Some(std::time::Instant::now());
+        let store = self.store.clone();
+        let cfg = self.cfg.clone();
+        let layout = self.layout.clone();
+        self.start_bg_job(BgJobKind::ProseCheck, "prose check", move |tx, _cancel| {
+            let _ = tx.send(BgMsg::Done(run_prose_check_worker(&store, &cfg, &layout)));
+        });
+    }
+
+    /// NARR-1 — ambient prose check: opt-in (`prose_auto`), gated by the cooldown
+    /// floor and an idle editor. Cheap when nothing changed (hash-lazy refresh).
+    fn maybe_spawn_prose_check(&mut self) {
+        if !self.prose_auto || self.bg_job.is_some() || !matches!(self.modal, Modal::None) {
+            return;
+        }
+        let cooldown = std::time::Duration::from_secs(self.cfg.prose.ambient_cooldown_secs.max(10));
+        if self.prose_last_run.map(|t| t.elapsed() < cooldown).unwrap_or(false) {
+            return;
+        }
+        self.start_prose_check(true);
     }
 
     /// Rebuild the open story bible / Editorial Pass from freshly-written
@@ -6194,6 +6318,10 @@ pub(super) enum BgJobKind {
     /// worker runs the deep questions / verdict over the open paragraph and
     /// emits to Output; the `Ok` payload is the finding count.
     InnerSocratesSlow,
+    /// NARR-1 — the narrative-voice (`prose`) background check (deterministic,
+    /// zero-AI). The worker refreshes the book's profiles + emits drift findings
+    /// to Output; the `Ok` payload is the finding count.
+    ProseCheck,
 }
 
 /// An in-flight background job: its progress/result channel + a label + which
@@ -10614,6 +10742,15 @@ impl App {
             A::AddParagraph => self.open_add_modal(NodeKind::Paragraph),
             A::AddJinjaTemplate => self.open_add_jinja_template_modal(),
             A::AddStructuralParagraph => self.open_structural_type_picker(),
+            A::ProseVoiceEngage => self.start_prose_check(false),
+            A::ProseToggleAmbient => {
+                self.prose_auto = !self.prose_auto;
+                self.status = if self.prose_auto {
+                    "prose ambient check ON — runs after an editing pause".into()
+                } else {
+                    "prose ambient check off".into()
+                };
+            }
             A::DeleteNode => self.open_delete_modal(),
             A::MorphType => self.cycle_leaf_type(),
             A::ReorderUp => self.move_current(MoveDir::Up),
@@ -12638,6 +12775,8 @@ impl App {
                 }
             }
         }
+        // NARR-1 — ambient prose check (opt-in, cooldown-gated, deterministic).
+        self.maybe_spawn_prose_check();
     }
 
     /// Spawn the idle slow-track check in the background (the LLM call blocks the

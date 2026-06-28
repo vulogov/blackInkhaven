@@ -83,6 +83,33 @@ pub(crate) fn violations(
     out
 }
 
+/// Emit one violation to the Output pane as an informational `prose` finding,
+/// navigating (when known) to the first paragraph of the flagged chapter.
+pub(crate) fn emit_violation(v: &Violation, source: Option<uuid::Uuid>) {
+    use crate::pane::output::{Lifetime, Message, Severity, kinds};
+    let dir = if v.delta >= 0.0 { "rose" } else { "fell" };
+    let text = format!(
+        "[ch.{}] {} {dir} to {:.3} (baseline {:.3}, Δ {:+.3})",
+        v.chapter, v.metric, v.value, v.baseline, v.delta
+    );
+    let mut msg = Message::new(
+        kinds::PROSE_DRIFT,
+        Severity::Info,
+        Lifetime::UntilActedOn,
+        serde_json::json!({
+            "text": text,
+            "category": "prose",
+            "metric": v.metric,
+            "chapter": v.chapter,
+            "delta": v.delta,
+        }),
+    );
+    if let Some(id) = source {
+        msg = msg.with_source_paragraph(id);
+    }
+    crate::pane::output::emit(&msg);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
