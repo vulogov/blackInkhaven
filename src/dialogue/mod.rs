@@ -12,6 +12,7 @@
 
 mod attribute;
 mod detect;
+mod pipeline;
 mod store;
 mod verbs;
 
@@ -19,6 +20,7 @@ use crate::prose::ProseLanguage;
 
 pub(crate) use attribute::{AttributionWindows, attribute_spans};
 pub(crate) use detect::detect_spans;
+pub(crate) use pipeline::{character_names, refresh_book};
 pub(crate) use store::DialogueStore;
 pub(crate) use verbs::{DialogueLexicon, classify_tag_verb, lexicon_for};
 
@@ -145,6 +147,34 @@ pub(crate) struct DialogueSpan {
     pub tag_verb_class: Option<TagVerbClass>,
     pub ends_question: bool,
     pub ends_exclamation: bool,
+}
+
+/// The three deterministic dialogue findings (RFC §5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DialogueFindingKind {
+    ZeroAttribution,
+    SaidBookism,
+    TalkingHead,
+}
+
+impl DialogueFindingKind {
+    pub(crate) fn as_code(&self) -> &'static str {
+        match self {
+            DialogueFindingKind::ZeroAttribution => "zero_attribution",
+            DialogueFindingKind::SaidBookism => "said_bookism",
+            DialogueFindingKind::TalkingHead => "talking_heads",
+        }
+    }
+}
+
+/// One emitted dialogue finding — `info` severity, navigable to `para_id`
+/// (a node uuid string) when present, else the chapter.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DialogueFinding {
+    pub kind: DialogueFindingKind,
+    pub chapter_ord: u32,
+    pub para_id: Option<String>,
+    pub detail: String,
 }
 
 /// Per-chapter dialogue aggregates (RFC §8.2 `dialogue_chapter_stats`).
