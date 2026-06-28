@@ -12042,6 +12042,32 @@ impl App {
                     }
                 }
             }
+            // Reorder among siblings (Shift+J/K) — reuses the Tree pane's
+            // filesystem-aware sibling swap. Persist the (possibly mutated)
+            // view state first so the reload+reanchor sees the live cursor.
+            KeyCode::Char('K') => {
+                self.outline_state = Some(state);
+                self.outline_reorder(MoveDir::Up);
+                return true;
+            }
+            KeyCode::Char('J') => {
+                self.outline_state = Some(state);
+                self.outline_reorder(MoveDir::Down);
+                return true;
+            }
+            // Promote (`<`, shift-left) / demote (`>`, shift-right) one nesting
+            // level — childless nodes only. Persist the view state first so the
+            // reload+reanchor sees the live cursor.
+            KeyCode::Char('<') => {
+                self.outline_state = Some(state);
+                self.outline_promote();
+                return true;
+            }
+            KeyCode::Char('>') => {
+                self.outline_state = Some(state);
+                self.outline_demote();
+                return true;
+            }
             KeyCode::Enter | KeyCode::Char('l') | KeyCode::Right => {
                 if let Some(id) = cur_id {
                     if self.hierarchy.has_children(id) {
@@ -12078,6 +12104,134 @@ impl App {
         }
         self.outline_state = Some(state);
         true
+    }
+
+    /// OUTLINE-1 (O-P3) — reorder the cursor node among its siblings, the same
+    /// filesystem-aware swap the Tree pane uses (`store::swap_siblings`). The
+    /// cursor tracks the node by uuid, so it stays put across the reload.
+    fn outline_reorder(&mut self, dir: MoveDir) {
+        let id = match self.outline_state.as_ref().and_then(|s| s.cursor_uuid) {
+            Some(id) => id,
+            None => return,
+        };
+        let Some(node) = self.hierarchy.get(id) else {
+            return;
+        };
+        let slug = node.slug.clone();
+        let siblings = self.hierarchy.children_of(node.parent_id);
+        let Some(pos) = siblings.iter().position(|n| n.id == id) else {
+            return;
+        };
+        let other_pos = match dir {
+            MoveDir::Up => {
+                if pos == 0 {
+                    self.status = format!("outline: `{slug}` is already first");
+                    return;
+                }
+                pos - 1
+            }
+            MoveDir::Down => {
+                if pos + 1 >= siblings.len() {
+                    self.status = format!("outline: `{slug}` is already last");
+                    return;
+                }
+                pos + 1
+            }
+        };
+        let other_id = siblings[other_pos].id;
+        match self.store.swap_siblings(&self.hierarchy, id, other_id) {
+            Ok(()) => {
+                self.reload_hierarchy();
+                if let Some(mut state) = self.outline_state.take() {
+                    let rows = state.visible_rows(&self.hierarchy);
+                    state.reanchor_cursor(&rows, 0);
+                    self.outline_state = Some(state);
+                }
+                self.status = format!(
+                    "outline: moved `{slug}` {}",
+                    match dir {
+                        MoveDir::Up => "up",
+                        MoveDir::Down => "down",
+                    }
+                );
+            }
+            Err(e) => self.status = format!("outline: move failed: {e}"),
+        }
+    }
+
+    /// OUTLINE-1 (O-P3) — promote the cursor node one nesting level: re-home it
+    /// under its grandparent (appended at the end), the classic outliner
+    /// "shift left". Childless nodes only (paragraphs / leaves); branch
+    /// restructuring stays in the Tree pane.
+    fn outline_promote(&mut self) {
+        let id = match self.outline_state.as_ref().and_then(|s| s.cursor_uuid) {
+            Some(id) => id,
+            None => return,
+        };
+        let Some(node) = self.hierarchy.get(id) else {
+            return;
+        };
+        let Some(parent_id) = node.parent_id else {
+            self.status = "outline: already at the top level".into();
+            return;
+        };
+        // The grandparent (the parent's parent) becomes the new parent.
+        let grandparent_id = self.hierarchy.get(parent_id).and_then(|p| p.parent_id);
+        self.outline_apply_reparent(id, grandparent_id, "promoted");
+    }
+
+    /// OUTLINE-1 (O-P3) — demote the cursor node one level: make it the last
+    /// child of its immediately-preceding sibling (which must be able to
+    /// contain it). The outliner "shift right".
+    fn outline_demote(&mut self) {
+        let id = match self.outline_state.as_ref().and_then(|s| s.cursor_uuid) {
+            Some(id) => id,
+            None => return,
+        };
+        let Some(node) = self.hierarchy.get(id) else {
+            return;
+        };
+        let siblings = self.hierarchy.children_of(node.parent_id);
+        let Some(pos) = siblings.iter().position(|n| n.id == id) else {
+            return;
+        };
+        if pos == 0 {
+            self.status = "outline: no preceding sibling to demote into".into();
+            return;
+        }
+        let target_id = siblings[pos - 1].id;
+        self.outline_apply_reparent(id, Some(target_id), "demoted");
+    }
+
+    /// Shared tail for promote/demote: run the childless-node reparent, reload,
+    /// reanchor the cursor onto the moved node, and report. On a placement-rule
+    /// rejection the manuscript is untouched and the message explains why.
+    fn outline_apply_reparent(&mut self, id: Uuid, new_parent: Option<Uuid>, verb: &str) {
+        let slug = self
+            .hierarchy
+            .get(id)
+            .map(|n| n.slug.clone())
+            .unwrap_or_default();
+        match self
+            .store
+            .move_node_to_parent(&self.cfg, &self.hierarchy, id, new_parent)
+        {
+            Ok(()) => {
+                self.reload_hierarchy();
+                if let Some(mut state) = self.outline_state.take() {
+                    // Keep the moved node's ancestors expanded + cursor on it.
+                    if let Some(pid) = self.hierarchy.get(id).and_then(|n| n.parent_id) {
+                        state.set_expanded(pid, true);
+                    }
+                    state.cursor_uuid = Some(id);
+                    let rows = state.visible_rows(&self.hierarchy);
+                    state.reanchor_cursor(&rows, 0);
+                    self.outline_state = Some(state);
+                }
+                self.status = format!("outline: {verb} `{slug}`");
+            }
+            Err(e) => self.status = format!("outline: {verb} failed — {e}"),
+        }
     }
 
     /// WORLD-4 — `Ctrl+B W`. Build the read-only World overview: the world
