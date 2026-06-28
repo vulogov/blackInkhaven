@@ -10,11 +10,13 @@
 //! attribution types, and the embedded neutral + said-bookism verb lists
 //! (`verbs`). Detectors land in D-P1, attribution in D-P2.
 
+mod attribute;
 mod detect;
 mod verbs;
 
 use crate::prose::ProseLanguage;
 
+pub(crate) use attribute::{AttributionWindows, attribute_spans};
 pub(crate) use detect::detect_spans;
 pub(crate) use verbs::{DialogueLexicon, classify_tag_verb, lexicon_for};
 
@@ -97,12 +99,21 @@ pub(crate) struct DialogueSpan {
     pub span_index: u32,
     /// Which mark form bracketed this span.
     pub form: SpanForm,
+    /// Paragraph char offsets of the span (open mark .. past close mark).
+    /// Runtime-only — used by the attribution windows; not persisted.
+    pub char_start: usize,
+    pub char_end: usize,
     /// Content inside the marks, stripped of any inline tag (FR `dit-il`).
     pub speech_text: String,
     pub word_count: u32,
     /// Character name when attribution is `Certain`; `None` otherwise.
     pub attribution_name: Option<String>,
     pub attribution_conf: AttributionConfidence,
+    /// Whether *any* attribution signal was found (name ≤60 tok · verb ≤15 ·
+    /// action beat ≤30 · inline tag). Distinct from `attribution_conf`: the
+    /// zero-attribution finding (§5.1) clears on any signal, while the
+    /// fingerprint (§6.2) only counts `Certain`. Runtime-only; not persisted.
+    pub has_attribution_signal: bool,
     /// The tag verb actually used, if one was found.
     pub tag_verb: Option<String>,
     pub tag_verb_class: Option<TagVerbClass>,
