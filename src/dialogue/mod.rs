@@ -23,7 +23,7 @@ pub(crate) use attribute::{AttributionWindows, attribute_spans};
 pub(crate) use detect::detect_spans;
 pub(crate) use pipeline::{character_names, refresh_book};
 pub(crate) use store::DialogueStore;
-pub(crate) use verbs::{DialogueLexicon, classify_tag_verb, lexicon_for};
+pub(crate) use verbs::{DialogueLexicon, classify_tag_verb, lexicon_for_with};
 
 /// The three structurally distinct dialogue-quotation conventions. Detection
 /// strategy is selected per book from its language.
