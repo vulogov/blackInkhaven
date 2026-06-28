@@ -124,6 +124,14 @@ impl ProseStore {
         Ok(rows.iter().filter_map(|r| row_to_profile(r)).collect())
     }
 
+    /// Distinct book slugs with stored profiles (used by `--reference`).
+    pub(crate) fn book_slugs(&self) -> Result<Vec<String>> {
+        let rows = self
+            .engine
+            .select_all("SELECT DISTINCT book_slug FROM prose_profiles ORDER BY book_slug")?;
+        Ok(rows.iter().filter_map(|r| r.first().and_then(as_text)).collect())
+    }
+
     /// The stored text hash for one scope, if present (the staleness key).
     pub(crate) fn stored_hash(&self, book_slug: &str, scope: &str) -> Result<Option<u64>> {
         let rows = self.engine.select_all_with(
