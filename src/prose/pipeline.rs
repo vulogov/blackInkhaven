@@ -12,7 +12,7 @@ use crate::store::node::Node;
 
 use super::profile::{self, VoiceProfile, VoiceScope};
 use super::store::ProseStore;
-use super::resolve_prose_language;
+use super::{CompiledLexicon, ProseLanguage, resolve_prose_language};
 
 /// A chapter's prose as one stripped blob: every non-Jinja paragraph in the
 /// chapter subtree, run through the Typst→plain stripper. STRUCT-1 Jinja
@@ -56,6 +56,13 @@ pub(crate) fn refresh_book(
     // Language change → mark rows in a different language stale.
     store.mark_language_stale(&book.slug, &lang)?;
 
+    // One compiled lexicon for the whole refresh, with the project's extras.
+    let lx = CompiledLexicon::for_language_with(
+        &lang,
+        &cfg.prose.extra_modal_tokens,
+        &cfg.prose.extra_interiority_phrases,
+    );
+
     let chapters: Vec<&Node> = h
         .children_of(Some(book.id))
         .into_iter()
@@ -72,24 +79,14 @@ pub(crate) fn refresh_book(
             &book.slug,
             VoiceScope::Chapter((idx + 1) as u32),
             &text,
-            explicit_lang,
-            cfg,
+            &lang,
+            &lx,
             deep,
             mattr_window,
             now,
         )?;
     }
-    refresh_scope(
-        store,
-        &book.slug,
-        VoiceScope::Book,
-        &full,
-        explicit_lang,
-        cfg,
-        deep,
-        mattr_window,
-        now,
-    )?;
+    refresh_scope(store, &book.slug, VoiceScope::Book, &full, &lang, &lx, deep, mattr_window, now)?;
 
     store.get_all(&book.slug)
 }
@@ -100,8 +97,8 @@ fn refresh_scope(
     book_slug: &str,
     scope: VoiceScope,
     text: &str,
-    explicit_lang: Option<&str>,
-    cfg: &Config,
+    lang: &ProseLanguage,
+    lx: &CompiledLexicon,
     deep: bool,
     mattr_window: usize,
     now: &str,
@@ -110,8 +107,7 @@ fn refresh_scope(
     if store.stored_hash(book_slug, &scope.as_str())? == Some(hash) {
         return Ok(()); // unchanged since last compute
     }
-    let (lang, _) = resolve_prose_language(explicit_lang, &cfg.language);
-    let p = profile::compute_profile(text, scope, &lang, deep, mattr_window);
+    let p = profile::compute_profile_with(text, scope, lang, lx, deep, mattr_window);
     store.upsert(book_slug, &p, now)
 }
 

@@ -15,8 +15,9 @@ mod pipeline;
 mod profile;
 mod segment;
 mod store;
+pub(crate) mod violations;
 
-// Public (in-crate) surface for the `inkhaven prose` CLI / Bund layer.
+// Public (in-crate) surface for the `inkhaven prose` CLI / Bund / TUI layer.
 pub(crate) use pipeline::refresh_book;
 pub(crate) use profile::{VoiceProfile, VoiceScope};
 pub(crate) use store::ProseStore;
@@ -137,8 +138,8 @@ pub(crate) fn tokenize(text: &str) -> Vec<String> {
 /// bigram/trigram arrays are scanned linearly.
 pub(crate) struct CompiledLexicon {
     modal_unigrams: HashSet<&'static str>,
-    modal_bigrams: &'static [[&'static str; 2]],
-    modal_trigrams: &'static [[&'static str; 3]],
+    modal_bigrams: Vec<[&'static str; 2]>,
+    modal_trigrams: Vec<[&'static str; 3]>,
     /// FID marker phrases pre-split into token sequences.
     interiority: Vec<Vec<&'static str>>,
     erlebte: HashSet<&'static str>,
@@ -146,18 +147,59 @@ pub(crate) struct CompiledLexicon {
     passive_exceptions: HashSet<&'static str>,
 }
 
+/// Leak a config-supplied token to `&'static str`. Bounded (a handful of
+/// `prose.extra_*` entries, parsed once at load) and conceptually static — the
+/// values live for the whole run — so leaking is the right call vs. threading a
+/// lifetime through every lexicon lookup.
+fn leak(s: &str) -> &'static str {
+    Box::leak(s.to_lowercase().into_boxed_str())
+}
+
 impl CompiledLexicon {
     pub(crate) fn for_language(lang: &ProseLanguage) -> CompiledLexicon {
+        Self::for_language_with(lang, &[], &[])
+    }
+
+    /// As [`for_language`], with config-supplied extra modal tokens and
+    /// interiority phrases appended to the active language's lists (NARR-1
+    /// `prose.extra_modal_tokens` / `prose.extra_interiority_phrases`).
+    pub(crate) fn for_language_with(
+        lang: &ProseLanguage,
+        extra_modal: &[String],
+        extra_interiority: &[String],
+    ) -> CompiledLexicon {
         let lx = lexicon::lexicon(lang);
+        let mut modal_unigrams: HashSet<&'static str> =
+            lx.modal_unigrams.iter().copied().collect();
+        let mut modal_bigrams: Vec<[&'static str; 2]> = lx.modal_bigrams.to_vec();
+        let mut modal_trigrams: Vec<[&'static str; 3]> = lx.modal_trigrams.to_vec();
+        for raw in extra_modal {
+            let w: Vec<&str> = raw.split_whitespace().collect();
+            match w.len() {
+                1 => {
+                    modal_unigrams.insert(leak(w[0]));
+                }
+                2 => modal_bigrams.push([leak(w[0]), leak(w[1])]),
+                3 => modal_trigrams.push([leak(w[0]), leak(w[1]), leak(w[2])]),
+                _ => {}
+            }
+        }
+        let mut interiority: Vec<Vec<&'static str>> = lx
+            .interiority
+            .iter()
+            .map(|p| p.split_whitespace().collect())
+            .collect();
+        for raw in extra_interiority {
+            let toks: Vec<&'static str> = raw.split_whitespace().map(leak).collect();
+            if !toks.is_empty() {
+                interiority.push(toks);
+            }
+        }
         CompiledLexicon {
-            modal_unigrams: lx.modal_unigrams.iter().copied().collect(),
-            modal_bigrams: lx.modal_bigrams,
-            modal_trigrams: lx.modal_trigrams,
-            interiority: lx
-                .interiority
-                .iter()
-                .map(|p| p.split_whitespace().collect())
-                .collect(),
+            modal_unigrams,
+            modal_bigrams,
+            modal_trigrams,
+            interiority,
             erlebte: lx.erlebte_particles.iter().copied().collect(),
             sensory: lx.sensory.iter().copied().collect(),
             passive_exceptions: lx.passive_exceptions.iter().copied().collect(),
@@ -175,14 +217,14 @@ impl CompiledLexicon {
                 hits += 1;
             }
             if i + 1 < tokens.len() {
-                for bi in self.modal_bigrams {
+                for bi in &self.modal_bigrams {
                     if tokens[i] == bi[0] && tokens[i + 1] == bi[1] {
                         hits += 1;
                     }
                 }
             }
             if i + 2 < tokens.len() {
-                for tri in self.modal_trigrams {
+                for tri in &self.modal_trigrams {
                     if tokens[i] == tri[0] && tokens[i + 1] == tri[1] && tokens[i + 2] == tri[2] {
                         hits += 1;
                     }
