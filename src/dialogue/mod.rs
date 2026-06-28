@@ -12,6 +12,7 @@
 
 mod attribute;
 mod detect;
+mod fingerprint;
 mod pipeline;
 mod store;
 mod verbs;

@@ -109,6 +109,7 @@ pub(crate) fn refresh_book(
     let mut findings = Vec::new();
     // (chapter_ord, neutral_tag_count, said_bookism_count) for the book baseline.
     let mut tag_counts: Vec<(u32, u32, u32)> = Vec::new();
+    let mut any_recomputed = false;
 
     for (idx, ch) in chapters.iter().enumerate() {
         let ord = (idx + 1) as u32;
@@ -126,6 +127,12 @@ pub(crate) fn refresh_book(
         )?;
         tag_counts.push((ord, stats.neutral_tag_count, stats.said_bookism_count));
         findings.append(&mut chap_findings);
+        any_recomputed = true;
+    }
+
+    // Rebuild the per-character fingerprints when any chapter changed (D-P5).
+    if any_recomputed {
+        super::fingerprint::rebuild_fingerprints(store, &book.slug, &lang, now)?;
     }
 
     // Said-bookism density: per-chapter density vs the book baseline.
