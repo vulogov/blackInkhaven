@@ -7,8 +7,10 @@
 //! C-P0 — the language model: the arc taxonomy, the core state/check types, and
 //! the per-language action-verb lists the agency score (C-P3) builds on.
 
+mod store;
 mod verbs;
 
+pub(crate) use store::CharStore;
 pub(crate) use verbs::{ActionVerbs, is_action_verb, verbs_for};
 
 /// Arc structural taxonomy (RFC §4). `Other` accepts any author string and
