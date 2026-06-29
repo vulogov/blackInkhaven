@@ -4,7 +4,7 @@
 |---|---|
 | **RFC** | MYTH-1 |
 | **Title** | Declared symbolic vocabulary, recurring motifs, archetypal roles: lexicon highlight + density scan + LLM consistency/completeness checks + Inner-family grounding |
-| **Status** | In progress — 1.4.19 |
+| **Status** | Shipped — 1.4.19 |
 | **Author** | Vladimir Ulogov |
 | **New dependency** | none |
 
