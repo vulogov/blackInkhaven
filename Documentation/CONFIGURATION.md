@@ -1346,6 +1346,36 @@ how richly the world's ground rules are
 documented, so you notice a 40-chapter
 manuscript still running on three facts.
 
+### `editor.startup_haiku` (1.4.17+)
+
+HAIKU-1. Emits a hand-curated haiku to the Output
+pane at three moments: at **startup**, when a new
+**manuscript paragraph** is created (user books
+only — never system books like Characters or
+Places, and never seeded/structural paragraphs),
+and on demand via **`Ctrl+Z p`**. The poem is in
+the book's language (`editor.language`), one of
+EN / RU / DE / FR / ES, falling back to English.
+On by default.
+
+```hjson
+{
+  editor: {
+    startup_haiku: true
+  }
+}
+```
+
+All 25 poems (5 languages × 5) are baked into the
+binary — **no AI, no network**, present even on an
+airgapped machine. A process-global rotation
+counter advances on each trigger, so you rarely
+see the same poem twice in a session. Set `false`
+to silence the automatic moments; the `Ctrl+Z p`
+chord still works on demand regardless.
+
+See [Tutorial 100 — The startup haiku](Tutorials/100-haiku.md).
+
 ### `snippets` — `bund:` prefix + picker placeholders (1.2.16+)
 
 Extends the 1.2.14 `snippets` block.  No new

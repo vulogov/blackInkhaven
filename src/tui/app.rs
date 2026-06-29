@@ -2073,6 +2073,11 @@ pub(crate) struct App {
     /// boilerplate + stamps the `para:*` tag). Cleared by `open_add_modal_inner`
     /// so a cancelled structural add never leaks into the next paragraph add.
     pub(super) pending_structural_type: Option<usize>,
+    /// HAIKU-1 T2 — id of a just-created manuscript paragraph awaiting its first
+    /// open. The haiku fires when that paragraph is opened in the editor (the
+    /// "created and opened for editing" moment), not at create time, so it
+    /// greets the writer exactly when they land in the blank buffer.
+    pub(super) pending_haiku_paragraph: Option<uuid::Uuid>,
 
     /// OUTLINE-1 — the full-screen Outline pane's persisted view state (expand
     /// flags, cursor, scroll, filter). `None` until the pane is first opened
@@ -2925,6 +2930,7 @@ impl App {
             pending_style_transfer: false,
             pending_jinja_template: false,
             pending_structural_type: None,
+            pending_haiku_paragraph: None,
             outline_state: None,
             para_clipboard: None,
             outline_editing_filter: false,
@@ -2970,6 +2976,12 @@ impl App {
         // "Output disabled", never aborts startup.
         if let Err(e) = crate::pane::output::install(&self.layout.root) {
             tracing::warn!(target: "inkhaven::pane", "output install: {e:#}");
+        }
+        // HAIKU-1 T1 — a startup haiku in the book's language, the Output pane's
+        // first "good news" message. Zero-AI; no-op if the store failed to
+        // install above.
+        if self.cfg.editor.startup_haiku {
+            crate::haiku::emit_for_lang(&self.cfg.language);
         }
         // 1.3.34+ — point the AI-cost usage tracker at this project so every
         // inference tallies into `inkhaven cost` / the Ctrl+B $ panel.
@@ -11121,6 +11133,10 @@ impl App {
             A::BundOpenShellFresh => self.open_shell_pane(true),
             A::BundShellSelection => self.toggle_shell_selection_mode(),
             A::BundEditProjectHjson => self.open_hjson_editor(),
+            A::ShowHaiku => {
+                crate::haiku::emit_for_lang(&self.cfg.language);
+                self.status = "✦ haiku written to Output".into();
+            }
             A::TtsReadParagraph => self.tts_read_paragraph(),
             A::TtsSaveAsAudio => self.tts_open_save_as_audio_picker(),
             A::OpenWritingStreakHeatmap => self.open_writing_streak_heatmap(),
@@ -23614,6 +23630,24 @@ impl App {
                 }
                 if let Some(i) = self.rows.iter().position(|(id, _)| *id == new_id) {
                     self.tree_cursor = i;
+                }
+                // HAIKU-1 T2 — arm a haiku for a fresh *manuscript* paragraph.
+                // It fires when the paragraph is opened in the editor (see
+                // `load_paragraph`) — the "created and opened for editing"
+                // moment — not here, because `commit_add` only creates the node
+                // in the tree; it doesn't open the buffer. Only plain prose
+                // paragraphs in a user book: `seed_body_after_create.is_none()`
+                // excludes every seeded kind (Dictionary / Sources / Glossary /
+                // Snippets / Threads / Language-rule / Jinja), `structural_pick`
+                // excludes structural subtypes, and `book_of_node` returns `Some`
+                // only when the containing book is a user book (not a system
+                // book like Characters / Places / Notes).
+                if kind == NodeKind::Paragraph
+                    && seed_body_after_create.is_none()
+                    && structural_pick.is_none()
+                    && self.book_of_node(new_id).is_some()
+                {
+                    self.pending_haiku_paragraph = Some(new_id);
                 }
             }
             Err(e) => {

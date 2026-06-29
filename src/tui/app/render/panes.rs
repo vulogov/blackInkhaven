@@ -1650,6 +1650,7 @@ impl super::super::App {
                 crate::pane::output::kinds::TIMELINE_ORPHAN_WARNING => "⊘ ",
                 crate::pane::output::kinds::TIMELINE_FUZZY_OVERLAP_WARNING => "⧉ ",
                 crate::pane::output::kinds::INNER_EDITOR_OBSERVATION => "✎ ",
+                crate::pane::output::kinds::HAIKU => "✦ ",
                 _ => "",
             };
             lines.push(Line::from(vec![
@@ -1661,7 +1662,27 @@ impl super::super::App {
             } else {
                 Style::default()
             };
-            lines.push(Line::from(vec![Span::raw("   "), Span::styled(text, text_style)]));
+            // HAIKU-1 — render the three lines as a poem (the pane's row model is
+            // one text line, so embedded newlines won't lay out; we push a line
+            // per haiku line). Falls back to the inline `text` if the array is
+            // absent.
+            if m.kind == crate::pane::output::kinds::HAIKU {
+                match m.metadata.get("haiku_lines").and_then(|v| v.as_array()) {
+                    Some(arr) => {
+                        for hl in arr {
+                            if let Some(s) = hl.as_str() {
+                                lines.push(Line::from(vec![
+                                    Span::raw("   "),
+                                    Span::styled(s.to_string(), text_style),
+                                ]));
+                            }
+                        }
+                    }
+                    None => lines.push(Line::from(vec![Span::raw("   "), Span::styled(text, text_style)])),
+                }
+            } else {
+                lines.push(Line::from(vec![Span::raw("   "), Span::styled(text, text_style)]));
+            }
 
             // Expanded detail (`o`/Space): per-word trace + alternatives, or the
             // remaining metadata fields for kinds without a trace.
@@ -1725,6 +1746,7 @@ impl super::super::App {
                     && alts.is_none()
                     && proposals.is_none()
                     && renderings.is_none()
+                    && m.kind != crate::pane::output::kinds::HAIKU
                 {
                     if let Some(obj) = m.metadata.as_object() {
                         for (k, v) in obj.iter().filter(|(k, _)| k.as_str() != "text") {
