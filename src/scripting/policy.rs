@@ -183,6 +183,14 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     // INNER-THEOLOGIAN-1 — `signals` recomputes only the derived inner_theologian.db
     // cache (store_read); `suppress` mutates the suppression flag (store_write, below).
     ("ink.theologian.signals", category::STORE_READ),
+    // MYTH-1 — declared-inventory + deterministic reads (symbols/motifs/
+    // archetypes/density/findings) recompute only derived caches → store_read;
+    // `suppress` mutates the findings table → store_write (below).
+    ("ink.myth.symbols", category::STORE_READ),
+    ("ink.myth.motifs", category::STORE_READ),
+    ("ink.myth.archetypes", category::STORE_READ),
+    ("ink.myth.density", category::STORE_READ),
+    ("ink.myth.findings", category::STORE_READ),
     // WORLD-6 — utopia coherence reads (model/findings/violations) are
     // store_read; `suppress` mutates the findings table → store_write (below).
     ("ink.utopia.model", category::STORE_READ),
@@ -209,6 +217,8 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.utopia.suppress", category::STORE_WRITE),
     // INNER-THEOLOGIAN-1 — suppressing a signal mutates the suppression flag.
     ("ink.theologian.suppress", category::STORE_WRITE),
+    // MYTH-1 — suppressing a myth finding mutates the findings table.
+    ("ink.myth.suppress", category::STORE_WRITE),
     ("ink.paragraph.set_status", category::STORE_WRITE),
     ("ink.paragraph.set_target", category::STORE_WRITE),
     ("ink.paragraph.save", category::STORE_WRITE),
