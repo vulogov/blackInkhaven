@@ -61,6 +61,7 @@ pub mod editorial;
 pub mod drift;
 pub mod world;
 pub mod utopia;
+pub mod character;
 pub mod lang;
 pub mod world_prompts;
 pub mod prompts;
@@ -841,6 +842,14 @@ pub enum Command {
     /// (deterministic, no AI).
     #[command(subcommand)]
     Drift(DriftCommand),
+
+    /// 1.4.16 CHAR-1 — `inkhaven character <subcommand>`.  Character arc
+    /// tracking: a chapter-ordered observable-state chain (LLM), a deterministic
+    /// agency score, stall detection, completeness checks against the author's
+    /// declared arc, and Planning-Board coverage gaps.  `arc <name>` is a
+    /// read-only report; `check`/`plan` gate via exit codes.
+    #[command(subcommand)]
+    Character(CharacterCommand),
 
     /// 1.3.0 PDF-1 — `inkhaven pdf <subcommand>`.  Page operations
     /// (extract / split / merge / rotate / reorder / delete), metadata,
@@ -3972,6 +3981,48 @@ pub enum WorldCommand {
     },
 }
 
+/// 1.4.16 CHAR-1 — sub-subcommands under `inkhaven character …`.
+#[derive(Debug, Subcommand)]
+pub enum CharacterCommand {
+    /// Show one character's tracked arc: declaration, chapter-by-chapter state
+    /// chain, agency scores, stalls, completeness checks, and planning gaps.
+    /// Read-only (reads the cached `char.duckdb`; run `refresh`/`check` first to
+    /// populate it).
+    Arc {
+        /// Character name (case-insensitive; matches the Characters-book roster).
+        name: String,
+        #[arg(long)]
+        book: Option<String>,
+    },
+    /// Run arc-completeness checks for every declared arc (LLM; extracts the
+    /// state chain first, lazily). Exits 1 on any gap or stall, 2 if the ending
+    /// or earned-arc check fails.
+    Check {
+        #[arg(long)]
+        book: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Recompute agency (deterministic) and re-extract the observable-state
+    /// chain (LLM, content-hash lazy) for declared characters. `--name` limits
+    /// it to one character.
+    Refresh {
+        #[arg(long)]
+        book: Option<String>,
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// Detect Planning-Board arc-coverage gaps (deterministic, no LLM): a
+    /// declared arc no scene card names, an arc confined to the first half, or
+    /// an arc with no scene card in the final act. Exits 1 on any gap.
+    Plan {
+        #[arg(long)]
+        book: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 /// 1.3.24 PANE-1 — sub-subcommands under `inkhaven output …`. The minimal CLI
 /// surface over the Output message store (the pane itself is a TUI feature);
 /// useful for scripting and for sshing into a project without a TUI.
@@ -4865,6 +4916,7 @@ impl Cli {
             }
             Command::Drift(cmd) => drift::run(&project, cmd).map_err(Into::into),
             Command::Lang(cmd) => lang::run(&project, cmd).map_err(Into::into),
+            Command::Character(cmd) => character::run(&project, cmd).map_err(Into::into),
             Command::World { json, deep, provider, entity, sub } => match sub {
                 Some(cmd) => utopia::run(&project, cmd).map_err(Into::into),
                 None => world::run(&project, json, deep, provider.as_deref(), entity.as_deref())
