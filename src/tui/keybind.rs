@@ -165,6 +165,11 @@ pub enum Action {
     /// state chain + agency + checks + planning gaps) for the nearest character.
     #[serde(rename = "character.open_arc")]
     OpenCharacterArc,
+    /// MYTH-1 — `Ctrl+V Shift+M`. Build the symbol/motif/archetype heatmap, push
+    /// it to the Thoughts pane, and open the Mythology book at the nearest
+    /// declared symbol.
+    #[serde(rename = "myth.open_heatmap")]
+    OpenMythHeatmap,
     /// HAIKU-1 — `Ctrl+Z p`. Emit a fresh haiku to the Output pane on demand.
     #[serde(rename = "haiku.show")]
     ShowHaiku,
@@ -945,6 +950,7 @@ impl Action {
             Action::OpenStoryBible => "bible".into(),
             Action::OpenDialogueView => "dialogue".into(),
             Action::OpenCharacterArc => "char arc".into(),
+            Action::OpenMythHeatmap => "myth heatmap".into(),
             Action::ShowHaiku => "haiku".into(),
             Action::ToggleRightPaneFullscreen => "pane fullscreen".into(),
             Action::OpenConlangHub => "conlang".into(),
@@ -1174,6 +1180,8 @@ impl Action {
                 "Emit a hand-curated haiku (HAIKU-1, Ctrl+Z p) to the Output pane, in the book's language (EN/RU/DE/FR/ES, falling back to English). A small pocket of stillness on demand — the same poem pool that greets you at startup and when you create a new manuscript paragraph; the rotation advances each time so you rarely see the same one twice in a session. Zero-AI, baked into the binary. Toggle the automatic moments with `editor.startup_haiku`. Mnemonic: P for Poem.".into(),
             Action::OpenCharacterArc =>
                 "Open the character arc view (CHAR-1, Ctrl+V Shift+N) — the tracked arc for the nearest character (one named in the current paragraph, else the first tracked one): the author-declared arc (start / midpoint / end), the chapter-by-chapter observable state chain (✦ marks a change) with each chapter's deterministic agency score (active / passive presence), the arc-completeness checks, and any Planning-Board coverage gaps. Read-only over the cached char.duckdb; `↑↓` scroll, `Esc` closes. Populate it with the `Ctrl+B Shift+C` review pass (agency + stalls + planning, zero-AI) or `inkhaven character refresh` / `check` (the LLM passes). Mnemonic: N for arc (the bend).".into(),
+            Action::OpenMythHeatmap =>
+                "Open the mythology heatmap (MYTH-1, Ctrl+V Shift+M) — refreshes the declared symbol / motif / archetype inventory from the Mythology system book, recomputes the per-chapter symbol-density scan, explicit motif occurrences, and the deterministic findings (archetype vacant / absent, motif absent from the final act), then renders the heatmap (symbol-density bars, motif-presence dots, archetype-presence bars across chapter buckets) into the Thoughts pane and jumps the editor to the nearest declared symbol (one named in the open paragraph, else the first). Zero-AI; the LLM consistency / completeness / role checks stay explicit on `inkhaven myth check`. Reads declarations only — never interprets, never edits prose. Mnemonic: M for Myth.".into(),
             Action::OpenConlangHub =>
                 "Open the ConLang hub (LANG-1, Ctrl+B X) — a read-only overview of every constructed language under the Language system book: phoneme inventory (consonants / vowels), template + constraint + allophony counts, prosody (stress rule, tone), romanization schemes, lexicon size, and linked speakers (Places / Characters). `↑↓` scroll, `Esc` closes. The deep operations live on the CLI — `inkhaven language audit / generate-lexicon / query / scan-manuscript` — plus `Ctrl+B Q` to translate a paragraph into an invented language. Mnemonic: X for conlang.".into(),
             Action::OpenOutline =>
@@ -1706,6 +1714,10 @@ impl KeyBindings {
                 // CHAR-1 — Ctrl+V Shift+N opens the character arc view (N = arc,
                 // the bend; plain `n` is ViewNextDiagnostic).
                 entry("Shift+n", Action::OpenCharacterArc, Scope::Any),
+                // MYTH-1 — Ctrl+V Shift+M builds the symbol/motif/archetype
+                // heatmap → Thoughts pane and jumps to the nearest declared
+                // symbol (M = Myth; plain `m` is ViewListBookmarks).
+                entry("Shift+m", Action::OpenMythHeatmap, Scope::Any),
                 // 1.4.8+ TERMS-1 — Ctrl+V z toggle the banned-synonym overlay;
                 // Ctrl+V Shift+Z declares the term under the cursor deliberate.
                 entry("z", Action::ViewToggleTermsOverlay, Scope::Any),
