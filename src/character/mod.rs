@@ -9,10 +9,13 @@
 
 mod agency;
 mod declarations;
+mod llm;
+mod pipeline;
 mod store;
 mod verbs;
 
 pub(crate) use declarations::read_arc_declarations;
+pub(crate) use pipeline::{character_names, run_agency, run_extraction};
 pub(crate) use store::CharStore;
 pub(crate) use verbs::{ActionVerbs, is_action_verb, verbs_for};
 
