@@ -47,6 +47,9 @@ pub mod kinds {
     /// WORLD-6 — a utopian/dystopian coherence finding (chain logic or
     /// entailment violation). Always informational.
     pub const UTOPIA: &str = "utopia";
+    /// CHAR-1 — a character-arc finding (stall, Planning-Board coverage gap, or
+    /// a cached arc-completeness problem). Always informational.
+    pub const CHAR: &str = "char";
 }
 
 /// Visual / priority class (RFC §7.4).
