@@ -1398,6 +1398,13 @@ pub(super) enum Modal {
         rows: Vec<String>,
         cursor: usize,
     },
+    /// CHAR-1 — the per-character arc view (`Ctrl+V Shift+N`). `rows` are
+    /// pre-rendered text lines (declaration + chapter state chain + agency +
+    /// stalls + checks + planning gaps); scrollable, read-only.
+    CharacterArc {
+        rows: Vec<String>,
+        cursor: usize,
+    },
 }
 
 /// 1.2.14+ Phase C.2 — one row of the project-

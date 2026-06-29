@@ -2603,6 +2603,94 @@ fn emit_cached_utopia_findings(store: &Store) -> std::result::Result<usize, Stri
     Ok(findings.len())
 }
 
+/// CHAR-1 — surface character-arc findings in the Output pane. The deterministic
+/// layers (agency + Planning-Board gaps) recompute (zero-AI, hash-cheap); stalls
+/// are derived from the cached state chain; arc-completeness problems are read
+/// **cached** (the LLM checks run explicitly via `inkhaven character check`, so
+/// the TUI hot path stays zero-cost). Replaces this book's prior CHAR findings.
+fn run_character_check(
+    store: &Store,
+    cfg: &Config,
+    layout: &ProjectLayout,
+) -> std::result::Result<usize, String> {
+    use crate::pane::output::{Lifetime, Message, Severity, kinds};
+    let stall_threshold = cfg.char.stall_threshold;
+
+    let h = crate::store::hierarchy::Hierarchy::load(store).map_err(|e| e.to_string())?;
+    let book = crate::cli::resolve_user_book(&h, None, "character")?.clone();
+    let cs = crate::character::CharStore::open(store.project_root()).map_err(|e| e.to_string())?;
+
+    // Mirror the author's declared arcs into the store, then refresh the
+    // deterministic layers (agency cells + planning gaps). No LLM here.
+    for (decl, hash) in crate::character::read_arc_declarations(&h, layout) {
+        let _ = cs.upsert_declaration(&book.slug, &decl, hash);
+    }
+    let _ = crate::character::run_agency(&cs, layout, &h, cfg, &book);
+    let _ = crate::character::run_planning(&cs, store, &h, &book);
+
+    // First paragraph of each chapter, for finding navigation.
+    let first_paras = chapter_first_paragraphs(&h, &book);
+    let para_for = |ch: Option<u32>| -> Option<uuid::Uuid> {
+        ch.and_then(|c| first_paras.get((c as usize).saturating_sub(1)).copied().flatten())
+    };
+
+    if let Some(s) = crate::pane::output::active() {
+        if let Ok(msgs) = s.by_kind(kinds::CHAR) {
+            for m in &msgs {
+                let _ = s.dismiss(m.id);
+            }
+        }
+    }
+
+    let emit = |text: String, category: &str, ch: Option<u32>| {
+        let mut msg = Message::new(
+            kinds::CHAR,
+            Severity::Info,
+            Lifetime::UntilActedOn,
+            serde_json::json!({ "text": text, "category": "character", "kind": category, "chapter": ch }),
+        );
+        if let Some(id) = para_for(ch) {
+            msg = msg.with_source_paragraph(id);
+        }
+        crate::pane::output::emit(&msg);
+    };
+
+    let mut count = 0;
+    let decls = cs.all_declarations(&book.slug).map_err(|e| e.to_string())?;
+    for d in &decls {
+        let name = &d.character_name;
+        let states = cs.states_for_character(&book.slug, name).map_err(|e| e.to_string())?;
+        // Stall — deterministic over the cached state chain.
+        if let Some(stall) = crate::character::detect_stall(name, &states, stall_threshold) {
+            emit(
+                format!("[character · stall · {name}] {}", stall.description),
+                "stall",
+                stall.chapter_ord,
+            );
+            count += 1;
+        }
+        // Cached arc-completeness problems (read-only).
+        if let Ok(checks) = cs.checks_for_character(&book.slug, name) {
+            for c in checks.iter().filter(|c| c.verdict.is_problem()) {
+                emit(
+                    format!("[character · {} · {name}] {}", c.check_type.as_code(), c.description),
+                    c.check_type.as_code(),
+                    c.chapter_ord,
+                );
+                count += 1;
+            }
+        }
+    }
+    // Planning-Board coverage gaps (deterministic).
+    if let Ok(gaps) = cs.planning_findings(&book.slug) {
+        for (name, ft, desc) in &gaps {
+            emit(format!("[character · planning · {name}] {desc}"), ft, None);
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
 /// The first paragraph id of each chapter (1-based), for Output finding
 /// navigation.
 fn chapter_first_paragraphs(
@@ -10992,6 +11080,7 @@ impl App {
             A::OpenConlangHub => self.open_conlang_hub(),
             A::OpenOutline => self.open_outline(),
             A::OpenDialogueView => self.open_dialogue_view(),
+            A::OpenCharacterArc => self.open_character_arc_view(),
             A::OpenWorldOverview => self.open_world_overview(),
             A::OpenInnerSocratesOverview => self.open_inner_socrates_overview(),
             A::OpenInnerEditorOverview => self.open_inner_editor_overview(),
@@ -12668,6 +12757,161 @@ impl App {
         true
     }
 
+    /// CHAR-1 — `Ctrl+V Shift+N`. Open the per-character arc view over the
+    /// cached `char.duckdb` (read-only; the LLM passes run via the review pass /
+    /// `inkhaven character refresh`). Focuses a character named in the open
+    /// paragraph, else the first tracked one.
+    fn open_character_arc_view(&mut self) {
+        let book = match crate::cli::resolve_user_book(&self.hierarchy, None, "character") {
+            Ok(b) => b.clone(),
+            Err(e) => {
+                self.status = format!("character: {e}");
+                return;
+            }
+        };
+        let cs = match crate::character::CharStore::open(self.store.project_root()) {
+            Ok(c) => c,
+            Err(e) => {
+                self.status = format!("character: {e}");
+                return;
+            }
+        };
+        // Reflect the current `character_arc` declarations into the store.
+        for (decl, hash) in crate::character::read_arc_declarations(&self.hierarchy, &self.layout) {
+            let _ = cs.upsert_declaration(&book.slug, &decl, hash);
+        }
+        // Candidate characters: those with a declaration or any stored state.
+        let mut names: Vec<String> = cs
+            .all_declarations(&book.slug)
+            .map(|v| v.into_iter().map(|d| d.character_name).collect())
+            .unwrap_or_default();
+        if let Ok(more) = cs.characters_with_states(&book.slug) {
+            for n in more {
+                if !names.iter().any(|x| x.eq_ignore_ascii_case(&n)) {
+                    names.push(n);
+                }
+            }
+        }
+        if names.is_empty() {
+            self.status =
+                "character: no tracked arcs yet — run the review pass (Ctrl+B Shift+C) or `inkhaven character refresh`".into();
+            return;
+        }
+        let opened_text =
+            self.opened.as_ref().map(|d| d.textarea.lines().join(" ").to_lowercase());
+        let focus = opened_text
+            .as_ref()
+            .and_then(|lc| names.iter().find(|n| lc.contains(&n.to_lowercase())).cloned())
+            .unwrap_or_else(|| names[0].clone());
+        let rows = self.build_character_arc_rows(&cs, &book.slug, &focus, &names);
+        self.modal = Modal::CharacterArc { rows, cursor: 0 };
+        self.status = "character arc · ↑↓ scroll · Esc".into();
+    }
+
+    /// Render the cached arc for `focus` into scrollable text rows.
+    fn build_character_arc_rows(
+        &self,
+        cs: &crate::character::CharStore,
+        book_slug: &str,
+        focus: &str,
+        names: &[String],
+    ) -> Vec<String> {
+        let mut rows = Vec::new();
+        let decl = cs.declaration(book_slug, focus).ok().flatten();
+        let states = cs.states_for_character(book_slug, focus).unwrap_or_default();
+        let checks = cs.checks_for_character(book_slug, focus).unwrap_or_default();
+        let planning: Vec<_> = cs
+            .planning_findings(book_slug)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|(n, _, _)| n.eq_ignore_ascii_case(focus))
+            .collect();
+
+        rows.push(format!("{} — Character arc", focus.to_uppercase()));
+        rows.push(String::new());
+        match &decl {
+            Some(d) => {
+                rows.push(format!("Declared arc: {}", d.arc_type.as_code()));
+                rows.push(format!("  start    : {}", d.desired_state_start));
+                if let Some(m) = &d.desired_midpoint_state {
+                    rows.push(format!("  midpoint : {m}"));
+                }
+                rows.push(format!("  end      : {}", d.desired_state_end));
+            }
+            None => rows.push(
+                "Declared arc: (none — add a `character_arc` block in the Characters book)".into(),
+            ),
+        }
+        rows.push(String::new());
+        if states.is_empty() {
+            rows.push("State chain: (empty — run `inkhaven character refresh`)".into());
+        } else {
+            rows.push(format!("State chain ({} chapters):", states.len()));
+            for s in &states {
+                let mark = if s.changed { '✦' } else { '·' };
+                let ag = s.agency_score.map(|x| format!("{x:.2}")).unwrap_or_else(|| "—".into());
+                rows.push(format!(
+                    "  {mark} ch.{:>2}  agency {ag} ({}a/{}p)",
+                    s.chapter_ord, s.active_count, s.passive_count
+                ));
+                rows.push(format!("       {}", s.state_summary));
+                if let Some(cd) = &s.change_description {
+                    rows.push(format!("       → {cd}"));
+                }
+            }
+        }
+        rows.push(String::new());
+        if checks.is_empty() {
+            rows.push("Arc checks: (none — run `inkhaven character check`)".into());
+        } else {
+            rows.push("Arc checks:".into());
+            for c in &checks {
+                let loc = c.chapter_ord.map(|o| format!(" (ch.{o})")).unwrap_or_default();
+                rows.push(format!("  [{}] {}{loc}", c.verdict.as_code(), c.check_type.label()));
+                rows.push(format!("       {}", c.description));
+            }
+        }
+        if !planning.is_empty() {
+            rows.push(String::new());
+            rows.push("Planning gaps:".into());
+            for (_, ft, desc) in &planning {
+                rows.push(format!("  [{ft}] {desc}"));
+            }
+        }
+        if names.len() > 1 {
+            rows.push(String::new());
+            rows.push(format!("Tracked: {}", names.join(", ")));
+        }
+        rows
+    }
+
+    fn character_arc_handle_key(&mut self, key: KeyEvent) -> bool {
+        let n = match &self.modal {
+            Modal::CharacterArc { rows, .. } => rows.len(),
+            _ => return false,
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "character arc: closed".into();
+            }
+            KeyCode::Up => {
+                if let Modal::CharacterArc { cursor, .. } = &mut self.modal {
+                    *cursor = cursor.saturating_sub(1);
+                }
+            }
+            KeyCode::Down => {
+                if let Modal::CharacterArc { cursor, .. } = &mut self.modal {
+                    if n > 0 {
+                        *cursor = (*cursor + 1).min(n - 1);
+                    }
+                }
+            }
+            _ => {}
+        }
+        true
+    }
+
     /// WORLD-4 — `Ctrl+B W`. Build the read-only World overview: the world
     /// definition + compiled astronomy + materialization status.
     fn open_world_overview(&mut self) {
@@ -13273,6 +13517,11 @@ impl App {
         // LLM stages run explicitly via `inkhaven world utopia-check`).
         let uto = emit_cached_utopia_findings(&self.store).unwrap_or(0);
 
+        // CHAR-1 — character-arc findings: deterministic agency + planning gaps +
+        // stalls recompute; arc-completeness problems are read cached (the LLM
+        // checks run explicitly via `inkhaven character check`).
+        let chr = run_character_check(&self.store, &self.cfg, &self.layout).unwrap_or(0);
+
         // Reflect the instant findings in the tree report-card immediately.
         self.refresh_tree_badges();
 
@@ -13283,12 +13532,12 @@ impl App {
         // seconds later (and re-badge the tree on completion).
         let editor_spawned = self.maybe_spawn_check_editor();
 
-        let total = fact + soc + tl + dlg + uto;
+        let total = fact + soc + tl + dlg + uto + chr;
         if total == 0 && !editor_spawned {
             self.status = if checked == 0 {
-                "review pass: clean (no open paragraph; timeline + dialogue + utopia included)".into()
+                "review pass: clean (no open paragraph; timeline + dialogue + utopia + character included)".into()
             } else {
-                format!("review pass: clean ({checked} ¶ + timeline + dialogue + utopia)")
+                format!("review pass: clean ({checked} ¶ + timeline + dialogue + utopia + character)")
             };
             return;
         }
@@ -13302,7 +13551,7 @@ impl App {
             format!("review pass: instant checks clean{editor_note}")
         } else {
             format!(
-                "review pass: {total} finding(s) — fact {fact} · socrates {soc} · timeline {tl} · dialogue {dlg} · utopia {uto}{editor_note} → Output (^B Tab)"
+                "review pass: {total} finding(s) — fact {fact} · socrates {soc} · timeline {tl} · dialogue {dlg} · utopia {uto} · character {chr}{editor_note} → Output (^B Tab)"
             )
         };
     }
@@ -22645,6 +22894,11 @@ impl App {
 
         if matches!(self.modal, Modal::DialogueFingerprint { .. }) {
             self.dialogue_fingerprint_handle_key(key);
+            return Ok(false);
+        }
+
+        if matches!(self.modal, Modal::CharacterArc { .. }) {
+            self.character_arc_handle_key(key);
             return Ok(false);
         }
 

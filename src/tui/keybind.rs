@@ -161,6 +161,10 @@ pub enum Action {
     /// view for the nearest character.
     #[serde(rename = "dialogue.open_view")]
     OpenDialogueView,
+    /// CHAR-1 — `Ctrl+V Shift+N`. Open the per-character arc view (declaration +
+    /// state chain + agency + checks + planning gaps) for the nearest character.
+    #[serde(rename = "character.open_arc")]
+    OpenCharacterArc,
     /// WORLD-4 — `Ctrl+B W`. Open the World overview (the world definition +
     /// compiled astronomy + materialization status).
     #[serde(rename = "world.open_overview")]
@@ -933,6 +937,7 @@ impl Action {
             Action::OpenEditorialPass => "editorial".into(),
             Action::OpenStoryBible => "bible".into(),
             Action::OpenDialogueView => "dialogue".into(),
+            Action::OpenCharacterArc => "char arc".into(),
             Action::OpenConlangHub => "conlang".into(),
             Action::OpenOutline => "outline".into(),
             Action::OpenWorldOverview => "world".into(),
@@ -1154,6 +1159,8 @@ impl Action {
                 "Open the story bible (1.3.8) — a consolidated, navigable view of the world you've built: every Character with the attributes the continuity bible has tracked across chapters (`eye_color: brown (ch.3)`), plus the Places, Artefacts, and Facts books. 1.3.10 adds semantic drift: under any entity `inkhaven drift scan` flagged, a ⚠ drift badge names the contradicting descriptions and shows the entity's chapter-ordered description trail (each row jumps to its source). 1.3.11 banners the world-consistency health line (the `inkhaven world` summary) at the top. `↑↓` navigate, `Enter` jumps to the entry's source paragraph, `Esc` closes. Run `inkhaven continuity extract` to populate the character attributes. Mnemonic: L for Lore.".into(),
             Action::OpenDialogueView =>
                 "Open the dialogue fingerprint view (DIALOG-1, Ctrl+V Shift+Q) — the per-character speech signature for the nearest character (or the most-speaking character if none is named in the current paragraph): utterance count, average length, vocabulary diversity (MATTR), question / exclamation ratios, and hedge density, as ASCII bars, with a compare line for the next two speakers. Read-only; `↑↓` scroll, `Esc` closes. Built from `Certain`-attributed dialogue; run `inkhaven dialogue scan` (or the `Ctrl+B Shift+C` review pass) to populate it. Mnemonic: Q for Quote.".into(),
+            Action::OpenCharacterArc =>
+                "Open the character arc view (CHAR-1, Ctrl+V Shift+N) — the tracked arc for the nearest character (one named in the current paragraph, else the first tracked one): the author-declared arc (start / midpoint / end), the chapter-by-chapter observable state chain (✦ marks a change) with each chapter's deterministic agency score (active / passive presence), the arc-completeness checks, and any Planning-Board coverage gaps. Read-only over the cached char.duckdb; `↑↓` scroll, `Esc` closes. Populate it with the `Ctrl+B Shift+C` review pass (agency + stalls + planning, zero-AI) or `inkhaven character refresh` / `check` (the LLM passes). Mnemonic: N for arc (the bend).".into(),
             Action::OpenConlangHub =>
                 "Open the ConLang hub (LANG-1, Ctrl+B X) — a read-only overview of every constructed language under the Language system book: phoneme inventory (consonants / vowels), template + constraint + allophony counts, prosody (stress rule, tone), romanization schemes, lexicon size, and linked speakers (Places / Characters). `↑↓` scroll, `Esc` closes. The deep operations live on the CLI — `inkhaven language audit / generate-lexicon / query / scan-manuscript` — plus `Ctrl+B Q` to translate a paragraph into an invented language. Mnemonic: X for conlang.".into(),
             Action::OpenOutline =>
@@ -1677,6 +1684,9 @@ impl KeyBindings {
                 // DIALOG-1 — Ctrl+V Shift+Q opens the dialogue fingerprint view
                 // (Q = Quote; Ctrl+V D was taken).
                 entry("Shift+q", Action::OpenDialogueView, Scope::Any),
+                // CHAR-1 — Ctrl+V Shift+N opens the character arc view (N = arc,
+                // the bend; plain `n` is ViewNextDiagnostic).
+                entry("Shift+n", Action::OpenCharacterArc, Scope::Any),
                 // 1.4.8+ TERMS-1 — Ctrl+V z toggle the banned-synonym overlay;
                 // Ctrl+V Shift+Z declares the term under the cursor deliberate.
                 entry("z", Action::ViewToggleTermsOverlay, Scope::Any),

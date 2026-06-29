@@ -5299,6 +5299,66 @@ impl super::super::App {
         );
     }
 
+    /// CHAR-1 — the per-character arc view (`Ctrl+V Shift+N`): a read-only
+    /// scrollable panel of the cached arc (declaration · state chain · agency ·
+    /// checks · planning gaps). Section headers (column-0, non-blank) render
+    /// bold-cyan; indented lines are detail.
+    pub(in crate::tui::app) fn draw_character_arc_modal(
+        &mut self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        use ratatui::style::Color;
+        let Modal::CharacterArc { rows, cursor } = &self.modal else {
+            return;
+        };
+
+        let width = area.width.saturating_sub(6).clamp(52, 92);
+        let height = area.height.saturating_sub(4).max(12);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Character arc ")
+            .border_style(Style::default().fg(self.theme.modal_border).add_modifier(Modifier::BOLD))
+            .style(Style::default().bg(self.theme.modal_bg).fg(self.theme.modal_fg));
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let list_h = inner.height.saturating_sub(1).max(1) as usize;
+        let body_rect = Rect { x: inner.x, y: inner.y, width: inner.width, height: list_h as u16 };
+        let footer_rect =
+            Rect { x: inner.x, y: inner.y + inner.height - 1, width: inner.width, height: 1 };
+
+        let cur = (*cursor).min(rows.len().saturating_sub(1));
+        let start = if cur >= list_h { cur + 1 - list_h } else { 0 };
+        let mut lines: Vec<Line> = Vec::new();
+        for (i, r) in rows.iter().enumerate().skip(start).take(list_h) {
+            // Header = the title line, or a non-blank line starting at column 0.
+            let is_header = i == 0 || (!r.is_empty() && !r.starts_with(' '));
+            let line = if is_header {
+                Line::from(Span::styled(
+                    r.clone(),
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                ))
+            } else {
+                Line::from(Span::styled(truncate_to(r, 90), Style::default()))
+            };
+            lines.push(line);
+        }
+        f.render_widget(Paragraph::new(lines), body_rect);
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                " ↑↓ scroll · Esc ",
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
     /// WORLD-4 — the World overview (`Ctrl+B W`): a read-only scrollable
     /// summary of the world definition, compiled astronomy, and materialization
     /// status. Lines that begin at column 0 (and aren't blank) are section

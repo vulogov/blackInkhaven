@@ -531,6 +531,14 @@ pub struct Scene {
     pub decision: String,
     #[serde(default = "default_status")]
     pub status: String,
+    /// CHAR-1 — character names from the Characters book whose arc this scene
+    /// advances. Optional; backward-compatible.
+    #[serde(default)]
+    pub characters: Vec<String>,
+    /// CHAR-1 — free-text note on the arc work this scene does. Display-only;
+    /// not parsed or checked.
+    #[serde(default)]
+    pub arc_function: Option<String>,
 }
 
 impl Scene {
@@ -547,6 +555,8 @@ impl Scene {
             dilemma: String::new(),
             decision: String::new(),
             status: default_status(),
+            characters: Vec::new(),
+            arc_function: None,
         }
     }
     /// A reactive sequel card (reaction/dilemma/decision).
@@ -562,6 +572,8 @@ impl Scene {
             dilemma: dilemma.into(),
             decision: decision.into(),
             status: default_status(),
+            characters: Vec::new(),
+            arc_function: None,
         }
     }
     pub fn is_sequel(&self) -> bool {
