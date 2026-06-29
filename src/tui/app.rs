@@ -14231,29 +14231,31 @@ impl App {
         let grounding = book_slug
             .as_deref()
             .and_then(|slug| crate::inner_theologian::build_grounding(&root, slug, &[]));
-        let user = crate::inner_theologian::build_session_prompt(
-            crate::inner_theologian::QuestionCategory::MoralWeight,
-            &prose,
-            grounding.as_deref(),
-            &lang,
-            &cfg.theologian.disabled_lenses,
-        );
         self.modal = Modal::None;
         // Pre-show the Thoughts pane (where the result will land) so the
         // "thinking…" wait and the answer share one place; don't force Output.
         self.right_pane = RightPane::Thoughts;
-        self.status = "⟳ Inner Theologian: thinking…".into();
+        self.status = "⟳ Inner Theologian: discerning the lenses…".into();
         self.start_bg_job(BgJobKind::TheologianSlow, "inner theologian", move |tx, _cancel| {
-            // Return the full prose so the main loop can seed it into the
-            // scrollable Thoughts pane — the Output pane is for short
-            // findings, not a multi-paragraph slow-track response.
-            let result = crate::inner_theologian::theologian_llm_call(
-                &cfg,
-                crate::inner_theologian::THEOLOGIAN_SYSTEM,
-                &user,
-            )
-            .map(|raw| raw.trim().to_string())
-            .map_err(|e| e.to_string());
+            use crate::inner_theologian as it;
+            // Two passes: (1) discover which tradition lenses genuinely
+            // illuminate this passage, (2) analyse through the discovered lenses.
+            let disc_prompt = it::build_discovery_prompt(&prose, &cfg.theologian.disabled_lenses);
+            let result = it::theologian_llm_call(&cfg, it::THEOLOGIAN_SYSTEM, &disc_prompt)
+                .and_then(|disc| {
+                    let (selected, silent) = it::parse_selected_lenses(&disc);
+                    let analysis = it::build_session_prompt(
+                        it::QuestionCategory::MoralWeight,
+                        &prose,
+                        &selected,
+                        &silent,
+                        grounding.as_deref(),
+                        &lang,
+                    );
+                    it::theologian_llm_call(&cfg, it::THEOLOGIAN_SYSTEM, &analysis)
+                })
+                .map(|raw| raw.trim().to_string())
+                .map_err(|e| e.to_string());
             let _ = tx.send(BgMsg::Done(result));
         });
     }

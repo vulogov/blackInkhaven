@@ -39,3 +39,12 @@ pub(crate) fn theologian_llm_call(cfg: &Config, system: &str, user: &str) -> Res
     }
     Err(anyhow!("Inner Theologian LLM error: {last_err}"))
 }
+
+/// Extract the first top-level JSON object from an LLM response (models often
+/// wrap JSON in prose or fences). Used by the lens-discovery parser (IT-P5).
+pub(super) fn extract_json_object(raw: &str) -> &str {
+    match (raw.find('{'), raw.rfind('}')) {
+        (Some(a), Some(b)) if b > a => &raw[a..=b],
+        _ => raw.trim(),
+    }
+}
