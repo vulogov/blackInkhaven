@@ -41,6 +41,8 @@ mod drift;
 mod prose;
 // DIALOG-1 — dialogue quality & attribution engine.
 mod dialogue;
+// CHAR-1 — character arc tracking.
+mod character;
 mod world_report;
 mod progress;
 mod replace;
