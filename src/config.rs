@@ -71,6 +71,9 @@ pub struct Config {
     pub dialogue: DialogueConfig,
     #[serde(default)]
     pub utopia: UtopiaConfig,
+    /// CHAR-1 — character-arc tracking.
+    #[serde(default)]
+    pub char: CharConfig,
     /// The project's declared genre (e.g. `literary_realism`, `fantasy`).
     /// Project-wide; consumed by Inner Editor's genre-aware prompting and open
     /// to other features later. `None` = genre-blind.
@@ -222,6 +225,7 @@ impl Default for Config {
             prose: ProseConfig::default(),
             dialogue: DialogueConfig::default(),
             utopia: UtopiaConfig::default(),
+            char: CharConfig::default(),
             genre: None,
             inner_socrates_default_persona: None,
             project_lock: ProjectLockConfig::default(),
@@ -3737,6 +3741,55 @@ impl Default for UtopiaConfig {
             stage3_batch_size: 5,
             stage3_min_chapter_words: 200,
             group_gap_threshold: 1,
+        }
+    }
+}
+
+/// CHAR-1 — `char:` block. Tunes the character-arc tracker: the agency windows,
+/// the stall threshold, the minimum chapters before LLM arc checks run, the
+/// cross-system enrichment toggles, and the genre verb extras. All optional;
+/// omitting the block uses these defaults (RFC §15).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CharConfig {
+    /// Consecutive unchanged chapters (after the baseline) before the stall
+    /// finding fires.
+    pub stall_threshold: u32,
+    /// Tokens before an action verb a character name may sit and still count as
+    /// the actor (active presence).
+    pub active_window_before: usize,
+    /// Tokens after a verb a character name may sit and count as the patient
+    /// (passive presence).
+    pub active_window_after: usize,
+    /// Minimum chapters of extracted state before the LLM arc-completeness
+    /// checks run for a character (fewer → stall only).
+    pub min_chapters_for_check: usize,
+    /// Enrich the state chain with DIALOG-1 utterance/hedge signals.
+    pub enrich_from_dialogue: bool,
+    /// Enrich the state chain with NARR-1 chapter interiority.
+    pub enrich_from_voice: bool,
+    /// Arc language override (`en`/`ru`/`de`/`fr`/`es`); `null` → project
+    /// language → English fallback.
+    pub language: Option<String>,
+    /// Verbs appended to the active language's action-verb list (genre verbs the
+    /// agency scorer should treat as deliberate action).
+    pub extra_action_verbs: Vec<String>,
+    /// State-extraction cost-warning threshold (USD). Informs, never blocks.
+    pub extraction_cost_warn: f32,
+}
+
+impl Default for CharConfig {
+    fn default() -> Self {
+        Self {
+            stall_threshold: 4,
+            active_window_before: 5,
+            active_window_after: 8,
+            min_chapters_for_check: 3,
+            enrich_from_dialogue: true,
+            enrich_from_voice: true,
+            language: None,
+            extra_action_verbs: Vec::new(),
+            extraction_cost_warn: 0.20,
         }
     }
 }

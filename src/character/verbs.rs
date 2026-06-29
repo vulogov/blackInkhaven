@@ -82,6 +82,24 @@ pub(crate) fn verbs_for(lang: &ProseLanguage) -> &'static ActionVerbs {
     }
 }
 
+/// The action-verb list for a language with `char.extra_action_verbs` folded in
+/// (lowercased, leaked to `'static` — mirrors NARR-1's `lexicon_for_with`).
+/// Returns the static list unchanged when there are no extras.
+pub(crate) fn verbs_for_with(lang: &ProseLanguage, extra: &[String]) -> ActionVerbs {
+    let base = verbs_for(lang);
+    if extra.is_empty() {
+        return ActionVerbs { verbs: base.verbs };
+    }
+    let mut v: Vec<&'static str> = base.verbs.to_vec();
+    for e in extra {
+        let t = e.trim().to_lowercase();
+        if !t.is_empty() {
+            v.push(Box::leak(t.into_boxed_str()));
+        }
+    }
+    ActionVerbs { verbs: Box::leak(v.into_boxed_slice()) }
+}
+
 /// Whether `verb` (any case) is a transitive action verb for this language.
 pub(crate) fn is_action_verb(verb: &str, av: &ActionVerbs) -> bool {
     let q = verb.trim().to_lowercase();
@@ -120,5 +138,15 @@ mod tests {
     fn fallback_language_uses_en() {
         let av = verbs_for(&ProseLanguage::Other("pl".into()));
         assert!(is_action_verb("won", av));
+    }
+
+    #[test]
+    fn extra_action_verbs_fold_in() {
+        let av = verbs_for_with(&ProseLanguage::En, &["Transmitted".into(), "  ".into()]);
+        assert!(is_action_verb("transmitted", &av)); // lowercased extra
+        assert!(is_action_verb("struck", &av)); // base list preserved
+        // Empty extras → base list, no leak.
+        let plain = verbs_for_with(&ProseLanguage::En, &[]);
+        assert!(is_action_verb("won", &plain));
     }
 }

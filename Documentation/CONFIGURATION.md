@@ -2242,6 +2242,50 @@ utopia: {
 
 See [Tutorial 98 — Utopia coherence](Tutorials/98-utopia-coherence.md).
 
+## 1.4.16 — Character arc tracking (CHAR-1)
+
+The optional `char:` block tunes the character-arc tracker. Omit it for the
+defaults below.
+
+```hjson
+char: {
+  // Consecutive unchanged chapters (after the baseline) before a stall fires.
+  stall_threshold: 4
+  // Tokens before an action verb a name may sit and still count as the actor.
+  active_window_before: 5
+  // Tokens after a verb a name may sit and count as the patient.
+  active_window_after: 8
+  // Minimum chapters of extracted state before the LLM arc checks run for a
+  // character (fewer → stall check only).
+  min_chapters_for_check: 3
+  // Enrich the state chain with DIALOG-1 utterance/hedge signals.
+  enrich_from_dialogue: true
+  // Enrich the state chain with NARR-1 chapter interiority.
+  enrich_from_voice: true
+  // Arc language override (en/ru/de/fr/es); null → project language → English.
+  language: null
+  // Genre verbs the agency scorer should treat as deliberate action, appended
+  // to the active language's list (e.g. SF "warped", "teleported").
+  extra_action_verbs: []
+  // State-extraction cost-warning threshold (USD). Informs, never blocks.
+  extraction_cost_warn: 0.20
+}
+```
+
+- Declare an arc in a **Characters**-book paragraph's `character_arc` HJSON block
+  (`arc_type`, `desired_state_start` / optional `desired_midpoint_state` /
+  `desired_state_end`). Run **`inkhaven character refresh`** (agency + state
+  extraction), **`check`** (arc completeness — exits 1/2 for CI), **`plan`**
+  (Planning-Board coverage gaps), **`arc <name>`** (report).
+- Agency is deterministic and zero-AI; state extraction is the only LLM pass
+  (content-hash lazy). Profiles live in `.inkhaven/char.duckdb`. Findings are
+  advisory (`info`): the deterministic layers + cached problems surface in the
+  `Ctrl+B Shift+C` review pass (Output `character` category) and the
+  **`Ctrl+V Shift+N`** arc view. Read-only `ink.char.*` Bund. It never edits
+  prose.
+
+See [Tutorial 99 — Character arcs](Tutorials/99-character-arcs.md).
+
 ## 1.4.10 — Jinja template paragraphs (STRUCT-1)
 
 A paragraph with `content_type: "jinja"` is a [minijinja](https://docs.rs/minijinja)

@@ -4,7 +4,7 @@
 |---|---|
 | **RFC** | CHAR-1 |
 | **Title** | Chapter-ordered character state chains; deterministic agency score; declared-arc completeness checks; Planning-Board linkage; CLI + Bund |
-| **Status** | In progress — 1.4.16 |
+| **Status** | Shipped — 1.4.16 |
 | **Author** | Vladimir Ulogov |
 | **Depends on** | NARR-1 (`ProseLanguage`, `detect_passive`, `prose_profiles.interiority_ratio`), DIALOG-1 (`dialogue_spans`, `character_dialogue_fingerprints`), the LLM engage + cost + bg infra |
 | **New dependency** | none |

@@ -25,10 +25,6 @@ use crate::store::hierarchy::Hierarchy;
 
 use super::CharacterCommand;
 
-/// RFC §15 defaults until the `char:` config block lands (C-P10).
-const STALL_THRESHOLD: u32 = 4;
-const MIN_CHAPTERS: usize = 3;
-
 pub fn run(project: &Path, cmd: CharacterCommand) -> Result<()> {
     match cmd {
         CharacterCommand::Arc { name, book } => arc(project, &name, book.as_deref()),
@@ -200,8 +196,16 @@ fn check(project: &Path, book_name: Option<&str>, json: bool) -> Result<()> {
         // Ensure the state chain exists (lazy; only re-extracts on edits).
         run_extraction(&cs, &cfg, &layout, &h, book, &d.character_name, Some(d)).map_err(se)?;
         let states = cs.states_for_character(&book.slug, &d.character_name).map_err(se)?;
-        let checks = run_arc_checks(&cs, &cfg, &book.slug, d, &states, STALL_THRESHOLD, MIN_CHAPTERS)
-            .map_err(se)?;
+        let checks = run_arc_checks(
+            &cs,
+            &cfg,
+            &book.slug,
+            d,
+            &states,
+            cfg.char.stall_threshold,
+            cfg.char.min_chapters_for_check,
+        )
+        .map_err(se)?;
         all.extend(checks);
     }
 

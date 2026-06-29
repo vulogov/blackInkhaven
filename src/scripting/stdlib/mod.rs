@@ -27,6 +27,8 @@ mod snippets;
 mod prose;
 mod dialogue;
 mod utopia;
+#[path = "char.rs"]
+mod char_arc;
 mod pdf;
 mod review;
 
@@ -60,5 +62,6 @@ pub fn register_ink_stdlib(vm: &mut VM) -> Result<()> {
     prose::register(vm)?;
     dialogue::register(vm)?;
     utopia::register(vm)?;
+    char_arc::register(vm)?;
     Ok(())
 }

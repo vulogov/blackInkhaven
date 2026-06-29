@@ -15,7 +15,7 @@ use anyhow::Result;
 
 use crate::config::Config;
 use crate::project::ProjectLayout;
-use crate::prose::{CompiledLexicon, ProseLanguage, VoiceScope, resolve_prose_language};
+use crate::prose::{CompiledLexicon, VoiceScope, resolve_prose_language};
 use crate::store::NodeKind;
 use crate::store::SYSTEM_TAG_CHARACTERS;
 use crate::store::hierarchy::Hierarchy;
@@ -24,7 +24,7 @@ use crate::store::node::Node;
 use super::agency::{AgencyWindows, compute_agency};
 use super::llm::char_llm_call;
 use super::store::CharStore;
-use super::{ArcDeclaration, CharacterState, verbs_for};
+use super::{ArcDeclaration, CharacterState, verbs_for_with};
 
 /// The character roster — titles of the Characters book's direct children.
 pub(crate) fn character_names(h: &Hierarchy) -> Vec<String> {
@@ -111,12 +111,15 @@ pub(crate) fn run_agency(
     cfg: &Config,
     book: &Node,
 ) -> Result<usize> {
-    let (lang, _note) = resolve_prose_language(None, &cfg.language);
+    let (lang, _note) = resolve_prose_language(cfg.char.language.as_deref(), &cfg.language);
     let lx = CompiledLexicon::for_language_with(&lang, &[], &[]);
-    let av = verbs_for(&lang);
+    let av = verbs_for_with(&lang, &cfg.char.extra_action_verbs);
     let roster = character_names(h);
     let now = chrono::Utc::now().to_rfc3339();
-    let win = AgencyWindows::default();
+    let win = AgencyWindows {
+        before: cfg.char.active_window_before,
+        after: cfg.char.active_window_after,
+    };
 
     let mut count = 0;
     for (idx, ch) in chapters_of(h, book).iter().enumerate() {
@@ -129,7 +132,7 @@ pub(crate) fn run_agency(
             }
             let others: Vec<String> = roster.iter().filter(|n| *n != name).cloned().collect();
             let (score, active, passive) =
-                compute_agency(&text, name, &others, &lang, &lx, av, win);
+                compute_agency(&text, name, &others, &lang, &lx, &av, win);
             store.upsert_agency(&book.slug, name, ord, score, active, passive, &now)?;
             count += 1;
         }
@@ -188,30 +191,36 @@ fn enrich(
     book_slug: &str,
     name: &str,
     chapter_ord: u32,
+    from_dialogue: bool,
+    from_voice: bool,
 ) -> (Option<u32>, Option<f32>, Option<f32>) {
     let mut utt = None;
     let mut hedge = None;
     let mut interiority = None;
     // DIALOG-1: per-chapter utterance count + book hedge density.
-    if let Ok(ds) = crate::dialogue::DialogueStore::open(project_root) {
-        if let Ok(spans) = ds.spans_for_chapter(book_slug, chapter_ord) {
-            let n = spans
-                .iter()
-                .filter(|s| s.attribution_name.as_deref() == Some(name))
-                .count();
-            utt = Some(n as u32);
-        }
-        if let Ok(Some(fp)) = ds.fingerprint(book_slug, name) {
-            hedge = Some(fp.hedge_density);
+    if from_dialogue {
+        if let Ok(ds) = crate::dialogue::DialogueStore::open(project_root) {
+            if let Ok(spans) = ds.spans_for_chapter(book_slug, chapter_ord) {
+                let n = spans
+                    .iter()
+                    .filter(|s| s.attribution_name.as_deref() == Some(name))
+                    .count();
+                utt = Some(n as u32);
+            }
+            if let Ok(Some(fp)) = ds.fingerprint(book_slug, name) {
+                hedge = Some(fp.hedge_density);
+            }
         }
     }
     // NARR-1: chapter interiority ratio.
-    if let Ok(ps) = crate::prose::ProseStore::open(project_root) {
-        if let Ok(profiles) = ps.get_all(book_slug) {
-            interiority = profiles
-                .iter()
-                .find(|p| p.scope == VoiceScope::Chapter(chapter_ord))
-                .and_then(|p| p.interiority_ratio);
+    if from_voice {
+        if let Ok(ps) = crate::prose::ProseStore::open(project_root) {
+            if let Ok(profiles) = ps.get_all(book_slug) {
+                interiority = profiles
+                    .iter()
+                    .find(|p| p.scope == VoiceScope::Chapter(chapter_ord))
+                    .and_then(|p| p.interiority_ratio);
+            }
         }
     }
     (utt, hedge, interiority)
@@ -268,8 +277,14 @@ pub(crate) fn run_extraction(
         let raw = char_llm_call(cfg, EXTRACTION_SYSTEM, &user)?;
         let (summary, changed, change_desc) =
             parse_state(&raw).unwrap_or_else(|| ("(no state extracted)".into(), false, None));
-        let (utt, hedge, interiority) =
-            enrich(layout.root.as_path(), &book.slug, name, *ord);
+        let (utt, hedge, interiority) = enrich(
+            layout.root.as_path(),
+            &book.slug,
+            name,
+            *ord,
+            cfg.char.enrich_from_dialogue,
+            cfg.char.enrich_from_voice,
+        );
         let state = CharacterState {
             character_name: name.to_string(),
             chapter_ord: *ord,

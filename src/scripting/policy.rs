@@ -173,6 +173,13 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.dialogue.violations", category::STORE_READ),
     ("ink.dialogue.spans", category::STORE_READ),
     ("ink.dialogue.refresh", category::STORE_READ),
+    // CHAR-1 — character-arc reads; `plan`/`refresh` write only the derived
+    // char.duckdb cache (not the manuscript), so they stay store_read too.
+    ("ink.char.arc", category::STORE_READ),
+    ("ink.char.stalls", category::STORE_READ),
+    ("ink.char.checks", category::STORE_READ),
+    ("ink.char.plan", category::STORE_READ),
+    ("ink.char.refresh", category::STORE_READ),
     // WORLD-6 — utopia coherence reads (model/findings/violations) are
     // store_read; `suppress` mutates the findings table → store_write (below).
     ("ink.utopia.model", category::STORE_READ),
