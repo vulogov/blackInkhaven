@@ -12,12 +12,14 @@ mod checks;
 mod declarations;
 mod llm;
 mod pipeline;
+mod planning;
 mod store;
 mod verbs;
 
 pub(crate) use checks::{detect_stall, run_arc_checks};
 pub(crate) use declarations::read_arc_declarations;
 pub(crate) use pipeline::{character_names, run_agency, run_extraction};
+pub(crate) use planning::run_planning;
 pub(crate) use store::CharStore;
 pub(crate) use verbs::{ActionVerbs, is_action_verb, verbs_for};
 
