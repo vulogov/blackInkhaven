@@ -1739,6 +1739,7 @@ impl super::super::App {
                 crate::pane::output::kinds::INNER_EDITOR_OBSERVATION => "✎ ",
                 crate::pane::output::kinds::HAIKU => "✦ ",
                 crate::pane::output::kinds::THEOLOGIAN => "⚖ ",
+                crate::pane::output::kinds::MYTH => "⊛ ",
                 _ => "",
             };
             lines.push(Line::from(vec![

@@ -175,6 +175,43 @@ pub(crate) fn collect_explicit_motifs(
     Ok(count)
 }
 
+/// One-shot scan: refresh the inventory, recompute density + explicit motifs,
+/// run the deterministic checks, and build the Thoughts/stdout heatmap. Returns
+/// `(unsuppressed deterministic finding count, heatmap markdown)`.
+pub(crate) fn run_full_scan(
+    store: &MythStore,
+    layout: &ProjectLayout,
+    h: &Hierarchy,
+    book: &Node,
+    buckets: usize,
+    final_act_pct: u32,
+    force: bool,
+) -> Result<(usize, String)> {
+    refresh_inventory(store, layout, h, book)?;
+    run_density_scan(store, layout, h, book, force)?;
+    collect_explicit_motifs(store, layout, h, book)?;
+    let findings = super::checks::run_deterministic_checks(store, layout, h, book, final_act_pct)?;
+
+    let total = chapter_count(h, book);
+    let presence: Vec<(String, Vec<u32>)> = store
+        .archetypes(&book.slug)?
+        .iter()
+        .map(|a| {
+            let name = a.character_name.trim();
+            let label = if name.is_empty() {
+                a.role.as_code().to_string()
+            } else {
+                format!("{} ({name})", a.role.as_code())
+            };
+            let chapters =
+                if name.is_empty() { Vec::new() } else { character_mention_chapters(layout, h, book, name) };
+            (label, chapters)
+        })
+        .collect();
+    let heatmap = super::heatmap::build_heatmap(store, &book.slug, &book.title, total, buckets, &presence)?;
+    Ok((findings.len(), heatmap))
+}
+
 /// The user book's chapter count.
 pub(super) fn chapter_count(h: &Hierarchy, book: &Node) -> u32 {
     chapters_of(h, book).len() as u32

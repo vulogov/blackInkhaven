@@ -56,6 +56,9 @@ pub mod kinds {
     /// INNER-THEOLOGIAN-1 — a fast-track ethical signal (moral invisibility /
     /// consequence gap / sacred levity). Always informational, never a verdict.
     pub const THEOLOGIAN: &str = "theologian";
+    /// MYTH-1 — a deterministic myth finding (archetype vacant/absent, motif
+    /// absent from the final act). Always informational.
+    pub const MYTH: &str = "myth";
 }
 
 /// Visual / priority class (RFC §7.4).
