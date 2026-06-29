@@ -135,7 +135,7 @@ fn deterministic_id(group: &str, a: &str, b: &str) -> String {
 }
 
 /// Number of pairs Stage 2 would check for a group (for the cost-warning note).
-pub(super) fn pair_count(claims: &[UtopiaClaim]) -> usize {
+pub(crate) fn pair_count(claims: &[UtopiaClaim]) -> usize {
     select_pairs(claims).len()
 }
 
@@ -143,7 +143,7 @@ pub(super) fn pair_count(claims: &[UtopiaClaim]) -> usize {
 /// verdict, and emit a finding per incompatibility. Clears the group's prior
 /// systemic chain findings first (domain-scoped, so the Factual cross-reference
 /// from Stage 1 survives). Returns the number of findings raised.
-pub(super) fn run_stage2_group(
+pub(crate) fn run_stage2_group(
     store: &UtopiaStore,
     cfg: &Config,
     book_slug: &str,

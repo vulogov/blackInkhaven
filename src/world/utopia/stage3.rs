@@ -145,7 +145,7 @@ pub(super) fn chapter_text(layout: &ProjectLayout, h: &Hierarchy, chapter_id: uu
 /// `batch_size` stale chapters this pass). Skips chapters below `min_words` and
 /// chapters whose scan hash is unchanged. Returns (violations found, chapters
 /// scanned this pass, chapters still stale).
-pub(super) fn run_stage3_group(
+pub(crate) fn run_stage3_group(
     store: &UtopiaStore,
     cfg: &Config,
     layout: &ProjectLayout,
