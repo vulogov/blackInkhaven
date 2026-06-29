@@ -322,6 +322,9 @@ fn lex_style_at(
             // priority HJSON knobs.
             LexCategory::Language => 2,
             LexCategory::Note => 1,
+            // MYTH-1 — symbols rank above notes/language but below the named
+            // entities, so a place/character name still wins a contested cell.
+            LexCategory::Symbol => 2,
         }
     }
     let mut chosen: Option<LexCategory> = None;
@@ -357,6 +360,11 @@ fn lex_style_at(
         LexCategory::Language => Style::default()
             .fg(theme.language_word_fg)
             .add_modifier(Modifier::ITALIC),
+        // MYTH-1 — declared symbol vocabulary, lavender. Bold like the named
+        // entities, but its own hue so symbolic density reads at a glance.
+        LexCategory::Symbol => Style::default()
+            .fg(theme.myth_symbol_fg)
+            .add_modifier(Modifier::BOLD),
     })
 }
 

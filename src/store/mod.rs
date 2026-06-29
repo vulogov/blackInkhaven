@@ -60,9 +60,14 @@ pub const SYSTEM_BOOKS: &[(&str, &str)] = &[
     ("scripts", "Scripts"),
     ("help", "Help"),
     ("intent", "Intent"),
+    // MYTH-1 (1.4.19+) — the Mythology book: declared symbols / motifs /
+    // archetypes (HJSON paragraphs tagged `para:myth-*`), read by the myth scan.
+    ("mythology", "Mythology"),
 ];
 
 pub const SYSTEM_TAG_NOTES: &str = "notes";
+/// MYTH-1 (1.4.19+) — the Mythology book holding declared symbols/motifs/archetypes.
+pub const SYSTEM_TAG_MYTHOLOGY: &str = "mythology";
 /// SOURCES-1 (1.4.5+) — the bibliography book: citation entries as HJSON
 /// paragraphs, compiled to `sources.bib` at assembly. See
 /// `Documentation/PROPOSALS/SOURCES-1_PLAN.md`. (Consumed from S-P1.)

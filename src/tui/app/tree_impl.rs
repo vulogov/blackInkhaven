@@ -173,8 +173,10 @@ impl super::App {
                             // STRUCT-2 — `para:*` structural subtype glyph
                             // (code / admonition / math / procedure / table);
                             // WORLD-6 — `para:utopia-*` declaration glyph
-                            // (⊢ ⚙ ⇒ ∅); else prose `¶`.
-                            _ => crate::world::utopia::utopia_glyph(node)
+                            // (⊢ ⚙ ⇒ ∅); MYTH-1 — `para:myth-*` declaration
+                            // glyph (⊛ ∿ ⍟); else prose `¶`.
+                            _ => crate::myth::myth_glyph(node)
+                                .or_else(|| crate::world::utopia::utopia_glyph(node))
                                 .or_else(|| super::structural_glyph(node))
                                 .unwrap_or("¶ "),
                         }

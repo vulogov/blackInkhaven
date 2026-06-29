@@ -346,6 +346,32 @@ pub fn bundled() -> Vec<Persona> {
                 (ImplicitComparison, 1.1),
             ],
         ),
+        // ── myth-reader (1.4.19 MYTH-1) — symbolic & archetypal resonance ──
+        // A Question-stance Slow persona for the book's declared mythic layer:
+        // it reads images as carrying weight, asks whether a recurring symbol
+        // earns its meaning, whether a motif completes its arc, and whether a
+        // character inhabits the archetype the page invokes. It interprets
+        // nothing on the author's behalf — it only asks where the resonance is.
+        p(
+            "myth-reader",
+            "The Myth-Reader",
+            "When an image returns, what has it gathered since last time?",
+            "You read for the book's symbolic and archetypal undercurrent. When an object, image, \
+             or gesture recurs, you ask what it has accumulated since its last appearance, and whether \
+             this return deepens it or merely repeats it. You ask whether a symbol's weight is earned \
+             on the page or only asserted; whether a motif introduced early is paid off or quietly \
+             abandoned; whether a character is performing the archetypal role the scene seems to invoke \
+             (the herald who announces, the shadow who opposes, the mentor who equips) or wearing it as \
+             a label. You ask what older story this moment rhymes with, and whether that echo is working \
+             for the author or against them. You interpret nothing on the author's behalf and never \
+             prescribe a fix — you only ask where the resonance lives.",
+            &[
+                (SignificanceProbing, 1.4),
+                (ImplicitComparison, 1.3),
+                (ImplicationTracing, 1.2),
+                (FramingInterrogation, 1.1),
+            ],
+        ),
     ]
 }
 
@@ -459,12 +485,13 @@ mod tests {
         let ps = bundled();
         // 5 fiction (1.3.x) + 4 nonfiction (1.4.6 AUDIENCE-1)
         // + 3 ideas (1.4.7 AUDIENCE-1.1) + 2 verdict adversaries (1.4.7)
-        // + 1 theatergoer (1.4.14 DIALOG-1).
-        assert_eq!(ps.len(), 15);
+        // + 1 theatergoer (1.4.14 DIALOG-1) + 1 myth-reader (1.4.19 MYTH-1).
+        assert_eq!(ps.len(), 16);
         let ids: std::collections::BTreeSet<_> = ps.iter().map(|p| p.id.as_str()).collect();
-        assert_eq!(ids.len(), 15);
+        assert_eq!(ids.len(), 16);
         assert!(ids.contains("inner-socrates"));
         assert!(ids.contains("theatergoer"));
+        assert!(ids.contains("myth-reader"));
         // Personas weight different categories (they read differently).
         let socr = ps.iter().find(|p| p.id == "inner-socrates").unwrap();
         let slow = ps.iter().find(|p| p.id == "slow-reader").unwrap();
