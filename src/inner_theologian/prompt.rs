@@ -7,6 +7,7 @@
 use crate::prose::ProseLanguage;
 
 use super::QuestionCategory;
+use super::TraditionLens;
 use super::corpus::questions_for;
 use super::lens::suggest_lenses;
 
@@ -43,24 +44,102 @@ pub(crate) fn language_name(lang: &ProseLanguage) -> &'static str {
     }
 }
 
-/// Build the slow-track user prompt for a session: the chosen category, the lens
-/// hints for the passage, the question templates, the in-language directive, and
-/// the passage. `grounding_prefix` (IT-P6) is prepended verbatim when present.
+/// The lenses available for a passage = all eleven minus any the author disabled.
+pub(crate) fn available_lenses(disabled: &[String]) -> Vec<TraditionLens> {
+    TraditionLens::ALL
+        .into_iter()
+        .filter(|l| !disabled.iter().any(|d| d.eq_ignore_ascii_case(l.as_code())))
+        .collect()
+}
+
+/// CALL 1 — lens discovery. Ask the model which of the available lenses genuinely
+/// illuminate this passage (and which are tellingly silent), so the analysis call
+/// (call 2) focuses on the right ones instead of a fixed default. Surface markers
+/// are offered as a soft hint. Returns a prompt expecting a small JSON object.
+pub(crate) fn build_discovery_prompt(passage: &str, disabled: &[String]) -> String {
+    let avail = available_lenses(disabled);
+    let menu = avail
+        .iter()
+        .map(|l| format!("{} ({})", l.label(), l.as_code()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let suggested: Vec<_> = suggest_lenses(passage)
+        .into_iter()
+        .filter(|l| avail.contains(l))
+        .collect();
+    let hint = if suggested.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "Surface markers point especially toward: {}. Weigh them, but you are not bound by them.\n\n",
+            suggested.iter().map(|l| l.as_code()).collect::<Vec<_>>().join(", ")
+        )
+    };
+    format!(
+        "You are about to read a manuscript passage through the lenses of the world's moral and \
+         theological traditions. First, decide which lenses are worth bringing to bear.\n\n\
+         Available lenses (code in parentheses): {menu}.\n\n\
+         {hint}\
+         Consider the passage through ALL of them. Then select the two to four whose questions would \
+         be GENUINELY most illuminating for THIS specific passage — vary by passage, do not default \
+         to a fixed set. Also note up to two lenses whose SILENCE is telling here (a moral question \
+         this work conspicuously never raises).\n\n\
+         Return ONLY this JSON, using the codes above:\n\
+         {{\"selected\":[\"code\",...],\"silent\":[\"code\",...]}}\n\n\
+         PASSAGE:\n{passage}"
+    )
+}
+
+/// Parse call-1's JSON into `(selected, silent)` lens lists. Tolerant of fences /
+/// surrounding prose; unknown codes are dropped.
+pub(crate) fn parse_selected_lenses(raw: &str) -> (Vec<TraditionLens>, Vec<TraditionLens>) {
+    let json = super::llm::extract_json_object(raw);
+    let v: serde_json::Value = match serde_json::from_str(json) {
+        Ok(v) => v,
+        Err(_) => return (Vec::new(), Vec::new()),
+    };
+    let codes = |key: &str| -> Vec<TraditionLens> {
+        v.get(key)
+            .and_then(|x| x.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|c| c.as_str())
+                    .filter_map(TraditionLens::from_code)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    };
+    (codes("selected"), codes("silent"))
+}
+
+/// CALL 2 — analysis. Build the slow-track question prompt using the lenses
+/// discovered in call 1 (`selected`), naming any tellingly-`silent` ones. Falls
+/// back to "choose for yourself from the available set" if discovery returned
+/// nothing. `grounding_prefix` (IT-P6) is prepended verbatim when present.
 pub(crate) fn build_session_prompt(
     category: QuestionCategory,
     passage: &str,
+    selected: &[TraditionLens],
+    silent: &[TraditionLens],
     grounding_prefix: Option<&str>,
     lang: &ProseLanguage,
-    disabled_lenses: &[String],
 ) -> String {
-    let lenses: Vec<_> = suggest_lenses(passage)
-        .into_iter()
-        .filter(|l| !disabled_lenses.iter().any(|d| d.eq_ignore_ascii_case(l.as_code())))
-        .collect();
-    let lens_list = if lenses.is_empty() {
-        "(author has disabled the suggested lenses — choose any that fit)".to_string()
+    let lens_instruction = if selected.is_empty() {
+        "Choose the two to four tradition lenses most illuminating for this passage yourself."
+            .to_string()
     } else {
-        lenses.iter().map(|l| l.label()).collect::<Vec<_>>().join(", ")
+        format!(
+            "Bring these lenses, chosen as most illuminating for this passage: {}.",
+            selected.iter().map(|l| l.label()).collect::<Vec<_>>().join(", ")
+        )
+    };
+    let silent_note = if silent.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " Where it is telling, you may also name the silence of: {}.",
+            silent.iter().map(|l| l.label()).collect::<Vec<_>>().join(", ")
+        )
     };
     let qs = questions_for(category)
         .iter()
@@ -72,12 +151,11 @@ pub(crate) fn build_session_prompt(
     let grounding = grounding_prefix.map(|g| format!("{}\n\n", g.trim())).unwrap_or_default();
     format!(
         "{grounding}Category {} — {}.\n\n\
-         The lenses most illuminating for this passage appear to be: {lens_list}. Use the ones that \
-         fit; name which tradition raises which question; invite the author to say a lens is \
-         irrelevant.\n\n\
+         {lens_instruction}{silent_note} Name which tradition raises which question, and invite the \
+         author to say any lens is irrelevant to their intention.\n\n\
          Question templates for this category (adapt them to this passage — do not recite verbatim):\n\
          {qs}\n\n\
-         Pose two or three questions. Write them in {language}. Gloss every tradition-specific term \
+         Pose two to four questions. Write them in {language}. Gloss every tradition-specific term \
          inline. Ask only — never judge, never prescribe.\n\n\
          PASSAGE:\n{passage}",
         category.number(),
@@ -102,19 +180,39 @@ mod tests {
     }
 
     #[test]
-    fn prompt_injects_category_lenses_language_and_grounding() {
+    fn analysis_prompt_uses_selected_lenses_language_grounding() {
         let p = build_session_prompt(
             QuestionCategory::MoralWeight,
             "He gave his life as a sacrifice for the others.",
+            &[TraditionLens::Orthodox, TraditionLens::Catholic],
+            &[TraditionLens::Confucianism],
             Some("GROUNDING: a stalled redemption arc was declared for Mara."),
             &ProseLanguage::Fr,
-            &[],
         );
         assert!(p.contains("Category 1 — Moral weight"));
         assert!(p.contains("Write them in French"));
         assert!(p.contains("GROUNDING:"));
-        // The sacrifice marker should surface Orthodox/Catholic/Protestant lenses.
-        assert!(p.contains("Orthodox") || p.contains("Catholic"));
+        assert!(p.contains("Orthodox") && p.contains("Catholic"));
+        assert!(p.contains("silence of: Confucianism"));
         assert!(p.contains("PASSAGE:"));
+    }
+
+    #[test]
+    fn discovery_prompt_lists_all_available_and_requests_json() {
+        let p = build_discovery_prompt("He gave his life as a sacrifice.", &["gnostic".into()]);
+        assert!(p.contains("\"selected\""));
+        assert!(p.contains("Buddhism (buddhism)"));
+        // The disabled lens is excluded from the menu.
+        assert!(!p.contains("(gnostic)"));
+    }
+
+    #[test]
+    fn parse_selected_tolerant() {
+        let (sel, sil) = parse_selected_lenses(
+            "sure: {\"selected\":[\"orthodox\",\"judaism\",\"nope\"],\"silent\":[\"islam\"]}",
+        );
+        assert_eq!(sel, vec![TraditionLens::Orthodox, TraditionLens::Judaism]);
+        assert_eq!(sil, vec![TraditionLens::Islam]);
+        assert_eq!(parse_selected_lenses("not json"), (vec![], vec![]));
     }
 }

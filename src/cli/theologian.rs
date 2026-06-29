@@ -11,7 +11,8 @@ use crate::config::Config;
 use crate::error::{Error, Result};
 use crate::inner_theologian::{
     DetectWindows, QuestionCategory, THEOLOGIAN_SYSTEM, TheologianStore, TraditionLens,
-    build_grounding, build_session_prompt, run_fast_scan, theologian_llm_call,
+    build_discovery_prompt, build_grounding, build_session_prompt, parse_selected_lenses,
+    run_fast_scan, theologian_llm_call,
 };
 use crate::project::ProjectLayout;
 use crate::store::hierarchy::Hierarchy;
@@ -127,20 +128,26 @@ fn session(
     };
     let grounding = build_grounding(store.project_root(), &book.slug, &scope_signals);
 
-    let mut user =
-        build_session_prompt(cat, &passage, grounding.as_deref(), &lang, &cfg.theologian.disabled_lenses);
-    if let Some(code) = lens {
-        match TraditionLens::from_code(code) {
-            Some(t) => {
-                user = format!("Use ONLY the {} lens for this session.\n\n{user}", t.label());
-            }
+    // Lens selection. With `--lens`, skip discovery and use exactly that lens.
+    // Otherwise run call 1 (discovery) to pick the most illuminating lenses, then
+    // call 2 (analysis) through them.
+    let (selected, silent) = match lens {
+        Some(code) => match TraditionLens::from_code(code) {
+            Some(t) => (vec![t], Vec::new()),
             None => {
-                let valid = TraditionLens::ALL.iter().map(|l| l.as_code()).collect::<Vec<_>>().join(", ");
+                let valid =
+                    TraditionLens::ALL.iter().map(|l| l.as_code()).collect::<Vec<_>>().join(", ");
                 return Err(Error::Store(format!("unknown lens `{code}` — valid: {valid}")));
             }
+        },
+        None => {
+            let disc_prompt = build_discovery_prompt(&passage, &cfg.theologian.disabled_lenses);
+            let disc = theologian_llm_call(&cfg, THEOLOGIAN_SYSTEM, &disc_prompt).map_err(se)?;
+            parse_selected_lenses(&disc)
         }
-    }
+    };
 
+    let user = build_session_prompt(cat, &passage, &selected, &silent, grounding.as_deref(), &lang);
     let raw = theologian_llm_call(&cfg, THEOLOGIAN_SYSTEM, &user).map_err(se)?;
     if json {
         println!("{}", serde_json::json!({ "category": cat.number(), "questions": raw.trim() }));

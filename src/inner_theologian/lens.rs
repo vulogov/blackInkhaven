@@ -41,9 +41,11 @@ const LENS_SIGNALS: &[LensSignal] = &[
     LensSignal { markers: &["war", "battle", "kill", "for duty", "had to", "command"], lenses: &[Hinduism, Islam, SecularPhilosophy] },
 ];
 
-/// Suggest lenses for a passage, in priority order, de-duplicated. Falls back to
-/// a broad, balanced default trio when no marker matches (so the persona always
-/// has somewhere to start).
+/// Marker-suggested lenses for a passage, in priority order, de-duplicated.
+/// These are a *soft hint* — the prompt presents all eleven lenses as the menu
+/// and the persona chooses; an empty result simply means "no markers fired, pick
+/// from the whole set." (No default trio: forcing the same three every time made
+/// the other eight traditions look ignored.)
 pub(crate) fn suggest_lenses(passage: &str) -> Vec<TraditionLens> {
     let lc = passage.to_lowercase();
     let mut out: Vec<TraditionLens> = Vec::new();
@@ -55,11 +57,6 @@ pub(crate) fn suggest_lenses(passage: &str) -> Vec<TraditionLens> {
                 }
             }
         }
-    }
-    if out.is_empty() {
-        // Default: one consequentialist/secular, one Abrahamic, one Dharmic —
-        // a balanced starting spread, no tradition privileged.
-        out = vec![SecularPhilosophy, Judaism, Buddhism];
     }
     out.truncate(5);
     out
@@ -88,10 +85,9 @@ mod tests {
     }
 
     #[test]
-    fn no_marker_yields_balanced_default() {
+    fn no_marker_yields_empty_so_persona_picks_from_all() {
         let s = suggest_lenses("The afternoon was warm and the tea had gone cold.");
-        assert_eq!(s.len(), 3);
-        assert!(s.contains(&SecularPhilosophy) && s.contains(&Judaism) && s.contains(&Buddhism));
+        assert!(s.is_empty());
     }
 
     #[test]

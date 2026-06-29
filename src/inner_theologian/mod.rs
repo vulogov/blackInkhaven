@@ -29,7 +29,9 @@ pub(crate) use detect::DetectWindows;
 pub(crate) use grounding::build_grounding;
 pub(crate) use llm::theologian_llm_call;
 pub(crate) use pipeline::run_fast_scan;
-pub(crate) use prompt::{THEOLOGIAN_SYSTEM, build_session_prompt};
+pub(crate) use prompt::{
+    THEOLOGIAN_SYSTEM, build_discovery_prompt, build_session_prompt, parse_selected_lenses,
+};
 pub(crate) use store::TheologianStore;
 
 /// The eleven tradition lenses (RFC §5.2). No lens is privileged; this order is
