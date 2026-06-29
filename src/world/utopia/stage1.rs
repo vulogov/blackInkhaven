@@ -128,7 +128,7 @@ pub(super) fn extract_group(
 
 /// Run Stage 1 for the whole book: detect groups, extract each (lazy), then the
 /// deterministic Facts cross-reference. Returns total claims extracted.
-pub(super) fn run_stage1(
+pub(crate) fn run_stage1(
     store: &UtopiaStore,
     cfg: &Config,
     layout: &ProjectLayout,

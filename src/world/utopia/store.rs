@@ -361,6 +361,24 @@ impl UtopiaStore {
         )
     }
 
+    /// Force Stage 1 re-extraction for every group (zero the cache hash).
+    pub(crate) fn invalidate_all_stage1(&self, book_slug: &str) -> Result<()> {
+        let bs = book_slug.to_string();
+        self.engine.execute_with(
+            "UPDATE utopia_cache SET stage1_hash = '0', stage2_complete = 0 WHERE book_slug = ?",
+            &[&bs],
+        )
+    }
+
+    /// Force Stage 3 re-scan (drop every per-chapter scan record).
+    pub(crate) fn clear_chapter_scans(&self, book_slug: &str) -> Result<()> {
+        let bs = book_slug.to_string();
+        self.engine.execute_with(
+            "DELETE FROM utopia_chapter_scan WHERE book_slug = ?",
+            &[&bs],
+        )
+    }
+
     /// Per-chapter Stage 3 cache: the stored chapter hash, if scanned.
     pub(crate) fn chapter_scan_hash(
         &self,
