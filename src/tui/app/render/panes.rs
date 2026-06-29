@@ -1567,6 +1567,75 @@ impl super::super::App {
     /// PANE-1 — the Output pane: structured notifications from every subsystem.
     /// Each message is a two-line entry (severity icon + kind, then its text),
     /// the selected row marked and bold when the region is focused.
+    /// THOUGHTS-1 — the Thoughts pane: a read-only, scrollable view of reflective
+    /// blocks (newest first), e.g. an Inner Theologian session. `thoughts_scroll`
+    /// counts lines from the top; ratatui clamps over-scroll.
+    pub(in crate::tui::app) fn draw_thoughts(&self, f: &mut ratatui::Frame, area: Rect) {
+        let focused =
+            self.focus == Focus::Ai && self.right_pane == crate::tui::app::RightPane::Thoughts;
+        let border_style = if focused {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(border_style)
+            .title(format!(" Thoughts · {} ", self.thoughts.len()));
+        let inner = block.inner(area);
+        f.render_widget(block, area);
+
+        if self.thoughts.is_empty() {
+            let hint = Paragraph::new(vec![
+                Line::from(""),
+                Line::from(Span::styled("  No thoughts yet.", Style::default().fg(Color::DarkGray))),
+                Line::from(Span::styled(
+                    "  Ctrl+B J→T asks the Inner Theologian.",
+                    Style::default().fg(Color::DarkGray),
+                )),
+            ]);
+            f.render_widget(hint, inner);
+            return;
+        }
+
+        let mut lines: Vec<Line> = Vec::new();
+        for (i, t) in self.thoughts.iter().rev().enumerate() {
+            if i > 0 {
+                lines.push(Line::from(Span::styled(
+                    "─".repeat(inner.width.max(1) as usize),
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+            for (j, raw) in t.lines().enumerate() {
+                // The first line of the newest block gets a ⚖ marker.
+                if i == 0 && j == 0 {
+                    lines.push(Line::from(Span::styled(
+                        raw.to_string(),
+                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                    )));
+                } else {
+                    lines.push(Line::from(raw.to_string()));
+                }
+            }
+        }
+
+        let para = Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((self.thoughts_scroll.min(u16::MAX as usize) as u16, 0));
+        f.render_widget(para, inner);
+
+        if inner.height > 1 {
+            let footer = Rect { x: inner.x, y: inner.y + inner.height - 1, width: inner.width, height: 1 };
+            f.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    " ↑↓ scroll · g/G top/bottom · c clear · Ctrl+B Tab cycles panes ",
+                    Style::default().add_modifier(Modifier::DIM),
+                ))),
+                footer,
+            );
+        }
+    }
+
     pub(in crate::tui::app) fn draw_output(&self, f: &mut ratatui::Frame, area: Rect) {
         use crate::pane::output::Severity;
 

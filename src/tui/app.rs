@@ -1566,6 +1566,24 @@ pub(crate) struct FactCheckNav {
 pub(crate) enum RightPane {
     Output,
     Ai,
+    /// THOUGHTS-1 — a read-only, scrollable pane for long reflective output
+    /// (e.g. the Inner Theologian slow track). Behaves like the AI pane for
+    /// scrolling; no input prompt.
+    Thoughts,
+}
+
+impl RightPane {
+    fn label(self) -> &'static str {
+        match self {
+            RightPane::Output => "Output",
+            RightPane::Ai => "AI",
+            RightPane::Thoughts => "Thoughts",
+        }
+    }
+}
+
+fn right_pane_label(p: RightPane) -> &'static str {
+    p.label()
 }
 
 /// INNER_SOCRATES-1 — the per-finding outcomes on a `socratic_inquiry` Output
@@ -2190,6 +2208,12 @@ pub(crate) struct App {
     /// at the top of the history. Reset to 0 each time a new user
     /// message is sent so the streaming reply is visible.
     chat_history_scroll: usize,
+
+    /// THOUGHTS-1 — the Thoughts pane's entries (each a block of reflective
+    /// text, e.g. an Inner Theologian session), newest last. Read-only.
+    thoughts: Vec<String>,
+    /// Lines scrolled up from the bottom of the Thoughts pane (PageUp adds).
+    thoughts_scroll: usize,
 
     /// Active chat-history search state (Ctrl+F in AI-fullscreen).
     /// While Some, matching lines render with a highlight bg and
@@ -2989,6 +3013,8 @@ impl App {
             prompt_picker_cursor: 0,
             paragraph_cursors: std::collections::HashMap::new(),
             chat_history: Vec::new(),
+            thoughts: Vec::new(),
+            thoughts_scroll: 0,
             system_prompt_override: None,
             pending_chat_user_msg: None,
             pending_paragraph_memory_target: None,
@@ -3757,15 +3783,13 @@ impl App {
                     self.status = "Inner Theologian: nothing rose for this ¶".into();
                 }
                 Ok(text) => {
-                    self.seed_theologian_chat(text);
-                    self.right_pane = RightPane::Ai;
-                    self.change_focus(Focus::Ai);
-                    // Drop into the AI reading layout so PageUp/PageDown/↑↓ scroll
-                    // the (long) response. The two fullscreens are exclusive.
-                    self.ai_fullscreen = true;
-                    self.typewriter_mode = false;
+                    // THOUGHTS-1 — the long reflective response lands in the
+                    // dedicated scrollable Thoughts pane (its proper home), not
+                    // the Output pane (short findings) or the AI chat.
+                    self.push_thought(format!("⚖ Inner Theologian\n\n{text}"));
+                    self.right_pane = RightPane::Thoughts;
                     self.status =
-                        "⚖ Inner Theologian — questions in the AI pane · PageUp/↑↓ scroll · Ctrl+B K to exit".into();
+                        "⚖ Inner Theologian — questions in the Thoughts pane (Ctrl+B Tab · ↑↓ scroll)".into();
                 }
                 Err(e) => self.status = format!("Inner Theologian skipped: {e}"),
             },
@@ -4725,11 +4749,11 @@ impl App {
         let cycling_blocked = self.focus.is_input() || in_editor_with_doc;
         if !cycling_blocked {
             if self.keymap.next_pane.matches(&key) {
-                self.change_focus(self.focus.next());
+                self.focus_cycle(self.focus.next());
                 return Ok(false);
             }
             if self.keymap.prev_pane.matches(&key) {
-                self.change_focus(self.focus.prev());
+                self.focus_cycle(self.focus.prev());
                 return Ok(false);
             }
         } else if in_editor_with_doc
@@ -4764,7 +4788,7 @@ impl App {
             } else {
                 self.focus.prev()
             };
-            self.change_focus(next);
+            self.focus_cycle(next);
             return Ok(false);
         }
 
@@ -4772,7 +4796,9 @@ impl App {
             Focus::Tree => self.handle_tree_key(key),
             Focus::Editor => self.handle_editor_key(key),
             // PANE-1 — when the right region shows Output, its keys win; else AI.
+            // THOUGHTS-1 — when it shows Thoughts, the Thoughts scroll keys win.
             Focus::Ai if self.right_pane == RightPane::Output => self.handle_output_key(key),
+            Focus::Ai if self.right_pane == RightPane::Thoughts => self.handle_thoughts_key(key),
             Focus::Ai => self.handle_passive_key(key),
             Focus::SearchBar => self.handle_input_key(key, true),
             Focus::AiPrompt => self.handle_input_key(key, false),
@@ -5745,10 +5771,11 @@ impl App {
             self.focus = f;
         }
 
-        // PANE-1 — restore the active right-side pane.
+        // PANE-1 / THOUGHTS-1 — restore the active right-side pane.
         match state.right_pane.as_str() {
             "Output" => self.right_pane = RightPane::Output,
             "Ai" => self.right_pane = RightPane::Ai,
+            "Thoughts" => self.right_pane = RightPane::Thoughts,
             _ => {}
         }
         // PANE-1 filtering — restore the Output pane's saved filter.
@@ -7937,23 +7964,75 @@ impl App {
     /// PANE-1 — cycle the right-side region pane (Ctrl+B Tab / Shift+Tab). With
     /// only Output and AI today both directions toggle; focus moves to the
     /// region so its keys (and the cycle chord) take effect immediately.
-    fn cycle_right_pane(&mut self, _forward: bool) {
-        let target = match self.right_pane {
-            RightPane::Output => RightPane::Ai,
-            RightPane::Ai => RightPane::Output,
+    fn cycle_right_pane(&mut self, forward: bool) {
+        const ORDER: [RightPane; 3] = [RightPane::Output, RightPane::Ai, RightPane::Thoughts];
+        let idx = ORDER.iter().position(|p| *p == self.right_pane).unwrap_or(0);
+        let target = if forward {
+            ORDER[(idx + 1) % ORDER.len()]
+        } else {
+            ORDER[(idx + ORDER.len() - 1) % ORDER.len()]
         };
         self.output_selected = 0;
-        // change_focus runs the editor-defocus bookkeeping and (for Focus::Ai)
-        // forces right_pane = Ai; re-assert the real target so cycling can land
-        // on the Output pane too.
+        // change_focus runs the editor-defocus bookkeeping; re-assert the real
+        // target after so cycling lands on the chosen pane (it no longer forces
+        // AI for Focus::Ai — THOUGHTS-1).
         self.change_focus(Focus::Ai);
         self.right_pane = target;
         // PANE-1 — persist the pane choice so it survives a restart.
         let _ = self.save_session();
-        self.status = match self.right_pane {
-            RightPane::Output => "pane → Output".into(),
-            RightPane::Ai => "pane → AI".into(),
-        };
+        self.status = format!("pane → {}", right_pane_label(target));
+    }
+
+    /// THOUGHTS-1 — append a reflective block to the Thoughts pane and surface it
+    /// (auto-show, unless the user is actively working in the right region).
+    fn push_thought(&mut self, text: String) {
+        if text.trim().is_empty() {
+            return;
+        }
+        self.thoughts.push(text);
+        self.thoughts_scroll = 0;
+        self.notify_pane(RightPane::Thoughts);
+    }
+
+    /// THOUGHTS-1 / auto-focus — when content arrives for a right-side pane,
+    /// surface it, UNLESS the user is actively working in the right region
+    /// (focus on the AI/Output/Thoughts area or typing into the AI prompt).
+    /// Persists the pane choice.
+    fn notify_pane(&mut self, pane: RightPane) {
+        if matches!(self.focus, Focus::Ai | Focus::AiPrompt) {
+            return; // don't steal the pane the user is using
+        }
+        if self.right_pane != pane {
+            self.right_pane = pane;
+            let _ = self.save_session();
+        }
+    }
+
+    /// THOUGHTS-1 — keys for the Thoughts pane (read-only, scrollable): ↑/↓ or
+    /// j/k line scroll, PageUp/PageDown, g/G top/bottom, `c` clear, Esc to the
+    /// editor. `thoughts_scroll` counts lines UP from the bottom; the renderer
+    /// clamps it.
+    fn handle_thoughts_key(&mut self, key: KeyEvent) -> Result<bool> {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.thoughts_scroll = self.thoughts_scroll.saturating_sub(1);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.thoughts_scroll = self.thoughts_scroll.saturating_add(1);
+            }
+            KeyCode::PageUp => self.thoughts_scroll = self.thoughts_scroll.saturating_sub(10),
+            KeyCode::PageDown => self.thoughts_scroll = self.thoughts_scroll.saturating_add(10),
+            KeyCode::Char('g') | KeyCode::Home => self.thoughts_scroll = 0,
+            KeyCode::Char('G') | KeyCode::End => self.thoughts_scroll = usize::MAX,
+            KeyCode::Char('c') | KeyCode::Char('C') => {
+                self.thoughts.clear();
+                self.thoughts_scroll = 0;
+                self.status = "Thoughts cleared".into();
+            }
+            KeyCode::Esc => self.change_focus(Focus::Editor),
+            _ => return Ok(false),
+        }
+        Ok(false)
     }
 
     /// PANE-1 — keys for the Output pane (active when the right region shows
@@ -14365,30 +14444,6 @@ impl App {
             self.chat_history.remove(i);
         }
         let mut seeded = vec![ChatTurn::User(prologue), ChatTurn::Assistant(opening)];
-        seeded.append(&mut self.chat_history);
-        self.chat_history = seeded;
-        self.chat_history_scroll = 0;
-    }
-
-    /// INNER-THEOLOGIAN-1 — seed the slow-track questions into the AI-pane
-    /// transcript (scrollable), the proper home for a long LLM response. Prior
-    /// theologian seeds are replaced so the pane doesn't accumulate them.
-    fn seed_theologian_chat(&mut self, questions: String) {
-        const MARKER: &str = "[Inner Theologian";
-        if let Some(i) = self
-            .chat_history
-            .iter()
-            .position(|t| matches!(t, ChatTurn::User(s) if s.starts_with(MARKER)))
-        {
-            if self.chat_history.get(i + 1).is_some_and(|t| matches!(t, ChatTurn::Assistant(_))) {
-                self.chat_history.remove(i + 1);
-            }
-            self.chat_history.remove(i);
-        }
-        let prologue =
-            "[Inner Theologian — a tradition-neutral lens session on this passage; it asks, never judges]"
-                .to_string();
-        let mut seeded = vec![ChatTurn::User(prologue), ChatTurn::Assistant(questions)];
         seeded.append(&mut self.chat_history);
         self.chat_history = seeded;
         self.chat_history_scroll = 0;
@@ -25462,10 +25517,11 @@ impl App {
             self.draw_secondary_editor(f, body[2]);
         } else {
             self.draw_editor(f, body[1]);
-            // PANE-1 — the right region shows Output or AI.
+            // PANE-1 / THOUGHTS-1 — the right region shows Output, AI, or Thoughts.
             match self.right_pane {
                 RightPane::Output => self.draw_output(f, body[2]),
                 RightPane::Ai => self.draw_ai(f, body[2]),
+                RightPane::Thoughts => self.draw_thoughts(f, body[2]),
             }
         }
         self.draw_ai_prompt(f, outer[2]);
@@ -26335,6 +26391,18 @@ impl App {
     /// open paragraph (best-effort) so unsaved edits are persisted even
     /// across Tab cycles, Ctrl+1..5 jumps, or any other focus shift. The
     /// underlying `save_current` writes to disk + bdslib + re-embeds.
+    /// THOUGHTS-1 — the plain-Tab focus cycle (Tree → Editor → right region →
+    /// Tree). When it lands on the right region (`Focus::Ai`), keep whatever pane
+    /// is currently shown (Output / AI / Thoughts) instead of forcing AI —
+    /// `change_focus` forces AI for one-shot AI ops, which Tab is not.
+    fn focus_cycle(&mut self, new: Focus) {
+        let keep = self.right_pane;
+        self.change_focus(new);
+        if new == Focus::Ai {
+            self.right_pane = keep;
+        }
+    }
+
     fn change_focus(&mut self, new: Focus) {
         if self.focus == Focus::Editor && new != Focus::Editor {
             // Focus-out also counts as "I'm done reviewing the
@@ -26362,12 +26430,10 @@ impl App {
             }
         }
         // PANE-1 — focusing the AI region (prompt or pane) implies the AI pane
-        // should be the visible right-side pane (RFC §162: "focusing the AI
-        // prompt automatically switches the right-side pane to AI"). This is what
-        // makes one-shot AI ops (critique / grammar / fact-check) surface their
-        // streamed output even when Output is the active pane. `cycle_right_pane`
-        // re-asserts its own target right after calling here, so it can still
-        // focus the Output pane.
+        // should be the visible right-side pane, so one-shot AI ops surface their
+        // streamed output even when Output/Thoughts is active. The plain-Tab
+        // focus cycle re-asserts the current pane right after (THOUGHTS-1), so Tab
+        // lands on whatever pane is shown rather than forcing AI.
         if matches!(new, Focus::Ai | Focus::AiPrompt) {
             self.right_pane = RightPane::Ai;
         }
