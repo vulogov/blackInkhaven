@@ -69,6 +69,8 @@ pub struct Config {
     pub prose: ProseConfig,
     #[serde(default)]
     pub dialogue: DialogueConfig,
+    #[serde(default)]
+    pub utopia: UtopiaConfig,
     /// The project's declared genre (e.g. `literary_realism`, `fantasy`).
     /// Project-wide; consumed by Inner Editor's genre-aware prompting and open
     /// to other features later. `None` = genre-blind.
@@ -219,6 +221,7 @@ impl Default for Config {
             jinja: JinjaConfig::default(),
             prose: ProseConfig::default(),
             dialogue: DialogueConfig::default(),
+            utopia: UtopiaConfig::default(),
             genre: None,
             inner_socrates_default_persona: None,
             project_lock: ProjectLockConfig::default(),
@@ -3706,6 +3709,34 @@ impl Default for DialogueConfig {
             language: None,
             extra_neutral_verbs: Vec::new(),
             extra_said_bookisms: Vec::new(),
+        }
+    }
+}
+
+/// WORLD-6 — `utopia:` block. Tunes the coherence checker's caching and the
+/// Stage-2 cost warning. All optional; omitting the block uses these defaults.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UtopiaConfig {
+    /// Stage 2 cost-warning threshold (USD). Fires before pairing if the
+    /// projected cost exceeds this — informs, never blocks.
+    pub stage2_cost_warn: f32,
+    /// Chapters processed per Stage 3 idle/background pass.
+    pub stage3_batch_size: usize,
+    /// Minimum chapter word count to include in the Stage 3 entailment scan.
+    pub stage3_min_chapter_words: usize,
+    /// Consecutive non-claim paragraphs that break a premise group (default 1;
+    /// 0 = all tagged paragraphs are one group).
+    pub group_gap_threshold: usize,
+}
+
+impl Default for UtopiaConfig {
+    fn default() -> Self {
+        Self {
+            stage2_cost_warn: 0.10,
+            stage3_batch_size: 5,
+            stage3_min_chapter_words: 200,
+            group_gap_threshold: 1,
         }
     }
 }

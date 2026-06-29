@@ -171,9 +171,12 @@ impl super::App {
                             // STRUCT-1 — Jinja template paragraph.
                             Some("jinja") => "⟡ ",
                             // STRUCT-2 — `para:*` structural subtype glyph
-                            // (code / admonition / math / procedure / table),
-                            // else prose `¶`.
-                            _ => super::structural_glyph(node).unwrap_or("¶ "),
+                            // (code / admonition / math / procedure / table);
+                            // WORLD-6 — `para:utopia-*` declaration glyph
+                            // (⊢ ⚙ ⇒ ∅); else prose `¶`.
+                            _ => crate::world::utopia::utopia_glyph(node)
+                                .or_else(|| super::structural_glyph(node))
+                                .unwrap_or("¶ "),
                         }
                     }
                 }

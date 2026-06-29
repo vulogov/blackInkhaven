@@ -18,10 +18,6 @@ use crate::world::utopia::{
 
 use super::WorldCommand;
 
-// Defaults (the `utopia:` config block threads overrides in W-P9).
-const GAP_THRESHOLD: usize = 1;
-const STAGE3_MIN_WORDS: usize = 200;
-
 pub fn run(project: &Path, cmd: WorldCommand) -> Result<()> {
     match cmd {
         WorldCommand::UtopiaCheck { book, stage, group, json } => {
@@ -64,8 +60,8 @@ fn check(
     let us = ustore(&store)?;
 
     // Stage 1 always (lazy).
-    run_stage1(&us, &cfg, &layout, &h, book, GAP_THRESHOLD).map_err(|e| Error::Store(e.to_string()))?;
-    let groups: Vec<_> = detect_premise_groups(&h, &layout, GAP_THRESHOLD)
+    run_stage1(&us, &cfg, &layout, &h, book, cfg.utopia.group_gap_threshold).map_err(|e| Error::Store(e.to_string()))?;
+    let groups: Vec<_> = detect_premise_groups(&h, &layout, cfg.utopia.group_gap_threshold)
         .into_iter()
         .filter(|g| group_filter.is_none_or(|f| g.name == f))
         .collect();
@@ -80,7 +76,7 @@ fn check(
     }
     if run3 {
         for g in &groups {
-            run_stage3_group(&us, &cfg, &layout, &h, book, &g.name, STAGE3_MIN_WORDS, usize::MAX)
+            run_stage3_group(&us, &cfg, &layout, &h, book, &g.name, cfg.utopia.stage3_min_chapter_words, usize::MAX)
                 .map_err(|e| Error::Store(e.to_string()))?;
         }
     }
@@ -147,7 +143,7 @@ fn model(project: &Path, book_name: Option<&str>, group_filter: Option<&str>, js
     let (layout, cfg, store, h) = open(project)?;
     let book = super::resolve_user_book(&h, book_name, "utopia").map_err(Error::Store)?;
     let us = ustore(&store)?;
-    run_stage1(&us, &cfg, &layout, &h, book, GAP_THRESHOLD).map_err(|e| Error::Store(e.to_string()))?;
+    run_stage1(&us, &cfg, &layout, &h, book, cfg.utopia.group_gap_threshold).map_err(|e| Error::Store(e.to_string()))?;
     let claims = us.all_claims(&book.slug).map_err(|e| Error::Store(e.to_string()))?;
     let claims: Vec<_> = claims
         .into_iter()
@@ -210,9 +206,9 @@ fn refresh(project: &Path, book_name: Option<&str>, stage: u8) -> Result<()> {
         3 => {
             us.clear_chapter_scans(&book.slug).map_err(|e| Error::Store(e.to_string()))?;
             let mut found = 0;
-            for g in detect_premise_groups(&h, &layout, GAP_THRESHOLD) {
+            for g in detect_premise_groups(&h, &layout, cfg.utopia.group_gap_threshold) {
                 let (f, _, _) = run_stage3_group(
-                    &us, &cfg, &layout, &h, book, &g.name, STAGE3_MIN_WORDS, usize::MAX,
+                    &us, &cfg, &layout, &h, book, &g.name, cfg.utopia.stage3_min_chapter_words, usize::MAX,
                 )
                 .map_err(|e| Error::Store(e.to_string()))?;
                 found += f;
@@ -221,7 +217,7 @@ fn refresh(project: &Path, book_name: Option<&str>, stage: u8) -> Result<()> {
         }
         _ => {
             us.invalidate_all_stage1(&book.slug).map_err(|e| Error::Store(e.to_string()))?;
-            let n = run_stage1(&us, &cfg, &layout, &h, book, GAP_THRESHOLD)
+            let n = run_stage1(&us, &cfg, &layout, &h, book, cfg.utopia.group_gap_threshold)
                 .map_err(|e| Error::Store(e.to_string()))?;
             eprintln!("utopia refresh: Stage 1 re-extracted — {n} claim(s)");
         }
