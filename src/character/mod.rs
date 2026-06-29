@@ -8,12 +8,14 @@
 //! the per-language action-verb lists the agency score (C-P3) builds on.
 
 mod agency;
+mod checks;
 mod declarations;
 mod llm;
 mod pipeline;
 mod store;
 mod verbs;
 
+pub(crate) use checks::{detect_stall, run_arc_checks};
 pub(crate) use declarations::read_arc_declarations;
 pub(crate) use pipeline::{character_names, run_agency, run_extraction};
 pub(crate) use store::CharStore;
