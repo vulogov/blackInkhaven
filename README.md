@@ -21,36 +21,41 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.4.17 — The startup haiku
+## Latest release · 1.4.18 — Inner Theologian + the Thoughts pane
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.4.17.md`](Documentation/RELEASE_NOTES/1.4.17.md)
-· Plan: [`Documentation/PROPOSALS/HAIKU-1_PLAN.md`](Documentation/PROPOSALS/HAIKU-1_PLAN.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.4.18.md`](Documentation/RELEASE_NOTES/1.4.18.md)
+· Plan: [`Documentation/PROPOSALS/INNER-THEOLOGIAN-1_PLAN.md`](Documentation/PROPOSALS/INNER-THEOLOGIAN-1_PLAN.md)
 
-A writing space should feel like one from the first second. 1.4.17 (HAIKU-1) puts a small,
-hand-curated haiku in the Output pane at three moments — at **startup**, when you create a new
-manuscript paragraph and open it to write, and on demand via **`Ctrl+Z p`**. It is the simplest
-feature in Inkhaven: **no AI, no network, no generation.** All 25 poems (five per language,
-EN/RU/DE/FR/ES) are `&'static str` baked into the binary — present in the first millisecond of startup,
-before the database journal replays, even on an airgapped machine. **No new crates.**
+Fiction carries moral weight. Inkhaven's Inner family had two members — Inner Socrates (logical
+structure) and Inner Editor (craft); 1.4.18 adds the third axis, **moral and theological seriousness**.
+**Inner Theologian** reads any manuscript through the lenses of **eleven** moral and theological
+traditions (Catholic, Protestant, Orthodox, Gnostic, LDS, Islam, Judaism, Hinduism, Buddhism,
+Confucianism, secular philosophy) — **not to judge by any of them, but to ask what each of them sees.**
+It belongs to no tradition, advocates none, **never delivers a verdict**, and never edits prose. **No
+new runtime crates.**
 
-### Three moments, one poem at a time
+### Two tracks
 
-The poem is in the book's language (`editor.language`, English fallback); a clock-seeded per-process
-rotation advances on each trigger, so you rarely see the same poem twice. It renders as a `✦ haiku`
-row with three indented lines, and only the most recent ever lives in the pane — a new one quietly
-replaces the last. Each language carries three Tier-A poems (the manuscript — ink, the blank page) and
-two Tier-B poems (the writer's surroundings — rain on the glass, the pause between words).
+The **fast track** is deterministic and zero-AI: three `info` signals (moral invisibility, consequence
+gap, sacred levity) in the Output `theologian` category (`⚖`), folded into the `Ctrl+B Shift+C` review
+pass. The **slow track** (`Ctrl+B J→T`) runs in two passes — a *discovery* call decides which of all
+eleven lenses genuinely illuminate the passage (and which are tellingly **silent**), then an *analysis*
+call poses two to four questions through them, in the book's language, naming which tradition raises
+which. CLI: `inkhaven theologian scan / session / suppress`.
 
-### Turning it off
+### The Thoughts pane
 
-`editor.startup_haiku: false` silences the startup and new-paragraph moments; the `Ctrl+Z p` chord
-still works whenever you want one.
+A long theological session belongs neither in a one-line Output finding nor a chat turn, so 1.4.18 adds
+a third right-side pane — **Thoughts** — a read-only, scrollable, Markdown-rendered home for it.
+`Ctrl+B Tab` now cycles Output → AI → Thoughts; plain `Tab` cycles Tree → Editor → the shown pane;
+content auto-surfaces (without stealing focus mid-read); `Ctrl+Z f` fullscreens Output/Thoughts; the
+active pane is remembered across restarts.
 
 ### Dependencies & compatibility
 
-**No new runtime crates; no new system books; no new `NodeKind`; no new DuckDB file.** One module
-(`src/haiku.rs`), one Output kind (`✦ haiku`), one config knob (`editor.startup_haiku`, default
-`true`), one chord (`Ctrl+Z p`).
+**No new runtime crates; no new system books; no new `NodeKind`.** One new `.inkhaven/inner_theologian.db`,
+one `theologian:` config block, one Output category (`⚖`), the `Ctrl+B J→T` subkey, and the Thoughts
+pane (`Ctrl+Z f`). Read-only `ink.theologian.*` Bund. Grounded by WORLD-6 / CHAR-1 when present.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

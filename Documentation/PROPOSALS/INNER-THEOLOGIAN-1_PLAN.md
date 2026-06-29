@@ -4,7 +4,7 @@
 |---|---|
 | **RFC** | INNER-THEOLOGIAN-1 |
 | **Title** | Tradition-neutral comparativist reader: 11 moral/theological lenses, fast-track ethical signals + slow-track interrogation corpus |
-| **Status** | In progress — 1.4.18 |
+| **Status** | Shipped — 1.4.18 |
 | **Author** | Vladimir Ulogov |
 | **New dependency** | none |
 
