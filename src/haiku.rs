@@ -11,9 +11,14 @@
 //! manuscript) in slots 0–2 and two Tier-B poems (the writer's surroundings) in
 //! slots 3–4, so the first two encounters are always manuscript-focused.
 
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static ROTATION: AtomicUsize = AtomicUsize::new(0);
+/// Per-process starting offset, seeded once from the wall clock. Without it the
+/// in-memory `ROTATION` resets to 0 every launch, so the startup haiku would be
+/// the same poem each time; the seed makes each session begin somewhere new.
+static SEED: OnceLock<usize> = OnceLock::new();
 
 pub struct Haiku {
     pub lang: &'static str,
@@ -21,15 +26,32 @@ pub struct Haiku {
     pub poems: [[&'static str; 3]; 5],
 }
 
-/// Advance the rotation counter and return the next haiku for the given
-/// ISO-639-1 code. Falls back to English for any unsupported code.
-pub fn next_for_lang(iso: &str) -> [&'static str; 3] {
-    let idx = ROTATION.fetch_add(1, Ordering::Relaxed) % 5;
+/// The next rotation slot (0..5): a per-process clock seed plus a monotonic
+/// counter, so successive haikus differ and the first one varies by launch.
+fn rotation_slot() -> usize {
+    let seed = *SEED.get_or_init(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.subsec_nanos() as usize)
+            .unwrap_or(0)
+    });
+    let n = ROTATION.fetch_add(1, Ordering::Relaxed);
+    seed.wrapping_add(n) % 5
+}
+
+/// The poem for `iso` at slot `idx` (mod 5). Falls back to English for any
+/// unsupported code.
+fn poem_at(iso: &str, idx: usize) -> [&'static str; 3] {
     let table = HAIKU_TABLE
         .iter()
         .find(|h| h.lang.eq_ignore_ascii_case(iso))
         .unwrap_or(&HAIKU_TABLE[0]); // index 0 is always English
-    table.poems[idx]
+    table.poems[idx % 5]
+}
+
+/// Advance the rotation and return the next haiku for the given ISO-639-1 code.
+pub fn next_for_lang(iso: &str) -> [&'static str; 3] {
+    poem_at(iso, rotation_slot())
 }
 
 static HAIKU_TABLE: &[Haiku] = &[
@@ -93,6 +115,19 @@ pub fn emit_for_lang(lang_long: &str) {
 
     let iso = crate::ai::prompts::iso_from_long(lang_long);
     let lines = next_for_lang(iso);
+
+    // Keep exactly one haiku in the pane: dismiss any prior ones before emitting.
+    // The Output store is persistent on disk, and `Lifetime::Session(1)` is only
+    // trimmed by the lazy `cleanup()` pass — so without this, haikus from this
+    // session *and previous launches* pile up (one per startup + per paragraph).
+    if let Some(store) = crate::pane::output::active() {
+        if let Ok(prior) = store.by_kind(kinds::HAIKU) {
+            for m in &prior {
+                let _ = store.dismiss(m.id);
+            }
+        }
+    }
+
     // `text` is the single-line form (for anything that reads metadata["text"],
     // e.g. ink.io / search); the pane renders the `haiku_lines` array as three
     // indented lines.
