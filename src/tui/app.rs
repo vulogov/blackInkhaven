@@ -2971,6 +2971,12 @@ impl App {
         if let Err(e) = crate::pane::output::install(&self.layout.root) {
             tracing::warn!(target: "inkhaven::pane", "output install: {e:#}");
         }
+        // HAIKU-1 T1 — a startup haiku in the book's language, the Output pane's
+        // first "good news" message. Zero-AI; no-op if the store failed to
+        // install above.
+        if self.cfg.editor.startup_haiku {
+            crate::haiku::emit_for_lang(&self.cfg.language);
+        }
         // 1.3.34+ — point the AI-cost usage tracker at this project so every
         // inference tallies into `inkhaven cost` / the Ctrl+B $ panel.
         crate::ai::usage::install(&self.layout.root, self.cfg.cost.usage_retention_days);
@@ -11121,6 +11127,10 @@ impl App {
             A::BundOpenShellFresh => self.open_shell_pane(true),
             A::BundShellSelection => self.toggle_shell_selection_mode(),
             A::BundEditProjectHjson => self.open_hjson_editor(),
+            A::ShowHaiku => {
+                crate::haiku::emit_for_lang(&self.cfg.language);
+                self.status = "✦ haiku written to Output".into();
+            }
             A::TtsReadParagraph => self.tts_read_paragraph(),
             A::TtsSaveAsAudio => self.tts_open_save_as_audio_picker(),
             A::OpenWritingStreakHeatmap => self.open_writing_streak_heatmap(),
@@ -23614,6 +23624,22 @@ impl App {
                 }
                 if let Some(i) = self.rows.iter().position(|(id, _)| *id == new_id) {
                     self.tree_cursor = i;
+                }
+                // HAIKU-1 T2 — a haiku when a fresh *manuscript* paragraph is
+                // born (the nakedest creative moment). Only plain prose
+                // paragraphs in a user book: `seed_body_after_create.is_none()`
+                // excludes every seeded kind (Dictionary / Sources / Glossary /
+                // Snippets / Threads / Language-rule / Jinja), `structural_pick`
+                // excludes structural subtypes, and `book_of_node` returns `Some`
+                // only when the containing book is a user book (not a system
+                // book like Characters / Places / Notes).
+                if self.cfg.editor.startup_haiku
+                    && kind == NodeKind::Paragraph
+                    && seed_body_after_create.is_none()
+                    && structural_pick.is_none()
+                    && self.book_of_node(new_id).is_some()
+                {
+                    crate::haiku::emit_for_lang(&self.cfg.language);
                 }
             }
             Err(e) => {

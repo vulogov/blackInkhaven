@@ -1580,6 +1580,11 @@ pub struct EditorConfig {
     /// fact-check fires. Default 5 (mirrors typst diagnostics idle).
     #[serde(default = "default_fact_check_idle_seconds")]
     pub fact_check_idle_seconds: u64,
+    /// HAIKU-1 — emit a hand-curated haiku (in the book's language) to the
+    /// Output pane at startup, when a new manuscript paragraph is created, and
+    /// on `Ctrl+Z p`. No AI, no network. Default: true.
+    #[serde(default = "default_startup_haiku")]
+    pub startup_haiku: bool,
     /// 1.3.37 — cap on the browser-style visited-paragraph history
     /// (persisted in `.session.json`). `0` (default) = unbounded,
     /// preserving prior behaviour; set e.g. 200 to bound session growth.
@@ -1814,6 +1819,10 @@ fn default_deleted_paragraph_history() -> usize {
 }
 
 fn default_external_change_auto_reload() -> bool {
+    true
+}
+
+fn default_startup_haiku() -> bool {
     true
 }
 
@@ -2976,6 +2985,7 @@ impl Default for EditorConfig {
             deleted_paragraph_history: default_deleted_paragraph_history(),
             external_change_auto_reload: default_external_change_auto_reload(),
             fact_check_idle_seconds: default_fact_check_idle_seconds(),
+            startup_haiku: default_startup_haiku(),
             visited_history_cap: default_visited_history_cap(),
             stemming: StemmingConfig::default(),
             startup_splash: default_startup_splash(),

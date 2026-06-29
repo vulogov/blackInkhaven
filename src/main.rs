@@ -43,6 +43,8 @@ mod prose;
 mod dialogue;
 // CHAR-1 — character arc tracking.
 mod character;
+// HAIKU-1 — zero-AI startup / new-paragraph / on-demand haiku.
+mod haiku;
 mod world_report;
 mod progress;
 mod replace;
