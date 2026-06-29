@@ -250,6 +250,80 @@ pub(super) fn character_mention_chapters(
     out
 }
 
+/// Up to `max` `(chapter_ord, sentence)` excerpts whose text contains any of the
+/// `needles` (lowercased; single tokens match whole-word, phrases as substrings).
+/// Used by the LLM checks (M-P9) to give the model concrete passages instead of
+/// the whole book. Sentences are split with the multilingual prose splitter.
+pub(super) fn excerpts_containing(
+    layout: &ProjectLayout,
+    h: &Hierarchy,
+    book: &Node,
+    lang: &crate::prose::ProseLanguage,
+    needles: &[String],
+    max: usize,
+) -> Vec<(u32, String)> {
+    let lc_needles: Vec<String> = needles.iter().map(|n| n.trim().to_lowercase()).filter(|n| !n.is_empty()).collect();
+    if lc_needles.is_empty() || max == 0 {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for (idx, ch) in chapters_of(h, book).iter().enumerate() {
+        let ord = (idx + 1) as u32;
+        for (_, text) in chapter_prose(layout, h, ch.id) {
+            for sent in crate::prose::segment::split_sentences(&text, lang) {
+                let s_lc = sent.to_lowercase();
+                let hit = lc_needles.iter().any(|n| {
+                    if n.contains(' ') {
+                        s_lc.contains(n.as_str())
+                    } else {
+                        s_lc.split(|c: char| !c.is_alphanumeric()).any(|w| w == n)
+                    }
+                });
+                if hit {
+                    out.push((ord, sent.trim().to_string()));
+                    if out.len() >= max {
+                        return out;
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The prose text of the paragraphs that carry a motif's explicit occurrences,
+/// as `(chapter_ord, text)` (for the motif-completeness LLM check, M-P9).
+pub(super) fn motif_occurrence_excerpts(
+    store: &MythStore,
+    layout: &ProjectLayout,
+    h: &Hierarchy,
+    book: &Node,
+    motif_para_id: &str,
+    max: usize,
+) -> Vec<(u32, String)> {
+    let mut out = Vec::new();
+    let occ_ids: std::collections::HashSet<String> = store
+        .motif_occurrence_para_ids(&book.slug, motif_para_id)
+        .unwrap_or_default()
+        .into_iter()
+        .collect();
+    if occ_ids.is_empty() {
+        return out;
+    }
+    for (idx, ch) in chapters_of(h, book).iter().enumerate() {
+        let ord = (idx + 1) as u32;
+        for (node, text) in chapter_prose(layout, h, ch.id) {
+            if occ_ids.contains(&node.id.to_string()) {
+                out.push((ord, text));
+                if out.len() >= max {
+                    return out;
+                }
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

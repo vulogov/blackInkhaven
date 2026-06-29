@@ -329,6 +329,17 @@ impl MythStore {
         )
     }
 
+    /// The prose paragraph ids carrying a motif's occurrences (any source).
+    pub(crate) fn motif_occurrence_para_ids(&self, book_slug: &str, motif_para_id: &str) -> Result<Vec<String>> {
+        let (bs, mp) = (book_slug.to_string(), motif_para_id.to_string());
+        let rows = self.engine.select_all_with(
+            "SELECT prose_para_id FROM myth_motif_occurrences \
+             WHERE book_slug = ? AND motif_para_id = ? ORDER BY chapter_ord",
+            &[&bs, &mp],
+        )?;
+        Ok(rows.iter().filter_map(|r| as_text(r.first())).collect())
+    }
+
     /// Distinct chapter ordinals where a motif occurs (any source).
     pub(crate) fn motif_chapters(&self, book_slug: &str, motif_para_id: &str) -> Result<Vec<u32>> {
         let (bs, mp) = (book_slug.to_string(), motif_para_id.to_string());
@@ -380,6 +391,40 @@ impl MythStore {
         };
         let rows = self.engine.select_all_with(sql, &[&bs])?;
         Ok(rows.iter().filter_map(row_to_finding).collect())
+    }
+
+    /// Findings paired with their stored `finding_id` (for the CLI listing, so a
+    /// reader can `myth suppress --finding <id>`).
+    pub(crate) fn findings_with_ids(
+        &self,
+        book_slug: &str,
+        include_suppressed: bool,
+    ) -> Result<Vec<(String, MythFinding)>> {
+        let bs = book_slug.to_string();
+        let sql = if include_suppressed {
+            "SELECT finding_id, finding_type, description, evidence, entry_para_id, chapter_ord, suppressed \
+             FROM myth_findings WHERE book_slug = ? ORDER BY finding_type, chapter_ord"
+        } else {
+            "SELECT finding_id, finding_type, description, evidence, entry_para_id, chapter_ord, suppressed \
+             FROM myth_findings WHERE book_slug = ? AND suppressed = 0 ORDER BY finding_type, chapter_ord"
+        };
+        let rows = self.engine.select_all_with(sql, &[&bs])?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                let id = as_text(r.first())?;
+                // The remaining columns mirror row_to_finding, shifted by one.
+                let f = MythFinding {
+                    finding_type: FindingType::from_code(&as_text(r.get(1))?)?,
+                    description: as_text(r.get(2))?,
+                    evidence: as_text(r.get(3)).filter(|s| !s.is_empty()),
+                    entry_para_id: as_text(r.get(4)).filter(|s| !s.is_empty()),
+                    chapter_ord: as_i64(r.get(5)).filter(|o| *o >= 0).map(|o| o as u32),
+                    suppressed: as_i64(r.get(6)).unwrap_or(0) != 0,
+                };
+                Some((id, f))
+            })
+            .collect())
     }
 
     /// Mark a finding suppressed by id. Returns whether a row matched.
