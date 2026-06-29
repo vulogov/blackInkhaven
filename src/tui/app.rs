@@ -3792,7 +3792,7 @@ impl App {
                     // the Output pane (short findings) or the AI chat.
                     // push_thought auto-shows it via notify_pane, which respects
                     // "don't steal" if the user is actively in another right pane.
-                    self.push_thought(format!("⚖ Inner Theologian\n\n{text}"));
+                    self.push_thought(format!("## ⚖ Inner Theologian\n\n{text}"));
                     self.status = if matches!(self.focus, Focus::Ai | Focus::AiPrompt)
                         && self.right_pane != RightPane::Thoughts
                     {

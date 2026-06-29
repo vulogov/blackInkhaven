@@ -1598,6 +1598,8 @@ impl super::super::App {
             return;
         }
 
+        // Render each thought block as Markdown (bold / italic / headings /
+        // lists / quotes / rules), reusing the AI pane's CommonMark lexer.
         let mut lines: Vec<Line> = Vec::new();
         for (i, t) in self.thoughts.iter().rev().enumerate() {
             if i > 0 {
@@ -1606,29 +1608,45 @@ impl super::super::App {
                     Style::default().fg(Color::DarkGray),
                 )));
             }
-            for (j, raw) in t.lines().enumerate() {
-                // The first line of the newest block gets a ⚖ marker.
-                if i == 0 && j == 0 {
-                    lines.push(Line::from(Span::styled(
-                        raw.to_string(),
-                        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-                    )));
-                } else {
-                    lines.push(Line::from(raw.to_string()));
-                }
+            for row in crate::tui::markdown_highlight::highlight_markdown_lines(t, &self.theme) {
+                lines.push(Line::from(
+                    row.into_iter()
+                        .map(|r| Span::styled(r.text, r.style))
+                        .collect::<Vec<_>>(),
+                ));
             }
         }
 
+        // Reserve the bottom row for the footer hint.
+        let footer_h: u16 = if inner.height > 1 { 1 } else { 0 };
+        let body_rect = Rect { height: inner.height - footer_h, ..inner };
+
+        // Clamp the scroll to the WRAPPED line count for the current width — the
+        // offset counts wrapped lines, which shrink when the pane widens (e.g.
+        // split → fullscreen), so a raw offset can land past the content and show
+        // a blank pane. Estimate wrapped rows by char width per line (ratatui's
+        // word-wrap breaks earlier, so this under-counts → the clamp is safe and
+        // never blanks).
+        let w = body_rect.width.max(1) as usize;
+        let wrapped_total: usize = lines
+            .iter()
+            .map(|l| {
+                let len: usize = l.spans.iter().map(|s| s.content.chars().count()).sum();
+                len.div_ceil(w).max(1)
+            })
+            .sum();
+        let max_scroll = wrapped_total.saturating_sub(body_rect.height as usize);
+        let scroll = self.thoughts_scroll.min(max_scroll);
         let para = Paragraph::new(lines)
             .wrap(Wrap { trim: false })
-            .scroll((self.thoughts_scroll.min(u16::MAX as usize) as u16, 0));
-        f.render_widget(para, inner);
+            .scroll((scroll.min(u16::MAX as usize) as u16, 0));
+        f.render_widget(para, body_rect);
 
-        if inner.height > 1 {
+        if footer_h == 1 {
             let footer = Rect { x: inner.x, y: inner.y + inner.height - 1, width: inner.width, height: 1 };
             f.render_widget(
                 Paragraph::new(Line::from(Span::styled(
-                    " ↑↓ scroll · g/G top/bottom · c clear · Ctrl+B Tab cycles panes ",
+                    " ↑↓ scroll · g/G top/bottom · c clear · Ctrl+Z f fullscreen · Ctrl+B Tab panes ",
                     Style::default().add_modifier(Modifier::DIM),
                 ))),
                 footer,
