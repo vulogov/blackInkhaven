@@ -21,7 +21,7 @@ pub(crate) use declarations::read_arc_declarations;
 pub(crate) use pipeline::{character_names, run_agency, run_extraction};
 pub(crate) use planning::run_planning;
 pub(crate) use store::CharStore;
-pub(crate) use verbs::{ActionVerbs, is_action_verb, verbs_for};
+pub(crate) use verbs::{ActionVerbs, is_action_verb, verbs_for_with};
 
 /// Arc structural taxonomy (RFC §4). `Other` accepts any author string and
 /// falls the checker back to the generic arc-completeness probe.

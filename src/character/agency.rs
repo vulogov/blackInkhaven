@@ -164,7 +164,7 @@ mod tests {
 
     #[test]
     fn active_when_name_precedes_action_verb() {
-        let av = super::super::verbs_for(&ProseLanguage::En);
+        let av = super::super::verbs::verbs_for(&ProseLanguage::En);
         let (score, active, passive) = compute_agency(
             "Mara struck the table. Mara opened the door.",
             "Mara",
@@ -181,7 +181,7 @@ mod tests {
 
     #[test]
     fn passive_when_name_follows_verb() {
-        let av = super::super::verbs_for(&ProseLanguage::En);
+        let av = super::super::verbs::verbs_for(&ProseLanguage::En);
         // "struck Mara" → Mara is the patient (after the verb).
         let (score, active, passive) = compute_agency(
             "The guard struck Mara hard.",
@@ -199,7 +199,7 @@ mod tests {
 
     #[test]
     fn intervening_other_name_blocks_active() {
-        let av = super::super::verbs_for(&ProseLanguage::En);
+        let av = super::super::verbs::verbs_for(&ProseLanguage::En);
         // "Mara watched as Aldric struck" — Aldric sits between Mara and struck.
         let (_s, active, _p) = compute_agency(
             "Mara saw Aldric struck the wall.",
@@ -215,7 +215,7 @@ mod tests {
 
     #[test]
     fn null_score_when_no_signal() {
-        let av = super::super::verbs_for(&ProseLanguage::En);
+        let av = super::super::verbs::verbs_for(&ProseLanguage::En);
         let (score, active, passive) = compute_agency(
             "Mara was in the room. The light was dim.",
             "Mara",
@@ -232,7 +232,7 @@ mod tests {
 
     #[test]
     fn passive_construction_counts_subject_as_passive() {
-        let av = super::super::verbs_for(&ProseLanguage::En);
+        let av = super::super::verbs::verbs_for(&ProseLanguage::En);
         // Passive voice with Mara as the subject near the start.
         let (_s, active, passive) = compute_agency(
             "Mara was taken by the guards.",

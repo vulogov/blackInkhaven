@@ -2614,7 +2614,7 @@ fn run_character_check(
     layout: &ProjectLayout,
 ) -> std::result::Result<usize, String> {
     use crate::pane::output::{Lifetime, Message, Severity, kinds};
-    const STALL_THRESHOLD: u32 = 4;
+    let stall_threshold = cfg.char.stall_threshold;
 
     let h = crate::store::hierarchy::Hierarchy::load(store).map_err(|e| e.to_string())?;
     let book = crate::cli::resolve_user_book(&h, None, "character")?.clone();
@@ -2661,7 +2661,7 @@ fn run_character_check(
         let name = &d.character_name;
         let states = cs.states_for_character(&book.slug, name).map_err(|e| e.to_string())?;
         // Stall — deterministic over the cached state chain.
-        if let Some(stall) = crate::character::detect_stall(name, &states, STALL_THRESHOLD) {
+        if let Some(stall) = crate::character::detect_stall(name, &states, stall_threshold) {
             emit(
                 format!("[character · stall · {name}] {}", stall.description),
                 "stall",
