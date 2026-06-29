@@ -21,41 +21,40 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.4.18 — Inner Theologian + the Thoughts pane
+## Latest release · 1.4.19 — Mythological & Symbolic Pattern Library
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.4.18.md`](Documentation/RELEASE_NOTES/1.4.18.md)
-· Plan: [`Documentation/PROPOSALS/INNER-THEOLOGIAN-1_PLAN.md`](Documentation/PROPOSALS/INNER-THEOLOGIAN-1_PLAN.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.4.19.md`](Documentation/RELEASE_NOTES/1.4.19.md)
+· Plan: [`Documentation/PROPOSALS/MYTH-1_PLAN.md`](Documentation/PROPOSALS/MYTH-1_PLAN.md)
 
-Fiction carries moral weight. Inkhaven's Inner family had two members — Inner Socrates (logical
-structure) and Inner Editor (craft); 1.4.18 adds the third axis, **moral and theological seriousness**.
-**Inner Theologian** reads any manuscript through the lenses of **eleven** moral and theological
-traditions (Catholic, Protestant, Orthodox, Gnostic, LDS, Islam, Judaism, Hinduism, Buddhism,
-Confucianism, secular philosophy) — **not to judge by any of them, but to ask what each of them sees.**
-It belongs to no tradition, advocates none, **never delivers a verdict**, and never edits prose. **No
-new runtime crates.**
+A serious novel runs a symbolic layer beneath its plot: an object that returns charged with new
+meaning, a motif that rises and pays off, a character who inhabits an archetypal role. 1.4.19 gives
+that layer a home — on one strict condition: it tracks only what **you declare** in the new
+**Mythology** system book. It never discovers symbols you didn't name, never interprets them, and
+never edits your prose. Every finding is advisory. **No new runtime crates.**
 
-### Two tracks
+### Declare it, then check it
 
-The **fast track** is deterministic and zero-AI: three `info` signals (moral invisibility, consequence
-gap, sacred levity) in the Output `theologian` category (`⚖`), folded into the `Ctrl+B Shift+C` review
-pass. The **slow track** (`Ctrl+B J→T`) runs in two passes — a *discovery* call decides which of all
-eleven lenses genuinely illuminate the passage (and which are tellingly **silent**), then an *analysis*
-call poses two to four questions through them, in the book's language, naming which tradition raises
-which. CLI: `inkhaven theologian scan / session / suppress`.
+Three declaration paragraphs — **symbols** (`para:myth-symbol`, `⊛`), **motifs** (`para:myth-motif`,
+`∿`), and **archetypes** (`para:myth-archetype`, `⍟`, a character mapped to one of Vogler's eight
+roles or a custom one). Declared symbol vocabulary glows in the editor (lavender). Two kinds of check:
+**deterministic** (zero-AI: archetype vacant / absent, motif absent from the final act) folded into the
+`Ctrl+B Shift+C` review pass in the Output `myth` category; and **LLM** (explicit, `inkhaven myth
+check`: symbol consistency, motif completeness, archetype role fulfilment) — given only your
+declarations plus concrete excerpts, in the project language.
 
-### The Thoughts pane
+### The heatmap & the Inner family
 
-A long theological session belongs neither in a one-line Output finding nor a chat turn, so 1.4.18 adds
-a third right-side pane — **Thoughts** — a read-only, scrollable, Markdown-rendered home for it.
-`Ctrl+B Tab` now cycles Output → AI → Thoughts; plain `Tab` cycles Tree → Editor → the shown pane;
-content auto-surfaces (without stealing focus mid-read); `Ctrl+Z f` fullscreens Output/Thoughts; the
-active pane is remembered across restarts.
+**`Ctrl+V Shift+M`** renders the symbol-density / motif-presence / archetype-presence heatmap into the
+**Thoughts** pane and jumps to the nearest declared symbol. A sixteenth Inner Socrates persona, **The
+Myth-Reader**, reads for symbolic resonance; your declared symbol traditions ground **Inner
+Theologian**, and your declared motifs ground the **utopian-architect** persona. CLI: `inkhaven myth
+scan / check / profile / refresh / suppress`.
 
 ### Dependencies & compatibility
 
-**No new runtime crates; no new system books; no new `NodeKind`.** One new `.inkhaven/inner_theologian.db`,
-one `theologian:` config block, one Output category (`⚖`), the `Ctrl+B J→T` subkey, and the Thoughts
-pane (`Ctrl+Z f`). Read-only `ink.theologian.*` Bund. Grounded by WORLD-6 / CHAR-1 when present.
+**No new runtime crates; no new `NodeKind`.** One new `mythology` system book, one
+`.inkhaven/myth.duckdb`, one `myth:` config block, one Output category (`⊛`), the `Ctrl+V Shift+M`
+chord, and the Myth-Reader persona. `ink.myth.*` Bund (read) + `ink.myth.suppress` (write).
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

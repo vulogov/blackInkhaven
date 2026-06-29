@@ -62,6 +62,31 @@ pub(crate) fn build_grounding(
         ));
     }
 
+    // Source 4 — MYTH-1 declared symbol traditions. A symbol the author roots in a
+    // named tradition (e.g. "Norse", "Christian") is a hook the theological reader
+    // should honour: it tells us which lens the author is already invoking.
+    if let Ok(ms) = crate::myth::MythStore::open(project_root) {
+        if let Ok(symbols) = ms.symbols(book_slug) {
+            let mut traditions: Vec<String> = symbols
+                .iter()
+                .flat_map(|s| s.traditions.iter().cloned())
+                .map(|t| t.trim().to_string())
+                .filter(|t| !t.is_empty())
+                .collect();
+            traditions.sort();
+            traditions.dedup();
+            if !traditions.is_empty() {
+                let shown: Vec<String> = traditions.iter().take(4).cloned().collect();
+                parts.push(format!(
+                    "The author's declared symbols draw on {} tradition(s) ({}); I will read with those \
+                     in mind rather than imposing another.",
+                    traditions.len(),
+                    shown.join(", ")
+                ));
+            }
+        }
+    }
+
     if parts.is_empty() {
         None
     } else {

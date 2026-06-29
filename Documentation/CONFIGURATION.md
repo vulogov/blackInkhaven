@@ -2364,6 +2364,53 @@ theologian: {
 
 See [Tutorial 101 — Inner Theologian](Tutorials/101-inner-theologian.md).
 
+## 1.4.19 — Mythology & symbolic pattern library (MYTH-1)
+
+The optional `myth:` block tunes the mythological & symbolic pattern library over
+the **declared** Mythology system book. Omit it for the defaults below;
+`enabled: false` gates the deterministic review-pass findings and the heatmap
+chord.
+
+```hjson
+myth: {
+  // Master switch. false gates the review-pass findings + the heatmap chord.
+  enabled: true
+  // Chapter buckets the heatmap collapses the book into.
+  heatmap_buckets: 8
+  // A symbol must appear in at least this many chapters before the LLM
+  // consistency check runs on it.
+  consistency_min_chapters: 5
+  // A motif must have at least this many occurrences before the LLM
+  // completeness check runs on it.
+  motif_min_occurrences: 3
+  // The final act = the last this-percent of chapters (motif-absent check).
+  final_act_pct: 25
+  // Warn (inform, never block) when an `inkhaven myth check` LLM run is
+  // estimated to exceed this many USD.
+  check_cost_warn: 0.08
+}
+```
+
+- **Declarations only.** The library tracks the symbols (`para:myth-symbol`,
+  `⊛`), motifs (`para:myth-motif`, `∿`), and archetypes (`para:myth-archetype`,
+  `⍟`) you declare in the Mythology book. It never discovers, never interprets,
+  never edits prose. Symbol vocabulary highlights in the editor (`myth_symbol_fg`,
+  lavender by default).
+- **Deterministic** (zero-AI): archetype vacant / absent, motif absent from the
+  final act — in the Output `myth` category, folded into the `Ctrl+B Shift+C`
+  review pass. **LLM** (explicit, `inkhaven myth check`): symbol consistency,
+  motif completeness, archetype role fulfilment.
+- **`Ctrl+V Shift+M`** builds the symbol/motif/archetype heatmap into the Thoughts
+  pane and jumps to the nearest declared symbol. CLI: `inkhaven myth
+  scan|check|profile|refresh|suppress` (`check` exits 1 on any finding). Bund:
+  `ink.myth.{symbols,motifs,archetypes,density,findings}` (read) +
+  `ink.myth.suppress` (write). Findings live in `.inkhaven/myth.duckdb`.
+- The **Myth-Reader** Inner Socrates persona reads for symbolic resonance; your
+  declared symbol traditions ground **Inner Theologian** and your declared motifs
+  ground the **utopian-architect** persona.
+
+See [Tutorial 102 — Mythological & Symbolic Pattern Library](Tutorials/102-mythology.md).
+
 ## 1.4.10 — Jinja template paragraphs (STRUCT-1)
 
 A paragraph with `content_type: "jinja"` is a [minijinja](https://docs.rs/minijinja)
