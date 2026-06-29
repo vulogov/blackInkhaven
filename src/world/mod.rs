@@ -33,6 +33,10 @@ pub mod proposals;
 pub mod storage;
 pub mod timeline_context;
 pub mod types;
+// WORLD-6 — utopian/dystopian coherence checker. Built across W-P0…W-P9; the
+// store / stages / CLI consume the types, so allow dead_code until they land.
+#[allow(dead_code)]
+pub mod utopia;
 
 use std::fmt;
 
