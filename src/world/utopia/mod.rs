@@ -14,6 +14,10 @@ use crate::store::SYSTEM_TAG_WORLD;
 use crate::store::hierarchy::Hierarchy;
 use crate::store::node::{Node, NodeKind};
 
+mod store;
+
+pub(crate) use store::UtopiaStore;
+
 /// The four kinds of declared claim that make up a premise set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ClaimType {
