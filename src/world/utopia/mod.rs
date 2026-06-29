@@ -14,6 +14,8 @@ use crate::store::SYSTEM_TAG_WORLD;
 use crate::store::hierarchy::Hierarchy;
 use crate::store::node::{Node, NodeKind};
 
+mod llm;
+mod stage1;
 mod store;
 
 pub(crate) use store::UtopiaStore;

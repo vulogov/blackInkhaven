@@ -204,6 +204,23 @@ impl UtopiaStore {
         }
     }
 
+    /// Delete a group's findings of a given reasoning domain — keeps the
+    /// Factual cross-reference (domain `factual`) and the Stage-2 chain logic
+    /// (domain `systemic`/`logical`) from clobbering each other, since both can
+    /// be `ChainBreak`.
+    pub(crate) fn clear_group_findings_by_domain(
+        &self,
+        book_slug: &str,
+        group: &str,
+        domain: FindingDomain,
+    ) -> Result<()> {
+        let (bs, g, d) = (book_slug.to_string(), group.to_string(), domain.as_code().to_string());
+        self.engine.execute_with(
+            "DELETE FROM utopia_findings WHERE book_slug = ? AND premise_group = ? AND finding_domain = ?",
+            &[&bs, &g, &d],
+        )
+    }
+
     pub(crate) fn upsert_finding(
         &self,
         book_slug: &str,
