@@ -19,6 +19,7 @@
 
 mod app;
 mod focus;
+mod picker;
 mod render;
 mod thread;
 
@@ -96,8 +97,15 @@ fn launch_tui(
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut app = ResearchApp::new(layout, cfg, store, hierarchy, thread)?;
-    let result = app.run(&mut terminal);
+    // R-P3: resolve which thread to open (the picker fires for >1 thread when
+    // no --thread was given). `None` → the user cancelled; exit cleanly.
+    let result = match picker::resolve_thread(&mut terminal, &layout, thread)? {
+        Some(name) => {
+            let mut app = ResearchApp::new(layout, cfg, store, hierarchy, Some(name))?;
+            app.run(&mut terminal)
+        }
+        None => Ok(()),
+    };
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
