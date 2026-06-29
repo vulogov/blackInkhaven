@@ -215,6 +215,27 @@ pub(super) fn build_lexicon(
     }
     lexicon.add_extra_forms(extras);
 
+    // MYTH-1 — declared symbol vocabulary highlights lavender. The tokens are
+    // compiled into myth.duckdb on every Mythology-book save; add them as
+    // Symbol-category surface forms (no-op if no Mythology book / no symbols).
+    if let Some(book) = hierarchy
+        .iter()
+        .find(|n| n.kind == crate::store::node::NodeKind::Book && n.system_tag.is_none())
+    {
+        if let Ok(ms) = crate::myth::MythStore::open(store.project_root()) {
+            // Rebuild the inventory + highlight vocab from the Mythology book so
+            // the highlight is live the moment a symbol is declared/edited (this
+            // runs on every save/open, like the rest of the lexicon build).
+            let layout = crate::project::ProjectLayout::new(store.project_root());
+            let _ = crate::myth::refresh_inventory(&ms, &layout, hierarchy, book);
+            if let Ok(tokens) = ms.highlight_tokens(&book.slug) {
+                lexicon.add_extra_forms(
+                    tokens.into_iter().map(|t| (t, super::lexicon::LexCategory::Symbol)),
+                );
+            }
+        }
+    }
+
     (lexicon, index)
 }
 
