@@ -17,11 +17,13 @@ use crate::store::node::Node;
 
 mod checks;
 mod heatmap;
+mod llm;
 mod parse;
 mod pipeline;
 mod store;
 
 pub(crate) use checks::run_deterministic_checks;
+pub(crate) use llm::run_llm_checks;
 pub(crate) use parse::{read_archetypes, read_motifs, read_symbols};
 pub(crate) use pipeline::{
     collect_explicit_motifs, refresh_inventory, run_density_scan, run_full_scan,
@@ -138,6 +140,8 @@ pub(crate) enum FindingType {
     ArchetypeVacant,
     /// A mapped character absent from its expected structural zone (deterministic).
     ArchetypeAbsent,
+    /// A mapped character present but not performing its declared role function (LLM).
+    ArchetypeRoleUnfulfilled,
 }
 
 impl FindingType {
@@ -148,6 +152,7 @@ impl FindingType {
             FindingType::MotifAbsentFinalAct => "motif_absent_final_act",
             FindingType::ArchetypeVacant => "archetype_vacant",
             FindingType::ArchetypeAbsent => "archetype_absent",
+            FindingType::ArchetypeRoleUnfulfilled => "archetype_role_unfulfilled",
         }
     }
 
@@ -158,6 +163,7 @@ impl FindingType {
             "motif_absent_final_act" => FindingType::MotifAbsentFinalAct,
             "archetype_vacant" => FindingType::ArchetypeVacant,
             "archetype_absent" => FindingType::ArchetypeAbsent,
+            "archetype_role_unfulfilled" => FindingType::ArchetypeRoleUnfulfilled,
             _ => return None,
         })
     }
@@ -169,6 +175,7 @@ impl FindingType {
             FindingType::MotifAbsentFinalAct => "motif absent from final act",
             FindingType::ArchetypeVacant => "archetype role vacant",
             FindingType::ArchetypeAbsent => "archetype character absent",
+            FindingType::ArchetypeRoleUnfulfilled => "archetype role unfulfilled",
         }
     }
 }
@@ -250,6 +257,7 @@ mod tests {
             FindingType::MotifAbsentFinalAct,
             FindingType::ArchetypeVacant,
             FindingType::ArchetypeAbsent,
+            FindingType::ArchetypeRoleUnfulfilled,
         ] {
             assert_eq!(FindingType::from_code(f.as_code()), Some(f));
             assert!(!f.label().is_empty());

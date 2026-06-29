@@ -13,7 +13,7 @@ mod metrics;
 mod passive;
 mod pipeline;
 mod profile;
-mod segment;
+pub(crate) mod segment;
 mod store;
 pub(crate) mod violations;
 
