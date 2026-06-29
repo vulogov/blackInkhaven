@@ -2201,6 +2201,9 @@ pub(crate) struct App {
     /// history, bottom = AI prompt. Same chord returns to the
     /// normal layout. Mutually exclusive with `typewriter_mode`.
     ai_fullscreen: bool,
+    /// THOUGHTS-1 — fullscreen the current right pane when it is Output or
+    /// Thoughts (the AI pane uses `ai_fullscreen`). Toggled by `Ctrl+Z f`.
+    right_fullscreen: bool,
 
     /// Extra lines to scroll the chat-history pane UP from its auto-
     /// bottom-pin. PageUp adds, PageDown subtracts; the value is
@@ -3054,6 +3057,7 @@ impl App {
             image_picker,
             typewriter_mode: false,
             ai_fullscreen: false,
+            right_fullscreen: false,
             chat_history_scroll: 0,
             chat_search: None,
             chat_selection: None,
@@ -3786,10 +3790,16 @@ impl App {
                     // THOUGHTS-1 — the long reflective response lands in the
                     // dedicated scrollable Thoughts pane (its proper home), not
                     // the Output pane (short findings) or the AI chat.
+                    // push_thought auto-shows it via notify_pane, which respects
+                    // "don't steal" if the user is actively in another right pane.
                     self.push_thought(format!("⚖ Inner Theologian\n\n{text}"));
-                    self.right_pane = RightPane::Thoughts;
-                    self.status =
-                        "⚖ Inner Theologian — questions in the Thoughts pane (Ctrl+B Tab · ↑↓ scroll)".into();
+                    self.status = if matches!(self.focus, Focus::Ai | Focus::AiPrompt)
+                        && self.right_pane != RightPane::Thoughts
+                    {
+                        "⚖ Inner Theologian — questions ready in the Thoughts pane (Ctrl+B Tab to view)".into()
+                    } else {
+                        "⚖ Inner Theologian — questions in the Thoughts pane (↑↓ scroll · Ctrl+Z f fullscreen)".into()
+                    };
                 }
                 Err(e) => self.status = format!("Inner Theologian skipped: {e}"),
             },
@@ -8029,7 +8039,14 @@ impl App {
                 self.thoughts_scroll = 0;
                 self.status = "Thoughts cleared".into();
             }
-            KeyCode::Esc => self.change_focus(Focus::Editor),
+            KeyCode::Esc => {
+                if self.right_fullscreen {
+                    self.right_fullscreen = false;
+                    self.status = "exited fullscreen".into();
+                } else {
+                    self.change_focus(Focus::Editor);
+                }
+            }
             _ => return Ok(false),
         }
         Ok(false)
@@ -11310,6 +11327,7 @@ impl App {
                 crate::haiku::emit_for_lang(&self.cfg.language);
                 self.status = "✦ haiku written to Output".into();
             }
+            A::ToggleRightPaneFullscreen => self.toggle_right_pane_fullscreen(),
             A::TtsReadParagraph => self.tts_read_paragraph(),
             A::TtsSaveAsAudio => self.tts_open_save_as_audio_picker(),
             A::OpenWritingStreakHeatmap => self.open_writing_streak_heatmap(),
@@ -20329,6 +20347,30 @@ impl App {
     /// 50/50 — AI pane on the left, chat history on the right —
     /// over a full-width AI prompt at the bottom. Same chord
     /// returns to the four-pane layout.
+    /// THOUGHTS-1 — `Ctrl+Z f`. Fullscreen the current right pane. For the AI
+    /// pane it delegates to `toggle_ai_fullscreen` (its richer layout); for
+    /// Output / Thoughts it toggles `right_fullscreen`.
+    fn toggle_right_pane_fullscreen(&mut self) {
+        match self.right_pane {
+            RightPane::Ai => self.toggle_ai_fullscreen(),
+            RightPane::Output | RightPane::Thoughts => {
+                self.right_fullscreen = !self.right_fullscreen;
+                if self.right_fullscreen {
+                    // The three fullscreens are exclusive.
+                    self.typewriter_mode = false;
+                    self.ai_fullscreen = false;
+                    // Focus the right region (keeping the current pane) so its
+                    // scroll keys take effect.
+                    self.focus_cycle(Focus::Ai);
+                    self.status =
+                        format!("{} fullscreen · Ctrl+Z f / Esc to exit", self.right_pane.label());
+                } else {
+                    self.status = "exited fullscreen".into();
+                }
+            }
+        }
+    }
+
     fn toggle_ai_fullscreen(&mut self) {
         self.ai_fullscreen = !self.ai_fullscreen;
         // Always start scrolled to the bottom (newest visible). The
@@ -25451,6 +25493,31 @@ impl App {
             self.draw_chat_history(f, top[1]);
             self.draw_ai_prompt(f, outer[1]);
             self.draw_status(f, outer[2]);
+            if !matches!(self.modal, Modal::None) {
+                self.draw_modal(f, f.area());
+            }
+            return;
+        }
+
+        // THOUGHTS-1 — fullscreen the current right pane when it is Output or
+        // Thoughts (the AI pane has its own `ai_fullscreen` layout above). Tree,
+        // editor, search bar, and AI prompt are hidden; one status line remains.
+        if self.right_fullscreen && matches!(self.right_pane, RightPane::Output | RightPane::Thoughts) {
+            let outer = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(0), Constraint::Length(1)])
+                .split(f.area());
+            self.layout_search = Rect::default();
+            self.layout_tree = Rect::default();
+            self.layout_editor = Rect::default();
+            self.layout_ai = outer[0];
+            self.layout_ai_prompt = Rect::default();
+            match self.right_pane {
+                RightPane::Output => self.draw_output(f, outer[0]),
+                RightPane::Thoughts => self.draw_thoughts(f, outer[0]),
+                RightPane::Ai => {}
+            }
+            self.draw_status(f, outer[1]);
             if !matches!(self.modal, Modal::None) {
                 self.draw_modal(f, f.area());
             }

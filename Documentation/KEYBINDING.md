@@ -595,10 +595,18 @@ prior set of chat turns won't dilute their grounding.
 
 ### 4.1 Output pane
 
-`Ctrl+B Tab` / `Ctrl+B Shift+Tab` cycle the right region between the **AI** pane
-and the **Output** pane — structured one-way notifications from every subsystem
-(fact-check, Socratic, timeline critique, translation, lexicon, Bund, …). Active
-when the right region shows Output.
+`Ctrl+B Tab` / `Ctrl+B Shift+Tab` cycle the right region between the **Output**
+pane (structured one-way notifications from every subsystem — fact-check,
+Socratic, timeline critique, translation, lexicon, Bund, …), the **AI** pane,
+and (1.4.18; THOUGHTS-1) the **Thoughts** pane — a read-only, scrollable home for
+long reflective output, e.g. the Inner Theologian slow track (`Ctrl+B J→T`). In
+the Thoughts pane: `↑↓`/`j`/`k` scroll, `PageUp`/`PageDown`, `g`/`G` top/bottom,
+`c` clear, `Esc` to the editor. Plain **`Tab`** now cycles Tree → Editor → *the
+currently-shown right pane* (no longer forced to AI). The active right pane is
+remembered across restarts. **`Ctrl+Z f`** fullscreens the current right pane
+(Output / Thoughts; the AI pane uses `Ctrl+B K`). When content arrives for a
+pane it auto-surfaces — unless you're actively working in a right pane, so it
+never steals focus mid-read.
 
 | Key       | Action                                                                          |
 | --------- | ------------------------------------------------------------------------------- |
