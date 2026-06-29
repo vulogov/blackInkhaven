@@ -26,6 +26,10 @@ pub(crate) use store::ProseStore;
 // per-language modal (hedging) unigram list, for the dialogue fingerprint.
 pub(crate) use metrics::mattr;
 
+// CHAR-1 reuse seam: per-language passive-voice detection over one sentence,
+// for the character agency score (active vs passive presence).
+pub(crate) use passive::detect_passive;
+
 /// The modal (epistemic-hedging) unigram list for a language — the word list
 /// the dialogue `hedge_density` metric matches against.
 pub(crate) fn modal_unigrams(lang: &ProseLanguage) -> &'static [&'static str] {

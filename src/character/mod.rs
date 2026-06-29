@@ -7,6 +7,7 @@
 //! C-P0 — the language model: the arc taxonomy, the core state/check types, and
 //! the per-language action-verb lists the agency score (C-P3) builds on.
 
+mod agency;
 mod declarations;
 mod store;
 mod verbs;
