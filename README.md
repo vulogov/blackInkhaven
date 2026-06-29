@@ -21,41 +21,36 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.4.16 — Character arc tracking
+## Latest release · 1.4.17 — The startup haiku
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.4.16.md`](Documentation/RELEASE_NOTES/1.4.16.md)
-· Plan: [`Documentation/PROPOSALS/CHAR-1_PLAN.md`](Documentation/PROPOSALS/CHAR-1_PLAN.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.4.17.md`](Documentation/RELEASE_NOTES/1.4.17.md)
+· Plan: [`Documentation/PROPOSALS/HAIKU-1_PLAN.md`](Documentation/PROPOSALS/HAIKU-1_PLAN.md)
 
-inkhaven tracks a character's **facts** (the continuity bible) and their **speech** (DIALOG-1
-fingerprints). 1.4.16 (CHAR-1) adds the third axis — **change over time**: per named character, a
-chapter-ordered chain of their observable state, a **deterministic agency score**, and completeness
-checks against the arc you declared. A character arc is a promise — *starts here, earned to there* —
-and CHAR-1 measures whether the book keeps it. It reads only your manuscript and your declarations,
-and **never edits prose**. **No new runtime crates.**
+A writing space should feel like one from the first second. 1.4.17 (HAIKU-1) puts a small,
+hand-curated haiku in the Output pane at three moments — at **startup**, when you create a new
+manuscript paragraph and open it to write, and on demand via **`Ctrl+Z p`**. It is the simplest
+feature in Inkhaven: **no AI, no network, no generation.** All 25 poems (five per language,
+EN/RU/DE/FR/ES) are `&'static str` baked into the binary — present in the first millisecond of startup,
+before the database journal replays, even on an airgapped machine. **No new crates.**
 
-### Declare, then check
+### Three moments, one poem at a time
 
-Add a `character_arc` HJSON block to a Characters-book paragraph (`arc_type` ∈ positive_change / flat /
-corruption / fall / disillusionment + aliases; `desired_state_start` / optional
-`desired_midpoint_state` / `desired_state_end`). **Agency** is zero-AI — `active/(active+passive)`
-presence via a windowed name↔action-verb heuristic (five languages EN/RU/DE/FR/ES); **state
-extraction** is the only LLM pass (sliding-window, content-hash lazy). `inkhaven character refresh`
-runs both; `check` runs start/midpoint/end alignment + an **arc-earned** check + a deterministic
-**stall** check (exit **2** if the ending/earned fails, **1** on any other gap or stall); `plan` flags
-Planning-Board coverage gaps (exit 1); `arc <name>` prints the full report.
+The poem is in the book's language (`editor.language`, English fallback); a clock-seeded per-process
+rotation advances on each trigger, so you rarely see the same poem twice. It renders as a `✦ haiku`
+row with three indented lines, and only the most recent ever lives in the pane — a new one quietly
+replaces the last. Each language carries three Tier-A poems (the manuscript — ink, the blank page) and
+two Tier-B poems (the writer's surroundings — rain on the glass, the pause between words).
 
-### Read it where you write
+### Turning it off
 
-**`Ctrl+V Shift+N`** opens the read-only arc view for the nearest character — declaration, ✦-marked
-state chain with per-chapter agency, checks, and planning gaps. The **`Ctrl+B Shift+C`** review pass
-folds in the deterministic layers (agency + planning + stalls) and surfaces the cached arc problems in
-the Output `character` category, zero-cost; the LLM checks stay explicit on the CLI.
+`editor.startup_haiku: false` silences the startup and new-paragraph moments; the `Ctrl+Z p` chord
+still works whenever you want one.
 
 ### Dependencies & compatibility
 
-**No new runtime crates; no new system books; no new `NodeKind`** — one new `.inkhaven/char.duckdb`,
-one `char:` config block, one new chord (`Ctrl+V Shift+N`). Read-only `ink.char.*` Bund. Built on
-NARR-1's language/passive machinery and DIALOG-1's dialogue store, both read-only.
+**No new runtime crates; no new system books; no new `NodeKind`; no new DuckDB file.** One module
+(`src/haiku.rs`), one Output kind (`✦ haiku`), one config knob (`editor.startup_haiku`, default
+`true`), one chord (`Ctrl+Z p`).
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
