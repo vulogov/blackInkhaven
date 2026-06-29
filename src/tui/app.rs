@@ -2796,6 +2796,50 @@ fn run_theologian_check(
     Ok(findings.len())
 }
 
+/// MYTH-1 — the deterministic myth findings (archetype vacancy/absence, motif
+/// absent from final act) in the review pass. Refreshes the declared inventory +
+/// density + explicit motifs first (zero-AI). The LLM consistency/completeness
+/// checks stay explicit (`inkhaven myth check`); the heatmap is on `Ctrl+V
+/// Shift+M`. Replaces this book's prior myth findings each pass.
+fn run_myth_check(store: &Store, _cfg: &Config, layout: &ProjectLayout) -> std::result::Result<usize, String> {
+    use crate::pane::output::{Lifetime, Message, Severity, kinds};
+
+    let h = crate::store::hierarchy::Hierarchy::load(store).map_err(|e| e.to_string())?;
+    // No Mythology book / no user book → nothing to do.
+    if !h.iter().any(|n| {
+        n.kind == NodeKind::Book
+            && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_MYTHOLOGY)
+    }) {
+        return Ok(0);
+    }
+    let book = crate::cli::resolve_user_book(&h, None, "myth")?.clone();
+    let ms = crate::myth::MythStore::open(store.project_root()).map_err(|e| e.to_string())?;
+
+    let _ = crate::myth::refresh_inventory(&ms, layout, &h, &book);
+    let _ = crate::myth::run_density_scan(&ms, layout, &h, &book, false);
+    let _ = crate::myth::collect_explicit_motifs(&ms, layout, &h, &book);
+    let findings = crate::myth::run_deterministic_checks(&ms, layout, &h, &book, 25)
+        .map_err(|e| e.to_string())?;
+
+    if let Some(s) = crate::pane::output::active() {
+        if let Ok(msgs) = s.by_kind(kinds::MYTH) {
+            for m in &msgs {
+                let _ = s.dismiss(m.id);
+            }
+        }
+    }
+    for f in &findings {
+        let text = format!("[myth · {}] {}", f.finding_type.label(), f.description);
+        crate::pane::output::emit(&Message::new(
+            kinds::MYTH,
+            Severity::Info,
+            Lifetime::UntilActedOn,
+            serde_json::json!({ "text": text, "category": "myth", "type": f.finding_type.as_code() }),
+        ));
+    }
+    Ok(findings.len())
+}
+
 /// The first paragraph id of each chapter (1-based), for Output finding
 /// navigation.
 fn chapter_first_paragraphs(
@@ -13730,6 +13774,10 @@ impl App {
         // slow-track LLM session stays explicit via Ctrl+B J→T).
         let theo = run_theologian_check(&self.store, &self.cfg, &self.layout).unwrap_or(0);
 
+        // MYTH-1 — deterministic myth findings (the LLM checks stay explicit via
+        // `inkhaven myth check`; the heatmap is on Ctrl+V Shift+M).
+        let myth = run_myth_check(&self.store, &self.cfg, &self.layout).unwrap_or(0);
+
         // Reflect the instant findings in the tree report-card immediately.
         self.refresh_tree_badges();
 
@@ -13740,12 +13788,12 @@ impl App {
         // seconds later (and re-badge the tree on completion).
         let editor_spawned = self.maybe_spawn_check_editor();
 
-        let total = fact + soc + tl + dlg + uto + chr + theo;
+        let total = fact + soc + tl + dlg + uto + chr + theo + myth;
         if total == 0 && !editor_spawned {
             self.status = if checked == 0 {
-                "review pass: clean (no open paragraph; timeline + dialogue + utopia + character + theologian included)".into()
+                "review pass: clean (no open paragraph; timeline + dialogue + utopia + character + theologian + myth included)".into()
             } else {
-                format!("review pass: clean ({checked} ¶ + timeline + dialogue + utopia + character + theologian)")
+                format!("review pass: clean ({checked} ¶ + timeline + dialogue + utopia + character + theologian + myth)")
             };
             return;
         }
@@ -13759,7 +13807,7 @@ impl App {
             format!("review pass: instant checks clean{editor_note}")
         } else {
             format!(
-                "review pass: {total} finding(s) — fact {fact} · socrates {soc} · timeline {tl} · dialogue {dlg} · utopia {uto} · character {chr} · theologian {theo}{editor_note} → Output (^B Tab)"
+                "review pass: {total} finding(s) — fact {fact} · socrates {soc} · timeline {tl} · dialogue {dlg} · utopia {uto} · character {chr} · theologian {theo} · myth {myth}{editor_note} → Output (^B Tab)"
             )
         };
     }
