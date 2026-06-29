@@ -221,6 +221,24 @@ impl UtopiaStore {
         )
     }
 
+    /// Delete a group's entailment-violation findings for one chapter (before
+    /// re-scanning that chapter). Per-chapter so a re-scan of one chapter
+    /// doesn't drop the others' violations.
+    pub(crate) fn clear_chapter_entailment(
+        &self,
+        book_slug: &str,
+        group: &str,
+        chapter_ord: u32,
+    ) -> Result<()> {
+        let (bs, g) = (book_slug.to_string(), group.to_string());
+        let ord = chapter_ord as i64;
+        self.engine.execute_with(
+            "DELETE FROM utopia_findings WHERE book_slug = ? AND premise_group = ? \
+             AND chapter_ord = ? AND finding_type = 'entailment_violation'",
+            &[&bs, &g, &ord],
+        )
+    }
+
     pub(crate) fn upsert_finding(
         &self,
         book_slug: &str,
