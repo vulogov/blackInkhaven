@@ -44,6 +44,9 @@ pub mod kinds {
     /// DIALOG-1 — a dialogue finding (zero-attribution / said-bookism density /
     /// talking-head sequence). Always informational.
     pub const DIALOGUE: &str = "dialogue";
+    /// WORLD-6 — a utopian/dystopian coherence finding (chain logic or
+    /// entailment violation). Always informational.
+    pub const UTOPIA: &str = "utopia";
 }
 
 /// Visual / priority class (RFC §7.4).

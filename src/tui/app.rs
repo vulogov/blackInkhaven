@@ -2555,6 +2555,54 @@ fn dialogue_bar_row(
     format!("  {label:<20} {valstr:<12} [{left} {bar} {right}]")
 }
 
+/// WORLD-6 — surface the **cached** utopia coherence findings (from
+/// utopia.duckdb) in the Output pane. Read-only: it never runs an LLM stage —
+/// computation stays explicit (`inkhaven world utopia-check`), so the TUI hot
+/// path stays zero-cost. Replaces this book's prior utopia findings; emits the
+/// current unsuppressed set. Returns the count.
+fn emit_cached_utopia_findings(store: &Store) -> std::result::Result<usize, String> {
+    use crate::pane::output::{Lifetime, Message, Severity, kinds};
+    let h = crate::store::hierarchy::Hierarchy::load(store).map_err(|e| e.to_string())?;
+    let book = crate::cli::resolve_user_book(&h, None, "utopia")?.clone();
+    let us =
+        crate::world::utopia::UtopiaStore::open(store.project_root()).map_err(|e| e.to_string())?;
+    let findings = us.findings(&book.slug, true).map_err(|e| e.to_string())?;
+
+    if let Some(s) = crate::pane::output::active() {
+        if let Ok(msgs) = s.by_kind(kinds::UTOPIA) {
+            for m in &msgs {
+                let _ = s.dismiss(m.id);
+            }
+        }
+    }
+    use crate::world::utopia::FindingType;
+    for f in &findings {
+        let text = match f.finding_type {
+            FindingType::EntailmentViolation => {
+                let loc = f.chapter_ord.map(|c| format!("ch.{c} ")).unwrap_or_default();
+                format!("[utopia · prose · {loc}{}] {}", f.premise_group, f.description)
+            }
+            _ => format!("[utopia · coherence · {}] {}", f.premise_group, f.description),
+        };
+        let mut msg = Message::new(
+            kinds::UTOPIA,
+            Severity::Info,
+            Lifetime::UntilActedOn,
+            serde_json::json!({
+                "text": text,
+                "category": "utopia",
+                "type": f.finding_type.as_code(),
+                "group": f.premise_group,
+            }),
+        );
+        if let Some(id) = f.para_id.as_ref().and_then(|p| uuid::Uuid::parse_str(p).ok()) {
+            msg = msg.with_source_paragraph(id);
+        }
+        crate::pane::output::emit(&msg);
+    }
+    Ok(findings.len())
+}
+
 /// The first paragraph id of each chapter (1-based), for Output finding
 /// navigation.
 fn chapter_first_paragraphs(
@@ -13221,6 +13269,10 @@ impl App {
         // chapters). Findings land in Output alongside fact/socrates/timeline.
         let dlg = run_dialogue_check(&self.store, &self.cfg, &self.layout).unwrap_or(0);
 
+        // WORLD-6 — surface the cached utopia coherence findings (read-only; the
+        // LLM stages run explicitly via `inkhaven world utopia-check`).
+        let uto = emit_cached_utopia_findings(&self.store).unwrap_or(0);
+
         // Reflect the instant findings in the tree report-card immediately.
         self.refresh_tree_badges();
 
@@ -13231,12 +13283,12 @@ impl App {
         // seconds later (and re-badge the tree on completion).
         let editor_spawned = self.maybe_spawn_check_editor();
 
-        let total = fact + soc + tl + dlg;
+        let total = fact + soc + tl + dlg + uto;
         if total == 0 && !editor_spawned {
             self.status = if checked == 0 {
-                "review pass: clean (no open paragraph; timeline + dialogue included)".into()
+                "review pass: clean (no open paragraph; timeline + dialogue + utopia included)".into()
             } else {
-                format!("review pass: clean ({checked} ¶ + timeline + dialogue)")
+                format!("review pass: clean ({checked} ¶ + timeline + dialogue + utopia)")
             };
             return;
         }
@@ -13250,7 +13302,7 @@ impl App {
             format!("review pass: instant checks clean{editor_note}")
         } else {
             format!(
-                "review pass: {total} finding(s) — fact {fact} · socrates {soc} · timeline {tl} · dialogue {dlg}{editor_note} → Output (^B Tab)"
+                "review pass: {total} finding(s) — fact {fact} · socrates {soc} · timeline {tl} · dialogue {dlg} · utopia {uto}{editor_note} → Output (^B Tab)"
             )
         };
     }
