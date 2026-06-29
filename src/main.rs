@@ -45,6 +45,10 @@ mod dialogue;
 mod character;
 // HAIKU-1 — zero-AI startup / new-paragraph / on-demand haiku.
 mod haiku;
+// INNER-THEOLOGIAN-1 — tradition-neutral moral/theological reader. Built across
+// IT-P0…IT-P11; gated until the store / detector / CLI consume the types.
+#[allow(dead_code, unused_imports)]
+mod inner_theologian;
 mod world_report;
 mod progress;
 mod replace;
