@@ -2603,6 +2603,94 @@ fn emit_cached_utopia_findings(store: &Store) -> std::result::Result<usize, Stri
     Ok(findings.len())
 }
 
+/// CHAR-1 — surface character-arc findings in the Output pane. The deterministic
+/// layers (agency + Planning-Board gaps) recompute (zero-AI, hash-cheap); stalls
+/// are derived from the cached state chain; arc-completeness problems are read
+/// **cached** (the LLM checks run explicitly via `inkhaven character check`, so
+/// the TUI hot path stays zero-cost). Replaces this book's prior CHAR findings.
+fn run_character_check(
+    store: &Store,
+    cfg: &Config,
+    layout: &ProjectLayout,
+) -> std::result::Result<usize, String> {
+    use crate::pane::output::{Lifetime, Message, Severity, kinds};
+    const STALL_THRESHOLD: u32 = 4;
+
+    let h = crate::store::hierarchy::Hierarchy::load(store).map_err(|e| e.to_string())?;
+    let book = crate::cli::resolve_user_book(&h, None, "character")?.clone();
+    let cs = crate::character::CharStore::open(store.project_root()).map_err(|e| e.to_string())?;
+
+    // Mirror the author's declared arcs into the store, then refresh the
+    // deterministic layers (agency cells + planning gaps). No LLM here.
+    for (decl, hash) in crate::character::read_arc_declarations(&h, layout) {
+        let _ = cs.upsert_declaration(&book.slug, &decl, hash);
+    }
+    let _ = crate::character::run_agency(&cs, layout, &h, cfg, &book);
+    let _ = crate::character::run_planning(&cs, store, &h, &book);
+
+    // First paragraph of each chapter, for finding navigation.
+    let first_paras = chapter_first_paragraphs(&h, &book);
+    let para_for = |ch: Option<u32>| -> Option<uuid::Uuid> {
+        ch.and_then(|c| first_paras.get((c as usize).saturating_sub(1)).copied().flatten())
+    };
+
+    if let Some(s) = crate::pane::output::active() {
+        if let Ok(msgs) = s.by_kind(kinds::CHAR) {
+            for m in &msgs {
+                let _ = s.dismiss(m.id);
+            }
+        }
+    }
+
+    let emit = |text: String, category: &str, ch: Option<u32>| {
+        let mut msg = Message::new(
+            kinds::CHAR,
+            Severity::Info,
+            Lifetime::UntilActedOn,
+            serde_json::json!({ "text": text, "category": "character", "kind": category, "chapter": ch }),
+        );
+        if let Some(id) = para_for(ch) {
+            msg = msg.with_source_paragraph(id);
+        }
+        crate::pane::output::emit(&msg);
+    };
+
+    let mut count = 0;
+    let decls = cs.all_declarations(&book.slug).map_err(|e| e.to_string())?;
+    for d in &decls {
+        let name = &d.character_name;
+        let states = cs.states_for_character(&book.slug, name).map_err(|e| e.to_string())?;
+        // Stall — deterministic over the cached state chain.
+        if let Some(stall) = crate::character::detect_stall(name, &states, STALL_THRESHOLD) {
+            emit(
+                format!("[character · stall · {name}] {}", stall.description),
+                "stall",
+                stall.chapter_ord,
+            );
+            count += 1;
+        }
+        // Cached arc-completeness problems (read-only).
+        if let Ok(checks) = cs.checks_for_character(&book.slug, name) {
+            for c in checks.iter().filter(|c| c.verdict.is_problem()) {
+                emit(
+                    format!("[character · {} · {name}] {}", c.check_type.as_code(), c.description),
+                    c.check_type.as_code(),
+                    c.chapter_ord,
+                );
+                count += 1;
+            }
+        }
+    }
+    // Planning-Board coverage gaps (deterministic).
+    if let Ok(gaps) = cs.planning_findings(&book.slug) {
+        for (name, ft, desc) in &gaps {
+            emit(format!("[character · planning · {name}] {desc}"), ft, None);
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
 /// The first paragraph id of each chapter (1-based), for Output finding
 /// navigation.
 fn chapter_first_paragraphs(
@@ -13273,6 +13361,11 @@ impl App {
         // LLM stages run explicitly via `inkhaven world utopia-check`).
         let uto = emit_cached_utopia_findings(&self.store).unwrap_or(0);
 
+        // CHAR-1 — character-arc findings: deterministic agency + planning gaps +
+        // stalls recompute; arc-completeness problems are read cached (the LLM
+        // checks run explicitly via `inkhaven character check`).
+        let chr = run_character_check(&self.store, &self.cfg, &self.layout).unwrap_or(0);
+
         // Reflect the instant findings in the tree report-card immediately.
         self.refresh_tree_badges();
 
@@ -13283,12 +13376,12 @@ impl App {
         // seconds later (and re-badge the tree on completion).
         let editor_spawned = self.maybe_spawn_check_editor();
 
-        let total = fact + soc + tl + dlg + uto;
+        let total = fact + soc + tl + dlg + uto + chr;
         if total == 0 && !editor_spawned {
             self.status = if checked == 0 {
-                "review pass: clean (no open paragraph; timeline + dialogue + utopia included)".into()
+                "review pass: clean (no open paragraph; timeline + dialogue + utopia + character included)".into()
             } else {
-                format!("review pass: clean ({checked} ¶ + timeline + dialogue + utopia)")
+                format!("review pass: clean ({checked} ¶ + timeline + dialogue + utopia + character)")
             };
             return;
         }
@@ -13302,7 +13395,7 @@ impl App {
             format!("review pass: instant checks clean{editor_note}")
         } else {
             format!(
-                "review pass: {total} finding(s) — fact {fact} · socrates {soc} · timeline {tl} · dialogue {dlg} · utopia {uto}{editor_note} → Output (^B Tab)"
+                "review pass: {total} finding(s) — fact {fact} · socrates {soc} · timeline {tl} · dialogue {dlg} · utopia {uto} · character {chr}{editor_note} → Output (^B Tab)"
             )
         };
     }
