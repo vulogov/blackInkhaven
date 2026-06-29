@@ -15,10 +15,14 @@
 
 use crate::store::node::Node;
 
+mod checks;
 mod parse;
+mod pipeline;
 mod store;
 
+pub(crate) use checks::run_deterministic_checks;
 pub(crate) use parse::{read_archetypes, read_motifs, read_symbols};
+pub(crate) use pipeline::{collect_explicit_motifs, refresh_inventory, run_density_scan};
 pub(crate) use store::MythStore;
 
 /// The registered `para:myth-*` tag values, their tree glyphs, and labels. Valid

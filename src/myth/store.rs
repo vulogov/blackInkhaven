@@ -269,6 +269,18 @@ impl MythStore {
         )
     }
 
+    /// The stored prose hash for a chapter's density rows, if any (for lazy
+    /// re-scan — all rows of a chapter share the hash).
+    pub(crate) fn density_chapter_hash(&self, book_slug: &str, chapter_ord: u32) -> Result<Option<u64>> {
+        let bs = book_slug.to_string();
+        let ord = chapter_ord as i64;
+        let rows = self.engine.select_all_with(
+            "SELECT prose_hash FROM myth_symbol_density WHERE book_slug = ? AND chapter_ord = ? LIMIT 1",
+            &[&bs, &ord],
+        )?;
+        Ok(rows.first().and_then(|r| as_text(r.first())).and_then(|s| s.parse().ok()))
+    }
+
     /// Per-chapter `(chapter_ord, count)` for one symbol.
     pub(crate) fn density_for_symbol(&self, book_slug: &str, symbol_para_id: &str) -> Result<Vec<(u32, u32)>> {
         let (bs, sp) = (book_slug.to_string(), symbol_para_id.to_string());
