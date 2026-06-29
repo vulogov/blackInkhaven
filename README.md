@@ -21,41 +21,41 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.4.15 — Utopian/dystopian coherence checker
+## Latest release · 1.4.16 — Character arc tracking
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.4.15.md`](Documentation/RELEASE_NOTES/1.4.15.md)
-· Plan: [`Documentation/PROPOSALS/WORLD-6_PLAN.md`](Documentation/PROPOSALS/WORLD-6_PLAN.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.4.16.md`](Documentation/RELEASE_NOTES/1.4.16.md)
+· Plan: [`Documentation/PROPOSALS/CHAR-1_PLAN.md`](Documentation/PROPOSALS/CHAR-1_PLAN.md)
 
-WORLD-4/5 check physical and temporal facts; nothing checked the **logical coherence of a social
-premise**. 1.4.15 (WORLD-6) adds a three-stage checker that reads your declared utopian/dystopian
-premise and finds the **coherence holes** — a mechanism that can't enforce its premise, two
-consequences that contradict, prose that uses something the premise eliminated. It reads **only what
-you declare** and judges **logical/systemic** structure only, never morality. **No new runtime
-crates.**
+inkhaven tracks a character's **facts** (the continuity bible) and their **speech** (DIALOG-1
+fingerprints). 1.4.16 (CHAR-1) adds the third axis — **change over time**: per named character, a
+chapter-ordered chain of their observable state, a **deterministic agency score**, and completeness
+checks against the arc you declared. A character arc is a promise — *starts here, earned to there* —
+and CHAR-1 measures whether the book keeps it. It reads only your manuscript and your declarations,
+and **never edits prose**. **No new runtime crates.**
 
 ### Declare, then check
 
-Tag World-book paragraphs `para:utopia-{premise,mechanism,consequence,elimination}` (⊢ ⚙ ⇒ ∅).
-`inkhaven world utopia-check` runs **Stage 1** extraction; `--stage 2` adds **pairing** (CHAIN BREAK /
-CONSEQUENCE GAP / INTERNAL CONFLICT, explicit-only); `--stage all` adds a per-chapter **entailment
-scan** against the elimination inventory. It exits 1 on any chain finding and 2 on any entailment
-violation — a pre-submission gate. A deterministic Facts-book cross-reference flags facts that are
-also declared eliminated.
+Add a `character_arc` HJSON block to a Characters-book paragraph (`arc_type` ∈ positive_change / flat /
+corruption / fall / disillusionment + aliases; `desired_state_start` / optional
+`desired_midpoint_state` / `desired_state_end`). **Agency** is zero-AI — `active/(active+passive)`
+presence via a windowed name↔action-verb heuristic (five languages EN/RU/DE/FR/ES); **state
+extraction** is the only LLM pass (sliding-window, content-hash lazy). `inkhaven character refresh`
+runs both; `check` runs start/midpoint/end alignment + an **arc-earned** check + a deterministic
+**stall** check (exit **2** if the ending/earned fails, **1** on any other gap or stall); `plan` flags
+Planning-Board coverage gaps (exit 1); `arc <name>` prints the full report.
 
-### Grounded interrogation
+### Read it where you write
 
-Findings ground the **`utopian-architect`** Inner Socrates persona — it names the unresolved tensions
-before its questions — and surface in the **`Ctrl+B Shift+C`** review pass (read-only; the LLM stages
-run only when you ask). Suppress a deliberate irony with `inkhaven world utopia-suppress` or a magic-
-ledger `deliberate_tension`.
+**`Ctrl+V Shift+N`** opens the read-only arc view for the nearest character — declaration, ✦-marked
+state chain with per-chapter agency, checks, and planning gaps. The **`Ctrl+B Shift+C`** review pass
+folds in the deterministic layers (agency + planning + stalls) and surfaces the cached arc problems in
+the Output `character` category, zero-cost; the LLM checks stay explicit on the CLI.
 
 ### Dependencies & compatibility
 
-**No new runtime crates; no new system books; no new `NodeKind`** — one new `.inkhaven/utopia.duckdb`,
-four new `para:utopia-*` tags, one `utopia:` config block. `inkhaven world` is now a subcommand group
-(`utopia-check` / `utopia-model` / `utopia-suppress` / `utopia-refresh`); the bare `inkhaven world`
-consistency snapshot is unchanged. Read-only `ink.utopia.*` Bund. The schema reserves a `theological`
-domain and `research` grounding hooks for future features, without coupling.
+**No new runtime crates; no new system books; no new `NodeKind`** — one new `.inkhaven/char.duckdb`,
+one `char:` config block, one new chord (`Ctrl+V Shift+N`). Read-only `ink.char.*` Bund. Built on
+NARR-1's language/passive machinery and DIALOG-1's dialogue store, both read-only.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
