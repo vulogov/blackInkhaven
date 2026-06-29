@@ -173,6 +173,11 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.dialogue.violations", category::STORE_READ),
     ("ink.dialogue.spans", category::STORE_READ),
     ("ink.dialogue.refresh", category::STORE_READ),
+    // WORLD-6 — utopia coherence reads (model/findings/violations) are
+    // store_read; `suppress` mutates the findings table → store_write (below).
+    ("ink.utopia.model", category::STORE_READ),
+    ("ink.utopia.findings", category::STORE_READ),
+    ("ink.utopia.violations", category::STORE_READ),
     // OUTLINE-1 — reading the outline is store_read; the paragraph copy/move
     // mutators are store_write (below).
     ("ink.outline.print", category::STORE_READ),
@@ -190,6 +195,8 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     // OUTLINE-1 — cross-parent paragraph copy/move.
     ("ink.outline.paragraph_copy", category::STORE_WRITE),
     ("ink.outline.paragraph_move", category::STORE_WRITE),
+    // WORLD-6 — suppressing a coherence finding mutates the store.
+    ("ink.utopia.suppress", category::STORE_WRITE),
     ("ink.paragraph.set_status", category::STORE_WRITE),
     ("ink.paragraph.set_target", category::STORE_WRITE),
     ("ink.paragraph.save", category::STORE_WRITE),
