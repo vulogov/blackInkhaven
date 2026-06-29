@@ -2208,6 +2208,40 @@ dialogue: {
 
 See [Tutorial 97 — Dialogue quality](Tutorials/97-dialogue-quality.md).
 
+## 1.4.15 — Utopian/dystopian coherence (WORLD-6)
+
+The optional `utopia:` block tunes the coherence checker. Omit it for the
+defaults below.
+
+```hjson
+utopia: {
+  // Stage 2 cost-warning threshold (USD). Fires before pairing if the
+  // projected cost exceeds this — informs, never blocks.
+  stage2_cost_warn: 0.10
+  // Chapters processed per Stage 3 background pass.
+  stage3_batch_size: 5
+  // Minimum chapter word count for the Stage 3 entailment scan.
+  stage3_min_chapter_words: 200
+  // Consecutive non-claim paragraphs that break a premise group
+  // (1 = any gap breaks; 0 = all tagged paragraphs are one group).
+  group_gap_threshold: 1
+}
+```
+
+- Declare premises in the **World** book with `para:utopia-{premise,mechanism,
+  consequence,elimination}` paragraphs (glyphs ⊢ ⚙ ⇒ ∅). Run the check with
+  **`inkhaven world utopia-check [--stage 1|2|3|all]`** — Stage 2 (pairing) is
+  **explicit-only** (O(pairs) LLM calls). It reads only what you declare and
+  reasons about logical/systemic structure only; moral/theological coherence is
+  out of scope (reserved for a future Inner Theologian).
+- Profiles live in `.inkhaven/utopia.duckdb`. Findings are advisory (`info`),
+  surface in the `Ctrl+B Shift+C` review pass, and ground the
+  `utopian-architect` persona. Read-only `ink.utopia.*` Bund. `inkhaven world`
+  is now a subcommand group; the bare `inkhaven world` consistency snapshot is
+  unchanged.
+
+See [Tutorial 98 — Utopia coherence](Tutorials/98-utopia-coherence.md).
+
 ## 1.4.10 — Jinja template paragraphs (STRUCT-1)
 
 A paragraph with `content_type: "jinja"` is a [minijinja](https://docs.rs/minijinja)
