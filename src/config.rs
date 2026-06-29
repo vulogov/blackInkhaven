@@ -77,6 +77,9 @@ pub struct Config {
     /// INNER-THEOLOGIAN-1 — moral/theological reader.
     #[serde(default)]
     pub theologian: TheologianConfig,
+    /// MYTH-1 — mythological & symbolic pattern library.
+    #[serde(default)]
+    pub myth: MythConfig,
     /// The project's declared genre (e.g. `literary_realism`, `fantasy`).
     /// Project-wide; consumed by Inner Editor's genre-aware prompting and open
     /// to other features later. `None` = genre-blind.
@@ -230,6 +233,7 @@ impl Default for Config {
             utopia: UtopiaConfig::default(),
             char: CharConfig::default(),
             theologian: TheologianConfig::default(),
+            myth: MythConfig::default(),
             genre: None,
             inner_socrates_default_persona: None,
             project_lock: ProjectLockConfig::default(),
@@ -3857,6 +3861,42 @@ impl Default for TheologianConfig {
             sacred_levity_signal: true,
             disabled_lenses: Vec::new(),
             language: None,
+        }
+    }
+}
+
+/// MYTH-1 — `myth:` block. The mythological & symbolic pattern library over the
+/// declared Mythology book. All optional; omitting the block uses these defaults.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MythConfig {
+    /// Master switch. `false` gates the deterministic review-pass findings and
+    /// the heatmap chord.
+    pub enabled: bool,
+    /// Number of chapter buckets the heatmap collapses the book into.
+    pub heatmap_buckets: usize,
+    /// A symbol must appear in at least this many chapters before the LLM
+    /// consistency check runs on it.
+    pub consistency_min_chapters: u32,
+    /// A motif must have at least this many occurrences before the LLM
+    /// completeness check runs on it.
+    pub motif_min_occurrences: u32,
+    /// The final act = the last this-percent of chapters (motif-absent check).
+    pub final_act_pct: u32,
+    /// Warn (inform, never block) when an `inkhaven myth check` LLM run is
+    /// estimated to exceed this many USD.
+    pub check_cost_warn: f32,
+}
+
+impl Default for MythConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            heatmap_buckets: 8,
+            consistency_min_chapters: 5,
+            motif_min_occurrences: 3,
+            final_act_pct: 25,
+            check_cost_warn: 0.08,
         }
     }
 }
