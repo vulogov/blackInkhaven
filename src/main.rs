@@ -50,6 +50,8 @@ mod inner_theologian;
 // MYTH-1 — mythological & symbolic pattern library. Built across M-P0…M-P15;
 // gated until the store / scan / CLI consume the types.
 mod myth;
+#[allow(dead_code, unused_imports)]
+mod research;
 mod world_report;
 mod progress;
 mod replace;

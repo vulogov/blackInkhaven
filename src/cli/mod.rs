@@ -916,6 +916,33 @@ pub enum Command {
     /// Launch the TUI editor (default if no subcommand is given).
     Tui,
 
+    /// 1.5.0 RESRCH-1 — launch the Research Assistant (`inkhaven research`): a
+    /// separate TUI screen for AI-assisted research that transfers verified
+    /// findings into the Facts / Notes corpus with a mandatory confirmation
+    /// step. `--thread` opens (or creates) a named, resumable session;
+    /// `--list-threads` and `--export-thread` are non-interactive.
+    Research {
+        /// Open (or create) a named research thread. Without it: the thread
+        /// picker (>1 thread) or the `default` thread (0–1).
+        #[arg(long)]
+        thread: Option<String>,
+        /// List all research threads (name, last-active, turn count, cost) and
+        /// exit. Honours `--format table|json`.
+        #[arg(long)]
+        list_threads: bool,
+        /// Export a named thread's history and exit. Honours `--format md|json`
+        /// and `--out <path>` (default stdout).
+        #[arg(long, value_name = "NAME")]
+        export_thread: Option<String>,
+        /// Output format for `--list-threads` (table|json) / `--export-thread`
+        /// (md|json).
+        #[arg(long)]
+        format: Option<String>,
+        /// Destination file for `--export-thread` (default: stdout).
+        #[arg(long)]
+        out: Option<String>,
+    },
+
     /// 1.2.10+ — launch the standalone TUI configuration
     /// editor for `<project>/inkhaven.hjson`.  Tree-pane
     /// hierarchy on the left, schema-aware widgets on the
@@ -4958,6 +4985,23 @@ impl Cli {
                 track.as_deref(),
             ).map_err(Into::into),
             Command::Tui => crate::tui::run(Some(&project)).map_err(Into::into),
+            Command::Research {
+                thread,
+                list_threads,
+                export_thread,
+                format,
+                out,
+            } => crate::research::run(
+                &project,
+                crate::research::ResearchInvocation {
+                    thread,
+                    list_threads,
+                    export_thread,
+                    format,
+                    out,
+                },
+            )
+            .map_err(Into::into),
             Command::Config => crate::config_tui::run(&project).map_err(Into::into),
             Command::PromptsEditor => crate::prompts_tui::run(&project).map_err(Into::into),
             Command::ShowDontTell(cmd) => {
