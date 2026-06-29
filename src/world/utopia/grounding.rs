@@ -1,8 +1,9 @@
 //! WORLD-6 (W-P5) — `utopian-architect` persona grounding. When that Inner
 //! Socrates persona opens a Slow session, its *opening context* is grounded
-//! from three sources in priority order (RFC §8): (1) active coherence findings
+//! from four sources in priority order (RFC §8): (1) active coherence findings
 //! in `utopia.duckdb`, (2) the World book's tagged premise structure, (3) the
-//! Facts book. If all three are empty the persona falls back to its default
+//! Facts book, (4 — MYTH-1) the declared motifs as thematic structure. If all
+//! are empty the persona falls back to its default
 //! questions (this returns `None`). The question bank itself is unchanged — only
 //! the prose context the model reads is prefixed.
 
@@ -46,7 +47,29 @@ pub(crate) fn build_grounding(project: &Path) -> Option<String> {
     if !facts.is_empty() {
         return Some(build_facts_text(&facts));
     }
+    // Source 4 (MYTH-1) — declared motifs as the book's thematic structure. When
+    // the world has no coherence findings, premise tags, or facts yet, the
+    // mythic layer still tells the architect which patterns the author cares
+    // about, so the questions can probe whether the world serves them.
+    if let Ok(ms) = crate::myth::MythStore::open(store.project_root()) {
+        if let Ok(motifs) = ms.motifs(&book.slug) {
+            if !motifs.is_empty() {
+                return Some(build_motifs_text(&motifs));
+            }
+        }
+    }
     None
+}
+
+/// Source 4 — the declared motifs when nothing else grounds the session.
+pub(crate) fn build_motifs_text(motifs: &[crate::myth::MythMotif]) -> String {
+    let list: Vec<String> = motifs.iter().take(8).map(|m| m.name.clone()).collect();
+    format!(
+        "Your Mythology book declares {} recurring motif(s) ({}). Let us consider whether your world's \
+         logic serves these patterns or works against them.",
+        motifs.len(),
+        list.join(", ")
+    )
 }
 
 /// Source 1 — a grounded opening from coherence findings (§8.2). Chain-logic
