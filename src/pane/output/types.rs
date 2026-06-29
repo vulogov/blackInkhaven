@@ -50,6 +50,9 @@ pub mod kinds {
     /// CHAR-1 — a character-arc finding (stall, Planning-Board coverage gap, or
     /// a cached arc-completeness problem). Always informational.
     pub const CHAR: &str = "char";
+    /// HAIKU-1 — a single haiku in the book's language. Informational;
+    /// `Lifetime::Session(1)` so only the most recent one lives at a time.
+    pub const HAIKU: &str = "haiku";
 }
 
 /// Visual / priority class (RFC §7.4).
