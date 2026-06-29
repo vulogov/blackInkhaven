@@ -29,6 +29,7 @@ mod dialogue;
 mod utopia;
 #[path = "char.rs"]
 mod char_arc;
+mod theologian;
 mod pdf;
 mod review;
 
@@ -63,5 +64,6 @@ pub fn register_ink_stdlib(vm: &mut VM) -> Result<()> {
     dialogue::register(vm)?;
     utopia::register(vm)?;
     char_arc::register(vm)?;
+    theologian::register(vm)?;
     Ok(())
 }

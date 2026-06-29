@@ -2696,6 +2696,79 @@ fn run_character_check(
     Ok(count)
 }
 
+/// INNER-THEOLOGIAN-1 — fast-track ethical signals in the review pass. Runs the
+/// deterministic detector (zero-AI) and surfaces its findings in the Output
+/// `theologian` category. The slow-track LLM session stays explicit (`Ctrl+B
+/// J→T` / the CLI). Replaces this book's prior theologian findings each pass.
+fn run_theologian_check(
+    store: &Store,
+    cfg: &Config,
+    layout: &ProjectLayout,
+) -> std::result::Result<usize, String> {
+    use crate::pane::output::{Lifetime, Message, Severity, kinds};
+
+    let clear = || {
+        if let Some(s) = crate::pane::output::active() {
+            if let Ok(msgs) = s.by_kind(kinds::THEOLOGIAN) {
+                for m in &msgs {
+                    let _ = s.dismiss(m.id);
+                }
+            }
+        }
+    };
+
+    if !cfg.theologian.enabled || !cfg.theologian.fast_track {
+        clear();
+        return Ok(0);
+    }
+
+    let h = crate::store::hierarchy::Hierarchy::load(store).map_err(|e| e.to_string())?;
+    let book = crate::cli::resolve_user_book(&h, None, "theologian")?.clone();
+    let ts = crate::inner_theologian::TheologianStore::open(store.project_root())
+        .map_err(|e| e.to_string())?;
+    let win = crate::inner_theologian::DetectWindows {
+        moral_invisibility: cfg.theologian.moral_invisibility_window,
+        consequence_gap: cfg.theologian.consequence_gap_window,
+    };
+    // Recompute (deterministic, zero-AI) then emit the unsuppressed set.
+    let _ = crate::inner_theologian::run_fast_scan(
+        &ts,
+        layout,
+        &h,
+        cfg,
+        &book,
+        win,
+        cfg.theologian.sacred_levity_signal,
+    );
+
+    clear();
+    let findings = ts.findings(&book.slug, false).map_err(|e| e.to_string())?;
+    for f in &findings {
+        let text = format!(
+            "[theologian · ch.{} · {}] {} → Ctrl+B J→T to explore",
+            f.chapter_ord,
+            f.signal_type.label(),
+            f.description
+        );
+        let mut msg = Message::new(
+            kinds::THEOLOGIAN,
+            Severity::Info,
+            Lifetime::UntilActedOn,
+            serde_json::json!({
+                "text": text,
+                "category": "theologian",
+                "signal": f.signal_type.as_code(),
+                "chapter": f.chapter_ord,
+            }),
+        );
+        if let Ok(pid) = uuid::Uuid::parse_str(&f.para_id) {
+            msg = msg.with_source_paragraph(pid);
+        }
+        crate::pane::output::emit(&msg);
+    }
+    Ok(findings.len())
+}
+
 /// The first paragraph id of each chapter (1-based), for Output finding
 /// navigation.
 fn chapter_first_paragraphs(
@@ -3678,6 +3751,20 @@ impl App {
                     }
                 }
                 Err(e) => self.status = format!("prose check failed: {e}"),
+            },
+            BgJobKind::TheologianSlow => match result {
+                Ok(n) => {
+                    let landed: usize = n.parse().unwrap_or(0);
+                    self.status = if landed == 0 {
+                        "Inner Theologian: nothing rose for this ¶".into()
+                    } else {
+                        "⚖ Inner Theologian: questions in Output — ^B Tab".into()
+                    };
+                    if landed > 0 {
+                        self.refresh_tree_badges();
+                    }
+                }
+                Err(e) => self.status = format!("Inner Theologian skipped: {e}"),
             },
         }
     }
@@ -6621,6 +6708,10 @@ pub(super) enum BgJobKind {
     /// zero-AI). The worker refreshes the book's profiles + emits drift findings
     /// to Output; the `Ok` payload is the finding count.
     ProseCheck,
+    /// INNER-THEOLOGIAN-1 — the slow-track theological session (LLM), `Ctrl+B
+    /// J→T`. The worker calls the persona over the open paragraph and emits its
+    /// questions to Output; the `Ok` payload is "1" when a question landed.
+    TheologianSlow,
 }
 
 /// An in-flight background job: its progress/result channel + a label + which
@@ -13538,6 +13629,10 @@ impl App {
         // checks run explicitly via `inkhaven character check`).
         let chr = run_character_check(&self.store, &self.cfg, &self.layout).unwrap_or(0);
 
+        // INNER-THEOLOGIAN-1 — deterministic fast-track ethical signals (the
+        // slow-track LLM session stays explicit via Ctrl+B J→T).
+        let theo = run_theologian_check(&self.store, &self.cfg, &self.layout).unwrap_or(0);
+
         // Reflect the instant findings in the tree report-card immediately.
         self.refresh_tree_badges();
 
@@ -13548,12 +13643,12 @@ impl App {
         // seconds later (and re-badge the tree on completion).
         let editor_spawned = self.maybe_spawn_check_editor();
 
-        let total = fact + soc + tl + dlg + uto + chr;
+        let total = fact + soc + tl + dlg + uto + chr + theo;
         if total == 0 && !editor_spawned {
             self.status = if checked == 0 {
-                "review pass: clean (no open paragraph; timeline + dialogue + utopia + character included)".into()
+                "review pass: clean (no open paragraph; timeline + dialogue + utopia + character + theologian included)".into()
             } else {
-                format!("review pass: clean ({checked} ¶ + timeline + dialogue + utopia + character)")
+                format!("review pass: clean ({checked} ¶ + timeline + dialogue + utopia + character + theologian)")
             };
             return;
         }
@@ -13567,7 +13662,7 @@ impl App {
             format!("review pass: instant checks clean{editor_note}")
         } else {
             format!(
-                "review pass: {total} finding(s) — fact {fact} · socrates {soc} · timeline {tl} · dialogue {dlg} · utopia {uto} · character {chr}{editor_note} → Output (^B Tab)"
+                "review pass: {total} finding(s) — fact {fact} · socrates {soc} · timeline {tl} · dialogue {dlg} · utopia {uto} · character {chr} · theologian {theo}{editor_note} → Output (^B Tab)"
             )
         };
     }
@@ -13815,7 +13910,7 @@ impl App {
         let rows = self.build_inner_socrates_rows();
         self.modal = Modal::InnerSocratesOverview { rows, cursor: 0 };
         self.status =
-            "Inner Socrates · F fast-check ¶ · E engage (slow/LLM) · S persona · L ledger · A auto · Esc".into();
+            "Inner Socrates · F fast-check ¶ · E engage (slow/LLM) · T theologian · S persona · L ledger · A auto · Esc".into();
     }
 
     fn build_inner_socrates_rows(&self) -> Vec<String> {
@@ -13891,6 +13986,7 @@ impl App {
             KeyCode::Char('l') | KeyCode::Char('L') => self.socratic_view_ledger(),
             KeyCode::Char('s') | KeyCode::Char('S') => self.socratic_cycle_persona(),
             KeyCode::Char('c') | KeyCode::Char('C') => self.socratic_open_conversation(),
+            KeyCode::Char('t') | KeyCode::Char('T') => self.theologian_engage_open_paragraph(),
             KeyCode::Char('n') | KeyCode::Char('N') => self.socratic_persona_wizard(),
             KeyCode::Char('a') | KeyCode::Char('A') => {
                 self.socratic_auto = !self.socratic_auto;
@@ -13997,6 +14093,79 @@ impl App {
                 let _ = tx.send(BgMsg::Done(result));
             },
         );
+    }
+
+    /// INNER-THEOLOGIAN-1 — `Ctrl+B J→T`. Run a slow-track theological session
+    /// over the open paragraph (Category 1) in the background; the worker calls
+    /// the persona and emits its questions to the Output `theologian` category.
+    fn theologian_engage_open_paragraph(&mut self) {
+        if !self.cfg.theologian.enabled {
+            self.status = "Inner Theologian is disabled (theologian.enabled = false)".into();
+            return;
+        }
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "Inner Theologian: no paragraph open".into();
+            return;
+        };
+        if doc.content_type.as_deref() == Some("jinja")
+            || self.hierarchy.get(doc.id).is_some_and(is_structural_nonprose)
+        {
+            self.status = "Inner Theologian: structural / template paragraphs are skipped (not prose)".into();
+            return;
+        }
+        let prose = doc.textarea.lines().join("\n");
+        if prose.trim().is_empty() {
+            self.status = "Inner Theologian: the paragraph is empty".into();
+            return;
+        }
+        let id = doc.id;
+        if let Err(e) = self.ai.resolve_provider(&self.cfg.llm, None) {
+            self.status = format!("Inner Theologian needs an LLM provider: {e}");
+            return;
+        }
+        let root = self.store.project_root().to_path_buf();
+        let cfg = self.cfg.clone();
+        let book_slug = self
+            .book_of_node(id)
+            .and_then(|bid| self.hierarchy.get(bid))
+            .map(|b| b.slug.clone());
+        let (lang, _note) =
+            crate::prose::resolve_prose_language(cfg.theologian.language.as_deref(), &cfg.language);
+        let grounding = book_slug
+            .as_deref()
+            .and_then(|slug| crate::inner_theologian::build_grounding(&root, slug, &[]));
+        let user = crate::inner_theologian::build_session_prompt(
+            crate::inner_theologian::QuestionCategory::MoralWeight,
+            &prose,
+            grounding.as_deref(),
+            &lang,
+            &cfg.theologian.disabled_lenses,
+        );
+        self.modal = Modal::None;
+        self.right_pane = RightPane::Output;
+        self.status = "⟳ Inner Theologian: thinking…".into();
+        self.start_bg_job(BgJobKind::TheologianSlow, "inner theologian", move |tx, _cancel| {
+            let result = crate::inner_theologian::theologian_llm_call(
+                &cfg,
+                crate::inner_theologian::THEOLOGIAN_SYSTEM,
+                &user,
+            )
+            .map(|raw| {
+                use crate::pane::output::{Lifetime, Message, Severity, kinds};
+                let text = format!("⚖ Inner Theologian\n{}", raw.trim());
+                let msg = Message::new(
+                    kinds::THEOLOGIAN,
+                    Severity::Info,
+                    Lifetime::UntilActedOn,
+                    serde_json::json!({ "text": text, "category": "theologian", "slow": true }),
+                )
+                .with_source_paragraph(id);
+                crate::pane::output::emit(&msg);
+                "1".to_string()
+            })
+            .map_err(|e| e.to_string());
+            let _ = tx.send(BgMsg::Done(result));
+        });
     }
 
     /// Build the world-ledger context and run the Socratic Fast track over the

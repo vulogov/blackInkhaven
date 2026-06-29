@@ -25,14 +25,12 @@ mod prompt;
 mod store;
 mod vocab;
 
-pub(crate) use corpus::{auto_fire_question, questions_for};
-pub(crate) use detect::{DetectWindows, detect_chapter};
+pub(crate) use detect::DetectWindows;
 pub(crate) use grounding::build_grounding;
-pub(crate) use lens::suggest_lenses;
+pub(crate) use llm::theologian_llm_call;
 pub(crate) use pipeline::run_fast_scan;
-pub(crate) use prompt::{build_session_prompt, language_name};
+pub(crate) use prompt::{THEOLOGIAN_SYSTEM, build_session_prompt};
 pub(crate) use store::TheologianStore;
-pub(crate) use vocab::{VocabLists, lists_for, scan_list};
 
 /// The eleven tradition lenses (RFC §5.2). No lens is privileged; this order is
 /// presentation-grouping only and carries no weight.

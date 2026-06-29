@@ -62,6 +62,7 @@ pub mod drift;
 pub mod world;
 pub mod utopia;
 pub mod character;
+pub mod theologian;
 pub mod lang;
 pub mod world_prompts;
 pub mod prompts;
@@ -850,6 +851,14 @@ pub enum Command {
     /// read-only report; `check`/`plan` gate via exit codes.
     #[command(subcommand)]
     Character(CharacterCommand),
+
+    /// 1.4.18 INNER-THEOLOGIAN-1 — `inkhaven theologian <subcommand>`. The
+    /// tradition-neutral moral/theological reader. `scan` runs the deterministic
+    /// fast-track ethical-signal detector (exit 1 on any unsuppressed signal);
+    /// `session` runs the slow-track LLM over a chapter / the book and prints its
+    /// questions; `suppress` mutes a signal. It asks, never judges.
+    #[command(subcommand)]
+    Theologian(TheologianCommand),
 
     /// 1.3.0 PDF-1 — `inkhaven pdf <subcommand>`.  Page operations
     /// (extract / split / merge / rotate / reorder / delete), metadata,
@@ -4023,6 +4032,49 @@ pub enum CharacterCommand {
     },
 }
 
+/// 1.4.18 INNER-THEOLOGIAN-1 — sub-subcommands under `inkhaven theologian …`.
+#[derive(Debug, Subcommand)]
+pub enum TheologianCommand {
+    /// Run the deterministic fast-track ethical-signal detector across the book.
+    /// Exits 1 on any unsuppressed signal (a pre-submission review prompt).
+    Scan {
+        #[arg(long)]
+        book: Option<String>,
+        /// `moral-invisibility` | `consequence-gap` | `sacred-levity` | `all`.
+        #[arg(long)]
+        signal: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run a slow-track theological session (LLM) over a chapter or the whole
+    /// book and print the persona's questions. `--category 1-6` (default 6 —
+    /// the book's implicit theology); `--lens <code>` restricts to one tradition.
+    Session {
+        #[arg(long)]
+        book: Option<String>,
+        /// Restrict to one chapter (1-based); omitted = the whole book.
+        #[arg(long)]
+        chapter: Option<u32>,
+        /// Question category 1–6 (default 6).
+        #[arg(long)]
+        category: Option<u8>,
+        /// Restrict to one tradition lens (e.g. `gnostic`, `buddhism`, `secular`).
+        #[arg(long)]
+        lens: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Suppress every fast-track signal on a paragraph (intent-ledger style).
+    Suppress {
+        #[arg(long)]
+        para: String,
+        #[arg(long)]
+        reason: String,
+        #[arg(long)]
+        book: Option<String>,
+    },
+}
+
 /// 1.3.24 PANE-1 — sub-subcommands under `inkhaven output …`. The minimal CLI
 /// surface over the Output message store (the pane itself is a TUI feature);
 /// useful for scripting and for sshing into a project without a TUI.
@@ -4917,6 +4969,7 @@ impl Cli {
             Command::Drift(cmd) => drift::run(&project, cmd).map_err(Into::into),
             Command::Lang(cmd) => lang::run(&project, cmd).map_err(Into::into),
             Command::Character(cmd) => character::run(&project, cmd).map_err(Into::into),
+            Command::Theologian(cmd) => theologian::run(&project, cmd).map_err(Into::into),
             Command::World { json, deep, provider, entity, sub } => match sub {
                 Some(cmd) => utopia::run(&project, cmd).map_err(Into::into),
                 None => world::run(&project, json, deep, provider.as_deref(), entity.as_deref())
