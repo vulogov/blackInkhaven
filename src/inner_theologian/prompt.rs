@@ -12,7 +12,7 @@ use super::lens::suggest_lenses;
 
 /// The persona identity and its hard constraints (RFC §5.1 / §5.3). Belongs to no
 /// tradition, advocates none, names its lens, never delivers a verdict.
-pub(super) const THEOLOGIAN_SYSTEM: &str = "You are a reader who approaches a manuscript through the \
+pub(crate) const THEOLOGIAN_SYSTEM: &str = "You are a reader who approaches a manuscript through the \
 lenses of the world's major moral and theological traditions — Catholic, Protestant, Orthodox, \
 Gnostic, LDS, Islam, Judaism, Hinduism, Buddhism, Confucianism, and secular moral philosophy — not to \
 judge the work by any of them, but to ask what each of them sees, and what those different visions \
@@ -51,9 +51,17 @@ pub(crate) fn build_session_prompt(
     passage: &str,
     grounding_prefix: Option<&str>,
     lang: &ProseLanguage,
+    disabled_lenses: &[String],
 ) -> String {
-    let lenses = suggest_lenses(passage);
-    let lens_list = lenses.iter().map(|l| l.label()).collect::<Vec<_>>().join(", ");
+    let lenses: Vec<_> = suggest_lenses(passage)
+        .into_iter()
+        .filter(|l| !disabled_lenses.iter().any(|d| d.eq_ignore_ascii_case(l.as_code())))
+        .collect();
+    let lens_list = if lenses.is_empty() {
+        "(author has disabled the suggested lenses — choose any that fit)".to_string()
+    } else {
+        lenses.iter().map(|l| l.label()).collect::<Vec<_>>().join(", ")
+    };
     let qs = questions_for(category)
         .iter()
         .enumerate()
@@ -100,6 +108,7 @@ mod tests {
             "He gave his life as a sacrifice for the others.",
             Some("GROUNDING: a stalled redemption arc was declared for Mara."),
             &ProseLanguage::Fr,
+            &[],
         );
         assert!(p.contains("Category 1 — Moral weight"));
         assert!(p.contains("Write them in French"));

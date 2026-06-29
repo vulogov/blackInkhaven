@@ -53,6 +53,9 @@ pub mod kinds {
     /// HAIKU-1 — a single haiku in the book's language. Informational;
     /// `Lifetime::Session(1)` so only the most recent one lives at a time.
     pub const HAIKU: &str = "haiku";
+    /// INNER-THEOLOGIAN-1 — a fast-track ethical signal (moral invisibility /
+    /// consequence gap / sacred levity). Always informational, never a verdict.
+    pub const THEOLOGIAN: &str = "theologian";
 }
 
 /// Visual / priority class (RFC §7.4).

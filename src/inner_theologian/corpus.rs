@@ -29,7 +29,10 @@ pub(crate) fn questions_for(cat: QuestionCategory) -> &'static [&'static str] {
 }
 
 /// The single auto-fire question (paragraph idle): always the cost-of-harm
-/// question from Category 1 (RFC §7.1).
+/// question from Category 1 (RFC §7.1). Reserved for the paragraph-idle
+/// auto-fire (Path 2), which is deferred — the slow track currently engages via
+/// `Ctrl+B J→T` and the CLI.
+#[allow(dead_code)]
 pub(crate) fn auto_fire_question() -> &'static str {
     MORAL_WEIGHT[0]
 }

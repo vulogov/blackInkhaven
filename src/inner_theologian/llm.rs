@@ -9,7 +9,7 @@ use anyhow::{Result, anyhow};
 
 use crate::config::Config;
 
-pub(super) fn theologian_llm_call(cfg: &Config, system: &str, user: &str) -> Result<String> {
+pub(crate) fn theologian_llm_call(cfg: &Config, system: &str, user: &str) -> Result<String> {
     let ai = crate::ai::AiClient::from_config(&cfg.llm)
         .map_err(|e| anyhow!("no LLM provider for Inner Theologian: {e}"))?;
     let (model, _env) = ai
