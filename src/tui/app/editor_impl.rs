@@ -584,6 +584,16 @@ impl super::App {
         self.detect_paragraph_language();
         self.change_focus(Focus::Editor);
         self.status = format!("opened {}", abs.display());
+        // HAIKU-1 T2 — if this is the freshly-created manuscript paragraph armed
+        // by `commit_add`, greet the blank buffer with a haiku now that it's open
+        // for editing. Fires once (the id is cleared on match), and only for the
+        // paragraph that was just created — never on re-opening existing prose.
+        if self.pending_haiku_paragraph == Some(node.id) {
+            self.pending_haiku_paragraph = None;
+            if self.cfg.editor.startup_haiku {
+                crate::haiku::emit_for_lang(&self.cfg.language);
+            }
+        }
         // 1.2.7+ — push to the visited-paragraph history,
         // unless this load_paragraph was triggered by a
         // back/forward navigation (in which case the cursor
