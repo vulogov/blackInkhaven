@@ -168,6 +168,10 @@ pub enum Action {
     /// HAIKU-1 — `Ctrl+Z p`. Emit a fresh haiku to the Output pane on demand.
     #[serde(rename = "haiku.show")]
     ShowHaiku,
+    /// THOUGHTS-1 — `Ctrl+Z f`. Fullscreen the current right pane (Output /
+    /// Thoughts; the AI pane uses its own fullscreen).
+    #[serde(rename = "pane.toggle_right_fullscreen")]
+    ToggleRightPaneFullscreen,
     /// WORLD-4 — `Ctrl+B W`. Open the World overview (the world definition +
     /// compiled astronomy + materialization status).
     #[serde(rename = "world.open_overview")]
@@ -942,6 +946,7 @@ impl Action {
             Action::OpenDialogueView => "dialogue".into(),
             Action::OpenCharacterArc => "char arc".into(),
             Action::ShowHaiku => "haiku".into(),
+            Action::ToggleRightPaneFullscreen => "pane fullscreen".into(),
             Action::OpenConlangHub => "conlang".into(),
             Action::OpenOutline => "outline".into(),
             Action::OpenWorldOverview => "world".into(),
@@ -1163,6 +1168,8 @@ impl Action {
                 "Open the story bible (1.3.8) — a consolidated, navigable view of the world you've built: every Character with the attributes the continuity bible has tracked across chapters (`eye_color: brown (ch.3)`), plus the Places, Artefacts, and Facts books. 1.3.10 adds semantic drift: under any entity `inkhaven drift scan` flagged, a ⚠ drift badge names the contradicting descriptions and shows the entity's chapter-ordered description trail (each row jumps to its source). 1.3.11 banners the world-consistency health line (the `inkhaven world` summary) at the top. `↑↓` navigate, `Enter` jumps to the entry's source paragraph, `Esc` closes. Run `inkhaven continuity extract` to populate the character attributes. Mnemonic: L for Lore.".into(),
             Action::OpenDialogueView =>
                 "Open the dialogue fingerprint view (DIALOG-1, Ctrl+V Shift+Q) — the per-character speech signature for the nearest character (or the most-speaking character if none is named in the current paragraph): utterance count, average length, vocabulary diversity (MATTR), question / exclamation ratios, and hedge density, as ASCII bars, with a compare line for the next two speakers. Read-only; `↑↓` scroll, `Esc` closes. Built from `Certain`-attributed dialogue; run `inkhaven dialogue scan` (or the `Ctrl+B Shift+C` review pass) to populate it. Mnemonic: Q for Quote.".into(),
+            Action::ToggleRightPaneFullscreen =>
+                "Fullscreen the current right-side pane (THOUGHTS-1, Ctrl+Z f) — the Output pane or the Thoughts pane fills the screen (tree, editor, and prompt hidden) for distraction-free reading of long content; press again or Esc to return. The AI pane has its own fullscreen (Ctrl+B K). Mnemonic: F for Fullscreen.".into(),
             Action::ShowHaiku =>
                 "Emit a hand-curated haiku (HAIKU-1, Ctrl+Z p) to the Output pane, in the book's language (EN/RU/DE/FR/ES, falling back to English). A small pocket of stillness on demand — the same poem pool that greets you at startup and when you create a new manuscript paragraph; the rotation advances each time so you rarely see the same one twice in a session. Zero-AI, baked into the binary. Toggle the automatic moments with `editor.startup_haiku`. Mnemonic: P for Poem.".into(),
             Action::OpenCharacterArc =>
@@ -1651,6 +1658,9 @@ impl KeyBindings {
                 // HAIKU-1 — Ctrl+Z p: a haiku on demand (P for Poem; `p` is free
                 // in the Bund sub-chord table).
                 entry("p", Action::ShowHaiku, Scope::Any),
+                // THOUGHTS-1 — Ctrl+Z f: fullscreen the current right pane
+                // (Output / Thoughts). F for Fullscreen; `f` is free here.
+                entry("f", Action::ToggleRightPaneFullscreen, Scope::Any),
             ],
             view_sub: vec![
                 // 1.3.33+ — Ctrl+V Space: the command palette. A reliable two-key

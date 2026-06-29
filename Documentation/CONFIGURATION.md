@@ -2316,6 +2316,54 @@ char: {
 
 See [Tutorial 99 — Character arcs](Tutorials/99-character-arcs.md).
 
+## 1.4.18 — Inner Theologian (INNER-THEOLOGIAN-1)
+
+The optional `theologian:` block tunes the tradition-neutral moral/theological
+reader. Omit it for the defaults below; `enabled: false` gates everything.
+
+```hjson
+theologian: {
+  // Master switch. false gates everything, including the fast-track.
+  enabled: true
+  // Fire a Category-1 question on paragraph idle (auto-fire). false → only
+  // Ctrl+B J→T and the Output-pane fast-track signals.
+  on_paragraph_idle: true
+  // Idle seconds before auto-fire; null → Inner Socrates' Slow threshold.
+  idle_threshold_seconds: null
+  // Slow-track LLM sub-budget (USD per session). Caps inform, never block.
+  session_budget: 0.15
+  // Run the deterministic fast-track in the review pass / deep-refresh.
+  fast_track: true
+  // Paragraphs after a harm event checked for acknowledgment (Signal 1).
+  moral_invisibility_window: 3
+  // Paragraphs after lethal violence checked for consequence (Signal 2).
+  consequence_gap_window: 5
+  // Emit the sacred-vocabulary-in-levity signal (Signal 3).
+  sacred_levity_signal: true
+  // Tradition lens codes to EXCLUDE from slow-track hints (default none — all
+  // eleven available). e.g. ["gnostic"].
+  disabled_lenses: []
+  // Question/marker language override (en/ru/de/fr/es); null → project → en.
+  language: null
+}
+```
+
+- **Eleven tradition lenses** (Catholic, Protestant, Orthodox, Gnostic, LDS,
+  Islam, Judaism, Hinduism, Buddhism, Confucianism, secular philosophy), applied
+  uniformly — no tradition privileged. The persona belongs to none and **never
+  delivers a verdict**; everything is a question.
+- **Fast track** (deterministic, zero-AI): three `info` signals — moral
+  invisibility, consequence gap, sacred levity — in the Output `theologian`
+  category (`⚖`), folded into the `Ctrl+B Shift+C` review pass. **Slow track**
+  (LLM): `Ctrl+B J→T` engages the open paragraph; `inkhaven theologian session
+  [--chapter N] [--category 1-6] [--lens <code>]` runs it from the CLI.
+- `inkhaven theologian scan` exits 1 on any unsuppressed signal (a
+  pre-submission prompt); `theologian suppress --para <id> --reason "…"` mutes
+  one. Read-only `ink.theologian.signals` + `ink.theologian.suppress` Bund.
+  Findings live in `.inkhaven/inner_theologian.db`. It never edits prose.
+
+See [Tutorial 101 — Inner Theologian](Tutorials/101-inner-theologian.md).
+
 ## 1.4.10 — Jinja template paragraphs (STRUCT-1)
 
 A paragraph with `content_type: "jinja"` is a [minijinja](https://docs.rs/minijinja)

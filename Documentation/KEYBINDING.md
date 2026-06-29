@@ -172,6 +172,7 @@ cancels with a status hint telling you which pane's table it consulted.
 | ---------- | ---------------------------------------------------------------------- |
 | `Shift+C`  | (1.3.34) **Unified review pass** — run every fast, deterministic checker at once: the world fact-checker + Inner Socrates over the **open paragraph**, plus the timeline critique over the **project**. Findings emit to the **Output pane** (filter them with `f`/`S`/`t`); the tree shows a per-node report-card badge (`⊗`/`⚠`/`●` + count). Instant and LLM-free. The CLI equivalent is `inkhaven check` (`--paragraph` / `--book-name` / `--no-fact` / `--no-socrates` / `--no-timeline`). |
 | `$`        | (1.3.34) **AI cost dashboard** — a scrollable panel of today's LLM call tallies for each capped subsystem (world slow track, Inner Socrates slow track + any analytical-thread sub-budgets) against their daily caps. Read-only. CLI equivalent: `inkhaven cost`. |
+| `J`        | (INNER_SOCRATES-1) **Inner Socrates overview** — active persona, recent questions, the intent ledger. Sub-keys: `F` fast-check ¶ · `E` engage (slow/LLM) · **`T` Inner Theologian** (1.4.18; INNER-THEOLOGIAN-1) · `S` persona · `L` ledger · `A` ambient · `C` conversation. **`J→T`** runs a slow-track theological session over the open paragraph: a tradition-neutral reader poses moral/theological questions through eleven tradition lenses (Catholic / Protestant / Orthodox / Gnostic / LDS / Islam / Judaism / Hinduism / Buddhism / Confucianism / secular), in the book's language, naming which lens raises which question — **it asks, never judges**. Questions land in the Output `theologian` category (`⚖`). The deterministic fast-track signals (moral invisibility / consequence gap / sacred levity) ride the `Ctrl+B Shift+C` review pass; the CLI surface is `inkhaven theologian scan / session / suppress`. |
 
 The Tree pane's plain-letter shortcuts (`B`, `C`, `V`, `A`, `S`, `+`, `P`,
 `D`, `-`) still work directly without the meta prefix when Tree has focus —
@@ -594,10 +595,18 @@ prior set of chat turns won't dilute their grounding.
 
 ### 4.1 Output pane
 
-`Ctrl+B Tab` / `Ctrl+B Shift+Tab` cycle the right region between the **AI** pane
-and the **Output** pane — structured one-way notifications from every subsystem
-(fact-check, Socratic, timeline critique, translation, lexicon, Bund, …). Active
-when the right region shows Output.
+`Ctrl+B Tab` / `Ctrl+B Shift+Tab` cycle the right region between the **Output**
+pane (structured one-way notifications from every subsystem — fact-check,
+Socratic, timeline critique, translation, lexicon, Bund, …), the **AI** pane,
+and (1.4.18; THOUGHTS-1) the **Thoughts** pane — a read-only, scrollable home for
+long reflective output, e.g. the Inner Theologian slow track (`Ctrl+B J→T`). In
+the Thoughts pane: `↑↓`/`j`/`k` scroll, `PageUp`/`PageDown`, `g`/`G` top/bottom,
+`c` clear, `Esc` to the editor. Plain **`Tab`** now cycles Tree → Editor → *the
+currently-shown right pane* (no longer forced to AI). The active right pane is
+remembered across restarts. **`Ctrl+Z f`** fullscreens the current right pane
+(Output / Thoughts; the AI pane uses `Ctrl+B K`). When content arrives for a
+pane it auto-surfaces — unless you're actively working in a right pane, so it
+never steals focus mid-read.
 
 | Key       | Action                                                                          |
 | --------- | ------------------------------------------------------------------------------- |

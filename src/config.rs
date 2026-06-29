@@ -74,6 +74,9 @@ pub struct Config {
     /// CHAR-1 — character-arc tracking.
     #[serde(default)]
     pub char: CharConfig,
+    /// INNER-THEOLOGIAN-1 — moral/theological reader.
+    #[serde(default)]
+    pub theologian: TheologianConfig,
     /// The project's declared genre (e.g. `literary_realism`, `fantasy`).
     /// Project-wide; consumed by Inner Editor's genre-aware prompting and open
     /// to other features later. `None` = genre-blind.
@@ -226,6 +229,7 @@ impl Default for Config {
             dialogue: DialogueConfig::default(),
             utopia: UtopiaConfig::default(),
             char: CharConfig::default(),
+            theologian: TheologianConfig::default(),
             genre: None,
             inner_socrates_default_persona: None,
             project_lock: ProjectLockConfig::default(),
@@ -3800,6 +3804,55 @@ impl Default for CharConfig {
             language: None,
             extra_action_verbs: Vec::new(),
             extraction_cost_warn: 0.20,
+        }
+    }
+}
+
+/// INNER-THEOLOGIAN-1 — `theologian:` block. The tradition-neutral moral/
+/// theological reader. All optional; omitting the block uses these defaults
+/// (RFC §14). Fully opt-out via `enabled: false`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TheologianConfig {
+    /// Master switch. `false` gates everything, including fast-track.
+    pub enabled: bool,
+    /// Fire a Category-1 question on paragraph idle (auto-fire). `false` → only
+    /// `Ctrl+B J→T` and the Output-pane fast-track signals.
+    pub on_paragraph_idle: bool,
+    /// Idle seconds before the auto-fire question; `null` → Inner Socrates' Slow
+    /// idle threshold.
+    pub idle_threshold_seconds: Option<u64>,
+    /// Slow-track LLM sub-budget (USD per session). Caps inform, never block.
+    pub session_budget: f32,
+    /// Run fast-track detection in the review pass / background deep-refresh.
+    pub fast_track: bool,
+    /// Paragraphs after a harm event checked for acknowledgment (Signal 1).
+    pub moral_invisibility_window: usize,
+    /// Paragraphs after lethal violence checked for consequence (Signal 2).
+    pub consequence_gap_window: usize,
+    /// Emit the sacred-vocabulary-in-levity signal (Signal 3).
+    pub sacred_levity_signal: bool,
+    /// Tradition lens codes to EXCLUDE from slow-track lens hints (default none —
+    /// all eleven available). E.g. `["gnostic"]`.
+    pub disabled_lenses: Vec<String>,
+    /// Question/marker language override (`en`/`ru`/`de`/`fr`/`es`); `null` →
+    /// project language → English.
+    pub language: Option<String>,
+}
+
+impl Default for TheologianConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            on_paragraph_idle: true,
+            idle_threshold_seconds: None,
+            session_budget: 0.15,
+            fast_track: true,
+            moral_invisibility_window: 3,
+            consequence_gap_window: 5,
+            sacred_levity_signal: true,
+            disabled_lenses: Vec::new(),
+            language: None,
         }
     }
 }
