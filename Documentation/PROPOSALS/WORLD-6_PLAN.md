@@ -4,7 +4,7 @@
 |---|---|
 | **RFC** | WORLD-6 |
 | **Title** | Three-stage coherence checker for declared social/systemic premises; `para:utopia-*` tags; `utopian-architect` grounding; CLI + Bund |
-| **Status** | In progress — 1.4.15 |
+| **Status** | Shipped — 1.4.15 |
 | **Author** | Vladimir Ulogov |
 | **Depends on** | STRUCT-2 (`para:*` tags), WORLD-4 (magic ledger), the LLM engage + cost + bg-job infra |
 | **New dependency** | none |
