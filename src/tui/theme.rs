@@ -70,6 +70,9 @@ pub struct Theme {
     /// Language sub-book — so multi-language
     /// projects can colour-code in the manuscript.
     pub language_word_fg: Color,
+    /// MYTH-1 (1.4.19+) — declared symbol vocabulary highlight (lavender by
+    /// default; `theme.myth_symbol_highlight` / `myth.symbol_highlight_color`).
+    pub myth_symbol_fg: Color,
     /// 1.2.12+ — per-detector style modifier for
     /// the three style-warning overlays.  Defaults to
     /// `Modifier::UNDERLINED` for all three
@@ -217,6 +220,8 @@ impl Theme {
                 &cfg.language_word_fg,
                 Color::Rgb(0xb4, 0xa8, 0xe1),
             ),
+            // MYTH-1 — lavender (#af5fff), distinct from the entity overlays.
+            myth_symbol_fg: color_or(&cfg.myth_symbol_fg, Color::Rgb(0xaf, 0x5f, 0xff)),
             // 1.2.12+ — per-detector modifier overrides;
             // default is UNDERLINED for all three (1.2.9
             // baseline).  See `parse_style_modifier`.
@@ -337,6 +342,7 @@ impl Theme {
             "style_warning_banned_synonym_fg" => self.style_warning_banned_synonym_fg = parsed,
             "style_warning_echo_fg" => self.style_warning_echo_fg = parsed,
             "language_word_fg" => self.language_word_fg = parsed,
+            "myth_symbol_fg" => self.myth_symbol_fg = parsed,
             "pov_chip_bg" => self.pov_chip_bg = parsed,
             "pov_chip_fg" => self.pov_chip_fg = parsed,
             "search_match_bg" => self.search_match_bg = parsed,

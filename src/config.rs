@@ -1233,6 +1233,9 @@ pub struct ThemeConfig {
     /// extends with per-Language-sub-book overrides.
     #[serde(default)]
     pub language_word_fg: String,
+    /// MYTH-1 (1.4.19+) — declared symbol vocabulary highlight (lavender default).
+    #[serde(default)]
+    pub myth_symbol_fg: String,
     /// 1.2.12+ — per-detector style modifier for the
     /// three style-warning overlays.  Accepts
     /// `"underline"` (default), `"bold"`, `"dim"`,
@@ -1361,6 +1364,7 @@ impl Default for ThemeConfig {
             // 1.2.13+ — invented-language overlay; empty
             // falls back to a soft mauve-teal at runtime.
             language_word_fg: String::new(),
+            myth_symbol_fg: String::new(),
             // 1.2.12+ — empty defaults map to UNDERLINED
             // (the historical hardcoded modifier).  Users
             // override to "bold", "dim", "reversed",

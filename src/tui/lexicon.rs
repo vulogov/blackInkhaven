@@ -49,6 +49,9 @@ pub enum LexCategory {
     /// lands on a recognised invented word.  See
     /// `Documentation/PROPOSALS/LANGUAGE_BOOK.md`.
     Language,
+    /// MYTH-1 (1.4.19+) — a declared symbol vocabulary token (from the Mythology
+    /// book). Highlighted lavender so symbolic density is visible while writing.
+    Symbol,
 }
 
 /// One match on a row of editor text, in character (not byte) coordinates.
