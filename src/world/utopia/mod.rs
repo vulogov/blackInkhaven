@@ -16,6 +16,7 @@ use crate::store::node::{Node, NodeKind};
 
 mod llm;
 mod stage1;
+mod stage2;
 mod store;
 
 pub(crate) use store::UtopiaStore;
