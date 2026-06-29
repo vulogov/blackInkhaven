@@ -21,39 +21,41 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.4.14 — Dialogue quality & attribution
+## Latest release · 1.4.15 — Utopian/dystopian coherence checker
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.4.14.md`](Documentation/RELEASE_NOTES/1.4.14.md)
-· Plan: [`Documentation/PROPOSALS/DIALOG-1_PLAN.md`](Documentation/PROPOSALS/DIALOG-1_PLAN.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.4.15.md`](Documentation/RELEASE_NOTES/1.4.15.md)
+· Plan: [`Documentation/PROPOSALS/WORLD-6_PLAN.md`](Documentation/PROPOSALS/WORLD-6_PLAN.md)
 
-Dialogue is the most technically demanding prose mode, and nothing measured it as a mode. 1.4.14
-(DIALOG-1) adds a deterministic dialogue engine — **no LLM, no parser, no external dependency** — in
-five languages (EN/RU/DE/FR/ES) across three quotation conventions. It **measures; it never
-prescribes.** **No new runtime crates.**
+WORLD-4/5 check physical and temporal facts; nothing checked the **logical coherence of a social
+premise**. 1.4.15 (WORLD-6) adds a three-stage checker that reads your declared utopian/dystopian
+premise and finds the **coherence holes** — a mechanism that can't enforce its premise, two
+consequences that contradict, prose that uses something the premise eliminated. It reads **only what
+you declare** and judges **logical/systemic** structure only, never morality. **No new runtime
+crates.**
 
-### Scan, and find three things
+### Declare, then check
 
-`inkhaven dialogue scan` flags **zero-attribution** speech (no tag or nearby character name),
-**said-bookism density** (a chapter's `whispered`/`growled` rate above the book baseline), and
-**talking-head sequences** (dialogue-only runs with no action beat) — and exits non-zero on any
-zero-attribution span, so it doubles as a pre-submission gate. Detection handles paired quotes (EN/DE),
-guillemets + em-dash (FR/RU, French inline `, dit-il,` stripped), and the Spanish hybrid.
+Tag World-book paragraphs `para:utopia-{premise,mechanism,consequence,elimination}` (⊢ ⚙ ⇒ ∅).
+`inkhaven world utopia-check` runs **Stage 1** extraction; `--stage 2` adds **pairing** (CHAIN BREAK /
+CONSEQUENCE GAP / INTERNAL CONFLICT, explicit-only); `--stage all` adds a per-chapter **entailment
+scan** against the elimination inventory. It exits 1 on any chain finding and 2 on any entailment
+violation — a pre-submission gate. A deterministic Facts-book cross-reference flags facts that are
+also declared eliminated.
 
-### A voice signature per character
+### Grounded interrogation
 
-`inkhaven dialogue profile` builds a six-metric fingerprint for each character — utterance count,
-average length, MATTR, question / exclamation ratios, hedge density — from confidently-attributed
-lines. **`Ctrl+V Shift+Q`** opens the fingerprint view for the nearest character. The findings ride
-the **`Ctrl+B Shift+C`** review pass into the Output pane (zero-AI, hash-lazy). A new Inner Socrates
-**`theatergoer`** persona reads a scene as if the narrator's glosses were invisible.
+Findings ground the **`utopian-architect`** Inner Socrates persona — it names the unresolved tensions
+before its questions — and surface in the **`Ctrl+B Shift+C`** review pass (read-only; the LLM stages
+run only when you ask). Suppress a deliberate irony with `inkhaven world utopia-suppress` or a magic-
+ledger `deliberate_tension`.
 
 ### Dependencies & compatibility
 
-**No new runtime crates; no new system books; no new `NodeKind`** — one new `.inkhaven/dialogue.duckdb`,
-one new persona (15 total), one new chord, one `dialogue:` config block (windows / thresholds, plus
-`extra_neutral_verbs` so SF/fantasy speech verbs aren't counted as said-bookisms). CLI:
-**`inkhaven dialogue scan|profile|refresh|suggest`**. Read-only `ink.dialogue.*` Bund. Imports NARR-1's
-`ProseLanguage` + modal lists; the pipeline, CLI, Bund, and TUI share one detection/attribution core.
+**No new runtime crates; no new system books; no new `NodeKind`** — one new `.inkhaven/utopia.duckdb`,
+four new `para:utopia-*` tags, one `utopia:` config block. `inkhaven world` is now a subcommand group
+(`utopia-check` / `utopia-model` / `utopia-suppress` / `utopia-refresh`); the bare `inkhaven world`
+consistency snapshot is unchanged. Read-only `ink.utopia.*` Bund. The schema reserves a `theological`
+domain and `research` grounding hooks for future features, without coupling.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

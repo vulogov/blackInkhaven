@@ -358,6 +358,22 @@ fn run_slow(
     // + a seam-free user prompt; every other persona keeps the neutral question
     // path unchanged. Output stays bilingual in both modes.
     let system = slow_system_for(persona.stance, genre.as_deref());
+    // WORLD-6 — the utopian-architect persona opens with coherence grounding
+    // (utopia.duckdb findings → World book structure → Facts), prefixed to the
+    // prose context. Only the opening context changes; the question bank does
+    // not. Any other persona is untouched.
+    let grounded;
+    let prose: &str = if persona.id == crate::world::utopia::UTOPIAN_ARCHITECT {
+        match crate::world::utopia::build_grounding(project) {
+            Some(g) => {
+                grounded = format!("{g}\n\n--- MANUSCRIPT ---\n{prose}");
+                &grounded
+            }
+            None => prose,
+        }
+    } else {
+        prose
+    };
     let prompt = if persona.stance.is_verdict() {
         build_verdict_prompt(persona, prose, &intent_summary(ledger), lang)
     } else {

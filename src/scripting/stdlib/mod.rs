@@ -26,6 +26,7 @@ mod terms;
 mod snippets;
 mod prose;
 mod dialogue;
+mod utopia;
 mod pdf;
 mod review;
 
@@ -58,5 +59,6 @@ pub fn register_ink_stdlib(vm: &mut VM) -> Result<()> {
     snippets::register(vm)?;
     prose::register(vm)?;
     dialogue::register(vm)?;
+    utopia::register(vm)?;
     Ok(())
 }

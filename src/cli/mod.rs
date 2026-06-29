@@ -60,6 +60,7 @@ pub mod plan;
 pub mod editorial;
 pub mod drift;
 pub mod world;
+pub mod utopia;
 pub mod lang;
 pub mod world_prompts;
 pub mod prompts;
@@ -736,6 +737,10 @@ pub enum Command {
         /// tracked attributes, and whether it's named in the prose.
         #[arg(long)]
         entity: Option<String>,
+        /// WORLD-6 — sub-checks under `inkhaven world …`. With no subcommand,
+        /// `inkhaven world` prints the consistency snapshot as before.
+        #[command(subcommand)]
+        sub: Option<WorldCommand>,
     },
 
     /// 1.2.18+ R.1 — export a user book to a
@@ -3920,6 +3925,53 @@ pub enum ThreadExportFormat {
     Markdown,
 }
 
+/// WORLD-6 — sub-subcommands under `inkhaven world …`: the utopian/dystopian
+/// coherence checker. `inkhaven world` with no subcommand keeps the existing
+/// consistency snapshot.
+#[derive(Debug, Subcommand)]
+pub enum WorldCommand {
+    /// Run the coherence check (Stage 1 always; Stage 2/3 on demand). Exits 1 on
+    /// any chain-logic finding, 2 on any entailment violation.
+    UtopiaCheck {
+        #[arg(long)]
+        book: Option<String>,
+        /// `1` | `2` | `3` | `all`. Default: Stage 1, report cached 2/3.
+        #[arg(long)]
+        stage: Option<String>,
+        /// Restrict to one named premise group.
+        #[arg(long)]
+        group: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print the extracted claim model without running any checks.
+    UtopiaModel {
+        #[arg(long)]
+        book: Option<String>,
+        #[arg(long)]
+        group: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Mark a finding suppressed with a reason.
+    UtopiaSuppress {
+        #[arg(long)]
+        finding: String,
+        #[arg(long)]
+        reason: String,
+        #[arg(long)]
+        book: Option<String>,
+    },
+    /// Force recomputation (Stage 1 or Stage 3), bypassing the hash cache.
+    UtopiaRefresh {
+        #[arg(long)]
+        book: Option<String>,
+        /// `1` (re-extract) or `3` (re-scan prose). Default: 1.
+        #[arg(long)]
+        stage: Option<u8>,
+    },
+}
+
 /// 1.3.24 PANE-1 — sub-subcommands under `inkhaven output …`. The minimal CLI
 /// surface over the Output message store (the pane itself is a TUI feature);
 /// useful for scripting and for sshing into a project without a TUI.
@@ -4813,10 +4865,11 @@ impl Cli {
             }
             Command::Drift(cmd) => drift::run(&project, cmd).map_err(Into::into),
             Command::Lang(cmd) => lang::run(&project, cmd).map_err(Into::into),
-            Command::World { json, deep, provider, entity } => {
-                world::run(&project, json, deep, provider.as_deref(), entity.as_deref())
-                    .map_err(Into::into)
-            }
+            Command::World { json, deep, provider, entity, sub } => match sub {
+                Some(cmd) => utopia::run(&project, cmd).map_err(Into::into),
+                None => world::run(&project, json, deep, provider.as_deref(), entity.as_deref())
+                    .map_err(Into::into),
+            },
             Command::Pdf(cmd) => pdf::run(cmd, &project).map_err(Into::into),
             Command::Replace {
                 pattern,
