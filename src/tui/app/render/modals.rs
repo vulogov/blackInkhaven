@@ -5716,10 +5716,17 @@ impl super::super::App {
         let inner = block.inner(rect);
         f.render_widget(block, rect);
 
-        let list_h = inner.height.saturating_sub(1).max(1) as usize;
+        // Reserve two rows for the footer so the (long) sub-key legend — now
+        // including T theologian — wraps instead of clipping at the right edge.
+        let footer_h: u16 = if inner.height > 3 { 2 } else { 1 };
+        let list_h = inner.height.saturating_sub(footer_h).max(1) as usize;
         let body_rect = Rect { x: inner.x, y: inner.y, width: inner.width, height: list_h as u16 };
-        let footer_rect =
-            Rect { x: inner.x, y: inner.y + inner.height - 1, width: inner.width, height: 1 };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height - footer_h,
+            width: inner.width,
+            height: footer_h,
+        };
 
         let cur = (*cursor).min(rows.len().saturating_sub(1));
         let start = if cur >= list_h { cur + 1 - list_h } else { 0 };
@@ -5739,9 +5746,10 @@ impl super::super::App {
         f.render_widget(Paragraph::new(lines), body_rect);
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                " ↑↓ · F check · E engage (slow) · C converse · N persona · S cycle · L ledger · A auto · Esc ",
+                " ↑↓ · F check · E engage (slow) · T theologian · C converse · N persona · S cycle · L ledger · A auto · Esc ",
                 Style::default().add_modifier(Modifier::DIM),
-            ))),
+            )))
+            .wrap(Wrap { trim: true }),
             footer_rect,
         );
     }

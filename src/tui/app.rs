@@ -3789,17 +3789,14 @@ impl App {
                 Ok(text) => {
                     // THOUGHTS-1 — the long reflective response lands in the
                     // dedicated scrollable Thoughts pane (its proper home), not
-                    // the Output pane (short findings) or the AI chat.
-                    // push_thought auto-shows it via notify_pane, which respects
-                    // "don't steal" if the user is actively in another right pane.
+                    // the Output pane (short findings) or the AI chat. The author
+                    // explicitly asked (J→T), so show + focus the Thoughts pane
+                    // and reset its scroll to the top of the new block.
                     self.push_thought(format!("## ⚖ Inner Theologian\n\n{text}"));
-                    self.status = if matches!(self.focus, Focus::Ai | Focus::AiPrompt)
-                        && self.right_pane != RightPane::Thoughts
-                    {
-                        "⚖ Inner Theologian — questions ready in the Thoughts pane (Ctrl+B Tab to view)".into()
-                    } else {
-                        "⚖ Inner Theologian — questions in the Thoughts pane (↑↓ scroll · Ctrl+Z f fullscreen)".into()
-                    };
+                    self.right_pane = RightPane::Thoughts; // explicit: the author asked
+                    self.focus_cycle(Focus::Ai); // focus the region, keep Thoughts
+                    self.status =
+                        "⚖ Inner Theologian — in the Thoughts pane (↑↓ scroll · Ctrl+Z f fullscreen)".into();
                 }
                 Err(e) => self.status = format!("Inner Theologian skipped: {e}"),
             },
@@ -14242,11 +14239,13 @@ impl App {
             &cfg.theologian.disabled_lenses,
         );
         self.modal = Modal::None;
-        self.right_pane = RightPane::Output;
+        // Pre-show the Thoughts pane (where the result will land) so the
+        // "thinking…" wait and the answer share one place; don't force Output.
+        self.right_pane = RightPane::Thoughts;
         self.status = "⟳ Inner Theologian: thinking…".into();
         self.start_bg_job(BgJobKind::TheologianSlow, "inner theologian", move |tx, _cancel| {
             // Return the full prose so the main loop can seed it into the
-            // scrollable AI-pane transcript — the Output pane is for short
+            // scrollable Thoughts pane — the Output pane is for short
             // findings, not a multi-paragraph slow-track response.
             let result = crate::inner_theologian::theologian_llm_call(
                 &cfg,
