@@ -15,11 +15,22 @@
 //! tradition-neutral, distinct from Socrates' findings, Editor's `✎`, and the
 //! `✦` HAIKU-1 took.
 
+mod corpus;
 mod detect;
+mod grounding;
+mod lens;
+mod llm;
+mod pipeline;
+mod prompt;
 mod store;
 mod vocab;
 
+pub(crate) use corpus::{auto_fire_question, questions_for};
 pub(crate) use detect::{DetectWindows, detect_chapter};
+pub(crate) use grounding::build_grounding;
+pub(crate) use lens::suggest_lenses;
+pub(crate) use pipeline::run_fast_scan;
+pub(crate) use prompt::{build_session_prompt, language_name};
 pub(crate) use store::TheologianStore;
 pub(crate) use vocab::{VocabLists, lists_for, scan_list};
 
