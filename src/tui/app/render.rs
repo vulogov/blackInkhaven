@@ -244,6 +244,10 @@ impl super::App {
             self.draw_dialogue_fingerprint_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::CharacterArc { .. }) {
+            self.draw_character_arc_modal(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::EditorialPass { .. }) {
             self.draw_editorial_pass_modal(f, area);
             return;

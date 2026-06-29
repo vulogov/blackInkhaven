@@ -11080,6 +11080,7 @@ impl App {
             A::OpenConlangHub => self.open_conlang_hub(),
             A::OpenOutline => self.open_outline(),
             A::OpenDialogueView => self.open_dialogue_view(),
+            A::OpenCharacterArc => self.open_character_arc_view(),
             A::OpenWorldOverview => self.open_world_overview(),
             A::OpenInnerSocratesOverview => self.open_inner_socrates_overview(),
             A::OpenInnerEditorOverview => self.open_inner_editor_overview(),
@@ -12746,6 +12747,161 @@ impl App {
             }
             KeyCode::Down => {
                 if let Modal::DialogueFingerprint { cursor, .. } = &mut self.modal {
+                    if n > 0 {
+                        *cursor = (*cursor + 1).min(n - 1);
+                    }
+                }
+            }
+            _ => {}
+        }
+        true
+    }
+
+    /// CHAR-1 — `Ctrl+V Shift+N`. Open the per-character arc view over the
+    /// cached `char.duckdb` (read-only; the LLM passes run via the review pass /
+    /// `inkhaven character refresh`). Focuses a character named in the open
+    /// paragraph, else the first tracked one.
+    fn open_character_arc_view(&mut self) {
+        let book = match crate::cli::resolve_user_book(&self.hierarchy, None, "character") {
+            Ok(b) => b.clone(),
+            Err(e) => {
+                self.status = format!("character: {e}");
+                return;
+            }
+        };
+        let cs = match crate::character::CharStore::open(self.store.project_root()) {
+            Ok(c) => c,
+            Err(e) => {
+                self.status = format!("character: {e}");
+                return;
+            }
+        };
+        // Reflect the current `character_arc` declarations into the store.
+        for (decl, hash) in crate::character::read_arc_declarations(&self.hierarchy, &self.layout) {
+            let _ = cs.upsert_declaration(&book.slug, &decl, hash);
+        }
+        // Candidate characters: those with a declaration or any stored state.
+        let mut names: Vec<String> = cs
+            .all_declarations(&book.slug)
+            .map(|v| v.into_iter().map(|d| d.character_name).collect())
+            .unwrap_or_default();
+        if let Ok(more) = cs.characters_with_states(&book.slug) {
+            for n in more {
+                if !names.iter().any(|x| x.eq_ignore_ascii_case(&n)) {
+                    names.push(n);
+                }
+            }
+        }
+        if names.is_empty() {
+            self.status =
+                "character: no tracked arcs yet — run the review pass (Ctrl+B Shift+C) or `inkhaven character refresh`".into();
+            return;
+        }
+        let opened_text =
+            self.opened.as_ref().map(|d| d.textarea.lines().join(" ").to_lowercase());
+        let focus = opened_text
+            .as_ref()
+            .and_then(|lc| names.iter().find(|n| lc.contains(&n.to_lowercase())).cloned())
+            .unwrap_or_else(|| names[0].clone());
+        let rows = self.build_character_arc_rows(&cs, &book.slug, &focus, &names);
+        self.modal = Modal::CharacterArc { rows, cursor: 0 };
+        self.status = "character arc · ↑↓ scroll · Esc".into();
+    }
+
+    /// Render the cached arc for `focus` into scrollable text rows.
+    fn build_character_arc_rows(
+        &self,
+        cs: &crate::character::CharStore,
+        book_slug: &str,
+        focus: &str,
+        names: &[String],
+    ) -> Vec<String> {
+        let mut rows = Vec::new();
+        let decl = cs.declaration(book_slug, focus).ok().flatten();
+        let states = cs.states_for_character(book_slug, focus).unwrap_or_default();
+        let checks = cs.checks_for_character(book_slug, focus).unwrap_or_default();
+        let planning: Vec<_> = cs
+            .planning_findings(book_slug)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|(n, _, _)| n.eq_ignore_ascii_case(focus))
+            .collect();
+
+        rows.push(format!("{} — Character arc", focus.to_uppercase()));
+        rows.push(String::new());
+        match &decl {
+            Some(d) => {
+                rows.push(format!("Declared arc: {}", d.arc_type.as_code()));
+                rows.push(format!("  start    : {}", d.desired_state_start));
+                if let Some(m) = &d.desired_midpoint_state {
+                    rows.push(format!("  midpoint : {m}"));
+                }
+                rows.push(format!("  end      : {}", d.desired_state_end));
+            }
+            None => rows.push(
+                "Declared arc: (none — add a `character_arc` block in the Characters book)".into(),
+            ),
+        }
+        rows.push(String::new());
+        if states.is_empty() {
+            rows.push("State chain: (empty — run `inkhaven character refresh`)".into());
+        } else {
+            rows.push(format!("State chain ({} chapters):", states.len()));
+            for s in &states {
+                let mark = if s.changed { '✦' } else { '·' };
+                let ag = s.agency_score.map(|x| format!("{x:.2}")).unwrap_or_else(|| "—".into());
+                rows.push(format!(
+                    "  {mark} ch.{:>2}  agency {ag} ({}a/{}p)",
+                    s.chapter_ord, s.active_count, s.passive_count
+                ));
+                rows.push(format!("       {}", s.state_summary));
+                if let Some(cd) = &s.change_description {
+                    rows.push(format!("       → {cd}"));
+                }
+            }
+        }
+        rows.push(String::new());
+        if checks.is_empty() {
+            rows.push("Arc checks: (none — run `inkhaven character check`)".into());
+        } else {
+            rows.push("Arc checks:".into());
+            for c in &checks {
+                let loc = c.chapter_ord.map(|o| format!(" (ch.{o})")).unwrap_or_default();
+                rows.push(format!("  [{}] {}{loc}", c.verdict.as_code(), c.check_type.label()));
+                rows.push(format!("       {}", c.description));
+            }
+        }
+        if !planning.is_empty() {
+            rows.push(String::new());
+            rows.push("Planning gaps:".into());
+            for (_, ft, desc) in &planning {
+                rows.push(format!("  [{ft}] {desc}"));
+            }
+        }
+        if names.len() > 1 {
+            rows.push(String::new());
+            rows.push(format!("Tracked: {}", names.join(", ")));
+        }
+        rows
+    }
+
+    fn character_arc_handle_key(&mut self, key: KeyEvent) -> bool {
+        let n = match &self.modal {
+            Modal::CharacterArc { rows, .. } => rows.len(),
+            _ => return false,
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "character arc: closed".into();
+            }
+            KeyCode::Up => {
+                if let Modal::CharacterArc { cursor, .. } = &mut self.modal {
+                    *cursor = cursor.saturating_sub(1);
+                }
+            }
+            KeyCode::Down => {
+                if let Modal::CharacterArc { cursor, .. } = &mut self.modal {
                     if n > 0 {
                         *cursor = (*cursor + 1).min(n - 1);
                     }
@@ -22738,6 +22894,11 @@ impl App {
 
         if matches!(self.modal, Modal::DialogueFingerprint { .. }) {
             self.dialogue_fingerprint_handle_key(key);
+            return Ok(false);
+        }
+
+        if matches!(self.modal, Modal::CharacterArc { .. }) {
+            self.character_arc_handle_key(key);
             return Ok(false);
         }
 
