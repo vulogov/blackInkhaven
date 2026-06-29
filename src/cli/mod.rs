@@ -41,6 +41,7 @@ pub mod terms;
 pub mod snippets;
 pub mod prose;
 pub mod dialogue;
+pub mod myth;
 pub mod tts;
 pub mod gen_fixture;
 pub mod bench_load;
@@ -859,6 +860,16 @@ pub enum Command {
     /// questions; `suppress` mutes a signal. It asks, never judges.
     #[command(subcommand)]
     Theologian(TheologianCommand),
+
+    /// 1.4.19 MYTH-1 — `inkhaven myth <subcommand>`. The mythological & symbolic
+    /// pattern library over the **declared** Mythology book. `scan` prints the
+    /// symbol/motif/archetype heatmap + deterministic findings; `check` runs the
+    /// LLM consistency / completeness / role passes (exit 1 on findings);
+    /// `profile` prints the declared inventory; `refresh` recomputes the
+    /// deterministic caches; `suppress` mutes a finding. Reads declarations only,
+    /// never interprets, never edits prose.
+    #[command(subcommand)]
+    Myth(MythCommand),
 
     /// 1.3.0 PDF-1 — `inkhaven pdf <subcommand>`.  Page operations
     /// (extract / split / merge / rotate / reorder / delete), metadata,
@@ -4075,6 +4086,57 @@ pub enum TheologianCommand {
     },
 }
 
+/// 1.4.19 MYTH-1 — sub-subcommands under `inkhaven myth …`.
+#[derive(Debug, Subcommand)]
+pub enum MythCommand {
+    /// Refresh the inventory + deterministic scans and print the symbol-density /
+    /// motif-presence / archetype-presence heatmap plus the deterministic
+    /// findings (archetype vacant/absent, motif absent from the final act).
+    /// Zero-AI.
+    Scan {
+        #[arg(long)]
+        book: Option<String>,
+        /// Recompute every chapter, bypassing the content-hash cache.
+        #[arg(long)]
+        force: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run the LLM checks (symbol consistency, motif completeness, archetype role)
+    /// plus the deterministic checks. Exits 1 on any unsuppressed finding — a
+    /// pre-submission review gate.
+    Check {
+        #[arg(long)]
+        book: Option<String>,
+        /// `symbol` | `motif` | `archetype` | `deterministic` | `all` (default).
+        #[arg(long)]
+        kind: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print the declared inventory (symbols / motifs / archetypes) without
+    /// running any check.
+    Profile {
+        #[arg(long)]
+        book: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Force recomputation of the deterministic caches (density + explicit
+    /// motifs), bypassing the content-hash cache.
+    Refresh {
+        #[arg(long)]
+        book: Option<String>,
+    },
+    /// Mark a finding suppressed by id.
+    Suppress {
+        #[arg(long)]
+        finding: String,
+        #[arg(long)]
+        book: Option<String>,
+    },
+}
+
 /// 1.3.24 PANE-1 — sub-subcommands under `inkhaven output …`. The minimal CLI
 /// surface over the Output message store (the pane itself is a TUI feature);
 /// useful for scripting and for sshing into a project without a TUI.
@@ -4970,6 +5032,7 @@ impl Cli {
             Command::Lang(cmd) => lang::run(&project, cmd).map_err(Into::into),
             Command::Character(cmd) => character::run(&project, cmd).map_err(Into::into),
             Command::Theologian(cmd) => theologian::run(&project, cmd).map_err(Into::into),
+            Command::Myth(cmd) => myth::run(&project, cmd).map_err(Into::into),
             Command::World { json, deep, provider, entity, sub } => match sub {
                 Some(cmd) => utopia::run(&project, cmd).map_err(Into::into),
                 None => world::run(&project, json, deep, provider.as_deref(), entity.as_deref())
