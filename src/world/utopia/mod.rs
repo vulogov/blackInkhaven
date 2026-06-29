@@ -14,12 +14,14 @@ use crate::store::SYSTEM_TAG_WORLD;
 use crate::store::hierarchy::Hierarchy;
 use crate::store::node::{Node, NodeKind};
 
+mod grounding;
 mod llm;
 mod stage1;
 mod stage2;
 mod stage3;
 mod store;
 
+pub(crate) use grounding::{UTOPIAN_ARCHITECT, build_grounding};
 pub(crate) use store::UtopiaStore;
 
 /// The four kinds of declared claim that make up a premise set.
