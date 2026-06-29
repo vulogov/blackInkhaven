@@ -4,7 +4,7 @@
 |---|---|
 | **RFC** | HAIKU-1 |
 | **Title** | Zero-AI, language-aware haiku in the Output pane at three moments |
-| **Status** | In progress — 1.4.17 |
+| **Status** | Shipped — 1.4.17 |
 | **Author** | Vladimir Ulogov |
 | **New dependency** | none |
 
