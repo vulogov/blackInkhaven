@@ -41,6 +41,10 @@ mod drift;
 mod prose;
 // DIALOG-1 — dialogue quality & attribution engine.
 mod dialogue;
+// CHAR-1 — character arc tracking. Built across C-P0…C-P10; the store / stages /
+// CLI consume the types, so allow dead_code until they land.
+#[allow(dead_code, unused_imports)]
+mod character;
 mod world_report;
 mod progress;
 mod replace;
