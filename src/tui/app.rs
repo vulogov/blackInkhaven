@@ -3753,16 +3753,19 @@ impl App {
                 Err(e) => self.status = format!("prose check failed: {e}"),
             },
             BgJobKind::TheologianSlow => match result {
-                Ok(n) => {
-                    let landed: usize = n.parse().unwrap_or(0);
-                    self.status = if landed == 0 {
-                        "Inner Theologian: nothing rose for this ¶".into()
-                    } else {
-                        "⚖ Inner Theologian: questions in Output — ^B Tab".into()
-                    };
-                    if landed > 0 {
-                        self.refresh_tree_badges();
-                    }
+                Ok(text) if text.trim().is_empty() => {
+                    self.status = "Inner Theologian: nothing rose for this ¶".into();
+                }
+                Ok(text) => {
+                    self.seed_theologian_chat(text);
+                    self.right_pane = RightPane::Ai;
+                    self.change_focus(Focus::Ai);
+                    // Drop into the AI reading layout so PageUp/PageDown/↑↓ scroll
+                    // the (long) response. The two fullscreens are exclusive.
+                    self.ai_fullscreen = true;
+                    self.typewriter_mode = false;
+                    self.status =
+                        "⚖ Inner Theologian — questions in the AI pane · PageUp/↑↓ scroll · Ctrl+B K to exit".into();
                 }
                 Err(e) => self.status = format!("Inner Theologian skipped: {e}"),
             },
@@ -14145,24 +14148,15 @@ impl App {
         self.right_pane = RightPane::Output;
         self.status = "⟳ Inner Theologian: thinking…".into();
         self.start_bg_job(BgJobKind::TheologianSlow, "inner theologian", move |tx, _cancel| {
+            // Return the full prose so the main loop can seed it into the
+            // scrollable AI-pane transcript — the Output pane is for short
+            // findings, not a multi-paragraph slow-track response.
             let result = crate::inner_theologian::theologian_llm_call(
                 &cfg,
                 crate::inner_theologian::THEOLOGIAN_SYSTEM,
                 &user,
             )
-            .map(|raw| {
-                use crate::pane::output::{Lifetime, Message, Severity, kinds};
-                let text = format!("⚖ Inner Theologian\n{}", raw.trim());
-                let msg = Message::new(
-                    kinds::THEOLOGIAN,
-                    Severity::Info,
-                    Lifetime::UntilActedOn,
-                    serde_json::json!({ "text": text, "category": "theologian", "slow": true }),
-                )
-                .with_source_paragraph(id);
-                crate::pane::output::emit(&msg);
-                "1".to_string()
-            })
+            .map(|raw| raw.trim().to_string())
             .map_err(|e| e.to_string());
             let _ = tx.send(BgMsg::Done(result));
         });
@@ -14371,6 +14365,30 @@ impl App {
             self.chat_history.remove(i);
         }
         let mut seeded = vec![ChatTurn::User(prologue), ChatTurn::Assistant(opening)];
+        seeded.append(&mut self.chat_history);
+        self.chat_history = seeded;
+        self.chat_history_scroll = 0;
+    }
+
+    /// INNER-THEOLOGIAN-1 — seed the slow-track questions into the AI-pane
+    /// transcript (scrollable), the proper home for a long LLM response. Prior
+    /// theologian seeds are replaced so the pane doesn't accumulate them.
+    fn seed_theologian_chat(&mut self, questions: String) {
+        const MARKER: &str = "[Inner Theologian";
+        if let Some(i) = self
+            .chat_history
+            .iter()
+            .position(|t| matches!(t, ChatTurn::User(s) if s.starts_with(MARKER)))
+        {
+            if self.chat_history.get(i + 1).is_some_and(|t| matches!(t, ChatTurn::Assistant(_))) {
+                self.chat_history.remove(i + 1);
+            }
+            self.chat_history.remove(i);
+        }
+        let prologue =
+            "[Inner Theologian — a tradition-neutral lens session on this passage; it asks, never judges]"
+                .to_string();
+        let mut seeded = vec![ChatTurn::User(prologue), ChatTurn::Assistant(questions)];
         seeded.append(&mut self.chat_history);
         self.chat_history = seeded;
         self.chat_history_scroll = 0;
