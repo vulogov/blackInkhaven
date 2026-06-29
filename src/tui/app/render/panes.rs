@@ -1567,6 +1567,93 @@ impl super::super::App {
     /// PANE-1 — the Output pane: structured notifications from every subsystem.
     /// Each message is a two-line entry (severity icon + kind, then its text),
     /// the selected row marked and bold when the region is focused.
+    /// THOUGHTS-1 — the Thoughts pane: a read-only, scrollable view of reflective
+    /// blocks (newest first), e.g. an Inner Theologian session. `thoughts_scroll`
+    /// counts lines from the top; ratatui clamps over-scroll.
+    pub(in crate::tui::app) fn draw_thoughts(&self, f: &mut ratatui::Frame, area: Rect) {
+        let focused =
+            self.focus == Focus::Ai && self.right_pane == crate::tui::app::RightPane::Thoughts;
+        let border_style = if focused {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(border_style)
+            .title(format!(" Thoughts · {} ", self.thoughts.len()));
+        let inner = block.inner(area);
+        f.render_widget(block, area);
+
+        if self.thoughts.is_empty() {
+            let hint = Paragraph::new(vec![
+                Line::from(""),
+                Line::from(Span::styled("  No thoughts yet.", Style::default().fg(Color::DarkGray))),
+                Line::from(Span::styled(
+                    "  Ctrl+B J→T asks the Inner Theologian.",
+                    Style::default().fg(Color::DarkGray),
+                )),
+            ]);
+            f.render_widget(hint, inner);
+            return;
+        }
+
+        // Render each thought block as Markdown (bold / italic / headings /
+        // lists / quotes / rules), reusing the AI pane's CommonMark lexer.
+        let mut lines: Vec<Line> = Vec::new();
+        for (i, t) in self.thoughts.iter().rev().enumerate() {
+            if i > 0 {
+                lines.push(Line::from(Span::styled(
+                    "─".repeat(inner.width.max(1) as usize),
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+            for row in crate::tui::markdown_highlight::highlight_markdown_lines(t, &self.theme) {
+                lines.push(Line::from(
+                    row.into_iter()
+                        .map(|r| Span::styled(r.text, r.style))
+                        .collect::<Vec<_>>(),
+                ));
+            }
+        }
+
+        // Reserve the bottom row for the footer hint.
+        let footer_h: u16 = if inner.height > 1 { 1 } else { 0 };
+        let body_rect = Rect { height: inner.height - footer_h, ..inner };
+
+        // Clamp the scroll to the WRAPPED line count for the current width — the
+        // offset counts wrapped lines, which shrink when the pane widens (e.g.
+        // split → fullscreen), so a raw offset can land past the content and show
+        // a blank pane. Estimate wrapped rows by char width per line (ratatui's
+        // word-wrap breaks earlier, so this under-counts → the clamp is safe and
+        // never blanks).
+        let w = body_rect.width.max(1) as usize;
+        let wrapped_total: usize = lines
+            .iter()
+            .map(|l| {
+                let len: usize = l.spans.iter().map(|s| s.content.chars().count()).sum();
+                len.div_ceil(w).max(1)
+            })
+            .sum();
+        let max_scroll = wrapped_total.saturating_sub(body_rect.height as usize);
+        let scroll = self.thoughts_scroll.min(max_scroll);
+        let para = Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((scroll.min(u16::MAX as usize) as u16, 0));
+        f.render_widget(para, body_rect);
+
+        if footer_h == 1 {
+            let footer = Rect { x: inner.x, y: inner.y + inner.height - 1, width: inner.width, height: 1 };
+            f.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    " ↑↓ scroll · g/G top/bottom · c clear · Ctrl+Z f fullscreen · Ctrl+B Tab panes ",
+                    Style::default().add_modifier(Modifier::DIM),
+                ))),
+                footer,
+            );
+        }
+    }
+
     pub(in crate::tui::app) fn draw_output(&self, f: &mut ratatui::Frame, area: Rect) {
         use crate::pane::output::Severity;
 
@@ -1651,6 +1738,7 @@ impl super::super::App {
                 crate::pane::output::kinds::TIMELINE_FUZZY_OVERLAP_WARNING => "⧉ ",
                 crate::pane::output::kinds::INNER_EDITOR_OBSERVATION => "✎ ",
                 crate::pane::output::kinds::HAIKU => "✦ ",
+                crate::pane::output::kinds::THEOLOGIAN => "⚖ ",
                 _ => "",
             };
             lines.push(Line::from(vec![

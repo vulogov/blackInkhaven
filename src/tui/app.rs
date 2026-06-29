@@ -1566,6 +1566,24 @@ pub(crate) struct FactCheckNav {
 pub(crate) enum RightPane {
     Output,
     Ai,
+    /// THOUGHTS-1 — a read-only, scrollable pane for long reflective output
+    /// (e.g. the Inner Theologian slow track). Behaves like the AI pane for
+    /// scrolling; no input prompt.
+    Thoughts,
+}
+
+impl RightPane {
+    fn label(self) -> &'static str {
+        match self {
+            RightPane::Output => "Output",
+            RightPane::Ai => "AI",
+            RightPane::Thoughts => "Thoughts",
+        }
+    }
+}
+
+fn right_pane_label(p: RightPane) -> &'static str {
+    p.label()
 }
 
 /// INNER_SOCRATES-1 — the per-finding outcomes on a `socratic_inquiry` Output
@@ -2183,6 +2201,9 @@ pub(crate) struct App {
     /// history, bottom = AI prompt. Same chord returns to the
     /// normal layout. Mutually exclusive with `typewriter_mode`.
     ai_fullscreen: bool,
+    /// THOUGHTS-1 — fullscreen the current right pane when it is Output or
+    /// Thoughts (the AI pane uses `ai_fullscreen`). Toggled by `Ctrl+Z f`.
+    right_fullscreen: bool,
 
     /// Extra lines to scroll the chat-history pane UP from its auto-
     /// bottom-pin. PageUp adds, PageDown subtracts; the value is
@@ -2190,6 +2211,12 @@ pub(crate) struct App {
     /// at the top of the history. Reset to 0 each time a new user
     /// message is sent so the streaming reply is visible.
     chat_history_scroll: usize,
+
+    /// THOUGHTS-1 — the Thoughts pane's entries (each a block of reflective
+    /// text, e.g. an Inner Theologian session), newest last. Read-only.
+    thoughts: Vec<String>,
+    /// Lines scrolled up from the bottom of the Thoughts pane (PageUp adds).
+    thoughts_scroll: usize,
 
     /// Active chat-history search state (Ctrl+F in AI-fullscreen).
     /// While Some, matching lines render with a highlight bg and
@@ -2696,6 +2723,79 @@ fn run_character_check(
     Ok(count)
 }
 
+/// INNER-THEOLOGIAN-1 — fast-track ethical signals in the review pass. Runs the
+/// deterministic detector (zero-AI) and surfaces its findings in the Output
+/// `theologian` category. The slow-track LLM session stays explicit (`Ctrl+B
+/// J→T` / the CLI). Replaces this book's prior theologian findings each pass.
+fn run_theologian_check(
+    store: &Store,
+    cfg: &Config,
+    layout: &ProjectLayout,
+) -> std::result::Result<usize, String> {
+    use crate::pane::output::{Lifetime, Message, Severity, kinds};
+
+    let clear = || {
+        if let Some(s) = crate::pane::output::active() {
+            if let Ok(msgs) = s.by_kind(kinds::THEOLOGIAN) {
+                for m in &msgs {
+                    let _ = s.dismiss(m.id);
+                }
+            }
+        }
+    };
+
+    if !cfg.theologian.enabled || !cfg.theologian.fast_track {
+        clear();
+        return Ok(0);
+    }
+
+    let h = crate::store::hierarchy::Hierarchy::load(store).map_err(|e| e.to_string())?;
+    let book = crate::cli::resolve_user_book(&h, None, "theologian")?.clone();
+    let ts = crate::inner_theologian::TheologianStore::open(store.project_root())
+        .map_err(|e| e.to_string())?;
+    let win = crate::inner_theologian::DetectWindows {
+        moral_invisibility: cfg.theologian.moral_invisibility_window,
+        consequence_gap: cfg.theologian.consequence_gap_window,
+    };
+    // Recompute (deterministic, zero-AI) then emit the unsuppressed set.
+    let _ = crate::inner_theologian::run_fast_scan(
+        &ts,
+        layout,
+        &h,
+        cfg,
+        &book,
+        win,
+        cfg.theologian.sacred_levity_signal,
+    );
+
+    clear();
+    let findings = ts.findings(&book.slug, false).map_err(|e| e.to_string())?;
+    for f in &findings {
+        let text = format!(
+            "[theologian · ch.{} · {}] {} → Ctrl+B J→T to explore",
+            f.chapter_ord,
+            f.signal_type.label(),
+            f.description
+        );
+        let mut msg = Message::new(
+            kinds::THEOLOGIAN,
+            Severity::Info,
+            Lifetime::UntilActedOn,
+            serde_json::json!({
+                "text": text,
+                "category": "theologian",
+                "signal": f.signal_type.as_code(),
+                "chapter": f.chapter_ord,
+            }),
+        );
+        if let Ok(pid) = uuid::Uuid::parse_str(&f.para_id) {
+            msg = msg.with_source_paragraph(pid);
+        }
+        crate::pane::output::emit(&msg);
+    }
+    Ok(findings.len())
+}
+
 /// The first paragraph id of each chapter (1-based), for Output finding
 /// navigation.
 fn chapter_first_paragraphs(
@@ -2916,6 +3016,8 @@ impl App {
             prompt_picker_cursor: 0,
             paragraph_cursors: std::collections::HashMap::new(),
             chat_history: Vec::new(),
+            thoughts: Vec::new(),
+            thoughts_scroll: 0,
             system_prompt_override: None,
             pending_chat_user_msg: None,
             pending_paragraph_memory_target: None,
@@ -2955,6 +3057,7 @@ impl App {
             image_picker,
             typewriter_mode: false,
             ai_fullscreen: false,
+            right_fullscreen: false,
             chat_history_scroll: 0,
             chat_search: None,
             chat_selection: None,
@@ -3678,6 +3781,24 @@ impl App {
                     }
                 }
                 Err(e) => self.status = format!("prose check failed: {e}"),
+            },
+            BgJobKind::TheologianSlow => match result {
+                Ok(text) if text.trim().is_empty() => {
+                    self.status = "Inner Theologian: nothing rose for this ¶".into();
+                }
+                Ok(text) => {
+                    // THOUGHTS-1 — the long reflective response lands in the
+                    // dedicated scrollable Thoughts pane (its proper home), not
+                    // the Output pane (short findings) or the AI chat. The author
+                    // explicitly asked (J→T), so show + focus the Thoughts pane
+                    // and reset its scroll to the top of the new block.
+                    self.push_thought(format!("## ⚖ Inner Theologian\n\n{text}"));
+                    self.right_pane = RightPane::Thoughts; // explicit: the author asked
+                    self.focus_cycle(Focus::Ai); // focus the region, keep Thoughts
+                    self.status =
+                        "⚖ Inner Theologian — in the Thoughts pane (↑↓ scroll · Ctrl+Z f fullscreen)".into();
+                }
+                Err(e) => self.status = format!("Inner Theologian skipped: {e}"),
             },
         }
     }
@@ -4635,11 +4756,11 @@ impl App {
         let cycling_blocked = self.focus.is_input() || in_editor_with_doc;
         if !cycling_blocked {
             if self.keymap.next_pane.matches(&key) {
-                self.change_focus(self.focus.next());
+                self.focus_cycle(self.focus.next());
                 return Ok(false);
             }
             if self.keymap.prev_pane.matches(&key) {
-                self.change_focus(self.focus.prev());
+                self.focus_cycle(self.focus.prev());
                 return Ok(false);
             }
         } else if in_editor_with_doc
@@ -4674,7 +4795,7 @@ impl App {
             } else {
                 self.focus.prev()
             };
-            self.change_focus(next);
+            self.focus_cycle(next);
             return Ok(false);
         }
 
@@ -4682,7 +4803,9 @@ impl App {
             Focus::Tree => self.handle_tree_key(key),
             Focus::Editor => self.handle_editor_key(key),
             // PANE-1 — when the right region shows Output, its keys win; else AI.
+            // THOUGHTS-1 — when it shows Thoughts, the Thoughts scroll keys win.
             Focus::Ai if self.right_pane == RightPane::Output => self.handle_output_key(key),
+            Focus::Ai if self.right_pane == RightPane::Thoughts => self.handle_thoughts_key(key),
             Focus::Ai => self.handle_passive_key(key),
             Focus::SearchBar => self.handle_input_key(key, true),
             Focus::AiPrompt => self.handle_input_key(key, false),
@@ -5655,10 +5778,11 @@ impl App {
             self.focus = f;
         }
 
-        // PANE-1 — restore the active right-side pane.
+        // PANE-1 / THOUGHTS-1 — restore the active right-side pane.
         match state.right_pane.as_str() {
             "Output" => self.right_pane = RightPane::Output,
             "Ai" => self.right_pane = RightPane::Ai,
+            "Thoughts" => self.right_pane = RightPane::Thoughts,
             _ => {}
         }
         // PANE-1 filtering — restore the Output pane's saved filter.
@@ -6621,6 +6745,10 @@ pub(super) enum BgJobKind {
     /// zero-AI). The worker refreshes the book's profiles + emits drift findings
     /// to Output; the `Ok` payload is the finding count.
     ProseCheck,
+    /// INNER-THEOLOGIAN-1 — the slow-track theological session (LLM), `Ctrl+B
+    /// J→T`. The worker calls the persona over the open paragraph and emits its
+    /// questions to Output; the `Ok` payload is "1" when a question landed.
+    TheologianSlow,
 }
 
 /// An in-flight background job: its progress/result channel + a label + which
@@ -7843,23 +7971,82 @@ impl App {
     /// PANE-1 — cycle the right-side region pane (Ctrl+B Tab / Shift+Tab). With
     /// only Output and AI today both directions toggle; focus moves to the
     /// region so its keys (and the cycle chord) take effect immediately.
-    fn cycle_right_pane(&mut self, _forward: bool) {
-        let target = match self.right_pane {
-            RightPane::Output => RightPane::Ai,
-            RightPane::Ai => RightPane::Output,
+    fn cycle_right_pane(&mut self, forward: bool) {
+        const ORDER: [RightPane; 3] = [RightPane::Output, RightPane::Ai, RightPane::Thoughts];
+        let idx = ORDER.iter().position(|p| *p == self.right_pane).unwrap_or(0);
+        let target = if forward {
+            ORDER[(idx + 1) % ORDER.len()]
+        } else {
+            ORDER[(idx + ORDER.len() - 1) % ORDER.len()]
         };
         self.output_selected = 0;
-        // change_focus runs the editor-defocus bookkeeping and (for Focus::Ai)
-        // forces right_pane = Ai; re-assert the real target so cycling can land
-        // on the Output pane too.
+        // change_focus runs the editor-defocus bookkeeping; re-assert the real
+        // target after so cycling lands on the chosen pane (it no longer forces
+        // AI for Focus::Ai — THOUGHTS-1).
         self.change_focus(Focus::Ai);
         self.right_pane = target;
         // PANE-1 — persist the pane choice so it survives a restart.
         let _ = self.save_session();
-        self.status = match self.right_pane {
-            RightPane::Output => "pane → Output".into(),
-            RightPane::Ai => "pane → AI".into(),
-        };
+        self.status = format!("pane → {}", right_pane_label(target));
+    }
+
+    /// THOUGHTS-1 — append a reflective block to the Thoughts pane and surface it
+    /// (auto-show, unless the user is actively working in the right region).
+    fn push_thought(&mut self, text: String) {
+        if text.trim().is_empty() {
+            return;
+        }
+        self.thoughts.push(text);
+        self.thoughts_scroll = 0;
+        self.notify_pane(RightPane::Thoughts);
+    }
+
+    /// THOUGHTS-1 / auto-focus — when content arrives for a right-side pane,
+    /// surface it, UNLESS the user is actively working in the right region
+    /// (focus on the AI/Output/Thoughts area or typing into the AI prompt).
+    /// Persists the pane choice.
+    fn notify_pane(&mut self, pane: RightPane) {
+        if matches!(self.focus, Focus::Ai | Focus::AiPrompt) {
+            return; // don't steal the pane the user is using
+        }
+        if self.right_pane != pane {
+            self.right_pane = pane;
+            let _ = self.save_session();
+        }
+    }
+
+    /// THOUGHTS-1 — keys for the Thoughts pane (read-only, scrollable): ↑/↓ or
+    /// j/k line scroll, PageUp/PageDown, g/G top/bottom, `c` clear, Esc to the
+    /// editor. `thoughts_scroll` counts lines UP from the bottom; the renderer
+    /// clamps it.
+    fn handle_thoughts_key(&mut self, key: KeyEvent) -> Result<bool> {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.thoughts_scroll = self.thoughts_scroll.saturating_sub(1);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                self.thoughts_scroll = self.thoughts_scroll.saturating_add(1);
+            }
+            KeyCode::PageUp => self.thoughts_scroll = self.thoughts_scroll.saturating_sub(10),
+            KeyCode::PageDown => self.thoughts_scroll = self.thoughts_scroll.saturating_add(10),
+            KeyCode::Char('g') | KeyCode::Home => self.thoughts_scroll = 0,
+            KeyCode::Char('G') | KeyCode::End => self.thoughts_scroll = usize::MAX,
+            KeyCode::Char('c') | KeyCode::Char('C') => {
+                self.thoughts.clear();
+                self.thoughts_scroll = 0;
+                self.status = "Thoughts cleared".into();
+            }
+            KeyCode::Esc => {
+                if self.right_fullscreen {
+                    self.right_fullscreen = false;
+                    self.status = "exited fullscreen".into();
+                } else {
+                    self.change_focus(Focus::Editor);
+                }
+            }
+            _ => return Ok(false),
+        }
+        Ok(false)
     }
 
     /// PANE-1 — keys for the Output pane (active when the right region shows
@@ -11137,6 +11324,7 @@ impl App {
                 crate::haiku::emit_for_lang(&self.cfg.language);
                 self.status = "✦ haiku written to Output".into();
             }
+            A::ToggleRightPaneFullscreen => self.toggle_right_pane_fullscreen(),
             A::TtsReadParagraph => self.tts_read_paragraph(),
             A::TtsSaveAsAudio => self.tts_open_save_as_audio_picker(),
             A::OpenWritingStreakHeatmap => self.open_writing_streak_heatmap(),
@@ -13538,6 +13726,10 @@ impl App {
         // checks run explicitly via `inkhaven character check`).
         let chr = run_character_check(&self.store, &self.cfg, &self.layout).unwrap_or(0);
 
+        // INNER-THEOLOGIAN-1 — deterministic fast-track ethical signals (the
+        // slow-track LLM session stays explicit via Ctrl+B J→T).
+        let theo = run_theologian_check(&self.store, &self.cfg, &self.layout).unwrap_or(0);
+
         // Reflect the instant findings in the tree report-card immediately.
         self.refresh_tree_badges();
 
@@ -13548,12 +13740,12 @@ impl App {
         // seconds later (and re-badge the tree on completion).
         let editor_spawned = self.maybe_spawn_check_editor();
 
-        let total = fact + soc + tl + dlg + uto + chr;
+        let total = fact + soc + tl + dlg + uto + chr + theo;
         if total == 0 && !editor_spawned {
             self.status = if checked == 0 {
-                "review pass: clean (no open paragraph; timeline + dialogue + utopia + character included)".into()
+                "review pass: clean (no open paragraph; timeline + dialogue + utopia + character + theologian included)".into()
             } else {
-                format!("review pass: clean ({checked} ¶ + timeline + dialogue + utopia + character)")
+                format!("review pass: clean ({checked} ¶ + timeline + dialogue + utopia + character + theologian)")
             };
             return;
         }
@@ -13567,7 +13759,7 @@ impl App {
             format!("review pass: instant checks clean{editor_note}")
         } else {
             format!(
-                "review pass: {total} finding(s) — fact {fact} · socrates {soc} · timeline {tl} · dialogue {dlg} · utopia {uto} · character {chr}{editor_note} → Output (^B Tab)"
+                "review pass: {total} finding(s) — fact {fact} · socrates {soc} · timeline {tl} · dialogue {dlg} · utopia {uto} · character {chr} · theologian {theo}{editor_note} → Output (^B Tab)"
             )
         };
     }
@@ -13815,7 +14007,7 @@ impl App {
         let rows = self.build_inner_socrates_rows();
         self.modal = Modal::InnerSocratesOverview { rows, cursor: 0 };
         self.status =
-            "Inner Socrates · F fast-check ¶ · E engage (slow/LLM) · S persona · L ledger · A auto · Esc".into();
+            "Inner Socrates · F fast-check ¶ · E engage (slow/LLM) · T theologian · S persona · L ledger · A auto · Esc".into();
     }
 
     fn build_inner_socrates_rows(&self) -> Vec<String> {
@@ -13891,6 +14083,7 @@ impl App {
             KeyCode::Char('l') | KeyCode::Char('L') => self.socratic_view_ledger(),
             KeyCode::Char('s') | KeyCode::Char('S') => self.socratic_cycle_persona(),
             KeyCode::Char('c') | KeyCode::Char('C') => self.socratic_open_conversation(),
+            KeyCode::Char('t') | KeyCode::Char('T') => self.theologian_engage_open_paragraph(),
             KeyCode::Char('n') | KeyCode::Char('N') => self.socratic_persona_wizard(),
             KeyCode::Char('a') | KeyCode::Char('A') => {
                 self.socratic_auto = !self.socratic_auto;
@@ -13997,6 +14190,74 @@ impl App {
                 let _ = tx.send(BgMsg::Done(result));
             },
         );
+    }
+
+    /// INNER-THEOLOGIAN-1 — `Ctrl+B J→T`. Run a slow-track theological session
+    /// over the open paragraph (Category 1) in the background; the worker calls
+    /// the persona and emits its questions to the Output `theologian` category.
+    fn theologian_engage_open_paragraph(&mut self) {
+        if !self.cfg.theologian.enabled {
+            self.status = "Inner Theologian is disabled (theologian.enabled = false)".into();
+            return;
+        }
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "Inner Theologian: no paragraph open".into();
+            return;
+        };
+        if doc.content_type.as_deref() == Some("jinja")
+            || self.hierarchy.get(doc.id).is_some_and(is_structural_nonprose)
+        {
+            self.status = "Inner Theologian: structural / template paragraphs are skipped (not prose)".into();
+            return;
+        }
+        let prose = doc.textarea.lines().join("\n");
+        if prose.trim().is_empty() {
+            self.status = "Inner Theologian: the paragraph is empty".into();
+            return;
+        }
+        let id = doc.id;
+        if let Err(e) = self.ai.resolve_provider(&self.cfg.llm, None) {
+            self.status = format!("Inner Theologian needs an LLM provider: {e}");
+            return;
+        }
+        let root = self.store.project_root().to_path_buf();
+        let cfg = self.cfg.clone();
+        let book_slug = self
+            .book_of_node(id)
+            .and_then(|bid| self.hierarchy.get(bid))
+            .map(|b| b.slug.clone());
+        let (lang, _note) =
+            crate::prose::resolve_prose_language(cfg.theologian.language.as_deref(), &cfg.language);
+        let grounding = book_slug
+            .as_deref()
+            .and_then(|slug| crate::inner_theologian::build_grounding(&root, slug, &[]));
+        self.modal = Modal::None;
+        // Pre-show the Thoughts pane (where the result will land) so the
+        // "thinking…" wait and the answer share one place; don't force Output.
+        self.right_pane = RightPane::Thoughts;
+        self.status = "⟳ Inner Theologian: discerning the lenses…".into();
+        self.start_bg_job(BgJobKind::TheologianSlow, "inner theologian", move |tx, _cancel| {
+            use crate::inner_theologian as it;
+            // Two passes: (1) discover which tradition lenses genuinely
+            // illuminate this passage, (2) analyse through the discovered lenses.
+            let disc_prompt = it::build_discovery_prompt(&prose, &cfg.theologian.disabled_lenses);
+            let result = it::theologian_llm_call(&cfg, it::THEOLOGIAN_SYSTEM, &disc_prompt)
+                .and_then(|disc| {
+                    let (selected, silent) = it::parse_selected_lenses(&disc);
+                    let analysis = it::build_session_prompt(
+                        it::QuestionCategory::MoralWeight,
+                        &prose,
+                        &selected,
+                        &silent,
+                        grounding.as_deref(),
+                        &lang,
+                    );
+                    it::theologian_llm_call(&cfg, it::THEOLOGIAN_SYSTEM, &analysis)
+                })
+                .map(|raw| raw.trim().to_string())
+                .map_err(|e| e.to_string());
+            let _ = tx.send(BgMsg::Done(result));
+        });
     }
 
     /// Build the world-ledger context and run the Socratic Fast track over the
@@ -20087,6 +20348,30 @@ impl App {
     /// 50/50 — AI pane on the left, chat history on the right —
     /// over a full-width AI prompt at the bottom. Same chord
     /// returns to the four-pane layout.
+    /// THOUGHTS-1 — `Ctrl+Z f`. Fullscreen the current right pane. For the AI
+    /// pane it delegates to `toggle_ai_fullscreen` (its richer layout); for
+    /// Output / Thoughts it toggles `right_fullscreen`.
+    fn toggle_right_pane_fullscreen(&mut self) {
+        match self.right_pane {
+            RightPane::Ai => self.toggle_ai_fullscreen(),
+            RightPane::Output | RightPane::Thoughts => {
+                self.right_fullscreen = !self.right_fullscreen;
+                if self.right_fullscreen {
+                    // The three fullscreens are exclusive.
+                    self.typewriter_mode = false;
+                    self.ai_fullscreen = false;
+                    // Focus the right region (keeping the current pane) so its
+                    // scroll keys take effect.
+                    self.focus_cycle(Focus::Ai);
+                    self.status =
+                        format!("{} fullscreen · Ctrl+Z f / Esc to exit", self.right_pane.label());
+                } else {
+                    self.status = "exited fullscreen".into();
+                }
+            }
+        }
+    }
+
     fn toggle_ai_fullscreen(&mut self) {
         self.ai_fullscreen = !self.ai_fullscreen;
         // Always start scrolled to the bottom (newest visible). The
@@ -25215,6 +25500,31 @@ impl App {
             return;
         }
 
+        // THOUGHTS-1 — fullscreen the current right pane when it is Output or
+        // Thoughts (the AI pane has its own `ai_fullscreen` layout above). Tree,
+        // editor, search bar, and AI prompt are hidden; one status line remains.
+        if self.right_fullscreen && matches!(self.right_pane, RightPane::Output | RightPane::Thoughts) {
+            let outer = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(0), Constraint::Length(1)])
+                .split(f.area());
+            self.layout_search = Rect::default();
+            self.layout_tree = Rect::default();
+            self.layout_editor = Rect::default();
+            self.layout_ai = outer[0];
+            self.layout_ai_prompt = Rect::default();
+            match self.right_pane {
+                RightPane::Output => self.draw_output(f, outer[0]),
+                RightPane::Thoughts => self.draw_thoughts(f, outer[0]),
+                RightPane::Ai => {}
+            }
+            self.draw_status(f, outer[1]);
+            if !matches!(self.modal, Modal::None) {
+                self.draw_modal(f, f.area());
+            }
+            return;
+        }
+
         let outer = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
@@ -25275,10 +25585,11 @@ impl App {
             self.draw_secondary_editor(f, body[2]);
         } else {
             self.draw_editor(f, body[1]);
-            // PANE-1 — the right region shows Output or AI.
+            // PANE-1 / THOUGHTS-1 — the right region shows Output, AI, or Thoughts.
             match self.right_pane {
                 RightPane::Output => self.draw_output(f, body[2]),
                 RightPane::Ai => self.draw_ai(f, body[2]),
+                RightPane::Thoughts => self.draw_thoughts(f, body[2]),
             }
         }
         self.draw_ai_prompt(f, outer[2]);
@@ -26148,6 +26459,18 @@ impl App {
     /// open paragraph (best-effort) so unsaved edits are persisted even
     /// across Tab cycles, Ctrl+1..5 jumps, or any other focus shift. The
     /// underlying `save_current` writes to disk + bdslib + re-embeds.
+    /// THOUGHTS-1 — the plain-Tab focus cycle (Tree → Editor → right region →
+    /// Tree). When it lands on the right region (`Focus::Ai`), keep whatever pane
+    /// is currently shown (Output / AI / Thoughts) instead of forcing AI —
+    /// `change_focus` forces AI for one-shot AI ops, which Tab is not.
+    fn focus_cycle(&mut self, new: Focus) {
+        let keep = self.right_pane;
+        self.change_focus(new);
+        if new == Focus::Ai {
+            self.right_pane = keep;
+        }
+    }
+
     fn change_focus(&mut self, new: Focus) {
         if self.focus == Focus::Editor && new != Focus::Editor {
             // Focus-out also counts as "I'm done reviewing the
@@ -26175,12 +26498,10 @@ impl App {
             }
         }
         // PANE-1 — focusing the AI region (prompt or pane) implies the AI pane
-        // should be the visible right-side pane (RFC §162: "focusing the AI
-        // prompt automatically switches the right-side pane to AI"). This is what
-        // makes one-shot AI ops (critique / grammar / fact-check) surface their
-        // streamed output even when Output is the active pane. `cycle_right_pane`
-        // re-asserts its own target right after calling here, so it can still
-        // focus the Output pane.
+        // should be the visible right-side pane, so one-shot AI ops surface their
+        // streamed output even when Output/Thoughts is active. The plain-Tab
+        // focus cycle re-asserts the current pane right after (THOUGHTS-1), so Tab
+        // lands on whatever pane is shown rather than forcing AI.
         if matches!(new, Focus::Ai | Focus::AiPrompt) {
             self.right_pane = RightPane::Ai;
         }
