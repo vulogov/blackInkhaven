@@ -23,47 +23,93 @@ pub(super) fn build_context(
     pinned: &[Uuid],
     rag_mode: RagMode,
     query: &str,
-) -> Option<String> {
+) -> (Option<String>, Vec<String>) {
     if rag_mode == RagMode::FullOnly {
-        return None;
+        return (None, Vec::new());
     }
-    let book_id = facts_book_id?;
     let mut sections: Vec<String> = Vec::new();
 
-    // Pinned nodes (G4) — always included, in pin order.
-    let mut pinned_block = String::new();
-    for id in pinned {
-        if let Ok(Some(bytes)) = store.get_content(*id) {
-            let body = String::from_utf8_lossy(&bytes);
-            if body.trim().is_empty() {
-                continue;
+    if let Some(book_id) = facts_book_id {
+        // Pinned nodes (G4) — always included, in pin order.
+        let mut pinned_block = String::new();
+        for id in pinned {
+            if let Ok(Some(bytes)) = store.get_content(*id) {
+                let body = String::from_utf8_lossy(&bytes);
+                if body.trim().is_empty() {
+                    continue;
+                }
+                let loc = hierarchy.get(*id).map(|n| hierarchy.slug_path(n)).unwrap_or_default();
+                pinned_block.push_str(&format!("[pinned: {loc}]\n{}\n\n", body.trim()));
             }
-            let loc = hierarchy.get(*id).map(|n| hierarchy.slug_path(n)).unwrap_or_default();
-            pinned_block.push_str(&format!("[pinned: {loc}]\n{}\n\n", body.trim()));
         }
-    }
-    if !pinned_block.trim().is_empty() {
-        sections.push(pinned_block.trim_end().to_string());
+        if !pinned_block.trim().is_empty() {
+            sections.push(pinned_block.trim_end().to_string());
+        }
+
+        // Semantic Facts retrieval, deduplicated against the pins.
+        if let Ok(passages) =
+            crate::book_rag::retrieval::retrieve(store, hierarchy, &cfg.book_rag, book_id, query)
+        {
+            let fresh: Vec<_> = passages
+                .into_iter()
+                .filter(|p| !pinned.contains(&p.id))
+                .take(cfg.research.rag_top_n.max(1))
+                .collect();
+            if !fresh.is_empty() {
+                sections.push(crate::book_rag::compose_context_prefix(&fresh));
+            }
+        }
     }
 
-    // Semantic Facts retrieval, deduplicated against the pins.
-    if let Ok(passages) = crate::book_rag::retrieval::retrieve(
-        store,
-        hierarchy,
-        &cfg.book_rag,
-        book_id,
-        query,
-    ) {
-        let fresh: Vec<_> = passages
-            .into_iter()
-            .filter(|p| !pinned.contains(&p.id))
-            .take(cfg.research.rag_top_n.max(1))
-            .collect();
-        if !fresh.is_empty() {
-            sections.push(crate::book_rag::compose_context_prefix(&fresh));
-        }
-    }
+    // R2-B — imported document chunks (a separate axis: standalone docs tagged
+    // `research_source`, not tree nodes). Returns the contributing source names
+    // so the caller can record `origin=document` provenance.
+    let sources = retrieve_sources(store, cfg, query, &mut sections);
 
     let combined = sections.join("\n\n");
-    if combined.trim().is_empty() { None } else { Some(combined) }
+    let ctx = if combined.trim().is_empty() { None } else { Some(combined) };
+    (ctx, sources)
+}
+
+/// Pull the top imported-document chunks for `query`, append a cited block to
+/// `sections`, and return the distinct source names that contributed.
+fn retrieve_sources(store: &Store, cfg: &Config, query: &str, sections: &mut Vec<String>) -> Vec<String> {
+    let want = cfg.research.rag_top_n.max(1);
+    let hits = match store.search_text(query, want * 4 + 8) {
+        Ok(h) => h,
+        Err(_) => return Vec::new(),
+    };
+    let mut block = String::new();
+    let mut names: Vec<String> = Vec::new();
+    for v in hits {
+        let meta = v.get("metadata");
+        let is_source = meta
+            .and_then(|m| m.get("kind"))
+            .and_then(|k| k.as_str())
+            .map(|k| k == super::imports::SOURCE_KIND)
+            .unwrap_or(false);
+        if !is_source {
+            continue;
+        }
+        let name = meta
+            .and_then(|m| m.get("name"))
+            .and_then(|n| n.as_str())
+            .unwrap_or("source")
+            .to_string();
+        let body = v.get("document").and_then(|d| d.as_str()).unwrap_or("").trim();
+        if body.is_empty() {
+            continue;
+        }
+        block.push_str(&format!("[source: {name}]\n{body}\n\n"));
+        if !names.contains(&name) {
+            names.push(name);
+        }
+        if names.len() >= want {
+            break;
+        }
+    }
+    if !block.trim().is_empty() {
+        sections.push(format!("Imported research sources:\n{}", block.trim_end()));
+    }
+    names
 }

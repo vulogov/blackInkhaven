@@ -1,6 +1,6 @@
 [package]
 name = "inkhaven"
-version = "1.5.0"
+version = "1.5.1"
 edition = "2024"
 # Rust 1.85 stabilised edition 2024. Bump alongside any toolchain-only
 # feature usage (let-else / chained-comparisons / etc. are already stable).
@@ -100,6 +100,9 @@ path = "src/main.rs"
 # crates that inkhaven never reached (Tantivy, augurs, axum, …).
 duckdb = { version = "1", features = ["bundled", "r2d2"] }
 fastembed = "5"
+# RESRCH-2 (R2-B) — text extraction from imported PDF research sources. The
+# only new runtime crate; the MD/text import path needs none.
+pdf-extract = "0.9"
 vecstore = "1"
 r2d2 = "0.8"
 parking_lot = "0.12"

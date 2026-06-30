@@ -3928,6 +3928,12 @@ pub struct ResearchConfig {
     pub diff_top_n: usize,
     /// `/verify`: minimum sentence word count for claim extraction.
     pub verify_min_sentence_words: usize,
+    /// RESRCH-2.1 — similarity score (0..1) at/above which a `/fact` insert warns
+    /// of a near-duplicate before committing (informs, never blocks).
+    pub dedup_warn_score: f64,
+    /// RESRCH-2 (R2-B) — max characters per embedded chunk when importing a
+    /// document (`/import`).
+    pub import_chunk_chars: usize,
 }
 
 impl Default for ResearchConfig {
@@ -3942,6 +3948,8 @@ impl Default for ResearchConfig {
             split_ratio: 4,
             diff_top_n: 3,
             verify_min_sentence_words: 8,
+            dedup_warn_score: 0.92,
+            import_chunk_chars: 1500,
         }
     }
 }
@@ -4716,6 +4724,7 @@ mod research_config_tests {
         assert_eq!(r.verify_min_sentence_words, 8);
         assert!(r.show_keybind_hints);
         assert!((r.session_budget_warn - 0.50).abs() < 1e-9);
+        assert!((r.dedup_warn_score - 0.92).abs() < 1e-9);
         assert!(r.default_thread.is_none());
     }
 

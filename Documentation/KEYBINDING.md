@@ -1514,8 +1514,10 @@ query prompt — needing ≥ 80 columns.
 | **Confirm overlay** | `Tab` switch title/body, `Ctrl+S` / `Ctrl+Enter` insert, `Esc` discard |
 
 Commands (type in the prompt): `/fact "..." [→ path]`, `/note "..." [→ path]`,
-`/goto <slug-path>`, `/diff`, `/verify`, `/factcheck`, `/chain a → b → c`,
-`/rag [mode]`, `/clear`, `/save [name]`. See
+`/promote [notes/path] [→ facts/path]`, `/sources`, `/import [path]`,
+`/forget <name>`, `/goto <slug-path>`, `/diff`, `/verify`, `/factcheck`,
+`/chain a → b → c`, `/rag [mode]`, `/clear`, `/save [name]`. `inkhaven research
+--import <path>` imports non-interactively. See
 [Tutorial 103](Tutorials/103-research-assistant.md).
 
 ## `inkhaven prompts-editor` (1.2.10+)

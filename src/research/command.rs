@@ -18,6 +18,15 @@ pub(super) enum Command {
     /// `/factcheck` — audit the whole Facts corpus for truth + mutual
     /// consistency (multi-call).
     FactCheck,
+    /// `/sources` — list each fact's recorded provenance (RESRCH-2.1).
+    Sources,
+    /// `/import [path]` — ingest a document as a research source, or list the
+    /// imported sources when bare (RESRCH-2 / R2-B).
+    Import(Option<String>),
+    /// `/forget <name>` — remove an imported research source.
+    Forget(String),
+    /// `/promote [notes/path] [→ facts/path]` — turn a Note into a verified Fact.
+    Promote { note: Option<String>, path: Option<String> },
     /// `/chain q1 → q2 → q3` — sequential research pipeline (R-P15).
     Chain(Vec<String>),
     /// `/rag [facts+full|facts|full]` — switch RAG mode.
@@ -85,6 +94,18 @@ pub(super) fn parse(input: &str) -> Option<Command> {
         "diff" => Command::Diff,
         "verify" => Command::Verify,
         "factcheck" => Command::FactCheck,
+        "sources" => Command::Sources,
+        "import" => Command::Import(if rest.is_empty() { None } else { Some(rest.to_string()) }),
+        "forget" => Command::Forget(rest.to_string()),
+        "promote" => {
+            // `/promote [notes/path] [→ facts/path]` — both optional.
+            let note = arrow_head(rest);
+            let path = arrow_tail(rest);
+            Command::Promote {
+                note: if note.is_empty() { None } else { Some(note) },
+                path,
+            }
+        }
         "chain" => {
             let steps: Vec<String> = split_steps(rest);
             Command::Chain(steps)
@@ -154,6 +175,15 @@ mod tests {
         assert_eq!(parse("/diff").unwrap(), Command::Diff);
         assert_eq!(parse("/verify").unwrap(), Command::Verify);
         assert_eq!(parse("/factcheck").unwrap(), Command::FactCheck);
+        assert_eq!(parse("/sources").unwrap(), Command::Sources);
+        assert_eq!(parse("/import /docs/rome.md").unwrap(), Command::Import(Some("/docs/rome.md".into())));
+        assert_eq!(parse("/import").unwrap(), Command::Import(None));
+        assert_eq!(parse("/forget rome").unwrap(), Command::Forget("rome".into()));
+        assert_eq!(
+            parse("/promote notes/rome/idea → Facts/Rome").unwrap(),
+            Command::Promote { note: Some("notes/rome/idea".into()), path: Some("Facts/Rome".into()) }
+        );
+        assert_eq!(parse("/promote").unwrap(), Command::Promote { note: None, path: None });
         assert_eq!(parse("/clear").unwrap(), Command::Clear);
         assert_eq!(parse("/rag facts").unwrap(), Command::Rag(Some("facts".into())));
         assert_eq!(parse("/save rome").unwrap(), Command::Save(Some("rome".into())));
