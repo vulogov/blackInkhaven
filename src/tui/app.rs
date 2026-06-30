@@ -3959,7 +3959,7 @@ impl App {
         loop {
             match inf.rx.try_recv() {
                 Ok(StreamMsg::Token(t)) => inf.response.push_str(&t),
-                Ok(StreamMsg::Done) => {
+                Ok(StreamMsg::Done(_)) => {
                     inf.status = InferenceStatus::Done;
                     let elapsed = inf.started_at.elapsed();
                     self.status = format!(

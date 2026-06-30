@@ -1433,7 +1433,7 @@ fn pump_inference(app: &mut App) {
                         send.response.push_str(&chunk);
                     }
                 }
-                Ok(StreamMsg::Done) => {
+                Ok(StreamMsg::Done(_)) => {
                     if let Some(send) = app.last_send.as_mut() {
                         send.duration = Some(send.started_at.elapsed());
                     }

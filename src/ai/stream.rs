@@ -3,14 +3,32 @@ use std::sync::Arc;
 
 use futures_util::StreamExt;
 use genai::Client;
-use genai::chat::{ChatMessage, ChatRequest, ChatStreamEvent};
+use genai::chat::{ChatMessage, ChatOptions, ChatRequest, ChatStreamEvent};
 use tokio::sync::mpsc;
+
+/// Real prompt/completion token counts captured from the provider (R2-E). Both
+/// are `0` when the provider didn't report usage; consumers fall back to the
+/// char-length heuristic in that case.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TokenUsage {
+    pub prompt: u32,
+    pub completion: u32,
+}
+
+impl TokenUsage {
+    /// True when the provider actually reported counts (not the zero default).
+    pub fn is_reported(&self) -> bool {
+        self.prompt > 0 || self.completion > 0
+    }
+}
 
 /// Streaming event we forward from the genai task back to the TUI event loop.
 #[derive(Debug)]
 pub enum StreamMsg {
     Token(String),
-    Done,
+    /// Stream finished; carries the provider-reported token usage when available
+    /// (R2-E — drives the real per-model cost model).
+    Done(Option<TokenUsage>),
     Error(String),
 }
 
@@ -64,7 +82,10 @@ pub fn spawn_chat_stream(
         messages.push(ChatMessage::user(user_prompt));
         let req = ChatRequest::new(messages);
 
-        let response = match client.exec_chat_stream(model.as_str(), req, None).await {
+        // R2-E — opt into usage capture so `StreamEnd.captured_usage` carries the
+        // provider's real prompt/completion token counts for the cost model.
+        let opts = ChatOptions::default().with_capture_usage(true);
+        let response = match client.exec_chat_stream(model.as_str(), req, Some(&opts)).await {
             Ok(r) => r,
             Err(e) => {
                 let _ = tx.send(StreamMsg::Error(format!("exec_chat_stream: {e}")));
@@ -73,6 +94,7 @@ pub fn spawn_chat_stream(
         };
 
         let mut stream = response.stream;
+        let mut usage: Option<TokenUsage> = None;
         while let Some(event) = stream.next().await {
             match event {
                 Ok(ChatStreamEvent::Chunk(chunk)) => {
@@ -81,18 +103,25 @@ pub fn spawn_chat_stream(
                         return;
                     }
                 }
+                Ok(ChatStreamEvent::End(end)) => {
+                    if let Some(u) = end.captured_usage {
+                        usage = Some(TokenUsage {
+                            prompt: u.prompt_tokens.unwrap_or(0).max(0) as u32,
+                            completion: u.completion_tokens.unwrap_or(0).max(0) as u32,
+                        });
+                    }
+                }
                 Ok(ChatStreamEvent::ReasoningChunk(_))
                 | Ok(ChatStreamEvent::ThoughtSignatureChunk(_))
                 | Ok(ChatStreamEvent::ToolCallChunk(_))
-                | Ok(ChatStreamEvent::Start)
-                | Ok(ChatStreamEvent::End(_)) => {}
+                | Ok(ChatStreamEvent::Start) => {}
                 Err(e) => {
                     let _ = tx.send(StreamMsg::Error(format!("stream event: {e}")));
                     return;
                 }
             }
         }
-        let _ = tx.send(StreamMsg::Done);
+        let _ = tx.send(StreamMsg::Done(usage));
     });
     rx
 }
@@ -132,7 +161,7 @@ pub fn collect_blocking(
                     let _ = std::io::stderr().flush();
                 }
             }
-            StreamMsg::Done => break,
+            StreamMsg::Done(_) => break,
             StreamMsg::Error(e) => return Err(e),
         }
     }

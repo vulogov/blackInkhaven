@@ -33,7 +33,7 @@ pub fn run(project: &Path, prompt: &str, provider: Option<&str>) -> Result<()> {
                 let _ = stdout.flush();
                 wrote_anything = true;
             }
-            StreamMsg::Done => break,
+            StreamMsg::Done(_) => break,
             StreamMsg::Error(e) => {
                 let _ = stdout.write_all(b"\n");
                 eprintln!("inference error: {e}");
