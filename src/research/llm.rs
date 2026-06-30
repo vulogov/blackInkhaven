@@ -44,3 +44,31 @@ pub(super) fn system_prompt(rag_mode: RagMode, rag_context: Option<&str>) -> Str
     }
     s
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cost_scales_with_length() {
+        let small = estimate_cost("hi", "there");
+        let big = estimate_cost(&"x".repeat(4000), &"y".repeat(4000));
+        assert!(big > small);
+        assert!(small >= 0.0);
+    }
+
+    #[test]
+    fn facts_only_adds_closed_instruction() {
+        let p = system_prompt(RagMode::FactsOnly, Some("a fact"));
+        assert!(p.contains("only the provided context"));
+        let p2 = system_prompt(RagMode::FactsPlusFull, Some("a fact"));
+        assert!(!p2.contains("only the provided context"));
+        assert!(p2.contains("a fact"));
+    }
+
+    #[test]
+    fn no_context_section_when_empty() {
+        let p = system_prompt(RagMode::FactsPlusFull, None);
+        assert!(!p.contains("existing facts"));
+    }
+}

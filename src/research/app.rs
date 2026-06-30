@@ -184,6 +184,13 @@ impl ResearchApp {
                 self.focus = self.focus.prev();
                 return;
             }
+            // F10 cycles the RAG mode from any pane (RFC §8).
+            KeyCode::F(10) => {
+                self.thread.rag_mode = self.thread.rag_mode.next();
+                let _ = self.thread.save(&self.layout);
+                self.status_message = Some(format!("RAG: {}", self.thread.rag_mode.label()));
+                return;
+            }
             _ => {}
         }
         // Pane-specific keys.
@@ -313,7 +320,17 @@ impl ResearchApp {
             })
             .collect();
 
-        let system = llm::system_prompt(self.thread.rag_mode, None);
+        // R-P8 — assemble Facts RAG context (pins + semantic), gated by mode.
+        let rag = super::rag::build_context(
+            &self.store,
+            &self.cfg,
+            &self.hierarchy,
+            self.facts_tree.root,
+            &self.pinned_nodes,
+            self.thread.rag_mode,
+            &prompt,
+        );
+        let system = llm::system_prompt(self.thread.rag_mode, rag.as_deref());
 
         let mut turn = ChatTurn::new(prompt.clone());
         turn.streaming = true;
