@@ -30,6 +30,9 @@ pub(super) enum Command {
     Web { ingest: Option<bool>, query: String },
     /// `/calc <expr>` — evaluate a deterministic Bund expression (R3-C).
     Calc(String),
+    /// `/whatswrong [facts/path]` — AI explanation of a fact flagged by
+    /// `/factcheck` (RE-P5); bare → the selected/cursor fact.
+    WhatsWrong(Option<String>),
     /// `/promote [notes/path] [→ facts/path]` — turn a Note into a verified Fact.
     Promote { note: Option<String>, path: Option<String> },
     /// `/chain q1 → q2 → q3` — sequential research pipeline (R-P15).
@@ -114,6 +117,7 @@ pub(super) fn parse(input: &str) -> Option<Command> {
             Command::Web { ingest, query: q.to_string() }
         }
         "calc" => Command::Calc(rest.to_string()),
+        "whatswrong" => Command::WhatsWrong(if rest.is_empty() { None } else { Some(rest.to_string()) }),
         "promote" => {
             // `/promote [notes/path] [→ facts/path]` — both optional.
             let note = arrow_head(rest);
@@ -209,6 +213,11 @@ mod tests {
             Command::Web { ingest: Some(false), query: "q".into() }
         );
         assert_eq!(parse("/calc 100 mi2km").unwrap(), Command::Calc("100 mi2km".into()));
+        assert_eq!(parse("/whatswrong").unwrap(), Command::WhatsWrong(None));
+        assert_eq!(
+            parse("/whatswrong facts/rome/fall").unwrap(),
+            Command::WhatsWrong(Some("facts/rome/fall".into()))
+        );
         assert_eq!(
             parse("/promote notes/rome/idea → Facts/Rome").unwrap(),
             Command::Promote { note: Some("notes/rome/idea".into()), path: Some("Facts/Rome".into()) }

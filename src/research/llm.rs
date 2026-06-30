@@ -5,20 +5,70 @@
 //! state lives on `ResearchApp` and is drained each tick.
 
 use super::thread::RagMode;
+use crate::ai::stream::TokenUsage;
+use crate::config::CostConfig;
 
 /// The streaming category recorded in the AI usage dashboard.
 pub(super) const CATEGORY: &str = "research";
 
-/// Coarse session-cost estimate. There is no per-model price table in the tree
-/// yet, so this is an explicitly approximate mid-tier rate (the status bar marks
-/// it `~`, and `session_budget_warn` only *informs*, never blocks — RFC §23).
-const EST_USD_PER_1K_TOKENS: f64 = 0.003;
+/// R2-E — model-aware turn cost in USD, plus whether it is **exact** (priced from
+/// the provider's real token usage) or **estimated** (the ≈4-chars/token heuristic,
+/// when the provider reported none). Input and output are priced separately from
+/// `cost.pricing`. `session_budget_warn` still only *informs*, never blocks.
+pub(super) fn cost_for(
+    cost_cfg: &CostConfig,
+    model: &str,
+    usage: Option<TokenUsage>,
+    prompt: &str,
+    response: &str,
+) -> (f64, bool) {
+    let price = cost_cfg.price_for(model);
+    let per_million = |tokens: f64, rate: f64| (tokens / 1_000_000.0) * rate;
+    match usage {
+        Some(u) if u.is_reported() => {
+            let c = per_million(u.prompt as f64, price.input_per_1m)
+                + per_million(u.completion as f64, price.output_per_1m);
+            (c, true)
+        }
+        _ => {
+            // ≈4 chars/token, priced per side so input/output rates still apply.
+            let in_tokens = prompt.len() as f64 / 4.0;
+            let out_tokens = response.len() as f64 / 4.0;
+            let c = per_million(in_tokens, price.input_per_1m)
+                + per_million(out_tokens, price.output_per_1m);
+            (c, false)
+        }
+    }
+}
 
-/// Rough token estimate (≈ 4 chars/token) → USD. Counts both sides of the turn.
-pub(super) fn estimate_cost(prompt: &str, response: &str) -> f64 {
-    let chars = (prompt.len() + response.len()) as f64;
-    let tokens = chars / 4.0;
-    (tokens / 1000.0) * EST_USD_PER_1K_TOKENS
+#[cfg(test)]
+mod cost_tests {
+    use super::*;
+
+    #[test]
+    fn exact_prices_input_and_output_separately() {
+        let cfg = CostConfig::default();
+        // gemini-2.5-pro: $1.25 in / $10 out per 1M.
+        let usage = Some(TokenUsage { prompt: 1_000_000, completion: 1_000_000 });
+        let (c, exact) = cost_for(&cfg, "gemini-2.5-pro", usage, "", "");
+        assert!(exact);
+        assert!((c - 11.25).abs() < 1e-9, "got {c}");
+    }
+
+    #[test]
+    fn falls_back_to_heuristic_without_usage() {
+        let cfg = CostConfig::default();
+        let (_, exact) = cost_for(&cfg, "claude-sonnet-4-5", None, "abcd", "efgh");
+        assert!(!exact);
+    }
+
+    #[test]
+    fn unknown_model_uses_default_rate() {
+        let cfg = CostConfig::default();
+        let usage = Some(TokenUsage { prompt: 1_000_000, completion: 0 });
+        let (c, _) = cost_for(&cfg, "some-unlisted-model", usage, "", "");
+        assert!((c - cfg.default_input_per_1m).abs() < 1e-9, "got {c}");
+    }
 }
 
 /// The research-mode system prompt (RFC §8). `rag_context` is the assembled
@@ -51,8 +101,9 @@ mod tests {
 
     #[test]
     fn cost_scales_with_length() {
-        let small = estimate_cost("hi", "there");
-        let big = estimate_cost(&"x".repeat(4000), &"y".repeat(4000));
+        let cfg = crate::config::CostConfig::default();
+        let (small, _) = cost_for(&cfg, "gemini-2.5-pro", None, "hi", "there");
+        let (big, _) = cost_for(&cfg, "gemini-2.5-pro", None, &"x".repeat(4000), &"y".repeat(4000));
         assert!(big > small);
         assert!(small >= 0.0);
     }
