@@ -342,13 +342,36 @@ impl ResearchApp {
         }
     }
 
-    /// R-P5 — the query prompt. Enter submits, ↑/↓ recall history, Esc
-    /// clears-then-defocuses, everything else types into the textarea.
+    /// R-P5 — the query prompt: a full editable text field. Enter submits;
+    /// Alt+Enter inserts a newline (multi-line queries). ←/→/Home/End and
+    /// Backspace/Delete edit; ↑/↓ move the cursor between lines and fall through
+    /// to prompt-history recall only at the top / bottom edge (shell-style).
     fn query_prompt_key(&mut self, key: KeyEvent) {
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
         match key.code {
+            // Alt+Enter (or Ctrl+Enter) inserts a newline; plain Enter submits.
+            KeyCode::Enter if alt || key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.prompt_history_idx = None;
+                self.query.insert_newline();
+            }
             KeyCode::Enter => self.submit_query(),
-            KeyCode::Up => self.history_back(),
-            KeyCode::Down => self.history_forward(),
+            KeyCode::Up => {
+                let (row, _) = self.query.cursor();
+                if row == 0 {
+                    self.history_back();
+                } else {
+                    self.query.move_cursor(tui_textarea::CursorMove::Up);
+                }
+            }
+            KeyCode::Down => {
+                let (row, _) = self.query.cursor();
+                let last = self.query.lines().len().saturating_sub(1);
+                if row >= last {
+                    self.history_forward();
+                } else {
+                    self.query.move_cursor(tui_textarea::CursorMove::Down);
+                }
+            }
             KeyCode::Esc => {
                 if self.query_text().trim().is_empty() {
                     self.focus = Focus::FactsTree;
@@ -358,7 +381,7 @@ impl ResearchApp {
                 }
             }
             _ => {
-                // History navigation resets once the user edits the draft.
+                // History navigation resets once the user edits/moves the draft.
                 self.prompt_history_idx = None;
                 let input: tui_textarea::Input = key.into();
                 self.query.input_without_shortcuts(input);
