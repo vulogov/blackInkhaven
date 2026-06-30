@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Track** | RESRCH-2 (Grounded Research) — first cut |
-| **Status** | Complete (T-P1..T-P6) — pending cut, 1.5.1 |
+| **Status** | Shipped — 1.5.1 |
 | **Target** | 1.5.1 |
 | **Builds on** | RESRCH-1 (`inkhaven research`, 1.5.0) |
 | **New runtime crates** | **none** |
