@@ -25,6 +25,7 @@ use crate::ai::stream::{ChatTurn as AiTurn, StreamMsg, spawn_chat_stream};
 
 use super::Focus;
 use super::chat::ChatTurn;
+use super::extract::{self, TargetBook};
 use super::facts_tree::FactsTree;
 use super::llm;
 use super::render;
@@ -43,6 +44,33 @@ pub(super) struct ManualEntry {
 
 #[derive(PartialEq, Eq)]
 pub(super) enum ManualStage {
+    Title,
+    Body,
+}
+
+/// R-P10/R-P11 — an in-flight extraction stream feeding the confirmation overlay.
+pub(super) struct ExtractState {
+    rx: mpsc::UnboundedReceiver<StreamMsg>,
+    buf: String,
+    book: TargetBook,
+    book_id: Uuid,
+    target: Option<Uuid>,
+    command: String,
+}
+
+/// G1/G2 — the editable insertion confirmation overlay.
+pub(super) struct ConfirmationState {
+    pub title: TextArea<'static>,
+    pub body: TextArea<'static>,
+    pub book: TargetBook,
+    pub book_id: Uuid,
+    pub target: Option<Uuid>,
+    pub field: ConfirmField,
+    pub command: String,
+}
+
+#[derive(PartialEq, Eq, Clone, Copy)]
+pub(super) enum ConfirmField {
     Title,
     Body,
 }
@@ -82,6 +110,10 @@ pub(crate) struct ResearchApp {
     /// In-flight stream (R-P7): the receiver + the chat-turn index it feeds.
     stream_rx: Option<mpsc::UnboundedReceiver<StreamMsg>>,
     streaming_turn: Option<usize>,
+    /// In-flight extraction (R-P10/R-P11) feeding the confirmation overlay.
+    extracting: Option<ExtractState>,
+    /// The editable insertion confirmation overlay (G1/G2).
+    pub(super) confirmation: Option<ConfirmationState>,
     /// Accumulated session cost estimate (USD).
     pub(super) session_cost: f64,
 
@@ -132,6 +164,8 @@ impl ResearchApp {
             chat_scroll: 0,
             stream_rx: None,
             streaming_turn: None,
+            extracting: None,
+            confirmation: None,
             session_cost: 0.0,
             focus: Focus::QueryPrompt,
             show_hints: true,
@@ -151,6 +185,7 @@ impl ResearchApp {
     pub(crate) fn run<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
         while !self.should_quit {
             self.poll_stream();
+            self.poll_extraction();
             terminal.draw(|f| render::render(f, self))?;
             if event::poll(Duration::from_millis(100))? {
                 if let Event::Key(key) = event::read()? {
@@ -172,6 +207,11 @@ impl ResearchApp {
         // The manual-entry overlay (G7) captures all keys while active.
         if self.manual.is_some() {
             self.manual_entry_key(key);
+            return;
+        }
+        // The confirmation overlay (G1/G2) captures all keys while active.
+        if self.confirmation.is_some() {
+            self.confirmation_key(key);
             return;
         }
         // Tab / Shift+Tab always cycle focus (even from the text prompt).
@@ -301,9 +341,13 @@ impl ResearchApp {
             Command::Unknown(name) => {
                 self.status_message = Some(format!("unknown command: /{name}"));
             }
+            Command::Fact { prompt, path } => {
+                self.start_extraction(TargetBook::Facts, prompt, path, "/fact")
+            }
+            Command::Note { prompt, path } => {
+                self.start_extraction(TargetBook::Notes, prompt, path, "/note")
+            }
             // Implemented in later phases.
-            Command::Fact { .. } => self.status_message = Some("/fact arrives in R-P10".to_string()),
-            Command::Note { .. } => self.status_message = Some("/note arrives in R-P11".to_string()),
             Command::Goto(_) => self.status_message = Some("/goto arrives in R-P12".to_string()),
             Command::Diff => self.status_message = Some("/diff arrives in R-P13".to_string()),
             Command::Verify => self.status_message = Some("/verify arrives in R-P14".to_string()),
@@ -468,6 +512,239 @@ impl ResearchApp {
             &self.layout,
         );
         self.rebuild_prompt_history();
+    }
+
+    /// The id of a system book by tag.
+    fn system_book_id(&self, tag: &str) -> Option<Uuid> {
+        self.hierarchy
+            .children_of(None)
+            .into_iter()
+            .find(|n| {
+                n.kind == crate::store::NodeKind::Book && n.system_tag.as_deref() == Some(tag)
+            })
+            .map(|n| n.id)
+    }
+
+    /// R-P10/R-P11 — start a `/fact` or `/note` extraction over the last
+    /// research response. The result lands in the confirmation overlay.
+    fn start_extraction(
+        &mut self,
+        book: TargetBook,
+        prompt: Option<String>,
+        path: Option<String>,
+        command_name: &str,
+    ) {
+        if self.extracting.is_some() || self.confirmation.is_some() {
+            self.status_message = Some("finish the current extraction first".to_string());
+            return;
+        }
+        let Some(research) = self.chat_history.last().map(|t| t.response.clone()) else {
+            self.status_message = Some("no research response yet — ask a question first".to_string());
+            return;
+        };
+        if research.trim().is_empty() {
+            self.status_message = Some("the last response is empty — nothing to extract".to_string());
+            return;
+        }
+
+        // Resolve the target book + insertion node.
+        let Some(book_id) = self.system_book_id(book.system_tag()) else {
+            self.status_message = Some(format!("no {} book in this project", book.label()));
+            return;
+        };
+        let target = self.resolve_insertion_target(book, path.as_deref());
+
+        let ai = match crate::ai::AiClient::from_config(&self.cfg.llm) {
+            Ok(a) => a,
+            Err(e) => {
+                self.status_message = Some(format!("no LLM provider: {e}"));
+                return;
+            }
+        };
+        let (model, _env) = match ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(m) => m,
+            Err(e) => {
+                self.status_message = Some(format!("provider error: {e}"));
+                return;
+            }
+        };
+
+        let instruction = prompt.unwrap_or_else(|| extract::default_instruction(book).to_string());
+        let system = extract::system_prompt(book, &instruction, &research);
+        let rx = spawn_chat_stream(
+            ai.client.clone(),
+            model.to_string(),
+            Some(system),
+            Vec::new(),
+            "Produce the entry as specified.".to_string(),
+            llm::CATEGORY,
+        );
+        self.extracting = Some(ExtractState {
+            rx,
+            buf: String::new(),
+            book,
+            book_id,
+            target,
+            command: format!("{command_name} \"{instruction}\""),
+        });
+        self.status_message = Some(format!("Extracting {}…", book.label()));
+    }
+
+    /// Resolve where an extraction inserts: an explicit `→ path` (resolved
+    /// against the whole hierarchy), else the Facts cursor (Facts only), else
+    /// the book root.
+    fn resolve_insertion_target(&self, book: TargetBook, path: Option<&str>) -> Option<Uuid> {
+        if let Some(p) = path {
+            // Accept an optional leading `facts/` or `notes/`.
+            let trimmed = p.trim().trim_start_matches('/');
+            if let Some(node) = self.hierarchy.find_by_path(trimmed) {
+                return Some(node.id);
+            }
+            let stripped = trimmed
+                .strip_prefix("facts/")
+                .or_else(|| trimmed.strip_prefix("notes/"))
+                .unwrap_or(trimmed);
+            if let Some(node) = self.hierarchy.find_by_path(stripped) {
+                return Some(node.id);
+            }
+            return None;
+        }
+        match book {
+            TargetBook::Facts => self.facts_tree.selected(),
+            TargetBook::Notes => None,
+        }
+    }
+
+    /// Drain the extraction stream; on completion, open the confirmation overlay.
+    fn poll_extraction(&mut self) {
+        let Some(ex) = self.extracting.as_mut() else { return };
+        let mut done = false;
+        loop {
+            match ex.rx.try_recv() {
+                Ok(StreamMsg::Token(t)) => ex.buf.push_str(&t),
+                Ok(StreamMsg::Done) | Err(mpsc::error::TryRecvError::Disconnected) => {
+                    done = true;
+                    break;
+                }
+                Ok(StreamMsg::Error(e)) => {
+                    self.status_message = Some(format!("extraction error: {e}"));
+                    self.extracting = None;
+                    return;
+                }
+                Err(mpsc::error::TryRecvError::Empty) => break,
+            }
+        }
+        if done {
+            let ex = self.extracting.take().unwrap();
+            let parsed = extract::parse(&ex.buf);
+            let mut title = TextArea::default();
+            title.insert_str(&parsed.title);
+            let mut body = TextArea::default();
+            body.insert_str(&parsed.text);
+            self.confirmation = Some(ConfirmationState {
+                title,
+                body,
+                book: ex.book,
+                book_id: ex.book_id,
+                target: ex.target,
+                field: ConfirmField::Title,
+                command: ex.command,
+            });
+            self.focus = Focus::ConfirmationOverlay;
+            self.status_message = None;
+        }
+    }
+
+    /// G1/G2 — keys for the confirmation overlay. Tab switches field; Ctrl+Enter
+    /// (or Ctrl+S) confirms; Esc discards.
+    fn confirmation_key(&mut self, key: KeyEvent) {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        if ctrl && matches!(key.code, KeyCode::Enter | KeyCode::Char('s')) {
+            self.confirm_insertion();
+            return;
+        }
+        match key.code {
+            KeyCode::Esc => {
+                self.confirmation = None;
+                self.focus = Focus::QueryPrompt;
+                self.status_message = Some("discarded".to_string());
+            }
+            KeyCode::Tab => {
+                if let Some(c) = self.confirmation.as_mut() {
+                    c.field = match c.field {
+                        ConfirmField::Title => ConfirmField::Body,
+                        ConfirmField::Body => ConfirmField::Title,
+                    };
+                }
+            }
+            _ => {
+                if let Some(c) = self.confirmation.as_mut() {
+                    let input: tui_textarea::Input = key.into();
+                    match c.field {
+                        ConfirmField::Title => {
+                            // Single-line title — swallow Enter.
+                            if key.code != KeyCode::Enter {
+                                c.title.input_without_shortcuts(input);
+                            }
+                        }
+                        ConfirmField::Body => {
+                            c.body.input_without_shortcuts(input);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Commit the confirmed entry into its book, then reload + persist the turn.
+    fn confirm_insertion(&mut self) {
+        let Some(c) = self.confirmation.take() else { return };
+        let title = c.title.lines().join(" ");
+        let body = c.body.lines().join("\n");
+        match super::insert::insert_paragraph(
+            &self.store,
+            &self.cfg,
+            &self.hierarchy,
+            c.book_id,
+            c.target,
+            &title,
+            &body,
+        ) {
+            Ok(new_id) => {
+                self.reload_hierarchy();
+                if c.book == TargetBook::Facts {
+                    let _ = self.facts_tree.reveal(&self.hierarchy, new_id);
+                }
+                let path = self
+                    .hierarchy
+                    .get(new_id)
+                    .map(|n| self.hierarchy.slug_path(n))
+                    .unwrap_or_default();
+                let kind = match c.book {
+                    TargetBook::Facts => TurnKind::FactInsertion,
+                    TargetBook::Notes => TurnKind::NoteInsertion,
+                };
+                let now = chrono::Utc::now().to_rfc3339();
+                let id = Uuid::now_v7().to_string();
+                let _ = self.thread.push_turn(
+                    ResearchTurn::insertion(
+                        id,
+                        kind,
+                        c.command,
+                        title.trim().to_string(),
+                        body,
+                        path.clone(),
+                        c.book.label().to_string(),
+                        now,
+                    ),
+                    &self.layout,
+                );
+                self.rebuild_prompt_history();
+                self.status_message = Some(format!("✓ Inserted: '{}' → {path}", title.trim()));
+            }
+            Err(e) => self.status_message = Some(format!("insert failed: {e}")),
+        }
+        self.focus = Focus::QueryPrompt;
     }
 
     fn rebuild_prompt_history(&mut self) {
