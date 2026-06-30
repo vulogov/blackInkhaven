@@ -75,6 +75,16 @@ pub(super) enum ConfirmField {
     Body,
 }
 
+/// R-P15 — `/chain`: a sequential research pipeline. Each step's response is
+/// accumulated as context for the next.
+pub(super) struct ChainState {
+    steps: Vec<String>,
+    current: usize,
+    accumulated: Vec<String>,
+    rx: Option<mpsc::UnboundedReceiver<StreamMsg>>,
+    turn_idx: usize,
+}
+
 /// Facts-tree / AI-chat split: tree columns out of 10 (4 = 40% tree, 60% chat).
 /// Hard-coded until the `research:` config block lands (R-P20).
 pub(crate) const DEFAULT_SPLIT_RATIO: u32 = 4;
@@ -114,6 +124,8 @@ pub(crate) struct ResearchApp {
     extracting: Option<ExtractState>,
     /// In-flight `/verify` probe (R-P14): receiver + accumulated buffer.
     verify_rx: Option<(mpsc::UnboundedReceiver<StreamMsg>, String)>,
+    /// In-flight `/chain` pipeline (R-P15).
+    chain: Option<ChainState>,
     /// The editable insertion confirmation overlay (G1/G2).
     pub(super) confirmation: Option<ConfirmationState>,
     /// Accumulated session cost estimate (USD).
@@ -168,6 +180,7 @@ impl ResearchApp {
             streaming_turn: None,
             extracting: None,
             verify_rx: None,
+            chain: None,
             confirmation: None,
             session_cost: 0.0,
             focus: Focus::QueryPrompt,
@@ -190,6 +203,7 @@ impl ResearchApp {
             self.poll_stream();
             self.poll_extraction();
             self.poll_verify();
+            self.poll_chain();
             terminal.draw(|f| render::render(f, self))?;
             if event::poll(Duration::from_millis(100))? {
                 if let Event::Key(key) = event::read()? {
@@ -354,8 +368,137 @@ impl ResearchApp {
             Command::Goto(path) => self.goto_path(&path),
             Command::Diff => self.run_diff(),
             Command::Verify => self.run_verify(),
-            // Implemented in later phases.
-            Command::Chain(_) => self.status_message = Some("/chain arrives in R-P15".to_string()),
+            Command::Chain(steps) => self.start_chain(steps),
+        }
+    }
+
+    /// R-P15 — start a `/chain` pipeline (steps already `→`-split + trimmed).
+    fn start_chain(&mut self, steps: Vec<String>) {
+        if self.chain.is_some() {
+            self.status_message = Some("a chain is already running".to_string());
+            return;
+        }
+        if steps.is_empty() {
+            self.status_message = Some("usage: /chain q1 → q2 → q3".to_string());
+            return;
+        }
+        self.chain = Some(ChainState { steps, current: 0, accumulated: Vec::new(), rx: None, turn_idx: 0 });
+        self.start_chain_step();
+    }
+
+    /// Spawn the current chain step's stream (with prior steps as context).
+    fn start_chain_step(&mut self) {
+        let Some(chain) = self.chain.as_mut() else { return };
+        let i = chain.current;
+        let total = chain.steps.len();
+        let step = chain.steps[i].clone();
+        let accumulated = chain.accumulated.join("\n\n");
+
+        let ai = match crate::ai::AiClient::from_config(&self.cfg.llm) {
+            Ok(a) => a,
+            Err(e) => {
+                self.status_message = Some(format!("no LLM provider: {e}"));
+                self.chain = None;
+                return;
+            }
+        };
+        let (model, _env) = match ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(m) => m,
+            Err(e) => {
+                self.status_message = Some(format!("provider error: {e}"));
+                self.chain = None;
+                return;
+            }
+        };
+
+        let rag = super::rag::build_context(
+            &self.store,
+            &self.cfg,
+            &self.hierarchy,
+            self.facts_tree.root,
+            &self.pinned_nodes,
+            self.thread.rag_mode,
+            &step,
+        );
+        let mut system = llm::system_prompt(self.thread.rag_mode, rag.as_deref());
+        if i > 0 {
+            system.push_str(&format!(
+                "\n\nPrevious research (step {}/{}):\n{}",
+                i,
+                total,
+                accumulated
+            ));
+        }
+
+        let mut turn = ChatTurn::new(format!("[Step {}/{}] {}", i + 1, total, step));
+        turn.streaming = true;
+        self.chat_history.push(turn);
+        let turn_idx = self.chat_history.len() - 1;
+        self.chat_scroll = 0;
+
+        let rx = spawn_chat_stream(
+            ai.client.clone(),
+            model.to_string(),
+            Some(system),
+            Vec::new(),
+            step,
+            llm::CATEGORY,
+        );
+        if let Some(chain) = self.chain.as_mut() {
+            chain.rx = Some(rx);
+            chain.turn_idx = turn_idx;
+        }
+        self.status_message = Some(format!("[Step {}/{} running…]", i + 1, total));
+    }
+
+    /// Drain the current chain step; on completion, advance to the next step or
+    /// finish the chain.
+    fn poll_chain(&mut self) {
+        let Some(chain) = self.chain.as_mut() else { return };
+        let Some(rx) = chain.rx.as_mut() else { return };
+        let idx = chain.turn_idx;
+        let mut done = false;
+        loop {
+            match rx.try_recv() {
+                Ok(StreamMsg::Token(t)) => {
+                    if let Some(turn) = self.chat_history.get_mut(idx) {
+                        turn.response.push_str(&t);
+                    }
+                }
+                Ok(StreamMsg::Done) | Err(mpsc::error::TryRecvError::Disconnected) => {
+                    done = true;
+                    break;
+                }
+                Ok(StreamMsg::Error(e)) => {
+                    if let Some(turn) = self.chat_history.get_mut(idx) {
+                        turn.response.push_str(&format!("\n[error: {e}]"));
+                    }
+                    done = true;
+                    break;
+                }
+                Err(mpsc::error::TryRecvError::Empty) => break,
+            }
+        }
+        if !done {
+            return;
+        }
+        // Finalise this step.
+        let response = self.chat_history.get(idx).map(|t| t.response.clone()).unwrap_or_default();
+        if let Some(turn) = self.chat_history.get_mut(idx) {
+            turn.streaming = false;
+            let cost = llm::estimate_cost(&turn.prompt, &turn.response);
+            turn.cost = cost;
+            self.session_cost += cost;
+        }
+        let Some(chain) = self.chain.as_mut() else { return };
+        chain.rx = None;
+        chain.accumulated.push(response);
+        chain.current += 1;
+        if chain.current < chain.steps.len() {
+            self.start_chain_step();
+        } else {
+            self.chain = None;
+            self.status_message = Some("chain complete".to_string());
         }
     }
 
