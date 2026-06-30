@@ -20,6 +20,11 @@ pub(super) enum Command {
     FactCheck,
     /// `/sources` — list each fact's recorded provenance (RESRCH-2.1).
     Sources,
+    /// `/import [path]` — ingest a document as a research source, or list the
+    /// imported sources when bare (RESRCH-2 / R2-B).
+    Import(Option<String>),
+    /// `/forget <name>` — remove an imported research source.
+    Forget(String),
     /// `/promote [notes/path] [→ facts/path]` — turn a Note into a verified Fact.
     Promote { note: Option<String>, path: Option<String> },
     /// `/chain q1 → q2 → q3` — sequential research pipeline (R-P15).
@@ -90,6 +95,8 @@ pub(super) fn parse(input: &str) -> Option<Command> {
         "verify" => Command::Verify,
         "factcheck" => Command::FactCheck,
         "sources" => Command::Sources,
+        "import" => Command::Import(if rest.is_empty() { None } else { Some(rest.to_string()) }),
+        "forget" => Command::Forget(rest.to_string()),
         "promote" => {
             // `/promote [notes/path] [→ facts/path]` — both optional.
             let note = arrow_head(rest);
@@ -169,6 +176,9 @@ mod tests {
         assert_eq!(parse("/verify").unwrap(), Command::Verify);
         assert_eq!(parse("/factcheck").unwrap(), Command::FactCheck);
         assert_eq!(parse("/sources").unwrap(), Command::Sources);
+        assert_eq!(parse("/import /docs/rome.md").unwrap(), Command::Import(Some("/docs/rome.md".into())));
+        assert_eq!(parse("/import").unwrap(), Command::Import(None));
+        assert_eq!(parse("/forget rome").unwrap(), Command::Forget("rome".into()));
         assert_eq!(
             parse("/promote notes/rome/idea → Facts/Rome").unwrap(),
             Command::Promote { note: Some("notes/rome/idea".into()), path: Some("Facts/Rome".into()) }

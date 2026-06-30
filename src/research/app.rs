@@ -539,6 +539,11 @@ impl ResearchApp {
             Command::FactCheck => self.start_factcheck(),
             Command::Sources => self.run_sources(),
             Command::Promote { note, path } => self.start_promote(note, path),
+            Command::Import(path) => match path {
+                Some(p) => self.run_import(&p),
+                None => self.run_imports_list(),
+            },
+            Command::Forget(name) => self.run_forget(&name),
             Command::Chain(steps) => self.start_chain(steps),
         }
     }
@@ -570,6 +575,112 @@ impl ResearchApp {
         self.chat_history
             .push(ChatTurn::with_response(format!("[/sources — {n} fact(s)]"), out));
         self.chat_scroll = 0;
+    }
+
+    /// `/import <path>` (R2-B) — read a Markdown / text / PDF file, chunk it, and
+    /// embed the chunks into the shared vector store as research sources, so they
+    /// ground answers and `/fact` can cite them.
+    fn run_import(&mut self, path: &str) {
+        use super::imports;
+        let p = std::path::Path::new(path);
+        let text = match imports::read_source(p) {
+            Ok(t) => t,
+            Err(e) => {
+                self.status_message = Some(format!("import: {e}"));
+                return;
+            }
+        };
+        let chunk_chars = self.cfg.research.import_chunk_chars.max(200);
+        let chunks = imports::chunk_text(&text, chunk_chars);
+        if chunks.is_empty() {
+            self.status_message = Some("import: no text extracted".to_string());
+            return;
+        }
+        let name = imports::source_name(p);
+        let abs = std::fs::canonicalize(p)
+            .map(|c| c.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| path.to_string());
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut doc_ids = Vec::new();
+        for (i, chunk) in chunks.iter().enumerate() {
+            let meta = serde_json::json!({
+                "kind": imports::SOURCE_KIND,
+                "source": abs,
+                "name": name,
+                "thread": self.thread.name,
+                "chunk": i,
+                "imported_at": now,
+            });
+            match self.store.raw().add_document(meta, chunk.as_bytes()) {
+                Ok(id) => doc_ids.push(id.to_string()),
+                Err(e) => {
+                    self.status_message = Some(format!("import: embed failed: {e}"));
+                    return;
+                }
+            }
+        }
+        let mut imports_store = imports::Imports::load(&self.layout);
+        // Re-import: drop the previous chunks of a same-named source first.
+        if let Some(old) = imports_store.sources.get(&name) {
+            for id in &old.doc_ids {
+                if let Ok(uuid) = uuid::Uuid::parse_str(id) {
+                    let _ = self.store.raw().delete_document(uuid);
+                }
+            }
+        }
+        let chunks_n = doc_ids.len();
+        imports_store.sources.insert(
+            name.clone(),
+            imports::ImportedSource {
+                name: name.clone(),
+                path: abs,
+                doc_ids,
+                thread: self.thread.name.clone(),
+                imported_at: now,
+                chunks: chunks_n,
+            },
+        );
+        let _ = imports_store.save(&self.layout);
+        self.status_message = Some(format!("✓ imported `{name}` — {chunks_n} chunk(s) as a research source"));
+    }
+
+    /// `/import` (bare) — list the imported research sources.
+    fn run_imports_list(&mut self) {
+        let store = super::imports::Imports::load(&self.layout);
+        let mut out = String::new();
+        if store.sources.is_empty() {
+            out.push_str("No documents imported. Use /import <path> (md / txt / pdf).");
+        } else {
+            for s in store.sources.values() {
+                out.push_str(&format!("• {} — {} chunk(s)\n    {}\n", s.name, s.chunks, s.path));
+            }
+            out.push_str("─────\n/forget <name> removes one.");
+        }
+        self.chat_history.push(ChatTurn::with_response(
+            format!("[/import — {} source(s)]", store.sources.len()),
+            out,
+        ));
+        self.chat_scroll = 0;
+    }
+
+    /// `/forget <name>` — drop an imported source's chunks from the index.
+    fn run_forget(&mut self, name: &str) {
+        let key = super::imports::source_name(std::path::Path::new(name));
+        let mut store = super::imports::Imports::load(&self.layout);
+        // Accept either the slug or the raw name as typed.
+        let found = store.sources.remove(name).or_else(|| store.sources.remove(&key));
+        match found {
+            Some(src) => {
+                for id in &src.doc_ids {
+                    if let Ok(uuid) = uuid::Uuid::parse_str(id) {
+                        let _ = self.store.raw().delete_document(uuid);
+                    }
+                }
+                let _ = store.save(&self.layout);
+                self.status_message = Some(format!("forgot `{}` ({} chunk(s))", src.name, src.doc_ids.len()));
+            }
+            None => self.status_message = Some(format!("no imported source named `{name}`")),
+        }
     }
 
     /// `/promote [notes/path] [→ facts/path]` — turn a Note into a verified Fact
@@ -793,7 +904,7 @@ impl ResearchApp {
             }
         };
 
-        let rag = super::rag::build_context(
+        let (rag, sources) = super::rag::build_context(
             &self.store,
             &self.cfg,
             &self.hierarchy,
@@ -814,6 +925,7 @@ impl ResearchApp {
 
         let mut turn = ChatTurn::new(format!("[Step {}/{}] {}", i + 1, total, step));
         turn.streaming = true;
+        turn.sources = sources;
         self.chat_history.push(turn);
         let turn_idx = self.chat_history.len() - 1;
         self.chat_scroll = 0;
@@ -956,8 +1068,9 @@ impl ResearchApp {
             })
             .collect();
 
-        // R-P8 — assemble Facts RAG context (pins + semantic), gated by mode.
-        let rag = super::rag::build_context(
+        // R-P8 / R2-B — assemble RAG context (pins + Facts + imported sources),
+        // gated by mode; `sources` names the imported docs that grounded it.
+        let (rag, sources) = super::rag::build_context(
             &self.store,
             &self.cfg,
             &self.hierarchy,
@@ -970,6 +1083,7 @@ impl ResearchApp {
 
         let mut turn = ChatTurn::new(prompt.clone());
         turn.streaming = true;
+        turn.sources = sources;
         self.chat_history.push(turn);
         self.streaming_turn = Some(self.chat_history.len() - 1);
 
@@ -1224,13 +1338,19 @@ impl ResearchApp {
         path: Option<String>,
         command_name: &str,
     ) {
-        let Some(research) = self.chat_history.last().map(|t| t.response.clone()) else {
+        let Some(last) = self.chat_history.last() else {
             self.status_message = Some("no research response yet — ask a question first".to_string());
             return;
         };
-        // Provenance: extracted by the model from the originating research query.
-        let query = self.chat_history.last().map(|t| t.prompt.clone()).unwrap_or_default();
-        let prov = ProvMeta { origin: "model".to_string(), query, detail: String::new() };
+        let research = last.response.clone();
+        let query = last.prompt.clone();
+        // Provenance: `document` when the answer was grounded on imported sources
+        // (R2-B), else `model`, from the originating research query.
+        let prov = if last.sources.is_empty() {
+            ProvMeta { origin: "model".to_string(), query, detail: String::new() }
+        } else {
+            ProvMeta { origin: "document".to_string(), query, detail: last.sources.join(", ") }
+        };
         self.start_extraction_from(book, research, prompt, path, command_name, prov);
     }
 
@@ -1992,6 +2112,48 @@ fn build_prompt_history(thread: &ResearchThread) -> Vec<String> {
 }
 
 /// `inkhaven research --list-threads`. (R-P19 may extend the formatting.)
+/// `inkhaven research --import <path>` — ingest a document non-interactively
+/// (R2-B). Thread-agnostic (recorded under thread ""), available to every thread.
+pub(crate) fn import_cli(layout: &ProjectLayout, cfg: &Config, store: &Store, path: &str) -> Result<()> {
+    use super::imports;
+    let p = std::path::Path::new(path);
+    let text = imports::read_source(p)?;
+    let chunks = imports::chunk_text(&text, cfg.research.import_chunk_chars.max(200));
+    if chunks.is_empty() {
+        anyhow::bail!("no text extracted from {path}");
+    }
+    let name = imports::source_name(p);
+    let abs = std::fs::canonicalize(p)
+        .map(|c| c.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| path.to_string());
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut doc_ids = Vec::new();
+    for (i, chunk) in chunks.iter().enumerate() {
+        let meta = serde_json::json!({
+            "kind": imports::SOURCE_KIND, "source": abs, "name": name,
+            "thread": "", "chunk": i, "imported_at": now,
+        });
+        let id = store.raw().add_document(meta, chunk.as_bytes()).map_err(|e| anyhow::anyhow!("{e}"))?;
+        doc_ids.push(id.to_string());
+    }
+    let mut imports_store = imports::Imports::load(layout);
+    let chunks_n = doc_ids.len();
+    imports_store.sources.insert(
+        name.clone(),
+        imports::ImportedSource {
+            name: name.clone(),
+            path: abs,
+            doc_ids,
+            thread: String::new(),
+            imported_at: now,
+            chunks: chunks_n,
+        },
+    );
+    imports_store.save(layout)?;
+    println!("imported `{name}` — {chunks_n} chunk(s) as a research source");
+    Ok(())
+}
+
 pub(crate) fn list_threads_cli(layout: &ProjectLayout, format: Option<&str>) -> Result<()> {
     let summaries = thread::list_threads(layout);
     if format == Some("json") {

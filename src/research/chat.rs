@@ -12,16 +12,19 @@ pub(super) struct ChatTurn {
     pub streaming: bool,
     /// Per-turn cost in USD (set on stream completion).
     pub cost: f64,
+    /// R2-B — names of imported documents that grounded this answer (for
+    /// `origin=document` provenance on a subsequent `/fact`).
+    pub sources: Vec<String>,
 }
 
 impl ChatTurn {
     pub(super) fn new(prompt: String) -> ChatTurn {
-        ChatTurn { prompt, response: String::new(), streaming: false, cost: 0.0 }
+        ChatTurn { prompt, response: String::new(), streaming: false, cost: 0.0, sources: Vec::new() }
     }
 
     /// A turn pre-filled with a final response (no streaming) — used for
     /// command output (`/diff`, `/verify`) and placeholders.
     pub(super) fn with_response(prompt: String, response: String) -> ChatTurn {
-        ChatTurn { prompt, response, streaming: false, cost: 0.0 }
+        ChatTurn { prompt, response, streaming: false, cost: 0.0, sources: Vec::new() }
     }
 }

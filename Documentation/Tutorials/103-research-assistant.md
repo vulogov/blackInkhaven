@@ -170,6 +170,21 @@ own knowledge.
 
 ---
 
+## 6½. Importing documents (1.5.1)
+
+Ground the assistant on **your own sources**, not just the model's knowledge. **`/import <path>`**
+(or `inkhaven research --import <path>`) ingests a **Markdown / text / PDF** file: it chunks the text and
+embeds the chunks into the shared vector store as *research sources*. From then on, those chunks are
+retrieved alongside your Facts and prepended (cited as `[source: name]`) to ground answers — and a
+`/fact` taken from a source-grounded answer records provenance **`document`** with the source name.
+
+- **`/import`** (bare) lists your imported sources; **`/forget <name>`** removes one.
+- PDFs are text-extracted on import; scanned/image-only PDFs yield little text (no OCR).
+- Imported chunks are retrieved whenever RAG is on (any mode except *Full only*).
+
+This is the first step of *grounded research*: your corpus can now stand on real documents, with every
+derived fact citing where it came from.
+
 ## 7. Deeper research
 
 - **`/chain q1 → q2 → q3`** — a sequential pipeline: each step's answer becomes context for the next.
