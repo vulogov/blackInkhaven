@@ -185,6 +185,22 @@ retrieved alongside your Facts and prepended (cited as `[source: name]`) to grou
 This is the first step of *grounded research*: your corpus can now stand on real documents, with every
 derived fact citing where it came from.
 
+## 6¾. Web search & fetch (1.5.2)
+
+Bring **live web sources** in — with the safety posture you choose. Configure a provider in
+`research.web` (Tavily with an API key, or your own SearXNG instance), then:
+
+- **`/web <query>`** (default) searches + fetches and **grounds an LLM answer** on the results, cited by
+  URL. A **`/fact`** taken from that web-grounded answer is **fact-checked before it commits**: a
+  single-fact accuracy check runs in the confirmation overlay — `ACCURATE` inserts, `DUBIOUS` /
+  `INACCURATE` shows the verdict and asks you to confirm again (`Ctrl+S`). Provenance is recorded as
+  `web` with the source URL(s) and the verdict.
+- **`/web --ingest <query>`** instead embeds the fetched pages directly as cited research sources (like
+  `/import`, but from the web) — no LLM in the loop.
+
+Set the default with `research.web.pipeline` (`chat` or `ingest`); `--chat` / `--ingest` override it per
+call. Web search needs network and a provider; without one, `/web` simply reports it's unavailable.
+
 ## 7. Deeper research
 
 - **`/chain q1 → q2 → q3`** — a sequential pipeline: each step's answer becomes context for the next.

@@ -3961,6 +3961,7 @@ dependencies = [
  "ratatui",
  "ratatui-image",
  "regex",
+ "reqwest 0.12.28",
  "resvg 0.47.0",
  "rodio",
  "rtf-parser-tt",
