@@ -104,6 +104,7 @@ fn render_help(frame: &mut Frame, app: &ResearchApp, area: Rect) {
         Line::from("    /sources             list each fact's recorded provenance"),
         Line::from("    /import [path]        ingest a md/txt/pdf as a research source (bare: list)"),
         Line::from("    /forget <name>       remove an imported source"),
+        Line::from("    /web [--ingest] q    web search & fetch (chat+factcheck, or ingest)"),
         Line::from("    /promote [note] [→ p] turn a Note into a verified Fact"),
         Line::from("    /chain a → b → c     sequential research pipeline"),
         Line::from("    /rag /clear /save    switch RAG · clear chat · rename thread"),
@@ -456,16 +457,18 @@ fn render_confirmation(frame: &mut Frame, app: &ResearchApp, area: Rect) {
         Paragraph::new(Span::styled(format!("→ {path}{src}"), Style::new().dim())),
         parts[4],
     );
-    // The action bar — or the near-duplicate warning (T-P4) when present.
-    let action = match &c.dup_warning {
-        Some(w) => Span::styled(
-            format!("⚠ {w}"),
-            Style::new().fg(app.theme.border_focused).bold(),
-        ),
-        None => Span::styled(
+    // The action bar — or a near-duplicate warning (T-P4) / fact-check verdict
+    // (WC-P3) when present.
+    let warn = Style::new().fg(app.theme.border_focused).bold();
+    let action = if let Some(w) = &c.dup_warning {
+        Span::styled(format!("⚠ {w}"), warn)
+    } else if let Some(v) = &c.fc_verdict {
+        Span::styled(format!("⚠ fact-check: {v} · Ctrl+S to insert anyway"), warn)
+    } else {
+        Span::styled(
             "[Tab: field]  [Ctrl+S / Ctrl+Enter: confirm]  [Esc: discard]",
             Style::new().dim(),
-        ),
+        )
     };
     frame.render_widget(Paragraph::new(action), parts[5]);
 }

@@ -33,6 +33,7 @@ mod rag;
 mod render;
 mod thread;
 mod verify;
+mod web;
 
 pub(crate) use focus::Focus;
 

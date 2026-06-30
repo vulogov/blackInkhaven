@@ -76,6 +76,10 @@ pub(super) struct ConfirmationState {
     pub prov: ProvMeta,
     /// RESRCH-2.1 (T-P4) — a near-duplicate warning that must be confirmed twice.
     pub dup_warning: Option<String>,
+    /// R2-C (WC-P3) — the pre-commit fact-check verdict for a web fact (set once);
+    /// a non-ACCURATE verdict requires a second confirm.
+    pub fc_checked: bool,
+    pub fc_verdict: Option<String>,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy)]
@@ -120,6 +124,15 @@ impl TreeInputKind {
             TreeInputKind::NewSubchapter => "New subchapter",
         }
     }
+}
+
+/// `/web` (R2-C) — an in-flight web search; on completion the results either
+/// ground an LLM chat answer (`ingest=false`) or are embedded as research
+/// sources (`ingest=true`).
+pub(super) struct WebState {
+    rx: mpsc::UnboundedReceiver<std::result::Result<Vec<super::web::WebResult>, String>>,
+    ingest: bool,
+    query: String,
 }
 
 /// `/factcheck` — a multi-call corpus audit: truth (per-fact, chunked) then
@@ -194,6 +207,10 @@ pub(crate) struct ResearchApp {
     chain: Option<ChainState>,
     /// In-flight `/factcheck` corpus audit.
     factcheck: Option<FactCheckState>,
+    /// In-flight `/web` search (R2-C).
+    web: Option<WebState>,
+    /// In-flight pre-commit fact-check for a web fact (WC-P3): receiver + buffer.
+    fc_confirm: Option<(mpsc::UnboundedReceiver<StreamMsg>, String)>,
     /// The editable insertion confirmation overlay (G1/G2).
     pub(super) confirmation: Option<ConfirmationState>,
     /// Accumulated session cost estimate (USD).
@@ -264,6 +281,8 @@ impl ResearchApp {
             verify_rx: None,
             chain: None,
             factcheck: None,
+            web: None,
+            fc_confirm: None,
             confirmation: None,
             session_cost: 0.0,
             budget_warned: false,
@@ -291,6 +310,8 @@ impl ResearchApp {
             self.poll_verify();
             self.poll_chain();
             self.poll_factcheck();
+            self.poll_web();
+            self.poll_fc_confirm();
             terminal.draw(|f| render::render(f, self))?;
             if event::poll(Duration::from_millis(100))? {
                 if let Event::Key(key) = event::read()? {
@@ -544,6 +565,7 @@ impl ResearchApp {
                 None => self.run_imports_list(),
             },
             Command::Forget(name) => self.run_forget(&name),
+            Command::Web { ingest, query } => self.start_web(ingest, query),
             Command::Chain(steps) => self.start_chain(steps),
         }
     }
@@ -681,6 +703,177 @@ impl ResearchApp {
             }
             None => self.status_message = Some(format!("no imported source named `{name}`")),
         }
+    }
+
+    /// `/web [--ingest|--chat] <query>` (R2-C) — spawn a web search; the result
+    /// either grounds an LLM chat answer or is embedded as research sources.
+    fn start_web(&mut self, ingest: Option<bool>, query: String) {
+        if self.web.is_some() {
+            self.status_message = Some("a web search is already running".to_string());
+            return;
+        }
+        let query = query.trim().to_string();
+        if query.is_empty() {
+            self.status_message = Some("usage: /web [--ingest|--chat] <query>".to_string());
+            return;
+        }
+        if !super::web::available(&self.cfg.research.web) {
+            self.status_message = Some(
+                "web search not configured — set research.web (provider + key/endpoint)".to_string(),
+            );
+            return;
+        }
+        let ingest = ingest.unwrap_or_else(|| self.cfg.research.web.pipeline == "ingest");
+        let web_cfg = self.cfg.research.web.clone();
+        let q = query.clone();
+        let (tx, rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let r = super::web::search(web_cfg, q).await.map_err(|e| e.to_string());
+            let _ = tx.send(r);
+        });
+        self.web = Some(WebState { rx, ingest, query });
+        self.status_message = Some("Searching the web…".to_string());
+    }
+
+    /// Drain the in-flight web search; on results, ingest them or ground a chat.
+    fn poll_web(&mut self) {
+        let Some(web) = self.web.as_mut() else { return };
+        let result = match web.rx.try_recv() {
+            Ok(r) => r,
+            Err(mpsc::error::TryRecvError::Empty) => return,
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                self.web = None;
+                return;
+            }
+        };
+        let WebState { ingest, query, .. } = self.web.take().unwrap();
+        let results = match result {
+            Ok(r) if !r.is_empty() => r,
+            Ok(_) => {
+                self.status_message = Some("web: no results".to_string());
+                return;
+            }
+            Err(e) => {
+                self.status_message = Some(format!("web: {e}"));
+                return;
+            }
+        };
+        if ingest {
+            self.web_ingest(&query, &results);
+        } else {
+            self.web_chat(&query, &results);
+        }
+    }
+
+    /// `--ingest` — embed the fetched pages as research sources (origin web).
+    fn web_ingest(&mut self, query: &str, results: &[super::web::WebResult]) {
+        use super::imports;
+        let chunk_chars = self.cfg.research.import_chunk_chars.max(200);
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut imports_store = imports::Imports::load(&self.layout);
+        let mut total = 0usize;
+        for r in results {
+            if r.text.trim().is_empty() {
+                continue;
+            }
+            let name = imports::source_name(std::path::Path::new(&r.url));
+            let chunks = imports::chunk_text(&r.text, chunk_chars);
+            let mut doc_ids = Vec::new();
+            for (i, chunk) in chunks.iter().enumerate() {
+                let meta = serde_json::json!({
+                    "kind": imports::SOURCE_KIND, "source": r.url, "name": name,
+                    "thread": self.thread.name, "chunk": i, "imported_at": now, "origin": "web",
+                    "title": r.title,
+                });
+                if let Ok(id) = self.store.raw().add_document(meta, chunk.as_bytes()) {
+                    doc_ids.push(id.to_string());
+                }
+            }
+            if let Some(old) = imports_store.sources.get(&name) {
+                for id in &old.doc_ids {
+                    if let Ok(u) = uuid::Uuid::parse_str(id) {
+                        let _ = self.store.raw().delete_document(u);
+                    }
+                }
+            }
+            total += doc_ids.len();
+            let chunks_n = doc_ids.len();
+            imports_store.sources.insert(
+                name.clone(),
+                imports::ImportedSource {
+                    name,
+                    path: r.url.clone(),
+                    doc_ids,
+                    thread: self.thread.name.clone(),
+                    imported_at: now.clone(),
+                    chunks: chunks_n,
+                },
+            );
+        }
+        let _ = imports_store.save(&self.layout);
+        let report: String = results
+            .iter()
+            .map(|r| format!("• {}\n    {}", r.title, r.url))
+            .collect::<Vec<_>>()
+            .join("\n");
+        self.chat_history.push(ChatTurn::with_response(
+            format!("/web --ingest {query}"),
+            format!("Ingested {} chunk(s) from {} page(s):\n{report}", total, results.len()),
+        ));
+        self.chat_scroll = 0;
+        self.status_message = Some(format!("✓ web: ingested {total} chunk(s)"));
+    }
+
+    /// Default — ground an LLM chat answer on the fetched pages, cited by URL.
+    /// The turn is marked web-grounded so a `/fact` from it is fact-checked
+    /// before it commits (WC-P3).
+    fn web_chat(&mut self, query: &str, results: &[super::web::WebResult]) {
+        let ai = match crate::ai::AiClient::from_config(&self.cfg.llm) {
+            Ok(a) => a,
+            Err(e) => {
+                self.status_message = Some(format!("no LLM provider: {e}"));
+                return;
+            }
+        };
+        let (model, _env) = match ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(m) => m,
+            Err(e) => {
+                self.status_message = Some(format!("provider error: {e}"));
+                return;
+            }
+        };
+        let (lang, _note) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        let language = super::extract::language_name(&lang);
+        // Build the web context block (bounded per result).
+        let mut ctx = String::new();
+        let mut sources: Vec<String> = Vec::new();
+        for r in results {
+            let body: String = r.text.chars().take(1500).collect();
+            ctx.push_str(&format!("[{} — {}]\n{}\n\n", r.title, r.url, body.trim()));
+            sources.push(if r.title.is_empty() { r.url.clone() } else { format!("{} ({})", r.title, r.url) });
+        }
+        let system = format!(
+            "You are a research assistant. Answer the question using ONLY these web search results, \
+             and cite the sources you use by title and URL. If the results don't answer it, say so. \
+             Do not invent facts. Write in {language}.\n\nWeb results:\n{ctx}"
+        );
+        let mut turn = ChatTurn::new(format!("/web {query}"));
+        turn.streaming = true;
+        turn.web_grounded = true;
+        turn.sources = sources;
+        self.chat_history.push(turn);
+        self.streaming_turn = Some(self.chat_history.len() - 1);
+        self.chat_scroll = 0;
+        let rx = spawn_chat_stream(
+            ai.client.clone(),
+            model.to_string(),
+            Some(system),
+            Vec::new(),
+            query.to_string(),
+            llm::CATEGORY,
+        );
+        self.stream_rx = Some(rx);
+        self.status_message = Some(format!("web: grounding answer on {} source(s)…", results.len()));
     }
 
     /// `/promote [notes/path] [→ facts/path]` — turn a Note into a verified Fact
@@ -1344,9 +1537,12 @@ impl ResearchApp {
         };
         let research = last.response.clone();
         let query = last.prompt.clone();
-        // Provenance: `document` when the answer was grounded on imported sources
-        // (R2-B), else `model`, from the originating research query.
-        let prov = if last.sources.is_empty() {
+        // Provenance: `web` when the answer was grounded on live web results
+        // (R2-C, fact-checked before commit); `document` for imported sources
+        // (R2-B); else `model`, from the originating research query.
+        let prov = if last.web_grounded {
+            ProvMeta { origin: "web".to_string(), query, detail: last.sources.join(", ") }
+        } else if last.sources.is_empty() {
             ProvMeta { origin: "model".to_string(), query, detail: String::new() }
         } else {
             ProvMeta { origin: "document".to_string(), query, detail: last.sources.join(", ") }
@@ -1483,6 +1679,8 @@ impl ResearchApp {
                 command: ex.command,
                 prov: ex.prov,
                 dup_warning: None,
+                fc_checked: false,
+                fc_verdict: None,
             });
             self.focus = Focus::ConfirmationOverlay;
             self.status_message = None;
@@ -1577,6 +1775,18 @@ impl ResearchApp {
                 return;
             }
         }
+        // WC-P3 — fact-check a web-sourced fact before it commits. The check
+        // runs async (spawn + poll-drain — no UI block, no stderr dots); when it
+        // returns, ACCURATE auto-inserts, DUBIOUS / INACCURATE shows the verdict
+        // and requires a second confirm.
+        let is_web = self.confirmation.as_ref().is_some_and(|c| c.prov.origin == "web");
+        let fc_done = self.confirmation.as_ref().is_some_and(|c| c.fc_checked);
+        if is_web && !fc_done {
+            if self.fc_confirm.is_none() {
+                self.start_fact_check(&body);
+            }
+            return; // wait for the verdict (poll_fc_confirm finalises)
+        }
         let c = self.confirmation.take().unwrap();
         match super::insert::insert_paragraph(
             &self.store,
@@ -1656,6 +1866,87 @@ impl ResearchApp {
             .into_iter()
             .find(|p| p.is_hit && p.score >= threshold)
             .map(|p| p.breadcrumb)
+    }
+
+    /// WC-P3 — spawn the single-fact truth check for the pending web fact.
+    fn start_fact_check(&mut self, body: &str) {
+        let ai = match crate::ai::AiClient::from_config(&self.cfg.llm) {
+            Ok(a) => a,
+            Err(_) => {
+                // No provider — skip the gate (mark checked so the next confirm inserts).
+                if let Some(c) = self.confirmation.as_mut() {
+                    c.fc_checked = true;
+                    c.fc_verdict = Some("unchecked (no LLM provider)".to_string());
+                }
+                self.status_message = Some("fact-check skipped — Ctrl+S to insert".to_string());
+                return;
+            }
+        };
+        let (model, _env) = match ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(m) => m,
+            Err(_) => {
+                if let Some(c) = self.confirmation.as_mut() {
+                    c.fc_checked = true;
+                }
+                return;
+            }
+        };
+        let (lang, _note) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        let language = super::extract::language_name(&lang);
+        let system = super::factcheck::truth_system(language);
+        let user = format!("Statements:\n1. {}\n", body.trim());
+        let rx = spawn_chat_stream(ai.client.clone(), model.to_string(), Some(system), Vec::new(), user, llm::CATEGORY);
+        self.fc_confirm = Some((rx, String::new()));
+        self.status_message = Some("fact-checking before commit…".to_string());
+    }
+
+    /// Drain the pre-commit fact-check; ACCURATE auto-inserts, otherwise show the
+    /// verdict and wait for a second confirm.
+    fn poll_fc_confirm(&mut self) {
+        let Some((rx, buf)) = self.fc_confirm.as_mut() else { return };
+        let mut done = false;
+        loop {
+            match rx.try_recv() {
+                Ok(StreamMsg::Token(t)) => buf.push_str(&t),
+                Ok(StreamMsg::Done) | Err(mpsc::error::TryRecvError::Disconnected) => {
+                    done = true;
+                    break;
+                }
+                Ok(StreamMsg::Error(_)) => {
+                    done = true;
+                    break;
+                }
+                Err(mpsc::error::TryRecvError::Empty) => break,
+            }
+        }
+        if !done {
+            return;
+        }
+        let (_, buf) = self.fc_confirm.take().unwrap();
+        // First non-empty verdict line, stripped of the leading "1.".
+        let verdict = buf
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty())
+            .map(|l| l.trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ' ').to_string())
+            .unwrap_or_else(|| "no verdict".to_string());
+        let accurate = verdict.to_ascii_uppercase().starts_with("ACCURATE");
+        if let Some(c) = self.confirmation.as_mut() {
+            c.fc_checked = true;
+            c.fc_verdict = Some(verdict.clone());
+            // Fold the verdict into the provenance detail.
+            if c.prov.detail.is_empty() {
+                c.prov.detail = format!("fact-check: {verdict}");
+            } else {
+                c.prov.detail = format!("{} · fact-check: {verdict}", c.prov.detail);
+            }
+        }
+        if accurate {
+            self.confirm_insertion(); // gate now skipped → inserts
+        } else {
+            self.status_message =
+                Some(format!("fact-check: {verdict} — Ctrl+S again to insert anyway"));
+        }
     }
 
     fn rebuild_prompt_history(&mut self) {
