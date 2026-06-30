@@ -128,6 +128,17 @@ fn render_facts_tree(frame: &mut Frame, app: &ResearchApp, area: Rect) {
     if let Some(m) = &app.manual {
         render_manual_overlay(frame, m, inner);
     }
+    if let Some(ti) = &app.tree_input {
+        let overlay = Rect { x: inner.x, y: inner.y, width: inner.width, height: 3.min(inner.height) };
+        frame.render_widget(Clear, overlay);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(format!(" {} (Enter · Esc) ", ti.kind.label()));
+        frame.render_widget(
+            Paragraph::new(Line::from(format!(" {}_", ti.buf))).block(block),
+            overlay,
+        );
+    }
 }
 
 fn render_manual_overlay(frame: &mut Frame, m: &super::app::ManualEntry, area: Rect) {
@@ -343,7 +354,9 @@ fn render_confirmation(frame: &mut Frame, app: &ResearchApp, area: Rect) {
 fn render_hints(frame: &mut Frame, app: &ResearchApp, area: Rect) {
     // G11 — context-sensitive per focus (RFC §20).
     let hint = match app.focus {
-        Focus::FactsTree => " Tab:chat  n:new fact  Ctrl+P:pin  j/k:nav  Enter:expand  ?:help  q:quit",
+        Focus::FactsTree => {
+            " n:fact c/s:chap/sub R:rename -/D:del K/J:move y/x/p:copy/cut/paste Ctrl+P:pin Tab:chat"
+        }
         Focus::QueryPrompt => {
             " Tab:tree  Enter:send  ↑↓:history  F10:RAG  /fact /note /goto /diff /verify /chain"
         }

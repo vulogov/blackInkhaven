@@ -78,6 +78,38 @@ pub(super) struct ChatSearch {
     pub current: usize,
 }
 
+/// Tree-edit single-line input overlay (rename / add chapter / add subchapter).
+pub(super) struct TreeInput {
+    pub kind: TreeInputKind,
+    pub buf: String,
+    /// For rename: the node being renamed. For add: the parent to create under.
+    pub target: Uuid,
+}
+
+#[derive(PartialEq, Eq, Clone, Copy)]
+pub(super) enum TreeInputKind {
+    Rename,
+    NewChapter,
+    NewSubchapter,
+}
+
+/// Tree clipboard mode (copy keeps the source; move relocates it).
+#[derive(PartialEq, Eq, Clone, Copy)]
+pub(super) enum ClipMode {
+    Copy,
+    Move,
+}
+
+impl TreeInputKind {
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            TreeInputKind::Rename => "Rename",
+            TreeInputKind::NewChapter => "New chapter",
+            TreeInputKind::NewSubchapter => "New subchapter",
+        }
+    }
+}
+
 /// R-P15 — `/chain`: a sequential research pipeline. Each step's response is
 /// accumulated as context for the next.
 pub(super) struct ChainState {
@@ -105,6 +137,12 @@ pub(crate) struct ResearchApp {
     pub(super) pinned_nodes: Vec<Uuid>,
     /// The inline manual-entry overlay, when active (G7).
     pub(super) manual: Option<ManualEntry>,
+    /// Tree-edit input overlay (rename / add branch), when active.
+    pub(super) tree_input: Option<TreeInput>,
+    /// A pending delete awaiting y/N confirmation (the target node id).
+    pub(super) pending_delete: Option<Uuid>,
+    /// Yanked / cut node awaiting paste (copy/move from the Outline, RFC parity).
+    pub(super) tree_clipboard: Option<(Uuid, ClipMode)>,
 
     /// The two-line query prompt (R-P5).
     pub(super) query: TextArea<'static>,
@@ -180,6 +218,9 @@ impl ResearchApp {
             facts_tree,
             pinned_nodes,
             manual: None,
+            tree_input: None,
+            pending_delete: None,
+            tree_clipboard: None,
             query: TextArea::default(),
             prompt_history,
             prompt_history_idx: None,
@@ -245,6 +286,15 @@ impl ResearchApp {
         // The confirmation overlay (G1/G2) captures all keys while active.
         if self.confirmation.is_some() {
             self.confirmation_key(key);
+            return;
+        }
+        // Tree-edit input overlay + delete confirmation capture keys too.
+        if self.tree_input.is_some() {
+            self.tree_input_key(key);
+            return;
+        }
+        if self.pending_delete.is_some() {
+            self.delete_confirm_key(key);
             return;
         }
         // Tab / Shift+Tab always cycle focus (even from the text prompt).
@@ -1166,6 +1216,18 @@ impl ResearchApp {
             }
             // Ctrl+P pins / unpins the cursor node (G4).
             KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => self.toggle_pin(),
+            // Tree-edit operations (on par with the editor's Tree pane).
+            KeyCode::Char('R') => self.tree_rename_start(),
+            KeyCode::Char('c') => self.tree_add_start(TreeInputKind::NewChapter),
+            KeyCode::Char('s') => self.tree_add_start(TreeInputKind::NewSubchapter),
+            KeyCode::Char('-') => self.tree_delete_start(false),
+            KeyCode::Char('D') => self.tree_delete_start(true),
+            KeyCode::Char('K') => self.tree_move(true),
+            KeyCode::Char('J') => self.tree_move(false),
+            // Copy/move across parents (Outline parity): y yank-copy, x cut-move, p paste.
+            KeyCode::Char('y') => self.tree_yank(ClipMode::Copy),
+            KeyCode::Char('x') => self.tree_yank(ClipMode::Move),
+            KeyCode::Char('p') => self.tree_paste(),
             _ => return false,
         }
         true
@@ -1261,6 +1323,254 @@ impl ResearchApp {
         if let Ok(h) = Hierarchy::load(&self.store) {
             self.hierarchy = h;
             self.facts_tree.rebuild(&self.hierarchy);
+        }
+    }
+
+    // ── tree-edit operations (#5 — on par with the editor's Tree pane) ──────────
+
+    /// `R` — rename the cursor node (prefilled inline input).
+    fn tree_rename_start(&mut self) {
+        let Some(id) = self.facts_tree.selected() else { return };
+        let title = self.hierarchy.get(id).map(|n| n.title.clone()).unwrap_or_default();
+        self.tree_input = Some(TreeInput { kind: TreeInputKind::Rename, buf: title, target: id });
+    }
+
+    /// `c` / `s` — add a chapter (under the Facts book) or a subchapter (under the
+    /// cursor's enclosing chapter). Opens a title input.
+    fn tree_add_start(&mut self, kind: TreeInputKind) {
+        let parent = match kind {
+            TreeInputKind::NewChapter => self.facts_tree.root,
+            TreeInputKind::NewSubchapter => self.enclosing_chapter(),
+            TreeInputKind::Rename => return,
+        };
+        match parent {
+            Some(p) => self.tree_input = Some(TreeInput { kind, buf: String::new(), target: p }),
+            None => {
+                self.status_message = Some("no chapter to nest under — add a chapter first".to_string())
+            }
+        }
+    }
+
+    /// The cursor's enclosing Chapter id (walking up), if any.
+    fn enclosing_chapter(&self) -> Option<Uuid> {
+        use crate::store::NodeKind;
+        let mut cur = self.facts_tree.selected();
+        while let Some(id) = cur {
+            let node = self.hierarchy.get(id)?;
+            if node.kind == NodeKind::Chapter {
+                return Some(id);
+            }
+            cur = node.parent_id;
+        }
+        None
+    }
+
+    /// Keys for the tree-edit input overlay.
+    fn tree_input_key(&mut self, key: KeyEvent) {
+        let Some(ti) = self.tree_input.as_mut() else { return };
+        match key.code {
+            KeyCode::Esc => self.tree_input = None,
+            KeyCode::Enter => {
+                let name = ti.buf.trim().to_string();
+                if name.is_empty() {
+                    self.tree_input = None;
+                    return;
+                }
+                let (kind, target) = (ti.kind, ti.target);
+                self.tree_input = None;
+                self.tree_input_commit(kind, target, &name);
+            }
+            KeyCode::Backspace => {
+                ti.buf.pop();
+            }
+            KeyCode::Char(c) => ti.buf.push(c),
+            _ => {}
+        }
+    }
+
+    /// Apply a rename / add-branch operation, then reload + reveal.
+    fn tree_input_commit(&mut self, kind: TreeInputKind, target: Uuid, name: &str) {
+        use crate::store::{InsertPosition, NodeKind};
+        let result: Result<Option<Uuid>, String> = match kind {
+            TreeInputKind::Rename => self
+                .store
+                .rename_node(&self.hierarchy, target, name)
+                .map(|_| Some(target))
+                .map_err(|e| e.to_string()),
+            TreeInputKind::NewChapter | TreeInputKind::NewSubchapter => {
+                let nk = if kind == TreeInputKind::NewChapter {
+                    NodeKind::Chapter
+                } else {
+                    NodeKind::Subchapter
+                };
+                let parent = self.hierarchy.get(target).cloned();
+                match parent {
+                    Some(p) => self
+                        .store
+                        .create_node(&self.cfg, &self.hierarchy, nk, name, Some(&p), None, InsertPosition::End)
+                        .map(|n| Some(n.id))
+                        .map_err(|e| e.to_string()),
+                    None => Err("parent missing".to_string()),
+                }
+            }
+        };
+        match result {
+            Ok(new_id) => {
+                self.reload_hierarchy();
+                if let Some(id) = new_id {
+                    let _ = self.facts_tree.reveal(&self.hierarchy, id);
+                }
+                self.status_message = Some(format!("{} ✓", kind.label()));
+            }
+            Err(e) => self.status_message = Some(format!("{}: {e}", kind.label())),
+        }
+    }
+
+    /// `-` (paragraph) / `D` (branch) — begin a delete (asks for confirmation).
+    fn tree_delete_start(&mut self, branch: bool) {
+        use crate::store::NodeKind;
+        let Some(id) = self.facts_tree.selected() else { return };
+        let Some(node) = self.hierarchy.get(id) else { return };
+        // Never delete the Facts book itself.
+        if Some(id) == self.facts_tree.root {
+            self.status_message = Some("can't delete the Facts book".to_string());
+            return;
+        }
+        let is_para = node.kind == NodeKind::Paragraph;
+        if branch && is_para {
+            self.status_message = Some("press - to delete a paragraph".to_string());
+            return;
+        }
+        if !branch && !is_para {
+            self.status_message = Some("press D to delete a branch".to_string());
+            return;
+        }
+        self.pending_delete = Some(id);
+        let title = node.title.clone();
+        self.status_message = Some(format!("delete `{title}`? y / N"));
+    }
+
+    /// y/N for a pending delete.
+    fn delete_confirm_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => self.tree_delete_commit(),
+            _ => {
+                self.pending_delete = None;
+                self.status_message = Some("delete cancelled".to_string());
+            }
+        }
+    }
+
+    /// Perform the confirmed delete (the node + its subtree), then reload.
+    fn tree_delete_commit(&mut self) {
+        use crate::store::NodeKind;
+        let Some(id) = self.pending_delete.take() else { return };
+        let Some(node) = self.hierarchy.get(id).cloned() else { return };
+        let ids = self.hierarchy.collect_subtree(id);
+        let fs_rel = if node.kind == NodeKind::Paragraph {
+            node.file.as_ref().map(std::path::PathBuf::from).unwrap_or_default()
+        } else {
+            self.hierarchy.fs_path(&node, &self.layout)
+        };
+        // Drop any pins inside the deleted subtree.
+        self.pinned_nodes.retain(|p| !ids.contains(p));
+        self.persist_pins();
+        match self.store.delete_subtree(&fs_rel, &ids) {
+            Ok(()) => {
+                self.reload_hierarchy();
+                self.status_message = Some(format!("deleted `{}`", node.title));
+            }
+            Err(e) => self.status_message = Some(format!("delete failed: {e}")),
+        }
+    }
+
+    /// `y` / `x` — mark the cursor node for copy / move (paste with `p`).
+    fn tree_yank(&mut self, mode: ClipMode) {
+        let Some(id) = self.facts_tree.selected() else { return };
+        if Some(id) == self.facts_tree.root {
+            self.status_message = Some("can't copy/move the Facts book".to_string());
+            return;
+        }
+        self.tree_clipboard = Some((id, mode));
+        let title = self.hierarchy.get(id).map(|n| n.title.clone()).unwrap_or_default();
+        self.status_message = Some(match mode {
+            ClipMode::Copy => format!("yanked `{title}` — p to paste a copy"),
+            ClipMode::Move => format!("cut `{title}` — p to paste (move)"),
+        });
+    }
+
+    /// `p` — paste the clipboard node under the cursor (into a branch, or beside
+    /// a paragraph). Copy duplicates a paragraph; move relocates a childless node.
+    fn tree_paste(&mut self) {
+        use crate::store::NodeKind;
+        let Some((src, mode)) = self.tree_clipboard else {
+            self.status_message = Some("nothing to paste (y yank / x cut first)".to_string());
+            return;
+        };
+        let Some(cursor) = self.facts_tree.selected() else { return };
+        // Target parent: the cursor if it can host content, else the cursor's parent.
+        let parent = match self.hierarchy.get(cursor).map(|n| n.kind) {
+            Some(NodeKind::Book | NodeKind::Chapter | NodeKind::Subchapter) => Some(cursor),
+            _ => self.hierarchy.get(cursor).and_then(|n| n.parent_id),
+        };
+        let result: Result<Uuid, String> = match mode {
+            ClipMode::Copy => self
+                .store
+                .copy_paragraph_to_parent(&self.cfg, &self.hierarchy, src, parent)
+                .map_err(|e| e.to_string()),
+            ClipMode::Move => self
+                .store
+                .move_node_to_parent(&self.cfg, &self.hierarchy, src, parent)
+                .map(|_| src)
+                .map_err(|e| e.to_string()),
+        };
+        match result {
+            Ok(landed) => {
+                if mode == ClipMode::Move {
+                    self.tree_clipboard = None;
+                }
+                self.reload_hierarchy();
+                let _ = self.facts_tree.reveal(&self.hierarchy, landed);
+                self.status_message =
+                    Some(if mode == ClipMode::Copy { "pasted a copy".into() } else { "moved".into() });
+            }
+            Err(e) => self.status_message = Some(format!("paste failed: {e}")),
+        }
+    }
+
+    /// `K` / `J` — move the cursor node up / down among its siblings.
+    fn tree_move(&mut self, up: bool) {
+        use crate::store::NodeKind;
+        let Some(id) = self.facts_tree.selected() else { return };
+        let Some(node) = self.hierarchy.get(id) else { return };
+        let parent = node.parent_id;
+        // Content siblings in display order.
+        let siblings: Vec<Uuid> = self
+            .hierarchy
+            .children_of(parent)
+            .into_iter()
+            .filter(|n| !matches!(n.kind, NodeKind::Image | NodeKind::Script))
+            .map(|n| n.id)
+            .collect();
+        let Some(pos) = siblings.iter().position(|s| *s == id) else { return };
+        let other = if up {
+            if pos == 0 {
+                return;
+            }
+            siblings[pos - 1]
+        } else {
+            if pos + 1 >= siblings.len() {
+                return;
+            }
+            siblings[pos + 1]
+        };
+        match self.store.swap_siblings(&self.hierarchy, id, other) {
+            Ok(()) => {
+                self.reload_hierarchy();
+                let _ = self.facts_tree.reveal(&self.hierarchy, id);
+                self.status_message = Some(if up { "moved up".into() } else { "moved down".into() });
+            }
+            Err(e) => self.status_message = Some(format!("move failed: {e}")),
         }
     }
 }
