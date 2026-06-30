@@ -31,10 +31,6 @@ use super::llm;
 use super::render;
 use super::thread::{self, ResearchThread, ResearchTurn, TurnKind};
 
-/// Default cap on pinned Facts nodes (RFC §16); the `research:` config block
-/// (R-P20) will override it.
-pub(crate) const DEFAULT_MAX_PINNED: usize = 3;
-
 /// G7 — the inline manual fact-entry overlay: title first, then body.
 pub(super) struct ManualEntry {
     pub stage: ManualStage,
@@ -91,10 +87,6 @@ pub(super) struct ChainState {
     turn_idx: usize,
 }
 
-/// Facts-tree / AI-chat split: tree columns out of 10 (4 = 40% tree, 60% chat).
-/// Hard-coded until the `research:` config block lands (R-P20).
-pub(crate) const DEFAULT_SPLIT_RATIO: u32 = 4;
-
 pub(crate) struct ResearchApp {
     pub(super) layout: ProjectLayout,
     pub(super) cfg: Config,
@@ -139,6 +131,8 @@ pub(crate) struct ResearchApp {
     pub(super) confirmation: Option<ConfirmationState>,
     /// Accumulated session cost estimate (USD).
     pub(super) session_cost: f64,
+    /// Whether the `session_budget_warn` notice has fired this session.
+    budget_warned: bool,
 
     pub(super) focus: Focus,
     pub(super) show_hints: bool,
@@ -170,6 +164,8 @@ impl ResearchApp {
             .filter(|id| hierarchy.get(*id).is_some())
             .collect();
         let prompt_history = build_prompt_history(&thread);
+        let show_hints = cfg.research.show_keybind_hints;
+        let split_ratio = cfg.research.split_ratio;
         Ok(ResearchApp {
             layout,
             cfg,
@@ -193,17 +189,18 @@ impl ResearchApp {
             chain: None,
             confirmation: None,
             session_cost: 0.0,
+            budget_warned: false,
             focus: Focus::QueryPrompt,
-            show_hints: true,
-            split_ratio: DEFAULT_SPLIT_RATIO,
+            show_hints,
+            split_ratio,
             status_message: None,
             should_quit: false,
         })
     }
 
-    /// Cap on pinned nodes (config in R-P20; default for now).
+    /// Cap on pinned nodes (`research.max_pinned_nodes`).
     fn max_pinned(&self) -> usize {
-        DEFAULT_MAX_PINNED
+        self.cfg.research.max_pinned_nodes.max(1)
     }
 
     /// The synchronous event loop: draw, then block up to 100 ms for a key.
@@ -692,6 +689,17 @@ impl ResearchApp {
             &self.layout,
         );
         self.rebuild_prompt_history();
+        self.maybe_warn_budget();
+    }
+
+    /// Inform (never block) when the session cost passes `session_budget_warn`.
+    fn maybe_warn_budget(&mut self) {
+        let warn = self.cfg.research.session_budget_warn;
+        if !self.budget_warned && warn > 0.0 && self.session_cost > warn {
+            self.budget_warned = true;
+            self.status_message =
+                Some(format!("session cost ~${:.3} passed the ${warn:.2} budget note", self.session_cost));
+        }
     }
 
     /// R-P12 — `/goto facts/path/slug`: resolve the slug path against the Facts
@@ -719,7 +727,7 @@ impl ResearchApp {
     /// already in the corpus (so the author can spot a near-duplicate before
     /// inserting). Reuses the Facts-scoped retriever; dedups pinned nodes.
     fn run_diff(&mut self) {
-        const DIFF_TOP_N: usize = 3;
+        let diff_top_n = self.cfg.research.diff_top_n.max(1);
         let Some(response) = self.chat_history.last().map(|t| t.response.clone()) else {
             self.status_message = Some("no research response to compare".to_string());
             return;
@@ -739,7 +747,7 @@ impl ResearchApp {
         let hits: Vec<_> = passages
             .into_iter()
             .filter(|p| p.is_hit && !self.pinned_nodes.contains(&p.id))
-            .take(DIFF_TOP_N)
+            .take(diff_top_n)
             .collect();
 
         let mut out = String::new();
@@ -753,7 +761,7 @@ impl ResearchApp {
             out.push_str("─────\nUse /fact to add a new entry, or /goto <path> to open an existing one.");
         }
         self.chat_history.push(ChatTurn::with_response(
-            format!("[/diff — top {DIFF_TOP_N} similar facts]"),
+            format!("[/diff — top {diff_top_n} similar facts]"),
             out,
         ));
         self.chat_scroll = 0;
@@ -763,7 +771,7 @@ impl ResearchApp {
     /// the last response. Extracts checkable claims, then asks for a HIGH /
     /// MEDIUM / LOW assessment of each.
     fn run_verify(&mut self) {
-        const MIN_WORDS: usize = 8;
+        let min_words = self.cfg.research.verify_min_sentence_words.max(1);
         if self.verify_rx.is_some() {
             self.status_message = Some("a verification is already running".to_string());
             return;
@@ -772,7 +780,7 @@ impl ResearchApp {
             self.status_message = Some("no research response to verify".to_string());
             return;
         };
-        let claims = super::verify::extract_claims(&response, MIN_WORDS);
+        let claims = super::verify::extract_claims(&response, min_words);
         if claims.is_empty() {
             self.status_message = Some("no specific claims found to verify".to_string());
             return;

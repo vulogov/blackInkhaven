@@ -1491,6 +1491,31 @@ Inside selection mode:
 Pane gated on `shell.enabled = true` in HJSON (default
 true).  See [`Tutorials/35-embedded-shell.md`](Tutorials/35-embedded-shell.md).
 
+## `inkhaven research` (1.5.0+, RESRCH-1)
+
+Standalone TUI for AI-assisted research that transfers verified findings into the
+**Facts** / **Notes** corpus. Launched outside the main editor:
+`inkhaven research [--thread <name>]` (also `--list-threads`, `--export-thread`).
+Three panes — Facts tree (left 40%), streaming RAG chat (right 60%), a two-line
+query prompt — needing ≥ 80 columns.
+
+| Key | Action |
+|:---|:---|
+| `Tab` / `Shift+Tab` | Cycle focus: Facts tree → query prompt → chat |
+| `F10` | Cycle RAG mode (Facts+Full → Facts only → Full only) |
+| `?` | Toggle the keybind hints bar |
+| `q` / `Ctrl+C` | Quit (restores the terminal) |
+| **Facts tree** | `j`/`k` nav, `Enter`/`l`/`h` expand/collapse, `g`/`G` top/bottom |
+| `Ctrl+P` (tree) | Pin / unpin the cursor node for RAG context (max 3, `⬡`) |
+| `n` (tree) | Manually add a fact (title → `Ctrl+S` body) |
+| **Query prompt** | `Enter` send, `↑`/`↓` recall history, `Esc` clear-then-defocus |
+| **Chat** | `j`/`k`/`g`/`G` scroll, `Ctrl+F` search (`n`/`N` between matches) |
+| **Confirm overlay** | `Tab` switch title/body, `Ctrl+S` / `Ctrl+Enter` insert, `Esc` discard |
+
+Commands (type in the prompt): `/fact "..." [→ path]`, `/note "..." [→ path]`,
+`/goto <slug-path>`, `/diff`, `/verify`, `/chain a → b → c`, `/rag [mode]`,
+`/clear`, `/save [name]`. See [Tutorial 103](Tutorials/103-research-assistant.md).
+
 ## `inkhaven prompts-editor` (1.2.10+)
 
 Standalone four-pane TUI for editing
