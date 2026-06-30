@@ -241,12 +241,18 @@ fn render_ai_chat(frame: &mut Frame, app: &ResearchApp, area: Rect) {
         })
         .collect();
 
-    // Scroll: search jumps to the current match; otherwise bottom-anchored.
-    let total = lines.len();
+    // Scroll in WRAPPED (visual) rows — the pane word-wraps, so a logical-line
+    // count under-measures the height and bottom-anchoring would cut the end.
+    let width = content.width as usize;
+    let wrapped: Vec<usize> = rows.iter().map(|(t, _)| wrapped_rows(t, width)).collect();
+    let total_visual: usize = wrapped.iter().sum();
     let height = content.height as usize;
-    let max_scroll = total.saturating_sub(height);
+    let max_scroll = total_visual.saturating_sub(height);
     let top = match current_line {
-        Some(l) => l.saturating_sub(height / 2).min(max_scroll) as u16,
+        Some(l) => {
+            let above: usize = wrapped[..l.min(wrapped.len())].iter().sum();
+            above.saturating_sub(height / 2).min(max_scroll) as u16
+        }
         None => {
             let from_bottom = (app.chat_scroll as usize).min(max_scroll);
             max_scroll.saturating_sub(from_bottom) as u16
@@ -268,6 +274,47 @@ fn render_ai_chat(frame: &mut Frame, app: &ResearchApp, area: Rect) {
     if app.confirmation.is_some() {
         render_confirmation(frame, app, inner);
     }
+}
+
+/// How many wrapped rows a logical line occupies at `width` columns — a close
+/// approximation of ratatui's word-wrapper (greedy word packing, hard-breaking
+/// over-long words). Used so the chat scroll measures visual rows, not logical
+/// lines. Cyrillic / Latin text is ~1 cell per char, which this assumes.
+fn wrapped_rows(text: &str, width: usize) -> usize {
+    if width == 0 {
+        return 1;
+    }
+    let mut rows = 1usize;
+    let mut col = 0usize;
+    for word in text.split(' ') {
+        let w = word.chars().count();
+        if w == 0 {
+            // A space (incl. runs of spaces): consumes one column.
+            col += 1;
+            if col > width {
+                rows += 1;
+                col = 0;
+            }
+            continue;
+        }
+        let need = if col == 0 { w } else { w + 1 };
+        if col + need <= width {
+            col += need;
+        } else {
+            // Wrap to a new row; hard-break a word longer than the width.
+            rows += 1;
+            if w <= width {
+                col = w;
+            } else {
+                rows += (w - 1) / width;
+                col = w % width;
+                if col == 0 {
+                    col = width;
+                }
+            }
+        }
+    }
+    rows.max(1)
 }
 
 /// Split a line on `query` (case-insensitive), highlighting the matches. The

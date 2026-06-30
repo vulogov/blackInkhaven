@@ -372,6 +372,12 @@ impl ResearchApp {
                     self.query.move_cursor(tui_textarea::CursorMove::Down);
                 }
             }
+            // Horizontal cursor movement — `input_without_shortcuts` does NOT
+            // perform arrow moves, so drive the cursor explicitly (like the editor).
+            KeyCode::Left => self.query.move_cursor(tui_textarea::CursorMove::Back),
+            KeyCode::Right => self.query.move_cursor(tui_textarea::CursorMove::Forward),
+            KeyCode::Home => self.query.move_cursor(tui_textarea::CursorMove::Head),
+            KeyCode::End => self.query.move_cursor(tui_textarea::CursorMove::End),
             KeyCode::Esc => {
                 if self.query_text().trim().is_empty() {
                     self.focus = Focus::FactsTree;
@@ -1093,6 +1099,25 @@ impl ResearchApp {
                         ConfirmField::Title => ConfirmField::Body,
                         ConfirmField::Body => ConfirmField::Title,
                     };
+                }
+            }
+            // Arrow / Home / End cursor movement on the focused field
+            // (`input_without_shortcuts` doesn't perform cursor moves).
+            KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End | KeyCode::Up | KeyCode::Down => {
+                use tui_textarea::CursorMove;
+                let mv = match key.code {
+                    KeyCode::Left => CursorMove::Back,
+                    KeyCode::Right => CursorMove::Forward,
+                    KeyCode::Home => CursorMove::Head,
+                    KeyCode::End => CursorMove::End,
+                    KeyCode::Up => CursorMove::Up,
+                    _ => CursorMove::Down,
+                };
+                if let Some(c) = self.confirmation.as_mut() {
+                    match c.field {
+                        ConfirmField::Title => c.title.move_cursor(mv),
+                        ConfirmField::Body => c.body.move_cursor(mv),
+                    }
                 }
             }
             _ => {
