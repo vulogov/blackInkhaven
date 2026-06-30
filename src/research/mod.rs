@@ -19,6 +19,7 @@
 
 mod app;
 mod chat;
+mod command;
 mod facts_tree;
 mod focus;
 mod insert;
