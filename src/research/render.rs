@@ -11,7 +11,6 @@ use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
-use super::MIN_WIDTH;
 use super::app::ResearchApp;
 use super::focus::Focus;
 
@@ -26,8 +25,9 @@ pub(super) fn border_style(app: &ResearchApp, pane: Focus) -> Style {
 
 pub(super) fn render(frame: &mut Frame, app: &ResearchApp) {
     let area = frame.area();
-    if area.width < MIN_WIDTH {
-        frame.render_widget(resize_message(area.width), area);
+    let min_width = app.cfg.research.min_width.max(40);
+    if area.width < min_width {
+        frame.render_widget(resize_message(area.width, min_width), area);
         return;
     }
 
@@ -56,12 +56,12 @@ pub(super) fn render(frame: &mut Frame, app: &ResearchApp) {
     render_status_bar(frame, app, outer[3]);
 }
 
-/// Shown when the terminal is narrower than `MIN_WIDTH`.
-fn resize_message(width: u16) -> Paragraph<'static> {
+/// Shown when the terminal is narrower than the configured minimum.
+fn resize_message(width: u16, min_width: u16) -> Paragraph<'static> {
     let text = Text::from(vec![
         Line::from(""),
         Line::from(format!(
-            "  Terminal too narrow ({width} cols). Research needs ≥{MIN_WIDTH}."
+            "  Terminal too narrow ({width} cols). Research needs ≥{min_width}."
         )),
         Line::from("  Resize the window, or press q / Ctrl+C to quit."),
     ]);
@@ -71,7 +71,7 @@ fn resize_message(width: u16) -> Paragraph<'static> {
 fn render_facts_tree(frame: &mut Frame, app: &ResearchApp, area: Rect) {
     let pin_count = app.pinned_nodes.len();
     let title = if pin_count > 0 {
-        format!(" Facts  [⬡ {pin_count}/{}] ", super::app::DEFAULT_MAX_PINNED)
+        format!(" Facts  [⬡ {pin_count}/{}] ", app.cfg.research.max_pinned_nodes)
     } else {
         " Facts ".to_string()
     };

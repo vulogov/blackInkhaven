@@ -60,10 +60,6 @@ pub(crate) struct ResearchInvocation {
     pub out: Option<String>,
 }
 
-/// The minimum terminal width the main layout renders at; below it, a resize
-/// message is shown instead (RFC §4).
-pub(crate) const MIN_WIDTH: u16 = 80;
-
 /// Launch the Research Assistant, or run a non-interactive thread operation.
 pub(crate) fn run(project: &Path, inv: ResearchInvocation) -> Result<()> {
     let layout = ProjectLayout::new(project);

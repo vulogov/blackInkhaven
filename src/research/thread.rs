@@ -312,6 +312,34 @@ mod tests {
     }
 
     #[test]
+    fn insertion_turn_roundtrips() {
+        let layout = tmp_layout("insertion");
+        let now = "2026-07-15T14:35:00Z".to_string();
+        let mut t = ResearchThread::open_or_create(&layout, "rome", now.clone()).unwrap();
+        t.push_turn(
+            ResearchTurn::insertion(
+                "i1".into(),
+                TurnKind::FactInsertion,
+                "/fact \"capacity\"".into(),
+                "Aqua Claudia Capacity".into(),
+                "~190,000 m³/day.".into(),
+                "facts/rome/aqua-claudia".into(),
+                "Facts".into(),
+                now,
+            ),
+            &layout,
+        )
+        .unwrap();
+        let reloaded = ResearchThread::load(&layout, "rome").unwrap();
+        assert_eq!(reloaded.turns.len(), 1);
+        let turn = &reloaded.turns[0];
+        assert_eq!(turn.kind, TurnKind::FactInsertion);
+        assert_eq!(turn.extracted_title.as_deref(), Some("Aqua Claudia Capacity"));
+        assert_eq!(turn.target_book.as_deref(), Some("Facts"));
+        assert_eq!(turn.insertion_path.as_deref(), Some("facts/rome/aqua-claudia"));
+    }
+
+    #[test]
     fn list_and_delete() {
         let layout = tmp_layout("listdel");
         let now = "2026-07-15T14:32:00Z".to_string();

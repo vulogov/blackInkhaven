@@ -54,7 +54,11 @@ pub(super) fn build_context(
         book_id,
         query,
     ) {
-        let fresh: Vec<_> = passages.into_iter().filter(|p| !pinned.contains(&p.id)).collect();
+        let fresh: Vec<_> = passages
+            .into_iter()
+            .filter(|p| !pinned.contains(&p.id))
+            .take(cfg.research.rag_top_n.max(1))
+            .collect();
         if !fresh.is_empty() {
             sections.push(crate::book_rag::compose_context_prefix(&fresh));
         }
