@@ -76,13 +76,90 @@ pub(super) fn consistency_system(language: &str) -> String {
     )
 }
 
-/// The user message for the consistency check: every fact, numbered.
-pub(super) fn consistency_user(facts: &[FactEntry]) -> String {
+/// The user message for the consistency check: the group's facts, numbered.
+pub(super) fn consistency_user(facts: &[&FactEntry]) -> String {
     let mut s = String::from("Facts:\n");
     for (i, f) in facts.iter().enumerate() {
         s.push_str(&format!("{}. {}\n", i + 1, f.text));
     }
     s
+}
+
+/// R2-E — the largest number of facts in one consistency call. Branches bigger
+/// than this are split into bounded sub-chunks so context never grows unbounded.
+pub(super) const CONSIST_MAX: usize = 16;
+
+/// One bounded consistency call: a human label + indices into the fact list.
+pub(super) struct ConsistGroup {
+    pub label: String,
+    pub idxs: Vec<usize>,
+}
+
+/// The Facts-tree branch a fact belongs to — the first path segment after the
+/// Facts book root (`facts/<branch>/…`). Facts directly under the root, or one
+/// level down, share `"(root)"` (they have no distinguishing branch).
+pub(super) fn branch_label(location: &str) -> String {
+    let segs: Vec<&str> = location.split('/').filter(|s| !s.is_empty()).collect();
+    if segs.len() > 2 { segs[1].to_string() } else { "(root)".to_string() }
+}
+
+/// R2-E — partition the corpus into **bounded** consistency calls instead of one
+/// unbounded prompt: a within-branch pass per Facts chapter (large branches split
+/// into `CONSIST_MAX` sub-chunks), plus a final **cross-branch** pass over a few
+/// representatives per branch so cross-cutting contradictions still surface.
+pub(super) fn consistency_groups(facts: &[FactEntry], max_group: usize) -> Vec<ConsistGroup> {
+    use std::collections::HashMap;
+    let mut order: Vec<String> = Vec::new();
+    let mut by_branch: HashMap<String, Vec<usize>> = HashMap::new();
+    for (i, f) in facts.iter().enumerate() {
+        let b = branch_label(&f.location);
+        if !by_branch.contains_key(&b) {
+            order.push(b.clone());
+        }
+        by_branch.entry(b).or_default().push(i);
+    }
+
+    let mut groups: Vec<ConsistGroup> = Vec::new();
+    let mut any_split = false;
+    for b in &order {
+        let idxs = &by_branch[b];
+        if idxs.len() < 2 {
+            continue; // a lone fact can't contradict within its own branch
+        }
+        if idxs.len() <= max_group {
+            groups.push(ConsistGroup { label: b.clone(), idxs: idxs.clone() });
+        } else {
+            any_split = true;
+            let k = idxs.len().div_ceil(max_group);
+            for (ci, chunk) in idxs.chunks(max_group).enumerate() {
+                groups.push(ConsistGroup { label: format!("{b} ({}/{k})", ci + 1), idxs: chunk.to_vec() });
+            }
+        }
+    }
+
+    // Cross pass — when more than one branch exists, or a branch was split (so
+    // contradictions spanning sub-chunks of the same branch can still be caught).
+    if order.len() > 1 || any_split {
+        let mut reps: Vec<usize> = Vec::new();
+        'outer: for b in &order {
+            for &i in by_branch[b].iter().take(2) {
+                reps.push(i);
+                if reps.len() >= max_group * 2 {
+                    break 'outer;
+                }
+            }
+        }
+        if reps.len() >= 2 {
+            groups.push(ConsistGroup { label: "cross-branch".to_string(), idxs: reps });
+        }
+    }
+
+    // Fallback — everything in one (still bounded) pass when nothing grouped
+    // (e.g. a handful of lone facts all under the root).
+    if groups.is_empty() && facts.len() >= 2 {
+        groups.push(ConsistGroup { label: "all".to_string(), idxs: (0..facts.len()).collect() });
+    }
+    groups
 }
 
 #[cfg(test)]
@@ -91,6 +168,10 @@ mod tests {
 
     fn fe(text: &str) -> FactEntry {
         FactEntry { id: Uuid::nil(), location: "facts/x".into(), text: text.into() }
+    }
+
+    fn fe_at(location: &str, text: &str) -> FactEntry {
+        FactEntry { id: Uuid::nil(), location: location.into(), text: text.into() }
     }
 
     #[test]
@@ -110,9 +191,65 @@ mod tests {
 
     #[test]
     fn consistency_user_numbers_from_one() {
-        let facts = vec![fe("A"), fe("B")];
-        let u = consistency_user(&facts);
+        let a = fe("A"); let b = fe("B");
+        let refs = vec![&a, &b];
+        let u = consistency_user(&refs);
         assert!(u.contains("1. A"));
         assert!(u.contains("2. B"));
+    }
+
+    #[test]
+    fn branch_label_extracts_chapter() {
+        assert_eq!(branch_label("facts/rome/engineering/aqueduct"), "rome");
+        assert_eq!(branch_label("facts/rome/legion"), "rome"); // paragraph under chapter rome
+        assert_eq!(branch_label("facts/loose"), "(root)"); // paragraph directly under the book
+    }
+
+    #[test]
+    fn consistency_groups_cluster_by_branch_and_add_cross_pass() {
+        let facts = vec![
+            fe_at("facts/rome/a/1", "r1"),
+            fe_at("facts/rome/a/2", "r2"),
+            fe_at("facts/egypt/b/1", "e1"),
+            fe_at("facts/egypt/b/2", "e2"),
+        ];
+        let groups = consistency_groups(&facts, CONSIST_MAX);
+        // Two within-branch groups + one cross-branch pass.
+        assert_eq!(groups.len(), 3);
+        assert!(groups.iter().any(|g| g.label == "rome" && g.idxs.len() == 2));
+        assert!(groups.iter().any(|g| g.label == "egypt"));
+        assert_eq!(groups.last().unwrap().label, "cross-branch");
+    }
+
+    #[test]
+    fn consistency_groups_split_large_branches() {
+        // 20 facts in one branch, CONSIST_MAX 8 → 3 sub-chunks + a cross pass.
+        let facts: Vec<FactEntry> =
+            (0..20).map(|i| fe_at("facts/big/x/p", &format!("f{i}"))).collect();
+        let groups = consistency_groups(&facts, 8);
+        let subchunks = groups.iter().filter(|g| g.label.starts_with("big")).count();
+        assert_eq!(subchunks, 3);
+        assert!(groups.iter().any(|g| g.label == "cross-branch"));
+        assert!(groups.iter().all(|g| g.idxs.len() <= 16)); // bounded
+    }
+
+    #[test]
+    fn consistency_groups_root_facts_form_one_group() {
+        // Two facts directly under the book share the "(root)" branch → one group.
+        let facts = vec![fe_at("facts/p1", "a"), fe_at("facts/p2", "b")];
+        let groups = consistency_groups(&facts, CONSIST_MAX);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].label, "(root)");
+    }
+
+    #[test]
+    fn consistency_groups_fallback_when_all_lone_branches() {
+        // Each fact is the only one in its own branch → no within-branch call, but
+        // the cross-branch pass still pairs them.
+        let facts = vec![fe_at("facts/a/x/p", "a"), fe_at("facts/b/y/p", "b")];
+        let groups = consistency_groups(&facts, CONSIST_MAX);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].label, "cross-branch");
+        assert_eq!(groups[0].idxs.len(), 2);
     }
 }

@@ -7,7 +7,7 @@
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Style, Stylize};
+use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
@@ -30,6 +30,17 @@ pub(super) fn border_style(app: &ResearchApp, pane: Focus) -> Style {
     } else {
         Style::new().fg(app.theme.border_unfocused)
     }
+}
+
+/// RE-P5 — colour for a `/factcheck` verdict glyph in the Facts tree.
+fn verdict_style(level: super::verdicts::Level) -> Style {
+    use super::verdicts::Level;
+    let c = match level {
+        Level::Accurate => Color::Green,
+        Level::Dubious => Color::Yellow,
+        Level::Inaccurate => Color::Red,
+    };
+    Style::new().fg(c)
 }
 
 pub(super) fn render(frame: &mut Frame, app: &ResearchApp) {
@@ -89,7 +100,7 @@ fn render_help(frame: &mut Frame, app: &ResearchApp, area: Rect) {
         Line::from(""),
         Line::from(Span::styled("  Query prompt", Style::new().fg(app.theme.ai_scope_fg).bold())),
         Line::from("    Enter send        Alt+Enter newline   ↑↓ history (at edges)"),
-        Line::from("    ←→ Home/End edit  Esc clear / defocus"),
+        Line::from("    ←→ Home/End edit  Esc clear / defocus  Tab complete /goto·→ path"),
         Line::from(""),
         Line::from(Span::styled("  Chat", Style::new().fg(app.theme.ai_scope_fg).bold())),
         Line::from("    j/k g/G scroll    Ctrl+F search (n/N matches)"),
@@ -100,7 +111,8 @@ fn render_help(frame: &mut Frame, app: &ResearchApp, area: Rect) {
         Line::from("    /goto facts/path     jump the tree to a node"),
         Line::from("    /diff                similar facts already in the corpus"),
         Line::from("    /verify              confidence-probe the last response"),
-        Line::from("    /factcheck           audit the whole corpus (truth + consistency)"),
+        Line::from("    /factcheck           audit the corpus (truth + consistency) → tree ✓?✗"),
+        Line::from("    /whatswrong [path]   explain a fact flagged ✗/? (bare: selected fact)"),
         Line::from("    /sources             list each fact's recorded provenance"),
         Line::from("    /import [path]        ingest a md/txt/pdf file or a folder (bare: list)"),
         Line::from("    /forget <name>       remove an imported source"),
@@ -178,9 +190,21 @@ fn render_facts_tree(frame: &mut Frame, app: &ResearchApp, area: Rect) {
             };
             let pin = if app.pinned_nodes.contains(&row.id) { "⬡ " } else { "" };
             let indent = "  ".repeat(row.depth);
+            // RE-P5 — a `/factcheck` verdict glyph (✓ / ? / ✗), themed by severity.
+            let verdict = app.fact_verdicts.level_for(row.id);
             let label = format!("{indent}{fold}{pin}{title}");
             if i == cursor {
-                lines.push(Line::from(Span::styled(label, Style::new().bold().reversed())));
+                let mut spans: Vec<Span> = Vec::new();
+                if let Some(v) = verdict {
+                    spans.push(Span::styled(format!("{} ", v.glyph()), verdict_style(v)));
+                }
+                spans.push(Span::styled(label, Style::new().bold().reversed()));
+                lines.push(Line::from(spans));
+            } else if let Some(v) = verdict {
+                lines.push(Line::from(vec![
+                    Span::styled(format!("{} ", v.glyph()), verdict_style(v)),
+                    Span::raw(label),
+                ]));
             } else {
                 lines.push(Line::from(label));
             }
@@ -505,7 +529,14 @@ fn render_status_bar(frame: &mut Frame, app: &ResearchApp, area: Rect) {
         frame.render_widget(Paragraph::new(format!("  {msg}")).style(Style::new().dim()), area);
         return;
     }
-    let mut text = format!("  [RAG: {}]  [~${:.3}]", app.thread.rag_mode.label(), app.session_cost);
+    // R2-E — `$` when every turn was priced from real provider token usage,
+    // `~$` once any turn fell back to the char-length estimate.
+    let cost_mark = if app.session_cost_exact { "$" } else { "~$" };
+    let mut text = format!(
+        "  [RAG: {}]  [{cost_mark}{:.3}]",
+        app.thread.rag_mode.label(),
+        app.session_cost
+    );
     // Pinned-node segment (G4) — abbreviated titles.
     for id in app.pinned_nodes.iter() {
         if let Some(node) = app.hierarchy.get(*id) {

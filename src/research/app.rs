@@ -62,6 +62,9 @@ pub(super) struct ExtractState {
     target: Option<Uuid>,
     command: String,
     prov: ProvMeta,
+    /// R2-E — index of the transient streaming preview turn (the extraction's
+    /// tokens render live, dim); removed when the confirmation overlay opens.
+    preview_idx: Option<usize>,
 }
 
 /// G1/G2 — the editable insertion confirmation overlay.
@@ -143,8 +146,15 @@ pub(super) struct FactCheckState {
     truth_phase: bool,
     chunk_idx: usize,
     truth_report: String,
+    /// R2-E — the bounded consistency calls (built when the truth pass ends).
+    consist_groups: Vec<super::factcheck::ConsistGroup>,
+    consist_idx: usize,
+    consist_report: String,
     rx: Option<mpsc::UnboundedReceiver<StreamMsg>>,
     buf: String,
+    /// R2-E — index of the streaming turn showing the in-flight call's tokens
+    /// (dim); reused to hold the final report when the audit completes.
+    preview_idx: Option<usize>,
 }
 
 /// R-P15 — `/chain`: a sequential research pipeline. Each step's response is
@@ -170,6 +180,9 @@ pub(crate) struct ResearchApp {
 
     /// The Facts tree pane (R-P4).
     pub(super) facts_tree: FactsTree,
+    /// RE-P5 — per-fact `/factcheck` verdicts (✓ / ? / ✗ glyphs in the tree;
+    /// seed for `/whatswrong`). Loaded from the sidecar, refreshed each audit.
+    pub(super) fact_verdicts: super::verdicts::Verdicts,
     /// Pinned Facts nodes (G4); RAG injection lands in R-P8.
     pub(super) pinned_nodes: Vec<Uuid>,
     /// The inline manual-entry overlay, when active (G7).
@@ -215,6 +228,10 @@ pub(crate) struct ResearchApp {
     pub(super) confirmation: Option<ConfirmationState>,
     /// Accumulated session cost estimate (USD).
     pub(super) session_cost: f64,
+    /// R2-E — true while every turn so far was priced from real provider token
+    /// usage; flips false once any turn falls back to the char heuristic (drives
+    /// the `$` vs `~$` status-bar prefix).
+    pub(super) session_cost_exact: bool,
     /// Whether the `session_budget_warn` notice has fired this session.
     budget_warned: bool,
 
@@ -255,6 +272,7 @@ impl ResearchApp {
         let show_hints = cfg.research.show_keybind_hints;
         let split_ratio = cfg.research.split_ratio;
         let theme = Theme::from_config(&cfg.theme);
+        let fact_verdicts = super::verdicts::Verdicts::load(&layout);
         Ok(ResearchApp {
             layout,
             cfg,
@@ -263,6 +281,7 @@ impl ResearchApp {
             theme,
             thread,
             facts_tree,
+            fact_verdicts,
             pinned_nodes,
             manual: None,
             tree_input: None,
@@ -285,6 +304,7 @@ impl ResearchApp {
             fc_confirm: None,
             confirmation: None,
             session_cost: 0.0,
+            session_cost_exact: true,
             budget_warned: false,
             focus: Focus::QueryPrompt,
             show_hints,
@@ -369,9 +389,13 @@ impl ResearchApp {
             self.delete_confirm_key(key);
             return;
         }
-        // Tab / Shift+Tab always cycle focus (even from the text prompt).
+        // Tab / Shift+Tab cycle focus — except in the prompt, where Tab first
+        // tries to complete a Facts slug path (`/goto …`, `… → …`); R2-E.
         match key.code {
             KeyCode::Tab => {
+                if matches!(self.focus, Focus::QueryPrompt) && self.try_path_completion() {
+                    return;
+                }
                 self.focus = self.focus.next();
                 return;
             }
@@ -514,6 +538,92 @@ impl ResearchApp {
         self.query = ta;
     }
 
+    /// R2-E — Tab-complete a Facts slug path under the cursor (after `/goto ` or
+    /// after `→`/`->`). Returns `true` when it handled Tab, so the dispatcher
+    /// doesn't fall through to focus-cycling. Single-line prompts only.
+    fn try_path_completion(&mut self) -> bool {
+        let (row, col) = self.query.cursor();
+        if row != 0 {
+            return false;
+        }
+        let text = self.query_text();
+        let Some(path_start) = completable_path_start(&text) else { return false };
+        if col < path_start {
+            return false;
+        }
+        let typed: String = text.chars().skip(path_start).take(col - path_start).collect();
+        let (parent, partial) = match typed.rfind('/') {
+            Some(i) => (typed[..i].to_string(), typed[i + 1..].to_string()),
+            None => (String::new(), typed.clone()),
+        };
+        let candidates = self.facts_slug_candidates(&parent, &partial);
+        match candidates.len() {
+            0 => {
+                self.status_message = Some("no matching Facts path".to_string());
+            }
+            1 => {
+                self.apply_completion(path_start, col, &parent, &candidates[0], true);
+            }
+            _ => {
+                let lcp = longest_common_prefix(&candidates);
+                if lcp.chars().count() > partial.chars().count() {
+                    self.apply_completion(path_start, col, &parent, &lcp, false);
+                }
+                let shown: Vec<&str> = candidates.iter().take(8).map(String::as_str).collect();
+                self.status_message =
+                    Some(format!("{} matches: {}", candidates.len(), shown.join("  ")));
+            }
+        }
+        true
+    }
+
+    /// Child slugs of the node at `parent` (a slug path; empty = the Facts book
+    /// root) whose slug starts with `partial`, sorted.
+    fn facts_slug_candidates(&self, parent: &str, partial: &str) -> Vec<String> {
+        let parent_id = if parent.is_empty() {
+            self.facts_tree.root
+        } else {
+            let p = parent.trim_start_matches('/');
+            self.hierarchy
+                .find_by_path(p)
+                .or_else(|| {
+                    let stripped =
+                        p.strip_prefix("facts/").or_else(|| p.strip_prefix("notes/")).unwrap_or(p);
+                    self.hierarchy.find_by_path(stripped)
+                })
+                .map(|n| n.id)
+        };
+        let Some(pid) = parent_id else { return Vec::new() };
+        let mut out: Vec<String> = self
+            .hierarchy
+            .children_of(Some(pid))
+            .iter()
+            .filter(|n| n.slug.starts_with(partial))
+            .map(|n| n.slug.clone())
+            .collect();
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    /// Splice a completed slug into the prompt, replacing the typed path token
+    /// (`chars[path_start..end]`) with `parent/leaf` (descend → trailing `/`).
+    fn apply_completion(&mut self, path_start: usize, end: usize, parent: &str, leaf: &str, descend: bool) {
+        let chars: Vec<char> = self.query_text().chars().collect();
+        let prefix: String = chars[..path_start].iter().collect();
+        let suffix: String = chars[end.min(chars.len())..].iter().collect();
+        let mut replacement = String::new();
+        if !parent.is_empty() {
+            replacement.push_str(parent);
+            replacement.push('/');
+        }
+        replacement.push_str(leaf);
+        if descend {
+            replacement.push('/');
+        }
+        self.set_query_text(&format!("{prefix}{replacement}{suffix}"));
+    }
+
     /// Submit the prompt. Commands (`/…`) route to the dispatcher (R-P9); plain
     /// text becomes a chat query. R-P7 replaces the placeholder with a real
     /// streamed response.
@@ -567,8 +677,89 @@ impl ResearchApp {
             Command::Forget(name) => self.run_forget(&name),
             Command::Web { ingest, query } => self.start_web(ingest, query),
             Command::Calc(expr) => self.run_calc(&expr),
+            Command::WhatsWrong(path) => self.run_whatswrong(path.as_deref()),
             Command::Chain(steps) => self.start_chain(steps),
         }
+    }
+
+    /// RE-P5 — `/whatswrong [facts/path]`: AI explanation of a fact flagged by
+    /// `/factcheck`. Targets the given path, else the selected/cursor fact; seeds
+    /// the prompt with the recorded verdict, and streams the answer into chat.
+    fn run_whatswrong(&mut self, path: Option<&str>) {
+        if self.stream_rx.is_some() {
+            self.status_message = Some("a response is already streaming".to_string());
+            return;
+        }
+        let target = match path {
+            Some(p) if !p.trim().is_empty() => self.resolve_insertion_target(TargetBook::Facts, Some(p)),
+            _ => self.facts_tree.selected(),
+        };
+        let Some(id) = target else {
+            self.status_message =
+                Some("usage: /whatswrong [facts/path] — or select a fact in the tree".to_string());
+            return;
+        };
+        let text = match self.store.get_content(id) {
+            Ok(Some(b)) => String::from_utf8_lossy(&b).trim().to_string(),
+            _ => String::new(),
+        };
+        if text.is_empty() {
+            self.status_message =
+                Some("/whatswrong: select a fact paragraph (this node has no text)".to_string());
+            return;
+        }
+        let loc = self.hierarchy.get(id).map(|n| self.hierarchy.slug_path(n)).unwrap_or_default();
+        let verdict_line = match self.fact_verdicts.get(id) {
+            Some(v) if !v.reason.is_empty() => {
+                format!("Prior fact-check verdict: {} — {}", v.level.label(), v.reason)
+            }
+            Some(v) => format!("Prior fact-check verdict: {}", v.level.label()),
+            None => "No prior fact-check verdict is on record for this fact.".to_string(),
+        };
+
+        let (lang, _note) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        let language = super::extract::language_name(&lang);
+        let system = format!(
+            "You are a meticulous fact-checking assistant reviewing one statement from a writer's \
+             reference database. Explain SPECIFICALLY what is inaccurate or questionable about it and \
+             state the correct information, concisely and concretely (names, dates, figures). If the \
+             statement is in fact accurate, say so plainly and briefly. Do not fabricate citations. \
+             Write in {language}."
+        );
+        let user = format!(
+            "Statement:\n{text}\n\n{verdict_line}\n\nWhat, if anything, is wrong with this statement?"
+        );
+
+        let ai = match crate::ai::AiClient::from_config(&self.cfg.llm) {
+            Ok(a) => a,
+            Err(e) => {
+                self.status_message = Some(format!("no LLM provider: {e}"));
+                return;
+            }
+        };
+        let (model, _env) = match ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(m) => m,
+            Err(e) => {
+                self.status_message = Some(format!("provider error: {e}"));
+                return;
+            }
+        };
+        let mut turn = ChatTurn::new(format!("/whatswrong {loc}"));
+        turn.streaming = true;
+        turn.model = model.to_string();
+        self.chat_history.push(turn);
+        self.streaming_turn = Some(self.chat_history.len() - 1);
+        self.chat_scroll = 0;
+        let rx = spawn_chat_stream(
+            ai.client.clone(),
+            model.to_string(),
+            Some(system),
+            Vec::new(),
+            user,
+            llm::CATEGORY,
+        );
+        self.stream_rx = Some(rx);
+        self.status_message = Some("analysing the flagged fact…".to_string());
     }
 
     /// `/sources` — list each Facts node with its recorded provenance (T-P3).
@@ -998,13 +1189,24 @@ impl ResearchApp {
             self.status_message = Some("no facts to check — add some first".to_string());
             return;
         }
+        // R2-E — one streaming turn carries the live tokens of each call, then the
+        // final report when the audit finishes.
+        let mut preview = ChatTurn::new("/factcheck".to_string());
+        preview.streaming = true;
+        self.chat_history.push(preview);
+        self.chat_scroll = 0;
+        let preview_idx = Some(self.chat_history.len() - 1);
         self.factcheck = Some(FactCheckState {
             facts,
             truth_phase: true,
             chunk_idx: 0,
             truth_report: String::new(),
+            consist_groups: Vec::new(),
+            consist_idx: 0,
+            consist_report: String::new(),
             rx: None,
             buf: String::new(),
+            preview_idx,
         });
         self.factcheck_next_call();
     }
@@ -1029,12 +1231,29 @@ impl ResearchApp {
                 format!("fact-check: truth {}/{n_chunks}…", fc.chunk_idx + 1),
             )
         } else {
-            // Move to (or run) the consistency pass.
-            fc.truth_phase = false;
+            // Truth pass done — build the bounded consistency groups once.
+            if fc.truth_phase {
+                fc.truth_phase = false;
+                fc.consist_groups =
+                    super::factcheck::consistency_groups(&fc.facts, super::factcheck::CONSIST_MAX);
+            }
+            if fc.consist_idx >= fc.consist_groups.len() {
+                // No (more) consistency calls — assemble + emit the report.
+                self.finish_factcheck();
+                return;
+            }
+            let g = &fc.consist_groups[fc.consist_idx];
+            let subset: Vec<&super::factcheck::FactEntry> = g.idxs.iter().map(|&i| &fc.facts[i]).collect();
+            let status = format!(
+                "fact-check: consistency {}/{} ({})…",
+                fc.consist_idx + 1,
+                fc.consist_groups.len(),
+                g.label
+            );
             (
                 super::factcheck::consistency_system(language),
-                super::factcheck::consistency_user(&fc.facts),
-                "fact-check: consistency…".to_string(),
+                super::factcheck::consistency_user(&subset),
+                status,
             )
         };
 
@@ -1055,9 +1274,16 @@ impl ResearchApp {
             }
         };
         let rx = spawn_chat_stream(ai.client.clone(), model.to_string(), Some(system), Vec::new(), user, llm::CATEGORY);
+        let preview_idx = self.factcheck.as_ref().and_then(|fc| fc.preview_idx);
         if let Some(fc) = self.factcheck.as_mut() {
             fc.rx = Some(rx);
             fc.buf.clear();
+        }
+        // Reset the live preview to this call's header; tokens append below it.
+        if let Some(i) = preview_idx {
+            if let Some(turn) = self.chat_history.get_mut(i) {
+                turn.response = format!("⋯ {status}\n");
+            }
         }
         self.status_message = Some(status);
     }
@@ -1067,15 +1293,21 @@ impl ResearchApp {
     fn poll_factcheck(&mut self) {
         let Some(fc) = self.factcheck.as_mut() else { return };
         let Some(rx) = fc.rx.as_mut() else { return };
+        let preview_idx = fc.preview_idx;
         let mut done = false;
+        let mut new_tokens = String::new();
         loop {
             match rx.try_recv() {
-                Ok(StreamMsg::Token(t)) => fc.buf.push_str(&t),
-                Ok(StreamMsg::Done) | Err(mpsc::error::TryRecvError::Disconnected) => {
+                Ok(StreamMsg::Token(t)) => {
+                    new_tokens.push_str(&t);
+                    fc.buf.push_str(&t);
+                }
+                Ok(StreamMsg::Done(_)) | Err(mpsc::error::TryRecvError::Disconnected) => {
                     done = true;
                     break;
                 }
                 Ok(StreamMsg::Error(e)) => {
+                    self.drop_preview(preview_idx);
                     self.status_message = Some(format!("fact-check error: {e}"));
                     self.factcheck = None;
                     return;
@@ -1083,13 +1315,21 @@ impl ResearchApp {
                 Err(mpsc::error::TryRecvError::Empty) => break,
             }
         }
+        // Mirror the just-arrived tokens into the live preview turn (dim).
+        if !new_tokens.is_empty() {
+            if let Some(i) = preview_idx {
+                if let Some(turn) = self.chat_history.get_mut(i) {
+                    turn.response.push_str(&new_tokens);
+                }
+            }
+        }
         if !done {
             return;
         }
-        // Record the finished call's output (drop the `fc` borrow before touching
-        // other `self` fields). `report` is Some only when the consistency pass
-        // (the final call) finished.
-        let (was_truth, report): (bool, Option<(usize, String)>) = {
+        // Record the finished call's output (truth chunk or one consistency group),
+        // then spawn the next call — `factcheck_next_call` emits the final report
+        // once every group is done.
+        {
             let fc = self.factcheck.as_mut().unwrap();
             fc.rx = None;
             let out = std::mem::take(&mut fc.buf);
@@ -1097,26 +1337,76 @@ impl ResearchApp {
                 fc.truth_report.push_str(out.trim());
                 fc.truth_report.push('\n');
                 fc.chunk_idx += 1;
-                (true, None)
             } else {
-                let total = fc.facts.len();
-                let report = format!(
-                    "[/factcheck — {total} fact(s)]\n\n── Factual accuracy ──\n{}\n\n── Mutual consistency ──\n{}\n",
-                    fc.truth_report.trim(),
-                    out.trim(),
-                );
-                (false, Some((total, report)))
+                let multi = fc.consist_groups.len() > 1;
+                let trimmed = out.trim();
+                // Suppress the boilerplate "no contradictions" per-group when there
+                // are several groups — only surface the groups that found something.
+                let is_clean = trimmed.eq_ignore_ascii_case("No contradictions found.")
+                    || trimmed.is_empty();
+                if !(multi && is_clean) {
+                    if multi {
+                        let label = fc.consist_groups[fc.consist_idx].label.clone();
+                        fc.consist_report.push_str(&format!("· {label}: "));
+                    }
+                    fc.consist_report.push_str(trimmed);
+                    fc.consist_report.push('\n');
+                }
+                fc.consist_idx += 1;
             }
-        };
-        if was_truth {
-            // Next truth chunk, or (chunks exhausted) the consistency pass.
-            self.factcheck_next_call();
-        } else if let Some((total, report)) = report {
-            self.chat_history.push(ChatTurn::with_response("/factcheck".to_string(), report));
-            self.chat_scroll = 0;
-            self.factcheck = None;
-            self.status_message = Some(format!("fact-check complete · {total} fact(s)"));
         }
+        self.factcheck_next_call();
+    }
+
+    /// Assemble and emit the final `/factcheck` report, then clear the state.
+    fn finish_factcheck(&mut self) {
+        let Some(fc) = self.factcheck.as_ref() else { return };
+        let total = fc.facts.len();
+        let n_groups = fc.consist_groups.len();
+
+        // RE-P5 — capture per-fact verdicts (✓ / ? / ✗) from the truth pass and
+        // persist them so the Facts tree can flag problem paragraphs.
+        let now = chrono::Utc::now().to_rfc3339();
+        let fact_ids: Vec<uuid::Uuid> = fc.facts.iter().map(|f| f.id).collect();
+        let parsed = super::verdicts::parse_truth_report(&fc.truth_report, &fact_ids, &now);
+        let (mut accurate, mut dubious, mut inaccurate) = (0usize, 0usize, 0usize);
+        for v in parsed.values() {
+            match v.level {
+                super::verdicts::Level::Accurate => accurate += 1,
+                super::verdicts::Level::Dubious => dubious += 1,
+                super::verdicts::Level::Inaccurate => inaccurate += 1,
+            }
+        }
+        // Refresh only the just-checked facts (leave older marks for untouched nodes).
+        for (k, v) in parsed {
+            self.fact_verdicts.facts.insert(k, v);
+        }
+        let _ = self.fact_verdicts.save(&self.layout);
+        let consistency = {
+            let c = fc.consist_report.trim();
+            if c.is_empty() { "No contradictions found.".to_string() } else { c.to_string() }
+        };
+        let report = format!(
+            "[/factcheck — {total} fact(s), {n_groups} consistency group(s)]\n\
+             ✓ {accurate} accurate · ? {dubious} questionable · ✗ {inaccurate} inaccurate \
+             (flags shown in the Facts tree · /whatswrong on a flagged fact)\n\n\
+             ── Factual accuracy ──\n{}\n\n── Mutual consistency ──\n{consistency}\n",
+            fc.truth_report.trim(),
+        );
+        let preview_idx = fc.preview_idx;
+        // Reuse the streaming preview turn for the final report (no duplicate turn).
+        match preview_idx.and_then(|i| self.chat_history.get_mut(i)) {
+            Some(turn) => {
+                turn.response = report;
+                turn.streaming = false;
+            }
+            None => self.chat_history.push(ChatTurn::with_response("/factcheck".to_string(), report)),
+        }
+        self.chat_scroll = 0;
+        self.factcheck = None;
+        self.status_message = Some(format!(
+            "fact-check complete · {total} fact(s) · ✓{accurate} ?{dubious} ✗{inaccurate}"
+        ));
     }
 
     /// R-P15 — start a `/chain` pipeline (steps already `→`-split + trimmed).
@@ -1179,6 +1469,7 @@ impl ResearchApp {
 
         let mut turn = ChatTurn::new(format!("[Step {}/{}] {}", i + 1, total, step));
         turn.streaming = true;
+        turn.model = model.to_string();
         turn.sources = sources;
         self.chat_history.push(turn);
         let turn_idx = self.chat_history.len() - 1;
@@ -1213,7 +1504,14 @@ impl ResearchApp {
                         turn.response.push_str(&t);
                     }
                 }
-                Ok(StreamMsg::Done) | Err(mpsc::error::TryRecvError::Disconnected) => {
+                Ok(StreamMsg::Done(usage)) => {
+                    if let Some(turn) = self.chat_history.get_mut(idx) {
+                        turn.usage = usage;
+                    }
+                    done = true;
+                    break;
+                }
+                Err(mpsc::error::TryRecvError::Disconnected) => {
                     done = true;
                     break;
                 }
@@ -1234,9 +1532,16 @@ impl ResearchApp {
         let response = self.chat_history.get(idx).map(|t| t.response.clone()).unwrap_or_default();
         if let Some(turn) = self.chat_history.get_mut(idx) {
             turn.streaming = false;
-            let cost = llm::estimate_cost(&turn.prompt, &turn.response);
+            let (cost, exact) = llm::cost_for(
+                &self.cfg.cost,
+                &turn.model,
+                turn.usage,
+                &turn.prompt,
+                &turn.response,
+            );
             turn.cost = cost;
             self.session_cost += cost;
+            self.session_cost_exact &= exact;
         }
         let Some(chain) = self.chain.as_mut() else { return };
         chain.rx = None;
@@ -1337,6 +1642,7 @@ impl ResearchApp {
 
         let mut turn = ChatTurn::new(prompt.clone());
         turn.streaming = true;
+        turn.model = model.to_string();
         turn.sources = sources;
         self.chat_history.push(turn);
         self.streaming_turn = Some(self.chat_history.len() - 1);
@@ -1364,7 +1670,10 @@ impl ResearchApp {
                         turn.response.push_str(&t);
                     }
                 }
-                Ok(StreamMsg::Done) => {
+                Ok(StreamMsg::Done(usage)) => {
+                    if let Some(turn) = self.chat_history.get_mut(idx) {
+                        turn.usage = usage;
+                    }
                     done = true;
                     break;
                 }
@@ -1391,19 +1700,25 @@ impl ResearchApp {
     fn finish_stream(&mut self, idx: usize) {
         self.stream_rx = None;
         self.streaming_turn = None;
-        let (prompt, response) = match self.chat_history.get_mut(idx) {
+        let (prompt, response, cost) = match self.chat_history.get_mut(idx) {
             Some(turn) => {
                 turn.streaming = false;
-                let cost = llm::estimate_cost(&turn.prompt, &turn.response);
+                let (cost, exact) = llm::cost_for(
+                    &self.cfg.cost,
+                    &turn.model,
+                    turn.usage,
+                    &turn.prompt,
+                    &turn.response,
+                );
                 turn.cost = cost;
                 self.session_cost += cost;
-                (turn.prompt.clone(), turn.response.clone())
+                self.session_cost_exact &= exact;
+                (turn.prompt.clone(), turn.response.clone(), cost)
             }
             None => return,
         };
         let now = chrono::Utc::now().to_rfc3339();
         let id = uuid::Uuid::now_v7().to_string();
-        let cost = llm::estimate_cost(&prompt, &response);
         let _ = self.thread.push_turn(
             ResearchTurn::query(id, prompt, response, cost, now),
             &self.layout,
@@ -1539,7 +1854,7 @@ impl ResearchApp {
         loop {
             match rx.try_recv() {
                 Ok(StreamMsg::Token(t)) => buf.push_str(&t),
-                Ok(StreamMsg::Done) | Err(mpsc::error::TryRecvError::Disconnected) => {
+                Ok(StreamMsg::Done(_)) | Err(mpsc::error::TryRecvError::Disconnected) => {
                     done = true;
                     break;
                 }
@@ -1669,16 +1984,36 @@ impl ResearchApp {
             "Produce the entry as specified.".to_string(),
             llm::CATEGORY,
         );
+        // R2-E — a transient streaming turn so the extraction's tokens show live
+        // (dim) instead of a silent status line; popped when the overlay opens.
+        let command = format!("{command_name} \"{instruction}\"");
+        let mut preview = ChatTurn::new(format!("{command}  (extracting {}…)", book.label()));
+        preview.streaming = true;
+        self.chat_history.push(preview);
+        self.chat_scroll = 0;
+        let preview_idx = Some(self.chat_history.len() - 1);
         self.extracting = Some(ExtractState {
             rx,
             buf: String::new(),
             book,
             book_id,
             target,
-            command: format!("{command_name} \"{instruction}\""),
+            command,
             prov,
+            preview_idx,
         });
         self.status_message = Some(format!("Extracting {}…", book.label()));
+    }
+
+    /// R2-E — drop a transient streaming preview turn (pop it if it's still the
+    /// last turn; otherwise just stop its streaming marker).
+    fn drop_preview(&mut self, idx: Option<usize>) {
+        let Some(i) = idx else { return };
+        if i + 1 == self.chat_history.len() {
+            self.chat_history.pop();
+        } else if let Some(t) = self.chat_history.get_mut(i) {
+            t.streaming = false;
+        }
     }
 
     /// Resolve where an extraction inserts: an explicit `→ path` (resolved
@@ -1709,15 +2044,21 @@ impl ResearchApp {
     /// Drain the extraction stream; on completion, open the confirmation overlay.
     fn poll_extraction(&mut self) {
         let Some(ex) = self.extracting.as_mut() else { return };
+        let preview_idx = ex.preview_idx;
         let mut done = false;
+        let mut new_tokens = String::new();
         loop {
             match ex.rx.try_recv() {
-                Ok(StreamMsg::Token(t)) => ex.buf.push_str(&t),
-                Ok(StreamMsg::Done) | Err(mpsc::error::TryRecvError::Disconnected) => {
+                Ok(StreamMsg::Token(t)) => {
+                    new_tokens.push_str(&t);
+                    ex.buf.push_str(&t);
+                }
+                Ok(StreamMsg::Done(_)) | Err(mpsc::error::TryRecvError::Disconnected) => {
                     done = true;
                     break;
                 }
                 Ok(StreamMsg::Error(e)) => {
+                    self.drop_preview(preview_idx);
                     self.status_message = Some(format!("extraction error: {e}"));
                     self.extracting = None;
                     return;
@@ -1725,7 +2066,16 @@ impl ResearchApp {
                 Err(mpsc::error::TryRecvError::Empty) => break,
             }
         }
+        // Mirror the just-arrived tokens into the live preview turn (dim).
+        if !new_tokens.is_empty() {
+            if let Some(i) = preview_idx {
+                if let Some(turn) = self.chat_history.get_mut(i) {
+                    turn.response.push_str(&new_tokens);
+                }
+            }
+        }
         if done {
+            self.drop_preview(preview_idx);
             let ex = self.extracting.take().unwrap();
             let parsed = extract::parse(&ex.buf);
             let mut title = TextArea::default();
@@ -1971,7 +2321,7 @@ impl ResearchApp {
         loop {
             match rx.try_recv() {
                 Ok(StreamMsg::Token(t)) => buf.push_str(&t),
-                Ok(StreamMsg::Done) | Err(mpsc::error::TryRecvError::Disconnected) => {
+                Ok(StreamMsg::Done(_)) | Err(mpsc::error::TryRecvError::Disconnected) => {
                     done = true;
                     break;
                 }
@@ -2596,4 +2946,80 @@ fn export_markdown(thread: &ResearchThread) -> String {
         }
     }
     s
+}
+
+/// R2-E — the char index where a completable Facts slug path begins in `text`:
+/// just after `→` / `->` (the insertion path of `/fact`/`/note`), or after the
+/// `/goto ` command word. `None` when there's no completable path token.
+fn completable_path_start(text: &str) -> Option<usize> {
+    // Arrow form first — it appears after a quoted/bare prompt.
+    let arrow = text
+        .find('→')
+        .map(|i| (i, '→'.len_utf8()))
+        .or_else(|| text.find("->").map(|i| (i, 2)));
+    if let Some((bi, w)) = arrow {
+        let after = &text[bi + w..];
+        let lead = after.len() - after.trim_start().len();
+        return Some(text[..bi + w + lead].chars().count());
+    }
+    // `/goto <path>` — require the trailing space so `/gotoX` isn't treated as one.
+    let lower = text.to_ascii_lowercase();
+    if lower.starts_with("/goto") {
+        let after = &text[5..];
+        if !after.is_empty() && !after.starts_with(char::is_whitespace) {
+            return None;
+        }
+        let lead = after.len() - after.trim_start().len();
+        return Some(text[..5 + lead].chars().count());
+    }
+    None
+}
+
+/// The longest common prefix shared by every string (by `char`).
+fn longest_common_prefix(items: &[String]) -> String {
+    let Some(first) = items.first() else { return String::new() };
+    let mut end = first.chars().count();
+    for s in &items[1..] {
+        let common = first.chars().zip(s.chars()).take_while(|(a, b)| a == b).count();
+        end = end.min(common);
+    }
+    first.chars().take(end).collect()
+}
+
+#[cfg(test)]
+mod completion_tests {
+    use super::{completable_path_start, longest_common_prefix};
+
+    #[test]
+    fn path_start_after_goto() {
+        let t = "/goto facts/rom";
+        let start = completable_path_start(t).unwrap();
+        let typed: String = t.chars().skip(start).collect();
+        assert_eq!(typed, "facts/rom");
+    }
+
+    #[test]
+    fn path_start_after_arrow() {
+        for t in ["/fact \"x\" → facts/ro", "/fact \"x\" -> facts/ro"] {
+            let start = completable_path_start(t).unwrap();
+            let typed: String = t.chars().skip(start).collect();
+            assert_eq!(typed, "facts/ro");
+        }
+    }
+
+    #[test]
+    fn non_path_commands_have_no_completion() {
+        assert!(completable_path_start("/diff").is_none());
+        assert!(completable_path_start("just a question").is_none());
+        assert!(completable_path_start("/gotoX").is_none());
+    }
+
+    #[test]
+    fn lcp_of_candidates() {
+        let c = vec!["engineering".to_string(), "engineers".to_string(), "england".to_string()];
+        assert_eq!(longest_common_prefix(&c), "eng");
+        let d = vec!["rome".to_string(), "ravenna".to_string()];
+        assert_eq!(longest_common_prefix(&d), "r");
+        assert_eq!(longest_common_prefix(&["solo".to_string()]), "solo");
+    }
 }

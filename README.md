@@ -21,36 +21,36 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.5.2 — The Web, Folders & Deterministic Facts
+## Latest release · 1.5.3 — Trust & Hygiene
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.5.2.md`](Documentation/RELEASE_NOTES/1.5.2.md)
-· Plans: [`RESRCH-2.3`](Documentation/PROPOSALS/RESRCH-2.3_PLAN.md) ·
-[`RESRCH-3`](Documentation/PROPOSALS/RESRCH-3_TRACK.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.5.3.md`](Documentation/RELEASE_NOTES/1.5.3.md)
+· Plan: [`RESRCH-2.4`](Documentation/PROPOSALS/RESRCH-2.4_PLAN.md) ·
+cross-track path: [`RESRCH-4`](Documentation/PROPOSALS/RESRCH-4_RFC.md)
 
-1.5.1 grounded the **Research Assistant** (`inkhaven research`) on your own documents. 1.5.2 widens
-**where facts can come from** — the live web, whole folders, and deterministic calculation — on the same
-source-retrieval + provenance plumbing.
+1.5.2 widened where research facts come from. 1.5.3 pays down the debt that breadth rode on, and turns
+the corpus audit into a navigable workflow — **no new crates**.
 
-### Web search & fetch (one new crate, `reqwest`)
+### Real cost · scalable, streamed `/factcheck`
 
-**`/web <query>`** searches + fetches and **grounds an LLM answer** on the results (cited by URL); a
-`/fact` taken from it is **fact-checked before it commits**, recording `web` provenance with the verdict.
-**`/web --ingest <query>`** instead embeds the fetched pages directly as cited sources (no LLM).
-Providers are configurable — **Tavily** (key) or your own **SearXNG** — via `research.web`.
+Session cost is now priced from a **per-model `cost.pricing` table** against the provider's **real token
+usage** (`$` exact / `~$` estimated). `/factcheck` is **chunked by Facts chapter** (plus a cross-branch
+pass) so it scales, and both it and `/fact` extraction now **stream live**.
 
-### Folder import & deterministic `/calc` (zero new crates)
+### Verdict flags + `/whatswrong`
 
-**`/import <folder>`** recursively imports a whole directory of `.md` / `.txt` / `.pdf` (point it at an
-Obsidian-style vault). **`/calc <expr>`** evaluates a deterministic expression in the in-tree **Bund**
-VM — physical constants and unit conversions (`100 mi2km` → `160.9344`); the result *is* its proof, so a
-`/fact` from it records `computed` provenance and **skips the fact-check gate**. Integer and float are
-interchangeable in word arguments.
+After a `/factcheck`, every fact in the **Facts tree** carries a glyph — **✓** accurate, **?**
+questionable, **✗** inaccurate — persisted until the next audit. Navigate to a flagged fact and run
+**`/whatswrong`** for a streamed AI explanation of what's wrong and the correct information, in your
+project language. `/factcheck` flags → the tree shows where → `/whatswrong` explains → you fix it.
+
+### Tab-completion
+
+In the prompt, **Tab** completes a Facts slug path after `/goto ` or a `→` insertion arrow.
 
 ### Dependencies & compatibility
 
-**One new runtime crate** — `reqwest` (HTTP for `/web`, rustls); folder import and `/calc` need none
-(`/calc` reuses the Bund VM). New provenance origins `web` / `computed`; new config block `research.web`.
-No new system books, no new `NodeKind`.
+**No new runtime crates.** New config `cost.pricing`; new sidecar `.inkhaven/fact-verdicts.json`; new
+command `/whatswrong`. No new system books, no new `NodeKind`.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
