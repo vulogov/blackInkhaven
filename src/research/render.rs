@@ -187,6 +187,68 @@ fn render_ai_chat(frame: &mut Frame, app: &ResearchApp, area: Rect) {
         Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }).scroll((top, 0)),
         inner,
     );
+
+    // The editable insertion confirmation overlay (G1/G2), in the lower area.
+    if app.confirmation.is_some() {
+        render_confirmation(frame, app, inner);
+    }
+}
+
+fn render_confirmation(frame: &mut Frame, app: &ResearchApp, area: Rect) {
+    use super::app::ConfirmField;
+    let Some(c) = &app.confirmation else { return };
+
+    let h = (area.height as i16 / 2).clamp(8, 16) as u16;
+    let overlay = Rect {
+        x: area.x,
+        y: area.y + area.height.saturating_sub(h),
+        width: area.width,
+        height: h,
+    };
+    frame.render_widget(Clear, overlay);
+
+    let path = match c.target.and_then(|id| app.hierarchy.get(id)) {
+        Some(n) => app.hierarchy.slug_path(n),
+        None => format!("{} (root)", c.book.label()),
+    };
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" Confirm insertion → {} ", c.book.label()));
+    let inner = block.inner(overlay);
+    frame.render_widget(block, overlay);
+
+    let parts = Layout::vertical([
+        Constraint::Length(1), // Title label
+        Constraint::Length(1), // Title field
+        Constraint::Length(1), // separator
+        Constraint::Fill(1),   // Body field
+        Constraint::Length(1), // path
+        Constraint::Length(1), // action bar
+    ])
+    .split(inner);
+
+    let title_focused = c.field == ConfirmField::Title;
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            "Title:",
+            if title_focused { Style::new().bold() } else { Style::new().dim() },
+        )),
+        parts[0],
+    );
+    frame.render_widget(&c.title, parts[1]);
+    frame.render_widget(Paragraph::new(Span::styled("─".repeat(inner.width as usize), Style::new().dim())), parts[2]);
+    frame.render_widget(&c.body, parts[3]);
+    frame.render_widget(
+        Paragraph::new(Span::styled(format!("→ {path}"), Style::new().dim())),
+        parts[4],
+    );
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            "[Tab: field]  [Ctrl+S / Ctrl+Enter: confirm]  [Esc: discard]",
+            Style::new().dim(),
+        )),
+        parts[5],
+    );
 }
 
 fn render_hints(frame: &mut Frame, app: &ResearchApp, area: Rect) {
