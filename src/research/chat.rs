@@ -12,19 +12,41 @@ pub(super) struct ChatTurn {
     pub streaming: bool,
     /// Per-turn cost in USD (set on stream completion).
     pub cost: f64,
-    /// R2-B — names of imported documents that grounded this answer (for
-    /// `origin=document` provenance on a subsequent `/fact`).
+    /// R2-B — names of imported documents (or, R2-C, web URLs/titles) that
+    /// grounded this answer (provenance `document` / `web` on a later `/fact`).
     pub sources: Vec<String>,
+    /// R2-C — true when this answer was grounded on live web results, so a
+    /// `/fact` from it is fact-checked before it commits.
+    pub web_grounded: bool,
+    /// R3-C — true for a deterministic `/calc` result, so a `/fact` from it is
+    /// recorded with `origin=computed` (un-fabricatable; no gate).
+    pub computed: bool,
 }
 
 impl ChatTurn {
     pub(super) fn new(prompt: String) -> ChatTurn {
-        ChatTurn { prompt, response: String::new(), streaming: false, cost: 0.0, sources: Vec::new() }
+        ChatTurn {
+            prompt,
+            response: String::new(),
+            streaming: false,
+            cost: 0.0,
+            sources: Vec::new(),
+            web_grounded: false,
+            computed: false,
+        }
     }
 
     /// A turn pre-filled with a final response (no streaming) — used for
     /// command output (`/diff`, `/verify`) and placeholders.
     pub(super) fn with_response(prompt: String, response: String) -> ChatTurn {
-        ChatTurn { prompt, response, streaming: false, cost: 0.0, sources: Vec::new() }
+        ChatTurn {
+            prompt,
+            response,
+            streaming: false,
+            cost: 0.0,
+            sources: Vec::new(),
+            web_grounded: false,
+            computed: false,
+        }
     }
 }

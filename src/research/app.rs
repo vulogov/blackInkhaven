@@ -76,6 +76,10 @@ pub(super) struct ConfirmationState {
     pub prov: ProvMeta,
     /// RESRCH-2.1 (T-P4) — a near-duplicate warning that must be confirmed twice.
     pub dup_warning: Option<String>,
+    /// R2-C (WC-P3) — the pre-commit fact-check verdict for a web fact (set once);
+    /// a non-ACCURATE verdict requires a second confirm.
+    pub fc_checked: bool,
+    pub fc_verdict: Option<String>,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy)]
@@ -120,6 +124,15 @@ impl TreeInputKind {
             TreeInputKind::NewSubchapter => "New subchapter",
         }
     }
+}
+
+/// `/web` (R2-C) — an in-flight web search; on completion the results either
+/// ground an LLM chat answer (`ingest=false`) or are embedded as research
+/// sources (`ingest=true`).
+pub(super) struct WebState {
+    rx: mpsc::UnboundedReceiver<std::result::Result<Vec<super::web::WebResult>, String>>,
+    ingest: bool,
+    query: String,
 }
 
 /// `/factcheck` — a multi-call corpus audit: truth (per-fact, chunked) then
@@ -194,6 +207,10 @@ pub(crate) struct ResearchApp {
     chain: Option<ChainState>,
     /// In-flight `/factcheck` corpus audit.
     factcheck: Option<FactCheckState>,
+    /// In-flight `/web` search (R2-C).
+    web: Option<WebState>,
+    /// In-flight pre-commit fact-check for a web fact (WC-P3): receiver + buffer.
+    fc_confirm: Option<(mpsc::UnboundedReceiver<StreamMsg>, String)>,
     /// The editable insertion confirmation overlay (G1/G2).
     pub(super) confirmation: Option<ConfirmationState>,
     /// Accumulated session cost estimate (USD).
@@ -264,6 +281,8 @@ impl ResearchApp {
             verify_rx: None,
             chain: None,
             factcheck: None,
+            web: None,
+            fc_confirm: None,
             confirmation: None,
             session_cost: 0.0,
             budget_warned: false,
@@ -291,6 +310,8 @@ impl ResearchApp {
             self.poll_verify();
             self.poll_chain();
             self.poll_factcheck();
+            self.poll_web();
+            self.poll_fc_confirm();
             terminal.draw(|f| render::render(f, self))?;
             if event::poll(Duration::from_millis(100))? {
                 if let Event::Key(key) = event::read()? {
@@ -544,6 +565,8 @@ impl ResearchApp {
                 None => self.run_imports_list(),
             },
             Command::Forget(name) => self.run_forget(&name),
+            Command::Web { ingest, query } => self.start_web(ingest, query),
+            Command::Calc(expr) => self.run_calc(&expr),
             Command::Chain(steps) => self.start_chain(steps),
         }
     }
@@ -581,46 +604,74 @@ impl ResearchApp {
     /// embed the chunks into the shared vector store as research sources, so they
     /// ground answers and `/fact` can cite them.
     fn run_import(&mut self, path: &str) {
-        use super::imports;
         let p = std::path::Path::new(path);
-        let text = match imports::read_source(p) {
-            Ok(t) => t,
-            Err(e) => {
-                self.status_message = Some(format!("import: {e}"));
-                return;
+        if p.is_dir() {
+            // Folder / vault import (R3-D, brought forward): recurse over the
+            // supported files.
+            let mut files = 0usize;
+            let mut chunks = 0usize;
+            let mut errors = 0usize;
+            for entry in walkdir::WalkDir::new(p).into_iter().filter_map(|e| e.ok()) {
+                let fp = entry.path();
+                if !fp.is_file() {
+                    continue;
+                }
+                let ext = fp.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+                if !matches!(ext.as_str(), "md" | "markdown" | "txt" | "text" | "pdf") {
+                    continue;
+                }
+                match self.import_one_file(fp) {
+                    Ok(n) => {
+                        files += 1;
+                        chunks += n;
+                    }
+                    Err(_) => errors += 1,
+                }
             }
-        };
+            self.status_message = Some(format!(
+                "✓ imported {files} file(s), {chunks} chunk(s) from `{}`{}",
+                p.display(),
+                if errors > 0 { format!(" ({errors} skipped)") } else { String::new() }
+            ));
+            return;
+        }
+        match self.import_one_file(p) {
+            Ok(n) => {
+                let name = super::imports::source_name(p);
+                self.status_message =
+                    Some(format!("✓ imported `{name}` — {n} chunk(s) as a research source"));
+            }
+            Err(e) => self.status_message = Some(format!("import: {e}")),
+        }
+    }
+
+    /// Read + chunk + embed one file as a research source; returns the chunk
+    /// count. Re-import drops the same-named source's previous chunks first.
+    fn import_one_file(&mut self, p: &std::path::Path) -> std::result::Result<usize, String> {
+        use super::imports;
+        let text = imports::read_source(p).map_err(|e| e.to_string())?;
         let chunk_chars = self.cfg.research.import_chunk_chars.max(200);
         let chunks = imports::chunk_text(&text, chunk_chars);
         if chunks.is_empty() {
-            self.status_message = Some("import: no text extracted".to_string());
-            return;
+            return Err("no text extracted".to_string());
         }
         let name = imports::source_name(p);
         let abs = std::fs::canonicalize(p)
             .map(|c| c.to_string_lossy().into_owned())
-            .unwrap_or_else(|_| path.to_string());
+            .unwrap_or_else(|_| p.to_string_lossy().into_owned());
         let now = chrono::Utc::now().to_rfc3339();
         let mut doc_ids = Vec::new();
         for (i, chunk) in chunks.iter().enumerate() {
             let meta = serde_json::json!({
-                "kind": imports::SOURCE_KIND,
-                "source": abs,
-                "name": name,
-                "thread": self.thread.name,
-                "chunk": i,
-                "imported_at": now,
+                "kind": imports::SOURCE_KIND, "source": abs, "name": name,
+                "thread": self.thread.name, "chunk": i, "imported_at": now,
             });
             match self.store.raw().add_document(meta, chunk.as_bytes()) {
                 Ok(id) => doc_ids.push(id.to_string()),
-                Err(e) => {
-                    self.status_message = Some(format!("import: embed failed: {e}"));
-                    return;
-                }
+                Err(e) => return Err(format!("embed failed: {e}")),
             }
         }
         let mut imports_store = imports::Imports::load(&self.layout);
-        // Re-import: drop the previous chunks of a same-named source first.
         if let Some(old) = imports_store.sources.get(&name) {
             for id in &old.doc_ids {
                 if let Ok(uuid) = uuid::Uuid::parse_str(id) {
@@ -632,7 +683,7 @@ impl ResearchApp {
         imports_store.sources.insert(
             name.clone(),
             imports::ImportedSource {
-                name: name.clone(),
+                name,
                 path: abs,
                 doc_ids,
                 thread: self.thread.name.clone(),
@@ -641,7 +692,7 @@ impl ResearchApp {
             },
         );
         let _ = imports_store.save(&self.layout);
-        self.status_message = Some(format!("✓ imported `{name}` — {chunks_n} chunk(s) as a research source"));
+        Ok(chunks_n)
     }
 
     /// `/import` (bare) — list the imported research sources.
@@ -681,6 +732,209 @@ impl ResearchApp {
             }
             None => self.status_message = Some(format!("no imported source named `{name}`")),
         }
+    }
+
+    /// `/calc <expr>` (R3-C) — evaluate a deterministic Bund expression
+    /// (constants + unit conversions in the `calc.*` words). The result is its
+    /// own proof; a `/fact` from it records `origin=computed` (no gate).
+    fn run_calc(&mut self, expr: &str) {
+        let expr = expr.trim();
+        if expr.is_empty() {
+            self.status_message =
+                Some("usage: /calc <expr>  e.g. /calc 100 mi2km   ·   /calc 4.2 ly2km".to_string());
+            return;
+        }
+        match crate::scripting::eval(expr) {
+            Ok(out) => {
+                let mut body = String::new();
+                if !out.stdout.trim().is_empty() {
+                    body.push_str(out.stdout.trim());
+                    body.push('\n');
+                }
+                match &out.top {
+                    Some(v) => body.push_str(&format!("= {}", crate::scripting::format_value(v))),
+                    None if body.is_empty() => body.push_str("(no result)"),
+                    None => {}
+                }
+                let mut turn = ChatTurn::with_response(format!("/calc {expr}"), body);
+                turn.computed = true;
+                self.chat_history.push(turn);
+                self.chat_scroll = 0;
+                self.status_message = Some("computed (deterministic) — /fact to record it".to_string());
+            }
+            Err(e) => self.status_message = Some(format!("calc: {e}")),
+        }
+    }
+
+    /// `/web [--ingest|--chat] <query>` (R2-C) — spawn a web search; the result
+    /// either grounds an LLM chat answer or is embedded as research sources.
+    fn start_web(&mut self, ingest: Option<bool>, query: String) {
+        if self.web.is_some() {
+            self.status_message = Some("a web search is already running".to_string());
+            return;
+        }
+        let query = query.trim().to_string();
+        if query.is_empty() {
+            self.status_message = Some("usage: /web [--ingest|--chat] <query>".to_string());
+            return;
+        }
+        if !super::web::available(&self.cfg.research.web) {
+            self.status_message = Some(
+                "web search not configured — set research.web (provider + key/endpoint)".to_string(),
+            );
+            return;
+        }
+        let ingest = ingest.unwrap_or_else(|| self.cfg.research.web.pipeline == "ingest");
+        let web_cfg = self.cfg.research.web.clone();
+        let q = query.clone();
+        let (tx, rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let r = super::web::search(web_cfg, q).await.map_err(|e| e.to_string());
+            let _ = tx.send(r);
+        });
+        self.web = Some(WebState { rx, ingest, query });
+        self.status_message = Some("Searching the web…".to_string());
+    }
+
+    /// Drain the in-flight web search; on results, ingest them or ground a chat.
+    fn poll_web(&mut self) {
+        let Some(web) = self.web.as_mut() else { return };
+        let result = match web.rx.try_recv() {
+            Ok(r) => r,
+            Err(mpsc::error::TryRecvError::Empty) => return,
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                self.web = None;
+                return;
+            }
+        };
+        let WebState { ingest, query, .. } = self.web.take().unwrap();
+        let results = match result {
+            Ok(r) if !r.is_empty() => r,
+            Ok(_) => {
+                self.status_message = Some("web: no results".to_string());
+                return;
+            }
+            Err(e) => {
+                self.status_message = Some(format!("web: {e}"));
+                return;
+            }
+        };
+        if ingest {
+            self.web_ingest(&query, &results);
+        } else {
+            self.web_chat(&query, &results);
+        }
+    }
+
+    /// `--ingest` — embed the fetched pages as research sources (origin web).
+    fn web_ingest(&mut self, query: &str, results: &[super::web::WebResult]) {
+        use super::imports;
+        let chunk_chars = self.cfg.research.import_chunk_chars.max(200);
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut imports_store = imports::Imports::load(&self.layout);
+        let mut total = 0usize;
+        for r in results {
+            if r.text.trim().is_empty() {
+                continue;
+            }
+            let name = imports::source_name(std::path::Path::new(&r.url));
+            let chunks = imports::chunk_text(&r.text, chunk_chars);
+            let mut doc_ids = Vec::new();
+            for (i, chunk) in chunks.iter().enumerate() {
+                let meta = serde_json::json!({
+                    "kind": imports::SOURCE_KIND, "source": r.url, "name": name,
+                    "thread": self.thread.name, "chunk": i, "imported_at": now, "origin": "web",
+                    "title": r.title,
+                });
+                if let Ok(id) = self.store.raw().add_document(meta, chunk.as_bytes()) {
+                    doc_ids.push(id.to_string());
+                }
+            }
+            if let Some(old) = imports_store.sources.get(&name) {
+                for id in &old.doc_ids {
+                    if let Ok(u) = uuid::Uuid::parse_str(id) {
+                        let _ = self.store.raw().delete_document(u);
+                    }
+                }
+            }
+            total += doc_ids.len();
+            let chunks_n = doc_ids.len();
+            imports_store.sources.insert(
+                name.clone(),
+                imports::ImportedSource {
+                    name,
+                    path: r.url.clone(),
+                    doc_ids,
+                    thread: self.thread.name.clone(),
+                    imported_at: now.clone(),
+                    chunks: chunks_n,
+                },
+            );
+        }
+        let _ = imports_store.save(&self.layout);
+        let report: String = results
+            .iter()
+            .map(|r| format!("• {}\n    {}", r.title, r.url))
+            .collect::<Vec<_>>()
+            .join("\n");
+        self.chat_history.push(ChatTurn::with_response(
+            format!("/web --ingest {query}"),
+            format!("Ingested {} chunk(s) from {} page(s):\n{report}", total, results.len()),
+        ));
+        self.chat_scroll = 0;
+        self.status_message = Some(format!("✓ web: ingested {total} chunk(s)"));
+    }
+
+    /// Default — ground an LLM chat answer on the fetched pages, cited by URL.
+    /// The turn is marked web-grounded so a `/fact` from it is fact-checked
+    /// before it commits (WC-P3).
+    fn web_chat(&mut self, query: &str, results: &[super::web::WebResult]) {
+        let ai = match crate::ai::AiClient::from_config(&self.cfg.llm) {
+            Ok(a) => a,
+            Err(e) => {
+                self.status_message = Some(format!("no LLM provider: {e}"));
+                return;
+            }
+        };
+        let (model, _env) = match ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(m) => m,
+            Err(e) => {
+                self.status_message = Some(format!("provider error: {e}"));
+                return;
+            }
+        };
+        let (lang, _note) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        let language = super::extract::language_name(&lang);
+        // Build the web context block (bounded per result).
+        let mut ctx = String::new();
+        let mut sources: Vec<String> = Vec::new();
+        for r in results {
+            let body: String = r.text.chars().take(1500).collect();
+            ctx.push_str(&format!("[{} — {}]\n{}\n\n", r.title, r.url, body.trim()));
+            sources.push(if r.title.is_empty() { r.url.clone() } else { format!("{} ({})", r.title, r.url) });
+        }
+        let system = format!(
+            "You are a research assistant. Answer the question using ONLY these web search results, \
+             and cite the sources you use by title and URL. If the results don't answer it, say so. \
+             Do not invent facts. Write in {language}.\n\nWeb results:\n{ctx}"
+        );
+        let mut turn = ChatTurn::new(format!("/web {query}"));
+        turn.streaming = true;
+        turn.web_grounded = true;
+        turn.sources = sources;
+        self.chat_history.push(turn);
+        self.streaming_turn = Some(self.chat_history.len() - 1);
+        self.chat_scroll = 0;
+        let rx = spawn_chat_stream(
+            ai.client.clone(),
+            model.to_string(),
+            Some(system),
+            Vec::new(),
+            query.to_string(),
+            llm::CATEGORY,
+        );
+        self.stream_rx = Some(rx);
+        self.status_message = Some(format!("web: grounding answer on {} source(s)…", results.len()));
     }
 
     /// `/promote [notes/path] [→ facts/path]` — turn a Note into a verified Fact
@@ -1344,9 +1598,14 @@ impl ResearchApp {
         };
         let research = last.response.clone();
         let query = last.prompt.clone();
-        // Provenance: `document` when the answer was grounded on imported sources
-        // (R2-B), else `model`, from the originating research query.
-        let prov = if last.sources.is_empty() {
+        // Provenance: `web` when the answer was grounded on live web results
+        // (R2-C, fact-checked before commit); `document` for imported sources
+        // (R2-B); else `model`, from the originating research query.
+        let prov = if last.computed {
+            ProvMeta { origin: "computed".to_string(), query, detail: String::new() }
+        } else if last.web_grounded {
+            ProvMeta { origin: "web".to_string(), query, detail: last.sources.join(", ") }
+        } else if last.sources.is_empty() {
             ProvMeta { origin: "model".to_string(), query, detail: String::new() }
         } else {
             ProvMeta { origin: "document".to_string(), query, detail: last.sources.join(", ") }
@@ -1483,6 +1742,8 @@ impl ResearchApp {
                 command: ex.command,
                 prov: ex.prov,
                 dup_warning: None,
+                fc_checked: false,
+                fc_verdict: None,
             });
             self.focus = Focus::ConfirmationOverlay;
             self.status_message = None;
@@ -1577,6 +1838,18 @@ impl ResearchApp {
                 return;
             }
         }
+        // WC-P3 — fact-check a web-sourced fact before it commits. The check
+        // runs async (spawn + poll-drain — no UI block, no stderr dots); when it
+        // returns, ACCURATE auto-inserts, DUBIOUS / INACCURATE shows the verdict
+        // and requires a second confirm.
+        let is_web = self.confirmation.as_ref().is_some_and(|c| c.prov.origin == "web");
+        let fc_done = self.confirmation.as_ref().is_some_and(|c| c.fc_checked);
+        if is_web && !fc_done {
+            if self.fc_confirm.is_none() {
+                self.start_fact_check(&body);
+            }
+            return; // wait for the verdict (poll_fc_confirm finalises)
+        }
         let c = self.confirmation.take().unwrap();
         match super::insert::insert_paragraph(
             &self.store,
@@ -1656,6 +1929,87 @@ impl ResearchApp {
             .into_iter()
             .find(|p| p.is_hit && p.score >= threshold)
             .map(|p| p.breadcrumb)
+    }
+
+    /// WC-P3 — spawn the single-fact truth check for the pending web fact.
+    fn start_fact_check(&mut self, body: &str) {
+        let ai = match crate::ai::AiClient::from_config(&self.cfg.llm) {
+            Ok(a) => a,
+            Err(_) => {
+                // No provider — skip the gate (mark checked so the next confirm inserts).
+                if let Some(c) = self.confirmation.as_mut() {
+                    c.fc_checked = true;
+                    c.fc_verdict = Some("unchecked (no LLM provider)".to_string());
+                }
+                self.status_message = Some("fact-check skipped — Ctrl+S to insert".to_string());
+                return;
+            }
+        };
+        let (model, _env) = match ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(m) => m,
+            Err(_) => {
+                if let Some(c) = self.confirmation.as_mut() {
+                    c.fc_checked = true;
+                }
+                return;
+            }
+        };
+        let (lang, _note) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        let language = super::extract::language_name(&lang);
+        let system = super::factcheck::truth_system(language);
+        let user = format!("Statements:\n1. {}\n", body.trim());
+        let rx = spawn_chat_stream(ai.client.clone(), model.to_string(), Some(system), Vec::new(), user, llm::CATEGORY);
+        self.fc_confirm = Some((rx, String::new()));
+        self.status_message = Some("fact-checking before commit…".to_string());
+    }
+
+    /// Drain the pre-commit fact-check; ACCURATE auto-inserts, otherwise show the
+    /// verdict and wait for a second confirm.
+    fn poll_fc_confirm(&mut self) {
+        let Some((rx, buf)) = self.fc_confirm.as_mut() else { return };
+        let mut done = false;
+        loop {
+            match rx.try_recv() {
+                Ok(StreamMsg::Token(t)) => buf.push_str(&t),
+                Ok(StreamMsg::Done) | Err(mpsc::error::TryRecvError::Disconnected) => {
+                    done = true;
+                    break;
+                }
+                Ok(StreamMsg::Error(_)) => {
+                    done = true;
+                    break;
+                }
+                Err(mpsc::error::TryRecvError::Empty) => break,
+            }
+        }
+        if !done {
+            return;
+        }
+        let (_, buf) = self.fc_confirm.take().unwrap();
+        // First non-empty verdict line, stripped of the leading "1.".
+        let verdict = buf
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty())
+            .map(|l| l.trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ' ').to_string())
+            .unwrap_or_else(|| "no verdict".to_string());
+        let accurate = verdict.to_ascii_uppercase().starts_with("ACCURATE");
+        if let Some(c) = self.confirmation.as_mut() {
+            c.fc_checked = true;
+            c.fc_verdict = Some(verdict.clone());
+            // Fold the verdict into the provenance detail.
+            if c.prov.detail.is_empty() {
+                c.prov.detail = format!("fact-check: {verdict}");
+            } else {
+                c.prov.detail = format!("{} · fact-check: {verdict}", c.prov.detail);
+            }
+        }
+        if accurate {
+            self.confirm_insertion(); // gate now skipped → inserts
+        } else {
+            self.status_message =
+                Some(format!("fact-check: {verdict} — Ctrl+S again to insert anyway"));
+        }
     }
 
     fn rebuild_prompt_history(&mut self) {
@@ -2115,17 +2469,42 @@ fn build_prompt_history(thread: &ResearchThread) -> Vec<String> {
 /// `inkhaven research --import <path>` — ingest a document non-interactively
 /// (R2-B). Thread-agnostic (recorded under thread ""), available to every thread.
 pub(crate) fn import_cli(layout: &ProjectLayout, cfg: &Config, store: &Store, path: &str) -> Result<()> {
-    use super::imports;
     let p = std::path::Path::new(path);
+    if p.is_dir() {
+        let (mut files, mut chunks) = (0usize, 0usize);
+        for entry in walkdir::WalkDir::new(p).into_iter().filter_map(|e| e.ok()) {
+            let fp = entry.path();
+            let ext = fp.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+            if fp.is_file() && matches!(ext.as_str(), "md" | "markdown" | "txt" | "text" | "pdf") {
+                match embed_source_file(layout, cfg, store, fp) {
+                    Ok(n) => {
+                        files += 1;
+                        chunks += n;
+                    }
+                    Err(e) => eprintln!("  skipped {}: {e}", fp.display()),
+                }
+            }
+        }
+        println!("imported {files} file(s), {chunks} chunk(s) from `{}`", p.display());
+        return Ok(());
+    }
+    let n = embed_source_file(layout, cfg, store, p)?;
+    println!("imported `{}` — {n} chunk(s) as a research source", super::imports::source_name(p));
+    Ok(())
+}
+
+/// Embed one file as a research source (thread-global); returns the chunk count.
+fn embed_source_file(layout: &ProjectLayout, cfg: &Config, store: &Store, p: &std::path::Path) -> Result<usize> {
+    use super::imports;
     let text = imports::read_source(p)?;
     let chunks = imports::chunk_text(&text, cfg.research.import_chunk_chars.max(200));
     if chunks.is_empty() {
-        anyhow::bail!("no text extracted from {path}");
+        anyhow::bail!("no text extracted from {}", p.display());
     }
     let name = imports::source_name(p);
     let abs = std::fs::canonicalize(p)
         .map(|c| c.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| path.to_string());
+        .unwrap_or_else(|_| p.to_string_lossy().into_owned());
     let now = chrono::Utc::now().to_rfc3339();
     let mut doc_ids = Vec::new();
     for (i, chunk) in chunks.iter().enumerate() {
@@ -2137,21 +2516,20 @@ pub(crate) fn import_cli(layout: &ProjectLayout, cfg: &Config, store: &Store, pa
         doc_ids.push(id.to_string());
     }
     let mut imports_store = imports::Imports::load(layout);
+    if let Some(old) = imports_store.sources.get(&name) {
+        for id in &old.doc_ids {
+            if let Ok(u) = uuid::Uuid::parse_str(id) {
+                let _ = store.raw().delete_document(u);
+            }
+        }
+    }
     let chunks_n = doc_ids.len();
     imports_store.sources.insert(
         name.clone(),
-        imports::ImportedSource {
-            name: name.clone(),
-            path: abs,
-            doc_ids,
-            thread: String::new(),
-            imported_at: now,
-            chunks: chunks_n,
-        },
+        imports::ImportedSource { name, path: abs, doc_ids, thread: String::new(), imported_at: now, chunks: chunks_n },
     );
     imports_store.save(layout)?;
-    println!("imported `{name}` — {chunks_n} chunk(s) as a research source");
-    Ok(())
+    Ok(chunks_n)
 }
 
 pub(crate) fn list_threads_cli(layout: &ProjectLayout, format: Option<&str>) -> Result<()> {

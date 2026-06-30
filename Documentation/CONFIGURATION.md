@@ -2442,6 +2442,16 @@ research: {
   dedup_warn_score: 0.92
   // /import: max characters per embedded chunk of an imported document (R2-B).
   import_chunk_chars: 1500
+  // /web (R2-C) — web search & fetch. Unavailable until a provider is set.
+  web: {
+    enabled: false
+    provider: "none"            // tavily | searxng | none
+    api_key: ""                 // Tavily key
+    endpoint: ""                // SearXNG base URL, e.g. https://searx.example.org
+    max_results: 5
+    fetch: true                 // fetch full page text (SearXNG; Tavily inlines it)
+    pipeline: "chat"            // chat (LLM + factcheck-before-commit) | ingest (cite-as-sources)
+  }
 }
 ```
 

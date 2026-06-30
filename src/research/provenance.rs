@@ -45,6 +45,7 @@ impl SourceRecord {
     /// A one-line human summary for the overlay / `/sources` report.
     pub(super) fn summary(&self) -> String {
         match self.origin.as_str() {
+            "web" if !self.detail.is_empty() => format!("web: {}", self.detail),
             "document" if !self.detail.is_empty() => format!("document: {}", self.detail),
             "model" if !self.query.is_empty() => format!("model · from query: {}", self.query),
             "promoted" if !self.detail.is_empty() => format!("promoted from note: {}", self.detail),

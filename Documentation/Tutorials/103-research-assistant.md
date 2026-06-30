@@ -179,11 +179,53 @@ retrieved alongside your Facts and prepended (cited as `[source: name]`) to grou
 `/fact` taken from a source-grounded answer records provenance **`document`** with the source name.
 
 - **`/import`** (bare) lists your imported sources; **`/forget <name>`** removes one.
+- **`/import <folder>`** imports a **whole directory** (recursively): every `.md` / `.txt` / `.pdf`
+  inside becomes a research source — point it at an Obsidian-style vault or a folder of notes and the
+  status line reports how many files and chunks landed. Re-importing replaces a same-named source.
 - PDFs are text-extracted on import; scanned/image-only PDFs yield little text (no OCR).
 - Imported chunks are retrieved whenever RAG is on (any mode except *Full only*).
 
 This is the first step of *grounded research*: your corpus can now stand on real documents, with every
 derived fact citing where it came from.
+
+## 6¾. Web search & fetch (1.5.2)
+
+Bring **live web sources** in — with the safety posture you choose. Configure a provider in
+`research.web` (Tavily with an API key, or your own SearXNG instance), then:
+
+- **`/web <query>`** (default) searches + fetches and **grounds an LLM answer** on the results, cited by
+  URL. A **`/fact`** taken from that web-grounded answer is **fact-checked before it commits**: a
+  single-fact accuracy check runs in the confirmation overlay — `ACCURATE` inserts, `DUBIOUS` /
+  `INACCURATE` shows the verdict and asks you to confirm again (`Ctrl+S`). Provenance is recorded as
+  `web` with the source URL(s) and the verdict.
+- **`/web --ingest <query>`** instead embeds the fetched pages directly as cited research sources (like
+  `/import`, but from the web) — no LLM in the loop.
+
+Set the default with `research.web.pipeline` (`chat` or `ingest`); `--chat` / `--ingest` override it per
+call. Web search needs network and a provider; without one, `/web` simply reports it's unavailable.
+
+## 6⅞. Deterministic calculation — `/calc` (1.5.2)
+
+Not every fact comes from a model or the web — some you just **compute**. **`/calc <expr>`** evaluates a
+deterministic expression in the in-tree Bund VM, with a prelude of **physical constants** and
+**unit-conversion words**. The computation *is* its own proof: a `/fact` taken from a `/calc` result
+records provenance **`computed`** and **skips the fact-check gate** entirely — nothing can be fabricated.
+
+```
+/calc 100 mi2km        → = 160.9344
+/calc 4.2 ly2km        → = 3.97e13
+/calc 20 c2f           → = 68
+/calc calc.pi          → = 3.14159265358979
+```
+
+- **Conversions** (pop a number, push the result): `mi2km` `km2mi` `m2ft` `ft2m` `m2mi` `mi2m`
+  `c2f` `f2c` `c2k` `k2c` `kg2lb` `lb2kg` `kmh2mph` `mph2kmh` `au2km` `km2au` `ly2km` `km2ly`
+  `ly2au` `au2ly` `pc2ly` `ly2pc` `deg2rad` `rad2deg`.
+- **Constants** (push a value, SI base units): `calc.pi` `calc.tau` `calc.e` `calc.c` (speed of light)
+  `calc.grav` (G) `calc.gee` (g₀) `calc.au` `calc.ly` `calc.pc` `calc.year` `calc.day` `calc.hour`
+  `calc.minute`.
+- Because it's Bund, the full stack language is available too: `/calc 3 4 + 5 *` → `= 35`. Each word
+  also has a `calc.`-prefixed form if a short alias collides with a builtin.
 
 ## 7. Deeper research
 

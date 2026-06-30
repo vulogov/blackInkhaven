@@ -3934,6 +3934,46 @@ pub struct ResearchConfig {
     /// RESRCH-2 (R2-B) — max characters per embedded chunk when importing a
     /// document (`/import`).
     pub import_chunk_chars: usize,
+    /// RESRCH-2 (R2-C) — web search & fetch settings.
+    #[serde(default)]
+    pub web: WebConfig,
+}
+
+/// RESRCH-2 (R2-C) — `research.web` block. `/web` is unavailable until a
+/// provider is configured; everything degrades cleanly when absent / offline.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WebConfig {
+    /// Master switch for `/web`.
+    pub enabled: bool,
+    /// `tavily` | `searxng` | `none`.
+    pub provider: String,
+    /// API key (Tavily).
+    pub api_key: String,
+    /// Base URL of a SearXNG instance (e.g. `https://searx.example.org`).
+    pub endpoint: String,
+    /// Max results to retrieve.
+    pub max_results: usize,
+    /// Fetch each result's full page text (SearXNG; Tavily returns content
+    /// inline). When false, only titles + snippets are used.
+    pub fetch: bool,
+    /// Default pipeline for a bare `/web`: `chat` (LLM + factcheck-before-commit)
+    /// or `ingest` (embed pages as cited research sources).
+    pub pipeline: String,
+}
+
+impl Default for WebConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            provider: "none".to_string(),
+            api_key: String::new(),
+            endpoint: String::new(),
+            max_results: 5,
+            fetch: true,
+            pipeline: "chat".to_string(),
+        }
+    }
 }
 
 impl Default for ResearchConfig {
@@ -3950,6 +3990,7 @@ impl Default for ResearchConfig {
             verify_min_sentence_words: 8,
             dedup_warn_score: 0.92,
             import_chunk_chars: 1500,
+            web: WebConfig::default(),
         }
     }
 }
