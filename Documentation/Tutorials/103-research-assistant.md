@@ -163,10 +163,37 @@ own knowledge.
   quantities, named entities) and have the model self-assess each as **HIGH / MEDIUM / ⚠ LOW**
   confidence. Guidance for what to investigate before you `/fact` it.
 - **`/factcheck`** — a post-hoc audit of the **whole Facts corpus** (multiple LLM calls): every fact is
-  judged for real-world accuracy (`ACCURATE` / `DUBIOUS` / `INACCURATE`), then the full set is checked
-  for facts that **contradict each other**. The report lands in the chat in two sections — factual
-  accuracy and mutual consistency. Read-only; it never edits your corpus. Run it periodically as your
-  knowledge base grows.
+  judged for real-world accuracy (`ACCURATE` / `DUBIOUS` / `INACCURATE`), then the corpus is checked for
+  facts that **contradict each other**. The accuracy pass and the consistency pass both **stream live**
+  (dim tokens) so you see progress, and the consistency pass is **chunked by Facts chapter** (plus a
+  cross-branch pass) instead of one unbounded call — it scales to a large corpus. The report lands in the
+  chat in two sections — factual accuracy and mutual consistency — with a `✓N ?N ✗N` tally. Read-only.
+
+### Verdict flags in the Facts tree + `/whatswrong` (1.5.3)
+
+After a `/factcheck`, each fact in the **Facts tree** carries a verdict glyph so problems are visible at a
+glance:
+
+- **✓** (green) — accurate · **?** (yellow) — questionable (`DUBIOUS`) · **✗** (red) — inaccurate.
+
+Navigate to a flagged fact (the marks persist in `.inkhaven/fact-verdicts.json` until the next audit),
+then run **`/whatswrong`** — it streams an AI explanation of *what* is inaccurate or questionable and what
+the correct information is, seeded with the recorded verdict reason and written in the project language.
+`/whatswrong` targets the **selected fact** by default, or an explicit `/whatswrong facts/path`. This is
+the loop: `/factcheck` flags → the tree shows where → `/whatswrong` explains → you fix it by hand.
+
+### Cost (1.5.3)
+
+The status bar's session cost is now priced from a **per-model table** (`cost.pricing`, USD per million
+tokens, input and output separately) against the provider's **real reported token usage** when available
+— shown as `$0.012` (exact) or `~$0.012` (the char-length estimate, when a provider reports no usage).
+It still only *informs*; `research.session_budget_warn` never blocks.
+
+### Tab-completion (1.5.3)
+
+In the query prompt, **Tab** completes a Facts slug path after `/goto ` or after a `→` insertion arrow
+(e.g. `/fact "…" → facts/ro⇥`): one match completes and descends, several splice the common prefix and
+list the options in the status bar. Elsewhere, Tab still cycles panes.
 
 ---
 
@@ -301,8 +328,21 @@ research: {
 }
 ```
 
-Colours follow your `theme:` block. Costs are a coarse, clearly-marked `~` estimate — they inform, never
-block.
+Colours follow your `theme:` block. Cost is priced from the **`cost.pricing`** table (per-model USD per
+million tokens, input/output separately) against the provider's real token usage when reported — `$`
+exact, `~$` estimated. It still only informs, never blocks.
+
+```hjson
+cost: {
+  pricing: {
+    "gemini-2.5-pro": { input_per_1m: 1.25, output_per_1m: 10.0 }
+    "claude-sonnet":  { input_per_1m: 3.0,  output_per_1m: 15.0 }
+    // … keyed by a model-name substring; longest match wins
+  }
+  default_input_per_1m: 3.0       // fallback for unlisted models
+  default_output_per_1m: 3.0
+}
+```
 
 ---
 

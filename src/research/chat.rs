@@ -21,6 +21,11 @@ pub(super) struct ChatTurn {
     /// R3-C — true for a deterministic `/calc` result, so a `/fact` from it is
     /// recorded with `origin=computed` (un-fabricatable; no gate).
     pub computed: bool,
+    /// R2-E — the model that produced this turn (for the per-model cost table).
+    pub model: String,
+    /// R2-E — provider-reported token usage, set on stream completion; `None`
+    /// when the provider didn't report (cost then falls back to the heuristic).
+    pub usage: Option<crate::ai::stream::TokenUsage>,
 }
 
 impl ChatTurn {
@@ -33,6 +38,8 @@ impl ChatTurn {
             sources: Vec::new(),
             web_grounded: false,
             computed: false,
+            model: String::new(),
+            usage: None,
         }
     }
 
@@ -47,6 +54,8 @@ impl ChatTurn {
             sources: Vec::new(),
             web_grounded: false,
             computed: false,
+            model: String::new(),
+            usage: None,
         }
     }
 }

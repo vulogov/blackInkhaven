@@ -32,6 +32,7 @@ mod provenance;
 mod rag;
 mod render;
 mod thread;
+mod verdicts;
 mod verify;
 mod web;
 

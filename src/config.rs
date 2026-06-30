@@ -3358,14 +3358,78 @@ pub struct CostConfig {
     /// Trailing days of per-category AI-call tallies kept in
     /// `.inkhaven/ai_usage.json` before the oldest are pruned.
     pub usage_retention_days: usize,
+    /// R2-E — per-model USD price table (input/output per **million** tokens),
+    /// keyed by a substring of the model name (longest match wins). Drives the
+    /// research session-cost display; the `default` fallback prices any model not
+    /// listed. Informative only — cost never blocks.
+    pub pricing: std::collections::BTreeMap<String, ModelPrice>,
+    /// Fallback price (USD per million tokens) for models absent from `pricing`.
+    pub default_input_per_1m: f64,
+    pub default_output_per_1m: f64,
+}
+
+/// R2-E — one model's input/output price in **USD per million tokens**.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ModelPrice {
+    pub input_per_1m: f64,
+    pub output_per_1m: f64,
+}
+
+impl Default for ModelPrice {
+    fn default() -> Self {
+        // Mirrors the legacy flat ~$0.003/1K = $3/1M estimate when a row omits a side.
+        Self { input_per_1m: 3.0, output_per_1m: 3.0 }
+    }
+}
+
+impl CostConfig {
+    /// The price row for `model` — the longest key that is a substring of the
+    /// model name, else the `default_*` fallback. (Keys like `gpt-4o`,
+    /// `claude-sonnet`, `gemini-2.5-pro` match their family.)
+    pub fn price_for(&self, model: &str) -> ModelPrice {
+        let m = model.to_ascii_lowercase();
+        let best = self
+            .pricing
+            .iter()
+            .filter(|(k, _)| m.contains(k.to_ascii_lowercase().as_str()))
+            .max_by_key(|(k, _)| k.len());
+        match best {
+            Some((_, p)) => *p,
+            None => ModelPrice {
+                input_per_1m: self.default_input_per_1m,
+                output_per_1m: self.default_output_per_1m,
+            },
+        }
+    }
 }
 
 impl Default for CostConfig {
     fn default() -> Self {
+        // Published list prices (USD / 1M tokens) as of the 1.5.3 cut — adjust in
+        // config as prices move. Keys match on a model-name substring.
+        let pricing = [
+            ("gemini-2.5-pro", 1.25, 10.0),
+            ("gemini-2.5-flash", 0.30, 2.50),
+            ("gemini", 1.25, 10.0),
+            ("claude-opus", 15.0, 75.0),
+            ("claude-sonnet", 3.0, 15.0),
+            ("claude-haiku", 0.80, 4.0),
+            ("gpt-4o-mini", 0.15, 0.60),
+            ("gpt-4o", 2.50, 10.0),
+            ("deepseek", 0.27, 1.10),
+            ("grok", 2.0, 10.0),
+        ]
+        .iter()
+        .map(|(k, i, o)| (k.to_string(), ModelPrice { input_per_1m: *i, output_per_1m: *o }))
+        .collect();
         Self {
             world_daily_call_cap: 200,
             inner_socrates_daily_call_cap: 150,
             usage_retention_days: 30,
+            pricing,
+            default_input_per_1m: 3.0,
+            default_output_per_1m: 3.0,
         }
     }
 }
