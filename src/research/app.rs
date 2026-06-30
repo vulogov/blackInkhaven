@@ -566,6 +566,7 @@ impl ResearchApp {
             },
             Command::Forget(name) => self.run_forget(&name),
             Command::Web { ingest, query } => self.start_web(ingest, query),
+            Command::Calc(expr) => self.run_calc(&expr),
             Command::Chain(steps) => self.start_chain(steps),
         }
     }
@@ -603,46 +604,74 @@ impl ResearchApp {
     /// embed the chunks into the shared vector store as research sources, so they
     /// ground answers and `/fact` can cite them.
     fn run_import(&mut self, path: &str) {
-        use super::imports;
         let p = std::path::Path::new(path);
-        let text = match imports::read_source(p) {
-            Ok(t) => t,
-            Err(e) => {
-                self.status_message = Some(format!("import: {e}"));
-                return;
+        if p.is_dir() {
+            // Folder / vault import (R3-D, brought forward): recurse over the
+            // supported files.
+            let mut files = 0usize;
+            let mut chunks = 0usize;
+            let mut errors = 0usize;
+            for entry in walkdir::WalkDir::new(p).into_iter().filter_map(|e| e.ok()) {
+                let fp = entry.path();
+                if !fp.is_file() {
+                    continue;
+                }
+                let ext = fp.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+                if !matches!(ext.as_str(), "md" | "markdown" | "txt" | "text" | "pdf") {
+                    continue;
+                }
+                match self.import_one_file(fp) {
+                    Ok(n) => {
+                        files += 1;
+                        chunks += n;
+                    }
+                    Err(_) => errors += 1,
+                }
             }
-        };
+            self.status_message = Some(format!(
+                "✓ imported {files} file(s), {chunks} chunk(s) from `{}`{}",
+                p.display(),
+                if errors > 0 { format!(" ({errors} skipped)") } else { String::new() }
+            ));
+            return;
+        }
+        match self.import_one_file(p) {
+            Ok(n) => {
+                let name = super::imports::source_name(p);
+                self.status_message =
+                    Some(format!("✓ imported `{name}` — {n} chunk(s) as a research source"));
+            }
+            Err(e) => self.status_message = Some(format!("import: {e}")),
+        }
+    }
+
+    /// Read + chunk + embed one file as a research source; returns the chunk
+    /// count. Re-import drops the same-named source's previous chunks first.
+    fn import_one_file(&mut self, p: &std::path::Path) -> std::result::Result<usize, String> {
+        use super::imports;
+        let text = imports::read_source(p).map_err(|e| e.to_string())?;
         let chunk_chars = self.cfg.research.import_chunk_chars.max(200);
         let chunks = imports::chunk_text(&text, chunk_chars);
         if chunks.is_empty() {
-            self.status_message = Some("import: no text extracted".to_string());
-            return;
+            return Err("no text extracted".to_string());
         }
         let name = imports::source_name(p);
         let abs = std::fs::canonicalize(p)
             .map(|c| c.to_string_lossy().into_owned())
-            .unwrap_or_else(|_| path.to_string());
+            .unwrap_or_else(|_| p.to_string_lossy().into_owned());
         let now = chrono::Utc::now().to_rfc3339();
         let mut doc_ids = Vec::new();
         for (i, chunk) in chunks.iter().enumerate() {
             let meta = serde_json::json!({
-                "kind": imports::SOURCE_KIND,
-                "source": abs,
-                "name": name,
-                "thread": self.thread.name,
-                "chunk": i,
-                "imported_at": now,
+                "kind": imports::SOURCE_KIND, "source": abs, "name": name,
+                "thread": self.thread.name, "chunk": i, "imported_at": now,
             });
             match self.store.raw().add_document(meta, chunk.as_bytes()) {
                 Ok(id) => doc_ids.push(id.to_string()),
-                Err(e) => {
-                    self.status_message = Some(format!("import: embed failed: {e}"));
-                    return;
-                }
+                Err(e) => return Err(format!("embed failed: {e}")),
             }
         }
         let mut imports_store = imports::Imports::load(&self.layout);
-        // Re-import: drop the previous chunks of a same-named source first.
         if let Some(old) = imports_store.sources.get(&name) {
             for id in &old.doc_ids {
                 if let Ok(uuid) = uuid::Uuid::parse_str(id) {
@@ -654,7 +683,7 @@ impl ResearchApp {
         imports_store.sources.insert(
             name.clone(),
             imports::ImportedSource {
-                name: name.clone(),
+                name,
                 path: abs,
                 doc_ids,
                 thread: self.thread.name.clone(),
@@ -663,7 +692,7 @@ impl ResearchApp {
             },
         );
         let _ = imports_store.save(&self.layout);
-        self.status_message = Some(format!("✓ imported `{name}` — {chunks_n} chunk(s) as a research source"));
+        Ok(chunks_n)
     }
 
     /// `/import` (bare) — list the imported research sources.
@@ -702,6 +731,38 @@ impl ResearchApp {
                 self.status_message = Some(format!("forgot `{}` ({} chunk(s))", src.name, src.doc_ids.len()));
             }
             None => self.status_message = Some(format!("no imported source named `{name}`")),
+        }
+    }
+
+    /// `/calc <expr>` (R3-C) — evaluate a deterministic Bund expression
+    /// (constants + unit conversions in the `calc.*` words). The result is its
+    /// own proof; a `/fact` from it records `origin=computed` (no gate).
+    fn run_calc(&mut self, expr: &str) {
+        let expr = expr.trim();
+        if expr.is_empty() {
+            self.status_message =
+                Some("usage: /calc <expr>  e.g. /calc 100 mi2km   ·   /calc 4.2 ly2km".to_string());
+            return;
+        }
+        match crate::scripting::eval(expr) {
+            Ok(out) => {
+                let mut body = String::new();
+                if !out.stdout.trim().is_empty() {
+                    body.push_str(out.stdout.trim());
+                    body.push('\n');
+                }
+                match &out.top {
+                    Some(v) => body.push_str(&format!("= {}", crate::scripting::format_value(v))),
+                    None if body.is_empty() => body.push_str("(no result)"),
+                    None => {}
+                }
+                let mut turn = ChatTurn::with_response(format!("/calc {expr}"), body);
+                turn.computed = true;
+                self.chat_history.push(turn);
+                self.chat_scroll = 0;
+                self.status_message = Some("computed (deterministic) — /fact to record it".to_string());
+            }
+            Err(e) => self.status_message = Some(format!("calc: {e}")),
         }
     }
 
@@ -1540,7 +1601,9 @@ impl ResearchApp {
         // Provenance: `web` when the answer was grounded on live web results
         // (R2-C, fact-checked before commit); `document` for imported sources
         // (R2-B); else `model`, from the originating research query.
-        let prov = if last.web_grounded {
+        let prov = if last.computed {
+            ProvMeta { origin: "computed".to_string(), query, detail: String::new() }
+        } else if last.web_grounded {
             ProvMeta { origin: "web".to_string(), query, detail: last.sources.join(", ") }
         } else if last.sources.is_empty() {
             ProvMeta { origin: "model".to_string(), query, detail: String::new() }
@@ -2406,17 +2469,42 @@ fn build_prompt_history(thread: &ResearchThread) -> Vec<String> {
 /// `inkhaven research --import <path>` — ingest a document non-interactively
 /// (R2-B). Thread-agnostic (recorded under thread ""), available to every thread.
 pub(crate) fn import_cli(layout: &ProjectLayout, cfg: &Config, store: &Store, path: &str) -> Result<()> {
-    use super::imports;
     let p = std::path::Path::new(path);
+    if p.is_dir() {
+        let (mut files, mut chunks) = (0usize, 0usize);
+        for entry in walkdir::WalkDir::new(p).into_iter().filter_map(|e| e.ok()) {
+            let fp = entry.path();
+            let ext = fp.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+            if fp.is_file() && matches!(ext.as_str(), "md" | "markdown" | "txt" | "text" | "pdf") {
+                match embed_source_file(layout, cfg, store, fp) {
+                    Ok(n) => {
+                        files += 1;
+                        chunks += n;
+                    }
+                    Err(e) => eprintln!("  skipped {}: {e}", fp.display()),
+                }
+            }
+        }
+        println!("imported {files} file(s), {chunks} chunk(s) from `{}`", p.display());
+        return Ok(());
+    }
+    let n = embed_source_file(layout, cfg, store, p)?;
+    println!("imported `{}` — {n} chunk(s) as a research source", super::imports::source_name(p));
+    Ok(())
+}
+
+/// Embed one file as a research source (thread-global); returns the chunk count.
+fn embed_source_file(layout: &ProjectLayout, cfg: &Config, store: &Store, p: &std::path::Path) -> Result<usize> {
+    use super::imports;
     let text = imports::read_source(p)?;
     let chunks = imports::chunk_text(&text, cfg.research.import_chunk_chars.max(200));
     if chunks.is_empty() {
-        anyhow::bail!("no text extracted from {path}");
+        anyhow::bail!("no text extracted from {}", p.display());
     }
     let name = imports::source_name(p);
     let abs = std::fs::canonicalize(p)
         .map(|c| c.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| path.to_string());
+        .unwrap_or_else(|_| p.to_string_lossy().into_owned());
     let now = chrono::Utc::now().to_rfc3339();
     let mut doc_ids = Vec::new();
     for (i, chunk) in chunks.iter().enumerate() {
@@ -2428,21 +2516,20 @@ pub(crate) fn import_cli(layout: &ProjectLayout, cfg: &Config, store: &Store, pa
         doc_ids.push(id.to_string());
     }
     let mut imports_store = imports::Imports::load(layout);
+    if let Some(old) = imports_store.sources.get(&name) {
+        for id in &old.doc_ids {
+            if let Ok(u) = uuid::Uuid::parse_str(id) {
+                let _ = store.raw().delete_document(u);
+            }
+        }
+    }
     let chunks_n = doc_ids.len();
     imports_store.sources.insert(
         name.clone(),
-        imports::ImportedSource {
-            name: name.clone(),
-            path: abs,
-            doc_ids,
-            thread: String::new(),
-            imported_at: now,
-            chunks: chunks_n,
-        },
+        imports::ImportedSource { name, path: abs, doc_ids, thread: String::new(), imported_at: now, chunks: chunks_n },
     );
     imports_store.save(layout)?;
-    println!("imported `{name}` — {chunks_n} chunk(s) as a research source");
-    Ok(())
+    Ok(chunks_n)
 }
 
 pub(crate) fn list_threads_cli(layout: &ProjectLayout, format: Option<&str>) -> Result<()> {

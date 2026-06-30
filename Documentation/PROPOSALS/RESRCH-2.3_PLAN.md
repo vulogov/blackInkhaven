@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Track** | RESRCH-2 (Grounded Research) — R2-C |
-| **Status** | Complete (WC-P1..WC-P4) — pending cut, 1.5.2 |
+| **Status** | Shipped 1.5.2 (WC-P1..WC-P4) |
 | **Target** | 1.5.2 |
 | **Builds on** | RESRCH-2.2 (document import: research-source retrieval + provenance) |
 | **New runtime crates** | **1 direct** — `reqwest` (already transitive via `genai`); SearXNG HTML→text uses a crate-free tag-strip |

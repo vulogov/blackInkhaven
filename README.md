@@ -21,37 +21,36 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.5.1 — Grounded Research
+## Latest release · 1.5.2 — The Web, Folders & Deterministic Facts
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.5.1.md`](Documentation/RELEASE_NOTES/1.5.1.md)
-· Plans: [`RESRCH-2.1`](Documentation/PROPOSALS/RESRCH-2.1_PLAN.md) ·
-[`RESRCH-2.2`](Documentation/PROPOSALS/RESRCH-2.2_PLAN.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.5.2.md`](Documentation/RELEASE_NOTES/1.5.2.md)
+· Plans: [`RESRCH-2.3`](Documentation/PROPOSALS/RESRCH-2.3_PLAN.md) ·
+[`RESRCH-3`](Documentation/PROPOSALS/RESRCH-3_TRACK.md)
 
-1.5.0 gave the **Research Assistant** (`inkhaven research`) a verified Facts corpus. 1.5.1 makes that
-corpus **trustworthy** and lets it stand on **real documents** — the first two cuts of the RESRCH-2
-track.
+1.5.1 grounded the **Research Assistant** (`inkhaven research`) on your own documents. 1.5.2 widens
+**where facts can come from** — the live web, whole folders, and deterministic calculation — on the same
+source-retrieval + provenance plumbing.
 
-### Trust: provenance, promotion, dedup (zero new crates)
+### Web search & fetch (one new crate, `reqwest`)
 
-Every inserted fact now records **where it came from** (`model` / `manual` / `promoted` / `document`),
-shown in the confirmation overlay and the new **`/sources`** command. A **near-duplicate guard** warns
-once before a `/fact` lands a fact too similar to an existing one (`research.dedup_warn_score`, informs
-never blocks). **`/promote [notes/path]`** turns a speculative **Note** into a verified **Fact** through
-the same reviewed flow.
+**`/web <query>`** searches + fetches and **grounds an LLM answer** on the results (cited by URL); a
+`/fact` taken from it is **fact-checked before it commits**, recording `web` provenance with the verdict.
+**`/web --ingest <query>`** instead embeds the fetched pages directly as cited sources (no LLM).
+Providers are configurable — **Tavily** (key) or your own **SearXNG** — via `research.web`.
 
-### Document import (one new crate, `pdf-extract`)
+### Folder import & deterministic `/calc` (zero new crates)
 
-**`/import <path>`** (or `inkhaven research --import`) ingests a **Markdown / text / PDF** file as a
-*research source*: it chunks + embeds the text into the shared vector store, retrieves those chunks
-alongside your Facts (cited `[source: name]`), and records `document` provenance on facts derived from
-them. **`/import`** lists, **`/forget <name>`** removes. Ground the model on your own references, with
-every derived fact citing its source.
+**`/import <folder>`** recursively imports a whole directory of `.md` / `.txt` / `.pdf` (point it at an
+Obsidian-style vault). **`/calc <expr>`** evaluates a deterministic expression in the in-tree **Bund**
+VM — physical constants and unit conversions (`100 mi2km` → `160.9344`); the result *is* its proof, so a
+`/fact` from it records `computed` provenance and **skips the fact-check gate**. Integer and float are
+interchangeable in word arguments.
 
 ### Dependencies & compatibility
 
-**One new runtime crate** — `pdf-extract` (PDF text extraction); the Markdown/text path and the trust
-cut need none. No new system books, no new `NodeKind`, no `facts.duckdb`. New sidecars:
-`.inkhaven/fact-sources.json`, `.inkhaven/research-sources.json`.
+**One new runtime crate** — `reqwest` (HTTP for `/web`, rustls); folder import and `/calc` need none
+(`/calc` reuses the Bund VM). New provenance origins `web` / `computed`; new config block `research.web`.
+No new system books, no new `NodeKind`.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

@@ -18,6 +18,9 @@ pub(super) struct ChatTurn {
     /// R2-C — true when this answer was grounded on live web results, so a
     /// `/fact` from it is fact-checked before it commits.
     pub web_grounded: bool,
+    /// R3-C — true for a deterministic `/calc` result, so a `/fact` from it is
+    /// recorded with `origin=computed` (un-fabricatable; no gate).
+    pub computed: bool,
 }
 
 impl ChatTurn {
@@ -29,6 +32,7 @@ impl ChatTurn {
             cost: 0.0,
             sources: Vec::new(),
             web_grounded: false,
+            computed: false,
         }
     }
 
@@ -42,6 +46,7 @@ impl ChatTurn {
             cost: 0.0,
             sources: Vec::new(),
             web_grounded: false,
+            computed: false,
         }
     }
 }
