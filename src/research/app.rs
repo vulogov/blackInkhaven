@@ -112,6 +112,8 @@ pub(crate) struct ResearchApp {
     streaming_turn: Option<usize>,
     /// In-flight extraction (R-P10/R-P11) feeding the confirmation overlay.
     extracting: Option<ExtractState>,
+    /// In-flight `/verify` probe (R-P14): receiver + accumulated buffer.
+    verify_rx: Option<(mpsc::UnboundedReceiver<StreamMsg>, String)>,
     /// The editable insertion confirmation overlay (G1/G2).
     pub(super) confirmation: Option<ConfirmationState>,
     /// Accumulated session cost estimate (USD).
@@ -165,6 +167,7 @@ impl ResearchApp {
             stream_rx: None,
             streaming_turn: None,
             extracting: None,
+            verify_rx: None,
             confirmation: None,
             session_cost: 0.0,
             focus: Focus::QueryPrompt,
@@ -186,6 +189,7 @@ impl ResearchApp {
         while !self.should_quit {
             self.poll_stream();
             self.poll_extraction();
+            self.poll_verify();
             terminal.draw(|f| render::render(f, self))?;
             if event::poll(Duration::from_millis(100))? {
                 if let Event::Key(key) = event::read()? {
@@ -349,8 +353,8 @@ impl ResearchApp {
             }
             Command::Goto(path) => self.goto_path(&path),
             Command::Diff => self.run_diff(),
+            Command::Verify => self.run_verify(),
             // Implemented in later phases.
-            Command::Verify => self.status_message = Some("/verify arrives in R-P14".to_string()),
             Command::Chain(_) => self.status_message = Some("/chain arrives in R-P15".to_string()),
         }
     }
@@ -577,6 +581,90 @@ impl ResearchApp {
             out,
         ));
         self.chat_scroll = 0;
+    }
+
+    /// R-P14 — `/verify`: probe the model's confidence in the specific claims of
+    /// the last response. Extracts checkable claims, then asks for a HIGH /
+    /// MEDIUM / LOW assessment of each.
+    fn run_verify(&mut self) {
+        const MIN_WORDS: usize = 8;
+        if self.verify_rx.is_some() {
+            self.status_message = Some("a verification is already running".to_string());
+            return;
+        }
+        let Some(response) = self.chat_history.last().map(|t| t.response.clone()) else {
+            self.status_message = Some("no research response to verify".to_string());
+            return;
+        };
+        let claims = super::verify::extract_claims(&response, MIN_WORDS);
+        if claims.is_empty() {
+            self.status_message = Some("no specific claims found to verify".to_string());
+            return;
+        }
+        let ai = match crate::ai::AiClient::from_config(&self.cfg.llm) {
+            Ok(a) => a,
+            Err(e) => {
+                self.status_message = Some(format!("no LLM provider: {e}"));
+                return;
+            }
+        };
+        let (model, _env) = match ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(m) => m,
+            Err(e) => {
+                self.status_message = Some(format!("provider error: {e}"));
+                return;
+            }
+        };
+        let rx = spawn_chat_stream(
+            ai.client.clone(),
+            model.to_string(),
+            Some(super::verify::PROBE_SYSTEM.to_string()),
+            Vec::new(),
+            super::verify::probe_user(&claims),
+            llm::CATEGORY,
+        );
+        self.verify_rx = Some((rx, String::new()));
+        self.status_message = Some(format!("Verifying {} claim(s)…", claims.len()));
+    }
+
+    /// Drain the `/verify` probe; on completion, render the verdicts (LOW marked
+    /// with ⚠).
+    fn poll_verify(&mut self) {
+        let Some((rx, buf)) = self.verify_rx.as_mut() else { return };
+        let mut done = false;
+        loop {
+            match rx.try_recv() {
+                Ok(StreamMsg::Token(t)) => buf.push_str(&t),
+                Ok(StreamMsg::Done) | Err(mpsc::error::TryRecvError::Disconnected) => {
+                    done = true;
+                    break;
+                }
+                Ok(StreamMsg::Error(e)) => {
+                    self.status_message = Some(format!("verify error: {e}"));
+                    self.verify_rx = None;
+                    return;
+                }
+                Err(mpsc::error::TryRecvError::Empty) => break,
+            }
+        }
+        if done {
+            let (_, buf) = self.verify_rx.take().unwrap();
+            let mut out = String::new();
+            for line in buf.lines() {
+                match super::verify::Confidence::parse(line) {
+                    Some(super::verify::Confidence::Low) => out.push_str(&format!("⚠ {}\n", line.trim())),
+                    Some(_) => out.push_str(&format!("{}\n", line.trim())),
+                    None => {
+                        if !line.trim().is_empty() {
+                            out.push_str(&format!("{}\n", line.trim()));
+                        }
+                    }
+                }
+            }
+            self.chat_history.push(ChatTurn::with_response("[/verify — claim confidence]".to_string(), out));
+            self.chat_scroll = 0;
+            self.status_message = None;
+        }
     }
 
     /// The id of a system book by tag.
