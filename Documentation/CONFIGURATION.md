@@ -2437,6 +2437,11 @@ research: {
   diff_top_n: 3
   // /verify: minimum sentence word count for claim extraction.
   verify_min_sentence_words: 8
+  // /fact: warn of a near-duplicate at/above this similarity (0..1); informs,
+  // never blocks (RESRCH-2.1).
+  dedup_warn_score: 0.92
+  // /import: max characters per embedded chunk of an imported document (R2-B).
+  import_chunk_chars: 1500
 }
 ```
 

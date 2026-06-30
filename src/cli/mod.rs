@@ -941,6 +941,10 @@ pub enum Command {
         /// Destination file for `--export-thread` (default: stdout).
         #[arg(long)]
         out: Option<String>,
+        /// 1.5.1 RESRCH-2 — ingest a document (md / txt / pdf) as a research
+        /// source and exit (non-interactive).
+        #[arg(long, value_name = "PATH")]
+        import: Option<String>,
     },
 
     /// 1.2.10+ — launch the standalone TUI configuration
@@ -4991,6 +4995,7 @@ impl Cli {
                 export_thread,
                 format,
                 out,
+                import,
             } => crate::research::run(
                 &project,
                 crate::research::ResearchInvocation {
@@ -4999,6 +5004,7 @@ impl Cli {
                     export_thread,
                     format,
                     out,
+                    import,
                 },
             )
             .map_err(Into::into),

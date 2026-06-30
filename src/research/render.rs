@@ -101,6 +101,10 @@ fn render_help(frame: &mut Frame, app: &ResearchApp, area: Rect) {
         Line::from("    /diff                similar facts already in the corpus"),
         Line::from("    /verify              confidence-probe the last response"),
         Line::from("    /factcheck           audit the whole corpus (truth + consistency)"),
+        Line::from("    /sources             list each fact's recorded provenance"),
+        Line::from("    /import [path]        ingest a md/txt/pdf as a research source (bare: list)"),
+        Line::from("    /forget <name>       remove an imported source"),
+        Line::from("    /promote [note] [→ p] turn a Note into a verified Fact"),
         Line::from("    /chain a → b → c     sequential research pipeline"),
         Line::from("    /rag /clear /save    switch RAG · clear chat · rename thread"),
         Line::from(""),
@@ -442,17 +446,28 @@ fn render_confirmation(frame: &mut Frame, app: &ResearchApp, area: Rect) {
     frame.render_widget(&c.title, parts[1]);
     frame.render_widget(Paragraph::new(Span::styled("─".repeat(inner.width as usize), Style::new().dim())), parts[2]);
     frame.render_widget(&c.body, parts[3]);
+    // Path + source (provenance, T-P3) on the location row.
+    let src = if c.book == super::extract::TargetBook::Facts && !c.prov.origin.is_empty() {
+        format!("   · src: {}", c.prov.origin)
+    } else {
+        String::new()
+    };
     frame.render_widget(
-        Paragraph::new(Span::styled(format!("→ {path}"), Style::new().dim())),
+        Paragraph::new(Span::styled(format!("→ {path}{src}"), Style::new().dim())),
         parts[4],
     );
-    frame.render_widget(
-        Paragraph::new(Span::styled(
+    // The action bar — or the near-duplicate warning (T-P4) when present.
+    let action = match &c.dup_warning {
+        Some(w) => Span::styled(
+            format!("⚠ {w}"),
+            Style::new().fg(app.theme.border_focused).bold(),
+        ),
+        None => Span::styled(
             "[Tab: field]  [Ctrl+S / Ctrl+Enter: confirm]  [Esc: discard]",
             Style::new().dim(),
-        )),
-        parts[5],
-    );
+        ),
+    };
+    frame.render_widget(Paragraph::new(action), parts[5]);
 }
 
 fn render_hints(frame: &mut Frame, app: &ResearchApp, area: Rect) {
