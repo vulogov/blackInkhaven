@@ -160,38 +160,108 @@ fn render_ai_chat(frame: &mut Frame, app: &ResearchApp, area: Rect) {
         return;
     }
 
-    let mut lines: Vec<Line> = Vec::new();
+    // G8 — when search is open, reserve a top bar for it.
+    let (search_bar, content) = match &app.chat_search {
+        Some(_) => {
+            let parts = Layout::vertical([Constraint::Length(1), Constraint::Fill(1)]).split(inner);
+            (Some(parts[0]), parts[1])
+        }
+        None => (None, inner),
+    };
+
+    // Build the chat lines as `(text, is_header)`.
+    let mut rows: Vec<(String, bool)> = Vec::new();
     for (i, turn) in app.chat_history.iter().enumerate() {
         if i > 0 {
-            lines.push(Line::from(""));
+            rows.push((String::new(), false));
         }
-        lines.push(Line::from(Span::styled(format!("[query {}]", i + 1), Style::new().bold())));
-        lines.push(Line::from(turn.prompt.clone()));
-        lines.push(Line::from(""));
+        rows.push((format!("[query {}]", i + 1), true));
+        rows.push((turn.prompt.clone(), false));
+        rows.push((String::new(), false));
         for l in turn.response.split('\n') {
-            lines.push(Line::from(l.to_string()));
+            rows.push((l.to_string(), false));
         }
         if turn.streaming {
-            lines.push(Line::from(Span::styled("▌", Style::new().dim())));
+            rows.push(("▌".to_string(), false));
         }
     }
 
-    // Scroll: chat_scroll counts lines UP from the bottom; clamp so we never
-    // scroll past the content (width-independent approximation).
+    // G8 — match lines (case-insensitive) and the current ordinal.
+    let query = app.chat_search.as_ref().map(|s| s.query.to_lowercase()).filter(|q| !q.is_empty());
+    let match_lines: Vec<usize> = match &query {
+        Some(q) => rows.iter().enumerate().filter(|(_, (t, _))| t.to_lowercase().contains(q)).map(|(i, _)| i).collect(),
+        None => Vec::new(),
+    };
+    let current_line: Option<usize> = if match_lines.is_empty() {
+        None
+    } else {
+        app.chat_search.as_ref().map(|s| match_lines[s.current % match_lines.len()])
+    };
+
+    let lines: Vec<Line> = rows
+        .iter()
+        .enumerate()
+        .map(|(i, (text, is_header))| {
+            if let (Some(q), true) = (&query, match_lines.contains(&i)) {
+                highlight_line(text, q, current_line == Some(i))
+            } else if *is_header {
+                Line::from(Span::styled(text.clone(), Style::new().bold()))
+            } else {
+                Line::from(text.clone())
+            }
+        })
+        .collect();
+
+    // Scroll: search jumps to the current match; otherwise bottom-anchored.
     let total = lines.len();
-    let height = inner.height as usize;
+    let height = content.height as usize;
     let max_scroll = total.saturating_sub(height);
-    let from_bottom = (app.chat_scroll as usize).min(max_scroll);
-    let top = max_scroll.saturating_sub(from_bottom) as u16;
+    let top = match current_line {
+        Some(l) => l.saturating_sub(height / 2).min(max_scroll) as u16,
+        None => {
+            let from_bottom = (app.chat_scroll as usize).min(max_scroll);
+            max_scroll.saturating_sub(from_bottom) as u16
+        }
+    };
     frame.render_widget(
         Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }).scroll((top, 0)),
-        inner,
+        content,
     );
+
+    if let (Some(bar), Some(search)) = (search_bar, &app.chat_search) {
+        let count = match_lines.len();
+        let pos = if count == 0 { 0 } else { (search.current % count) + 1 };
+        let label = format!(" /{}  ({pos}/{count})  n·N next/prev  Esc close", search.query);
+        frame.render_widget(Paragraph::new(label).style(Style::new().dim()), bar);
+    }
 
     // The editable insertion confirmation overlay (G1/G2), in the lower area.
     if app.confirmation.is_some() {
         render_confirmation(frame, app, inner);
     }
+}
+
+/// Split a line on `query` (case-insensitive), highlighting the matches. The
+/// current match line is additionally bold.
+fn highlight_line<'a>(text: &'a str, query: &str, is_current: bool) -> Line<'a> {
+    let base = if is_current { Style::new().bold() } else { Style::new() };
+    let hit = Style::new().bg(ratatui::style::Color::Yellow).fg(ratatui::style::Color::Black);
+    let mut spans: Vec<Span> = Vec::new();
+    let lower = text.to_lowercase();
+    let mut from = 0usize;
+    while let Some(rel) = lower[from..].find(query) {
+        let start = from + rel;
+        let end = start + query.len();
+        if start > from {
+            spans.push(Span::styled(text[from..start].to_string(), base));
+        }
+        spans.push(Span::styled(text[start..end].to_string(), hit));
+        from = end;
+    }
+    if from < text.len() {
+        spans.push(Span::styled(text[from..].to_string(), base));
+    }
+    Line::from(spans)
 }
 
 fn render_confirmation(frame: &mut Frame, app: &ResearchApp, area: Rect) {

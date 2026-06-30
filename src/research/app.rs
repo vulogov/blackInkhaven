@@ -75,6 +75,12 @@ pub(super) enum ConfirmField {
     Body,
 }
 
+/// G8 — chat search state.
+pub(super) struct ChatSearch {
+    pub query: String,
+    pub current: usize,
+}
+
 /// R-P15 — `/chain`: a sequential research pipeline. Each step's response is
 /// accumulated as context for the next.
 pub(super) struct ChainState {
@@ -116,6 +122,9 @@ pub(crate) struct ResearchApp {
     /// The chat transcript (R-P6) + scroll offset (lines from the bottom).
     pub(super) chat_history: Vec<ChatTurn>,
     pub(super) chat_scroll: u16,
+    /// G8 — chat search: the query + current-match ordinal (render finds the
+    /// matching lines, where the window height is known).
+    pub(super) chat_search: Option<ChatSearch>,
 
     /// In-flight stream (R-P7): the receiver + the chat-turn index it feeds.
     stream_rx: Option<mpsc::UnboundedReceiver<StreamMsg>>,
@@ -176,6 +185,7 @@ impl ResearchApp {
             draft_backup: String::new(),
             chat_history: Vec::new(),
             chat_scroll: 0,
+            chat_search: None,
             stream_rx: None,
             streaming_turn: None,
             extracting: None,
@@ -301,9 +311,32 @@ impl ResearchApp {
         }
     }
 
-    /// R-P6 — chat pane scroll keys. Returns whether consumed.
+    /// R-P6 / G8 — chat pane keys: scroll, plus `Ctrl+F` search.
     fn chat_key(&mut self, key: KeyEvent) -> bool {
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        // The search bar captures input while open.
+        if let Some(search) = self.chat_search.as_mut() {
+            match key.code {
+                KeyCode::Esc => self.chat_search = None,
+                KeyCode::Char('f') if ctrl => self.chat_search = None,
+                KeyCode::Char('n') => search.current = search.current.wrapping_add(1),
+                KeyCode::Char('N') => search.current = search.current.wrapping_sub(1),
+                KeyCode::Backspace => {
+                    search.query.pop();
+                    search.current = 0;
+                }
+                KeyCode::Char(c) => {
+                    search.query.push(c);
+                    search.current = 0;
+                }
+                _ => {}
+            }
+            return true;
+        }
         match key.code {
+            KeyCode::Char('f') if ctrl => {
+                self.chat_search = Some(ChatSearch { query: String::new(), current: 0 });
+            }
             KeyCode::Up | KeyCode::Char('k') => self.chat_scroll = self.chat_scroll.saturating_add(1),
             KeyCode::Down | KeyCode::Char('j') => self.chat_scroll = self.chat_scroll.saturating_sub(1),
             KeyCode::Char('g') => self.chat_scroll = u16::MAX, // clamped to top by render
