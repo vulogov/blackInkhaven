@@ -50,6 +50,8 @@ mod inner_theologian;
 // MYTH-1 — mythological & symbolic pattern library. Built across M-P0…M-P15;
 // gated until the store / scan / CLI consume the types.
 mod myth;
+#[allow(dead_code, unused_imports)]
+mod research;
 mod world_report;
 mod progress;
 mod replace;
@@ -99,6 +101,10 @@ fn main() {
         None | Some(cli::Command::Tui)
             | Some(cli::Command::Config)
             | Some(cli::Command::PromptsEditor)
+            // 1.5.0 RESRCH-1 — `inkhaven research` is a full-screen TUI too, so
+            // its logs (and genai's) must go to the file, never stderr, or they
+            // scribble over the alt-screen.
+            | Some(cli::Command::Research { .. })
     );
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("inkhaven=info,warn"));

@@ -8,7 +8,6 @@ use std::hash::{Hash, Hasher};
 
 use anyhow::Result;
 
-use crate::config::Config;
 use crate::project::ProjectLayout;
 use crate::store::NodeKind;
 use crate::store::hierarchy::Hierarchy;

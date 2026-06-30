@@ -60,7 +60,7 @@ pub(crate) mod style_warnings;
 mod echo_overlay;
 mod quickref;
 mod sound;
-mod theme;
+pub(crate) mod theme;
 mod typst_funcs;
 mod search_replace;
 mod search_results;

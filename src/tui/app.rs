@@ -8159,6 +8159,22 @@ impl App {
                 self.output_filter.clear();
                 self.after_output_filter_change("output filter cleared".into());
             }
+            // Clear the whole pane: dismiss every non-pinned message (pins are
+            // deliberate, so they survive). Shift+C so plain `c` stays filter-clear.
+            KeyCode::Char('C') => {
+                let mut cleared = 0usize;
+                if let Some(s) = crate::pane::output::active() {
+                    for m in &msgs {
+                        if !m.pinned {
+                            let _ = s.dismiss(m.id);
+                            cleared += 1;
+                        }
+                    }
+                }
+                self.output_selected = 0;
+                self.refresh_tree_badges();
+                self.status = format!("cleared {cleared} message(s)");
+            }
             KeyCode::Up | KeyCode::Char('k') if plain => {
                 self.output_selected = self.output_selected.saturating_sub(1);
             }
