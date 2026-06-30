@@ -8,8 +8,8 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Style, Stylize};
-use ratatui::text::{Line, Text};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::text::{Line, Span, Text};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 use super::MIN_WIDTH;
 use super::app::ResearchApp;
@@ -69,17 +69,78 @@ fn resize_message(width: u16) -> Paragraph<'static> {
 }
 
 fn render_facts_tree(frame: &mut Frame, app: &ResearchApp, area: Rect) {
+    let pin_count = app.pinned_nodes.len();
+    let title = if pin_count > 0 {
+        format!(" Facts  [⬡ {pin_count}/{}] ", super::app::DEFAULT_MAX_PINNED)
+    } else {
+        " Facts ".to_string()
+    };
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(" Facts ")
+        .title(title)
         .border_style(border_style(app, Focus::FactsTree));
-    let body = Text::from(vec![
-        Line::from(""),
-        Line::from("  System Book: Facts"),
-        Line::from(""),
-        Line::from("  (tree — R-P4)"),
-    ]);
-    frame.render_widget(Paragraph::new(body).block(block), area);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    if app.facts_tree.is_empty() {
+        let msg = Text::from(vec![
+            Line::from(""),
+            Line::from("  (empty Facts book)"),
+            Line::from("  Press n to add a fact."),
+        ]);
+        frame.render_widget(Paragraph::new(msg).style(Style::new().dim()), inner);
+    } else {
+        let rows = app.facts_tree.rows();
+        // Keep the cursor visible (simple top-anchored window).
+        let height = inner.height as usize;
+        let cursor = app.facts_tree.cursor;
+        let start = cursor.saturating_sub(height.saturating_sub(1));
+        let mut lines: Vec<Line> = Vec::new();
+        for (i, row) in rows.iter().enumerate().skip(start).take(height) {
+            let node = app.hierarchy.get(row.id);
+            let title = node.map(|n| n.title.as_str()).unwrap_or("?");
+            let fold = if row.has_children {
+                if row.expanded { "▾ " } else { "▸ " }
+            } else {
+                "• "
+            };
+            let pin = if app.pinned_nodes.contains(&row.id) { "⬡ " } else { "" };
+            let indent = "  ".repeat(row.depth);
+            let label = format!("{indent}{fold}{pin}{title}");
+            if i == cursor {
+                lines.push(Line::from(Span::styled(label, Style::new().bold().reversed())));
+            } else {
+                lines.push(Line::from(label));
+            }
+        }
+        frame.render_widget(Paragraph::new(Text::from(lines)), inner);
+    }
+
+    if let Some(m) = &app.manual {
+        render_manual_overlay(frame, m, inner);
+    }
+}
+
+fn render_manual_overlay(frame: &mut Frame, m: &super::app::ManualEntry, area: Rect) {
+    use super::app::ManualStage;
+    let h = if m.stage == ManualStage::Title { 3 } else { 8 };
+    let overlay = Rect { x: area.x, y: area.y, width: area.width, height: h.min(area.height) };
+    frame.render_widget(Clear, overlay);
+    let (title, body): (&str, Vec<Line>) = match m.stage {
+        ManualStage::Title => (
+            " New fact — title ",
+            vec![Line::from(format!(" {}_", m.title))],
+        ),
+        ManualStage::Body => {
+            let mut lines: Vec<Line> = vec![Line::from(format!(" {}", m.title.trim())), Line::from("")];
+            for l in m.body.split('\n') {
+                lines.push(Line::from(format!(" {l}")));
+            }
+            (" New fact — body (Ctrl+S save · Esc cancel) ", lines)
+        }
+    };
+    let block = Block::default().borders(Borders::ALL).title(title);
+    frame.render_widget(Paragraph::new(Text::from(body)).block(block).wrap(Wrap { trim: false }), overlay);
 }
 
 fn render_ai_chat(frame: &mut Frame, app: &ResearchApp, area: Rect) {
