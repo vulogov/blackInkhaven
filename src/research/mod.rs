@@ -27,6 +27,7 @@ mod focus;
 mod insert;
 mod llm;
 mod picker;
+mod provenance;
 mod rag;
 mod render;
 mod thread;
