@@ -279,11 +279,74 @@ impl ResearchApp {
         self.prompt_history_idx = None;
         self.chat_scroll = 0;
 
-        if text.starts_with('/') {
-            self.status_message = Some("commands arrive in R-P9".to_string());
+        if let Some(cmd) = super::command::parse(&text) {
+            self.dispatch_command(cmd);
             return;
         }
         self.start_query(text);
+    }
+
+    /// R-P9 — route a parsed `/command`. The simple commands act here; the
+    /// heavier ones land in their phases (R-P10..R-P15).
+    fn dispatch_command(&mut self, cmd: super::command::Command) {
+        use super::command::Command;
+        match cmd {
+            Command::Clear => {
+                self.chat_history.clear();
+                self.chat_scroll = 0;
+                self.status_message = Some("chat cleared".to_string());
+            }
+            Command::Rag(arg) => self.set_rag_mode(arg.as_deref()),
+            Command::Save(name) => self.save_thread_as(name.as_deref()),
+            Command::Unknown(name) => {
+                self.status_message = Some(format!("unknown command: /{name}"));
+            }
+            // Implemented in later phases.
+            Command::Fact { .. } => self.status_message = Some("/fact arrives in R-P10".to_string()),
+            Command::Note { .. } => self.status_message = Some("/note arrives in R-P11".to_string()),
+            Command::Goto(_) => self.status_message = Some("/goto arrives in R-P12".to_string()),
+            Command::Diff => self.status_message = Some("/diff arrives in R-P13".to_string()),
+            Command::Verify => self.status_message = Some("/verify arrives in R-P14".to_string()),
+            Command::Chain(_) => self.status_message = Some("/chain arrives in R-P15".to_string()),
+        }
+    }
+
+    /// `/rag [facts+full|facts|full]` — set the mode explicitly, or cycle when
+    /// no argument is given.
+    fn set_rag_mode(&mut self, arg: Option<&str>) {
+        use super::thread::RagMode;
+        let mode = match arg.map(|a| a.trim().to_ascii_lowercase()) {
+            Some(a) if a == "facts" || a == "facts-only" || a == "factsonly" => Some(RagMode::FactsOnly),
+            Some(a) if a == "full" || a == "full-only" || a == "fullonly" => Some(RagMode::FullOnly),
+            Some(a) if a == "facts+full" || a == "both" => Some(RagMode::FactsPlusFull),
+            Some(_) => None,
+            None => Some(self.thread.rag_mode.next()),
+        };
+        match mode {
+            Some(m) => {
+                self.thread.rag_mode = m;
+                let _ = self.thread.save(&self.layout);
+                self.status_message = Some(format!("RAG: {}", m.label()));
+            }
+            None => self.status_message = Some("usage: /rag [facts+full|facts|full]".to_string()),
+        }
+    }
+
+    /// `/save [name]` — rename the current thread (and migrate its file), or
+    /// just persist when no name is given.
+    fn save_thread_as(&mut self, name: Option<&str>) {
+        if let Some(name) = name.map(str::trim).filter(|s| !s.is_empty()) {
+            let old_slug = self.thread.name.clone();
+            self.thread.display_name = name.to_string();
+            self.thread.name = thread::thread_slug(name);
+            if self.thread.save(&self.layout).is_ok() && self.thread.name != old_slug {
+                let _ = thread::delete_thread(&self.layout, &old_slug);
+            }
+            self.status_message = Some(format!("saved as `{name}`"));
+        } else {
+            let _ = self.thread.save(&self.layout);
+            self.status_message = Some("thread saved".to_string());
+        }
     }
 
     /// R-P7 — start a streamed research query. Builds the system prompt (RAG
