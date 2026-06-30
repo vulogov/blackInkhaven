@@ -254,6 +254,25 @@ records provenance **`computed`** and **skips the fact-check gate** entirely —
 - Because it's Bund, the full stack language is available too: `/calc 3 4 + 5 *` → `= 35`. Each word
   also has a `calc.`-prefixed form if a short alias collides with a builtin.
 
+### Scientific & astronomy words (1.5.4)
+
+`/calc` also carries a **scientific substrate** (`sqrt cbrt pow exp ln log10 log2 sin cos tan asin acos
+atan atan2 hypot abs floor ceil round`) and **astronomy/planetology formulas** in convenient units:
+
+| Word | Stack | Meaning |
+|---|---|---|
+| `kepler_period` | `( a M -- T )` | orbital period; a [AU], M [M☉] → T [yr] (`√(a³/M)`) |
+| `surface_gravity` | `( M R -- g )` | M [M⊕], R [R⊕] → g [m/s²] |
+| `escape_velocity` | `( M R -- v )` | M [M⊕], R [R⊕] → v [m/s] |
+| `insolation` | `( L d -- S )` | L [L☉], d [AU] → flux [W/m²] (inverse-square) |
+| `synodic_period` | `( T1 T2 -- Tsyn )` | `1/Tsyn = |1/T1 − 1/T2|` |
+| `angular_size` `hill_sphere` `roche_limit` `tidal_accel` | … | (see the [RFC](../PROPOSALS/RESRCH-4_RFC.md) formula table) |
+
+```
+/calc 4 1 kepler_period      → = 8         (a=4 AU, M=1 M☉ → 8 years)
+/calc 1 1 surface_gravity    → = 9.80665   (Earth)
+```
+
 ### Grounding `/calc` in your World book (1.5.4)
 
 `/calc` can read **this project's own World-book facts** (the materialized WORLD-4 simulation), so a

@@ -37,6 +37,12 @@ fn as_f64(v: &Value) -> std::result::Result<f64, BundError> {
         .map_err(|e| easy_error::err_msg(format!("calc: expected a number ({e})")))
 }
 
+/// Pop one number off the stack, coercing int→float (R4-A/B helper).
+fn pop_f(vm: &mut VM, tag: &str) -> std::result::Result<f64, BundError> {
+    let v = pull(vm, tag).map_err(|e| easy_error::err_msg(e.to_string()))?;
+    as_f64(&v)
+}
+
 /// A conversion word: pop a number, push `f(x)`.
 macro_rules! kconv {
     ($fn:ident, $f:expr) => {
@@ -45,6 +51,19 @@ macro_rules! kconv {
             let x = as_f64(&v)?;
             let f: fn(f64) -> f64 = $f;
             push(vm, Value::from_float(f(x)));
+            Ok(vm)
+        }
+    };
+}
+
+/// A binary word: pop `b` then `a` (so `( a b -- y )`), push `f(a, b)`.
+macro_rules! kbin {
+    ($fn:ident, $tag:literal, $f:expr) => {
+        fn $fn(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+            let b = pop_f(vm, $tag)?;
+            let a = pop_f(vm, $tag)?;
+            let f: fn(f64, f64) -> f64 = $f;
+            push(vm, Value::from_float(f(a, b)));
             Ok(vm)
         }
     };
@@ -90,6 +109,153 @@ kconv!(c_pc2ly, |x| x * 3.261_563_777);
 kconv!(c_ly2pc, |x| x / 3.261_563_777);
 kconv!(c_deg2rad, |x| x * std::f64::consts::PI / 180.0);
 kconv!(c_rad2deg, |x| x * 180.0 / std::f64::consts::PI);
+
+// ── scientific math substrate (R4-A) ─────────────────────────────────────────
+// Registered under `calc.<name>` (short alias best-effort, like the conversions),
+// so the `calc.`-prefixed form never collides with bundcore's own arithmetic.
+kconv!(m_sqrt, |x| x.sqrt());
+kconv!(m_cbrt, |x| x.cbrt());
+kconv!(m_exp, |x| x.exp());
+kconv!(m_ln, |x| x.ln());
+kconv!(m_log10, |x| x.log10());
+kconv!(m_log2, |x| x.log2());
+kconv!(m_sin, |x| x.sin());
+kconv!(m_cos, |x| x.cos());
+kconv!(m_tan, |x| x.tan());
+kconv!(m_asin, |x| x.asin());
+kconv!(m_acos, |x| x.acos());
+kconv!(m_atan, |x| x.atan());
+kconv!(m_abs, |x| x.abs());
+kconv!(m_floor, |x| x.floor());
+kconv!(m_ceil, |x| x.ceil());
+kconv!(m_round, |x| x.round());
+kbin!(m_pow, "calc.pow", |a, b| a.powf(b));
+kbin!(m_atan2, "calc.atan2", |a, b| a.atan2(b)); // ( y x -- rad )
+kbin!(m_hypot, "calc.hypot", |a, b| a.hypot(b));
+
+// ── astronomy & planetology (R4-B) ───────────────────────────────────────────
+// Deterministic formulas in convenient units; they pair with the `calc.world.*`
+// readers (e.g. `world.star_mass world.au kepler_period`). Constants reuse the
+// `calc.*` set (G = `calc.grav`, g₀ = `calc.gee`).
+
+const SOLAR_CONSTANT_WM2: f64 = 1361.0; // mean insolation at 1 AU, W/m²
+const EARTH_ESCAPE_MS: f64 = 11_186.0; // Earth escape velocity, m/s
+const STD_GRAVITY: f64 = 9.806_65; // g₀, m/s²
+
+/// `kepler_period` — `( a M -- T )`: Kepler's third law in solar units.
+/// a [AU], M [solar masses] → T [years]; `T = √(a³ / M)`.
+fn a_kepler_period(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    let m = pop_f(vm, "kepler_period")?;
+    let a = pop_f(vm, "kepler_period")?;
+    if m <= 0.0 {
+        return Err(easy_error::err_msg("kepler_period: mass must be > 0"));
+    }
+    push(vm, Value::from_float((a.powi(3) / m).sqrt()));
+    Ok(vm)
+}
+
+/// `surface_gravity` — `( M R -- g )`: M [Earth masses], R [Earth radii] →
+/// g [m/s²]; `g = (M / R²) · g₀`.
+fn a_surface_gravity(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    let r = pop_f(vm, "surface_gravity")?;
+    let m = pop_f(vm, "surface_gravity")?;
+    if r == 0.0 {
+        return Err(easy_error::err_msg("surface_gravity: radius must be ≠ 0"));
+    }
+    push(vm, Value::from_float((m / (r * r)) * STD_GRAVITY));
+    Ok(vm)
+}
+
+/// `escape_velocity` — `( M R -- v )`: M [Earth masses], R [Earth radii] →
+/// v [m/s]; `v = v⊕·√(M / R)`.
+fn a_escape_velocity(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    let r = pop_f(vm, "escape_velocity")?;
+    let m = pop_f(vm, "escape_velocity")?;
+    if r <= 0.0 {
+        return Err(easy_error::err_msg("escape_velocity: radius must be > 0"));
+    }
+    push(vm, Value::from_float(EARTH_ESCAPE_MS * (m / r).sqrt()));
+    Ok(vm)
+}
+
+/// `insolation` — `( L d -- S )`: L [solar luminosities], d [AU] → S [W/m²];
+/// inverse-square, `S = (L / d²) · 1361`.
+fn a_insolation(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    let d = pop_f(vm, "insolation")?;
+    let l = pop_f(vm, "insolation")?;
+    if d == 0.0 {
+        return Err(easy_error::err_msg("insolation: distance must be ≠ 0"));
+    }
+    push(vm, Value::from_float((l / (d * d)) * SOLAR_CONSTANT_WM2));
+    Ok(vm)
+}
+
+/// `synodic_period` — `( T1 T2 -- Tsyn )`: `1/Tsyn = |1/T1 − 1/T2|` (same time unit).
+fn a_synodic_period(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    let t2 = pop_f(vm, "synodic_period")?;
+    let t1 = pop_f(vm, "synodic_period")?;
+    if t1 == 0.0 || t2 == 0.0 {
+        return Err(easy_error::err_msg("synodic_period: periods must be ≠ 0"));
+    }
+    let diff = (1.0 / t1 - 1.0 / t2).abs();
+    if diff == 0.0 {
+        return Err(easy_error::err_msg("synodic_period: equal periods (no synodic cycle)"));
+    }
+    push(vm, Value::from_float(1.0 / diff));
+    Ok(vm)
+}
+
+/// `angular_size` — `( size dist -- θ )`: `θ = 2·atan(size / (2·dist))` [rad].
+fn a_angular_size(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    let dist = pop_f(vm, "angular_size")?;
+    let size = pop_f(vm, "angular_size")?;
+    if dist == 0.0 {
+        return Err(easy_error::err_msg("angular_size: distance must be ≠ 0"));
+    }
+    push(vm, Value::from_float(2.0 * (size / (2.0 * dist)).atan()));
+    Ok(vm)
+}
+
+/// `hill_sphere` — `( a e m M -- rH )`: `rH ≈ a·(1−e)·∛(m / (3M))`. a [any length],
+/// m & M [same mass unit] → rH [same length as a].
+fn a_hill_sphere(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    let big_m = pop_f(vm, "hill_sphere")?;
+    let m = pop_f(vm, "hill_sphere")?;
+    let e = pop_f(vm, "hill_sphere")?;
+    let a = pop_f(vm, "hill_sphere")?;
+    if big_m <= 0.0 {
+        return Err(easy_error::err_msg("hill_sphere: primary mass must be > 0"));
+    }
+    push(vm, Value::from_float(a * (1.0 - e) * (m / (3.0 * big_m)).cbrt()));
+    Ok(vm)
+}
+
+/// `roche_limit` — `( R rhoM rhom -- d )`: fluid `d = 2.44·R·∛(ρM / ρm)`.
+/// R [any length] → d [same]; densities in any shared unit.
+fn a_roche_limit(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    let rho_m = pop_f(vm, "roche_limit")?;
+    let rho_big = pop_f(vm, "roche_limit")?;
+    let r = pop_f(vm, "roche_limit")?;
+    if rho_m <= 0.0 {
+        return Err(easy_error::err_msg("roche_limit: satellite density must be > 0"));
+    }
+    push(vm, Value::from_float(2.44 * r * (rho_big / rho_m).cbrt()));
+    Ok(vm)
+}
+
+/// `tidal_accel` — `( M r d -- a )`: SI tidal acceleration `a = 2·G·M·r / d³`.
+/// M [kg], r & d [m] → a [m/s²].
+fn a_tidal_accel(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    let d = pop_f(vm, "tidal_accel")?;
+    let r = pop_f(vm, "tidal_accel")?;
+    let m = pop_f(vm, "tidal_accel")?;
+    if d == 0.0 {
+        return Err(easy_error::err_msg("tidal_accel: distance must be ≠ 0"));
+    }
+    const G: f64 = 6.674_30e-11;
+    push(vm, Value::from_float(2.0 * G * m * r / d.powi(3)));
+    Ok(vm)
+}
 
 // ── World-book readers (R4-D) ────────────────────────────────────────────────
 //
@@ -256,6 +422,36 @@ const WORDS: &[(&str, fn(&mut VM) -> std::result::Result<&mut VM, BundError>)] =
     ("calc.ly2pc", c_ly2pc),
     ("calc.deg2rad", c_deg2rad),
     ("calc.rad2deg", c_rad2deg),
+    // Scientific math substrate (R4-A).
+    ("calc.sqrt", m_sqrt),
+    ("calc.cbrt", m_cbrt),
+    ("calc.exp", m_exp),
+    ("calc.ln", m_ln),
+    ("calc.log10", m_log10),
+    ("calc.log2", m_log2),
+    ("calc.sin", m_sin),
+    ("calc.cos", m_cos),
+    ("calc.tan", m_tan),
+    ("calc.asin", m_asin),
+    ("calc.acos", m_acos),
+    ("calc.atan", m_atan),
+    ("calc.abs", m_abs),
+    ("calc.floor", m_floor),
+    ("calc.ceil", m_ceil),
+    ("calc.round", m_round),
+    ("calc.pow", m_pow),
+    ("calc.atan2", m_atan2),
+    ("calc.hypot", m_hypot),
+    // Astronomy & planetology (R4-B).
+    ("calc.kepler_period", a_kepler_period),
+    ("calc.surface_gravity", a_surface_gravity),
+    ("calc.escape_velocity", a_escape_velocity),
+    ("calc.insolation", a_insolation),
+    ("calc.synodic_period", a_synodic_period),
+    ("calc.angular_size", a_angular_size),
+    ("calc.hill_sphere", a_hill_sphere),
+    ("calc.roche_limit", a_roche_limit),
+    ("calc.tidal_accel", a_tidal_accel),
     // World-book readers (R4-D).
     ("calc.world.get", world_get),
     ("calc.world.has", world_has),
@@ -303,5 +499,28 @@ mod tests {
         assert!((top_float("calc.pi") - std::f64::consts::PI).abs() < 1e-12);
         // light-year in metres
         assert!((top_float("calc.ly") - 9.460_730_472_580_8e15).abs() < 1.0);
+    }
+
+    #[test]
+    fn math_substrate() {
+        assert!((top_float("9 calc.sqrt") - 3.0).abs() < 1e-9);
+        assert!((top_float("2 10 calc.pow") - 1024.0).abs() < 1e-9);
+        assert!((top_float("3 4 calc.hypot") - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn astronomy_known_values() {
+        // Kepler: a=4 AU, M=1 M☉ → T = √(64) = 8 yr.
+        assert!((top_float("4 1 calc.kepler_period") - 8.0).abs() < 1e-9);
+        // Earth: M=1, R=1 → g₀ = 9.80665 m/s².
+        assert!((top_float("1 1 calc.surface_gravity") - 9.806_65).abs() < 1e-6);
+        // Escape: M=1, R=1 → 11186 m/s.
+        assert!((top_float("1 1 calc.escape_velocity") - 11_186.0).abs() < 1e-6);
+        // Insolation: L=1 L☉, d=2 AU → 1361 / 4 = 340.25 W/m².
+        assert!((top_float("1 2 calc.insolation") - 340.25).abs() < 1e-6);
+        // Synodic: T1=1, T2=1.5 → 1/(1 − 2/3) = 3.
+        assert!((top_float("1 1.5 calc.synodic_period") - 3.0).abs() < 1e-9);
+        // Roche (fluid): R=1, ρM=1, ρm=1 → 2.44.
+        assert!((top_float("1 1 1 calc.roche_limit") - 2.44).abs() < 1e-9);
     }
 }
