@@ -129,6 +129,18 @@ cursor (a branch hosts it as a child; a paragraph as a sibling). Inserted facts 
 immediately**, so they're instantly retrievable by `/diff`, the writing-mode RAG, and every Facts
 consumer — no rebuild.
 
+**Provenance (1.5.1).** Every inserted fact records where it came from — `model` (with the originating
+research query), `manual`, or `promoted` — in `.inkhaven/fact-sources.json`. The confirmation overlay
+shows the pending `src:`; **`/sources`** lists every fact with its origin. **Near-duplicate guard:** if
+a `/fact` body closely matches an existing fact, the overlay warns once (`⚠ similar to facts/…`); press
+`Ctrl+S` again to insert anyway. It only informs — it never blocks.
+
+### `/promote [notes/path] [→ facts/path]`
+
+Turn a speculative **Note** into a verified **Fact**: re-runs the extraction + confirmation over the
+note's text into Facts (provenance `promoted`). With no argument it promotes the thread's most recent
+`/note`. Non-destructive — the note stays unless you delete it.
+
 ### `/note "instruction" [→ path]`
 
 The same flow, but into the **Notes** book and preserving a **speculative** voice ("this *might*
