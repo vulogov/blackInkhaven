@@ -21,41 +21,37 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.5.0 — Research Assistant
+## Latest release · 1.5.1 — Grounded Research
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.5.0.md`](Documentation/RELEASE_NOTES/1.5.0.md)
-· Plan: [`Documentation/PROPOSALS/RESRCH-1_PLAN.md`](Documentation/PROPOSALS/RESRCH-1_PLAN.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.5.1.md`](Documentation/RELEASE_NOTES/1.5.1.md)
+· Plans: [`RESRCH-2.1`](Documentation/PROPOSALS/RESRCH-2.1_PLAN.md) ·
+[`RESRCH-2.2`](Documentation/PROPOSALS/RESRCH-2.2_PLAN.md)
 
-Your manuscript stands on a foundation of facts. In Inkhaven those live in the **Facts** system book —
-the ground truth the world-checker, the Book-scope RAG chat, the Inner family, and the Mythology
-library all draw on. Populating it used to mean leaving the writing environment. **`inkhaven research`**
-closes that loop: a separate, full-screen TUI for AI-assisted research that transfers **verified**
-findings straight into the Facts / Notes corpus — with a confirmation step on every insertion. **No new
-runtime crates.**
+1.5.0 gave the **Research Assistant** (`inkhaven research`) a verified Facts corpus. 1.5.1 makes that
+corpus **trustworthy** and lets it stand on **real documents** — the first two cuts of the RESRCH-2
+track.
 
-### Ask, then capture — reviewed, every time
+### Trust: provenance, promotion, dedup (zero new crates)
 
-Three panes — a **Facts tree**, a **streaming RAG chat** grounded by your corpus, and a `/command`
-query prompt. Ask a question; **`/fact "instruction"`** distils the answer into one titled fact (in your
-project's language) and opens an **editable confirmation overlay** — edit, `Ctrl+S` to insert, `Esc` to
-discard. Inserted facts re-embed immediately, so they reach `/diff`, the writing-mode RAG, and every
-Facts consumer with no rebuild. **`/note`** captures speculative thinking into Notes; **`n`** types a
-fact by hand. **`F10`** cycles the RAG mode (Facts+Full / Facts only / Full only); **`Ctrl+P`** pins up
-to three facts always in context.
+Every inserted fact now records **where it came from** (`model` / `manual` / `promoted` / `document`),
+shown in the confirmation overlay and the new **`/sources`** command. A **near-duplicate guard** warns
+once before a `/fact` lands a fact too similar to an existing one (`research.dedup_warn_score`, informs
+never blocks). **`/promote [notes/path]`** turns a speculative **Note** into a verified **Fact** through
+the same reviewed flow.
 
-### Checking & organising
+### Document import (one new crate, `pdf-extract`)
 
-**`/diff`** shows similar facts already in the corpus; **`/verify`** confidence-probes the last
-response's claims; **`/factcheck`** audits the **whole corpus** for accuracy and mutual contradictions;
-**`/chain a → b → c`** runs a sequential pipeline. The Facts tree edits on par with the main editor and
-Outline (`R` rename, `c`/`s` chapter/subchapter, `-`/`D` delete, `K`/`J` move, `y`/`x`/`p`
-copy/cut/paste). Sessions are named, resumable **threads**; `Ctrl+B h` shows a full quick reference.
+**`/import <path>`** (or `inkhaven research --import`) ingests a **Markdown / text / PDF** file as a
+*research source*: it chunks + embeds the text into the shared vector store, retrieves those chunks
+alongside your Facts (cited `[source: name]`), and records `document` provenance on facts derived from
+them. **`/import`** lists, **`/forget <name>`** removes. Ground the model on your own references, with
+every derived fact citing its source.
 
 ### Dependencies & compatibility
 
-**No new runtime crates; no new system books; no new `NodeKind`.** One sidecar dir
-(`.inkhaven/research-threads/`), one `research:` config block, one CLI screen (`inkhaven research`).
-**No `facts.duckdb`** — facts are Facts-book paragraphs in the shared vector store.
+**One new runtime crate** — `pdf-extract` (PDF text extraction); the Markdown/text path and the trust
+cut need none. No new system books, no new `NodeKind`, no `facts.duckdb`. New sidecars:
+`.inkhaven/fact-sources.json`, `.inkhaven/research-sources.json`.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
