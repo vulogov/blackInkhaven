@@ -31,6 +31,7 @@ mod utopia;
 mod char_arc;
 mod theologian;
 mod myth;
+mod calc;
 mod pdf;
 mod review;
 
@@ -67,5 +68,6 @@ pub fn register_ink_stdlib(vm: &mut VM) -> Result<()> {
     char_arc::register(vm)?;
     theologian::register(vm)?;
     myth::register(vm)?;
+    calc::register(vm)?;
     Ok(())
 }

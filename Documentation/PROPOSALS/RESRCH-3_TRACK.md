@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Proposed (track) |
+| **Status** | Proposed (track) — **R3-C `/calc` and R3-D folder import brought forward, shipped 1.5.2** |
 | **Builds on** | RESRCH-2 (`/web`, `/import`, provenance, the source-retrieval pipeline) |
 | **Theme** | Where RESRCH-2 added retrieval *mechanisms* (web, documents), RESRCH-3 adds **authoritative, verifiable sources** — each with a dedicated `/` command, an origin tag, and a place on the trust ladder |
 
@@ -59,7 +59,9 @@ The strongest fit with Inkhaven's zero-AI / no-fabrication ethos — see the *Ho
 - **`/calc <expression>`** — a deterministic evaluator (arithmetic, **unit conversions**, physical
   constants) backed by the in-tree **Bund** VM (`rust_multistackvm`, already a dependency) + a small
   constants/units prelude. The computation *is* the proof; the result shows its steps. `origin=computed`
-  → **gate bypassed**.
+  → **gate bypassed**. **✅ Shipped 1.5.2** — `src/scripting/stdlib/calc.rs` (13 constants + 24
+  conversion words, integer/float interchangeable); `/calc` in the research assistant records
+  `origin=computed`.
 - **`/world <query>`** — surface the project's own **WORLD-4/5/6 simulation** (astronomy, world-state)
   as a deterministic, internally-consistent fact source. `origin=simulation` → gate bypassed. No
   network; the data is already in the project.
@@ -70,7 +72,8 @@ The strongest fit with Inkhaven's zero-AI / no-fabrication ethos — see the *Ho
   **BibTeX/CSL-JSON export** (reuses the existing `sources::parse_bibtex`; **no new crate**) → research
   sources + `BibEntry`s, with attached PDFs embedded via the R2-B path. `origin=library`.
 - **Vault import** — recursively import an **Obsidian-style Markdown vault** (a folder of linked notes),
-  preserving note titles as source names. Extends `/import` to folders. No new crate.
+  preserving note titles as source names. Extends `/import` to folders. No new crate. **✅ Shipped
+  1.5.2** — `/import <folder>` (and `inkhaven research --import <folder>`) recurses over md/txt/pdf.
 - **Folder-watch / sync** — a designated research folder re-imported on change (CLI `inkhaven research
   --sync <folder>`, or a manifest auto-imported on launch), so the corpus tracks the author's working
   files instead of one-shot `/import`.
