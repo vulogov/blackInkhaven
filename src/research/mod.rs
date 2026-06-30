@@ -24,6 +24,7 @@ mod extract;
 mod factcheck;
 mod facts_tree;
 mod focus;
+mod imports;
 mod insert;
 mod llm;
 mod picker;
@@ -60,6 +61,8 @@ pub(crate) struct ResearchInvocation {
     pub export_thread: Option<String>,
     pub format: Option<String>,
     pub out: Option<String>,
+    /// RESRCH-2 (R2-B) — `--import <path>`: ingest a document non-interactively.
+    pub import: Option<String>,
 }
 
 /// Launch the Research Assistant, or run a non-interactive thread operation.
@@ -69,6 +72,10 @@ pub(crate) fn run(project: &Path, inv: ResearchInvocation) -> Result<()> {
     let cfg = Config::load_layered(&layout.config_path()).map_err(anyhow::Error::from)?;
 
     // Non-interactive paths (R-P19 fleshes these out over the thread store).
+    if let Some(path) = inv.import.as_deref() {
+        let store = Store::open(layout.clone(), &cfg).map_err(anyhow::Error::from)?;
+        return app::import_cli(&layout, &cfg, &store, path);
+    }
     if inv.list_threads {
         return app::list_threads_cli(&layout, inv.format.as_deref());
     }

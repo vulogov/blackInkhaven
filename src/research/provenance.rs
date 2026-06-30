@@ -45,6 +45,7 @@ impl SourceRecord {
     /// A one-line human summary for the overlay / `/sources` report.
     pub(super) fn summary(&self) -> String {
         match self.origin.as_str() {
+            "document" if !self.detail.is_empty() => format!("document: {}", self.detail),
             "model" if !self.query.is_empty() => format!("model · from query: {}", self.query),
             "promoted" if !self.detail.is_empty() => format!("promoted from note: {}", self.detail),
             "manual" => "manual entry".to_string(),
@@ -129,5 +130,7 @@ mod tests {
         assert_eq!(m.summary(), "manual entry");
         let p = SourceRecord::new("promoted", "notes/rome/idea", "", "t", "now".into());
         assert!(p.summary().contains("notes/rome/idea"));
+        let d = SourceRecord::new("document", "rome-aqueducts", "", "t", "now".into());
+        assert!(d.summary().contains("document: rome-aqueducts"));
     }
 }

@@ -102,6 +102,8 @@ fn render_help(frame: &mut Frame, app: &ResearchApp, area: Rect) {
         Line::from("    /verify              confidence-probe the last response"),
         Line::from("    /factcheck           audit the whole corpus (truth + consistency)"),
         Line::from("    /sources             list each fact's recorded provenance"),
+        Line::from("    /import [path]        ingest a md/txt/pdf as a research source (bare: list)"),
+        Line::from("    /forget <name>       remove an imported source"),
         Line::from("    /promote [note] [→ p] turn a Note into a verified Fact"),
         Line::from("    /chain a → b → c     sequential research pipeline"),
         Line::from("    /rag /clear /save    switch RAG · clear chat · rename thread"),
