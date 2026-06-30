@@ -322,12 +322,14 @@ fn render_confirmation(frame: &mut Frame, app: &ResearchApp, area: Rect) {
 }
 
 fn render_hints(frame: &mut Frame, app: &ResearchApp, area: Rect) {
-    // Context-sensitive content arrives in R-P17; R-P1 shows a static line.
+    // G11 — context-sensitive per focus (RFC §20).
     let hint = match app.focus {
-        Focus::FactsTree => " Tab:chat  n:new fact  Ctrl+P:pin  ?:help  q:quit",
-        Focus::QueryPrompt => " Tab:tree  Enter:send  ↑↓:history  ?:help  q:quit",
-        Focus::AiChat => " Tab:query  Ctrl+F:search  j/k:scroll  ?:help  q:quit",
-        Focus::ConfirmationOverlay => " Tab:field  Ctrl+Enter:confirm  Esc:discard",
+        Focus::FactsTree => " Tab:chat  n:new fact  Ctrl+P:pin  j/k:nav  Enter:expand  ?:help  q:quit",
+        Focus::QueryPrompt => {
+            " Tab:tree  Enter:send  ↑↓:history  F10:RAG  /fact /note /goto /diff /verify /chain"
+        }
+        Focus::AiChat => " Tab:query  Ctrl+F:search  j/k:scroll  g/G:top/bottom  ?:help",
+        Focus::ConfirmationOverlay => " Tab:field  Ctrl+S / Ctrl+Enter:confirm  Esc:discard",
     };
     frame.render_widget(Paragraph::new(hint).style(Style::new().dim()), area);
 }
@@ -343,13 +345,19 @@ fn render_query_prompt(frame: &mut Frame, app: &ResearchApp, area: Rect) {
 }
 
 fn render_status_bar(frame: &mut Frame, app: &ResearchApp, area: Rect) {
-    let text = match &app.status_message {
-        Some(msg) => format!("  {msg}"),
-        None => format!(
-            "  [RAG: {}]  [~${:.3}]  [?:help  q:quit]",
-            app.thread.rag_mode.label(),
-            app.session_cost,
-        ),
-    };
+    // A transient message overrides the middle segments (RFC §21).
+    if let Some(msg) = &app.status_message {
+        frame.render_widget(Paragraph::new(format!("  {msg}")).style(Style::new().dim()), area);
+        return;
+    }
+    let mut text = format!("  [RAG: {}]  [~${:.3}]", app.thread.rag_mode.label(), app.session_cost);
+    // Pinned-node segment (G4) — abbreviated titles.
+    for id in app.pinned_nodes.iter() {
+        if let Some(node) = app.hierarchy.get(*id) {
+            let t: String = node.title.chars().take(15).collect();
+            text.push_str(&format!("  [⬡ {t}]"));
+        }
+    }
+    text.push_str("  [?:help  q:quit]");
     frame.render_widget(Paragraph::new(text).style(Style::new().dim()), area);
 }
