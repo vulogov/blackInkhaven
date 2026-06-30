@@ -17,12 +17,14 @@ use crate::project::ProjectLayout;
 use crate::store::Store;
 use crate::store::hierarchy::Hierarchy;
 
+use tui_textarea::TextArea;
 use uuid::Uuid;
 
 use super::Focus;
+use super::chat::ChatTurn;
 use super::facts_tree::FactsTree;
 use super::render;
-use super::thread::{self, ResearchThread};
+use super::thread::{self, ResearchThread, TurnKind};
 
 /// Default cap on pinned Facts nodes (RFC §16); the `research:` config block
 /// (R-P20) will override it.
@@ -61,6 +63,18 @@ pub(crate) struct ResearchApp {
     /// The inline manual-entry overlay, when active (G7).
     pub(super) manual: Option<ManualEntry>,
 
+    /// The two-line query prompt (R-P5).
+    pub(super) query: TextArea<'static>,
+    /// Recallable prompt history (newest first), with the cursor into it.
+    pub(super) prompt_history: Vec<String>,
+    pub(super) prompt_history_idx: Option<usize>,
+    /// The in-progress draft saved when history recall begins (restored on ↓).
+    pub(super) draft_backup: String,
+
+    /// The chat transcript (R-P6) + scroll offset (lines from the bottom).
+    pub(super) chat_history: Vec<ChatTurn>,
+    pub(super) chat_scroll: u16,
+
     pub(super) focus: Focus,
     pub(super) show_hints: bool,
     pub(super) split_ratio: u32,
@@ -90,6 +104,7 @@ impl ResearchApp {
             .filter_map(|s| Uuid::parse_str(s).ok())
             .filter(|id| hierarchy.get(*id).is_some())
             .collect();
+        let prompt_history = build_prompt_history(&thread);
         Ok(ResearchApp {
             layout,
             cfg,
@@ -99,6 +114,12 @@ impl ResearchApp {
             facts_tree,
             pinned_nodes,
             manual: None,
+            query: TextArea::default(),
+            prompt_history,
+            prompt_history_idx: None,
+            draft_backup: String::new(),
+            chat_history: Vec::new(),
+            chat_scroll: 0,
             focus: Focus::QueryPrompt,
             show_hints: true,
             split_ratio: DEFAULT_SPLIT_RATIO,
@@ -139,18 +160,154 @@ impl ResearchApp {
             self.manual_entry_key(key);
             return;
         }
-        // Pane-specific keys first; fall through to globals.
-        if self.focus == Focus::FactsTree && self.facts_tree_key(key) {
-            return;
-        }
+        // Tab / Shift+Tab always cycle focus (even from the text prompt).
         match key.code {
-            // `q` exits from any non-text pane (R-P5 will gate this while the
-            // query prompt is focused + non-empty).
+            KeyCode::Tab => {
+                self.focus = self.focus.next();
+                return;
+            }
+            KeyCode::BackTab => {
+                self.focus = self.focus.prev();
+                return;
+            }
+            _ => {}
+        }
+        // Pane-specific keys.
+        match self.focus {
+            Focus::FactsTree => {
+                if self.facts_tree_key(key) {
+                    return;
+                }
+            }
+            Focus::QueryPrompt => {
+                self.query_prompt_key(key);
+                return;
+            }
+            Focus::AiChat => {
+                if self.chat_key(key) {
+                    return;
+                }
+            }
+            Focus::ConfirmationOverlay => {}
+        }
+        // Globals (only reached for unconsumed keys outside the text prompt).
+        match key.code {
             KeyCode::Char('q') => self.should_quit = true,
             KeyCode::Char('?') => self.show_hints = !self.show_hints,
-            KeyCode::Tab => self.focus = self.focus.next(),
-            KeyCode::BackTab => self.focus = self.focus.prev(),
             _ => {}
+        }
+    }
+
+    /// R-P5 — the query prompt. Enter submits, ↑/↓ recall history, Esc
+    /// clears-then-defocuses, everything else types into the textarea.
+    fn query_prompt_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Enter => self.submit_query(),
+            KeyCode::Up => self.history_back(),
+            KeyCode::Down => self.history_forward(),
+            KeyCode::Esc => {
+                if self.query_text().trim().is_empty() {
+                    self.focus = Focus::FactsTree;
+                } else {
+                    self.query = TextArea::default();
+                    self.prompt_history_idx = None;
+                }
+            }
+            _ => {
+                // History navigation resets once the user edits the draft.
+                self.prompt_history_idx = None;
+                let input: tui_textarea::Input = key.into();
+                self.query.input_without_shortcuts(input);
+            }
+        }
+    }
+
+    /// R-P6 — chat pane scroll keys. Returns whether consumed.
+    fn chat_key(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => self.chat_scroll = self.chat_scroll.saturating_add(1),
+            KeyCode::Down | KeyCode::Char('j') => self.chat_scroll = self.chat_scroll.saturating_sub(1),
+            KeyCode::Char('g') => self.chat_scroll = u16::MAX, // clamped to top by render
+            KeyCode::Char('G') => self.chat_scroll = 0,        // bottom (latest)
+            KeyCode::Esc => self.focus = Focus::QueryPrompt,
+            _ => return false,
+        }
+        true
+    }
+
+    /// The current prompt text (lines joined).
+    pub(super) fn query_text(&self) -> String {
+        self.query.lines().join("\n")
+    }
+
+    fn set_query_text(&mut self, text: &str) {
+        let mut ta = TextArea::default();
+        ta.insert_str(text);
+        self.query = ta;
+    }
+
+    /// Submit the prompt. Commands (`/…`) route to the dispatcher (R-P9); plain
+    /// text becomes a chat query. R-P7 replaces the placeholder with a real
+    /// streamed response.
+    fn submit_query(&mut self) {
+        let text = self.query_text().trim().to_string();
+        if text.is_empty() {
+            return;
+        }
+        self.query = TextArea::default();
+        self.prompt_history_idx = None;
+        self.chat_scroll = 0;
+
+        if text.starts_with('/') {
+            self.status_message = Some("commands arrive in R-P9".to_string());
+            return;
+        }
+        // Placeholder response until the streaming LLM lands (R-P7).
+        self.chat_history
+            .push(ChatTurn::with_response(text, "(LLM streaming wiring lands in R-P7)".to_string()));
+        self.rebuild_prompt_history();
+    }
+
+    fn rebuild_prompt_history(&mut self) {
+        self.prompt_history = build_prompt_history(&self.thread);
+        // Also include this session's live chat prompts (newest first).
+        for turn in self.chat_history.iter().rev() {
+            if !self.prompt_history.iter().any(|p| p == &turn.prompt) {
+                self.prompt_history.insert(0, turn.prompt.clone());
+            }
+        }
+    }
+
+    fn history_back(&mut self) {
+        if self.prompt_history.is_empty() {
+            return;
+        }
+        let next = match self.prompt_history_idx {
+            None => {
+                self.draft_backup = self.query_text();
+                0
+            }
+            Some(i) => (i + 1).min(self.prompt_history.len() - 1),
+        };
+        self.prompt_history_idx = Some(next);
+        let text = self.prompt_history[next].clone();
+        self.set_query_text(&text);
+    }
+
+    fn history_forward(&mut self) {
+        match self.prompt_history_idx {
+            Some(0) | None => {
+                // Past the newest → restore the draft.
+                self.prompt_history_idx = None;
+                let draft = self.draft_backup.clone();
+                self.set_query_text(&draft);
+            }
+            Some(i) => {
+                let idx = i - 1;
+                self.prompt_history_idx = Some(idx);
+                let text = self.prompt_history[idx].clone();
+                self.set_query_text(&text);
+            }
         }
     }
 
@@ -272,6 +429,24 @@ impl ResearchApp {
             self.facts_tree.rebuild(&self.hierarchy);
         }
     }
+}
+
+/// Recallable prompts from a thread's turns (newest first): query prompts and
+/// the `/command` strings of insertions (RFC §18.3).
+fn build_prompt_history(thread: &ResearchThread) -> Vec<String> {
+    let mut out = Vec::new();
+    for turn in thread.turns.iter().rev() {
+        let entry = match turn.kind {
+            TurnKind::Query => turn.prompt.clone(),
+            TurnKind::FactInsertion | TurnKind::NoteInsertion => turn.command.clone(),
+        };
+        if let Some(e) = entry {
+            if !e.trim().is_empty() && !out.contains(&e) {
+                out.push(e);
+            }
+        }
+    }
+    out
 }
 
 /// `inkhaven research --list-threads`. (R-P19 may extend the formatting.)

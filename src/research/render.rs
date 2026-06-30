@@ -148,12 +148,45 @@ fn render_ai_chat(frame: &mut Frame, app: &ResearchApp, area: Rect) {
         .borders(Borders::ALL)
         .title(format!(" Research · thread: {} ", app.thread.display_name))
         .border_style(border_style(app, Focus::AiChat));
-    let body = Text::from(vec![
-        Line::from(""),
-        Line::from("  No queries yet — type below and press Enter."),
-        Line::from("  (streaming chat — R-P6/R-P7)"),
-    ]);
-    frame.render_widget(Paragraph::new(body).block(block), area);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    if app.chat_history.is_empty() {
+        let body = Text::from(vec![
+            Line::from(""),
+            Line::from("  No queries yet — type below and press Enter."),
+        ]);
+        frame.render_widget(Paragraph::new(body).style(Style::new().dim()), inner);
+        return;
+    }
+
+    let mut lines: Vec<Line> = Vec::new();
+    for (i, turn) in app.chat_history.iter().enumerate() {
+        if i > 0 {
+            lines.push(Line::from(""));
+        }
+        lines.push(Line::from(Span::styled(format!("[query {}]", i + 1), Style::new().bold())));
+        lines.push(Line::from(turn.prompt.clone()));
+        lines.push(Line::from(""));
+        for l in turn.response.split('\n') {
+            lines.push(Line::from(l.to_string()));
+        }
+        if turn.streaming {
+            lines.push(Line::from(Span::styled("▌", Style::new().dim())));
+        }
+    }
+
+    // Scroll: chat_scroll counts lines UP from the bottom; clamp so we never
+    // scroll past the content (width-independent approximation).
+    let total = lines.len();
+    let height = inner.height as usize;
+    let max_scroll = total.saturating_sub(height);
+    let from_bottom = (app.chat_scroll as usize).min(max_scroll);
+    let top = max_scroll.saturating_sub(from_bottom) as u16;
+    frame.render_widget(
+        Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }).scroll((top, 0)),
+        inner,
+    );
 }
 
 fn render_hints(frame: &mut Frame, app: &ResearchApp, area: Rect) {
@@ -172,7 +205,9 @@ fn render_query_prompt(frame: &mut Frame, app: &ResearchApp, area: Rect) {
         .borders(Borders::ALL)
         .title(" Query ")
         .border_style(border_style(app, Focus::QueryPrompt));
-    frame.render_widget(Paragraph::new("").block(block), area);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    frame.render_widget(&app.query, inner);
 }
 
 fn render_status_bar(frame: &mut Frame, app: &ResearchApp, area: Rect) {
