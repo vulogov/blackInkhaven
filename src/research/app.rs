@@ -30,6 +30,7 @@ use super::facts_tree::FactsTree;
 use super::llm;
 use super::render;
 use super::thread::{self, ResearchThread, ResearchTurn, TurnKind};
+use crate::tui::theme::Theme;
 
 /// G7 — the inline manual fact-entry overlay: title first, then body.
 pub(super) struct ManualEntry {
@@ -92,6 +93,8 @@ pub(crate) struct ResearchApp {
     pub(super) cfg: Config,
     pub(super) store: Store,
     pub(super) hierarchy: Hierarchy,
+    /// Decoded colour scheme from the project / global `theme:` config.
+    pub(super) theme: Theme,
 
     /// The open, persistent research thread (R-P2).
     pub(super) thread: ResearchThread,
@@ -166,11 +169,13 @@ impl ResearchApp {
         let prompt_history = build_prompt_history(&thread);
         let show_hints = cfg.research.show_keybind_hints;
         let split_ratio = cfg.research.split_ratio;
+        let theme = Theme::from_config(&cfg.theme);
         Ok(ResearchApp {
             layout,
             cfg,
             store,
             hierarchy,
+            theme,
             thread,
             facts_tree,
             pinned_nodes,
@@ -224,8 +229,11 @@ impl ResearchApp {
     }
 
     fn on_key(&mut self, key: KeyEvent) {
-        // Ctrl+C always exits.
-        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+        // Ctrl+C and Ctrl+Q always exit, from any pane or overlay (the plain `q`
+        // only quits outside a text field; Ctrl+Q is the universal escape hatch).
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('q'))
+        {
             self.should_quit = true;
             return;
         }
