@@ -347,9 +347,9 @@ impl ResearchApp {
             Command::Note { prompt, path } => {
                 self.start_extraction(TargetBook::Notes, prompt, path, "/note")
             }
+            Command::Goto(path) => self.goto_path(&path),
+            Command::Diff => self.run_diff(),
             // Implemented in later phases.
-            Command::Goto(_) => self.status_message = Some("/goto arrives in R-P12".to_string()),
-            Command::Diff => self.status_message = Some("/diff arrives in R-P13".to_string()),
             Command::Verify => self.status_message = Some("/verify arrives in R-P14".to_string()),
             Command::Chain(_) => self.status_message = Some("/chain arrives in R-P15".to_string()),
         }
@@ -512,6 +512,71 @@ impl ResearchApp {
             &self.layout,
         );
         self.rebuild_prompt_history();
+    }
+
+    /// R-P12 — `/goto facts/path/slug`: resolve the slug path against the Facts
+    /// book, expand its ancestors, place the cursor, and focus the tree.
+    fn goto_path(&mut self, path: &str) {
+        let trimmed = path.trim().trim_start_matches('/');
+        let id = self
+            .hierarchy
+            .find_by_path(trimmed)
+            .or_else(|| {
+                let stripped = trimmed.strip_prefix("facts/").unwrap_or(trimmed);
+                self.hierarchy.find_by_path(stripped)
+            })
+            .map(|n| n.id);
+        match id {
+            Some(id) if self.facts_tree.reveal(&self.hierarchy, id) => {
+                self.focus = Focus::FactsTree;
+                self.status_message = Some(format!("→ {path}"));
+            }
+            _ => self.status_message = Some(format!("Path not found: {path}")),
+        }
+    }
+
+    /// R-P13 — `/diff`: embed the last response and show the most similar Facts
+    /// already in the corpus (so the author can spot a near-duplicate before
+    /// inserting). Reuses the Facts-scoped retriever; dedups pinned nodes.
+    fn run_diff(&mut self) {
+        const DIFF_TOP_N: usize = 3;
+        let Some(response) = self.chat_history.last().map(|t| t.response.clone()) else {
+            self.status_message = Some("no research response to compare".to_string());
+            return;
+        };
+        let Some(book_id) = self.facts_tree.root else {
+            self.status_message = Some("no Facts book".to_string());
+            return;
+        };
+        let passages = crate::book_rag::retrieval::retrieve(
+            &self.store,
+            &self.hierarchy,
+            &self.cfg.book_rag,
+            book_id,
+            &response,
+        )
+        .unwrap_or_default();
+        let hits: Vec<_> = passages
+            .into_iter()
+            .filter(|p| p.is_hit && !self.pinned_nodes.contains(&p.id))
+            .take(DIFF_TOP_N)
+            .collect();
+
+        let mut out = String::new();
+        if hits.is_empty() {
+            out.push_str("No similar facts in your corpus yet.");
+        } else {
+            for p in &hits {
+                let excerpt: String = p.body.chars().take(160).collect();
+                out.push_str(&format!("{:.2}  {}\n      {}\n\n", p.score, p.breadcrumb, excerpt.trim()));
+            }
+            out.push_str("─────\nUse /fact to add a new entry, or /goto <path> to open an existing one.");
+        }
+        self.chat_history.push(ChatTurn::with_response(
+            format!("[/diff — top {DIFF_TOP_N} similar facts]"),
+            out,
+        ));
+        self.chat_scroll = 0;
     }
 
     /// The id of a system book by tag.
