@@ -21,40 +21,41 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.4.19 — Mythological & Symbolic Pattern Library
+## Latest release · 1.5.0 — Research Assistant
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.4.19.md`](Documentation/RELEASE_NOTES/1.4.19.md)
-· Plan: [`Documentation/PROPOSALS/MYTH-1_PLAN.md`](Documentation/PROPOSALS/MYTH-1_PLAN.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.5.0.md`](Documentation/RELEASE_NOTES/1.5.0.md)
+· Plan: [`Documentation/PROPOSALS/RESRCH-1_PLAN.md`](Documentation/PROPOSALS/RESRCH-1_PLAN.md)
 
-A serious novel runs a symbolic layer beneath its plot: an object that returns charged with new
-meaning, a motif that rises and pays off, a character who inhabits an archetypal role. 1.4.19 gives
-that layer a home — on one strict condition: it tracks only what **you declare** in the new
-**Mythology** system book. It never discovers symbols you didn't name, never interprets them, and
-never edits your prose. Every finding is advisory. **No new runtime crates.**
+Your manuscript stands on a foundation of facts. In Inkhaven those live in the **Facts** system book —
+the ground truth the world-checker, the Book-scope RAG chat, the Inner family, and the Mythology
+library all draw on. Populating it used to mean leaving the writing environment. **`inkhaven research`**
+closes that loop: a separate, full-screen TUI for AI-assisted research that transfers **verified**
+findings straight into the Facts / Notes corpus — with a confirmation step on every insertion. **No new
+runtime crates.**
 
-### Declare it, then check it
+### Ask, then capture — reviewed, every time
 
-Three declaration paragraphs — **symbols** (`para:myth-symbol`, `⊛`), **motifs** (`para:myth-motif`,
-`∿`), and **archetypes** (`para:myth-archetype`, `⍟`, a character mapped to one of Vogler's eight
-roles or a custom one). Declared symbol vocabulary glows in the editor (lavender). Two kinds of check:
-**deterministic** (zero-AI: archetype vacant / absent, motif absent from the final act) folded into the
-`Ctrl+B Shift+C` review pass in the Output `myth` category; and **LLM** (explicit, `inkhaven myth
-check`: symbol consistency, motif completeness, archetype role fulfilment) — given only your
-declarations plus concrete excerpts, in the project language.
+Three panes — a **Facts tree**, a **streaming RAG chat** grounded by your corpus, and a `/command`
+query prompt. Ask a question; **`/fact "instruction"`** distils the answer into one titled fact (in your
+project's language) and opens an **editable confirmation overlay** — edit, `Ctrl+S` to insert, `Esc` to
+discard. Inserted facts re-embed immediately, so they reach `/diff`, the writing-mode RAG, and every
+Facts consumer with no rebuild. **`/note`** captures speculative thinking into Notes; **`n`** types a
+fact by hand. **`F10`** cycles the RAG mode (Facts+Full / Facts only / Full only); **`Ctrl+P`** pins up
+to three facts always in context.
 
-### The heatmap & the Inner family
+### Checking & organising
 
-**`Ctrl+V Shift+M`** renders the symbol-density / motif-presence / archetype-presence heatmap into the
-**Thoughts** pane and jumps to the nearest declared symbol. A sixteenth Inner Socrates persona, **The
-Myth-Reader**, reads for symbolic resonance; your declared symbol traditions ground **Inner
-Theologian**, and your declared motifs ground the **utopian-architect** persona. CLI: `inkhaven myth
-scan / check / profile / refresh / suppress`.
+**`/diff`** shows similar facts already in the corpus; **`/verify`** confidence-probes the last
+response's claims; **`/factcheck`** audits the **whole corpus** for accuracy and mutual contradictions;
+**`/chain a → b → c`** runs a sequential pipeline. The Facts tree edits on par with the main editor and
+Outline (`R` rename, `c`/`s` chapter/subchapter, `-`/`D` delete, `K`/`J` move, `y`/`x`/`p`
+copy/cut/paste). Sessions are named, resumable **threads**; `Ctrl+B h` shows a full quick reference.
 
 ### Dependencies & compatibility
 
-**No new runtime crates; no new `NodeKind`.** One new `mythology` system book, one
-`.inkhaven/myth.duckdb`, one `myth:` config block, one Output category (`⊛`), the `Ctrl+V Shift+M`
-chord, and the Myth-Reader persona. `ink.myth.*` Bund (read) + `ink.myth.suppress` (write).
+**No new runtime crates; no new system books; no new `NodeKind`.** One sidecar dir
+(`.inkhaven/research-threads/`), one `research:` config block, one CLI screen (`inkhaven research`).
+**No `facts.duckdb`** — facts are Facts-book paragraphs in the shared vector store.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
