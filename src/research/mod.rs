@@ -18,7 +18,9 @@
 //! outer layout skeleton (placeholder panes), and `q` / `Ctrl+C` exit.
 
 mod app;
+mod facts_tree;
 mod focus;
+mod insert;
 mod picker;
 mod render;
 mod thread;
