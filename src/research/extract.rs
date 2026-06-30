@@ -42,8 +42,23 @@ struct ExtractDoc {
     fact: String,
 }
 
+/// The project-language name for the in-language directive (`Other` → English).
+pub(super) fn language_name(lang: &crate::prose::ProseLanguage) -> &'static str {
+    use crate::prose::ProseLanguage::*;
+    match lang {
+        En => "English",
+        Ru => "Russian",
+        De => "German",
+        Fr => "French",
+        Es => "Spanish",
+        Other(_) => "English",
+    }
+}
+
 /// The extraction system prompt (RFC §10.2 for Facts; §11 variant for Notes).
-pub(super) fn system_prompt(book: TargetBook, instruction: &str, research: &str) -> String {
+/// `language` is the project language name — the extraction must stay in it (and
+/// in the language of the research response), never silently translate to English.
+pub(super) fn system_prompt(book: TargetBook, language: &str, instruction: &str, research: &str) -> String {
     let rules = match book {
         TargetBook::Facts => {
             "Rules:\n\
@@ -65,9 +80,11 @@ pub(super) fn system_prompt(book: TargetBook, instruction: &str, research: &str)
         "You are extracting a single {kind} for a writer's reference database.\n\n\
          The author provides a research response and a clarifying instruction.\n\
          Your task: produce ONE {kind} entry.\n\n\
-         {rules}\n\n\
+         {rules}\n\
+         - LANGUAGE: write BOTH the title and the {kind} text in {language} — the \
+         same language as the research response. Do NOT translate to English.\n\n\
          Return JSON only — no preamble, no markdown fences:\n\
-         {{\n  \"title\": \"3-7 word title, title case, no period\",\n  \"fact\": \"The extracted {kind} text.\"\n}}\n\n\
+         {{\n  \"title\": \"3-7 word title in {language}, no period\",\n  \"fact\": \"The extracted {kind} text in {language}.\"\n}}\n\n\
          Author's clarifying instruction: {instruction}\n\n\
          Research response to extract from:\n{research}",
         kind = if book == TargetBook::Facts { "fact" } else { "note" },
@@ -123,10 +140,13 @@ mod tests {
 
     #[test]
     fn note_prompt_differs_from_fact() {
-        let fact = system_prompt(TargetBook::Facts, "x", "y");
-        let note = system_prompt(TargetBook::Notes, "x", "y");
+        let fact = system_prompt(TargetBook::Facts, "Russian", "x", "y");
+        let note = system_prompt(TargetBook::Notes, "Russian", "x", "y");
         assert!(fact.contains("Declarative and self-contained"));
         assert!(note.contains("speculative or tentative"));
         assert!(note.contains("note entry"));
+        // The in-language directive is present.
+        assert!(fact.contains("in Russian"));
+        assert!(note.contains("in Russian"));
     }
 }
