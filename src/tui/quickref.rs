@@ -225,6 +225,7 @@ fn ai_entries() -> Vec<Entry> {
         entry("S", "Filter by minimum severity (Info / Warning / Contradiction)"),
         entry("t", "Filter: this paragraph only"),
         entry("c", "Clear Output filters"),
+        entry("C", "Clear the Output pane (dismiss all unpinned messages)"),
     ]
 }
 

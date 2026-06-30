@@ -2411,6 +2411,50 @@ myth: {
 
 See [Tutorial 102 — Mythological & Symbolic Pattern Library](Tutorials/102-mythology.md).
 
+## 1.5.0 — Research Assistant (RESRCH-1)
+
+The optional `research:` block tunes `inkhaven research` — a separate TUI screen
+for AI-assisted research that transfers verified findings into the Facts / Notes
+corpus. Omit the block for the defaults below.
+
+```hjson
+research: {
+  // Default thread to open (null = picker / `default`).
+  default_thread: null
+  // Max Facts paragraphs prepended per query as RAG context.
+  rag_top_n: 5
+  // Per-session cost-cap warning (USD). Informs, never blocks.
+  session_budget_warn: 0.50
+  // Max pinned Facts nodes (Ctrl+P).
+  max_pinned_nodes: 3
+  // Show the keybind hints bar by default (? toggles).
+  show_keybind_hints: true
+  // Minimum terminal width; below it, a resize message shows.
+  min_width: 80
+  // Facts tree / chat split: tree columns out of 10 (4 = 40% tree).
+  split_ratio: 4
+  // /diff: number of similar facts to show.
+  diff_top_n: 3
+  // /verify: minimum sentence word count for claim extraction.
+  verify_min_sentence_words: 8
+}
+```
+
+- **Separate TUI** (`inkhaven research [--thread <name>]`): Facts tree (40%, navigate
+  / pin / `n` add) + streaming RAG chat (60%) + a `/command` query prompt. `Tab`
+  cycles focus, **F10** cycles the RAG mode (Facts+Full / Facts only / Full only).
+- **Commands:** `/fact` / `/note` (extract the last response → an **editable
+  confirmation overlay** → Facts / Notes; every insertion is reviewed), `/goto`,
+  `/diff` (corpus similarity), `/verify` (claim confidence), `/chain` (sequential
+  pipeline), `/rag` / `/clear` / `/save`. Inserts re-embed immediately, so new
+  facts reach every consumer with no rebuild.
+- **Threads** persist under `.inkhaven/research-threads/<slug>.json` (queries,
+  insertions, pins, RAG mode); `--list-threads` / `--export-thread` (table/json/md)
+  are non-interactive. **No facts.duckdb** — facts are paragraphs in the Facts book,
+  indexed in the shared vector store. Zero new runtime crates.
+
+See [Tutorial 103 — The Research Assistant](Tutorials/103-research-assistant.md).
+
 ## 1.4.10 — Jinja template paragraphs (STRUCT-1)
 
 A paragraph with `content_type: "jinja"` is a [minijinja](https://docs.rs/minijinja)

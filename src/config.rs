@@ -80,6 +80,9 @@ pub struct Config {
     /// MYTH-1 — mythological & symbolic pattern library.
     #[serde(default)]
     pub myth: MythConfig,
+    /// RESRCH-1 — the Research Assistant (`inkhaven research`).
+    #[serde(default)]
+    pub research: ResearchConfig,
     /// The project's declared genre (e.g. `literary_realism`, `fantasy`).
     /// Project-wide; consumed by Inner Editor's genre-aware prompting and open
     /// to other features later. `None` = genre-blind.
@@ -234,6 +237,7 @@ impl Default for Config {
             char: CharConfig::default(),
             theologian: TheologianConfig::default(),
             myth: MythConfig::default(),
+            research: ResearchConfig::default(),
             genre: None,
             inner_socrates_default_persona: None,
             project_lock: ProjectLockConfig::default(),
@@ -3901,6 +3905,47 @@ impl Default for MythConfig {
     }
 }
 
+/// RESRCH-1 — `research:` block tuning the Research Assistant (`inkhaven
+/// research`). All optional; omitting the block uses these defaults (RFC §23).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ResearchConfig {
+    /// Default thread to open (null = picker / `default`).
+    pub default_thread: Option<String>,
+    /// Max Facts paragraphs prepended per query as RAG context.
+    pub rag_top_n: usize,
+    /// Per-session cost-cap warning (USD). Informs, never blocks.
+    pub session_budget_warn: f64,
+    /// Max pinned nodes in the Facts tree.
+    pub max_pinned_nodes: usize,
+    /// Show the keybind hints bar by default.
+    pub show_keybind_hints: bool,
+    /// Minimum terminal width; below it, a resize message shows.
+    pub min_width: u16,
+    /// Facts tree / chat split: tree columns out of 10 (4 = 40% tree).
+    pub split_ratio: u32,
+    /// `/diff`: number of similar facts to show.
+    pub diff_top_n: usize,
+    /// `/verify`: minimum sentence word count for claim extraction.
+    pub verify_min_sentence_words: usize,
+}
+
+impl Default for ResearchConfig {
+    fn default() -> Self {
+        Self {
+            default_thread: None,
+            rag_top_n: 5,
+            session_budget_warn: 0.50,
+            max_pinned_nodes: 3,
+            show_keybind_hints: true,
+            min_width: 80,
+            split_ratio: 4,
+            diff_top_n: 3,
+            verify_min_sentence_words: 8,
+        }
+    }
+}
+
 /// Per-metric drift thresholds for the `prose` finding category.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -4656,6 +4701,37 @@ mod layering_tests {
 }
 
 // 1.3.32+ (road to 1.4.0) — config parser property sweep.
+#[cfg(test)]
+mod research_config_tests {
+    use super::{Config, ResearchConfig};
+
+    #[test]
+    fn defaults_match_rfc() {
+        let r = ResearchConfig::default();
+        assert_eq!(r.rag_top_n, 5);
+        assert_eq!(r.max_pinned_nodes, 3);
+        assert_eq!(r.min_width, 80);
+        assert_eq!(r.split_ratio, 4);
+        assert_eq!(r.diff_top_n, 3);
+        assert_eq!(r.verify_min_sentence_words, 8);
+        assert!(r.show_keybind_hints);
+        assert!((r.session_budget_warn - 0.50).abs() < 1e-9);
+        assert!(r.default_thread.is_none());
+    }
+
+    #[test]
+    fn missing_block_uses_defaults_and_overrides_apply() {
+        // Absent → defaults.
+        let cfg: Config = serde_hjson::from_str("{}").unwrap();
+        assert_eq!(cfg.research.split_ratio, 4);
+        // A partial block overrides only the named fields.
+        let cfg2: Config = serde_hjson::from_str("{ research: { split_ratio: 5, diff_top_n: 7 } }").unwrap();
+        assert_eq!(cfg2.research.split_ratio, 5);
+        assert_eq!(cfg2.research.diff_top_n, 7);
+        assert_eq!(cfg2.research.max_pinned_nodes, 3); // untouched default
+    }
+}
+
 #[cfg(test)]
 mod prop_tests {
     use super::Config;

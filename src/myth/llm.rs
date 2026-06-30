@@ -234,8 +234,15 @@ pub(crate) fn run_llm_checks(
             ArchetypeRole::Custom(s) => s.replace('_', " "),
             r => r.as_code().replace('_', " "),
         };
+        // Vogler's eight get the canonical framing; a custom role is described
+        // only by its declared function (no archetypal expectation imposed).
+        let role_note = if a.role.is_vogler() {
+            "(one of the classic narrative archetypes)"
+        } else {
+            "(an author-defined role)"
+        };
         let user = format!(
-            "A character is mapped to a narrative archetype.\nCharacter: {name}\nArchetype role: {role}\n\
+            "A character is mapped to a narrative archetype {role_note}.\nCharacter: {name}\nArchetype role: {role}\n\
              Declared function: {func}\n\nPassages featuring the character:\n{ex}\n\n\
              Judge whether the character actually PERFORMS the declared role function in the prose. \
              {lang_dir} Return a JSON array; if the character does NOT fulfil the role, ONE object \
