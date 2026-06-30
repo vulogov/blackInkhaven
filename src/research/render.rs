@@ -22,12 +22,13 @@ enum RowKind {
     Plain,
 }
 
-/// Border style for a pane: bright/bold when focused, dim otherwise (RFC §5.3).
+/// Border style for a pane: the theme's focused colour (bold) when active, the
+/// unfocused colour otherwise — a visible, theme-aware selection cue.
 pub(super) fn border_style(app: &ResearchApp, pane: Focus) -> Style {
     if app.focus == pane {
-        Style::new().bold()
+        Style::new().fg(app.theme.border_focused).bold()
     } else {
-        Style::new().dim()
+        Style::new().fg(app.theme.border_unfocused)
     }
 }
 
@@ -209,19 +210,20 @@ fn render_ai_chat(frame: &mut Frame, app: &ResearchApp, area: Rect) {
         app.chat_search.as_ref().map(|s| match_lines[s.current % match_lines.len()])
     };
 
-    // Query header + prompt in cyan (bold header); response in default fg.
-    let cyan = Style::new().fg(ratatui::style::Color::Cyan);
+    // Query header + prompt in the theme's accent colour (bold header); the
+    // response in the default pane foreground — a clear query/response split.
+    let accent = Style::new().fg(app.theme.ai_scope_fg);
     let lines: Vec<Line> = rows
         .iter()
         .enumerate()
         .map(|(i, (text, kind))| {
             if let (Some(q), true) = (&query, match_lines.contains(&i)) {
-                highlight_line(text, q, current_line == Some(i))
+                highlight_line(app, text, q, current_line == Some(i))
             } else {
                 let style = match kind {
-                    RowKind::Header => cyan.bold(),
-                    RowKind::Prompt => cyan,
-                    RowKind::Response | RowKind::Plain => Style::new(),
+                    RowKind::Header => accent.bold(),
+                    RowKind::Prompt => accent,
+                    RowKind::Response | RowKind::Plain => Style::new().fg(app.theme.pane_fg),
                 };
                 Line::from(Span::styled(text.clone(), style))
             }
@@ -258,10 +260,11 @@ fn render_ai_chat(frame: &mut Frame, app: &ResearchApp, area: Rect) {
 }
 
 /// Split a line on `query` (case-insensitive), highlighting the matches. The
-/// current match line is additionally bold.
-fn highlight_line<'a>(text: &'a str, query: &str, is_current: bool) -> Line<'a> {
+/// current match line is additionally bold. Match colours come from the theme.
+fn highlight_line<'a>(app: &ResearchApp, text: &'a str, query: &str, is_current: bool) -> Line<'a> {
     let base = if is_current { Style::new().bold() } else { Style::new() };
-    let hit = Style::new().bg(ratatui::style::Color::Yellow).fg(ratatui::style::Color::Black);
+    let bg = if is_current { app.theme.search_current_bg } else { app.theme.search_match_bg };
+    let hit = Style::new().bg(bg).fg(app.theme.pane_bg);
     let mut spans: Vec<Span> = Vec::new();
     let lower = text.to_lowercase();
     let mut from = 0usize;

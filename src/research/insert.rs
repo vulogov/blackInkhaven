@@ -54,6 +54,13 @@ pub(super) fn insert_paragraph(
     let mut node = store
         .create_node(cfg, h, NodeKind::Paragraph, title, Some(&parent), None, position)
         .context("create paragraph node")?;
+    // create_node seeds the `.typ` file with `= {title}`. Overwrite it with the
+    // real body FIRST (the editor reads the `.typ` file), THEN update the DB
+    // blob + reembed — the canonical two-step the store's own creators use.
+    if let Some(rel) = &node.file {
+        let abs = store.project_root().join(rel);
+        crate::io_atomic::write(&abs, body.as_bytes()).context("write paragraph .typ body")?;
+    }
     store
         .update_paragraph_content(&mut node, body.as_bytes())
         .context("write paragraph body (reembeds)")?;
