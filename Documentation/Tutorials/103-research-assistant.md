@@ -254,6 +254,27 @@ records provenance **`computed`** and **skips the fact-check gate** entirely —
 - Because it's Bund, the full stack language is available too: `/calc 3 4 + 5 *` → `= 35`. Each word
   also has a `calc.`-prefixed form if a short alias collides with a builtin.
 
+### Grounding `/calc` in your World book (1.5.4)
+
+`/calc` can read **this project's own World-book facts** (the materialized WORLD-4 simulation), so a
+calculation is grounded in *your* world, not generic constants:
+
+```
+/calc "Astronomy/year_length_planet_days" world.get   → world: Astronomy/year_length_planet_days = 412.3
+                                                         = 412.3
+/calc world.year                                       → the same, via a convenience word
+```
+
+- **`world.get <path>`** — the value at a `Chapter/field[/index|key…]` path in the World book (e.g.
+  `"Climate/zones/0/annual_mean_c"`); pushes a number, or `NODATA` when the path doesn't resolve (it
+  never invents a value). **`world.has <path>`** tests a path; **`world.dict <Chapter>`** pushes a whole
+  layer as a dict.
+- **Convenience words** for the common astronomy figures: `world.year`, `world.declared_year`,
+  `world.tilt`, `world.star_mass`, `world.orbit_days`, `world.divergence`.
+- Every World read is **echoed** in the result (`world: <path> = <value>`), and a `/fact` taken from a
+  World-grounded `/calc` records provenance **`computed · world:<path>`** — the deterministic, *self-citing*
+  tier. (Requires a materialized World book — run `inkhaven realworld compile --materialize` first.)
+
 ## 7. Deeper research
 
 - **`/chain q1 → q2 → q3`** — a sequential pipeline: each step's answer becomes context for the next.

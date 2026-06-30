@@ -935,12 +935,19 @@ impl ResearchApp {
                 Some("usage: /calc <expr>  e.g. /calc 100 mi2km   ·   /calc 4.2 ly2km".to_string());
             return;
         }
+        // R4-D — clear any stale World-read trail before evaluating.
+        let _ = crate::scripting::take_world_reads();
         match crate::scripting::eval(expr) {
             Ok(out) => {
+                let world_reads = crate::scripting::take_world_reads();
                 let mut body = String::new();
                 if !out.stdout.trim().is_empty() {
                     body.push_str(out.stdout.trim());
                     body.push('\n');
+                }
+                // R4-D — echo each World fact this calc read, transparently.
+                for (path, rendered) in &world_reads {
+                    body.push_str(&format!("world: {path} = {rendered}\n"));
                 }
                 match &out.top {
                     Some(v) => body.push_str(&format!("= {}", crate::scripting::format_value(v))),
@@ -949,9 +956,19 @@ impl ResearchApp {
                 }
                 let mut turn = ChatTurn::with_response(format!("/calc {expr}"), body);
                 turn.computed = true;
+                // R4-D — a World-grounded calc cites its source paths in provenance.
+                if !world_reads.is_empty() {
+                    let paths: Vec<&str> = world_reads.iter().map(|(p, _)| p.as_str()).collect();
+                    turn.world_detail = format!("world:{}", paths.join(","));
+                }
                 self.chat_history.push(turn);
                 self.chat_scroll = 0;
-                self.status_message = Some("computed (deterministic) — /fact to record it".to_string());
+                let note = if world_reads.is_empty() {
+                    "computed (deterministic) — /fact to record it"
+                } else {
+                    "computed from World facts — /fact to record it"
+                };
+                self.status_message = Some(note.to_string());
             }
             Err(e) => self.status_message = Some(format!("calc: {e}")),
         }
@@ -1917,7 +1934,8 @@ impl ResearchApp {
         // (R2-C, fact-checked before commit); `document` for imported sources
         // (R2-B); else `model`, from the originating research query.
         let prov = if last.computed {
-            ProvMeta { origin: "computed".to_string(), query, detail: String::new() }
+            // R4-D — carry the `world:<path>` citation when the calc read World facts.
+            ProvMeta { origin: "computed".to_string(), query, detail: last.world_detail.clone() }
         } else if last.web_grounded {
             ProvMeta { origin: "web".to_string(), query, detail: last.sources.join(", ") }
         } else if last.sources.is_empty() {
