@@ -14,6 +14,14 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 use super::app::ResearchApp;
 use super::focus::Focus;
 
+/// Chat line role — drives the query/response colour distinction.
+enum RowKind {
+    Header,
+    Prompt,
+    Response,
+    Plain,
+}
+
 /// Border style for a pane: bright/bold when focused, dim otherwise (RFC §5.3).
 pub(super) fn border_style(app: &ResearchApp, pane: Focus) -> Style {
     if app.focus == pane {
@@ -169,20 +177,23 @@ fn render_ai_chat(frame: &mut Frame, app: &ResearchApp, area: Rect) {
         None => (None, inner),
     };
 
-    // Build the chat lines as `(text, is_header)`.
-    let mut rows: Vec<(String, bool)> = Vec::new();
+    // Build the chat lines as `(text, kind)` so query and response render in
+    // distinct colours.
+    let mut rows: Vec<(String, RowKind)> = Vec::new();
     for (i, turn) in app.chat_history.iter().enumerate() {
         if i > 0 {
-            rows.push((String::new(), false));
+            rows.push((String::new(), RowKind::Plain));
         }
-        rows.push((format!("[query {}]", i + 1), true));
-        rows.push((turn.prompt.clone(), false));
-        rows.push((String::new(), false));
+        rows.push((format!("❯ query {}", i + 1), RowKind::Header));
+        for l in turn.prompt.split('\n') {
+            rows.push((l.to_string(), RowKind::Prompt));
+        }
+        rows.push((String::new(), RowKind::Plain));
         for l in turn.response.split('\n') {
-            rows.push((l.to_string(), false));
+            rows.push((l.to_string(), RowKind::Response));
         }
         if turn.streaming {
-            rows.push(("▌".to_string(), false));
+            rows.push(("▌".to_string(), RowKind::Plain));
         }
     }
 
@@ -198,16 +209,21 @@ fn render_ai_chat(frame: &mut Frame, app: &ResearchApp, area: Rect) {
         app.chat_search.as_ref().map(|s| match_lines[s.current % match_lines.len()])
     };
 
+    // Query header + prompt in cyan (bold header); response in default fg.
+    let cyan = Style::new().fg(ratatui::style::Color::Cyan);
     let lines: Vec<Line> = rows
         .iter()
         .enumerate()
-        .map(|(i, (text, is_header))| {
+        .map(|(i, (text, kind))| {
             if let (Some(q), true) = (&query, match_lines.contains(&i)) {
                 highlight_line(text, q, current_line == Some(i))
-            } else if *is_header {
-                Line::from(Span::styled(text.clone(), Style::new().bold()))
             } else {
-                Line::from(text.clone())
+                let style = match kind {
+                    RowKind::Header => cyan.bold(),
+                    RowKind::Prompt => cyan,
+                    RowKind::Response | RowKind::Plain => Style::new(),
+                };
+                Line::from(Span::styled(text.clone(), style))
             }
         })
         .collect();

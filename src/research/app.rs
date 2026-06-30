@@ -1035,9 +1035,19 @@ impl ResearchApp {
 
     /// Commit the confirmed entry into its book, then reload + persist the turn.
     fn confirm_insertion(&mut self) {
-        let Some(c) = self.confirmation.take() else { return };
-        let title = c.title.lines().join(" ");
-        let body = c.body.lines().join("\n");
+        // Peek the fields first: refuse an empty body (the extraction may have
+        // produced no `fact`), keeping the editable overlay open rather than
+        // inserting a paragraph that is just the seeded `= title` heading.
+        let (title, body) = match &self.confirmation {
+            Some(c) => (c.title.lines().join(" "), c.body.lines().join("\n")),
+            None => return,
+        };
+        if body.trim().is_empty() {
+            self.status_message =
+                Some("fact body is empty — type it, or Esc to cancel".to_string());
+            return;
+        }
+        let c = self.confirmation.take().unwrap();
         match super::insert::insert_paragraph(
             &self.store,
             &self.cfg,

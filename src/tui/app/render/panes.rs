@@ -1846,8 +1846,15 @@ impl super::super::App {
             }
         }
 
-        // Reserve the bottom row for an action-key hint when there's space.
-        let footer_h: u16 = if inner.height > 2 { 1 } else { 0 };
+        // Reserve up to two bottom rows for the action-key hint (it wraps when
+        // the pane is narrow, so a single row truncated the longer hints).
+        let footer_h: u16 = if inner.height > 4 {
+            2
+        } else if inner.height > 2 {
+            1
+        } else {
+            0
+        };
         let list_area = Rect { height: inner.height - footer_h, ..inner };
 
         // Scroll so the selected entry stays visible (entries vary in height when
@@ -1857,12 +1864,12 @@ impl super::super::App {
         let para = Paragraph::new(lines).wrap(Wrap { trim: false }).scroll((offset, 0));
         f.render_widget(para, list_area);
 
-        if footer_h == 1 {
+        if footer_h >= 1 {
             let footer = Rect {
                 x: inner.x,
-                y: inner.y + inner.height - 1,
+                y: inner.y + inner.height - footer_h,
                 width: inner.width,
-                height: 1,
+                height: footer_h,
             };
             // The action row is context-aware: a lexicon proposal advertises
             // its Enter→accept; a translation result, r→remember.
@@ -1893,16 +1900,20 @@ impl super::super::App {
                 _ => " ↑↓ · o expand · r remember · a ask AI · d dismiss · p pin · ^B Tab",
             };
             // Compact filter cue: `f` cycles source, `S` severity, `t` this-¶,
-            // `c` clears. Full keys in the quick reference. Shown active when set.
+            // `c` clears the filter, `C` clears the pane. Full keys in the quick
+            // reference. Shown active when set.
             let filter_cue = if self.output_filter.is_active() {
-                " · filter:f/S/t c:clr"
+                " · C clear · filter:f/S/t c:clr"
             } else {
-                " · f:filter"
+                " · C clear · f:filter"
             };
+            // Wrap so the longer hints don't truncate in a narrow pane (footer is
+            // up to two rows).
             let hint = Paragraph::new(Line::from(Span::styled(
                 format!("{hint_text}{filter_cue}"),
                 Style::default().fg(Color::DarkGray),
-            )));
+            )))
+            .wrap(ratatui::widgets::Wrap { trim: false });
             f.render_widget(hint, footer);
         }
     }
