@@ -110,6 +110,18 @@ impl TreeInputKind {
     }
 }
 
+/// `/factcheck` — a multi-call corpus audit: truth (per-fact, chunked) then
+/// consistency (the whole set). Drained in the run loop like the chain.
+pub(super) struct FactCheckState {
+    facts: Vec<super::factcheck::FactEntry>,
+    /// `true` while running truth chunks; `false` during the consistency pass.
+    truth_phase: bool,
+    chunk_idx: usize,
+    truth_report: String,
+    rx: Option<mpsc::UnboundedReceiver<StreamMsg>>,
+    buf: String,
+}
+
 /// R-P15 — `/chain`: a sequential research pipeline. Each step's response is
 /// accumulated as context for the next.
 pub(super) struct ChainState {
@@ -168,6 +180,8 @@ pub(crate) struct ResearchApp {
     verify_rx: Option<(mpsc::UnboundedReceiver<StreamMsg>, String)>,
     /// In-flight `/chain` pipeline (R-P15).
     chain: Option<ChainState>,
+    /// In-flight `/factcheck` corpus audit.
+    factcheck: Option<FactCheckState>,
     /// The editable insertion confirmation overlay (G1/G2).
     pub(super) confirmation: Option<ConfirmationState>,
     /// Accumulated session cost estimate (USD).
@@ -179,6 +193,10 @@ pub(crate) struct ResearchApp {
     pub(super) show_hints: bool,
     pub(super) split_ratio: u32,
     pub(super) status_message: Option<String>,
+    /// `Ctrl+B` prefix is armed, waiting for the second key (e.g. `h`).
+    ctrl_b_pending: bool,
+    /// The full quick-reference overlay (Ctrl+B h) is open.
+    pub(super) show_help: bool,
 
     should_quit: bool,
 }
@@ -233,6 +251,7 @@ impl ResearchApp {
             extracting: None,
             verify_rx: None,
             chain: None,
+            factcheck: None,
             confirmation: None,
             session_cost: 0.0,
             budget_warned: false,
@@ -240,6 +259,8 @@ impl ResearchApp {
             show_hints,
             split_ratio,
             status_message: None,
+            ctrl_b_pending: false,
+            show_help: false,
             should_quit: false,
         })
     }
@@ -257,6 +278,7 @@ impl ResearchApp {
             self.poll_extraction();
             self.poll_verify();
             self.poll_chain();
+            self.poll_factcheck();
             terminal.draw(|f| render::render(f, self))?;
             if event::poll(Duration::from_millis(100))? {
                 if let Event::Key(key) = event::read()? {
@@ -276,6 +298,23 @@ impl ResearchApp {
             && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('q'))
         {
             self.should_quit = true;
+            return;
+        }
+        // The quick-reference overlay (Ctrl+B h) swallows the next key to close.
+        if self.show_help {
+            self.show_help = false;
+            return;
+        }
+        // `Ctrl+B` arms a prefix; the next key resolves it (`h` = help).
+        if self.ctrl_b_pending {
+            self.ctrl_b_pending = false;
+            if matches!(key.code, KeyCode::Char('h') | KeyCode::Char('H')) {
+                self.show_help = true;
+            }
+            return;
+        }
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('b') {
+            self.ctrl_b_pending = true;
             return;
         }
         // The manual-entry overlay (G7) captures all keys while active.
@@ -485,7 +524,145 @@ impl ResearchApp {
             Command::Goto(path) => self.goto_path(&path),
             Command::Diff => self.run_diff(),
             Command::Verify => self.run_verify(),
+            Command::FactCheck => self.start_factcheck(),
             Command::Chain(steps) => self.start_chain(steps),
+        }
+    }
+
+    /// `/factcheck` — audit the Facts corpus: a chunked truth pass over every
+    /// fact, then a single consistency pass over the whole set. Multi-call.
+    fn start_factcheck(&mut self) {
+        if self.factcheck.is_some() {
+            self.status_message = Some("a fact-check is already running".to_string());
+            return;
+        }
+        let Some(book_id) = self.facts_tree.root else {
+            self.status_message = Some("no Facts book".to_string());
+            return;
+        };
+        let facts = super::factcheck::gather_facts(&self.store, &self.hierarchy, book_id);
+        if facts.is_empty() {
+            self.status_message = Some("no facts to check — add some first".to_string());
+            return;
+        }
+        self.factcheck = Some(FactCheckState {
+            facts,
+            truth_phase: true,
+            chunk_idx: 0,
+            truth_report: String::new(),
+            rx: None,
+            buf: String::new(),
+        });
+        self.factcheck_next_call();
+    }
+
+    /// Spawn the next `/factcheck` call (a truth chunk, or the consistency pass).
+    fn factcheck_next_call(&mut self) {
+        let (lang, _note) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        let language = super::extract::language_name(&lang);
+        let Some(fc) = self.factcheck.as_mut() else { return };
+
+        let total = fc.facts.len();
+        let chunk_size = super::factcheck::TRUTH_CHUNK;
+        let n_chunks = total.div_ceil(chunk_size);
+
+        let (system, user, status) = if fc.truth_phase && fc.chunk_idx < n_chunks {
+            let base = fc.chunk_idx * chunk_size;
+            let chunk: Vec<&super::factcheck::FactEntry> =
+                fc.facts[base..(base + chunk_size).min(total)].iter().collect();
+            (
+                super::factcheck::truth_system(language),
+                super::factcheck::truth_user(&chunk, base),
+                format!("fact-check: truth {}/{n_chunks}…", fc.chunk_idx + 1),
+            )
+        } else {
+            // Move to (or run) the consistency pass.
+            fc.truth_phase = false;
+            (
+                super::factcheck::consistency_system(language),
+                super::factcheck::consistency_user(&fc.facts),
+                "fact-check: consistency…".to_string(),
+            )
+        };
+
+        let ai = match crate::ai::AiClient::from_config(&self.cfg.llm) {
+            Ok(a) => a,
+            Err(e) => {
+                self.status_message = Some(format!("no LLM provider: {e}"));
+                self.factcheck = None;
+                return;
+            }
+        };
+        let (model, _env) = match ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(m) => m,
+            Err(e) => {
+                self.status_message = Some(format!("provider error: {e}"));
+                self.factcheck = None;
+                return;
+            }
+        };
+        let rx = spawn_chat_stream(ai.client.clone(), model.to_string(), Some(system), Vec::new(), user, llm::CATEGORY);
+        if let Some(fc) = self.factcheck.as_mut() {
+            fc.rx = Some(rx);
+            fc.buf.clear();
+        }
+        self.status_message = Some(status);
+    }
+
+    /// Drain the in-flight `/factcheck` call; advance through truth chunks, then
+    /// the consistency pass, then emit the report.
+    fn poll_factcheck(&mut self) {
+        let Some(fc) = self.factcheck.as_mut() else { return };
+        let Some(rx) = fc.rx.as_mut() else { return };
+        let mut done = false;
+        loop {
+            match rx.try_recv() {
+                Ok(StreamMsg::Token(t)) => fc.buf.push_str(&t),
+                Ok(StreamMsg::Done) | Err(mpsc::error::TryRecvError::Disconnected) => {
+                    done = true;
+                    break;
+                }
+                Ok(StreamMsg::Error(e)) => {
+                    self.status_message = Some(format!("fact-check error: {e}"));
+                    self.factcheck = None;
+                    return;
+                }
+                Err(mpsc::error::TryRecvError::Empty) => break,
+            }
+        }
+        if !done {
+            return;
+        }
+        // Record the finished call's output (drop the `fc` borrow before touching
+        // other `self` fields). `report` is Some only when the consistency pass
+        // (the final call) finished.
+        let (was_truth, report): (bool, Option<(usize, String)>) = {
+            let fc = self.factcheck.as_mut().unwrap();
+            fc.rx = None;
+            let out = std::mem::take(&mut fc.buf);
+            if fc.truth_phase {
+                fc.truth_report.push_str(out.trim());
+                fc.truth_report.push('\n');
+                fc.chunk_idx += 1;
+                (true, None)
+            } else {
+                let total = fc.facts.len();
+                let report = format!(
+                    "[/factcheck — {total} fact(s)]\n\n── Factual accuracy ──\n{}\n\n── Mutual consistency ──\n{}\n",
+                    fc.truth_report.trim(),
+                    out.trim(),
+                );
+                (false, Some((total, report)))
+            }
+        };
+        if was_truth {
+            // Next truth chunk, or (chunks exhausted) the consistency pass.
+            self.factcheck_next_call();
+        } else if let Some((total, report)) = report {
+            self.chat_history.push(ChatTurn::with_response("/factcheck".to_string(), report));
+            self.chat_scroll = 0;
+            self.factcheck = None;
+            self.status_message = Some(format!("fact-check complete · {total} fact(s)"));
         }
     }
 

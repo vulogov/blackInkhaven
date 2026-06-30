@@ -21,6 +21,7 @@ mod app;
 mod chat;
 mod command;
 mod extract;
+mod factcheck;
 mod facts_tree;
 mod focus;
 mod insert;

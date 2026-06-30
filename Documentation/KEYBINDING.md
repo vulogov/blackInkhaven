@@ -1503,8 +1503,9 @@ query prompt — needing ≥ 80 columns.
 |:---|:---|
 | `Tab` / `Shift+Tab` | Cycle focus: Facts tree → query prompt → chat |
 | `F10` | Cycle RAG mode (Facts+Full → Facts only → Full only) |
+| `Ctrl+B h` | Full quick reference of every chord + `/command` (any key closes) |
 | `?` | Toggle the keybind hints bar |
-| `q` / `Ctrl+C` | Quit (restores the terminal) |
+| `q` / `Ctrl+C` / `Ctrl+Q` | Quit (restores the terminal; Ctrl+Q works in text fields too) |
 | **Facts tree** | `j`/`k` nav, `Enter`/`l`/`h` expand/collapse, `g`/`G` top/bottom |
 | `Ctrl+P` (tree) | Pin / unpin the cursor node for RAG context (max 3, `⬡`) |
 | `n` (tree) | Manually add a fact (title → `Ctrl+S` body) |
@@ -1513,8 +1514,9 @@ query prompt — needing ≥ 80 columns.
 | **Confirm overlay** | `Tab` switch title/body, `Ctrl+S` / `Ctrl+Enter` insert, `Esc` discard |
 
 Commands (type in the prompt): `/fact "..." [→ path]`, `/note "..." [→ path]`,
-`/goto <slug-path>`, `/diff`, `/verify`, `/chain a → b → c`, `/rag [mode]`,
-`/clear`, `/save [name]`. See [Tutorial 103](Tutorials/103-research-assistant.md).
+`/goto <slug-path>`, `/diff`, `/verify`, `/factcheck`, `/chain a → b → c`,
+`/rag [mode]`, `/clear`, `/save [name]`. See
+[Tutorial 103](Tutorials/103-research-assistant.md).
 
 ## `inkhaven prompts-editor` (1.2.10+)
 

@@ -13,8 +13,11 @@ pub(super) enum Command {
     Goto(String),
     /// `/diff` — semantic similarity check (R-P13).
     Diff,
-    /// `/verify` — LLM confidence probe (R-P14).
+    /// `/verify` — LLM confidence probe on the last response (R-P14).
     Verify,
+    /// `/factcheck` — audit the whole Facts corpus for truth + mutual
+    /// consistency (multi-call).
+    FactCheck,
     /// `/chain q1 → q2 → q3` — sequential research pipeline (R-P15).
     Chain(Vec<String>),
     /// `/rag [facts+full|facts|full]` — switch RAG mode.
@@ -81,6 +84,7 @@ pub(super) fn parse(input: &str) -> Option<Command> {
         "goto" => Command::Goto(rest.to_string()),
         "diff" => Command::Diff,
         "verify" => Command::Verify,
+        "factcheck" => Command::FactCheck,
         "chain" => {
             let steps: Vec<String> = split_steps(rest);
             Command::Chain(steps)
@@ -149,6 +153,7 @@ mod tests {
         assert_eq!(parse("/goto facts/rome/eng").unwrap(), Command::Goto("facts/rome/eng".into()));
         assert_eq!(parse("/diff").unwrap(), Command::Diff);
         assert_eq!(parse("/verify").unwrap(), Command::Verify);
+        assert_eq!(parse("/factcheck").unwrap(), Command::FactCheck);
         assert_eq!(parse("/clear").unwrap(), Command::Clear);
         assert_eq!(parse("/rag facts").unwrap(), Command::Rag(Some("facts".into())));
         assert_eq!(parse("/save rome").unwrap(), Command::Save(Some("rome".into())));

@@ -63,6 +63,63 @@ pub(super) fn render(frame: &mut Frame, app: &ResearchApp) {
     }
     render_query_prompt(frame, app, outer[2]);
     render_status_bar(frame, app, outer[3]);
+
+    // The full quick-reference overlay (Ctrl+B h) sits over everything.
+    if app.show_help {
+        render_help(frame, app, area);
+    }
+}
+
+/// Ctrl+B h — a full reference of panes' chords and the `/command` namespace.
+fn render_help(frame: &mut Frame, app: &ResearchApp, area: Rect) {
+    let lines: Vec<Line> = vec![
+        Line::from(Span::styled("  Research Assistant — quick reference", Style::new().bold())),
+        Line::from(""),
+        Line::from(Span::styled("  Global", Style::new().fg(app.theme.ai_scope_fg).bold())),
+        Line::from("    Tab / Shift+Tab   cycle panes (Facts tree · query · chat)"),
+        Line::from("    F10               cycle RAG mode (Facts+Full · Facts · Full)"),
+        Line::from("    Ctrl+B h          this reference     ?  toggle hints bar"),
+        Line::from("    Ctrl+Q / Ctrl+C   quit               q  quit (outside text)"),
+        Line::from(""),
+        Line::from(Span::styled("  Facts tree", Style::new().fg(app.theme.ai_scope_fg).bold())),
+        Line::from("    j/k g/G  nav      h/l/Enter fold      Ctrl+P pin (max 3)"),
+        Line::from("    n new fact        R rename            c/s new chapter/subchapter"),
+        Line::from("    - / D delete (¶/branch)               K/J move up/down"),
+        Line::from("    y/x/p  copy / cut / paste across parents"),
+        Line::from(""),
+        Line::from(Span::styled("  Query prompt", Style::new().fg(app.theme.ai_scope_fg).bold())),
+        Line::from("    Enter send        Alt+Enter newline   ↑↓ history (at edges)"),
+        Line::from("    ←→ Home/End edit  Esc clear / defocus"),
+        Line::from(""),
+        Line::from(Span::styled("  Chat", Style::new().fg(app.theme.ai_scope_fg).bold())),
+        Line::from("    j/k g/G scroll    Ctrl+F search (n/N matches)"),
+        Line::from(""),
+        Line::from(Span::styled("  /commands", Style::new().fg(app.theme.ai_scope_fg).bold())),
+        Line::from("    /fact \"…\" [→ path]   extract last response → Facts (confirm)"),
+        Line::from("    /note \"…\" [→ path]   → Notes (speculative)"),
+        Line::from("    /goto facts/path     jump the tree to a node"),
+        Line::from("    /diff                similar facts already in the corpus"),
+        Line::from("    /verify              confidence-probe the last response"),
+        Line::from("    /factcheck           audit the whole corpus (truth + consistency)"),
+        Line::from("    /chain a → b → c     sequential research pipeline"),
+        Line::from("    /rag /clear /save    switch RAG · clear chat · rename thread"),
+        Line::from(""),
+        Line::from(Span::styled("  Press any key to close.", Style::new().dim())),
+    ];
+    let h = (lines.len() as u16 + 2).min(area.height);
+    let w = 72u16.min(area.width);
+    let modal = Rect {
+        x: area.x + (area.width.saturating_sub(w)) / 2,
+        y: area.y + (area.height.saturating_sub(h)) / 2,
+        width: w,
+        height: h,
+    };
+    frame.render_widget(Clear, modal);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Help (Ctrl+B h) ")
+        .border_style(Style::new().fg(app.theme.border_focused).bold());
+    frame.render_widget(Paragraph::new(Text::from(lines)).block(block), modal);
 }
 
 /// Shown when the terminal is narrower than the configured minimum.
@@ -405,7 +462,7 @@ fn render_hints(frame: &mut Frame, app: &ResearchApp, area: Rect) {
             " n:fact c/s:chap/sub R:rename -/D:del K/J:move y/x/p:copy/cut/paste Ctrl+P:pin Tab:chat"
         }
         Focus::QueryPrompt => {
-            " Tab:tree  ⏎ send · Alt+⏎ newline · ←→↑↓ edit/move · ↑↓ history (at edges) · F10 RAG · /fact …"
+            " ⏎ send · Alt+⏎ newline · ←→↑↓ edit · F10 RAG · Ctrl+B h help · /fact /diff /verify /factcheck …"
         }
         Focus::AiChat => " Tab:query  Ctrl+F:search  j/k:scroll  g/G:top/bottom  ?:help",
         Focus::ConfirmationOverlay => " Tab:field  Ctrl+S / Ctrl+Enter:confirm  Esc:discard",

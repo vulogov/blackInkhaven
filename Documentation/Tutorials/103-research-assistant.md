@@ -49,6 +49,9 @@ are instantly available to `/diff`, the writing-mode RAG, and every Facts consum
 - **`/verify`** — extract the specific, checkable claims (years, quoted titles, quantities, named
   entities) and have the model self-assess each as HIGH / MEDIUM / **⚠ LOW** confidence — guidance for
   what to investigate before you `/fact` it.
+- **`/factcheck`** — a post-hoc audit of the **whole Facts corpus** (multiple LLM calls): every fact is
+  assessed for factual accuracy (ACCURATE / DUBIOUS / INACCURATE), then the full set is checked for
+  facts that **contradict each other**. Read-only; it reports into the chat and never edits the corpus.
 - **`/chain q1 → q2 → q3`** — a sequential pipeline: each step's answer becomes context for the next.
 - **`/goto facts/path/slug`** — jump the tree to a node. **`/rag`**, **`/clear`**, **`/save [name]`**
   round out the namespace.
@@ -57,8 +60,8 @@ are instantly available to `/diff`, the writing-mode RAG, and every Facts consum
 
 Sessions are **named, persistent threads** under `.inkhaven/research-threads/`: queries, insertions,
 pinned nodes, and RAG mode all persist and resume. `↑`/`↓` in the prompt recall your history.
-**`Ctrl+F`** searches the chat (highlight + `n`/`N`). `?` toggles the keybind hints; `q` / `Ctrl+C`
-quits.
+**`Ctrl+F`** searches the chat (highlight + `n`/`N`). **`Ctrl+B h`** opens a full quick-reference of
+every chord and `/command`; `?` toggles the keybind hints; `q` / `Ctrl+C` / `Ctrl+Q` quit.
 
 ## Configuration
 
