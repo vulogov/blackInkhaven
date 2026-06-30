@@ -994,7 +994,11 @@ impl ResearchApp {
         };
 
         let instruction = prompt.unwrap_or_else(|| extract::default_instruction(book).to_string());
-        let system = extract::system_prompt(book, &instruction, &research);
+        // Key the extraction off the project language so it never drops to
+        // English when the research / corpus is in another language.
+        let (lang, _note) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        let language = extract::language_name(&lang);
+        let system = extract::system_prompt(book, language, &instruction, &research);
         let rx = spawn_chat_stream(
             ai.client.clone(),
             model.to_string(),
