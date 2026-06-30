@@ -29,6 +29,7 @@ mod picker;
 mod rag;
 mod render;
 mod thread;
+mod verify;
 
 pub(crate) use focus::Focus;
 
