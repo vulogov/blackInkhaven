@@ -358,7 +358,7 @@ fn render_hints(frame: &mut Frame, app: &ResearchApp, area: Rect) {
             " n:fact c/s:chap/sub R:rename -/D:del K/J:move y/x/p:copy/cut/paste Ctrl+P:pin Tab:chat"
         }
         Focus::QueryPrompt => {
-            " Tab:tree  Enter:send  ↑↓:history  F10:RAG  /fact /note /goto /diff /verify /chain"
+            " Tab:tree  ⏎ send · Alt+⏎ newline · ←→↑↓ edit/move · ↑↓ history (at edges) · F10 RAG · /fact …"
         }
         Focus::AiChat => " Tab:query  Ctrl+F:search  j/k:scroll  g/G:top/bottom  ?:help",
         Focus::ConfirmationOverlay => " Tab:field  Ctrl+S / Ctrl+Enter:confirm  Esc:discard",
