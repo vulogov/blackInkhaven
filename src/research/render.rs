@@ -213,7 +213,11 @@ fn render_query_prompt(frame: &mut Frame, app: &ResearchApp, area: Rect) {
 fn render_status_bar(frame: &mut Frame, app: &ResearchApp, area: Rect) {
     let text = match &app.status_message {
         Some(msg) => format!("  {msg}"),
-        None => "  [RAG: Facts+Full]  [~$0.000]  [?:help  q:quit]".to_string(),
+        None => format!(
+            "  [RAG: {}]  [~${:.3}]  [?:help  q:quit]",
+            app.thread.rag_mode.label(),
+            app.session_cost,
+        ),
     };
     frame.render_widget(Paragraph::new(text).style(Style::new().dim()), area);
 }

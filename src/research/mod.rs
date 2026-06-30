@@ -22,6 +22,7 @@ mod chat;
 mod facts_tree;
 mod focus;
 mod insert;
+mod llm;
 mod picker;
 mod render;
 mod thread;
