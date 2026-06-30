@@ -17,14 +17,18 @@ use crate::project::ProjectLayout;
 use crate::store::Store;
 use crate::store::hierarchy::Hierarchy;
 
+use tokio::sync::mpsc;
 use tui_textarea::TextArea;
 use uuid::Uuid;
+
+use crate::ai::stream::{ChatTurn as AiTurn, StreamMsg, spawn_chat_stream};
 
 use super::Focus;
 use super::chat::ChatTurn;
 use super::facts_tree::FactsTree;
+use super::llm;
 use super::render;
-use super::thread::{self, ResearchThread, TurnKind};
+use super::thread::{self, ResearchThread, ResearchTurn, TurnKind};
 
 /// Default cap on pinned Facts nodes (RFC §16); the `research:` config block
 /// (R-P20) will override it.
@@ -75,6 +79,12 @@ pub(crate) struct ResearchApp {
     pub(super) chat_history: Vec<ChatTurn>,
     pub(super) chat_scroll: u16,
 
+    /// In-flight stream (R-P7): the receiver + the chat-turn index it feeds.
+    stream_rx: Option<mpsc::UnboundedReceiver<StreamMsg>>,
+    streaming_turn: Option<usize>,
+    /// Accumulated session cost estimate (USD).
+    pub(super) session_cost: f64,
+
     pub(super) focus: Focus,
     pub(super) show_hints: bool,
     pub(super) split_ratio: u32,
@@ -120,6 +130,9 @@ impl ResearchApp {
             draft_backup: String::new(),
             chat_history: Vec::new(),
             chat_scroll: 0,
+            stream_rx: None,
+            streaming_turn: None,
+            session_cost: 0.0,
             focus: Focus::QueryPrompt,
             show_hints: true,
             split_ratio: DEFAULT_SPLIT_RATIO,
@@ -137,6 +150,7 @@ impl ResearchApp {
     /// Later phases also drain the `StreamMsg` receiver here each tick (R-P7).
     pub(crate) fn run<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
         while !self.should_quit {
+            self.poll_stream();
             terminal.draw(|f| render::render(f, self))?;
             if event::poll(Duration::from_millis(100))? {
                 if let Event::Key(key) = event::read()? {
@@ -262,9 +276,117 @@ impl ResearchApp {
             self.status_message = Some("commands arrive in R-P9".to_string());
             return;
         }
-        // Placeholder response until the streaming LLM lands (R-P7).
-        self.chat_history
-            .push(ChatTurn::with_response(text, "(LLM streaming wiring lands in R-P7)".to_string()));
+        self.start_query(text);
+    }
+
+    /// R-P7 — start a streamed research query. Builds the system prompt (RAG
+    /// context arrives in R-P8), replays the prior turns, and spawns the stream.
+    fn start_query(&mut self, prompt: String) {
+        // Already streaming? Ignore (one in-flight query at a time).
+        if self.stream_rx.is_some() {
+            self.status_message = Some("a query is still streaming…".to_string());
+            return;
+        }
+        let ai = match crate::ai::AiClient::from_config(&self.cfg.llm) {
+            Ok(a) => a,
+            Err(e) => {
+                self.chat_history
+                    .push(ChatTurn::with_response(prompt, format!("[no LLM provider: {e}]")));
+                return;
+            }
+        };
+        let (model, _env) = match ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(m) => m,
+            Err(e) => {
+                self.chat_history
+                    .push(ChatTurn::with_response(prompt, format!("[provider error: {e}]")));
+                return;
+            }
+        };
+
+        // Replay completed turns as conversation history.
+        let history: Vec<AiTurn> = self
+            .chat_history
+            .iter()
+            .flat_map(|t| {
+                [AiTurn::User(t.prompt.clone()), AiTurn::Assistant(t.response.clone())]
+            })
+            .collect();
+
+        let system = llm::system_prompt(self.thread.rag_mode, None);
+
+        let mut turn = ChatTurn::new(prompt.clone());
+        turn.streaming = true;
+        self.chat_history.push(turn);
+        self.streaming_turn = Some(self.chat_history.len() - 1);
+
+        let rx = spawn_chat_stream(
+            ai.client.clone(),
+            model.to_string(),
+            Some(system),
+            history,
+            prompt,
+            llm::CATEGORY,
+        );
+        self.stream_rx = Some(rx);
+    }
+
+    /// Drain the in-flight stream (R-P7), called each tick.
+    fn poll_stream(&mut self) {
+        let Some(rx) = self.stream_rx.as_mut() else { return };
+        let Some(idx) = self.streaming_turn else { return };
+        let mut done = false;
+        loop {
+            match rx.try_recv() {
+                Ok(StreamMsg::Token(t)) => {
+                    if let Some(turn) = self.chat_history.get_mut(idx) {
+                        turn.response.push_str(&t);
+                    }
+                }
+                Ok(StreamMsg::Done) => {
+                    done = true;
+                    break;
+                }
+                Ok(StreamMsg::Error(e)) => {
+                    if let Some(turn) = self.chat_history.get_mut(idx) {
+                        turn.response.push_str(&format!("\n[error: {e}]"));
+                    }
+                    done = true;
+                    break;
+                }
+                Err(mpsc::error::TryRecvError::Empty) => break,
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    done = true;
+                    break;
+                }
+            }
+        }
+        if done {
+            self.finish_stream(idx);
+        }
+    }
+
+    /// Finalise a completed stream: cost, persistence, history rebuild.
+    fn finish_stream(&mut self, idx: usize) {
+        self.stream_rx = None;
+        self.streaming_turn = None;
+        let (prompt, response) = match self.chat_history.get_mut(idx) {
+            Some(turn) => {
+                turn.streaming = false;
+                let cost = llm::estimate_cost(&turn.prompt, &turn.response);
+                turn.cost = cost;
+                self.session_cost += cost;
+                (turn.prompt.clone(), turn.response.clone())
+            }
+            None => return,
+        };
+        let now = chrono::Utc::now().to_rfc3339();
+        let id = uuid::Uuid::now_v7().to_string();
+        let cost = llm::estimate_cost(&prompt, &response);
+        let _ = self.thread.push_turn(
+            ResearchTurn::query(id, prompt, response, cost, now),
+            &self.layout,
+        );
         self.rebuild_prompt_history();
     }
 
