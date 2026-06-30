@@ -4,7 +4,7 @@
 |---|---|
 | **RFC** | RESRCH-1 |
 | **Title** | A purpose-built TUI mode for AI-assisted research that transfers verified findings into the Facts / Notes corpus |
-| **Status** | Complete (R-P1..R-P21) — pending cut, 1.5.0 |
+| **Status** | Shipped — 1.5.0 |
 | **Author** | Vladimir Ulogov |
 | **New dependency** | none |
 | **Scope decision** | Full feature in 1.5.0 (all 21 PRs); extracted research targets **Facts + Notes** (the existing Research system book is left untouched) |
