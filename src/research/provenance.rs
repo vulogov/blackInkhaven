@@ -47,6 +47,8 @@ impl SourceRecord {
         match self.origin.as_str() {
             "computed" if !self.detail.is_empty() => format!("computed · {}", self.detail),
             "computed" => "computed (deterministic)".to_string(),
+            "wikidata" if !self.detail.is_empty() => format!("wikidata: {}", self.detail),
+            "wikidata" => "wikidata (structured)".to_string(),
             "web" if !self.detail.is_empty() => format!("web: {}", self.detail),
             "document" if !self.detail.is_empty() => format!("document: {}", self.detail),
             "model" if !self.query.is_empty() => format!("model · from query: {}", self.query),

@@ -35,6 +35,7 @@ mod thread;
 mod verdicts;
 mod verify;
 mod web;
+mod wikidata;
 
 pub(crate) use focus::Focus;
 

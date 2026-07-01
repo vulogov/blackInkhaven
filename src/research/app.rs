@@ -138,6 +138,12 @@ pub(super) struct WebState {
     query: String,
 }
 
+/// R3-A — an in-flight `/wikidata` fetch (async task → single-result channel).
+pub(super) struct WikidataState {
+    rx: mpsc::UnboundedReceiver<std::result::Result<super::wikidata::WdEntity, String>>,
+    query: String,
+}
+
 /// `/factcheck` — a multi-call corpus audit: truth (per-fact, chunked) then
 /// consistency (the whole set). Drained in the run loop like the chain.
 pub(super) struct FactCheckState {
@@ -222,6 +228,7 @@ pub(crate) struct ResearchApp {
     factcheck: Option<FactCheckState>,
     /// In-flight `/web` search (R2-C).
     web: Option<WebState>,
+    wikidata_state: Option<WikidataState>,
     /// In-flight pre-commit fact-check for a web fact (WC-P3): receiver + buffer.
     fc_confirm: Option<(mpsc::UnboundedReceiver<StreamMsg>, String)>,
     /// The editable insertion confirmation overlay (G1/G2).
@@ -301,6 +308,7 @@ impl ResearchApp {
             chain: None,
             factcheck: None,
             web: None,
+            wikidata_state: None,
             fc_confirm: None,
             confirmation: None,
             session_cost: 0.0,
@@ -331,6 +339,7 @@ impl ResearchApp {
             self.poll_chain();
             self.poll_factcheck();
             self.poll_web();
+            self.poll_wikidata();
             self.poll_fc_confirm();
             terminal.draw(|f| render::render(f, self))?;
             if event::poll(Duration::from_millis(100))? {
@@ -677,6 +686,7 @@ impl ResearchApp {
             Command::Forget(name) => self.run_forget(&name),
             Command::Web { ingest, query } => self.start_web(ingest, query),
             Command::Calc(expr) => self.run_calc(&expr),
+            Command::Wikidata(query) => self.start_wikidata(query),
             Command::WhatsWrong(path) => self.run_whatswrong(path.as_deref()),
             Command::Chain(steps) => self.start_chain(steps),
         }
@@ -1002,6 +1012,69 @@ impl ResearchApp {
         });
         self.web = Some(WebState { rx, ingest, query });
         self.status_message = Some("Searching the web…".to_string());
+    }
+
+    /// `/wikidata <query>` (R3-A) — spawn a Wikidata entity fetch. The result is
+    /// structured triples (no LLM); a `/fact` from it records `origin=wikidata`
+    /// (+ Q-ID) and skips the fact-check gate (top of the trust ladder).
+    fn start_wikidata(&mut self, query: String) {
+        if self.wikidata_state.is_some() {
+            self.status_message = Some("a Wikidata query is already running".to_string());
+            return;
+        }
+        let query = query.trim().to_string();
+        if query.is_empty() {
+            self.status_message = Some("usage: /wikidata <query>  e.g. /wikidata Roman aqueduct".to_string());
+            return;
+        }
+        if !super::wikidata::available(&self.cfg.research.wikidata) {
+            self.status_message = Some("wikidata disabled (research.wikidata.enabled)".to_string());
+            return;
+        }
+        let (lang, _note) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        // Wikidata wants an ISO code; unsupported → English labels.
+        let code = match lang.as_code() {
+            "other" => "en".to_string(),
+            c => c.to_string(),
+        };
+        let cfg = self.cfg.research.wikidata.clone();
+        let q = query.clone();
+        let (tx, rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let r = super::wikidata::fetch(cfg, q, code).await.map_err(|e| e.to_string());
+            let _ = tx.send(r);
+        });
+        self.wikidata_state = Some(WikidataState { rx, query });
+        self.status_message = Some("Querying Wikidata…".to_string());
+    }
+
+    /// Drain the in-flight Wikidata fetch; on success, show the structured entity.
+    fn poll_wikidata(&mut self) {
+        let Some(wd) = self.wikidata_state.as_mut() else { return };
+        let result = match wd.rx.try_recv() {
+            Ok(r) => r,
+            Err(mpsc::error::TryRecvError::Empty) => return,
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                self.wikidata_state = None;
+                return;
+            }
+        };
+        let WikidataState { query, .. } = self.wikidata_state.take().unwrap();
+        match result {
+            Ok(entity) => {
+                let body = super::wikidata::render(&entity);
+                let mut turn = ChatTurn::with_response(format!("/wikidata {query}"), body);
+                turn.wikidata = Some(entity.qid.clone());
+                turn.sources = vec![format!("Wikidata {}", entity.qid)];
+                self.chat_history.push(turn);
+                self.chat_scroll = 0;
+                self.status_message = Some(format!(
+                    "{} ({}) — structured facts · /fact to record (gate-skipped)",
+                    entity.label, entity.qid
+                ));
+            }
+            Err(e) => self.status_message = Some(format!("wikidata: {e}")),
+        }
     }
 
     /// Drain the in-flight web search; on results, ingest them or ground a chat.
@@ -1936,6 +2009,9 @@ impl ResearchApp {
         let prov = if last.computed {
             // R4-D — carry the `world:<path>` citation when the calc read World facts.
             ProvMeta { origin: "computed".to_string(), query, detail: last.world_detail.clone() }
+        } else if let Some(qid) = last.wikidata.clone() {
+            // R3-A — structured Wikidata triple, cited by Q-ID; gate skipped.
+            ProvMeta { origin: "wikidata".to_string(), query, detail: qid }
         } else if last.web_grounded {
             ProvMeta { origin: "web".to_string(), query, detail: last.sources.join(", ") }
         } else if last.sources.is_empty() {
