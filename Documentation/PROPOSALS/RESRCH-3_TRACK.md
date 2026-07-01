@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Proposed (track) — **R3-C `/calc` and R3-D folder import brought forward, shipped 1.5.2** |
+| **Status** | **R3-A / R3-B / R3-E shipped 1.5.5** · R3-C `/calc` + R3-D folder import brought forward (1.5.2) · R3-C `/world` display + R3-D Zotero/folder-watch open |
 | **Builds on** | RESRCH-2 (`/web`, `/import`, provenance, the source-retrieval pipeline) |
 | **Theme** | Where RESRCH-2 added retrieval *mechanisms* (web, documents), RESRCH-3 adds **authoritative, verifiable sources** — each with a dedicated `/` command, an origin tag, and a place on the trust ladder |
 
@@ -34,17 +34,20 @@ follows automatically.
 
 ## Phases
 
-### R3-A — Structured knowledge base: `/wikidata <query>`
+### R3-A — Structured knowledge base: `/wikidata <query>` — **✅ Shipped 1.5.5-dev**
 
 - Search Wikidata entities (REST/SPARQL, free, **no key**, `reqwest` already present), return each
   entity's **structured claims** (label, description, key properties → values) — citable by **Q-ID**.
+- **Built:** `src/research/wikidata.rs` — `wbsearchentities` → `wbgetentities` (labels/descriptions/
+  claims) → one batched label resolve; external-ID properties filtered; project-language labels;
+  `origin=wikidata` (+ Q-ID) with the factcheck gate skipped. `research.wikidata` config (keyless).
 - Provenance `origin=wikidata` (+ Q-ID); **top of the trust ladder** → the factcheck gate is skipped (a
   Q-ID-backed triple is already a verifiable fact).
 - **Wikipedia is deliberately excluded.** Its prose carries well-documented editorial bias in
   politics / economics / history; Wikidata's structured triples (and their per-statement reference
   qualifiers) expose almost none of that surface. We ground on the structured facts, not the narrative.
 
-### R3-B — Scholarly: `/openalex <query>`, `/arxiv <query>`
+### R3-B — Scholarly: `/openalex <query>`, `/arxiv <query>` — **✅ Shipped 1.5.5-dev**
 
 - **OpenAlex** (works API, free, no key — "polite pool" via a `mailto`) and **arXiv** (Atom API, free,
   no key): return papers → title, authors, year, abstract, and a stable **DOI / arXiv-ID**.
@@ -52,6 +55,10 @@ follows automatically.
 - **Auto-citation:** a `/fact` derived from a paper can auto-create a **SOURCES-1 `BibEntry`** (that
   infrastructure already exists — `src/sources/`), so the fact and a real bibliography entry land
   together.
+- **Built:** `src/research/scholarly.rs` — OpenAlex `works` (mailto polite pool, abstract rebuilt from
+  the inverted index) + arXiv Atom (crate-free extraction, HTTPS). A `/fact` → `origin=openalex|arxiv`
+  (+ DOI/ID), gate skipped, and `add_bibentry` writes a `BibEntry` into a **Research** chapter of the
+  Sources book (dedup by cite key). `research.scholarly` config (`enabled`/`mailto`/`auto_cite`).
 
 ### R3-C — Deterministic / computational: `/calc`, `/world` (zero new crates, zero network)
 
@@ -78,12 +85,22 @@ The strongest fit with Inkhaven's zero-AI / no-fabrication ethos — see the *Ho
   --sync <folder>`, or a manifest auto-imported on launch), so the corpus tracks the author's working
   files instead of one-shot `/import`.
 
-### R3-E — Cross-cutting: triangulation
+### R3-E — Cross-cutting: triangulation — **✅ Shipped 1.5.5-dev (`/triangulate`)**
 
 Once ≥ 2 sources exist, a fact's claim can be checked against **several** sources (web + Wikidata +
 OpenAlex) and the **agreement/disagreement** reported — a far stronger gate than the model grading
 itself. Folds into the WC-P3 confirmation gate (verdict becomes "3/3 sources agree" rather than the
 model's self-assessment).
+
+- **Built:** **`/triangulate [claim]`** (bare → last response) gathers evidence from the structured
+  sources concurrently (Wikidata + OpenAlex + arXiv, `tokio::spawn` + join), then one LLM call judges
+  **each source** `SUPPORTS | CONTRADICTS | SILENT` against the claim (judging *external* evidence, not
+  its own output) and reports an `Agreement: n/m support` tally. Streams into chat via the shared path.
+- **Gate-fold ✅ Shipped 1.5.5-dev:** `research.triangulate_gate` makes triangulation the automatic
+  `/fact` gate for `model` / `web` / `document` facts (replacing the single-source self-check). On
+  confirm it gathers evidence → judges each source → `SUPPORTS` with no `CONTRADICTS` inserts, else a
+  second confirm (like the dedup / web gates). `computed` / `wikidata` / `openalex` / `arxiv` skip it
+  (already authoritative). Off by default (network-heavy).
 
 ## Dependency posture
 - `/wikidata`, `/openalex`, `/arxiv`: **no new crates** (reuse `reqwest` from R2-C); all keyless.
