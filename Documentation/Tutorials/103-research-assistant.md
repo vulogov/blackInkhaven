@@ -231,6 +231,82 @@ Bring **live web sources** in — with the safety posture you choose. Configure 
 Set the default with `research.web.pipeline` (`chat` or `ingest`); `--chat` / `--ingest` override it per
 call. Web search needs network and a provider; without one, `/web` simply reports it's unavailable.
 
+## 6.8. Structured facts — `/wikidata` (1.5.5)
+
+Where `/web` brings in *prose*, **`/wikidata <query>`** brings in **structured triples** — the top of the
+trust ladder. It looks up the best-matching Wikidata entity and shows its **statements** (property →
+value), each citable by the entity's **Q-ID**:
+
+```
+/wikidata Albert Einstein
+  Albert Einstein (Q937) — German-born theoretical physicist (1879–1955)
+  • occupation: theoretical physicist
+  • date of birth: 1879-03-14
+  • field of work: physics
+  …
+  Source: Wikidata Q937 · https://www.wikidata.org/wiki/Q937
+```
+
+- **Keyless** (no API key, no config needed — on by default; tune `research.wikidata`), and it uses your
+  **project language** for labels and descriptions.
+- A **`/fact`** taken from a `/wikidata` result records provenance **`wikidata`** with the Q-ID, and
+  **skips the fact-check gate** — a Q-ID-backed triple is already a verifiable fact, not a model's guess.
+- **Wikipedia is deliberately excluded.** Its narrative carries well-documented editorial bias
+  (politics / economics / history); Wikidata's per-statement triples don't. We ground on the facts, not
+  the story. (External-identifier properties like catalog IDs are filtered out to keep the view factual.)
+
+## 6.85. Scholarly sources — `/openalex` & `/arxiv` (1.5.5)
+
+Bring in **peer-reviewed and preprint literature**, cited by **DOI / arXiv-ID** — the scholarly tier of
+the trust ladder. Both are **keyless**:
+
+- **`/openalex <query>`** — the top matching work from [OpenAlex](https://openalex.org) (title, authors,
+  year, abstract, DOI). Set `research.scholarly.mailto` to your email to join OpenAlex's *polite pool*
+  (recommended — avoids the anonymous rate limit).
+- **`/arxiv <query>`** — the top matching [arXiv](https://arxiv.org) preprint (title, authors, year,
+  abstract, arXiv-ID).
+
+```
+/arxiv attention is all you need
+  Attention Is All You Need
+  Ashish Vaswani, Noam Shazeer, … · 2017
+  arxiv:1706.03762v5
+  <abstract…>
+  Source: arxiv · http://arxiv.org/abs/1706.03762v5
+```
+
+**Auto-citation.** A **`/fact`** taken from an `/openalex` or `/arxiv` result records provenance
+**`openalex`** / **`arxiv`** (with the DOI/ID) **and auto-creates a SOURCES-1 `BibEntry`** under a
+**Research** chapter in your Sources book — the verified fact and a real bibliography entry land together
+(deduped by cite key). The metadata is authoritative, so the fact-check gate is skipped; you still review
+the extracted claim in the confirmation overlay as always. Disable with `research.scholarly.auto_cite`.
+
+## 6.9. Triangulation — `/triangulate` (1.5.5)
+
+Once you have **several independent sources**, a claim can be checked against *all* of them — a far
+stronger test than the model grading its own output. **`/triangulate <claim>`** (bare → the last
+response) queries the **structured sources concurrently** — Wikidata, OpenAlex, arXiv — gathers what each
+says, then has the model judge **each source** against the claim:
+
+```
+/triangulate the aqueduct carried 1 million cubic metres per day
+  Wikidata: SILENT — no capacity statement for this entity
+  OpenAlex: SUPPORTS — the cited work gives a comparable daily figure
+  arXiv:    SILENT — the preprint is about flow modelling, not capacity
+  Agreement: 1/3 support
+```
+
+Crucially, the model judges **independent external evidence**, not its own answer — so the verdict means
+something. Use it before you `/fact` a shaky claim: if the sources don't corroborate, investigate first.
+(Triangulation needs at least Wikidata or the scholarly sources enabled.)
+
+**As the `/fact` gate.** Set **`research.triangulate_gate: true`** and triangulation runs *automatically*
+before a `model` / `web` / `document` fact commits — cross-source agreement **replaces** the single-source
+self-check. On the confirmation, `SUPPORTS` with no `CONTRADICTS` inserts; a contradicted or uncorroborated
+verdict shows the agreement and asks you to `Ctrl+S` again to insert anyway (like the dedup guard —
+informs, never blocks). Deterministic / structured facts (`computed`, `wikidata`, `openalex`, `arxiv`)
+are already authoritative and skip the gate. It's **off by default** (network-heavy).
+
 ## 6⅞. Deterministic calculation — `/calc` (1.5.2)
 
 Not every fact comes from a model or the web — some you just **compute**. **`/calc <expr>`** evaluates a
@@ -365,6 +441,9 @@ research: {
   split_ratio: 4                // 4 = 40% tree, 60% chat
   diff_top_n: 3
   verify_min_sentence_words: 8
+  triangulate_gate: false        // R3-E: cross-source-agreement /fact gate (network-heavy)
+  wikidata: { enabled: true }    // R3-A (keyless)
+  scholarly: { enabled: true, mailto: "you@example.org", auto_cite: true }  // R3-B
 }
 ```
 

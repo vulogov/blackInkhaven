@@ -30,6 +30,16 @@ pub(super) enum Command {
     Web { ingest: Option<bool>, query: String },
     /// `/calc <expr>` — evaluate a deterministic Bund expression (R3-C).
     Calc(String),
+    /// `/wikidata <query>` — fetch a Wikidata entity's structured claims (R3-A).
+    Wikidata(String),
+    /// `/openalex <query>` — fetch the top OpenAlex paper (R3-B).
+    OpenAlex(String),
+    /// `/arxiv <query>` — fetch the top arXiv paper (R3-B).
+    Arxiv(String),
+    /// `/triangulate [claim]` — cross-check a claim across the structured sources
+    /// (Wikidata + OpenAlex + arXiv) and report agreement (R3-E). Bare → the last
+    /// response.
+    Triangulate(String),
     /// `/whatswrong [facts/path]` — AI explanation of a fact flagged by
     /// `/factcheck` (RE-P5); bare → the selected/cursor fact.
     WhatsWrong(Option<String>),
@@ -117,6 +127,10 @@ pub(super) fn parse(input: &str) -> Option<Command> {
             Command::Web { ingest, query: q.to_string() }
         }
         "calc" => Command::Calc(rest.to_string()),
+        "wikidata" => Command::Wikidata(rest.to_string()),
+        "openalex" => Command::OpenAlex(rest.to_string()),
+        "arxiv" => Command::Arxiv(rest.to_string()),
+        "triangulate" | "tri" => Command::Triangulate(rest.to_string()),
         "whatswrong" => Command::WhatsWrong(if rest.is_empty() { None } else { Some(rest.to_string()) }),
         "promote" => {
             // `/promote [notes/path] [→ facts/path]` — both optional.
@@ -213,6 +227,11 @@ mod tests {
             Command::Web { ingest: Some(false), query: "q".into() }
         );
         assert_eq!(parse("/calc 100 mi2km").unwrap(), Command::Calc("100 mi2km".into()));
+        assert_eq!(parse("/wikidata Rome").unwrap(), Command::Wikidata("Rome".into()));
+        assert_eq!(parse("/openalex aqueduct").unwrap(), Command::OpenAlex("aqueduct".into()));
+        assert_eq!(parse("/arxiv attention").unwrap(), Command::Arxiv("attention".into()));
+        assert_eq!(parse("/triangulate the sky is blue").unwrap(), Command::Triangulate("the sky is blue".into()));
+        assert_eq!(parse("/tri x").unwrap(), Command::Triangulate("x".into()));
         assert_eq!(parse("/whatswrong").unwrap(), Command::WhatsWrong(None));
         assert_eq!(
             parse("/whatswrong facts/rome/fall").unwrap(),

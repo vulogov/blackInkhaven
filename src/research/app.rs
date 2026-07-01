@@ -138,6 +138,36 @@ pub(super) struct WebState {
     query: String,
 }
 
+/// R3-A — an in-flight `/wikidata` fetch (async task → single-result channel).
+pub(super) struct WikidataState {
+    rx: mpsc::UnboundedReceiver<std::result::Result<super::wikidata::WdEntity, String>>,
+    query: String,
+}
+
+/// R3-B — an in-flight `/openalex` or `/arxiv` fetch.
+pub(super) struct ScholarlyState {
+    rx: mpsc::UnboundedReceiver<std::result::Result<super::scholarly::Paper, String>>,
+    query: String,
+}
+
+/// R3-E — the evidence-gathering phase of `/triangulate` (source label → text);
+/// once it arrives, an LLM judges each source and the answer streams as usual.
+pub(super) struct TriangulateState {
+    rx: mpsc::UnboundedReceiver<Vec<(String, String)>>,
+    claim: String,
+}
+
+/// R3-E — the `/fact` triangulation gate: gather evidence, then have the LLM
+/// judge it; a weak verdict requires a second confirm (like the web gate).
+enum TriGatePhase {
+    Gather(mpsc::UnboundedReceiver<Vec<(String, String)>>),
+    Judge { rx: mpsc::UnboundedReceiver<StreamMsg>, buf: String },
+}
+pub(super) struct TriGate {
+    phase: TriGatePhase,
+    claim: String,
+}
+
 /// `/factcheck` — a multi-call corpus audit: truth (per-fact, chunked) then
 /// consistency (the whole set). Drained in the run loop like the chain.
 pub(super) struct FactCheckState {
@@ -222,6 +252,13 @@ pub(crate) struct ResearchApp {
     factcheck: Option<FactCheckState>,
     /// In-flight `/web` search (R2-C).
     web: Option<WebState>,
+    wikidata_state: Option<WikidataState>,
+    scholarly_state: Option<ScholarlyState>,
+    triangulate: Option<TriangulateState>,
+    tri_gate: Option<TriGate>,
+    /// R3-B — a pending SOURCES-1 citation to write when the current `/fact` from
+    /// a paper is confirmed (set at extraction, consumed on insert).
+    pending_cite: Option<crate::sources::BibEntry>,
     /// In-flight pre-commit fact-check for a web fact (WC-P3): receiver + buffer.
     fc_confirm: Option<(mpsc::UnboundedReceiver<StreamMsg>, String)>,
     /// The editable insertion confirmation overlay (G1/G2).
@@ -301,6 +338,11 @@ impl ResearchApp {
             chain: None,
             factcheck: None,
             web: None,
+            wikidata_state: None,
+            scholarly_state: None,
+            triangulate: None,
+            tri_gate: None,
+            pending_cite: None,
             fc_confirm: None,
             confirmation: None,
             session_cost: 0.0,
@@ -331,6 +373,10 @@ impl ResearchApp {
             self.poll_chain();
             self.poll_factcheck();
             self.poll_web();
+            self.poll_wikidata();
+            self.poll_scholarly();
+            self.poll_triangulate();
+            self.poll_tri_gate();
             self.poll_fc_confirm();
             terminal.draw(|f| render::render(f, self))?;
             if event::poll(Duration::from_millis(100))? {
@@ -677,6 +723,10 @@ impl ResearchApp {
             Command::Forget(name) => self.run_forget(&name),
             Command::Web { ingest, query } => self.start_web(ingest, query),
             Command::Calc(expr) => self.run_calc(&expr),
+            Command::Wikidata(query) => self.start_wikidata(query),
+            Command::OpenAlex(query) => self.start_scholarly("openalex", query),
+            Command::Arxiv(query) => self.start_scholarly("arxiv", query),
+            Command::Triangulate(claim) => self.start_triangulate(claim),
             Command::WhatsWrong(path) => self.run_whatswrong(path.as_deref()),
             Command::Chain(steps) => self.start_chain(steps),
         }
@@ -1002,6 +1052,317 @@ impl ResearchApp {
         });
         self.web = Some(WebState { rx, ingest, query });
         self.status_message = Some("Searching the web…".to_string());
+    }
+
+    /// `/wikidata <query>` (R3-A) — spawn a Wikidata entity fetch. The result is
+    /// structured triples (no LLM); a `/fact` from it records `origin=wikidata`
+    /// (+ Q-ID) and skips the fact-check gate (top of the trust ladder).
+    fn start_wikidata(&mut self, query: String) {
+        if self.wikidata_state.is_some() {
+            self.status_message = Some("a Wikidata query is already running".to_string());
+            return;
+        }
+        let query = query.trim().to_string();
+        if query.is_empty() {
+            self.status_message = Some("usage: /wikidata <query>  e.g. /wikidata Roman aqueduct".to_string());
+            return;
+        }
+        if !super::wikidata::available(&self.cfg.research.wikidata) {
+            self.status_message = Some("wikidata disabled (research.wikidata.enabled)".to_string());
+            return;
+        }
+        let (lang, _note) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        // Wikidata wants an ISO code; unsupported → English labels.
+        let code = match lang.as_code() {
+            "other" => "en".to_string(),
+            c => c.to_string(),
+        };
+        let cfg = self.cfg.research.wikidata.clone();
+        let q = query.clone();
+        let (tx, rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let r = super::wikidata::fetch(cfg, q, code).await.map_err(|e| e.to_string());
+            let _ = tx.send(r);
+        });
+        self.wikidata_state = Some(WikidataState { rx, query });
+        self.status_message = Some("Querying Wikidata…".to_string());
+    }
+
+    /// Drain the in-flight Wikidata fetch; on success, show the structured entity.
+    fn poll_wikidata(&mut self) {
+        let Some(wd) = self.wikidata_state.as_mut() else { return };
+        let result = match wd.rx.try_recv() {
+            Ok(r) => r,
+            Err(mpsc::error::TryRecvError::Empty) => return,
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                self.wikidata_state = None;
+                return;
+            }
+        };
+        let WikidataState { query, .. } = self.wikidata_state.take().unwrap();
+        match result {
+            Ok(entity) => {
+                let body = super::wikidata::render(&entity);
+                let mut turn = ChatTurn::with_response(format!("/wikidata {query}"), body);
+                turn.wikidata = Some(entity.qid.clone());
+                turn.sources = vec![format!("Wikidata {}", entity.qid)];
+                self.chat_history.push(turn);
+                self.chat_scroll = 0;
+                self.status_message = Some(format!(
+                    "{} ({}) — structured facts · /fact to record (gate-skipped)",
+                    entity.label, entity.qid
+                ));
+            }
+            Err(e) => self.status_message = Some(format!("wikidata: {e}")),
+        }
+    }
+
+    /// `/openalex` / `/arxiv` (R3-B) — spawn a scholarly fetch. The result is a
+    /// paper's metadata + abstract; a `/fact` from it records `origin=<source>`,
+    /// skips the gate (authoritative metadata), and auto-creates a `BibEntry`.
+    fn start_scholarly(&mut self, source: &'static str, query: String) {
+        if self.scholarly_state.is_some() {
+            self.status_message = Some("a scholarly query is already running".to_string());
+            return;
+        }
+        let query = query.trim().to_string();
+        if query.is_empty() {
+            self.status_message = Some(format!("usage: /{source} <query>"));
+            return;
+        }
+        if !super::scholarly::available(&self.cfg.research.scholarly) {
+            self.status_message = Some("scholarly search disabled (research.scholarly.enabled)".to_string());
+            return;
+        }
+        let cfg = self.cfg.research.scholarly.clone();
+        let q = query.clone();
+        let (tx, rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let r = match source {
+                "arxiv" => super::scholarly::arxiv(q).await,
+                _ => super::scholarly::openalex(cfg, q).await,
+            }
+            .map_err(|e| e.to_string());
+            let _ = tx.send(r);
+        });
+        self.scholarly_state = Some(ScholarlyState { rx, query });
+        self.status_message = Some(format!("Querying {source}…"));
+    }
+
+    /// Drain the in-flight scholarly fetch; on success, show the paper.
+    fn poll_scholarly(&mut self) {
+        let Some(sc) = self.scholarly_state.as_mut() else { return };
+        let result = match sc.rx.try_recv() {
+            Ok(r) => r,
+            Err(mpsc::error::TryRecvError::Empty) => return,
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                self.scholarly_state = None;
+                return;
+            }
+        };
+        let ScholarlyState { query, .. } = self.scholarly_state.take().unwrap();
+        match result {
+            Ok(paper) => {
+                let body = super::scholarly::render(&paper);
+                let ident = paper.cite_detail();
+                let mut turn = ChatTurn::with_response(format!("/{} {query}", paper.source), body);
+                turn.sources = vec![format!("{} {ident}", paper.source)];
+                turn.paper = Some(paper);
+                self.chat_history.push(turn);
+                self.chat_scroll = 0;
+                self.status_message =
+                    Some(format!("{ident} — /fact to record (auto-cites to Sources)"));
+            }
+            Err(e) => self.status_message = Some(format!("scholarly: {e}")),
+        }
+    }
+
+    /// R3-B — write a SOURCES-1 `BibEntry` into the Sources book under a
+    /// "Research" chapter (dedup by cite key). Mirrors the `sources import` path.
+    fn add_bibentry(&self, entry: &crate::sources::BibEntry) -> anyhow::Result<bool> {
+        use crate::store::{InsertPosition, NodeKind};
+        if !entry.is_valid() {
+            return Ok(false);
+        }
+        let hier = crate::store::hierarchy::Hierarchy::load(&self.store)?;
+        let book = hier
+            .iter()
+            .find(|n| {
+                n.kind == NodeKind::Book
+                    && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_SOURCES)
+            })
+            .ok_or_else(|| anyhow::anyhow!("Sources book missing"))?
+            .clone();
+        // Find or create the "Research" chapter.
+        let chapter = match hier
+            .children_of(Some(book.id))
+            .into_iter()
+            .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Research"))
+            .cloned()
+        {
+            Some(c) => c,
+            None => self.store.create_node(
+                &self.cfg,
+                &hier,
+                NodeKind::Chapter,
+                "Research",
+                Some(&book),
+                None,
+                InsertPosition::End,
+            )?,
+        };
+        // Dedup by cite key (case-insensitive) within the chapter.
+        let key_lc = entry.key.to_lowercase();
+        let exists = hier
+            .children_of(Some(chapter.id))
+            .into_iter()
+            .any(|n| n.title.to_lowercase() == key_lc);
+        if exists {
+            return Ok(false);
+        }
+        let hier = crate::store::hierarchy::Hierarchy::load(&self.store)?;
+        let mut node = self.store.create_node(
+            &self.cfg,
+            &hier,
+            NodeKind::Paragraph,
+            &entry.key,
+            Some(&chapter),
+            None,
+            InsertPosition::End,
+        )?;
+        node.content_type = Some("hjson".to_string());
+        let body = entry.to_hjson();
+        if let Some(rel) = &node.file {
+            let _ = crate::io_atomic::write(&self.store.project_root().join(rel), body.as_bytes());
+        }
+        self.store.update_paragraph_content(&mut node, body.as_bytes())?;
+        Ok(true)
+    }
+
+    /// `/triangulate [claim]` (R3-E) — cross-check a claim against the independent
+    /// structured sources (Wikidata + OpenAlex + arXiv). Phase 1 gathers each
+    /// source's evidence concurrently; phase 2 (in `poll_triangulate`) has the LLM
+    /// judge each source SUPPORTS / CONTRADICTS / SILENT — a far stronger check
+    /// than the model grading its own output.
+    fn start_triangulate(&mut self, claim: String) {
+        if self.triangulate.is_some() || self.stream_rx.is_some() {
+            self.status_message = Some("a response is already in flight".to_string());
+            return;
+        }
+        let claim = if claim.trim().is_empty() {
+            self.chat_history.last().map(|t| t.response.clone()).unwrap_or_default()
+        } else {
+            claim
+        };
+        let claim = claim.trim().to_string();
+        if claim.is_empty() {
+            self.status_message =
+                Some("usage: /triangulate <claim>  (bare: cross-check the last response)".to_string());
+            return;
+        }
+        let wd_cfg = self.cfg.research.wikidata.clone();
+        let sc_cfg = self.cfg.research.scholarly.clone();
+        let wd_on = super::wikidata::available(&wd_cfg);
+        let sc_on = super::scholarly::available(&sc_cfg);
+        if !wd_on && !sc_on {
+            self.status_message =
+                Some("triangulate: no structured sources enabled (wikidata / scholarly)".to_string());
+            return;
+        }
+        let (lang, _note) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        let code = match lang.as_code() {
+            "other" => "en".to_string(),
+            c => c.to_string(),
+        };
+        let q = claim.clone();
+        let (tx, rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let mut evidence: Vec<(String, String)> = Vec::new();
+            if wd_on {
+                if let Ok(e) = super::wikidata::fetch(wd_cfg, q.clone(), code).await {
+                    evidence.push(("Wikidata".to_string(), super::wikidata::render(&e)));
+                }
+            }
+            if sc_on {
+                if let Ok(p) = super::scholarly::openalex(sc_cfg.clone(), q.clone()).await {
+                    evidence.push(("OpenAlex".to_string(), super::scholarly::render(&p)));
+                }
+                if let Ok(p) = super::scholarly::arxiv(q.clone()).await {
+                    evidence.push(("arXiv".to_string(), super::scholarly::render(&p)));
+                }
+            }
+            let _ = tx.send(evidence);
+        });
+        self.triangulate = Some(TriangulateState { rx, claim });
+        self.status_message = Some("Triangulating across sources…".to_string());
+    }
+
+    /// Phase 2 of `/triangulate` — evidence gathered; have the LLM judge each
+    /// source against the claim and stream the agreement report.
+    fn poll_triangulate(&mut self) {
+        let Some(tr) = self.triangulate.as_mut() else { return };
+        let evidence = match tr.rx.try_recv() {
+            Ok(e) => e,
+            Err(mpsc::error::TryRecvError::Empty) => return,
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                self.triangulate = None;
+                return;
+            }
+        };
+        let TriangulateState { claim, .. } = self.triangulate.take().unwrap();
+        if evidence.is_empty() {
+            self.status_message = Some("triangulate: no source returned evidence".to_string());
+            return;
+        }
+        let ai = match crate::ai::AiClient::from_config(&self.cfg.llm) {
+            Ok(a) => a,
+            Err(e) => {
+                self.status_message = Some(format!("no LLM provider: {e}"));
+                return;
+            }
+        };
+        let (model, _env) = match ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(m) => m,
+            Err(e) => {
+                self.status_message = Some(format!("provider error: {e}"));
+                return;
+            }
+        };
+        let (lang, _note) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        let language = super::extract::language_name(&lang);
+        let mut ev = String::new();
+        let mut labels: Vec<String> = Vec::new();
+        for (label, text) in &evidence {
+            let body: String = text.chars().take(1200).collect();
+            ev.push_str(&format!("[{label}]\n{}\n\n", body.trim()));
+            labels.push(label.clone());
+        }
+        let system = format!(
+            "You are triangulating a claim against INDEPENDENT sources. Judge ONLY from the sources \
+             below — do not use outside knowledge. For EACH source, output one line:\n\
+             <source>: SUPPORTS | CONTRADICTS | SILENT — <short reason>\n\
+             Then a final line: `Agreement: <n>/<m> support`. Write in {language}."
+        );
+        let user = format!("Claim:\n{claim}\n\nSources:\n{ev}");
+        let short: String = claim.chars().take(60).collect();
+        let mut turn = ChatTurn::new(format!("/triangulate {short}"));
+        turn.streaming = true;
+        turn.model = model.to_string();
+        turn.sources = labels;
+        self.chat_history.push(turn);
+        self.streaming_turn = Some(self.chat_history.len() - 1);
+        self.chat_scroll = 0;
+        let rx = spawn_chat_stream(
+            ai.client.clone(),
+            model.to_string(),
+            Some(system),
+            Vec::new(),
+            user,
+            llm::CATEGORY,
+        );
+        self.stream_rx = Some(rx);
+        self.status_message =
+            Some(format!("Judging {} source(s) against the claim…", evidence.len()));
     }
 
     /// Drain the in-flight web search; on results, ingest them or ground a chat.
@@ -1930,12 +2291,24 @@ impl ResearchApp {
         };
         let research = last.response.clone();
         let query = last.prompt.clone();
+        // R3-B — a paper `/fact` queues a SOURCES-1 citation (written on confirm).
+        let cite = last
+            .paper
+            .as_ref()
+            .filter(|_| self.cfg.research.scholarly.auto_cite)
+            .map(|p| p.to_bibentry());
         // Provenance: `web` when the answer was grounded on live web results
         // (R2-C, fact-checked before commit); `document` for imported sources
         // (R2-B); else `model`, from the originating research query.
         let prov = if last.computed {
             // R4-D — carry the `world:<path>` citation when the calc read World facts.
             ProvMeta { origin: "computed".to_string(), query, detail: last.world_detail.clone() }
+        } else if let Some(qid) = last.wikidata.clone() {
+            // R3-A — structured Wikidata triple, cited by Q-ID; gate skipped.
+            ProvMeta { origin: "wikidata".to_string(), query, detail: qid }
+        } else if let Some(paper) = &last.paper {
+            // R3-B — scholarly paper; gate skipped, auto-cites to Sources on insert.
+            ProvMeta { origin: paper.source.to_string(), query, detail: paper.cite_detail() }
         } else if last.web_grounded {
             ProvMeta { origin: "web".to_string(), query, detail: last.sources.join(", ") }
         } else if last.sources.is_empty() {
@@ -1943,6 +2316,7 @@ impl ResearchApp {
         } else {
             ProvMeta { origin: "document".to_string(), query, detail: last.sources.join(", ") }
         };
+        self.pending_cite = cite;
         self.start_extraction_from(book, research, prompt, path, command_name, prov);
     }
 
@@ -2206,17 +2580,30 @@ impl ResearchApp {
                 return;
             }
         }
-        // WC-P3 — fact-check a web-sourced fact before it commits. The check
-        // runs async (spawn + poll-drain — no UI block, no stderr dots); when it
-        // returns, ACCURATE auto-inserts, DUBIOUS / INACCURATE shows the verdict
-        // and requires a second confirm.
-        let is_web = self.confirmation.as_ref().is_some_and(|c| c.prov.origin == "web");
+        // The pre-commit gate. A `model` / `web` / `document` fact needs checking;
+        // `computed` / `wikidata` / `openalex` / `arxiv` are already authoritative
+        // (structured / deterministic) and skip it. When `triangulate_gate` is on
+        // and a structured source is available, cross-source triangulation (R3-E)
+        // is the gate; otherwise the single-source web check (WC-P3). Both run
+        // async (spawn + poll-drain) and require a second confirm on a weak verdict.
+        let origin = self.confirmation.as_ref().map(|c| c.prov.origin.clone()).unwrap_or_default();
+        let needs_gate = matches!(origin.as_str(), "model" | "web" | "document");
         let fc_done = self.confirmation.as_ref().is_some_and(|c| c.fc_checked);
-        if is_web && !fc_done {
-            if self.fc_confirm.is_none() {
-                self.start_fact_check(&body);
+        if needs_gate && !fc_done {
+            let structured_available = super::wikidata::available(&self.cfg.research.wikidata)
+                || super::scholarly::available(&self.cfg.research.scholarly);
+            if self.cfg.research.triangulate_gate && structured_available {
+                if self.tri_gate.is_none() {
+                    self.start_triangulate_gate(&title, &body);
+                }
+                return; // wait for the triangulation verdict (poll_tri_gate finalises)
             }
-            return; // wait for the verdict (poll_fc_confirm finalises)
+            if origin == "web" {
+                if self.fc_confirm.is_none() {
+                    self.start_fact_check(&body);
+                }
+                return; // wait for the verdict (poll_fc_confirm finalises)
+            }
         }
         let c = self.confirmation.take().unwrap();
         match super::insert::insert_paragraph(
@@ -2273,7 +2660,22 @@ impl ResearchApp {
                     );
                 }
                 self.rebuild_prompt_history();
-                self.status_message = Some(format!("✓ Inserted: '{}' → {path}", title.trim()));
+                // R3-B — auto-create the SOURCES-1 citation for a scholarly `/fact`.
+                let mut cite_note = String::new();
+                if matches!(c.prov.origin.as_str(), "openalex" | "arxiv") {
+                    if let Some(entry) = self.pending_cite.take() {
+                        match self.add_bibentry(&entry) {
+                            Ok(true) => {
+                                self.reload_hierarchy();
+                                cite_note = format!("  · cited `{}` → Sources", entry.key);
+                            }
+                            Ok(false) => cite_note = "  · citation already in Sources".to_string(),
+                            Err(e) => cite_note = format!("  · citation failed: {e}"),
+                        }
+                    }
+                }
+                self.status_message =
+                    Some(format!("✓ Inserted: '{}' → {path}{cite_note}", title.trim()));
             }
             Err(e) => self.status_message = Some(format!("insert failed: {e}")),
         }
@@ -2378,6 +2780,170 @@ impl ResearchApp {
             self.status_message =
                 Some(format!("fact-check: {verdict} — Ctrl+S again to insert anyway"));
         }
+    }
+
+    /// R3-E — start the triangulation gate for a pending `/fact`: gather evidence
+    /// from the structured sources (phase 1); `poll_tri_gate` runs the judge.
+    fn start_triangulate_gate(&mut self, title: &str, body: &str) {
+        let claim = if title.trim().is_empty() {
+            body.trim().to_string()
+        } else {
+            format!("{}. {}", title.trim(), body.trim())
+        };
+        let wd_cfg = self.cfg.research.wikidata.clone();
+        let sc_cfg = self.cfg.research.scholarly.clone();
+        let wd_on = super::wikidata::available(&wd_cfg);
+        let sc_on = super::scholarly::available(&sc_cfg);
+        let (lang, _note) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        let code = match lang.as_code() {
+            "other" => "en".to_string(),
+            c => c.to_string(),
+        };
+        let q = claim.clone();
+        let (tx, rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let mut evidence: Vec<(String, String)> = Vec::new();
+            if wd_on {
+                if let Ok(e) = super::wikidata::fetch(wd_cfg, q.clone(), code).await {
+                    evidence.push(("Wikidata".to_string(), super::wikidata::render(&e)));
+                }
+            }
+            if sc_on {
+                if let Ok(p) = super::scholarly::openalex(sc_cfg.clone(), q.clone()).await {
+                    evidence.push(("OpenAlex".to_string(), super::scholarly::render(&p)));
+                }
+                if let Ok(p) = super::scholarly::arxiv(q.clone()).await {
+                    evidence.push(("arXiv".to_string(), super::scholarly::render(&p)));
+                }
+            }
+            let _ = tx.send(evidence);
+        });
+        self.tri_gate = Some(TriGate { phase: TriGatePhase::Gather(rx), claim });
+        self.status_message = Some("triangulating before commit…".to_string());
+    }
+
+    /// R3-E — drive the triangulation gate: gather → judge → verdict. A verdict
+    /// with support and no contradiction auto-inserts; otherwise it asks for a
+    /// second confirm (like the web / dedup gates).
+    fn poll_tri_gate(&mut self) {
+        let Some(gate) = self.tri_gate.as_mut() else { return };
+        match &mut gate.phase {
+            TriGatePhase::Gather(rx) => {
+                let evidence = match rx.try_recv() {
+                    Ok(e) => e,
+                    Err(mpsc::error::TryRecvError::Empty) => return,
+                    Err(mpsc::error::TryRecvError::Disconnected) => {
+                        self.tri_gate = None;
+                        return;
+                    }
+                };
+                if evidence.is_empty() {
+                    // Nothing to corroborate against — pass through, but say so.
+                    self.tri_gate = None;
+                    if let Some(c) = self.confirmation.as_mut() {
+                        c.fc_checked = true;
+                        c.fc_verdict = Some("triangulation: no corroborating sources".to_string());
+                    }
+                    self.status_message =
+                        Some("triangulation: no sources found — Ctrl+S again to insert".to_string());
+                    return;
+                }
+                let claim = gate.claim.clone();
+                self.start_tri_gate_judge(&claim, &evidence);
+            }
+            TriGatePhase::Judge { rx, buf } => {
+                let mut done = false;
+                loop {
+                    match rx.try_recv() {
+                        Ok(StreamMsg::Token(t)) => buf.push_str(&t),
+                        Ok(StreamMsg::Done(_)) | Err(mpsc::error::TryRecvError::Disconnected) => {
+                            done = true;
+                            break;
+                        }
+                        Ok(StreamMsg::Error(_)) => {
+                            done = true;
+                            break;
+                        }
+                        Err(mpsc::error::TryRecvError::Empty) => break,
+                    }
+                }
+                if !done {
+                    return;
+                }
+                let TriGate { phase, .. } = self.tri_gate.take().unwrap();
+                let TriGatePhase::Judge { buf, .. } = phase else { return };
+                let (verdict, pass) = summarize_triangulation(&buf);
+                if let Some(c) = self.confirmation.as_mut() {
+                    c.fc_checked = true;
+                    c.fc_verdict = Some(verdict.clone());
+                    c.prov.detail = if c.prov.detail.is_empty() {
+                        format!("triangulation: {verdict}")
+                    } else {
+                        format!("{} · triangulation: {verdict}", c.prov.detail)
+                    };
+                }
+                if pass {
+                    self.confirm_insertion(); // gate satisfied → inserts
+                } else {
+                    self.status_message =
+                        Some(format!("triangulation: {verdict} — Ctrl+S again to insert anyway"));
+                }
+            }
+        }
+    }
+
+    /// Spawn the triangulation-gate judge LLM call over the gathered evidence.
+    fn start_tri_gate_judge(&mut self, claim: &str, evidence: &[(String, String)]) {
+        let ai = match crate::ai::AiClient::from_config(&self.cfg.llm) {
+            Ok(a) => a,
+            Err(_) => {
+                self.tri_gate = None;
+                if let Some(c) = self.confirmation.as_mut() {
+                    c.fc_checked = true;
+                    c.fc_verdict = Some("triangulation skipped (no LLM provider)".to_string());
+                }
+                self.status_message = Some("triangulation skipped — Ctrl+S to insert".to_string());
+                return;
+            }
+        };
+        let (model, _env) = match ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(m) => m,
+            Err(_) => {
+                self.tri_gate = None;
+                if let Some(c) = self.confirmation.as_mut() {
+                    c.fc_checked = true;
+                }
+                return;
+            }
+        };
+        let (lang, _note) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        let language = super::extract::language_name(&lang);
+        let mut ev = String::new();
+        for (label, text) in evidence {
+            let body: String = text.chars().take(1200).collect();
+            ev.push_str(&format!("[{label}]\n{}\n\n", body.trim()));
+        }
+        let system = format!(
+            "You are triangulating a claim against INDEPENDENT sources before it enters a knowledge base. \
+             Judge ONLY from the sources below — do not use outside knowledge. For EACH source, output one \
+             line:\n<source>: SUPPORTS | CONTRADICTS | SILENT — <short reason>\n\
+             Then a final line: `Agreement: <n>/<m> support`. Write in {language}."
+        );
+        let user = format!("Claim:\n{claim}\n\nSources:\n{ev}");
+        let rx = spawn_chat_stream(
+            ai.client.clone(),
+            model.to_string(),
+            Some(system),
+            Vec::new(),
+            user,
+            llm::CATEGORY,
+        );
+        self.tri_gate = Some(TriGate {
+            phase: TriGatePhase::Judge { rx, buf: String::new() },
+            claim: claim.to_string(),
+        });
+        self.status_message =
+            Some(format!("judging {} source(s) before commit…", evidence.len()));
     }
 
     fn rebuild_prompt_history(&mut self) {
@@ -3039,5 +3605,62 @@ mod completion_tests {
         let d = vec!["rome".to_string(), "ravenna".to_string()];
         assert_eq!(longest_common_prefix(&d), "r");
         assert_eq!(longest_common_prefix(&["solo".to_string()]), "solo");
+    }
+}
+
+/// R3-E — parse the triangulation judge's output into a one-line verdict and a
+/// pass flag. Pass = at least one source SUPPORTS and none CONTRADICTS; a weak or
+/// contradicted verdict requires a second confirm.
+fn summarize_triangulation(buf: &str) -> (String, bool) {
+    let mut supports = 0usize;
+    let mut contradicts = 0usize;
+    let mut agreement: Option<String> = None;
+    for line in buf.lines() {
+        let l = line.trim();
+        if l.is_empty() {
+            continue;
+        }
+        if l.to_ascii_lowercase().starts_with("agreement") {
+            agreement = Some(l.to_string());
+            continue;
+        }
+        // The verdict token sits before the em-dash / hyphen reason separator.
+        let head = l.split('—').next().unwrap_or(l);
+        let head = head.split(" - ").next().unwrap_or(head).to_ascii_uppercase();
+        if head.contains("CONTRADICT") {
+            contradicts += 1;
+        } else if head.contains("SUPPORT") {
+            supports += 1;
+        }
+    }
+    let verdict =
+        agreement.unwrap_or_else(|| format!("{supports} support · {contradicts} contradict"));
+    (verdict, supports >= 1 && contradicts == 0)
+}
+
+#[cfg(test)]
+mod triangulation_tests {
+    use super::summarize_triangulation;
+
+    #[test]
+    fn passes_on_support_without_contradiction() {
+        let buf = "Wikidata: SUPPORTS — matches the triple\narXiv: SILENT — not addressed\nAgreement: 1/2 support";
+        let (v, pass) = summarize_triangulation(buf);
+        assert!(pass);
+        assert!(v.contains("Agreement"));
+    }
+
+    #[test]
+    fn fails_on_contradiction() {
+        let buf = "Wikidata: CONTRADICTS — the date differs\nOpenAlex: SUPPORTS — consistent";
+        let (_, pass) = summarize_triangulation(buf);
+        assert!(!pass);
+    }
+
+    #[test]
+    fn fails_when_all_silent() {
+        let buf = "Wikidata: SILENT — nothing\narXiv: SILENT — nothing\nAgreement: 0/2 support";
+        let (_, pass) = summarize_triangulation(buf);
+        assert!(!pass);
     }
 }

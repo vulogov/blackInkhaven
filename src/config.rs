@@ -3995,12 +3995,69 @@ pub struct ResearchConfig {
     /// RESRCH-2.1 — similarity score (0..1) at/above which a `/fact` insert warns
     /// of a near-duplicate before committing (informs, never blocks).
     pub dedup_warn_score: f64,
+    /// RESRCH-3 (R3-E) — when true, a `/fact` from a `model` / `web` / `document`
+    /// source is **triangulated** across the structured sources before it commits
+    /// (cross-source agreement replaces the single-source self-check). Off by
+    /// default — it is network-heavy. Informs; a weak verdict just asks to
+    /// confirm again.
+    pub triangulate_gate: bool,
     /// RESRCH-2 (R2-B) — max characters per embedded chunk when importing a
     /// document (`/import`).
     pub import_chunk_chars: usize,
     /// RESRCH-2 (R2-C) — web search & fetch settings.
     #[serde(default)]
     pub web: WebConfig,
+    /// RESRCH-3 (R3-A) — `research.wikidata` block for `/wikidata`.
+    pub wikidata: WikidataConfig,
+    /// RESRCH-3 (R3-B) — `research.scholarly` block for `/openalex` + `/arxiv`.
+    pub scholarly: ScholarlyConfig,
+}
+
+/// RESRCH-3 (R3-B) — `research.scholarly` block. `/openalex` and `/arxiv` are
+/// keyless; `mailto` joins OpenAlex's "polite pool" (recommended, avoids the
+/// anonymous rate limit). Scholarly tier — a `/fact` from a paper auto-creates a
+/// SOURCES-1 `BibEntry`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ScholarlyConfig {
+    /// Master switch for `/openalex` + `/arxiv`.
+    pub enabled: bool,
+    /// Contact email for OpenAlex's polite pool (optional but recommended).
+    pub mailto: String,
+    /// Auto-create a SOURCES-1 bibliography entry when a `/fact` is taken from a
+    /// paper.
+    pub auto_cite: bool,
+}
+
+impl Default for ScholarlyConfig {
+    fn default() -> Self {
+        Self { enabled: true, mailto: String::new(), auto_cite: true }
+    }
+}
+
+/// RESRCH-3 (R3-A) — `research.wikidata` block. `/wikidata` queries Wikidata's
+/// **structured** entity claims (Q-ID-cited, keyless) — the top of the trust
+/// ladder, so a `/fact` from it skips the fact-check gate. Wikipedia's prose is
+/// deliberately excluded; we ground on the triples, not the narrative.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WikidataConfig {
+    /// Master switch for `/wikidata` (keyless — on by default).
+    pub enabled: bool,
+    /// Base URL of the Wikibase API host.
+    pub endpoint: String,
+    /// Max property statements rendered per entity.
+    pub max_statements: usize,
+}
+
+impl Default for WikidataConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            endpoint: "https://www.wikidata.org".to_string(),
+            max_statements: 24,
+        }
+    }
 }
 
 /// RESRCH-2 (R2-C) — `research.web` block. `/web` is unavailable until a
@@ -4053,8 +4110,11 @@ impl Default for ResearchConfig {
             diff_top_n: 3,
             verify_min_sentence_words: 8,
             dedup_warn_score: 0.92,
+            triangulate_gate: false,
             import_chunk_chars: 1500,
             web: WebConfig::default(),
+            wikidata: WikidataConfig::default(),
+            scholarly: ScholarlyConfig::default(),
         }
     }
 }

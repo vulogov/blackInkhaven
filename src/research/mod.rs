@@ -31,10 +31,12 @@ mod picker;
 mod provenance;
 mod rag;
 mod render;
+mod scholarly;
 mod thread;
 mod verdicts;
 mod verify;
 mod web;
+mod wikidata;
 
 pub(crate) use focus::Focus;
 
