@@ -157,6 +157,17 @@ pub(super) struct TriangulateState {
     claim: String,
 }
 
+/// R3-E — the `/fact` triangulation gate: gather evidence, then have the LLM
+/// judge it; a weak verdict requires a second confirm (like the web gate).
+enum TriGatePhase {
+    Gather(mpsc::UnboundedReceiver<Vec<(String, String)>>),
+    Judge { rx: mpsc::UnboundedReceiver<StreamMsg>, buf: String },
+}
+pub(super) struct TriGate {
+    phase: TriGatePhase,
+    claim: String,
+}
+
 /// `/factcheck` — a multi-call corpus audit: truth (per-fact, chunked) then
 /// consistency (the whole set). Drained in the run loop like the chain.
 pub(super) struct FactCheckState {
@@ -244,6 +255,7 @@ pub(crate) struct ResearchApp {
     wikidata_state: Option<WikidataState>,
     scholarly_state: Option<ScholarlyState>,
     triangulate: Option<TriangulateState>,
+    tri_gate: Option<TriGate>,
     /// R3-B — a pending SOURCES-1 citation to write when the current `/fact` from
     /// a paper is confirmed (set at extraction, consumed on insert).
     pending_cite: Option<crate::sources::BibEntry>,
@@ -329,6 +341,7 @@ impl ResearchApp {
             wikidata_state: None,
             scholarly_state: None,
             triangulate: None,
+            tri_gate: None,
             pending_cite: None,
             fc_confirm: None,
             confirmation: None,
@@ -363,6 +376,7 @@ impl ResearchApp {
             self.poll_wikidata();
             self.poll_scholarly();
             self.poll_triangulate();
+            self.poll_tri_gate();
             self.poll_fc_confirm();
             terminal.draw(|f| render::render(f, self))?;
             if event::poll(Duration::from_millis(100))? {
@@ -2566,17 +2580,30 @@ impl ResearchApp {
                 return;
             }
         }
-        // WC-P3 — fact-check a web-sourced fact before it commits. The check
-        // runs async (spawn + poll-drain — no UI block, no stderr dots); when it
-        // returns, ACCURATE auto-inserts, DUBIOUS / INACCURATE shows the verdict
-        // and requires a second confirm.
-        let is_web = self.confirmation.as_ref().is_some_and(|c| c.prov.origin == "web");
+        // The pre-commit gate. A `model` / `web` / `document` fact needs checking;
+        // `computed` / `wikidata` / `openalex` / `arxiv` are already authoritative
+        // (structured / deterministic) and skip it. When `triangulate_gate` is on
+        // and a structured source is available, cross-source triangulation (R3-E)
+        // is the gate; otherwise the single-source web check (WC-P3). Both run
+        // async (spawn + poll-drain) and require a second confirm on a weak verdict.
+        let origin = self.confirmation.as_ref().map(|c| c.prov.origin.clone()).unwrap_or_default();
+        let needs_gate = matches!(origin.as_str(), "model" | "web" | "document");
         let fc_done = self.confirmation.as_ref().is_some_and(|c| c.fc_checked);
-        if is_web && !fc_done {
-            if self.fc_confirm.is_none() {
-                self.start_fact_check(&body);
+        if needs_gate && !fc_done {
+            let structured_available = super::wikidata::available(&self.cfg.research.wikidata)
+                || super::scholarly::available(&self.cfg.research.scholarly);
+            if self.cfg.research.triangulate_gate && structured_available {
+                if self.tri_gate.is_none() {
+                    self.start_triangulate_gate(&title, &body);
+                }
+                return; // wait for the triangulation verdict (poll_tri_gate finalises)
             }
-            return; // wait for the verdict (poll_fc_confirm finalises)
+            if origin == "web" {
+                if self.fc_confirm.is_none() {
+                    self.start_fact_check(&body);
+                }
+                return; // wait for the verdict (poll_fc_confirm finalises)
+            }
         }
         let c = self.confirmation.take().unwrap();
         match super::insert::insert_paragraph(
@@ -2753,6 +2780,170 @@ impl ResearchApp {
             self.status_message =
                 Some(format!("fact-check: {verdict} — Ctrl+S again to insert anyway"));
         }
+    }
+
+    /// R3-E — start the triangulation gate for a pending `/fact`: gather evidence
+    /// from the structured sources (phase 1); `poll_tri_gate` runs the judge.
+    fn start_triangulate_gate(&mut self, title: &str, body: &str) {
+        let claim = if title.trim().is_empty() {
+            body.trim().to_string()
+        } else {
+            format!("{}. {}", title.trim(), body.trim())
+        };
+        let wd_cfg = self.cfg.research.wikidata.clone();
+        let sc_cfg = self.cfg.research.scholarly.clone();
+        let wd_on = super::wikidata::available(&wd_cfg);
+        let sc_on = super::scholarly::available(&sc_cfg);
+        let (lang, _note) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        let code = match lang.as_code() {
+            "other" => "en".to_string(),
+            c => c.to_string(),
+        };
+        let q = claim.clone();
+        let (tx, rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let mut evidence: Vec<(String, String)> = Vec::new();
+            if wd_on {
+                if let Ok(e) = super::wikidata::fetch(wd_cfg, q.clone(), code).await {
+                    evidence.push(("Wikidata".to_string(), super::wikidata::render(&e)));
+                }
+            }
+            if sc_on {
+                if let Ok(p) = super::scholarly::openalex(sc_cfg.clone(), q.clone()).await {
+                    evidence.push(("OpenAlex".to_string(), super::scholarly::render(&p)));
+                }
+                if let Ok(p) = super::scholarly::arxiv(q.clone()).await {
+                    evidence.push(("arXiv".to_string(), super::scholarly::render(&p)));
+                }
+            }
+            let _ = tx.send(evidence);
+        });
+        self.tri_gate = Some(TriGate { phase: TriGatePhase::Gather(rx), claim });
+        self.status_message = Some("triangulating before commit…".to_string());
+    }
+
+    /// R3-E — drive the triangulation gate: gather → judge → verdict. A verdict
+    /// with support and no contradiction auto-inserts; otherwise it asks for a
+    /// second confirm (like the web / dedup gates).
+    fn poll_tri_gate(&mut self) {
+        let Some(gate) = self.tri_gate.as_mut() else { return };
+        match &mut gate.phase {
+            TriGatePhase::Gather(rx) => {
+                let evidence = match rx.try_recv() {
+                    Ok(e) => e,
+                    Err(mpsc::error::TryRecvError::Empty) => return,
+                    Err(mpsc::error::TryRecvError::Disconnected) => {
+                        self.tri_gate = None;
+                        return;
+                    }
+                };
+                if evidence.is_empty() {
+                    // Nothing to corroborate against — pass through, but say so.
+                    self.tri_gate = None;
+                    if let Some(c) = self.confirmation.as_mut() {
+                        c.fc_checked = true;
+                        c.fc_verdict = Some("triangulation: no corroborating sources".to_string());
+                    }
+                    self.status_message =
+                        Some("triangulation: no sources found — Ctrl+S again to insert".to_string());
+                    return;
+                }
+                let claim = gate.claim.clone();
+                self.start_tri_gate_judge(&claim, &evidence);
+            }
+            TriGatePhase::Judge { rx, buf } => {
+                let mut done = false;
+                loop {
+                    match rx.try_recv() {
+                        Ok(StreamMsg::Token(t)) => buf.push_str(&t),
+                        Ok(StreamMsg::Done(_)) | Err(mpsc::error::TryRecvError::Disconnected) => {
+                            done = true;
+                            break;
+                        }
+                        Ok(StreamMsg::Error(_)) => {
+                            done = true;
+                            break;
+                        }
+                        Err(mpsc::error::TryRecvError::Empty) => break,
+                    }
+                }
+                if !done {
+                    return;
+                }
+                let TriGate { phase, .. } = self.tri_gate.take().unwrap();
+                let TriGatePhase::Judge { buf, .. } = phase else { return };
+                let (verdict, pass) = summarize_triangulation(&buf);
+                if let Some(c) = self.confirmation.as_mut() {
+                    c.fc_checked = true;
+                    c.fc_verdict = Some(verdict.clone());
+                    c.prov.detail = if c.prov.detail.is_empty() {
+                        format!("triangulation: {verdict}")
+                    } else {
+                        format!("{} · triangulation: {verdict}", c.prov.detail)
+                    };
+                }
+                if pass {
+                    self.confirm_insertion(); // gate satisfied → inserts
+                } else {
+                    self.status_message =
+                        Some(format!("triangulation: {verdict} — Ctrl+S again to insert anyway"));
+                }
+            }
+        }
+    }
+
+    /// Spawn the triangulation-gate judge LLM call over the gathered evidence.
+    fn start_tri_gate_judge(&mut self, claim: &str, evidence: &[(String, String)]) {
+        let ai = match crate::ai::AiClient::from_config(&self.cfg.llm) {
+            Ok(a) => a,
+            Err(_) => {
+                self.tri_gate = None;
+                if let Some(c) = self.confirmation.as_mut() {
+                    c.fc_checked = true;
+                    c.fc_verdict = Some("triangulation skipped (no LLM provider)".to_string());
+                }
+                self.status_message = Some("triangulation skipped — Ctrl+S to insert".to_string());
+                return;
+            }
+        };
+        let (model, _env) = match ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(m) => m,
+            Err(_) => {
+                self.tri_gate = None;
+                if let Some(c) = self.confirmation.as_mut() {
+                    c.fc_checked = true;
+                }
+                return;
+            }
+        };
+        let (lang, _note) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        let language = super::extract::language_name(&lang);
+        let mut ev = String::new();
+        for (label, text) in evidence {
+            let body: String = text.chars().take(1200).collect();
+            ev.push_str(&format!("[{label}]\n{}\n\n", body.trim()));
+        }
+        let system = format!(
+            "You are triangulating a claim against INDEPENDENT sources before it enters a knowledge base. \
+             Judge ONLY from the sources below — do not use outside knowledge. For EACH source, output one \
+             line:\n<source>: SUPPORTS | CONTRADICTS | SILENT — <short reason>\n\
+             Then a final line: `Agreement: <n>/<m> support`. Write in {language}."
+        );
+        let user = format!("Claim:\n{claim}\n\nSources:\n{ev}");
+        let rx = spawn_chat_stream(
+            ai.client.clone(),
+            model.to_string(),
+            Some(system),
+            Vec::new(),
+            user,
+            llm::CATEGORY,
+        );
+        self.tri_gate = Some(TriGate {
+            phase: TriGatePhase::Judge { rx, buf: String::new() },
+            claim: claim.to_string(),
+        });
+        self.status_message =
+            Some(format!("judging {} source(s) before commit…", evidence.len()));
     }
 
     fn rebuild_prompt_history(&mut self) {
@@ -3414,5 +3605,62 @@ mod completion_tests {
         let d = vec!["rome".to_string(), "ravenna".to_string()];
         assert_eq!(longest_common_prefix(&d), "r");
         assert_eq!(longest_common_prefix(&["solo".to_string()]), "solo");
+    }
+}
+
+/// R3-E — parse the triangulation judge's output into a one-line verdict and a
+/// pass flag. Pass = at least one source SUPPORTS and none CONTRADICTS; a weak or
+/// contradicted verdict requires a second confirm.
+fn summarize_triangulation(buf: &str) -> (String, bool) {
+    let mut supports = 0usize;
+    let mut contradicts = 0usize;
+    let mut agreement: Option<String> = None;
+    for line in buf.lines() {
+        let l = line.trim();
+        if l.is_empty() {
+            continue;
+        }
+        if l.to_ascii_lowercase().starts_with("agreement") {
+            agreement = Some(l.to_string());
+            continue;
+        }
+        // The verdict token sits before the em-dash / hyphen reason separator.
+        let head = l.split('—').next().unwrap_or(l);
+        let head = head.split(" - ").next().unwrap_or(head).to_ascii_uppercase();
+        if head.contains("CONTRADICT") {
+            contradicts += 1;
+        } else if head.contains("SUPPORT") {
+            supports += 1;
+        }
+    }
+    let verdict =
+        agreement.unwrap_or_else(|| format!("{supports} support · {contradicts} contradict"));
+    (verdict, supports >= 1 && contradicts == 0)
+}
+
+#[cfg(test)]
+mod triangulation_tests {
+    use super::summarize_triangulation;
+
+    #[test]
+    fn passes_on_support_without_contradiction() {
+        let buf = "Wikidata: SUPPORTS — matches the triple\narXiv: SILENT — not addressed\nAgreement: 1/2 support";
+        let (v, pass) = summarize_triangulation(buf);
+        assert!(pass);
+        assert!(v.contains("Agreement"));
+    }
+
+    #[test]
+    fn fails_on_contradiction() {
+        let buf = "Wikidata: CONTRADICTS — the date differs\nOpenAlex: SUPPORTS — consistent";
+        let (_, pass) = summarize_triangulation(buf);
+        assert!(!pass);
+    }
+
+    #[test]
+    fn fails_when_all_silent() {
+        let buf = "Wikidata: SILENT — nothing\narXiv: SILENT — nothing\nAgreement: 0/2 support";
+        let (_, pass) = summarize_triangulation(buf);
+        assert!(!pass);
     }
 }
