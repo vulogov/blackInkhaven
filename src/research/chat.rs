@@ -21,6 +21,9 @@ pub(super) struct ChatTurn {
     /// R3-C — true for a deterministic `/calc` result, so a `/fact` from it is
     /// recorded with `origin=computed` (un-fabricatable; no gate).
     pub computed: bool,
+    /// R4-D — for a World-grounded `/calc`, the `world:<path>,…` citation carried
+    /// into provenance `detail` when a `/fact` is taken from it.
+    pub world_detail: String,
     /// R2-E — the model that produced this turn (for the per-model cost table).
     pub model: String,
     /// R2-E — provider-reported token usage, set on stream completion; `None`
@@ -38,6 +41,7 @@ impl ChatTurn {
             sources: Vec::new(),
             web_grounded: false,
             computed: false,
+            world_detail: String::new(),
             model: String::new(),
             usage: None,
         }
@@ -54,6 +58,7 @@ impl ChatTurn {
             sources: Vec::new(),
             web_grounded: false,
             computed: false,
+            world_detail: String::new(),
             model: String::new(),
             usage: None,
         }
