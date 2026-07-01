@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | **R5-A/B/C/D shipped 1.5.8-dev** (Part A synthesis complete); R5-E/F maintenance open |
+| **Status** | **R5-A/B/C/D + R5-E + R5-F(staleness) shipped 1.5.8-dev**; R5-F (dead-source, insert-time contradiction) open |
 | **Builds on** | RESRCH-1..4 + UX + Undisputed (all shipped) — the corpus, provenance, the trust ladder, SOURCES-1, `/triangulate` |
 | **Theme** | The program so far is about **acquisition** — getting facts *in*, cited, cross-checked. Two things it still can't do: **turn the corpus into output**, and **keep it healthy over time**. RESRCH-5 adds both, reusing the retrieval + provenance + SOURCES-1 machinery. Nothing here needs a new crate. |
 
@@ -42,8 +42,8 @@ A knowledge base decays; nothing tends it yet.
 
 | Phase | Content |
 |---|---|
-| **R5-E — `/upgrade`** | Find **`model`-origin** facts (the speculative tier) and, for each, try to **re-ground it on a structured source** via the `/triangulate` engine (Wikidata / scholarly). When corroborated, **raise its provenance tier** (record new provenance + the citation) — turning guesses into cited facts over time. **Non-destructive to the fact text**; only the provenance is upgraded (and the tree tier glyph follows). |
-| **R5-F — Hygiene** | *Staleness report* — flag `web` / `model` facts older than `N` days (from `created_at`) for re-verification. *Dead-source detection* — `web`-origin facts whose URL now 404s (a `reqwest` HEAD; degrades offline). *Insert-time contradiction guard* — extend the dedup guard so a `/fact` that **contradicts** an existing fact warns before it commits (not just similarity). |
+| **R5-E — `/upgrade`** | Re-ground a **`model`-origin** fact on a structured source via the triangulation engine; when corroborated, **raise its provenance tier**. Non-destructive. **✅ Shipped 1.5.8-dev** — `/upgrade [path]` (bare → selected fact): gather Wikidata/OpenAlex/arXiv evidence → judge per-source SUPPORTS/CONTRADICTS → `pick_corroborator` (highest tier, no contradiction) → rewrite provenance origin (`corroborated (was model)`); the tree tier glyph follows. *(Bulk over all model facts deferred — this is single-fact.)* |
+| **R5-F — Hygiene** | *Staleness report* — flag aging `web`/`model` facts. **✅ `/stale [days]` shipped 1.5.8-dev** (sync, from `created_at`). *Deferred:* dead-source 404 detection (async `reqwest` HEAD) and the insert-time contradiction guard (overlaps the existing `triangulate_gate` + `/factcheck` consistency; a follow-on). |
 
 ## Dependency posture
 - **No new runtime crates** — Part A reuses `retrieve` + `compile_bibtex` + the streaming path; Part B

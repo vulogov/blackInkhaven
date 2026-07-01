@@ -173,6 +173,21 @@ pub(super) struct TriGate {
     claim: String,
 }
 
+/// RESRCH-5 (R5-E) — `/upgrade`: gather structured-source evidence about a
+/// `model` fact, then judge which source corroborates it and raise its
+/// provenance tier. Non-destructive to the fact text.
+enum UpgradePhase {
+    Gather(mpsc::UnboundedReceiver<Vec<(String, String)>>),
+    Judge { rx: mpsc::UnboundedReceiver<StreamMsg>, buf: String },
+}
+pub(super) struct UpgradeState {
+    node_id: Uuid,
+    claim: String,
+    query: String,
+    phase: UpgradePhase,
+    preview_idx: Option<usize>,
+}
+
 /// `/factcheck` — a multi-call corpus audit: truth (per-fact, chunked) then
 /// consistency (the whole set). Drained in the run loop like the chain.
 pub(super) struct FactCheckState {
@@ -339,6 +354,7 @@ pub(crate) struct ResearchApp {
     scholarly_state: Option<ScholarlyState>,
     triangulate: Option<TriangulateState>,
     tri_gate: Option<TriGate>,
+    upgrade: Option<UpgradeState>,
     /// R3-B — a pending SOURCES-1 citation to write when the current `/fact` from
     /// a paper is confirmed (set at extraction, consumed on insert).
     pending_cite: Option<crate::sources::BibEntry>,
@@ -438,6 +454,7 @@ impl ResearchApp {
             scholarly_state: None,
             triangulate: None,
             tri_gate: None,
+            upgrade: None,
             pending_cite: None,
             fc_confirm: None,
             confirmation: None,
@@ -476,6 +493,7 @@ impl ResearchApp {
             || self.scholarly_state.is_some()
             || self.triangulate.is_some()
             || self.tri_gate.is_some()
+            || self.upgrade.is_some()
             || self.fc_confirm.is_some()
     }
 
@@ -494,6 +512,7 @@ impl ResearchApp {
             self.poll_scholarly();
             self.poll_triangulate();
             self.poll_tri_gate();
+            self.poll_upgrade();
             self.poll_fc_confirm();
             // UX-P3 — drive the status-bar spinner: start the timer when work is
             // in flight, clear it when the last async op finishes.
@@ -915,6 +934,8 @@ impl ResearchApp {
             Command::Outline(topic) => self.run_grounded(&topic, GroundedKind::Outline),
             Command::Gaps(topic) => self.run_grounded(&topic, GroundedKind::Gaps),
             Command::Bibliography => self.run_bibliography(),
+            Command::Upgrade(path) => self.start_upgrade(path.as_deref()),
+            Command::Stale(arg) => self.run_stale(arg.as_deref()),
             Command::Sources => self.run_sources(),
             Command::Promote { note, path } => self.start_promote(note, path),
             Command::Import(path) => match path {
@@ -1105,6 +1126,263 @@ impl ResearchApp {
         self.chat_history.push(ChatTurn::with_response("/bibliography".to_string(), body));
         self.chat_scroll = 0;
         self.status_message = Some(format!("{n} citation(s) · y to copy the BibTeX"));
+    }
+
+    /// RESRCH-5 (R5-F) — `/stale [days]`: list `model` / `web` facts older than
+    /// `days` (default 90) from their provenance `created_at`, so you can
+    /// re-verify aging claims. Read-only.
+    fn run_stale(&mut self, arg: Option<&str>) {
+        let days: i64 = arg.and_then(|a| a.trim().parse().ok()).unwrap_or(90);
+        let now = chrono::Utc::now();
+        let mut rows: Vec<(i64, String, String)> = Vec::new();
+        for (id, rec) in &self.fact_provenance.facts {
+            if !matches!(rec.origin.as_str(), "model" | "web") {
+                continue;
+            }
+            let Ok(ts) = chrono::DateTime::parse_from_rfc3339(&rec.created_at) else { continue };
+            let age = (now - ts.with_timezone(&chrono::Utc)).num_days();
+            if age <= days {
+                continue;
+            }
+            let loc = uuid::Uuid::parse_str(id)
+                .ok()
+                .and_then(|u| self.hierarchy.get(u))
+                .map(|n| self.hierarchy.slug_path(n))
+                .unwrap_or_else(|| id.clone());
+            rows.push((age, loc, rec.origin.clone()));
+        }
+        rows.sort_by(|a, b| b.0.cmp(&a.0));
+        let body = if rows.is_empty() {
+            format!("No model/web facts older than {days} days — the corpus is fresh.")
+        } else {
+            let mut s = format!("[/stale — {} fact(s) older than {days} days · re-verify or /upgrade]\n", rows.len());
+            for (age, loc, origin) in &rows {
+                s.push_str(&format!("· {age}d  [{origin}]  {loc}\n"));
+            }
+            s
+        };
+        self.chat_history.push(ChatTurn::with_response(format!("/stale {days}"), body));
+        self.chat_scroll = 0;
+    }
+
+    /// RESRCH-5 (R5-E) — `/upgrade [facts/path]`: try to re-ground a `model` fact
+    /// on a structured source (Wikidata / scholarly, via the triangulation engine)
+    /// and, when corroborated, **raise its provenance tier**. The fact text is
+    /// never changed — only the provenance. Bare targets the selected fact.
+    fn start_upgrade(&mut self, path: Option<&str>) {
+        if self.upgrade.is_some() || self.stream_rx.is_some() {
+            self.status_message = Some("a response is already in flight".to_string());
+            return;
+        }
+        let target = match path {
+            Some(p) if !p.trim().is_empty() => self.resolve_insertion_target(TargetBook::Facts, Some(p)),
+            _ => self.facts_tree.selected(),
+        };
+        let Some(id) = target else {
+            self.status_message =
+                Some("usage: /upgrade [facts/path] — or select a model fact in the tree".to_string());
+            return;
+        };
+        let origin = self
+            .fact_provenance
+            .for_node(&id.to_string())
+            .map(|r| r.origin.clone())
+            .unwrap_or_else(|| "model".to_string());
+        if matches!(origin.as_str(), "computed" | "simulation" | "wikidata" | "openalex" | "arxiv") {
+            self.status_message = Some(format!("already structured ({origin}) — nothing to upgrade"));
+            return;
+        }
+        let claim = match self.store.get_content(id) {
+            Ok(Some(b)) => String::from_utf8_lossy(&b).trim().to_string(),
+            _ => String::new(),
+        };
+        if claim.is_empty() {
+            self.status_message = Some("/upgrade: select a fact paragraph with text".to_string());
+            return;
+        }
+        let wd_cfg = self.cfg.research.wikidata.clone();
+        let sc_cfg = self.cfg.research.scholarly.clone();
+        let wd_on = super::wikidata::available(&wd_cfg);
+        let sc_on = super::scholarly::available(&sc_cfg);
+        if !wd_on && !sc_on {
+            self.status_message = Some("/upgrade: no structured sources enabled".to_string());
+            return;
+        }
+        let (lang, _note) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        let code = match lang.as_code() {
+            "other" => "en".to_string(),
+            c => c.to_string(),
+        };
+        let q = claim.clone();
+        let (tx, rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let mut evidence: Vec<(String, String)> = Vec::new();
+            if wd_on {
+                if let Ok(e) = super::wikidata::fetch(wd_cfg, q.clone(), code).await {
+                    evidence.push(("Wikidata".to_string(), super::wikidata::render(&e)));
+                }
+            }
+            if sc_on {
+                if let Ok(p) = super::scholarly::openalex(sc_cfg.clone(), q.clone()).await {
+                    evidence.push(("OpenAlex".to_string(), super::scholarly::render(&p)));
+                }
+                if let Ok(p) = super::scholarly::arxiv(q.clone()).await {
+                    evidence.push(("arXiv".to_string(), super::scholarly::render(&p)));
+                }
+            }
+            let _ = tx.send(evidence);
+        });
+        let loc = self.hierarchy.get(id).map(|n| self.hierarchy.slug_path(n)).unwrap_or_default();
+        let mut preview = ChatTurn::new(format!("/upgrade {loc}"));
+        preview.streaming = true;
+        self.chat_history.push(preview);
+        self.chat_scroll = 0;
+        let preview_idx = Some(self.chat_history.len() - 1);
+        self.upgrade = Some(UpgradeState { node_id: id, claim, query: loc, phase: UpgradePhase::Gather(rx), preview_idx });
+        self.status_message = Some("upgrade: gathering structured evidence…".to_string());
+    }
+
+    /// Drive the `/upgrade` pipeline: gather → judge → (on corroboration) raise
+    /// the fact's provenance tier.
+    fn poll_upgrade(&mut self) {
+        // Phase 1 — evidence gathered?
+        let gathered =
+            if let Some(UpgradeState { phase: UpgradePhase::Gather(rx), .. }) = self.upgrade.as_mut() {
+                match rx.try_recv() {
+                    Ok(e) => Some(Ok(e)),
+                    Err(mpsc::error::TryRecvError::Empty) => return,
+                    Err(_) => Some(Err(())),
+                }
+            } else {
+                None
+            };
+        if let Some(res) = gathered {
+            match res {
+                Err(()) => self.upgrade = None,
+                Ok(ev) if ev.is_empty() => {
+                    self.finish_upgrade(None, "no structured source returned evidence about this fact")
+                }
+                Ok(ev) => {
+                    let claim = self.upgrade.as_ref().unwrap().claim.clone();
+                    self.start_upgrade_judge(&claim, &ev);
+                }
+            }
+            return;
+        }
+        // Phase 2 — the judge stream.
+        let preview_idx = self.upgrade.as_ref().and_then(|u| u.preview_idx);
+        let mut done = false;
+        let mut new_tokens = String::new();
+        if let Some(UpgradeState { phase: UpgradePhase::Judge { rx, buf }, .. }) = self.upgrade.as_mut() {
+            loop {
+                match rx.try_recv() {
+                    Ok(StreamMsg::Token(t)) => {
+                        new_tokens.push_str(&t);
+                        buf.push_str(&t);
+                    }
+                    Ok(StreamMsg::Done(_)) | Err(mpsc::error::TryRecvError::Disconnected) => {
+                        done = true;
+                        break;
+                    }
+                    Ok(StreamMsg::Error(_)) => {
+                        done = true;
+                        break;
+                    }
+                    Err(mpsc::error::TryRecvError::Empty) => break,
+                }
+            }
+        } else {
+            return;
+        }
+        if !new_tokens.is_empty() {
+            if let Some(i) = preview_idx {
+                if let Some(t) = self.chat_history.get_mut(i) {
+                    t.response.push_str(&new_tokens);
+                }
+            }
+        }
+        if !done {
+            return;
+        }
+        let buf = match self.upgrade.as_ref().map(|u| &u.phase) {
+            Some(UpgradePhase::Judge { buf, .. }) => buf.clone(),
+            _ => return,
+        };
+        match pick_corroborator(&buf) {
+            Some(origin) => self.finish_upgrade(Some(origin), ""),
+            None => self.finish_upgrade(None, "no structured source corroborated the claim"),
+        }
+    }
+
+    /// Spawn the `/upgrade` corroboration-judge over the gathered evidence.
+    fn start_upgrade_judge(&mut self, claim: &str, evidence: &[(String, String)]) {
+        let ai = match crate::ai::AiClient::from_config(&self.cfg.llm) {
+            Ok(a) => a,
+            Err(e) => {
+                self.status_message = Some(format!("no LLM provider: {e}"));
+                self.upgrade = None;
+                return;
+            }
+        };
+        let (model, _env) = match ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(m) => m,
+            Err(e) => {
+                self.status_message = Some(format!("provider error: {e}"));
+                self.upgrade = None;
+                return;
+            }
+        };
+        let (lang, _note) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        let language = super::extract::language_name(&lang);
+        let mut ev = String::new();
+        for (label, text) in evidence {
+            let body: String = text.chars().take(1200).collect();
+            ev.push_str(&format!("[{label}]\n{}\n\n", body.trim()));
+        }
+        let system = format!(
+            "You are checking whether INDEPENDENT structured sources CORROBORATE a claim from a writer's \
+             database. For EACH source below, judge from the source text alone: does it SUPPORT, \
+             CONTRADICT, or is it SILENT on the claim? Output one line per source:\n\
+             <source>: SUPPORTS | CONTRADICTS | SILENT — <short reason>\n\
+             Do not use outside knowledge. Write in {language}."
+        );
+        let user = format!("Claim:\n{claim}\n\nSources:\n{ev}");
+        let rx = spawn_chat_stream(ai.client.clone(), model.to_string(), Some(system), Vec::new(), user, llm::CATEGORY);
+        if let Some(up) = self.upgrade.as_mut() {
+            up.phase = UpgradePhase::Judge { rx, buf: String::new() };
+        }
+        self.status_message = Some(format!("upgrade: judging {} source(s)…", evidence.len()));
+    }
+
+    /// Finalise `/upgrade`: raise the fact's provenance tier on corroboration (the
+    /// text is never touched), or report it stays `model`.
+    fn finish_upgrade(&mut self, corroborator: Option<String>, note: &str) {
+        let Some(up) = self.upgrade.take() else { return };
+        let (report, status) = match corroborator {
+            Some(origin) => {
+                let now = chrono::Utc::now().to_rfc3339();
+                super::provenance::Provenance::record(
+                    &self.layout,
+                    &up.node_id.to_string(),
+                    super::provenance::SourceRecord::new(&origin, "corroborated (was model)", &up.query, &self.thread.name, now),
+                );
+                self.fact_provenance = super::provenance::Provenance::load(&self.layout);
+                (
+                    format!("[/upgrade] ✓ corroborated by {origin} — provenance raised to `{origin}` (the fact text is unchanged)."),
+                    format!("upgraded → {origin}"),
+                )
+            }
+            None => (format!("[/upgrade] — {note}; stays `model`. Verify it by hand, or /triangulate it."), "not upgraded".to_string()),
+        };
+        match up.preview_idx.and_then(|i| self.chat_history.get_mut(i)) {
+            Some(turn) => {
+                turn.response = report;
+                turn.streaming = false;
+            }
+            None => self.chat_history.push(ChatTurn::with_response("/upgrade".to_string(), report)),
+        }
+        self.chat_scroll = 0;
+        self.status_message = Some(status);
     }
 
     /// `/sources` — list each Facts node with its recorded provenance (T-P3).
@@ -4424,6 +4702,36 @@ mod completion_tests {
     }
 }
 
+/// R5-E — from the `/upgrade` corroboration judgement, the origin tier of the
+/// best corroborating source (highest tier that SUPPORTS with **no** source
+/// CONTRADICTING), or `None`. Priority: wikidata > openalex > arxiv.
+fn pick_corroborator(buf: &str) -> Option<String> {
+    let mut supports: Vec<&str> = Vec::new();
+    let mut any_contradict = false;
+    for line in buf.lines() {
+        let u = line.to_ascii_uppercase();
+        let head = u.split('—').next().unwrap_or("");
+        if head.contains("CONTRADICT") {
+            any_contradict = true;
+        } else if head.contains("SUPPORT") {
+            if head.contains("WIKIDATA") {
+                supports.push("wikidata");
+            } else if head.contains("OPENALEX") {
+                supports.push("openalex");
+            } else if head.contains("ARXIV") {
+                supports.push("arxiv");
+            }
+        }
+    }
+    if any_contradict {
+        return None;
+    }
+    ["wikidata", "openalex", "arxiv"]
+        .into_iter()
+        .find(|tier| supports.contains(tier))
+        .map(str::to_string)
+}
+
 /// R3-E — parse the triangulation judge's output into a one-line verdict and a
 /// pass flag. Pass = at least one source SUPPORTS and none CONTRADICTS; a weak or
 /// contradicted verdict requires a second confirm.
@@ -4478,6 +4786,24 @@ mod triangulation_tests {
         let buf = "Wikidata: SILENT — nothing\narXiv: SILENT — nothing\nAgreement: 0/2 support";
         let (_, pass) = summarize_triangulation(buf);
         assert!(!pass);
+    }
+
+    #[test]
+    fn corroborator_prefers_highest_tier_and_respects_contradiction() {
+        use super::pick_corroborator;
+        // Wikidata supports, arXiv silent → wikidata wins (top tier).
+        assert_eq!(
+            pick_corroborator("Wikidata: SUPPORTS — matches\narXiv: SILENT — n/a").as_deref(),
+            Some("wikidata")
+        );
+        // OpenAlex supports, no wikidata → openalex.
+        assert_eq!(
+            pick_corroborator("OpenAlex: SUPPORTS — consistent").as_deref(),
+            Some("openalex")
+        );
+        // Any contradiction → no corroboration.
+        assert!(pick_corroborator("Wikidata: SUPPORTS — x\narXiv: CONTRADICTS — y").is_none());
+        assert!(pick_corroborator("Wikidata: SILENT — nothing").is_none());
     }
 }
 
