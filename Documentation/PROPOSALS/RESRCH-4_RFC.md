@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Track** | RESRCH-4 (Computational research) |
-| **Status** | Draft RFC (formalizes [`RESRCH-4_TRACK.md`](RESRCH-4_TRACK.md)) |
+| **Status** | R4-D + R4-B/A **shipped 1.5.4**; R4-C/E + reducers + route-2 open (formalizes [`RESRCH-4_TRACK.md`](RESRCH-4_TRACK.md)) |
 | **Builds on** | RESRCH-3 / R3-C (`calc.*` words + `/calc`, shipped 1.5.2) · WORLD-4/5/6 (the **World** system book) |
 | **New runtime crates** | **none** · **no network** — pure arithmetic over the in-tree Bund VM + the already-ambient `active_store()` reading already-on-disk World JSON |
 | **Decisions to confirm** | (D1) World read route — **read the materialized book**, recompile fallback. (D2) reader surface — **one path accessor + a compact convenience set**. (D3) provenance — extend `computed` with a **`world:<path>`** citation, gate still bypassed. |

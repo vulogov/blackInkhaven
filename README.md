@@ -21,36 +21,34 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.5.3 — Trust & Hygiene
+## Latest release · 1.5.4 — Computational `/calc`
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.5.3.md`](Documentation/RELEASE_NOTES/1.5.3.md)
-· Plan: [`RESRCH-2.4`](Documentation/PROPOSALS/RESRCH-2.4_PLAN.md) ·
-cross-track path: [`RESRCH-4`](Documentation/PROPOSALS/RESRCH-4_RFC.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.5.4.md`](Documentation/RELEASE_NOTES/1.5.4.md)
+· RFC: [`RESRCH-4`](Documentation/PROPOSALS/RESRCH-4_RFC.md)
 
-1.5.2 widened where research facts come from. 1.5.3 pays down the debt that breadth rode on, and turns
-the corpus audit into a navigable workflow — **no new crates**.
+1.5.3 paid down the research assistant's debt. 1.5.4 turns `/calc` into a **computational research
+instrument** that reads **this project's own World-book facts** and computes on them — deterministically,
+`origin=computed`, gate-bypassed, and **self-citing**. **No new crates, no network.**
 
-### Real cost · scalable, streamed `/factcheck`
+### World-book readers
 
-Session cost is now priced from a **per-model `cost.pricing` table** against the provider's **real token
-usage** (`$` exact / `~$` estimated). `/factcheck` is **chunked by Facts chapter** (plus a cross-branch
-pass) so it scales, and both it and `/fact` extraction now **stream live**.
+**`world.get <path>`** pulls the value at a `Chapter/field[/index…]` path in the materialized WORLD-4
+book (e.g. `"Astronomy/year_length_planet_days"`); unresolved paths push **NODATA**, never a fabricated
+value. **`world.dict <Chapter>`** / **`world.has`** and convenience words (`world.year`, `world.tilt`,
+`world.star_mass`, …) round it out. Every read is **echoed** in the result, and a `/fact` from a
+World-grounded `/calc` records provenance **`computed · world:<path>`** — the self-citing deterministic tier.
 
-### Verdict flags + `/whatswrong`
+### Astronomy formulas + math substrate
 
-After a `/factcheck`, every fact in the **Facts tree** carries a glyph — **✓** accurate, **?**
-questionable, **✗** inaccurate — persisted until the next audit. Navigate to a flagged fact and run
-**`/whatswrong`** for a streamed AI explanation of what's wrong and the correct information, in your
-project language. `/factcheck` flags → the tree shows where → `/whatswrong` explains → you fix it.
-
-### Tab-completion
-
-In the prompt, **Tab** completes a Facts slug path after `/goto ` or a `→` insertion arrow.
+Deterministic, Earth/Sun-tested formulas — `kepler_period`, `surface_gravity`, `escape_velocity`,
+`insolation`, `synodic_period`, `hill_sphere`, `roche_limit`, … — plus a scientific substrate (`sqrt pow
+exp ln sin cos tan atan2 hypot …`). They **compose with the World readers**:
+**`/calc world.star_mass world.au kepler_period`** recomputes *this* system's year from its own facts.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** New config `cost.pricing`; new sidecar `.inkhaven/fact-verdicts.json`; new
-command `/whatswrong`. No new system books, no new `NodeKind`.
+**No new runtime crates, no network** (in-tree Bund VM + read-only `active_store()` over the on-disk
+World JSON). New provenance detail `world:<path>` on the existing `computed` origin — no schema change.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
