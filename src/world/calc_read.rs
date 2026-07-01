@@ -27,25 +27,72 @@ pub fn chapter(store: &Store, chapter_head: &str) -> Option<Json> {
     let chapter = h.children_of(Some(book.id)).into_iter().find(|n| {
         n.kind == NodeKind::Chapter
             && (n.title.eq_ignore_ascii_case(head) || n.slug.eq_ignore_ascii_case(head))
-    })?;
+    });
 
+    // Route 1 — read the materialized paragraph JSON of the chapter (if present).
     let mut map = serde_json::Map::new();
-    for pid in h.collect_subtree(chapter.id) {
-        let Some(node) = h.get(pid) else { continue };
-        if node.kind != NodeKind::Paragraph {
-            continue;
-        }
-        let Ok(Some(bytes)) = store.get_content(pid) else { continue };
-        if let Ok(Json::Object(obj)) = serde_json::from_slice::<Json>(&bytes) {
-            for (k, v) in obj {
-                map.insert(k, v);
+    if let Some(chapter) = &chapter {
+        for pid in h.collect_subtree(chapter.id) {
+            let Some(node) = h.get(pid) else { continue };
+            if node.kind != NodeKind::Paragraph {
+                continue;
+            }
+            let Ok(Some(bytes)) = store.get_content(pid) else { continue };
+            if let Ok(Json::Object(obj)) = serde_json::from_slice::<Json>(&bytes) {
+                for (k, v) in obj {
+                    map.insert(k, v);
+                }
             }
         }
     }
-    if map.is_empty() {
-        return None;
+    if !map.is_empty() {
+        return Some(Json::Object(map));
     }
-    Some(Json::Object(map))
+    // Route 2 — the chapter is absent or unmaterialized; recompile from world.hjson.
+    recompile_chapter(store, head)
+}
+
+/// Route 2 — recompile a layer in memory from `world.hjson` and return its output
+/// as a JSON object (same numbers materialization would write). Used when the
+/// World book chapter isn't materialized; `None` when there's no `world.hjson` or
+/// the chapter isn't a known layer.
+fn recompile_chapter(store: &Store, chapter_head: &str) -> Option<Json> {
+    use crate::world::compile::{
+        compile_astronomy, compile_climate, compile_demographics, compile_geology, compile_hydrology,
+    };
+    use crate::world::types::WorldDefinition;
+
+    let raw = std::fs::read_to_string(store.project_root().join("world.hjson")).ok()?;
+    let def = WorldDefinition::from_hjson(&raw).ok()?;
+    // The layer dependency chain: astronomy/geology from the definition; the rest
+    // consume upstream outputs.
+    let value = match chapter_head.to_ascii_lowercase().as_str() {
+        "astronomy" => serde_json::to_value(compile_astronomy(&def.astronomy)),
+        "geology" => serde_json::to_value(compile_geology(&def)),
+        "climate" => {
+            let astro = compile_astronomy(&def.astronomy);
+            let geo = compile_geology(&def);
+            serde_json::to_value(compile_climate(&def, &astro, &geo))
+        }
+        "hydrology" => {
+            let astro = compile_astronomy(&def.astronomy);
+            let geo = compile_geology(&def);
+            let clim = compile_climate(&def, &astro, &geo);
+            serde_json::to_value(compile_hydrology(&geo, &clim))
+        }
+        "demographics" => {
+            let astro = compile_astronomy(&def.astronomy);
+            let geo = compile_geology(&def);
+            let clim = compile_climate(&def, &astro, &geo);
+            let hydro = compile_hydrology(&geo, &clim);
+            serde_json::to_value(compile_demographics(&clim, &hydro))
+        }
+        _ => return None,
+    };
+    match value.ok()? {
+        obj @ Json::Object(_) => Some(obj),
+        _ => None,
+    }
 }
 
 /// Resolve a full `Chapter/field[/idx|key…]` path to a JSON value: the chapter

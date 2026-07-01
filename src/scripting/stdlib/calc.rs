@@ -293,6 +293,55 @@ fn m_lcm(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
     Ok(vm)
 }
 
+// ── list reducers (R4-A) ─────────────────────────────────────────────────────
+// Consume a Bund list literal, e.g. `[ 1 2 3 ] calc.sum`.
+
+/// Pop a list and coerce every element to `f64`.
+fn pop_number_list(vm: &mut VM, tag: &str) -> std::result::Result<Vec<f64>, BundError> {
+    let items = pull(vm, tag)
+        .map_err(|e| easy_error::err_msg(e.to_string()))?
+        .cast_list()
+        .map_err(|e| easy_error::err_msg(format!("{tag}: expected a list, e.g. `[ 1 2 3 ] {tag}` ({e})")))?;
+    items.iter().map(as_f64).collect()
+}
+
+/// `sum` — `( list -- Σ )`.
+fn r_sum(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    let xs = pop_number_list(vm, "calc.sum")?;
+    push(vm, Value::from_float(xs.iter().sum()));
+    Ok(vm)
+}
+
+/// `mean` — `( list -- x̄ )`.
+fn r_mean(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    let xs = pop_number_list(vm, "calc.mean")?;
+    if xs.is_empty() {
+        return Err(easy_error::err_msg("calc.mean: empty list"));
+    }
+    push(vm, Value::from_float(xs.iter().sum::<f64>() / xs.len() as f64));
+    Ok(vm)
+}
+
+/// `min` — `( list -- m )`.
+fn r_min(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    let xs = pop_number_list(vm, "calc.min")?;
+    match xs.iter().copied().reduce(f64::min) {
+        Some(m) => push(vm, Value::from_float(m)),
+        None => return Err(easy_error::err_msg("calc.min: empty list")),
+    }
+    Ok(vm)
+}
+
+/// `max` — `( list -- m )`.
+fn r_max(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    let xs = pop_number_list(vm, "calc.max")?;
+    match xs.iter().copied().reduce(f64::max) {
+        Some(m) => push(vm, Value::from_float(m)),
+        None => return Err(easy_error::err_msg("calc.max: empty list")),
+    }
+    Ok(vm)
+}
+
 // ── climate, geography & economy (R4-C) ──────────────────────────────────────
 const EARTH_RADIUS_KM: f64 = 6371.0;
 
@@ -691,6 +740,10 @@ const WORDS: &[(&str, fn(&mut VM) -> std::result::Result<&mut VM, BundError>)] =
     ("calc.factorial", m_factorial),
     ("calc.gcd", m_gcd),
     ("calc.lcm", m_lcm),
+    ("calc.sum", r_sum),
+    ("calc.mean", r_mean),
+    ("calc.min", r_min),
+    ("calc.max", r_max),
     // Climate, geography & economy (R4-C).
     ("calc.lapse_rate", c_lapse_rate),
     ("calc.dewpoint", c_dewpoint),
@@ -799,6 +852,16 @@ mod tests {
         // gcd / factorial.
         assert!((top_float("12 18 calc.gcd") - 6.0).abs() < 1e-9);
         assert!((top_float("5 calc.factorial") - 120.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn list_reducers() {
+        assert!((top_float("[ 1 2 3 4 ] calc.sum") - 10.0).abs() < 1e-9);
+        assert!((top_float("[ 1 2 3 4 ] calc.mean") - 2.5).abs() < 1e-9);
+        assert!((top_float("[ 5 2 8 1 ] calc.min") - 1.0).abs() < 1e-9);
+        assert!((top_float("[ 5 2 8 1 ] calc.max") - 8.0).abs() < 1e-9);
+        // Floats + a longer chain: mean of [1.5 2.5] = 2.0.
+        assert!((top_float("[ 1.5 2.5 ] calc.mean") - 2.0).abs() < 1e-9);
     }
 
     #[test]

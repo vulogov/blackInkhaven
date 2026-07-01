@@ -47,6 +47,8 @@ impl SourceRecord {
         match self.origin.as_str() {
             "computed" if !self.detail.is_empty() => format!("computed · {}", self.detail),
             "computed" => "computed (deterministic)".to_string(),
+            "simulation" if !self.detail.is_empty() => format!("simulation · {}", self.detail),
+            "simulation" => "simulation (World)".to_string(),
             "wikidata" if !self.detail.is_empty() => format!("wikidata: {}", self.detail),
             "wikidata" => "wikidata (structured)".to_string(),
             "openalex" if !self.detail.is_empty() => format!("openalex · {}", self.detail),
