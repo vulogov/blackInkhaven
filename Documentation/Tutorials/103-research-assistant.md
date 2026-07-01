@@ -281,6 +281,25 @@ the trust ladder. Both are **keyless**:
 (deduped by cite key). The metadata is authoritative, so the fact-check gate is skipped; you still review
 the extracted claim in the confirmation overlay as always. Disable with `research.scholarly.auto_cite`.
 
+## 6.9. Triangulation — `/triangulate` (1.5.5)
+
+Once you have **several independent sources**, a claim can be checked against *all* of them — a far
+stronger test than the model grading its own output. **`/triangulate <claim>`** (bare → the last
+response) queries the **structured sources concurrently** — Wikidata, OpenAlex, arXiv — gathers what each
+says, then has the model judge **each source** against the claim:
+
+```
+/triangulate the aqueduct carried 1 million cubic metres per day
+  Wikidata: SILENT — no capacity statement for this entity
+  OpenAlex: SUPPORTS — the cited work gives a comparable daily figure
+  arXiv:    SILENT — the preprint is about flow modelling, not capacity
+  Agreement: 1/3 support
+```
+
+Crucially, the model judges **independent external evidence**, not its own answer — so the verdict means
+something. Use it before you `/fact` a shaky claim: if the sources don't corroborate, investigate first.
+(Triangulation needs at least Wikidata or the scholarly sources enabled.)
+
 ## 6⅞. Deterministic calculation — `/calc` (1.5.2)
 
 Not every fact comes from a model or the web — some you just **compute**. **`/calc <expr>`** evaluates a
