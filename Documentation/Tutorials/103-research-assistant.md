@@ -433,6 +433,19 @@ The corpus is finally a source you can *compose from*, not just add to.
   **`inkhaven research --bibliography [--out refs.bib]`** writes it to a file. The citations you accrued
   become a real manuscript bibliography. (R5-D.)
 
+## 6.97. Keeping the corpus healthy — `/upgrade` & `/stale` (1.5.8)
+
+A knowledge base decays; these tend it.
+
+- **`/upgrade [facts/path]`** (bare → the selected fact) tries to **re-ground a `model`-origin fact on a
+  structured source** — it gathers evidence from Wikidata / OpenAlex / arXiv about the claim and asks the
+  model whether any source **corroborates** it. If one does (and none contradicts), the fact's
+  **provenance tier is raised** to that source (its tree tier glyph updates) — a speculative claim becomes
+  a cited one. **The fact text is never changed**; only the provenance. Already-structured facts are
+  skipped. (RESRCH-5 / R5-E.)
+- **`/stale [days]`** lists your **`model` / `web`** facts older than *N* days (default 90) — the ones
+  whose grounding may have drifted — so you can re-verify or `/upgrade` them. Read-only. (R5-F.)
+
 ## 7. Deeper research
 
 - **`/chain q1 → q2 → q3`** — a sequential pipeline: each step's answer becomes context for the next.

@@ -30,6 +30,11 @@ pub(super) enum Command {
     Gaps(String),
     /// `/bibliography` — emit the Sources Research chapter as BibTeX (R5-D).
     Bibliography,
+    /// `/upgrade [facts/path]` — try to re-ground a `model`-origin fact on a
+    /// structured source and raise its provenance tier (R5-E; non-destructive).
+    Upgrade(Option<String>),
+    /// `/stale [days]` — list `model`/`web` facts older than N days (R5-F).
+    Stale(Option<String>),
     /// `/sources` — list each fact's recorded provenance (RESRCH-2.1).
     Sources,
     /// `/import [path]` — ingest a document as a research source, or list the
@@ -92,6 +97,8 @@ pub(super) const SPECS: &[CommandSpec] = &[
     CommandSpec { name: "outline", summary: "a structured, fact-citing outline", usage: "/outline <topic>" },
     CommandSpec { name: "gaps", summary: "open questions the corpus doesn't answer", usage: "/gaps <topic>" },
     CommandSpec { name: "bibliography", summary: "Sources Research chapter → BibTeX", usage: "/bibliography" },
+    CommandSpec { name: "upgrade", summary: "re-ground a model fact on a structured source", usage: "/upgrade [facts/path]" },
+    CommandSpec { name: "stale", summary: "list aging model/web facts", usage: "/stale [days]" },
     CommandSpec { name: "whatswrong", summary: "explain a flagged fact (AI)", usage: "/whatswrong [facts/path]" },
     CommandSpec { name: "sources", summary: "list each fact's provenance", usage: "/sources" },
     CommandSpec { name: "import", summary: "ingest a file / folder / .bib / .json", usage: "/import [path]" },
@@ -195,6 +202,8 @@ pub(super) fn parse(input: &str) -> Option<Command> {
         "outline" => Command::Outline(rest.to_string()),
         "gaps" => Command::Gaps(rest.to_string()),
         "bibliography" | "bib" => Command::Bibliography,
+        "upgrade" => Command::Upgrade(if rest.is_empty() { None } else { Some(rest.to_string()) }),
+        "stale" => Command::Stale(if rest.is_empty() { None } else { Some(rest.to_string()) }),
         "sources" => Command::Sources,
         "import" => Command::Import(if rest.is_empty() { None } else { Some(rest.to_string()) }),
         "forget" => Command::Forget(rest.to_string()),
@@ -300,6 +309,8 @@ mod tests {
         assert_eq!(parse("/gaps the siege").unwrap(), Command::Gaps("the siege".into()));
         assert_eq!(parse("/bibliography").unwrap(), Command::Bibliography);
         assert_eq!(parse("/bib").unwrap(), Command::Bibliography);
+        assert_eq!(parse("/upgrade").unwrap(), Command::Upgrade(None));
+        assert_eq!(parse("/stale 30").unwrap(), Command::Stale(Some("30".into())));
         assert_eq!(parse("/sources").unwrap(), Command::Sources);
         assert_eq!(parse("/import /docs/rome.md").unwrap(), Command::Import(Some("/docs/rome.md".into())));
         assert_eq!(parse("/import").unwrap(), Command::Import(None));
