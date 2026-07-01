@@ -18,6 +18,9 @@ pub(super) enum Command {
     /// `/factcheck` — audit the whole Facts corpus for truth + mutual
     /// consistency (multi-call).
     FactCheck,
+    /// `/undisputed` — common-sense check of the authorial (undisputed) facts
+    /// (RESRCH-UNDISPUTED; read-only, never rewrites).
+    Undisputed,
     /// `/sources` — list each fact's recorded provenance (RESRCH-2.1).
     Sources,
     /// `/import [path]` — ingest a document as a research source, or list the
@@ -75,6 +78,7 @@ pub(super) const SPECS: &[CommandSpec] = &[
     CommandSpec { name: "diff", summary: "similar facts already in the corpus", usage: "/diff" },
     CommandSpec { name: "verify", summary: "confidence-probe the last response", usage: "/verify" },
     CommandSpec { name: "factcheck", summary: "audit the corpus (truth + consistency)", usage: "/factcheck" },
+    CommandSpec { name: "undisputed", summary: "common-sense check of authorial facts", usage: "/undisputed" },
     CommandSpec { name: "whatswrong", summary: "explain a flagged fact (AI)", usage: "/whatswrong [facts/path]" },
     CommandSpec { name: "sources", summary: "list each fact's provenance", usage: "/sources" },
     CommandSpec { name: "import", summary: "ingest a file / folder / .bib / .json", usage: "/import [path]" },
@@ -173,6 +177,7 @@ pub(super) fn parse(input: &str) -> Option<Command> {
         "diff" => Command::Diff,
         "verify" => Command::Verify,
         "factcheck" => Command::FactCheck,
+        "undisputed" => Command::Undisputed,
         "sources" => Command::Sources,
         "import" => Command::Import(if rest.is_empty() { None } else { Some(rest.to_string()) }),
         "forget" => Command::Forget(rest.to_string()),
@@ -272,6 +277,7 @@ mod tests {
         assert_eq!(parse("/diff").unwrap(), Command::Diff);
         assert_eq!(parse("/verify").unwrap(), Command::Verify);
         assert_eq!(parse("/factcheck").unwrap(), Command::FactCheck);
+        assert_eq!(parse("/undisputed").unwrap(), Command::Undisputed);
         assert_eq!(parse("/sources").unwrap(), Command::Sources);
         assert_eq!(parse("/import /docs/rome.md").unwrap(), Command::Import(Some("/docs/rome.md".into())));
         assert_eq!(parse("/import").unwrap(), Command::Import(None));

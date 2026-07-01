@@ -182,6 +182,22 @@ the correct information is, seeded with the recorded verdict reason and written 
 `/whatswrong` targets the **selected fact** by default, or an explicit `/whatswrong facts/path`. This is
 the loop: `/factcheck` flags → the tree shows where → `/whatswrong` explains → you fix it by hand.
 
+### Undisputed (authorial) facts + `/undisputed` (1.5.6)
+
+Some Facts are your **creative invention** — an invented god, a fictional aqueduct's capacity, a rule of
+your magic system. They are *not* claims about the real world, so real-world fact-checking is meaningless
+(and they'd fail it anyway). Mark such a fact **undisputed** by selecting it in the Facts tree and pressing
+**`u`** (toggle) — it gains a magenta **`※`** glyph. (You can also add the tag `fact:undisputed` from the
+editor's tag picker.)
+
+- An undisputed fact is **excluded from `/factcheck`** — but the report notes how many were skipped
+  (`※ N undisputed fact(s) excluded (authorial)`).
+- **`/undisputed`** runs a *separate*, read-only pass over **only** the undisputed facts, with a different
+  question: not "is this real?" but "does it make **internal common sense**?" Each is judged
+  `PLAUSIBLE / ODD / INCOHERENT` **within its own fictional frame** — self-consistent, free of obvious
+  contradiction — in your project language. It **never rewrites** anything; it just reports (with a
+  `✓N ?N ✗N` tally). Undisputed facts live *outside* the trust ladder — they're authorial axioms.
+
 ### Cost (1.5.3)
 
 The status bar's session cost is now priced from a **per-model table** (`cost.pricing`, USD per million

@@ -190,6 +190,20 @@ pub(super) struct FactCheckState {
     /// R2-E — index of the streaming turn showing the in-flight call's tokens
     /// (dim); reused to hold the final report when the audit completes.
     preview_idx: Option<usize>,
+    /// RESRCH-UNDISPUTED (UD-P2) — count of authorial facts excluded from this
+    /// audit, reported in the final report.
+    undisputed: usize,
+}
+
+/// RESRCH-UNDISPUTED (UD-P3) — the `/undisputed` common-sense pass over the
+/// authorial facts (chunked, like `/factcheck`'s truth phase; read-only).
+pub(super) struct UndisputedState {
+    facts: Vec<super::factcheck::FactEntry>,
+    chunk_idx: usize,
+    report: String,
+    rx: Option<mpsc::UnboundedReceiver<StreamMsg>>,
+    buf: String,
+    preview_idx: Option<usize>,
 }
 
 /// R-P15 — `/chain`: a sequential research pipeline. Each step's response is
@@ -258,6 +272,7 @@ pub(crate) struct ResearchApp {
     chain: Option<ChainState>,
     /// In-flight `/factcheck` corpus audit.
     factcheck: Option<FactCheckState>,
+    undisputed_check: Option<UndisputedState>,
     /// In-flight `/web` search (R2-C).
     web: Option<WebState>,
     wikidata_state: Option<WikidataState>,
@@ -351,6 +366,7 @@ impl ResearchApp {
             verify_rx: None,
             chain: None,
             factcheck: None,
+            undisputed_check: None,
             web: None,
             wikidata_state: None,
             scholarly_state: None,
@@ -386,6 +402,7 @@ impl ResearchApp {
             || self.verify_rx.is_some()
             || self.chain.is_some()
             || self.factcheck.is_some()
+            || self.undisputed_check.is_some()
             || self.web.is_some()
             || self.wikidata_state.is_some()
             || self.scholarly_state.is_some()
@@ -403,6 +420,7 @@ impl ResearchApp {
             self.poll_verify();
             self.poll_chain();
             self.poll_factcheck();
+            self.poll_undisputed();
             self.poll_web();
             self.poll_wikidata();
             self.poll_scholarly();
@@ -804,6 +822,7 @@ impl ResearchApp {
             Command::Diff => self.run_diff(),
             Command::Verify => self.run_verify(),
             Command::FactCheck => self.start_factcheck(),
+            Command::Undisputed => self.start_undisputed(),
             Command::Sources => self.run_sources(),
             Command::Promote { note, path } => self.start_promote(note, path),
             Command::Import(path) => match path {
@@ -1655,8 +1674,14 @@ impl ResearchApp {
             return;
         };
         let facts = super::factcheck::gather_facts(&self.store, &self.hierarchy, book_id);
+        // UD-P2 — authorial facts are excluded from the audit but counted.
+        let undisputed = super::factcheck::gather_undisputed(&self.store, &self.hierarchy, book_id).len();
         if facts.is_empty() {
-            self.status_message = Some("no facts to check — add some first".to_string());
+            self.status_message = Some(if undisputed > 0 {
+                format!("no disputed facts to check — {undisputed} undisputed (try /undisputed)")
+            } else {
+                "no facts to check — add some first".to_string()
+            });
             return;
         }
         // R2-E — one streaming turn carries the live tokens of each call, then the
@@ -1677,6 +1702,7 @@ impl ResearchApp {
             rx: None,
             buf: String::new(),
             preview_idx,
+            undisputed,
         });
         self.factcheck_next_call();
     }
@@ -1833,6 +1859,7 @@ impl ResearchApp {
         let Some(fc) = self.factcheck.as_ref() else { return };
         let total = fc.facts.len();
         let n_groups = fc.consist_groups.len();
+        let undisputed = fc.undisputed;
 
         // RE-P5 — capture per-fact verdicts (✓ / ? / ✗) from the truth pass and
         // persist them so the Facts tree can flag problem paragraphs.
@@ -1856,10 +1883,15 @@ impl ResearchApp {
             let c = fc.consist_report.trim();
             if c.is_empty() { "No contradictions found.".to_string() } else { c.to_string() }
         };
+        let undisputed_note = if undisputed > 0 {
+            format!("\n※ {undisputed} undisputed fact(s) excluded (authorial · check with /undisputed)")
+        } else {
+            String::new()
+        };
         let report = format!(
             "[/factcheck — {total} fact(s), {n_groups} consistency group(s)]\n\
              ✓ {accurate} accurate · ? {dubious} questionable · ✗ {inaccurate} inaccurate \
-             (flags shown in the Facts tree · /whatswrong on a flagged fact)\n\n\
+             (flags shown in the Facts tree · /whatswrong on a flagged fact){undisputed_note}\n\n\
              ── Factual accuracy ──\n{}\n\n── Mutual consistency ──\n{consistency}\n",
             fc.truth_report.trim(),
         );
@@ -1877,6 +1909,177 @@ impl ResearchApp {
         self.status_message = Some(format!(
             "fact-check complete · {total} fact(s) · ✓{accurate} ?{dubious} ✗{inaccurate}"
         ));
+    }
+
+    /// RESRCH-UNDISPUTED (UD-P3) — `/undisputed`: a chunked, language-aware
+    /// common-sense check over the authorial (undisputed) facts. Read-only —
+    /// reports into the chat, never rewrites. Mirrors `/factcheck`'s truth phase.
+    fn start_undisputed(&mut self) {
+        if self.undisputed_check.is_some() {
+            self.status_message = Some("an undisputed check is already running".to_string());
+            return;
+        }
+        let Some(book_id) = self.facts_tree.root else {
+            self.status_message = Some("no Facts book".to_string());
+            return;
+        };
+        let facts = super::factcheck::gather_undisputed(&self.store, &self.hierarchy, book_id);
+        if facts.is_empty() {
+            self.status_message =
+                Some("no undisputed facts — mark one with `u` (※) in the Facts tree first".to_string());
+            return;
+        }
+        let mut preview = ChatTurn::new("/undisputed".to_string());
+        preview.streaming = true;
+        self.chat_history.push(preview);
+        self.chat_scroll = 0;
+        let preview_idx = Some(self.chat_history.len() - 1);
+        self.undisputed_check = Some(UndisputedState {
+            facts,
+            chunk_idx: 0,
+            report: String::new(),
+            rx: None,
+            buf: String::new(),
+            preview_idx,
+        });
+        self.undisputed_next_call();
+    }
+
+    /// Spawn the next `/undisputed` common-sense chunk, or finalise.
+    fn undisputed_next_call(&mut self) {
+        let (lang, _note) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        let language = super::extract::language_name(&lang);
+        let (base, chunk_n, total, n_chunks) = {
+            let Some(uc) = self.undisputed_check.as_ref() else { return };
+            let total = uc.facts.len();
+            let n_chunks = total.div_ceil(super::factcheck::TRUTH_CHUNK);
+            if uc.chunk_idx >= n_chunks {
+                self.finish_undisputed();
+                return;
+            }
+            (uc.chunk_idx * super::factcheck::TRUTH_CHUNK, uc.chunk_idx + 1, total, n_chunks)
+        };
+        let (system, user) = {
+            let uc = self.undisputed_check.as_ref().unwrap();
+            let chunk: Vec<&super::factcheck::FactEntry> = uc.facts
+                [base..(base + super::factcheck::TRUTH_CHUNK).min(total)]
+                .iter()
+                .collect();
+            (super::factcheck::undisputed_system(language), super::factcheck::truth_user(&chunk, base))
+        };
+        let ai = match crate::ai::AiClient::from_config(&self.cfg.llm) {
+            Ok(a) => a,
+            Err(e) => {
+                self.status_message = Some(format!("no LLM provider: {e}"));
+                self.undisputed_check = None;
+                return;
+            }
+        };
+        let (model, _env) = match ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(m) => m,
+            Err(e) => {
+                self.status_message = Some(format!("provider error: {e}"));
+                self.undisputed_check = None;
+                return;
+            }
+        };
+        let status = format!("undisputed: common sense {chunk_n}/{n_chunks}…");
+        let rx = spawn_chat_stream(ai.client.clone(), model.to_string(), Some(system), Vec::new(), user, llm::CATEGORY);
+        let preview_idx = self.undisputed_check.as_ref().and_then(|u| u.preview_idx);
+        if let Some(uc) = self.undisputed_check.as_mut() {
+            uc.rx = Some(rx);
+            uc.buf.clear();
+        }
+        if let Some(i) = preview_idx {
+            if let Some(t) = self.chat_history.get_mut(i) {
+                t.response = format!("⋯ {status}\n");
+            }
+        }
+        self.status_message = Some(status);
+    }
+
+    /// Drain the in-flight `/undisputed` chunk; advance or finalise.
+    fn poll_undisputed(&mut self) {
+        let Some(uc) = self.undisputed_check.as_mut() else { return };
+        let Some(rx) = uc.rx.as_mut() else { return };
+        let preview_idx = uc.preview_idx;
+        let mut done = false;
+        let mut new_tokens = String::new();
+        loop {
+            match rx.try_recv() {
+                Ok(StreamMsg::Token(t)) => {
+                    new_tokens.push_str(&t);
+                    uc.buf.push_str(&t);
+                }
+                Ok(StreamMsg::Done(_)) | Err(mpsc::error::TryRecvError::Disconnected) => {
+                    done = true;
+                    break;
+                }
+                Ok(StreamMsg::Error(e)) => {
+                    self.drop_preview(preview_idx);
+                    self.status_message = Some(format!("undisputed error: {e}"));
+                    self.undisputed_check = None;
+                    return;
+                }
+                Err(mpsc::error::TryRecvError::Empty) => break,
+            }
+        }
+        if !new_tokens.is_empty() {
+            if let Some(i) = preview_idx {
+                if let Some(t) = self.chat_history.get_mut(i) {
+                    t.response.push_str(&new_tokens);
+                }
+            }
+        }
+        if !done {
+            return;
+        }
+        {
+            let uc = self.undisputed_check.as_mut().unwrap();
+            uc.rx = None;
+            let out = std::mem::take(&mut uc.buf);
+            uc.report.push_str(out.trim());
+            uc.report.push('\n');
+            uc.chunk_idx += 1;
+        }
+        self.undisputed_next_call();
+    }
+
+    /// Assemble + emit the `/undisputed` report (with a PLAUSIBLE/ODD/INCOHERENT
+    /// tally), then clear the state.
+    fn finish_undisputed(&mut self) {
+        let Some(uc) = self.undisputed_check.as_ref() else { return };
+        let total = uc.facts.len();
+        let (mut plausible, mut odd, mut incoherent) = (0usize, 0usize, 0usize);
+        for line in uc.report.lines() {
+            let head = line.to_ascii_uppercase();
+            let head = head.split('—').next().unwrap_or("");
+            if head.contains("INCOHERENT") {
+                incoherent += 1;
+            } else if head.contains("ODD") {
+                odd += 1;
+            } else if head.contains("PLAUSIBLE") {
+                plausible += 1;
+            }
+        }
+        let report = format!(
+            "[/undisputed — {total} authorial fact(s)]\n\
+             ✓ {plausible} plausible · ? {odd} odd · ✗ {incoherent} incoherent \
+             (internal common sense only — real-world truth deliberately not checked)\n\n{}\n",
+            uc.report.trim(),
+        );
+        let preview_idx = uc.preview_idx;
+        match preview_idx.and_then(|i| self.chat_history.get_mut(i)) {
+            Some(turn) => {
+                turn.response = report;
+                turn.streaming = false;
+            }
+            None => self.chat_history.push(ChatTurn::with_response("/undisputed".to_string(), report)),
+        }
+        self.chat_scroll = 0;
+        self.undisputed_check = None;
+        self.status_message =
+            Some(format!("undisputed check complete · {total} · ✓{plausible} ?{odd} ✗{incoherent}"));
     }
 
     /// R-P15 — start a `/chain` pipeline (steps already `→`-split + trimmed).
