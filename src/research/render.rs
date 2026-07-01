@@ -333,9 +333,14 @@ fn render_facts_tree(frame: &mut Frame, app: &ResearchApp, area: Rect) {
             let label = format!("{indent}{fold}{pin}{title}");
             let mut spans: Vec<Span> = Vec::new();
             // RESRCH-UNDISPUTED — an authorial `※` glyph for a `fact:undisputed`
-            // fact (outside the trust ladder; excluded from /factcheck).
+            // fact (outside the trust ladder; excluded from /factcheck). UD-P4 —
+            // coloured by the last `/undisputed` common-sense verdict when present.
             if node.is_some_and(|n| n.tags.iter().any(|t| t == super::UNDISPUTED_TAG)) {
-                spans.push(Span::styled("※", Style::new().fg(Color::Magenta)));
+                let style = match app.undisputed_verdicts.level_for(row.id) {
+                    Some(level) => verdict_style(level),
+                    None => Style::new().fg(Color::Magenta),
+                };
+                spans.push(Span::styled("※", style));
             }
             // UX-P2 — a permanent provenance-tier glyph (source trust).
             if let Some(rec) = app.fact_provenance.for_node(&row.id.to_string()) {

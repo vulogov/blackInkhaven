@@ -243,6 +243,9 @@ pub(crate) struct ResearchApp {
     /// UX-P2 — per-fact provenance (source-tier glyph in the tree). Reloaded on
     /// each `reload_hierarchy` so newly-inserted facts show their tier.
     pub(super) fact_provenance: super::provenance::Provenance,
+    /// UD-P4 — per-fact `/undisputed` common-sense verdicts; colours the `※`
+    /// glyph (plausible/odd/incoherent).
+    pub(super) undisputed_verdicts: super::verdicts::Verdicts,
     /// Pinned Facts nodes (G4); RAG injection lands in R-P8.
     pub(super) pinned_nodes: Vec<Uuid>,
     /// The inline manual-entry overlay, when active (G7).
@@ -350,6 +353,7 @@ impl ResearchApp {
         let theme = Theme::from_config(&cfg.theme);
         let fact_verdicts = super::verdicts::Verdicts::load(&layout);
         let fact_provenance = super::provenance::Provenance::load(&layout);
+        let undisputed_verdicts = super::verdicts::Verdicts::load_undisputed(&layout);
         Ok(ResearchApp {
             layout,
             cfg,
@@ -360,6 +364,7 @@ impl ResearchApp {
             facts_tree,
             fact_verdicts,
             fact_provenance,
+            undisputed_verdicts,
             pinned_nodes,
             manual: None,
             tree_input: None,
@@ -2084,6 +2089,14 @@ impl ResearchApp {
     fn finish_undisputed(&mut self) {
         let Some(uc) = self.undisputed_check.as_ref() else { return };
         let total = uc.facts.len();
+        // UD-P4 — persist per-fact common-sense verdicts (colour the ※ glyph).
+        let now = chrono::Utc::now().to_rfc3339();
+        let fact_ids: Vec<uuid::Uuid> = uc.facts.iter().map(|f| f.id).collect();
+        let parsed = super::verdicts::parse_undisputed_report(&uc.report, &fact_ids, &now);
+        for (k, v) in parsed {
+            self.undisputed_verdicts.facts.insert(k, v);
+        }
+        let _ = self.undisputed_verdicts.save_undisputed(&self.layout);
         let (mut plausible, mut odd, mut incoherent) = (0usize, 0usize, 0usize);
         for line in uc.report.lines() {
             let head = line.to_ascii_uppercase();

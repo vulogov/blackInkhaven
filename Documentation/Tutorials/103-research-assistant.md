@@ -196,7 +196,8 @@ editor's tag picker.)
   question: not "is this real?" but "does it make **internal common sense**?" Each is judged
   `PLAUSIBLE / ODD / INCOHERENT` **within its own fictional frame** — self-consistent, free of obvious
   contradiction — in your project language. It **never rewrites** anything; it just reports (with a
-  `✓N ?N ✗N` tally). Undisputed facts live *outside* the trust ladder — they're authorial axioms.
+  `✓N ?N ✗N` tally). After the pass, the tree **colours each `※` glyph** by its verdict (green plausible ·
+  yellow odd · red incoherent). Undisputed facts live *outside* the trust ladder — they're authorial axioms.
 
 ### Cost (1.5.3)
 
