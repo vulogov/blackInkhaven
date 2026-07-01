@@ -942,9 +942,14 @@ pub enum Command {
         #[arg(long)]
         out: Option<String>,
         /// 1.5.1 RESRCH-2 — ingest a document (md / txt / pdf) as a research
-        /// source and exit (non-interactive).
+        /// source and exit (non-interactive). A `.bib` file imports its
+        /// citations into the Sources book.
         #[arg(long, value_name = "PATH")]
         import: Option<String>,
+        /// 1.5.6 RESRCH-3 (R3-D) — register a folder for re-import-on-change
+        /// (import it now, and re-import at each launch when its files change).
+        #[arg(long, value_name = "FOLDER")]
+        sync: Option<String>,
     },
 
     /// 1.2.10+ — launch the standalone TUI configuration
@@ -4996,6 +5001,7 @@ impl Cli {
                 format,
                 out,
                 import,
+                sync,
             } => crate::research::run(
                 &project,
                 crate::research::ResearchInvocation {
@@ -5005,6 +5011,7 @@ impl Cli {
                     format,
                     out,
                     import,
+                    sync,
                 },
             )
             .map_err(Into::into),
