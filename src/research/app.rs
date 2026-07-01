@@ -79,10 +79,15 @@ pub(super) struct ConfirmationState {
     pub prov: ProvMeta,
     /// RESRCH-2.1 (T-P4) — a near-duplicate warning that must be confirmed twice.
     pub dup_warning: Option<String>,
+    /// UX-P4 — the near-duplicate fact's body, shown beside the pending fact.
+    pub dup_body: Option<String>,
     /// R2-C (WC-P3) — the pre-commit fact-check verdict for a web fact (set once);
     /// a non-ACCURATE verdict requires a second confirm.
     pub fc_checked: bool,
     pub fc_verdict: Option<String>,
+    /// UX-P4 — the full multi-line verdict text (per-source triangulation lines /
+    /// the fact-check reason), rendered in the overlay evidence panel.
+    pub fc_detail: Option<String>,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy)]
@@ -185,6 +190,20 @@ pub(super) struct FactCheckState {
     /// R2-E — index of the streaming turn showing the in-flight call's tokens
     /// (dim); reused to hold the final report when the audit completes.
     preview_idx: Option<usize>,
+    /// RESRCH-UNDISPUTED (UD-P2) — count of authorial facts excluded from this
+    /// audit, reported in the final report.
+    undisputed: usize,
+}
+
+/// RESRCH-UNDISPUTED (UD-P3) — the `/undisputed` common-sense pass over the
+/// authorial facts (chunked, like `/factcheck`'s truth phase; read-only).
+pub(super) struct UndisputedState {
+    facts: Vec<super::factcheck::FactEntry>,
+    chunk_idx: usize,
+    report: String,
+    rx: Option<mpsc::UnboundedReceiver<StreamMsg>>,
+    buf: String,
+    preview_idx: Option<usize>,
 }
 
 /// R-P15 — `/chain`: a sequential research pipeline. Each step's response is
@@ -213,6 +232,9 @@ pub(crate) struct ResearchApp {
     /// RE-P5 — per-fact `/factcheck` verdicts (✓ / ? / ✗ glyphs in the tree;
     /// seed for `/whatswrong`). Loaded from the sidecar, refreshed each audit.
     pub(super) fact_verdicts: super::verdicts::Verdicts,
+    /// UX-P2 — per-fact provenance (source-tier glyph in the tree). Reloaded on
+    /// each `reload_hierarchy` so newly-inserted facts show their tier.
+    pub(super) fact_provenance: super::provenance::Provenance,
     /// Pinned Facts nodes (G4); RAG injection lands in R-P8.
     pub(super) pinned_nodes: Vec<Uuid>,
     /// The inline manual-entry overlay, when active (G7).
@@ -250,6 +272,7 @@ pub(crate) struct ResearchApp {
     chain: Option<ChainState>,
     /// In-flight `/factcheck` corpus audit.
     factcheck: Option<FactCheckState>,
+    undisputed_check: Option<UndisputedState>,
     /// In-flight `/web` search (R2-C).
     web: Option<WebState>,
     wikidata_state: Option<WikidataState>,
@@ -263,6 +286,10 @@ pub(crate) struct ResearchApp {
     fc_confirm: Option<(mpsc::UnboundedReceiver<StreamMsg>, String)>,
     /// The editable insertion confirmation overlay (G1/G2).
     pub(super) confirmation: Option<ConfirmationState>,
+    /// UX-P3 — spinner frame counter + when the current async op began (for the
+    /// status-bar spinner + elapsed timer while a fetch/stream is in flight).
+    pub(super) spin_tick: usize,
+    pub(super) async_started: Option<std::time::Instant>,
     /// Accumulated session cost estimate (USD).
     pub(super) session_cost: f64,
     /// R2-E — true while every turn so far was priced from real provider token
@@ -310,6 +337,7 @@ impl ResearchApp {
         let split_ratio = cfg.research.split_ratio;
         let theme = Theme::from_config(&cfg.theme);
         let fact_verdicts = super::verdicts::Verdicts::load(&layout);
+        let fact_provenance = super::provenance::Provenance::load(&layout);
         Ok(ResearchApp {
             layout,
             cfg,
@@ -319,6 +347,7 @@ impl ResearchApp {
             thread,
             facts_tree,
             fact_verdicts,
+            fact_provenance,
             pinned_nodes,
             manual: None,
             tree_input: None,
@@ -337,6 +366,7 @@ impl ResearchApp {
             verify_rx: None,
             chain: None,
             factcheck: None,
+            undisputed_check: None,
             web: None,
             wikidata_state: None,
             scholarly_state: None,
@@ -345,6 +375,8 @@ impl ResearchApp {
             pending_cite: None,
             fc_confirm: None,
             confirmation: None,
+            spin_tick: 0,
+            async_started: None,
             session_cost: 0.0,
             session_cost_exact: true,
             budget_warned: false,
@@ -363,6 +395,22 @@ impl ResearchApp {
         self.cfg.research.max_pinned_nodes.max(1)
     }
 
+    /// UX-P3 — is any async operation (stream / fetch / gate) in flight?
+    pub(super) fn is_busy(&self) -> bool {
+        self.stream_rx.is_some()
+            || self.extracting.is_some()
+            || self.verify_rx.is_some()
+            || self.chain.is_some()
+            || self.factcheck.is_some()
+            || self.undisputed_check.is_some()
+            || self.web.is_some()
+            || self.wikidata_state.is_some()
+            || self.scholarly_state.is_some()
+            || self.triangulate.is_some()
+            || self.tri_gate.is_some()
+            || self.fc_confirm.is_some()
+    }
+
     /// The synchronous event loop: draw, then block up to 100 ms for a key.
     /// Later phases also drain the `StreamMsg` receiver here each tick (R-P7).
     pub(crate) fn run<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
@@ -372,12 +420,23 @@ impl ResearchApp {
             self.poll_verify();
             self.poll_chain();
             self.poll_factcheck();
+            self.poll_undisputed();
             self.poll_web();
             self.poll_wikidata();
             self.poll_scholarly();
             self.poll_triangulate();
             self.poll_tri_gate();
             self.poll_fc_confirm();
+            // UX-P3 — drive the status-bar spinner: start the timer when work is
+            // in flight, clear it when the last async op finishes.
+            self.spin_tick = self.spin_tick.wrapping_add(1);
+            if self.is_busy() {
+                if self.async_started.is_none() {
+                    self.async_started = Some(std::time::Instant::now());
+                }
+            } else {
+                self.async_started = None;
+            }
             terminal.draw(|f| render::render(f, self))?;
             if event::poll(Duration::from_millis(100))? {
                 if let Event::Key(key) = event::read()? {
@@ -439,7 +498,9 @@ impl ResearchApp {
         // tries to complete a Facts slug path (`/goto …`, `… → …`); R2-E.
         match key.code {
             KeyCode::Tab => {
-                if matches!(self.focus, Focus::QueryPrompt) && self.try_path_completion() {
+                if matches!(self.focus, Focus::QueryPrompt)
+                    && (self.try_command_completion() || self.try_path_completion())
+                {
                     return;
                 }
                 self.focus = self.focus.next();
@@ -584,6 +645,53 @@ impl ResearchApp {
         self.query = ta;
     }
 
+    /// UX-P1 — Tab-complete a `/command` name when the cursor sits in the command
+    /// word (`/` prefix, before the first space). Returns `true` when it handled
+    /// Tab. Single match completes + adds a space; several splice the common
+    /// prefix and list the options.
+    fn try_command_completion(&mut self) -> bool {
+        let (row, col) = self.query.cursor();
+        if row != 0 {
+            return false;
+        }
+        let text = self.query_text();
+        if !text.starts_with('/') {
+            return false;
+        }
+        // The command word spans char 1..first-whitespace; only complete when the
+        // cursor is inside it.
+        let first_ws = text.find(char::is_whitespace).map(|b| text[..b].chars().count()).unwrap_or_else(|| text.chars().count());
+        if col == 0 || col > first_ws {
+            return false;
+        }
+        let typed: String = text.chars().skip(1).take(first_ws - 1).collect::<String>().to_ascii_lowercase();
+        let matches: Vec<&str> =
+            super::command::SPECS.iter().map(|s| s.name).filter(|n| n.starts_with(&typed)).collect();
+        match matches.len() {
+            0 => self.status_message = Some(format!("/{typed} — no such command")),
+            1 => self.splice_command(matches[0], first_ws),
+            _ => {
+                let owned: Vec<String> = matches.iter().map(|s| s.to_string()).collect();
+                let lcp = longest_common_prefix(&owned);
+                if lcp.chars().count() > typed.chars().count() {
+                    self.splice_command(&lcp, first_ws);
+                }
+                self.status_message = Some(format!("{} commands: {}", matches.len(), matches.join(" · ")));
+            }
+        }
+        true
+    }
+
+    /// Replace the command word (`chars[1..end]`) with `name`; add a trailing
+    /// space when it fully names a command and no args follow yet.
+    fn splice_command(&mut self, name: &str, end: usize) {
+        let chars: Vec<char> = self.query_text().chars().collect();
+        let suffix: String = chars[end.min(chars.len())..].iter().collect();
+        let is_full = super::command::SPECS.iter().any(|s| s.name == name);
+        let tail = if is_full && suffix.is_empty() { " " } else { suffix.as_str() };
+        self.set_query_text(&format!("/{name}{tail}"));
+    }
+
     /// R2-E — Tab-complete a Facts slug path under the cursor (after `/goto ` or
     /// after `→`/`->`). Returns `true` when it handled Tab, so the dispatcher
     /// doesn't fall through to focus-cycling. Single-line prompts only.
@@ -714,6 +822,7 @@ impl ResearchApp {
             Command::Diff => self.run_diff(),
             Command::Verify => self.run_verify(),
             Command::FactCheck => self.start_factcheck(),
+            Command::Undisputed => self.start_undisputed(),
             Command::Sources => self.run_sources(),
             Command::Promote { note, path } => self.start_promote(note, path),
             Command::Import(path) => match path {
@@ -723,6 +832,7 @@ impl ResearchApp {
             Command::Forget(name) => self.run_forget(&name),
             Command::Web { ingest, query } => self.start_web(ingest, query),
             Command::Calc(expr) => self.run_calc(&expr),
+            Command::World(arg) => self.run_world(&arg),
             Command::Wikidata(query) => self.start_wikidata(query),
             Command::OpenAlex(query) => self.start_scholarly("openalex", query),
             Command::Arxiv(query) => self.start_scholarly("arxiv", query),
@@ -846,6 +956,24 @@ impl ResearchApp {
     /// ground answers and `/fact` can cite them.
     fn run_import(&mut self, path: &str) {
         let p = std::path::Path::new(path);
+        let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+        if matches!(ext.as_str(), "bib" | "bibtex" | "json") {
+            // R3-D — a BibTeX / CSL-JSON file imports its entries into the Sources book.
+            let result = if ext == "json" {
+                import_csl_json(&self.cfg, &self.store, p)
+            } else {
+                import_bibtex(&self.cfg, &self.store, p)
+            };
+            match result {
+                Ok((added, total)) => {
+                    self.reload_hierarchy();
+                    self.status_message =
+                        Some(format!("✓ imported {added}/{total} citation(s) → Sources"));
+                }
+                Err(e) => self.status_message = Some(format!("citation import: {e}")),
+            }
+            return;
+        }
         if p.is_dir() {
             // Folder / vault import (R3-D, brought forward): recurse over the
             // supported files.
@@ -1024,6 +1152,45 @@ impl ResearchApp {
         }
     }
 
+    /// `/world [layer]` (R3-C) — surface the project's own World-simulation facts
+    /// (WORLD-4). Bare lists the layers; `/world <layer>` shows that layer's facts
+    /// (read from the materialized book, or recomputed from `world.hjson`). A
+    /// `/fact` from it records `origin=simulation` and skips the gate.
+    fn run_world(&mut self, arg: &str) {
+        const LAYERS: [&str; 5] = ["Astronomy", "Geology", "Climate", "Hydrology", "Demographics"];
+        let arg = arg.trim();
+        if arg.is_empty() {
+            let mut body = String::from("World layers — use /world <layer>:\n");
+            for l in LAYERS {
+                let has = crate::world::calc_read::chapter(&self.store, l).is_some();
+                body.push_str(&format!("• {l}{}\n", if has { "" } else { "  (no data)" }));
+            }
+            body.push_str("\nA /fact from a /world result records origin=simulation (deterministic).");
+            self.chat_history.push(ChatTurn::with_response("/world".to_string(), body));
+            self.chat_scroll = 0;
+            return;
+        }
+        match crate::world::calc_read::chapter(&self.store, arg) {
+            Some(json) => {
+                let pretty = serde_json::to_string_pretty(&json).unwrap_or_default();
+                let clipped: String = pretty.chars().take(2400).collect();
+                let body = format!("World / {arg}\n{clipped}");
+                let mut turn = ChatTurn::with_response(format!("/world {arg}"), body);
+                turn.simulation = true;
+                turn.sources = vec![format!("simulation:{arg}")];
+                self.chat_history.push(turn);
+                self.chat_scroll = 0;
+                self.status_message =
+                    Some(format!("{arg} — simulation facts · /fact to record (gate-skipped)"));
+            }
+            None => {
+                self.status_message = Some(format!(
+                    "no World data for `{arg}` — try /world for the layers, or `realworld compile --materialize`"
+                ));
+            }
+        }
+    }
+
     /// `/web [--ingest|--chat] <query>` (R2-C) — spawn a web search; the result
     /// either grounds an LLM chat answer or is embedded as research sources.
     fn start_web(&mut self, ingest: Option<bool>, query: String) {
@@ -1180,63 +1347,7 @@ impl ResearchApp {
     /// R3-B — write a SOURCES-1 `BibEntry` into the Sources book under a
     /// "Research" chapter (dedup by cite key). Mirrors the `sources import` path.
     fn add_bibentry(&self, entry: &crate::sources::BibEntry) -> anyhow::Result<bool> {
-        use crate::store::{InsertPosition, NodeKind};
-        if !entry.is_valid() {
-            return Ok(false);
-        }
-        let hier = crate::store::hierarchy::Hierarchy::load(&self.store)?;
-        let book = hier
-            .iter()
-            .find(|n| {
-                n.kind == NodeKind::Book
-                    && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_SOURCES)
-            })
-            .ok_or_else(|| anyhow::anyhow!("Sources book missing"))?
-            .clone();
-        // Find or create the "Research" chapter.
-        let chapter = match hier
-            .children_of(Some(book.id))
-            .into_iter()
-            .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Research"))
-            .cloned()
-        {
-            Some(c) => c,
-            None => self.store.create_node(
-                &self.cfg,
-                &hier,
-                NodeKind::Chapter,
-                "Research",
-                Some(&book),
-                None,
-                InsertPosition::End,
-            )?,
-        };
-        // Dedup by cite key (case-insensitive) within the chapter.
-        let key_lc = entry.key.to_lowercase();
-        let exists = hier
-            .children_of(Some(chapter.id))
-            .into_iter()
-            .any(|n| n.title.to_lowercase() == key_lc);
-        if exists {
-            return Ok(false);
-        }
-        let hier = crate::store::hierarchy::Hierarchy::load(&self.store)?;
-        let mut node = self.store.create_node(
-            &self.cfg,
-            &hier,
-            NodeKind::Paragraph,
-            &entry.key,
-            Some(&chapter),
-            None,
-            InsertPosition::End,
-        )?;
-        node.content_type = Some("hjson".to_string());
-        let body = entry.to_hjson();
-        if let Some(rel) = &node.file {
-            let _ = crate::io_atomic::write(&self.store.project_root().join(rel), body.as_bytes());
-        }
-        self.store.update_paragraph_content(&mut node, body.as_bytes())?;
-        Ok(true)
+        add_bibentry(&self.store, &self.cfg, entry)
     }
 
     /// `/triangulate [claim]` (R3-E) — cross-check a claim against the independent
@@ -1563,8 +1674,14 @@ impl ResearchApp {
             return;
         };
         let facts = super::factcheck::gather_facts(&self.store, &self.hierarchy, book_id);
+        // UD-P2 — authorial facts are excluded from the audit but counted.
+        let undisputed = super::factcheck::gather_undisputed(&self.store, &self.hierarchy, book_id).len();
         if facts.is_empty() {
-            self.status_message = Some("no facts to check — add some first".to_string());
+            self.status_message = Some(if undisputed > 0 {
+                format!("no disputed facts to check — {undisputed} undisputed (try /undisputed)")
+            } else {
+                "no facts to check — add some first".to_string()
+            });
             return;
         }
         // R2-E — one streaming turn carries the live tokens of each call, then the
@@ -1585,6 +1702,7 @@ impl ResearchApp {
             rx: None,
             buf: String::new(),
             preview_idx,
+            undisputed,
         });
         self.factcheck_next_call();
     }
@@ -1741,6 +1859,7 @@ impl ResearchApp {
         let Some(fc) = self.factcheck.as_ref() else { return };
         let total = fc.facts.len();
         let n_groups = fc.consist_groups.len();
+        let undisputed = fc.undisputed;
 
         // RE-P5 — capture per-fact verdicts (✓ / ? / ✗) from the truth pass and
         // persist them so the Facts tree can flag problem paragraphs.
@@ -1764,10 +1883,15 @@ impl ResearchApp {
             let c = fc.consist_report.trim();
             if c.is_empty() { "No contradictions found.".to_string() } else { c.to_string() }
         };
+        let undisputed_note = if undisputed > 0 {
+            format!("\n※ {undisputed} undisputed fact(s) excluded (authorial · check with /undisputed)")
+        } else {
+            String::new()
+        };
         let report = format!(
             "[/factcheck — {total} fact(s), {n_groups} consistency group(s)]\n\
              ✓ {accurate} accurate · ? {dubious} questionable · ✗ {inaccurate} inaccurate \
-             (flags shown in the Facts tree · /whatswrong on a flagged fact)\n\n\
+             (flags shown in the Facts tree · /whatswrong on a flagged fact){undisputed_note}\n\n\
              ── Factual accuracy ──\n{}\n\n── Mutual consistency ──\n{consistency}\n",
             fc.truth_report.trim(),
         );
@@ -1785,6 +1909,177 @@ impl ResearchApp {
         self.status_message = Some(format!(
             "fact-check complete · {total} fact(s) · ✓{accurate} ?{dubious} ✗{inaccurate}"
         ));
+    }
+
+    /// RESRCH-UNDISPUTED (UD-P3) — `/undisputed`: a chunked, language-aware
+    /// common-sense check over the authorial (undisputed) facts. Read-only —
+    /// reports into the chat, never rewrites. Mirrors `/factcheck`'s truth phase.
+    fn start_undisputed(&mut self) {
+        if self.undisputed_check.is_some() {
+            self.status_message = Some("an undisputed check is already running".to_string());
+            return;
+        }
+        let Some(book_id) = self.facts_tree.root else {
+            self.status_message = Some("no Facts book".to_string());
+            return;
+        };
+        let facts = super::factcheck::gather_undisputed(&self.store, &self.hierarchy, book_id);
+        if facts.is_empty() {
+            self.status_message =
+                Some("no undisputed facts — mark one with `u` (※) in the Facts tree first".to_string());
+            return;
+        }
+        let mut preview = ChatTurn::new("/undisputed".to_string());
+        preview.streaming = true;
+        self.chat_history.push(preview);
+        self.chat_scroll = 0;
+        let preview_idx = Some(self.chat_history.len() - 1);
+        self.undisputed_check = Some(UndisputedState {
+            facts,
+            chunk_idx: 0,
+            report: String::new(),
+            rx: None,
+            buf: String::new(),
+            preview_idx,
+        });
+        self.undisputed_next_call();
+    }
+
+    /// Spawn the next `/undisputed` common-sense chunk, or finalise.
+    fn undisputed_next_call(&mut self) {
+        let (lang, _note) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        let language = super::extract::language_name(&lang);
+        let (base, chunk_n, total, n_chunks) = {
+            let Some(uc) = self.undisputed_check.as_ref() else { return };
+            let total = uc.facts.len();
+            let n_chunks = total.div_ceil(super::factcheck::TRUTH_CHUNK);
+            if uc.chunk_idx >= n_chunks {
+                self.finish_undisputed();
+                return;
+            }
+            (uc.chunk_idx * super::factcheck::TRUTH_CHUNK, uc.chunk_idx + 1, total, n_chunks)
+        };
+        let (system, user) = {
+            let uc = self.undisputed_check.as_ref().unwrap();
+            let chunk: Vec<&super::factcheck::FactEntry> = uc.facts
+                [base..(base + super::factcheck::TRUTH_CHUNK).min(total)]
+                .iter()
+                .collect();
+            (super::factcheck::undisputed_system(language), super::factcheck::truth_user(&chunk, base))
+        };
+        let ai = match crate::ai::AiClient::from_config(&self.cfg.llm) {
+            Ok(a) => a,
+            Err(e) => {
+                self.status_message = Some(format!("no LLM provider: {e}"));
+                self.undisputed_check = None;
+                return;
+            }
+        };
+        let (model, _env) = match ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(m) => m,
+            Err(e) => {
+                self.status_message = Some(format!("provider error: {e}"));
+                self.undisputed_check = None;
+                return;
+            }
+        };
+        let status = format!("undisputed: common sense {chunk_n}/{n_chunks}…");
+        let rx = spawn_chat_stream(ai.client.clone(), model.to_string(), Some(system), Vec::new(), user, llm::CATEGORY);
+        let preview_idx = self.undisputed_check.as_ref().and_then(|u| u.preview_idx);
+        if let Some(uc) = self.undisputed_check.as_mut() {
+            uc.rx = Some(rx);
+            uc.buf.clear();
+        }
+        if let Some(i) = preview_idx {
+            if let Some(t) = self.chat_history.get_mut(i) {
+                t.response = format!("⋯ {status}\n");
+            }
+        }
+        self.status_message = Some(status);
+    }
+
+    /// Drain the in-flight `/undisputed` chunk; advance or finalise.
+    fn poll_undisputed(&mut self) {
+        let Some(uc) = self.undisputed_check.as_mut() else { return };
+        let Some(rx) = uc.rx.as_mut() else { return };
+        let preview_idx = uc.preview_idx;
+        let mut done = false;
+        let mut new_tokens = String::new();
+        loop {
+            match rx.try_recv() {
+                Ok(StreamMsg::Token(t)) => {
+                    new_tokens.push_str(&t);
+                    uc.buf.push_str(&t);
+                }
+                Ok(StreamMsg::Done(_)) | Err(mpsc::error::TryRecvError::Disconnected) => {
+                    done = true;
+                    break;
+                }
+                Ok(StreamMsg::Error(e)) => {
+                    self.drop_preview(preview_idx);
+                    self.status_message = Some(format!("undisputed error: {e}"));
+                    self.undisputed_check = None;
+                    return;
+                }
+                Err(mpsc::error::TryRecvError::Empty) => break,
+            }
+        }
+        if !new_tokens.is_empty() {
+            if let Some(i) = preview_idx {
+                if let Some(t) = self.chat_history.get_mut(i) {
+                    t.response.push_str(&new_tokens);
+                }
+            }
+        }
+        if !done {
+            return;
+        }
+        {
+            let uc = self.undisputed_check.as_mut().unwrap();
+            uc.rx = None;
+            let out = std::mem::take(&mut uc.buf);
+            uc.report.push_str(out.trim());
+            uc.report.push('\n');
+            uc.chunk_idx += 1;
+        }
+        self.undisputed_next_call();
+    }
+
+    /// Assemble + emit the `/undisputed` report (with a PLAUSIBLE/ODD/INCOHERENT
+    /// tally), then clear the state.
+    fn finish_undisputed(&mut self) {
+        let Some(uc) = self.undisputed_check.as_ref() else { return };
+        let total = uc.facts.len();
+        let (mut plausible, mut odd, mut incoherent) = (0usize, 0usize, 0usize);
+        for line in uc.report.lines() {
+            let head = line.to_ascii_uppercase();
+            let head = head.split('—').next().unwrap_or("");
+            if head.contains("INCOHERENT") {
+                incoherent += 1;
+            } else if head.contains("ODD") {
+                odd += 1;
+            } else if head.contains("PLAUSIBLE") {
+                plausible += 1;
+            }
+        }
+        let report = format!(
+            "[/undisputed — {total} authorial fact(s)]\n\
+             ✓ {plausible} plausible · ? {odd} odd · ✗ {incoherent} incoherent \
+             (internal common sense only — real-world truth deliberately not checked)\n\n{}\n",
+            uc.report.trim(),
+        );
+        let preview_idx = uc.preview_idx;
+        match preview_idx.and_then(|i| self.chat_history.get_mut(i)) {
+            Some(turn) => {
+                turn.response = report;
+                turn.streaming = false;
+            }
+            None => self.chat_history.push(ChatTurn::with_response("/undisputed".to_string(), report)),
+        }
+        self.chat_scroll = 0;
+        self.undisputed_check = None;
+        self.status_message =
+            Some(format!("undisputed check complete · {total} · ✓{plausible} ?{odd} ✗{incoherent}"));
     }
 
     /// R-P15 — start a `/chain` pipeline (steps already `→`-split + trimmed).
@@ -2303,6 +2598,9 @@ impl ResearchApp {
         let prov = if last.computed {
             // R4-D — carry the `world:<path>` citation when the calc read World facts.
             ProvMeta { origin: "computed".to_string(), query, detail: last.world_detail.clone() }
+        } else if last.simulation {
+            // R3-C — the project's own deterministic World simulation; gate skipped.
+            ProvMeta { origin: "simulation".to_string(), query, detail: last.sources.join(", ") }
         } else if let Some(qid) = last.wikidata.clone() {
             // R3-A — structured Wikidata triple, cited by Q-ID; gate skipped.
             ProvMeta { origin: "wikidata".to_string(), query, detail: qid }
@@ -2484,8 +2782,10 @@ impl ResearchApp {
                 command: ex.command,
                 prov: ex.prov,
                 dup_warning: None,
+                dup_body: None,
                 fc_checked: false,
                 fc_verdict: None,
+                fc_detail: None,
             });
             self.focus = Focus::ConfirmationOverlay;
             self.status_message = None;
@@ -2571,10 +2871,11 @@ impl ResearchApp {
         let already_warned = self.confirmation.as_ref().is_some_and(|c| c.dup_warning.is_some());
         let is_facts = self.confirmation.as_ref().is_some_and(|c| c.book == TargetBook::Facts);
         if is_facts && !already_warned {
-            if let Some(dup) = self.find_near_duplicate(&body) {
+            if let Some((dup, dup_body)) = self.find_near_duplicate(&body) {
                 if let Some(c) = self.confirmation.as_mut() {
                     c.dup_warning =
                         Some(format!("similar to {dup} · Ctrl+S again to insert anyway"));
+                    c.dup_body = Some(dup_body);
                 }
                 self.status_message = Some(format!("near-duplicate of {dup}"));
                 return;
@@ -2684,7 +2985,9 @@ impl ResearchApp {
 
     /// T-P4 — the slug-path of the nearest existing Facts paragraph whose body is
     /// a near-duplicate of `body` (score ≥ the configured threshold), if any.
-    fn find_near_duplicate(&self, body: &str) -> Option<String> {
+    /// The nearest near-duplicate fact (its breadcrumb + body), if any is at or
+    /// above the dedup threshold. UX-P4 shows the body beside the pending fact.
+    fn find_near_duplicate(&self, body: &str) -> Option<(String, String)> {
         let book_id = self.facts_tree.root?;
         let threshold = self.cfg.research.dedup_warn_score;
         let passages = crate::book_rag::retrieval::retrieve(
@@ -2698,7 +3001,7 @@ impl ResearchApp {
         passages
             .into_iter()
             .find(|p| p.is_hit && p.score >= threshold)
-            .map(|p| p.breadcrumb)
+            .map(|p| (p.breadcrumb, p.body))
     }
 
     /// WC-P3 — spawn the single-fact truth check for the pending web fact.
@@ -2764,9 +3067,11 @@ impl ResearchApp {
             .map(|l| l.trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ' ').to_string())
             .unwrap_or_else(|| "no verdict".to_string());
         let accurate = verdict.to_ascii_uppercase().starts_with("ACCURATE");
+        let detail = buf.trim().to_string();
         if let Some(c) = self.confirmation.as_mut() {
             c.fc_checked = true;
             c.fc_verdict = Some(verdict.clone());
+            c.fc_detail = Some(detail);
             // Fold the verdict into the provenance detail.
             if c.prov.detail.is_empty() {
                 c.prov.detail = format!("fact-check: {verdict}");
@@ -2873,9 +3178,11 @@ impl ResearchApp {
                 let TriGate { phase, .. } = self.tri_gate.take().unwrap();
                 let TriGatePhase::Judge { buf, .. } = phase else { return };
                 let (verdict, pass) = summarize_triangulation(&buf);
+                let detail = buf.trim().to_string();
                 if let Some(c) = self.confirmation.as_mut() {
                     c.fc_checked = true;
                     c.fc_verdict = Some(verdict.clone());
+                    c.fc_detail = Some(detail);
                     c.prov.detail = if c.prov.detail.is_empty() {
                         format!("triangulation: {verdict}")
                     } else {
@@ -3022,6 +3329,8 @@ impl ResearchApp {
             KeyCode::Char('y') => self.tree_yank(ClipMode::Copy),
             KeyCode::Char('x') => self.tree_yank(ClipMode::Move),
             KeyCode::Char('p') => self.tree_paste(),
+            // RESRCH-UNDISPUTED — toggle the `fact:undisputed` authorial tag.
+            KeyCode::Char('u') => self.toggle_undisputed(),
             _ => return false,
         }
         true
@@ -3042,6 +3351,39 @@ impl ResearchApp {
             self.status_message = Some(format!("pinned ({}/{})", self.pinned_nodes.len(), self.max_pinned()));
         }
         self.persist_pins();
+    }
+
+    /// RESRCH-UNDISPUTED — toggle the `fact:undisputed` tag on the selected fact.
+    /// An undisputed fact is the author's creative invention: glyphed `※` in the
+    /// tree, excluded from `/factcheck`, and checked instead by `/undisputed`.
+    fn toggle_undisputed(&mut self) {
+        let Some(id) = self.facts_tree.selected() else { return };
+        let Some(node) = self.hierarchy.get(id) else { return };
+        if node.kind != crate::store::NodeKind::Paragraph {
+            self.status_message = Some("select a fact (a paragraph) to mark undisputed".to_string());
+            return;
+        }
+        let mut updated = node.clone();
+        let now_marked = match updated.tags.iter().position(|t| t == super::UNDISPUTED_TAG) {
+            Some(pos) => {
+                updated.tags.remove(pos);
+                false
+            }
+            None => {
+                updated.tags.push(super::UNDISPUTED_TAG.to_string());
+                true
+            }
+        };
+        if let Err(e) = self.store.raw().update_metadata(id, updated.to_json()) {
+            self.status_message = Some(format!("undisputed: tag write failed: {e}"));
+            return;
+        }
+        self.reload_hierarchy();
+        self.status_message = Some(if now_marked {
+            "※ marked undisputed — excluded from /factcheck; check with /undisputed".to_string()
+        } else {
+            "unmarked — this fact is fact-checked normally again".to_string()
+        });
     }
 
     /// Save the current pin set onto the thread.
@@ -3126,6 +3468,8 @@ impl ResearchApp {
 
     /// Reload the hierarchy after a store mutation and rebuild the Facts tree.
     pub(super) fn reload_hierarchy(&mut self) {
+        // UX-P2 — refresh provenance so a newly-inserted fact shows its tier glyph.
+        self.fact_provenance = super::provenance::Provenance::load(&self.layout);
         if let Ok(h) = Hierarchy::load(&self.store) {
             self.hierarchy = h;
             self.facts_tree.rebuild(&self.hierarchy);
@@ -3404,6 +3748,17 @@ fn build_prompt_history(thread: &ResearchThread) -> Vec<String> {
 /// (R2-B). Thread-agnostic (recorded under thread ""), available to every thread.
 pub(crate) fn import_cli(layout: &ProjectLayout, cfg: &Config, store: &Store, path: &str) -> Result<()> {
     let p = std::path::Path::new(path);
+    let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    if matches!(ext.as_str(), "bib" | "bibtex") {
+        let (added, total) = import_bibtex(cfg, store, p)?;
+        println!("imported {added}/{total} citation(s) from `{path}` → Sources");
+        return Ok(());
+    }
+    if ext == "json" {
+        let (added, total) = import_csl_json(cfg, store, p)?;
+        println!("imported {added}/{total} CSL-JSON citation(s) from `{path}` → Sources");
+        return Ok(());
+    }
     if p.is_dir() {
         let (mut files, mut chunks) = (0usize, 0usize);
         for entry in walkdir::WalkDir::new(p).into_iter().filter_map(|e| e.ok()) {
@@ -3425,6 +3780,158 @@ pub(crate) fn import_cli(layout: &ProjectLayout, cfg: &Config, store: &Store, pa
     let n = embed_source_file(layout, cfg, store, p)?;
     println!("imported `{}` — {n} chunk(s) as a research source", super::imports::source_name(p));
     Ok(())
+}
+
+/// R3-D — parse a BibTeX file and add each entry to the Sources book (a Research
+/// chapter, dedup by cite key). Returns `(added, total)`.
+pub(crate) fn import_bibtex(cfg: &Config, store: &Store, p: &std::path::Path) -> Result<(usize, usize)> {
+    let text = std::fs::read_to_string(p).map_err(|e| anyhow::anyhow!("read {}: {e}", p.display()))?;
+    let entries = crate::sources::parse_bibtex(&text);
+    let total = entries.len();
+    let mut added = 0usize;
+    for entry in &entries {
+        if add_bibentry(store, cfg, entry).unwrap_or(false) {
+            added += 1;
+        }
+    }
+    Ok((added, total))
+}
+
+/// R3-D — parse a CSL-JSON file (an array of citation objects) into `BibEntry`s
+/// and add each to the Sources book. Returns `(added, total)`.
+pub(crate) fn import_csl_json(cfg: &Config, store: &Store, p: &std::path::Path) -> Result<(usize, usize)> {
+    let text = std::fs::read_to_string(p).map_err(|e| anyhow::anyhow!("read {}: {e}", p.display()))?;
+    let entries = parse_csl_json(&text)?;
+    let total = entries.len();
+    let mut added = 0usize;
+    for entry in &entries {
+        if add_bibentry(store, cfg, entry).unwrap_or(false) {
+            added += 1;
+        }
+    }
+    Ok((added, total))
+}
+
+/// Parse a CSL-JSON array (`[{ "type", "title", "author":[{family,given}], … }]`)
+/// into `BibEntry`s.
+pub(crate) fn parse_csl_json(text: &str) -> Result<Vec<crate::sources::BibEntry>> {
+    let arr: serde_json::Value =
+        serde_json::from_str(text).map_err(|e| anyhow::anyhow!("CSL-JSON parse: {e}"))?;
+    let items = arr.as_array().ok_or_else(|| anyhow::anyhow!("CSL-JSON must be a JSON array"))?;
+    Ok(items.iter().filter_map(csl_to_bibentry).collect())
+}
+
+/// Map one CSL-JSON object to a `BibEntry`.
+fn csl_to_bibentry(obj: &serde_json::Value) -> Option<crate::sources::BibEntry> {
+    let s = |k: &str| obj.get(k).and_then(|v| v.as_str()).map(str::to_string);
+    let title = s("title")?;
+    // Authors: "family, given and family, given …".
+    let author = obj
+        .get("author")
+        .and_then(|a| a.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|a| {
+                    let fam = a.get("family").and_then(|v| v.as_str());
+                    let giv = a.get("given").and_then(|v| v.as_str());
+                    match (fam, giv) {
+                        (Some(f), Some(g)) => Some(format!("{f}, {g}")),
+                        (Some(f), None) => Some(f.to_string()),
+                        _ => a.get("literal").and_then(|v| v.as_str()).map(str::to_string),
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" and ")
+        })
+        .unwrap_or_default();
+    // Year: issued.date-parts[0][0].
+    let year = obj
+        .get("issued")
+        .and_then(|i| i.get("date-parts"))
+        .and_then(|d| d.as_array())
+        .and_then(|a| a.first())
+        .and_then(|p| p.as_array())
+        .and_then(|p| p.first())
+        .and_then(|y| y.as_i64())
+        .map(|y| y.to_string())
+        .unwrap_or_default();
+    let entry_type = match obj.get("type").and_then(|v| v.as_str()).unwrap_or("") {
+        "article-journal" | "article" => "article",
+        "book" => "book",
+        "chapter" => "incollection",
+        "paper-conference" => "inproceedings",
+        "thesis" => "phdthesis",
+        _ => "misc",
+    }
+    .to_string();
+    // Cite key: CSL `id`, else family+year slug.
+    let key = s("id").unwrap_or_else(|| {
+        let fam = author.split(',').next().unwrap_or("ref").trim().to_ascii_lowercase();
+        let fam: String = fam.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+        format!("{}{year}", if fam.is_empty() { "ref".to_string() } else { fam })
+    });
+    Some(crate::sources::BibEntry {
+        key,
+        entry_type,
+        author,
+        title,
+        year,
+        journal: s("container-title"),
+        volume: s("volume"),
+        number: s("issue"),
+        pages: s("page"),
+        publisher: s("publisher"),
+        url: s("URL"),
+        doi: s("DOI"),
+        isbn: s("ISBN"),
+        abstract_: s("abstract"),
+        ..Default::default()
+    })
+}
+
+/// R3-B/D — write a SOURCES-1 `BibEntry` into the Sources book under a "Research"
+/// chapter (dedup by cite key). Returns `true` when a new entry was created.
+pub(crate) fn add_bibentry(
+    store: &Store,
+    cfg: &Config,
+    entry: &crate::sources::BibEntry,
+) -> anyhow::Result<bool> {
+    use crate::store::{InsertPosition, NodeKind};
+    if !entry.is_valid() {
+        return Ok(false);
+    }
+    let hier = crate::store::hierarchy::Hierarchy::load(store)?;
+    let book = hier
+        .iter()
+        .find(|n| {
+            n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_SOURCES)
+        })
+        .ok_or_else(|| anyhow::anyhow!("Sources book missing"))?
+        .clone();
+    let chapter = match hier
+        .children_of(Some(book.id))
+        .into_iter()
+        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Research"))
+        .cloned()
+    {
+        Some(c) => c,
+        None => store.create_node(cfg, &hier, NodeKind::Chapter, "Research", Some(&book), None, InsertPosition::End)?,
+    };
+    // Dedup by cite key (case-insensitive) within the chapter.
+    let key_lc = entry.key.to_lowercase();
+    if hier.children_of(Some(chapter.id)).into_iter().any(|n| n.title.to_lowercase() == key_lc) {
+        return Ok(false);
+    }
+    let hier = crate::store::hierarchy::Hierarchy::load(store)?;
+    let mut node =
+        store.create_node(cfg, &hier, NodeKind::Paragraph, &entry.key, Some(&chapter), None, InsertPosition::End)?;
+    node.content_type = Some("hjson".to_string());
+    let body = entry.to_hjson();
+    if let Some(rel) = &node.file {
+        let _ = crate::io_atomic::write(&store.project_root().join(rel), body.as_bytes());
+    }
+    store.update_paragraph_content(&mut node, body.as_bytes())?;
+    Ok(true)
 }
 
 /// Embed one file as a research source (thread-global); returns the chunk count.
@@ -3662,5 +4169,36 @@ mod triangulation_tests {
         let buf = "Wikidata: SILENT — nothing\narXiv: SILENT — nothing\nAgreement: 0/2 support";
         let (_, pass) = summarize_triangulation(buf);
         assert!(!pass);
+    }
+}
+
+#[cfg(test)]
+mod csl_tests {
+    use super::parse_csl_json;
+
+    #[test]
+    fn parses_csl_json_array() {
+        let text = r#"[
+          {"id":"vaswani2017","type":"paper-conference","title":"Attention Is All You Need",
+           "author":[{"family":"Vaswani","given":"Ashish"},{"family":"Shazeer","given":"Noam"}],
+           "issued":{"date-parts":[[2017]]},"DOI":"10.5555/x","container-title":"NeurIPS"}
+        ]"#;
+        let v = parse_csl_json(text).unwrap();
+        assert_eq!(v.len(), 1);
+        let e = &v[0];
+        assert_eq!(e.key, "vaswani2017");
+        assert_eq!(e.entry_type, "inproceedings");
+        assert_eq!(e.author, "Vaswani, Ashish and Shazeer, Noam");
+        assert_eq!(e.year, "2017");
+        assert_eq!(e.doi.as_deref(), Some("10.5555/x"));
+        assert!(e.is_valid());
+    }
+
+    #[test]
+    fn derives_key_when_absent_and_rejects_non_array() {
+        let text = r#"[{"type":"book","title":"T","author":[{"family":"Roe","given":"J"}],"issued":{"date-parts":[[1999]]}}]"#;
+        let v = parse_csl_json(text).unwrap();
+        assert_eq!(v[0].key, "roe1999");
+        assert!(parse_csl_json("{}").is_err()); // object, not array
     }
 }

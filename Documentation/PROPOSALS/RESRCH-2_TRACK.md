@@ -120,13 +120,18 @@ The debt items from the review, grouped:
 - **Tab-completion** on `/goto` and `/fact → path` (the 1.5.1 deferral) — slug completion against the
   Facts tree.
 
-### R2-F — Batch / headless research  ·  *no new crates*
+### R2-F — Batch / headless research  ·  *no new crates*  ·  **✅ Shipped 1.5.6**
 
 `inkhaven research --batch questions.txt` runs a question list non-interactively: query → extract →
 (with `--auto-confirm` + a confidence threshold) insert facts that clear the bar, each with provenance,
 and write a Markdown report. The confirmation rule relaxes **only** under the explicit flag + threshold
 — the interactive default still confirms every insertion (the RESRCH-1 non-negotiable). Useful for
 seeding a corpus from a research outline.
+
+- **Built:** `src/research/batch.rs` — per question: Facts-grounded answer (`collect_blocking`) →
+  `extract::parse` candidate → confidence probe (`--confidence`, default 0.7) → insert under
+  `--auto-confirm` (else report as a candidate), `model` provenance (thread `"batch"`). Markdown report
+  to `--out` / stdout.
 
 ---
 

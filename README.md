@@ -21,35 +21,42 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.5.5 — Authoritative Sources
+## Latest release · 1.5.6 — Finish, Legibility & Fiction
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.5.5.md`](Documentation/RELEASE_NOTES/1.5.5.md)
-· Track: [`RESRCH-3`](Documentation/PROPOSALS/RESRCH-3_TRACK.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.5.6.md`](Documentation/RELEASE_NOTES/1.5.6.md)
+· Tracks: [`RESRCH-UX`](Documentation/PROPOSALS/RESRCH-UX_TRACK.md) ·
+[`RESRCH-UNDISPUTED`](Documentation/PROPOSALS/RESRCH-UNDISPUTED_TRACK.md)
 
-1.5.4 taught `/calc` to read the project's own World facts. 1.5.5 opens the research assistant onto
-**authoritative external sources** and lets a claim be **cross-checked across all of them** — the endpoint
-of the trust ladder. **No new crates**, all keyless.
+A large Research-Assistant release: it **finishes** the RESRCH-2/3/4 program, makes the accumulated power
+**legible**, and adds what a *fiction* corpus needs — **authorial facts** that are deliberately not
+real-world-checkable. **No new crates.**
 
-### Structured & scholarly sources
+### Finishing the program
 
-**`/wikidata <query>`** returns an entity's **structured claims** (property → value, cited by **Q-ID**);
-a `/fact` from it records `wikidata` provenance and skips the gate (Wikipedia's biased prose is
-deliberately excluded — we ground on the triples). **`/openalex`** and **`/arxiv`** return papers by
-**DOI / arXiv-ID**, and a `/fact` from a paper **auto-creates a SOURCES-1 `BibEntry`** — the fact and a
-real bibliography entry land together.
+`/calc` gains climate/geography/economy words (`haversine`, `compound`, `logistic`, …), list reducers
+(`[ 1 2 3 ] sum`), and `calc.world.check`; **`/world`** browses your simulation's facts (with a
+recompile-from-`world.hjson` fallback); **`/import`** takes **`.bib`/`.json`** citations and
+`--sync <folder>` re-imports on change; **`--batch`** runs headless research to a Markdown report. This
+completes RESRCH-2/3/4.
 
-### Triangulation — the cross-source gate
+### Making it legible (RESRCH-UX)
 
-**`/triangulate <claim>`** gathers evidence from the structured sources concurrently and has the model
-judge **each source** `SUPPORTS | CONTRADICTS | SILENT` — judging *independent evidence*, not its own
-output. With **`research.triangulate_gate: true`**, triangulation becomes the automatic `/fact` gate,
-**replacing** the single-source self-check: the decision to commit is now independent sources voting.
+A **command palette** (type `/` + Tab) with live hints; **trust badges** on every chat turn and permanent
+**tier glyphs** in the Facts tree; an **async spinner + elapsed timer**; and a **richer confirmation
+overlay** that renders the triangulation verdict, the near-duplicate's text, and the exact provenance
+that will be recorded.
+
+### Guarding the fiction (RESRCH-UNDISPUTED)
+
+Press **`u`** to mark a Fact **undisputed** (a `※` glyph) — the author's creative invention. Undisputed
+facts are **excluded from `/factcheck`** (which reports the count); new **`/undisputed`** checks only
+those for **internal common sense** (`PLAUSIBLE/ODD/INCOHERENT`), never real-world truth, never rewriting.
 
 ### Dependencies & compatibility
 
-**No new runtime crates** (all three sources reuse the 1.5.2 `reqwest`; all keyless). New config
-`research.wikidata` / `research.scholarly` / `research.triangulate_gate`; new provenance origins
-`wikidata` / `openalex` / `arxiv`. No new system books, no new `NodeKind`.
+**No new runtime crates.** New command `/undisputed`; new provenance origin `simulation`; new sidecar
+`.inkhaven/research-sync.json`; new CLI flags `--sync/--batch/--auto-confirm/--confidence`. No new system
+books, no new `NodeKind`.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

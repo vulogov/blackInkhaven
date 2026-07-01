@@ -182,6 +182,22 @@ the correct information is, seeded with the recorded verdict reason and written 
 `/whatswrong` targets the **selected fact** by default, or an explicit `/whatswrong facts/path`. This is
 the loop: `/factcheck` flags → the tree shows where → `/whatswrong` explains → you fix it by hand.
 
+### Undisputed (authorial) facts + `/undisputed` (1.5.6)
+
+Some Facts are your **creative invention** — an invented god, a fictional aqueduct's capacity, a rule of
+your magic system. They are *not* claims about the real world, so real-world fact-checking is meaningless
+(and they'd fail it anyway). Mark such a fact **undisputed** by selecting it in the Facts tree and pressing
+**`u`** (toggle) — it gains a magenta **`※`** glyph. (You can also add the tag `fact:undisputed` from the
+editor's tag picker.)
+
+- An undisputed fact is **excluded from `/factcheck`** — but the report notes how many were skipped
+  (`※ N undisputed fact(s) excluded (authorial)`).
+- **`/undisputed`** runs a *separate*, read-only pass over **only** the undisputed facts, with a different
+  question: not "is this real?" but "does it make **internal common sense**?" Each is judged
+  `PLAUSIBLE / ODD / INCOHERENT` **within its own fictional frame** — self-consistent, free of obvious
+  contradiction — in your project language. It **never rewrites** anything; it just reports (with a
+  `✓N ?N ✗N` tally). Undisputed facts live *outside* the trust ladder — they're authorial axioms.
+
 ### Cost (1.5.3)
 
 The status bar's session cost is now priced from a **per-model table** (`cost.pricing`, USD per million
@@ -211,6 +227,13 @@ retrieved alongside your Facts and prepended (cited as `[source: name]`) to grou
   status line reports how many files and chunks landed. Re-importing replaces a same-named source.
 - PDFs are text-extracted on import; scanned/image-only PDFs yield little text (no OCR).
 - Imported chunks are retrieved whenever RAG is on (any mode except *Full only*).
+- **`/import <file.bib>`** / **`<file.json>`** (and `inkhaven research --import`) imports a **BibTeX** or
+  **CSL-JSON** file: each entry becomes a **SOURCES-1 citation** under a *Research* chapter of your Sources
+  book (deduped by cite key) — your existing bibliography (or a Zotero export), brought straight into the
+  corpus (R3-D).
+- **`inkhaven research --sync <folder>`** registers a folder for **re-import-on-change**: it imports the
+  folder now, and every subsequent `inkhaven research` launch re-imports it **if its files changed**
+  (mtime-gated) — so a working vault stays in sync without a manual `/import` each time.
 
 This is the first step of *grounded research*: your corpus can now stand on real documents, with every
 derived fact citing where it came from.
@@ -349,6 +372,17 @@ atan atan2 hypot abs floor ceil round`) and **astronomy/planetology formulas** i
 /calc 1 1 surface_gravity    → = 9.80665   (Earth)
 ```
 
+**Climate, geography & economy (1.5.6).** `lapse_rate` (altitude→ΔT), `dewpoint`, `insolation_at_lat`,
+`heat_index`; **`haversine`** (two lat/lon → great-circle km), `bearing`, `destination_point` (pushes
+`lat2 lon2`), `slope`; and finance/population: `compound`, `cagr`, `inflation_adjust`, `annuity`,
+`malthus` (exponential) / `logistic` (carrying-capacity). Plus math `trunc sign factorial gcd lcm`.
+
+```
+/calc 51.5 -0.13 40.71 -74.0 haversine   → = 5570.2   (London → New York, km)
+/calc 1000 0.05 1 10 compound            → = 1628.89  (1000 at 5%/yr for 10 yr)
+/calc 5000 100000 0.03 50 logistic       → projected population toward K=100000
+```
+
 ### Grounding `/calc` in your World book (1.5.4)
 
 `/calc` can read **this project's own World-book facts** (the materialized WORLD-4 simulation), so a
@@ -368,7 +402,16 @@ calculation is grounded in *your* world, not generic constants:
   `world.tilt`, `world.star_mass`, `world.orbit_days`, `world.divergence`.
 - Every World read is **echoed** in the result (`world: <path> = <value>`), and a `/fact` taken from a
   World-grounded `/calc` records provenance **`computed · world:<path>`** — the deterministic, *self-citing*
-  tier. (Requires a materialized World book — run `inkhaven realworld compile --materialize` first.)
+  tier. It reads the **materialized** book, or (if you haven't run `realworld compile --materialize` yet)
+  **recomputes** the layer from `world.hjson` on the fly — same numbers either way.
+- **List reducers:** `[ 1 2 3 4 ] sum` → `10`; also `mean`, `min`, `max` over a Bund list literal.
+
+### Browsing the world — `/world` (1.5.6)
+
+**`/world`** lists your World simulation's layers (Astronomy · Geology · Climate · Hydrology ·
+Demographics); **`/world <layer>`** shows that layer's facts (the materialized JSON, or recomputed from
+`world.hjson`). A `/fact` from a `/world` result records provenance **`simulation`** and **skips the
+gate** — it's your own deterministic, internally-consistent world, not an outside claim.
 
 ## 7. Deeper research
 
@@ -413,6 +456,34 @@ fact/note insertions, pinned nodes, and RAG mode all persist and **resume** exac
 - **`inkhaven research --list-threads`** prints every thread (name · last-active · turns · cost), and
   **`--export-thread <name>`** writes its full history as Markdown or JSON (`--out FILE`, default
   stdout) — a clean record of how a fact came to be.
+
+## 9½. UI niceties (1.5.6)
+
+- **Command completion + live hints.** Type `/` and press **Tab** to complete a command name (one match
+  completes, several list in the status bar); the **hints bar** tracks what you're typing — matching
+  commands while you type the word, then the recognised command's usage (`/web [--ingest|--chat]
+  <query>`). Tab still completes Facts paths after `/goto ` or a `→` arrow.
+- **Trust made visible.** Each chat turn shows a **source-tier badge** — `[computed]` `[◆ Q937]`
+  `[§ arxiv]` `[⚠ web]` `[document]` `[? model]` — and each fact in the **Facts tree** carries a
+  permanent **tier glyph** by its recorded provenance (≡ deterministic · ◆ structured · § scholarly ·
+  ◇ web · ▪ imported · · model), so the trust ladder is legible at a glance.
+- **Async liveness.** A braille **spinner + elapsed timer** appears in the status bar whenever a fetch,
+  stream, or gate is in flight (`⠙ (3s) Querying Wikidata…`).
+- **A richer confirmation.** When the triangulation gate or fact-check runs, the confirmation overlay
+  shows the **per-source verdict** (green `SUPPORTS` / red `CONTRADICTS` / dim `SILENT`, with the
+  `Agreement: n/m` tally) instead of a status flash; the near-duplicate guard shows the **similar fact's
+  text** beside the pending one; and the location row previews the exact **`will record: <tier> ·
+  <citation>`** provenance, with Title/Body char counts.
+
+### Headless batch research (1.5.6)
+
+**`inkhaven research --batch questions.txt`** researches a **question list** non-interactively (one
+question per line; `#` comments ignored). For each question it grounds an answer on your Facts corpus,
+distils one candidate fact, and scores the model's confidence — then writes a **Markdown report**
+(`--out FILE`, default stdout). By default it only *proposes* (the interactive rule — confirm every
+insertion — still holds). Add **`--auto-confirm`** (and optionally **`--confidence 0.8`**, default 0.7)
+to **insert** the facts that clear the bar, each with `model` provenance. Good for seeding a corpus from a
+research outline — the relaxation happens *only* behind the explicit flag + threshold.
 
 ---
 
