@@ -47,7 +47,7 @@ follows automatically.
   politics / economics / history; Wikidata's structured triples (and their per-statement reference
   qualifiers) expose almost none of that surface. We ground on the structured facts, not the narrative.
 
-### R3-B — Scholarly: `/openalex <query>`, `/arxiv <query>`
+### R3-B — Scholarly: `/openalex <query>`, `/arxiv <query>` — **✅ Shipped 1.5.5-dev**
 
 - **OpenAlex** (works API, free, no key — "polite pool" via a `mailto`) and **arXiv** (Atom API, free,
   no key): return papers → title, authors, year, abstract, and a stable **DOI / arXiv-ID**.
@@ -55,6 +55,10 @@ follows automatically.
 - **Auto-citation:** a `/fact` derived from a paper can auto-create a **SOURCES-1 `BibEntry`** (that
   infrastructure already exists — `src/sources/`), so the fact and a real bibliography entry land
   together.
+- **Built:** `src/research/scholarly.rs` — OpenAlex `works` (mailto polite pool, abstract rebuilt from
+  the inverted index) + arXiv Atom (crate-free extraction, HTTPS). A `/fact` → `origin=openalex|arxiv`
+  (+ DOI/ID), gate skipped, and `add_bibentry` writes a `BibEntry` into a **Research** chapter of the
+  Sources book (dedup by cite key). `research.scholarly` config (`enabled`/`mailto`/`auto_cite`).
 
 ### R3-C — Deterministic / computational: `/calc`, `/world` (zero new crates, zero network)
 

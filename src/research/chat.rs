@@ -27,6 +27,9 @@ pub(super) struct ChatTurn {
     /// R3-A — the Wikidata Q-ID when this turn is a `/wikidata` result, so a
     /// `/fact` from it records `origin=wikidata` (+ Q-ID) and skips the gate.
     pub wikidata: Option<String>,
+    /// R3-B — the paper when this turn is an `/openalex`/`/arxiv` result, so a
+    /// `/fact` records `origin=openalex|arxiv` and can auto-create a `BibEntry`.
+    pub paper: Option<super::scholarly::Paper>,
     /// R2-E — the model that produced this turn (for the per-model cost table).
     pub model: String,
     /// R2-E — provider-reported token usage, set on stream completion; `None`
@@ -46,6 +49,7 @@ impl ChatTurn {
             computed: false,
             world_detail: String::new(),
             wikidata: None,
+            paper: None,
             model: String::new(),
             usage: None,
         }
@@ -64,6 +68,7 @@ impl ChatTurn {
             computed: false,
             world_detail: String::new(),
             wikidata: None,
+            paper: None,
             model: String::new(),
             usage: None,
         }

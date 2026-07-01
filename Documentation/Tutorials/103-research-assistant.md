@@ -255,6 +255,32 @@ value), each citable by the entity's **Q-ID**:
   (politics / economics / history); Wikidata's per-statement triples don't. We ground on the facts, not
   the story. (External-identifier properties like catalog IDs are filtered out to keep the view factual.)
 
+## 6.85. Scholarly sources — `/openalex` & `/arxiv` (1.5.5)
+
+Bring in **peer-reviewed and preprint literature**, cited by **DOI / arXiv-ID** — the scholarly tier of
+the trust ladder. Both are **keyless**:
+
+- **`/openalex <query>`** — the top matching work from [OpenAlex](https://openalex.org) (title, authors,
+  year, abstract, DOI). Set `research.scholarly.mailto` to your email to join OpenAlex's *polite pool*
+  (recommended — avoids the anonymous rate limit).
+- **`/arxiv <query>`** — the top matching [arXiv](https://arxiv.org) preprint (title, authors, year,
+  abstract, arXiv-ID).
+
+```
+/arxiv attention is all you need
+  Attention Is All You Need
+  Ashish Vaswani, Noam Shazeer, … · 2017
+  arxiv:1706.03762v5
+  <abstract…>
+  Source: arxiv · http://arxiv.org/abs/1706.03762v5
+```
+
+**Auto-citation.** A **`/fact`** taken from an `/openalex` or `/arxiv` result records provenance
+**`openalex`** / **`arxiv`** (with the DOI/ID) **and auto-creates a SOURCES-1 `BibEntry`** under a
+**Research** chapter in your Sources book — the verified fact and a real bibliography entry land together
+(deduped by cite key). The metadata is authoritative, so the fact-check gate is skipped; you still review
+the extracted claim in the confirmation overlay as always. Disable with `research.scholarly.auto_cite`.
+
 ## 6⅞. Deterministic calculation — `/calc` (1.5.2)
 
 Not every fact comes from a model or the web — some you just **compute**. **`/calc <expr>`** evaluates a
