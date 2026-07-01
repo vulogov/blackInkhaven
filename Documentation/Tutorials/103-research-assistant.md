@@ -255,6 +255,16 @@ Bring **live web sources** in — with the safety posture you choose. Configure 
 Set the default with `research.web.pipeline` (`chat` or `ingest`); `--chat` / `--ingest` override it per
 call. Web search needs network and a provider; without one, `/web` simply reports it's unavailable.
 
+### Public-domain books — `/gutenberg` (1.5.8)
+
+**`/gutenberg <query>`** (alias `/pg`) searches **Project Gutenberg** (the ~75,000 free public-domain
+books, via the keyless Gutendex catalogue), fetches the best-matching book's plain text, strips the PG
+header/footer, and **ingests it as a research source** — exactly like `/import`, but from the library.
+From then on, the book's relevant **passages are retrieved and cited** `[source: <Title> (PG#<id>)]`
+whenever you ask about it, and they ground `/synthesize` and `/fact`. It searches *metadata*
+(title/author/subject); the *snippet* search happens in your corpus RAG after ingest. Keyless; uses the
+project language; `research.gutenberg.max_chars` bounds how much of a long book is embedded.
+
 ## 6.8. Structured facts — `/wikidata` (1.5.5)
 
 Where `/web` brings in *prose*, **`/wikidata <query>`** brings in **structured triples** — the top of the
@@ -413,6 +423,38 @@ calculation is grounded in *your* world, not generic constants:
 Demographics); **`/world <layer>`** shows that layer's facts (the materialized JSON, or recomputed from
 `world.hjson`). A `/fact` from a `/world` result records provenance **`simulation`** and **skips the
 gate** — it's your own deterministic, internally-consistent world, not an outside claim.
+
+## 6.95. Producing output — `/synthesize` & `/bibliography` (1.5.8)
+
+The corpus is finally a source you can *compose from*, not just add to.
+
+- **`/synthesize <topic>`** retrieves the facts related to a topic and streams a **grounded synthesis**
+  that uses *only* your verified facts, **cites each by its breadcrumb**, and flags where the corpus is
+  thin — a mini overview built from your own knowledge base, in your project language. It never invents
+  facts; `y` copies it, or `/fact` a distilled point. (RESRCH-5 / R5-A.)
+- **`/outline <topic>`** produces a **structured, fact-citing outline** — nested points, each citing its
+  supporting fact by `[breadcrumb]`, with anything the corpus doesn't cover marked `(needs research)`.
+  The research → writing bridge: copy it into the manuscript. (R5-B.)
+- **`/gaps <topic>`** lists the **open questions** the corpus *doesn't* answer — concrete things to go
+  find — which you can drop into a file to seed **`--batch`**, closing the loop research → gaps → batch →
+  facts. (R5-C.)
+- **`/bibliography`** emits the **Sources book's Research chapter** — every citation auto-filed by
+  `/openalex`/`/arxiv` and `/import <.bib>` — as **BibTeX** (`y` to copy). Headless:
+  **`inkhaven research --bibliography [--out refs.bib]`** writes it to a file. The citations you accrued
+  become a real manuscript bibliography. (R5-D.)
+
+## 6.97. Keeping the corpus healthy — `/upgrade` & `/stale` (1.5.8)
+
+A knowledge base decays; these tend it.
+
+- **`/upgrade [facts/path]`** (bare → the selected fact) tries to **re-ground a `model`-origin fact on a
+  structured source** — it gathers evidence from Wikidata / OpenAlex / arXiv about the claim and asks the
+  model whether any source **corroborates** it. If one does (and none contradicts), the fact's
+  **provenance tier is raised** to that source (its tree tier glyph updates) — a speculative claim becomes
+  a cited one. **The fact text is never changed**; only the provenance. Already-structured facts are
+  skipped. (RESRCH-5 / R5-E.)
+- **`/stale [days]`** lists your **`model` / `web`** facts older than *N* days (default 90) — the ones
+  whose grounding may have drifted — so you can re-verify or `/upgrade` them. Read-only. (R5-F.)
 
 ## 7. Deeper research
 
