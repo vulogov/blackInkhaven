@@ -255,6 +255,16 @@ Bring **live web sources** in — with the safety posture you choose. Configure 
 Set the default with `research.web.pipeline` (`chat` or `ingest`); `--chat` / `--ingest` override it per
 call. Web search needs network and a provider; without one, `/web` simply reports it's unavailable.
 
+### Public-domain books — `/gutenberg` (1.5.8)
+
+**`/gutenberg <query>`** (alias `/pg`) searches **Project Gutenberg** (the ~75,000 free public-domain
+books, via the keyless Gutendex catalogue), fetches the best-matching book's plain text, strips the PG
+header/footer, and **ingests it as a research source** — exactly like `/import`, but from the library.
+From then on, the book's relevant **passages are retrieved and cited** `[source: <Title> (PG#<id>)]`
+whenever you ask about it, and they ground `/synthesize` and `/fact`. It searches *metadata*
+(title/author/subject); the *snippet* search happens in your corpus RAG after ingest. Keyless; uses the
+project language; `research.gutenberg.max_chars` bounds how much of a long book is embedded.
+
 ## 6.8. Structured facts — `/wikidata` (1.5.5)
 
 Where `/web` brings in *prose*, **`/wikidata <query>`** brings in **structured triples** — the top of the

@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Proposed |
+| **Status** | **PG-P1 + PG-P2 shipped 1.5.8-dev**; PG-P3 (auto-cite) + PG-P4 (chapters, picker) + CLI flag open |
 | **Builds on** | RESRCH-2 (document import: chunk → embed → retrieve → cite), RESRCH-3 (source adapters + provenance), R3-B (SOURCES-1 auto-cite) |
 | **Theme** | Bring **Project Gutenberg** — ~75,000 **public-domain** full-text books — into the corpus as a research source: search the catalogue, ingest a book's text (or a chapter), and let the existing RAG surface the relevant **snippets**. A full-text library adapter, keyless and free. |
 
@@ -68,8 +68,8 @@ they ground answers and can be `/fact`ed.
 
 | Phase | Content |
 |---|---|
-| **PG-P1** | `research/gutenberg.rs`: Gutendex search (`GutenbergBook { id, title, authors, subjects, text_url }`) + plain-text fetch + `strip_pg_boilerplate`. Fixture-tested parse (Gutendex is blockable from CI). |
-| **PG-P2** | `/gutenberg <query>` command (+ `CommandSpec` for the UX-P1 palette): search → fetch → chunk + embed as a `research_source` (`origin=gutenberg`) via the existing import path; `Imports` sidecar entry; provenance. CLI `inkhaven research --gutenberg <query>`. |
+| **PG-P1** | `research/gutenberg.rs`: Gutendex search (`GutenbergBook { id, title, authors, subjects, text_url }`) + plain-text fetch + `strip_pg_boilerplate`. Fixture-tested parse (Gutendex is blockable from CI). **✅ Shipped 1.5.8-dev** — keyless, project-language, `max_chars` cap; 3 fixture tests. |
+| **PG-P2** | `/gutenberg <query>` command (+ `CommandSpec` for the UX-P1 palette): search → fetch → chunk + embed as a `research_source` (`origin=gutenberg`) via the existing import path; `Imports` sidecar entry; provenance. **✅ Shipped 1.5.8-dev** (TUI) — `/gutenberg` / `/pg`, `ingest_gutenberg` mirrors `/web --ingest`; cited `[source: <Title> (PG#<id>)]`. *(CLI `--gutenberg` deferred — needs a runtime for the async fetch.)* |
 | **PG-P3** | Auto-cite the book as a SOURCES-1 `BibEntry` (feeds `/bibliography`); `origin=gutenberg` provenance summary + a tree tier glyph. |
 | **PG-P4 *(follow-on)*** | Chapter split (`--chapter`) + a multi-result picker. |
 

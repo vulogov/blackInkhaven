@@ -51,6 +51,9 @@ pub(super) enum Command {
     World(String),
     /// `/wikidata <query>` — fetch a Wikidata entity's structured claims (R3-A).
     Wikidata(String),
+    /// `/gutenberg <query>` — ingest a public-domain Project Gutenberg book as a
+    /// research source (RESRCH-GUTENBERG).
+    Gutenberg(String),
     /// `/openalex <query>` — fetch the top OpenAlex paper (R3-B).
     OpenAlex(String),
     /// `/arxiv <query>` — fetch the top arXiv paper (R3-B).
@@ -105,6 +108,7 @@ pub(super) const SPECS: &[CommandSpec] = &[
     CommandSpec { name: "forget", summary: "remove an imported source", usage: "/forget <name>" },
     CommandSpec { name: "web", summary: "web search & fetch", usage: "/web [--ingest|--chat] <query>" },
     CommandSpec { name: "wikidata", summary: "structured triples (Q-ID)", usage: "/wikidata <query>" },
+    CommandSpec { name: "gutenberg", summary: "ingest a public-domain book (Project Gutenberg)", usage: "/gutenberg <query>" },
     CommandSpec { name: "openalex", summary: "scholarly paper (DOI)", usage: "/openalex <query>" },
     CommandSpec { name: "arxiv", summary: "arXiv preprint", usage: "/arxiv <query>" },
     CommandSpec { name: "triangulate", summary: "cross-check a claim across sources", usage: "/triangulate [claim]" },
@@ -221,6 +225,7 @@ pub(super) fn parse(input: &str) -> Option<Command> {
         "calc" => Command::Calc(rest.to_string()),
         "world" => Command::World(rest.to_string()),
         "wikidata" => Command::Wikidata(rest.to_string()),
+        "gutenberg" | "pg" => Command::Gutenberg(rest.to_string()),
         "openalex" => Command::OpenAlex(rest.to_string()),
         "arxiv" => Command::Arxiv(rest.to_string()),
         "triangulate" | "tri" => Command::Triangulate(rest.to_string()),
@@ -331,6 +336,8 @@ mod tests {
         assert_eq!(parse("/world Astronomy").unwrap(), Command::World("Astronomy".into()));
         assert_eq!(parse("/world").unwrap(), Command::World(String::new()));
         assert_eq!(parse("/wikidata Rome").unwrap(), Command::Wikidata("Rome".into()));
+        assert_eq!(parse("/gutenberg pride and prejudice").unwrap(), Command::Gutenberg("pride and prejudice".into()));
+        assert_eq!(parse("/pg dickens").unwrap(), Command::Gutenberg("dickens".into()));
         assert_eq!(parse("/openalex aqueduct").unwrap(), Command::OpenAlex("aqueduct".into()));
         assert_eq!(parse("/arxiv attention").unwrap(), Command::Arxiv("attention".into()));
         assert_eq!(parse("/triangulate the sky is blue").unwrap(), Command::Triangulate("the sky is blue".into()));
