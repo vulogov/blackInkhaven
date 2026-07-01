@@ -84,6 +84,9 @@ pub(crate) struct ResearchInvocation {
     pub auto_confirm: bool,
     /// R2-F — `--confidence <0..1>`: the auto-insert threshold (default 0.7).
     pub confidence: Option<f64>,
+    /// RESRCH-5 (R5-D) — `--bibliography`: emit the Sources Research chapter as
+    /// BibTeX (`--out` file, else stdout) and exit.
+    pub bibliography: bool,
 }
 
 /// Launch the Research Assistant, or run a non-interactive thread operation.
@@ -100,6 +103,20 @@ pub(crate) fn run(project: &Path, inv: ResearchInvocation) -> Result<()> {
     if let Some(folder) = inv.sync.as_deref() {
         let store = Store::open(layout.clone(), &cfg).map_err(anyhow::Error::from)?;
         return sync_cli(&layout, &cfg, &store, folder);
+    }
+    if inv.bibliography {
+        let store = Store::open(layout.clone(), &cfg).map_err(anyhow::Error::from)?;
+        let hierarchy = Hierarchy::load(&store).map_err(anyhow::Error::from)?;
+        let entries = app::collect_research_bibentries(&store, &hierarchy);
+        let (bibtex, n) = crate::sources::compile_bibtex(&entries);
+        match inv.out.as_deref() {
+            Some(p) => {
+                std::fs::write(p, &bibtex).map_err(|e| anyhow::anyhow!("write {p}: {e}"))?;
+                eprintln!("wrote {n} entr{} → {p}", if n == 1 { "y" } else { "ies" });
+            }
+            None => print!("{bibtex}"),
+        }
+        return Ok(());
     }
     if let Some(bpath) = inv.batch.as_deref() {
         let store = Store::open(layout.clone(), &cfg).map_err(anyhow::Error::from)?;

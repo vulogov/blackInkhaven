@@ -962,6 +962,10 @@ pub enum Command {
         /// R2-F — auto-insert confidence threshold, 0..1 (default 0.7).
         #[arg(long, value_name = "0..1")]
         confidence: Option<f64>,
+        /// 1.5.8 RESRCH-5 (R5-D) — emit the Sources Research chapter as BibTeX
+        /// (`--out` file, else stdout) and exit.
+        #[arg(long)]
+        bibliography: bool,
     },
 
     /// 1.2.10+ — launch the standalone TUI configuration
@@ -5017,6 +5021,7 @@ impl Cli {
                 batch,
                 auto_confirm,
                 confidence,
+                bibliography,
             } => crate::research::run(
                 &project,
                 crate::research::ResearchInvocation {
@@ -5030,6 +5035,7 @@ impl Cli {
                     batch,
                     auto_confirm,
                     confidence,
+                    bibliography,
                 },
             )
             .map_err(Into::into),

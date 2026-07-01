@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Proposed (track) |
+| **Status** | **R5-A + R5-D shipped 1.5.8-dev**; R5-B/C/E/F open |
 | **Builds on** | RESRCH-1..4 + UX + Undisputed (all shipped) — the corpus, provenance, the trust ladder, SOURCES-1, `/triangulate` |
 | **Theme** | The program so far is about **acquisition** — getting facts *in*, cited, cross-checked. Two things it still can't do: **turn the corpus into output**, and **keep it healthy over time**. RESRCH-5 adds both, reusing the retrieval + provenance + SOURCES-1 machinery. Nothing here needs a new crate. |
 
@@ -31,10 +31,10 @@ Everything grounds *in*; nothing composes *out*. This is where the research pays
 
 | Phase | Content |
 |---|---|
-| **R5-A — `/synthesize <topic>`** | Retrieve the facts related to a topic (`retrieve` over the Facts book), then stream a **grounded synthesis** that uses *only* those facts, **cites each by its breadcrumb + provenance tier**, and flags where the corpus is thin — a mini overview built from your own verified corpus, in the project language. Read-only (a chat turn; `/fact` or `y` to keep it). |
+| **R5-A — `/synthesize <topic>`** | Retrieve the facts related to a topic (`retrieve` over the Facts book), then stream a **grounded synthesis** that uses *only* those facts, **cites each by its breadcrumb + provenance tier**, and flags where the corpus is thin — a mini overview built from your own verified corpus, in the project language. Read-only (a chat turn; `/fact` or `y` to keep it). **✅ Shipped 1.5.8-dev** — `run_synthesize` retrieves up to 24 passages with their provenance tier, streams a cited synthesis. |
 | **R5-B — `/outline <topic>`** | The same retrieval, but the output is a **structured chapter/section outline**, each point citing the facts that support it — the **research → writing bridge**. Copy it into the manuscript, or `/note` it. |
 | **R5-C — `/gaps <topic>`** | Retrieve, then ask the model what's **missing** ("you have the aqueduct's capacity but not its date"). Output a question list; optionally write it to a file to seed **`--batch`** (R2-F), closing the loop research → gaps → batch → facts. |
-| **R5-D — `/bibliography [→ out]`** | Walk the Sources book's **Research** chapter (the `BibEntry`s auto-filed by R3-B and `/import`), `compile_bibtex`, and emit a formatted **`.bib` / references section** — the citations you accrued become a real manuscript bibliography. CLI `inkhaven research --bibliography [--out FILE]`. |
+| **R5-D — `/bibliography [→ out]`** | Walk the Sources book's **Research** chapter (the `BibEntry`s auto-filed by R3-B and `/import`), `compile_bibtex`, and emit a formatted **`.bib` / references section** — the citations you accrued become a real manuscript bibliography. CLI `inkhaven research --bibliography [--out FILE]`. **✅ Shipped 1.5.8-dev** — `collect_research_bibentries` + `compile_bibtex`; `/bibliography` (chat) and `--bibliography [--out]` (CLI). |
 
 ## Part B — Maintenance: keep the corpus healthy
 

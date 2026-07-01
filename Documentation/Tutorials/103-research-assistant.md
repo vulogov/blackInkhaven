@@ -414,6 +414,19 @@ Demographics); **`/world <layer>`** shows that layer's facts (the materialized J
 `world.hjson`). A `/fact` from a `/world` result records provenance **`simulation`** and **skips the
 gate** — it's your own deterministic, internally-consistent world, not an outside claim.
 
+## 6.95. Producing output — `/synthesize` & `/bibliography` (1.5.8)
+
+The corpus is finally a source you can *compose from*, not just add to.
+
+- **`/synthesize <topic>`** retrieves the facts related to a topic and streams a **grounded synthesis**
+  that uses *only* your verified facts, **cites each by its breadcrumb**, and flags where the corpus is
+  thin — a mini overview built from your own knowledge base, in your project language. It never invents
+  facts; `y` copies it, or `/fact` a distilled point. (RESRCH-5 / R5-A.)
+- **`/bibliography`** emits the **Sources book's Research chapter** — every citation auto-filed by
+  `/openalex`/`/arxiv` and `/import <.bib>` — as **BibTeX** (`y` to copy). Headless:
+  **`inkhaven research --bibliography [--out refs.bib]`** writes it to a file. The citations you accrued
+  become a real manuscript bibliography. (R5-D.)
+
 ## 7. Deeper research
 
 - **`/chain q1 → q2 → q3`** — a sequential pipeline: each step's answer becomes context for the next.

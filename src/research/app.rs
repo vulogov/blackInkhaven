@@ -862,6 +862,8 @@ impl ResearchApp {
             Command::Verify => self.run_verify(),
             Command::FactCheck => self.start_factcheck(),
             Command::Undisputed => self.start_undisputed(),
+            Command::Synthesize(topic) => self.run_synthesize(&topic),
+            Command::Bibliography => self.run_bibliography(),
             Command::Sources => self.run_sources(),
             Command::Promote { note, path } => self.start_promote(note, path),
             Command::Import(path) => match path {
@@ -959,6 +961,104 @@ impl ResearchApp {
         );
         self.stream_rx = Some(rx);
         self.status_message = Some("analysing the flagged fact…".to_string());
+    }
+
+    /// RESRCH-5 (R5-A) — `/synthesize <topic>`: retrieve the related facts and
+    /// stream a **grounded, cited** synthesis over the Facts corpus (read-only,
+    /// language-aware). Cites each fact by its breadcrumb + provenance tier.
+    fn run_synthesize(&mut self, topic: &str) {
+        if self.stream_rx.is_some() {
+            self.status_message = Some("a response is already streaming".to_string());
+            return;
+        }
+        let topic = topic.trim();
+        if topic.is_empty() {
+            self.status_message = Some("usage: /synthesize <topic>".to_string());
+            return;
+        }
+        let Some(book_id) = self.facts_tree.root else {
+            self.status_message = Some("no Facts book".to_string());
+            return;
+        };
+        let passages = match crate::book_rag::retrieval::retrieve(
+            &self.store,
+            &self.hierarchy,
+            &self.cfg.book_rag,
+            book_id,
+            topic,
+        ) {
+            Ok(p) => p,
+            Err(e) => {
+                self.status_message = Some(format!("synthesize: {e}"));
+                return;
+            }
+        };
+        if passages.is_empty() {
+            self.status_message = Some(format!("no facts related to `{topic}` — add some first"));
+            return;
+        }
+        // Build the cited context: `[breadcrumb · tier] body` per fact.
+        let mut ctx = String::new();
+        let n = passages.len().min(24);
+        for p in passages.iter().take(n) {
+            let tier = self
+                .fact_provenance
+                .for_node(&p.id.to_string())
+                .map(|r| r.origin.as_str())
+                .unwrap_or("—");
+            let body: String = p.body.chars().take(600).collect();
+            ctx.push_str(&format!("[{} · {tier}]\n{}\n\n", p.breadcrumb, body.trim()));
+        }
+
+        let (lang, _note) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        let language = super::extract::language_name(&lang);
+        let system = format!(
+            "You are synthesizing a grounded overview from a writer's own VERIFIED facts. Use ONLY the \
+             facts below — do not add outside knowledge. Weave them into a clear, coherent synthesis of \
+             the topic, and CITE each claim by its [breadcrumb]. Where the facts are thin or silent on \
+             part of the topic, say so explicitly rather than inventing. Write in {language}."
+        );
+        let user = format!("Topic: {topic}\n\nFacts (breadcrumb · provenance):\n{ctx}");
+
+        let ai = match crate::ai::AiClient::from_config(&self.cfg.llm) {
+            Ok(a) => a,
+            Err(e) => {
+                self.status_message = Some(format!("no LLM provider: {e}"));
+                return;
+            }
+        };
+        let (model, _env) = match ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(m) => m,
+            Err(e) => {
+                self.status_message = Some(format!("provider error: {e}"));
+                return;
+            }
+        };
+        let mut turn = ChatTurn::new(format!("/synthesize {topic}"));
+        turn.streaming = true;
+        turn.model = model.to_string();
+        self.chat_history.push(turn);
+        self.streaming_turn = Some(self.chat_history.len() - 1);
+        self.chat_scroll = 0;
+        let rx = spawn_chat_stream(ai.client.clone(), model.to_string(), Some(system), Vec::new(), user, llm::CATEGORY);
+        self.stream_rx = Some(rx);
+        self.status_message = Some(format!("synthesizing from {n} fact(s)…"));
+    }
+
+    /// RESRCH-5 (R5-D) — `/bibliography`: emit the Sources book's Research chapter
+    /// (the auto-cited entries) as BibTeX into the chat.
+    fn run_bibliography(&mut self) {
+        let entries = collect_research_bibentries(&self.store, &self.hierarchy);
+        if entries.is_empty() {
+            self.status_message =
+                Some("no citations yet — /openalex /arxiv /import <.bib> file them first".to_string());
+            return;
+        }
+        let (bibtex, n) = crate::sources::compile_bibtex(&entries);
+        let body = format!("[/bibliography — {n} entr{}]\n\n{bibtex}", if n == 1 { "y" } else { "ies" });
+        self.chat_history.push(ChatTurn::with_response("/bibliography".to_string(), body));
+        self.chat_scroll = 0;
+        self.status_message = Some(format!("{n} citation(s) · y to copy the BibTeX"));
     }
 
     /// `/sources` — list each Facts node with its recorded provenance (T-P3).
@@ -4060,6 +4160,41 @@ pub(crate) fn add_bibentry(
     }
     store.update_paragraph_content(&mut node, body.as_bytes())?;
     Ok(true)
+}
+
+/// RESRCH-5 (R5-D) — collect the `BibEntry`s under the Sources book's Research
+/// chapter (the auto-cited + imported entries), for `/bibliography`.
+pub(crate) fn collect_research_bibentries(store: &Store, h: &Hierarchy) -> Vec<crate::sources::BibEntry> {
+    use crate::store::NodeKind;
+    let Some(book) = h.iter().find(|n| {
+        n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_SOURCES)
+    }) else {
+        return Vec::new();
+    };
+    let Some(chapter) = h
+        .children_of(Some(book.id))
+        .into_iter()
+        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Research"))
+    else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for pid in h.collect_subtree(chapter.id) {
+        let Some(node) = h.get(pid) else { continue };
+        if node.kind != NodeKind::Paragraph {
+            continue;
+        }
+        let body = match store.get_content(pid) {
+            Ok(Some(b)) => String::from_utf8_lossy(&b).into_owned(),
+            _ => continue,
+        };
+        if let Some(e) = crate::sources::BibEntry::from_hjson(&body) {
+            if e.is_valid() {
+                out.push(e);
+            }
+        }
+    }
+    out
 }
 
 /// Embed one file as a research source (thread-global); returns the chunk count.
