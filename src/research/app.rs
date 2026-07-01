@@ -149,6 +149,14 @@ pub(super) struct WikidataState {
     query: String,
 }
 
+/// RESRCH-GUTENBERG — an in-flight `/gutenberg` search + text fetch.
+pub(super) struct GutenbergState {
+    rx: mpsc::UnboundedReceiver<
+        std::result::Result<(super::gutenberg::GutenbergBook, String), String>,
+    >,
+    query: String,
+}
+
 /// R3-B — an in-flight `/openalex` or `/arxiv` fetch.
 pub(super) struct ScholarlyState {
     rx: mpsc::UnboundedReceiver<std::result::Result<super::scholarly::Paper, String>>,
@@ -351,6 +359,7 @@ pub(crate) struct ResearchApp {
     /// In-flight `/web` search (R2-C).
     web: Option<WebState>,
     wikidata_state: Option<WikidataState>,
+    gutenberg_state: Option<GutenbergState>,
     scholarly_state: Option<ScholarlyState>,
     triangulate: Option<TriangulateState>,
     tri_gate: Option<TriGate>,
@@ -451,6 +460,7 @@ impl ResearchApp {
             undisputed_check: None,
             web: None,
             wikidata_state: None,
+            gutenberg_state: None,
             scholarly_state: None,
             triangulate: None,
             tri_gate: None,
@@ -490,6 +500,7 @@ impl ResearchApp {
             || self.undisputed_check.is_some()
             || self.web.is_some()
             || self.wikidata_state.is_some()
+            || self.gutenberg_state.is_some()
             || self.scholarly_state.is_some()
             || self.triangulate.is_some()
             || self.tri_gate.is_some()
@@ -509,6 +520,7 @@ impl ResearchApp {
             self.poll_undisputed();
             self.poll_web();
             self.poll_wikidata();
+            self.poll_gutenberg();
             self.poll_scholarly();
             self.poll_triangulate();
             self.poll_tri_gate();
@@ -947,6 +959,7 @@ impl ResearchApp {
             Command::Calc(expr) => self.run_calc(&expr),
             Command::World(arg) => self.run_world(&arg),
             Command::Wikidata(query) => self.start_wikidata(query),
+            Command::Gutenberg(query) => self.start_gutenberg(query),
             Command::OpenAlex(query) => self.start_scholarly("openalex", query),
             Command::Arxiv(query) => self.start_scholarly("arxiv", query),
             Command::Triangulate(claim) => self.start_triangulate(claim),
@@ -1716,6 +1729,118 @@ impl ResearchApp {
         });
         self.wikidata_state = Some(WikidataState { rx, query });
         self.status_message = Some("Querying Wikidata…".to_string());
+    }
+
+    /// RESRCH-GUTENBERG — `/gutenberg <query>`: search the Gutendex catalogue and
+    /// fetch the top public-domain book's text (async). Ingested in
+    /// `poll_gutenberg` via the `/import` pipeline.
+    fn start_gutenberg(&mut self, query: String) {
+        if self.gutenberg_state.is_some() {
+            self.status_message = Some("a Gutenberg fetch is already running".to_string());
+            return;
+        }
+        let query = query.trim().to_string();
+        if query.is_empty() {
+            self.status_message = Some("usage: /gutenberg <query>  e.g. /gutenberg pride and prejudice".to_string());
+            return;
+        }
+        if !super::gutenberg::available(&self.cfg.research.gutenberg) {
+            self.status_message = Some("gutenberg disabled (research.gutenberg.enabled)".to_string());
+            return;
+        }
+        let (lang, _note) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        let code = match lang.as_code() {
+            "other" => String::new(),
+            c => c.to_string(),
+        };
+        let cfg = self.cfg.research.gutenberg.clone();
+        let q = query.clone();
+        let (tx, rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let r = super::gutenberg::fetch(cfg, q, code).await.map_err(|e| e.to_string());
+            let _ = tx.send(r);
+        });
+        self.gutenberg_state = Some(GutenbergState { rx, query });
+        self.status_message = Some("Searching Project Gutenberg…".to_string());
+    }
+
+    /// Drain the in-flight Gutenberg fetch; on success, ingest the book's text as
+    /// a research source (chunked, `origin=gutenberg`).
+    fn poll_gutenberg(&mut self) {
+        let Some(gb) = self.gutenberg_state.as_mut() else { return };
+        let result = match gb.rx.try_recv() {
+            Ok(r) => r,
+            Err(mpsc::error::TryRecvError::Empty) => return,
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                self.gutenberg_state = None;
+                return;
+            }
+        };
+        let GutenbergState { query, .. } = self.gutenberg_state.take().unwrap();
+        let (book, text) = match result {
+            Ok(bt) => bt,
+            Err(e) => {
+                self.status_message = Some(format!("gutenberg: {e}"));
+                return;
+            }
+        };
+        self.ingest_gutenberg(&query, &book, &text);
+    }
+
+    /// Ingest a Gutenberg book's text as a `research_source` (mirrors the `/web
+    /// --ingest` / `/import` embed path); `origin=gutenberg`.
+    fn ingest_gutenberg(&mut self, query: &str, book: &super::gutenberg::GutenbergBook, text: &str) {
+        use super::imports;
+        if text.trim().is_empty() {
+            self.status_message = Some("gutenberg: no text extracted".to_string());
+            return;
+        }
+        let chunk_chars = self.cfg.research.import_chunk_chars.max(200);
+        let now = chrono::Utc::now().to_rfc3339();
+        let name = format!("{} (PG#{})", book.title, book.id);
+        let source_url = format!("https://www.gutenberg.org/ebooks/{}", book.id);
+        let chunks = imports::chunk_text(text, chunk_chars);
+        let mut doc_ids = Vec::new();
+        for (i, chunk) in chunks.iter().enumerate() {
+            let meta = serde_json::json!({
+                "kind": imports::SOURCE_KIND, "source": source_url, "name": name,
+                "thread": self.thread.name, "chunk": i, "imported_at": now,
+                "origin": "gutenberg", "title": book.title,
+            });
+            if let Ok(id) = self.store.raw().add_document(meta, chunk.as_bytes()) {
+                doc_ids.push(id.to_string());
+            }
+        }
+        let mut imports_store = imports::Imports::load(&self.layout);
+        if let Some(old) = imports_store.sources.get(&name) {
+            for id in &old.doc_ids {
+                if let Ok(u) = uuid::Uuid::parse_str(id) {
+                    let _ = self.store.raw().delete_document(u);
+                }
+            }
+        }
+        let chunks_n = doc_ids.len();
+        imports_store.sources.insert(
+            name.clone(),
+            imports::ImportedSource {
+                name: name.clone(),
+                path: source_url.clone(),
+                doc_ids,
+                thread: self.thread.name.clone(),
+                imported_at: now,
+                chunks: chunks_n,
+            },
+        );
+        let _ = imports_store.save(&self.layout);
+        let who = if book.authors.is_empty() { String::new() } else { format!(" · {}", book.authors.join(", ")) };
+        let body = format!(
+            "Ingested **{}**{who} as a research source ({chunks_n} chunk(s)).\n{source_url}\n\n\
+             Ask about it — the relevant passages are now retrieved and cited `[source: {}]`.",
+            book.title, name
+        );
+        self.chat_history.push(ChatTurn::with_response(format!("/gutenberg {query}"), body));
+        self.chat_scroll = 0;
+        self.status_message = Some(format!("✓ Project Gutenberg: {chunks_n} chunk(s) from `{}`", book.title));
     }
 
     /// Drain the in-flight Wikidata fetch; on success, show the structured entity.
