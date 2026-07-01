@@ -43,6 +43,11 @@ mod batch;
 
 pub(crate) use focus::Focus;
 
+/// RESRCH-UNDISPUTED — the tag marking a Facts paragraph as an authorial
+/// ("undisputed") fact: glyphed in the tree, excluded from `/factcheck`, checked
+/// by `/undisputed`. A `Node.tags` value; see the RESRCH-UNDISPUTED track.
+pub(super) const UNDISPUTED_TAG: &str = "fact:undisputed";
+
 use std::io;
 use std::path::Path;
 

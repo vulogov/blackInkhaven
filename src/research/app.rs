@@ -3126,6 +3126,8 @@ impl ResearchApp {
             KeyCode::Char('y') => self.tree_yank(ClipMode::Copy),
             KeyCode::Char('x') => self.tree_yank(ClipMode::Move),
             KeyCode::Char('p') => self.tree_paste(),
+            // RESRCH-UNDISPUTED — toggle the `fact:undisputed` authorial tag.
+            KeyCode::Char('u') => self.toggle_undisputed(),
             _ => return false,
         }
         true
@@ -3146,6 +3148,39 @@ impl ResearchApp {
             self.status_message = Some(format!("pinned ({}/{})", self.pinned_nodes.len(), self.max_pinned()));
         }
         self.persist_pins();
+    }
+
+    /// RESRCH-UNDISPUTED — toggle the `fact:undisputed` tag on the selected fact.
+    /// An undisputed fact is the author's creative invention: glyphed `※` in the
+    /// tree, excluded from `/factcheck`, and checked instead by `/undisputed`.
+    fn toggle_undisputed(&mut self) {
+        let Some(id) = self.facts_tree.selected() else { return };
+        let Some(node) = self.hierarchy.get(id) else { return };
+        if node.kind != crate::store::NodeKind::Paragraph {
+            self.status_message = Some("select a fact (a paragraph) to mark undisputed".to_string());
+            return;
+        }
+        let mut updated = node.clone();
+        let now_marked = match updated.tags.iter().position(|t| t == super::UNDISPUTED_TAG) {
+            Some(pos) => {
+                updated.tags.remove(pos);
+                false
+            }
+            None => {
+                updated.tags.push(super::UNDISPUTED_TAG.to_string());
+                true
+            }
+        };
+        if let Err(e) = self.store.raw().update_metadata(id, updated.to_json()) {
+            self.status_message = Some(format!("undisputed: tag write failed: {e}"));
+            return;
+        }
+        self.reload_hierarchy();
+        self.status_message = Some(if now_marked {
+            "※ marked undisputed — excluded from /factcheck; check with /undisputed".to_string()
+        } else {
+            "unmarked — this fact is fact-checked normally again".to_string()
+        });
     }
 
     /// Save the current pin set onto the thread.

@@ -160,6 +160,7 @@ fn render_help(frame: &mut Frame, app: &ResearchApp, area: Rect) {
         Line::from("    n new fact        R rename            c/s new chapter/subchapter"),
         Line::from("    - / D delete (¶/branch)               K/J move up/down"),
         Line::from("    y/x/p  copy / cut / paste across parents"),
+        Line::from("    u  toggle ※ undisputed (authorial — excluded from /factcheck)"),
         Line::from(""),
         Line::from(Span::styled("  Query prompt", Style::new().fg(app.theme.ai_scope_fg).bold())),
         Line::from("    Enter send        Alt+Enter newline   ↑↓ history (at edges)"),
@@ -259,6 +260,11 @@ fn render_facts_tree(frame: &mut Frame, app: &ResearchApp, area: Rect) {
             let indent = "  ".repeat(row.depth);
             let label = format!("{indent}{fold}{pin}{title}");
             let mut spans: Vec<Span> = Vec::new();
+            // RESRCH-UNDISPUTED — an authorial `※` glyph for a `fact:undisputed`
+            // fact (outside the trust ladder; excluded from /factcheck).
+            if node.is_some_and(|n| n.tags.iter().any(|t| t == super::UNDISPUTED_TAG)) {
+                spans.push(Span::styled("※", Style::new().fg(Color::Magenta)));
+            }
             // UX-P2 — a permanent provenance-tier glyph (source trust).
             if let Some(rec) = app.fact_provenance.for_node(&row.id.to_string()) {
                 if let Some((g, c)) = provenance_tier_glyph(&rec.origin) {
@@ -628,7 +634,7 @@ fn render_hints(frame: &mut Frame, app: &ResearchApp, area: Rect) {
     // G11 — context-sensitive per focus (RFC §20).
     let hint = match app.focus {
         Focus::FactsTree => {
-            " n:fact c/s:chap/sub R:rename -/D:del K/J:move y/x/p:copy/cut/paste Ctrl+P:pin Tab:chat"
+            " n:fact c/s:chap/sub R:rename -/D:del K/J:move y/x/p:copy u:undisputed(※) Ctrl+P:pin Tab:chat"
         }
         Focus::QueryPrompt => {
             " ⏎ send · Alt+⏎ newline · Tab: complete /command·path · F10 RAG · Ctrl+B h help · type / for commands"
