@@ -21,34 +21,35 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.5.4 — Computational `/calc`
+## Latest release · 1.5.5 — Authoritative Sources
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.5.4.md`](Documentation/RELEASE_NOTES/1.5.4.md)
-· RFC: [`RESRCH-4`](Documentation/PROPOSALS/RESRCH-4_RFC.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.5.5.md`](Documentation/RELEASE_NOTES/1.5.5.md)
+· Track: [`RESRCH-3`](Documentation/PROPOSALS/RESRCH-3_TRACK.md)
 
-1.5.3 paid down the research assistant's debt. 1.5.4 turns `/calc` into a **computational research
-instrument** that reads **this project's own World-book facts** and computes on them — deterministically,
-`origin=computed`, gate-bypassed, and **self-citing**. **No new crates, no network.**
+1.5.4 taught `/calc` to read the project's own World facts. 1.5.5 opens the research assistant onto
+**authoritative external sources** and lets a claim be **cross-checked across all of them** — the endpoint
+of the trust ladder. **No new crates**, all keyless.
 
-### World-book readers
+### Structured & scholarly sources
 
-**`world.get <path>`** pulls the value at a `Chapter/field[/index…]` path in the materialized WORLD-4
-book (e.g. `"Astronomy/year_length_planet_days"`); unresolved paths push **NODATA**, never a fabricated
-value. **`world.dict <Chapter>`** / **`world.has`** and convenience words (`world.year`, `world.tilt`,
-`world.star_mass`, …) round it out. Every read is **echoed** in the result, and a `/fact` from a
-World-grounded `/calc` records provenance **`computed · world:<path>`** — the self-citing deterministic tier.
+**`/wikidata <query>`** returns an entity's **structured claims** (property → value, cited by **Q-ID**);
+a `/fact` from it records `wikidata` provenance and skips the gate (Wikipedia's biased prose is
+deliberately excluded — we ground on the triples). **`/openalex`** and **`/arxiv`** return papers by
+**DOI / arXiv-ID**, and a `/fact` from a paper **auto-creates a SOURCES-1 `BibEntry`** — the fact and a
+real bibliography entry land together.
 
-### Astronomy formulas + math substrate
+### Triangulation — the cross-source gate
 
-Deterministic, Earth/Sun-tested formulas — `kepler_period`, `surface_gravity`, `escape_velocity`,
-`insolation`, `synodic_period`, `hill_sphere`, `roche_limit`, … — plus a scientific substrate (`sqrt pow
-exp ln sin cos tan atan2 hypot …`). They **compose with the World readers**:
-**`/calc world.star_mass world.au kepler_period`** recomputes *this* system's year from its own facts.
+**`/triangulate <claim>`** gathers evidence from the structured sources concurrently and has the model
+judge **each source** `SUPPORTS | CONTRADICTS | SILENT` — judging *independent evidence*, not its own
+output. With **`research.triangulate_gate: true`**, triangulation becomes the automatic `/fact` gate,
+**replacing** the single-source self-check: the decision to commit is now independent sources voting.
 
 ### Dependencies & compatibility
 
-**No new runtime crates, no network** (in-tree Bund VM + read-only `active_store()` over the on-disk
-World JSON). New provenance detail `world:<path>` on the existing `computed` origin — no schema change.
+**No new runtime crates** (all three sources reuse the 1.5.2 `reqwest`; all keyless). New config
+`research.wikidata` / `research.scholarly` / `research.triangulate_gate`; new provenance origins
+`wikidata` / `openalex` / `arxiv`. No new system books, no new `NodeKind`.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

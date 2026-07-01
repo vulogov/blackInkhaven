@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Proposed (track) — **R3-C `/calc` and R3-D folder import brought forward, shipped 1.5.2** |
+| **Status** | **R3-A / R3-B / R3-E shipped 1.5.5** · R3-C `/calc` + R3-D folder import brought forward (1.5.2) · R3-C `/world` display + R3-D Zotero/folder-watch open |
 | **Builds on** | RESRCH-2 (`/web`, `/import`, provenance, the source-retrieval pipeline) |
 | **Theme** | Where RESRCH-2 added retrieval *mechanisms* (web, documents), RESRCH-3 adds **authoritative, verifiable sources** — each with a dedicated `/` command, an origin tag, and a place on the trust ladder |
 
