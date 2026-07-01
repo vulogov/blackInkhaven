@@ -32,6 +32,50 @@ pub(super) fn border_style(app: &ResearchApp, pane: Focus) -> Style {
     }
 }
 
+/// UX-P2 — the trust-tier badge for a chat turn (label + colour), derived from
+/// its provenance-bearing fields. `None` for a command's own output.
+fn turn_badge(turn: &super::chat::ChatTurn) -> Option<(String, Style)> {
+    let tag = |txt: String, c: Color| Some((format!("[{txt}]"), Style::new().fg(c)));
+    if turn.computed {
+        return tag("computed".into(), Color::Cyan);
+    }
+    if turn.simulation {
+        return tag("simulation".into(), Color::Green);
+    }
+    if let Some(qid) = &turn.wikidata {
+        return tag(format!("◆ {qid}"), Color::Cyan);
+    }
+    if let Some(p) = &turn.paper {
+        return tag(format!("§ {}", p.source), Color::Magenta);
+    }
+    if turn.web_grounded {
+        return tag("⚠ web".into(), Color::Yellow);
+    }
+    if !turn.sources.is_empty() {
+        return tag("document".into(), Color::Blue);
+    }
+    // A model answer to a plain question — not a command's own output.
+    if !turn.response.is_empty() && !turn.prompt.starts_with('/') {
+        return Some(("[? model]".to_string(), Style::new().dim()));
+    }
+    None
+}
+
+/// UX-P2 — the Facts-tree source-tier glyph + colour for a provenance origin.
+/// `None` for origins with no meaningful tier (e.g. `manual`).
+fn provenance_tier_glyph(origin: &str) -> Option<(&'static str, Color)> {
+    match origin {
+        "computed" | "simulation" => Some(("≡", Color::Green)), // deterministic
+        "wikidata" => Some(("◆", Color::Cyan)),                 // structured
+        "openalex" | "arxiv" => Some(("§", Color::Magenta)),    // scholarly
+        "web" => Some(("◇", Color::Yellow)),                    // web prose
+        "document" | "library" => Some(("▪", Color::Blue)),     // imported
+        "promoted" => Some(("↑", Color::Blue)),
+        "model" => Some(("·", Color::DarkGray)),                // closed-world
+        _ => None,
+    }
+}
+
 /// RE-P5 — colour for a `/factcheck` verdict glyph in the Facts tree.
 fn verdict_style(level: super::verdicts::Level) -> Style {
     use super::verdicts::Level;
@@ -100,7 +144,7 @@ fn render_help(frame: &mut Frame, app: &ResearchApp, area: Rect) {
         Line::from(""),
         Line::from(Span::styled("  Query prompt", Style::new().fg(app.theme.ai_scope_fg).bold())),
         Line::from("    Enter send        Alt+Enter newline   ↑↓ history (at edges)"),
-        Line::from("    ←→ Home/End edit  Esc clear / defocus  Tab complete /goto·→ path"),
+        Line::from("    ←→ Home/End edit  Esc clear/defocus  Tab complete /command·path (hints below)"),
         Line::from(""),
         Line::from(Span::styled("  Chat", Style::new().fg(app.theme.ai_scope_fg).bold())),
         Line::from("    j/k g/G scroll    Ctrl+F search (n/N matches)"),
@@ -194,24 +238,27 @@ fn render_facts_tree(frame: &mut Frame, app: &ResearchApp, area: Rect) {
             };
             let pin = if app.pinned_nodes.contains(&row.id) { "⬡ " } else { "" };
             let indent = "  ".repeat(row.depth);
-            // RE-P5 — a `/factcheck` verdict glyph (✓ / ? / ✗), themed by severity.
-            let verdict = app.fact_verdicts.level_for(row.id);
             let label = format!("{indent}{fold}{pin}{title}");
-            if i == cursor {
-                let mut spans: Vec<Span> = Vec::new();
-                if let Some(v) = verdict {
-                    spans.push(Span::styled(format!("{} ", v.glyph()), verdict_style(v)));
+            let mut spans: Vec<Span> = Vec::new();
+            // UX-P2 — a permanent provenance-tier glyph (source trust).
+            if let Some(rec) = app.fact_provenance.for_node(&row.id.to_string()) {
+                if let Some((g, c)) = provenance_tier_glyph(&rec.origin) {
+                    spans.push(Span::styled(g.to_string(), Style::new().fg(c)));
                 }
-                spans.push(Span::styled(label, Style::new().bold().reversed()));
-                lines.push(Line::from(spans));
-            } else if let Some(v) = verdict {
-                lines.push(Line::from(vec![
-                    Span::styled(format!("{} ", v.glyph()), verdict_style(v)),
-                    Span::raw(label),
-                ]));
-            } else {
-                lines.push(Line::from(label));
             }
+            // RE-P5 — a `/factcheck` verdict glyph (✓ / ? / ✗), themed by severity.
+            if let Some(v) = app.fact_verdicts.level_for(row.id) {
+                spans.push(Span::styled(v.glyph().to_string(), verdict_style(v)));
+            }
+            if !spans.is_empty() {
+                spans.push(Span::raw(" "));
+            }
+            if i == cursor {
+                spans.push(Span::styled(label, Style::new().bold().reversed()));
+            } else {
+                spans.push(Span::raw(label));
+            }
+            lines.push(Line::from(spans));
         }
         frame.render_widget(Paragraph::new(Text::from(lines)), inner);
     }
@@ -280,30 +327,30 @@ fn render_ai_chat(frame: &mut Frame, app: &ResearchApp, area: Rect) {
         None => (None, inner),
     };
 
-    // Build the chat lines as `(text, kind)` so query and response render in
-    // distinct colours.
-    let mut rows: Vec<(String, RowKind)> = Vec::new();
+    // Build the chat lines as `(text, kind, badge)` so query and response render
+    // in distinct colours; the header carries an optional trust-tier badge (UX-P2).
+    let mut rows: Vec<(String, RowKind, Option<(String, Style)>)> = Vec::new();
     for (i, turn) in app.chat_history.iter().enumerate() {
         if i > 0 {
-            rows.push((String::new(), RowKind::Plain));
+            rows.push((String::new(), RowKind::Plain, None));
         }
-        rows.push((format!("❯ query {}", i + 1), RowKind::Header));
+        rows.push((format!("❯ query {}", i + 1), RowKind::Header, turn_badge(turn)));
         for l in turn.prompt.split('\n') {
-            rows.push((l.to_string(), RowKind::Prompt));
+            rows.push((l.to_string(), RowKind::Prompt, None));
         }
-        rows.push((String::new(), RowKind::Plain));
+        rows.push((String::new(), RowKind::Plain, None));
         for l in turn.response.split('\n') {
-            rows.push((l.to_string(), RowKind::Response));
+            rows.push((l.to_string(), RowKind::Response, None));
         }
         if turn.streaming {
-            rows.push(("▌".to_string(), RowKind::Plain));
+            rows.push(("▌".to_string(), RowKind::Plain, None));
         }
     }
 
     // G8 — match lines (case-insensitive) and the current ordinal.
     let query = app.chat_search.as_ref().map(|s| s.query.to_lowercase()).filter(|q| !q.is_empty());
     let match_lines: Vec<usize> = match &query {
-        Some(q) => rows.iter().enumerate().filter(|(_, (t, _))| t.to_lowercase().contains(q)).map(|(i, _)| i).collect(),
+        Some(q) => rows.iter().enumerate().filter(|(_, (t, _, _))| t.to_lowercase().contains(q)).map(|(i, _)| i).collect(),
         None => Vec::new(),
     };
     let current_line: Option<usize> = if match_lines.is_empty() {
@@ -318,7 +365,7 @@ fn render_ai_chat(frame: &mut Frame, app: &ResearchApp, area: Rect) {
     let lines: Vec<Line> = rows
         .iter()
         .enumerate()
-        .map(|(i, (text, kind))| {
+        .map(|(i, (text, kind, badge))| {
             if let (Some(q), true) = (&query, match_lines.contains(&i)) {
                 highlight_line(app, text, q, current_line == Some(i))
             } else {
@@ -327,7 +374,14 @@ fn render_ai_chat(frame: &mut Frame, app: &ResearchApp, area: Rect) {
                     RowKind::Prompt => accent,
                     RowKind::Response | RowKind::Plain => Style::new().fg(app.theme.pane_fg),
                 };
-                Line::from(Span::styled(text.clone(), style))
+                match badge {
+                    Some((label, bstyle)) => Line::from(vec![
+                        Span::styled(text.clone(), style),
+                        Span::raw("  "),
+                        Span::styled(label.clone(), *bstyle),
+                    ]),
+                    None => Line::from(Span::styled(text.clone(), style)),
+                }
             }
         })
         .collect();
@@ -335,7 +389,7 @@ fn render_ai_chat(frame: &mut Frame, app: &ResearchApp, area: Rect) {
     // Scroll in WRAPPED (visual) rows — the pane word-wraps, so a logical-line
     // count under-measures the height and bottom-anchoring would cut the end.
     let width = content.width as usize;
-    let wrapped: Vec<usize> = rows.iter().map(|(t, _)| wrapped_rows(t, width)).collect();
+    let wrapped: Vec<usize> = rows.iter().map(|(t, _, _)| wrapped_rows(t, width)).collect();
     let total_visual: usize = wrapped.iter().sum();
     let height = content.height as usize;
     let max_scroll = total_visual.saturating_sub(height);
@@ -503,13 +557,27 @@ fn render_confirmation(frame: &mut Frame, app: &ResearchApp, area: Rect) {
 }
 
 fn render_hints(frame: &mut Frame, app: &ResearchApp, area: Rect) {
+    // UX-P1 — while typing a `/command`, the hints bar tracks the input: show
+    // matching command names, or the recognised command's usage + summary.
+    if matches!(app.focus, Focus::QueryPrompt) {
+        let input = app.query_text();
+        if input.trim_start().starts_with('/') {
+            if let Some(hint) = super::command::hint_for(&input) {
+                frame.render_widget(
+                    Paragraph::new(format!(" {hint}")).style(Style::new().fg(app.theme.ai_scope_fg)),
+                    area,
+                );
+                return;
+            }
+        }
+    }
     // G11 — context-sensitive per focus (RFC §20).
     let hint = match app.focus {
         Focus::FactsTree => {
             " n:fact c/s:chap/sub R:rename -/D:del K/J:move y/x/p:copy/cut/paste Ctrl+P:pin Tab:chat"
         }
         Focus::QueryPrompt => {
-            " ⏎ send · Alt+⏎ newline · ←→↑↓ edit · F10 RAG · Ctrl+B h help · /fact /diff /verify /factcheck …"
+            " ⏎ send · Alt+⏎ newline · Tab: complete /command·path · F10 RAG · Ctrl+B h help · type / for commands"
         }
         Focus::AiChat => " Tab:query  Ctrl+F:search  j/k:scroll  g/G:top/bottom  ?:help",
         Focus::ConfirmationOverlay => " Tab:field  Ctrl+S / Ctrl+Enter:confirm  Esc:discard",
@@ -528,16 +596,25 @@ fn render_query_prompt(frame: &mut Frame, app: &ResearchApp, area: Rect) {
 }
 
 fn render_status_bar(frame: &mut Frame, app: &ResearchApp, area: Rect) {
+    // UX-P3 — a braille spinner + elapsed seconds while an async op is in flight.
+    let spin = match app.async_started {
+        Some(t) => {
+            const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+            let f = FRAMES[app.spin_tick % FRAMES.len()];
+            format!("{f} ({}s) ", t.elapsed().as_secs())
+        }
+        None => String::new(),
+    };
     // A transient message overrides the middle segments (RFC §21).
     if let Some(msg) = &app.status_message {
-        frame.render_widget(Paragraph::new(format!("  {msg}")).style(Style::new().dim()), area);
+        frame.render_widget(Paragraph::new(format!("  {spin}{msg}")).style(Style::new().dim()), area);
         return;
     }
     // R2-E — `$` when every turn was priced from real provider token usage,
     // `~$` once any turn fell back to the char-length estimate.
     let cost_mark = if app.session_cost_exact { "$" } else { "~$" };
     let mut text = format!(
-        "  [RAG: {}]  [{cost_mark}{:.3}]",
+        "  {spin}[RAG: {}]  [{cost_mark}{:.3}]",
         app.thread.rag_mode.label(),
         app.session_cost
     );
