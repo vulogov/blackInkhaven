@@ -453,6 +453,11 @@ fact/note insertions, pinned nodes, and RAG mode all persist and **resume** exac
   ◇ web · ▪ imported · · model), so the trust ladder is legible at a glance.
 - **Async liveness.** A braille **spinner + elapsed timer** appears in the status bar whenever a fetch,
   stream, or gate is in flight (`⠙ (3s) Querying Wikidata…`).
+- **A richer confirmation.** When the triangulation gate or fact-check runs, the confirmation overlay
+  shows the **per-source verdict** (green `SUPPORTS` / red `CONTRADICTS` / dim `SILENT`, with the
+  `Agreement: n/m` tally) instead of a status flash; the near-duplicate guard shows the **similar fact's
+  text** beside the pending one; and the location row previews the exact **`will record: <tier> ·
+  <citation>`** provenance, with Title/Body char counts.
 
 ### Headless batch research (1.5.6)
 

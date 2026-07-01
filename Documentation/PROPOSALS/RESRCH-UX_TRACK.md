@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | **UX-P1/P2/P3 shipped 1.5.6-dev**; UX-P4/P5 open |
+| **Status** | **UX-P1/P2/P3/P4 shipped 1.5.6-dev**; UX-P5 open |
 | **Builds on** | RESRCH-1..4 (the Research Assistant TUI, `inkhaven research`) |
 | **Theme** | The assistant grew a lot of *capability* (~24 `/commands`, five source tiers, a trust ladder, triangulation gate) but the **UI didn't keep pace**. The features are powerful yet **undiscoverable and invisible**. This track makes the capability *legible* — no new research capability, pure experience. |
 
@@ -41,7 +41,7 @@ Each is shippable on its own; all are rendering / input changes with **no new cr
 | **UX-P1 — Command palette + live hints** | When the prompt begins with `/` and the cursor is in the command word, `Tab` (and/or a live overlay) offers a **filtered list of commands** with one-line descriptions + arg hints; arrow-select, narrow-as-you-type, Enter completes. Path completion (existing) still fires once past the command word. The **hints bar** becomes context-sensitive: typing `/web ` shows `/web [--ingest|--chat] <query>`. A `commands()` table (name → summary → usage) is the single source, also feeding `Ctrl+B h`. The biggest single win. |
 | **UX-P2 — Trust made visible** | A **source-tier badge** on each chat turn — a themed `Span` derived from the turn's provenance fields (`[computed]` `[◆ Q937]` `[§ arxiv]` `[⚠ web]` `[? model]`). A **permanent trust glyph** in the Facts tree by each fact's recorded provenance origin (reuse the verdict-glyph render + the provenance sidecar), so the trust ladder is legible at a glance. |
 | **UX-P3 — Async liveness** | A **braille spinner + elapsed seconds** in the status bar whenever any async op is in flight (`poll_*` states), naming what's running and that `Esc` cancels. Background ops (folder re-import on launch, `--batch`) emit a transient line instead of silence. |
-| **UX-P4 — Richer confirmation overlay** | Render the **triangulation / fact-check verdict** in the overlay (per-source `SUPPORTS`/`CONTRADICTS`/`SILENT`, coloured) instead of a status flash; show the **near-duplicate's text** beside the pending fact when the dedup guard fires; show the exact **provenance tier + citation** that will be recorded, with field labels + a Title/Body active-field cue. |
+| **UX-P4 — Richer confirmation overlay** | Render the **triangulation / fact-check verdict** in the overlay (per-source `SUPPORTS`/`CONTRADICTS`/`SILENT`, coloured) instead of a status flash; show the **near-duplicate's text** beside the pending fact when the dedup guard fires; show the exact **provenance tier + citation** that will be recorded, with field labels + a Title/Body active-field cue. **✅ Shipped 1.5.6** — `ConfirmationState.fc_detail`/`dup_body`; an evidence panel splits the overlay when a verdict/dup is present (`evidence_line_style` colours each line); the location row shows `will record: <origin> · <detail>`; Title/Body labels carry char counts. |
 | **UX-P5 — Layout & readability** *(stretch)* | Live **split resize** (widen/narrow tree vs chat) + **pane zoom** (full-screen chat or tree); light **markdown** styling in responses (bold/bullets/code via `Span`); **turn separators** and a **"▼ N more"** scroll affordance; a **yank** key for the last response / selected fact. |
 
 ## Recommended first cut (for 1.5.6) — **shipped**

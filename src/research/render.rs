@@ -61,6 +61,25 @@ fn turn_badge(turn: &super::chat::ChatTurn) -> Option<(String, Style)> {
     None
 }
 
+/// UX-P4 — colour an evidence line by its verdict keyword (per-source vote /
+/// fact-check verdict) in the confirmation overlay.
+fn evidence_line_style(line: &str) -> Style {
+    let u = line.to_ascii_uppercase();
+    // The agreement summary line ("Agreement: n/m support") is checked first —
+    // it contains the word "support" but shouldn't read as a per-source vote.
+    if u.trim_start().starts_with("AGREEMENT") {
+        Style::new().bold()
+    } else if u.contains("CONTRADICT") || u.contains("INACCURATE") {
+        Style::new().fg(Color::Red)
+    } else if u.contains("DUBIOUS") {
+        Style::new().fg(Color::Yellow)
+    } else if u.contains("SUPPORT") || u.contains("ACCURATE") {
+        Style::new().fg(Color::Green)
+    } else {
+        Style::new().dim()
+    }
+}
+
 /// UX-P2 — the Facts-tree source-tier glyph + colour for a provenance origin.
 /// `None` for origins with no meaningful tier (e.g. `manual`).
 fn provenance_tier_glyph(origin: &str) -> Option<(&'static str, Color)> {
@@ -490,7 +509,10 @@ fn render_confirmation(frame: &mut Frame, app: &ResearchApp, area: Rect) {
     use super::app::ConfirmField;
     let Some(c) = &app.confirmation else { return };
 
-    let h = (area.height as i16 / 2).clamp(8, 16) as u16;
+    // UX-P4 — give the overlay more room when an evidence panel is shown.
+    let has_evidence = c.fc_detail.is_some() || c.dup_body.is_some();
+    let max_h = if has_evidence { 22 } else { 16 };
+    let h = (area.height as i16 * 6 / 10).clamp(8, max_h) as u16;
     let overlay = Rect {
         x: area.x,
         y: area.y + area.height.saturating_sub(h),
@@ -513,31 +535,63 @@ fn render_confirmation(frame: &mut Frame, app: &ResearchApp, area: Rect) {
         Constraint::Length(1), // Title label
         Constraint::Length(1), // Title field
         Constraint::Length(1), // separator
-        Constraint::Fill(1),   // Body field
-        Constraint::Length(1), // path
+        Constraint::Fill(1),   // Body + (optional) evidence panel
+        Constraint::Length(1), // path + provenance preview
         Constraint::Length(1), // action bar
     ])
     .split(inner);
 
+    // UX-P4 — field labels carry a char count; the active field is bold.
     let title_focused = c.field == ConfirmField::Title;
+    let title_chars = c.title.lines().join(" ").chars().count();
+    let body_chars = c.body.lines().join("\n").chars().count();
     frame.render_widget(
-        Paragraph::new(Span::styled(
-            "Title:",
-            if title_focused { Style::new().bold() } else { Style::new().dim() },
-        )),
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                format!("Title ({title_chars})"),
+                if title_focused { Style::new().bold() } else { Style::new().dim() },
+            ),
+            Span::styled(
+                format!("   ·   Body ({body_chars})"),
+                if title_focused { Style::new().dim() } else { Style::new().bold() },
+            ),
+        ])),
         parts[0],
     );
     frame.render_widget(&c.title, parts[1]);
     frame.render_widget(Paragraph::new(Span::styled("─".repeat(inner.width as usize), Style::new().dim())), parts[2]);
-    frame.render_widget(&c.body, parts[3]);
-    // Path + source (provenance, T-P3) on the location row.
-    let src = if c.book == super::extract::TargetBook::Facts && !c.prov.origin.is_empty() {
-        format!("   · src: {}", c.prov.origin)
+
+    // UX-P4 — when a verdict / near-duplicate is present, split the middle area
+    // into the Body field (top) and an evidence panel (bottom) so the reasoning
+    // is on-screen, not a status flash.
+    let evidence = c.fc_detail.as_deref().filter(|s| !s.trim().is_empty());
+    if evidence.is_some() || c.dup_body.is_some() {
+        let mid = Layout::vertical([Constraint::Fill(1), Constraint::Fill(1)]).split(parts[3]);
+        frame.render_widget(&c.body, mid[0]);
+        let mut lines: Vec<Line> = Vec::new();
+        if let Some(detail) = evidence {
+            lines.push(Line::from(Span::styled("── sources ──", Style::new().dim())));
+            for l in detail.lines() {
+                lines.push(Line::from(Span::styled(l.to_string(), evidence_line_style(l))));
+            }
+        } else if let Some(dup) = &c.dup_body {
+            lines.push(Line::from(Span::styled("── similar fact already in the corpus ──", Style::new().dim())));
+            lines.push(Line::from(Span::styled(dup.clone(), Style::new().fg(app.theme.pane_fg).dim())));
+        }
+        frame.render_widget(Paragraph::new(Text::from(lines)).wrap(Wrap { trim: true }), mid[1]);
+    } else {
+        frame.render_widget(&c.body, parts[3]);
+    }
+
+    // UX-P4 — the exact provenance tier + citation that will be recorded.
+    let prov = if c.book == super::extract::TargetBook::Facts && !c.prov.origin.is_empty() {
+        let d = if c.prov.detail.is_empty() { String::new() } else { format!(" · {}", c.prov.detail) };
+        format!("   will record: {}{}", c.prov.origin, d)
     } else {
         String::new()
     };
     frame.render_widget(
-        Paragraph::new(Span::styled(format!("→ {path}{src}"), Style::new().dim())),
+        Paragraph::new(Span::styled(format!("→ {path}{prov}"), Style::new().dim())),
         parts[4],
     );
     // The action bar — or a near-duplicate warning (T-P4) / fact-check verdict
@@ -627,4 +681,25 @@ fn render_status_bar(frame: &mut Frame, app: &ResearchApp, area: Rect) {
     }
     text.push_str("  [?:help  q:quit]");
     frame.render_widget(Paragraph::new(text).style(Style::new().dim()), area);
+}
+
+#[cfg(test)]
+mod ux_tests {
+    use super::*;
+
+    #[test]
+    fn evidence_line_colours() {
+        assert_eq!(evidence_line_style("Wikidata: CONTRADICTS — differs").fg, Some(Color::Red));
+        assert_eq!(evidence_line_style("arXiv: SUPPORTS — consistent").fg, Some(Color::Green));
+        assert_eq!(evidence_line_style("verdict: DUBIOUS").fg, Some(Color::Yellow));
+        assert!(evidence_line_style("Agreement: 2/3 support").add_modifier.contains(ratatui::style::Modifier::BOLD));
+    }
+
+    #[test]
+    fn tier_glyph_mapping() {
+        assert_eq!(provenance_tier_glyph("wikidata").map(|(g, _)| g), Some("◆"));
+        assert_eq!(provenance_tier_glyph("arxiv").map(|(g, _)| g), Some("§"));
+        assert_eq!(provenance_tier_glyph("computed").map(|(g, _)| g), Some("≡"));
+        assert!(provenance_tier_glyph("manual").is_none());
+    }
 }
