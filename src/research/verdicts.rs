@@ -67,25 +67,47 @@ pub(super) struct Verdicts {
     pub facts: BTreeMap<String, Verdict>,
 }
 
+/// The `/factcheck` verdict sidecar.
+const VERDICTS_FILE: &str = "fact-verdicts.json";
+/// UD-P4 — the `/undisputed` common-sense verdict sidecar (separate — undisputed
+/// facts never carry a `/factcheck` verdict, and the tree renders them via `※`).
+const UNDISPUTED_FILE: &str = "fact-undisputed.json";
+
 impl Verdicts {
-    fn path(layout: &ProjectLayout) -> std::path::PathBuf {
-        layout.root.join(".inkhaven").join("fact-verdicts.json")
+    fn path(layout: &ProjectLayout, file: &str) -> std::path::PathBuf {
+        layout.root.join(".inkhaven").join(file)
     }
 
-    pub(super) fn load(layout: &ProjectLayout) -> Verdicts {
-        match std::fs::read_to_string(Verdicts::path(layout)) {
+    fn load_file(layout: &ProjectLayout, file: &str) -> Verdicts {
+        match std::fs::read_to_string(Verdicts::path(layout, file)) {
             Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
             Err(_) => Verdicts::default(),
         }
     }
 
-    pub(super) fn save(&self, layout: &ProjectLayout) -> Result<()> {
+    fn save_file(&self, layout: &ProjectLayout, file: &str) -> Result<()> {
         let dir = layout.root.join(".inkhaven");
         std::fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
         let json = serde_json::to_string_pretty(self).context("serialise verdicts")?;
-        crate::io_atomic::write(&Verdicts::path(layout), json.as_bytes())
-            .context("write fact-verdicts.json")?;
+        crate::io_atomic::write(&Verdicts::path(layout, file), json.as_bytes())
+            .with_context(|| format!("write {file}"))?;
         Ok(())
+    }
+
+    pub(super) fn load(layout: &ProjectLayout) -> Verdicts {
+        Verdicts::load_file(layout, VERDICTS_FILE)
+    }
+
+    pub(super) fn save(&self, layout: &ProjectLayout) -> Result<()> {
+        self.save_file(layout, VERDICTS_FILE)
+    }
+
+    pub(super) fn load_undisputed(layout: &ProjectLayout) -> Verdicts {
+        Verdicts::load_file(layout, UNDISPUTED_FILE)
+    }
+
+    pub(super) fn save_undisputed(&self, layout: &ProjectLayout) -> Result<()> {
+        self.save_file(layout, UNDISPUTED_FILE)
     }
 
     pub(super) fn level_for(&self, node_id: Uuid) -> Option<Level> {
@@ -97,11 +119,15 @@ impl Verdicts {
     }
 }
 
-/// Parse the truth-pass report into per-node verdicts. The report has one line
-/// per statement — `<n>. ACCURATE | DUBIOUS | INACCURATE — <reason>` — where the
-/// statement number `n` (1-based) indexes the ordered `fact_ids` passed to the
-/// truth calls. `now` stamps every parsed verdict.
-pub(super) fn parse_truth_report(report: &str, fact_ids: &[Uuid], now: &str) -> BTreeMap<String, Verdict> {
+/// Parse a numbered per-statement report into per-node verdicts. `level_of` maps
+/// the verdict word to a `Level`; the statement number `n` (1-based) indexes the
+/// ordered `fact_ids`. `now` stamps every verdict.
+fn parse_report(
+    report: &str,
+    fact_ids: &[Uuid],
+    now: &str,
+    level_of: impl Fn(&str) -> Option<Level>,
+) -> BTreeMap<String, Verdict> {
     let mut out = BTreeMap::new();
     for line in report.lines() {
         let line = line.trim();
@@ -111,10 +137,8 @@ pub(super) fn parse_truth_report(report: &str, fact_ids: &[Uuid], now: &str) -> 
             continue;
         }
         let rest = rest.trim();
-        // First whitespace-delimited token is the verdict word.
         let word = rest.split([' ', '\t', ':', '—', '-']).find(|s| !s.is_empty()).unwrap_or("");
-        let Some(level) = Level::parse(word) else { continue };
-        // Reason: text after the first em-dash / hyphen separator, if any.
+        let Some(level) = level_of(word) else { continue };
         let reason = rest
             .split_once('—')
             .or_else(|| rest.split_once(" - "))
@@ -126,6 +150,23 @@ pub(super) fn parse_truth_report(report: &str, fact_ids: &[Uuid], now: &str) -> 
         );
     }
     out
+}
+
+/// `/factcheck` truth-pass report → verdicts (`ACCURATE | DUBIOUS | INACCURATE`).
+pub(super) fn parse_truth_report(report: &str, fact_ids: &[Uuid], now: &str) -> BTreeMap<String, Verdict> {
+    parse_report(report, fact_ids, now, Level::parse)
+}
+
+/// UD-P4 — `/undisputed` common-sense report → verdicts, mapping
+/// `PLAUSIBLE → Accurate`, `ODD → Dubious`, `INCOHERENT → Inaccurate` so the
+/// tree can colour the `※` glyph by the common-sense result.
+pub(super) fn parse_undisputed_report(report: &str, fact_ids: &[Uuid], now: &str) -> BTreeMap<String, Verdict> {
+    parse_report(report, fact_ids, now, |word| match word.to_ascii_uppercase().as_str() {
+        "PLAUSIBLE" => Some(Level::Accurate),
+        "ODD" => Some(Level::Dubious),
+        "INCOHERENT" => Some(Level::Inaccurate),
+        _ => None,
+    })
 }
 
 #[cfg(test)]
@@ -159,5 +200,17 @@ mod tests {
         assert_eq!(Level::Accurate.glyph(), "✓");
         assert_eq!(Level::Dubious.glyph(), "?");
         assert_eq!(Level::Inaccurate.glyph(), "✗");
+    }
+
+    #[test]
+    fn undisputed_maps_common_sense_words() {
+        let ids: Vec<Uuid> = (0..3).map(|_| Uuid::new_v4()).collect();
+        let report = "1. PLAUSIBLE — fits the world\n2. ODD — a bit strange\n3. INCOHERENT — contradicts itself";
+        let m = parse_undisputed_report(report, &ids, "now");
+        assert_eq!(m[&ids[0].to_string()].level, Level::Accurate);
+        assert_eq!(m[&ids[1].to_string()].level, Level::Dubious);
+        assert_eq!(m[&ids[2].to_string()].level, Level::Inaccurate);
+        // Real-world verdict words are NOT accepted by the common-sense parser.
+        assert!(parse_undisputed_report("1. ACCURATE — x", &ids, "now").is_empty());
     }
 }
