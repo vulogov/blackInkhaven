@@ -196,7 +196,8 @@ editor's tag picker.)
   question: not "is this real?" but "does it make **internal common sense**?" Each is judged
   `PLAUSIBLE / ODD / INCOHERENT` **within its own fictional frame** — self-consistent, free of obvious
   contradiction — in your project language. It **never rewrites** anything; it just reports (with a
-  `✓N ?N ✗N` tally). Undisputed facts live *outside* the trust ladder — they're authorial axioms.
+  `✓N ?N ✗N` tally). After the pass, the tree **colours each `※` glyph** by its verdict (green plausible ·
+  yellow odd · red incoherent). Undisputed facts live *outside* the trust ladder — they're authorial axioms.
 
 ### Cost (1.5.3)
 
@@ -469,6 +470,15 @@ fact/note insertions, pinned nodes, and RAG mode all persist and **resume** exac
   ◇ web · ▪ imported · · model), so the trust ladder is legible at a glance.
 - **Async liveness.** A braille **spinner + elapsed timer** appears in the status bar whenever a fetch,
   stream, or gate is in flight (`⠙ (3s) Querying Wikidata…`).
+- **Quick-view a fact.** In the Facts tree, **`Enter`** on a fact opens a **scrollable modal** with its
+  full body (`j/k`/arrows scroll · `Y` copy · `Esc` close); `Enter` on a branch folds/expands it.
+- **Layout control.** **`<` / `>`** (in the tree or chat) resize the split; **`Ctrl+Z`** zooms the
+  focused pane full-screen (toggle). *(macOS note: `Ctrl+←/→` is Mission Control, so resize uses `<`/`>`.)*
+- **Copy to clipboard.** **`y`** in the chat copies the last response; **`Y`** in the tree copies the
+  selected fact's body. A dim **`▼ more`** marks the chat when you're scrolled up, and a rule separates
+  turns.
+- **Light markdown** in responses — **bold**, *italic*, `inline code`, headings, bullets and links are
+  styled inline, so structured answers (Wikidata triples, outlines) read more clearly.
 - **A richer confirmation.** When the triangulation gate or fact-check runs, the confirmation overlay
   shows the **per-source verdict** (green `SUPPORTS` / red `CONTRADICTS` / dim `SILENT`, with the
   `Agreement: n/m` tally) instead of a status flash; the near-duplicate guard shows the **similar fact's

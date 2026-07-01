@@ -21,42 +21,30 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.5.6 — Finish, Legibility & Fiction
+## Latest release · 1.5.7 — Research Assistant: comfort & completion
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.5.6.md`](Documentation/RELEASE_NOTES/1.5.6.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.5.7.md`](Documentation/RELEASE_NOTES/1.5.7.md)
 · Tracks: [`RESRCH-UX`](Documentation/PROPOSALS/RESRCH-UX_TRACK.md) ·
 [`RESRCH-UNDISPUTED`](Documentation/PROPOSALS/RESRCH-UNDISPUTED_TRACK.md)
 
-A large Research-Assistant release: it **finishes** the RESRCH-2/3/4 program, makes the accumulated power
-**legible**, and adds what a *fiction* corpus needs — **authorial facts** that are deliberately not
-real-world-checkable. **No new crates.**
+A focused follow-on to 1.5.6 that finishes the two Research-Assistant tracks it opened. **No new crates.**
 
-### Finishing the program
+### Layout & readability (RESRCH-UX P5)
 
-`/calc` gains climate/geography/economy words (`haversine`, `compound`, `logistic`, …), list reducers
-(`[ 1 2 3 ] sum`), and `calc.world.check`; **`/world`** browses your simulation's facts (with a
-recompile-from-`world.hjson` fallback); **`/import`** takes **`.bib`/`.json`** citations and
-`--sync <folder>` re-imports on change; **`--batch`** runs headless research to a Markdown report. This
-completes RESRCH-2/3/4.
+**`Enter`** on a fact opens a scrollable **quick-view** modal; **`<` / `>`** resize the split and
+**`Ctrl+Z`** zooms a pane; **`y`/`Y`** copy the last response / selected fact to the clipboard; a rule
+separates chat turns with a **`▼ more`** scroll cue; and responses render **light markdown** (bold,
+italic, `code`, headings, bullets, links).
 
-### Making it legible (RESRCH-UX)
+### Authorial-fact verdicts (RESRCH-UNDISPUTED P4)
 
-A **command palette** (type `/` + Tab) with live hints; **trust badges** on every chat turn and permanent
-**tier glyphs** in the Facts tree; an **async spinner + elapsed timer**; and a **richer confirmation
-overlay** that renders the triangulation verdict, the near-duplicate's text, and the exact provenance
-that will be recorded.
-
-### Guarding the fiction (RESRCH-UNDISPUTED)
-
-Press **`u`** to mark a Fact **undisputed** (a `※` glyph) — the author's creative invention. Undisputed
-facts are **excluded from `/factcheck`** (which reports the count); new **`/undisputed`** checks only
-those for **internal common sense** (`PLAUSIBLE/ODD/INCOHERENT`), never real-world truth, never rewriting.
+**`/undisputed`** now **colours each `※` glyph** in the tree by its common-sense verdict — green
+plausible · yellow odd · red incoherent — so a glance shows which authorial facts read cleanly.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** New command `/undisputed`; new provenance origin `simulation`; new sidecar
-`.inkhaven/research-sync.json`; new CLI flags `--sync/--batch/--auto-confirm/--confidence`. No new system
-books, no new `NodeKind`.
+**No new runtime crates** (yank reuses `arboard`; markdown reuses the editor's highlighter). New sidecar
+`.inkhaven/fact-undisputed.json`. With this, RESRCH-UX (P1–P5) and RESRCH-UNDISPUTED (P1–P4) are complete.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
