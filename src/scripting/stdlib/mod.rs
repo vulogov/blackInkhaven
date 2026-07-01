@@ -31,7 +31,7 @@ mod utopia;
 mod char_arc;
 mod theologian;
 mod myth;
-mod calc;
+pub(crate) mod calc;
 mod pdf;
 mod review;
 

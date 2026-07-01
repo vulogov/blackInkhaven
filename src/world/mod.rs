@@ -23,6 +23,7 @@
 // its re-exports exist before the phases that will consume them.
 #![allow(dead_code, unused_imports)]
 
+pub mod calc_read;
 pub mod compile;
 pub mod fact_check;
 pub mod fact_check_lang;

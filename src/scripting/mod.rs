@@ -574,6 +574,13 @@ pub fn eval(code: &str) -> Result<EvalOutput> {
 /// than `Value { … }`. Compound variants (list, map) go through
 /// rust_dynamic's `cast_value_to_json` and get pretty-printed —
 /// suitable for piping into `jq` or eyeballing the structure.
+/// R4-D — drain the World-fact paths read during the most recent `eval` (path,
+/// rendered value). `/calc` uses this for the source echo + `world:<path>`
+/// provenance on a derived `/fact`.
+pub fn take_world_reads() -> Vec<(String, String)> {
+    stdlib::calc::take_world_reads()
+}
+
 pub fn format_value(v: &Value) -> String {
     if let Ok(s) = v.clone().cast_string() {
         return s;
