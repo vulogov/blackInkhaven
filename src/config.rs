@@ -4011,6 +4011,35 @@ pub struct ResearchConfig {
     pub wikidata: WikidataConfig,
     /// RESRCH-3 (R3-B) — `research.scholarly` block for `/openalex` + `/arxiv`.
     pub scholarly: ScholarlyConfig,
+    /// RESRCH-GUTENBERG — `research.gutenberg` block for `/gutenberg`.
+    pub gutenberg: GutenbergConfig,
+}
+
+/// RESRCH-GUTENBERG — `research.gutenberg` block. `/gutenberg` searches the
+/// keyless **Gutendex** catalogue and ingests a public-domain book's plain text
+/// as a research source. `max_chars` bounds the embedded portion of a book.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GutenbergConfig {
+    /// Master switch for `/gutenberg` (keyless — on by default).
+    pub enabled: bool,
+    /// Base URL of the Gutendex API host (override for a mirror).
+    pub endpoint: String,
+    /// Max characters of a book's text to ingest (bounds embedding cost).
+    pub max_chars: usize,
+    /// Auto-create a SOURCES-1 `BibEntry` for an ingested book (PG-P3).
+    pub auto_cite: bool,
+}
+
+impl Default for GutenbergConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            endpoint: "https://gutendex.com".to_string(),
+            max_chars: 300_000,
+            auto_cite: true,
+        }
+    }
 }
 
 /// RESRCH-3 (R3-B) — `research.scholarly` block. `/openalex` and `/arxiv` are
@@ -4115,6 +4144,7 @@ impl Default for ResearchConfig {
             web: WebConfig::default(),
             wikidata: WikidataConfig::default(),
             scholarly: ScholarlyConfig::default(),
+            gutenberg: GutenbergConfig::default(),
         }
     }
 }
