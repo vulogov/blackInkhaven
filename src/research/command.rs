@@ -18,6 +18,9 @@ pub(super) enum Command {
     /// `/factcheck` — audit the whole Facts corpus for truth + mutual
     /// consistency (multi-call).
     FactCheck,
+    /// `/undisputed` — common-sense check of the authorial (undisputed) facts
+    /// (RESRCH-UNDISPUTED; read-only, never rewrites).
+    Undisputed,
     /// `/sources` — list each fact's recorded provenance (RESRCH-2.1).
     Sources,
     /// `/import [path]` — ingest a document as a research source, or list the
@@ -30,6 +33,8 @@ pub(super) enum Command {
     Web { ingest: Option<bool>, query: String },
     /// `/calc <expr>` — evaluate a deterministic Bund expression (R3-C).
     Calc(String),
+    /// `/world [layer]` — surface the project's World simulation facts (R3-C).
+    World(String),
     /// `/wikidata <query>` — fetch a Wikidata entity's structured claims (R3-A).
     Wikidata(String),
     /// `/openalex <query>` — fetch the top OpenAlex paper (R3-B).
@@ -55,6 +60,66 @@ pub(super) enum Command {
     Save(Option<String>),
     /// An unrecognised `/word`.
     Unknown(String),
+}
+
+/// RESRCH-UX (UX-P1) — one command's name, one-line summary, and usage. The
+/// single source for the command palette, the live hints bar, and `Ctrl+B h`.
+pub(super) struct CommandSpec {
+    pub name: &'static str,
+    pub summary: &'static str,
+    pub usage: &'static str,
+}
+
+/// Every `/command`, for completion + hints. Order = display order.
+pub(super) const SPECS: &[CommandSpec] = &[
+    CommandSpec { name: "fact", summary: "extract last response → Facts (confirm)", usage: "/fact \"…\" [→ path]" },
+    CommandSpec { name: "note", summary: "extract → Notes (speculative)", usage: "/note \"…\" [→ path]" },
+    CommandSpec { name: "goto", summary: "jump the tree to a node", usage: "/goto facts/path" },
+    CommandSpec { name: "diff", summary: "similar facts already in the corpus", usage: "/diff" },
+    CommandSpec { name: "verify", summary: "confidence-probe the last response", usage: "/verify" },
+    CommandSpec { name: "factcheck", summary: "audit the corpus (truth + consistency)", usage: "/factcheck" },
+    CommandSpec { name: "undisputed", summary: "common-sense check of authorial facts", usage: "/undisputed" },
+    CommandSpec { name: "whatswrong", summary: "explain a flagged fact (AI)", usage: "/whatswrong [facts/path]" },
+    CommandSpec { name: "sources", summary: "list each fact's provenance", usage: "/sources" },
+    CommandSpec { name: "import", summary: "ingest a file / folder / .bib / .json", usage: "/import [path]" },
+    CommandSpec { name: "forget", summary: "remove an imported source", usage: "/forget <name>" },
+    CommandSpec { name: "web", summary: "web search & fetch", usage: "/web [--ingest|--chat] <query>" },
+    CommandSpec { name: "wikidata", summary: "structured triples (Q-ID)", usage: "/wikidata <query>" },
+    CommandSpec { name: "openalex", summary: "scholarly paper (DOI)", usage: "/openalex <query>" },
+    CommandSpec { name: "arxiv", summary: "arXiv preprint", usage: "/arxiv <query>" },
+    CommandSpec { name: "triangulate", summary: "cross-check a claim across sources", usage: "/triangulate [claim]" },
+    CommandSpec { name: "calc", summary: "deterministic calc / units / world.get", usage: "/calc <expr>" },
+    CommandSpec { name: "world", summary: "your World simulation facts", usage: "/world [layer]" },
+    CommandSpec { name: "promote", summary: "turn a Note into a verified Fact", usage: "/promote [note] [→ path]" },
+    CommandSpec { name: "chain", summary: "sequential research pipeline", usage: "/chain a → b → c" },
+    CommandSpec { name: "rag", summary: "switch RAG mode", usage: "/rag [facts+full|facts|full]" },
+    CommandSpec { name: "clear", summary: "clear the chat window", usage: "/clear" },
+    CommandSpec { name: "save", summary: "save / rename the thread", usage: "/save [name]" },
+];
+
+/// The usage/summary hint for a fully-typed command word, or a list of matches
+/// while it's still being typed. `None` when the input isn't a `/command`.
+pub(super) fn hint_for(input: &str) -> Option<String> {
+    let body = input.trim_start().strip_prefix('/')?;
+    let (word, rest) = match body.split_once(char::is_whitespace) {
+        Some((w, r)) => (w, Some(r)),
+        None => (body, None),
+    };
+    let word_lc = word.to_ascii_lowercase();
+    // A completed command (there's a space after it) → show its usage + summary.
+    if rest.is_some() {
+        if let Some(s) = SPECS.iter().find(|s| s.name == word_lc) {
+            return Some(format!("{}  — {}", s.usage, s.summary));
+        }
+        return None;
+    }
+    // Still typing the command word → show matches.
+    let matches: Vec<&str> = SPECS.iter().map(|s| s.name).filter(|n| n.starts_with(&word_lc)).collect();
+    match matches.len() {
+        0 => Some(format!("/{word_lc} — unknown command (Ctrl+B h for the list)")),
+        1 => SPECS.iter().find(|s| s.name == matches[0]).map(|s| format!("{}  — {}", s.usage, s.summary)),
+        _ => Some(format!("{} commands: {}", matches.len(), matches.join(" · "))),
+    }
 }
 
 /// Split a command argument into its first quoted string and an optional
@@ -112,6 +177,7 @@ pub(super) fn parse(input: &str) -> Option<Command> {
         "diff" => Command::Diff,
         "verify" => Command::Verify,
         "factcheck" => Command::FactCheck,
+        "undisputed" => Command::Undisputed,
         "sources" => Command::Sources,
         "import" => Command::Import(if rest.is_empty() { None } else { Some(rest.to_string()) }),
         "forget" => Command::Forget(rest.to_string()),
@@ -127,6 +193,7 @@ pub(super) fn parse(input: &str) -> Option<Command> {
             Command::Web { ingest, query: q.to_string() }
         }
         "calc" => Command::Calc(rest.to_string()),
+        "world" => Command::World(rest.to_string()),
         "wikidata" => Command::Wikidata(rest.to_string()),
         "openalex" => Command::OpenAlex(rest.to_string()),
         "arxiv" => Command::Arxiv(rest.to_string()),
@@ -210,6 +277,7 @@ mod tests {
         assert_eq!(parse("/diff").unwrap(), Command::Diff);
         assert_eq!(parse("/verify").unwrap(), Command::Verify);
         assert_eq!(parse("/factcheck").unwrap(), Command::FactCheck);
+        assert_eq!(parse("/undisputed").unwrap(), Command::Undisputed);
         assert_eq!(parse("/sources").unwrap(), Command::Sources);
         assert_eq!(parse("/import /docs/rome.md").unwrap(), Command::Import(Some("/docs/rome.md".into())));
         assert_eq!(parse("/import").unwrap(), Command::Import(None));
@@ -227,6 +295,8 @@ mod tests {
             Command::Web { ingest: Some(false), query: "q".into() }
         );
         assert_eq!(parse("/calc 100 mi2km").unwrap(), Command::Calc("100 mi2km".into()));
+        assert_eq!(parse("/world Astronomy").unwrap(), Command::World("Astronomy".into()));
+        assert_eq!(parse("/world").unwrap(), Command::World(String::new()));
         assert_eq!(parse("/wikidata Rome").unwrap(), Command::Wikidata("Rome".into()));
         assert_eq!(parse("/openalex aqueduct").unwrap(), Command::OpenAlex("aqueduct".into()));
         assert_eq!(parse("/arxiv attention").unwrap(), Command::Arxiv("attention".into()));
@@ -259,5 +329,20 @@ mod tests {
     #[test]
     fn unknown_command() {
         assert_eq!(parse("/frobnicate x").unwrap(), Command::Unknown("frobnicate".into()));
+    }
+
+    #[test]
+    fn specs_all_parse_and_hint() {
+        for s in SPECS {
+            assert!(
+                !matches!(parse(&format!("/{}", s.name)), Some(Command::Unknown(_))),
+                "spec `{}` doesn't parse to a real command",
+                s.name
+            );
+        }
+        assert!(hint_for("/web ").unwrap().contains("query")); // completed → usage
+        assert!(hint_for("/wik").unwrap().to_lowercase().contains("wikidata")); // one match
+        assert!(hint_for("/w").unwrap().contains("commands")); // several matches
+        assert!(hint_for("plain text").is_none());
     }
 }

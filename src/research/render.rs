@@ -32,6 +32,69 @@ pub(super) fn border_style(app: &ResearchApp, pane: Focus) -> Style {
     }
 }
 
+/// UX-P2 — the trust-tier badge for a chat turn (label + colour), derived from
+/// its provenance-bearing fields. `None` for a command's own output.
+fn turn_badge(turn: &super::chat::ChatTurn) -> Option<(String, Style)> {
+    let tag = |txt: String, c: Color| Some((format!("[{txt}]"), Style::new().fg(c)));
+    if turn.computed {
+        return tag("computed".into(), Color::Cyan);
+    }
+    if turn.simulation {
+        return tag("simulation".into(), Color::Green);
+    }
+    if let Some(qid) = &turn.wikidata {
+        return tag(format!("◆ {qid}"), Color::Cyan);
+    }
+    if let Some(p) = &turn.paper {
+        return tag(format!("§ {}", p.source), Color::Magenta);
+    }
+    if turn.web_grounded {
+        return tag("⚠ web".into(), Color::Yellow);
+    }
+    if !turn.sources.is_empty() {
+        return tag("document".into(), Color::Blue);
+    }
+    // A model answer to a plain question — not a command's own output.
+    if !turn.response.is_empty() && !turn.prompt.starts_with('/') {
+        return Some(("[? model]".to_string(), Style::new().dim()));
+    }
+    None
+}
+
+/// UX-P4 — colour an evidence line by its verdict keyword (per-source vote /
+/// fact-check verdict) in the confirmation overlay.
+fn evidence_line_style(line: &str) -> Style {
+    let u = line.to_ascii_uppercase();
+    // The agreement summary line ("Agreement: n/m support") is checked first —
+    // it contains the word "support" but shouldn't read as a per-source vote.
+    if u.trim_start().starts_with("AGREEMENT") {
+        Style::new().bold()
+    } else if u.contains("CONTRADICT") || u.contains("INACCURATE") {
+        Style::new().fg(Color::Red)
+    } else if u.contains("DUBIOUS") {
+        Style::new().fg(Color::Yellow)
+    } else if u.contains("SUPPORT") || u.contains("ACCURATE") {
+        Style::new().fg(Color::Green)
+    } else {
+        Style::new().dim()
+    }
+}
+
+/// UX-P2 — the Facts-tree source-tier glyph + colour for a provenance origin.
+/// `None` for origins with no meaningful tier (e.g. `manual`).
+fn provenance_tier_glyph(origin: &str) -> Option<(&'static str, Color)> {
+    match origin {
+        "computed" | "simulation" => Some(("≡", Color::Green)), // deterministic
+        "wikidata" => Some(("◆", Color::Cyan)),                 // structured
+        "openalex" | "arxiv" => Some(("§", Color::Magenta)),    // scholarly
+        "web" => Some(("◇", Color::Yellow)),                    // web prose
+        "document" | "library" => Some(("▪", Color::Blue)),     // imported
+        "promoted" => Some(("↑", Color::Blue)),
+        "model" => Some(("·", Color::DarkGray)),                // closed-world
+        _ => None,
+    }
+}
+
 /// RE-P5 — colour for a `/factcheck` verdict glyph in the Facts tree.
 fn verdict_style(level: super::verdicts::Level) -> Style {
     use super::verdicts::Level;
@@ -97,10 +160,11 @@ fn render_help(frame: &mut Frame, app: &ResearchApp, area: Rect) {
         Line::from("    n new fact        R rename            c/s new chapter/subchapter"),
         Line::from("    - / D delete (¶/branch)               K/J move up/down"),
         Line::from("    y/x/p  copy / cut / paste across parents"),
+        Line::from("    u  toggle ※ undisputed (authorial — excluded from /factcheck)"),
         Line::from(""),
         Line::from(Span::styled("  Query prompt", Style::new().fg(app.theme.ai_scope_fg).bold())),
         Line::from("    Enter send        Alt+Enter newline   ↑↓ history (at edges)"),
-        Line::from("    ←→ Home/End edit  Esc clear / defocus  Tab complete /goto·→ path"),
+        Line::from("    ←→ Home/End edit  Esc clear/defocus  Tab complete /command·path (hints below)"),
         Line::from(""),
         Line::from(Span::styled("  Chat", Style::new().fg(app.theme.ai_scope_fg).bold())),
         Line::from("    j/k g/G scroll    Ctrl+F search (n/N matches)"),
@@ -112,15 +176,17 @@ fn render_help(frame: &mut Frame, app: &ResearchApp, area: Rect) {
         Line::from("    /diff                similar facts already in the corpus"),
         Line::from("    /verify              confidence-probe the last response"),
         Line::from("    /factcheck           audit the corpus (truth + consistency) → tree ✓?✗"),
+        Line::from("    /undisputed          common-sense check of ※ authorial facts (no rewrite)"),
         Line::from("    /whatswrong [path]   explain a fact flagged ✗/? (bare: selected fact)"),
         Line::from("    /sources             list each fact's recorded provenance"),
-        Line::from("    /import [path]        ingest a md/txt/pdf file or a folder (bare: list)"),
+        Line::from("    /import [path]        ingest md/txt/pdf, a folder, or .bib/.json (bare: list)"),
         Line::from("    /forget <name>       remove an imported source"),
         Line::from("    /web [--ingest] q    web search & fetch (chat+factcheck, or ingest)"),
         Line::from("    /wikidata <query>    structured Wikidata triples (Q-ID cited, gate-skipped)"),
         Line::from("    /openalex /arxiv q   scholarly papers (DOI/ID; /fact auto-cites to Sources)"),
         Line::from("    /triangulate [claim] cross-check a claim across the structured sources"),
         Line::from("    /calc <expr>         deterministic calc/units + world.get (→ /fact)"),
+        Line::from("    /world [layer]       your World simulation facts (origin=simulation)"),
         Line::from("    /promote [note] [→ p] turn a Note into a verified Fact"),
         Line::from("    /chain a → b → c     sequential research pipeline"),
         Line::from("    /rag /clear /save    switch RAG · clear chat · rename thread"),
@@ -193,24 +259,32 @@ fn render_facts_tree(frame: &mut Frame, app: &ResearchApp, area: Rect) {
             };
             let pin = if app.pinned_nodes.contains(&row.id) { "⬡ " } else { "" };
             let indent = "  ".repeat(row.depth);
-            // RE-P5 — a `/factcheck` verdict glyph (✓ / ? / ✗), themed by severity.
-            let verdict = app.fact_verdicts.level_for(row.id);
             let label = format!("{indent}{fold}{pin}{title}");
-            if i == cursor {
-                let mut spans: Vec<Span> = Vec::new();
-                if let Some(v) = verdict {
-                    spans.push(Span::styled(format!("{} ", v.glyph()), verdict_style(v)));
-                }
-                spans.push(Span::styled(label, Style::new().bold().reversed()));
-                lines.push(Line::from(spans));
-            } else if let Some(v) = verdict {
-                lines.push(Line::from(vec![
-                    Span::styled(format!("{} ", v.glyph()), verdict_style(v)),
-                    Span::raw(label),
-                ]));
-            } else {
-                lines.push(Line::from(label));
+            let mut spans: Vec<Span> = Vec::new();
+            // RESRCH-UNDISPUTED — an authorial `※` glyph for a `fact:undisputed`
+            // fact (outside the trust ladder; excluded from /factcheck).
+            if node.is_some_and(|n| n.tags.iter().any(|t| t == super::UNDISPUTED_TAG)) {
+                spans.push(Span::styled("※", Style::new().fg(Color::Magenta)));
             }
+            // UX-P2 — a permanent provenance-tier glyph (source trust).
+            if let Some(rec) = app.fact_provenance.for_node(&row.id.to_string()) {
+                if let Some((g, c)) = provenance_tier_glyph(&rec.origin) {
+                    spans.push(Span::styled(g.to_string(), Style::new().fg(c)));
+                }
+            }
+            // RE-P5 — a `/factcheck` verdict glyph (✓ / ? / ✗), themed by severity.
+            if let Some(v) = app.fact_verdicts.level_for(row.id) {
+                spans.push(Span::styled(v.glyph().to_string(), verdict_style(v)));
+            }
+            if !spans.is_empty() {
+                spans.push(Span::raw(" "));
+            }
+            if i == cursor {
+                spans.push(Span::styled(label, Style::new().bold().reversed()));
+            } else {
+                spans.push(Span::raw(label));
+            }
+            lines.push(Line::from(spans));
         }
         frame.render_widget(Paragraph::new(Text::from(lines)), inner);
     }
@@ -279,30 +353,30 @@ fn render_ai_chat(frame: &mut Frame, app: &ResearchApp, area: Rect) {
         None => (None, inner),
     };
 
-    // Build the chat lines as `(text, kind)` so query and response render in
-    // distinct colours.
-    let mut rows: Vec<(String, RowKind)> = Vec::new();
+    // Build the chat lines as `(text, kind, badge)` so query and response render
+    // in distinct colours; the header carries an optional trust-tier badge (UX-P2).
+    let mut rows: Vec<(String, RowKind, Option<(String, Style)>)> = Vec::new();
     for (i, turn) in app.chat_history.iter().enumerate() {
         if i > 0 {
-            rows.push((String::new(), RowKind::Plain));
+            rows.push((String::new(), RowKind::Plain, None));
         }
-        rows.push((format!("❯ query {}", i + 1), RowKind::Header));
+        rows.push((format!("❯ query {}", i + 1), RowKind::Header, turn_badge(turn)));
         for l in turn.prompt.split('\n') {
-            rows.push((l.to_string(), RowKind::Prompt));
+            rows.push((l.to_string(), RowKind::Prompt, None));
         }
-        rows.push((String::new(), RowKind::Plain));
+        rows.push((String::new(), RowKind::Plain, None));
         for l in turn.response.split('\n') {
-            rows.push((l.to_string(), RowKind::Response));
+            rows.push((l.to_string(), RowKind::Response, None));
         }
         if turn.streaming {
-            rows.push(("▌".to_string(), RowKind::Plain));
+            rows.push(("▌".to_string(), RowKind::Plain, None));
         }
     }
 
     // G8 — match lines (case-insensitive) and the current ordinal.
     let query = app.chat_search.as_ref().map(|s| s.query.to_lowercase()).filter(|q| !q.is_empty());
     let match_lines: Vec<usize> = match &query {
-        Some(q) => rows.iter().enumerate().filter(|(_, (t, _))| t.to_lowercase().contains(q)).map(|(i, _)| i).collect(),
+        Some(q) => rows.iter().enumerate().filter(|(_, (t, _, _))| t.to_lowercase().contains(q)).map(|(i, _)| i).collect(),
         None => Vec::new(),
     };
     let current_line: Option<usize> = if match_lines.is_empty() {
@@ -317,7 +391,7 @@ fn render_ai_chat(frame: &mut Frame, app: &ResearchApp, area: Rect) {
     let lines: Vec<Line> = rows
         .iter()
         .enumerate()
-        .map(|(i, (text, kind))| {
+        .map(|(i, (text, kind, badge))| {
             if let (Some(q), true) = (&query, match_lines.contains(&i)) {
                 highlight_line(app, text, q, current_line == Some(i))
             } else {
@@ -326,7 +400,14 @@ fn render_ai_chat(frame: &mut Frame, app: &ResearchApp, area: Rect) {
                     RowKind::Prompt => accent,
                     RowKind::Response | RowKind::Plain => Style::new().fg(app.theme.pane_fg),
                 };
-                Line::from(Span::styled(text.clone(), style))
+                match badge {
+                    Some((label, bstyle)) => Line::from(vec![
+                        Span::styled(text.clone(), style),
+                        Span::raw("  "),
+                        Span::styled(label.clone(), *bstyle),
+                    ]),
+                    None => Line::from(Span::styled(text.clone(), style)),
+                }
             }
         })
         .collect();
@@ -334,7 +415,7 @@ fn render_ai_chat(frame: &mut Frame, app: &ResearchApp, area: Rect) {
     // Scroll in WRAPPED (visual) rows — the pane word-wraps, so a logical-line
     // count under-measures the height and bottom-anchoring would cut the end.
     let width = content.width as usize;
-    let wrapped: Vec<usize> = rows.iter().map(|(t, _)| wrapped_rows(t, width)).collect();
+    let wrapped: Vec<usize> = rows.iter().map(|(t, _, _)| wrapped_rows(t, width)).collect();
     let total_visual: usize = wrapped.iter().sum();
     let height = content.height as usize;
     let max_scroll = total_visual.saturating_sub(height);
@@ -435,7 +516,10 @@ fn render_confirmation(frame: &mut Frame, app: &ResearchApp, area: Rect) {
     use super::app::ConfirmField;
     let Some(c) = &app.confirmation else { return };
 
-    let h = (area.height as i16 / 2).clamp(8, 16) as u16;
+    // UX-P4 — give the overlay more room when an evidence panel is shown.
+    let has_evidence = c.fc_detail.is_some() || c.dup_body.is_some();
+    let max_h = if has_evidence { 22 } else { 16 };
+    let h = (area.height as i16 * 6 / 10).clamp(8, max_h) as u16;
     let overlay = Rect {
         x: area.x,
         y: area.y + area.height.saturating_sub(h),
@@ -458,31 +542,63 @@ fn render_confirmation(frame: &mut Frame, app: &ResearchApp, area: Rect) {
         Constraint::Length(1), // Title label
         Constraint::Length(1), // Title field
         Constraint::Length(1), // separator
-        Constraint::Fill(1),   // Body field
-        Constraint::Length(1), // path
+        Constraint::Fill(1),   // Body + (optional) evidence panel
+        Constraint::Length(1), // path + provenance preview
         Constraint::Length(1), // action bar
     ])
     .split(inner);
 
+    // UX-P4 — field labels carry a char count; the active field is bold.
     let title_focused = c.field == ConfirmField::Title;
+    let title_chars = c.title.lines().join(" ").chars().count();
+    let body_chars = c.body.lines().join("\n").chars().count();
     frame.render_widget(
-        Paragraph::new(Span::styled(
-            "Title:",
-            if title_focused { Style::new().bold() } else { Style::new().dim() },
-        )),
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                format!("Title ({title_chars})"),
+                if title_focused { Style::new().bold() } else { Style::new().dim() },
+            ),
+            Span::styled(
+                format!("   ·   Body ({body_chars})"),
+                if title_focused { Style::new().dim() } else { Style::new().bold() },
+            ),
+        ])),
         parts[0],
     );
     frame.render_widget(&c.title, parts[1]);
     frame.render_widget(Paragraph::new(Span::styled("─".repeat(inner.width as usize), Style::new().dim())), parts[2]);
-    frame.render_widget(&c.body, parts[3]);
-    // Path + source (provenance, T-P3) on the location row.
-    let src = if c.book == super::extract::TargetBook::Facts && !c.prov.origin.is_empty() {
-        format!("   · src: {}", c.prov.origin)
+
+    // UX-P4 — when a verdict / near-duplicate is present, split the middle area
+    // into the Body field (top) and an evidence panel (bottom) so the reasoning
+    // is on-screen, not a status flash.
+    let evidence = c.fc_detail.as_deref().filter(|s| !s.trim().is_empty());
+    if evidence.is_some() || c.dup_body.is_some() {
+        let mid = Layout::vertical([Constraint::Fill(1), Constraint::Fill(1)]).split(parts[3]);
+        frame.render_widget(&c.body, mid[0]);
+        let mut lines: Vec<Line> = Vec::new();
+        if let Some(detail) = evidence {
+            lines.push(Line::from(Span::styled("── sources ──", Style::new().dim())));
+            for l in detail.lines() {
+                lines.push(Line::from(Span::styled(l.to_string(), evidence_line_style(l))));
+            }
+        } else if let Some(dup) = &c.dup_body {
+            lines.push(Line::from(Span::styled("── similar fact already in the corpus ──", Style::new().dim())));
+            lines.push(Line::from(Span::styled(dup.clone(), Style::new().fg(app.theme.pane_fg).dim())));
+        }
+        frame.render_widget(Paragraph::new(Text::from(lines)).wrap(Wrap { trim: true }), mid[1]);
+    } else {
+        frame.render_widget(&c.body, parts[3]);
+    }
+
+    // UX-P4 — the exact provenance tier + citation that will be recorded.
+    let prov = if c.book == super::extract::TargetBook::Facts && !c.prov.origin.is_empty() {
+        let d = if c.prov.detail.is_empty() { String::new() } else { format!(" · {}", c.prov.detail) };
+        format!("   will record: {}{}", c.prov.origin, d)
     } else {
         String::new()
     };
     frame.render_widget(
-        Paragraph::new(Span::styled(format!("→ {path}{src}"), Style::new().dim())),
+        Paragraph::new(Span::styled(format!("→ {path}{prov}"), Style::new().dim())),
         parts[4],
     );
     // The action bar — or a near-duplicate warning (T-P4) / fact-check verdict
@@ -502,13 +618,27 @@ fn render_confirmation(frame: &mut Frame, app: &ResearchApp, area: Rect) {
 }
 
 fn render_hints(frame: &mut Frame, app: &ResearchApp, area: Rect) {
+    // UX-P1 — while typing a `/command`, the hints bar tracks the input: show
+    // matching command names, or the recognised command's usage + summary.
+    if matches!(app.focus, Focus::QueryPrompt) {
+        let input = app.query_text();
+        if input.trim_start().starts_with('/') {
+            if let Some(hint) = super::command::hint_for(&input) {
+                frame.render_widget(
+                    Paragraph::new(format!(" {hint}")).style(Style::new().fg(app.theme.ai_scope_fg)),
+                    area,
+                );
+                return;
+            }
+        }
+    }
     // G11 — context-sensitive per focus (RFC §20).
     let hint = match app.focus {
         Focus::FactsTree => {
-            " n:fact c/s:chap/sub R:rename -/D:del K/J:move y/x/p:copy/cut/paste Ctrl+P:pin Tab:chat"
+            " n:fact c/s:chap/sub R:rename -/D:del K/J:move y/x/p:copy u:undisputed(※) Ctrl+P:pin Tab:chat"
         }
         Focus::QueryPrompt => {
-            " ⏎ send · Alt+⏎ newline · ←→↑↓ edit · F10 RAG · Ctrl+B h help · /fact /diff /verify /factcheck …"
+            " ⏎ send · Alt+⏎ newline · Tab: complete /command·path · F10 RAG · Ctrl+B h help · type / for commands"
         }
         Focus::AiChat => " Tab:query  Ctrl+F:search  j/k:scroll  g/G:top/bottom  ?:help",
         Focus::ConfirmationOverlay => " Tab:field  Ctrl+S / Ctrl+Enter:confirm  Esc:discard",
@@ -527,16 +657,25 @@ fn render_query_prompt(frame: &mut Frame, app: &ResearchApp, area: Rect) {
 }
 
 fn render_status_bar(frame: &mut Frame, app: &ResearchApp, area: Rect) {
+    // UX-P3 — a braille spinner + elapsed seconds while an async op is in flight.
+    let spin = match app.async_started {
+        Some(t) => {
+            const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+            let f = FRAMES[app.spin_tick % FRAMES.len()];
+            format!("{f} ({}s) ", t.elapsed().as_secs())
+        }
+        None => String::new(),
+    };
     // A transient message overrides the middle segments (RFC §21).
     if let Some(msg) = &app.status_message {
-        frame.render_widget(Paragraph::new(format!("  {msg}")).style(Style::new().dim()), area);
+        frame.render_widget(Paragraph::new(format!("  {spin}{msg}")).style(Style::new().dim()), area);
         return;
     }
     // R2-E — `$` when every turn was priced from real provider token usage,
     // `~$` once any turn fell back to the char-length estimate.
     let cost_mark = if app.session_cost_exact { "$" } else { "~$" };
     let mut text = format!(
-        "  [RAG: {}]  [{cost_mark}{:.3}]",
+        "  {spin}[RAG: {}]  [{cost_mark}{:.3}]",
         app.thread.rag_mode.label(),
         app.session_cost
     );
@@ -549,4 +688,25 @@ fn render_status_bar(frame: &mut Frame, app: &ResearchApp, area: Rect) {
     }
     text.push_str("  [?:help  q:quit]");
     frame.render_widget(Paragraph::new(text).style(Style::new().dim()), area);
+}
+
+#[cfg(test)]
+mod ux_tests {
+    use super::*;
+
+    #[test]
+    fn evidence_line_colours() {
+        assert_eq!(evidence_line_style("Wikidata: CONTRADICTS — differs").fg, Some(Color::Red));
+        assert_eq!(evidence_line_style("arXiv: SUPPORTS — consistent").fg, Some(Color::Green));
+        assert_eq!(evidence_line_style("verdict: DUBIOUS").fg, Some(Color::Yellow));
+        assert!(evidence_line_style("Agreement: 2/3 support").add_modifier.contains(ratatui::style::Modifier::BOLD));
+    }
+
+    #[test]
+    fn tier_glyph_mapping() {
+        assert_eq!(provenance_tier_glyph("wikidata").map(|(g, _)| g), Some("◆"));
+        assert_eq!(provenance_tier_glyph("arxiv").map(|(g, _)| g), Some("§"));
+        assert_eq!(provenance_tier_glyph("computed").map(|(g, _)| g), Some("≡"));
+        assert!(provenance_tier_glyph("manual").is_none());
+    }
 }

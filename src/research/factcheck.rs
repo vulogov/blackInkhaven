@@ -23,12 +23,20 @@ pub(super) struct FactEntry {
 /// How many facts go into one truth-check LLM call.
 pub(super) const TRUTH_CHUNK: usize = 8;
 
-/// Gather every paragraph under the Facts book as a `FactEntry` (non-empty).
-pub(super) fn gather_facts(store: &Store, h: &Hierarchy, book_id: Uuid) -> Vec<FactEntry> {
+/// Whether a node carries the authorial `fact:undisputed` tag (RESRCH-UNDISPUTED).
+fn is_undisputed(node: &crate::store::node::Node) -> bool {
+    node.tags.iter().any(|t| t == super::UNDISPUTED_TAG)
+}
+
+/// Gather Facts-book paragraphs as `FactEntry`s (non-empty). `undisputed`
+/// selects which set: `false` → the **disputed** facts (what `/factcheck`
+/// checks); `true` → the **undisputed** authorial facts (what `/undisputed`
+/// checks). RESRCH-UNDISPUTED — undisputed facts are excluded from `/factcheck`.
+fn gather(store: &Store, h: &Hierarchy, book_id: Uuid, undisputed: bool) -> Vec<FactEntry> {
     let mut out = Vec::new();
     for id in h.collect_subtree(book_id) {
         let Some(node) = h.get(id) else { continue };
-        if node.kind != NodeKind::Paragraph {
+        if node.kind != NodeKind::Paragraph || is_undisputed(node) != undisputed {
             continue;
         }
         let text = match store.get_content(id) {
@@ -41,6 +49,31 @@ pub(super) fn gather_facts(store: &Store, h: &Hierarchy, book_id: Uuid) -> Vec<F
         out.push(FactEntry { id, location: h.slug_path(node), text });
     }
     out
+}
+
+/// The disputed facts — what `/factcheck` audits (undisputed ones are excluded).
+pub(super) fn gather_facts(store: &Store, h: &Hierarchy, book_id: Uuid) -> Vec<FactEntry> {
+    gather(store, h, book_id, false)
+}
+
+/// The undisputed (authorial) facts — what `/undisputed` checks for common sense.
+pub(super) fn gather_undisputed(store: &Store, h: &Hierarchy, book_id: Uuid) -> Vec<FactEntry> {
+    gather(store, h, book_id, true)
+}
+
+/// RESRCH-UNDISPUTED — the `/undisputed` common-sense prompt. Frames the facts as
+/// deliberate fiction and checks only INTERNAL coherence, never real-world truth,
+/// and never proposes rewrites.
+pub(super) fn undisputed_system(language: &str) -> String {
+    format!(
+        "The following are statements from a WORK OF FICTION — the author's deliberate creative \
+         invention. Do NOT check them against real-world knowledge; they are not meant to be real. \
+         For EACH numbered statement, judge ONLY its internal common sense: is it self-consistent and \
+         plausible WITHIN its own fictional frame, free of obvious contradiction or nonsense? Respond \
+         with one line per statement, in this exact shape:\n\
+         <number>. PLAUSIBLE | ODD | INCOHERENT — <short reason>\n\
+         Never propose rewrites and never change the statements. Write the reasons in {language}."
+    )
 }
 
 /// The truth-check system prompt (per-statement accuracy verdicts).
