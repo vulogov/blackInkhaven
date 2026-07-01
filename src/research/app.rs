@@ -213,6 +213,9 @@ pub(crate) struct ResearchApp {
     /// RE-P5 — per-fact `/factcheck` verdicts (✓ / ? / ✗ glyphs in the tree;
     /// seed for `/whatswrong`). Loaded from the sidecar, refreshed each audit.
     pub(super) fact_verdicts: super::verdicts::Verdicts,
+    /// UX-P2 — per-fact provenance (source-tier glyph in the tree). Reloaded on
+    /// each `reload_hierarchy` so newly-inserted facts show their tier.
+    pub(super) fact_provenance: super::provenance::Provenance,
     /// Pinned Facts nodes (G4); RAG injection lands in R-P8.
     pub(super) pinned_nodes: Vec<Uuid>,
     /// The inline manual-entry overlay, when active (G7).
@@ -263,6 +266,10 @@ pub(crate) struct ResearchApp {
     fc_confirm: Option<(mpsc::UnboundedReceiver<StreamMsg>, String)>,
     /// The editable insertion confirmation overlay (G1/G2).
     pub(super) confirmation: Option<ConfirmationState>,
+    /// UX-P3 — spinner frame counter + when the current async op began (for the
+    /// status-bar spinner + elapsed timer while a fetch/stream is in flight).
+    pub(super) spin_tick: usize,
+    pub(super) async_started: Option<std::time::Instant>,
     /// Accumulated session cost estimate (USD).
     pub(super) session_cost: f64,
     /// R2-E — true while every turn so far was priced from real provider token
@@ -310,6 +317,7 @@ impl ResearchApp {
         let split_ratio = cfg.research.split_ratio;
         let theme = Theme::from_config(&cfg.theme);
         let fact_verdicts = super::verdicts::Verdicts::load(&layout);
+        let fact_provenance = super::provenance::Provenance::load(&layout);
         Ok(ResearchApp {
             layout,
             cfg,
@@ -319,6 +327,7 @@ impl ResearchApp {
             thread,
             facts_tree,
             fact_verdicts,
+            fact_provenance,
             pinned_nodes,
             manual: None,
             tree_input: None,
@@ -345,6 +354,8 @@ impl ResearchApp {
             pending_cite: None,
             fc_confirm: None,
             confirmation: None,
+            spin_tick: 0,
+            async_started: None,
             session_cost: 0.0,
             session_cost_exact: true,
             budget_warned: false,
@@ -363,6 +374,21 @@ impl ResearchApp {
         self.cfg.research.max_pinned_nodes.max(1)
     }
 
+    /// UX-P3 — is any async operation (stream / fetch / gate) in flight?
+    pub(super) fn is_busy(&self) -> bool {
+        self.stream_rx.is_some()
+            || self.extracting.is_some()
+            || self.verify_rx.is_some()
+            || self.chain.is_some()
+            || self.factcheck.is_some()
+            || self.web.is_some()
+            || self.wikidata_state.is_some()
+            || self.scholarly_state.is_some()
+            || self.triangulate.is_some()
+            || self.tri_gate.is_some()
+            || self.fc_confirm.is_some()
+    }
+
     /// The synchronous event loop: draw, then block up to 100 ms for a key.
     /// Later phases also drain the `StreamMsg` receiver here each tick (R-P7).
     pub(crate) fn run<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
@@ -378,6 +404,16 @@ impl ResearchApp {
             self.poll_triangulate();
             self.poll_tri_gate();
             self.poll_fc_confirm();
+            // UX-P3 — drive the status-bar spinner: start the timer when work is
+            // in flight, clear it when the last async op finishes.
+            self.spin_tick = self.spin_tick.wrapping_add(1);
+            if self.is_busy() {
+                if self.async_started.is_none() {
+                    self.async_started = Some(std::time::Instant::now());
+                }
+            } else {
+                self.async_started = None;
+            }
             terminal.draw(|f| render::render(f, self))?;
             if event::poll(Duration::from_millis(100))? {
                 if let Event::Key(key) = event::read()? {
@@ -439,7 +475,9 @@ impl ResearchApp {
         // tries to complete a Facts slug path (`/goto …`, `… → …`); R2-E.
         match key.code {
             KeyCode::Tab => {
-                if matches!(self.focus, Focus::QueryPrompt) && self.try_path_completion() {
+                if matches!(self.focus, Focus::QueryPrompt)
+                    && (self.try_command_completion() || self.try_path_completion())
+                {
                     return;
                 }
                 self.focus = self.focus.next();
@@ -582,6 +620,53 @@ impl ResearchApp {
         let mut ta = TextArea::default();
         ta.insert_str(text);
         self.query = ta;
+    }
+
+    /// UX-P1 — Tab-complete a `/command` name when the cursor sits in the command
+    /// word (`/` prefix, before the first space). Returns `true` when it handled
+    /// Tab. Single match completes + adds a space; several splice the common
+    /// prefix and list the options.
+    fn try_command_completion(&mut self) -> bool {
+        let (row, col) = self.query.cursor();
+        if row != 0 {
+            return false;
+        }
+        let text = self.query_text();
+        if !text.starts_with('/') {
+            return false;
+        }
+        // The command word spans char 1..first-whitespace; only complete when the
+        // cursor is inside it.
+        let first_ws = text.find(char::is_whitespace).map(|b| text[..b].chars().count()).unwrap_or_else(|| text.chars().count());
+        if col == 0 || col > first_ws {
+            return false;
+        }
+        let typed: String = text.chars().skip(1).take(first_ws - 1).collect::<String>().to_ascii_lowercase();
+        let matches: Vec<&str> =
+            super::command::SPECS.iter().map(|s| s.name).filter(|n| n.starts_with(&typed)).collect();
+        match matches.len() {
+            0 => self.status_message = Some(format!("/{typed} — no such command")),
+            1 => self.splice_command(matches[0], first_ws),
+            _ => {
+                let owned: Vec<String> = matches.iter().map(|s| s.to_string()).collect();
+                let lcp = longest_common_prefix(&owned);
+                if lcp.chars().count() > typed.chars().count() {
+                    self.splice_command(&lcp, first_ws);
+                }
+                self.status_message = Some(format!("{} commands: {}", matches.len(), matches.join(" · ")));
+            }
+        }
+        true
+    }
+
+    /// Replace the command word (`chars[1..end]`) with `name`; add a trailing
+    /// space when it fully names a command and no args follow yet.
+    fn splice_command(&mut self, name: &str, end: usize) {
+        let chars: Vec<char> = self.query_text().chars().collect();
+        let suffix: String = chars[end.min(chars.len())..].iter().collect();
+        let is_full = super::command::SPECS.iter().any(|s| s.name == name);
+        let tail = if is_full && suffix.is_empty() { " " } else { suffix.as_str() };
+        self.set_query_text(&format!("/{name}{tail}"));
     }
 
     /// R2-E — Tab-complete a Facts slug path under the cursor (after `/goto ` or
@@ -3131,6 +3216,8 @@ impl ResearchApp {
 
     /// Reload the hierarchy after a store mutation and rebuild the Facts tree.
     pub(super) fn reload_hierarchy(&mut self) {
+        // UX-P2 — refresh provenance so a newly-inserted fact shows its tier glyph.
+        self.fact_provenance = super::provenance::Provenance::load(&self.layout);
         if let Ok(h) = Hierarchy::load(&self.store) {
             self.hierarchy = h;
             self.facts_tree.rebuild(&self.hierarchy);

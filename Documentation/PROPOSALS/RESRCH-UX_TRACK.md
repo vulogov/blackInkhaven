@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Proposed (track) — **targeted for 1.5.6** |
+| **Status** | **UX-P1/P2/P3 shipped 1.5.6-dev**; UX-P4/P5 open |
 | **Builds on** | RESRCH-1..4 (the Research Assistant TUI, `inkhaven research`) |
 | **Theme** | The assistant grew a lot of *capability* (~24 `/commands`, five source tiers, a trust ladder, triangulation gate) but the **UI didn't keep pace**. The features are powerful yet **undiscoverable and invisible**. This track makes the capability *legible* — no new research capability, pure experience. |
 
@@ -44,11 +44,21 @@ Each is shippable on its own; all are rendering / input changes with **no new cr
 | **UX-P4 — Richer confirmation overlay** | Render the **triangulation / fact-check verdict** in the overlay (per-source `SUPPORTS`/`CONTRADICTS`/`SILENT`, coloured) instead of a status flash; show the **near-duplicate's text** beside the pending fact when the dedup guard fires; show the exact **provenance tier + citation** that will be recorded, with field labels + a Title/Body active-field cue. |
 | **UX-P5 — Layout & readability** *(stretch)* | Live **split resize** (widen/narrow tree vs chat) + **pane zoom** (full-screen chat or tree); light **markdown** styling in responses (bold/bullets/code via `Span`); **turn separators** and a **"▼ N more"** scroll affordance; a **yank** key for the last response / selected fact. |
 
-## Recommended first cut (for 1.5.6)
+## Recommended first cut (for 1.5.6) — **shipped**
 
-**UX-P1 (command palette + hints) + UX-P2 (trust badges/glyphs) + UX-P3 (async spinner).** Together they
-fix the three real problems — *can't find features*, *can't see grounding*, *feels frozen* — and all
-three reuse existing state with no new dependencies. UX-P4/P5 follow as polish.
+**UX-P1 (command completion + hints) + UX-P2 (trust badges/glyphs) + UX-P3 (async spinner).** Together
+they fix the three real problems — *can't find features*, *can't see grounding*, *feels frozen* — and all
+three reuse existing state with no new dependencies.
+
+- **UX-P1 ✅** — `command::SPECS` (the single source, also feeds `Ctrl+B h`) + `hint_for`; Tab completes a
+  `/command` in the command word (`try_command_completion`, before path completion); the hints bar is
+  input-aware.
+- **UX-P2 ✅** — `turn_badge` renders a tier badge on each chat header; `provenance_tier_glyph` +
+  `fact_provenance` (reloaded on `reload_hierarchy`) render a permanent tier glyph per fact in the tree.
+- **UX-P3 ✅** — `is_busy()` + `spin_tick`/`async_started` drive a braille spinner + elapsed timer in the
+  status bar.
+
+UX-P4/P5 follow as polish.
 
 ## Out of scope
 - Mouse interaction (research mode is keyboard-only by design).

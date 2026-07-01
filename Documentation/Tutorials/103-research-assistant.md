@@ -441,6 +441,19 @@ fact/note insertions, pinned nodes, and RAG mode all persist and **resume** exac
   **`--export-thread <name>`** writes its full history as Markdown or JSON (`--out FILE`, default
   stdout) — a clean record of how a fact came to be.
 
+## 9½. UI niceties (1.5.6)
+
+- **Command completion + live hints.** Type `/` and press **Tab** to complete a command name (one match
+  completes, several list in the status bar); the **hints bar** tracks what you're typing — matching
+  commands while you type the word, then the recognised command's usage (`/web [--ingest|--chat]
+  <query>`). Tab still completes Facts paths after `/goto ` or a `→` arrow.
+- **Trust made visible.** Each chat turn shows a **source-tier badge** — `[computed]` `[◆ Q937]`
+  `[§ arxiv]` `[⚠ web]` `[document]` `[? model]` — and each fact in the **Facts tree** carries a
+  permanent **tier glyph** by its recorded provenance (≡ deterministic · ◆ structured · § scholarly ·
+  ◇ web · ▪ imported · · model), so the trust ladder is legible at a glance.
+- **Async liveness.** A braille **spinner + elapsed timer** appears in the status bar whenever a fetch,
+  stream, or gate is in flight (`⠙ (3s) Querying Wikidata…`).
+
 ### Headless batch research (1.5.6)
 
 **`inkhaven research --batch questions.txt`** researches a **question list** non-interactively (one
