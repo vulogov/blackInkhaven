@@ -20,6 +20,8 @@ enum RowKind {
     Prompt,
     Response,
     Plain,
+    /// UX-P5 — a dim rule between turns.
+    Separator,
 }
 
 /// Border style for a pane: the theme's focused colour (bold) when active, the
@@ -59,6 +61,26 @@ fn turn_badge(turn: &super::chat::ChatTurn) -> Option<(String, Style)> {
         return Some(("[? model]".to_string(), Style::new().dim()));
     }
     None
+}
+
+/// UX-P5 — render one chat-response line with light markdown styling, reusing the
+/// editor's `highlight_markdown_lines`. Markers are preserved (so the visible
+/// width is unchanged, keeping the wrapped-scroll math valid); plain runs fall
+/// back to the pane foreground so the base colour matches the rest of the chat.
+fn md_line<'a>(app: &ResearchApp, text: &str) -> Line<'a> {
+    let runs = crate::tui::markdown_highlight::highlight_markdown_lines(text, &app.theme);
+    let first = runs.into_iter().next().unwrap_or_default();
+    if first.is_empty() {
+        return Line::from(String::new());
+    }
+    let spans: Vec<Span> = first
+        .into_iter()
+        .map(|r| {
+            let style = if r.style.fg.is_none() { r.style.fg(app.theme.pane_fg) } else { r.style };
+            Span::styled(r.text, style)
+        })
+        .collect();
+    Line::from(spans)
 }
 
 /// UX-P4 — colour an evidence line by its verdict keyword (per-source vote /
@@ -123,25 +145,73 @@ pub(super) fn render(frame: &mut Frame, app: &ResearchApp) {
     ])
     .split(area);
 
-    let split = app.split_ratio.clamp(1, 9);
-    let main = Layout::horizontal([
-        Constraint::Ratio(split, 10),
-        Constraint::Ratio(10 - split, 10),
-    ])
-    .split(outer[0]);
-
-    render_facts_tree(frame, app, main[0]);
-    render_ai_chat(frame, app, main[1]);
+    // UX-P5 — a zoomed pane takes the whole main area; else the normal split.
+    match app.zoom {
+        Some(Focus::FactsTree) => render_facts_tree(frame, app, outer[0]),
+        Some(Focus::AiChat) => render_ai_chat(frame, app, outer[0]),
+        _ => {
+            let split = app.split_ratio.clamp(1, 9);
+            let main = Layout::horizontal([
+                Constraint::Ratio(split, 10),
+                Constraint::Ratio(10 - split, 10),
+            ])
+            .split(outer[0]);
+            render_facts_tree(frame, app, main[0]);
+            render_ai_chat(frame, app, main[1]);
+        }
+    }
     if app.show_hints {
         render_hints(frame, app, outer[1]);
     }
     render_query_prompt(frame, app, outer[2]);
     render_status_bar(frame, app, outer[3]);
 
+    // UX-P5 — the fact quick-view modal sits above the panes.
+    if app.peek.is_some() {
+        render_peek(frame, app, area);
+    }
     // The full quick-reference overlay (Ctrl+B h) sits over everything.
     if app.show_help {
         render_help(frame, app, area);
     }
+}
+
+/// UX-P5 — the fact quick-view modal (Enter on a fact): a scrollable view of the
+/// fact's body. `j/k`/arrows scroll · `g/G` top/bottom · `Y` copy · Esc closes.
+fn render_peek(frame: &mut Frame, app: &ResearchApp, area: Rect) {
+    let Some(p) = &app.peek else { return };
+    let w = (area.width as f32 * 0.7) as u16;
+    let h = (area.height as f32 * 0.7) as u16;
+    let modal = Rect {
+        x: area.x + (area.width.saturating_sub(w)) / 2,
+        y: area.y + (area.height.saturating_sub(h)) / 2,
+        width: w.max(20),
+        height: h.max(6),
+    };
+    frame.render_widget(Clear, modal);
+    let title: String = p.title.chars().take(modal.width.saturating_sub(6) as usize).collect();
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" {title} "))
+        .border_style(Style::new().fg(app.theme.border_focused).bold());
+    let inner = block.inner(modal);
+    frame.render_widget(block, modal);
+
+    // Clamp the scroll to the wrapped body height.
+    let text_h = inner.height.saturating_sub(1) as usize;
+    let wrapped: usize = p.body.lines().map(|l| wrapped_rows(l, inner.width as usize).max(1)).sum();
+    let max_scroll = wrapped.saturating_sub(text_h) as u16;
+    let scroll = p.scroll.min(max_scroll);
+    let parts = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).split(inner);
+    frame.render_widget(
+        Paragraph::new(p.body.clone()).wrap(Wrap { trim: false }).scroll((scroll, 0)),
+        parts[0],
+    );
+    let more = if scroll < max_scroll { "  ▼ more" } else { "" };
+    frame.render_widget(
+        Paragraph::new(Span::styled(format!(" j/k scroll · Y copy · Esc close{more}"), Style::new().dim())),
+        parts[1],
+    );
 }
 
 /// Ctrl+B h — a full reference of panes' chords and the `/command` namespace.
@@ -153,21 +223,22 @@ fn render_help(frame: &mut Frame, app: &ResearchApp, area: Rect) {
         Line::from("    Tab / Shift+Tab   cycle panes (Facts tree · query · chat)"),
         Line::from("    F10               cycle RAG mode (Facts+Full · Facts · Full)"),
         Line::from("    Ctrl+B h          this reference     ?  toggle hints bar"),
+        Line::from("    < / > resize split (in tree/chat)     Ctrl+Z zoom pane"),
         Line::from("    Ctrl+Q / Ctrl+C   quit               q  quit (outside text)"),
         Line::from(""),
         Line::from(Span::styled("  Facts tree", Style::new().fg(app.theme.ai_scope_fg).bold())),
-        Line::from("    j/k g/G  nav      h/l/Enter fold      Ctrl+P pin (max 3)"),
+        Line::from("    j/k g/G  nav      Enter peek / fold   h/l step  Ctrl+P pin"),
         Line::from("    n new fact        R rename            c/s new chapter/subchapter"),
         Line::from("    - / D delete (¶/branch)               K/J move up/down"),
         Line::from("    y/x/p  copy / cut / paste across parents"),
-        Line::from("    u  toggle ※ undisputed (authorial — excluded from /factcheck)"),
+        Line::from("    u  toggle ※ undisputed (authorial)   Y  copy fact body"),
         Line::from(""),
         Line::from(Span::styled("  Query prompt", Style::new().fg(app.theme.ai_scope_fg).bold())),
         Line::from("    Enter send        Alt+Enter newline   ↑↓ history (at edges)"),
         Line::from("    ←→ Home/End edit  Esc clear/defocus  Tab complete /command·path (hints below)"),
         Line::from(""),
         Line::from(Span::styled("  Chat", Style::new().fg(app.theme.ai_scope_fg).bold())),
-        Line::from("    j/k g/G scroll    Ctrl+F search (n/N matches)"),
+        Line::from("    j/k g/G scroll    Ctrl+F search (n/N)   y copy last response"),
         Line::from(""),
         Line::from(Span::styled("  /commands", Style::new().fg(app.theme.ai_scope_fg).bold())),
         Line::from("    /fact \"…\" [→ path]   extract last response → Facts (confirm)"),
@@ -262,9 +333,14 @@ fn render_facts_tree(frame: &mut Frame, app: &ResearchApp, area: Rect) {
             let label = format!("{indent}{fold}{pin}{title}");
             let mut spans: Vec<Span> = Vec::new();
             // RESRCH-UNDISPUTED — an authorial `※` glyph for a `fact:undisputed`
-            // fact (outside the trust ladder; excluded from /factcheck).
+            // fact (outside the trust ladder; excluded from /factcheck). UD-P4 —
+            // coloured by the last `/undisputed` common-sense verdict when present.
             if node.is_some_and(|n| n.tags.iter().any(|t| t == super::UNDISPUTED_TAG)) {
-                spans.push(Span::styled("※", Style::new().fg(Color::Magenta)));
+                let style = match app.undisputed_verdicts.level_for(row.id) {
+                    Some(level) => verdict_style(level),
+                    None => Style::new().fg(Color::Magenta),
+                };
+                spans.push(Span::styled("※", style));
             }
             // UX-P2 — a permanent provenance-tier glyph (source trust).
             if let Some(rec) = app.fact_provenance.for_node(&row.id.to_string()) {
@@ -358,7 +434,7 @@ fn render_ai_chat(frame: &mut Frame, app: &ResearchApp, area: Rect) {
     let mut rows: Vec<(String, RowKind, Option<(String, Style)>)> = Vec::new();
     for (i, turn) in app.chat_history.iter().enumerate() {
         if i > 0 {
-            rows.push((String::new(), RowKind::Plain, None));
+            rows.push((String::new(), RowKind::Separator, None));
         }
         rows.push((format!("❯ query {}", i + 1), RowKind::Header, turn_badge(turn)));
         for l in turn.prompt.split('\n') {
@@ -388,17 +464,27 @@ fn render_ai_chat(frame: &mut Frame, app: &ResearchApp, area: Rect) {
     // Query header + prompt in the theme's accent colour (bold header); the
     // response in the default pane foreground — a clear query/response split.
     let accent = Style::new().fg(app.theme.ai_scope_fg);
+    let width = content.width as usize;
     let lines: Vec<Line> = rows
         .iter()
         .enumerate()
         .map(|(i, (text, kind, badge))| {
+            if matches!(kind, RowKind::Separator) {
+                return Line::from(Span::styled("─".repeat(width.max(1)), Style::new().dim()));
+            }
             if let (Some(q), true) = (&query, match_lines.contains(&i)) {
                 highlight_line(app, text, q, current_line == Some(i))
+            } else if matches!(kind, RowKind::Response) {
+                // UX-P5 — light markdown in responses (bold/italic/code/headings/
+                // links/bullets); markers are kept, so wrap-width is unchanged.
+                md_line(app, text)
             } else {
                 let style = match kind {
                     RowKind::Header => accent.bold(),
                     RowKind::Prompt => accent,
-                    RowKind::Response | RowKind::Plain => Style::new().fg(app.theme.pane_fg),
+                    RowKind::Response | RowKind::Plain | RowKind::Separator => {
+                        Style::new().fg(app.theme.pane_fg)
+                    }
                 };
                 match badge {
                     Some((label, bstyle)) => Line::from(vec![
@@ -414,7 +500,6 @@ fn render_ai_chat(frame: &mut Frame, app: &ResearchApp, area: Rect) {
 
     // Scroll in WRAPPED (visual) rows — the pane word-wraps, so a logical-line
     // count under-measures the height and bottom-anchoring would cut the end.
-    let width = content.width as usize;
     let wrapped: Vec<usize> = rows.iter().map(|(t, _, _)| wrapped_rows(t, width)).collect();
     let total_visual: usize = wrapped.iter().sum();
     let height = content.height as usize;
@@ -433,6 +518,22 @@ fn render_ai_chat(frame: &mut Frame, app: &ResearchApp, area: Rect) {
         Paragraph::new(Text::from(lines)).wrap(Wrap { trim: false }).scroll((top, 0)),
         content,
     );
+
+    // UX-P5 — a "▼ more" affordance at the bottom-right when scrolled up.
+    if (top as usize) < max_scroll && content.height > 0 {
+        let label = " ▼ more ";
+        let lw = (label.chars().count() as u16).min(content.width);
+        let ind = Rect {
+            x: content.x + content.width.saturating_sub(lw),
+            y: content.y + content.height - 1,
+            width: lw,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(Span::styled(label, Style::new().fg(app.theme.ai_scope_fg).bold())),
+            ind,
+        );
+    }
 
     if let (Some(bar), Some(search)) = (search_bar, &app.chat_search) {
         let count = match_lines.len();
@@ -635,12 +736,12 @@ fn render_hints(frame: &mut Frame, app: &ResearchApp, area: Rect) {
     // G11 — context-sensitive per focus (RFC §20).
     let hint = match app.focus {
         Focus::FactsTree => {
-            " n:fact c/s:chap/sub R:rename -/D:del K/J:move y/x/p:copy u:undisputed(※) Ctrl+P:pin Tab:chat"
+            " Enter:peek n:fact c/s:chap R:rename -/D:del K/J:move y/x/p:node u:undisputed(※) Y:copy Ctrl+P:pin"
         }
         Focus::QueryPrompt => {
             " ⏎ send · Alt+⏎ newline · Tab: complete /command·path · F10 RAG · Ctrl+B h help · type / for commands"
         }
-        Focus::AiChat => " Tab:query  Ctrl+F:search  j/k:scroll  g/G:top/bottom  ?:help",
+        Focus::AiChat => " Tab:query  Ctrl+F:search  j/k:scroll  y:copy  Ctrl+Z:zoom  < >:resize",
         Focus::ConfirmationOverlay => " Tab:field  Ctrl+S / Ctrl+Enter:confirm  Esc:discard",
     };
     frame.render_widget(Paragraph::new(hint).style(Style::new().dim()), area);

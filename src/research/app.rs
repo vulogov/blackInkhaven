@@ -195,6 +195,14 @@ pub(super) struct FactCheckState {
     undisputed: usize,
 }
 
+/// UX-P5 — the fact quick-view modal: Enter on a fact opens a scrollable view of
+/// its body; Esc closes. Read-only.
+pub(super) struct PeekState {
+    pub title: String,
+    pub body: String,
+    pub scroll: u16,
+}
+
 /// RESRCH-UNDISPUTED (UD-P3) — the `/undisputed` common-sense pass over the
 /// authorial facts (chunked, like `/factcheck`'s truth phase; read-only).
 pub(super) struct UndisputedState {
@@ -235,6 +243,9 @@ pub(crate) struct ResearchApp {
     /// UX-P2 — per-fact provenance (source-tier glyph in the tree). Reloaded on
     /// each `reload_hierarchy` so newly-inserted facts show their tier.
     pub(super) fact_provenance: super::provenance::Provenance,
+    /// UD-P4 — per-fact `/undisputed` common-sense verdicts; colours the `※`
+    /// glyph (plausible/odd/incoherent).
+    pub(super) undisputed_verdicts: super::verdicts::Verdicts,
     /// Pinned Facts nodes (G4); RAG injection lands in R-P8.
     pub(super) pinned_nodes: Vec<Uuid>,
     /// The inline manual-entry overlay, when active (G7).
@@ -302,6 +313,10 @@ pub(crate) struct ResearchApp {
     pub(super) focus: Focus,
     pub(super) show_hints: bool,
     pub(super) split_ratio: u32,
+    /// UX-P5 — the fact quick-view modal (Enter on a fact), when open.
+    pub(super) peek: Option<PeekState>,
+    /// UX-P5 — a zoomed (full-screen) pane, when active (FactsTree or AiChat).
+    pub(super) zoom: Option<Focus>,
     pub(super) status_message: Option<String>,
     /// `Ctrl+B` prefix is armed, waiting for the second key (e.g. `h`).
     ctrl_b_pending: bool,
@@ -338,6 +353,7 @@ impl ResearchApp {
         let theme = Theme::from_config(&cfg.theme);
         let fact_verdicts = super::verdicts::Verdicts::load(&layout);
         let fact_provenance = super::provenance::Provenance::load(&layout);
+        let undisputed_verdicts = super::verdicts::Verdicts::load_undisputed(&layout);
         Ok(ResearchApp {
             layout,
             cfg,
@@ -348,6 +364,7 @@ impl ResearchApp {
             facts_tree,
             fact_verdicts,
             fact_provenance,
+            undisputed_verdicts,
             pinned_nodes,
             manual: None,
             tree_input: None,
@@ -383,6 +400,8 @@ impl ResearchApp {
             focus: Focus::QueryPrompt,
             show_hints,
             split_ratio,
+            peek: None,
+            zoom: None,
             status_message: None,
             ctrl_b_pending: false,
             show_help: false,
@@ -492,6 +511,21 @@ impl ResearchApp {
         }
         if self.pending_delete.is_some() {
             self.delete_confirm_key(key);
+            return;
+        }
+        // UX-P5 — the fact quick-view modal captures keys while open.
+        if self.peek.is_some() {
+            self.peek_key(key);
+            return;
+        }
+        // UX-P5 — pane zoom (Ctrl+Z), from anywhere. (Split resize is `<`/`>`,
+        // pane-scoped — Ctrl+←/→ is taken by macOS Mission Control.)
+        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('z') {
+            self.zoom = match self.zoom {
+                Some(_) => None,
+                None if matches!(self.focus, Focus::FactsTree) => Some(Focus::FactsTree),
+                None => Some(Focus::AiChat),
+            };
             return;
         }
         // Tab / Shift+Tab cycle focus — except in the prompt, where Tab first
@@ -628,6 +662,11 @@ impl ResearchApp {
             KeyCode::Down | KeyCode::Char('j') => self.chat_scroll = self.chat_scroll.saturating_sub(1),
             KeyCode::Char('g') => self.chat_scroll = u16::MAX, // clamped to top by render
             KeyCode::Char('G') => self.chat_scroll = 0,        // bottom (latest)
+            // UX-P5 — copy the last response to the system clipboard.
+            KeyCode::Char('y') => self.yank_last_response(),
+            // UX-P5 — resize the split (`>` widens the tree, `<` narrows it).
+            KeyCode::Char('>') => self.resize_split(true),
+            KeyCode::Char('<') => self.resize_split(false),
             KeyCode::Esc => self.focus = Focus::QueryPrompt,
             _ => return false,
         }
@@ -2050,6 +2089,14 @@ impl ResearchApp {
     fn finish_undisputed(&mut self) {
         let Some(uc) = self.undisputed_check.as_ref() else { return };
         let total = uc.facts.len();
+        // UD-P4 — persist per-fact common-sense verdicts (colour the ※ glyph).
+        let now = chrono::Utc::now().to_rfc3339();
+        let fact_ids: Vec<uuid::Uuid> = uc.facts.iter().map(|f| f.id).collect();
+        let parsed = super::verdicts::parse_undisputed_report(&uc.report, &fact_ids, &now);
+        for (k, v) in parsed {
+            self.undisputed_verdicts.facts.insert(k, v);
+        }
+        let _ = self.undisputed_verdicts.save_undisputed(&self.layout);
         let (mut plausible, mut odd, mut incoherent) = (0usize, 0usize, 0usize);
         for line in uc.report.lines() {
             let head = line.to_ascii_uppercase();
@@ -3304,10 +3351,12 @@ impl ResearchApp {
             KeyCode::Down | KeyCode::Char('j') => self.facts_tree.move_down(),
             KeyCode::Char('g') => self.facts_tree.to_top(),
             KeyCode::Char('G') => self.facts_tree.to_bottom(),
-            KeyCode::Right | KeyCode::Char('l') | KeyCode::Enter => {
-                self.facts_tree.step_in(&self.hierarchy)
-            }
+            KeyCode::Right | KeyCode::Char('l') => self.facts_tree.step_in(&self.hierarchy),
+            // Enter — quick-view a fact (leaf) or fold/expand a branch (UX-P5).
+            KeyCode::Enter => self.peek_selected(),
             KeyCode::Left | KeyCode::Char('h') => self.facts_tree.step_out(&self.hierarchy),
+            // UX-P5 — copy the selected fact's body to the system clipboard.
+            KeyCode::Char('Y') => self.yank_selected_body(),
             KeyCode::Char('n') => {
                 self.manual = Some(ManualEntry {
                     stage: ManualStage::Title,
@@ -3331,6 +3380,9 @@ impl ResearchApp {
             KeyCode::Char('p') => self.tree_paste(),
             // RESRCH-UNDISPUTED — toggle the `fact:undisputed` authorial tag.
             KeyCode::Char('u') => self.toggle_undisputed(),
+            // UX-P5 — resize the split (`>` widens the tree, `<` narrows it).
+            KeyCode::Char('>') => self.resize_split(true),
+            KeyCode::Char('<') => self.resize_split(false),
             _ => return false,
         }
         true
@@ -3390,6 +3442,82 @@ impl ResearchApp {
     fn persist_pins(&mut self) {
         self.thread.pinned_nodes = self.pinned_nodes.iter().map(|u| u.to_string()).collect();
         let _ = self.thread.save(&self.layout);
+    }
+
+    /// UX-P5 — Enter on the cursor: quick-view a fact (a leaf paragraph) in a
+    /// scrollable modal, or fold/expand a branch.
+    fn peek_selected(&mut self) {
+        let Some(id) = self.facts_tree.selected() else { return };
+        let Some(node) = self.hierarchy.get(id) else { return };
+        if node.kind != crate::store::NodeKind::Paragraph {
+            self.facts_tree.step_in(&self.hierarchy);
+            return;
+        }
+        let title = node.title.clone();
+        let body = match self.store.get_content(id) {
+            Ok(Some(b)) => String::from_utf8_lossy(&b).trim().to_string(),
+            _ => String::new(),
+        };
+        self.peek = Some(PeekState { title, body, scroll: 0 });
+    }
+
+    /// UX-P5 — keys for the fact quick-view modal (scroll · Esc/Enter close).
+    fn peek_key(&mut self, key: KeyEvent) {
+        let Some(p) = self.peek.as_mut() else { return };
+        match key.code {
+            KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => self.peek = None,
+            KeyCode::Down | KeyCode::Char('j') => p.scroll = p.scroll.saturating_add(1),
+            KeyCode::Up | KeyCode::Char('k') => p.scroll = p.scroll.saturating_sub(1),
+            KeyCode::Char('g') => p.scroll = 0,
+            KeyCode::Char('G') => p.scroll = u16::MAX, // clamped in render
+            KeyCode::Char('Y') => {
+                let body = p.body.clone();
+                self.copy_to_clipboard(&body);
+            }
+            _ => {}
+        }
+    }
+
+    /// UX-P5 — copy the selected fact's body to the system clipboard.
+    fn yank_selected_body(&mut self) {
+        let Some(id) = self.facts_tree.selected() else { return };
+        let body = match self.store.get_content(id) {
+            Ok(Some(b)) => String::from_utf8_lossy(&b).trim().to_string(),
+            _ => String::new(),
+        };
+        if body.is_empty() {
+            self.status_message = Some("nothing to copy".to_string());
+            return;
+        }
+        self.copy_to_clipboard(&body);
+    }
+
+    /// UX-P5 — copy the last chat response to the system clipboard.
+    fn yank_last_response(&mut self) {
+        match self.chat_history.last().map(|t| t.response.clone()).filter(|r| !r.trim().is_empty()) {
+            Some(text) => self.copy_to_clipboard(&text),
+            None => self.status_message = Some("no response to copy".to_string()),
+        }
+    }
+
+    /// UX-P5 — nudge the tree/chat split ratio (`>` widens the tree, `<` narrows).
+    fn resize_split(&mut self, wider_tree: bool) {
+        self.split_ratio = if wider_tree {
+            (self.split_ratio + 1).min(9)
+        } else {
+            self.split_ratio.saturating_sub(1).max(1)
+        };
+    }
+
+    /// Reuse the editor's `arboard` clipboard (already a dependency); degrades to
+    /// a status note when no clipboard is available (e.g. headless / pure SSH).
+    fn copy_to_clipboard(&mut self, text: &str) {
+        let ok = arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text.to_string())).is_ok();
+        self.status_message = Some(if ok {
+            format!("copied {} char(s) to clipboard", text.chars().count())
+        } else {
+            "clipboard unavailable".to_string()
+        });
     }
 
     /// G7 — keys for the inline manual fact-entry overlay (title → body).

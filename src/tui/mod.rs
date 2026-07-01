@@ -24,7 +24,7 @@ mod diff_utils;
 // path widget can reuse the F3 file picker.
 pub(crate) mod file_picker;
 mod focus;
-mod highlight;
+pub(crate) mod highlight;
 mod hjson_edit;
 mod hjson_highlight;
 mod jinja_highlight;
@@ -36,7 +36,7 @@ pub(crate) mod palette;
 mod lexicon;
 mod lexicon_build;
 mod markdown;
-mod markdown_highlight;
+pub(crate) mod markdown_highlight;
 mod modal;
 mod pov_tracker;
 // 1.2.18+ R.3 — reading-time computation for the

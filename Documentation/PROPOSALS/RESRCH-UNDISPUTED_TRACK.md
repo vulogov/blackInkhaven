@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | **UD-P1/P2/P3 shipped 1.5.6-dev** (UD-P4 stretch open) |
+| **Status** | **UD-P1/P2/P3 shipped 1.5.6 · UD-P4 shipped 1.5.7-dev** — track complete |
 | **Builds on** | RESRCH-1 (Facts corpus) · R2-E `/factcheck` · RE-P5 verdict glyphs · UX-P2 tier glyphs |
 | **Theme** | Some Facts are **the author's creative invention**, not claims about the real world — an invented god's name, a fictional aqueduct's capacity, a magic system's rule. They *will* fail a real-world fact-check (which grades against the model's general knowledge), and they *should not* be checked against it at all. This track lets the author mark a fact **undisputed**: excluded from `/factcheck`, glyphed in the tree, and checked instead for **internal common sense** by a separate, non-destructive `/undisputed` pass. |
 
@@ -78,7 +78,7 @@
 | **UD-P1 — Tag + glyph + toggle** | `UNDISPUTED_TAG` const + `research.undisputed_tag`; a Facts-tree key to toggle the tag (store write + reload); an `※` glyph in the research tree read from `node.tags`. |
 | **UD-P2 — `/factcheck` exclusion + count** | `gather_facts` partitions disputed/undisputed; truth + consistency run over the disputed set only; the report + status show the excluded count. |
 | **UD-P3 — `/undisputed` common-sense pass** | New `/undisputed` command + `CommandSpec` (UX-P1 palette/hints); gather-undisputed; a chunked, language-aware common-sense prompt (`PLAUSIBLE/ODD/INCOHERENT`); read-only chat report. |
-| **UD-P4 *(stretch)*** | Persist `/undisputed` verdicts → an `※`-scoped tree mark; a config to auto-exclude on a per-branch basis. |
+| **UD-P4** | Persist `/undisputed` verdicts → an `※`-scoped tree mark. **✅ Shipped 1.5.7-dev** — `parse_undisputed_report` maps `PLAUSIBLE/ODD/INCOHERENT` → `Level`; stored in a separate `.inkhaven/fact-undisputed.json` (`Verdicts::save_undisputed`); the tree **colours the `※` glyph** green/yellow/red by the last common-sense verdict. *(Per-branch auto-exclude config deferred.)* |
 
 ## Notes & constraints
 - **No new store schema, no new crates.** Tags are an existing persisted `Vec<String>`; the checks reuse
