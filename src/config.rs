@@ -4003,6 +4003,30 @@ pub struct ResearchConfig {
     pub web: WebConfig,
     /// RESRCH-3 (R3-A) — `research.wikidata` block for `/wikidata`.
     pub wikidata: WikidataConfig,
+    /// RESRCH-3 (R3-B) — `research.scholarly` block for `/openalex` + `/arxiv`.
+    pub scholarly: ScholarlyConfig,
+}
+
+/// RESRCH-3 (R3-B) — `research.scholarly` block. `/openalex` and `/arxiv` are
+/// keyless; `mailto` joins OpenAlex's "polite pool" (recommended, avoids the
+/// anonymous rate limit). Scholarly tier — a `/fact` from a paper auto-creates a
+/// SOURCES-1 `BibEntry`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ScholarlyConfig {
+    /// Master switch for `/openalex` + `/arxiv`.
+    pub enabled: bool,
+    /// Contact email for OpenAlex's polite pool (optional but recommended).
+    pub mailto: String,
+    /// Auto-create a SOURCES-1 bibliography entry when a `/fact` is taken from a
+    /// paper.
+    pub auto_cite: bool,
+}
+
+impl Default for ScholarlyConfig {
+    fn default() -> Self {
+        Self { enabled: true, mailto: String::new(), auto_cite: true }
+    }
 }
 
 /// RESRCH-3 (R3-A) — `research.wikidata` block. `/wikidata` queries Wikidata's
@@ -4083,6 +4107,7 @@ impl Default for ResearchConfig {
             import_chunk_chars: 1500,
             web: WebConfig::default(),
             wikidata: WikidataConfig::default(),
+            scholarly: ScholarlyConfig::default(),
         }
     }
 }

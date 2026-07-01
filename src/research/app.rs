@@ -144,6 +144,12 @@ pub(super) struct WikidataState {
     query: String,
 }
 
+/// R3-B — an in-flight `/openalex` or `/arxiv` fetch.
+pub(super) struct ScholarlyState {
+    rx: mpsc::UnboundedReceiver<std::result::Result<super::scholarly::Paper, String>>,
+    query: String,
+}
+
 /// `/factcheck` — a multi-call corpus audit: truth (per-fact, chunked) then
 /// consistency (the whole set). Drained in the run loop like the chain.
 pub(super) struct FactCheckState {
@@ -229,6 +235,10 @@ pub(crate) struct ResearchApp {
     /// In-flight `/web` search (R2-C).
     web: Option<WebState>,
     wikidata_state: Option<WikidataState>,
+    scholarly_state: Option<ScholarlyState>,
+    /// R3-B — a pending SOURCES-1 citation to write when the current `/fact` from
+    /// a paper is confirmed (set at extraction, consumed on insert).
+    pending_cite: Option<crate::sources::BibEntry>,
     /// In-flight pre-commit fact-check for a web fact (WC-P3): receiver + buffer.
     fc_confirm: Option<(mpsc::UnboundedReceiver<StreamMsg>, String)>,
     /// The editable insertion confirmation overlay (G1/G2).
@@ -309,6 +319,8 @@ impl ResearchApp {
             factcheck: None,
             web: None,
             wikidata_state: None,
+            scholarly_state: None,
+            pending_cite: None,
             fc_confirm: None,
             confirmation: None,
             session_cost: 0.0,
@@ -340,6 +352,7 @@ impl ResearchApp {
             self.poll_factcheck();
             self.poll_web();
             self.poll_wikidata();
+            self.poll_scholarly();
             self.poll_fc_confirm();
             terminal.draw(|f| render::render(f, self))?;
             if event::poll(Duration::from_millis(100))? {
@@ -687,6 +700,8 @@ impl ResearchApp {
             Command::Web { ingest, query } => self.start_web(ingest, query),
             Command::Calc(expr) => self.run_calc(&expr),
             Command::Wikidata(query) => self.start_wikidata(query),
+            Command::OpenAlex(query) => self.start_scholarly("openalex", query),
+            Command::Arxiv(query) => self.start_scholarly("arxiv", query),
             Command::WhatsWrong(path) => self.run_whatswrong(path.as_deref()),
             Command::Chain(steps) => self.start_chain(steps),
         }
@@ -1075,6 +1090,128 @@ impl ResearchApp {
             }
             Err(e) => self.status_message = Some(format!("wikidata: {e}")),
         }
+    }
+
+    /// `/openalex` / `/arxiv` (R3-B) — spawn a scholarly fetch. The result is a
+    /// paper's metadata + abstract; a `/fact` from it records `origin=<source>`,
+    /// skips the gate (authoritative metadata), and auto-creates a `BibEntry`.
+    fn start_scholarly(&mut self, source: &'static str, query: String) {
+        if self.scholarly_state.is_some() {
+            self.status_message = Some("a scholarly query is already running".to_string());
+            return;
+        }
+        let query = query.trim().to_string();
+        if query.is_empty() {
+            self.status_message = Some(format!("usage: /{source} <query>"));
+            return;
+        }
+        if !super::scholarly::available(&self.cfg.research.scholarly) {
+            self.status_message = Some("scholarly search disabled (research.scholarly.enabled)".to_string());
+            return;
+        }
+        let cfg = self.cfg.research.scholarly.clone();
+        let q = query.clone();
+        let (tx, rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let r = match source {
+                "arxiv" => super::scholarly::arxiv(q).await,
+                _ => super::scholarly::openalex(cfg, q).await,
+            }
+            .map_err(|e| e.to_string());
+            let _ = tx.send(r);
+        });
+        self.scholarly_state = Some(ScholarlyState { rx, query });
+        self.status_message = Some(format!("Querying {source}…"));
+    }
+
+    /// Drain the in-flight scholarly fetch; on success, show the paper.
+    fn poll_scholarly(&mut self) {
+        let Some(sc) = self.scholarly_state.as_mut() else { return };
+        let result = match sc.rx.try_recv() {
+            Ok(r) => r,
+            Err(mpsc::error::TryRecvError::Empty) => return,
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                self.scholarly_state = None;
+                return;
+            }
+        };
+        let ScholarlyState { query, .. } = self.scholarly_state.take().unwrap();
+        match result {
+            Ok(paper) => {
+                let body = super::scholarly::render(&paper);
+                let ident = paper.cite_detail();
+                let mut turn = ChatTurn::with_response(format!("/{} {query}", paper.source), body);
+                turn.sources = vec![format!("{} {ident}", paper.source)];
+                turn.paper = Some(paper);
+                self.chat_history.push(turn);
+                self.chat_scroll = 0;
+                self.status_message =
+                    Some(format!("{ident} — /fact to record (auto-cites to Sources)"));
+            }
+            Err(e) => self.status_message = Some(format!("scholarly: {e}")),
+        }
+    }
+
+    /// R3-B — write a SOURCES-1 `BibEntry` into the Sources book under a
+    /// "Research" chapter (dedup by cite key). Mirrors the `sources import` path.
+    fn add_bibentry(&self, entry: &crate::sources::BibEntry) -> anyhow::Result<bool> {
+        use crate::store::{InsertPosition, NodeKind};
+        if !entry.is_valid() {
+            return Ok(false);
+        }
+        let hier = crate::store::hierarchy::Hierarchy::load(&self.store)?;
+        let book = hier
+            .iter()
+            .find(|n| {
+                n.kind == NodeKind::Book
+                    && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_SOURCES)
+            })
+            .ok_or_else(|| anyhow::anyhow!("Sources book missing"))?
+            .clone();
+        // Find or create the "Research" chapter.
+        let chapter = match hier
+            .children_of(Some(book.id))
+            .into_iter()
+            .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Research"))
+            .cloned()
+        {
+            Some(c) => c,
+            None => self.store.create_node(
+                &self.cfg,
+                &hier,
+                NodeKind::Chapter,
+                "Research",
+                Some(&book),
+                None,
+                InsertPosition::End,
+            )?,
+        };
+        // Dedup by cite key (case-insensitive) within the chapter.
+        let key_lc = entry.key.to_lowercase();
+        let exists = hier
+            .children_of(Some(chapter.id))
+            .into_iter()
+            .any(|n| n.title.to_lowercase() == key_lc);
+        if exists {
+            return Ok(false);
+        }
+        let hier = crate::store::hierarchy::Hierarchy::load(&self.store)?;
+        let mut node = self.store.create_node(
+            &self.cfg,
+            &hier,
+            NodeKind::Paragraph,
+            &entry.key,
+            Some(&chapter),
+            None,
+            InsertPosition::End,
+        )?;
+        node.content_type = Some("hjson".to_string());
+        let body = entry.to_hjson();
+        if let Some(rel) = &node.file {
+            let _ = crate::io_atomic::write(&self.store.project_root().join(rel), body.as_bytes());
+        }
+        self.store.update_paragraph_content(&mut node, body.as_bytes())?;
+        Ok(true)
     }
 
     /// Drain the in-flight web search; on results, ingest them or ground a chat.
@@ -2003,6 +2140,12 @@ impl ResearchApp {
         };
         let research = last.response.clone();
         let query = last.prompt.clone();
+        // R3-B — a paper `/fact` queues a SOURCES-1 citation (written on confirm).
+        let cite = last
+            .paper
+            .as_ref()
+            .filter(|_| self.cfg.research.scholarly.auto_cite)
+            .map(|p| p.to_bibentry());
         // Provenance: `web` when the answer was grounded on live web results
         // (R2-C, fact-checked before commit); `document` for imported sources
         // (R2-B); else `model`, from the originating research query.
@@ -2012,6 +2155,9 @@ impl ResearchApp {
         } else if let Some(qid) = last.wikidata.clone() {
             // R3-A — structured Wikidata triple, cited by Q-ID; gate skipped.
             ProvMeta { origin: "wikidata".to_string(), query, detail: qid }
+        } else if let Some(paper) = &last.paper {
+            // R3-B — scholarly paper; gate skipped, auto-cites to Sources on insert.
+            ProvMeta { origin: paper.source.to_string(), query, detail: paper.cite_detail() }
         } else if last.web_grounded {
             ProvMeta { origin: "web".to_string(), query, detail: last.sources.join(", ") }
         } else if last.sources.is_empty() {
@@ -2019,6 +2165,7 @@ impl ResearchApp {
         } else {
             ProvMeta { origin: "document".to_string(), query, detail: last.sources.join(", ") }
         };
+        self.pending_cite = cite;
         self.start_extraction_from(book, research, prompt, path, command_name, prov);
     }
 
@@ -2349,7 +2496,22 @@ impl ResearchApp {
                     );
                 }
                 self.rebuild_prompt_history();
-                self.status_message = Some(format!("✓ Inserted: '{}' → {path}", title.trim()));
+                // R3-B — auto-create the SOURCES-1 citation for a scholarly `/fact`.
+                let mut cite_note = String::new();
+                if matches!(c.prov.origin.as_str(), "openalex" | "arxiv") {
+                    if let Some(entry) = self.pending_cite.take() {
+                        match self.add_bibentry(&entry) {
+                            Ok(true) => {
+                                self.reload_hierarchy();
+                                cite_note = format!("  · cited `{}` → Sources", entry.key);
+                            }
+                            Ok(false) => cite_note = "  · citation already in Sources".to_string(),
+                            Err(e) => cite_note = format!("  · citation failed: {e}"),
+                        }
+                    }
+                }
+                self.status_message =
+                    Some(format!("✓ Inserted: '{}' → {path}{cite_note}", title.trim()));
             }
             Err(e) => self.status_message = Some(format!("insert failed: {e}")),
         }

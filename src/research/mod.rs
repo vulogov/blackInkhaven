@@ -31,6 +31,7 @@ mod picker;
 mod provenance;
 mod rag;
 mod render;
+mod scholarly;
 mod thread;
 mod verdicts;
 mod verify;
