@@ -422,6 +422,12 @@ The corpus is finally a source you can *compose from*, not just add to.
   that uses *only* your verified facts, **cites each by its breadcrumb**, and flags where the corpus is
   thin — a mini overview built from your own knowledge base, in your project language. It never invents
   facts; `y` copies it, or `/fact` a distilled point. (RESRCH-5 / R5-A.)
+- **`/outline <topic>`** produces a **structured, fact-citing outline** — nested points, each citing its
+  supporting fact by `[breadcrumb]`, with anything the corpus doesn't cover marked `(needs research)`.
+  The research → writing bridge: copy it into the manuscript. (R5-B.)
+- **`/gaps <topic>`** lists the **open questions** the corpus *doesn't* answer — concrete things to go
+  find — which you can drop into a file to seed **`--batch`**, closing the loop research → gaps → batch →
+  facts. (R5-C.)
 - **`/bibliography`** emits the **Sources book's Research chapter** — every citation auto-filed by
   `/openalex`/`/arxiv` and `/import <.bib>` — as **BibTeX** (`y` to copy). Headless:
   **`inkhaven research --bibliography [--out refs.bib]`** writes it to a file. The citations you accrued

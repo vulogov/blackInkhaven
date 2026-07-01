@@ -24,6 +24,10 @@ pub(super) enum Command {
     /// `/synthesize <topic>` — grounded, cited synthesis over the Facts corpus
     /// (RESRCH-5 / R5-A).
     Synthesize(String),
+    /// `/outline <topic>` — a structured, fact-citing outline (R5-B).
+    Outline(String),
+    /// `/gaps <topic>` — open questions the corpus doesn't answer (R5-C).
+    Gaps(String),
     /// `/bibliography` — emit the Sources Research chapter as BibTeX (R5-D).
     Bibliography,
     /// `/sources` — list each fact's recorded provenance (RESRCH-2.1).
@@ -85,6 +89,8 @@ pub(super) const SPECS: &[CommandSpec] = &[
     CommandSpec { name: "factcheck", summary: "audit the corpus (truth + consistency)", usage: "/factcheck" },
     CommandSpec { name: "undisputed", summary: "common-sense check of authorial facts", usage: "/undisputed" },
     CommandSpec { name: "synthesize", summary: "grounded, cited synthesis from your facts", usage: "/synthesize <topic>" },
+    CommandSpec { name: "outline", summary: "a structured, fact-citing outline", usage: "/outline <topic>" },
+    CommandSpec { name: "gaps", summary: "open questions the corpus doesn't answer", usage: "/gaps <topic>" },
     CommandSpec { name: "bibliography", summary: "Sources Research chapter → BibTeX", usage: "/bibliography" },
     CommandSpec { name: "whatswrong", summary: "explain a flagged fact (AI)", usage: "/whatswrong [facts/path]" },
     CommandSpec { name: "sources", summary: "list each fact's provenance", usage: "/sources" },
@@ -186,6 +192,8 @@ pub(super) fn parse(input: &str) -> Option<Command> {
         "factcheck" => Command::FactCheck,
         "undisputed" => Command::Undisputed,
         "synthesize" => Command::Synthesize(rest.to_string()),
+        "outline" => Command::Outline(rest.to_string()),
+        "gaps" => Command::Gaps(rest.to_string()),
         "bibliography" | "bib" => Command::Bibliography,
         "sources" => Command::Sources,
         "import" => Command::Import(if rest.is_empty() { None } else { Some(rest.to_string()) }),
@@ -288,6 +296,8 @@ mod tests {
         assert_eq!(parse("/factcheck").unwrap(), Command::FactCheck);
         assert_eq!(parse("/undisputed").unwrap(), Command::Undisputed);
         assert_eq!(parse("/synthesize roman roads").unwrap(), Command::Synthesize("roman roads".into()));
+        assert_eq!(parse("/outline the siege").unwrap(), Command::Outline("the siege".into()));
+        assert_eq!(parse("/gaps the siege").unwrap(), Command::Gaps("the siege".into()));
         assert_eq!(parse("/bibliography").unwrap(), Command::Bibliography);
         assert_eq!(parse("/bib").unwrap(), Command::Bibliography);
         assert_eq!(parse("/sources").unwrap(), Command::Sources);

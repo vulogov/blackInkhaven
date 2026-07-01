@@ -195,6 +195,55 @@ pub(super) struct FactCheckState {
     undisputed: usize,
 }
 
+/// RESRCH-5 (R5-A/B/C) — the kind of grounded output over the retrieved facts.
+#[derive(Clone, Copy)]
+pub(super) enum GroundedKind {
+    Synthesize,
+    Outline,
+    Gaps,
+}
+
+impl GroundedKind {
+    fn command(self) -> &'static str {
+        match self {
+            GroundedKind::Synthesize => "synthesize",
+            GroundedKind::Outline => "outline",
+            GroundedKind::Gaps => "gaps",
+        }
+    }
+
+    fn gerund(self) -> &'static str {
+        match self {
+            GroundedKind::Synthesize => "synthesizing",
+            GroundedKind::Outline => "outlining",
+            GroundedKind::Gaps => "finding gaps",
+        }
+    }
+
+    fn system_prompt(self, language: &str) -> String {
+        match self {
+            GroundedKind::Synthesize => format!(
+                "You are synthesizing a grounded overview from a writer's own VERIFIED facts. Use ONLY the \
+                 facts below — do not add outside knowledge. Weave them into a clear, coherent synthesis of \
+                 the topic, and CITE each claim by its [breadcrumb]. Where the facts are thin or silent on \
+                 part of the topic, say so explicitly rather than inventing. Write in {language}."
+            ),
+            GroundedKind::Outline => format!(
+                "You are drafting a STRUCTURED OUTLINE for writing about a topic, drawing ONLY on the \
+                 writer's verified facts below — do not add outside knowledge. Produce nested bullet \
+                 points / sections; under each point, CITE the supporting fact by its [breadcrumb]. Mark \
+                 any point the facts don't cover with '(needs research)'. Write in {language}."
+            ),
+            GroundedKind::Gaps => format!(
+                "You are finding what is MISSING to write well about a topic. Given ONLY the writer's \
+                 facts below, list the OPEN QUESTIONS and gaps — specific things the corpus does NOT \
+                 answer — as a numbered list, each a single concrete question. Do NOT answer them and do \
+                 NOT invent facts; only identify what's absent. Write in {language}."
+            ),
+        }
+    }
+}
+
 /// UX-P5 — the fact quick-view modal: Enter on a fact opens a scrollable view of
 /// its body; Esc closes. Read-only.
 pub(super) struct PeekState {
@@ -862,7 +911,9 @@ impl ResearchApp {
             Command::Verify => self.run_verify(),
             Command::FactCheck => self.start_factcheck(),
             Command::Undisputed => self.start_undisputed(),
-            Command::Synthesize(topic) => self.run_synthesize(&topic),
+            Command::Synthesize(topic) => self.run_grounded(&topic, GroundedKind::Synthesize),
+            Command::Outline(topic) => self.run_grounded(&topic, GroundedKind::Outline),
+            Command::Gaps(topic) => self.run_grounded(&topic, GroundedKind::Gaps),
             Command::Bibliography => self.run_bibliography(),
             Command::Sources => self.run_sources(),
             Command::Promote { note, path } => self.start_promote(note, path),
@@ -963,17 +1014,17 @@ impl ResearchApp {
         self.status_message = Some("analysing the flagged fact…".to_string());
     }
 
-    /// RESRCH-5 (R5-A) — `/synthesize <topic>`: retrieve the related facts and
-    /// stream a **grounded, cited** synthesis over the Facts corpus (read-only,
-    /// language-aware). Cites each fact by its breadcrumb + provenance tier.
-    fn run_synthesize(&mut self, topic: &str) {
+    /// RESRCH-5 (R5-A/B/C) — retrieve the facts related to a topic and stream a
+    /// grounded output over them (synthesis / outline / gaps). Read-only,
+    /// language-aware; cites each fact by its breadcrumb.
+    fn run_grounded(&mut self, topic: &str, kind: GroundedKind) {
         if self.stream_rx.is_some() {
             self.status_message = Some("a response is already streaming".to_string());
             return;
         }
         let topic = topic.trim();
         if topic.is_empty() {
-            self.status_message = Some("usage: /synthesize <topic>".to_string());
+            self.status_message = Some(format!("usage: /{} <topic>", kind.command()));
             return;
         }
         let Some(book_id) = self.facts_tree.root else {
@@ -989,7 +1040,7 @@ impl ResearchApp {
         ) {
             Ok(p) => p,
             Err(e) => {
-                self.status_message = Some(format!("synthesize: {e}"));
+                self.status_message = Some(format!("{}: {e}", kind.command()));
                 return;
             }
         };
@@ -1012,12 +1063,7 @@ impl ResearchApp {
 
         let (lang, _note) = crate::prose::resolve_prose_language(None, &self.cfg.language);
         let language = super::extract::language_name(&lang);
-        let system = format!(
-            "You are synthesizing a grounded overview from a writer's own VERIFIED facts. Use ONLY the \
-             facts below — do not add outside knowledge. Weave them into a clear, coherent synthesis of \
-             the topic, and CITE each claim by its [breadcrumb]. Where the facts are thin or silent on \
-             part of the topic, say so explicitly rather than inventing. Write in {language}."
-        );
+        let system = kind.system_prompt(language);
         let user = format!("Topic: {topic}\n\nFacts (breadcrumb · provenance):\n{ctx}");
 
         let ai = match crate::ai::AiClient::from_config(&self.cfg.llm) {
@@ -1034,7 +1080,7 @@ impl ResearchApp {
                 return;
             }
         };
-        let mut turn = ChatTurn::new(format!("/synthesize {topic}"));
+        let mut turn = ChatTurn::new(format!("/{} {topic}", kind.command()));
         turn.streaming = true;
         turn.model = model.to_string();
         self.chat_history.push(turn);
@@ -1042,7 +1088,7 @@ impl ResearchApp {
         self.chat_scroll = 0;
         let rx = spawn_chat_stream(ai.client.clone(), model.to_string(), Some(system), Vec::new(), user, llm::CATEGORY);
         self.stream_rx = Some(rx);
-        self.status_message = Some(format!("synthesizing from {n} fact(s)…"));
+        self.status_message = Some(format!("{} from {n} fact(s)…", kind.gerund()));
     }
 
     /// RESRCH-5 (R5-D) — `/bibliography`: emit the Sources book's Research chapter
