@@ -231,6 +231,30 @@ Bring **live web sources** in — with the safety posture you choose. Configure 
 Set the default with `research.web.pipeline` (`chat` or `ingest`); `--chat` / `--ingest` override it per
 call. Web search needs network and a provider; without one, `/web` simply reports it's unavailable.
 
+## 6.8. Structured facts — `/wikidata` (1.5.5)
+
+Where `/web` brings in *prose*, **`/wikidata <query>`** brings in **structured triples** — the top of the
+trust ladder. It looks up the best-matching Wikidata entity and shows its **statements** (property →
+value), each citable by the entity's **Q-ID**:
+
+```
+/wikidata Albert Einstein
+  Albert Einstein (Q937) — German-born theoretical physicist (1879–1955)
+  • occupation: theoretical physicist
+  • date of birth: 1879-03-14
+  • field of work: physics
+  …
+  Source: Wikidata Q937 · https://www.wikidata.org/wiki/Q937
+```
+
+- **Keyless** (no API key, no config needed — on by default; tune `research.wikidata`), and it uses your
+  **project language** for labels and descriptions.
+- A **`/fact`** taken from a `/wikidata` result records provenance **`wikidata`** with the Q-ID, and
+  **skips the fact-check gate** — a Q-ID-backed triple is already a verifiable fact, not a model's guess.
+- **Wikipedia is deliberately excluded.** Its narrative carries well-documented editorial bias
+  (politics / economics / history); Wikidata's per-statement triples don't. We ground on the facts, not
+  the story. (External-identifier properties like catalog IDs are filtered out to keep the view factual.)
+
 ## 6⅞. Deterministic calculation — `/calc` (1.5.2)
 
 Not every fact comes from a model or the web — some you just **compute**. **`/calc <expr>`** evaluates a

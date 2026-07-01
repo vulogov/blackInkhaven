@@ -117,6 +117,7 @@ fn render_help(frame: &mut Frame, app: &ResearchApp, area: Rect) {
         Line::from("    /import [path]        ingest a md/txt/pdf file or a folder (bare: list)"),
         Line::from("    /forget <name>       remove an imported source"),
         Line::from("    /web [--ingest] q    web search & fetch (chat+factcheck, or ingest)"),
+        Line::from("    /wikidata <query>    structured Wikidata triples (Q-ID cited, gate-skipped)"),
         Line::from("    /calc <expr>         deterministic calc/units + world.get (→ /fact)"),
         Line::from("    /promote [note] [→ p] turn a Note into a verified Fact"),
         Line::from("    /chain a → b → c     sequential research pipeline"),

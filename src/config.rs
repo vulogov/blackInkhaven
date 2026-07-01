@@ -4001,6 +4001,33 @@ pub struct ResearchConfig {
     /// RESRCH-2 (R2-C) — web search & fetch settings.
     #[serde(default)]
     pub web: WebConfig,
+    /// RESRCH-3 (R3-A) — `research.wikidata` block for `/wikidata`.
+    pub wikidata: WikidataConfig,
+}
+
+/// RESRCH-3 (R3-A) — `research.wikidata` block. `/wikidata` queries Wikidata's
+/// **structured** entity claims (Q-ID-cited, keyless) — the top of the trust
+/// ladder, so a `/fact` from it skips the fact-check gate. Wikipedia's prose is
+/// deliberately excluded; we ground on the triples, not the narrative.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WikidataConfig {
+    /// Master switch for `/wikidata` (keyless — on by default).
+    pub enabled: bool,
+    /// Base URL of the Wikibase API host.
+    pub endpoint: String,
+    /// Max property statements rendered per entity.
+    pub max_statements: usize,
+}
+
+impl Default for WikidataConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            endpoint: "https://www.wikidata.org".to_string(),
+            max_statements: 24,
+        }
+    }
 }
 
 /// RESRCH-2 (R2-C) — `research.web` block. `/web` is unavailable until a
@@ -4055,6 +4082,7 @@ impl Default for ResearchConfig {
             dedup_warn_score: 0.92,
             import_chunk_chars: 1500,
             web: WebConfig::default(),
+            wikidata: WikidataConfig::default(),
         }
     }
 }

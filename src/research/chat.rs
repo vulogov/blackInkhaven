@@ -24,6 +24,9 @@ pub(super) struct ChatTurn {
     /// R4-D — for a World-grounded `/calc`, the `world:<path>,…` citation carried
     /// into provenance `detail` when a `/fact` is taken from it.
     pub world_detail: String,
+    /// R3-A — the Wikidata Q-ID when this turn is a `/wikidata` result, so a
+    /// `/fact` from it records `origin=wikidata` (+ Q-ID) and skips the gate.
+    pub wikidata: Option<String>,
     /// R2-E — the model that produced this turn (for the per-model cost table).
     pub model: String,
     /// R2-E — provider-reported token usage, set on stream completion; `None`
@@ -42,6 +45,7 @@ impl ChatTurn {
             web_grounded: false,
             computed: false,
             world_detail: String::new(),
+            wikidata: None,
             model: String::new(),
             usage: None,
         }
@@ -59,6 +63,7 @@ impl ChatTurn {
             web_grounded: false,
             computed: false,
             world_detail: String::new(),
+            wikidata: None,
             model: String::new(),
             usage: None,
         }

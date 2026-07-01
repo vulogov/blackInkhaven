@@ -34,10 +34,13 @@ follows automatically.
 
 ## Phases
 
-### R3-A — Structured knowledge base: `/wikidata <query>`
+### R3-A — Structured knowledge base: `/wikidata <query>` — **✅ Shipped 1.5.5-dev**
 
 - Search Wikidata entities (REST/SPARQL, free, **no key**, `reqwest` already present), return each
   entity's **structured claims** (label, description, key properties → values) — citable by **Q-ID**.
+- **Built:** `src/research/wikidata.rs` — `wbsearchentities` → `wbgetentities` (labels/descriptions/
+  claims) → one batched label resolve; external-ID properties filtered; project-language labels;
+  `origin=wikidata` (+ Q-ID) with the factcheck gate skipped. `research.wikidata` config (keyless).
 - Provenance `origin=wikidata` (+ Q-ID); **top of the trust ladder** → the factcheck gate is skipped (a
   Q-ID-backed triple is already a verifiable fact).
 - **Wikipedia is deliberately excluded.** Its prose carries well-documented editorial bias in
