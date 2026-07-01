@@ -79,10 +79,15 @@ pub(super) struct ConfirmationState {
     pub prov: ProvMeta,
     /// RESRCH-2.1 (T-P4) — a near-duplicate warning that must be confirmed twice.
     pub dup_warning: Option<String>,
+    /// UX-P4 — the near-duplicate fact's body, shown beside the pending fact.
+    pub dup_body: Option<String>,
     /// R2-C (WC-P3) — the pre-commit fact-check verdict for a web fact (set once);
     /// a non-ACCURATE verdict requires a second confirm.
     pub fc_checked: bool,
     pub fc_verdict: Option<String>,
+    /// UX-P4 — the full multi-line verdict text (per-source triangulation lines /
+    /// the fact-check reason), rendered in the overlay evidence panel.
+    pub fc_detail: Option<String>,
 }
 
 #[derive(PartialEq, Eq, Clone, Copy)]
@@ -2574,8 +2579,10 @@ impl ResearchApp {
                 command: ex.command,
                 prov: ex.prov,
                 dup_warning: None,
+                dup_body: None,
                 fc_checked: false,
                 fc_verdict: None,
+                fc_detail: None,
             });
             self.focus = Focus::ConfirmationOverlay;
             self.status_message = None;
@@ -2661,10 +2668,11 @@ impl ResearchApp {
         let already_warned = self.confirmation.as_ref().is_some_and(|c| c.dup_warning.is_some());
         let is_facts = self.confirmation.as_ref().is_some_and(|c| c.book == TargetBook::Facts);
         if is_facts && !already_warned {
-            if let Some(dup) = self.find_near_duplicate(&body) {
+            if let Some((dup, dup_body)) = self.find_near_duplicate(&body) {
                 if let Some(c) = self.confirmation.as_mut() {
                     c.dup_warning =
                         Some(format!("similar to {dup} · Ctrl+S again to insert anyway"));
+                    c.dup_body = Some(dup_body);
                 }
                 self.status_message = Some(format!("near-duplicate of {dup}"));
                 return;
@@ -2774,7 +2782,9 @@ impl ResearchApp {
 
     /// T-P4 — the slug-path of the nearest existing Facts paragraph whose body is
     /// a near-duplicate of `body` (score ≥ the configured threshold), if any.
-    fn find_near_duplicate(&self, body: &str) -> Option<String> {
+    /// The nearest near-duplicate fact (its breadcrumb + body), if any is at or
+    /// above the dedup threshold. UX-P4 shows the body beside the pending fact.
+    fn find_near_duplicate(&self, body: &str) -> Option<(String, String)> {
         let book_id = self.facts_tree.root?;
         let threshold = self.cfg.research.dedup_warn_score;
         let passages = crate::book_rag::retrieval::retrieve(
@@ -2788,7 +2798,7 @@ impl ResearchApp {
         passages
             .into_iter()
             .find(|p| p.is_hit && p.score >= threshold)
-            .map(|p| p.breadcrumb)
+            .map(|p| (p.breadcrumb, p.body))
     }
 
     /// WC-P3 — spawn the single-fact truth check for the pending web fact.
@@ -2854,9 +2864,11 @@ impl ResearchApp {
             .map(|l| l.trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ' ').to_string())
             .unwrap_or_else(|| "no verdict".to_string());
         let accurate = verdict.to_ascii_uppercase().starts_with("ACCURATE");
+        let detail = buf.trim().to_string();
         if let Some(c) = self.confirmation.as_mut() {
             c.fc_checked = true;
             c.fc_verdict = Some(verdict.clone());
+            c.fc_detail = Some(detail);
             // Fold the verdict into the provenance detail.
             if c.prov.detail.is_empty() {
                 c.prov.detail = format!("fact-check: {verdict}");
@@ -2963,9 +2975,11 @@ impl ResearchApp {
                 let TriGate { phase, .. } = self.tri_gate.take().unwrap();
                 let TriGatePhase::Judge { buf, .. } = phase else { return };
                 let (verdict, pass) = summarize_triangulation(&buf);
+                let detail = buf.trim().to_string();
                 if let Some(c) = self.confirmation.as_mut() {
                     c.fc_checked = true;
                     c.fc_verdict = Some(verdict.clone());
+                    c.fc_detail = Some(detail);
                     c.prov.detail = if c.prov.detail.is_empty() {
                         format!("triangulation: {verdict}")
                     } else {
