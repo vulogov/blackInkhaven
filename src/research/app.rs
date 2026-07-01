@@ -723,6 +723,7 @@ impl ResearchApp {
             Command::Forget(name) => self.run_forget(&name),
             Command::Web { ingest, query } => self.start_web(ingest, query),
             Command::Calc(expr) => self.run_calc(&expr),
+            Command::World(arg) => self.run_world(&arg),
             Command::Wikidata(query) => self.start_wikidata(query),
             Command::OpenAlex(query) => self.start_scholarly("openalex", query),
             Command::Arxiv(query) => self.start_scholarly("arxiv", query),
@@ -847,15 +848,20 @@ impl ResearchApp {
     fn run_import(&mut self, path: &str) {
         let p = std::path::Path::new(path);
         let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
-        if matches!(ext.as_str(), "bib" | "bibtex") {
-            // R3-D — a BibTeX file imports its entries into the Sources book.
-            match import_bibtex(&self.cfg, &self.store, p) {
+        if matches!(ext.as_str(), "bib" | "bibtex" | "json") {
+            // R3-D — a BibTeX / CSL-JSON file imports its entries into the Sources book.
+            let result = if ext == "json" {
+                import_csl_json(&self.cfg, &self.store, p)
+            } else {
+                import_bibtex(&self.cfg, &self.store, p)
+            };
+            match result {
                 Ok((added, total)) => {
                     self.reload_hierarchy();
                     self.status_message =
                         Some(format!("✓ imported {added}/{total} citation(s) → Sources"));
                 }
-                Err(e) => self.status_message = Some(format!("bibtex: {e}")),
+                Err(e) => self.status_message = Some(format!("citation import: {e}")),
             }
             return;
         }
@@ -1034,6 +1040,45 @@ impl ResearchApp {
                 self.status_message = Some(note.to_string());
             }
             Err(e) => self.status_message = Some(format!("calc: {e}")),
+        }
+    }
+
+    /// `/world [layer]` (R3-C) — surface the project's own World-simulation facts
+    /// (WORLD-4). Bare lists the layers; `/world <layer>` shows that layer's facts
+    /// (read from the materialized book, or recomputed from `world.hjson`). A
+    /// `/fact` from it records `origin=simulation` and skips the gate.
+    fn run_world(&mut self, arg: &str) {
+        const LAYERS: [&str; 5] = ["Astronomy", "Geology", "Climate", "Hydrology", "Demographics"];
+        let arg = arg.trim();
+        if arg.is_empty() {
+            let mut body = String::from("World layers — use /world <layer>:\n");
+            for l in LAYERS {
+                let has = crate::world::calc_read::chapter(&self.store, l).is_some();
+                body.push_str(&format!("• {l}{}\n", if has { "" } else { "  (no data)" }));
+            }
+            body.push_str("\nA /fact from a /world result records origin=simulation (deterministic).");
+            self.chat_history.push(ChatTurn::with_response("/world".to_string(), body));
+            self.chat_scroll = 0;
+            return;
+        }
+        match crate::world::calc_read::chapter(&self.store, arg) {
+            Some(json) => {
+                let pretty = serde_json::to_string_pretty(&json).unwrap_or_default();
+                let clipped: String = pretty.chars().take(2400).collect();
+                let body = format!("World / {arg}\n{clipped}");
+                let mut turn = ChatTurn::with_response(format!("/world {arg}"), body);
+                turn.simulation = true;
+                turn.sources = vec![format!("simulation:{arg}")];
+                self.chat_history.push(turn);
+                self.chat_scroll = 0;
+                self.status_message =
+                    Some(format!("{arg} — simulation facts · /fact to record (gate-skipped)"));
+            }
+            None => {
+                self.status_message = Some(format!(
+                    "no World data for `{arg}` — try /world for the layers, or `realworld compile --materialize`"
+                ));
+            }
         }
     }
 
@@ -2260,6 +2305,9 @@ impl ResearchApp {
         let prov = if last.computed {
             // R4-D — carry the `world:<path>` citation when the calc read World facts.
             ProvMeta { origin: "computed".to_string(), query, detail: last.world_detail.clone() }
+        } else if last.simulation {
+            // R3-C — the project's own deterministic World simulation; gate skipped.
+            ProvMeta { origin: "simulation".to_string(), query, detail: last.sources.join(", ") }
         } else if let Some(qid) = last.wikidata.clone() {
             // R3-A — structured Wikidata triple, cited by Q-ID; gate skipped.
             ProvMeta { origin: "wikidata".to_string(), query, detail: qid }
@@ -3367,6 +3415,11 @@ pub(crate) fn import_cli(layout: &ProjectLayout, cfg: &Config, store: &Store, pa
         println!("imported {added}/{total} citation(s) from `{path}` → Sources");
         return Ok(());
     }
+    if ext == "json" {
+        let (added, total) = import_csl_json(cfg, store, p)?;
+        println!("imported {added}/{total} CSL-JSON citation(s) from `{path}` → Sources");
+        return Ok(());
+    }
     if p.is_dir() {
         let (mut files, mut chunks) = (0usize, 0usize);
         for entry in walkdir::WalkDir::new(p).into_iter().filter_map(|e| e.ok()) {
@@ -3403,6 +3456,98 @@ pub(crate) fn import_bibtex(cfg: &Config, store: &Store, p: &std::path::Path) ->
         }
     }
     Ok((added, total))
+}
+
+/// R3-D — parse a CSL-JSON file (an array of citation objects) into `BibEntry`s
+/// and add each to the Sources book. Returns `(added, total)`.
+pub(crate) fn import_csl_json(cfg: &Config, store: &Store, p: &std::path::Path) -> Result<(usize, usize)> {
+    let text = std::fs::read_to_string(p).map_err(|e| anyhow::anyhow!("read {}: {e}", p.display()))?;
+    let entries = parse_csl_json(&text)?;
+    let total = entries.len();
+    let mut added = 0usize;
+    for entry in &entries {
+        if add_bibentry(store, cfg, entry).unwrap_or(false) {
+            added += 1;
+        }
+    }
+    Ok((added, total))
+}
+
+/// Parse a CSL-JSON array (`[{ "type", "title", "author":[{family,given}], … }]`)
+/// into `BibEntry`s.
+pub(crate) fn parse_csl_json(text: &str) -> Result<Vec<crate::sources::BibEntry>> {
+    let arr: serde_json::Value =
+        serde_json::from_str(text).map_err(|e| anyhow::anyhow!("CSL-JSON parse: {e}"))?;
+    let items = arr.as_array().ok_or_else(|| anyhow::anyhow!("CSL-JSON must be a JSON array"))?;
+    Ok(items.iter().filter_map(csl_to_bibentry).collect())
+}
+
+/// Map one CSL-JSON object to a `BibEntry`.
+fn csl_to_bibentry(obj: &serde_json::Value) -> Option<crate::sources::BibEntry> {
+    let s = |k: &str| obj.get(k).and_then(|v| v.as_str()).map(str::to_string);
+    let title = s("title")?;
+    // Authors: "family, given and family, given …".
+    let author = obj
+        .get("author")
+        .and_then(|a| a.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|a| {
+                    let fam = a.get("family").and_then(|v| v.as_str());
+                    let giv = a.get("given").and_then(|v| v.as_str());
+                    match (fam, giv) {
+                        (Some(f), Some(g)) => Some(format!("{f}, {g}")),
+                        (Some(f), None) => Some(f.to_string()),
+                        _ => a.get("literal").and_then(|v| v.as_str()).map(str::to_string),
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" and ")
+        })
+        .unwrap_or_default();
+    // Year: issued.date-parts[0][0].
+    let year = obj
+        .get("issued")
+        .and_then(|i| i.get("date-parts"))
+        .and_then(|d| d.as_array())
+        .and_then(|a| a.first())
+        .and_then(|p| p.as_array())
+        .and_then(|p| p.first())
+        .and_then(|y| y.as_i64())
+        .map(|y| y.to_string())
+        .unwrap_or_default();
+    let entry_type = match obj.get("type").and_then(|v| v.as_str()).unwrap_or("") {
+        "article-journal" | "article" => "article",
+        "book" => "book",
+        "chapter" => "incollection",
+        "paper-conference" => "inproceedings",
+        "thesis" => "phdthesis",
+        _ => "misc",
+    }
+    .to_string();
+    // Cite key: CSL `id`, else family+year slug.
+    let key = s("id").unwrap_or_else(|| {
+        let fam = author.split(',').next().unwrap_or("ref").trim().to_ascii_lowercase();
+        let fam: String = fam.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+        format!("{}{year}", if fam.is_empty() { "ref".to_string() } else { fam })
+    });
+    Some(crate::sources::BibEntry {
+        key,
+        entry_type,
+        author,
+        title,
+        year,
+        journal: s("container-title"),
+        volume: s("volume"),
+        number: s("issue"),
+        pages: s("page"),
+        publisher: s("publisher"),
+        url: s("URL"),
+        doi: s("DOI"),
+        isbn: s("ISBN"),
+        abstract_: s("abstract"),
+        ..Default::default()
+    })
 }
 
 /// R3-B/D — write a SOURCES-1 `BibEntry` into the Sources book under a "Research"
@@ -3685,5 +3830,36 @@ mod triangulation_tests {
         let buf = "Wikidata: SILENT — nothing\narXiv: SILENT — nothing\nAgreement: 0/2 support";
         let (_, pass) = summarize_triangulation(buf);
         assert!(!pass);
+    }
+}
+
+#[cfg(test)]
+mod csl_tests {
+    use super::parse_csl_json;
+
+    #[test]
+    fn parses_csl_json_array() {
+        let text = r#"[
+          {"id":"vaswani2017","type":"paper-conference","title":"Attention Is All You Need",
+           "author":[{"family":"Vaswani","given":"Ashish"},{"family":"Shazeer","given":"Noam"}],
+           "issued":{"date-parts":[[2017]]},"DOI":"10.5555/x","container-title":"NeurIPS"}
+        ]"#;
+        let v = parse_csl_json(text).unwrap();
+        assert_eq!(v.len(), 1);
+        let e = &v[0];
+        assert_eq!(e.key, "vaswani2017");
+        assert_eq!(e.entry_type, "inproceedings");
+        assert_eq!(e.author, "Vaswani, Ashish and Shazeer, Noam");
+        assert_eq!(e.year, "2017");
+        assert_eq!(e.doi.as_deref(), Some("10.5555/x"));
+        assert!(e.is_valid());
+    }
+
+    #[test]
+    fn derives_key_when_absent_and_rejects_non_array() {
+        let text = r#"[{"type":"book","title":"T","author":[{"family":"Roe","given":"J"}],"issued":{"date-parts":[[1999]]}}]"#;
+        let v = parse_csl_json(text).unwrap();
+        assert_eq!(v[0].key, "roe1999");
+        assert!(parse_csl_json("{}").is_err()); // object, not array
     }
 }

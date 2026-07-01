@@ -30,6 +30,8 @@ pub(super) enum Command {
     Web { ingest: Option<bool>, query: String },
     /// `/calc <expr>` — evaluate a deterministic Bund expression (R3-C).
     Calc(String),
+    /// `/world [layer]` — surface the project's World simulation facts (R3-C).
+    World(String),
     /// `/wikidata <query>` — fetch a Wikidata entity's structured claims (R3-A).
     Wikidata(String),
     /// `/openalex <query>` — fetch the top OpenAlex paper (R3-B).
@@ -127,6 +129,7 @@ pub(super) fn parse(input: &str) -> Option<Command> {
             Command::Web { ingest, query: q.to_string() }
         }
         "calc" => Command::Calc(rest.to_string()),
+        "world" => Command::World(rest.to_string()),
         "wikidata" => Command::Wikidata(rest.to_string()),
         "openalex" => Command::OpenAlex(rest.to_string()),
         "arxiv" => Command::Arxiv(rest.to_string()),
@@ -227,6 +230,8 @@ mod tests {
             Command::Web { ingest: Some(false), query: "q".into() }
         );
         assert_eq!(parse("/calc 100 mi2km").unwrap(), Command::Calc("100 mi2km".into()));
+        assert_eq!(parse("/world Astronomy").unwrap(), Command::World("Astronomy".into()));
+        assert_eq!(parse("/world").unwrap(), Command::World(String::new()));
         assert_eq!(parse("/wikidata Rome").unwrap(), Command::Wikidata("Rome".into()));
         assert_eq!(parse("/openalex aqueduct").unwrap(), Command::OpenAlex("aqueduct".into()));
         assert_eq!(parse("/arxiv attention").unwrap(), Command::Arxiv("attention".into()));

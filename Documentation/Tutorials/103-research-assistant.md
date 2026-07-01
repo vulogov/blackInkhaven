@@ -211,9 +211,10 @@ retrieved alongside your Facts and prepended (cited as `[source: name]`) to grou
   status line reports how many files and chunks landed. Re-importing replaces a same-named source.
 - PDFs are text-extracted on import; scanned/image-only PDFs yield little text (no OCR).
 - Imported chunks are retrieved whenever RAG is on (any mode except *Full only*).
-- **`/import <file.bib>`** (and `inkhaven research --import x.bib`) imports a **BibTeX** file: each entry
-  becomes a **SOURCES-1 citation** under a *Research* chapter of your Sources book (deduped by cite key) —
-  your existing bibliography, brought straight into the corpus (R3-D).
+- **`/import <file.bib>`** / **`<file.json>`** (and `inkhaven research --import`) imports a **BibTeX** or
+  **CSL-JSON** file: each entry becomes a **SOURCES-1 citation** under a *Research* chapter of your Sources
+  book (deduped by cite key) — your existing bibliography (or a Zotero export), brought straight into the
+  corpus (R3-D).
 - **`inkhaven research --sync <folder>`** registers a folder for **re-import-on-change**: it imports the
   folder now, and every subsequent `inkhaven research` launch re-imports it **if its files changed**
   (mtime-gated) — so a working vault stays in sync without a manual `/import` each time.
@@ -385,7 +386,16 @@ calculation is grounded in *your* world, not generic constants:
   `world.tilt`, `world.star_mass`, `world.orbit_days`, `world.divergence`.
 - Every World read is **echoed** in the result (`world: <path> = <value>`), and a `/fact` taken from a
   World-grounded `/calc` records provenance **`computed · world:<path>`** — the deterministic, *self-citing*
-  tier. (Requires a materialized World book — run `inkhaven realworld compile --materialize` first.)
+  tier. It reads the **materialized** book, or (if you haven't run `realworld compile --materialize` yet)
+  **recomputes** the layer from `world.hjson` on the fly — same numbers either way.
+- **List reducers:** `[ 1 2 3 4 ] sum` → `10`; also `mean`, `min`, `max` over a Bund list literal.
+
+### Browsing the world — `/world` (1.5.6)
+
+**`/world`** lists your World simulation's layers (Astronomy · Geology · Climate · Hydrology ·
+Demographics); **`/world <layer>`** shows that layer's facts (the materialized JSON, or recomputed from
+`world.hjson`). A `/fact` from a `/world` result records provenance **`simulation`** and **skips the
+gate** — it's your own deterministic, internally-consistent world, not an outside claim.
 
 ## 7. Deeper research
 

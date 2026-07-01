@@ -71,15 +71,18 @@ The strongest fit with Inkhaven's zero-AI / no-fabrication ethos — see the *Ho
   `origin=computed`.
 - **`/world <query>`** — surface the project's own **WORLD-4/5/6 simulation** (astronomy, world-state)
   as a deterministic, internally-consistent fact source. `origin=simulation` → gate bypassed. No
-  network; the data is already in the project.
+  network; the data is already in the project. **✅ Shipped 1.5.6** — `/world` lists the layers,
+  `/world <layer>` renders its facts (materialized book, or recomputed from `world.hjson`); a `/fact`
+  records `origin=simulation` and skips the gate.
 
 ### R3-D — Author's library: Zotero / vault / folder-watch (the trust anchor — see note below)
 
 - **Zotero / BibTeX import** — ingest the author's curated reference library. Simplest path: read a
   **BibTeX/CSL-JSON export** (reuses the existing `sources::parse_bibtex`; **no new crate**) → research
   sources + `BibEntry`s, with attached PDFs embedded via the R2-B path. `origin=library`.
-  **✅ Shipped 1.5.6** — `/import <file.bib>` (and `--import`) parses BibTeX → `BibEntry`s in the Sources
-  book's Research chapter (dedup by cite key). *CSL-JSON + PDF-attachment embedding deferred.*
+  **✅ Shipped 1.5.6** — `/import <file.bib>` **and `<file.json>`** parse BibTeX / **CSL-JSON** →
+  `BibEntry`s in the Sources book's Research chapter (dedup by cite key). *PDF-attachment embedding +
+  direct `zotero.sqlite` read deferred.*
 - **Vault import** — recursively import an **Obsidian-style Markdown vault** (a folder of linked notes),
   preserving note titles as source names. Extends `/import` to folders. No new crate. **✅ Shipped
   1.5.2** — `/import <folder>` (and `inkhaven research --import <folder>`) recurses over md/txt/pdf.
