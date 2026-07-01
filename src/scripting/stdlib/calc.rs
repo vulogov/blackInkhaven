@@ -526,6 +526,30 @@ fn world_get(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
     Ok(vm)
 }
 
+/// `calc.world.check` — `( path computed -- delta )`: the signed difference
+/// (declared − computed) between a World-book fact and a `/calc`-recomputed value,
+/// e.g. `world.star_mass world.au kepler_period  "Astronomy/year_length_planet_days"  swap  calc.world.check`.
+/// Surfaces the same divergence WORLD-4's `year_length_divergence_pct` reports.
+fn world_check(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    let computed = pop_f(vm, "calc.world.check")?;
+    let path = pull(vm, "calc.world.check")
+        .map_err(|e| easy_error::err_msg(e.to_string()))?
+        .cast_string()
+        .map_err(|e| easy_error::err_msg(format!("calc.world.check: expected a path string ({e})")))?;
+    match world_number(&path) {
+        Some(declared) => {
+            let delta = declared - computed;
+            record_world_read(&path, &format!("{} (Δ {:+})", format_float(declared), delta));
+            push(vm, Value::from_float(delta));
+        }
+        None => {
+            record_world_read(&path, "NODATA");
+            push(vm, Value::nodata());
+        }
+    }
+    Ok(vm)
+}
+
 /// `calc.world.has` — `( path -- bool )`: does the path resolve to anything?
 fn world_has(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
     let path = pull(vm, "calc.world.has")
@@ -686,6 +710,7 @@ const WORDS: &[(&str, fn(&mut VM) -> std::result::Result<&mut VM, BundError>)] =
     ("calc.world.get", world_get),
     ("calc.world.has", world_has),
     ("calc.world.dict", world_dict),
+    ("calc.world.check", world_check),
     ("calc.world.year", w_year),
     ("calc.world.declared_year", w_declared_year),
     ("calc.world.tilt", w_tilt),
@@ -774,6 +799,14 @@ mod tests {
         // gcd / factorial.
         assert!((top_float("12 18 calc.gcd") - 6.0).abs() < 1e-9);
         assert!((top_float("5 calc.factorial") - 120.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn world_check_nodata_without_project() {
+        // No active store → the path can't resolve → NODATA (never a number).
+        let out = crate::scripting::eval("\"Astronomy/year_length_planet_days\" 400 calc.world.check")
+            .expect("eval");
+        assert!(out.top.unwrap().cast_float().is_err(), "should be NODATA, not a number");
     }
 
     #[test]
