@@ -300,6 +300,13 @@ Crucially, the model judges **independent external evidence**, not its own answe
 something. Use it before you `/fact` a shaky claim: if the sources don't corroborate, investigate first.
 (Triangulation needs at least Wikidata or the scholarly sources enabled.)
 
+**As the `/fact` gate.** Set **`research.triangulate_gate: true`** and triangulation runs *automatically*
+before a `model` / `web` / `document` fact commits — cross-source agreement **replaces** the single-source
+self-check. On the confirmation, `SUPPORTS` with no `CONTRADICTS` inserts; a contradicted or uncorroborated
+verdict shows the agreement and asks you to `Ctrl+S` again to insert anyway (like the dedup guard —
+informs, never blocks). Deterministic / structured facts (`computed`, `wikidata`, `openalex`, `arxiv`)
+are already authoritative and skip the gate. It's **off by default** (network-heavy).
+
 ## 6⅞. Deterministic calculation — `/calc` (1.5.2)
 
 Not every fact comes from a model or the web — some you just **compute**. **`/calc <expr>`** evaluates a
@@ -434,6 +441,9 @@ research: {
   split_ratio: 4                // 4 = 40% tree, 60% chat
   diff_top_n: 3
   verify_min_sentence_words: 8
+  triangulate_gate: false        // R3-E: cross-source-agreement /fact gate (network-heavy)
+  wikidata: { enabled: true }    // R3-A (keyless)
+  scholarly: { enabled: true, mailto: "you@example.org", auto_cite: true }  // R3-B
 }
 ```
 

@@ -3995,6 +3995,12 @@ pub struct ResearchConfig {
     /// RESRCH-2.1 — similarity score (0..1) at/above which a `/fact` insert warns
     /// of a near-duplicate before committing (informs, never blocks).
     pub dedup_warn_score: f64,
+    /// RESRCH-3 (R3-E) — when true, a `/fact` from a `model` / `web` / `document`
+    /// source is **triangulated** across the structured sources before it commits
+    /// (cross-source agreement replaces the single-source self-check). Off by
+    /// default — it is network-heavy. Informs; a weak verdict just asks to
+    /// confirm again.
+    pub triangulate_gate: bool,
     /// RESRCH-2 (R2-B) — max characters per embedded chunk when importing a
     /// document (`/import`).
     pub import_chunk_chars: usize,
@@ -4104,6 +4110,7 @@ impl Default for ResearchConfig {
             diff_top_n: 3,
             verify_min_sentence_words: 8,
             dedup_warn_score: 0.92,
+            triangulate_gate: false,
             import_chunk_chars: 1500,
             web: WebConfig::default(),
             wikidata: WikidataConfig::default(),

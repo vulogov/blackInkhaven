@@ -96,8 +96,11 @@ model's self-assessment).
   sources concurrently (Wikidata + OpenAlex + arXiv, `tokio::spawn` + join), then one LLM call judges
   **each source** `SUPPORTS | CONTRADICTS | SILENT` against the claim (judging *external* evidence, not
   its own output) and reports an `Agreement: n/m support` tally. Streams into chat via the shared path.
-- **Follow-up:** folding the triangulation verdict *into* the WC-P3 `/fact` confirmation gate (replacing
-  the single-source self-check) — the standalone command lands first; the automatic gate-fold is next.
+- **Gate-fold ✅ Shipped 1.5.5-dev:** `research.triangulate_gate` makes triangulation the automatic
+  `/fact` gate for `model` / `web` / `document` facts (replacing the single-source self-check). On
+  confirm it gathers evidence → judges each source → `SUPPORTS` with no `CONTRADICTS` inserts, else a
+  second confirm (like the dedup / web gates). `computed` / `wikidata` / `openalex` / `arxiv` skip it
+  (already authoritative). Off by default (network-heavy).
 
 ## Dependency posture
 - `/wikidata`, `/openalex`, `/arxiv`: **no new crates** (reuse `reqwest` from R2-C); all keyless.
