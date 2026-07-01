@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Proposed (track) |
+| **Status** | **UD-P1/P2/P3 shipped 1.5.6-dev** (UD-P4 stretch open) |
 | **Builds on** | RESRCH-1 (Facts corpus) · R2-E `/factcheck` · RE-P5 verdict glyphs · UX-P2 tier glyphs |
 | **Theme** | Some Facts are **the author's creative invention**, not claims about the real world — an invented god's name, a fictional aqueduct's capacity, a magic system's rule. They *will* fail a real-world fact-check (which grades against the model's general knowledge), and they *should not* be checked against it at all. This track lets the author mark a fact **undisputed**: excluded from `/factcheck`, glyphed in the tree, and checked instead for **internal common sense** by a separate, non-destructive `/undisputed` pass. |
 
@@ -91,7 +91,15 @@
   The `※` glyph is deliberately *not* a tier glyph; it says "not a real-world claim." A `/fact` is never
   auto-marked undisputed — it's always a deliberate author act.
 
-## Recommended first cut
+## Recommended first cut — **shipped 1.5.6**
 **UD-P1 + UD-P2 + UD-P3** together — the whole loop the user described (mark → excluded-with-count →
 separate common-sense check). Small and self-contained; all three reuse existing tag + `/factcheck` +
 UX-P1 machinery with no new dependencies.
+
+- **UD-P1 ✅** — `research::UNDISPUTED_TAG`; `u` in the Facts tree toggles the tag (`toggle_undisputed` →
+  `update_metadata`); a magenta `※` glyph reads `node.tags` in `render_facts_tree`.
+- **UD-P2 ✅** — `factcheck::gather` partitions on `is_undisputed`; `gather_facts` returns disputed only,
+  `gather_undisputed` the rest; `/factcheck` excludes them and the report shows `※ N … excluded`.
+- **UD-P3 ✅** — `/undisputed` command (+ `CommandSpec` for the UX-P1 palette): a chunked, streamed,
+  language-aware common-sense pass (`undisputed_system` → `PLAUSIBLE/ODD/INCOHERENT`), read-only, with a
+  `✓N ?N ✗N` tally. Mirrors `/factcheck`'s truth phase.
