@@ -950,6 +950,18 @@ pub enum Command {
         /// (import it now, and re-import at each launch when its files change).
         #[arg(long, value_name = "FOLDER")]
         sync: Option<String>,
+        /// 1.5.6 RESRCH-2 (R2-F) — research a question list headlessly (one
+        /// question per line; `#` comments ignored) and write a Markdown report
+        /// (`--out`, default stdout).
+        #[arg(long, value_name = "FILE")]
+        batch: Option<String>,
+        /// R2-F — with `--batch`, insert facts that clear `--confidence`
+        /// (otherwise the report lists candidates only).
+        #[arg(long)]
+        auto_confirm: bool,
+        /// R2-F — auto-insert confidence threshold, 0..1 (default 0.7).
+        #[arg(long, value_name = "0..1")]
+        confidence: Option<f64>,
     },
 
     /// 1.2.10+ — launch the standalone TUI configuration
@@ -5002,6 +5014,9 @@ impl Cli {
                 out,
                 import,
                 sync,
+                batch,
+                auto_confirm,
+                confidence,
             } => crate::research::run(
                 &project,
                 crate::research::ResearchInvocation {
@@ -5012,6 +5027,9 @@ impl Cli {
                     out,
                     import,
                     sync,
+                    batch,
+                    auto_confirm,
+                    confidence,
                 },
             )
             .map_err(Into::into),
