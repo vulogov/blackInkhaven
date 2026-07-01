@@ -846,6 +846,19 @@ impl ResearchApp {
     /// ground answers and `/fact` can cite them.
     fn run_import(&mut self, path: &str) {
         let p = std::path::Path::new(path);
+        let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+        if matches!(ext.as_str(), "bib" | "bibtex") {
+            // R3-D — a BibTeX file imports its entries into the Sources book.
+            match import_bibtex(&self.cfg, &self.store, p) {
+                Ok((added, total)) => {
+                    self.reload_hierarchy();
+                    self.status_message =
+                        Some(format!("✓ imported {added}/{total} citation(s) → Sources"));
+                }
+                Err(e) => self.status_message = Some(format!("bibtex: {e}")),
+            }
+            return;
+        }
         if p.is_dir() {
             // Folder / vault import (R3-D, brought forward): recurse over the
             // supported files.
@@ -1180,63 +1193,7 @@ impl ResearchApp {
     /// R3-B — write a SOURCES-1 `BibEntry` into the Sources book under a
     /// "Research" chapter (dedup by cite key). Mirrors the `sources import` path.
     fn add_bibentry(&self, entry: &crate::sources::BibEntry) -> anyhow::Result<bool> {
-        use crate::store::{InsertPosition, NodeKind};
-        if !entry.is_valid() {
-            return Ok(false);
-        }
-        let hier = crate::store::hierarchy::Hierarchy::load(&self.store)?;
-        let book = hier
-            .iter()
-            .find(|n| {
-                n.kind == NodeKind::Book
-                    && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_SOURCES)
-            })
-            .ok_or_else(|| anyhow::anyhow!("Sources book missing"))?
-            .clone();
-        // Find or create the "Research" chapter.
-        let chapter = match hier
-            .children_of(Some(book.id))
-            .into_iter()
-            .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Research"))
-            .cloned()
-        {
-            Some(c) => c,
-            None => self.store.create_node(
-                &self.cfg,
-                &hier,
-                NodeKind::Chapter,
-                "Research",
-                Some(&book),
-                None,
-                InsertPosition::End,
-            )?,
-        };
-        // Dedup by cite key (case-insensitive) within the chapter.
-        let key_lc = entry.key.to_lowercase();
-        let exists = hier
-            .children_of(Some(chapter.id))
-            .into_iter()
-            .any(|n| n.title.to_lowercase() == key_lc);
-        if exists {
-            return Ok(false);
-        }
-        let hier = crate::store::hierarchy::Hierarchy::load(&self.store)?;
-        let mut node = self.store.create_node(
-            &self.cfg,
-            &hier,
-            NodeKind::Paragraph,
-            &entry.key,
-            Some(&chapter),
-            None,
-            InsertPosition::End,
-        )?;
-        node.content_type = Some("hjson".to_string());
-        let body = entry.to_hjson();
-        if let Some(rel) = &node.file {
-            let _ = crate::io_atomic::write(&self.store.project_root().join(rel), body.as_bytes());
-        }
-        self.store.update_paragraph_content(&mut node, body.as_bytes())?;
-        Ok(true)
+        add_bibentry(&self.store, &self.cfg, entry)
     }
 
     /// `/triangulate [claim]` (R3-E) — cross-check a claim against the independent
@@ -3404,6 +3361,12 @@ fn build_prompt_history(thread: &ResearchThread) -> Vec<String> {
 /// (R2-B). Thread-agnostic (recorded under thread ""), available to every thread.
 pub(crate) fn import_cli(layout: &ProjectLayout, cfg: &Config, store: &Store, path: &str) -> Result<()> {
     let p = std::path::Path::new(path);
+    let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    if matches!(ext.as_str(), "bib" | "bibtex") {
+        let (added, total) = import_bibtex(cfg, store, p)?;
+        println!("imported {added}/{total} citation(s) from `{path}` → Sources");
+        return Ok(());
+    }
     if p.is_dir() {
         let (mut files, mut chunks) = (0usize, 0usize);
         for entry in walkdir::WalkDir::new(p).into_iter().filter_map(|e| e.ok()) {
@@ -3425,6 +3388,66 @@ pub(crate) fn import_cli(layout: &ProjectLayout, cfg: &Config, store: &Store, pa
     let n = embed_source_file(layout, cfg, store, p)?;
     println!("imported `{}` — {n} chunk(s) as a research source", super::imports::source_name(p));
     Ok(())
+}
+
+/// R3-D — parse a BibTeX file and add each entry to the Sources book (a Research
+/// chapter, dedup by cite key). Returns `(added, total)`.
+pub(crate) fn import_bibtex(cfg: &Config, store: &Store, p: &std::path::Path) -> Result<(usize, usize)> {
+    let text = std::fs::read_to_string(p).map_err(|e| anyhow::anyhow!("read {}: {e}", p.display()))?;
+    let entries = crate::sources::parse_bibtex(&text);
+    let total = entries.len();
+    let mut added = 0usize;
+    for entry in &entries {
+        if add_bibentry(store, cfg, entry).unwrap_or(false) {
+            added += 1;
+        }
+    }
+    Ok((added, total))
+}
+
+/// R3-B/D — write a SOURCES-1 `BibEntry` into the Sources book under a "Research"
+/// chapter (dedup by cite key). Returns `true` when a new entry was created.
+pub(crate) fn add_bibentry(
+    store: &Store,
+    cfg: &Config,
+    entry: &crate::sources::BibEntry,
+) -> anyhow::Result<bool> {
+    use crate::store::{InsertPosition, NodeKind};
+    if !entry.is_valid() {
+        return Ok(false);
+    }
+    let hier = crate::store::hierarchy::Hierarchy::load(store)?;
+    let book = hier
+        .iter()
+        .find(|n| {
+            n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_SOURCES)
+        })
+        .ok_or_else(|| anyhow::anyhow!("Sources book missing"))?
+        .clone();
+    let chapter = match hier
+        .children_of(Some(book.id))
+        .into_iter()
+        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Research"))
+        .cloned()
+    {
+        Some(c) => c,
+        None => store.create_node(cfg, &hier, NodeKind::Chapter, "Research", Some(&book), None, InsertPosition::End)?,
+    };
+    // Dedup by cite key (case-insensitive) within the chapter.
+    let key_lc = entry.key.to_lowercase();
+    if hier.children_of(Some(chapter.id)).into_iter().any(|n| n.title.to_lowercase() == key_lc) {
+        return Ok(false);
+    }
+    let hier = crate::store::hierarchy::Hierarchy::load(store)?;
+    let mut node =
+        store.create_node(cfg, &hier, NodeKind::Paragraph, &entry.key, Some(&chapter), None, InsertPosition::End)?;
+    node.content_type = Some("hjson".to_string());
+    let body = entry.to_hjson();
+    if let Some(rel) = &node.file {
+        let _ = crate::io_atomic::write(&store.project_root().join(rel), body.as_bytes());
+    }
+    store.update_paragraph_content(&mut node, body.as_bytes())?;
+    Ok(true)
 }
 
 /// Embed one file as a research source (thread-global); returns the chunk count.

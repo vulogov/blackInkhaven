@@ -211,6 +211,12 @@ retrieved alongside your Facts and prepended (cited as `[source: name]`) to grou
   status line reports how many files and chunks landed. Re-importing replaces a same-named source.
 - PDFs are text-extracted on import; scanned/image-only PDFs yield little text (no OCR).
 - Imported chunks are retrieved whenever RAG is on (any mode except *Full only*).
+- **`/import <file.bib>`** (and `inkhaven research --import x.bib`) imports a **BibTeX** file: each entry
+  becomes a **SOURCES-1 citation** under a *Research* chapter of your Sources book (deduped by cite key) —
+  your existing bibliography, brought straight into the corpus (R3-D).
+- **`inkhaven research --sync <folder>`** registers a folder for **re-import-on-change**: it imports the
+  folder now, and every subsequent `inkhaven research` launch re-imports it **if its files changed**
+  (mtime-gated) — so a working vault stays in sync without a manual `/import` each time.
 
 This is the first step of *grounded research*: your corpus can now stand on real documents, with every
 derived fact citing where it came from.

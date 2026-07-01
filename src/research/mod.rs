@@ -35,6 +35,7 @@ mod scholarly;
 mod thread;
 mod verdicts;
 mod verify;
+mod sync;
 mod web;
 mod wikidata;
 
@@ -67,6 +68,9 @@ pub(crate) struct ResearchInvocation {
     pub out: Option<String>,
     /// RESRCH-2 (R2-B) — `--import <path>`: ingest a document non-interactively.
     pub import: Option<String>,
+    /// RESRCH-3 (R3-D) — `--sync <folder>`: register a folder for
+    /// re-import-on-change and import it now.
+    pub sync: Option<String>,
 }
 
 /// Launch the Research Assistant, or run a non-interactive thread operation.
@@ -80,6 +84,10 @@ pub(crate) fn run(project: &Path, inv: ResearchInvocation) -> Result<()> {
         let store = Store::open(layout.clone(), &cfg).map_err(anyhow::Error::from)?;
         return app::import_cli(&layout, &cfg, &store, path);
     }
+    if let Some(folder) = inv.sync.as_deref() {
+        let store = Store::open(layout.clone(), &cfg).map_err(anyhow::Error::from)?;
+        return sync_cli(&layout, &cfg, &store, folder);
+    }
     if inv.list_threads {
         return app::list_threads_cli(&layout, inv.format.as_deref());
     }
@@ -90,7 +98,37 @@ pub(crate) fn run(project: &Path, inv: ResearchInvocation) -> Result<()> {
     let store = Store::open(layout.clone(), &cfg).map_err(anyhow::Error::from)?;
     let hierarchy = Hierarchy::load(&store).map_err(anyhow::Error::from)?;
 
+    // R3-D — re-import any synced folder whose newest file changed since last sync.
+    reimport_changed_folders(&layout, &cfg, &store);
+
     launch_tui(layout, cfg, store, hierarchy, inv.thread)
+}
+
+/// R3-D — `--sync <folder>`: register the folder and import it now.
+fn sync_cli(layout: &ProjectLayout, cfg: &Config, store: &Store, folder: &str) -> Result<()> {
+    let now = chrono::Utc::now().timestamp();
+    let abs = sync::SyncManifest::register(layout, folder, now)?;
+    app::import_cli(layout, cfg, store, &abs)?;
+    println!("synced folder registered — re-imported on change at each launch");
+    Ok(())
+}
+
+/// R3-D — on launch, re-import registered folders whose newest importable file is
+/// newer than the last sync (idempotent; folder import refreshes same-named
+/// sources). Best-effort — never blocks launch.
+fn reimport_changed_folders(layout: &ProjectLayout, cfg: &Config, store: &Store) {
+    let manifest = sync::SyncManifest::load(layout);
+    for (abs, last_sync) in &manifest.folders {
+        let path = std::path::Path::new(abs);
+        if !path.is_dir() {
+            continue;
+        }
+        if sync::newest_mtime(path) > *last_sync {
+            if app::import_cli(layout, cfg, store, abs).is_ok() {
+                sync::SyncManifest::mark_synced(layout, abs, chrono::Utc::now().timestamp());
+            }
+        }
+    }
 }
 
 /// Set up the terminal, run the event loop, and restore the terminal on exit
