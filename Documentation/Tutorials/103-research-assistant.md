@@ -349,6 +349,17 @@ atan atan2 hypot abs floor ceil round`) and **astronomy/planetology formulas** i
 /calc 1 1 surface_gravity    → = 9.80665   (Earth)
 ```
 
+**Climate, geography & economy (1.5.6).** `lapse_rate` (altitude→ΔT), `dewpoint`, `insolation_at_lat`,
+`heat_index`; **`haversine`** (two lat/lon → great-circle km), `bearing`, `destination_point` (pushes
+`lat2 lon2`), `slope`; and finance/population: `compound`, `cagr`, `inflation_adjust`, `annuity`,
+`malthus` (exponential) / `logistic` (carrying-capacity). Plus math `trunc sign factorial gcd lcm`.
+
+```
+/calc 51.5 -0.13 40.71 -74.0 haversine   → = 5570.2   (London → New York, km)
+/calc 1000 0.05 1 10 compound            → = 1628.89  (1000 at 5%/yr for 10 yr)
+/calc 5000 100000 0.03 50 logistic       → projected population toward K=100000
+```
+
 ### Grounding `/calc` in your World book (1.5.4)
 
 `/calc` can read **this project's own World-book facts** (the materialized WORLD-4 simulation), so a
