@@ -258,6 +258,8 @@ fn render_help(frame: &mut Frame, app: &ResearchApp, area: Rect) {
         Line::from("    /triangulate [claim] cross-check a claim across the structured sources"),
         Line::from("    /calc <expr>         deterministic calc/units + world.get (→ /fact)"),
         Line::from("    /world [layer]       your World simulation facts (origin=simulation)"),
+        Line::from("    /synthesize <topic>  grounded, cited synthesis from your facts"),
+        Line::from("    /bibliography        Sources Research chapter → BibTeX (y to copy)"),
         Line::from("    /promote [note] [→ p] turn a Note into a verified Fact"),
         Line::from("    /chain a → b → c     sequential research pipeline"),
         Line::from("    /rag /clear /save    switch RAG · clear chat · rename thread"),
