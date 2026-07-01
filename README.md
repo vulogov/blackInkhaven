@@ -21,30 +21,37 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.5.7 — Research Assistant: comfort & completion
+## Latest release · 1.5.8 — Synthesis, Maintenance & a Public-Domain Library
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.5.7.md`](Documentation/RELEASE_NOTES/1.5.7.md)
-· Tracks: [`RESRCH-UX`](Documentation/PROPOSALS/RESRCH-UX_TRACK.md) ·
-[`RESRCH-UNDISPUTED`](Documentation/PROPOSALS/RESRCH-UNDISPUTED_TRACK.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.5.8.md`](Documentation/RELEASE_NOTES/1.5.8.md)
+· Tracks: [`RESRCH-5`](Documentation/PROPOSALS/RESRCH-5_TRACK.md) ·
+[`RESRCH-GUTENBERG`](Documentation/PROPOSALS/RESRCH-GUTENBERG_TRACK.md)
 
-A focused follow-on to 1.5.6 that finishes the two Research-Assistant tracks it opened. **No new crates.**
+The Research Assistant stops being only an *inbox* for facts: it now **composes output** from the corpus,
+**maintains** it over time, and pulls in **public-domain books**. **No new crates.**
 
-### Layout & readability (RESRCH-UX P5)
+### Synthesis (corpus → output)
 
-**`Enter`** on a fact opens a scrollable **quick-view** modal; **`<` / `>`** resize the split and
-**`Ctrl+Z`** zooms a pane; **`y`/`Y`** copy the last response / selected fact to the clipboard; a rule
-separates chat turns with a **`▼ more`** scroll cue; and responses render **light markdown** (bold,
-italic, `code`, headings, bullets, links).
+**`/synthesize <topic>`** streams a grounded, cited synthesis from your own facts; **`/outline`** gives a
+fact-citing chapter outline; **`/gaps`** lists the open questions the corpus doesn't answer; and
+**`/bibliography`** emits the accrued citations as **BibTeX** (`--bibliography` headless).
 
-### Authorial-fact verdicts (RESRCH-UNDISPUTED P4)
+### Maintenance (keep it healthy)
 
-**`/undisputed`** now **colours each `※` glyph** in the tree by its common-sense verdict — green
-plausible · yellow odd · red incoherent — so a glance shows which authorial facts read cleanly.
+**`/upgrade`** re-grounds a `model`-origin fact on a structured source and, when corroborated, **raises
+its provenance tier** (text untouched); **`/stale [days]`** lists aging `model`/`web` facts to re-verify.
+
+### A public-domain library
+
+**`/gutenberg <query>`** (`/pg`) searches **Project Gutenberg** (keyless Gutendex), fetches a book's text,
+and ingests it as a research source — its passages are then retrieved and cited `[source: <Title>
+(PG#<id>)]`, grounding your work.
 
 ### Dependencies & compatibility
 
-**No new runtime crates** (yank reuses `arboard`; markdown reuses the editor's highlighter). New sidecar
-`.inkhaven/fact-undisputed.json`. With this, RESRCH-UX (P1–P5) and RESRCH-UNDISPUTED (P1–P4) are complete.
+**No new runtime crates** — all reuse the existing retrieval / provenance / SOURCES-1 / ingestion /
+triangulation machinery. New config `research.gutenberg`; new provenance origin `gutenberg`; new CLI flag
+`--bibliography`.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
