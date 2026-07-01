@@ -431,6 +431,16 @@ fact/note insertions, pinned nodes, and RAG mode all persist and **resume** exac
   **`--export-thread <name>`** writes its full history as Markdown or JSON (`--out FILE`, default
   stdout) — a clean record of how a fact came to be.
 
+### Headless batch research (1.5.6)
+
+**`inkhaven research --batch questions.txt`** researches a **question list** non-interactively (one
+question per line; `#` comments ignored). For each question it grounds an answer on your Facts corpus,
+distils one candidate fact, and scores the model's confidence — then writes a **Markdown report**
+(`--out FILE`, default stdout). By default it only *proposes* (the interactive rule — confirm every
+insertion — still holds). Add **`--auto-confirm`** (and optionally **`--confidence 0.8`**, default 0.7)
+to **insert** the facts that clear the bar, each with `model` provenance. Good for seeding a corpus from a
+research outline — the relaxation happens *only* behind the explicit flag + threshold.
+
 ---
 
 ## 10. The Inner family already knows your facts

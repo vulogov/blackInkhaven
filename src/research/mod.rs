@@ -39,6 +39,8 @@ mod sync;
 mod web;
 mod wikidata;
 
+mod batch;
+
 pub(crate) use focus::Focus;
 
 use std::io;
@@ -71,6 +73,12 @@ pub(crate) struct ResearchInvocation {
     /// RESRCH-3 (R3-D) — `--sync <folder>`: register a folder for
     /// re-import-on-change and import it now.
     pub sync: Option<String>,
+    /// RESRCH-2 (R2-F) — `--batch <file>`: research a question list headlessly.
+    pub batch: Option<String>,
+    /// R2-F — `--auto-confirm`: insert facts clearing the confidence threshold.
+    pub auto_confirm: bool,
+    /// R2-F — `--confidence <0..1>`: the auto-insert threshold (default 0.7).
+    pub confidence: Option<f64>,
 }
 
 /// Launch the Research Assistant, or run a non-interactive thread operation.
@@ -87,6 +95,18 @@ pub(crate) fn run(project: &Path, inv: ResearchInvocation) -> Result<()> {
     if let Some(folder) = inv.sync.as_deref() {
         let store = Store::open(layout.clone(), &cfg).map_err(anyhow::Error::from)?;
         return sync_cli(&layout, &cfg, &store, folder);
+    }
+    if let Some(bpath) = inv.batch.as_deref() {
+        let store = Store::open(layout.clone(), &cfg).map_err(anyhow::Error::from)?;
+        return batch::run(
+            &layout,
+            &cfg,
+            &store,
+            bpath,
+            inv.auto_confirm,
+            inv.confidence.unwrap_or(0.7),
+            inv.out.as_deref(),
+        );
     }
     if inv.list_threads {
         return app::list_threads_cli(&layout, inv.format.as_deref());
