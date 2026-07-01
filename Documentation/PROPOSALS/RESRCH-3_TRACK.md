@@ -85,12 +85,19 @@ The strongest fit with Inkhaven's zero-AI / no-fabrication ethos — see the *Ho
   --sync <folder>`, or a manifest auto-imported on launch), so the corpus tracks the author's working
   files instead of one-shot `/import`.
 
-### R3-E — Cross-cutting: triangulation
+### R3-E — Cross-cutting: triangulation — **✅ Shipped 1.5.5-dev (`/triangulate`)**
 
 Once ≥ 2 sources exist, a fact's claim can be checked against **several** sources (web + Wikidata +
 OpenAlex) and the **agreement/disagreement** reported — a far stronger gate than the model grading
 itself. Folds into the WC-P3 confirmation gate (verdict becomes "3/3 sources agree" rather than the
 model's self-assessment).
+
+- **Built:** **`/triangulate [claim]`** (bare → last response) gathers evidence from the structured
+  sources concurrently (Wikidata + OpenAlex + arXiv, `tokio::spawn` + join), then one LLM call judges
+  **each source** `SUPPORTS | CONTRADICTS | SILENT` against the claim (judging *external* evidence, not
+  its own output) and reports an `Agreement: n/m support` tally. Streams into chat via the shared path.
+- **Follow-up:** folding the triangulation verdict *into* the WC-P3 `/fact` confirmation gate (replacing
+  the single-source self-check) — the standalone command lands first; the automatic gate-fold is next.
 
 ## Dependency posture
 - `/wikidata`, `/openalex`, `/arxiv`: **no new crates** (reuse `reqwest` from R2-C); all keyless.

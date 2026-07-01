@@ -150,6 +150,13 @@ pub(super) struct ScholarlyState {
     query: String,
 }
 
+/// R3-E — the evidence-gathering phase of `/triangulate` (source label → text);
+/// once it arrives, an LLM judges each source and the answer streams as usual.
+pub(super) struct TriangulateState {
+    rx: mpsc::UnboundedReceiver<Vec<(String, String)>>,
+    claim: String,
+}
+
 /// `/factcheck` — a multi-call corpus audit: truth (per-fact, chunked) then
 /// consistency (the whole set). Drained in the run loop like the chain.
 pub(super) struct FactCheckState {
@@ -236,6 +243,7 @@ pub(crate) struct ResearchApp {
     web: Option<WebState>,
     wikidata_state: Option<WikidataState>,
     scholarly_state: Option<ScholarlyState>,
+    triangulate: Option<TriangulateState>,
     /// R3-B — a pending SOURCES-1 citation to write when the current `/fact` from
     /// a paper is confirmed (set at extraction, consumed on insert).
     pending_cite: Option<crate::sources::BibEntry>,
@@ -320,6 +328,7 @@ impl ResearchApp {
             web: None,
             wikidata_state: None,
             scholarly_state: None,
+            triangulate: None,
             pending_cite: None,
             fc_confirm: None,
             confirmation: None,
@@ -353,6 +362,7 @@ impl ResearchApp {
             self.poll_web();
             self.poll_wikidata();
             self.poll_scholarly();
+            self.poll_triangulate();
             self.poll_fc_confirm();
             terminal.draw(|f| render::render(f, self))?;
             if event::poll(Duration::from_millis(100))? {
@@ -702,6 +712,7 @@ impl ResearchApp {
             Command::Wikidata(query) => self.start_wikidata(query),
             Command::OpenAlex(query) => self.start_scholarly("openalex", query),
             Command::Arxiv(query) => self.start_scholarly("arxiv", query),
+            Command::Triangulate(claim) => self.start_triangulate(claim),
             Command::WhatsWrong(path) => self.run_whatswrong(path.as_deref()),
             Command::Chain(steps) => self.start_chain(steps),
         }
@@ -1212,6 +1223,132 @@ impl ResearchApp {
         }
         self.store.update_paragraph_content(&mut node, body.as_bytes())?;
         Ok(true)
+    }
+
+    /// `/triangulate [claim]` (R3-E) — cross-check a claim against the independent
+    /// structured sources (Wikidata + OpenAlex + arXiv). Phase 1 gathers each
+    /// source's evidence concurrently; phase 2 (in `poll_triangulate`) has the LLM
+    /// judge each source SUPPORTS / CONTRADICTS / SILENT — a far stronger check
+    /// than the model grading its own output.
+    fn start_triangulate(&mut self, claim: String) {
+        if self.triangulate.is_some() || self.stream_rx.is_some() {
+            self.status_message = Some("a response is already in flight".to_string());
+            return;
+        }
+        let claim = if claim.trim().is_empty() {
+            self.chat_history.last().map(|t| t.response.clone()).unwrap_or_default()
+        } else {
+            claim
+        };
+        let claim = claim.trim().to_string();
+        if claim.is_empty() {
+            self.status_message =
+                Some("usage: /triangulate <claim>  (bare: cross-check the last response)".to_string());
+            return;
+        }
+        let wd_cfg = self.cfg.research.wikidata.clone();
+        let sc_cfg = self.cfg.research.scholarly.clone();
+        let wd_on = super::wikidata::available(&wd_cfg);
+        let sc_on = super::scholarly::available(&sc_cfg);
+        if !wd_on && !sc_on {
+            self.status_message =
+                Some("triangulate: no structured sources enabled (wikidata / scholarly)".to_string());
+            return;
+        }
+        let (lang, _note) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        let code = match lang.as_code() {
+            "other" => "en".to_string(),
+            c => c.to_string(),
+        };
+        let q = claim.clone();
+        let (tx, rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let mut evidence: Vec<(String, String)> = Vec::new();
+            if wd_on {
+                if let Ok(e) = super::wikidata::fetch(wd_cfg, q.clone(), code).await {
+                    evidence.push(("Wikidata".to_string(), super::wikidata::render(&e)));
+                }
+            }
+            if sc_on {
+                if let Ok(p) = super::scholarly::openalex(sc_cfg.clone(), q.clone()).await {
+                    evidence.push(("OpenAlex".to_string(), super::scholarly::render(&p)));
+                }
+                if let Ok(p) = super::scholarly::arxiv(q.clone()).await {
+                    evidence.push(("arXiv".to_string(), super::scholarly::render(&p)));
+                }
+            }
+            let _ = tx.send(evidence);
+        });
+        self.triangulate = Some(TriangulateState { rx, claim });
+        self.status_message = Some("Triangulating across sources…".to_string());
+    }
+
+    /// Phase 2 of `/triangulate` — evidence gathered; have the LLM judge each
+    /// source against the claim and stream the agreement report.
+    fn poll_triangulate(&mut self) {
+        let Some(tr) = self.triangulate.as_mut() else { return };
+        let evidence = match tr.rx.try_recv() {
+            Ok(e) => e,
+            Err(mpsc::error::TryRecvError::Empty) => return,
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                self.triangulate = None;
+                return;
+            }
+        };
+        let TriangulateState { claim, .. } = self.triangulate.take().unwrap();
+        if evidence.is_empty() {
+            self.status_message = Some("triangulate: no source returned evidence".to_string());
+            return;
+        }
+        let ai = match crate::ai::AiClient::from_config(&self.cfg.llm) {
+            Ok(a) => a,
+            Err(e) => {
+                self.status_message = Some(format!("no LLM provider: {e}"));
+                return;
+            }
+        };
+        let (model, _env) = match ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(m) => m,
+            Err(e) => {
+                self.status_message = Some(format!("provider error: {e}"));
+                return;
+            }
+        };
+        let (lang, _note) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        let language = super::extract::language_name(&lang);
+        let mut ev = String::new();
+        let mut labels: Vec<String> = Vec::new();
+        for (label, text) in &evidence {
+            let body: String = text.chars().take(1200).collect();
+            ev.push_str(&format!("[{label}]\n{}\n\n", body.trim()));
+            labels.push(label.clone());
+        }
+        let system = format!(
+            "You are triangulating a claim against INDEPENDENT sources. Judge ONLY from the sources \
+             below — do not use outside knowledge. For EACH source, output one line:\n\
+             <source>: SUPPORTS | CONTRADICTS | SILENT — <short reason>\n\
+             Then a final line: `Agreement: <n>/<m> support`. Write in {language}."
+        );
+        let user = format!("Claim:\n{claim}\n\nSources:\n{ev}");
+        let short: String = claim.chars().take(60).collect();
+        let mut turn = ChatTurn::new(format!("/triangulate {short}"));
+        turn.streaming = true;
+        turn.model = model.to_string();
+        turn.sources = labels;
+        self.chat_history.push(turn);
+        self.streaming_turn = Some(self.chat_history.len() - 1);
+        self.chat_scroll = 0;
+        let rx = spawn_chat_stream(
+            ai.client.clone(),
+            model.to_string(),
+            Some(system),
+            Vec::new(),
+            user,
+            llm::CATEGORY,
+        );
+        self.stream_rx = Some(rx);
+        self.status_message =
+            Some(format!("Judging {} source(s) against the claim…", evidence.len()));
     }
 
     /// Drain the in-flight web search; on results, ingest them or ground a chat.
