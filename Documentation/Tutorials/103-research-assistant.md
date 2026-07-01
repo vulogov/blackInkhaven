@@ -476,6 +476,8 @@ fact/note insertions, pinned nodes, and RAG mode all persist and **resume** exac
 - **Copy to clipboard.** **`y`** in the chat copies the last response; **`Y`** in the tree copies the
   selected fact's body. A dim **`▼ more`** marks the chat when you're scrolled up, and a rule separates
   turns.
+- **Light markdown** in responses — **bold**, *italic*, `inline code`, headings, bullets and links are
+  styled inline, so structured answers (Wikidata triples, outlines) read more clearly.
 - **A richer confirmation.** When the triangulation gate or fact-check runs, the confirmation overlay
   shows the **per-source verdict** (green `SUPPORTS` / red `CONTRADICTS` / dim `SILENT`, with the
   `Agreement: n/m` tally) instead of a status flash; the near-duplicate guard shows the **similar fact's

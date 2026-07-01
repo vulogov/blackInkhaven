@@ -63,6 +63,26 @@ fn turn_badge(turn: &super::chat::ChatTurn) -> Option<(String, Style)> {
     None
 }
 
+/// UX-P5 — render one chat-response line with light markdown styling, reusing the
+/// editor's `highlight_markdown_lines`. Markers are preserved (so the visible
+/// width is unchanged, keeping the wrapped-scroll math valid); plain runs fall
+/// back to the pane foreground so the base colour matches the rest of the chat.
+fn md_line<'a>(app: &ResearchApp, text: &str) -> Line<'a> {
+    let runs = crate::tui::markdown_highlight::highlight_markdown_lines(text, &app.theme);
+    let first = runs.into_iter().next().unwrap_or_default();
+    if first.is_empty() {
+        return Line::from(String::new());
+    }
+    let spans: Vec<Span> = first
+        .into_iter()
+        .map(|r| {
+            let style = if r.style.fg.is_none() { r.style.fg(app.theme.pane_fg) } else { r.style };
+            Span::styled(r.text, style)
+        })
+        .collect();
+    Line::from(spans)
+}
+
 /// UX-P4 — colour an evidence line by its verdict keyword (per-source vote /
 /// fact-check verdict) in the confirmation overlay.
 fn evidence_line_style(line: &str) -> Style {
@@ -449,6 +469,10 @@ fn render_ai_chat(frame: &mut Frame, app: &ResearchApp, area: Rect) {
             }
             if let (Some(q), true) = (&query, match_lines.contains(&i)) {
                 highlight_line(app, text, q, current_line == Some(i))
+            } else if matches!(kind, RowKind::Response) {
+                // UX-P5 — light markdown in responses (bold/italic/code/headings/
+                // links/bullets); markers are kept, so wrap-width is unchanged.
+                md_line(app, text)
             } else {
                 let style = match kind {
                     RowKind::Header => accent.bold(),
