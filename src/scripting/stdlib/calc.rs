@@ -257,6 +257,215 @@ fn a_tidal_accel(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
     Ok(vm)
 }
 
+// ── scientific math (R4-A completion) ────────────────────────────────────────
+kconv!(m_trunc, |x| x.trunc());
+kconv!(m_sign, |x| if x > 0.0 { 1.0 } else if x < 0.0 { -1.0 } else { 0.0 });
+kconv!(m_factorial, |x| {
+    let n = x.round().max(0.0) as u64;
+    (1..=n).fold(1.0f64, |a, i| a * i as f64)
+});
+
+fn gcd_i64(a: i64, b: i64) -> i64 {
+    let (mut a, mut b) = (a.abs(), b.abs());
+    while b != 0 {
+        let t = b;
+        b = a % b;
+        a = t;
+    }
+    a
+}
+
+/// `gcd` — `( a b -- g )` (integer semantics; inputs rounded).
+fn m_gcd(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    let b = pop_f(vm, "gcd")?.round() as i64;
+    let a = pop_f(vm, "gcd")?.round() as i64;
+    push(vm, Value::from_float(gcd_i64(a, b) as f64));
+    Ok(vm)
+}
+
+/// `lcm` — `( a b -- l )`.
+fn m_lcm(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    let b = pop_f(vm, "lcm")?.round() as i64;
+    let a = pop_f(vm, "lcm")?.round() as i64;
+    let g = gcd_i64(a, b);
+    let l = if g == 0 { 0.0 } else { (a / g * b).abs() as f64 };
+    push(vm, Value::from_float(l));
+    Ok(vm)
+}
+
+// ── climate, geography & economy (R4-C) ──────────────────────────────────────
+const EARTH_RADIUS_KM: f64 = 6371.0;
+
+/// `lapse_rate` — `( Δh_m -- ΔT )`: environmental Γ = 6.5 K/km.
+fn c_lapse_rate(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    let dh = pop_f(vm, "lapse_rate")?;
+    push(vm, Value::from_float(-6.5 * dh / 1000.0));
+    Ok(vm)
+}
+
+/// `dewpoint` — `( T RH -- Td )`: Magnus formula. T,Td [°C], RH [%].
+fn c_dewpoint(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    let rh = pop_f(vm, "dewpoint")?;
+    let t = pop_f(vm, "dewpoint")?;
+    if rh <= 0.0 {
+        return Err(easy_error::err_msg("dewpoint: humidity must be > 0"));
+    }
+    let (a, b) = (17.625_f64, 243.04_f64);
+    let alpha = (a * t) / (b + t) + (rh / 100.0).ln();
+    push(vm, Value::from_float(b * alpha / (a - alpha)));
+    Ok(vm)
+}
+
+/// `insolation_at_lat` — `( lat_deg decl_deg -- H )`: daily-mean insolation proxy
+/// [W/m²]. `H = (1361/π)·(h0·sinφ·sinδ + cosφ·cosδ·sin h0)`.
+fn c_insolation_at_lat(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    let decl = pop_f(vm, "insolation_at_lat")?.to_radians();
+    let lat = pop_f(vm, "insolation_at_lat")?.to_radians();
+    // Sunset hour angle (clamped for polar day / night).
+    let cos_h0 = (-lat.tan() * decl.tan()).clamp(-1.0, 1.0);
+    let h0 = cos_h0.acos();
+    let s0 = 1361.0 / std::f64::consts::PI;
+    let h = s0 * (h0 * lat.sin() * decl.sin() + lat.cos() * decl.cos() * h0.sin());
+    push(vm, Value::from_float(h.max(0.0)));
+    Ok(vm)
+}
+
+/// `heat_index` — `( T RH -- HI )`: NWS Rothfusz regression. T,HI [°F], RH [%].
+fn c_heat_index(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    let rh = pop_f(vm, "heat_index")?;
+    let t = pop_f(vm, "heat_index")?;
+    let hi = -42.379 + 2.049_015_23 * t + 10.143_331_27 * rh - 0.224_755_41 * t * rh
+        - 0.006_837_83 * t * t
+        - 0.054_817_17 * rh * rh
+        + 0.001_228_74 * t * t * rh
+        + 0.000_852_82 * t * rh * rh
+        - 0.000_001_99 * t * t * rh * rh;
+    push(vm, Value::from_float(hi));
+    Ok(vm)
+}
+
+/// `haversine` — `( lat1 lon1 lat2 lon2 -- km )`: great-circle distance.
+fn c_haversine(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    let lon2 = pop_f(vm, "haversine")?.to_radians();
+    let lat2 = pop_f(vm, "haversine")?.to_radians();
+    let lon1 = pop_f(vm, "haversine")?.to_radians();
+    let lat1 = pop_f(vm, "haversine")?.to_radians();
+    let (dlat, dlon) = (lat2 - lat1, lon2 - lon1);
+    let a = (dlat / 2.0).sin().powi(2) + lat1.cos() * lat2.cos() * (dlon / 2.0).sin().powi(2);
+    let c = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
+    push(vm, Value::from_float(EARTH_RADIUS_KM * c));
+    Ok(vm)
+}
+
+/// `bearing` — `( lat1 lon1 lat2 lon2 -- deg )`: initial bearing, 0–360.
+fn c_bearing(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    let lon2 = pop_f(vm, "bearing")?.to_radians();
+    let lat2 = pop_f(vm, "bearing")?.to_radians();
+    let lon1 = pop_f(vm, "bearing")?.to_radians();
+    let lat1 = pop_f(vm, "bearing")?.to_radians();
+    let dlon = lon2 - lon1;
+    let y = dlon.sin() * lat2.cos();
+    let x = lat1.cos() * lat2.sin() - lat1.sin() * lat2.cos() * dlon.cos();
+    let deg = (y.atan2(x).to_degrees() + 360.0) % 360.0;
+    push(vm, Value::from_float(deg));
+    Ok(vm)
+}
+
+/// `destination_point` — `( lat1 lon1 bearing_deg d_km -- lat2 lon2 )` (pushes two).
+fn c_destination_point(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    let d = pop_f(vm, "destination_point")?;
+    let brng = pop_f(vm, "destination_point")?.to_radians();
+    let lon1 = pop_f(vm, "destination_point")?.to_radians();
+    let lat1 = pop_f(vm, "destination_point")?.to_radians();
+    let ad = d / EARTH_RADIUS_KM; // angular distance
+    let lat2 = (lat1.sin() * ad.cos() + lat1.cos() * ad.sin() * brng.cos()).asin();
+    let lon2 = lon1
+        + (brng.sin() * ad.sin() * lat1.cos()).atan2(ad.cos() - lat1.sin() * lat2.sin());
+    push(vm, Value::from_float(lat2.to_degrees()));
+    push(vm, Value::from_float(lon2.to_degrees()));
+    Ok(vm)
+}
+
+/// `slope` — `( rise run -- grade )`: rise/run (unitless).
+fn c_slope(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    let run = pop_f(vm, "slope")?;
+    let rise = pop_f(vm, "slope")?;
+    if run == 0.0 {
+        return Err(easy_error::err_msg("slope: run must be ≠ 0"));
+    }
+    push(vm, Value::from_float(rise / run));
+    Ok(vm)
+}
+
+/// `compound` — `( P r n t -- A )`: `A = P·(1+r/n)^(n·t)`.
+fn e_compound(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    let t = pop_f(vm, "compound")?;
+    let n = pop_f(vm, "compound")?;
+    let r = pop_f(vm, "compound")?;
+    let p = pop_f(vm, "compound")?;
+    if n == 0.0 {
+        return Err(easy_error::err_msg("compound: periods/yr must be ≠ 0"));
+    }
+    push(vm, Value::from_float(p * (1.0 + r / n).powf(n * t)));
+    Ok(vm)
+}
+
+/// `cagr` — `( begin end yrs -- g )`: compound annual growth rate.
+fn e_cagr(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    let yrs = pop_f(vm, "cagr")?;
+    let end = pop_f(vm, "cagr")?;
+    let begin = pop_f(vm, "cagr")?;
+    if begin == 0.0 || yrs == 0.0 {
+        return Err(easy_error::err_msg("cagr: begin and years must be ≠ 0"));
+    }
+    push(vm, Value::from_float((end / begin).powf(1.0 / yrs) - 1.0));
+    Ok(vm)
+}
+
+/// `inflation_adjust` — `( nominal i yrs -- real )`: `nominal / (1+i)^yrs`.
+fn e_inflation_adjust(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    let yrs = pop_f(vm, "inflation_adjust")?;
+    let i = pop_f(vm, "inflation_adjust")?;
+    let nominal = pop_f(vm, "inflation_adjust")?;
+    push(vm, Value::from_float(nominal / (1.0 + i).powf(yrs)));
+    Ok(vm)
+}
+
+/// `annuity` — `( PMT r n -- PV )`: present value of an ordinary annuity.
+fn e_annuity(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    let n = pop_f(vm, "annuity")?;
+    let r = pop_f(vm, "annuity")?;
+    let pmt = pop_f(vm, "annuity")?;
+    if r == 0.0 {
+        return Err(easy_error::err_msg("annuity: rate must be ≠ 0"));
+    }
+    push(vm, Value::from_float(pmt * (1.0 - (1.0 + r).powf(-n)) / r));
+    Ok(vm)
+}
+
+/// `malthus` — `( N0 r t -- N )`: exponential growth `N0·e^(r·t)`.
+fn e_malthus(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    let t = pop_f(vm, "malthus")?;
+    let r = pop_f(vm, "malthus")?;
+    let n0 = pop_f(vm, "malthus")?;
+    push(vm, Value::from_float(n0 * (r * t).exp()));
+    Ok(vm)
+}
+
+/// `logistic` — `( N0 K r t -- N )`: carrying-capacity growth.
+fn e_logistic(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    let t = pop_f(vm, "logistic")?;
+    let r = pop_f(vm, "logistic")?;
+    let k = pop_f(vm, "logistic")?;
+    let n0 = pop_f(vm, "logistic")?;
+    if n0 == 0.0 {
+        return Err(easy_error::err_msg("logistic: initial population must be ≠ 0"));
+    }
+    let n = k / (1.0 + ((k - n0) / n0) * (-r * t).exp());
+    push(vm, Value::from_float(n));
+    Ok(vm)
+}
+
 // ── World-book readers (R4-D) ────────────────────────────────────────────────
 //
 // `calc.world.*` pull this project's own World-book facts into `/calc`. Read-only
@@ -452,6 +661,27 @@ const WORDS: &[(&str, fn(&mut VM) -> std::result::Result<&mut VM, BundError>)] =
     ("calc.hill_sphere", a_hill_sphere),
     ("calc.roche_limit", a_roche_limit),
     ("calc.tidal_accel", a_tidal_accel),
+    // Scientific math completion (R4-A).
+    ("calc.trunc", m_trunc),
+    ("calc.sign", m_sign),
+    ("calc.factorial", m_factorial),
+    ("calc.gcd", m_gcd),
+    ("calc.lcm", m_lcm),
+    // Climate, geography & economy (R4-C).
+    ("calc.lapse_rate", c_lapse_rate),
+    ("calc.dewpoint", c_dewpoint),
+    ("calc.insolation_at_lat", c_insolation_at_lat),
+    ("calc.heat_index", c_heat_index),
+    ("calc.haversine", c_haversine),
+    ("calc.bearing", c_bearing),
+    ("calc.destination_point", c_destination_point),
+    ("calc.slope", c_slope),
+    ("calc.compound", e_compound),
+    ("calc.cagr", e_cagr),
+    ("calc.inflation_adjust", e_inflation_adjust),
+    ("calc.annuity", e_annuity),
+    ("calc.malthus", e_malthus),
+    ("calc.logistic", e_logistic),
     // World-book readers (R4-D).
     ("calc.world.get", world_get),
     ("calc.world.has", world_has),
@@ -522,5 +752,36 @@ mod tests {
         assert!((top_float("1 1.5 calc.synodic_period") - 3.0).abs() < 1e-9);
         // Roche (fluid): R=1, ρM=1, ρm=1 → 2.44.
         assert!((top_float("1 1 1 calc.roche_limit") - 2.44).abs() < 1e-9);
+    }
+
+    #[test]
+    fn climate_geo_economy() {
+        // lapse rate: 1000 m → −6.5 °C.
+        assert!((top_float("1000 calc.lapse_rate") + 6.5).abs() < 1e-9);
+        // haversine London→New York ≈ 5570 km.
+        let d = top_float("51.5 -0.13 40.71 -74.0 calc.haversine");
+        assert!((d - 5570.0).abs() < 20.0, "got {d}");
+        // slope 3/4.
+        assert!((top_float("3 4 calc.slope") - 0.75).abs() < 1e-9);
+        // compound: 1000 at 5%/yr, annual, 10 yr → 1628.894…
+        assert!((top_float("1000 0.05 1 10 calc.compound") - 1628.894_626_777).abs() < 1e-6);
+        // CAGR 100→200 over 10 yr → 2^0.1 − 1.
+        assert!((top_float("100 200 10 calc.cagr") - (2f64.powf(0.1) - 1.0)).abs() < 1e-9);
+        // Malthus: N0=100, r=0, t=5 → 100.
+        assert!((top_float("100 0 5 calc.malthus") - 100.0).abs() < 1e-9);
+        // Logistic at t=0 → N0.
+        assert!((top_float("10 100 0.1 0 calc.logistic") - 10.0).abs() < 1e-9);
+        // gcd / factorial.
+        assert!((top_float("12 18 calc.gcd") - 6.0).abs() < 1e-9);
+        assert!((top_float("5 calc.factorial") - 120.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn destination_point_pushes_two() {
+        // From the equator/prime meridian, bearing 90° (east), ~111.32 km ≈ 1° lon.
+        let out = crate::scripting::eval("0 0 90 111.195 calc.destination_point").expect("eval");
+        // top is lon2 ≈ 1.0, and a lat2 ≈ 0 remains beneath it.
+        let lon2 = out.top.unwrap().cast_float().unwrap();
+        assert!((lon2 - 1.0).abs() < 0.01, "lon2={lon2}");
     }
 }
