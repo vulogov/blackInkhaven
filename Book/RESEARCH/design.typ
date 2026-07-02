@@ -288,6 +288,36 @@
   v(3mm)
 }
 
+// Computing a fact — looked-up inputs become a derived, top-rung fact.
+#let compute_climb() = {
+  v(3mm)
+  align(center, diagram(
+    spacing: (14mm, 3mm),
+    dnode((0, 0), [*Place A*\ GeoNames]),
+    dnode((0, 1), [*Place B*\ GeoNames]),
+    dnode((1, 0.5), [#strong[/calc]\ haversine]),
+    dnode((2, 0.5), [*Distance*\ computed — top rung], fill: ink_recap_bg),
+    edge((0, 0), (1, 0.5), "->"), edge((0, 1), (1, 0.5), "->"),
+    edge((1, 0.5), (2, 0.5), "->"),
+  ))
+  figure_note[Two looked-up places become one derived fact — the firmest kind, because anyone can re-run the sum.]
+  v(3mm)
+}
+
+// Borrowed vs invented — two kinds of fact, checked two different ways.
+#let authorial_split() = {
+  v(3mm)
+  align(center, diagram(
+    spacing: (16mm, 5mm),
+    dnode((0, 0.5), [*A fact in\ your book*]),
+    dnode((1, 0), [*Borrowed*\ on the ladder →\ /factcheck]),
+    dnode((1, 1), [*Invented*\ undisputed ※ →\ /undisputed (coherence)], fill: ink_recap_bg),
+    edge((0, 0.5), (1, 0), "->"), edge((0, 0.5), (1, 1), "->"),
+  ))
+  figure_note[Borrowed facts are checked against the world; invented facts are checked only against themselves.]
+  v(3mm)
+}
+
 // The larger arc — what the Research Assistant does over a whole project.
 #let research_arc() = {
   v(3mm)

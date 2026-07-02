@@ -33,7 +33,7 @@ locally; after that it compiles offline.
 
 ## Status
 
-Being composed. Parts I–III are written (introduction + nine chapters, ~55 pages);
+Being composed. Parts I–V are written (introduction + eleven chapters, ~67 pages);
 the remaining parts are laid out as a roadmap in [`RESEARCH.typ`](RESEARCH.typ)
 and land chapter by chapter:
 
@@ -46,6 +46,11 @@ and land chapter by chapter:
   (`/triangulate` + the gate) · auditing everything you kept (`/factcheck`,
   verdict glyphs, `/whatswrong`) · strengthening what you keep (refutation gate,
   `/upgrade`, `/stale`)
+- **IV — Computed Facts** *(written)*: facts you compute (`/calc` across real
+  domains) and simulate (the World book) — the top of the trust ladder
+- **V — Fiction's Own Facts** *(written)*: the facts you invented — `undisputed`
+  (`u`, ※), excluded from `/factcheck`, checked for internal coherence by
+  `/undisputed`
 - **III — Trust & Cross-Checking**: triangulation · fact-checking · refutation & upgrade
 - **IV — Computed Facts**: `/calc` & the World book
 - **V — Fiction's Own Facts**: undisputed (authorial) facts
