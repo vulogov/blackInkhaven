@@ -26,11 +26,12 @@
   include "chapters/05-scholarly-and-books.typ",
   include "chapters/06-the-web.typ",
 
+  part(number: "III", title: "Trust & Cross-Checking"),
+  include "chapters/07-triangulation.typ",
+  include "chapters/08-fact-checking.typ",
+  include "chapters/09-refutation-and-upgrade.typ",
+
   // ── Roadmap for the rest of the book (chapters land as they are written) ──
-  // part(number: "III", title: "Trust & Cross-Checking"),
-  //   include "chapters/07-triangulation.typ",           // /triangulate + the gate
-  //   include "chapters/08-fact-checking.typ",           // /factcheck, glyphs, /whatswrong
-  //   include "chapters/09-refutation-and-upgrade.typ",  // refute gate · /upgrade · /stale
   // part(number: "IV", title: "Computed Facts"),
   //   include "chapters/10-calc-and-world.typ",          // /calc + the World book
   // part(number: "V", title: "Fiction's Own Facts"),
