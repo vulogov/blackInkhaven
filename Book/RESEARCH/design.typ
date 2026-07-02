@@ -238,6 +238,23 @@
   v(3mm)
 }
 
+// The authoritative sources fanning into your corpus — the Part II picture.
+#let sources_fan() = {
+  v(3mm)
+  align(center, diagram(
+    spacing: (16mm, 4mm),
+    dnode((0, 0), [*Wikidata · GeoNames*\ structured]),
+    dnode((0, 1), [*OpenAlex · arXiv*\ scholarly]),
+    dnode((0, 2), [*Gutenberg*\ public-domain books]),
+    dnode((0, 3), [*Web*\ cited pages]),
+    dnode((2, 1.5), [*Your Facts*\ each one cited], fill: ink_recap_bg),
+    edge((0, 0), (2, 1.5), "->"), edge((0, 1), (2, 1.5), "->"),
+    edge((0, 2), (2, 1.5), "->"), edge((0, 3), (2, 1.5), "->"),
+  ))
+  figure_note[Each source starts a fact higher on the ladder than a model's guess — and each one hands you a citation for free.]
+  v(3mm)
+}
+
 // The larger arc — what the Research Assistant does over a whole project.
 #let research_arc() = {
   v(3mm)

@@ -33,13 +33,15 @@ locally; after that it compiles offline.
 
 ## Status
 
-Being composed. Part I (**Grounding Your Book**) — the introduction and the first
-three chapters — is written; the remaining parts are laid out as a roadmap in
-[`RESEARCH.typ`](RESEARCH.typ) and land chapter by chapter:
+Being composed. Parts I–II are written (introduction + six chapters, ~41 pages);
+the remaining parts are laid out as a roadmap in [`RESEARCH.typ`](RESEARCH.typ)
+and land chapter by chapter:
 
 - **I — Grounding Your Book** *(written)*: why ground your book · the Research
   Assistant · your first fact
-- **II — Authoritative Sources**: Wikidata & GeoNames · scholarly & books · the web
+- **II — Authoritative Sources** *(written)*: structured facts & real places
+  (Wikidata, GeoNames) · the literature & the library (OpenAlex, arXiv, Gutenberg)
+  · the web, earned (`/web`, fact-check gate)
 - **III — Trust & Cross-Checking**: triangulation · fact-checking · refutation & upgrade
 - **IV — Computed Facts**: `/calc` & the World book
 - **V — Fiction's Own Facts**: undisputed (authorial) facts

@@ -21,11 +21,12 @@
   include "chapters/02-the-research-assistant.typ",
   include "chapters/03-your-first-fact.typ",
 
+  part(number: "II", title: "Authoritative Sources"),
+  include "chapters/04-wikidata-and-geonames.typ",
+  include "chapters/05-scholarly-and-books.typ",
+  include "chapters/06-the-web.typ",
+
   // ── Roadmap for the rest of the book (chapters land as they are written) ──
-  // part(number: "II", title: "Authoritative Sources"),
-  //   include "chapters/04-wikidata-and-geonames.typ",   // structured facts + real places
-  //   include "chapters/05-scholarly-and-books.typ",     // openalex · arxiv · gutenberg
-  //   include "chapters/06-the-web.typ",                 // /web, cited + fact-checked
   // part(number: "III", title: "Trust & Cross-Checking"),
   //   include "chapters/07-triangulation.typ",           // /triangulate + the gate
   //   include "chapters/08-fact-checking.typ",           // /factcheck, glyphs, /whatswrong
