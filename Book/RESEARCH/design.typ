@@ -255,6 +255,39 @@
   v(3mm)
 }
 
+// Triangulation — one claim held up against independent sources at once.
+#let triangulate_diagram() = {
+  v(3mm)
+  align(center, diagram(
+    spacing: (15mm, 3mm),
+    dnode((0, 1), [*A claim*\ to test]),
+    dnode((1, 0), [Wikidata]),
+    dnode((1, 1), [OpenAlex]),
+    dnode((1, 2), [arXiv]),
+    dnode((2, 1), [*Verdict*\ do they agree?], fill: ink_recap_bg),
+    edge((0, 1), (1, 0), "->"), edge((0, 1), (1, 1), "->"), edge((0, 1), (1, 2), "->"),
+    edge((1, 0), (2, 1), "->"), edge((1, 1), (2, 1), "->"), edge((1, 2), (2, 1), "->"),
+  ))
+  figure_note[A claim the sources *agree* on, with none contradicting, is far firmer than any single one alone.]
+  v(3mm)
+}
+
+// Corroborate vs. refute — two mirror-image checks.
+#let two_gates() = {
+  v(3mm)
+  align(center, diagram(
+    spacing: (14mm, 4mm),
+    dnode((1, 0), [*A candidate fact*]),
+    dnode((0, 1), [*Triangulate*\ "who SUPPORTS this?"]),
+    dnode((2, 1), [*Refute*\ "can I DISPROVE this?"]),
+    dnode((1, 2), [*Kept only if it survives both angles*], fill: ink_recap_bg),
+    edge((1, 0), (0, 1), "->"), edge((1, 0), (2, 1), "->"),
+    edge((0, 1), (1, 2), "->"), edge((2, 1), (1, 2), "->"),
+  ))
+  figure_note[Corroboration asks who agrees; refutation attacks the claim. A fact that passes both is one you can lean on.]
+  v(3mm)
+}
+
 // The larger arc — what the Research Assistant does over a whole project.
 #let research_arc() = {
   v(3mm)

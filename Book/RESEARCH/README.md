@@ -33,7 +33,7 @@ locally; after that it compiles offline.
 
 ## Status
 
-Being composed. Parts I–II are written (introduction + six chapters, ~41 pages);
+Being composed. Parts I–III are written (introduction + nine chapters, ~55 pages);
 the remaining parts are laid out as a roadmap in [`RESEARCH.typ`](RESEARCH.typ)
 and land chapter by chapter:
 
@@ -42,6 +42,10 @@ and land chapter by chapter:
 - **II — Authoritative Sources** *(written)*: structured facts & real places
   (Wikidata, GeoNames) · the literature & the library (OpenAlex, arXiv, Gutenberg)
   · the web, earned (`/web`, fact-check gate)
+- **III — Trust & Cross-Checking** *(written)*: cross-checking a claim
+  (`/triangulate` + the gate) · auditing everything you kept (`/factcheck`,
+  verdict glyphs, `/whatswrong`) · strengthening what you keep (refutation gate,
+  `/upgrade`, `/stale`)
 - **III — Trust & Cross-Checking**: triangulation · fact-checking · refutation & upgrade
 - **IV — Computed Facts**: `/calc` & the World book
 - **V — Fiction's Own Facts**: undisputed (authorial) facts
