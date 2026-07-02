@@ -561,6 +561,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "runs the full fixture pipeline, which embeds paragraphs and needs the ONNX model (network-fetched); flaky in CI, run locally"]
     fn small_fixture_creates_expected_shape() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("project");
@@ -574,6 +575,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "runs the full fixture pipeline, which embeds paragraphs and needs the ONNX model (network-fetched); flaky in CI, run locally"]
     fn small_fixture_is_byte_deterministic() {
         let tmp_a = tempfile::tempdir().unwrap();
         let tmp_b = tempfile::tempdir().unwrap();
