@@ -41,14 +41,15 @@
   include "chapters/12-synthesize-and-outline.typ",
   include "chapters/13-bibliography.typ",
 
-  // ── Roadmap for the rest of the book (chapters land as they are written) ──
-  // part(number: "VII", title: "Working at Scale"),
-  //   include "chapters/14-headless.typ",                // --batch · --import · --sync
-  // part(number: "VIII", title: "A Complete Walkthrough"),
-  //   include "chapters/15-walkthrough.typ",
-  //   include "chapters/a-command-reference.typ",
-  //   include "chapters/b-provenance-reference.typ",
-  //   include "chapters/c-glossary.typ",
+  part(number: "VII", title: "Working at Scale"),
+  include "chapters/14-headless.typ",
+
+  part(number: "VIII", title: "A Complete Walkthrough"),
+  include "chapters/15-walkthrough.typ",
+
+  include "chapters/a-command-reference.typ",
+  include "chapters/b-provenance-reference.typ",
+  include "chapters/c-glossary.typ",
 
   include "chapters/99-about-the-author.typ",
 ))

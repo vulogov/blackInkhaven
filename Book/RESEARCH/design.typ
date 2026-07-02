@@ -338,6 +338,24 @@
   v(3mm)
 }
 
+// The gaps -> batch -> facts loop — the corpus filling its own holes, headlessly.
+#let batch_loop() = {
+  v(3mm)
+  align(center, diagram(
+    spacing: 8mm,
+    dnode((0, 0), [#strong[/gaps]\ open questions]),
+    dnode((1, 0), [a questions\ file]),
+    dnode((2, 0), [#strong[\-\-batch]\ headless]),
+    dnode((3, 0), [candidate\ facts]),
+    dnode((3, 1), [*your corpus*], fill: ink_recap_bg),
+    edge((0, 0), (1, 0), "->"), edge((1, 0), (2, 0), "->"),
+    edge((2, 0), (3, 0), "->"), edge((3, 0), (3, 1), "->", label: text(size: 7pt, [confirm])),
+    edge((3, 1), (0, 0), "->", stroke: (dash: "dashed"), label: text(size: 7pt, [repeat])),
+  ))
+  figure_note[The corpus can be told to go and fill its own gaps while you do something else.]
+  v(3mm)
+}
+
 // The larger arc — what the Research Assistant does over a whole project.
 #let research_arc() = {
   v(3mm)
