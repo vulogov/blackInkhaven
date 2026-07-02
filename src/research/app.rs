@@ -149,12 +149,13 @@ pub(super) struct WikidataState {
     query: String,
 }
 
-/// RESRCH-GUTENBERG — an in-flight `/gutenberg` search + text fetch.
+/// RESRCH-GUTENBERG — an in-flight `/gutenberg` search + text fetch. Carries the
+/// optional `--chapter` selector (PG-P4) through to ingestion.
+type GutenbergFetch = (super::gutenberg::GutenbergBook, String, Vec<super::gutenberg::GutenbergBook>);
 pub(super) struct GutenbergState {
-    rx: mpsc::UnboundedReceiver<
-        std::result::Result<(super::gutenberg::GutenbergBook, String), String>,
-    >,
+    rx: mpsc::UnboundedReceiver<std::result::Result<GutenbergFetch, String>>,
     query: String,
+    chapter: Option<usize>,
 }
 
 /// R3-B — an in-flight `/openalex` or `/arxiv` fetch.
@@ -1739,9 +1740,10 @@ impl ResearchApp {
             self.status_message = Some("a Gutenberg fetch is already running".to_string());
             return;
         }
-        let query = query.trim().to_string();
+        // PG-P4 — an optional `--chapter N` selector may lead the argument.
+        let (chapter, query) = parse_chapter_flag(query.trim());
         if query.is_empty() {
-            self.status_message = Some("usage: /gutenberg <query>  e.g. /gutenberg pride and prejudice".to_string());
+            self.status_message = Some("usage: /gutenberg [--chapter N] <query|PG#>".to_string());
             return;
         }
         if !super::gutenberg::available(&self.cfg.research.gutenberg) {
@@ -1760,7 +1762,7 @@ impl ResearchApp {
             let r = super::gutenberg::fetch(cfg, q, code).await.map_err(|e| e.to_string());
             let _ = tx.send(r);
         });
-        self.gutenberg_state = Some(GutenbergState { rx, query });
+        self.gutenberg_state = Some(GutenbergState { rx, query, chapter });
         self.status_message = Some("Searching Project Gutenberg…".to_string());
     }
 
@@ -1776,28 +1778,55 @@ impl ResearchApp {
                 return;
             }
         };
-        let GutenbergState { query, .. } = self.gutenberg_state.take().unwrap();
-        let (book, text) = match result {
+        let GutenbergState { query, chapter, .. } = self.gutenberg_state.take().unwrap();
+        let (book, text, alternatives) = match result {
             Ok(bt) => bt,
             Err(e) => {
                 self.status_message = Some(format!("gutenberg: {e}"));
                 return;
             }
         };
-        self.ingest_gutenberg(&query, &book, &text);
+        self.ingest_gutenberg(&query, &book, &text, chapter, &alternatives);
     }
 
     /// Ingest a Gutenberg book's text as a `research_source` (mirrors the `/web
-    /// --ingest` / `/import` embed path); `origin=gutenberg`.
-    fn ingest_gutenberg(&mut self, query: &str, book: &super::gutenberg::GutenbergBook, text: &str) {
+    /// --ingest` / `/import` embed path); `origin=gutenberg`. PG-P3 auto-cites the
+    /// book; PG-P4 ingests only `chapter` when given and lists `alternatives`.
+    fn ingest_gutenberg(
+        &mut self,
+        query: &str,
+        book: &super::gutenberg::GutenbergBook,
+        text: &str,
+        chapter: Option<usize>,
+        alternatives: &[super::gutenberg::GutenbergBook],
+    ) {
         use super::imports;
         if text.trim().is_empty() {
             self.status_message = Some("gutenberg: no text extracted".to_string());
             return;
         }
+        // PG-P4 — narrow to a single chapter when requested.
+        let (body_text, chapter_note) = match chapter {
+            Some(n) => {
+                let chapters = super::gutenberg::split_chapters(text);
+                match chapters.get(n.saturating_sub(1)) {
+                    Some(c) => (c.clone(), format!(" · chapter {n}/{}", chapters.len())),
+                    None => {
+                        self.status_message =
+                            Some(format!("chapter {n} out of range (book has {})", chapters.len()));
+                        return;
+                    }
+                }
+            }
+            None => (text.to_string(), String::new()),
+        };
+        let text = body_text.as_str();
         let chunk_chars = self.cfg.research.import_chunk_chars.max(200);
         let now = chrono::Utc::now().to_rfc3339();
-        let name = format!("{} (PG#{})", book.title, book.id);
+        let name = match chapter {
+            Some(n) => format!("{} ch.{n} (PG#{})", book.title, book.id),
+            None => format!("{} (PG#{})", book.title, book.id),
+        };
         let source_url = format!("https://www.gutenberg.org/ebooks/{}", book.id);
         let chunks = imports::chunk_text(text, chunk_chars);
         let mut doc_ids = Vec::new();
@@ -1832,10 +1861,30 @@ impl ResearchApp {
             },
         );
         let _ = imports_store.save(&self.layout);
+
+        // PG-P3 — auto-cite the book as a SOURCES-1 BibEntry (feeds /bibliography).
+        let mut cite_note = String::new();
+        if self.cfg.research.gutenberg.auto_cite {
+            let entry = book.to_bibentry();
+            if let Ok(true) = add_bibentry(&self.store, &self.cfg, &entry) {
+                self.reload_hierarchy();
+                cite_note = format!("\nCited as `@{}` (see /bibliography).", entry.key);
+            }
+        }
+        // PG-P4 — offer the runner-up matches for a re-run by PG id.
+        let mut alt_note = String::new();
+        if !alternatives.is_empty() {
+            alt_note.push_str("\n\nOther matches (re-run `/gutenberg <PG#>`):");
+            for a in alternatives {
+                let who = a.authors.first().map(|s| format!(" — {s}")).unwrap_or_default();
+                alt_note.push_str(&format!("\n  · PG#{}  {}{who}", a.id, a.title));
+            }
+        }
+
         let who = if book.authors.is_empty() { String::new() } else { format!(" · {}", book.authors.join(", ")) };
         let body = format!(
-            "Ingested **{}**{who} as a research source ({chunks_n} chunk(s)).\n{source_url}\n\n\
-             Ask about it — the relevant passages are now retrieved and cited `[source: {}]`.",
+            "Ingested **{}**{who}{chapter_note} as a research source ({chunks_n} chunk(s)).\n{source_url}\n\n\
+             Ask about it — the relevant passages are now retrieved and cited `[source: {}]`.{cite_note}{alt_note}",
             book.title, name
         );
         self.chat_history.push(ChatTurn::with_response(format!("/gutenberg {query}"), body));
@@ -4609,6 +4658,22 @@ pub(crate) fn add_bibentry(
     }
     store.update_paragraph_content(&mut node, body.as_bytes())?;
     Ok(true)
+}
+
+/// PG-P4 — peel a leading `--chapter N` selector off a `/gutenberg` argument,
+/// returning `(chapter, remaining_query)`.
+fn parse_chapter_flag(arg: &str) -> (Option<usize>, String) {
+    let mut rest = arg.trim();
+    let mut chapter = None;
+    if let Some(after) = rest.strip_prefix("--chapter").or_else(|| rest.strip_prefix("--ch")) {
+        let after = after.trim_start();
+        let mut it = after.splitn(2, char::is_whitespace);
+        if let Some(n) = it.next().and_then(|t| t.parse::<usize>().ok()) {
+            chapter = Some(n);
+            rest = it.next().unwrap_or("").trim();
+        }
+    }
+    (chapter, rest.to_string())
 }
 
 /// RESRCH-5 (R5-D) — collect the `BibEntry`s under the Sources book's Research

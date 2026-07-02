@@ -265,6 +265,13 @@ whenever you ask about it, and they ground `/synthesize` and `/fact`. It searche
 (title/author/subject); the *snippet* search happens in your corpus RAG after ingest. Keyless; uses the
 project language; `research.gutenberg.max_chars` bounds how much of a long book is embedded.
 
+- **Pick a specific edition.** The reply lists the runner-up matches with their PG ids; re-run
+  **`/gutenberg <PG#>`** (a bare number) to ingest that exact book instead of the top hit.
+- **Just one chapter.** **`/gutenberg --chapter N <query>`** (or `--ch N`) ingests only chapter *N* — handy
+  when you want a single relevant chapter of a long novel, not the whole thing.
+- **Auto-cited.** Each ingested book is filed as a citation (`@austenpg1342`, note *Project Gutenberg
+  #<id>*), so it appears in **`/bibliography`** automatically. Toggle with `research.gutenberg.auto_cite`.
+
 ## 6.8. Structured facts — `/wikidata` (1.5.5)
 
 Where `/web` brings in *prose*, **`/wikidata <query>`** brings in **structured triples** — the top of the
