@@ -3521,6 +3521,15 @@ impl ResearchApp {
 
     /// G1/G2 — keys for the confirmation overlay. Tab switches field; Ctrl+Enter
     /// (or Ctrl+S) confirms; Esc discards.
+    /// BUG-1 — drop every in-flight pre-commit gate receiver (triangulation /
+    /// web fact-check / refutation). Called when the confirmation overlay is
+    /// discarded so an orphaned gate task can't finalise onto a later insertion.
+    fn clear_insertion_gates(&mut self) {
+        self.tri_gate = None;
+        self.fc_confirm = None;
+        self.refute_confirm = None;
+    }
+
     fn confirmation_key(&mut self, key: KeyEvent) {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         if ctrl && matches!(key.code, KeyCode::Enter | KeyCode::Char('s')) {
@@ -3530,6 +3539,10 @@ impl ResearchApp {
         match key.code {
             KeyCode::Esc => {
                 self.confirmation = None;
+                // BUG-1 — also drop any in-flight pre-commit gate receiver, so a
+                // stale verdict can't resolve onto the *next* confirmation and
+                // force-insert an unvetted fact with the wrong provenance.
+                self.clear_insertion_gates();
                 self.focus = Focus::QueryPrompt;
                 self.status_message = Some("discarded".to_string());
             }
@@ -5159,6 +5172,39 @@ mod completion_tests {
     }
 }
 
+/// BUG-2 — the support classification of one judge line
+/// (`<source>: VERDICT — reason`). Robust to **negated** phrasing
+/// (`NOT SUPPORTED`, `unsupported`, `no support`) and to a plain-hyphen reason
+/// separator (not just the em-dash `—`), which previously slipped through a
+/// `contains("SUPPORT")` check and raised a fact's tier with no corroboration.
+/// Contradiction is checked first.
+#[derive(PartialEq)]
+enum SupportVerdict {
+    Contradict,
+    Support,
+    Silent,
+}
+
+fn classify_support(line: &str) -> SupportVerdict {
+    let u = line.to_ascii_uppercase();
+    // Inspect only the verdict clause: drop the `<source>:` prefix and the
+    // reason after the separator (em-dash or ` - `).
+    let after_colon = u.splitn(2, ':').nth(1).unwrap_or(&u);
+    let clause = after_colon.split('—').next().unwrap_or(after_colon);
+    let clause = clause.split(" - ").next().unwrap_or(clause).trim();
+    if clause.contains("CONTRADICT") {
+        SupportVerdict::Contradict
+    } else if clause.contains("SUPPORT")
+        && !clause.contains("NOT SUPPORT")
+        && !clause.contains("UNSUPPORT")
+        && !clause.contains("NO SUPPORT")
+    {
+        SupportVerdict::Support
+    } else {
+        SupportVerdict::Silent
+    }
+}
+
 /// R5-E — from the `/upgrade` corroboration judgement, the origin tier of the
 /// best corroborating source (highest tier that SUPPORTS with **no** source
 /// CONTRADICTING), or `None`. Priority: wikidata > openalex > arxiv.
@@ -5166,18 +5212,22 @@ fn pick_corroborator(buf: &str) -> Option<String> {
     let mut supports: Vec<&str> = Vec::new();
     let mut any_contradict = false;
     for line in buf.lines() {
+        // Detect the source from the name prefix (before `:`), not the reason
+        // text — a reason may *mention* another source.
         let u = line.to_ascii_uppercase();
-        let head = u.split('—').next().unwrap_or("");
-        if head.contains("CONTRADICT") {
-            any_contradict = true;
-        } else if head.contains("SUPPORT") {
-            if head.contains("WIKIDATA") {
-                supports.push("wikidata");
-            } else if head.contains("OPENALEX") {
-                supports.push("openalex");
-            } else if head.contains("ARXIV") {
-                supports.push("arxiv");
+        let source_part = u.splitn(2, ':').next().unwrap_or(&u);
+        match classify_support(line) {
+            SupportVerdict::Contradict => any_contradict = true,
+            SupportVerdict::Support => {
+                if source_part.contains("WIKIDATA") {
+                    supports.push("wikidata");
+                } else if source_part.contains("OPENALEX") {
+                    supports.push("openalex");
+                } else if source_part.contains("ARXIV") {
+                    supports.push("arxiv");
+                }
             }
+            SupportVerdict::Silent => {}
         }
     }
     if any_contradict {
@@ -5205,13 +5255,11 @@ fn summarize_triangulation(buf: &str) -> (String, bool) {
             agreement = Some(l.to_string());
             continue;
         }
-        // The verdict token sits before the em-dash / hyphen reason separator.
-        let head = l.split('—').next().unwrap_or(l);
-        let head = head.split(" - ").next().unwrap_or(head).to_ascii_uppercase();
-        if head.contains("CONTRADICT") {
-            contradicts += 1;
-        } else if head.contains("SUPPORT") {
-            supports += 1;
+        // BUG-2 — negation-aware classification (shared with `pick_corroborator`).
+        match classify_support(l) {
+            SupportVerdict::Contradict => contradicts += 1,
+            SupportVerdict::Support => supports += 1,
+            SupportVerdict::Silent => {}
         }
     }
     let verdict =
@@ -5261,6 +5309,28 @@ mod triangulation_tests {
         // Any contradiction → no corroboration.
         assert!(pick_corroborator("Wikidata: SUPPORTS — x\narXiv: CONTRADICTS — y").is_none());
         assert!(pick_corroborator("Wikidata: SILENT — nothing").is_none());
+    }
+
+    #[test]
+    fn bug2_negated_support_is_not_support() {
+        use super::{pick_corroborator, summarize_triangulation};
+        // "NOT SUPPORTED" / "unsupported" / "does not support" must NOT corroborate.
+        assert!(pick_corroborator("Wikidata: NOT SUPPORTED — no such statement").is_none());
+        assert!(pick_corroborator("Wikidata: UNSUPPORTED").is_none());
+        assert!(pick_corroborator("OpenAlex: SILENT - the source does not support this").is_none());
+        // A plain-hyphen reason separator must not fold the reason into the verdict.
+        assert_eq!(
+            pick_corroborator("Wikidata: SUPPORTS - matches the triple").as_deref(),
+            Some("wikidata")
+        );
+        // Source attribution comes from the name prefix, not a reason mention.
+        assert_eq!(
+            pick_corroborator("arXiv: SUPPORTS — consistent with the Wikidata figure").as_deref(),
+            Some("arxiv")
+        );
+        // Triangulation gate agrees: negated support does not pass.
+        let (_, pass) = summarize_triangulation("Wikidata: NOT SUPPORTED — n/a\narXiv: SILENT — n/a");
+        assert!(!pass);
     }
 }
 
