@@ -1288,7 +1288,9 @@ impl ResearchApp {
             };
         if let Some(res) = gathered {
             match res {
-                Err(()) => self.upgrade = None,
+                // BUG-5 — finalise the preview turn (not just drop state) so its
+                // spinner resolves instead of streaming forever.
+                Err(()) => self.finish_upgrade(None, "evidence gathering failed"),
                 Ok(ev) if ev.is_empty() => {
                     self.finish_upgrade(None, "no structured source returned evidence about this fact")
                 }
@@ -1299,9 +1301,12 @@ impl ResearchApp {
             }
             return;
         }
-        // Phase 2 — the judge stream.
+        // Phase 2 — the judge stream. BUG-4 — a clean `Done` yields a verdict; an
+        // `Error`/`Disconnected` mid-stream must NOT parse the partial buffer as a
+        // verdict (it could raise the tier on half the evidence).
         let preview_idx = self.upgrade.as_ref().and_then(|u| u.preview_idx);
         let mut done = false;
+        let mut aborted = false;
         let mut new_tokens = String::new();
         if let Some(UpgradeState { phase: UpgradePhase::Judge { rx, buf }, .. }) = self.upgrade.as_mut() {
             loop {
@@ -1310,12 +1315,12 @@ impl ResearchApp {
                         new_tokens.push_str(&t);
                         buf.push_str(&t);
                     }
-                    Ok(StreamMsg::Done(_)) | Err(mpsc::error::TryRecvError::Disconnected) => {
+                    Ok(StreamMsg::Done(_)) => {
                         done = true;
                         break;
                     }
-                    Ok(StreamMsg::Error(_)) => {
-                        done = true;
+                    Ok(StreamMsg::Error(_)) | Err(mpsc::error::TryRecvError::Disconnected) => {
+                        aborted = true;
                         break;
                     }
                     Err(mpsc::error::TryRecvError::Empty) => break,
@@ -1330,6 +1335,10 @@ impl ResearchApp {
                     t.response.push_str(&new_tokens);
                 }
             }
+        }
+        if aborted {
+            self.finish_upgrade(None, "judge interrupted — not upgraded");
+            return;
         }
         if !done {
             return;
@@ -1346,19 +1355,19 @@ impl ResearchApp {
 
     /// Spawn the `/upgrade` corroboration-judge over the gathered evidence.
     fn start_upgrade_judge(&mut self, claim: &str, evidence: &[(String, String)]) {
+        // BUG-5 — on a provider error, finalise the preview turn (spinner off)
+        // rather than dropping state and leaving it streaming forever.
         let ai = match crate::ai::AiClient::from_config(&self.cfg.llm) {
             Ok(a) => a,
-            Err(e) => {
-                self.status_message = Some(format!("no LLM provider: {e}"));
-                self.upgrade = None;
+            Err(_) => {
+                self.finish_upgrade(None, "no LLM provider for the judge");
                 return;
             }
         };
         let (model, _env) = match ai.resolve_provider(&self.cfg.llm, None) {
             Ok(m) => m,
-            Err(e) => {
-                self.status_message = Some(format!("provider error: {e}"));
-                self.upgrade = None;
+            Err(_) => {
+                self.finish_upgrade(None, "LLM provider error");
                 return;
             }
         };
@@ -1528,9 +1537,11 @@ impl ResearchApp {
                 "kind": imports::SOURCE_KIND, "source": abs, "name": name,
                 "thread": self.thread.name, "chunk": i, "imported_at": now,
             });
-            match self.store.raw().add_document(meta, chunk.as_bytes()) {
-                Ok(id) => doc_ids.push(id.to_string()),
-                Err(e) => return Err(format!("embed failed: {e}")),
+            // BUG-6 — record successes and keep going (never return mid-loop):
+            // a mid-loop return would leave earlier chunks in the vector store but
+            // absent from the sidecar → orphans `/forget` can't remove.
+            if let Ok(id) = self.store.raw().add_document(meta, chunk.as_bytes()) {
+                doc_ids.push(id.to_string());
             }
         }
         let mut imports_store = imports::Imports::load(&self.layout);
@@ -4923,8 +4934,11 @@ fn embed_source_file(layout: &ProjectLayout, cfg: &Config, store: &Store, p: &st
             "kind": imports::SOURCE_KIND, "source": abs, "name": name,
             "thread": "", "chunk": i, "imported_at": now,
         });
-        let id = store.raw().add_document(meta, chunk.as_bytes()).map_err(|e| anyhow::anyhow!("{e}"))?;
-        doc_ids.push(id.to_string());
+        // BUG-6 — tolerate a failed chunk (record successes, save the sidecar) so
+        // a mid-loop failure can't orphan already-embedded vectors.
+        if let Ok(id) = store.raw().add_document(meta, chunk.as_bytes()) {
+            doc_ids.push(id.to_string());
+        }
     }
     let mut imports_store = imports::Imports::load(layout);
     if let Some(old) = imports_store.sources.get(&name) {
@@ -5002,8 +5016,10 @@ pub(crate) fn gutenberg_cli(layout: &ProjectLayout, cfg: &Config, store: &Store,
             "kind": imports::SOURCE_KIND, "source": source_url, "name": name,
             "thread": "", "chunk": i, "imported_at": now, "origin": "gutenberg", "title": book.title,
         });
-        let id = store.raw().add_document(meta, chunk.as_bytes()).map_err(|e| anyhow::anyhow!("{e}"))?;
-        doc_ids.push(id.to_string());
+        // BUG-6 — record successes, save the sidecar regardless (no orphans).
+        if let Ok(id) = store.raw().add_document(meta, chunk.as_bytes()) {
+            doc_ids.push(id.to_string());
+        }
     }
     let mut imports_store = imports::Imports::load(layout);
     if let Some(old) = imports_store.sources.get(&name) {
