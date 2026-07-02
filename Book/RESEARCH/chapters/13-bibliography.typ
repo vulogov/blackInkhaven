@@ -84,8 +84,8 @@ compose. You have now travelled the whole circle. You *acquired* facts from ever
 rung of the ladder; you *cross-checked* the load-bearing ones and audited the rest;
 you *maintained* the corpus by upgrading guesses and flagging stale facts; and in
 this part you *composed* it back out — a cited synthesis, a working outline, a list
-of what's missing, and a bibliography that built itself. The knowledge base you
-started with an empty tree has become something that writes back into your book.
+of what's missing, and a bibliography that built itself. The knowledge base that
+began as an empty tree has become something that writes back into your book.
 
 Two things remain. Everything so far has been hands-on, one command at a time — but
 some research is better done in bulk, headlessly, while you do something else; that

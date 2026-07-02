@@ -58,7 +58,7 @@ keep quietly deposits its citation.
 
 #section("The library: `/gutenberg`")
 
-Project Gutenberg is a library of tens of thousands of *public-domain* books —
+Project Gutenberg is a library of some seventy-five thousand *public-domain* books —
 out of copyright, free to read and reuse. Inkhaven can pull one straight into your
 corpus:
 

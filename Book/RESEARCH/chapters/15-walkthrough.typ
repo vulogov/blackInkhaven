@@ -76,7 +76,7 @@ was tested from more than one side.
    of scale is honest. One check is plenty.],
   [For the historian, one supporting source is a beginning. You might also run
    `/upgrade` on any related guesses, and turn the refutation gate on so a
-   determined skeptic pass runs before each new claim commits. The figure is going
+   determined sceptic pass runs before each new claim commits. The figure is going
    in a footnoted paragraph; it should survive attack as well as find support.],
 )
 
