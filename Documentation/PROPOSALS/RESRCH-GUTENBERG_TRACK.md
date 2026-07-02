@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | **PG-P1 + PG-P2 shipped 1.5.8-dev**; PG-P3 (auto-cite) + PG-P4 (chapters, picker) + CLI flag open |
+| **Status** | **PG-P1..P4 shipped** (PG-P1/P2 in 1.5.8; PG-P3 auto-cite + PG-P4 chapters/picker in 1.5.9-dev); CLI `--gutenberg` still open |
 | **Builds on** | RESRCH-2 (document import: chunk → embed → retrieve → cite), RESRCH-3 (source adapters + provenance), R3-B (SOURCES-1 auto-cite) |
 | **Theme** | Bring **Project Gutenberg** — ~75,000 **public-domain** full-text books — into the corpus as a research source: search the catalogue, ingest a book's text (or a chapter), and let the existing RAG surface the relevant **snippets**. A full-text library adapter, keyless and free. |
 
@@ -70,8 +70,8 @@ they ground answers and can be `/fact`ed.
 |---|---|
 | **PG-P1** | `research/gutenberg.rs`: Gutendex search (`GutenbergBook { id, title, authors, subjects, text_url }`) + plain-text fetch + `strip_pg_boilerplate`. Fixture-tested parse (Gutendex is blockable from CI). **✅ Shipped 1.5.8-dev** — keyless, project-language, `max_chars` cap; 3 fixture tests. |
 | **PG-P2** | `/gutenberg <query>` command (+ `CommandSpec` for the UX-P1 palette): search → fetch → chunk + embed as a `research_source` (`origin=gutenberg`) via the existing import path; `Imports` sidecar entry; provenance. **✅ Shipped 1.5.8-dev** (TUI) — `/gutenberg` / `/pg`, `ingest_gutenberg` mirrors `/web --ingest`; cited `[source: <Title> (PG#<id>)]`. *(CLI `--gutenberg` deferred — needs a runtime for the async fetch.)* |
-| **PG-P3** | Auto-cite the book as a SOURCES-1 `BibEntry` (feeds `/bibliography`); `origin=gutenberg` provenance summary + a tree tier glyph. |
-| **PG-P4 *(follow-on)*** | Chapter split (`--chapter`) + a multi-result picker. |
+| **PG-P3** | Auto-cite the book as a SOURCES-1 `BibEntry` (feeds `/bibliography`). **✅ Shipped 1.5.9-dev** — `GutenbergBook::to_bibentry` (`book`, key `<surname>pg<id>`, note *Project Gutenberg #id*) → `add_bibentry`; gated by `research.gutenberg.auto_cite` (default on). |
+| **PG-P4** | Chapter split (`--chapter`) + a multi-result picker. **✅ Shipped 1.5.9-dev** — `--chapter N` / `--ch N` (`split_chapters` heuristic → ingest one chapter); `fetch` returns up to 4 **alternatives**, listed with their PG ids, and a bare `/gutenberg <PG#>` fetches that exact book (`/books/<id>`). |
 
 ## Etiquette & limits
 - **Public domain** — PG texts carry no copyright; ingesting them is unproblematic. Gutendex is a

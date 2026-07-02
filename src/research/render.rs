@@ -255,7 +255,7 @@ fn render_help(frame: &mut Frame, app: &ResearchApp, area: Rect) {
         Line::from("    /import [path]        ingest md/txt/pdf, a folder, or .bib/.json (bare: list)"),
         Line::from("    /forget <name>       remove an imported source"),
         Line::from("    /web [--ingest] q    web search & fetch (chat+factcheck, or ingest)"),
-        Line::from("    /gutenberg <query>   ingest a public-domain book (Project Gutenberg)"),
+        Line::from("    /gutenberg [--ch N] q  ingest a public-domain book (Project Gutenberg; PG# picks)"),
         Line::from("    /wikidata <query>    structured Wikidata triples (Q-ID cited, gate-skipped)"),
         Line::from("    /openalex /arxiv q   scholarly papers (DOI/ID; /fact auto-cites to Sources)"),
         Line::from("    /triangulate [claim] cross-check a claim across the structured sources"),
