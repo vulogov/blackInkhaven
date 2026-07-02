@@ -33,9 +33,9 @@ locally; after that it compiles offline.
 
 ## Status
 
-Being composed. Parts I–V are written (introduction + eleven chapters, ~67 pages);
-the remaining parts are laid out as a roadmap in [`RESEARCH.typ`](RESEARCH.typ)
-and land chapter by chapter:
+Being composed. Parts I–VI are written (introduction + thirteen chapters, ~79
+pages); the remaining parts are laid out as a roadmap in
+[`RESEARCH.typ`](RESEARCH.typ) and land chapter by chapter:
 
 - **I — Grounding Your Book** *(written)*: why ground your book · the Research
   Assistant · your first fact
@@ -51,6 +51,9 @@ and land chapter by chapter:
 - **V — Fiction's Own Facts** *(written)*: the facts you invented — `undisputed`
   (`u`, ※), excluded from `/factcheck`, checked for internal coherence by
   `/undisputed`
+- **VI — Composing Out** *(written)*: composing from what you know (`/synthesize`,
+  `/outline`, `/gaps`) · the bibliography that built itself (`/bibliography`,
+  `--bibliography`)
 - **III — Trust & Cross-Checking**: triangulation · fact-checking · refutation & upgrade
 - **IV — Computed Facts**: `/calc` & the World book
 - **V — Fiction's Own Facts**: undisputed (authorial) facts

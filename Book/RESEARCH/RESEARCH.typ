@@ -37,10 +37,11 @@
   part(number: "V", title: "Fiction's Own Facts"),
   include "chapters/11-undisputed.typ",
 
+  part(number: "VI", title: "Composing Out"),
+  include "chapters/12-synthesize-and-outline.typ",
+  include "chapters/13-bibliography.typ",
+
   // ── Roadmap for the rest of the book (chapters land as they are written) ──
-  // part(number: "VI", title: "Composing Out"),
-  //   include "chapters/12-synthesize-and-outline.typ",  // /synthesize · /outline · /gaps
-  //   include "chapters/13-bibliography.typ",            // /bibliography + the Sources book
   // part(number: "VII", title: "Working at Scale"),
   //   include "chapters/14-headless.typ",                // --batch · --import · --sync
   // part(number: "VIII", title: "A Complete Walkthrough"),

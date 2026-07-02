@@ -318,6 +318,26 @@
   v(3mm)
 }
 
+// Composing out — the corpus finally producing output back into the book.
+#let compose_out() = {
+  v(3mm)
+  align(center, diagram(
+    spacing: (15mm, 3mm),
+    dnode((0, 1.5), [*Your corpus*\ Facts + Sources]),
+    dnode((1, 0), [#strong[/synthesize]\ cited overview]),
+    dnode((1, 1), [#strong[/outline]\ fact-citing plan]),
+    dnode((1, 2), [#strong[/gaps]\ what's missing]),
+    dnode((1, 3), [#strong[/bibliography]\ references]),
+    dnode((2, 1.5), [*Your book*], fill: ink_recap_bg),
+    edge((0, 1.5), (1, 0), "->"), edge((0, 1.5), (1, 1), "->"),
+    edge((0, 1.5), (1, 2), "->"), edge((0, 1.5), (1, 3), "->"),
+    edge((1, 0), (2, 1.5), "->"), edge((1, 1), (2, 1.5), "->"),
+    edge((1, 2), (2, 1.5), "->"), edge((1, 3), (2, 1.5), "->"),
+  ))
+  figure_note[The corpus you built is not the end product — it is the raw material the last commands turn back into your book.]
+  v(3mm)
+}
+
 // The larger arc — what the Research Assistant does over a whole project.
 #let research_arc() = {
   v(3mm)
