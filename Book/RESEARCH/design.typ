@@ -91,16 +91,21 @@
 }
 
 // ── Section / subsection ────────────────────────────────────────────
+// NOTE (Typst 0.14): a block's `below` now sets the gap literally, rather than
+// max()-ing with the surrounding paragraph spacing as older Typst did — so the
+// tiny `below` values the CONLANG design used collapse a heading onto its body
+// here. These give the heading real breathing room below while keeping more
+// space above (so a heading still belongs to what follows it).
 #let section(title) = {
   hide(heading(level: 2, numbering: none, outlined: true, title))
   block(
-    sticky: true, above: 7mm, below: 1.5mm,
+    sticky: true, above: 8mm, below: 3.2mm,
     text(font: body_family, size: 15pt, weight: "bold", fill: ink_black, title),
   )
 }
 #let subsection(title) = {
   block(
-    sticky: true, above: 4mm, below: 0.5mm,
+    sticky: true, above: 5.5mm, below: 2.4mm,
     text(font: body_family, size: 11.5pt, weight: "bold", fill: ink_black, title),
   )
 }
@@ -111,7 +116,7 @@
   block(
     fill: ink_term_bg, stroke: (left: 2pt + ink_term),
     inset: (left: 9pt, right: 9pt, top: 7pt, bottom: 7pt),
-    width: 100%, radius: 1pt, breakable: false,
+    width: 100%, radius: 1pt, breakable: true,
     {
       text(font: body_family, size: 8pt, weight: "bold", fill: ink_term, tracking: 1pt, "TERM")
       h(6pt)
@@ -129,7 +134,7 @@
   block(
     fill: ink_call_bg, stroke: (left: 2pt + ink_accent),
     inset: (left: 9pt, right: 9pt, top: 7pt, bottom: 7pt),
-    width: 100%, radius: 1pt, breakable: false,
+    width: 100%, radius: 1pt, breakable: true,
     {
       text(font: body_family, size: 8pt, weight: "bold", fill: ink_accent, tracking: 1.5pt, upper(label))
       v(2mm)
@@ -147,12 +152,12 @@
     columns: (1fr, 1fr), gutter: 5mm,
     block(
       fill: ink_call_bg, stroke: (left: 2pt + ink_accent),
-      inset: 8pt, width: 100%, radius: 1pt, breakable: false,
+      inset: 8pt, width: 100%, radius: 1pt, breakable: true,
       { text(font: body_family, size: 8pt, weight: "bold", fill: ink_accent, tracking: 1pt, "FICTION"); v(2mm); fiction },
     ),
     block(
       fill: ink_recap_bg, stroke: (left: 2pt + ink_recap),
-      inset: 8pt, width: 100%, radius: 1pt, breakable: false,
+      inset: 8pt, width: 100%, radius: 1pt, breakable: true,
       { text(font: body_family, size: 8pt, weight: "bold", fill: ink_recap, tracking: 1pt, "NON-FICTION"); v(2mm); nonfiction },
     ),
   )
@@ -165,7 +170,7 @@
   block(
     fill: ink_recap_bg, stroke: (left: 2pt + ink_recap),
     inset: (left: 9pt, right: 9pt, top: 8pt, bottom: 8pt),
-    width: 100%, radius: 1pt, breakable: false,
+    width: 100%, radius: 1pt, breakable: true,
     {
       text(font: body_family, size: 9pt, weight: "bold", fill: ink_recap, tracking: 1.5pt, "WHAT YOU LEARNED")
       v(2mm)
