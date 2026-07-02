@@ -1,5 +1,12 @@
 # Stability & ripple-effect bug scan — bugfixing plan (1.5.9-dev)
 
+> **Status: P0 + P1 + P2 fixed (1.5.9-dev).** BUG-1..12 resolved with regression
+> tests where unit-testable (`bug2_negated_support_is_not_support`,
+> `bug3_highlight_segments_ascii_and_multibyte`, `parse_hex` multibyte). BUG-13
+> (P3) deferred — documented as a single-writer assumption. Full suite 2235 / 7
+> ignored.
+
+
 _A four-track parallel audit of the sources (gate state machine · new adapters/async · core infra/config ·
 broad panic sweep). The tree is well-hardened overall — pervasive `saturating_sub`, char-based parsers,
 `Disconnected` handling on every polled channel, no `.lock().unwrap()`. The findings below are the real,

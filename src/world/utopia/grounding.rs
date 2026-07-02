@@ -85,7 +85,10 @@ pub(crate) fn build_findings_text(findings: &[UtopiaFinding]) -> String {
     for (i, f) in shown.iter().enumerate() {
         let loc = match (f.finding_type, f.chapter_ord, &f.para_id) {
             (FindingType::EntailmentViolation, Some(ch), Some(p)) => {
-                format!(" (chapter {ch}, para {})", &p[..p.len().min(8)])
+                // BUG-12 — truncate by chars, not bytes: `para_id` can be a
+                // model-echoed value, and a byte slice at 8 could split a codepoint.
+                let short: String = p.chars().take(8).collect();
+                format!(" (chapter {ch}, para {short})")
             }
             _ => String::new(),
         };

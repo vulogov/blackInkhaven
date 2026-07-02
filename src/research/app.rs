@@ -1802,6 +1802,7 @@ impl ResearchApp {
             Err(mpsc::error::TryRecvError::Empty) => return,
             Err(mpsc::error::TryRecvError::Disconnected) => {
                 self.gutenberg_state = None;
+                self.status_message = Some("gutenberg: request cancelled".to_string());
                 return;
             }
         };
@@ -1834,9 +1835,15 @@ impl ResearchApp {
         }
         // PG-P4 — narrow to a single chapter when requested.
         let (body_text, chapter_note) = match chapter {
+            // BUG-9 — chapters are 1-indexed; `--chapter 0` is invalid (it used to
+            // silently ingest chapter 1 labelled "chapter 0").
+            Some(0) => {
+                self.status_message = Some("chapter numbers start at 1".to_string());
+                return;
+            }
             Some(n) => {
                 let chapters = super::gutenberg::split_chapters(text);
-                match chapters.get(n.saturating_sub(1)) {
+                match chapters.get(n - 1) {
                     Some(c) => (c.clone(), format!(" · chapter {n}/{}", chapters.len())),
                     None => {
                         self.status_message =
@@ -1927,6 +1934,7 @@ impl ResearchApp {
             Err(mpsc::error::TryRecvError::Empty) => return,
             Err(mpsc::error::TryRecvError::Disconnected) => {
                 self.wikidata_state = None;
+                self.status_message = Some("wikidata: request cancelled".to_string());
                 return;
             }
         };
@@ -1990,6 +1998,7 @@ impl ResearchApp {
             Err(mpsc::error::TryRecvError::Empty) => return,
             Err(mpsc::error::TryRecvError::Disconnected) => {
                 self.geonames_state = None;
+                self.status_message = Some("geonames: request cancelled".to_string());
                 return;
             }
         };
@@ -2240,11 +2249,27 @@ impl ResearchApp {
         let now = chrono::Utc::now().to_rfc3339();
         let mut imports_store = imports::Imports::load(&self.layout);
         let mut total = 0usize;
+        // BUG-7 — two distinct URLs in one batch can slug to the same name; track
+        // names used this batch and disambiguate so the second doesn't delete the
+        // first's just-embedded vectors. (Cross-batch re-ingest still replaces.)
+        let mut batch_names: std::collections::HashSet<String> = std::collections::HashSet::new();
         for r in results {
             if r.text.trim().is_empty() {
                 continue;
             }
-            let name = imports::source_name(std::path::Path::new(&r.url));
+            let base = imports::source_name(std::path::Path::new(&r.url));
+            let name = if batch_names.insert(base.clone()) {
+                base
+            } else {
+                let mut n = 2;
+                loop {
+                    let cand = format!("{base}-{n}");
+                    if batch_names.insert(cand.clone()) {
+                        break cand;
+                    }
+                    n += 1;
+                }
+            };
             let chunks = imports::chunk_text(&r.text, chunk_chars);
             let mut doc_ids = Vec::new();
             for (i, chunk) in chunks.iter().enumerate() {
@@ -3986,8 +4011,17 @@ impl ResearchApp {
                 let evidence = match rx.try_recv() {
                     Ok(e) => e,
                     Err(mpsc::error::TryRecvError::Empty) => return,
+                    // BUG-11 — a died gather task must finalise like every other
+                    // gate terminus (set fc_checked + a verdict), not silently
+                    // drop the gate leaving the user with no way past it.
                     Err(mpsc::error::TryRecvError::Disconnected) => {
                         self.tri_gate = None;
+                        if let Some(c) = self.confirmation.as_mut() {
+                            c.fc_checked = true;
+                            c.fc_verdict = Some("triangulation: gathering failed".to_string());
+                        }
+                        self.status_message =
+                            Some("triangulation: gathering failed — Ctrl+S again to insert".to_string());
                         return;
                     }
                 };
@@ -4989,12 +5023,13 @@ pub(crate) fn gutenberg_cli(layout: &ProjectLayout, cfg: &Config, store: &Store,
         .ok_or_else(|| anyhow::anyhow!("gutenberg fetch cancelled"))?
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-    // PG-P4 — narrow to one chapter when asked.
+    // PG-P4 — narrow to one chapter when asked. BUG-9 — chapters are 1-indexed.
     let body = match chapter {
+        Some(0) => anyhow::bail!("chapter numbers start at 1"),
         Some(n) => {
             let chapters = super::gutenberg::split_chapters(&text);
             chapters
-                .get(n.saturating_sub(1))
+                .get(n - 1)
                 .cloned()
                 .ok_or_else(|| anyhow::anyhow!("chapter {n} out of range (book has {})", chapters.len()))?
         }
