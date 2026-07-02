@@ -603,26 +603,48 @@ fn wrapped_rows(text: &str, width: usize) -> usize {
 
 /// Split a line on `query` (case-insensitive), highlighting the matches. The
 /// current match line is additionally bold. Match colours come from the theme.
-fn highlight_line<'a>(app: &ResearchApp, text: &'a str, query: &str, is_current: bool) -> Line<'a> {
+fn highlight_line<'a>(app: &ResearchApp, text: &str, query: &str, is_current: bool) -> Line<'a> {
     let base = if is_current { Style::new().bold() } else { Style::new() };
     let bg = if is_current { app.theme.search_current_bg } else { app.theme.search_match_bg };
     let hit = Style::new().bg(bg).fg(app.theme.pane_bg);
-    let mut spans: Vec<Span> = Vec::new();
-    let lower = text.to_lowercase();
-    let mut from = 0usize;
-    while let Some(rel) = lower[from..].find(query) {
-        let start = from + rel;
-        let end = start + query.len();
-        if start > from {
-            spans.push(Span::styled(text[from..start].to_string(), base));
-        }
-        spans.push(Span::styled(text[start..end].to_string(), hit));
-        from = end;
-    }
-    if from < text.len() {
-        spans.push(Span::styled(text[from..].to_string(), base));
-    }
+    let spans: Vec<Span> = highlight_segments(text, query)
+        .into_iter()
+        .map(|(seg, is_hit)| Span::styled(seg, if is_hit { hit } else { base }))
+        .collect();
     Line::from(spans)
+}
+
+/// BUG-3 — split `text` into `(segment, is_match)` runs for a case-insensitive
+/// `query` match, using **char-aligned** indices. The previous version computed
+/// byte offsets on `text.to_lowercase()` and sliced the *original* `text`; a
+/// char whose lowercase changes byte length (`ẞ`→`ß`, `İ`→`i̇`) desynced the two
+/// and panicked the render loop. Matching per-char sidesteps offset drift.
+fn highlight_segments(text: &str, query: &str) -> Vec<(String, bool)> {
+    let q: Vec<char> = query.to_lowercase().chars().collect();
+    let chars: Vec<char> = text.chars().collect();
+    if q.is_empty() || chars.is_empty() {
+        return vec![(text.to_string(), false)];
+    }
+    let lower: Vec<char> = chars.iter().map(|c| c.to_lowercase().next().unwrap_or(*c)).collect();
+    let mut out: Vec<(String, bool)> = Vec::new();
+    let mut i = 0usize;
+    let mut plain_start = 0usize;
+    while i < chars.len() {
+        if i + q.len() <= chars.len() && lower[i..i + q.len()] == q[..] {
+            if i > plain_start {
+                out.push((chars[plain_start..i].iter().collect(), false));
+            }
+            out.push((chars[i..i + q.len()].iter().collect(), true));
+            i += q.len();
+            plain_start = i;
+        } else {
+            i += 1;
+        }
+    }
+    if plain_start < chars.len() {
+        out.push((chars[plain_start..].iter().collect(), false));
+    }
+    out
 }
 
 fn render_confirmation(frame: &mut Frame, app: &ResearchApp, area: Rect) {
@@ -822,5 +844,24 @@ mod ux_tests {
         assert_eq!(provenance_tier_glyph("arxiv").map(|(g, _)| g), Some("§"));
         assert_eq!(provenance_tier_glyph("computed").map(|(g, _)| g), Some("≡"));
         assert!(provenance_tier_glyph("manual").is_none());
+    }
+
+    #[test]
+    fn bug3_highlight_segments_ascii_and_multibyte() {
+        // Basic case-insensitive match.
+        let segs = highlight_segments("The Roman aqueduct", "roman");
+        assert_eq!(segs, vec![
+            ("The ".to_string(), false),
+            ("Roman".to_string(), true),
+            (" aqueduct".to_string(), false),
+        ]);
+        // BUG-3 — a length-changing lowercase (ẞ→ß) must NOT panic and must match.
+        let segs = highlight_segments("STRAẞE", "straße");
+        assert_eq!(segs, vec![("STRAẞE".to_string(), true)]);
+        // İ (Turkish dotted capital I, lowercases to two chars) must not panic.
+        let _ = highlight_segments("İSTANBUL", "istanbul");
+        // No match / empty query are safe.
+        assert_eq!(highlight_segments("hello", "zzz"), vec![("hello".to_string(), false)]);
+        assert_eq!(highlight_segments("hello", ""), vec![("hello".to_string(), false)]);
     }
 }
