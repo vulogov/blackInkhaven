@@ -149,6 +149,12 @@ pub(super) struct WikidataState {
     query: String,
 }
 
+/// RESRCH-6-lite — an in-flight `/geonames` place lookup.
+pub(super) struct GeonamesState {
+    rx: mpsc::UnboundedReceiver<std::result::Result<super::geonames::GeoPlace, String>>,
+    query: String,
+}
+
 /// RESRCH-GUTENBERG — an in-flight `/gutenberg` search + text fetch. Carries the
 /// optional `--chapter` selector (PG-P4) through to ingestion.
 type GutenbergFetch = (super::gutenberg::GutenbergBook, String, Vec<super::gutenberg::GutenbergBook>);
@@ -360,6 +366,7 @@ pub(crate) struct ResearchApp {
     /// In-flight `/web` search (R2-C).
     web: Option<WebState>,
     wikidata_state: Option<WikidataState>,
+    geonames_state: Option<GeonamesState>,
     gutenberg_state: Option<GutenbergState>,
     scholarly_state: Option<ScholarlyState>,
     triangulate: Option<TriangulateState>,
@@ -370,6 +377,8 @@ pub(crate) struct ResearchApp {
     pending_cite: Option<crate::sources::BibEntry>,
     /// In-flight pre-commit fact-check for a web fact (WC-P3): receiver + buffer.
     fc_confirm: Option<(mpsc::UnboundedReceiver<StreamMsg>, String)>,
+    /// R6-A — in-flight adversarial refutation pass before commit: receiver + buffer.
+    refute_confirm: Option<(mpsc::UnboundedReceiver<StreamMsg>, String)>,
     /// The editable insertion confirmation overlay (G1/G2).
     pub(super) confirmation: Option<ConfirmationState>,
     /// UX-P3 — spinner frame counter + when the current async op began (for the
@@ -461,6 +470,7 @@ impl ResearchApp {
             undisputed_check: None,
             web: None,
             wikidata_state: None,
+            geonames_state: None,
             gutenberg_state: None,
             scholarly_state: None,
             triangulate: None,
@@ -468,6 +478,7 @@ impl ResearchApp {
             upgrade: None,
             pending_cite: None,
             fc_confirm: None,
+            refute_confirm: None,
             confirmation: None,
             spin_tick: 0,
             async_started: None,
@@ -501,12 +512,14 @@ impl ResearchApp {
             || self.undisputed_check.is_some()
             || self.web.is_some()
             || self.wikidata_state.is_some()
+            || self.geonames_state.is_some()
             || self.gutenberg_state.is_some()
             || self.scholarly_state.is_some()
             || self.triangulate.is_some()
             || self.tri_gate.is_some()
             || self.upgrade.is_some()
             || self.fc_confirm.is_some()
+            || self.refute_confirm.is_some()
     }
 
     /// The synchronous event loop: draw, then block up to 100 ms for a key.
@@ -521,12 +534,14 @@ impl ResearchApp {
             self.poll_undisputed();
             self.poll_web();
             self.poll_wikidata();
+            self.poll_geonames();
             self.poll_gutenberg();
             self.poll_scholarly();
             self.poll_triangulate();
             self.poll_tri_gate();
             self.poll_upgrade();
             self.poll_fc_confirm();
+            self.poll_refute();
             // UX-P3 — drive the status-bar spinner: start the timer when work is
             // in flight, clear it when the last async op finishes.
             self.spin_tick = self.spin_tick.wrapping_add(1);
@@ -960,6 +975,7 @@ impl ResearchApp {
             Command::Calc(expr) => self.run_calc(&expr),
             Command::World(arg) => self.run_world(&arg),
             Command::Wikidata(query) => self.start_wikidata(query),
+            Command::Geonames(query) => self.start_geonames(query),
             Command::Gutenberg(query) => self.start_gutenberg(query),
             Command::OpenAlex(query) => self.start_scholarly("openalex", query),
             Command::Arxiv(query) => self.start_scholarly("arxiv", query),
@@ -1202,7 +1218,7 @@ impl ResearchApp {
             .for_node(&id.to_string())
             .map(|r| r.origin.clone())
             .unwrap_or_else(|| "model".to_string());
-        if matches!(origin.as_str(), "computed" | "simulation" | "wikidata" | "openalex" | "arxiv") {
+        if matches!(origin.as_str(), "computed" | "simulation" | "wikidata" | "geonames" | "openalex" | "arxiv") {
             self.status_message = Some(format!("already structured ({origin}) — nothing to upgrade"));
             return;
         }
@@ -1918,6 +1934,69 @@ impl ResearchApp {
                 ));
             }
             Err(e) => self.status_message = Some(format!("wikidata: {e}")),
+        }
+    }
+
+    /// RESRCH-6-lite — `/geonames <query>`: look a real-world place up in the
+    /// GeoNames gazetteer (structured tier). A `/fact` from it records
+    /// `origin=geonames` (+ id) and skips the gate.
+    fn start_geonames(&mut self, query: String) {
+        if self.geonames_state.is_some() {
+            self.status_message = Some("a GeoNames query is already running".to_string());
+            return;
+        }
+        let query = query.trim().to_string();
+        if query.is_empty() {
+            self.status_message = Some("usage: /geonames <query>  e.g. /geonames Rome".to_string());
+            return;
+        }
+        if !super::geonames::available(&self.cfg.research.geonames) {
+            self.status_message =
+                Some("geonames unavailable — set research.geonames.username (free at geonames.org)".to_string());
+            return;
+        }
+        let (lang, _note) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        let code = match lang.as_code() {
+            "other" => String::new(),
+            c => c.to_string(),
+        };
+        let cfg = self.cfg.research.geonames.clone();
+        let q = query.clone();
+        let (tx, rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let r = super::geonames::fetch(cfg, q, code).await.map_err(|e| e.to_string());
+            let _ = tx.send(r);
+        });
+        self.geonames_state = Some(GeonamesState { rx, query });
+        self.status_message = Some("Querying GeoNames…".to_string());
+    }
+
+    /// Drain the in-flight GeoNames lookup; on success, show the place card.
+    fn poll_geonames(&mut self) {
+        let Some(gn) = self.geonames_state.as_mut() else { return };
+        let result = match gn.rx.try_recv() {
+            Ok(r) => r,
+            Err(mpsc::error::TryRecvError::Empty) => return,
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                self.geonames_state = None;
+                return;
+            }
+        };
+        let GeonamesState { query, .. } = self.geonames_state.take().unwrap();
+        match result {
+            Ok(place) => {
+                let body = super::geonames::render(&place);
+                let mut turn = ChatTurn::with_response(format!("/geonames {query}"), body);
+                turn.geonames = Some(place.id.to_string());
+                turn.sources = vec![format!("GeoNames {}", place.id)];
+                self.chat_history.push(turn);
+                self.chat_scroll = 0;
+                self.status_message = Some(format!(
+                    "{} — real place · /fact to record (gate-skipped)",
+                    place.name
+                ));
+            }
+            Err(e) => self.status_message = Some(format!("geonames: {e}")),
         }
     }
 
@@ -3249,6 +3328,9 @@ impl ResearchApp {
         } else if let Some(qid) = last.wikidata.clone() {
             // R3-A — structured Wikidata triple, cited by Q-ID; gate skipped.
             ProvMeta { origin: "wikidata".to_string(), query, detail: qid }
+        } else if let Some(id) = last.geonames.clone() {
+            // RESRCH-6-lite — structured GeoNames place, cited by id; gate skipped.
+            ProvMeta { origin: "geonames".to_string(), query, detail: id }
         } else if let Some(paper) = &last.paper {
             // R3-B — scholarly paper; gate skipped, auto-cites to Sources on insert.
             ProvMeta { origin: paper.source.to_string(), query, detail: paper.cite_detail() }
@@ -3550,6 +3632,14 @@ impl ResearchApp {
                 }
                 return; // wait for the verdict (poll_fc_confirm finalises)
             }
+            // R6-A — otherwise (a plain `model`/`document` fact, no structured gate),
+            // an optional adversarial refutation pass tries to disprove it first.
+            if self.cfg.research.refute_gate {
+                if self.refute_confirm.is_none() {
+                    self.start_refute(&body);
+                }
+                return; // wait for the refutation verdict (poll_refute finalises)
+            }
         }
         let c = self.confirmation.take().unwrap();
         match super::insert::insert_paragraph(
@@ -3729,6 +3819,96 @@ impl ResearchApp {
         } else {
             self.status_message =
                 Some(format!("fact-check: {verdict} — Ctrl+S again to insert anyway"));
+        }
+    }
+
+    /// R6-A — spawn the adversarial refutation pass for the pending fact: one LLM
+    /// call prompted to actively *refute* the claim (a skeptic, unlike
+    /// `/triangulate`'s corroboration). Advisory — a `REFUTED` verdict just asks
+    /// the author to confirm again.
+    fn start_refute(&mut self, body: &str) {
+        let ai = match crate::ai::AiClient::from_config(&self.cfg.llm) {
+            Ok(a) => a,
+            Err(_) => {
+                if let Some(c) = self.confirmation.as_mut() {
+                    c.fc_checked = true;
+                    c.fc_verdict = Some("unchecked (no LLM provider)".to_string());
+                }
+                self.status_message = Some("refutation skipped — Ctrl+S to insert".to_string());
+                return;
+            }
+        };
+        let (model, _env) = match ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(m) => m,
+            Err(_) => {
+                if let Some(c) = self.confirmation.as_mut() {
+                    c.fc_checked = true;
+                }
+                return;
+            }
+        };
+        let (lang, _note) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        let language = super::extract::language_name(&lang);
+        let system = format!(
+            "You are a rigorous skeptic reviewing ONE statement a writer wants to add to their factual \
+             reference database. Actively try to REFUTE it — look for factual errors, anachronisms, \
+             internal contradictions, or claims that conflict with well-established knowledge. Answer \
+             with a single leading verdict word: SOUND (you could not refute it) or REFUTED (it is \
+             likely false or misleading), then ' — ' and a one-sentence reason. Do not fabricate. \
+             Write in {language}."
+        );
+        let user = format!("Statement:\n{}\n", body.trim());
+        let rx = spawn_chat_stream(ai.client.clone(), model.to_string(), Some(system), Vec::new(), user, llm::CATEGORY);
+        self.refute_confirm = Some((rx, String::new()));
+        self.status_message = Some("refuting before commit…".to_string());
+    }
+
+    /// Drain the refutation pass; SOUND auto-inserts, REFUTED shows the reason and
+    /// waits for a second confirm (advisory — the author always overrides).
+    fn poll_refute(&mut self) {
+        let Some((rx, buf)) = self.refute_confirm.as_mut() else { return };
+        let mut done = false;
+        loop {
+            match rx.try_recv() {
+                Ok(StreamMsg::Token(t)) => buf.push_str(&t),
+                Ok(StreamMsg::Done(_)) | Err(mpsc::error::TryRecvError::Disconnected) => {
+                    done = true;
+                    break;
+                }
+                Ok(StreamMsg::Error(_)) => {
+                    done = true;
+                    break;
+                }
+                Err(mpsc::error::TryRecvError::Empty) => break,
+            }
+        }
+        if !done {
+            return;
+        }
+        let (_, buf) = self.refute_confirm.take().unwrap();
+        let verdict = buf
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty())
+            .map(|l| l.trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ' ').to_string())
+            .unwrap_or_else(|| "no verdict".to_string());
+        let sound = verdict.to_ascii_uppercase().starts_with("SOUND");
+        let detail = buf.trim().to_string();
+        if let Some(c) = self.confirmation.as_mut() {
+            c.fc_checked = true;
+            c.fc_verdict = Some(verdict.clone());
+            c.fc_detail = Some(detail);
+            if c.prov.detail.is_empty() {
+                c.prov.detail = format!("refutation: {verdict}");
+            } else {
+                c.prov.detail = format!("{} · refutation: {verdict}", c.prov.detail);
+            }
+        }
+        if sound {
+            self.confirm_insertion(); // survived refutation → inserts
+        } else {
+            self.status_message =
+                Some(format!("refutation: {verdict} — Ctrl+S again to insert anyway"));
         }
     }
 

@@ -51,6 +51,8 @@ impl SourceRecord {
             "simulation" => "simulation (World)".to_string(),
             "wikidata" if !self.detail.is_empty() => format!("wikidata: {}", self.detail),
             "wikidata" => "wikidata (structured)".to_string(),
+            "geonames" if !self.detail.is_empty() => format!("geonames #{}", self.detail),
+            "geonames" => "geonames (place)".to_string(),
             "openalex" if !self.detail.is_empty() => format!("openalex · {}", self.detail),
             "arxiv" if !self.detail.is_empty() => format!("arxiv · {}", self.detail),
             "openalex" | "arxiv" => format!("{} (scholarly)", self.origin),
