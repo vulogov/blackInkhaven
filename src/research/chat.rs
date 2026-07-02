@@ -27,6 +27,9 @@ pub(super) struct ChatTurn {
     /// R3-A — the Wikidata Q-ID when this turn is a `/wikidata` result, so a
     /// `/fact` from it records `origin=wikidata` (+ Q-ID) and skips the gate.
     pub wikidata: Option<String>,
+    /// RESRCH-6-lite — the GeoNames id when this turn is a `/geonames` result, so
+    /// a `/fact` from it records `origin=geonames` (+ id) and skips the gate.
+    pub geonames: Option<String>,
     /// R3-B — the paper when this turn is an `/openalex`/`/arxiv` result, so a
     /// `/fact` records `origin=openalex|arxiv` and can auto-create a `BibEntry`.
     pub paper: Option<super::scholarly::Paper>,
@@ -52,6 +55,7 @@ impl ChatTurn {
             computed: false,
             world_detail: String::new(),
             wikidata: None,
+            geonames: None,
             paper: None,
             simulation: false,
             model: String::new(),
@@ -72,6 +76,7 @@ impl ChatTurn {
             computed: false,
             world_detail: String::new(),
             wikidata: None,
+            geonames: None,
             paper: None,
             simulation: false,
             model: String::new(),

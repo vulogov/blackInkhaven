@@ -40,6 +40,7 @@ mod web;
 mod wikidata;
 
 mod batch;
+mod geonames;
 mod gutenberg;
 
 pub(crate) use focus::Focus;

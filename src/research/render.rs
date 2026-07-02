@@ -47,6 +47,9 @@ fn turn_badge(turn: &super::chat::ChatTurn) -> Option<(String, Style)> {
     if let Some(qid) = &turn.wikidata {
         return tag(format!("◆ {qid}"), Color::Cyan);
     }
+    if let Some(id) = &turn.geonames {
+        return tag(format!("⊕ {id}"), Color::Cyan);
+    }
     if let Some(p) = &turn.paper {
         return tag(format!("§ {}", p.source), Color::Magenta);
     }
@@ -91,11 +94,11 @@ fn evidence_line_style(line: &str) -> Style {
     // it contains the word "support" but shouldn't read as a per-source vote.
     if u.trim_start().starts_with("AGREEMENT") {
         Style::new().bold()
-    } else if u.contains("CONTRADICT") || u.contains("INACCURATE") {
+    } else if u.contains("CONTRADICT") || u.contains("INACCURATE") || u.contains("REFUTED") {
         Style::new().fg(Color::Red)
     } else if u.contains("DUBIOUS") {
         Style::new().fg(Color::Yellow)
-    } else if u.contains("SUPPORT") || u.contains("ACCURATE") {
+    } else if u.contains("SUPPORT") || u.contains("ACCURATE") || u.contains("SOUND") {
         Style::new().fg(Color::Green)
     } else {
         Style::new().dim()
@@ -108,6 +111,7 @@ fn provenance_tier_glyph(origin: &str) -> Option<(&'static str, Color)> {
     match origin {
         "computed" | "simulation" => Some(("≡", Color::Green)), // deterministic
         "wikidata" => Some(("◆", Color::Cyan)),                 // structured
+        "geonames" => Some(("⊕", Color::Cyan)),                 // structured (places)
         "openalex" | "arxiv" => Some(("§", Color::Magenta)),    // scholarly
         "web" => Some(("◇", Color::Yellow)),                    // web prose
         "document" | "library" => Some(("▪", Color::Blue)),     // imported
@@ -257,6 +261,7 @@ fn render_help(frame: &mut Frame, app: &ResearchApp, area: Rect) {
         Line::from("    /web [--ingest] q    web search & fetch (chat+factcheck, or ingest)"),
         Line::from("    /gutenberg [--ch N] q  ingest a public-domain book (Project Gutenberg; PG# picks)"),
         Line::from("    /wikidata <query>    structured Wikidata triples (Q-ID cited, gate-skipped)"),
+        Line::from("    /geonames <query>    real-world places (GeoNames; gate-skipped)"),
         Line::from("    /openalex /arxiv q   scholarly papers (DOI/ID; /fact auto-cites to Sources)"),
         Line::from("    /triangulate [claim] cross-check a claim across the structured sources"),
         Line::from("    /calc <expr>         deterministic calc/units + world.get (→ /fact)"),
@@ -813,6 +818,7 @@ mod ux_tests {
     #[test]
     fn tier_glyph_mapping() {
         assert_eq!(provenance_tier_glyph("wikidata").map(|(g, _)| g), Some("◆"));
+        assert_eq!(provenance_tier_glyph("geonames").map(|(g, _)| g), Some("⊕"));
         assert_eq!(provenance_tier_glyph("arxiv").map(|(g, _)| g), Some("§"));
         assert_eq!(provenance_tier_glyph("computed").map(|(g, _)| g), Some("≡"));
         assert!(provenance_tier_glyph("manual").is_none());
