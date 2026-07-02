@@ -4750,6 +4750,93 @@ fn embed_source_file(layout: &ProjectLayout, cfg: &Config, store: &Store, p: &st
     Ok(chunks_n)
 }
 
+/// RESRCH-GUTENBERG (PG-P2, CLI) — `inkhaven research --gutenberg <query|PG#>`:
+/// search Gutendex, fetch + strip a public-domain book, and ingest it as a
+/// thread-global research source (`origin=gutenberg`). Accepts a leading
+/// `--chapter N`. Blocks on the async fetch via the entered runtime handle (the
+/// `collect_blocking` pattern). Auto-cites when `research.gutenberg.auto_cite`.
+pub(crate) fn gutenberg_cli(layout: &ProjectLayout, cfg: &Config, store: &Store, query: &str) -> Result<()> {
+    use super::imports;
+    if !super::gutenberg::available(&cfg.research.gutenberg) {
+        anyhow::bail!("gutenberg disabled (research.gutenberg.enabled)");
+    }
+    let (chapter, q) = parse_chapter_flag(query.trim());
+    if q.is_empty() {
+        anyhow::bail!("usage: --gutenberg [--chapter N] <query|PG#>");
+    }
+    let (lang, _note) = crate::prose::resolve_prose_language(None, &cfg.language);
+    let code = match lang.as_code() {
+        "other" => String::new(),
+        c => c.to_string(),
+    };
+    // Spawn the async fetch and block on it (main entered a multi-thread runtime).
+    let gcfg = cfg.research.gutenberg.clone();
+    let qq = q.clone();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    tokio::spawn(async move {
+        let r = super::gutenberg::fetch(gcfg, qq, code).await.map_err(|e| e.to_string());
+        let _ = tx.send(r);
+    });
+    let (book, text, _alts) = rx
+        .blocking_recv()
+        .ok_or_else(|| anyhow::anyhow!("gutenberg fetch cancelled"))?
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    // PG-P4 — narrow to one chapter when asked.
+    let body = match chapter {
+        Some(n) => {
+            let chapters = super::gutenberg::split_chapters(&text);
+            chapters
+                .get(n.saturating_sub(1))
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("chapter {n} out of range (book has {})", chapters.len()))?
+        }
+        None => text,
+    };
+    let chunks = imports::chunk_text(&body, cfg.research.import_chunk_chars.max(200));
+    if chunks.is_empty() {
+        anyhow::bail!("no text extracted");
+    }
+    let name = match chapter {
+        Some(n) => format!("{} ch.{n} (PG#{})", book.title, book.id),
+        None => format!("{} (PG#{})", book.title, book.id),
+    };
+    let source_url = format!("https://www.gutenberg.org/ebooks/{}", book.id);
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut doc_ids = Vec::new();
+    for (i, chunk) in chunks.iter().enumerate() {
+        let meta = serde_json::json!({
+            "kind": imports::SOURCE_KIND, "source": source_url, "name": name,
+            "thread": "", "chunk": i, "imported_at": now, "origin": "gutenberg", "title": book.title,
+        });
+        let id = store.raw().add_document(meta, chunk.as_bytes()).map_err(|e| anyhow::anyhow!("{e}"))?;
+        doc_ids.push(id.to_string());
+    }
+    let mut imports_store = imports::Imports::load(layout);
+    if let Some(old) = imports_store.sources.get(&name) {
+        for id in &old.doc_ids {
+            if let Ok(u) = uuid::Uuid::parse_str(id) {
+                let _ = store.raw().delete_document(u);
+            }
+        }
+    }
+    let chunks_n = doc_ids.len();
+    imports_store.sources.insert(
+        name.clone(),
+        imports::ImportedSource { name: name.clone(), path: source_url.clone(), doc_ids, thread: String::new(), imported_at: now, chunks: chunks_n },
+    );
+    imports_store.save(layout)?;
+    let mut cite = String::new();
+    if cfg.research.gutenberg.auto_cite {
+        let entry = book.to_bibentry();
+        if let Ok(true) = add_bibentry(store, cfg, &entry) {
+            cite = format!(" · cited @{}", entry.key);
+        }
+    }
+    eprintln!("✓ ingested {} — {chunks_n} chunk(s){cite}\n  {source_url}", book.title);
+    Ok(())
+}
+
 pub(crate) fn list_threads_cli(layout: &ProjectLayout, format: Option<&str>) -> Result<()> {
     let summaries = thread::list_threads(layout);
     if format == Some("json") {

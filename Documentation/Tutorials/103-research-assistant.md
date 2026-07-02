@@ -271,6 +271,8 @@ project language; `research.gutenberg.max_chars` bounds how much of a long book 
   when you want a single relevant chapter of a long novel, not the whole thing.
 - **Auto-cited.** Each ingested book is filed as a citation (`@austenpg1342`, note *Project Gutenberg
   #<id>*), so it appears in **`/bibliography`** automatically. Toggle with `research.gutenberg.auto_cite`.
+- **Headless.** **`inkhaven research --gutenberg "<query|PG#>"`** ingests a book from the shell (accepts a
+  leading `--chapter N`), for scripting a corpus without opening the TUI.
 
 ## 6.8. Structured facts — `/wikidata` (1.5.5)
 
