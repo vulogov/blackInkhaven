@@ -6,10 +6,13 @@ Every term this book defined, gathered in one place. Each was introduced in a
 marked box the first time it was needed; here they are, alphabetical, for looking
 up.
 
+// The bold term keeps a real gap above its definition (Typst 0.14 honours the
+// `below`/`above` literally — a tiny value collapses the term onto its body) and
+// `sticky` so a term is never orphaned from its definition at a page break.
 #let gloss(name, body) = {
-  block(above: 3.5mm, below: 0mm, breakable: false,
+  block(above: 4.5mm, below: 1.6mm, sticky: true, breakable: false,
     text(font: body_family, weight: "bold", size: 10.5pt, fill: ink_term, name))
-  block(above: 0.5mm, text(font: body_family, size: 10pt, body))
+  block(above: 0mm, text(font: body_family, size: 10pt, body))
 }
 
 #gloss("Audit")[A pass over your whole Facts book at once (`/factcheck`), rather than a check of a single claim. It catches old facts never re-examined, and contradictions between facts that are each fine alone.]

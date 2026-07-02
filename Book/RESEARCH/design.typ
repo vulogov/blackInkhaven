@@ -116,7 +116,7 @@
   block(
     fill: ink_term_bg, stroke: (left: 2pt + ink_term),
     inset: (left: 9pt, right: 9pt, top: 7pt, bottom: 7pt),
-    width: 100%, radius: 1pt, breakable: true,
+    width: 100%, radius: 1pt, breakable: false,
     {
       text(font: body_family, size: 8pt, weight: "bold", fill: ink_term, tracking: 1pt, "TERM")
       h(6pt)
@@ -134,7 +134,7 @@
   block(
     fill: ink_call_bg, stroke: (left: 2pt + ink_accent),
     inset: (left: 9pt, right: 9pt, top: 7pt, bottom: 7pt),
-    width: 100%, radius: 1pt, breakable: true,
+    width: 100%, radius: 1pt, breakable: false,
     {
       text(font: body_family, size: 8pt, weight: "bold", fill: ink_accent, tracking: 1.5pt, upper(label))
       v(2mm)
@@ -148,19 +148,22 @@
 //    writer, side by side. Used throughout to keep both audiences in view. ──
 #let two_track(fiction, nonfiction) = {
   v(2mm)
-  grid(
+  // Wrap the two columns in a single non-breakable block so the whole unit —
+  // both boxes and their "FICTION"/"NON-FICTION" headers — moves to the next page
+  // together rather than splitting across a page boundary.
+  block(breakable: false, width: 100%, grid(
     columns: (1fr, 1fr), gutter: 5mm,
     block(
       fill: ink_call_bg, stroke: (left: 2pt + ink_accent),
-      inset: 8pt, width: 100%, radius: 1pt, breakable: true,
+      inset: 8pt, width: 100%, radius: 1pt, breakable: false,
       { text(font: body_family, size: 8pt, weight: "bold", fill: ink_accent, tracking: 1pt, "FICTION"); v(2mm); fiction },
     ),
     block(
       fill: ink_recap_bg, stroke: (left: 2pt + ink_recap),
-      inset: 8pt, width: 100%, radius: 1pt, breakable: true,
+      inset: 8pt, width: 100%, radius: 1pt, breakable: false,
       { text(font: body_family, size: 8pt, weight: "bold", fill: ink_recap, tracking: 1pt, "NON-FICTION"); v(2mm); nonfiction },
     ),
-  )
+  ))
   v(2mm)
 }
 
@@ -170,7 +173,7 @@
   block(
     fill: ink_recap_bg, stroke: (left: 2pt + ink_recap),
     inset: (left: 9pt, right: 9pt, top: 8pt, bottom: 8pt),
-    width: 100%, radius: 1pt, breakable: true,
+    width: 100%, radius: 1pt, breakable: false,
     {
       text(font: body_family, size: 9pt, weight: "bold", fill: ink_recap, tracking: 1.5pt, "WHAT YOU LEARNED")
       v(2mm)

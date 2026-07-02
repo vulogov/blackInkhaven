@@ -29,7 +29,7 @@ it, you have to *attack* it.
 
 Turn on `research.refute_gate`, and a plain model- or document-derived `/fact` —
 one not already handled by triangulation or the web check — gets a single
-skeptic's pass before it commits. The Assistant tries to refute the claim and
+sceptic's pass before it commits. The Assistant tries to refute the claim and
 reports a verdict: `SOUND` (it could not disprove it) lets the fact through;
 `REFUTED` shows you the reasoning and asks you to confirm again. It is cheap, it
 needs no external source, it works offline — and it is the natural check for the
@@ -39,7 +39,7 @@ gate, it is advisory: you always keep the last word.
 #callout(label: "Two questions, one habit")[
   You do not have to choose between triangulation and refutation — they answer
   different questions and compose. A load-bearing claim ideally survives both: the
-  independent sources corroborate it, *and* a determined skeptic could not knock it
+  independent sources corroborate it, *and* a determined sceptic could not knock it
   down. When a fact has passed both, you are as sure as this workflow can make you.
 ]
 
@@ -95,7 +95,7 @@ have moved. `/stale` finds those:
 It lists your `model`- and `web`-tier facts older than the number of days you
 give — the ones whose grounding is softest and most likely to have drifted — so
 you can re-verify or `/upgrade` them. Structured and computed facts, being firmer
-and stable, are left out; there is little point re-checking a Q-id.
+and more stable, are left out; there is little point re-checking a Q-id.
 
 #term("Staleness")[
   A fact is *stale* when enough time has passed that its grounding may no longer
@@ -123,7 +123,7 @@ back out into the book you are writing.
   [*Refutation* is triangulation's mirror: it tries to *disprove* a claim rather
    than find support, catching plausible-but-wrong facts that attract no
    contradiction.],
-  [`research.refute_gate` runs a cheap, offline skeptic pass on low-rung `/fact`s:
+  [`research.refute_gate` runs a cheap, offline sceptic pass on low-rung `/fact`s:
    `SOUND` passes, `REFUTED` asks again — advisory, never blocking.],
   [`/upgrade` re-grounds a `model` fact on a corroborating source and *raises its
    provenance tier in place* — the wording never changes, only the rung.],
