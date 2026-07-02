@@ -33,9 +33,8 @@ locally; after that it compiles offline.
 
 ## Status
 
-Being composed. Parts I–VI are written (introduction + thirteen chapters, ~79
-pages); the remaining parts are laid out as a roadmap in
-[`RESEARCH.typ`](RESEARCH.typ) and land chapter by chapter:
+**Complete first draft** — all eight parts, fifteen chapters, three appendices, and
+an afterword (~99 pages):
 
 - **I — Grounding Your Book** *(written)*: why ground your book · the Research
   Assistant · your first fact
@@ -54,6 +53,13 @@ pages); the remaining parts are laid out as a roadmap in
 - **VI — Composing Out** *(written)*: composing from what you know (`/synthesize`,
   `/outline`, `/gaps`) · the bibliography that built itself (`/bibliography`,
   `--bibliography`)
+- **VII — Working at Scale** *(written)*: headless research — `--batch` (closing
+  the `/gaps` loop), `--import`, `--sync`, and the CLI twins
+- **VIII — A Complete Walkthrough** *(written)*: one fact, end to end (novelist +
+  historian in concert)
+- **Appendices** *(written)*: command reference · the trust ladder & provenance ·
+  glossary
+- **About the author** afterword
 - **III — Trust & Cross-Checking**: triangulation · fact-checking · refutation & upgrade
 - **IV — Computed Facts**: `/calc` & the World book
 - **V — Fiction's Own Facts**: undisputed (authorial) facts
