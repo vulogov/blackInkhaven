@@ -4216,9 +4216,10 @@ pub enum RealworldCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Compile a layer (P0: only `astronomy`) and print the result.
+    /// Compile the whole world (all layers) — or one `--layer` — and print it.
     Compile {
-        /// Which layer to compile (default: astronomy).
+        /// Which layer to compile: `all` (default, the whole world) or one of
+        /// astronomy · geology · climate · hydrology · demographics.
         #[arg(long)]
         layer: Option<String>,
         /// Emit the layer output as JSON.

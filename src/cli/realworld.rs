@@ -897,11 +897,82 @@ fn show(project: &Path, json: bool) -> Result<()> {
     Ok(())
 }
 
+/// WORLD-7 (W7-P1) — compile the WHOLE world in one command. Runs the five
+/// physical layers in dependency order and, with `--materialize`, writes every
+/// chapter — Astronomy → Geology → Climate → Hydrology → Demographics — plus the
+/// author-declared Setting into the World book. Pure orchestration of the
+/// existing `compile_*` + `materialize_*` building blocks.
+fn compile_all_cli(project: &Path, json: bool, materialize: bool) -> Result<()> {
+    use crate::world::compile::{compile_astronomy, compile_climate, compile_demographics, compile_hydrology};
+    let def = load(project)?;
+    let astro = compile_astronomy(&def.astronomy);
+    let geo = geology_for(project, &def)?;
+    let climate = compile_climate(&def, &astro, &geo);
+    let hydro = compile_hydrology(&geo, &climate);
+    let demo = compile_demographics(&climate, &hydro);
+
+    // Materialize first (a side effect that runs in both JSON and human modes),
+    // in dependency order, so a whole world lands in one command.
+    let mut reports: Vec<crate::world::materialize::MaterializeReport> = Vec::new();
+    if materialize {
+        use crate::config::Config;
+        use crate::project::ProjectLayout;
+        use crate::store::Store;
+        let layout = ProjectLayout::new(project);
+        layout.require_initialized()?;
+        let cfg = Config::load_layered(&layout.config_path())?;
+        let store = Store::open(layout, &cfg)?;
+        use crate::world::materialize as m;
+        reports.push(m::materialize_astronomy(&store, &cfg, &astro)?);
+        reports.push(m::materialize_geology(&store, &cfg, &geo)?);
+        reports.push(m::materialize_climate(&store, &cfg, &climate)?);
+        reports.push(m::materialize_hydrology(&store, &cfg, &hydro)?);
+        reports.push(m::materialize_demographics(&store, &cfg, &demo)?);
+        reports.push(m::materialize_setting(&store, &cfg, &def)?);
+    }
+
+    if json {
+        let v = serde_json::json!({
+            "astronomy": astro, "geology": geo, "climate": climate,
+            "hydrology": hydro, "demographics": demo,
+        });
+        let s = serde_json::to_string_pretty(&v)
+            .map_err(|e| Error::Store(format!("serializing world: {e}")))?;
+        println!("{s}");
+        return Ok(());
+    }
+
+    println!("world · {}", def.name);
+    println!("  compiled 5 layers: astronomy · geology · climate · hydrology · demographics");
+    println!(
+        "  {} settlement(s), population {}",
+        demo.settlements.len(),
+        fmt_pop(demo.total_population)
+    );
+    if reports.is_empty() {
+        println!("  (run with --materialize to write the World book)");
+    } else {
+        println!("  materialized {} chapter(s):", reports.len());
+        for r in &reports {
+            println!("    → World/{}: {} created, {} updated", r.chapter, r.created.len(), r.updated.len());
+        }
+    }
+    Ok(())
+}
+
 fn compile(project: &Path, layer: Option<&str>, json: bool, materialize: bool) -> Result<()> {
-    let l = layer.unwrap_or("astronomy");
+    // WORLD-7 — a bare `realworld compile` (or `--layer all`) now compiles the
+    // whole world; `--layer <name>` still compiles a single layer.
+    let l = layer.unwrap_or("all");
+    if l == "all" {
+        return compile_all_cli(project, json, materialize);
+    }
     let known = ["astronomy", "geology", "climate", "hydrology", "demographics"];
     if !known.contains(&l) {
-        return Err(Error::Config(format!("unknown layer `{l}` (one of: {})", known.join(", "))));
+        return Err(Error::Config(format!(
+            "unknown layer `{l}` (one of: all, {})",
+            known.join(", ")
+        )));
     }
     match l {
         "geology" => return compile_geology_cli(project, json, materialize),
@@ -1239,9 +1310,12 @@ fn materialize_to_store(
 fn starter_template(name: &str) -> String {
     format!(
         r#"// A world definition for `inkhaven realworld`.
-// Edit freely, then `inkhaven realworld compile`. Only the astronomy block is
-// wired today (WORLD-4 P0); geology / climate / hydrology / demographics / magic
-// land in later phases and are accepted-and-ignored for now.
+// Edit freely, then `inkhaven realworld compile --materialize` to compile and
+// write the whole world (astronomy · geology · climate · hydrology · demographics)
+// into the World book, or `compile --layer <name>` for one layer. Geology /
+// climate / hydrology / demographics are generated from `seed` below; add an
+// optional block for any of them to override the defaults, and `magic: {{ … }}`
+// to declare an author rules ledger (`realworld magic`).
 {{
     name: "{name}"
     seed: 0x1A2B3C

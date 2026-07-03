@@ -7,12 +7,13 @@
 //! astronomy → geology → climate → hydrology → demographics — each a pure
 //! function of `(definition, seed)` (layer 5 has seeded-stochastic + AI parts).
 //!
-//! This module is built incrementally in the 1.3.x tree, one layer per signed
-//! increment. **P0 ships the world-definition types and the astronomy layer**:
-//! closed-form planetary physics (Kepler's third law, daily-insolation by
-//! latitude band, lunar synodic periods, tides), with zero new dependencies.
-//! Later phases add storage, materialization, the remaining layers, plakat, and
-//! the fact-checker.
+//! All five physical layers are built and tested (`compile/`), each materialises
+//! into its World-book chapter (`materialize.rs`), and the surface is complete:
+//! `realworld compile [--layer <name>|all]`, the plakat `map`, the `places`
+//! bridge, `magic`, `coherence`, co-location, proposals, and the fast/slow
+//! fact-checker. WORLD-7 (1.6.0) unifies a bare `compile` into a one-command
+//! whole-world compile + materialise, surfaces every layer in the TUI, and
+//! deepens the world→prose bridge.
 //!
 //! Authority discipline (the spine of the RFC): the author always wins. The
 //! compiler *proposes*; nothing commits without acceptance. Astronomy is the one
