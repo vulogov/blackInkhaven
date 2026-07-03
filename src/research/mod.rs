@@ -40,6 +40,7 @@ mod web;
 mod wikidata;
 
 mod batch;
+mod geonames;
 mod gutenberg;
 
 pub(crate) use focus::Focus;
@@ -88,6 +89,9 @@ pub(crate) struct ResearchInvocation {
     /// RESRCH-5 (R5-D) — `--bibliography`: emit the Sources Research chapter as
     /// BibTeX (`--out` file, else stdout) and exit.
     pub bibliography: bool,
+    /// RESRCH-GUTENBERG (PG-P2) — `--gutenberg <query|PG#>`: ingest a public-domain
+    /// Project Gutenberg book non-interactively and exit.
+    pub gutenberg: Option<String>,
 }
 
 /// Launch the Research Assistant, or run a non-interactive thread operation.
@@ -104,6 +108,10 @@ pub(crate) fn run(project: &Path, inv: ResearchInvocation) -> Result<()> {
     if let Some(folder) = inv.sync.as_deref() {
         let store = Store::open(layout.clone(), &cfg).map_err(anyhow::Error::from)?;
         return sync_cli(&layout, &cfg, &store, folder);
+    }
+    if let Some(query) = inv.gutenberg.as_deref() {
+        let store = Store::open(layout.clone(), &cfg).map_err(anyhow::Error::from)?;
+        return app::gutenberg_cli(&layout, &cfg, &store, query);
     }
     if inv.bibliography {
         let store = Store::open(layout.clone(), &cfg).map_err(anyhow::Error::from)?;

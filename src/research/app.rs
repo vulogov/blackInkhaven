@@ -149,12 +149,19 @@ pub(super) struct WikidataState {
     query: String,
 }
 
-/// RESRCH-GUTENBERG — an in-flight `/gutenberg` search + text fetch.
-pub(super) struct GutenbergState {
-    rx: mpsc::UnboundedReceiver<
-        std::result::Result<(super::gutenberg::GutenbergBook, String), String>,
-    >,
+/// RESRCH-6-lite — an in-flight `/geonames` place lookup.
+pub(super) struct GeonamesState {
+    rx: mpsc::UnboundedReceiver<std::result::Result<super::geonames::GeoPlace, String>>,
     query: String,
+}
+
+/// RESRCH-GUTENBERG — an in-flight `/gutenberg` search + text fetch. Carries the
+/// optional `--chapter` selector (PG-P4) through to ingestion.
+type GutenbergFetch = (super::gutenberg::GutenbergBook, String, Vec<super::gutenberg::GutenbergBook>);
+pub(super) struct GutenbergState {
+    rx: mpsc::UnboundedReceiver<std::result::Result<GutenbergFetch, String>>,
+    query: String,
+    chapter: Option<usize>,
 }
 
 /// R3-B — an in-flight `/openalex` or `/arxiv` fetch.
@@ -359,6 +366,7 @@ pub(crate) struct ResearchApp {
     /// In-flight `/web` search (R2-C).
     web: Option<WebState>,
     wikidata_state: Option<WikidataState>,
+    geonames_state: Option<GeonamesState>,
     gutenberg_state: Option<GutenbergState>,
     scholarly_state: Option<ScholarlyState>,
     triangulate: Option<TriangulateState>,
@@ -369,6 +377,8 @@ pub(crate) struct ResearchApp {
     pending_cite: Option<crate::sources::BibEntry>,
     /// In-flight pre-commit fact-check for a web fact (WC-P3): receiver + buffer.
     fc_confirm: Option<(mpsc::UnboundedReceiver<StreamMsg>, String)>,
+    /// R6-A — in-flight adversarial refutation pass before commit: receiver + buffer.
+    refute_confirm: Option<(mpsc::UnboundedReceiver<StreamMsg>, String)>,
     /// The editable insertion confirmation overlay (G1/G2).
     pub(super) confirmation: Option<ConfirmationState>,
     /// UX-P3 — spinner frame counter + when the current async op began (for the
@@ -460,6 +470,7 @@ impl ResearchApp {
             undisputed_check: None,
             web: None,
             wikidata_state: None,
+            geonames_state: None,
             gutenberg_state: None,
             scholarly_state: None,
             triangulate: None,
@@ -467,6 +478,7 @@ impl ResearchApp {
             upgrade: None,
             pending_cite: None,
             fc_confirm: None,
+            refute_confirm: None,
             confirmation: None,
             spin_tick: 0,
             async_started: None,
@@ -500,12 +512,14 @@ impl ResearchApp {
             || self.undisputed_check.is_some()
             || self.web.is_some()
             || self.wikidata_state.is_some()
+            || self.geonames_state.is_some()
             || self.gutenberg_state.is_some()
             || self.scholarly_state.is_some()
             || self.triangulate.is_some()
             || self.tri_gate.is_some()
             || self.upgrade.is_some()
             || self.fc_confirm.is_some()
+            || self.refute_confirm.is_some()
     }
 
     /// The synchronous event loop: draw, then block up to 100 ms for a key.
@@ -520,12 +534,14 @@ impl ResearchApp {
             self.poll_undisputed();
             self.poll_web();
             self.poll_wikidata();
+            self.poll_geonames();
             self.poll_gutenberg();
             self.poll_scholarly();
             self.poll_triangulate();
             self.poll_tri_gate();
             self.poll_upgrade();
             self.poll_fc_confirm();
+            self.poll_refute();
             // UX-P3 — drive the status-bar spinner: start the timer when work is
             // in flight, clear it when the last async op finishes.
             self.spin_tick = self.spin_tick.wrapping_add(1);
@@ -959,6 +975,7 @@ impl ResearchApp {
             Command::Calc(expr) => self.run_calc(&expr),
             Command::World(arg) => self.run_world(&arg),
             Command::Wikidata(query) => self.start_wikidata(query),
+            Command::Geonames(query) => self.start_geonames(query),
             Command::Gutenberg(query) => self.start_gutenberg(query),
             Command::OpenAlex(query) => self.start_scholarly("openalex", query),
             Command::Arxiv(query) => self.start_scholarly("arxiv", query),
@@ -1201,7 +1218,7 @@ impl ResearchApp {
             .for_node(&id.to_string())
             .map(|r| r.origin.clone())
             .unwrap_or_else(|| "model".to_string());
-        if matches!(origin.as_str(), "computed" | "simulation" | "wikidata" | "openalex" | "arxiv") {
+        if matches!(origin.as_str(), "computed" | "simulation" | "wikidata" | "geonames" | "openalex" | "arxiv") {
             self.status_message = Some(format!("already structured ({origin}) — nothing to upgrade"));
             return;
         }
@@ -1271,7 +1288,9 @@ impl ResearchApp {
             };
         if let Some(res) = gathered {
             match res {
-                Err(()) => self.upgrade = None,
+                // BUG-5 — finalise the preview turn (not just drop state) so its
+                // spinner resolves instead of streaming forever.
+                Err(()) => self.finish_upgrade(None, "evidence gathering failed"),
                 Ok(ev) if ev.is_empty() => {
                     self.finish_upgrade(None, "no structured source returned evidence about this fact")
                 }
@@ -1282,9 +1301,12 @@ impl ResearchApp {
             }
             return;
         }
-        // Phase 2 — the judge stream.
+        // Phase 2 — the judge stream. BUG-4 — a clean `Done` yields a verdict; an
+        // `Error`/`Disconnected` mid-stream must NOT parse the partial buffer as a
+        // verdict (it could raise the tier on half the evidence).
         let preview_idx = self.upgrade.as_ref().and_then(|u| u.preview_idx);
         let mut done = false;
+        let mut aborted = false;
         let mut new_tokens = String::new();
         if let Some(UpgradeState { phase: UpgradePhase::Judge { rx, buf }, .. }) = self.upgrade.as_mut() {
             loop {
@@ -1293,12 +1315,12 @@ impl ResearchApp {
                         new_tokens.push_str(&t);
                         buf.push_str(&t);
                     }
-                    Ok(StreamMsg::Done(_)) | Err(mpsc::error::TryRecvError::Disconnected) => {
+                    Ok(StreamMsg::Done(_)) => {
                         done = true;
                         break;
                     }
-                    Ok(StreamMsg::Error(_)) => {
-                        done = true;
+                    Ok(StreamMsg::Error(_)) | Err(mpsc::error::TryRecvError::Disconnected) => {
+                        aborted = true;
                         break;
                     }
                     Err(mpsc::error::TryRecvError::Empty) => break,
@@ -1313,6 +1335,10 @@ impl ResearchApp {
                     t.response.push_str(&new_tokens);
                 }
             }
+        }
+        if aborted {
+            self.finish_upgrade(None, "judge interrupted — not upgraded");
+            return;
         }
         if !done {
             return;
@@ -1329,19 +1355,19 @@ impl ResearchApp {
 
     /// Spawn the `/upgrade` corroboration-judge over the gathered evidence.
     fn start_upgrade_judge(&mut self, claim: &str, evidence: &[(String, String)]) {
+        // BUG-5 — on a provider error, finalise the preview turn (spinner off)
+        // rather than dropping state and leaving it streaming forever.
         let ai = match crate::ai::AiClient::from_config(&self.cfg.llm) {
             Ok(a) => a,
-            Err(e) => {
-                self.status_message = Some(format!("no LLM provider: {e}"));
-                self.upgrade = None;
+            Err(_) => {
+                self.finish_upgrade(None, "no LLM provider for the judge");
                 return;
             }
         };
         let (model, _env) = match ai.resolve_provider(&self.cfg.llm, None) {
             Ok(m) => m,
-            Err(e) => {
-                self.status_message = Some(format!("provider error: {e}"));
-                self.upgrade = None;
+            Err(_) => {
+                self.finish_upgrade(None, "LLM provider error");
                 return;
             }
         };
@@ -1511,9 +1537,11 @@ impl ResearchApp {
                 "kind": imports::SOURCE_KIND, "source": abs, "name": name,
                 "thread": self.thread.name, "chunk": i, "imported_at": now,
             });
-            match self.store.raw().add_document(meta, chunk.as_bytes()) {
-                Ok(id) => doc_ids.push(id.to_string()),
-                Err(e) => return Err(format!("embed failed: {e}")),
+            // BUG-6 — record successes and keep going (never return mid-loop):
+            // a mid-loop return would leave earlier chunks in the vector store but
+            // absent from the sidecar → orphans `/forget` can't remove.
+            if let Ok(id) = self.store.raw().add_document(meta, chunk.as_bytes()) {
+                doc_ids.push(id.to_string());
             }
         }
         let mut imports_store = imports::Imports::load(&self.layout);
@@ -1739,9 +1767,10 @@ impl ResearchApp {
             self.status_message = Some("a Gutenberg fetch is already running".to_string());
             return;
         }
-        let query = query.trim().to_string();
+        // PG-P4 — an optional `--chapter N` selector may lead the argument.
+        let (chapter, query) = parse_chapter_flag(query.trim());
         if query.is_empty() {
-            self.status_message = Some("usage: /gutenberg <query>  e.g. /gutenberg pride and prejudice".to_string());
+            self.status_message = Some("usage: /gutenberg [--chapter N] <query|PG#>".to_string());
             return;
         }
         if !super::gutenberg::available(&self.cfg.research.gutenberg) {
@@ -1760,7 +1789,7 @@ impl ResearchApp {
             let r = super::gutenberg::fetch(cfg, q, code).await.map_err(|e| e.to_string());
             let _ = tx.send(r);
         });
-        self.gutenberg_state = Some(GutenbergState { rx, query });
+        self.gutenberg_state = Some(GutenbergState { rx, query, chapter });
         self.status_message = Some("Searching Project Gutenberg…".to_string());
     }
 
@@ -1773,31 +1802,65 @@ impl ResearchApp {
             Err(mpsc::error::TryRecvError::Empty) => return,
             Err(mpsc::error::TryRecvError::Disconnected) => {
                 self.gutenberg_state = None;
+                self.status_message = Some("gutenberg: request cancelled".to_string());
                 return;
             }
         };
-        let GutenbergState { query, .. } = self.gutenberg_state.take().unwrap();
-        let (book, text) = match result {
+        let GutenbergState { query, chapter, .. } = self.gutenberg_state.take().unwrap();
+        let (book, text, alternatives) = match result {
             Ok(bt) => bt,
             Err(e) => {
                 self.status_message = Some(format!("gutenberg: {e}"));
                 return;
             }
         };
-        self.ingest_gutenberg(&query, &book, &text);
+        self.ingest_gutenberg(&query, &book, &text, chapter, &alternatives);
     }
 
     /// Ingest a Gutenberg book's text as a `research_source` (mirrors the `/web
-    /// --ingest` / `/import` embed path); `origin=gutenberg`.
-    fn ingest_gutenberg(&mut self, query: &str, book: &super::gutenberg::GutenbergBook, text: &str) {
+    /// --ingest` / `/import` embed path); `origin=gutenberg`. PG-P3 auto-cites the
+    /// book; PG-P4 ingests only `chapter` when given and lists `alternatives`.
+    fn ingest_gutenberg(
+        &mut self,
+        query: &str,
+        book: &super::gutenberg::GutenbergBook,
+        text: &str,
+        chapter: Option<usize>,
+        alternatives: &[super::gutenberg::GutenbergBook],
+    ) {
         use super::imports;
         if text.trim().is_empty() {
             self.status_message = Some("gutenberg: no text extracted".to_string());
             return;
         }
+        // PG-P4 — narrow to a single chapter when requested.
+        let (body_text, chapter_note) = match chapter {
+            // BUG-9 — chapters are 1-indexed; `--chapter 0` is invalid (it used to
+            // silently ingest chapter 1 labelled "chapter 0").
+            Some(0) => {
+                self.status_message = Some("chapter numbers start at 1".to_string());
+                return;
+            }
+            Some(n) => {
+                let chapters = super::gutenberg::split_chapters(text);
+                match chapters.get(n - 1) {
+                    Some(c) => (c.clone(), format!(" · chapter {n}/{}", chapters.len())),
+                    None => {
+                        self.status_message =
+                            Some(format!("chapter {n} out of range (book has {})", chapters.len()));
+                        return;
+                    }
+                }
+            }
+            None => (text.to_string(), String::new()),
+        };
+        let text = body_text.as_str();
         let chunk_chars = self.cfg.research.import_chunk_chars.max(200);
         let now = chrono::Utc::now().to_rfc3339();
-        let name = format!("{} (PG#{})", book.title, book.id);
+        let name = match chapter {
+            Some(n) => format!("{} ch.{n} (PG#{})", book.title, book.id),
+            None => format!("{} (PG#{})", book.title, book.id),
+        };
         let source_url = format!("https://www.gutenberg.org/ebooks/{}", book.id);
         let chunks = imports::chunk_text(text, chunk_chars);
         let mut doc_ids = Vec::new();
@@ -1832,10 +1895,30 @@ impl ResearchApp {
             },
         );
         let _ = imports_store.save(&self.layout);
+
+        // PG-P3 — auto-cite the book as a SOURCES-1 BibEntry (feeds /bibliography).
+        let mut cite_note = String::new();
+        if self.cfg.research.gutenberg.auto_cite {
+            let entry = book.to_bibentry();
+            if let Ok(true) = add_bibentry(&self.store, &self.cfg, &entry) {
+                self.reload_hierarchy();
+                cite_note = format!("\nCited as `@{}` (see /bibliography).", entry.key);
+            }
+        }
+        // PG-P4 — offer the runner-up matches for a re-run by PG id.
+        let mut alt_note = String::new();
+        if !alternatives.is_empty() {
+            alt_note.push_str("\n\nOther matches (re-run `/gutenberg <PG#>`):");
+            for a in alternatives {
+                let who = a.authors.first().map(|s| format!(" — {s}")).unwrap_or_default();
+                alt_note.push_str(&format!("\n  · PG#{}  {}{who}", a.id, a.title));
+            }
+        }
+
         let who = if book.authors.is_empty() { String::new() } else { format!(" · {}", book.authors.join(", ")) };
         let body = format!(
-            "Ingested **{}**{who} as a research source ({chunks_n} chunk(s)).\n{source_url}\n\n\
-             Ask about it — the relevant passages are now retrieved and cited `[source: {}]`.",
+            "Ingested **{}**{who}{chapter_note} as a research source ({chunks_n} chunk(s)).\n{source_url}\n\n\
+             Ask about it — the relevant passages are now retrieved and cited `[source: {}]`.{cite_note}{alt_note}",
             book.title, name
         );
         self.chat_history.push(ChatTurn::with_response(format!("/gutenberg {query}"), body));
@@ -1851,6 +1934,7 @@ impl ResearchApp {
             Err(mpsc::error::TryRecvError::Empty) => return,
             Err(mpsc::error::TryRecvError::Disconnected) => {
                 self.wikidata_state = None;
+                self.status_message = Some("wikidata: request cancelled".to_string());
                 return;
             }
         };
@@ -1869,6 +1953,70 @@ impl ResearchApp {
                 ));
             }
             Err(e) => self.status_message = Some(format!("wikidata: {e}")),
+        }
+    }
+
+    /// RESRCH-6-lite — `/geonames <query>`: look a real-world place up in the
+    /// GeoNames gazetteer (structured tier). A `/fact` from it records
+    /// `origin=geonames` (+ id) and skips the gate.
+    fn start_geonames(&mut self, query: String) {
+        if self.geonames_state.is_some() {
+            self.status_message = Some("a GeoNames query is already running".to_string());
+            return;
+        }
+        let query = query.trim().to_string();
+        if query.is_empty() {
+            self.status_message = Some("usage: /geonames <query>  e.g. /geonames Rome".to_string());
+            return;
+        }
+        if !super::geonames::available(&self.cfg.research.geonames) {
+            self.status_message =
+                Some("geonames unavailable — set research.geonames.username (free at geonames.org)".to_string());
+            return;
+        }
+        let (lang, _note) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        let code = match lang.as_code() {
+            "other" => String::new(),
+            c => c.to_string(),
+        };
+        let cfg = self.cfg.research.geonames.clone();
+        let q = query.clone();
+        let (tx, rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let r = super::geonames::fetch(cfg, q, code).await.map_err(|e| e.to_string());
+            let _ = tx.send(r);
+        });
+        self.geonames_state = Some(GeonamesState { rx, query });
+        self.status_message = Some("Querying GeoNames…".to_string());
+    }
+
+    /// Drain the in-flight GeoNames lookup; on success, show the place card.
+    fn poll_geonames(&mut self) {
+        let Some(gn) = self.geonames_state.as_mut() else { return };
+        let result = match gn.rx.try_recv() {
+            Ok(r) => r,
+            Err(mpsc::error::TryRecvError::Empty) => return,
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                self.geonames_state = None;
+                self.status_message = Some("geonames: request cancelled".to_string());
+                return;
+            }
+        };
+        let GeonamesState { query, .. } = self.geonames_state.take().unwrap();
+        match result {
+            Ok(place) => {
+                let body = super::geonames::render(&place);
+                let mut turn = ChatTurn::with_response(format!("/geonames {query}"), body);
+                turn.geonames = Some(place.id.to_string());
+                turn.sources = vec![format!("GeoNames {}", place.id)];
+                self.chat_history.push(turn);
+                self.chat_scroll = 0;
+                self.status_message = Some(format!(
+                    "{} — real place · /fact to record (gate-skipped)",
+                    place.name
+                ));
+            }
+            Err(e) => self.status_message = Some(format!("geonames: {e}")),
         }
     }
 
@@ -2101,11 +2249,27 @@ impl ResearchApp {
         let now = chrono::Utc::now().to_rfc3339();
         let mut imports_store = imports::Imports::load(&self.layout);
         let mut total = 0usize;
+        // BUG-7 — two distinct URLs in one batch can slug to the same name; track
+        // names used this batch and disambiguate so the second doesn't delete the
+        // first's just-embedded vectors. (Cross-batch re-ingest still replaces.)
+        let mut batch_names: std::collections::HashSet<String> = std::collections::HashSet::new();
         for r in results {
             if r.text.trim().is_empty() {
                 continue;
             }
-            let name = imports::source_name(std::path::Path::new(&r.url));
+            let base = imports::source_name(std::path::Path::new(&r.url));
+            let name = if batch_names.insert(base.clone()) {
+                base
+            } else {
+                let mut n = 2;
+                loop {
+                    let cand = format!("{base}-{n}");
+                    if batch_names.insert(cand.clone()) {
+                        break cand;
+                    }
+                    n += 1;
+                }
+            };
             let chunks = imports::chunk_text(&r.text, chunk_chars);
             let mut doc_ids = Vec::new();
             for (i, chunk) in chunks.iter().enumerate() {
@@ -3200,6 +3364,9 @@ impl ResearchApp {
         } else if let Some(qid) = last.wikidata.clone() {
             // R3-A — structured Wikidata triple, cited by Q-ID; gate skipped.
             ProvMeta { origin: "wikidata".to_string(), query, detail: qid }
+        } else if let Some(id) = last.geonames.clone() {
+            // RESRCH-6-lite — structured GeoNames place, cited by id; gate skipped.
+            ProvMeta { origin: "geonames".to_string(), query, detail: id }
         } else if let Some(paper) = &last.paper {
             // R3-B — scholarly paper; gate skipped, auto-cites to Sources on insert.
             ProvMeta { origin: paper.source.to_string(), query, detail: paper.cite_detail() }
@@ -3390,6 +3557,15 @@ impl ResearchApp {
 
     /// G1/G2 — keys for the confirmation overlay. Tab switches field; Ctrl+Enter
     /// (or Ctrl+S) confirms; Esc discards.
+    /// BUG-1 — drop every in-flight pre-commit gate receiver (triangulation /
+    /// web fact-check / refutation). Called when the confirmation overlay is
+    /// discarded so an orphaned gate task can't finalise onto a later insertion.
+    fn clear_insertion_gates(&mut self) {
+        self.tri_gate = None;
+        self.fc_confirm = None;
+        self.refute_confirm = None;
+    }
+
     fn confirmation_key(&mut self, key: KeyEvent) {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         if ctrl && matches!(key.code, KeyCode::Enter | KeyCode::Char('s')) {
@@ -3399,6 +3575,10 @@ impl ResearchApp {
         match key.code {
             KeyCode::Esc => {
                 self.confirmation = None;
+                // BUG-1 — also drop any in-flight pre-commit gate receiver, so a
+                // stale verdict can't resolve onto the *next* confirmation and
+                // force-insert an unvetted fact with the wrong provenance.
+                self.clear_insertion_gates();
                 self.focus = Focus::QueryPrompt;
                 self.status_message = Some("discarded".to_string());
             }
@@ -3500,6 +3680,14 @@ impl ResearchApp {
                     self.start_fact_check(&body);
                 }
                 return; // wait for the verdict (poll_fc_confirm finalises)
+            }
+            // R6-A — otherwise (a plain `model`/`document` fact, no structured gate),
+            // an optional adversarial refutation pass tries to disprove it first.
+            if self.cfg.research.refute_gate {
+                if self.refute_confirm.is_none() {
+                    self.start_refute(&body);
+                }
+                return; // wait for the refutation verdict (poll_refute finalises)
             }
         }
         let c = self.confirmation.take().unwrap();
@@ -3683,6 +3871,96 @@ impl ResearchApp {
         }
     }
 
+    /// R6-A — spawn the adversarial refutation pass for the pending fact: one LLM
+    /// call prompted to actively *refute* the claim (a skeptic, unlike
+    /// `/triangulate`'s corroboration). Advisory — a `REFUTED` verdict just asks
+    /// the author to confirm again.
+    fn start_refute(&mut self, body: &str) {
+        let ai = match crate::ai::AiClient::from_config(&self.cfg.llm) {
+            Ok(a) => a,
+            Err(_) => {
+                if let Some(c) = self.confirmation.as_mut() {
+                    c.fc_checked = true;
+                    c.fc_verdict = Some("unchecked (no LLM provider)".to_string());
+                }
+                self.status_message = Some("refutation skipped — Ctrl+S to insert".to_string());
+                return;
+            }
+        };
+        let (model, _env) = match ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(m) => m,
+            Err(_) => {
+                if let Some(c) = self.confirmation.as_mut() {
+                    c.fc_checked = true;
+                }
+                return;
+            }
+        };
+        let (lang, _note) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        let language = super::extract::language_name(&lang);
+        let system = format!(
+            "You are a rigorous skeptic reviewing ONE statement a writer wants to add to their factual \
+             reference database. Actively try to REFUTE it — look for factual errors, anachronisms, \
+             internal contradictions, or claims that conflict with well-established knowledge. Answer \
+             with a single leading verdict word: SOUND (you could not refute it) or REFUTED (it is \
+             likely false or misleading), then ' — ' and a one-sentence reason. Do not fabricate. \
+             Write in {language}."
+        );
+        let user = format!("Statement:\n{}\n", body.trim());
+        let rx = spawn_chat_stream(ai.client.clone(), model.to_string(), Some(system), Vec::new(), user, llm::CATEGORY);
+        self.refute_confirm = Some((rx, String::new()));
+        self.status_message = Some("refuting before commit…".to_string());
+    }
+
+    /// Drain the refutation pass; SOUND auto-inserts, REFUTED shows the reason and
+    /// waits for a second confirm (advisory — the author always overrides).
+    fn poll_refute(&mut self) {
+        let Some((rx, buf)) = self.refute_confirm.as_mut() else { return };
+        let mut done = false;
+        loop {
+            match rx.try_recv() {
+                Ok(StreamMsg::Token(t)) => buf.push_str(&t),
+                Ok(StreamMsg::Done(_)) | Err(mpsc::error::TryRecvError::Disconnected) => {
+                    done = true;
+                    break;
+                }
+                Ok(StreamMsg::Error(_)) => {
+                    done = true;
+                    break;
+                }
+                Err(mpsc::error::TryRecvError::Empty) => break,
+            }
+        }
+        if !done {
+            return;
+        }
+        let (_, buf) = self.refute_confirm.take().unwrap();
+        let verdict = buf
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty())
+            .map(|l| l.trim_start_matches(|c: char| c.is_ascii_digit() || c == '.' || c == ' ').to_string())
+            .unwrap_or_else(|| "no verdict".to_string());
+        let sound = verdict.to_ascii_uppercase().starts_with("SOUND");
+        let detail = buf.trim().to_string();
+        if let Some(c) = self.confirmation.as_mut() {
+            c.fc_checked = true;
+            c.fc_verdict = Some(verdict.clone());
+            c.fc_detail = Some(detail);
+            if c.prov.detail.is_empty() {
+                c.prov.detail = format!("refutation: {verdict}");
+            } else {
+                c.prov.detail = format!("{} · refutation: {verdict}", c.prov.detail);
+            }
+        }
+        if sound {
+            self.confirm_insertion(); // survived refutation → inserts
+        } else {
+            self.status_message =
+                Some(format!("refutation: {verdict} — Ctrl+S again to insert anyway"));
+        }
+    }
+
     /// R3-E — start the triangulation gate for a pending `/fact`: gather evidence
     /// from the structured sources (phase 1); `poll_tri_gate` runs the judge.
     fn start_triangulate_gate(&mut self, title: &str, body: &str) {
@@ -3733,8 +4011,17 @@ impl ResearchApp {
                 let evidence = match rx.try_recv() {
                     Ok(e) => e,
                     Err(mpsc::error::TryRecvError::Empty) => return,
+                    // BUG-11 — a died gather task must finalise like every other
+                    // gate terminus (set fc_checked + a verdict), not silently
+                    // drop the gate leaving the user with no way past it.
                     Err(mpsc::error::TryRecvError::Disconnected) => {
                         self.tri_gate = None;
+                        if let Some(c) = self.confirmation.as_mut() {
+                            c.fc_checked = true;
+                            c.fc_verdict = Some("triangulation: gathering failed".to_string());
+                        }
+                        self.status_message =
+                            Some("triangulation: gathering failed — Ctrl+S again to insert".to_string());
                         return;
                     }
                 };
@@ -4611,6 +4898,22 @@ pub(crate) fn add_bibentry(
     Ok(true)
 }
 
+/// PG-P4 — peel a leading `--chapter N` selector off a `/gutenberg` argument,
+/// returning `(chapter, remaining_query)`.
+fn parse_chapter_flag(arg: &str) -> (Option<usize>, String) {
+    let mut rest = arg.trim();
+    let mut chapter = None;
+    if let Some(after) = rest.strip_prefix("--chapter").or_else(|| rest.strip_prefix("--ch")) {
+        let after = after.trim_start();
+        let mut it = after.splitn(2, char::is_whitespace);
+        if let Some(n) = it.next().and_then(|t| t.parse::<usize>().ok()) {
+            chapter = Some(n);
+            rest = it.next().unwrap_or("").trim();
+        }
+    }
+    (chapter, rest.to_string())
+}
+
 /// RESRCH-5 (R5-D) — collect the `BibEntry`s under the Sources book's Research
 /// chapter (the auto-cited + imported entries), for `/bibliography`.
 pub(crate) fn collect_research_bibentries(store: &Store, h: &Hierarchy) -> Vec<crate::sources::BibEntry> {
@@ -4665,8 +4968,11 @@ fn embed_source_file(layout: &ProjectLayout, cfg: &Config, store: &Store, p: &st
             "kind": imports::SOURCE_KIND, "source": abs, "name": name,
             "thread": "", "chunk": i, "imported_at": now,
         });
-        let id = store.raw().add_document(meta, chunk.as_bytes()).map_err(|e| anyhow::anyhow!("{e}"))?;
-        doc_ids.push(id.to_string());
+        // BUG-6 — tolerate a failed chunk (record successes, save the sidecar) so
+        // a mid-loop failure can't orphan already-embedded vectors.
+        if let Ok(id) = store.raw().add_document(meta, chunk.as_bytes()) {
+            doc_ids.push(id.to_string());
+        }
     }
     let mut imports_store = imports::Imports::load(layout);
     if let Some(old) = imports_store.sources.get(&name) {
@@ -4683,6 +4989,96 @@ fn embed_source_file(layout: &ProjectLayout, cfg: &Config, store: &Store, p: &st
     );
     imports_store.save(layout)?;
     Ok(chunks_n)
+}
+
+/// RESRCH-GUTENBERG (PG-P2, CLI) — `inkhaven research --gutenberg <query|PG#>`:
+/// search Gutendex, fetch + strip a public-domain book, and ingest it as a
+/// thread-global research source (`origin=gutenberg`). Accepts a leading
+/// `--chapter N`. Blocks on the async fetch via the entered runtime handle (the
+/// `collect_blocking` pattern). Auto-cites when `research.gutenberg.auto_cite`.
+pub(crate) fn gutenberg_cli(layout: &ProjectLayout, cfg: &Config, store: &Store, query: &str) -> Result<()> {
+    use super::imports;
+    if !super::gutenberg::available(&cfg.research.gutenberg) {
+        anyhow::bail!("gutenberg disabled (research.gutenberg.enabled)");
+    }
+    let (chapter, q) = parse_chapter_flag(query.trim());
+    if q.is_empty() {
+        anyhow::bail!("usage: --gutenberg [--chapter N] <query|PG#>");
+    }
+    let (lang, _note) = crate::prose::resolve_prose_language(None, &cfg.language);
+    let code = match lang.as_code() {
+        "other" => String::new(),
+        c => c.to_string(),
+    };
+    // Spawn the async fetch and block on it (main entered a multi-thread runtime).
+    let gcfg = cfg.research.gutenberg.clone();
+    let qq = q.clone();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    tokio::spawn(async move {
+        let r = super::gutenberg::fetch(gcfg, qq, code).await.map_err(|e| e.to_string());
+        let _ = tx.send(r);
+    });
+    let (book, text, _alts) = rx
+        .blocking_recv()
+        .ok_or_else(|| anyhow::anyhow!("gutenberg fetch cancelled"))?
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    // PG-P4 — narrow to one chapter when asked. BUG-9 — chapters are 1-indexed.
+    let body = match chapter {
+        Some(0) => anyhow::bail!("chapter numbers start at 1"),
+        Some(n) => {
+            let chapters = super::gutenberg::split_chapters(&text);
+            chapters
+                .get(n - 1)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("chapter {n} out of range (book has {})", chapters.len()))?
+        }
+        None => text,
+    };
+    let chunks = imports::chunk_text(&body, cfg.research.import_chunk_chars.max(200));
+    if chunks.is_empty() {
+        anyhow::bail!("no text extracted");
+    }
+    let name = match chapter {
+        Some(n) => format!("{} ch.{n} (PG#{})", book.title, book.id),
+        None => format!("{} (PG#{})", book.title, book.id),
+    };
+    let source_url = format!("https://www.gutenberg.org/ebooks/{}", book.id);
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut doc_ids = Vec::new();
+    for (i, chunk) in chunks.iter().enumerate() {
+        let meta = serde_json::json!({
+            "kind": imports::SOURCE_KIND, "source": source_url, "name": name,
+            "thread": "", "chunk": i, "imported_at": now, "origin": "gutenberg", "title": book.title,
+        });
+        // BUG-6 — record successes, save the sidecar regardless (no orphans).
+        if let Ok(id) = store.raw().add_document(meta, chunk.as_bytes()) {
+            doc_ids.push(id.to_string());
+        }
+    }
+    let mut imports_store = imports::Imports::load(layout);
+    if let Some(old) = imports_store.sources.get(&name) {
+        for id in &old.doc_ids {
+            if let Ok(u) = uuid::Uuid::parse_str(id) {
+                let _ = store.raw().delete_document(u);
+            }
+        }
+    }
+    let chunks_n = doc_ids.len();
+    imports_store.sources.insert(
+        name.clone(),
+        imports::ImportedSource { name: name.clone(), path: source_url.clone(), doc_ids, thread: String::new(), imported_at: now, chunks: chunks_n },
+    );
+    imports_store.save(layout)?;
+    let mut cite = String::new();
+    if cfg.research.gutenberg.auto_cite {
+        let entry = book.to_bibentry();
+        if let Ok(true) = add_bibentry(store, cfg, &entry) {
+            cite = format!(" · cited @{}", entry.key);
+        }
+    }
+    eprintln!("✓ ingested {} — {chunks_n} chunk(s){cite}\n  {source_url}", book.title);
+    Ok(())
 }
 
 pub(crate) fn list_threads_cli(layout: &ProjectLayout, format: Option<&str>) -> Result<()> {
@@ -4827,6 +5223,39 @@ mod completion_tests {
     }
 }
 
+/// BUG-2 — the support classification of one judge line
+/// (`<source>: VERDICT — reason`). Robust to **negated** phrasing
+/// (`NOT SUPPORTED`, `unsupported`, `no support`) and to a plain-hyphen reason
+/// separator (not just the em-dash `—`), which previously slipped through a
+/// `contains("SUPPORT")` check and raised a fact's tier with no corroboration.
+/// Contradiction is checked first.
+#[derive(PartialEq)]
+enum SupportVerdict {
+    Contradict,
+    Support,
+    Silent,
+}
+
+fn classify_support(line: &str) -> SupportVerdict {
+    let u = line.to_ascii_uppercase();
+    // Inspect only the verdict clause: drop the `<source>:` prefix and the
+    // reason after the separator (em-dash or ` - `).
+    let after_colon = u.splitn(2, ':').nth(1).unwrap_or(&u);
+    let clause = after_colon.split('—').next().unwrap_or(after_colon);
+    let clause = clause.split(" - ").next().unwrap_or(clause).trim();
+    if clause.contains("CONTRADICT") {
+        SupportVerdict::Contradict
+    } else if clause.contains("SUPPORT")
+        && !clause.contains("NOT SUPPORT")
+        && !clause.contains("UNSUPPORT")
+        && !clause.contains("NO SUPPORT")
+    {
+        SupportVerdict::Support
+    } else {
+        SupportVerdict::Silent
+    }
+}
+
 /// R5-E — from the `/upgrade` corroboration judgement, the origin tier of the
 /// best corroborating source (highest tier that SUPPORTS with **no** source
 /// CONTRADICTING), or `None`. Priority: wikidata > openalex > arxiv.
@@ -4834,18 +5263,22 @@ fn pick_corroborator(buf: &str) -> Option<String> {
     let mut supports: Vec<&str> = Vec::new();
     let mut any_contradict = false;
     for line in buf.lines() {
+        // Detect the source from the name prefix (before `:`), not the reason
+        // text — a reason may *mention* another source.
         let u = line.to_ascii_uppercase();
-        let head = u.split('—').next().unwrap_or("");
-        if head.contains("CONTRADICT") {
-            any_contradict = true;
-        } else if head.contains("SUPPORT") {
-            if head.contains("WIKIDATA") {
-                supports.push("wikidata");
-            } else if head.contains("OPENALEX") {
-                supports.push("openalex");
-            } else if head.contains("ARXIV") {
-                supports.push("arxiv");
+        let source_part = u.splitn(2, ':').next().unwrap_or(&u);
+        match classify_support(line) {
+            SupportVerdict::Contradict => any_contradict = true,
+            SupportVerdict::Support => {
+                if source_part.contains("WIKIDATA") {
+                    supports.push("wikidata");
+                } else if source_part.contains("OPENALEX") {
+                    supports.push("openalex");
+                } else if source_part.contains("ARXIV") {
+                    supports.push("arxiv");
+                }
             }
+            SupportVerdict::Silent => {}
         }
     }
     if any_contradict {
@@ -4873,13 +5306,11 @@ fn summarize_triangulation(buf: &str) -> (String, bool) {
             agreement = Some(l.to_string());
             continue;
         }
-        // The verdict token sits before the em-dash / hyphen reason separator.
-        let head = l.split('—').next().unwrap_or(l);
-        let head = head.split(" - ").next().unwrap_or(head).to_ascii_uppercase();
-        if head.contains("CONTRADICT") {
-            contradicts += 1;
-        } else if head.contains("SUPPORT") {
-            supports += 1;
+        // BUG-2 — negation-aware classification (shared with `pick_corroborator`).
+        match classify_support(l) {
+            SupportVerdict::Contradict => contradicts += 1,
+            SupportVerdict::Support => supports += 1,
+            SupportVerdict::Silent => {}
         }
     }
     let verdict =
@@ -4929,6 +5360,28 @@ mod triangulation_tests {
         // Any contradiction → no corroboration.
         assert!(pick_corroborator("Wikidata: SUPPORTS — x\narXiv: CONTRADICTS — y").is_none());
         assert!(pick_corroborator("Wikidata: SILENT — nothing").is_none());
+    }
+
+    #[test]
+    fn bug2_negated_support_is_not_support() {
+        use super::{pick_corroborator, summarize_triangulation};
+        // "NOT SUPPORTED" / "unsupported" / "does not support" must NOT corroborate.
+        assert!(pick_corroborator("Wikidata: NOT SUPPORTED — no such statement").is_none());
+        assert!(pick_corroborator("Wikidata: UNSUPPORTED").is_none());
+        assert!(pick_corroborator("OpenAlex: SILENT - the source does not support this").is_none());
+        // A plain-hyphen reason separator must not fold the reason into the verdict.
+        assert_eq!(
+            pick_corroborator("Wikidata: SUPPORTS - matches the triple").as_deref(),
+            Some("wikidata")
+        );
+        // Source attribution comes from the name prefix, not a reason mention.
+        assert_eq!(
+            pick_corroborator("arXiv: SUPPORTS — consistent with the Wikidata figure").as_deref(),
+            Some("arxiv")
+        );
+        // Triangulation gate agrees: negated support does not pass.
+        let (_, pass) = summarize_triangulation("Wikidata: NOT SUPPORTED — n/a\narXiv: SILENT — n/a");
+        assert!(!pass);
     }
 }
 

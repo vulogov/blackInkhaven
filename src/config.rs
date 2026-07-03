@@ -4001,6 +4001,12 @@ pub struct ResearchConfig {
     /// default — it is network-heavy. Informs; a weak verdict just asks to
     /// confirm again.
     pub triangulate_gate: bool,
+    /// RESRCH-6-lite (R6-A) — when true, a `/fact` from a `model` / `document`
+    /// source that is *not* otherwise gated gets one **adversarial refutation**
+    /// pass before it commits: the model actively tries to refute the claim, and
+    /// a `REFUTED` verdict asks the author to confirm again (advisory — never a
+    /// hard block). Off by default.
+    pub refute_gate: bool,
     /// RESRCH-2 (R2-B) — max characters per embedded chunk when importing a
     /// document (`/import`).
     pub import_chunk_chars: usize,
@@ -4011,6 +4017,8 @@ pub struct ResearchConfig {
     pub wikidata: WikidataConfig,
     /// RESRCH-3 (R3-B) — `research.scholarly` block for `/openalex` + `/arxiv`.
     pub scholarly: ScholarlyConfig,
+    /// RESRCH-6-lite — `research.geonames` block for `/geonames`.
+    pub geonames: GeonamesConfig,
     /// RESRCH-GUTENBERG — `research.gutenberg` block for `/gutenberg`.
     pub gutenberg: GutenbergConfig,
 }
@@ -4089,6 +4097,30 @@ impl Default for WikidataConfig {
     }
 }
 
+/// RESRCH-6-lite — `research.geonames` block for `/geonames` (real-world places
+/// via the GeoNames gazetteer). GeoNames needs a free **username** (registration,
+/// not a key), so it stays unavailable until `username` is set.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GeonamesConfig {
+    /// Master switch for `/geonames`.
+    pub enabled: bool,
+    /// Base URL of the GeoNames API host.
+    pub endpoint: String,
+    /// Free GeoNames username (register at geonames.org). Empty → unavailable.
+    pub username: String,
+}
+
+impl Default for GeonamesConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            endpoint: "http://api.geonames.org".to_string(),
+            username: String::new(),
+        }
+    }
+}
+
 /// RESRCH-2 (R2-C) — `research.web` block. `/web` is unavailable until a
 /// provider is configured; everything degrades cleanly when absent / offline.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -4140,10 +4172,12 @@ impl Default for ResearchConfig {
             verify_min_sentence_words: 8,
             dedup_warn_score: 0.92,
             triangulate_gate: false,
+            refute_gate: false,
             import_chunk_chars: 1500,
             web: WebConfig::default(),
             wikidata: WikidataConfig::default(),
             scholarly: ScholarlyConfig::default(),
+            geonames: GeonamesConfig::default(),
             gutenberg: GutenbergConfig::default(),
         }
     }

@@ -387,6 +387,11 @@ pub enum Action {
     /// "markdown"`).
     #[serde(rename = "editor.insert_footnote")]
     EditorInsertFootnote,
+    /// REFLOW-1 — Ctrl+V j. Re-wrap the paragraph at the cursor to the editor's
+    /// current text width (fixes a paragraph pasted as one long line, or
+    /// hard-wrapped at some other width). Editor-undoable.
+    #[serde(rename = "editor.reflow_paragraph")]
+    EditorReflowParagraph,
     /// Ctrl+V Shift+G.
     /// Project-level word-count goal +
     /// projection modal.
@@ -1000,6 +1005,7 @@ impl Action {
             Action::ViewCommentsPanel => "comments".into(),
             Action::AiContinuationDraft => "continue".into(),
             Action::EditorInsertFootnote => "footnote".into(),
+            Action::EditorReflowParagraph => "reflow ¶".into(),
             Action::ViewProjectGoalModal => "goal".into(),
             Action::AiStyleTransferRewrite => "style xfer".into(),
             Action::OpenSnapshotPicker => "snapshots".into(),
@@ -1275,6 +1281,8 @@ impl Action {
                 "AI continuation drafting (Ctrl+V d, 1.2.14+). Asks the configured LLM to continue the open paragraph in the author's voice.  Prompt envelope sends the previous N paragraphs (configurable via `editor.continuation_anchor_count`, default 3) as voice anchors and the open paragraph with the cursor position marked.  Response wrapped in <<<DRAFT>>> / <<<END>>> markers; AI pane I apply lifts only the draft block at the cursor.  Pairs with snippet expansion (\\tdo + Ctrl+V d for AI-generated TODOs).".into(),
             Action::EditorInsertFootnote =>
                 "Insert an inline footnote at the cursor (Ctrl+V f, 1.2.14+). Pops a multi-line text input modal for the footnote body.  On commit, inserts `#footnote[<body>]` at the cursor (Typst, the default) or `[^id]` plus a trailing `[^id]: <body>` line (markdown, when `editor.footnote_style = \"markdown\"`).  Mostly for academic / reference writing; the Typst markup is already supported by the assembled-book renderer.".into(),
+            Action::EditorReflowParagraph =>
+                "Reflow (re-wrap) the paragraph at the cursor to the editor's current text width (REFLOW-1, Ctrl+V j). Takes the blank-line-delimited block of prose around the cursor — whether it arrived as a single long line (pasted from another source) or hard-wrapped at some other width — collapses its line breaks and re-wraps the words greedily to the pane width (minus the line-number gutter). Applied as one editor edit, so `Ctrl+Z` undoes it. Prose paragraphs only (skips read-only and hjson/bund/markdown buffers). Mnemonic: j for justify.".into(),
             Action::ViewProjectGoalModal =>
                 "Project-level word-count goal + projection modal (Ctrl+V Shift+G, 1.2.14+). Reads `project.word_count_goal`, `project.target_date`, `project.counted_books` from the HJSON config.  Computes total project words, percentage of goal, days remaining, words-per-day required from today, recent average from the daily streak event log, and the projected completion date.  Per-book breakdown shows which book(s) contribute most.  Read-only; close with Esc.".into(),
             Action::AiStyleTransferRewrite =>
@@ -1805,6 +1813,7 @@ impl KeyBindings {
                 // 1.2.14+ Phase Q.3 — Ctrl+V f
                 // insert footnote.
                 entry("f", Action::EditorInsertFootnote, Scope::Editor),
+                entry("j", Action::EditorReflowParagraph, Scope::Editor),
                 // 1.2.14+ Phase Q.4 — Ctrl+V Shift+G
                 // project goal modal.
                 entry("Shift+g", Action::ViewProjectGoalModal, Scope::Any),
@@ -2290,6 +2299,20 @@ mod tests {
             k.resolve_view_sub(&upper, Focus::Editor),
             Some(Action::ViewTimeline)
         );
+    }
+
+    #[test]
+    fn reflow_is_bound_to_ctrl_v_j() {
+        // REFLOW-1 — Ctrl+V j reflows the paragraph (editor scope).
+        let k = KeyBindings::defaults();
+        let j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
+        assert_eq!(
+            k.resolve_view_sub(&j, Focus::Editor),
+            Some(Action::EditorReflowParagraph)
+        );
+        // Labeled + described so it appears in the Ctrl+V palette.
+        assert!(!Action::EditorReflowParagraph.label().is_empty());
+        assert!(!Action::EditorReflowParagraph.description().is_empty());
     }
 
     #[test]

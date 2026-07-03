@@ -966,6 +966,10 @@ pub enum Command {
         /// (`--out` file, else stdout) and exit.
         #[arg(long)]
         bibliography: bool,
+        /// 1.5.9 RESRCH-GUTENBERG — ingest a public-domain Project Gutenberg book
+        /// (search query or bare PG id; accepts a leading `--chapter N`) and exit.
+        #[arg(long, value_name = "QUERY")]
+        gutenberg: Option<String>,
     },
 
     /// 1.2.10+ — launch the standalone TUI configuration
@@ -5022,6 +5026,7 @@ impl Cli {
                 auto_confirm,
                 confidence,
                 bibliography,
+                gutenberg,
             } => crate::research::run(
                 &project,
                 crate::research::ResearchInvocation {
@@ -5036,6 +5041,7 @@ impl Cli {
                     auto_confirm,
                     confidence,
                     bibliography,
+                    gutenberg,
                 },
             )
             .map_err(Into::into),

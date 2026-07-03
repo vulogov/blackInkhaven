@@ -944,7 +944,10 @@ fn hsl_slider_line(label: &str, value: u32, max: u32, active: bool) -> Line<'sta
 fn parse_hex(s: &str) -> Option<(u8, u8, u8)> {
     let raw = s.trim();
     let hex = raw.strip_prefix('#').unwrap_or(raw);
-    if hex.len() != 6 {
+    // BUG-8 — `len()` is bytes; a 6-byte multibyte string (e.g. two `€`) would
+    // pass the gate and then panic on the non-boundary `hex[0..2]` slice. Guard
+    // for ASCII first (mirrors `config::parse_color`).
+    if !hex.is_ascii() || hex.len() != 6 {
         return None;
     }
     let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
@@ -1654,5 +1657,9 @@ mod tests_hsl {
         assert_eq!(parse_hex("CDD6F4"), Some((0xcd, 0xd6, 0xf4)));
         assert_eq!(parse_hex("not hex"), None);
         assert_eq!(parse_hex("#cdd6"), None);
+        // BUG-8 — a 6-byte multibyte string must return None, not panic on a
+        // non-char-boundary slice.
+        assert_eq!(parse_hex("€€"), None); // two 3-byte euro signs = 6 bytes
+        assert_eq!(parse_hex("#café1"), None);
     }
 }

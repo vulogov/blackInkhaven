@@ -265,6 +265,15 @@ whenever you ask about it, and they ground `/synthesize` and `/fact`. It searche
 (title/author/subject); the *snippet* search happens in your corpus RAG after ingest. Keyless; uses the
 project language; `research.gutenberg.max_chars` bounds how much of a long book is embedded.
 
+- **Pick a specific edition.** The reply lists the runner-up matches with their PG ids; re-run
+  **`/gutenberg <PG#>`** (a bare number) to ingest that exact book instead of the top hit.
+- **Just one chapter.** **`/gutenberg --chapter N <query>`** (or `--ch N`) ingests only chapter *N* — handy
+  when you want a single relevant chapter of a long novel, not the whole thing.
+- **Auto-cited.** Each ingested book is filed as a citation (`@austenpg1342`, note *Project Gutenberg
+  #<id>*), so it appears in **`/bibliography`** automatically. Toggle with `research.gutenberg.auto_cite`.
+- **Headless.** **`inkhaven research --gutenberg "<query|PG#>"`** ingests a book from the shell (accepts a
+  leading `--chapter N`), for scripting a corpus without opening the TUI.
+
 ## 6.8. Structured facts — `/wikidata` (1.5.5)
 
 Where `/web` brings in *prose*, **`/wikidata <query>`** brings in **structured triples** — the top of the
@@ -288,6 +297,27 @@ value), each citable by the entity's **Q-ID**:
 - **Wikipedia is deliberately excluded.** Its narrative carries well-documented editorial bias
   (politics / economics / history); Wikidata's per-statement triples don't. We ground on the facts, not
   the story. (External-identifier properties like catalog IDs are filtered out to keep the view factual.)
+
+## 6.82. Real places — `/geonames` (1.5.9)
+
+**`/geonames <query>`** (alias `/geo`) looks a real-world place up in the **GeoNames** gazetteer and
+returns a compact card — region, country, feature type (e.g. *capital of a political entity*),
+coordinates, population — cited by GeoNames id:
+
+```
+/geonames Rome
+  Roma — Latium, Italy
+  Type: capital of a political entity
+  Coordinates: 41.89193, 12.51133
+  Population: 2318895
+  Source: GeoNames #3169070 · https://www.geonames.org/3169070
+```
+
+Like `/wikidata`, it's a **structured** source (glyph `⊕`): a `/fact` from it records provenance
+**`geonames`** with the id and **skips the fact-check gate**. Ideal for grounding fiction in real
+geography. GeoNames needs a **free username** (register at geonames.org, one-time) — set
+`research.geonames.username`; until then `/geonames` reports it's unavailable. Uses your project language
+for localized names.
 
 ## 6.85. Scholarly sources — `/openalex` & `/arxiv` (1.5.5)
 
@@ -338,8 +368,16 @@ something. Use it before you `/fact` a shaky claim: if the sources don't corrobo
 before a `model` / `web` / `document` fact commits — cross-source agreement **replaces** the single-source
 self-check. On the confirmation, `SUPPORTS` with no `CONTRADICTS` inserts; a contradicted or uncorroborated
 verdict shows the agreement and asks you to `Ctrl+S` again to insert anyway (like the dedup guard —
-informs, never blocks). Deterministic / structured facts (`computed`, `wikidata`, `openalex`, `arxiv`)
-are already authoritative and skip the gate. It's **off by default** (network-heavy).
+informs, never blocks). Deterministic / structured facts (`computed`, `wikidata`, `geonames`, `openalex`,
+`arxiv`) are already authoritative and skip the gate. It's **off by default** (network-heavy).
+
+**Adversarial refutation gate (1.5.9).** Set **`research.refute_gate: true`** and a plain `model` /
+`document` fact that *isn't* otherwise gated gets one **skeptic pass** before it commits: the model is
+asked to actively **refute** the claim (find errors, anachronisms, contradictions) — the mirror image of
+triangulation's corroboration. A `SOUND` verdict inserts; a `REFUTED` verdict shows the reason and asks
+you to `Ctrl+S` again. **Advisory — you always override**; it never blocks or edits your fact. It's the
+cheap, offline-capable trust check for the speculative tier (no structured source required). Off by
+default.
 
 ## 6⅞. Deterministic calculation — `/calc` (1.5.2)
 
