@@ -4,7 +4,7 @@
 |---|---|
 | **RFC** | LANG-3 |
 | **Title** | Local Translation Models for ConLangs |
-| **Status** | Draft |
+| **Status** | Partial — Tier-1 RBMT (P0.1) landed 1.3.23; later (neural) tiers open |
 | **Created** | 2026-06-20 |
 | **Author** | Vladimir Ulogov |
 | **Target version** | 1.5.0 |

@@ -4,7 +4,7 @@
 |---|---|
 | **RFC** | PDF-1 |
 | **Title** | PDF Management and Imposition Pipeline |
-| **Status** | Draft |
+| **Status** | Shipped — 1.3.0 (PDF management & imposition pipeline) |
 | **Created** | 2026-06-07 |
 | **Author** | Vladimir Ulogov |
 | **Target version** | 1.3.0 |
