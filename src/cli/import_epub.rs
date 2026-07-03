@@ -32,16 +32,18 @@ pub fn run(
         .map_err(|e| Error::Store(format!("import-epub: {e:#}")))?;
 
     println!(
-        "EPUB import {} — book `{}`:\n  chapters:   {}\n  paragraphs: {}\n  images:     {}",
+        "EPUB import {} — book `{}`:\n  chapters:   {}\n  paragraphs: {}\n  images:     {} imported, {} extracted",
         if dry_run { "(dry-run)" } else { "complete" },
         report.book_title,
         report.chapters_created,
         report.paragraphs_created,
+        report.images_imported,
         report.images_extracted,
     );
     if report.images_extracted > 0 && !dry_run {
         println!(
-            "  (images extracted to `{}-images/`; in-prose refs are commented for re-linking)",
+            "  ({} unreferenced image(s) extracted to `{}-images/` for hand-placement)",
+            report.images_extracted,
             slug::slugify(&report.book_title)
         );
     }
