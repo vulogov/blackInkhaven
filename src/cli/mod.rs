@@ -4242,6 +4242,9 @@ pub enum RealworldCommand {
     /// List the Place ↔ World cross-references (accepted compiler Places + their
     /// climate zone / biome / hydrology basis / coordinates).
     Places,
+    /// WORLD-7 — derive a story-Timeline calendar from the world's astronomy
+    /// (months, season markers) and print it to adopt under `timeline.calendar`.
+    Calendar,
     /// Show the magic ledger — the declared exceptions to physics the
     /// fact-checker will respect. Edit it in the `magic:` block of `world.hjson`.
     Magic {

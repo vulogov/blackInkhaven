@@ -13326,6 +13326,10 @@ impl App {
             out.calendar_check.computed_days,
             if out.calendar_check.consistent { "consistent" } else { "off >1 day ⚠" }
         ));
+        rows.push(format!(
+            "  → story calendar: {} months × {} days  ·  adopt via CLI `realworld calendar`",
+            def.astronomy.calendar.months, def.astronomy.calendar.month_length_days
+        ));
         rows.push("".into());
 
         // The chapter titles already materialized under the World book — drives

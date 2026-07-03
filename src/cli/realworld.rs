@@ -26,6 +26,7 @@ pub fn run(project: &Path, cmd: RealworldCommand) -> Result<()> {
         RealworldCommand::Propose => propose(project),
         RealworldCommand::Proposals { cmd } => proposals(project, cmd),
         RealworldCommand::Places => places(project),
+        RealworldCommand::Calendar => calendar(project),
         RealworldCommand::Magic { materialize } => magic(project, materialize),
         RealworldCommand::Map { spec_only, no_ingest } => map(project, spec_only, no_ingest),
         RealworldCommand::CoLocation => co_location(project),
@@ -578,6 +579,89 @@ fn places(project: &Path) -> Result<()> {
         );
     }
     println!("\n{} world-linked place(s).", links.len());
+    Ok(())
+}
+
+/// WORLD-7 (W7-P3) — derive a story-Timeline calendar (`timeline.calendar`) from
+/// the world's astronomy: the day→month→year unit stack (carrying any author
+/// month names) and the four season markers. Pure + testable.
+fn build_timeline_calendar(
+    def: &WorldDefinition,
+    astro: &crate::world::types::AstronomyOutput,
+) -> crate::timeline::calendar::CalendarConfig {
+    use crate::timeline::calendar::{CalendarConfig, SeasonDef, UnitDef};
+    let cal = &def.astronomy.calendar;
+    let months = cal.months.max(1);
+    let month_len = cal.month_length_days.max(1);
+
+    let units = vec![
+        UnitDef { name: "day".into(), per_parent: month_len, names: Vec::new() },
+        UnitDef { name: "month".into(), per_parent: months, names: cal.month_names.clone() },
+        UnitDef { name: "year".into(), per_parent: 0, names: Vec::new() },
+    ];
+
+    // Each astronomy marker starts a season and spans to the next; marker names
+    // like "spring_equinox" → "spring".
+    let mut markers = astro.seasons.clone();
+    markers.sort_by(|a, b| {
+        a.year_fraction.partial_cmp(&b.year_fraction).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let mut seasons = Vec::new();
+    for (i, m) in markers.iter().enumerate() {
+        let start_month = ((m.year_fraction * months as f64).floor() as u32).min(months - 1) + 1;
+        let next = markers.get(i + 1).map(|n| n.year_fraction).unwrap_or(markers[0].year_fraction + 1.0);
+        let span = (((next - m.year_fraction) * months as f64).round() as i64).max(1) as u32;
+        let name = m.name.split(['_', ' ']).next().unwrap_or(&m.name).to_lowercase();
+        seasons.push(SeasonDef { name, start_month, span_months: span });
+    }
+
+    CalendarConfig {
+        preset: "custom".into(),
+        base_unit: "day".into(),
+        units,
+        seasons,
+        epoch_label: String::new(),
+        epoch_before_label: String::new(),
+        display_format: String::new(),
+        parse_aliases: Vec::new(),
+    }
+}
+
+/// `realworld calendar` — print the story-Timeline calendar derived from the
+/// world's astronomy, ready to adopt under `timeline.calendar`. The simulation
+/// proposes; the author adopts (authority discipline).
+fn calendar(project: &Path) -> Result<()> {
+    use crate::world::compile::compile_astronomy;
+    let def = load(project)?;
+    let astro = compile_astronomy(&def.astronomy);
+    let cal = &def.astronomy.calendar;
+    let tl = build_timeline_calendar(&def, &astro);
+
+    let year_days = cal.months.saturating_mul(cal.month_length_days);
+    println!(
+        "calendar · {} — {} months × {} days = {}-day year",
+        def.name, cal.months, cal.month_length_days, year_days
+    );
+    let names = if cal.month_names.is_empty() {
+        format!("(unnamed — months 1..{})", cal.months)
+    } else {
+        cal.month_names.join(", ")
+    };
+    println!("  months:  {names}");
+    println!(
+        "  seasons: {}",
+        tl.seasons
+            .iter()
+            .map(|s| format!("{} (from month {}, {} mo)", s.name, s.start_month, s.span_months))
+            .collect::<Vec<_>>()
+            .join(" · ")
+    );
+
+    let body = serde_json::to_string_pretty(&tl)
+        .map_err(|e| Error::Store(format!("serializing calendar: {e}")))?;
+    println!(
+        "\nAdopt it as your story's calendar — set `timeline.enabled: true` and paste this\nas `timeline.calendar` in inkhaven.hjson:\n\n{body}"
+    );
     Ok(())
 }
 
@@ -1344,4 +1428,32 @@ fn starter_template(name: &str) -> String {
 }}
 "#
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn calendar_bridge_maps_astronomy() {
+        // W7-P3 — the astronomy calendar → story-Timeline CalendarConfig mapping.
+        let def = crate::world::types::WorldDefinition::from_hjson(&starter_template("Test"))
+            .expect("starter template parses");
+        let astro = crate::world::compile::compile_astronomy(&def.astronomy);
+        let tl = build_timeline_calendar(&def, &astro);
+
+        assert_eq!(tl.preset, "custom");
+        assert_eq!(tl.base_unit, "day");
+        // day → month → year stack, from the world calendar (30-day months, 12/yr).
+        assert_eq!(tl.units.len(), 3);
+        assert_eq!(tl.units[0].per_parent, 30);
+        assert_eq!(tl.units[1].per_parent, 12);
+        assert_eq!(tl.units[2].per_parent, 0); // year is unbounded
+        // Four season markers, each a valid in-range span.
+        assert_eq!(tl.seasons.len(), 4);
+        for s in &tl.seasons {
+            assert!((1..=12).contains(&s.start_month), "start_month {} in range", s.start_month);
+            assert!(s.span_months >= 1);
+        }
+    }
 }
