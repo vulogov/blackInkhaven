@@ -5,6 +5,11 @@
 //! overrides) drive the five compile layers, each of which produces a populated
 //! `*Output` here. Layers without an explicit block are generated from the seed.
 
+// A deliberate flat re-export API (`crate::world::types::*`): some names are
+// consumed via their submodule path or by field access rather than through the
+// flat alias, so the binary-crate `unused_imports` lint mis-fires on them.
+#![allow(unused_imports)]
+
 pub mod astronomy;
 pub mod climate;
 pub mod demographics;

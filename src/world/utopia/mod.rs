@@ -23,7 +23,7 @@ mod store;
 
 pub(crate) use grounding::{UTOPIAN_ARCHITECT, build_grounding};
 pub(crate) use stage1::run_stage1;
-pub(crate) use stage2::{pair_count, run_stage2_group};
+pub(crate) use stage2::run_stage2_group;
 pub(crate) use stage3::run_stage3_group;
 pub(crate) use store::UtopiaStore;
 

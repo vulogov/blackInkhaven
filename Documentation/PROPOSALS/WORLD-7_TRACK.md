@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Proposed (track) · headline of the 1.6.0 "Living World" cycle |
+| **Status** | **Complete (P1–P4)** · headline of the 1.6.0 "Living World" cycle |
 | **Builds on** | WORLD-4 (the layered simulation), WORLD-6 (utopia coherence), RESRCH-3/4 (`/world`, `/calc` world reads) |
 | **Theme** | The World Simulation is **built but not finished-off**. All five physical layers compile, all materialize, the map and Places bridge exist — but there is no single "compile my world" command, the docs lie about what's wired, and the non-astronomy layers are invisible in the TUI. WORLD-7 unifies, surfaces, and documents the last mile, then deepens the world→prose bridge. |
 
@@ -42,7 +42,14 @@ The earlier assumption that "only astronomy is wired" is a **stale comment**, no
 | **W7-P1 — One-command full-world compile** | `realworld compile` with no `--layer` (or `--layer all`) runs the full chain once and **materializes every chapter** — Astronomy → Geology → Climate → Hydrology → Demographics, plus the author-declared **Setting** — in dependency order, reporting per-chapter paragraph counts. Reuses the existing `compile_*` + `materialize_*` fns (pure orchestration). Fix the stale starter-template + `mod.rs` comments. **This is the headline UX win: "compile my world" becomes one command.** |
 | **W7-P2 — Surface every layer** | The `Ctrl+B W` World overview shows the compiled layers that exist in the World book (not just astronomy): a compact summary per materialized chapter, with a "not yet compiled — run `realworld compile`" hint for absent ones. Optionally a `/world` completeness line in the Research Assistant. **✅ Shipped** — the overview now compiles the chain live and shows a summary line per layer (geology plates/continents/ocean%, climate temp/precip/biomes, hydrology rivers/lakes/watersheds, demographics population/settlements), each with a `✓ in World book` / `· press C to compile` mark. |
 | **W7-P3 — Deepen the world→prose bridge** | Make `realworld places` idempotent/refreshable and surface it (materialize demographics settlements → the Places book with provenance), and add a demographics/astronomy → **Timeline** seed (founding dates, seasons) so the simulation actually feeds the manuscript's places and calendar. **✅ Shipped (calendar bridge)** — the Places bridge already exists (the idempotent `propose`→accept flow, authority-respecting). Added the **astronomy → story-Timeline calendar** bridge: `build_timeline_calendar` (pure, tested) derives a `timeline.calendar` `CalendarConfig` (day→month→year units with author month names + the four season markers) from the world; `realworld calendar` prints it to adopt (the sim proposes, the author pastes it into `inkhaven.hjson`), and the `Ctrl+B W` overview surfaces the story-calendar line. *(Deferred: settlement founding-date events — demographics carries no dates; would be synthetic.)* |
-| **W7-P4 *(stretch)*** | Validation of every definition block (not just astronomy); a small **magic/rules** compile pass over the `MagicLedger` beyond materialization; plakat map polish. Retire the module-level `#![allow(dead_code)]` on `src/world/` as the surface lands. |
+| **W7-P4 *(cleanup)*** | Validation of every definition block; retire the blanket `dead_code`/`unused_imports` allow. **✅ Shipped** — `realworld validate` now compiles *every* layer (astronomy → geology → climate → hydrology → demographics + magic ledger), so a broken DEM path or inconsistent block surfaces at validate time rather than at materialise. Retired the blanket `#![allow(dead_code, unused_imports)]` on `src/world/`: narrowed to `#![allow(dead_code)]` (a few genuine foundation items remain — `WorldError`/`Result`, reserved fact-check/storage/utopia helpers), scoped `unused_imports` to the deliberate flat types re-export API, and removed two truly-dead utopia imports — `world/` now builds warning-free. *(Deferred: a magic/rules compile pass beyond materialization, plakat polish.)* |
+
+## Status
+
+**WORLD-7 complete (P1–P4).** The World Simulation is unified (one-command whole-world
+compile + materialise), fully surfaced (every layer in the `Ctrl+B W` overview), bridged to prose
+(the astronomy→story-Timeline calendar, on top of the existing Places bridge), validated end-to-end,
+and cleaned up (blanket allow retired). No new runtime crates.
 
 ## Dependency posture
 - **No new runtime crates.** Every layer, materializer, and reader already exists; WORLD-7 is
