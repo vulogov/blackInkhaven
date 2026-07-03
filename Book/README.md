@@ -10,6 +10,8 @@ corpus can grow without the volumes colliding — drop a new
 | Book | Directory | Format | Length | Notes |
 |------|-----------|--------|--------|-------|
 | **The Book of Inkhaven** | [`1.2.6_MANUAL/`](1.2.6_MANUAL/) | Typst → PDF (+ Markdown mirror) | 34 chapters | The companion manual: walks every feature in the order a working author meets them, from install through scripting. The `markdown/` mirror feeds `inkhaven import-help` so the F1 RAG help covers the book. |
+| **Developing a Constructed Language** | [`CONLANG_DEVELOPMENT/`](CONLANG_DEVELOPMENT/) | Typst → PDF | 26 chapters + appendices | A beginner's guide to conlanging with Inkhaven's ConLang Suite — from an empty project to a finished language with its own dictionary, grammar, and writing system. Bundled fonts only. |
+| **Grounding Your Book in Fact** | [`RESEARCH/`](RESEARCH/) | Typst → PDF | Complete draft — 15 chapters + appendices, ~99pp | A beginner's guide to Inkhaven's Research Assistant for **fiction and non-fiction** authors: grounding the facts a book leans on, from a first question to a fact-checked, cited knowledge base. Teaches with [fletcher](https://typst.app/universe/package/fletcher) diagrams, not screenshots. |
 
 ## Conventions
 

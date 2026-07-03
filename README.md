@@ -21,37 +21,44 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.5.8 — Synthesis, Maintenance & a Public-Domain Library
+## Latest release · 1.5.9 — Places, Refutation, a Stability Pass & a Book
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.5.8.md`](Documentation/RELEASE_NOTES/1.5.8.md)
-· Tracks: [`RESRCH-5`](Documentation/PROPOSALS/RESRCH-5_TRACK.md) ·
-[`RESRCH-GUTENBERG`](Documentation/PROPOSALS/RESRCH-GUTENBERG_TRACK.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.5.9.md`](Documentation/RELEASE_NOTES/1.5.9.md)
+· Tracks: [`RESRCH-GUTENBERG`](Documentation/PROPOSALS/RESRCH-GUTENBERG_TRACK.md) ·
+[`BUGFIX_PLAN`](Documentation/PROPOSALS/BUGFIX_PLAN_1.5.9.md) · Book:
+[`Grounding Your Book in Fact`](Book/RESEARCH/)
 
-The Research Assistant stops being only an *inbox* for facts: it now **composes output** from the corpus,
-**maintains** it over time, and pulls in **public-domain books**. **No new crates.**
+A broad release: real-world places, an adversarial trust check, a full stability audit, an editor comfort
+feature, and a complete companion book. **No new crates.**
 
-### Synthesis (corpus → output)
+### Real places & refutation (RESRCH-6-lite)
 
-**`/synthesize <topic>`** streams a grounded, cited synthesis from your own facts; **`/outline`** gives a
-fact-citing chapter outline; **`/gaps`** lists the open questions the corpus doesn't answer; and
-**`/bibliography`** emits the accrued citations as **BibTeX** (`--bibliography` headless).
+**`/geonames <query>`** grounds fiction and non-fiction in real geography — region, country, feature type,
+coordinates, population — cited by id and gate-skipped like `/wikidata` (needs a free username). And
+**`research.refute_gate`** adds an offline **skeptic pass** that actively tries to *refute* a `model` fact
+before it commits (`SOUND` inserts, `REFUTED` asks again) — the mirror of `/triangulate`.
 
-### Maintenance (keep it healthy)
+### Project Gutenberg, finished
 
-**`/upgrade`** re-grounds a `model`-origin fact on a structured source and, when corroborated, **raises
-its provenance tier** (text untouched); **`/stale [days]`** lists aging `model`/`web` facts to re-verify.
+**`/gutenberg`** now **auto-cites** ingested books into `/bibliography`, takes `--chapter N` and a bare
+`<PG#>` to pick an exact edition, and has a headless twin `inkhaven research --gutenberg`.
 
-### A public-domain library
+### A stability pass
 
-**`/gutenberg <query>`** (`/pg`) searches **Project Gutenberg** (keyless Gutendex), fetches a book's text,
-and ingests it as a research source — its passages are then retrieved and cited `[source: <Title>
-(PG#<id>)]`, grounding your work.
+A four-track ripple-effect audit → **BUG-1..12 fixed** with regression tests: a gate-receiver leak that
+could insert an unvetted fact, a triangulation parser that read "not supported" as support, a multibyte
+search-highlight panic, `/upgrade` robustness, CLI vector orphans, and a sweep of lower-severity panics.
+
+### Editor & book
+
+**`Ctrl+V j`** re-wraps the paragraph at the cursor to the editor width (fixes prose pasted as one long
+line). And **"Grounding Your Book in Fact"** — a ~101-page beginner's guide to the Research Assistant for
+fiction and non-fiction authors — ships in [`Book/RESEARCH/`](Book/RESEARCH/).
 
 ### Dependencies & compatibility
 
-**No new runtime crates** — all reuse the existing retrieval / provenance / SOURCES-1 / ingestion /
-triangulation machinery. New config `research.gutenberg`; new provenance origin `gutenberg`; new CLI flag
-`--bibliography`.
+**No new runtime crates.** New command `/geonames`; new config `research.geonames` + `research.refute_gate`;
+new provenance origin `geonames`; new CLI flag `--gutenberg`; new editor chord `Ctrl+V j`.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

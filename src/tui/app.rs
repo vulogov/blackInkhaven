@@ -11465,6 +11465,7 @@ impl App {
             A::ViewCommentsPanel => self.open_comments_panel(),
             A::AiContinuationDraft => self.start_continuation_draft(),
             A::EditorInsertFootnote => self.start_insert_footnote(),
+            A::EditorReflowParagraph => self.reflow_paragraph(),
             A::ViewProjectGoalModal => self.open_project_goal_modal(),
             A::AiStyleTransferRewrite => self.start_style_transfer_picker(),
             A::OpenSnapshotPicker => self.open_snapshot_picker(),
@@ -14968,6 +14969,48 @@ impl App {
             _ => {}
         }
         true
+    }
+
+    /// REFLOW-1 — re-wrap the blank-line-delimited paragraph at the cursor to the
+    /// editor's current text width. Turns a paragraph pasted as one long line (or
+    /// hard-wrapped at some other width) into lines wrapped to the pane, as a
+    /// single editor-undoable edit. Free chord: `Ctrl+V j` ("justify").
+    fn reflow_paragraph(&mut self) {
+        // Read the cached pane rect first (disjoint field) so `layout_editor` isn't
+        // borrowed while `opened` is held mutably below.
+        let pane_w = self.layout_editor.width;
+        let Some(doc) = self.opened.as_mut() else {
+            self.status = "no open paragraph to reflow".to_string();
+            return;
+        };
+        if doc.read_only {
+            self.status = "paragraph is read-only".to_string();
+            return;
+        }
+        if doc.content_type.is_some() {
+            // Prose paragraphs only — never reflow hjson / bund / markdown buffers.
+            self.status = "reflow is for prose paragraphs".to_string();
+            return;
+        }
+        let (cur_row, _) = doc.textarea.cursor();
+        let num_lines = doc.textarea.lines().len().max(1);
+        let gutter = (digit_count(num_lines) + 1) as u16;
+        // Editor text width = pane − border(2) − line-number gutter (see panes.rs).
+        let width = pane_w.saturating_sub(2).saturating_sub(gutter).max(20) as usize;
+        let Some((start, end, wrapped)) = reflow_block(doc.textarea.lines(), cur_row, width) else {
+            self.status = "cursor is on a blank line — nothing to reflow".to_string();
+            return;
+        };
+        let end_col = doc.textarea.lines()[end].chars().count();
+        let new_lines = wrapped.matches('\n').count() + 1;
+        // Replace the block range in place (keeps tui-textarea's own undo intact).
+        doc.textarea.move_cursor(CursorMove::Jump(start as u16, 0));
+        doc.textarea.start_selection();
+        doc.textarea.move_cursor(CursorMove::Jump(end as u16, end_col as u16));
+        doc.textarea.cut();
+        doc.textarea.insert_str(&wrapped);
+        doc.dirty = true;
+        self.status = format!("reflowed paragraph → {new_lines} line(s) @ {width} cols (Ctrl+Z undoes)");
     }
 
     /// Replace the `:lang:` trigger span with the chosen word (mirrors
@@ -28940,6 +28983,32 @@ pub(super) fn digit_count(n: usize) -> usize {
     d
 }
 
+/// REFLOW-1 — for the blank-line-delimited block of prose containing `cur_row`,
+/// return `(start_row, end_row, rewrapped_text)` where the block's words are
+/// re-wrapped (greedy word wrap) to `width` columns, newline-joined. Returns
+/// `None` when the cursor is out of range or on a blank line (no paragraph).
+/// Pure — unit-testable without an editor.
+fn reflow_block(lines: &[String], cur_row: usize, width: usize) -> Option<(usize, usize, String)> {
+    if cur_row >= lines.len() || lines[cur_row].trim().is_empty() {
+        return None;
+    }
+    // Walk up/down over the contiguous non-blank run around the cursor.
+    let start = (0..=cur_row)
+        .rev()
+        .take_while(|&r| !lines[r].trim().is_empty())
+        .last()
+        .unwrap_or(cur_row);
+    let end = (cur_row..lines.len())
+        .take_while(|&r| !lines[r].trim().is_empty())
+        .last()
+        .unwrap_or(cur_row);
+    // Join the block's lines into one stream of words, then re-wrap. The reusable
+    // greedy word-wrap collapses the original line breaks and re-breaks at `width`.
+    let joined = lines[start..=end].join(" ");
+    let wrapped = crate::tui::text_utils::wrap_words_or_chars(&joined, width).join("\n");
+    Some((start, end, wrapped))
+}
+
 /// Allowlist of keystrokes that are non-mutating in the editor pane. Used to
 /// gate the editor when an open paragraph lives inside the read-only Help
 /// subtree. Anything not listed here is rejected with a status message.
@@ -29500,6 +29569,42 @@ mod tests_tree_badges {
         assert_eq!(badges[&p1], (1, Severity::Warning));
         assert_eq!(badges[&chapter], (1, Severity::Warning));
         assert_eq!(badges[&book], (1, Severity::Warning));
+    }
+}
+
+#[cfg(test)]
+mod tests_reflow {
+    use super::reflow_block;
+
+    fn lines(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn single_long_line_wraps_to_width() {
+        let l = lines(&["the quick brown fox jumps over the lazy dog"]);
+        let (start, end, out) = reflow_block(&l, 0, 20).unwrap();
+        assert_eq!((start, end), (0, 0));
+        // Every produced line fits the width; the text round-trips word-for-word.
+        assert!(out.lines().all(|ln| ln.chars().count() <= 20));
+        assert_eq!(out.split_whitespace().collect::<Vec<_>>(), l[0].split_whitespace().collect::<Vec<_>>());
+        assert!(out.contains('\n')); // it actually wrapped
+    }
+
+    #[test]
+    fn rewraps_a_hardwrapped_block_within_blank_lines() {
+        let l = lines(&["intro para", "", "one two", "three four", "five", "", "tail"]);
+        // Cursor on row 3 (inside the middle block rows 2..=4).
+        let (start, end, out) = reflow_block(&l, 3, 40).unwrap();
+        assert_eq!((start, end), (2, 4));
+        assert_eq!(out, "one two three four five"); // collapsed to one line at width 40
+    }
+
+    #[test]
+    fn blank_line_or_out_of_range_is_none() {
+        let l = lines(&["a", "", "b"]);
+        assert!(reflow_block(&l, 1, 40).is_none()); // on the blank line
+        assert!(reflow_block(&l, 9, 40).is_none()); // out of range
     }
 }
 
