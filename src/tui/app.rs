@@ -13347,21 +13347,56 @@ impl App {
             .unwrap_or_default();
         let has = |title: &str| world_chapters.iter().any(|c| c.eq_ignore_ascii_case(title));
 
-        // The remaining MVP layers — all shipped; show whether each is in the book.
-        let geo_mode = match def.geology.as_ref() {
-            Some(g) if g.dem.is_some() => "DEM-sourced",
-            _ => "generated",
-        };
-        for (layer, note) in [
-            ("Geology", geo_mode),
-            ("Climate", "derived"),
-            ("Hydrology", "derived"),
-            ("Demographics", "derived"),
-            ("Magic Ledger", if def.magic.as_ref().map(|m| m.enabled).unwrap_or(false) { "enabled" } else { "off" }),
-        ] {
-            let mark = if has(layer) { "✓ in World book" } else { "· press C to compile" };
-            rows.push(format!("{layer}  ({note})  {mark}"));
+        // WORLD-7 (W7-P2) — surface every physical layer, not just astronomy.
+        // Compile the chain live (deterministic, bounded grid) for a preview
+        // summary, and mark whether each is materialized in the World book.
+        let mark = |title: &str| if has(title) { "✓ in World book" } else { "· press C to compile" };
+        {
+            use crate::world::compile::{
+                compile_climate, compile_demographics, compile_geology, compile_hydrology,
+            };
+            let geo = compile_geology(&def);
+            let climate = compile_climate(&def, &out, &geo);
+            let hydro = compile_hydrology(&geo, &climate);
+            let demo = compile_demographics(&climate, &hydro);
+            let geo_mode = if def.geology.as_ref().and_then(|g| g.dem.as_ref()).is_some() {
+                "DEM-sourced"
+            } else {
+                "generated"
+            };
+            let pop = demo.total_population;
+            let pop_s = if pop >= 1_000_000 {
+                format!("{:.1}M", pop as f64 / 1_000_000.0)
+            } else if pop >= 10_000 {
+                format!("{:.0}k", pop as f64 / 1_000.0)
+            } else {
+                pop.to_string()
+            };
+
+            rows.push(format!("Geology  ({geo_mode})  {}", mark("Geology")));
+            rows.push(format!(
+                "  {} plate(s) · {} continent(s) · {:.0}% ocean · {} range(s)",
+                geo.plates.len(), geo.continents, geo.sea_coverage_pct, geo.mountain_ranges.len()
+            ));
+            rows.push(format!("Climate  (derived)  {}", mark("Climate")));
+            rows.push(format!(
+                "  land mean {:.1}°C · {:.0} mm/yr · {} biome(s)",
+                climate.mean_land_temp_c, climate.mean_land_precip_mm, climate.zones.len()
+            ));
+            rows.push(format!("Hydrology  (derived)  {}", mark("Hydrology")));
+            rows.push(format!(
+                "  {} river(s) · {} lake(s) · {} watershed(s)",
+                hydro.river_count, hydro.lake_count, hydro.watershed_count
+            ));
+            rows.push(format!("Demographics  (derived)  {}", mark("Demographics")));
+            rows.push(format!(
+                "  population {pop_s} · {} settlement(s) ({} cities, {} towns)",
+                demo.settlements.len(), demo.size_classes.cities, demo.size_classes.towns
+            ));
         }
+        let magic_note =
+            if def.magic.as_ref().map(|m| m.enabled).unwrap_or(false) { "enabled" } else { "off" };
+        rows.push(format!("Magic Ledger  ({magic_note})  {}", mark("Magic Ledger")));
         rows.push("".into());
 
         let any = !world_chapters.is_empty();
