@@ -20,9 +20,13 @@
 //! layer with no proposals — its outputs are closed-form physics, treated as
 //! fact and re-asserted every run unless the author hand-overrides.
 
-// Foundation ahead of its CLI / TUI / Bund consumers: the type/output API and
-// its re-exports exist before the phases that will consume them.
-#![allow(dead_code, unused_imports)]
+
+// WORLD-7 — the simulation is now wired end-to-end (compile → materialise →
+// surface), so the blanket `unused_imports` allow is retired. A handful of
+// foundation items remain ahead of their consumers (the `WorldError`/`Result`
+// pair, a few reserved fact-check / storage / utopia helpers), so `dead_code`
+// stays scoped here.
+#![allow(dead_code)]
 
 pub mod calc_read;
 pub mod compile;

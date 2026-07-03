@@ -950,6 +950,7 @@ fn new(project: &Path, name: &str, force: bool) -> Result<()> {
 }
 
 fn validate(project: &Path) -> Result<()> {
+    use crate::world::compile::{compile_astronomy, compile_climate, compile_demographics, compile_hydrology};
     let def = load(project)?;
     println!(
         "ok — world `{}`, seed {:#x}, primary language `{}`",
@@ -957,7 +958,27 @@ fn validate(project: &Path) -> Result<()> {
         def.seed_u64(),
         def.primary_language
     );
-    println!("  astronomy: {} moon(s), {}-month calendar", def.astronomy.moons.len(), def.astronomy.calendar.months);
+    // WORLD-7 (W7-P4) — validate every layer actually compiles, not just that
+    // the definition parses. A broken DEM path or an inconsistent block surfaces
+    // here as a compile error rather than at materialize time.
+    let astro = compile_astronomy(&def.astronomy);
+    println!(
+        "  astronomy:    ok · {} moon(s), {}-month calendar",
+        def.astronomy.moons.len(),
+        def.astronomy.calendar.months
+    );
+    let geo = geology_for(project, &def)?;
+    println!("  geology:      ok · {} plate(s), {} continent(s)", geo.plates.len(), geo.continents);
+    let climate = compile_climate(&def, &astro, &geo);
+    println!("  climate:      ok · {} biome(s)", climate.zones.len());
+    let hydro = compile_hydrology(&geo, &climate);
+    println!("  hydrology:    ok · {} river(s), {} lake(s)", hydro.river_count, hydro.lake_count);
+    let demo = compile_demographics(&climate, &hydro);
+    println!("  demographics: ok · {} settlement(s)", demo.settlements.len());
+    if let Some(m) = def.magic.as_ref() {
+        println!("  magic:        {}", if m.enabled { "ledger enabled" } else { "off" });
+    }
+    println!("all layers compile.");
     Ok(())
 }
 
