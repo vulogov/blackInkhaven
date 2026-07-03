@@ -4,7 +4,7 @@
 |---|---|
 | **RFC** | WORLD-4 *(authored as "WORLD-1"; renumbered — WORLD-1/2/3 are the shipped consistency pillar, 1.3.8/1.3.10/1.3.11)* |
 | **Title** | World Simulation (`inkhaven realworld` + real-time fact-checker) |
-| **Status** | **In progress — building incrementally in the 1.3.x cycle** |
+| **Status** | Shipped — 1.3.25–1.3.27 (all five layers + fact-checker); finished by [WORLD-7](WORLD-7_TRACK.md) in 1.6.0 |
 | **Created** | 2026-06-25 |
 | **Author** | Vladimir Ulogov |
 | **Target version** | author wrote 1.5.0; **pulled forward into the 1.3.x tree** (user-directed 2026-06-25) |

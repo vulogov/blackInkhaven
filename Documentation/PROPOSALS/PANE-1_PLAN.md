@@ -4,7 +4,7 @@
 |---|---|
 | **RFC** | PANE-1 |
 | **Title** | Output Pane Architecture |
-| **Status** | Draft |
+| **Status** | Shipped — 1.3.24–1.3.25 (Output pane architecture) |
 | **Created** | 2026-06-24 |
 | **Author** | Vladimir Ulogov |
 | **Target version** | 1.4.0 |
