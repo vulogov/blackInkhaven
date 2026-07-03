@@ -68,6 +68,7 @@ pub mod lang;
 pub mod world_prompts;
 pub mod prompts;
 pub mod show_dont_tell;
+pub mod style;
 pub mod stats;
 pub mod book_rag;
 pub(crate) mod book_walk;
@@ -453,6 +454,18 @@ pub enum Command {
         /// user book it can be omitted.
         #[arg(long)]
         book_name: Option<String>,
+    },
+
+    /// Run the deterministic style-warning detectors (filter-words,
+    /// repeated-phrase, show-don't-tell, anachronism) over the manuscript and
+    /// print a report — CLI/CI parity for the in-editor overlay (`Ctrl+V w`).
+    Style {
+        /// Scope to one user book (default: all non-system books).
+        #[arg(long)]
+        book_name: Option<String>,
+        /// Detector language (default: the project's top-level `language`).
+        #[arg(long)]
+        language: Option<String>,
     },
 
     /// 1.2.12+ — export the project-wide concordance (every
@@ -4913,6 +4926,9 @@ impl Cli {
             }
             Command::Stats { book_name } => {
                 stats::run(&project, book_name.as_deref()).map_err(Into::into)
+            }
+            Command::Style { book_name, language } => {
+                style::run(&project, book_name, language).map_err(Into::into)
             }
             Command::Doctor { voices, tts_test, filter_words_snippet, scan, json, class, autofix, yes } => {
                 if filter_words_snippet {
