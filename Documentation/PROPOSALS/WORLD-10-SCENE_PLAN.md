@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Proposed · closes out WORLD-10 (the last "The Desk" piece) |
+| **Status** | **Shipped** (S-P1..S-P4) · closes out WORLD-10 |
 | **Builds on** | `realworld scene` (the composition), `world/weather.rs`, `world/timeline_context.rs` (WORLD-5), the polities/culture layers, `resolve_place_link` |
 | **Theme** | Make the world *present while you write*: for the scene under the cursor, show its season/weather, place, and people — ambiently, without leaving the editor. |
 

@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Largely shipped in 1.6.0 — WORLD-8 (P1+P2), WORLD-9 (Polities + Culture), Ecology, and WORLD-10 (Weather + Travel) all landed. Scene world-context + richer history (migrations/polity arcs) remain. |
+| **Status** | Shipped in 1.6.0 — WORLD-8 (History, incl. migrations/polity arcs), WORLD-9 (Polities + Culture), Ecology, and WORLD-10 (Weather, Travel, **Scene world-context**) all landed. The three dimensions — Time, Peoples, the Desk — are now real. Remaining: nearest-features proximity in the scene brief; time-evolution ("run the clock") as a stretch. |
 | **Builds on** | WORLD-4 (layered sim), WORLD-6 (utopia coherence), WORLD-7 (unify / surface / bridge / cleanup) |
 | **Organizing insight** | The sim today builds a **place** — a present-day physical + demographic snapshot. It does not yet have a **time** (history), a **people** (culture / polities), or a **presence at the desk** (integration into the act of writing). Those three dimensions are where the remaining value is. |
 
@@ -43,7 +43,7 @@ The sim is compiled and materialised, but it does not yet *show up while you wri
 
 | Track | What it adds | Builds on | Value / risk |
 |---|---|---|---|
-| **WORLD-10 · Scene world-context** | For the open scene's place + Timeline date, surface the relevant world facts (season, weather, nearby rivers / terrain, local culture) as ambient writing context. | place/gazetteer, calendar bridge, climate / astronomy | **Composition shipped** — `realworld scene --place <name> --day <N>` briefs season+weather at the place's latitude, its biome/climate, and the nearest realm's culture. **Open**: the in-editor pane that auto-detects the scene's place (wiki-links) + date (`timeline_context`) and shows this ambiently — the "at the desk" surface. |
+| **WORLD-10 · Scene world-context** | For the open scene's place + Timeline date, surface the relevant world facts (season, weather, local culture) as ambient writing context. | place/gazetteer, calendar bridge, climate / astronomy | **✅ Shipped** — `realworld scene` (the composition) + the in-editor surface: an ambient **footer chip** (self-gating, `tick_scene_context`) and a **"This scene"** header in the `Ctrl+B W` overview. Place/date resolve from a place-linked Timeline event, then a paragraph link to a Place (no wiki-links). See [WORLD-10-SCENE_PLAN.md](WORLD-10-SCENE_PLAN.md). |
 | **Travel / distance continuity checker** | The map carries coordinates + terrain; check prose travel claims ("rode A→B in a day") against real distance / terrain. | map `MapSpec` coords, geology / hydrology | **✅ Shipped** — `realworld travel` / `src/world/travel.rs`: real distance from planet + grid vs. the mode's pace; consults the magic ledger's `travel_time`. (Coord inputs; place-name resolution is a follow-up.) |
 | **Weather / season at a date** | Given a scene's date + latitude, compute the season / insolation (astronomy already models this). | astronomy seasons, climate | **✅ Shipped** — `realworld weather` / `src/world/weather.rs`: hemisphere-corrected season + interpolated insolation for a day-of-year + latitude. |
 
