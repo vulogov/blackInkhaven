@@ -4291,6 +4291,8 @@ pub enum RealworldCommand {
     Ecology,
     /// WORLD-9 — nations formed by clustering settlements around their capitals.
     Polities,
+    /// WORLD-9 — one culture per polity (ethos, belief, a conlang profile).
+    Culture,
     /// Show the magic ledger — the declared exceptions to physics the
     /// fact-checker will respect. Edit it in the `magic:` block of `world.hjson`.
     Magic {
