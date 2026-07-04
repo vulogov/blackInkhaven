@@ -30,7 +30,12 @@ impl Counts {
     }
 }
 
-pub fn run(project: &Path, book_name: Option<String>, language: Option<String>) -> Result<()> {
+pub fn run(
+    project: &Path,
+    book_name: Option<String>,
+    language: Option<String>,
+    json: bool,
+) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
     let cfg = Config::load_layered(&layout.config_path())?;
@@ -93,7 +98,41 @@ pub fn run(project: &Path, book_name: Option<String>, language: Option<String>) 
         }
     }
 
+    per_para.sort_by(|a, b| b.1.total().cmp(&a.1.total()));
     let scope = book_name.as_deref().unwrap_or("manuscript");
+
+    if json {
+        let paras: Vec<_> = per_para
+            .iter()
+            .map(|(title, c)| {
+                serde_json::json!({
+                    "title": title,
+                    "filter_words": c.filter,
+                    "repeated_phrase": c.repeated,
+                    "show_dont_tell": c.show,
+                    "anachronism": c.anachronism,
+                    "total": c.total(),
+                })
+            })
+            .collect();
+        let out = serde_json::json!({
+            "scope": scope,
+            "language": lang,
+            "paragraphs_total": paragraphs,
+            "paragraphs_flagged": per_para.len(),
+            "totals": {
+                "filter_words": totals.filter,
+                "repeated_phrase": totals.repeated,
+                "show_dont_tell": totals.show,
+                "anachronism": totals.anachronism,
+                "total": totals.total(),
+            },
+            "paragraphs": paras,
+        });
+        println!("{}", serde_json::to_string_pretty(&out).unwrap_or_default());
+        return Ok(());
+    }
+
     println!(
         "style · {scope} ({lang}) — {} of {paragraphs} paragraph(s) flagged",
         per_para.len()
@@ -104,7 +143,6 @@ pub fn run(project: &Path, book_name: Option<String>, language: Option<String>) 
     println!("  anachronism:     {}", totals.anachronism);
     println!("  total:           {}", totals.total());
 
-    per_para.sort_by(|a, b| b.1.total().cmp(&a.1.total()));
     if !per_para.is_empty() {
         println!("\ntop paragraphs (f=filter r=repeat s=show-tell a=anachronism):");
         for (title, c) in per_para.iter().take(15) {

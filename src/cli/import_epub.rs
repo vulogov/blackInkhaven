@@ -40,6 +40,9 @@ pub fn run(
         report.images_imported,
         report.images_extracted,
     );
+    if let Some(author) = &report.author {
+        println!("  author:     {author}  (set your book metadata / manuscript author to match)");
+    }
     if report.images_extracted > 0 && !dry_run {
         println!(
             "  ({} unreferenced image(s) extracted to `{}-images/` for hand-placement)",
