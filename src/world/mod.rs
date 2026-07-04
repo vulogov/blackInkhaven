@@ -39,6 +39,7 @@ pub mod proposals;
 pub mod storage;
 pub mod timeline_context;
 pub mod types;
+pub mod weather;
 // WORLD-6 — utopian/dystopian coherence checker.
 pub mod utopia;
 

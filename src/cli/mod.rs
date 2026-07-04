@@ -4278,6 +4278,15 @@ pub enum RealworldCommand {
         #[arg(long)]
         materialize: bool,
     },
+    /// WORLD-10 — the local season + insolation for a day-of-year at a latitude.
+    Weather {
+        /// Day of the year (0-based).
+        #[arg(long, default_value_t = 0.0)]
+        day: f64,
+        /// Latitude in degrees (negative = southern hemisphere).
+        #[arg(long, default_value_t = 45.0)]
+        lat: f64,
+    },
     /// Show the magic ledger — the declared exceptions to physics the
     /// fact-checker will respect. Edit it in the `magic:` block of `world.hjson`.
     Magic {

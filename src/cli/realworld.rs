@@ -29,6 +29,7 @@ pub fn run(project: &Path, cmd: RealworldCommand) -> Result<()> {
         RealworldCommand::Calendar => calendar(project),
         RealworldCommand::Gazetteer { output } => gazetteer(project, output.as_deref()),
         RealworldCommand::History { json, materialize } => history(project, json, materialize),
+        RealworldCommand::Weather { day, lat } => weather(project, day, lat),
         RealworldCommand::Magic { materialize } => magic(project, materialize),
         RealworldCommand::Map { spec_only, no_ingest } => map(project, spec_only, no_ingest),
         RealworldCommand::CoLocation => co_location(project),
@@ -675,6 +676,27 @@ fn calendar(project: &Path) -> Result<()> {
         .map_err(|e| Error::Store(format!("serializing calendar: {e}")))?;
     println!(
         "\nAdopt it as your story's calendar — set `timeline.enabled: true` and paste this\nas `timeline.calendar` in inkhaven.hjson:\n\n{body}"
+    );
+    Ok(())
+}
+
+/// WORLD-10 — `realworld weather --day <N> --lat <deg>`: the local season +
+/// relative insolation for a day-of-year at a latitude, from the compiled
+/// astronomy. So a scene's weather stays consistent with the planet.
+fn weather(project: &Path, day: f64, lat: f64) -> Result<()> {
+    use crate::world::compile::compile_astronomy;
+    let def = load(project)?;
+    let astro = compile_astronomy(&def.astronomy);
+    let w = crate::world::weather::weather_at(&astro, day, lat);
+    println!(
+        "weather · {} · day {:.0} of {:.0} · lat {:.0}°",
+        def.name, day, astro.year_length_planet_days, lat
+    );
+    println!("  season:     {}", w.season);
+    println!("  conditions: {}", w.descriptor);
+    println!(
+        "  insolation: {:.2} (relative, at the {:.0}° band)",
+        w.insolation, w.lat_band_deg
     );
     Ok(())
 }
