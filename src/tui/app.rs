@@ -1728,6 +1728,14 @@ pub(crate) struct App {
     ie_last_fp: Option<(Uuid, u64)>,
     ie_activity_at: Option<std::time::Instant>,
     ie_needs_check: bool,
+    /// INNER-THEOLOGIAN-1 — ambient paragraph-idle nudge. Gated by
+    /// `theologian.enabled && theologian.on_paragraph_idle` (both default on).
+    /// On idle, poses the single Category-1 cost-of-harm question into Output
+    /// (deterministic, zero-cost — the deliberate LLM engage stays on
+    /// `Ctrl+B J→T`). `theo_last_fp` debounces per content version.
+    theo_last_fp: Option<(Uuid, u64)>,
+    theo_activity_at: Option<std::time::Instant>,
+    theo_needs_check: bool,
     /// NARR-1 — ambient prose check toggle (`Ctrl+V Shift+V`); seeded from
     /// `prose.ambient`. `prose_last_run` is the cooldown floor.
     prose_auto: bool,
@@ -3001,6 +3009,9 @@ impl App {
             socr_last_fp: None,
             socr_activity_at: None,
             socr_needs_check: false,
+            theo_last_fp: None,
+            theo_activity_at: None,
+            theo_needs_check: false,
             ie_auto: false,
             ie_last_fp: None,
             ie_activity_at: None,
@@ -3335,6 +3346,7 @@ impl App {
             self.tick_health_pump();
             self.tick_fact_check();
             self.tick_inner_socrates();
+            self.tick_inner_theologian();
             self.tick_inner_editor();
             self.tick_tree_badges();
             // 1.2.9+ — close the TTS playback modal as
@@ -14721,6 +14733,66 @@ impl App {
                 }
             }
         }
+    }
+
+    /// INNER-THEOLOGIAN-1 — the ambient paragraph-idle nudge, mirroring the
+    /// Socratic ambient (deterministic, zero-cost, into Output). Gated by
+    /// `theologian.enabled && theologian.on_paragraph_idle`.
+    fn tick_inner_theologian(&mut self) {
+        if !self.cfg.theologian.enabled || !self.cfg.theologian.on_paragraph_idle {
+            return;
+        }
+        let fp = self.opened.as_ref().map(content_fingerprint);
+        if fp != self.theo_last_fp {
+            // An edit re-arms the idle timer; nothing fires until the pause.
+            self.theo_last_fp = fp;
+            self.theo_activity_at = fp.map(|_| std::time::Instant::now());
+            self.theo_needs_check = fp.is_some();
+            return;
+        }
+        if self.theo_needs_check && matches!(self.modal, Modal::None) {
+            if let Some(t) = self.theo_activity_at {
+                let idle = self
+                    .cfg
+                    .theologian
+                    .idle_threshold_seconds
+                    .unwrap_or(self.cfg.editor.fact_check_idle_seconds);
+                if t.elapsed() >= std::time::Duration::from_secs(idle) {
+                    self.theo_needs_check = false;
+                    self.auto_theologian_nudge();
+                }
+            }
+        }
+    }
+
+    /// Pose the single Category-1 cost-of-harm question for the open paragraph
+    /// into Output (no LLM — the deliberate slow session stays on `Ctrl+B J→T`).
+    fn auto_theologian_nudge(&mut self) {
+        use crate::pane::output::{kinds, Lifetime, Message, Severity};
+        let Some(doc) = self.opened.as_ref() else { return };
+        // Prose only — skip jinja templates and structural non-prose.
+        if doc.content_type.as_deref() == Some("jinja")
+            || self.hierarchy.get(doc.id).is_some_and(is_structural_nonprose)
+        {
+            return;
+        }
+        if doc.textarea.lines().join("\n").trim().is_empty() {
+            return;
+        }
+        let id = doc.id;
+        let question = crate::inner_theologian::auto_fire_question();
+        let msg = Message::new(
+            kinds::THEOLOGIAN,
+            Severity::Info,
+            Lifetime::UntilActedOn,
+            serde_json::json!({
+                "text": format!("[theologian] {question} → Ctrl+B J→T to explore"),
+                "category": "theologian",
+                "signal": "auto_fire",
+            }),
+        )
+        .with_source_paragraph(id);
+        crate::pane::output::emit(&msg);
     }
 
     /// 1.3.34+ — recompute the tree report-card badges no more than ~once a second.
