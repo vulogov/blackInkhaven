@@ -56,7 +56,66 @@ pub struct CheckContext<'a> {
     pub season: Option<&'a str>,
 }
 
+/// The built-in fact-check categories a rule's `covers` can target. Advisory:
+/// a project may introduce its own, and a checker that emits a custom category
+/// will still be suppressed by a matching rule.
+pub const KNOWN_CATEGORIES: &[&str] = &[
+    "astronomy",
+    "climate",
+    "climate_anomaly",
+    "date_coherence",
+    "demographics",
+    "economy",
+    "travel_time",
+    "character_age",
+];
+
 impl MagicLedger {
+    /// WORLD-7 (W7-P4) — lint the ledger for internal problems. Returns advisory
+    /// strings; the ledger is never rejected (inform, never block). Catches the
+    /// dead / malformed / redundant cases so a one-time setup doesn't silently
+    /// fail to suppress.
+    pub fn lint(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        if self.enabled && self.rules.is_empty() {
+            out.push("ledger is enabled but has no rules".to_string());
+        }
+        if !self.enabled && !self.rules.is_empty() {
+            out.push(format!(
+                "{} rule(s) declared but the ledger is disabled (enabled: false) — nothing suppresses",
+                self.rules.len()
+            ));
+        }
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for (i, r) in self.rules.iter().enumerate() {
+            let label = if r.kind.trim().is_empty() {
+                format!("rule #{}", i + 1)
+            } else {
+                format!("rule `{}`", r.kind)
+            };
+            if r.kind.trim().is_empty() {
+                out.push(format!("{label}: empty `kind`"));
+            }
+            if r.covers.is_empty() {
+                out.push(format!("{label}: covers no category — it can never suppress a warning"));
+            }
+            for c in &r.covers {
+                if !c.eq_ignore_ascii_case("any") && !KNOWN_CATEGORIES.contains(&c.as_str()) {
+                    out.push(format!(
+                        "{label}: `{c}` is not a built-in fact-check category (check spelling; a custom one is fine)"
+                    ));
+                }
+            }
+            let mut covers_sorted = r.covers.clone();
+            covers_sorted.sort();
+            let sig = format!("{}|{}", r.kind.to_lowercase(), covers_sorted.join(","));
+            if !r.kind.trim().is_empty() && !seen.insert(sig) {
+                out.push(format!("{label}: duplicate of an earlier rule (same kind + covers)"));
+            }
+        }
+        out
+    }
+
     /// Find a rule that suppresses a candidate finding in the given context — the
     /// fact-checker's lazy consultation. `None` means "emit the warning".
     pub fn find_suppressor(&self, ctx: &CheckContext) -> Option<&MagicRule> {
@@ -169,5 +228,36 @@ mod tests {
         let roles = vec!["royal_messenger".to_string()];
         let ctx = CheckContext { category: "travel_time", roles: &roles, ..Default::default() };
         assert!(l.find_suppressor(&ctx).is_none());
+    }
+
+    #[test]
+    fn lint_passes_a_clean_ledger() {
+        assert!(ledger().lint().is_empty());
+    }
+
+    #[test]
+    fn lint_flags_the_dead_and_malformed_cases() {
+        let body = r#"{
+            enabled: true
+            rules: [
+                { kind: "", covers: ["travel_time"] }
+                { kind: "windwalk", covers: [] }
+                { kind: "seer", covers: ["climat"] }
+                { kind: "windwalk", covers: [] }
+            ]
+        }"#;
+        let l: MagicLedger = serde_hjson::from_str(body).unwrap();
+        let out = l.lint();
+        assert!(out.iter().any(|s| s.contains("empty `kind`")));
+        assert!(out.iter().any(|s| s.contains("covers no category")));
+        assert!(out.iter().any(|s| s.contains("not a built-in fact-check category")));
+        assert!(out.iter().any(|s| s.contains("duplicate")));
+    }
+
+    #[test]
+    fn lint_flags_disabled_with_rules() {
+        let mut l = ledger();
+        l.enabled = false;
+        assert!(l.lint().iter().any(|s| s.contains("disabled")));
     }
 }

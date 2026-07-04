@@ -4261,6 +4261,13 @@ pub enum RealworldCommand {
     /// WORLD-7 — derive a story-Timeline calendar from the world's astronomy
     /// (months, season markers) and print it to adopt under `timeline.calendar`.
     Calendar,
+    /// WORLD-7 — emit a consolidated Markdown world reference (calendar, sky,
+    /// regions, landmarks, waters, settlements, economy, magic).
+    Gazetteer {
+        /// Write to a file instead of stdout (e.g. a manuscript appendix source).
+        #[arg(long)]
+        output: Option<String>,
+    },
     /// Show the magic ledger — the declared exceptions to physics the
     /// fact-checker will respect. Edit it in the `magic:` block of `world.hjson`.
     Magic {
