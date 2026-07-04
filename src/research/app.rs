@@ -155,6 +155,13 @@ pub(super) struct GeonamesState {
     query: String,
 }
 
+/// RESRCH-5 (R5-F) — an in-flight `/deadsources` sweep. `checked` is the number
+/// of sources examined, for the summary line.
+pub(super) struct DeadLinksState {
+    rx: mpsc::UnboundedReceiver<std::result::Result<Vec<super::deadlinks::DeadLink>, String>>,
+    checked: usize,
+}
+
 /// RESRCH-GUTENBERG — an in-flight `/gutenberg` search + text fetch. Carries the
 /// optional `--chapter` selector (PG-P4) through to ingestion.
 type GutenbergFetch = (super::gutenberg::GutenbergBook, String, Vec<super::gutenberg::GutenbergBook>);
@@ -367,6 +374,7 @@ pub(crate) struct ResearchApp {
     web: Option<WebState>,
     wikidata_state: Option<WikidataState>,
     geonames_state: Option<GeonamesState>,
+    deadlinks_state: Option<DeadLinksState>,
     gutenberg_state: Option<GutenbergState>,
     scholarly_state: Option<ScholarlyState>,
     triangulate: Option<TriangulateState>,
@@ -471,6 +479,7 @@ impl ResearchApp {
             web: None,
             wikidata_state: None,
             geonames_state: None,
+            deadlinks_state: None,
             gutenberg_state: None,
             scholarly_state: None,
             triangulate: None,
@@ -535,6 +544,7 @@ impl ResearchApp {
             self.poll_web();
             self.poll_wikidata();
             self.poll_geonames();
+            self.poll_deadlinks();
             self.poll_gutenberg();
             self.poll_scholarly();
             self.poll_triangulate();
@@ -964,6 +974,7 @@ impl ResearchApp {
             Command::Bibliography => self.run_bibliography(),
             Command::Upgrade(path) => self.start_upgrade(path.as_deref()),
             Command::Stale(arg) => self.run_stale(arg.as_deref()),
+            Command::DeadSources => self.start_deadlinks(),
             Command::Sources => self.run_sources(),
             Command::Promote { note, path } => self.start_promote(note, path),
             Command::Import(path) => match path {
@@ -2017,6 +2028,112 @@ impl ResearchApp {
                 ));
             }
             Err(e) => self.status_message = Some(format!("geonames: {e}")),
+        }
+    }
+
+    /// RESRCH-5 (R5-F) — `/deadsources`: check every `web` URL (HTTP) and
+    /// `document` file (disk) in the provenance sidecar and report the ones that
+    /// no longer resolve. Read-only; runs async so the UI stays responsive.
+    fn start_deadlinks(&mut self) {
+        if self.deadlinks_state.is_some() {
+            self.status_message = Some("a dead-source sweep is already running".to_string());
+            return;
+        }
+        let root = self.layout.root.clone();
+        let mut immediate: Vec<super::deadlinks::DeadLink> = Vec::new();
+        let mut web: Vec<(String, String)> = Vec::new(); // (loc, url)
+        let mut doc_examined = 0usize;
+        for (id, rec) in &self.fact_provenance.facts {
+            let loc = uuid::Uuid::parse_str(id)
+                .ok()
+                .and_then(|u| self.hierarchy.get(u))
+                .map(|n| self.hierarchy.slug_path(n))
+                .unwrap_or_else(|| id.clone());
+            match rec.origin.as_str() {
+                "web" if rec.detail.starts_with("http") => web.push((loc, rec.detail.clone())),
+                "document" if !rec.detail.is_empty() => {
+                    doc_examined += 1;
+                    let p = std::path::Path::new(&rec.detail);
+                    let abs = if p.is_absolute() { p.to_path_buf() } else { root.join(p) };
+                    if !abs.exists() {
+                        immediate.push(super::deadlinks::DeadLink {
+                            loc,
+                            origin: "document".into(),
+                            target: rec.detail.clone(),
+                            reason: "file missing".into(),
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let checked = web.len() + doc_examined;
+        if checked == 0 {
+            self.chat_history.push(ChatTurn::with_response(
+                "/deadsources".to_string(),
+                "No web or document sources to check — the corpus has no external links.".to_string(),
+            ));
+            self.chat_scroll = 0;
+            return;
+        }
+
+        let (tx, rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let out = async {
+                let client = super::deadlinks::client().map_err(|e| e.to_string())?;
+                let mut dead = immediate;
+                for (loc, url) in web {
+                    if let Some(reason) = super::deadlinks::check_web(&client, &url).await {
+                        dead.push(super::deadlinks::DeadLink {
+                            loc,
+                            origin: "web".into(),
+                            target: url,
+                            reason,
+                        });
+                    }
+                }
+                Ok::<_, String>(dead)
+            }
+            .await;
+            let _ = tx.send(out);
+        });
+        self.deadlinks_state = Some(DeadLinksState { rx, checked });
+        self.status_message = Some(format!("Checking {checked} source(s) for link rot…"));
+    }
+
+    /// Drain the in-flight dead-source sweep and report.
+    fn poll_deadlinks(&mut self) {
+        let Some(st) = self.deadlinks_state.as_mut() else { return };
+        let result = match st.rx.try_recv() {
+            Ok(r) => r,
+            Err(mpsc::error::TryRecvError::Empty) => return,
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                self.deadlinks_state = None;
+                self.status_message = Some("deadsources: request cancelled".to_string());
+                return;
+            }
+        };
+        let checked = self.deadlinks_state.take().unwrap().checked;
+        match result {
+            Ok(dead) => {
+                let body = if dead.is_empty() {
+                    format!("[/deadsources] checked {checked} source(s) — all resolve. No link rot.")
+                } else {
+                    let mut s = format!(
+                        "[/deadsources — {} dead of {checked} checked · re-source or /upgrade]\n",
+                        dead.len()
+                    );
+                    for d in &dead {
+                        s.push_str(&format!("· [{}] {}  {}  ({})\n", d.origin, d.reason, d.target, d.loc));
+                    }
+                    s
+                };
+                self.status_message = Some(format!("dead-source sweep: {} dead of {checked}", dead.len()));
+                self.chat_history.push(ChatTurn::with_response("/deadsources".to_string(), body));
+                self.chat_scroll = 0;
+            }
+            Err(e) => self.status_message = Some(format!("deadsources: {e}")),
         }
     }
 
