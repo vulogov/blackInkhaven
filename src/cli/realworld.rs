@@ -27,6 +27,7 @@ pub fn run(project: &Path, cmd: RealworldCommand) -> Result<()> {
         RealworldCommand::Proposals { cmd } => proposals(project, cmd),
         RealworldCommand::Places => places(project),
         RealworldCommand::Calendar => calendar(project),
+        RealworldCommand::Gazetteer { output } => gazetteer(project, output.as_deref()),
         RealworldCommand::Magic { materialize } => magic(project, materialize),
         RealworldCommand::Map { spec_only, no_ingest } => map(project, spec_only, no_ingest),
         RealworldCommand::CoLocation => co_location(project),
@@ -548,6 +549,18 @@ fn magic(project: &Path, materialize: bool) -> Result<()> {
             }
         }
     }
+    // W7-P4 — validate the ledger for dead / malformed / redundant rules.
+    let issues = ledger.lint();
+    if issues.is_empty() {
+        if !ledger.rules.is_empty() {
+            println!("  ✓ ledger is consistent");
+        }
+    } else {
+        println!("  {} issue(s):", issues.len());
+        for w in &issues {
+            println!("    ⚠ {w}");
+        }
+    }
     if materialize {
         use crate::config::Config;
         use crate::project::ProjectLayout;
@@ -662,6 +675,179 @@ fn calendar(project: &Path) -> Result<()> {
     println!(
         "\nAdopt it as your story's calendar — set `timeline.enabled: true` and paste this\nas `timeline.calendar` in inkhaven.hjson:\n\n{body}"
     );
+    Ok(())
+}
+
+/// WORLD-7 (W7-P4) — `realworld gazetteer [--output PATH]`: a consolidated,
+/// Markdown world reference (calendar, sky, regions, landmarks, waters,
+/// settlements, economy, magic) from the definition + compiled layers. Print to
+/// stdout, or write it beside the manuscript as an appendix source.
+fn gazetteer(project: &Path, output: Option<&str>) -> Result<()> {
+    use crate::world::compile::{compile_astronomy, compile_climate, compile_demographics, compile_hydrology};
+    use std::fmt::Write;
+    let def = load(project)?;
+    let astro = compile_astronomy(&def.astronomy);
+    let geo = geology_for(project, &def)?;
+    let climate = compile_climate(&def, &astro, &geo);
+    let hydro = compile_hydrology(&geo, &climate);
+    let demo = compile_demographics(&climate, &hydro);
+
+    let mut md = String::new();
+    let _ = writeln!(md, "# {} — World Gazetteer\n", def.name);
+    let _ = writeln!(md, "_Seed {:#x} · primary language {}_", def.seed_u64(), def.primary_language);
+
+    let cal = &def.astronomy.calendar;
+    let _ = writeln!(md, "\n## Calendar\n");
+    let _ = writeln!(
+        md,
+        "{} months × {} days = {}-day year.",
+        cal.months,
+        cal.month_length_days,
+        cal.months.saturating_mul(cal.month_length_days)
+    );
+    if !cal.month_names.is_empty() {
+        let _ = writeln!(md, "\nMonths: {}.", cal.month_names.join(", "));
+    }
+    let mut seasons = astro.seasons.clone();
+    seasons.sort_by(|a, b| a.year_fraction.partial_cmp(&b.year_fraction).unwrap_or(std::cmp::Ordering::Equal));
+    if !seasons.is_empty() {
+        let s = seasons.iter().map(|m| m.name.replace('_', " ")).collect::<Vec<_>>().join(" · ");
+        let _ = writeln!(md, "\nSeasons: {s}.");
+    }
+
+    let _ = writeln!(md, "\n## Sky\n");
+    let _ = writeln!(
+        md,
+        "- Star {} (luminosity {} L☉, {:.2} M☉)",
+        def.astronomy.star.class, def.astronomy.star.luminosity_solar, astro.stellar_mass_solar
+    );
+    let _ = writeln!(
+        md,
+        "- Year {:.1} planet-days · axial tilt {:.1}°",
+        astro.year_length_planet_days, astro.axial_tilt_deg
+    );
+    for m in &astro.moons {
+        let _ = writeln!(md, "- Moon {} · synodic {:.1} planet-days", m.name, m.synodic_period_planet_days);
+    }
+
+    if let Some(g) = &def.geography {
+        if !g.regions.is_empty() {
+            let _ = writeln!(md, "\n## Regions\n");
+            for r in &g.regions {
+                let _ = write!(md, "- **{}**", r.name);
+                let facets: Vec<&str> = [r.biome.as_str(), r.climate.as_str()]
+                    .into_iter()
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                if !facets.is_empty() {
+                    let _ = write!(md, " · {}", facets.join(", "));
+                }
+                if !r.description.is_empty() {
+                    let _ = write!(md, " — {}", r.description);
+                }
+                let _ = writeln!(md);
+            }
+        }
+        if !g.landmarks.is_empty() {
+            let _ = writeln!(md, "\n## Landmarks\n");
+            for l in &g.landmarks {
+                let _ = write!(md, "- **{}**", l.name);
+                if !l.kind.is_empty() {
+                    let _ = write!(md, " ({})", l.kind);
+                }
+                if l.population > 0 {
+                    let _ = write!(md, " · pop {}", fmt_pop(l.population));
+                }
+                if !l.description.is_empty() {
+                    let _ = write!(md, " — {}", l.description);
+                }
+                let _ = writeln!(md);
+            }
+        }
+    }
+
+    let _ = writeln!(md, "\n## Waters\n");
+    let _ = writeln!(
+        md,
+        "Procedural: {} river(s), {} lake(s), {} watershed(s).",
+        hydro.river_count, hydro.lake_count, hydro.watershed_count
+    );
+    if let Some(h) = &def.hydrology {
+        if !h.rainfall.is_empty() {
+            let _ = writeln!(md, "\nRainfall: {}.", h.rainfall);
+        }
+        for (label, list) in [("Rivers", &h.rivers), ("Lakes", &h.lakes), ("Seas", &h.seas)] {
+            if !list.is_empty() {
+                let _ = writeln!(md, "\n**{label}**\n");
+                for w in list {
+                    let _ = write!(md, "- {}", w.name);
+                    if !w.description.is_empty() {
+                        let _ = write!(md, " — {}", w.description);
+                    }
+                    let _ = writeln!(md);
+                }
+            }
+        }
+    }
+
+    if !demo.settlements.is_empty() {
+        let _ = writeln!(md, "\n## Settlements\n");
+        let _ = writeln!(
+            md,
+            "Population {} across {} settlement(s).\n",
+            fmt_pop(demo.total_population),
+            demo.settlements.len()
+        );
+        for s in demo.settlements.iter().take(12) {
+            let _ = writeln!(
+                md,
+                "- {} at ({}, {}) · pop {} · {}",
+                s.class, s.x, s.y, fmt_pop(s.population), s.biome
+            );
+        }
+    }
+
+    if let Some(e) = &def.economy {
+        let _ = writeln!(md, "\n## Economy\n");
+        if !e.tech_level.is_empty() {
+            let _ = writeln!(md, "- Tech level: {}", e.tech_level);
+        }
+        if !e.currency.is_empty() {
+            let _ = writeln!(md, "- Currency: {}", e.currency);
+        }
+        if !e.trade_goods.is_empty() {
+            let _ = writeln!(md, "- Trade goods: {}", e.trade_goods.join(", "));
+        }
+        if !e.resources.is_empty() {
+            let _ = writeln!(md, "- Resources: {}", e.resources.join(", "));
+        }
+    }
+
+    if let Some(m) = &def.magic {
+        if !m.rules.is_empty() {
+            let _ = writeln!(md, "\n## Magic\n");
+            let _ = writeln!(md, "_{}_\n", if m.enabled { "enabled" } else { "disabled" });
+            for r in &m.rules {
+                let _ = write!(md, "- **{}**", r.kind);
+                if !r.covers.is_empty() {
+                    let _ = write!(md, " (covers {})", r.covers.join(", "));
+                }
+                if !r.description.is_empty() {
+                    let _ = write!(md, " — {}", r.description);
+                }
+                let _ = writeln!(md);
+            }
+        }
+    }
+
+    match output {
+        Some(path) => {
+            crate::io_atomic::write(std::path::Path::new(path), md.as_bytes())
+                .map_err(|e| Error::Store(format!("writing {path}: {e}")))?;
+            println!("gazetteer · {} → {} ({} lines)", def.name, path, md.lines().count());
+        }
+        None => print!("{md}"),
+    }
     Ok(())
 }
 
@@ -976,7 +1162,15 @@ fn validate(project: &Path) -> Result<()> {
     let demo = compile_demographics(&climate, &hydro);
     println!("  demographics: ok · {} settlement(s)", demo.settlements.len());
     if let Some(m) = def.magic.as_ref() {
-        println!("  magic:        {}", if m.enabled { "ledger enabled" } else { "off" });
+        let issues = m.lint();
+        if issues.is_empty() {
+            println!("  magic:        ok · {}", if m.enabled { "ledger enabled" } else { "off" });
+        } else {
+            println!("  magic:        {} issue(s):", issues.len());
+            for w in &issues {
+                println!("                  ⚠ {w}");
+            }
+        }
     }
     println!("all layers compile.");
     Ok(())
