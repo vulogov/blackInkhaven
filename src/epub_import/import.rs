@@ -34,6 +34,9 @@ pub struct EpubImportOpts {
 #[derive(Debug, Default)]
 pub struct EpubImportReport {
     pub book_title: String,
+    /// The EPUB's `dc:creator`, surfaced so the author can set book metadata
+    /// (inkhaven has no per-book author field to store it in yet).
+    pub author: Option<String>,
     pub chapters_created: usize,
     pub paragraphs_created: usize,
     /// Images referenced in a chapter and imported as `NodeKind::Image` nodes
@@ -66,6 +69,7 @@ pub fn import_epub(
         .or_else(|| (!pkg.title.trim().is_empty()).then(|| pkg.title.clone()))
         .unwrap_or_else(|| "Imported EPUB".to_string());
     report.book_title = book_title.clone();
+    report.author = pkg.author.clone().filter(|a| !a.trim().is_empty());
 
     let image_items: Vec<&super::package::ManifestItem> = pkg
         .manifest

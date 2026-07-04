@@ -466,6 +466,9 @@ pub enum Command {
         /// Detector language (default: the project's top-level `language`).
         #[arg(long)]
         language: Option<String>,
+        /// Emit the report as JSON (per-kind totals + per-paragraph counts) for CI.
+        #[arg(long)]
+        json: bool,
     },
 
     /// 1.2.12+ — export the project-wide concordance (every
@@ -5000,8 +5003,8 @@ impl Cli {
             Command::Stats { book_name } => {
                 stats::run(&project, book_name.as_deref()).map_err(Into::into)
             }
-            Command::Style { book_name, language } => {
-                style::run(&project, book_name, language).map_err(Into::into)
+            Command::Style { book_name, language, json } => {
+                style::run(&project, book_name, language, json).map_err(Into::into)
             }
             Command::Doctor { voices, tts_test, filter_words_snippet, scan, json, class, autofix, yes } => {
                 if filter_words_snippet {
