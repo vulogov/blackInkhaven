@@ -741,47 +741,42 @@ fn scene(project: &Path, place: Option<String>, day: f64, lat: Option<f64>) -> R
     let seed = def.seed_u64();
 
     let link = place.as_deref().map(|n| resolve_place_link(project, n)).transpose()?;
-    let latitude = lat
-        .or_else(|| link.as_ref().map(|l| row_to_latitude(l.y, climate.height)))
-        .unwrap_or(45.0);
+    let latitude = lat.or_else(|| link.as_ref().map(|l| row_to_latitude(l.y, climate.height)));
+
+    // Peoples for the nearest-realm culture, then the shared composition.
+    let pol = compile_polities(&demo, seed);
+    let capital_biomes: Vec<String> = pol
+        .polities
+        .iter()
+        .map(|q| {
+            demo.settlements
+                .iter()
+                .find(|s| (s.x, s.y) == q.capital_pos)
+                .map(|s| s.biome.clone())
+                .unwrap_or_default()
+        })
+        .collect();
+    let cul = compile_culture(&pol, &capital_biomes, seed);
+    let brief = crate::world::scene::scene_brief(&astro, &pol, &cul, link.as_ref(), Some(day), latitude);
 
     println!("scene · {}", def.name);
-    if let Some(l) = &link {
-        println!("  place:    {} · {} · {} at ({}, {})", l.name, l.biome, l.climate_zone, l.x, l.y);
+    if let (Some(name), Some(biome)) = (&brief.place, &brief.biome) {
+        let cz = brief.climate_zone.as_deref().unwrap_or("");
+        println!("  place:    {name} · {biome} {cz}");
     }
-    let w = crate::world::weather::weather_at(&astro, day, latitude);
-    println!("  when:     day {:.0} of {:.0} · lat {:.0}°", day, astro.year_length_planet_days, latitude);
-    println!("  season:   {} · {}", w.season, w.descriptor);
-
-    // The culture whose realm sits nearest the place.
-    let pol = compile_polities(&demo, seed);
-    if let (Some(l), false) = (&link, pol.polities.is_empty()) {
-        let nearest = pol
-            .polities
-            .iter()
-            .enumerate()
-            .min_by_key(|(_, p)| {
-                let dx = p.capital_pos.0 as i64 - l.x as i64;
-                let dy = p.capital_pos.1 as i64 - l.y as i64;
-                dx * dx + dy * dy
-            });
-        if let Some((i, p)) = nearest {
-            let capital_biomes: Vec<String> = pol
-                .polities
-                .iter()
-                .map(|q| {
-                    demo.settlements
-                        .iter()
-                        .find(|s| (s.x, s.y) == q.capital_pos)
-                        .map(|s| s.biome.clone())
-                        .unwrap_or_default()
-                })
-                .collect();
-            let cul = compile_culture(&pol, &capital_biomes, seed);
-            if let Some(c) = cul.cultures.get(i) {
-                println!("  people:   {} — {}", p.name, c.ethos);
-                println!("            belief: {} · tongue: {}", c.belief, c.language_profile);
-            }
+    println!(
+        "  when:     day {:.0} of {:.0}{}",
+        day,
+        astro.year_length_planet_days,
+        latitude.map(|l| format!(" · lat {l:.0}°")).unwrap_or_default()
+    );
+    if let (Some(s), Some(c)) = (&brief.season, &brief.conditions) {
+        println!("  season:   {s} · {c}");
+    }
+    if let Some(realm) = &brief.realm {
+        println!("  people:   {realm} — {}", brief.ethos.as_deref().unwrap_or(""));
+        if let (Some(b), Some(t)) = (&brief.belief, &brief.tongue) {
+            println!("            belief: {b} · tongue: {t}");
         }
     }
     Ok(())

@@ -36,6 +36,7 @@ pub mod fact_check_slow;
 pub mod materialize;
 pub mod plakat;
 pub mod proposals;
+pub mod scene;
 pub mod storage;
 pub mod timeline_context;
 pub mod travel;
