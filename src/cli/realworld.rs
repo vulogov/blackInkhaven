@@ -877,6 +877,9 @@ fn history(project: &Path, json: bool, materialize: bool) -> Result<()> {
             "foundings": hist.foundings.iter().map(|f| serde_json::json!({
                 "year": f.year, "label": f.label, "class": f.class, "population": f.population,
             })).collect::<Vec<_>>(),
+            "events": hist.events.iter().map(|e| serde_json::json!({
+                "year": e.year, "kind": e.kind, "description": e.description,
+            })).collect::<Vec<_>>(),
         });
         println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
         return Ok(());
@@ -886,6 +889,9 @@ fn history(project: &Path, json: bool, materialize: bool) -> Result<()> {
     for e in &hist.epochs {
         println!("\n  {} ({}…{})", e.name, e.start_year, e.end_year);
         println!("    {}", e.note);
+        for ev in hist.events.iter().filter(|v| v.year >= e.start_year && v.year < e.end_year) {
+            println!("    · year {:>5}  {}", ev.year, ev.description);
+        }
         for f in hist.foundings.iter().filter(|f| f.year >= e.start_year && f.year < e.end_year) {
             println!("    · year {:>5}  {} founded  (pop {})", f.year, f.label, fmt_pop(f.population));
         }

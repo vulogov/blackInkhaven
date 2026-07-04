@@ -29,14 +29,30 @@ pub struct Epoch {
     pub note: String,
 }
 
+/// A generated historical event beyond the foundings (a realm's rise or fall, a
+/// migration) — the narrative texture of the world's past.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HistEvent {
+    pub year: i64,
+    /// "rise" | "fall" | "migration".
+    pub kind: String,
+    pub description: String,
+}
+
 /// The compiled chronology.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HistoryOutput {
     /// Foundings, oldest first.
     pub foundings: Vec<Founding>,
     pub epochs: Vec<Epoch>,
+    /// Realm rises/falls + migrations, chronologically ordered.
+    pub events: Vec<HistEvent>,
     /// Total span of recorded history, in years.
     pub span_years: i64,
+}
+
+fn mix(a: u64, seed: u64) -> u64 {
+    a.wrapping_mul(2_654_435_761).wrapping_add(seed.wrapping_mul(40_503)).wrapping_add(0x9E37)
 }
 
 /// Weight of a settlement's siting toward antiquity — the best sites were
@@ -112,7 +128,49 @@ pub fn compile_history(demo: &DemographicsOutput, seed: u64) -> HistoryOutput {
         },
     ];
 
-    HistoryOutput { foundings, epochs, span_years: span }
+    // Richer events: polity rise/fall + migrations between biomes.
+    let mut events: Vec<HistEvent> = Vec::new();
+    let pol = super::polities_layer::compile_polities(demo, seed);
+    for (i, p) in pol.polities.iter().enumerate() {
+        // Realms rise across the early epochs, spread out.
+        let rise = -span + third * ((mix(i as u64, seed) % 3) as i64);
+        events.push(HistEvent {
+            year: rise,
+            kind: "rise".into(),
+            description: format!("the realm of {} rises around {}", p.name, p.capital),
+        });
+        // Roughly one in three wanes in a later age.
+        if mix(i as u64, seed.wrapping_add(11)) % 3 == 0 {
+            events.push(HistEvent {
+                year: -third + span / 6,
+                kind: "fall".into(),
+                description: format!("the realm of {} wanes", p.name),
+            });
+        }
+    }
+    // Distinct biomes present → seeded migrations.
+    let mut biomes: Vec<String> = Vec::new();
+    for s in &demo.settlements {
+        if !biomes.contains(&s.biome) {
+            biomes.push(s.biome.clone());
+        }
+    }
+    if biomes.len() >= 2 {
+        for e in 0..2u64 {
+            let a = &biomes[(mix(e, seed) % biomes.len() as u64) as usize];
+            let b = &biomes[(mix(e.wrapping_add(7), seed.wrapping_mul(3)) % biomes.len() as u64) as usize];
+            if a != b {
+                events.push(HistEvent {
+                    year: -span + third + (e as i64) * (third / 2),
+                    kind: "migration".into(),
+                    description: format!("a people migrate from the {a} to the {b}"),
+                });
+            }
+        }
+    }
+    events.sort_by_key(|e| e.year);
+
+    HistoryOutput { foundings, epochs, events, span_years: span }
 }
 
 #[cfg(test)]
@@ -153,6 +211,25 @@ mod tests {
         assert!(h.foundings.first().unwrap().year < h.foundings.last().unwrap().year);
         assert_eq!(h.foundings.len(), 3);
         assert_eq!(h.epochs.len(), 3);
+    }
+
+    #[test]
+    fn generates_rise_and_migration_events() {
+        let d = demo(vec![
+            settle(0, 0, 90_000, "city", "river_mouth"),
+            settle(40, 40, 80_000, "city", "confluence"),
+            settle(1, 1, 3_000, "town", "fertile_valley"),
+            settle(41, 39, 2_000, "town", "coast"),
+        ]);
+        // Give the settlements distinct biomes so a migration can fire.
+        let mut d = d;
+        d.settlements[1].biome = "hot_desert".into();
+        d.settlements[3].biome = "taiga".into();
+        let h = compile_history(&d, 0x55);
+        assert!(h.events.iter().any(|e| e.kind == "rise"));
+        assert!(h.events.iter().any(|e| e.kind == "migration"));
+        // Chronologically ordered.
+        assert!(h.events.windows(2).all(|w| w[0].year <= w[1].year));
     }
 
     #[test]
