@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Proposed backlog · post-WORLD-7 |
+| **Status** | Largely shipped in 1.6.0 — WORLD-8 (P1+P2), WORLD-9 (Polities + Culture), Ecology, and WORLD-10 (Weather + Travel) all landed. Scene world-context + richer history (migrations/polity arcs) remain. |
 | **Builds on** | WORLD-4 (layered sim), WORLD-6 (utopia coherence), WORLD-7 (unify / surface / bridge / cleanup) |
 | **Organizing insight** | The sim today builds a **place** — a present-day physical + demographic snapshot. It does not yet have a **time** (history), a **people** (culture / polities), or a **presence at the desk** (integration into the act of writing). Those three dimensions are where the remaining value is. |
 
@@ -24,7 +24,7 @@ The sim is a static present-day snapshot; it has no past.
 
 | Track | What it adds | Builds on | Value / risk |
 |---|---|---|---|
-| **WORLD-8 · History & Chronology** | A deterministic 6th layer that generates the world's past from `(demographics + geography + seed)`: settlement founding order, migrations, the rise and fall of polities, major events — **materialised as Timeline events**. | demographics settlements, the WORLD-7 (W7-P3) calendar bridge | **High** / Med — the single most impactful missing piece for fiction. The "founding-date events" deferred in W7-P3 are a subset of this. **W8-P1 shipped**: `compile_history` (founding chronology + epochs, deterministic) + `realworld history [--json]` (prints it and emits an adoptable `inkhaven event add` block). **W8-P2** (open): materialise a History chapter into the World book + direct Timeline-event writes; migrations / polity rise-and-fall. |
+| **WORLD-8 · History & Chronology** | A deterministic 6th layer that generates the world's past from `(demographics + geography + seed)`: settlement founding order, migrations, the rise and fall of polities, major events — **materialised as Timeline events**. | demographics settlements, the WORLD-7 (W7-P3) calendar bridge | **High** / Med — the single most impactful missing piece for fiction. The "founding-date events" deferred in W7-P3 are a subset of this. **W8-P1+P2 shipped**: `compile_history` (founding chronology + epochs) + `realworld history [--json] [--materialize]` — prints it, emits an adoptable `inkhaven event add` block, and writes a **History chapter** into the World book (also folded into the whole-world `compile --materialize`). **Open**: migrations / polity rise-and-fall as richer generated events. |
 | **Time evolution ("run the clock")** | Advance the world N years: population growth, climate drift, tech advance. Snapshot → dynamic. | all layers | High ambition / **High** — a stretch; not near-term. |
 
 ## Dimension 2 — PEOPLES (ties to ConLang)
@@ -33,9 +33,9 @@ The sim produces settlements + biomes but stops short of *who lives there*.
 
 | Track | What it adds | Builds on | Value / risk |
 |---|---|---|---|
-| **WORLD-9 · Culture & Society** | Derive cultures / religions / naming conventions per region from demographics + biomes, and **assign each culture a language** — wiring the World sim to the **ConLang** flagship (region X speaks conlang Y). | demographics, climate biomes, the ConLang suite | **High** / Med — connects two flagship systems; a genuinely novel capability. |
-| **Polities layer** | Aggregate settlements into nations with borders, capitals, and relations → feeds maps + conflict / tension. | demographics, map coordinates | **High** / Med |
-| **Ecology / flora-fauna** | Populate each biome with plausible species. | climate biomes | Med / Med |
+| **WORLD-9 · Culture & Society** | Derive cultures / religions / naming conventions per region from demographics + biomes, and **assign each culture a language** — wiring the World sim to the **ConLang** flagship (region X speaks conlang Y). | demographics, climate biomes, the ConLang suite | **✅ Shipped** — `realworld culture` / `compile_culture`: one culture per polity (biome-derived ethos, seeded belief, a conlang **language profile** to realise, a naming sample). The profile is proposed; the author realises it with `inkhaven language`. |
+| **Polities layer** | Aggregate settlements into nations with borders, capitals, and relations → feeds maps + conflict / tension. | demographics, map coordinates | **✅ Shipped** — `realworld polities` / `compile_polities`: settlements cluster around the largest capitals into named realms with populations + seeded relations. |
+| **Ecology / flora-fauna** | Populate each biome with plausible species. | climate biomes | **✅ Shipped** — `realworld ecology` / `compile_ecology`: flora/fauna archetypes + a keystone per land biome, seed-rotated. |
 
 ## Dimension 3 — THE DESK (the writing payoff)
 
@@ -43,9 +43,9 @@ The sim is compiled and materialised, but it does not yet *show up while you wri
 
 | Track | What it adds | Builds on | Value / risk |
 |---|---|---|---|
-| **WORLD-10 · Scene world-context** | For the open scene's place + Timeline date, surface the relevant world facts (season, weather, nearby rivers / terrain, local culture) as ambient writing context. | place/gazetteer, calendar bridge, climate / astronomy | **High** / Med — turns the sim from "a thing you compile" into "a thing you write against". |
-| **Travel / distance continuity checker** | The map carries coordinates + terrain; check prose travel claims ("rode A→B in a day") against real distance / terrain. | map `MapSpec` coords, geology / hydrology | **High** / Low-Med — a concrete continuity win, cheap given the coordinates already exist. |
-| **Weather / season at a date** | Given a scene's date + latitude, compute the season / insolation (astronomy already models this). | astronomy seasons, climate | Med / Low |
+| **WORLD-10 · Scene world-context** | For the open scene's place + Timeline date, surface the relevant world facts (season, weather, nearby rivers / terrain, local culture) as ambient writing context. | place/gazetteer, calendar bridge, climate / astronomy | **Open** (the remaining WORLD-10 piece) — turns the sim from "a thing you compile" into "a thing you write against". Would compose `realworld weather`/`travel` + the gazetteer into an editor pane. |
+| **Travel / distance continuity checker** | The map carries coordinates + terrain; check prose travel claims ("rode A→B in a day") against real distance / terrain. | map `MapSpec` coords, geology / hydrology | **✅ Shipped** — `realworld travel` / `src/world/travel.rs`: real distance from planet + grid vs. the mode's pace; consults the magic ledger's `travel_time`. (Coord inputs; place-name resolution is a follow-up.) |
+| **Weather / season at a date** | Given a scene's date + latitude, compute the season / insolation (astronomy already models this). | astronomy seasons, climate | **✅ Shipped** — `realworld weather` / `src/world/weather.rs`: hemisphere-corrected season + interpolated insolation for a day-of-year + latitude. |
 
 ---
 
