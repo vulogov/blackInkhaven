@@ -13369,8 +13369,10 @@ impl App {
         let mark = |title: &str| if has(title) { "✓ in World book" } else { "· press C to compile" };
         {
             use crate::world::compile::{
-                compile_climate, compile_demographics, compile_geology, compile_hydrology,
+                compile_climate, compile_culture, compile_demographics, compile_ecology,
+                compile_geology, compile_history, compile_hydrology, compile_polities,
             };
+            let seed = def.seed_u64();
             let geo = compile_geology(&def);
             let climate = compile_climate(&def, &out, &geo);
             let hydro = compile_hydrology(&geo, &climate);
@@ -13409,6 +13411,37 @@ impl App {
                 "  population {pop_s} · {} settlement(s) ({} cities, {} towns)",
                 demo.settlements.len(), demo.size_classes.cities, demo.size_classes.towns
             ));
+
+            // WORLD-8/9 — the derived history + peoples passes.
+            let hist = compile_history(&demo, seed);
+            rows.push(format!("History  (derived)  {}", mark("History")));
+            rows.push(format!(
+                "  {} years · {} epoch(s) · {} founding(s) · {} event(s)",
+                hist.span_years, hist.epochs.len(), hist.foundings.len(), hist.events.len()
+            ));
+            let eco = compile_ecology(&climate, seed);
+            rows.push(format!(
+                "Ecology  ·  {} land biome(s){}",
+                eco.biomes.len(),
+                eco.biomes.first().map(|b| format!(" · keystone {}", b.keystone)).unwrap_or_default()
+            ));
+            let pol = compile_polities(&demo, seed);
+            let capital_biomes: Vec<String> = pol
+                .polities
+                .iter()
+                .map(|p| {
+                    demo.settlements
+                        .iter()
+                        .find(|s| (s.x, s.y) == p.capital_pos)
+                        .map(|s| s.biome.clone())
+                        .unwrap_or_default()
+                })
+                .collect();
+            let cul = compile_culture(&pol, &capital_biomes, seed);
+            rows.push(format!("Peoples  ·  {} realm(s), {} culture(s)", pol.polities.len(), cul.cultures.len()));
+            if let Some(c) = cul.cultures.first() {
+                rows.push(format!("  {} — {}", c.polity, c.ethos));
+            }
         }
         let magic_note =
             if def.magic.as_ref().map(|m| m.enabled).unwrap_or(false) { "enabled" } else { "off" };
