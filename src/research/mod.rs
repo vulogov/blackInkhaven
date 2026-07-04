@@ -20,6 +20,7 @@
 mod app;
 mod chat;
 mod command;
+mod deadlinks;
 mod extract;
 mod factcheck;
 mod facts_tree;

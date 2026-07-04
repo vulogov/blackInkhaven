@@ -35,6 +35,9 @@ pub(super) enum Command {
     Upgrade(Option<String>),
     /// `/stale [days]` — list `model`/`web` facts older than N days (R5-F).
     Stale(Option<String>),
+    /// `/deadsources` — check each `web` URL / `document` file source and report
+    /// the ones that no longer resolve (R5-F, dead-source detection).
+    DeadSources,
     /// `/sources` — list each fact's recorded provenance (RESRCH-2.1).
     Sources,
     /// `/import [path]` — ingest a document as a research source, or list the
@@ -105,6 +108,7 @@ pub(super) const SPECS: &[CommandSpec] = &[
     CommandSpec { name: "bibliography", summary: "Sources Research chapter → BibTeX", usage: "/bibliography" },
     CommandSpec { name: "upgrade", summary: "re-ground a model fact on a structured source", usage: "/upgrade [facts/path]" },
     CommandSpec { name: "stale", summary: "list aging model/web facts", usage: "/stale [days]" },
+    CommandSpec { name: "deadsources", summary: "check web/document sources for link rot", usage: "/deadsources" },
     CommandSpec { name: "whatswrong", summary: "explain a flagged fact (AI)", usage: "/whatswrong [facts/path]" },
     CommandSpec { name: "sources", summary: "list each fact's provenance", usage: "/sources" },
     CommandSpec { name: "import", summary: "ingest a file / folder / .bib / .json", usage: "/import [path]" },
@@ -212,6 +216,7 @@ pub(super) fn parse(input: &str) -> Option<Command> {
         "bibliography" | "bib" => Command::Bibliography,
         "upgrade" => Command::Upgrade(if rest.is_empty() { None } else { Some(rest.to_string()) }),
         "stale" => Command::Stale(if rest.is_empty() { None } else { Some(rest.to_string()) }),
+        "deadsources" | "deadlinks" => Command::DeadSources,
         "sources" => Command::Sources,
         "import" => Command::Import(if rest.is_empty() { None } else { Some(rest.to_string()) }),
         "forget" => Command::Forget(rest.to_string()),
