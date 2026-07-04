@@ -31,6 +31,7 @@ pub fn run(project: &Path, cmd: RealworldCommand) -> Result<()> {
         RealworldCommand::History { json, materialize } => history(project, json, materialize),
         RealworldCommand::Weather { day, lat } => weather(project, day, lat),
         RealworldCommand::Ecology => ecology(project),
+        RealworldCommand::Polities => polities(project),
         RealworldCommand::Magic { materialize } => magic(project, materialize),
         RealworldCommand::Map { spec_only, no_ingest } => map(project, spec_only, no_ingest),
         RealworldCommand::CoLocation => co_location(project),
@@ -678,6 +679,39 @@ fn calendar(project: &Path) -> Result<()> {
     println!(
         "\nAdopt it as your story's calendar — set `timeline.enabled: true` and paste this\nas `timeline.calendar` in inkhaven.hjson:\n\n{body}"
     );
+    Ok(())
+}
+
+/// WORLD-9 (Polities) — `realworld polities`: the nations formed by clustering
+/// settlements around their largest capitals, with populations and relations.
+fn polities(project: &Path) -> Result<()> {
+    use crate::world::compile::{
+        compile_astronomy, compile_climate, compile_demographics, compile_hydrology, compile_polities,
+    };
+    let def = load(project)?;
+    let astro = compile_astronomy(&def.astronomy);
+    let geo = geology_for(project, &def)?;
+    let climate = compile_climate(&def, &astro, &geo);
+    let hydro = compile_hydrology(&geo, &climate);
+    let demo = compile_demographics(&climate, &hydro);
+    let pol = compile_polities(&demo, def.seed_u64());
+
+    println!("polities · {} — {} realm(s)", def.name, pol.polities.len());
+    for (i, p) in pol.polities.iter().enumerate() {
+        println!(
+            "\n  [{i}] {} · capital {} at ({}, {})",
+            p.name, p.capital, p.capital_pos.0, p.capital_pos.1
+        );
+        println!("      {} settlement(s) · population {}", p.member_count, fmt_pop(p.population));
+    }
+    let notable: Vec<&crate::world::compile::polities_layer::Relation> =
+        pol.relations.iter().filter(|r| r.stance != "neutral").collect();
+    if !notable.is_empty() {
+        println!("\n  relations:");
+        for r in notable {
+            println!("    {} {} {}", pol.polities[r.a].name, r.stance, pol.polities[r.b].name);
+        }
+    }
     Ok(())
 }
 

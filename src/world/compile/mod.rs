@@ -7,6 +7,7 @@ pub mod ecology_layer;
 pub mod geology_layer;
 pub mod history_layer;
 pub mod hydrology_layer;
+pub mod polities_layer;
 
 pub use astronomy_layer::compile_astronomy;
 pub use climate_layer::compile_climate;
@@ -15,3 +16,4 @@ pub use ecology_layer::compile_ecology;
 pub use geology_layer::{compile_geology, compile_geology_dem};
 pub use history_layer::compile_history;
 pub use hydrology_layer::compile_hydrology;
+pub use polities_layer::compile_polities;
