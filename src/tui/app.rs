@@ -1572,6 +1572,16 @@ pub(crate) enum RightPane {
     Thoughts,
 }
 
+/// WORLD-10 — the world-level compile cached for the scene context (recomputed
+/// lazily; the per-paragraph place/date resolution is cheap on top of it).
+struct SceneWorld {
+    astro: crate::world::types::AstronomyOutput,
+    pol: crate::world::compile::polities_layer::PolitiesOutput,
+    cul: crate::world::compile::culture_layer::CultureOutput,
+    height: usize,
+    place_links: Vec<crate::world::proposals::PlaceLink>,
+}
+
 impl RightPane {
     fn label(self) -> &'static str {
         match self {
@@ -1736,6 +1746,12 @@ pub(crate) struct App {
     theo_last_fp: Option<(Uuid, u64)>,
     theo_activity_at: Option<std::time::Instant>,
     theo_needs_check: bool,
+    /// WORLD-10 — scene world-context. `scene_world` is the lazily-compiled world;
+    /// `scene_brief` is the current paragraph's brief (footer chip + overview),
+    /// recomputed only when the open paragraph changes.
+    scene_world: Option<SceneWorld>,
+    scene_last_para: Option<Uuid>,
+    scene_brief: Option<crate::world::scene::SceneBrief>,
     /// NARR-1 — ambient prose check toggle (`Ctrl+V Shift+V`); seeded from
     /// `prose.ambient`. `prose_last_run` is the cooldown floor.
     prose_auto: bool,
@@ -3012,6 +3028,9 @@ impl App {
             theo_last_fp: None,
             theo_activity_at: None,
             theo_needs_check: false,
+            scene_world: None,
+            scene_last_para: None,
+            scene_brief: None,
             ie_auto: false,
             ie_last_fp: None,
             ie_activity_at: None,
@@ -3347,6 +3366,7 @@ impl App {
             self.tick_fact_check();
             self.tick_inner_socrates();
             self.tick_inner_theologian();
+            self.tick_scene_context();
             self.tick_inner_editor();
             self.tick_tree_badges();
             // 1.2.9+ — close the TTS playback modal as
@@ -13304,6 +13324,25 @@ impl App {
         ));
         rows.push("".into());
 
+        // WORLD-10 (S-P4) — the current scene, focused, above the world layers.
+        if let Some(b) = &self.scene_brief {
+            rows.push("This scene".into());
+            if let Some(p) = &b.place {
+                let extras: Vec<&str> =
+                    [b.biome.as_deref(), b.climate_zone.as_deref()].into_iter().flatten().collect();
+                let tail = if extras.is_empty() { String::new() } else { format!(" · {}", extras.join(" · ")) };
+                rows.push(format!("  place:   {p}{tail}"));
+            }
+            if let (Some(s), Some(c)) = (&b.season, &b.conditions) {
+                rows.push(format!("  when:    {s} · {c}"));
+            }
+            if let Some(r) = &b.realm {
+                let ethos = b.ethos.as_deref().map(|e| format!(" — {e}")).unwrap_or_default();
+                rows.push(format!("  people:  {r}{ethos}"));
+            }
+            rows.push("".into());
+        }
+
         let a = &def.astronomy;
         let out = compile_astronomy(a);
         rows.push("Astronomy  ✓".into());
@@ -14826,6 +14865,121 @@ impl App {
         )
         .with_source_paragraph(id);
         crate::pane::output::emit(&msg);
+    }
+
+    /// WORLD-10 — refresh the scene world-context when the open paragraph changes.
+    /// Self-gating: only paragraphs with links (a place-linked Timeline event or a
+    /// paragraph link to a Place) get a brief, so the footer chip appears only
+    /// where there is genuine scene context. The world compile is cached.
+    fn tick_scene_context(&mut self) {
+        let cur = self.opened.as_ref().map(|d| d.id);
+        if cur == self.scene_last_para {
+            return;
+        }
+        self.scene_last_para = cur;
+        self.scene_brief = None;
+        let Some(id) = cur else { return };
+
+        // Cheap gate before any compile: does this paragraph link to anything?
+        let has_para_link =
+            self.hierarchy.get(id).map(|n| !n.linked_paragraphs.is_empty()).unwrap_or(false);
+        let has_event = crate::world::timeline_context::gather_events(&self.hierarchy)
+            .iter()
+            .any(|e| e.linked_paragraphs.contains(&id));
+        if !has_para_link && !has_event {
+            return;
+        }
+
+        if self.scene_world.is_none() {
+            let w = self.compute_scene_world();
+            self.scene_world = w;
+        }
+        let Some(sw) = self.scene_world.as_ref() else { return };
+        let (place, date) = self.scene_place_and_date(id, &sw.place_links);
+        if place.is_none() && date.is_none() {
+            return;
+        }
+        let day = date.map(|t| (t as f64).rem_euclid(sw.astro.year_length_planet_days.max(1.0)));
+        let lat = place.as_ref().map(|p| {
+            if sw.height <= 1 {
+                0.0
+            } else {
+                90.0 - (p.y as f64 / (sw.height - 1) as f64) * 180.0
+            }
+        });
+        let brief =
+            crate::world::scene::scene_brief(&sw.astro, &sw.pol, &sw.cul, place.as_ref(), day, lat);
+        if !brief.is_empty() {
+            self.scene_brief = Some(brief);
+        }
+    }
+
+    /// Compile the world once for the scene context (astronomy + peoples + the
+    /// grid height + accepted place links). `None` when there is no `world.hjson`.
+    fn compute_scene_world(&self) -> Option<SceneWorld> {
+        use crate::world::compile::{
+            compile_astronomy, compile_climate, compile_culture, compile_demographics,
+            compile_geology, compile_hydrology, compile_polities,
+        };
+        let root = self.store.project_root();
+        let raw = std::fs::read_to_string(root.join("world.hjson")).ok()?;
+        let def = crate::world::types::WorldDefinition::from_hjson(&raw).ok()?;
+        let seed = def.seed_u64();
+        let astro = compile_astronomy(&def.astronomy);
+        let geo = compile_geology(&def);
+        let climate = compile_climate(&def, &astro, &geo);
+        let hydro = compile_hydrology(&geo, &climate);
+        let demo = compile_demographics(&climate, &hydro);
+        let pol = compile_polities(&demo, seed);
+        let capital_biomes: Vec<String> = pol
+            .polities
+            .iter()
+            .map(|q| {
+                demo.settlements
+                    .iter()
+                    .find(|s| (s.x, s.y) == q.capital_pos)
+                    .map(|s| s.biome.clone())
+                    .unwrap_or_default()
+            })
+            .collect();
+        let cul = compile_culture(&pol, &capital_biomes, seed);
+        let place_links = crate::world::storage::WorldStore::open_for_project(root)
+            .ok()
+            .and_then(|s| s.list_place_links().ok())
+            .unwrap_or_default();
+        Some(SceneWorld { astro, pol, cul, height: climate.height, place_links })
+    }
+
+    /// Resolve the open paragraph's place + date: a place-linked Timeline event
+    /// first (gives both), else a paragraph link to a Place node.
+    fn scene_place_and_date(
+        &self,
+        para_id: Uuid,
+        place_links: &[crate::world::proposals::PlaceLink],
+    ) -> (Option<crate::world::proposals::PlaceLink>, Option<i64>) {
+        let events = crate::world::timeline_context::gather_events(&self.hierarchy);
+        let anchor = events
+            .iter()
+            .filter(|e| e.linked_paragraphs.contains(&para_id))
+            .min_by_key(|e| e.start_ticks);
+        let date = anchor.map(|e| e.start_ticks);
+        let mut place = anchor
+            .and_then(|e| e.places.first())
+            .and_then(|pid| place_links.iter().find(|l| l.place_id == *pid).cloned());
+        if place.is_none() {
+            if let Some(node) = self.hierarchy.get(para_id) {
+                place = node
+                    .linked_paragraphs
+                    .iter()
+                    .find_map(|tid| place_links.iter().find(|l| l.place_id == *tid).cloned());
+            }
+        }
+        (place, date)
+    }
+
+    /// WORLD-10 — the one-line scene chip for the editor footer.
+    pub(super) fn scene_chip(&self) -> Option<String> {
+        self.scene_brief.as_ref().and_then(|b| b.chip())
     }
 
     /// 1.3.34+ — recompute the tree report-card badges no more than ~once a second.
