@@ -32,6 +32,7 @@ pub fn run(project: &Path, cmd: RealworldCommand) -> Result<()> {
         RealworldCommand::Weather { day, lat } => weather(project, day, lat),
         RealworldCommand::Ecology => ecology(project),
         RealworldCommand::Polities => polities(project),
+        RealworldCommand::Culture => culture(project),
         RealworldCommand::Magic { materialize } => magic(project, materialize),
         RealworldCommand::Map { spec_only, no_ingest } => map(project, spec_only, no_ingest),
         RealworldCommand::CoLocation => co_location(project),
@@ -679,6 +680,43 @@ fn calendar(project: &Path) -> Result<()> {
     println!(
         "\nAdopt it as your story's calendar — set `timeline.enabled: true` and paste this\nas `timeline.calendar` in inkhaven.hjson:\n\n{body}"
     );
+    Ok(())
+}
+
+/// WORLD-9 (Culture) — `realworld culture`: one culture per polity (ethos,
+/// belief, a conlang typology profile to realise, a naming sample).
+fn culture(project: &Path) -> Result<()> {
+    use crate::world::compile::{
+        compile_astronomy, compile_climate, compile_culture, compile_demographics, compile_hydrology,
+        compile_polities,
+    };
+    let def = load(project)?;
+    let astro = compile_astronomy(&def.astronomy);
+    let geo = geology_for(project, &def)?;
+    let climate = compile_climate(&def, &astro, &geo);
+    let hydro = compile_hydrology(&geo, &climate);
+    let demo = compile_demographics(&climate, &hydro);
+    let pol = compile_polities(&demo, def.seed_u64());
+    let capital_biomes: Vec<String> = pol
+        .polities
+        .iter()
+        .map(|p| {
+            demo.settlements
+                .iter()
+                .find(|s| (s.x, s.y) == p.capital_pos)
+                .map(|s| s.biome.clone())
+                .unwrap_or_default()
+        })
+        .collect();
+    let cul = compile_culture(&pol, &capital_biomes, def.seed_u64());
+
+    println!("culture · {} — {} culture(s)", def.name, cul.cultures.len());
+    for c in &cul.cultures {
+        println!("\n  {} — {}", c.polity, c.ethos);
+        println!("    belief:   {}", c.belief);
+        println!("    language: {}  (realise with `inkhaven language`)", c.language_profile);
+        println!("    naming:   e.g. {}", c.naming_sample);
+    }
     Ok(())
 }
 
