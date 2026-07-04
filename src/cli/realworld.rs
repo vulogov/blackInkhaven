@@ -36,6 +36,7 @@ pub fn run(project: &Path, cmd: RealworldCommand) -> Result<()> {
         RealworldCommand::Travel { from, to, from_x, from_y, to_x, to_y, days, mode } => {
             travel(project, from, to, from_x, from_y, to_x, to_y, days, &mode)
         }
+        RealworldCommand::Scene { place, day, lat } => scene(project, place, day, lat),
         RealworldCommand::Magic { materialize } => magic(project, materialize),
         RealworldCommand::Map { spec_only, no_ingest } => map(project, spec_only, no_ingest),
         RealworldCommand::CoLocation => co_location(project),
@@ -686,8 +687,11 @@ fn calendar(project: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Resolve an accepted Place / world-link name to its map coordinates.
-fn resolve_place(project: &Path, name: &str) -> Result<(f64, f64)> {
+/// Resolve an accepted Place / world-link name to its full record.
+fn resolve_place_link(
+    project: &Path,
+    name: &str,
+) -> Result<crate::world::proposals::PlaceLink> {
     use crate::world::storage::WorldStore;
     let store = WorldStore::open_for_project(project)
         .map_err(|e| Error::Store(format!("opening world store: {e}")))?;
@@ -695,14 +699,92 @@ fn resolve_place(project: &Path, name: &str) -> Result<(f64, f64)> {
         .list_place_links()
         .map_err(|e| Error::Store(format!("listing places: {e}")))?;
     links
-        .iter()
+        .into_iter()
         .find(|l| l.name.eq_ignore_ascii_case(name))
-        .map(|l| (l.x as f64, l.y as f64))
         .ok_or_else(|| {
             Error::Config(format!(
-                "place `{name}` not found among accepted world places — accept it via `realworld proposals`, or pass --from-x/--from-y coordinates"
+                "place `{name}` not found among accepted world places — accept it via `realworld proposals`, or pass coordinates"
             ))
         })
+}
+
+/// Resolve a place name to its map coordinates.
+fn resolve_place(project: &Path, name: &str) -> Result<(f64, f64)> {
+    let l = resolve_place_link(project, name)?;
+    Ok((l.x as f64, l.y as f64))
+}
+
+/// Grid row → latitude in degrees (row 0 = north pole, last row = south pole).
+fn row_to_latitude(y: usize, height: usize) -> f64 {
+    if height <= 1 {
+        return 0.0;
+    }
+    90.0 - (y as f64 / (height - 1) as f64) * 180.0
+}
+
+/// WORLD-10 — `realworld scene --place <name> --day <N>`: a scene brief for the
+/// writer — the local season + weather at the place's latitude on that day, the
+/// place's biome / climate, and the culture whose realm it sits nearest. The
+/// composition the in-editor world-context pane will show (auto-detecting the
+/// scene's place + date is the remaining wiring).
+fn scene(project: &Path, place: Option<String>, day: f64, lat: Option<f64>) -> Result<()> {
+    use crate::world::compile::{
+        compile_astronomy, compile_climate, compile_culture, compile_demographics, compile_hydrology,
+        compile_polities,
+    };
+    let def = load(project)?;
+    let astro = compile_astronomy(&def.astronomy);
+    let geo = geology_for(project, &def)?;
+    let climate = compile_climate(&def, &astro, &geo);
+    let hydro = compile_hydrology(&geo, &climate);
+    let demo = compile_demographics(&climate, &hydro);
+    let seed = def.seed_u64();
+
+    let link = place.as_deref().map(|n| resolve_place_link(project, n)).transpose()?;
+    let latitude = lat
+        .or_else(|| link.as_ref().map(|l| row_to_latitude(l.y, climate.height)))
+        .unwrap_or(45.0);
+
+    println!("scene · {}", def.name);
+    if let Some(l) = &link {
+        println!("  place:    {} · {} · {} at ({}, {})", l.name, l.biome, l.climate_zone, l.x, l.y);
+    }
+    let w = crate::world::weather::weather_at(&astro, day, latitude);
+    println!("  when:     day {:.0} of {:.0} · lat {:.0}°", day, astro.year_length_planet_days, latitude);
+    println!("  season:   {} · {}", w.season, w.descriptor);
+
+    // The culture whose realm sits nearest the place.
+    let pol = compile_polities(&demo, seed);
+    if let (Some(l), false) = (&link, pol.polities.is_empty()) {
+        let nearest = pol
+            .polities
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, p)| {
+                let dx = p.capital_pos.0 as i64 - l.x as i64;
+                let dy = p.capital_pos.1 as i64 - l.y as i64;
+                dx * dx + dy * dy
+            });
+        if let Some((i, p)) = nearest {
+            let capital_biomes: Vec<String> = pol
+                .polities
+                .iter()
+                .map(|q| {
+                    demo.settlements
+                        .iter()
+                        .find(|s| (s.x, s.y) == q.capital_pos)
+                        .map(|s| s.biome.clone())
+                        .unwrap_or_default()
+                })
+                .collect();
+            let cul = compile_culture(&pol, &capital_biomes, seed);
+            if let Some(c) = cul.cultures.get(i) {
+                println!("  people:   {} — {}", p.name, c.ethos);
+                println!("            belief: {} · tongue: {}", c.belief, c.language_profile);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// WORLD-10 — `realworld travel`: is a journey between two map cells plausible
@@ -1918,6 +2000,14 @@ fn starter_template(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn row_to_latitude_maps_poles_and_equator() {
+        assert!((super::row_to_latitude(0, 181) - 90.0).abs() < 1e-9); // north pole
+        assert!((super::row_to_latitude(180, 181) + 90.0).abs() < 1e-9); // south pole
+        assert!((super::row_to_latitude(90, 181)).abs() < 1e-9); // equator
+        assert_eq!(super::row_to_latitude(0, 1), 0.0); // degenerate grid
+    }
 
     #[test]
     fn calendar_bridge_maps_astronomy() {

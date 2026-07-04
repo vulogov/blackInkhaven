@@ -4317,6 +4317,19 @@ pub enum RealworldCommand {
         #[arg(long, default_value = "foot")]
         mode: String,
     },
+    /// WORLD-10 — a scene brief: season + weather at a place's latitude on a
+    /// day, its biome/climate, and the nearest realm's culture.
+    Scene {
+        /// An accepted world Place the scene is set in.
+        #[arg(long)]
+        place: Option<String>,
+        /// Day of the year (0-based).
+        #[arg(long, default_value_t = 0.0)]
+        day: f64,
+        /// Latitude override (else derived from the place's map row).
+        #[arg(long)]
+        lat: Option<f64>,
+    },
     /// Show the magic ledger — the declared exceptions to physics the
     /// fact-checker will respect. Edit it in the `magic:` block of `world.hjson`.
     Magic {
