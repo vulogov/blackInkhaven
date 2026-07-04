@@ -95,9 +95,14 @@ pub fn materialize_history(
             "year": f.year, "label": f.label, "class": f.class, "population": f.population,
         })).collect::<Vec<_>>(),
     });
+    let events = serde_json::json!({
+        "events": out.events.iter().map(|e| serde_json::json!({
+            "year": e.year, "kind": e.kind, "description": e.description,
+        })).collect::<Vec<_>>(),
+    });
 
     let mut report = MaterializeReport { chapter: "History".into(), ..Default::default() };
-    for (title, payload) in [("Epochs", epochs), ("Foundings", foundings)] {
+    for (title, payload) in [("Epochs", epochs), ("Events", events), ("Foundings", foundings)] {
         let body = serde_json::to_string_pretty(&payload)
             .map_err(|e| Error::Store(format!("serializing {title}: {e}")))?;
         match ensure_paragraph(store, cfg, &chapter, title, &body)? {
