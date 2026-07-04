@@ -4809,6 +4809,69 @@ pub enum TimelineExportFormat {
     Png,
 }
 
+/// Does this command mutate the project's node store? Used to decide whether
+/// to take the multi-writer advisory lock. Conservative — the structural
+/// writers and the store-creating importers; read-only reports are excluded so
+/// they never warn while a TUI is open.
+fn command_mutates(command: &Command) -> bool {
+    matches!(
+        command,
+        Command::Add { .. }
+            | Command::Delete { .. }
+            | Command::Mv { .. }
+            | Command::Paragraph(_)
+            | Command::Reindex { .. }
+            | Command::Replace { .. }
+            | Command::ImportScrivener { .. }
+            | Command::ImportEpub { .. }
+    )
+}
+
+/// Take the project advisory lock for a store-mutating CLI command, mirroring
+/// the TUI's policy (`project_lock.enabled` / `on_conflict`). Returns the held
+/// lock (kept alive for the command), or `None` when locking doesn't apply
+/// (non-mutating command, not an initialized project, lock disabled, or already
+/// busy and we proceed permissively). Errors only when `on_conflict = refuse`.
+fn maybe_lock_for_cli(
+    project: &std::path::Path,
+    command: &Command,
+) -> Result<Option<crate::project_lock::ProjectLock>> {
+    use crate::project_lock::{acquire, LockOutcome};
+    if !command_mutates(command) {
+        return Ok(None);
+    }
+    let layout = crate::project::ProjectLayout::new(project);
+    if layout.require_initialized().is_err() {
+        return Ok(None); // not a project — the command reports that on its own terms
+    }
+    let cfg = match crate::config::Config::load_layered(&layout.config_path()) {
+        Ok(c) => c,
+        Err(_) => return Ok(None),
+    };
+    if !cfg.project_lock.enabled {
+        return Ok(None);
+    }
+    match acquire(&layout.root) {
+        Ok(LockOutcome::Acquired(lock)) => Ok(Some(lock)),
+        Ok(LockOutcome::Busy(info)) => {
+            eprintln!(
+                "⚠ Another inkhaven session may already have this project open ({}).",
+                info.describe()
+            );
+            eprintln!("  Concurrent writes can corrupt the project store.");
+            if cfg.project_lock.on_conflict == "refuse" {
+                anyhow::bail!(
+                    "refusing to run: project is locked by another session (project_lock.on_conflict = refuse)"
+                );
+            }
+            eprintln!("  Proceeding anyway.");
+            Ok(None)
+        }
+        // Locking unsupported on this filesystem — proceed permissively.
+        Err(_) => Ok(None),
+    }
+}
+
 impl Cli {
     pub fn run(self) -> Result<()> {
         let project = self
@@ -4816,7 +4879,17 @@ impl Cli {
             .clone()
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
-        match self.command.unwrap_or(Command::Tui) {
+        let command = self.command.unwrap_or(Command::Tui);
+
+        // Multi-writer safety (1.6.0): a store-mutating CLI command run while a
+        // TUI — or another CLI writer — holds the project is a lost-update risk.
+        // Consult the same advisory lock the TUI uses: inform (never hard-block
+        // unless `project_lock.on_conflict = refuse`) and hold it for the
+        // command's duration so concurrent CLI writers serialise. `_lock` lives
+        // until `run` returns.
+        let _lock = maybe_lock_for_cli(&project, &command)?;
+
+        match command {
             Command::Init { path, force, template } => {
                 init::run(&path, force, &template).map_err(Into::into)
             }
