@@ -30,6 +30,7 @@ pub fn run(project: &Path, cmd: RealworldCommand) -> Result<()> {
         RealworldCommand::Gazetteer { output } => gazetteer(project, output.as_deref()),
         RealworldCommand::History { json, materialize } => history(project, json, materialize),
         RealworldCommand::Weather { day, lat } => weather(project, day, lat),
+        RealworldCommand::Ecology => ecology(project),
         RealworldCommand::Magic { materialize } => magic(project, materialize),
         RealworldCommand::Map { spec_only, no_ingest } => map(project, spec_only, no_ingest),
         RealworldCommand::CoLocation => co_location(project),
@@ -677,6 +678,24 @@ fn calendar(project: &Path) -> Result<()> {
     println!(
         "\nAdopt it as your story's calendar — set `timeline.enabled: true` and paste this\nas `timeline.calendar` in inkhaven.hjson:\n\n{body}"
     );
+    Ok(())
+}
+
+/// WORLD (Ecology) — `realworld ecology`: the flora / fauna archetypes + a
+/// keystone animal for each land biome, derived from the compiled climate.
+fn ecology(project: &Path) -> Result<()> {
+    use crate::world::compile::{compile_astronomy, compile_climate, compile_ecology};
+    let def = load(project)?;
+    let astro = compile_astronomy(&def.astronomy);
+    let geo = geology_for(project, &def)?;
+    let climate = compile_climate(&def, &astro, &geo);
+    let eco = compile_ecology(&climate, def.seed_u64());
+    println!("ecology · {} — {} land biome(s)", def.name, eco.biomes.len());
+    for b in &eco.biomes {
+        println!("\n  {} ({:.0}% of land)  · keystone: {}", b.biome, b.area_pct, b.keystone);
+        println!("    flora: {}", b.flora.join(", "));
+        println!("    fauna: {}", b.fauna.join(", "));
+    }
     Ok(())
 }
 

@@ -4287,6 +4287,8 @@ pub enum RealworldCommand {
         #[arg(long, default_value_t = 45.0)]
         lat: f64,
     },
+    /// WORLD — flora / fauna archetypes + a keystone animal per land biome.
+    Ecology,
     /// Show the magic ledger — the declared exceptions to physics the
     /// fact-checker will respect. Edit it in the `magic:` block of `world.hjson`.
     Magic {
