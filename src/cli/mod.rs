@@ -4293,6 +4293,24 @@ pub enum RealworldCommand {
     Polities,
     /// WORLD-9 — one culture per polity (ethos, belief, a conlang profile).
     Culture,
+    /// WORLD-10 — is a journey between two map cells plausible in the claimed
+    /// time? Checks the real distance (planet + grid) against the mode's pace.
+    Travel {
+        #[arg(long, default_value_t = 0.0)]
+        from_x: f64,
+        #[arg(long, default_value_t = 0.0)]
+        from_y: f64,
+        #[arg(long, default_value_t = 0.0)]
+        to_x: f64,
+        #[arg(long, default_value_t = 0.0)]
+        to_y: f64,
+        /// Claimed journey time in days.
+        #[arg(long, default_value_t = 1.0)]
+        days: f64,
+        /// foot (default) | horse | cart | ship.
+        #[arg(long, default_value = "foot")]
+        mode: String,
+    },
     /// Show the magic ledger — the declared exceptions to physics the
     /// fact-checker will respect. Edit it in the `magic:` block of `world.hjson`.
     Magic {

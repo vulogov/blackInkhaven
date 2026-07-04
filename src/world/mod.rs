@@ -38,6 +38,7 @@ pub mod plakat;
 pub mod proposals;
 pub mod storage;
 pub mod timeline_context;
+pub mod travel;
 pub mod types;
 pub mod weather;
 // WORLD-6 — utopian/dystopian coherence checker.
