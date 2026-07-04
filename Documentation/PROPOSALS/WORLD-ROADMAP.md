@@ -24,7 +24,7 @@ The sim is a static present-day snapshot; it has no past.
 
 | Track | What it adds | Builds on | Value / risk |
 |---|---|---|---|
-| **WORLD-8 · History & Chronology** | A deterministic 6th layer that generates the world's past from `(demographics + geography + seed)`: settlement founding order, migrations, the rise and fall of polities, major events — **materialised as Timeline events**. | demographics settlements, the WORLD-7 (W7-P3) calendar bridge | **High** / Med — the single most impactful missing piece for fiction. The "founding-date events" deferred in W7-P3 are a subset of this. |
+| **WORLD-8 · History & Chronology** | A deterministic 6th layer that generates the world's past from `(demographics + geography + seed)`: settlement founding order, migrations, the rise and fall of polities, major events — **materialised as Timeline events**. | demographics settlements, the WORLD-7 (W7-P3) calendar bridge | **High** / Med — the single most impactful missing piece for fiction. The "founding-date events" deferred in W7-P3 are a subset of this. **W8-P1 shipped**: `compile_history` (founding chronology + epochs, deterministic) + `realworld history [--json]` (prints it and emits an adoptable `inkhaven event add` block). **W8-P2** (open): materialise a History chapter into the World book + direct Timeline-event writes; migrations / polity rise-and-fall. |
 | **Time evolution ("run the clock")** | Advance the world N years: population growth, climate drift, tech advance. Snapshot → dynamic. | all layers | High ambition / **High** — a stretch; not near-term. |
 
 ## Dimension 2 — PEOPLES (ties to ConLang)
