@@ -4274,6 +4274,9 @@ pub enum RealworldCommand {
         /// Emit the chronology as JSON.
         #[arg(long)]
         json: bool,
+        /// Write the History chapter into the World system book.
+        #[arg(long)]
+        materialize: bool,
     },
     /// Show the magic ledger — the declared exceptions to physics the
     /// fact-checker will respect. Edit it in the `magic:` block of `world.hjson`.

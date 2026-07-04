@@ -28,7 +28,7 @@ pub fn run(project: &Path, cmd: RealworldCommand) -> Result<()> {
         RealworldCommand::Places => places(project),
         RealworldCommand::Calendar => calendar(project),
         RealworldCommand::Gazetteer { output } => gazetteer(project, output.as_deref()),
-        RealworldCommand::History { json } => history(project, json),
+        RealworldCommand::History { json, materialize } => history(project, json, materialize),
         RealworldCommand::Magic { materialize } => magic(project, materialize),
         RealworldCommand::Map { spec_only, no_ingest } => map(project, spec_only, no_ingest),
         RealworldCommand::CoLocation => co_location(project),
@@ -684,7 +684,7 @@ fn calendar(project: &Path) -> Result<()> {
 /// adoptable Timeline block (the sim proposes; the author enters the events they
 /// want via `inkhaven event`). Materialisation into the World book + direct
 /// Timeline writes are W8-P2.
-fn history(project: &Path, json: bool) -> Result<()> {
+fn history(project: &Path, json: bool, materialize: bool) -> Result<()> {
     use crate::world::compile::{
         compile_astronomy, compile_climate, compile_demographics, compile_hydrology, compile_history,
     };
@@ -695,6 +695,19 @@ fn history(project: &Path, json: bool) -> Result<()> {
     let hydro = compile_hydrology(&geo, &climate);
     let demo = compile_demographics(&climate, &hydro);
     let hist = compile_history(&demo, def.seed_u64());
+
+    let mat_report = if materialize {
+        use crate::config::Config;
+        use crate::project::ProjectLayout;
+        use crate::store::Store;
+        let layout = ProjectLayout::new(project);
+        layout.require_initialized()?;
+        let cfg = Config::load_layered(&layout.config_path())?;
+        let store = Store::open(layout, &cfg)?;
+        Some(crate::world::materialize::materialize_history(&store, &cfg, &hist)?)
+    } else {
+        None
+    };
 
     if json {
         let v = serde_json::json!({
@@ -718,9 +731,17 @@ fn history(project: &Path, json: bool) -> Result<()> {
             println!("    · year {:>5}  {} founded  (pop {})", f.year, f.label, fmt_pop(f.population));
         }
     }
+    if let Some(r) = &mat_report {
+        println!(
+            "\n  → World/{}: {} paragraph(s) created, {} updated",
+            r.chapter,
+            r.created.len(),
+            r.updated.len()
+        );
+    }
     println!("\nAdopt into the story Timeline (rename as you like):");
     for f in &hist.foundings {
-        println!("  inkhaven event add --title \"{} founded\" --date \"{}\"", f.label, f.year);
+        println!("  inkhaven event add --start \"{}\" \"{} founded\"", f.year, f.label);
     }
     Ok(())
 }
@@ -1274,6 +1295,9 @@ fn compile_all_cli(project: &Path, json: bool, materialize: bool) -> Result<()> 
         reports.push(m::materialize_climate(&store, &cfg, &climate)?);
         reports.push(m::materialize_hydrology(&store, &cfg, &hydro)?);
         reports.push(m::materialize_demographics(&store, &cfg, &demo)?);
+        // WORLD-8 — the world's past lands with the whole-world compile.
+        let hist = crate::world::compile::compile_history(&demo, def.seed_u64());
+        reports.push(m::materialize_history(&store, &cfg, &hist)?);
         reports.push(m::materialize_setting(&store, &cfg, &def)?);
     }
 
