@@ -72,6 +72,42 @@ pub fn materialize_astronomy(
     Ok(report)
 }
 
+/// WORLD-8 (W8-P2) — materialize the history chronology into `World / History`
+/// (the epochs + the founding chronology). The persistent world-book record; the
+/// story Timeline is populated separately via the adoptable `event add` block
+/// (`realworld history`), keeping the author in control of their timeline.
+pub fn materialize_history(
+    store: &Store,
+    cfg: &Config,
+    out: &crate::world::compile::history_layer::HistoryOutput,
+) -> Result<MaterializeReport> {
+    let world = world_book(store)?;
+    let chapter = ensure_chapter(store, cfg, &world, "History")?;
+
+    let epochs = serde_json::json!({
+        "span_years": out.span_years,
+        "epochs": out.epochs.iter().map(|e| serde_json::json!({
+            "name": e.name, "start_year": e.start_year, "end_year": e.end_year, "note": e.note,
+        })).collect::<Vec<_>>(),
+    });
+    let foundings = serde_json::json!({
+        "foundings": out.foundings.iter().map(|f| serde_json::json!({
+            "year": f.year, "label": f.label, "class": f.class, "population": f.population,
+        })).collect::<Vec<_>>(),
+    });
+
+    let mut report = MaterializeReport { chapter: "History".into(), ..Default::default() };
+    for (title, payload) in [("Epochs", epochs), ("Foundings", foundings)] {
+        let body = serde_json::to_string_pretty(&payload)
+            .map_err(|e| Error::Store(format!("serializing {title}: {e}")))?;
+        match ensure_paragraph(store, cfg, &chapter, title, &body)? {
+            Outcome::Created => report.created.push(title.to_string()),
+            Outcome::Updated => report.updated.push(title.to_string()),
+        }
+    }
+    Ok(report)
+}
+
 /// Materialize a geology output into `World / Geology / *` (continents & plates,
 /// mountains & ranges, mineral distribution) and write the heightmap as a
 /// grayscale PNG under `assets/world/heightmap.png` — the heightmap travels as
