@@ -33,8 +33,8 @@ pub fn run(project: &Path, cmd: RealworldCommand) -> Result<()> {
         RealworldCommand::Ecology => ecology(project),
         RealworldCommand::Polities => polities(project),
         RealworldCommand::Culture => culture(project),
-        RealworldCommand::Travel { from_x, from_y, to_x, to_y, days, mode } => {
-            travel(project, from_x, from_y, to_x, to_y, days, &mode)
+        RealworldCommand::Travel { from, to, from_x, from_y, to_x, to_y, days, mode } => {
+            travel(project, from, to, from_x, from_y, to_x, to_y, days, &mode)
         }
         RealworldCommand::Magic { materialize } => magic(project, materialize),
         RealworldCommand::Map { spec_only, no_ingest } => map(project, spec_only, no_ingest),
@@ -686,12 +686,33 @@ fn calendar(project: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Resolve an accepted Place / world-link name to its map coordinates.
+fn resolve_place(project: &Path, name: &str) -> Result<(f64, f64)> {
+    use crate::world::storage::WorldStore;
+    let store = WorldStore::open_for_project(project)
+        .map_err(|e| Error::Store(format!("opening world store: {e}")))?;
+    let links = store
+        .list_place_links()
+        .map_err(|e| Error::Store(format!("listing places: {e}")))?;
+    links
+        .iter()
+        .find(|l| l.name.eq_ignore_ascii_case(name))
+        .map(|l| (l.x as f64, l.y as f64))
+        .ok_or_else(|| {
+            Error::Config(format!(
+                "place `{name}` not found among accepted world places — accept it via `realworld proposals`, or pass --from-x/--from-y coordinates"
+            ))
+        })
+}
+
 /// WORLD-10 — `realworld travel`: is a journey between two map cells plausible
 /// in the claimed time by the given mode? Uses the planet size + grid for the
 /// real distance and consults the magic ledger's `travel_time` rules.
 #[allow(clippy::too_many_arguments)]
 fn travel(
     project: &Path,
+    from: Option<String>,
+    to: Option<String>,
     from_x: f64,
     from_y: f64,
     to_x: f64,
@@ -702,9 +723,22 @@ fn travel(
     let def = load(project)?;
     let geo = geology_for(project, &def)?;
     let kpc = crate::world::travel::km_per_cell(def.astronomy.planet.radius_earth, geo.width);
+    // Named places (accepted Places / world links) resolve to coordinates;
+    // otherwise the explicit --from-x/--to-x coordinates are used.
+    let (from_x, from_y) = match &from {
+        Some(n) => resolve_place(project, n)?,
+        None => (from_x, from_y),
+    };
+    let (to_x, to_y) = match &to {
+        Some(n) => resolve_place(project, n)?,
+        None => (to_x, to_y),
+    };
     let cells = ((to_x - from_x).powi(2) + (to_y - from_y).powi(2)).sqrt();
     let a = crate::world::travel::assess(cells * kpc, days, mode);
 
+    if from.is_some() || to.is_some() {
+        println!("travel · {} → {}", from.as_deref().unwrap_or("start"), to.as_deref().unwrap_or("end"));
+    }
     println!(
         "travel · {} · {:.0} km ({:.1} cells) by {}",
         def.name, a.distance_km, cells, a.mode

@@ -4296,6 +4296,12 @@ pub enum RealworldCommand {
     /// WORLD-10 — is a journey between two map cells plausible in the claimed
     /// time? Checks the real distance (planet + grid) against the mode's pace.
     Travel {
+        /// Origin place name (an accepted world Place); overrides --from-x/-y.
+        #[arg(long)]
+        from: Option<String>,
+        /// Destination place name; overrides --to-x/-y.
+        #[arg(long)]
+        to: Option<String>,
         #[arg(long, default_value_t = 0.0)]
         from_x: f64,
         #[arg(long, default_value_t = 0.0)]
