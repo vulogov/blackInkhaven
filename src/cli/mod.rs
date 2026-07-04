@@ -4268,6 +4268,13 @@ pub enum RealworldCommand {
         #[arg(long)]
         output: Option<String>,
     },
+    /// WORLD-8 — derive the world's founding chronology + epochs from the
+    /// demographics and print it, with an adoptable Timeline block.
+    History {
+        /// Emit the chronology as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Show the magic ledger — the declared exceptions to physics the
     /// fact-checker will respect. Edit it in the `magic:` block of `world.hjson`.
     Magic {

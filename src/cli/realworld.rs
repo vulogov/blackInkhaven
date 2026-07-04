@@ -28,6 +28,7 @@ pub fn run(project: &Path, cmd: RealworldCommand) -> Result<()> {
         RealworldCommand::Places => places(project),
         RealworldCommand::Calendar => calendar(project),
         RealworldCommand::Gazetteer { output } => gazetteer(project, output.as_deref()),
+        RealworldCommand::History { json } => history(project, json),
         RealworldCommand::Magic { materialize } => magic(project, materialize),
         RealworldCommand::Map { spec_only, no_ingest } => map(project, spec_only, no_ingest),
         RealworldCommand::CoLocation => co_location(project),
@@ -675,6 +676,52 @@ fn calendar(project: &Path) -> Result<()> {
     println!(
         "\nAdopt it as your story's calendar — set `timeline.enabled: true` and paste this\nas `timeline.calendar` in inkhaven.hjson:\n\n{body}"
     );
+    Ok(())
+}
+
+/// WORLD-8 (W8-P1) — `realworld history [--json]`: derive the world's founding
+/// chronology + epochs from the compiled demographics and print it, plus an
+/// adoptable Timeline block (the sim proposes; the author enters the events they
+/// want via `inkhaven event`). Materialisation into the World book + direct
+/// Timeline writes are W8-P2.
+fn history(project: &Path, json: bool) -> Result<()> {
+    use crate::world::compile::{
+        compile_astronomy, compile_climate, compile_demographics, compile_hydrology, compile_history,
+    };
+    let def = load(project)?;
+    let astro = compile_astronomy(&def.astronomy);
+    let geo = geology_for(project, &def)?;
+    let climate = compile_climate(&def, &astro, &geo);
+    let hydro = compile_hydrology(&geo, &climate);
+    let demo = compile_demographics(&climate, &hydro);
+    let hist = compile_history(&demo, def.seed_u64());
+
+    if json {
+        let v = serde_json::json!({
+            "span_years": hist.span_years,
+            "epochs": hist.epochs.iter().map(|e| serde_json::json!({
+                "name": e.name, "start_year": e.start_year, "end_year": e.end_year, "note": e.note,
+            })).collect::<Vec<_>>(),
+            "foundings": hist.foundings.iter().map(|f| serde_json::json!({
+                "year": f.year, "label": f.label, "class": f.class, "population": f.population,
+            })).collect::<Vec<_>>(),
+        });
+        println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
+        return Ok(());
+    }
+
+    println!("history · {} — {} years of recorded past", def.name, hist.span_years);
+    for e in &hist.epochs {
+        println!("\n  {} ({}…{})", e.name, e.start_year, e.end_year);
+        println!("    {}", e.note);
+        for f in hist.foundings.iter().filter(|f| f.year >= e.start_year && f.year < e.end_year) {
+            println!("    · year {:>5}  {} founded  (pop {})", f.year, f.label, fmt_pop(f.population));
+        }
+    }
+    println!("\nAdopt into the story Timeline (rename as you like):");
+    for f in &hist.foundings {
+        println!("  inkhaven event add --title \"{} founded\" --date \"{}\"", f.label, f.year);
+    }
     Ok(())
 }
 
