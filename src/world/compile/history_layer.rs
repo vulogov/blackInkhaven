@@ -82,7 +82,11 @@ fn antiquity(s: &Settlement, seed: u64) -> f64 {
     (s.population.max(1) as f64).ln() * basis_weight(&s.basis) + jitter(s, seed)
 }
 
-pub fn compile_history(demo: &DemographicsOutput, seed: u64) -> HistoryOutput {
+pub fn compile_history(
+    demo: &DemographicsOutput,
+    declared: &[crate::world::types::HistEventDef],
+    seed: u64,
+) -> HistoryOutput {
     let mut settlements: Vec<&Settlement> = demo.settlements.iter().collect();
     settlements.sort_by(|a, b| {
         antiquity(b, seed)
@@ -168,9 +172,53 @@ pub fn compile_history(demo: &DemographicsOutput, seed: u64) -> HistoryOutput {
             }
         }
     }
+    // WORLD-11 (W11-P1) — merge the author's declared events into the chronology.
+    // They sort into their epoch by year, just like the generated ones.
+    for d in declared {
+        events.push(HistEvent {
+            year: d.year,
+            kind: "declared".into(),
+            description: d.title.clone(),
+        });
+    }
     events.sort_by_key(|e| e.year);
 
     HistoryOutput { foundings, epochs, events, span_years: span }
+}
+
+/// WORLD-11 — the epoch a year falls in, given the compiled epochs.
+pub fn epoch_of(year: i64, epochs: &[Epoch]) -> Option<&Epoch> {
+    epochs.iter().find(|e| year >= e.start_year && year < e.end_year)
+}
+
+/// WORLD-11 — verify declared history events for plausibility. Advisory only.
+pub fn lint_history(declared: &[crate::world::types::HistEventDef], out: &HistoryOutput) -> Vec<String> {
+    let mut warnings = Vec::new();
+    for d in declared {
+        let label = if d.title.trim().is_empty() {
+            format!("event at year {}", d.year)
+        } else {
+            format!("event `{}`", d.title)
+        };
+        if d.year > 0 {
+            warnings.push(format!("{label}: year {} is after the present (0)", d.year));
+        } else if d.year < -out.span_years {
+            warnings.push(format!(
+                "{label}: year {} is before recorded history began ({})",
+                d.year, -out.span_years
+            ));
+        }
+        if let Some(declared_epoch) = &d.epoch {
+            match epoch_of(d.year, &out.epochs) {
+                Some(e) if !e.name.eq_ignore_ascii_case(declared_epoch) => warnings.push(format!(
+                    "{label}: pinned to epoch `{declared_epoch}`, but year {} falls in `{}`",
+                    d.year, e.name
+                )),
+                _ => {}
+            }
+        }
+    }
+    warnings
 }
 
 #[cfg(test)]
@@ -205,7 +253,7 @@ mod tests {
             settle(2, 2, 90_000, "city", "river_mouth"),
             settle(3, 3, 5_000, "town", "fertile_valley"),
         ]);
-        let h = compile_history(&d, 0x1234);
+        let h = compile_history(&d, &[], 0x1234);
         // The big river-mouth city is the oldest (most negative year).
         assert_eq!(h.foundings.first().unwrap().class, "city");
         assert!(h.foundings.first().unwrap().year < h.foundings.last().unwrap().year);
@@ -225,11 +273,34 @@ mod tests {
         let mut d = d;
         d.settlements[1].biome = "hot_desert".into();
         d.settlements[3].biome = "taiga".into();
-        let h = compile_history(&d, 0x55);
+        let h = compile_history(&d, &[], 0x55);
         assert!(h.events.iter().any(|e| e.kind == "rise"));
         assert!(h.events.iter().any(|e| e.kind == "migration"));
         // Chronologically ordered.
         assert!(h.events.windows(2).all(|w| w[0].year <= w[1].year));
+    }
+
+    #[test]
+    fn declared_events_merge_and_are_linted() {
+        use crate::world::types::HistEventDef;
+        let d = demo(vec![
+            settle(0, 0, 90_000, "city", "river_mouth"),
+            settle(5, 5, 3_000, "town", "fertile_valley"),
+        ]);
+        let declared = vec![
+            HistEventDef { year: -100, title: "The Sundering".into(), epoch: None, places: None, description: String::new() },
+            HistEventDef { year: 50, title: "An Impossible Future".into(), epoch: None, places: None, description: String::new() },
+        ];
+        let h = compile_history(&d, &declared, 0x1);
+        assert!(h.events.iter().any(|e| e.kind == "declared" && e.description == "The Sundering"));
+        let w = lint_history(&declared, &h);
+        // The year-50 event is after the present (0) and must be flagged.
+        assert!(w.iter().any(|s| s.contains("after the present")));
+        // A mismatched epoch pin is flagged.
+        let bad_epoch = vec![HistEventDef {
+            year: -50, title: "Misdated".into(), epoch: Some("Founding Age".into()), places: None, description: String::new(),
+        }];
+        assert!(lint_history(&bad_epoch, &h).iter().any(|s| s.contains("falls in")));
     }
 
     #[test]
@@ -238,14 +309,14 @@ mod tests {
             settle(1, 1, 500, "village", "coast"),
             settle(2, 2, 90_000, "city", "river_mouth"),
         ]);
-        assert_eq!(compile_history(&d, 7), compile_history(&d, 7));
+        assert_eq!(compile_history(&d, &[], 7), compile_history(&d, &[], 7));
     }
 
     #[test]
     fn span_scales_with_settlement_count_and_is_capped() {
         let one = demo(vec![settle(1, 1, 100, "village", "coast")]);
         let many = demo((0..500).map(|i| settle(i, i, 100, "village", "coast")).collect());
-        assert!(compile_history(&one, 0).span_years < compile_history(&many, 0).span_years);
-        assert!(compile_history(&many, 0).span_years <= 4000);
+        assert!(compile_history(&one, &[], 0).span_years < compile_history(&many, &[], 0).span_years);
+        assert!(compile_history(&many, &[], 0).span_years <= 4000);
     }
 }
