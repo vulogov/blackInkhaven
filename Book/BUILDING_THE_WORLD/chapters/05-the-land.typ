@@ -149,9 +149,9 @@ more land, paint more of it bright. That trial-and-error is usually all you need
 takes a number from `0` to `65535`, where `0` is black and `65535` is white;
 everything at or below it is sea.)
 
-#subsection("Two shortcuts")
+#subsection("Three shortcuts")
 
-If drawing is not your strength, two roads hand you a heightmap ready-made:
+If drawing is not your strength, three roads hand you a heightmap ready-made:
 
 #list(
   [*Generate one.* Free terrain tools — *Wilbur*, or Blender's built-in *A.N.T.
@@ -162,7 +162,45 @@ If drawing is not your strength, two roads hand you a heightmap ready-made:
    pan to any real region and download its terrain as a greyscale PNG; *QGIS* (free)
    can do the same over public SRTM elevation data. A quiet way to give a fantasy
    map the bones of a real coastline.],
+  [*Ask a text-to-image generator.* Tools like ChatGPT / DALL·E, the free Bing /
+   Microsoft Image Creator, Google Gemini, Midjourney, or Stable Diffusion can
+   draw a heightmap straight from a written description — the fastest road of all
+   if you can describe the shape you want but not draw it. It needs a good prompt
+   and a little clean-up; both are below.],
 )
+
+#subsection("Prompting an image generator for a heightmap")
+
+The trick is to ask for a *heightmap* explicitly and to fix the convention
+(brighter = higher), because a picture that merely "looks like a map" will not do.
+Prompts along these lines work well:
+
+```
+A top-down greyscale heightmap (digital elevation model) of a fantasy
+continent. Black ocean; dark-grey coastal lowlands rising to light-grey
+hills and pure-white mountain ranges. Smooth, soft gradients. No text, no
+labels, no borders, no compass, no shading or hillshade — greyscale
+elevation only.
+```
+
+For a specific shape, describe it: *"a large landmass in the north-west and a
+long island chain curving to the south-east, a wide bay on the east coast."*
+
+#note[
+  Two clean-up steps make an AI image usable, because these tools do not produce a
+  true DEM on their own:
+  #list(
+    [*Desaturate it.* Generators output full colour even when they look grey. Open
+     the image and convert it to greyscale (`Image → Mode → Grayscale` in GIMP),
+     so brightness alone carries the height.],
+    [*Blur it.* AI heightmaps often have hard edges and stray texture. Apply a
+     Gaussian Blur (radius ~15–25) to smooth the slopes, exactly as for a
+     hand-drawn map, and crop out any leftover frame or label.],
+  )
+  One more watch-point: some models *invert* the convention and paint mountains
+  dark. If your continents come out as oceans, invert the image (`Colors →
+  Invert`) so that bright is high again.
+]
 
 #pitfall[
   A crisp, high-contrast image with hard edges makes for cliff-walled, unnatural
