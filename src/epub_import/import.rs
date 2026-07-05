@@ -34,8 +34,16 @@ pub struct EpubImportOpts {
 #[derive(Debug, Default)]
 pub struct EpubImportReport {
     pub book_title: String,
+    /// The EPUB's `dc:creator`, surfaced so the author can set book metadata
+    /// (inkhaven has no per-book author field to store it in yet).
+    pub author: Option<String>,
     pub chapters_created: usize,
     pub paragraphs_created: usize,
+    /// Images referenced in a chapter and imported as `NodeKind::Image` nodes
+    /// under that chapter (so they render in the assembled book).
+    pub images_imported: usize,
+    /// Manifest images NOT referenced by any chapter (cover art, orphans),
+    /// written to a sidecar folder for the author to place by hand.
     pub images_extracted: usize,
     pub errors: Vec<String>,
 }
@@ -61,6 +69,7 @@ pub fn import_epub(
         .or_else(|| (!pkg.title.trim().is_empty()).then(|| pkg.title.clone()))
         .unwrap_or_else(|| "Imported EPUB".to_string());
     report.book_title = book_title.clone();
+    report.author = pkg.author.clone().filter(|a| !a.trim().is_empty());
 
     let image_items: Vec<&super::package::ManifestItem> = pkg
         .manifest
@@ -78,7 +87,11 @@ pub fn import_epub(
     // 1. The book.
     let book_id = create_node(store, cfg, NodeKind::Book, &book_title, None)?;
 
-    // 2. Each spine document → a Chapter + one Paragraph of prose.
+    // Manifest hrefs imported as image nodes — skipped by the sidecar step below.
+    let mut imported_hrefs: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    // 2. Each spine document → a Chapter + one Paragraph of prose, and its
+    //    referenced images → `NodeKind::Image` nodes under that chapter.
     for (i, href) in pkg.spine.iter().enumerate() {
         let xhtml = match archive.read(href) {
             Some(b) => String::from_utf8_lossy(&b).into_owned(),
@@ -87,6 +100,14 @@ pub fn import_epub(
                 continue;
             }
         };
+        // Resolve the chapter's `<img>` references (relative to this document)
+        // to manifest images before the refs are neutralised out of the prose.
+        let chapter_images: Vec<(String, Option<String>)> = extract_img_srcs(&xhtml)
+            .into_iter()
+            .map(|(src, alt)| (resolve_href(href, &src), alt))
+            .filter(|(res, _)| pkg.manifest.values().any(|m| m.href == *res))
+            .collect();
+
         let body = neutralize_image_refs(&xhtml_to_typst(&xhtml));
         let chapter_title =
             first_heading(&body).unwrap_or_else(|| format!("Chapter {}", i + 1));
@@ -114,16 +135,38 @@ pub fn import_epub(
                 .errors
                 .push(format!("paragraph in `{chapter_title}`: {e:#}")),
         }
+
+        // Import each referenced image as an Image node under the chapter. The
+        // hierarchy is reloaded per node (via `create_image`) so ordering stays
+        // correct across successive inserts.
+        for (res, alt) in chapter_images {
+            let Some(bytes) = archive.read(&res) else { continue };
+            let fname = res.rsplit('/').next().unwrap_or("image");
+            let (stem, ext) = match fname.rsplit_once('.') {
+                Some((s, e)) if !e.is_empty() => (s, e.to_ascii_lowercase()),
+                _ => (fname, "png".to_string()),
+            };
+            let title = alt.filter(|a| !a.trim().is_empty()).unwrap_or_else(|| stem.to_string());
+            match create_image(store, cfg, chapter_id, &title, &ext, &bytes) {
+                Ok(()) => {
+                    report.images_imported += 1;
+                    imported_hrefs.insert(res);
+                }
+                Err(e) => report.errors.push(format!("image `{fname}`: {e:#}")),
+            }
+        }
     }
 
-    // 3. Extract images to a sidecar folder beside the project, for the
-    //    author to re-link. (Full image-node import is a follow-up.)
-    if !image_items.is_empty() {
+    // 3. Any manifest images NOT referenced by a chapter (cover art, orphans)
+    //    go to a sidecar folder for the author to place by hand.
+    let orphans: Vec<&super::package::ManifestItem> =
+        image_items.iter().copied().filter(|m| !imported_hrefs.contains(&m.href)).collect();
+    if !orphans.is_empty() {
         let dir = store
             .project_root()
             .join(format!("{}-images", slug::slugify(&book_title)));
         let _ = std::fs::create_dir_all(&dir);
-        for item in image_items {
+        for item in orphans {
             if let Some(bytes) = archive.read(&item.href) {
                 let name = item.href.rsplit('/').next().unwrap_or("image");
                 if crate::io_atomic::write(&dir.join(name), &bytes).is_ok() {
@@ -134,6 +177,83 @@ pub fn import_epub(
     }
 
     Ok(report)
+}
+
+/// Create an `Image` node under `parent_id`, writing `bytes` as its content.
+/// Reloads the hierarchy so `create_image_node`'s ordering is correct across
+/// successive inserts under the same parent.
+fn create_image(
+    store: &Store,
+    cfg: &Config,
+    parent_id: Uuid,
+    title: &str,
+    ext: &str,
+    bytes: &[u8],
+) -> Result<()> {
+    let hierarchy = Hierarchy::load(store).map_err(|e| anyhow::anyhow!("hierarchy: {e}"))?;
+    let parent = hierarchy
+        .get(parent_id)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("parent {parent_id} missing"))?;
+    store
+        .create_image_node(cfg, &hierarchy, title, ext, bytes, Some(&parent), InsertPosition::End)
+        .map_err(|e| anyhow::anyhow!("create image `{title}`: {e}"))?;
+    Ok(())
+}
+
+/// Extract `(src, alt)` from every `<img>` tag in an XHTML document.
+fn extract_img_srcs(xhtml: &str) -> Vec<(String, Option<String>)> {
+    let lower = xhtml.to_ascii_lowercase();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while let Some(rel) = lower[i..].find("<img") {
+        let start = i + rel;
+        let end = xhtml[start..].find('>').map(|e| start + e).unwrap_or(xhtml.len());
+        let tag = &xhtml[start..end];
+        if let Some(src) = attr_value(tag, "src") {
+            out.push((src, attr_value(tag, "alt")));
+        }
+        i = end.max(start + 4);
+    }
+    out
+}
+
+/// Value of `name="…"` / `name='…'` in a tag slice (case-insensitive name).
+fn attr_value(tag: &str, name: &str) -> Option<String> {
+    let lower = tag.to_ascii_lowercase();
+    let key = format!("{name}=");
+    let after = lower.find(&key)? + key.len();
+    let bytes = tag.as_bytes();
+    let quote = *bytes.get(after)? as char;
+    if quote != '"' && quote != '\'' {
+        return None;
+    }
+    let rest = &tag[after + 1..];
+    let end = rest.find(quote)?;
+    Some(rest[..end].to_string())
+}
+
+/// Resolve a relative image `src` against the referencing document's `base`
+/// href (both OPF-root-relative), collapsing `.` / `..` segments.
+fn resolve_href(base: &str, src: &str) -> String {
+    let src = src.split(['#', '?']).next().unwrap_or(src);
+    if let Some(abs) = src.strip_prefix('/') {
+        return abs.to_string();
+    }
+    let mut parts: Vec<&str> = match base.rfind('/') {
+        Some(i) => base[..i].split('/').filter(|s| !s.is_empty()).collect(),
+        None => Vec::new(),
+    };
+    for seg in src.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            s => parts.push(s),
+        }
+    }
+    parts.join("/")
 }
 
 /// Create a Book/Chapter branch node and return its id.
@@ -244,5 +364,24 @@ mod tests {
         // Unterminated marker is left verbatim, no panic.
         let bad = neutralize_image_refs("oops #image(\"x");
         assert!(bad.contains("#image(\"x"));
+    }
+
+    #[test]
+    fn extract_img_srcs_reads_src_and_alt() {
+        let x = r#"<p>hi</p><img src="../images/fig1.png" alt="Figure 1"/><img src='cover.jpg'>"#;
+        let got = extract_img_srcs(x);
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0], ("../images/fig1.png".into(), Some("Figure 1".into())));
+        assert_eq!(got[1], ("cover.jpg".into(), None));
+    }
+
+    #[test]
+    fn resolve_href_collapses_dot_segments() {
+        // src relative to the chapter document's directory.
+        assert_eq!(resolve_href("OEBPS/text/ch1.xhtml", "../images/f.png"), "OEBPS/images/f.png");
+        assert_eq!(resolve_href("OEBPS/ch1.xhtml", "img/f.png"), "OEBPS/img/f.png");
+        // Absolute (root-relative) and fragment/query stripping.
+        assert_eq!(resolve_href("a/b.xhtml", "/x/y.png"), "x/y.png");
+        assert_eq!(resolve_href("a/b.xhtml", "./f.png#frag"), "a/f.png");
     }
 }

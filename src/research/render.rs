@@ -256,6 +256,7 @@ fn render_help(frame: &mut Frame, app: &ResearchApp, area: Rect) {
         Line::from("    /sources             list each fact's recorded provenance"),
         Line::from("    /upgrade [path]      re-ground a model fact → raise its tier (structured)"),
         Line::from("    /stale [days]        list aging model/web facts to re-verify"),
+        Line::from("    /deadsources         check web/document sources for link rot"),
         Line::from("    /import [path]        ingest md/txt/pdf, a folder, or .bib/.json (bare: list)"),
         Line::from("    /forget <name>       remove an imported source"),
         Line::from("    /web [--ingest] q    web search & fetch (chat+factcheck, or ingest)"),

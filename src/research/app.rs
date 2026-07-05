@@ -155,6 +155,13 @@ pub(super) struct GeonamesState {
     query: String,
 }
 
+/// RESRCH-5 (R5-F) — an in-flight `/deadsources` sweep. `checked` is the number
+/// of sources examined, for the summary line.
+pub(super) struct DeadLinksState {
+    rx: mpsc::UnboundedReceiver<std::result::Result<Vec<super::deadlinks::DeadLink>, String>>,
+    checked: usize,
+}
+
 /// RESRCH-GUTENBERG — an in-flight `/gutenberg` search + text fetch. Carries the
 /// optional `--chapter` selector (PG-P4) through to ingestion.
 type GutenbergFetch = (super::gutenberg::GutenbergBook, String, Vec<super::gutenberg::GutenbergBook>);
@@ -367,6 +374,7 @@ pub(crate) struct ResearchApp {
     web: Option<WebState>,
     wikidata_state: Option<WikidataState>,
     geonames_state: Option<GeonamesState>,
+    deadlinks_state: Option<DeadLinksState>,
     gutenberg_state: Option<GutenbergState>,
     scholarly_state: Option<ScholarlyState>,
     triangulate: Option<TriangulateState>,
@@ -471,6 +479,7 @@ impl ResearchApp {
             web: None,
             wikidata_state: None,
             geonames_state: None,
+            deadlinks_state: None,
             gutenberg_state: None,
             scholarly_state: None,
             triangulate: None,
@@ -535,6 +544,7 @@ impl ResearchApp {
             self.poll_web();
             self.poll_wikidata();
             self.poll_geonames();
+            self.poll_deadlinks();
             self.poll_gutenberg();
             self.poll_scholarly();
             self.poll_triangulate();
@@ -964,6 +974,7 @@ impl ResearchApp {
             Command::Bibliography => self.run_bibliography(),
             Command::Upgrade(path) => self.start_upgrade(path.as_deref()),
             Command::Stale(arg) => self.run_stale(arg.as_deref()),
+            Command::DeadSources => self.start_deadlinks(),
             Command::Sources => self.run_sources(),
             Command::Promote { note, path } => self.start_promote(note, path),
             Command::Import(path) => match path {
@@ -2017,6 +2028,112 @@ impl ResearchApp {
                 ));
             }
             Err(e) => self.status_message = Some(format!("geonames: {e}")),
+        }
+    }
+
+    /// RESRCH-5 (R5-F) — `/deadsources`: check every `web` URL (HTTP) and
+    /// `document` file (disk) in the provenance sidecar and report the ones that
+    /// no longer resolve. Read-only; runs async so the UI stays responsive.
+    fn start_deadlinks(&mut self) {
+        if self.deadlinks_state.is_some() {
+            self.status_message = Some("a dead-source sweep is already running".to_string());
+            return;
+        }
+        let root = self.layout.root.clone();
+        let mut immediate: Vec<super::deadlinks::DeadLink> = Vec::new();
+        let mut web: Vec<(String, String)> = Vec::new(); // (loc, url)
+        let mut doc_examined = 0usize;
+        for (id, rec) in &self.fact_provenance.facts {
+            let loc = uuid::Uuid::parse_str(id)
+                .ok()
+                .and_then(|u| self.hierarchy.get(u))
+                .map(|n| self.hierarchy.slug_path(n))
+                .unwrap_or_else(|| id.clone());
+            match rec.origin.as_str() {
+                "web" if rec.detail.starts_with("http") => web.push((loc, rec.detail.clone())),
+                "document" if !rec.detail.is_empty() => {
+                    doc_examined += 1;
+                    let p = std::path::Path::new(&rec.detail);
+                    let abs = if p.is_absolute() { p.to_path_buf() } else { root.join(p) };
+                    if !abs.exists() {
+                        immediate.push(super::deadlinks::DeadLink {
+                            loc,
+                            origin: "document".into(),
+                            target: rec.detail.clone(),
+                            reason: "file missing".into(),
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        let checked = web.len() + doc_examined;
+        if checked == 0 {
+            self.chat_history.push(ChatTurn::with_response(
+                "/deadsources".to_string(),
+                "No web or document sources to check — the corpus has no external links.".to_string(),
+            ));
+            self.chat_scroll = 0;
+            return;
+        }
+
+        let (tx, rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let out = async {
+                let client = super::deadlinks::client().map_err(|e| e.to_string())?;
+                let mut dead = immediate;
+                for (loc, url) in web {
+                    if let Some(reason) = super::deadlinks::check_web(&client, &url).await {
+                        dead.push(super::deadlinks::DeadLink {
+                            loc,
+                            origin: "web".into(),
+                            target: url,
+                            reason,
+                        });
+                    }
+                }
+                Ok::<_, String>(dead)
+            }
+            .await;
+            let _ = tx.send(out);
+        });
+        self.deadlinks_state = Some(DeadLinksState { rx, checked });
+        self.status_message = Some(format!("Checking {checked} source(s) for link rot…"));
+    }
+
+    /// Drain the in-flight dead-source sweep and report.
+    fn poll_deadlinks(&mut self) {
+        let Some(st) = self.deadlinks_state.as_mut() else { return };
+        let result = match st.rx.try_recv() {
+            Ok(r) => r,
+            Err(mpsc::error::TryRecvError::Empty) => return,
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                self.deadlinks_state = None;
+                self.status_message = Some("deadsources: request cancelled".to_string());
+                return;
+            }
+        };
+        let checked = self.deadlinks_state.take().unwrap().checked;
+        match result {
+            Ok(dead) => {
+                let body = if dead.is_empty() {
+                    format!("[/deadsources] checked {checked} source(s) — all resolve. No link rot.")
+                } else {
+                    let mut s = format!(
+                        "[/deadsources — {} dead of {checked} checked · re-source or /upgrade]\n",
+                        dead.len()
+                    );
+                    for d in &dead {
+                        s.push_str(&format!("· [{}] {}  {}  ({})\n", d.origin, d.reason, d.target, d.loc));
+                    }
+                    s
+                };
+                self.status_message = Some(format!("dead-source sweep: {} dead of {checked}", dead.len()));
+                self.chat_history.push(ChatTurn::with_response("/deadsources".to_string(), body));
+                self.chat_scroll = 0;
+            }
+            Err(e) => self.status_message = Some(format!("deadsources: {e}")),
         }
     }
 
@@ -3648,12 +3765,23 @@ impl ResearchApp {
         let is_facts = self.confirmation.as_ref().is_some_and(|c| c.book == TargetBook::Facts);
         if is_facts && !already_warned {
             if let Some((dup, dup_body)) = self.find_near_duplicate(&body) {
+                // R5-F — a near-duplicate that flips polarity ("X is Y" vs "X is
+                // not Y") or changes a numeric value is a contradiction, not a
+                // dup. Deterministic; the warn-once → second-confirm UX is shared.
+                let contradicts = looks_contradictory(&body, &dup_body);
                 if let Some(c) = self.confirmation.as_mut() {
-                    c.dup_warning =
-                        Some(format!("similar to {dup} · Ctrl+S again to insert anyway"));
+                    c.dup_warning = Some(if contradicts {
+                        format!("⚠ contradicts {dup} · Ctrl+S again to insert anyway")
+                    } else {
+                        format!("similar to {dup} · Ctrl+S again to insert anyway")
+                    });
                     c.dup_body = Some(dup_body);
                 }
-                self.status_message = Some(format!("near-duplicate of {dup}"));
+                self.status_message = Some(if contradicts {
+                    format!("possible contradiction with {dup}")
+                } else {
+                    format!("near-duplicate of {dup}")
+                });
                 return;
             }
         }
@@ -5147,6 +5275,52 @@ fn export_markdown(thread: &ResearchThread) -> String {
     s
 }
 
+/// R5-F — deterministic insert-time contradiction test between a new fact and an
+/// existing near-duplicate (already known topically similar). Flags the clear,
+/// cheap cases: an opposite negation parity ("X is Y" vs "X is not Y"), or the
+/// same wording with a changed numeric value ("ended in 1918" vs "1945").
+/// Semantic contradictions beyond these stay for a future LLM pass.
+fn looks_contradictory(new_body: &str, dup_body: &str) -> bool {
+    if net_negated(new_body) != net_negated(dup_body) {
+        return true;
+    }
+    let (a, b) = (numbers(new_body), numbers(dup_body));
+    !a.is_empty() && !b.is_empty() && a != b
+}
+
+/// Whether the text carries a *net* negation (an odd count of negation words).
+fn net_negated(s: &str) -> bool {
+    const NEG: &[&str] = &[
+        "not", "no", "never", "cannot", "can't", "without", "neither", "nor", "none", "isn't",
+        "aren't", "wasn't", "weren't", "don't", "doesn't", "didn't", "won't", "hasn't", "haven't",
+        "hadn't", "couldn't", "wouldn't", "shouldn't",
+    ];
+    let count = s
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric() && c != '\'')
+        .filter(|w| NEG.contains(w))
+        .count();
+    count % 2 == 1
+}
+
+/// Sorted numeric tokens (digit runs) in the text, for value-mismatch detection.
+fn numbers(s: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    for ch in s.chars() {
+        if ch.is_ascii_digit() {
+            cur.push(ch);
+        } else if !cur.is_empty() {
+            out.push(std::mem::take(&mut cur));
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out.sort();
+    out
+}
+
 /// R2-E — the char index where a completable Facts slug path begins in `text`:
 /// just after `→` / `->` (the insertion path of `/fact`/`/note`), or after the
 /// `/goto ` command word. `None` when there's no completable path token.
@@ -5183,6 +5357,32 @@ fn longest_common_prefix(items: &[String]) -> String {
         end = end.min(common);
     }
     first.chars().take(end).collect()
+}
+
+#[cfg(test)]
+mod contradiction_tests {
+    use super::looks_contradictory;
+
+    #[test]
+    fn negation_flip_is_a_contradiction() {
+        assert!(looks_contradictory("The treaty was ratified.", "The treaty was not ratified."));
+        assert!(looks_contradictory("She never returned to the city.", "She returned to the city."));
+    }
+
+    #[test]
+    fn changed_number_is_a_contradiction() {
+        assert!(looks_contradictory("The war ended in 1918.", "The war ended in 1945."));
+        assert!(looks_contradictory("The bridge is 1200 metres long.", "The bridge is 1400 metres long."));
+    }
+
+    #[test]
+    fn same_polarity_and_numbers_is_not() {
+        // A genuine near-duplicate, not a contradiction.
+        assert!(!looks_contradictory("The war ended in 1918.", "The war concluded in 1918."));
+        assert!(!looks_contradictory("Paris is the capital.", "The capital is Paris."));
+        // Incidental negation words ("note"/"know") must not trip the word test.
+        assert!(!looks_contradictory("Note that the city grew.", "Note the city grew."));
+    }
 }
 
 #[cfg(test)]

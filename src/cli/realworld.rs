@@ -26,6 +26,17 @@ pub fn run(project: &Path, cmd: RealworldCommand) -> Result<()> {
         RealworldCommand::Propose => propose(project),
         RealworldCommand::Proposals { cmd } => proposals(project, cmd),
         RealworldCommand::Places => places(project),
+        RealworldCommand::Calendar => calendar(project),
+        RealworldCommand::Gazetteer { output } => gazetteer(project, output.as_deref()),
+        RealworldCommand::History { json, materialize } => history(project, json, materialize),
+        RealworldCommand::Weather { day, lat } => weather(project, day, lat),
+        RealworldCommand::Ecology => ecology(project),
+        RealworldCommand::Polities => polities(project),
+        RealworldCommand::Culture => culture(project),
+        RealworldCommand::Travel { from, to, from_x, from_y, to_x, to_y, days, mode } => {
+            travel(project, from, to, from_x, from_y, to_x, to_y, days, &mode)
+        }
+        RealworldCommand::Scene { place, day, lat } => scene(project, place, day, lat),
         RealworldCommand::Magic { materialize } => magic(project, materialize),
         RealworldCommand::Map { spec_only, no_ingest } => map(project, spec_only, no_ingest),
         RealworldCommand::CoLocation => co_location(project),
@@ -547,6 +558,18 @@ fn magic(project: &Path, materialize: bool) -> Result<()> {
             }
         }
     }
+    // W7-P4 — validate the ledger for dead / malformed / redundant rules.
+    let issues = ledger.lint();
+    if issues.is_empty() {
+        if !ledger.rules.is_empty() {
+            println!("  ✓ ledger is consistent");
+        }
+    } else {
+        println!("  {} issue(s):", issues.len());
+        for w in &issues {
+            println!("    ⚠ {w}");
+        }
+    }
     if materialize {
         use crate::config::Config;
         use crate::project::ProjectLayout;
@@ -578,6 +601,630 @@ fn places(project: &Path) -> Result<()> {
         );
     }
     println!("\n{} world-linked place(s).", links.len());
+    Ok(())
+}
+
+/// WORLD-7 (W7-P3) — derive a story-Timeline calendar (`timeline.calendar`) from
+/// the world's astronomy: the day→month→year unit stack (carrying any author
+/// month names) and the four season markers. Pure + testable.
+fn build_timeline_calendar(
+    def: &WorldDefinition,
+    astro: &crate::world::types::AstronomyOutput,
+) -> crate::timeline::calendar::CalendarConfig {
+    use crate::timeline::calendar::{CalendarConfig, SeasonDef, UnitDef};
+    let cal = &def.astronomy.calendar;
+    let months = cal.months.max(1);
+    let month_len = cal.month_length_days.max(1);
+
+    let units = vec![
+        UnitDef { name: "day".into(), per_parent: month_len, names: Vec::new() },
+        UnitDef { name: "month".into(), per_parent: months, names: cal.month_names.clone() },
+        UnitDef { name: "year".into(), per_parent: 0, names: Vec::new() },
+    ];
+
+    // Each astronomy marker starts a season and spans to the next; marker names
+    // like "spring_equinox" → "spring".
+    let mut markers = astro.seasons.clone();
+    markers.sort_by(|a, b| {
+        a.year_fraction.partial_cmp(&b.year_fraction).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let mut seasons = Vec::new();
+    for (i, m) in markers.iter().enumerate() {
+        let start_month = ((m.year_fraction * months as f64).floor() as u32).min(months - 1) + 1;
+        let next = markers.get(i + 1).map(|n| n.year_fraction).unwrap_or(markers[0].year_fraction + 1.0);
+        let span = (((next - m.year_fraction) * months as f64).round() as i64).max(1) as u32;
+        let name = m.name.split(['_', ' ']).next().unwrap_or(&m.name).to_lowercase();
+        seasons.push(SeasonDef { name, start_month, span_months: span });
+    }
+
+    CalendarConfig {
+        preset: "custom".into(),
+        base_unit: "day".into(),
+        units,
+        seasons,
+        epoch_label: String::new(),
+        epoch_before_label: String::new(),
+        display_format: String::new(),
+        parse_aliases: Vec::new(),
+    }
+}
+
+/// `realworld calendar` — print the story-Timeline calendar derived from the
+/// world's astronomy, ready to adopt under `timeline.calendar`. The simulation
+/// proposes; the author adopts (authority discipline).
+fn calendar(project: &Path) -> Result<()> {
+    use crate::world::compile::compile_astronomy;
+    let def = load(project)?;
+    let astro = compile_astronomy(&def.astronomy);
+    let cal = &def.astronomy.calendar;
+    let tl = build_timeline_calendar(&def, &astro);
+
+    let year_days = cal.months.saturating_mul(cal.month_length_days);
+    println!(
+        "calendar · {} — {} months × {} days = {}-day year",
+        def.name, cal.months, cal.month_length_days, year_days
+    );
+    let names = if cal.month_names.is_empty() {
+        format!("(unnamed — months 1..{})", cal.months)
+    } else {
+        cal.month_names.join(", ")
+    };
+    println!("  months:  {names}");
+    println!(
+        "  seasons: {}",
+        tl.seasons
+            .iter()
+            .map(|s| format!("{} (from month {}, {} mo)", s.name, s.start_month, s.span_months))
+            .collect::<Vec<_>>()
+            .join(" · ")
+    );
+
+    let body = serde_json::to_string_pretty(&tl)
+        .map_err(|e| Error::Store(format!("serializing calendar: {e}")))?;
+    println!(
+        "\nAdopt it as your story's calendar — set `timeline.enabled: true` and paste this\nas `timeline.calendar` in inkhaven.hjson:\n\n{body}"
+    );
+    Ok(())
+}
+
+/// Resolve an accepted Place / world-link name to its full record.
+fn resolve_place_link(
+    project: &Path,
+    name: &str,
+) -> Result<crate::world::proposals::PlaceLink> {
+    use crate::world::storage::WorldStore;
+    let store = WorldStore::open_for_project(project)
+        .map_err(|e| Error::Store(format!("opening world store: {e}")))?;
+    let links = store
+        .list_place_links()
+        .map_err(|e| Error::Store(format!("listing places: {e}")))?;
+    links
+        .into_iter()
+        .find(|l| l.name.eq_ignore_ascii_case(name))
+        .ok_or_else(|| {
+            Error::Config(format!(
+                "place `{name}` not found among accepted world places — accept it via `realworld proposals`, or pass coordinates"
+            ))
+        })
+}
+
+/// Resolve a place name to its map coordinates.
+fn resolve_place(project: &Path, name: &str) -> Result<(f64, f64)> {
+    let l = resolve_place_link(project, name)?;
+    Ok((l.x as f64, l.y as f64))
+}
+
+/// Grid row → latitude in degrees (row 0 = north pole, last row = south pole).
+fn row_to_latitude(y: usize, height: usize) -> f64 {
+    if height <= 1 {
+        return 0.0;
+    }
+    90.0 - (y as f64 / (height - 1) as f64) * 180.0
+}
+
+/// WORLD-10 — `realworld scene --place <name> --day <N>`: a scene brief for the
+/// writer — the local season + weather at the place's latitude on that day, the
+/// place's biome / climate, and the culture whose realm it sits nearest. The
+/// composition the in-editor world-context pane will show (auto-detecting the
+/// scene's place + date is the remaining wiring).
+fn scene(project: &Path, place: Option<String>, day: f64, lat: Option<f64>) -> Result<()> {
+    use crate::world::compile::{
+        compile_astronomy, compile_climate, compile_culture, compile_demographics, compile_hydrology,
+        compile_polities,
+    };
+    let def = load(project)?;
+    let astro = compile_astronomy(&def.astronomy);
+    let geo = geology_for(project, &def)?;
+    let climate = compile_climate(&def, &astro, &geo);
+    let hydro = compile_hydrology(&geo, &climate);
+    let demo = compile_demographics(&climate, &hydro);
+    let seed = def.seed_u64();
+
+    let link = place.as_deref().map(|n| resolve_place_link(project, n)).transpose()?;
+    let latitude = lat.or_else(|| link.as_ref().map(|l| row_to_latitude(l.y, climate.height)));
+
+    // Peoples for the nearest-realm culture, then the shared composition.
+    let pol = compile_polities(&demo, &def.nations, seed);
+    let capital_biomes: Vec<String> = pol
+        .polities
+        .iter()
+        .map(|q| {
+            demo.settlements
+                .iter()
+                .find(|s| (s.x, s.y) == q.capital_pos)
+                .map(|s| s.biome.clone())
+                .unwrap_or_default()
+        })
+        .collect();
+    let cul = compile_culture(&pol, &capital_biomes, &def.cultures, seed);
+    let brief = crate::world::scene::scene_brief(&astro, &pol, &cul, link.as_ref(), Some(day), latitude);
+
+    println!("scene · {}", def.name);
+    if let (Some(name), Some(biome)) = (&brief.place, &brief.biome) {
+        let cz = brief.climate_zone.as_deref().unwrap_or("");
+        println!("  place:    {name} · {biome} {cz}");
+    }
+    println!(
+        "  when:     day {:.0} of {:.0}{}",
+        day,
+        astro.year_length_planet_days,
+        latitude.map(|l| format!(" · lat {l:.0}°")).unwrap_or_default()
+    );
+    if let (Some(s), Some(c)) = (&brief.season, &brief.conditions) {
+        println!("  season:   {s} · {c}");
+    }
+    if let Some(realm) = &brief.realm {
+        println!("  people:   {realm} — {}", brief.ethos.as_deref().unwrap_or(""));
+        if let (Some(b), Some(t)) = (&brief.belief, &brief.tongue) {
+            println!("            belief: {b} · tongue: {t}");
+        }
+    }
+    Ok(())
+}
+
+/// WORLD-10 — `realworld travel`: is a journey between two map cells plausible
+/// in the claimed time by the given mode? Uses the planet size + grid for the
+/// real distance and consults the magic ledger's `travel_time` rules.
+#[allow(clippy::too_many_arguments)]
+fn travel(
+    project: &Path,
+    from: Option<String>,
+    to: Option<String>,
+    from_x: f64,
+    from_y: f64,
+    to_x: f64,
+    to_y: f64,
+    days: f64,
+    mode: &str,
+) -> Result<()> {
+    let def = load(project)?;
+    let geo = geology_for(project, &def)?;
+    let kpc = crate::world::travel::km_per_cell(def.astronomy.planet.radius_earth, geo.width);
+    // Named places (accepted Places / world links) resolve to coordinates;
+    // otherwise the explicit --from-x/--to-x coordinates are used.
+    let (from_x, from_y) = match &from {
+        Some(n) => resolve_place(project, n)?,
+        None => (from_x, from_y),
+    };
+    let (to_x, to_y) = match &to {
+        Some(n) => resolve_place(project, n)?,
+        None => (to_x, to_y),
+    };
+    let cells = ((to_x - from_x).powi(2) + (to_y - from_y).powi(2)).sqrt();
+    let a = crate::world::travel::assess(cells * kpc, days, mode);
+
+    if from.is_some() || to.is_some() {
+        println!("travel · {} → {}", from.as_deref().unwrap_or("start"), to.as_deref().unwrap_or("end"));
+    }
+    println!(
+        "travel · {} · {:.0} km ({:.1} cells) by {}",
+        def.name, a.distance_km, cells, a.mode
+    );
+    println!(
+        "  claimed {:.1} day(s) · needs ~{:.1} at {:.0} km/day",
+        a.claimed_days,
+        a.needed_days,
+        crate::world::travel::speed_km_per_day(mode)
+    );
+    if a.plausible {
+        println!("  ✓ plausible");
+    } else {
+        println!("  ⚠ too fast — the straight-line journey needs ~{:.1} day(s)", a.needed_days);
+        if let Some(m) = &def.magic {
+            let ctx = crate::world::types::CheckContext { category: "travel_time", ..Default::default() };
+            if m.find_suppressor(&ctx).is_some() {
+                println!("    (a magic rule covers travel_time — this may be sanctioned)");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// WORLD-9 (Culture) — `realworld culture`: one culture per polity (ethos,
+/// belief, a conlang typology profile to realise, a naming sample).
+fn culture(project: &Path) -> Result<()> {
+    use crate::world::compile::{
+        compile_astronomy, compile_climate, compile_culture, compile_demographics, compile_hydrology,
+        compile_polities,
+    };
+    let def = load(project)?;
+    let astro = compile_astronomy(&def.astronomy);
+    let geo = geology_for(project, &def)?;
+    let climate = compile_climate(&def, &astro, &geo);
+    let hydro = compile_hydrology(&geo, &climate);
+    let demo = compile_demographics(&climate, &hydro);
+    let pol = compile_polities(&demo, &def.nations, def.seed_u64());
+    let capital_biomes: Vec<String> = pol
+        .polities
+        .iter()
+        .map(|p| {
+            demo.settlements
+                .iter()
+                .find(|s| (s.x, s.y) == p.capital_pos)
+                .map(|s| s.biome.clone())
+                .unwrap_or_default()
+        })
+        .collect();
+    let cul = compile_culture(&pol, &capital_biomes, &def.cultures, def.seed_u64());
+
+    println!("culture · {} — {} culture(s)", def.name, cul.cultures.len());
+    for c in &cul.cultures {
+        println!("\n  {} — {}", c.polity, c.ethos);
+        println!("    belief:   {}", c.belief);
+        println!("    language: {}  (realise with `inkhaven language`)", c.language_profile);
+        println!("    naming:   e.g. {}", c.naming_sample);
+    }
+    Ok(())
+}
+
+/// WORLD-9 (Polities) — `realworld polities`: the nations formed by clustering
+/// settlements around their largest capitals, with populations and relations.
+fn polities(project: &Path) -> Result<()> {
+    use crate::world::compile::{
+        compile_astronomy, compile_climate, compile_demographics, compile_hydrology, compile_polities,
+    };
+    let def = load(project)?;
+    let astro = compile_astronomy(&def.astronomy);
+    let geo = geology_for(project, &def)?;
+    let climate = compile_climate(&def, &astro, &geo);
+    let hydro = compile_hydrology(&geo, &climate);
+    let demo = compile_demographics(&climate, &hydro);
+    let pol = compile_polities(&demo, &def.nations, def.seed_u64());
+
+    let warnings = crate::world::compile::polities_layer::lint_polities(&def.nations, &demo);
+    if !warnings.is_empty() {
+        println!("  {} declared-nation warning(s):", warnings.len());
+        for w in &warnings {
+            println!("    ⚠ {w}");
+        }
+    }
+    let declared_n = def.nations.len();
+    println!(
+        "polities · {} — {} realm(s){}",
+        def.name,
+        pol.polities.len(),
+        if declared_n > 0 { format!(" ({declared_n} declared)") } else { String::new() }
+    );
+    for (i, p) in pol.polities.iter().enumerate() {
+        println!(
+            "\n  [{i}] {} · capital {} at ({}, {})",
+            p.name, p.capital, p.capital_pos.0, p.capital_pos.1
+        );
+        println!("      {} settlement(s) · population {}", p.member_count, fmt_pop(p.population));
+    }
+    let notable: Vec<&crate::world::compile::polities_layer::Relation> =
+        pol.relations.iter().filter(|r| r.stance != "neutral").collect();
+    if !notable.is_empty() {
+        println!("\n  relations:");
+        for r in notable {
+            println!("    {} {} {}", pol.polities[r.a].name, r.stance, pol.polities[r.b].name);
+        }
+    }
+    Ok(())
+}
+
+/// WORLD (Ecology) — `realworld ecology`: the flora / fauna archetypes + a
+/// keystone animal for each land biome, derived from the compiled climate.
+fn ecology(project: &Path) -> Result<()> {
+    use crate::world::compile::{compile_astronomy, compile_climate, compile_ecology};
+    let def = load(project)?;
+    let astro = compile_astronomy(&def.astronomy);
+    let geo = geology_for(project, &def)?;
+    let climate = compile_climate(&def, &astro, &geo);
+    let eco = compile_ecology(&climate, def.ecology.as_ref().map(|e| e.regions.as_slice()).unwrap_or(&[]), def.seed_u64());
+    println!("ecology · {} — {} land biome(s)", def.name, eco.biomes.len());
+    for b in &eco.biomes {
+        println!("\n  {} ({:.0}% of land)  · keystone: {}", b.biome, b.area_pct, b.keystone);
+        println!("    flora: {}", b.flora.join(", "));
+        println!("    fauna: {}", b.fauna.join(", "));
+    }
+    Ok(())
+}
+
+/// WORLD-10 — `realworld weather --day <N> --lat <deg>`: the local season +
+/// relative insolation for a day-of-year at a latitude, from the compiled
+/// astronomy. So a scene's weather stays consistent with the planet.
+fn weather(project: &Path, day: f64, lat: f64) -> Result<()> {
+    use crate::world::compile::compile_astronomy;
+    let def = load(project)?;
+    let astro = compile_astronomy(&def.astronomy);
+    let w = crate::world::weather::weather_at(&astro, day, lat);
+    println!(
+        "weather · {} · day {:.0} of {:.0} · lat {:.0}°",
+        def.name, day, astro.year_length_planet_days, lat
+    );
+    println!("  season:     {}", w.season);
+    println!("  conditions: {}", w.descriptor);
+    println!(
+        "  insolation: {:.2} (relative, at the {:.0}° band)",
+        w.insolation, w.lat_band_deg
+    );
+    Ok(())
+}
+
+/// WORLD-8 (W8-P1) — `realworld history [--json]`: derive the world's founding
+/// chronology + epochs from the compiled demographics and print it, plus an
+/// adoptable Timeline block (the sim proposes; the author enters the events they
+/// want via `inkhaven event`). Materialisation into the World book + direct
+/// Timeline writes are W8-P2.
+fn history(project: &Path, json: bool, materialize: bool) -> Result<()> {
+    use crate::world::compile::{
+        compile_astronomy, compile_climate, compile_demographics, compile_hydrology, compile_history,
+    };
+    let def = load(project)?;
+    let astro = compile_astronomy(&def.astronomy);
+    let geo = geology_for(project, &def)?;
+    let climate = compile_climate(&def, &astro, &geo);
+    let hydro = compile_hydrology(&geo, &climate);
+    let demo = compile_demographics(&climate, &hydro);
+    let declared = def.history.as_ref().map(|h| h.events.as_slice()).unwrap_or(&[]);
+    let hist = compile_history(&demo, declared, def.seed_u64());
+
+    let mat_report = if materialize {
+        use crate::config::Config;
+        use crate::project::ProjectLayout;
+        use crate::store::Store;
+        let layout = ProjectLayout::new(project);
+        layout.require_initialized()?;
+        let cfg = Config::load_layered(&layout.config_path())?;
+        let store = Store::open(layout, &cfg)?;
+        Some(crate::world::materialize::materialize_history(&store, &cfg, &hist)?)
+    } else {
+        None
+    };
+
+    if json {
+        let v = serde_json::json!({
+            "span_years": hist.span_years,
+            "epochs": hist.epochs.iter().map(|e| serde_json::json!({
+                "name": e.name, "start_year": e.start_year, "end_year": e.end_year, "note": e.note,
+            })).collect::<Vec<_>>(),
+            "foundings": hist.foundings.iter().map(|f| serde_json::json!({
+                "year": f.year, "label": f.label, "class": f.class, "population": f.population,
+            })).collect::<Vec<_>>(),
+            "events": hist.events.iter().map(|e| serde_json::json!({
+                "year": e.year, "kind": e.kind, "description": e.description,
+            })).collect::<Vec<_>>(),
+        });
+        println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
+        return Ok(());
+    }
+
+    println!("history · {} — {} years of recorded past", def.name, hist.span_years);
+    for e in &hist.epochs {
+        println!("\n  {} ({}…{})", e.name, e.start_year, e.end_year);
+        println!("    {}", e.note);
+        for ev in hist.events.iter().filter(|v| v.year >= e.start_year && v.year < e.end_year) {
+            println!("    · year {:>5}  {}", ev.year, ev.description);
+        }
+        for f in hist.foundings.iter().filter(|f| f.year >= e.start_year && f.year < e.end_year) {
+            println!("    · year {:>5}  {} founded  (pop {})", f.year, f.label, fmt_pop(f.population));
+        }
+    }
+    if let Some(r) = &mat_report {
+        println!(
+            "\n  → World/{}: {} paragraph(s) created, {} updated",
+            r.chapter,
+            r.created.len(),
+            r.updated.len()
+        );
+    }
+    // W11-P1 — verify the author's declared events (advisory).
+    let warnings = crate::world::compile::history_layer::lint_history(declared, &hist);
+    if !warnings.is_empty() {
+        println!("\n  {} declared-event warning(s):", warnings.len());
+        for w in &warnings {
+            println!("    ⚠ {w}");
+        }
+    }
+
+    println!("\nAdopt into the story Timeline (rename as you like):");
+    // Declared events first — those are the ones you meant to keep.
+    for d in declared {
+        let place = d
+            .places
+            .as_ref()
+            .and_then(|p| p.first())
+            .map(|p| format!(" (at {p})"))
+            .unwrap_or_default();
+        println!("  inkhaven event add --start \"{}\" \"{}{place}\"", d.year, d.title);
+    }
+    for f in &hist.foundings {
+        println!("  inkhaven event add --start \"{}\" \"{} founded\"", f.year, f.label);
+    }
+    Ok(())
+}
+
+/// WORLD-7 (W7-P4) — `realworld gazetteer [--output PATH]`: a consolidated,
+/// Markdown world reference (calendar, sky, regions, landmarks, waters,
+/// settlements, economy, magic) from the definition + compiled layers. Print to
+/// stdout, or write it beside the manuscript as an appendix source.
+fn gazetteer(project: &Path, output: Option<&str>) -> Result<()> {
+    use crate::world::compile::{compile_astronomy, compile_climate, compile_demographics, compile_hydrology};
+    use std::fmt::Write;
+    let def = load(project)?;
+    let astro = compile_astronomy(&def.astronomy);
+    let geo = geology_for(project, &def)?;
+    let climate = compile_climate(&def, &astro, &geo);
+    let hydro = compile_hydrology(&geo, &climate);
+    let demo = compile_demographics(&climate, &hydro);
+
+    let mut md = String::new();
+    let _ = writeln!(md, "# {} — World Gazetteer\n", def.name);
+    let _ = writeln!(md, "_Seed {:#x} · primary language {}_", def.seed_u64(), def.primary_language);
+
+    let cal = &def.astronomy.calendar;
+    let _ = writeln!(md, "\n## Calendar\n");
+    let _ = writeln!(
+        md,
+        "{} months × {} days = {}-day year.",
+        cal.months,
+        cal.month_length_days,
+        cal.months.saturating_mul(cal.month_length_days)
+    );
+    if !cal.month_names.is_empty() {
+        let _ = writeln!(md, "\nMonths: {}.", cal.month_names.join(", "));
+    }
+    let mut seasons = astro.seasons.clone();
+    seasons.sort_by(|a, b| a.year_fraction.partial_cmp(&b.year_fraction).unwrap_or(std::cmp::Ordering::Equal));
+    if !seasons.is_empty() {
+        let s = seasons.iter().map(|m| m.name.replace('_', " ")).collect::<Vec<_>>().join(" · ");
+        let _ = writeln!(md, "\nSeasons: {s}.");
+    }
+
+    let _ = writeln!(md, "\n## Sky\n");
+    let _ = writeln!(
+        md,
+        "- Star {} (luminosity {} L☉, {:.2} M☉)",
+        def.astronomy.star.class, def.astronomy.star.luminosity_solar, astro.stellar_mass_solar
+    );
+    let _ = writeln!(
+        md,
+        "- Year {:.1} planet-days · axial tilt {:.1}°",
+        astro.year_length_planet_days, astro.axial_tilt_deg
+    );
+    for m in &astro.moons {
+        let _ = writeln!(md, "- Moon {} · synodic {:.1} planet-days", m.name, m.synodic_period_planet_days);
+    }
+
+    if let Some(g) = &def.geography {
+        if !g.regions.is_empty() {
+            let _ = writeln!(md, "\n## Regions\n");
+            for r in &g.regions {
+                let _ = write!(md, "- **{}**", r.name);
+                let facets: Vec<&str> = [r.biome.as_str(), r.climate.as_str()]
+                    .into_iter()
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                if !facets.is_empty() {
+                    let _ = write!(md, " · {}", facets.join(", "));
+                }
+                if !r.description.is_empty() {
+                    let _ = write!(md, " — {}", r.description);
+                }
+                let _ = writeln!(md);
+            }
+        }
+        if !g.landmarks.is_empty() {
+            let _ = writeln!(md, "\n## Landmarks\n");
+            for l in &g.landmarks {
+                let _ = write!(md, "- **{}**", l.name);
+                if !l.kind.is_empty() {
+                    let _ = write!(md, " ({})", l.kind);
+                }
+                if l.population > 0 {
+                    let _ = write!(md, " · pop {}", fmt_pop(l.population));
+                }
+                if !l.description.is_empty() {
+                    let _ = write!(md, " — {}", l.description);
+                }
+                let _ = writeln!(md);
+            }
+        }
+    }
+
+    let _ = writeln!(md, "\n## Waters\n");
+    let _ = writeln!(
+        md,
+        "Procedural: {} river(s), {} lake(s), {} watershed(s).",
+        hydro.river_count, hydro.lake_count, hydro.watershed_count
+    );
+    if let Some(h) = &def.hydrology {
+        if !h.rainfall.is_empty() {
+            let _ = writeln!(md, "\nRainfall: {}.", h.rainfall);
+        }
+        for (label, list) in [("Rivers", &h.rivers), ("Lakes", &h.lakes), ("Seas", &h.seas)] {
+            if !list.is_empty() {
+                let _ = writeln!(md, "\n**{label}**\n");
+                for w in list {
+                    let _ = write!(md, "- {}", w.name);
+                    if !w.description.is_empty() {
+                        let _ = write!(md, " — {}", w.description);
+                    }
+                    let _ = writeln!(md);
+                }
+            }
+        }
+    }
+
+    if !demo.settlements.is_empty() {
+        let _ = writeln!(md, "\n## Settlements\n");
+        let _ = writeln!(
+            md,
+            "Population {} across {} settlement(s).\n",
+            fmt_pop(demo.total_population),
+            demo.settlements.len()
+        );
+        for s in demo.settlements.iter().take(12) {
+            let _ = writeln!(
+                md,
+                "- {} at ({}, {}) · pop {} · {}",
+                s.class, s.x, s.y, fmt_pop(s.population), s.biome
+            );
+        }
+    }
+
+    if let Some(e) = &def.economy {
+        let _ = writeln!(md, "\n## Economy\n");
+        if !e.tech_level.is_empty() {
+            let _ = writeln!(md, "- Tech level: {}", e.tech_level);
+        }
+        if !e.currency.is_empty() {
+            let _ = writeln!(md, "- Currency: {}", e.currency);
+        }
+        if !e.trade_goods.is_empty() {
+            let _ = writeln!(md, "- Trade goods: {}", e.trade_goods.join(", "));
+        }
+        if !e.resources.is_empty() {
+            let _ = writeln!(md, "- Resources: {}", e.resources.join(", "));
+        }
+    }
+
+    if let Some(m) = &def.magic {
+        if !m.rules.is_empty() {
+            let _ = writeln!(md, "\n## Magic\n");
+            let _ = writeln!(md, "_{}_\n", if m.enabled { "enabled" } else { "disabled" });
+            for r in &m.rules {
+                let _ = write!(md, "- **{}**", r.kind);
+                if !r.covers.is_empty() {
+                    let _ = write!(md, " (covers {})", r.covers.join(", "));
+                }
+                if !r.description.is_empty() {
+                    let _ = write!(md, " — {}", r.description);
+                }
+                let _ = writeln!(md);
+            }
+        }
+    }
+
+    match output {
+        Some(path) => {
+            crate::io_atomic::write(std::path::Path::new(path), md.as_bytes())
+                .map_err(|e| Error::Store(format!("writing {path}: {e}")))?;
+            println!("gazetteer · {} → {} ({} lines)", def.name, path, md.lines().count());
+        }
+        None => print!("{md}"),
+    }
     Ok(())
 }
 
@@ -866,6 +1513,7 @@ fn new(project: &Path, name: &str, force: bool) -> Result<()> {
 }
 
 fn validate(project: &Path) -> Result<()> {
+    use crate::world::compile::{compile_astronomy, compile_climate, compile_demographics, compile_hydrology};
     let def = load(project)?;
     println!(
         "ok — world `{}`, seed {:#x}, primary language `{}`",
@@ -873,7 +1521,111 @@ fn validate(project: &Path) -> Result<()> {
         def.seed_u64(),
         def.primary_language
     );
-    println!("  astronomy: {} moon(s), {}-month calendar", def.astronomy.moons.len(), def.astronomy.calendar.months);
+    // WORLD-7 (W7-P4) — validate every layer actually compiles, not just that
+    // the definition parses. A broken DEM path or an inconsistent block surfaces
+    // here as a compile error rather than at materialize time.
+    let astro = compile_astronomy(&def.astronomy);
+    println!(
+        "  astronomy:    ok · {} moon(s), {}-month calendar",
+        def.astronomy.moons.len(),
+        def.astronomy.calendar.months
+    );
+    let geo = geology_for(project, &def)?;
+    println!("  geology:      ok · {} plate(s), {} continent(s)", geo.plates.len(), geo.continents);
+    let climate = compile_climate(&def, &astro, &geo);
+    println!("  climate:      ok · {} biome(s)", climate.zones.len());
+    let hydro = compile_hydrology(&geo, &climate);
+    println!("  hydrology:    ok · {} river(s), {} lake(s)", hydro.river_count, hydro.lake_count);
+    let demo = compile_demographics(&climate, &hydro);
+    println!("  demographics: ok · {} settlement(s)", demo.settlements.len());
+    // W11-P1 — verify declared history events (advisory).
+    let declared_hist = def.history.as_ref().map(|h| h.events.as_slice()).unwrap_or(&[]);
+    if !declared_hist.is_empty() {
+        let hist = crate::world::compile::compile_history(&demo, declared_hist, def.seed_u64());
+        let w = crate::world::compile::history_layer::lint_history(declared_hist, &hist);
+        if w.is_empty() {
+            println!("  history:      ok · {} declared event(s)", declared_hist.len());
+        } else {
+            println!("  history:      {} declared event(s), {} warning(s):", declared_hist.len(), w.len());
+            for x in &w {
+                println!("                  ⚠ {x}");
+            }
+        }
+    }
+    // W11-P2 — verify declared nations (advisory).
+    if !def.nations.is_empty() {
+        let w = crate::world::compile::polities_layer::lint_polities(&def.nations, &demo);
+        if w.is_empty() {
+            println!("  nations:      ok · {} declared", def.nations.len());
+        } else {
+            println!("  nations:      {} declared, {} warning(s):", def.nations.len(), w.len());
+            for x in &w {
+                println!("                  ⚠ {x}");
+            }
+        }
+    }
+    // W11-P3 — verify declared river courses (downhill; reaches water). Advisory.
+    if let Some(hy) = def.hydrology.as_ref() {
+        let courses = hy.rivers.iter().filter(|r| r.from.is_some() && r.to.is_some()).count();
+        if courses > 0 {
+            let w = crate::world::compile::hydrology_layer::lint_rivers(hy, &geo);
+            if w.is_empty() {
+                println!("  rivers:       ok · {courses} declared course(s) run downhill to water");
+            } else {
+                println!("  rivers:       {courses} declared course(s), {} warning(s):", w.len());
+                for x in &w {
+                    println!("                  ⚠ {x}");
+                }
+            }
+        }
+    }
+    // W11-P4 — verify pinned cultures + ecology (advisory).
+    if !def.cultures.is_empty() {
+        let pol = crate::world::compile::compile_polities(&demo, &def.nations, def.seed_u64());
+        let capital_biomes: Vec<String> = pol
+            .polities
+            .iter()
+            .map(|q| {
+                demo.settlements
+                    .iter()
+                    .find(|s| (s.x, s.y) == q.capital_pos)
+                    .map(|s| s.biome.clone())
+                    .unwrap_or_default()
+            })
+            .collect();
+        let w = crate::world::compile::culture_layer::lint_culture(&def.cultures, &pol, &capital_biomes);
+        if w.is_empty() {
+            println!("  cultures:     ok · {} pinned", def.cultures.len());
+        } else {
+            println!("  cultures:     {} pinned, {} warning(s):", def.cultures.len(), w.len());
+            for x in &w {
+                println!("                  ⚠ {x}");
+            }
+        }
+    }
+    if let Some(eco) = def.ecology.as_ref().filter(|e| !e.regions.is_empty()) {
+        let w = crate::world::compile::ecology_layer::lint_ecology(&eco.regions, &climate);
+        if w.is_empty() {
+            println!("  ecology:      ok · {} pinned biome(s)", eco.regions.len());
+        } else {
+            println!("  ecology:      {} pinned, {} warning(s):", eco.regions.len(), w.len());
+            for x in &w {
+                println!("                  ⚠ {x}");
+            }
+        }
+    }
+    if let Some(m) = def.magic.as_ref() {
+        let issues = m.lint();
+        if issues.is_empty() {
+            println!("  magic:        ok · {}", if m.enabled { "ledger enabled" } else { "off" });
+        } else {
+            println!("  magic:        {} issue(s):", issues.len());
+            for w in &issues {
+                println!("                  ⚠ {w}");
+            }
+        }
+    }
+    println!("all layers compile.");
     Ok(())
 }
 
@@ -897,11 +1649,86 @@ fn show(project: &Path, json: bool) -> Result<()> {
     Ok(())
 }
 
+/// WORLD-7 (W7-P1) — compile the WHOLE world in one command. Runs the five
+/// physical layers in dependency order and, with `--materialize`, writes every
+/// chapter — Astronomy → Geology → Climate → Hydrology → Demographics — plus the
+/// author-declared Setting into the World book. Pure orchestration of the
+/// existing `compile_*` + `materialize_*` building blocks.
+fn compile_all_cli(project: &Path, json: bool, materialize: bool) -> Result<()> {
+    use crate::world::compile::{compile_astronomy, compile_climate, compile_demographics, compile_hydrology};
+    let def = load(project)?;
+    let astro = compile_astronomy(&def.astronomy);
+    let geo = geology_for(project, &def)?;
+    let climate = compile_climate(&def, &astro, &geo);
+    let hydro = compile_hydrology(&geo, &climate);
+    let demo = compile_demographics(&climate, &hydro);
+
+    // Materialize first (a side effect that runs in both JSON and human modes),
+    // in dependency order, so a whole world lands in one command.
+    let mut reports: Vec<crate::world::materialize::MaterializeReport> = Vec::new();
+    if materialize {
+        use crate::config::Config;
+        use crate::project::ProjectLayout;
+        use crate::store::Store;
+        let layout = ProjectLayout::new(project);
+        layout.require_initialized()?;
+        let cfg = Config::load_layered(&layout.config_path())?;
+        let store = Store::open(layout, &cfg)?;
+        use crate::world::materialize as m;
+        reports.push(m::materialize_astronomy(&store, &cfg, &astro)?);
+        reports.push(m::materialize_geology(&store, &cfg, &geo)?);
+        reports.push(m::materialize_climate(&store, &cfg, &climate)?);
+        reports.push(m::materialize_hydrology(&store, &cfg, &hydro)?);
+        reports.push(m::materialize_demographics(&store, &cfg, &demo)?);
+        // WORLD-8 — the world's past lands with the whole-world compile.
+        let declared_hist = def.history.as_ref().map(|h| h.events.as_slice()).unwrap_or(&[]);
+        let hist = crate::world::compile::compile_history(&demo, declared_hist, def.seed_u64());
+        reports.push(m::materialize_history(&store, &cfg, &hist)?);
+        reports.push(m::materialize_setting(&store, &cfg, &def)?);
+    }
+
+    if json {
+        let v = serde_json::json!({
+            "astronomy": astro, "geology": geo, "climate": climate,
+            "hydrology": hydro, "demographics": demo,
+        });
+        let s = serde_json::to_string_pretty(&v)
+            .map_err(|e| Error::Store(format!("serializing world: {e}")))?;
+        println!("{s}");
+        return Ok(());
+    }
+
+    println!("world · {}", def.name);
+    println!("  compiled 5 layers: astronomy · geology · climate · hydrology · demographics");
+    println!(
+        "  {} settlement(s), population {}",
+        demo.settlements.len(),
+        fmt_pop(demo.total_population)
+    );
+    if reports.is_empty() {
+        println!("  (run with --materialize to write the World book)");
+    } else {
+        println!("  materialized {} chapter(s):", reports.len());
+        for r in &reports {
+            println!("    → World/{}: {} created, {} updated", r.chapter, r.created.len(), r.updated.len());
+        }
+    }
+    Ok(())
+}
+
 fn compile(project: &Path, layer: Option<&str>, json: bool, materialize: bool) -> Result<()> {
-    let l = layer.unwrap_or("astronomy");
+    // WORLD-7 — a bare `realworld compile` (or `--layer all`) now compiles the
+    // whole world; `--layer <name>` still compiles a single layer.
+    let l = layer.unwrap_or("all");
+    if l == "all" {
+        return compile_all_cli(project, json, materialize);
+    }
     let known = ["astronomy", "geology", "climate", "hydrology", "demographics"];
     if !known.contains(&l) {
-        return Err(Error::Config(format!("unknown layer `{l}` (one of: {})", known.join(", "))));
+        return Err(Error::Config(format!(
+            "unknown layer `{l}` (one of: all, {})",
+            known.join(", ")
+        )));
     }
     match l {
         "geology" => return compile_geology_cli(project, json, materialize),
@@ -1239,9 +2066,12 @@ fn materialize_to_store(
 fn starter_template(name: &str) -> String {
     format!(
         r#"// A world definition for `inkhaven realworld`.
-// Edit freely, then `inkhaven realworld compile`. Only the astronomy block is
-// wired today (WORLD-4 P0); geology / climate / hydrology / demographics / magic
-// land in later phases and are accepted-and-ignored for now.
+// Edit freely, then `inkhaven realworld compile --materialize` to compile and
+// write the whole world (astronomy · geology · climate · hydrology · demographics)
+// into the World book, or `compile --layer <name>` for one layer. Geology /
+// climate / hydrology / demographics are generated from `seed` below; add an
+// optional block for any of them to override the defaults, and `magic: {{ … }}`
+// to declare an author rules ledger (`realworld magic`).
 {{
     name: "{name}"
     seed: 0x1A2B3C
@@ -1270,4 +2100,40 @@ fn starter_template(name: &str) -> String {
 }}
 "#
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn row_to_latitude_maps_poles_and_equator() {
+        assert!((super::row_to_latitude(0, 181) - 90.0).abs() < 1e-9); // north pole
+        assert!((super::row_to_latitude(180, 181) + 90.0).abs() < 1e-9); // south pole
+        assert!((super::row_to_latitude(90, 181)).abs() < 1e-9); // equator
+        assert_eq!(super::row_to_latitude(0, 1), 0.0); // degenerate grid
+    }
+
+    #[test]
+    fn calendar_bridge_maps_astronomy() {
+        // W7-P3 — the astronomy calendar → story-Timeline CalendarConfig mapping.
+        let def = crate::world::types::WorldDefinition::from_hjson(&starter_template("Test"))
+            .expect("starter template parses");
+        let astro = crate::world::compile::compile_astronomy(&def.astronomy);
+        let tl = build_timeline_calendar(&def, &astro);
+
+        assert_eq!(tl.preset, "custom");
+        assert_eq!(tl.base_unit, "day");
+        // day → month → year stack, from the world calendar (30-day months, 12/yr).
+        assert_eq!(tl.units.len(), 3);
+        assert_eq!(tl.units[0].per_parent, 30);
+        assert_eq!(tl.units[1].per_parent, 12);
+        assert_eq!(tl.units[2].per_parent, 0); // year is unbounded
+        // Four season markers, each a valid in-range span.
+        assert_eq!(tl.seasons.len(), 4);
+        for s in &tl.seasons {
+            assert!((1..=12).contains(&s.start_month), "start_month {} in range", s.start_month);
+            assert!(s.span_months >= 1);
+        }
+    }
 }

@@ -4,7 +4,7 @@
 |---|---|
 | **RFC** | INNER_SOCRATES-1 |
 | **Title** | Examined Authorship via Socratic Interrogation (Reader Personas, Intent Ledger, Fast/Slow Socratic Tracks) |
-| **Status** | **In progress — building incrementally in the 1.3.x cycle** |
+| **Status** | Shipped — 1.3.28–1.3.29 |
 | **Created** | 2026-06-26 |
 | **Author** | Vladimir Ulogov |
 | **Target version** | author wrote 1.6.0; **pulled forward into the 1.3.x tree** (same cadence as WORLD-4) |

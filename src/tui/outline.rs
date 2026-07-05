@@ -1,9 +1,11 @@
 //! OUTLINE-1 — full-screen manuscript Outline pane.
 //!
-//! This module owns the pane's persisted view state (`OutlineState`) and, in
-//! later phases, its renderer + key handling. The structural mutation
-//! operations (reorder / promote / demote / copy / move) live in
-//! `crate::outline` so the CLI and Bund share them.
+//! This module owns the pane's persisted view state (`OutlineState`). Its
+//! renderer + key handling and the structural edits — reorder (`Shift+J/K`),
+//! promote/demote (`</>`), and cross-parent paragraph copy/move (`y/m/f`) —
+//! shipped in 1.4.13 (O-P1..P4) and run in the TUI app, calling the store's
+//! filesystem-aware `swap_siblings` / `move_node_to_parent` (the same primitives
+//! the Tree pane and the `inkhaven outline` / `paragraph` CLI share).
 //!
 //! O-P0 — the state: expanded/collapsed flags, cursor, scroll, and the inline
 //! filter string, persisted per-project to `.inkhaven/outline-state.json`

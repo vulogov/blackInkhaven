@@ -1,10 +1,14 @@
 //! WORLD-4 value types: the parsed world definition and the per-layer outputs.
 //!
-//! P0 models the top-level definition (name / seed / primary language) and the
-//! `astronomy` block in full; the other declaration blocks
-//! (`geology` / `climate` / `technology` / `magic` / `compiler`) are accepted
-//! and ignored for now — serde drops unknown fields, so a complete `world.hjson`
-//! parses cleanly even though only astronomy is wired this phase.
+//! The top-level definition (name / seed / primary language) plus the per-layer
+//! declaration blocks (`astronomy`, and optional `geology` / `climate` / `magic`
+//! overrides) drive the five compile layers, each of which produces a populated
+//! `*Output` here. Layers without an explicit block are generated from the seed.
+
+// A deliberate flat re-export API (`crate::world::types::*`): some names are
+// consumed via their submodule path or by field access rather than through the
+// flat alias, so the binary-crate `unused_imports` lint mis-fires on them.
+#![allow(unused_imports)]
 
 pub mod astronomy;
 pub mod climate;
@@ -26,6 +30,7 @@ pub use geology::{
 pub use hydrology::{HydrologyOutput, RiverSummary, SettlementPrior};
 pub use magic::{Applicability, CheckContext, MagicLedger, MagicRule};
 pub use world::{
-    AstronomyDef, Calendar, DemGeology, GeneratedGeology, GeologyDef, Moon, Orbit, Planet,
-    SeedValue, Star, WorldDefinition,
+    AstronomyDef, Calendar, CultureDef, DemGeology, EcologyDef, EcologyRegionDef, GeneratedGeology,
+    GeologyDef, HistEventDef, HistoryDef, HydrologyDef, Moon, NamedWater, NationDef, NationRelation,
+    Orbit, Planet, SeedValue, Star, WorldDefinition,
 };

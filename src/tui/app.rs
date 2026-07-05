@@ -1572,6 +1572,16 @@ pub(crate) enum RightPane {
     Thoughts,
 }
 
+/// WORLD-10 — the world-level compile cached for the scene context (recomputed
+/// lazily; the per-paragraph place/date resolution is cheap on top of it).
+struct SceneWorld {
+    astro: crate::world::types::AstronomyOutput,
+    pol: crate::world::compile::polities_layer::PolitiesOutput,
+    cul: crate::world::compile::culture_layer::CultureOutput,
+    height: usize,
+    place_links: Vec<crate::world::proposals::PlaceLink>,
+}
+
 impl RightPane {
     fn label(self) -> &'static str {
         match self {
@@ -1728,6 +1738,20 @@ pub(crate) struct App {
     ie_last_fp: Option<(Uuid, u64)>,
     ie_activity_at: Option<std::time::Instant>,
     ie_needs_check: bool,
+    /// INNER-THEOLOGIAN-1 — ambient paragraph-idle nudge. Gated by
+    /// `theologian.enabled && theologian.on_paragraph_idle` (both default on).
+    /// On idle, poses the single Category-1 cost-of-harm question into Output
+    /// (deterministic, zero-cost — the deliberate LLM engage stays on
+    /// `Ctrl+B J→T`). `theo_last_fp` debounces per content version.
+    theo_last_fp: Option<(Uuid, u64)>,
+    theo_activity_at: Option<std::time::Instant>,
+    theo_needs_check: bool,
+    /// WORLD-10 — scene world-context. `scene_world` is the lazily-compiled world;
+    /// `scene_brief` is the current paragraph's brief (footer chip + overview),
+    /// recomputed only when the open paragraph changes.
+    scene_world: Option<SceneWorld>,
+    scene_last_para: Option<Uuid>,
+    scene_brief: Option<crate::world::scene::SceneBrief>,
     /// NARR-1 — ambient prose check toggle (`Ctrl+V Shift+V`); seeded from
     /// `prose.ambient`. `prose_last_run` is the cooldown floor.
     prose_auto: bool,
@@ -3001,6 +3025,12 @@ impl App {
             socr_last_fp: None,
             socr_activity_at: None,
             socr_needs_check: false,
+            theo_last_fp: None,
+            theo_activity_at: None,
+            theo_needs_check: false,
+            scene_world: None,
+            scene_last_para: None,
+            scene_brief: None,
             ie_auto: false,
             ie_last_fp: None,
             ie_activity_at: None,
@@ -3335,6 +3365,8 @@ impl App {
             self.tick_health_pump();
             self.tick_fact_check();
             self.tick_inner_socrates();
+            self.tick_inner_theologian();
+            self.tick_scene_context();
             self.tick_inner_editor();
             self.tick_tree_badges();
             // 1.2.9+ — close the TTS playback modal as
@@ -13292,6 +13324,25 @@ impl App {
         ));
         rows.push("".into());
 
+        // WORLD-10 (S-P4) — the current scene, focused, above the world layers.
+        if let Some(b) = &self.scene_brief {
+            rows.push("This scene".into());
+            if let Some(p) = &b.place {
+                let extras: Vec<&str> =
+                    [b.biome.as_deref(), b.climate_zone.as_deref()].into_iter().flatten().collect();
+                let tail = if extras.is_empty() { String::new() } else { format!(" · {}", extras.join(" · ")) };
+                rows.push(format!("  place:   {p}{tail}"));
+            }
+            if let (Some(s), Some(c)) = (&b.season, &b.conditions) {
+                rows.push(format!("  when:    {s} · {c}"));
+            }
+            if let Some(r) = &b.realm {
+                let ethos = b.ethos.as_deref().map(|e| format!(" — {e}")).unwrap_or_default();
+                rows.push(format!("  people:  {r}{ethos}"));
+            }
+            rows.push("".into());
+        }
+
         let a = &def.astronomy;
         let out = compile_astronomy(a);
         rows.push("Astronomy  ✓".into());
@@ -13326,6 +13377,10 @@ impl App {
             out.calendar_check.computed_days,
             if out.calendar_check.consistent { "consistent" } else { "off >1 day ⚠" }
         ));
+        rows.push(format!(
+            "  → story calendar: {} months × {} days  ·  adopt via CLI `realworld calendar`",
+            def.astronomy.calendar.months, def.astronomy.calendar.month_length_days
+        ));
         rows.push("".into());
 
         // The chapter titles already materialized under the World book — drives
@@ -13347,21 +13402,90 @@ impl App {
             .unwrap_or_default();
         let has = |title: &str| world_chapters.iter().any(|c| c.eq_ignore_ascii_case(title));
 
-        // The remaining MVP layers — all shipped; show whether each is in the book.
-        let geo_mode = match def.geology.as_ref() {
-            Some(g) if g.dem.is_some() => "DEM-sourced",
-            _ => "generated",
-        };
-        for (layer, note) in [
-            ("Geology", geo_mode),
-            ("Climate", "derived"),
-            ("Hydrology", "derived"),
-            ("Demographics", "derived"),
-            ("Magic Ledger", if def.magic.as_ref().map(|m| m.enabled).unwrap_or(false) { "enabled" } else { "off" }),
-        ] {
-            let mark = if has(layer) { "✓ in World book" } else { "· press C to compile" };
-            rows.push(format!("{layer}  ({note})  {mark}"));
+        // WORLD-7 (W7-P2) — surface every physical layer, not just astronomy.
+        // Compile the chain live (deterministic, bounded grid) for a preview
+        // summary, and mark whether each is materialized in the World book.
+        let mark = |title: &str| if has(title) { "✓ in World book" } else { "· press C to compile" };
+        {
+            use crate::world::compile::{
+                compile_climate, compile_culture, compile_demographics, compile_ecology,
+                compile_geology, compile_history, compile_hydrology, compile_polities,
+            };
+            let seed = def.seed_u64();
+            let geo = compile_geology(&def);
+            let climate = compile_climate(&def, &out, &geo);
+            let hydro = compile_hydrology(&geo, &climate);
+            let demo = compile_demographics(&climate, &hydro);
+            let geo_mode = if def.geology.as_ref().and_then(|g| g.dem.as_ref()).is_some() {
+                "DEM-sourced"
+            } else {
+                "generated"
+            };
+            let pop = demo.total_population;
+            let pop_s = if pop >= 1_000_000 {
+                format!("{:.1}M", pop as f64 / 1_000_000.0)
+            } else if pop >= 10_000 {
+                format!("{:.0}k", pop as f64 / 1_000.0)
+            } else {
+                pop.to_string()
+            };
+
+            rows.push(format!("Geology  ({geo_mode})  {}", mark("Geology")));
+            rows.push(format!(
+                "  {} plate(s) · {} continent(s) · {:.0}% ocean · {} range(s)",
+                geo.plates.len(), geo.continents, geo.sea_coverage_pct, geo.mountain_ranges.len()
+            ));
+            rows.push(format!("Climate  (derived)  {}", mark("Climate")));
+            rows.push(format!(
+                "  land mean {:.1}°C · {:.0} mm/yr · {} biome(s)",
+                climate.mean_land_temp_c, climate.mean_land_precip_mm, climate.zones.len()
+            ));
+            rows.push(format!("Hydrology  (derived)  {}", mark("Hydrology")));
+            rows.push(format!(
+                "  {} river(s) · {} lake(s) · {} watershed(s)",
+                hydro.river_count, hydro.lake_count, hydro.watershed_count
+            ));
+            rows.push(format!("Demographics  (derived)  {}", mark("Demographics")));
+            rows.push(format!(
+                "  population {pop_s} · {} settlement(s) ({} cities, {} towns)",
+                demo.settlements.len(), demo.size_classes.cities, demo.size_classes.towns
+            ));
+
+            // WORLD-8/9 — the derived history + peoples passes.
+            let declared_hist = def.history.as_ref().map(|h| h.events.as_slice()).unwrap_or(&[]);
+            let hist = compile_history(&demo, declared_hist, seed);
+            rows.push(format!("History  (derived)  {}", mark("History")));
+            rows.push(format!(
+                "  {} years · {} epoch(s) · {} founding(s) · {} event(s)",
+                hist.span_years, hist.epochs.len(), hist.foundings.len(), hist.events.len()
+            ));
+            let eco = compile_ecology(&climate, def.ecology.as_ref().map(|e| e.regions.as_slice()).unwrap_or(&[]), seed);
+            rows.push(format!(
+                "Ecology  ·  {} land biome(s){}",
+                eco.biomes.len(),
+                eco.biomes.first().map(|b| format!(" · keystone {}", b.keystone)).unwrap_or_default()
+            ));
+            let pol = compile_polities(&demo, &def.nations, seed);
+            let capital_biomes: Vec<String> = pol
+                .polities
+                .iter()
+                .map(|p| {
+                    demo.settlements
+                        .iter()
+                        .find(|s| (s.x, s.y) == p.capital_pos)
+                        .map(|s| s.biome.clone())
+                        .unwrap_or_default()
+                })
+                .collect();
+            let cul = compile_culture(&pol, &capital_biomes, &def.cultures, seed);
+            rows.push(format!("Peoples  ·  {} realm(s), {} culture(s)", pol.polities.len(), cul.cultures.len()));
+            if let Some(c) = cul.cultures.first() {
+                rows.push(format!("  {} — {}", c.polity, c.ethos));
+            }
         }
+        let magic_note =
+            if def.magic.as_ref().map(|m| m.enabled).unwrap_or(false) { "enabled" } else { "off" };
+        rows.push(format!("Magic Ledger  ({magic_note})  {}", mark("Magic Ledger")));
         rows.push("".into());
 
         let any = !world_chapters.is_empty();
@@ -14682,6 +14806,181 @@ impl App {
                 }
             }
         }
+    }
+
+    /// INNER-THEOLOGIAN-1 — the ambient paragraph-idle nudge, mirroring the
+    /// Socratic ambient (deterministic, zero-cost, into Output). Gated by
+    /// `theologian.enabled && theologian.on_paragraph_idle`.
+    fn tick_inner_theologian(&mut self) {
+        if !self.cfg.theologian.enabled || !self.cfg.theologian.on_paragraph_idle {
+            return;
+        }
+        let fp = self.opened.as_ref().map(content_fingerprint);
+        if fp != self.theo_last_fp {
+            // An edit re-arms the idle timer; nothing fires until the pause.
+            self.theo_last_fp = fp;
+            self.theo_activity_at = fp.map(|_| std::time::Instant::now());
+            self.theo_needs_check = fp.is_some();
+            return;
+        }
+        if self.theo_needs_check && matches!(self.modal, Modal::None) {
+            if let Some(t) = self.theo_activity_at {
+                let idle = self
+                    .cfg
+                    .theologian
+                    .idle_threshold_seconds
+                    .unwrap_or(self.cfg.editor.fact_check_idle_seconds);
+                if t.elapsed() >= std::time::Duration::from_secs(idle) {
+                    self.theo_needs_check = false;
+                    self.auto_theologian_nudge();
+                }
+            }
+        }
+    }
+
+    /// Pose the single Category-1 cost-of-harm question for the open paragraph
+    /// into Output (no LLM — the deliberate slow session stays on `Ctrl+B J→T`).
+    fn auto_theologian_nudge(&mut self) {
+        use crate::pane::output::{kinds, Lifetime, Message, Severity};
+        let Some(doc) = self.opened.as_ref() else { return };
+        // Prose only — skip jinja templates and structural non-prose.
+        if doc.content_type.as_deref() == Some("jinja")
+            || self.hierarchy.get(doc.id).is_some_and(is_structural_nonprose)
+        {
+            return;
+        }
+        if doc.textarea.lines().join("\n").trim().is_empty() {
+            return;
+        }
+        let id = doc.id;
+        let question = crate::inner_theologian::auto_fire_question();
+        let msg = Message::new(
+            kinds::THEOLOGIAN,
+            Severity::Info,
+            Lifetime::UntilActedOn,
+            serde_json::json!({
+                "text": format!("[theologian] {question} → Ctrl+B J→T to explore"),
+                "category": "theologian",
+                "signal": "auto_fire",
+            }),
+        )
+        .with_source_paragraph(id);
+        crate::pane::output::emit(&msg);
+    }
+
+    /// WORLD-10 — refresh the scene world-context when the open paragraph changes.
+    /// Self-gating: only paragraphs with links (a place-linked Timeline event or a
+    /// paragraph link to a Place) get a brief, so the footer chip appears only
+    /// where there is genuine scene context. The world compile is cached.
+    fn tick_scene_context(&mut self) {
+        let cur = self.opened.as_ref().map(|d| d.id);
+        if cur == self.scene_last_para {
+            return;
+        }
+        self.scene_last_para = cur;
+        self.scene_brief = None;
+        let Some(id) = cur else { return };
+
+        // Cheap gate before any compile: does this paragraph link to anything?
+        let has_para_link =
+            self.hierarchy.get(id).map(|n| !n.linked_paragraphs.is_empty()).unwrap_or(false);
+        let has_event = crate::world::timeline_context::gather_events(&self.hierarchy)
+            .iter()
+            .any(|e| e.linked_paragraphs.contains(&id));
+        if !has_para_link && !has_event {
+            return;
+        }
+
+        if self.scene_world.is_none() {
+            let w = self.compute_scene_world();
+            self.scene_world = w;
+        }
+        let Some(sw) = self.scene_world.as_ref() else { return };
+        let (place, date) = self.scene_place_and_date(id, &sw.place_links);
+        if place.is_none() && date.is_none() {
+            return;
+        }
+        let day = date.map(|t| (t as f64).rem_euclid(sw.astro.year_length_planet_days.max(1.0)));
+        let lat = place.as_ref().map(|p| {
+            if sw.height <= 1 {
+                0.0
+            } else {
+                90.0 - (p.y as f64 / (sw.height - 1) as f64) * 180.0
+            }
+        });
+        let brief =
+            crate::world::scene::scene_brief(&sw.astro, &sw.pol, &sw.cul, place.as_ref(), day, lat);
+        if !brief.is_empty() {
+            self.scene_brief = Some(brief);
+        }
+    }
+
+    /// Compile the world once for the scene context (astronomy + peoples + the
+    /// grid height + accepted place links). `None` when there is no `world.hjson`.
+    fn compute_scene_world(&self) -> Option<SceneWorld> {
+        use crate::world::compile::{
+            compile_astronomy, compile_climate, compile_culture, compile_demographics,
+            compile_geology, compile_hydrology, compile_polities,
+        };
+        let root = self.store.project_root();
+        let raw = std::fs::read_to_string(root.join("world.hjson")).ok()?;
+        let def = crate::world::types::WorldDefinition::from_hjson(&raw).ok()?;
+        let seed = def.seed_u64();
+        let astro = compile_astronomy(&def.astronomy);
+        let geo = compile_geology(&def);
+        let climate = compile_climate(&def, &astro, &geo);
+        let hydro = compile_hydrology(&geo, &climate);
+        let demo = compile_demographics(&climate, &hydro);
+        let pol = compile_polities(&demo, &def.nations, seed);
+        let capital_biomes: Vec<String> = pol
+            .polities
+            .iter()
+            .map(|q| {
+                demo.settlements
+                    .iter()
+                    .find(|s| (s.x, s.y) == q.capital_pos)
+                    .map(|s| s.biome.clone())
+                    .unwrap_or_default()
+            })
+            .collect();
+        let cul = compile_culture(&pol, &capital_biomes, &def.cultures, seed);
+        let place_links = crate::world::storage::WorldStore::open_for_project(root)
+            .ok()
+            .and_then(|s| s.list_place_links().ok())
+            .unwrap_or_default();
+        Some(SceneWorld { astro, pol, cul, height: climate.height, place_links })
+    }
+
+    /// Resolve the open paragraph's place + date: a place-linked Timeline event
+    /// first (gives both), else a paragraph link to a Place node.
+    fn scene_place_and_date(
+        &self,
+        para_id: Uuid,
+        place_links: &[crate::world::proposals::PlaceLink],
+    ) -> (Option<crate::world::proposals::PlaceLink>, Option<i64>) {
+        let events = crate::world::timeline_context::gather_events(&self.hierarchy);
+        let anchor = events
+            .iter()
+            .filter(|e| e.linked_paragraphs.contains(&para_id))
+            .min_by_key(|e| e.start_ticks);
+        let date = anchor.map(|e| e.start_ticks);
+        let mut place = anchor
+            .and_then(|e| e.places.first())
+            .and_then(|pid| place_links.iter().find(|l| l.place_id == *pid).cloned());
+        if place.is_none() {
+            if let Some(node) = self.hierarchy.get(para_id) {
+                place = node
+                    .linked_paragraphs
+                    .iter()
+                    .find_map(|tid| place_links.iter().find(|l| l.place_id == *tid).cloned());
+            }
+        }
+        (place, date)
+    }
+
+    /// WORLD-10 — the one-line scene chip for the editor footer.
+    pub(super) fn scene_chip(&self) -> Option<String> {
+        self.scene_brief.as_ref().and_then(|b| b.chip())
     }
 
     /// 1.3.34+ — recompute the tree report-card badges no more than ~once a second.

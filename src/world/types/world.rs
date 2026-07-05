@@ -31,6 +31,96 @@ pub struct WorldDefinition {
     pub economy: Option<EconomyDef>,
     #[serde(default)]
     pub magic: Option<super::magic::MagicLedger>,
+    /// WORLD-11 (W11-P1) — author-declared history: events merged into the
+    /// generated chronology, pinned to an epoch (declared or inferred), and
+    /// adoptable onto the story Timeline.
+    #[serde(default)]
+    pub history: Option<HistoryDef>,
+    /// WORLD-11 (W11-P2) — author-declared nations. Each pins a named realm to a
+    /// capital cell; the remaining settlements cluster into generated realms.
+    #[serde(default)]
+    pub nations: Vec<NationDef>,
+    /// WORLD-11 (W11-P4) — author-pinned cultures, matched to a nation by name.
+    #[serde(default)]
+    pub cultures: Vec<CultureDef>,
+    /// WORLD-11 (W11-P4) — author-pinned ecology, matched to a biome.
+    #[serde(default)]
+    pub ecology: Option<EcologyDef>,
+}
+
+/// WORLD-11 — an author-pinned culture, overriding the generated one for its
+/// nation.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CultureDef {
+    /// The nation whose culture this pins (matched by name).
+    pub nation: String,
+    #[serde(default)]
+    pub ethos: String,
+    #[serde(default)]
+    pub belief: String,
+    /// A conlang typology profile, e.g. "SOV · agglutinative · tonal".
+    #[serde(default)]
+    pub language: String,
+}
+
+/// WORLD-11 — the declared `ecology:` block.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct EcologyDef {
+    #[serde(default)]
+    pub regions: Vec<EcologyRegionDef>,
+}
+
+/// An author-pinned ecology for one biome, overriding the generated one.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct EcologyRegionDef {
+    pub biome: String,
+    #[serde(default)]
+    pub flora: Vec<String>,
+    #[serde(default)]
+    pub fauna: Vec<String>,
+    #[serde(default)]
+    pub keystone: String,
+}
+
+/// WORLD-11 — a declared nation.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct NationDef {
+    pub name: String,
+    /// The capital's map cell `[x, y]`; the nearest settlement becomes its seat.
+    pub capital: [usize; 2],
+    /// Declared relations with other named nations (override the seeded ones).
+    #[serde(default)]
+    pub relations: Vec<NationRelation>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct NationRelation {
+    pub with: String,
+    /// "allied" | "rival" | "neutral".
+    pub stance: String,
+}
+
+/// WORLD-11 — the declared `history:` block.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct HistoryDef {
+    #[serde(default)]
+    pub events: Vec<HistEventDef>,
+}
+
+/// One author-declared historical event.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct HistEventDef {
+    /// Years relative to the present (0); negative is the past.
+    pub year: i64,
+    pub title: String,
+    /// Optional epoch name; when omitted, inferred from the year.
+    #[serde(default)]
+    pub epoch: Option<String>,
+    /// Optional accepted-Place names this event happened at (for Timeline links).
+    #[serde(default)]
+    pub places: Option<Vec<String>>,
+    #[serde(default)]
+    pub description: String,
 }
 
 impl WorldDefinition {
@@ -268,6 +358,12 @@ pub struct NamedWater {
     pub name: String,
     #[serde(default)]
     pub description: String,
+    /// WORLD-11 (W11-P3) — optional declared source cell `[x, y]` (rivers).
+    #[serde(default)]
+    pub from: Option<[usize; 2]>,
+    /// WORLD-11 (W11-P3) — optional declared mouth cell `[x, y]` (rivers).
+    #[serde(default)]
+    pub to: Option<[usize; 2]>,
 }
 
 /// The `economy` declaration block.
