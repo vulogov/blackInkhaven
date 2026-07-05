@@ -25,6 +25,7 @@ The `realworld` group is Inkhaven's world builder; the few rows outside it
   chord_row("… --layer <name>", "Compile just one named layer (or all) and read what it found on its own."),
   chord_row("… --materialize", "Write the compiled layers as chapters into the World system book."),
   chord_row("… --json", "Emit the result as structured data, for tools and scripts."),
+  chord_row("realworld variants --count N", "Propose N candidate worlds from consecutive seeds (a one-line summary each) so you can pick a seed — the world proposes, you choose."),
   chord_row("realworld show", "Print the world definition; --json for structured form."),
   chord_row("Ctrl+B W", "Open the read-only World overview — every compiled layer, plus a \"This scene\" header when the cursor is in a scene."),
 ))
