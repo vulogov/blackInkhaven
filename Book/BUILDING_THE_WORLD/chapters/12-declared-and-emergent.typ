@@ -48,6 +48,15 @@ cities, and the `resources` the land is known for. These give the fact-checker a
 handle on economic sense (a bronze-age realm minting steel coin is worth a flag),
 and they give your scenes their texture.
 
+#hjson[```
+economy: {
+  tech_level: "iron"
+  currency: "the silver mark"
+  trade_goods: ["salt", "amber", "wool"]
+  resources: ["iron", "timber"]
+}
+```]
+
 #note[
   All three blocks are optional. Leave them out and the world still compiles — you
   simply have an unnamed, un-priced world. Add them a line at a time, naming only
@@ -63,8 +72,7 @@ The world's job is to offer; yours is to accept or refuse.
 
 The clearest place to see this is settlements. The demographics layer produces
 dozens of them — but they are not yet Places in your book. `realworld propose`
-turns them into *proposals*: candidate Place entries, waiting. `realworld
-proposals` lets you walk the list and accept the ones you want, rejecting the
+turns them into *proposals*: candidate Place entries, waiting. `realworld proposals` lets you walk the list and accept the ones you want, rejecting the
 rest. Only an accepted settlement becomes an entry in the Places book. The forty
 villages the compiler found but you never accept simply stay in the simulation,
 available if you need them, silent if you do not.
@@ -131,6 +139,17 @@ one document you can keep as an appendix to your manuscript.
   the file. Find your region sitting among the emergent ones. You have just put
   your own hand on the map, and the world has folded it in beside its own work.
 ]
+
+#hjson[```
+geography: {
+  regions: [
+    { name: "The Ashfall Reach", biome: "cold_desert", climate: "harsh, dry", description: "A volcanic waste east of the mountains." }
+  ]
+  landmarks: [
+    { name: "Karrow", kind: "port", climate_zone: "temperate", population: 18000, description: "The last deep harbour before the ice." }
+  ]
+}
+```]
 
 #recap((
   [A world has two hands: what *emerges* from the physics you set, and what you

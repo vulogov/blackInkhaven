@@ -50,6 +50,7 @@
 
   include "chapters/a-command-reference.typ",
   include "chapters/b-glossary.typ",
+  include "chapters/c-world-hjson-keys.typ",
 
   include "chapters/99-about-the-author.typ",
 ))

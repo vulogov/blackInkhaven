@@ -68,6 +68,15 @@ geology: {
 }
 ```
 
+The `dem` block also carries the scale that turns pixels into real ground, and
+the brightness Inkhaven should read as the shoreline:
+
+#hjson[```
+geology: {
+  dem: { path: "heightmap.png", scale_km_per_pixel: 5.0, sea_level_pixel_value: 40 }
+}
+```]
+
 #note[
   The `dem` path is relative to your project, not to wherever you happen to be
   standing in the terminal — `maps/my-continent.png` means the `maps` folder
@@ -118,12 +127,15 @@ chapters from now.
 ]
 
 #tryit[
-  Change the `seed` in your `world.hjson` by a single digit and run `realworld
-  compile --layer geology` again. The continents are not nudged — they are
+  Change the `seed` in your `world.hjson` by a single digit and run `realworld compile --layer geology` again. The continents are not nudged — they are
   *different continents*, a whole new arrangement of land and sea from one
   altered number. Try three or four seeds and keep the world whose shape you like
   best. This is worldbuilding by audition: you are not drawing the land, you are
   choosing which grown land to keep.
+
+  #hjson[```
+  seed: 0x5eed2
+  ```]
 ]
 
 #recap((

@@ -51,7 +51,13 @@ astronomy: {
 You do not have to fill every field to something exotic. Copy Earth's numbers,
 as above, and you have a familiar sky you can trust while you learn — a real
 starting point, not a placeholder. Change one number at a time and watch what
-moves.
+moves. Swap the Sun for a cooler, redder star and the whole energy budget shifts:
+
+#hjson[```
+astronomy: {
+  star: { class: "K", luminosity_solar: 0.6 }
+}
+```]
 
 #term("Axial tilt")[
   The angle between a planet's spin axis and the line straight up from its orbit
@@ -86,7 +92,16 @@ From the tilt it also decides how *strong* the seasons are. This is the quiet
 power of that one field: a world with almost no tilt has a mild, monotonous
 year — perpetual near-equinox, little difference between the solstices — while a
 sharply tilted world has ferocious summers and brutal winters, because far more
-of the star's light lands on the leaning hemisphere. That quantity has a name.
+of the star's light lands on the leaning hemisphere. Push the tilt well past
+Earth's to feel it:
+
+#hjson[```
+astronomy: {
+  planet: { axial_tilt_deg: 35 }
+}
+```]
+
+That quantity has a name.
 
 #term("Insolation")[
   The amount of a star's light and heat falling on a given patch of ground over
@@ -105,7 +120,17 @@ temperature and rain. The sky hands the land its energy; the land does the rest.
 
 If you gave your world moons, the sky computes their *synodic periods* and the
 tides they raise. A world with three moons has a busy, layered sky and complex
-tides; a world with none has still seas and dark nights.
+tides; a world with none has still seas and dark nights. Hang a second, smaller
+moon on a faster orbit and the tides gain a second beat:
+
+#hjson[```
+astronomy: {
+  moons: [
+    { name: "Pale", mass_lunar: 1.0, period_days: 27.3 }
+    { name: "Ember", mass_lunar: 0.4, period_days: 9.1 }
+  ]
+}
+```]
 
 #term("Synodic period")[
   The time a moon takes to return to the same phase as seen from the ground — new
@@ -147,8 +172,7 @@ This is the whole sky, computed and laid out, before any land exists to stand
 under it.
 
 #note[
-  The sky is also the source of your story's *calendar*. Run `realworld
-  calendar` and Inkhaven derives a story-Timeline calendar from the astronomy —
+  The sky is also the source of your story's *calendar*. Run `realworld calendar` and Inkhaven derives a story-Timeline calendar from the astronomy —
   months, weekdays, the alignment of the new year to a season marker — as a set
   of lines you can adopt into `timeline.calendar`. The world proposes the
   calendar; you adopt it. Nothing reaches your Timeline until you choose to let

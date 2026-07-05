@@ -127,8 +127,7 @@ continuity error; it is a fact of your world, and the checker knows it.
 ]
 
 #tryit[
-  Run `realworld fact-check --text "They rode from the capital to the far coast
-  in a single afternoon."` and read the flag it returns — the distance, the pace,
+  Run `realworld fact-check --text "They rode from the capital to the far coast in a single afternoon."` and read the flag it returns — the distance, the pace,
   the verdict. Then take a real paragraph from your draft, one set somewhere with
   a decided climate, and check it with `--paragraph <id>`. If it comes back clean,
   you have earned a small, specific confidence; if it does not, you have caught a

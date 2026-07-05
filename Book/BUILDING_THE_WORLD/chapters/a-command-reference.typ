@@ -9,8 +9,12 @@ but not the exact word for it. The commands are grouped by the part of the
 process they belong to, in the same order the book teaches them: first defining
 and growing the physical world, then deepening it with a past and a people, then
 the author's deliberate hand, then working at the desk, and finally the bridges
-that carry the world into your manuscript. All commands live under `realworld`
-unless noted otherwise.
+that carry the world into your manuscript.
+
+Every command below is a subcommand of Inkhaven: prefix each with `inkhaven`. When
+a row reads `realworld compile`, the command you type is `inkhaven realworld compile`.
+The `realworld` group is Inkhaven's world builder; the few rows outside it
+(`Ctrl+B W`, `inkhaven event add`) are marked.
 
 #section("Define & grow")
 

@@ -177,9 +177,11 @@ Part V is about the line between what you invent and what you declare; and Part
 VI brings the whole world to your writing desk. Part VII builds one world end to
 end, so you can see the whole process in motion.
 
-Commands you type look like `realworld compile` or `/world`. Keys you press look
-like `Ctrl+B W`. When a command shows you something, the book tells you what you
-would see and why it matters — but it draws the *shape* of the work with
+Commands you type look like `realworld compile`. Every one of them is a
+subcommand of Inkhaven: the full command is `inkhaven realworld compile`, and the
+book abbreviates it to `realworld …` once Chapter 3 has made that plain. Keys you
+press look like `Ctrl+B W`. When a command shows you something, the book tells you
+what you would see and why it matters — but it draws the *shape* of the work with
 diagrams rather than screenshots, because screenshots age and the ideas beneath
 them do not.
 

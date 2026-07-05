@@ -144,8 +144,7 @@ you need right now.
   Run `realworld weather --day 300 --lat 55`, note the season it reports, then run
   it again with `--lat -55` and watch the season flip to its opposite — the
   hemisphere correction, made visible. Then take a journey from your own draft
-  that has always felt a little too easy, and put it to `realworld travel
-  --from … --to … --days … --mode …`. If the world argues, believe it.
+  that has always felt a little too easy, and put it to `realworld travel --from … --to … --days … --mode …`. If the world argues, believe it.
 ]
 
 #recap((

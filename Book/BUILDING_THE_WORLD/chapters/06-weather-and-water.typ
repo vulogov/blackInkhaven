@@ -105,6 +105,12 @@ read the world's weather as a list of places, not a spreadsheet.
   pours more energy into the same latitudes: the warm belt widens, the ice
   retreats toward the poles, and more water evaporates to fall as rain. You have
   just made a warmer, wetter world without touching a single biome by hand.
+
+  #hjson[```
+  astronomy: {
+    star: { luminosity_solar: 1.3 }
+  }
+  ```]
 ]
 
 #section("Hydrology: what the rain does next")
