@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Proposed (track) |
+| **Status** | **Shipped (P1–P4)** — the emergent layers are now declare-or-generate + verify; the book is revised to match. |
 | **Builds on** | WORLD-4 (layers), WORLD-8 (history), WORLD-9 (polities/culture), the declared blocks (geography/economy/magic), the world fact-checker |
 | **Theme** | Today the physical-and-derived layers are split cleanly in two: `astronomy · geology · geography · hydrology · economy · magic` are *declared*; `history · nations · rivers-courses · culture · ecology` are *purely generated*, with no `world.hjson` block to touch. WORLD-11 removes that hard split. Every generated layer becomes **declare-or-generate**: you may pin your own facts, the sim fills the rest, and `realworld` **verifies your declarations for plausibility** — informing you when a declaration fights the physics, never overriding you. |
 
