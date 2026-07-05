@@ -117,6 +117,42 @@ let the ones you do not need stay quietly in the background where they belong.
   sentence is the moment your map became a *world*.
 ]
 
+#section("Pinning a biome's life")
+
+`realworld ecology` fills every biome, and its archetypes are a generous first
+draft. But a biome can be the beating heart of your story — the desert your whole
+book crosses — and you may already know exactly what grows and hunts there. You
+can *pin* your own life for a biome with an `ecology:` block: give it a region
+keyed to a biome, and your *flora*, *fauna*, and *keystone* override the generated
+life for that biome wherever it occurs.
+
+#hjson[```
+ecology: {
+  regions: [
+    {
+      biome: "hot_desert"
+      flora: ["blood-thorn", "glass cactus"]
+      fauna: ["sand-strider", "dune wyrm"]
+      keystone: "dune wyrm"
+    }
+  ]
+}
+```]
+
+Notice the names are still your own inventions — *blood-thorn*, *dune wyrm* — not
+Earth species. Pinning the life does not mean abandoning the discipline of the
+archetype; it means you have already done the naming the generator left to you,
+and you want the world to keep your beasts instead of proposing its own.
+
+#note[
+  The world checks a pinned ecology against the climate it grew. It warns if
+  *cold-adapted* life is pinned to a hot biome — or hot-country life to a frozen
+  one — a creature living where its own body could not — or if the `biome` you
+  named does not occur anywhere in the world you built. As ever the warning yields
+  to you; it only asks whether the life you pinned could survive the weather you
+  already set.
+]
+
 #section("The end of Part IV")
 
 With that, the physical and human world is complete. Look back over what you have

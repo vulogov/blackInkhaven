@@ -111,13 +111,56 @@ federation the map would have split in two. Redraw them. Merge two clusters the
 history joined; split one a civil war tore apart.
 
 #note[
-  The world proposes the realms; you rule them. Like history, nations have no
-  block in `world.hjson` — there is no `polities:` to hand-edit. `realworld polities`
-  reads the nations out of where your cities already sit and seeds their
-  relations from the world seed, taking no other input, and it writes nothing into
-  your manuscript. You rename the realms, redraw the borders, and rewrite the
-  grudges as the story needs, exactly as you accept or reject the places the world
-  proposes. The map is the world's; the politics is yours.
+  The world proposes the realms; you rule them. Nations are *generated* first:
+  `realworld polities` reads them out of where your cities already sit and seeds
+  their relations from the world seed, and it writes nothing into your manuscript.
+  But you may also *declare* realms of your own, in a `nations:` block. Each
+  declared realm pins a named country to a capital cell; the world clusters the
+  rest of the settlements around your seats just as it does around the generated
+  ones, and where a declaration and the inference disagree, your declared *names*
+  and *relations* win. You still rename, redraw, and rewrite the grudges as the
+  story needs, exactly as you accept or reject the places the world proposes. The
+  map is the world's; the politics is yours.
+]
+
+#section("Declaring your own nations")
+
+Redrawing the generated realms by hand is one way to get the politics you want.
+Declaring them outright is another, and it is the one to reach for when a realm
+matters enough to fix in the world itself — a capital your plot has already
+chosen, an old enmity the story turns on. You write realms into `world.hjson`, in
+a `nations:` block, and the world builds around them:
+
+#hjson[
+```
+nations: [
+  {
+    name: "Karon"
+    capital: [48, 19]
+    relations: [
+      { with: "Serai", stance: "rival" }
+    ]
+  }
+]
+```
+]
+
+The `capital` is a *map cell* — an `[x, y]` coordinate on the world grid, not a
+city name — and the world seats the realm at the settlement nearest that cell,
+then clusters the surrounding towns around it exactly as `polities` does for a
+generated seat. The `relations` list overrides the seeded web pair by pair: each
+`{ with, stance }` names another realm and the stance this one takes toward it —
+`rival`, `allied`, `neutral` — replacing whatever the seed rolled for that pair.
+Everything you do not declare is still inferred, so a single named realm can sit
+inside a map of otherwise generated neighbours.
+
+#note[
+  The coordinate is checked against the land. If a `capital` cell sits far from
+  any settlement — out in the wilderness, where no city stands to be its seat —
+  the world warns you: a realm needs people to rule, and a capital in empty
+  country is almost always a coordinate typed a few cells wrong. As ever the
+  warning does not overrule you; it points at the seat with no city under it and
+  lets you move it.
 ]
 
 #recap((

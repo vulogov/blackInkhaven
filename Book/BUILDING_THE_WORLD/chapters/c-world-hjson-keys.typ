@@ -93,7 +93,10 @@ fact-checker resolve places you name in prose.
 Descriptive names laid over the procedural rivers, which still run.
 
 #gloss("rainfall")[`text` — a note: `"arid"`, `"temperate"`, or `"wet"`.]
-#gloss("rivers")[`list` of `block`, each `name` (`text`) + `description` (`text`).]
+#gloss("rivers")[`list` of `block`, each `name` (`text`) + `description` (`text`),
+  and optionally a declared course: `from` and `to` (each a `[x, y]` cell). When
+  both are set, the world checks the course runs downhill to water and warns if
+  it does not.]
 #gloss("lakes")[`list` — same shape as `rivers`.]
 #gloss("seas")[`list` — same shape as `rivers`.]
 
@@ -118,3 +121,47 @@ Descriptive names laid over the procedural rivers, which still run.
   (`text`); and `applicable_to` (`block` with optional `roles`, `regions`,
   `seasons` lists — an unset facet means "any"). Kind-specific parameters
   (e.g. `speed_kph_override`) may be added as extra keys on the rule.]
+
+#section("history — declared events (optional)")
+
+Author events merged into the generated chronology; the world checks them and
+adopts place-linked ones onto the story Timeline.
+
+#gloss("events")[`list` of `block`, each: `year` (`number` — years before the
+  present, negative is the past); `title` (`text`); `epoch` (`text`, optional —
+  inferred from the year when omitted); `places` (`list` of `text`, optional —
+  accepted Place names, for Timeline links); `description` (`text`, optional).
+  The world warns if a year is after the present or before recorded history, or
+  if a declared `epoch` does not contain the year.]
+
+#section("nations — declared realms (optional)")
+
+A `list` of nations; each pins a named realm, and the remaining settlements
+cluster into generated realms around them.
+
+#gloss("name")[`text` — the realm's name.]
+#gloss("capital")[`[x, y]` — the capital's map cell; the nearest settlement becomes
+  its seat. The world warns if it sits far from any settlement (in the
+  wilderness).]
+#gloss("relations")[`list` of `block`, each `with` (`text` — another nation's name)
+  + `stance` (`text` — `"allied"`, `"rival"`, `"neutral"`). Override the seeded
+  relations.]
+
+#section("cultures — pinned cultures (optional)")
+
+A `list` that overrides the generated culture of a nation, matched by name.
+
+#gloss("nation")[`text` — the nation this culture belongs to.]
+#gloss("ethos")[`text`, optional — overrides the generated ethos. The world warns
+  if a seafaring ethos is pinned to a dry inland capital.]
+#gloss("belief")[`text`, optional — the culture's belief system.]
+#gloss("language")[`text`, optional — a conlang typology profile, e.g.
+  `"SOV · agglutinative · tonal"`.]
+
+#section("ecology — pinned life (optional)")
+
+#gloss("regions")[`list` of `block`, each: `biome` (`text` — one of the twelve
+  biome names, e.g. `"hot_desert"`); `flora` (`list` of `text`); `fauna` (`list`
+  of `text`); `keystone` (`text`). Overrides the generated life for that biome.
+  The world warns if cold-adapted life is pinned to a hot biome (or the reverse),
+  or if the biome does not occur in the world.]

@@ -36,13 +36,17 @@ grew, infers a *founding order* from that ranking, and lays those foundings out
 along a single axis of time — measured backward from now.
 
 #note[
-  There is no `history:` block in `world.hjson`, and you will not find one. A past
-  is not something you *declare* — it is something the world already implies, so
-  `realworld history` takes no input but the world you have already compiled.
-  To change the history, change what it grows from: a different `seed`, or a land
-  that settles its cities differently, tells a different story. (The one date you
-  *do* set is the world's calendar, back in the `astronomy` block — that is what
-  the years below are counted in.)
+  The past is *generated* first: `realworld history` reads it out of the world you
+  have already compiled, taking no input but the settlements themselves. To change
+  what it infers, change what it grows from — a different `seed`, or a land that
+  settles its cities differently, tells a different story. But you may also
+  *declare* events of your own, in a `history:` block: they merge into the
+  generated chronology, sort into their epoch by year, and — where they name a
+  Place you have accepted — adopt onto the story Timeline alongside the inferred
+  ones. The world still takes the generated past as its base; your declarations
+  are added to it, not swapped in for it. (The one date you *do* always set is the
+  world's calendar, back in the `astronomy` block — that is what the years below
+  are counted in.)
 ]
 
 #term("Chronology")[
@@ -145,6 +149,50 @@ a capital deliberately founded on empty ground — override it. Rename an epoch,
 redate a fall, drop a migration that does not fit. The generated past is a
 strong first draft precisely because it is consistent with the geography; but,
 as always, the author has the last word over which yesterday the world remembers.
+
+#section("Declaring your own events")
+
+Inference is generous, but it cannot know the one event your book is built on —
+the treaty, the landing, the betrayal that has no settlement to imply it. So you
+may write events straight into `world.hjson`, in a `history:` block, and the
+world will fold them into the chronology it generates:
+
+#hjson[
+```
+history: {
+  events: [
+    {
+      year: -1200
+      title: "The First Landing"
+      epoch: "Founding Age"
+      places: ["Karthage"]
+      description: "The seafarers make landfall."
+    }
+  ]
+}
+```
+]
+
+Each field earns its place. The `year` is dated the same way the generated events
+are — years *before the present*, so `-1200` is twelve centuries ago (the sign is
+simply the direction into the past). The `epoch` is optional: name it and the
+event files under that age; leave it out and the world infers the epoch from the
+year, dropping the event into whichever of the three ages the date falls in. The
+`places` list links the event to Places you have already accepted — that link is
+what lets a declared event adopt onto the Timeline, exactly as a generated one
+does; an event with no place stays in the chronicle but has nowhere to sit on the
+story's dated axis. The `title` and `description` are yours to phrase as a
+historian would.
+
+#note[
+  A declaration is checked for plausibility, not obeyed blindly. The world warns
+  if a `year` lands *after* the present — an event that has not happened yet — or
+  so far back that it predates recorded history, and it warns if you name an
+  `epoch` that does not contain the `year` you gave (an event you filed under the
+  Founding Age but dated to last week). The warning does not delete your event;
+  it tells you the past you wrote does not line up with the past the world knows,
+  and leaves the reconciling to you.
+]
 
 #recap((
   [A world with no past is a stage set; a *chronology* — inferred from where the
