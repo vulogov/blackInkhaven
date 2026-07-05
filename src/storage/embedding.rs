@@ -71,7 +71,6 @@ impl EmbeddingEngine {
     /// backs the I.1.4 lazy-init test.  `allow(dead_code)`: only
     /// the test consumes it in the current build; diagnostics
     /// wiring lands in a follow-up.
-    #[allow(dead_code)]
     pub fn is_loaded(&self) -> bool {
         self.inner.lock().is_some()
     }

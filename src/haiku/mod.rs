@@ -14,6 +14,8 @@
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+pub mod semantic;
+
 static ROTATION: AtomicUsize = AtomicUsize::new(0);
 /// Per-process starting offset, seeded once from the wall clock. Without it the
 /// in-memory `ROTATION` resets to 0 every launch, so the startup haiku would be
@@ -140,6 +142,69 @@ pub fn emit_for_lang(lang_long: &str) {
             "text": inline,
             "haiku_lines": [lines[0], lines[1], lines[2]],
             "category": "haiku",
+        }),
+    );
+    crate::pane::output::emit(&msg);
+}
+
+/// HAIKU-2 — emit one haiku, choosing *semantically* when possible.
+///
+/// `context` is the paragraph body / title text used as the similarity query;
+/// `embed_fn` wraps `store.embed_batch`. The caller passes `embed_fn: Some(..)`
+/// **only when the embedding engine is already warm** (see
+/// `Store::embedding_is_loaded`), so this never triggers the ~470 ms cold model
+/// load on the UI thread. On `None` context / cold cache / trivial context, it
+/// falls back to the HAIKU-1 rotation — the writer sees the same UX either way.
+pub fn emit_with_context(
+    lang_long: &str,
+    context: Option<&str>,
+    embed_fn: Option<&dyn Fn(&[&str]) -> anyhow::Result<Vec<Vec<f32>>>>,
+) {
+    use crate::pane::output::{kinds, Lifetime, Message, Severity};
+
+    let iso = crate::ai::prompts::iso_from_long(lang_long);
+    // Advance the rotation exactly once — used for the semantic tiebreak and as
+    // the fallback slot, so a semantic emit costs the same one step as HAIKU-1.
+    let slot = rotation_slot();
+
+    let mut used_semantic = false;
+    let lines: [&'static str; 3] = (|| -> Option<[&'static str; 3]> {
+        let ctx = context?;
+        let embed = embed_fn?;
+        // Need real signal: at least 8 non-whitespace characters.
+        if ctx.chars().filter(|c| !c.is_whitespace()).count() < 8 {
+            return None;
+        }
+        // MiniLM's window is ~256 tokens; 512 bytes is a safe proxy.
+        let snippet: String = ctx.chars().take(512).collect();
+        if let Err(e) = semantic::warm_cache(|texts| embed(texts)) {
+            tracing::debug!(target: "inkhaven::haiku", "semantic warm failed: {e:#}");
+            return None;
+        }
+        let query_vec = embed(&[snippet.as_str()]).ok()?.into_iter().next()?;
+        let picked = semantic::select(iso, &query_vec, slot)?;
+        used_semantic = true;
+        Some(picked)
+    })()
+    .unwrap_or_else(|| poem_at(iso, slot));
+
+    // ── emit (mirrors emit_for_lang) ─────────────────────────────────────
+    if let Some(store) = crate::pane::output::active() {
+        if let Ok(prior) = store.by_kind(kinds::HAIKU) {
+            for m in &prior {
+                let _ = store.dismiss(m.id);
+            }
+        }
+    }
+    let inline = format!("{} / {} / {}", lines[0], lines[1], lines[2]);
+    let msg = Message::new(
+        kinds::HAIKU,
+        Severity::Info,
+        Lifetime::Session(1),
+        serde_json::json!({
+            "text": inline,
+            "haiku_lines": [lines[0], lines[1], lines[2]],
+            "category": if used_semantic { "haiku_semantic" } else { "haiku" },
         }),
     );
     crate::pane::output::emit(&msg);
