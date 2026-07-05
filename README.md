@@ -21,44 +21,63 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.5.9 — Places, Refutation, a Stability Pass & a Book
+## Latest release · 1.6.0 — The Living World
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.5.9.md`](Documentation/RELEASE_NOTES/1.5.9.md)
-· Tracks: [`RESRCH-GUTENBERG`](Documentation/PROPOSALS/RESRCH-GUTENBERG_TRACK.md) ·
-[`BUGFIX_PLAN`](Documentation/PROPOSALS/BUGFIX_PLAN_1.5.9.md) · Book:
-[`Grounding Your Book in Fact`](Book/RESEARCH/)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.6.0.md`](Documentation/RELEASE_NOTES/1.6.0.md)
+· Tracks: [`WORLD-ROADMAP`](Documentation/PROPOSALS/WORLD-ROADMAP.md) ·
+[`WORLD-11`](Documentation/PROPOSALS/WORLD-11_TRACK.md) · Book:
+[`Building the World with Inkhaven`](Book/BUILDING_THE_WORLD/)
 
-A broad release: real-world places, an adversarial trust check, a full stability audit, an editor comfort
-feature, and a complete companion book. **No new crates.**
+The World Simulation cycle: a world gains a **past**, a **people**, and a
+**presence at your desk** — and the author's hand reaches every layer, with the
+world checking each declaration for plausibility. **No new crates.**
 
-### Real places & refutation (RESRCH-6-lite)
+### A living world
 
-**`/geonames <query>`** grounds fiction and non-fiction in real geography — region, country, feature type,
-coordinates, population — cited by id and gate-skipped like `/wikidata` (needs a free username). And
-**`research.refute_gate`** adds an offline **skeptic pass** that actively tries to *refute* a `model` fact
-before it commits (`SOUND` inserts, `REFUTED` asks again) — the mirror of `/triangulate`.
+A bare **`realworld compile`** now grows and materialises the *whole* world in one
+command. **`realworld history`** gives it a past (foundings, epochs, migrations,
+realm rise/fall); **`realworld polities` / `culture` / `ecology`** give it nations,
+cultures (each with a conlang profile), and life; and **`realworld weather` /
+`travel` / `scene`** — plus an in-editor scene chip — bring the world to your
+cursor while you write.
 
-### Project Gutenberg, finished
+### Declare & verify (WORLD-11)
 
-**`/gutenberg`** now **auto-cites** ingested books into `/bibliography`, takes `--chapter N` and a bare
-`<PG#>` to pick an exact edition, and has a headless twin `inkhaven research --gutenberg`.
+The generated layers become **declare-or-generate**: pin your own `history`,
+`nations`, river courses (`hydrology.rivers[].from/to`), `cultures`, and `ecology`
+in `world.hjson`, and the world **checks each for plausibility** — a river that
+runs uphill, a polar beast in the tropics, a seafaring people in a landlocked
+desert — informing you, never overruling you.
 
-### A stability pass
+### Beyond the world
 
-A four-track ripple-effect audit → **BUG-1..12 fixed** with regression tests: a gate-receiver leak that
-could insert an unvetted fact, a triangulation parser that read "not supported" as support, a multibyte
-search-highlight panic, `/upgrade` robustness, CLI vector orphans, and a sweep of lower-severity panics.
+Store-mutating CLI commands now honour the **project lock** (multi-writer safety).
+**`/deadsources`** finds link-rot in a research corpus. **`inkhaven style`** runs
+the editor's four style detectors over the whole manuscript (`--json` for CI). The
+**Inner Theologian** gains its idle nudge, and the Research Assistant now flags an
+**insert-time contradiction** (a negation flip or a changed number), not just a
+duplicate.
 
-### Editor & book
+### Import & robustness
 
-**`Ctrl+V j`** re-wraps the paragraph at the cursor to the editor width (fixes prose pasted as one long
-line). And **"Grounding Your Book in Fact"** — a ~101-page beginner's guide to the Research Assistant for
-fiction and non-fiction authors — ships in [`Book/RESEARCH/`](Book/RESEARCH/).
+**EPUB images** are now imported as image nodes (they were dropped before), and
+the **RTF importer** no longer panics on adversarial bytes.
+
+### A new book
+
+**"Building the World with Inkhaven"** — a ~156-page beginner's guide to
+worldbuilding as a process — ships in
+[`Book/BUILDING_THE_WORLD/`](Book/BUILDING_THE_WORLD/), including how to make a DEM
+(by hand, with terrain tools, from real Earth, from a text-to-image generator, or
+with **plakat**) and the full plakat↔Inkhaven map round-trip.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** New command `/geonames`; new config `research.geonames` + `research.refute_gate`;
-new provenance origin `geonames`; new CLI flag `--gutenberg`; new editor chord `Ctrl+V j`.
+**No new runtime crates.** New `realworld` subcommands (`history`, `weather`,
+`ecology`, `polities`, `culture`, `travel`, `scene`, `gazetteer`, `calendar`); new
+`inkhaven style`; new research `/deadsources`. New optional `world.hjson` blocks
+(`history`, `nations`, `cultures`, `ecology`, `hydrology.rivers[].from/to`) — all
+`serde` defaults, so existing worlds are unaffected.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
