@@ -68,6 +68,7 @@ pub mod lang;
 pub mod world_prompts;
 pub mod prompts;
 pub mod show_dont_tell;
+pub mod style;
 pub mod stats;
 pub mod book_rag;
 pub(crate) mod book_walk;
@@ -453,6 +454,21 @@ pub enum Command {
         /// user book it can be omitted.
         #[arg(long)]
         book_name: Option<String>,
+    },
+
+    /// Run the deterministic style-warning detectors (filter-words,
+    /// repeated-phrase, show-don't-tell, anachronism) over the manuscript and
+    /// print a report — CLI/CI parity for the in-editor overlay (`Ctrl+V w`).
+    Style {
+        /// Scope to one user book (default: all non-system books).
+        #[arg(long)]
+        book_name: Option<String>,
+        /// Detector language (default: the project's top-level `language`).
+        #[arg(long)]
+        language: Option<String>,
+        /// Emit the report as JSON (per-kind totals + per-paragraph counts) for CI.
+        #[arg(long)]
+        json: bool,
     },
 
     /// 1.2.12+ — export the project-wide concordance (every
@@ -4216,9 +4232,10 @@ pub enum RealworldCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Compile a layer (P0: only `astronomy`) and print the result.
+    /// Compile the whole world (all layers) — or one `--layer` — and print it.
     Compile {
-        /// Which layer to compile (default: astronomy).
+        /// Which layer to compile: `all` (default, the whole world) or one of
+        /// astronomy · geology · climate · hydrology · demographics.
         #[arg(long)]
         layer: Option<String>,
         /// Emit the layer output as JSON.
@@ -4241,6 +4258,78 @@ pub enum RealworldCommand {
     /// List the Place ↔ World cross-references (accepted compiler Places + their
     /// climate zone / biome / hydrology basis / coordinates).
     Places,
+    /// WORLD-7 — derive a story-Timeline calendar from the world's astronomy
+    /// (months, season markers) and print it to adopt under `timeline.calendar`.
+    Calendar,
+    /// WORLD-7 — emit a consolidated Markdown world reference (calendar, sky,
+    /// regions, landmarks, waters, settlements, economy, magic).
+    Gazetteer {
+        /// Write to a file instead of stdout (e.g. a manuscript appendix source).
+        #[arg(long)]
+        output: Option<String>,
+    },
+    /// WORLD-8 — derive the world's founding chronology + epochs from the
+    /// demographics and print it, with an adoptable Timeline block.
+    History {
+        /// Emit the chronology as JSON.
+        #[arg(long)]
+        json: bool,
+        /// Write the History chapter into the World system book.
+        #[arg(long)]
+        materialize: bool,
+    },
+    /// WORLD-10 — the local season + insolation for a day-of-year at a latitude.
+    Weather {
+        /// Day of the year (0-based).
+        #[arg(long, default_value_t = 0.0)]
+        day: f64,
+        /// Latitude in degrees (negative = southern hemisphere).
+        #[arg(long, default_value_t = 45.0)]
+        lat: f64,
+    },
+    /// WORLD — flora / fauna archetypes + a keystone animal per land biome.
+    Ecology,
+    /// WORLD-9 — nations formed by clustering settlements around their capitals.
+    Polities,
+    /// WORLD-9 — one culture per polity (ethos, belief, a conlang profile).
+    Culture,
+    /// WORLD-10 — is a journey between two map cells plausible in the claimed
+    /// time? Checks the real distance (planet + grid) against the mode's pace.
+    Travel {
+        /// Origin place name (an accepted world Place); overrides --from-x/-y.
+        #[arg(long)]
+        from: Option<String>,
+        /// Destination place name; overrides --to-x/-y.
+        #[arg(long)]
+        to: Option<String>,
+        #[arg(long, default_value_t = 0.0)]
+        from_x: f64,
+        #[arg(long, default_value_t = 0.0)]
+        from_y: f64,
+        #[arg(long, default_value_t = 0.0)]
+        to_x: f64,
+        #[arg(long, default_value_t = 0.0)]
+        to_y: f64,
+        /// Claimed journey time in days.
+        #[arg(long, default_value_t = 1.0)]
+        days: f64,
+        /// foot (default) | horse | cart | ship.
+        #[arg(long, default_value = "foot")]
+        mode: String,
+    },
+    /// WORLD-10 — a scene brief: season + weather at a place's latitude on a
+    /// day, its biome/climate, and the nearest realm's culture.
+    Scene {
+        /// An accepted world Place the scene is set in.
+        #[arg(long)]
+        place: Option<String>,
+        /// Day of the year (0-based).
+        #[arg(long, default_value_t = 0.0)]
+        day: f64,
+        /// Latitude override (else derived from the place's map row).
+        #[arg(long)]
+        lat: Option<f64>,
+    },
     /// Show the magic ledger — the declared exceptions to physics the
     /// fact-checker will respect. Edit it in the `magic:` block of `world.hjson`.
     Magic {
@@ -4792,6 +4881,69 @@ pub enum TimelineExportFormat {
     Png,
 }
 
+/// Does this command mutate the project's node store? Used to decide whether
+/// to take the multi-writer advisory lock. Conservative — the structural
+/// writers and the store-creating importers; read-only reports are excluded so
+/// they never warn while a TUI is open.
+fn command_mutates(command: &Command) -> bool {
+    matches!(
+        command,
+        Command::Add { .. }
+            | Command::Delete { .. }
+            | Command::Mv { .. }
+            | Command::Paragraph(_)
+            | Command::Reindex { .. }
+            | Command::Replace { .. }
+            | Command::ImportScrivener { .. }
+            | Command::ImportEpub { .. }
+    )
+}
+
+/// Take the project advisory lock for a store-mutating CLI command, mirroring
+/// the TUI's policy (`project_lock.enabled` / `on_conflict`). Returns the held
+/// lock (kept alive for the command), or `None` when locking doesn't apply
+/// (non-mutating command, not an initialized project, lock disabled, or already
+/// busy and we proceed permissively). Errors only when `on_conflict = refuse`.
+fn maybe_lock_for_cli(
+    project: &std::path::Path,
+    command: &Command,
+) -> Result<Option<crate::project_lock::ProjectLock>> {
+    use crate::project_lock::{acquire, LockOutcome};
+    if !command_mutates(command) {
+        return Ok(None);
+    }
+    let layout = crate::project::ProjectLayout::new(project);
+    if layout.require_initialized().is_err() {
+        return Ok(None); // not a project — the command reports that on its own terms
+    }
+    let cfg = match crate::config::Config::load_layered(&layout.config_path()) {
+        Ok(c) => c,
+        Err(_) => return Ok(None),
+    };
+    if !cfg.project_lock.enabled {
+        return Ok(None);
+    }
+    match acquire(&layout.root) {
+        Ok(LockOutcome::Acquired(lock)) => Ok(Some(lock)),
+        Ok(LockOutcome::Busy(info)) => {
+            eprintln!(
+                "⚠ Another inkhaven session may already have this project open ({}).",
+                info.describe()
+            );
+            eprintln!("  Concurrent writes can corrupt the project store.");
+            if cfg.project_lock.on_conflict == "refuse" {
+                anyhow::bail!(
+                    "refusing to run: project is locked by another session (project_lock.on_conflict = refuse)"
+                );
+            }
+            eprintln!("  Proceeding anyway.");
+            Ok(None)
+        }
+        // Locking unsupported on this filesystem — proceed permissively.
+        Err(_) => Ok(None),
+    }
+}
+
 impl Cli {
     pub fn run(self) -> Result<()> {
         let project = self
@@ -4799,7 +4951,17 @@ impl Cli {
             .clone()
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
-        match self.command.unwrap_or(Command::Tui) {
+        let command = self.command.unwrap_or(Command::Tui);
+
+        // Multi-writer safety (1.6.0): a store-mutating CLI command run while a
+        // TUI — or another CLI writer — holds the project is a lost-update risk.
+        // Consult the same advisory lock the TUI uses: inform (never hard-block
+        // unless `project_lock.on_conflict = refuse`) and hold it for the
+        // command's duration so concurrent CLI writers serialise. `_lock` lives
+        // until `run` returns.
+        let _lock = maybe_lock_for_cli(&project, &command)?;
+
+        match command {
             Command::Init { path, force, template } => {
                 init::run(&path, force, &template).map_err(Into::into)
             }
@@ -4909,6 +5071,9 @@ impl Cli {
             }
             Command::Stats { book_name } => {
                 stats::run(&project, book_name.as_deref()).map_err(Into::into)
+            }
+            Command::Style { book_name, language, json } => {
+                style::run(&project, book_name, language, json).map_err(Into::into)
             }
             Command::Doctor { voices, tts_test, filter_words_snippet, scan, json, class, autofix, yes } => {
                 if filter_words_snippet {

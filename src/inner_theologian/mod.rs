@@ -25,6 +25,7 @@ mod prompt;
 mod store;
 mod vocab;
 
+pub(crate) use corpus::auto_fire_question;
 pub(crate) use detect::DetectWindows;
 pub(crate) use grounding::build_grounding;
 pub(crate) use llm::theologian_llm_call;

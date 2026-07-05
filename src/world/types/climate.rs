@@ -40,7 +40,7 @@ impl Biome {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Default, Deserialize, Serialize)]
 pub struct ClimateOutput {
     pub width: usize,
     pub height: usize,
@@ -62,7 +62,7 @@ pub struct ClimateOutput {
     pub precipitation_mm: Vec<f32>,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Default, Deserialize, Serialize)]
 pub struct ClimateZone {
     pub biome: String,
     /// Share of land area, as a percentage.

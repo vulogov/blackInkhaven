@@ -11,7 +11,7 @@ use anyhow::Result;
 
 use crate::config::Config;
 
-use super::llm::{extract_json_array, utopia_llm_call};
+use super::llm::utopia_llm_call;
 use super::store::UtopiaStore;
 use super::{ClaimType, FindingDomain, FindingType, UtopiaClaim, UtopiaFinding};
 

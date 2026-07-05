@@ -564,10 +564,14 @@ impl super::super::App {
         // explicit reviewer attention the author
         // should see first.
         let comment_chip = self.comment_at_cursor_chip();
+        // WORLD-10 — the ambient scene chip (lowest priority: shows when no
+        // cursor-specific chip and no goal gauge occupies the footer).
+        let scene_chip = self.scene_chip();
         let need_footer = goal_footer.is_some()
             || language_chip.is_some()
             || comment_chip.is_some()
-            || terms_chip.is_some();
+            || terms_chip.is_some()
+            || scene_chip.is_some();
         let (editor_rect, footer_rect) = if need_footer {
             let footer_h: u16 = 1;
             let er = Rect {
@@ -657,6 +661,13 @@ impl super::super::App {
                         Style::default().add_modifier(Modifier::DIM),
                     ),
                     Span::raw(format!("  · goal: {gauge}")),
+                ]);
+                f.render_widget(Paragraph::new(line), rect);
+            } else if let Some(chip) = scene_chip {
+                let style = Style::default().add_modifier(Modifier::DIM | Modifier::ITALIC);
+                let line = Line::from(vec![
+                    Span::styled(" scene · ", style),
+                    Span::styled(chip, style),
                 ]);
                 f.render_widget(Paragraph::new(line), rect);
             }

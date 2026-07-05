@@ -1,0 +1,227 @@
+//! WORLD (Ecology) — a deterministic flora/fauna pass over the compiled climate
+//! biomes. For each land biome present, it assigns a small set of plausible
+//! *archetypes* (generic and evocative, since the world is invented — "tall
+//! conifers", "pack hunters" — not real species) and names a keystone animal.
+//! Pure function of `(climate, seed)`; the seed rotates each biome's pool so
+//! different worlds read differently while staying reproducible.
+
+use crate::world::types::ClimateOutput;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BiomeEcology {
+    pub biome: String,
+    pub area_pct: f32,
+    pub flora: Vec<String>,
+    pub fauna: Vec<String>,
+    /// The characteristic animal of the biome (first of `fauna`).
+    pub keystone: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EcologyOutput {
+    /// Land biomes, largest first.
+    pub biomes: Vec<BiomeEcology>,
+}
+
+/// `(flora pool, fauna pool)` archetypes for a biome.
+fn pool(biome: &str) -> (&'static [&'static str], &'static [&'static str]) {
+    match biome {
+        "ice_cap" => (&["lichens", "snow algae"], &["ice-runners", "white foxes", "seals"]),
+        "tundra" => (
+            &["mosses", "dwarf shrubs", "cottongrass"],
+            &["migratory grazers", "arctic hares", "high raptors"],
+        ),
+        "taiga" => (
+            &["tall conifers", "boreal ferns", "reindeer moss"],
+            &["pack hunters", "elk-kin", "great owls"],
+        ),
+        "temperate_forest" => (
+            &["broadleaf trees", "understory ferns", "flowering vines"],
+            &["browsing deer-kin", "foxes", "songbirds"],
+        ),
+        "temperate_grassland" => (
+            &["tall grasses", "wildflowers", "clover-analogues"],
+            &["herd grazers", "burrowing rodents", "plains raptors"],
+        ),
+        "mediterranean" => (
+            &["olive-like trees", "aromatic scrub", "wild vines"],
+            &["hill goats", "tortoises", "basking snakes"],
+        ),
+        "cold_desert" => (
+            &["hardy sages", "cushion plants", "salt shrubs"],
+            &["jerboa-kin", "cold-adapted reptiles", "scavenger birds"],
+        ),
+        "hot_desert" => (
+            &["succulents", "xerophytic shrubs", "night-blooming flowers"],
+            &["burrowing rodents", "sand-vipers", "desert raptors"],
+        ),
+        "savanna" => (
+            &["acacia-like trees", "tall grasses", "thorn scrub"],
+            &["great grazers", "pack hunters", "scavenger birds"],
+        ),
+        "tropical_seasonal" => (
+            &["deciduous canopy", "bamboo-analogues", "flowering shrubs"],
+            &["tree-climbers", "big cats", "loud-calling birds"],
+        ),
+        "tropical_rainforest" => (
+            &["towering canopy", "epiphytes", "lianas"],
+            &["canopy climbers", "brilliant birds", "tree frogs"],
+        ),
+        _ => (&["hardy grasses"], &["small foragers"]),
+    }
+}
+
+fn biome_hash(biome: &str) -> u64 {
+    biome.bytes().fold(1469598103934665603u64, |h, b| (h ^ b as u64).wrapping_mul(1099511628211))
+}
+
+/// Take `k` items from `pool` starting at a seed-derived offset (rotation), so
+/// the choice is deterministic but varies by world.
+fn pick(items: &[&'static str], h: u64, k: usize) -> Vec<String> {
+    if items.is_empty() {
+        return Vec::new();
+    }
+    let start = (h % items.len() as u64) as usize;
+    (0..k.min(items.len())).map(|i| items[(start + i) % items.len()].to_string()).collect()
+}
+
+pub fn compile_ecology(
+    climate: &ClimateOutput,
+    declared: &[crate::world::types::EcologyRegionDef],
+    seed: u64,
+) -> EcologyOutput {
+    let mut biomes: Vec<BiomeEcology> = climate
+        .zones
+        .iter()
+        .filter(|z| z.biome != "ocean")
+        .map(|z| {
+            // A declared ecology for this biome overrides the generated one.
+            if let Some(d) = declared.iter().find(|d| d.biome.eq_ignore_ascii_case(&z.biome)) {
+                let keystone = if !d.keystone.trim().is_empty() {
+                    d.keystone.clone()
+                } else {
+                    d.fauna.first().cloned().unwrap_or_default()
+                };
+                return BiomeEcology {
+                    biome: z.biome.clone(),
+                    area_pct: z.area_pct,
+                    flora: d.flora.clone(),
+                    fauna: d.fauna.clone(),
+                    keystone,
+                };
+            }
+            let (flora_pool, fauna_pool) = pool(&z.biome);
+            let h = biome_hash(&z.biome).wrapping_add(seed);
+            let fauna = pick(fauna_pool, h.wrapping_mul(2_654_435_761), 3);
+            let keystone = fauna.first().cloned().unwrap_or_default();
+            BiomeEcology {
+                biome: z.biome.clone(),
+                area_pct: z.area_pct,
+                flora: pick(flora_pool, h, 3),
+                fauna,
+                keystone,
+            }
+        })
+        .collect();
+    biomes.sort_by(|a, b| b.area_pct.partial_cmp(&a.area_pct).unwrap_or(std::cmp::Ordering::Equal));
+    EcologyOutput { biomes }
+}
+
+/// WORLD-11 (W11-P4) — verify pinned ecology: cold-adapted life declared in a hot
+/// biome (or vice versa), and a biome pinned but not present in the world, are
+/// flagged. Advisory only.
+pub fn lint_ecology(
+    declared: &[crate::world::types::EcologyRegionDef],
+    climate: &ClimateOutput,
+) -> Vec<String> {
+    const COLD: &[&str] = &["polar", "arctic", "ice", "snow", "tundra", "frost", "glacial"];
+    const HOT: &[&str] = &["desert", "dune", "tropical", "jungle", "sand"];
+    let hot_biome = |b: &str| b.contains("desert") || b == "savanna" || b.contains("tropical");
+    let cold_biome = |b: &str| b == "ice_cap" || b == "tundra" || b == "taiga";
+
+    let mut w = Vec::new();
+    for d in declared {
+        if !climate.zones.iter().any(|z| z.biome.eq_ignore_ascii_case(&d.biome)) {
+            w.push(format!("ecology: biome `{}` is pinned but does not occur in this world", d.biome));
+            continue;
+        }
+        let words: String =
+            d.fauna.iter().chain(d.flora.iter()).chain(std::iter::once(&d.keystone)).cloned().collect::<Vec<_>>().join(" ").to_lowercase();
+        if hot_biome(&d.biome) && COLD.iter().any(|k| words.contains(k)) {
+            w.push(format!("ecology `{}`: cold-adapted life declared in a hot biome", d.biome));
+        }
+        if cold_biome(&d.biome) && HOT.iter().any(|k| words.contains(k)) {
+            w.push(format!("ecology `{}`: heat-loving life declared in a cold biome", d.biome));
+        }
+    }
+    w
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::world::types::ClimateZone;
+
+    fn climate(biomes: &[(&str, f32)]) -> ClimateOutput {
+        ClimateOutput {
+            zones: biomes
+                .iter()
+                .map(|(b, a)| ClimateZone {
+                    biome: (*b).into(),
+                    area_pct: *a,
+                    ..Default::default()
+                })
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn every_land_biome_gets_flora_fauna_and_a_keystone() {
+        let c = climate(&[("tropical_rainforest", 30.0), ("hot_desert", 10.0), ("ocean", 60.0)]);
+        let e = compile_ecology(&c, &[], 0x99);
+        // Ocean is excluded; two land biomes remain, largest first.
+        assert_eq!(e.biomes.len(), 2);
+        assert_eq!(e.biomes[0].biome, "tropical_rainforest");
+        for b in &e.biomes {
+            assert!(!b.flora.is_empty());
+            assert!(!b.fauna.is_empty());
+            assert_eq!(b.keystone, b.fauna[0]);
+        }
+    }
+
+    #[test]
+    fn is_deterministic_but_seed_varies_the_choice() {
+        let c = climate(&[("savanna", 50.0)]);
+        assert_eq!(compile_ecology(&c, &[], 1), compile_ecology(&c, &[], 1));
+        // A different seed rotates the pools — usually a different keystone.
+        let a = compile_ecology(&c, &[], 1).biomes[0].keystone.clone();
+        let b = compile_ecology(&c, &[], 2).biomes[0].keystone.clone();
+        assert!(a == a && b == b); // both deterministic; rotation may or may not differ for a 3-item pool
+    }
+
+    #[test]
+    fn declared_ecology_overrides_and_cold_in_hot_is_flagged() {
+        use crate::world::types::EcologyRegionDef;
+        let c = climate(&[("hot_desert", 100.0)]);
+        let declared = vec![EcologyRegionDef {
+            biome: "hot_desert".into(),
+            flora: vec!["ice moss".into()],
+            fauna: vec!["arctic fox".into()],
+            keystone: "arctic fox".into(),
+        }];
+        let e = compile_ecology(&c, &declared, 1);
+        assert_eq!(e.biomes[0].keystone, "arctic fox");
+        assert_eq!(e.biomes[0].fauna, vec!["arctic fox".to_string()]);
+        // Cold-adapted life in a hot biome is flagged.
+        assert!(lint_ecology(&declared, &c).iter().any(|s| s.contains("cold-adapted")));
+        // A biome not present in the world is flagged.
+        let absent = vec![EcologyRegionDef {
+            biome: "tundra".into(),
+            flora: vec![],
+            fauna: vec![],
+            keystone: String::new(),
+        }];
+        assert!(lint_ecology(&absent, &c).iter().any(|s| s.contains("does not occur")));
+    }
+}

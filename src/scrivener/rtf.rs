@@ -28,12 +28,16 @@ use anyhow::Result;
 /// Convert RTF bytes to a Typst-friendly source string.
 /// Lossy by design — see module docs for what we drop.
 pub fn rtf_to_typst(rtf_bytes: &[u8]) -> Result<String> {
-    // Try the structured parser first. If it returns Err, fall
-    // back to a brute-force plain-text extraction so the user
-    // doesn't lose the document body to a syntactic glitch.
-    match parse_structured(rtf_bytes) {
-        Ok(s) => Ok(s),
-        Err(_) => Ok(strip_to_plain_text(rtf_bytes)),
+    // Try the structured parser first. If it returns Err — or the third-party
+    // `rtf-parser-tt` lexer/parser *panics* on adversarial bytes (1.3.36
+    // hardening: the upstream crate byte-slices and can panic even on ASCII
+    // input) — fall back to a brute-force plain-text extraction so the importer
+    // never crashes and the user keeps the document body.
+    let structured =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| parse_structured(rtf_bytes)));
+    match structured {
+        Ok(Ok(s)) => Ok(s),
+        Ok(Err(_)) | Err(_) => Ok(strip_to_plain_text(rtf_bytes)),
     }
 }
 
