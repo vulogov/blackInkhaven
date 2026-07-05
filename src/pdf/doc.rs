@@ -16,6 +16,8 @@ use super::Result;
 pub enum PdfSource {
     /// Produced by inkhaven from a Typst tree.  The tree reference needed
     /// for outline injection is added when that lands (P0, later).
+    // PDF-1 P3: constructed once by-chapter ops gate on #metadata provenance.
+    #[allow(dead_code)]
     Inkhaven { typst_root: PathBuf },
     /// Any other PDF (or one whose origin we don't track).
     External,
@@ -37,7 +39,9 @@ impl PdfDoc {
         Ok(Self::wrap(inner, PdfSource::External))
     }
 
-    /// Load from bytes (source: External).
+    /// Load from bytes (source: External). Symmetric to [`Self::to_bytes`];
+    /// used by the round-trip tests and the in-memory pipeline.
+    #[allow(dead_code)]
     pub fn load_mem(bytes: &[u8]) -> Result<Self> {
         let inner = Document::load_mem(bytes)?;
         Ok(Self::wrap(inner, PdfSource::External))

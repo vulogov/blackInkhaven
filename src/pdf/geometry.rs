@@ -20,6 +20,7 @@ pub fn pt_to_mm(pt: f32) -> f32 {
 pub fn in_to_pt(inch: f32) -> f32 {
     inch * PT_PER_IN
 }
+#[allow(dead_code)] // unit conversion, paired with the in→pt helper above
 pub fn pt_to_in(pt: f32) -> f32 {
     pt / PT_PER_IN
 }
@@ -88,6 +89,7 @@ impl Rect {
         Size::new(self.width(), self.height())
     }
     /// PDF `MediaBox` array `[x0 y0 x1 y1]`.
+    #[allow(dead_code)] // imposition geometry surface (PDF-1 P2 sheet placement)
     pub fn to_mediabox(&self) -> [f32; 4] {
         [self.x0, self.y0, self.x1, self.y1]
     }

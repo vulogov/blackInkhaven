@@ -21,63 +21,53 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.6.0 — The Living World
+## Latest release · 1.6.1 — Harden & Polish
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.6.0.md`](Documentation/RELEASE_NOTES/1.6.0.md)
-· Tracks: [`WORLD-ROADMAP`](Documentation/PROPOSALS/WORLD-ROADMAP.md) ·
-[`WORLD-11`](Documentation/PROPOSALS/WORLD-11_TRACK.md) · Book:
+Read the full notes: [`Documentation/RELEASE_NOTES/1.6.1.md`](Documentation/RELEASE_NOTES/1.6.1.md)
+· Plan: [`BUGFIX_PLAN_1.6.1`](Documentation/PROPOSALS/BUGFIX_PLAN_1.6.1.md) · Book:
 [`Building the World with Inkhaven`](Book/BUILDING_THE_WORLD/)
 
-The World Simulation cycle: a world gains a **past**, a **people**, and a
-**presence at your desk** — and the author's hand reaches every layer, with the
-world checking each declaration for plausibility. **No new crates.**
+A consolidation release after the big 1.6.0 "Living World" cycle: a stability
+audit over the new code, two subsystems finished, a world-choosing command, and a
+semantic upgrade to the startup haiku. **No new crates.**
 
-### A living world
+### A stability pass
 
-A bare **`realworld compile`** now grows and materialises the *whole* world in one
-command. **`realworld history`** gives it a past (foundings, epochs, migrations,
-realm rise/fall); **`realworld polities` / `culture` / `ecology`** give it nations,
-cultures (each with a conlang profile), and life; and **`realworld weather` /
-`travel` / `scene`** — plus an in-editor scene chip — bring the world to your
-cursor while you write.
+A four-track adversarial audit over everything 1.6.0 added → **10 bugs fixed**
+with regression tests: the 1.6.0 RTF panic fix was incomplete (the crash hook
+still fired — now suppressed); the scene-context cache never invalidated
+(mid-session world edits ignored until restart — now mtime-keyed); a declared
+nation could be silently dropped; `realworld travel` overstated north–south
+distance ~1.5× on the equirectangular grid; plus lock coverage, contradiction
+false-positives, and a sweep of lower-severity fixes.
 
-### Declare & verify (WORLD-11)
+### Two subsystems finished
 
-The generated layers become **declare-or-generate**: pin your own `history`,
-`nations`, river courses (`hydrology.rivers[].from/to`), `cultures`, and `ecology`
-in `world.hjson`, and the world **checks each for plausibility** — a river that
-runs uphill, a polar beast in the tropics, a seafaring people in a landlocked
-desert — informing you, never overruling you.
+**`inkhaven pdf outline --set <TOC>`** injects a bookmark tree from an indented
+`Title :: page` file, and **`inkhaven sources export --format bibtex|csl-json`**
+closes the CSL-JSON round-trip with Zotero and other citation managers. Both
+retire a `dead_code` allow — the PDF and citation subsystems were already fully
+built and are now warning-clean.
 
-### Beyond the world
+### Choose a world
 
-Store-mutating CLI commands now honour the **project lock** (multi-writer safety).
-**`/deadsources`** finds link-rot in a research corpus. **`inkhaven style`** runs
-the editor's four style detectors over the whole manuscript (`--json` for CI). The
-**Inner Theologian** gains its idle nudge, and the Research Assistant now flags an
-**insert-time contradiction** (a negation flip or a changed number), not just a
-duplicate.
+**`inkhaven realworld variants [--count N]`** grows N candidate worlds from
+consecutive seeds and summarizes each beside the seed that grows it — *the world
+proposes, you choose*, now at the world level (documented in ch. 3 of the book).
 
-### Import & robustness
+### Semantic haiku (HAIKU-2)
 
-**EPUB images** are now imported as image nodes (they were dropped before), and
-the **RTF importer** no longer panics on adversarial bytes.
-
-### A new book
-
-**"Building the World with Inkhaven"** — a ~156-page beginner's guide to
-worldbuilding as a process — ships in
-[`Book/BUILDING_THE_WORLD/`](Book/BUILDING_THE_WORLD/), including how to make a DEM
-(by hand, with terrain tools, from real Earth, from a text-to-image generator, or
-with **plakat**) and the full plakat↔Inkhaven map round-trip.
+When the local embedding engine is warm, the poem shown on a new paragraph or
+`Ctrl+Z p` is chosen by **cosine similarity** to your writing context — a chapter
+on frost gets a different poem than one on beginnings. Startup and any cold moment
+keep the rotation. **Zero AI API, zero network.** Toggle with
+`editor.haiku_semantic` (default on).
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** New `realworld` subcommands (`history`, `weather`,
-`ecology`, `polities`, `culture`, `travel`, `scene`, `gazetteer`, `calendar`); new
-`inkhaven style`; new research `/deadsources`. New optional `world.hjson` blocks
-(`history`, `nations`, `cultures`, `ecology`, `hydrology.rivers[].from/to`) — all
-`serde` defaults, so existing worlds are unaffected.
+**No new runtime crates.** New commands `pdf outline --set`, `sources export`,
+`realworld variants`; new config `editor.haiku_semantic`; two `dead_code` allows
+retired. All additive — existing projects are unaffected.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

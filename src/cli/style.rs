@@ -54,7 +54,11 @@ pub fn run(
     let books: Vec<_> = h
         .iter()
         .filter(|n| n.kind == NodeKind::Book && n.system_tag.is_none())
-        .filter(|n| book_name.as_deref().is_none_or(|bn| n.title.eq_ignore_ascii_case(bn)))
+        .filter(|n| {
+            book_name
+                .as_deref()
+                .is_none_or(|bn| n.title.eq_ignore_ascii_case(bn) || n.slug.eq_ignore_ascii_case(bn))
+        })
         .map(|n| (n.id, n.title.clone()))
         .collect();
     if books.is_empty() {

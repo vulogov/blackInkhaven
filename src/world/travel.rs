@@ -17,12 +17,22 @@ pub struct TravelAssessment {
 
 /// Sustained overland/sea pace in km/day (rough, pre-industrial).
 pub fn speed_km_per_day(mode: &str) -> f64 {
-    match mode {
-        "ship" | "sail" | "sea" => 120.0,
+    match mode.to_ascii_lowercase().as_str() {
+        "ship" | "sail" | "sea" | "boat" => 120.0,
         "horse" | "ride" | "mounted" => 55.0,
         "cart" | "wagon" => 25.0,
         _ => 30.0, // foot / march
     }
+}
+
+/// Whether `mode` is a pace the model knows — so the caller can warn that an
+/// unrecognized mode (e.g. `boat` misspelled) was assessed at the foot fallback.
+pub fn mode_recognized(mode: &str) -> bool {
+    matches!(
+        mode.to_ascii_lowercase().as_str(),
+        "ship" | "sail" | "sea" | "boat" | "horse" | "ride" | "mounted" | "cart" | "wagon"
+            | "foot" | "walk" | "march" | "on foot"
+    )
 }
 
 pub fn assess(distance_km: f64, claimed_days: f64, mode: &str) -> TravelAssessment {
@@ -39,12 +49,23 @@ pub fn assess(distance_km: f64, claimed_days: f64, mode: &str) -> TravelAssessme
     }
 }
 
-/// Kilometres per map cell, from the planet's radius and the grid width (the grid
-/// is treated as spanning the planet's circumference).
-pub fn km_per_cell(radius_earth: f64, grid_width: usize) -> f64 {
+/// Kilometres per map cell along each axis `(east–west, north–south)`. The grid
+/// is equirectangular: its width spans the full circumference (360°) while its
+/// height spans pole-to-pole (180°), so a north–south cell is *shorter* than an
+/// east–west one. Treating the grid as isotropic overstates N–S distance ~1.5×.
+pub fn cell_km(radius_earth: f64, grid_width: usize, grid_height: usize) -> (f64, f64) {
     const EARTH_RADIUS_KM: f64 = 6371.0;
-    let circumference = 2.0 * std::f64::consts::PI * radius_earth.max(0.01) * EARTH_RADIUS_KM;
-    circumference / (grid_width.max(1) as f64)
+    let r = radius_earth.max(0.01) * EARTH_RADIUS_KM;
+    let x = 2.0 * std::f64::consts::PI * r / (grid_width.max(1) as f64);
+    let y = std::f64::consts::PI * r / (grid_height.max(1) as f64);
+    (x, y)
+}
+
+/// Straight-line surface distance in km for a cell delta `(dx, dy)`, respecting
+/// the grid's anisotropy (see [`cell_km`]).
+pub fn distance_km(radius_earth: f64, grid_width: usize, grid_height: usize, dx: f64, dy: f64) -> f64 {
+    let (xk, yk) = cell_km(radius_earth, grid_width, grid_height);
+    ((dx * xk).powi(2) + (dy * yk).powi(2)).sqrt()
 }
 
 #[cfg(test)]
@@ -70,11 +91,28 @@ mod tests {
     }
 
     #[test]
-    fn km_per_cell_scales_with_planet_and_grid() {
-        // Earth-size planet, 360-cell grid → ~111 km/cell (a degree).
-        let k = km_per_cell(1.0, 360);
-        assert!((k - 111.2).abs() < 2.0, "got {k}");
-        // A bigger planet → more km per cell at the same grid width.
-        assert!(km_per_cell(2.0, 360) > k);
+    fn cells_are_anisotropic_on_the_real_grid() {
+        // The model grid is 160×120 equirectangular: an x-cell (2.25°) is longer
+        // than a y-cell (1.5°) — the ratio is 2·H/W = 240/160 = 1.5.
+        let (xk, yk) = cell_km(1.0, 160, 120);
+        assert!(xk > yk);
+        assert!((xk / yk - 1.5).abs() < 0.01, "ratio {}", xk / yk);
+        // A bigger planet → more km per cell.
+        let (xk2, _) = cell_km(2.0, 160, 120);
+        assert!(xk2 > xk);
+    }
+
+    #[test]
+    fn distance_respects_the_axis() {
+        // A purely N–S delta is shorter than the same-magnitude E–W delta.
+        let ns = distance_km(1.0, 160, 120, 0.0, 4.0);
+        let ew = distance_km(1.0, 160, 120, 4.0, 0.0);
+        assert!(ns < ew, "N–S {ns} should be < E–W {ew}");
+    }
+
+    #[test]
+    fn unknown_mode_is_flagged() {
+        assert!(mode_recognized("ship") && mode_recognized("boat") && mode_recognized("foot"));
+        assert!(!mode_recognized("teleport"));
     }
 }

@@ -95,23 +95,25 @@ pub fn compile_ecology(
         .iter()
         .filter(|z| z.biome != "ocean")
         .map(|z| {
-            // A declared ecology for this biome overrides the generated one.
+            let (flora_pool, fauna_pool) = pool(&z.biome);
+            let h = biome_hash(&z.biome).wrapping_add(seed);
+            // A declared ecology overrides the generated one field-by-field: an
+            // empty declared field keeps the generated value, so pinning only a
+            // keystone doesn't wipe the biome's flora/fauna.
             if let Some(d) = declared.iter().find(|d| d.biome.eq_ignore_ascii_case(&z.biome)) {
+                let flora = if d.flora.is_empty() { pick(flora_pool, h, 3) } else { d.flora.clone() };
+                let fauna = if d.fauna.is_empty() {
+                    pick(fauna_pool, h.wrapping_mul(2_654_435_761), 3)
+                } else {
+                    d.fauna.clone()
+                };
                 let keystone = if !d.keystone.trim().is_empty() {
                     d.keystone.clone()
                 } else {
-                    d.fauna.first().cloned().unwrap_or_default()
+                    fauna.first().cloned().unwrap_or_default()
                 };
-                return BiomeEcology {
-                    biome: z.biome.clone(),
-                    area_pct: z.area_pct,
-                    flora: d.flora.clone(),
-                    fauna: d.fauna.clone(),
-                    keystone,
-                };
+                return BiomeEcology { biome: z.biome.clone(), area_pct: z.area_pct, flora, fauna, keystone };
             }
-            let (flora_pool, fauna_pool) = pool(&z.biome);
-            let h = biome_hash(&z.biome).wrapping_add(seed);
             let fauna = pick(fauna_pool, h.wrapping_mul(2_654_435_761), 3);
             let keystone = fauna.first().cloned().unwrap_or_default();
             BiomeEcology {
@@ -223,5 +225,21 @@ mod tests {
             keystone: String::new(),
         }];
         assert!(lint_ecology(&absent, &c).iter().any(|s| s.contains("does not occur")));
+    }
+
+    #[test]
+    fn a_keystone_only_pin_keeps_the_generated_flora_and_fauna() {
+        use crate::world::types::EcologyRegionDef;
+        let c = climate(&[("hot_desert", 100.0)]);
+        let declared = vec![EcologyRegionDef {
+            biome: "hot_desert".into(),
+            flora: vec![],
+            fauna: vec![],
+            keystone: "dune wyrm".into(),
+        }];
+        let e = compile_ecology(&c, &declared, 1);
+        assert_eq!(e.biomes[0].keystone, "dune wyrm");
+        assert!(!e.biomes[0].fauna.is_empty(), "generated fauna preserved");
+        assert!(!e.biomes[0].flora.is_empty(), "generated flora preserved");
     }
 }

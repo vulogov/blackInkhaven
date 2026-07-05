@@ -33,8 +33,12 @@ pub fn rtf_to_typst(rtf_bytes: &[u8]) -> Result<String> {
     // hardening: the upstream crate byte-slices and can panic even on ASCII
     // input) — fall back to a brute-force plain-text extraction so the importer
     // never crashes and the user keeps the document body.
-    let structured =
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| parse_structured(rtf_bytes)));
+    // Suppress the global crash hook for the duration of the guarded call, so a
+    // recovered lexer panic doesn't write a crash report / print "inkhaven
+    // crashed" / tear the terminal down — the body is recovered, not lost.
+    let structured = crate::crash::suppress_panic_report(|| {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| parse_structured(rtf_bytes)))
+    });
     match structured {
         Ok(Ok(s)) => Ok(s),
         Ok(Err(_)) | Err(_) => Ok(strip_to_plain_text(rtf_bytes)),
