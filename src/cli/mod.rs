@@ -4896,6 +4896,18 @@ fn command_mutates(command: &Command) -> bool {
             | Command::Replace { .. }
             | Command::ImportScrivener { .. }
             | Command::ImportEpub { .. }
+            | Command::ImportHelp { .. }
+            | Command::ImportTypstHelp
+            | Command::Recover { .. }
+            | Command::Event(EventCommand::Add { .. })
+            | Command::Sources(SourcesCommand::Import { .. })
+            | Command::Thread(ThreadCommand::Add { .. })
+            | Command::Language(
+                LanguageCommand::Init { .. }
+                    | LanguageCommand::AddWord { .. }
+                    | LanguageCommand::RemoveWord { .. }
+                    | LanguageCommand::Import { .. }
+            )
     )
 }
 
