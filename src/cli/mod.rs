@@ -2298,9 +2298,17 @@ pub enum PdfCommand {
         #[arg(long)]
         out: Option<std::path::PathBuf>,
     },
-    /// List the document outline (bookmarks).
+    /// List the document outline (bookmarks), or inject one from a TOC file
+    /// with `--set` (indented `Title :: page` lines; indentation nests).
     Outline {
         input: std::path::PathBuf,
+        /// A table-of-contents file to inject as bookmarks. Each line is
+        /// `Title :: page` (1-based); leading spaces/tabs set the nesting.
+        #[arg(long, value_name = "TOC")]
+        set: Option<std::path::PathBuf>,
+        /// Where to write the injected PDF (default: `<stem>-outline.pdf`).
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
     },
     /// Check a PDF is print-ready (RFC §8.6): effective image DPI, font
     /// embedding, page-size consistency, blank/colour pages.  Profile

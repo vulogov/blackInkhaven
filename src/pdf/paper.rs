@@ -55,6 +55,7 @@ pub fn paper_stock(name: &str) -> Option<PaperStock> {
 }
 
 /// All preset names (for `--help` / config error messages).
+#[allow(dead_code)] // surfaced in the unknown-stock config error (PDF-1 P2)
 pub fn stock_names() -> impl Iterator<Item = &'static str> {
     STOCKS.iter().map(|s| s.name)
 }

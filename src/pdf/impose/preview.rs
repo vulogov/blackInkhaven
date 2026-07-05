@@ -17,6 +17,7 @@ pub struct ImpositionPreview {
     pub signature_pages: usize,
     pub sheets_per_signature: usize,
     pub signatures: usize,
+    #[allow(dead_code)] // part of the complete plan; surfaced by --preview consumers
     pub total_sheets: usize,
     pub imposed_pages: usize,
     pub blanks: usize,
