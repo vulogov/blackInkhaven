@@ -1579,7 +1579,6 @@ struct SceneWorld {
     pol: crate::world::compile::polities_layer::PolitiesOutput,
     cul: crate::world::compile::culture_layer::CultureOutput,
     height: usize,
-    place_links: Vec<crate::world::proposals::PlaceLink>,
 }
 
 impl RightPane {
@@ -1750,6 +1749,9 @@ pub(crate) struct App {
     /// `scene_brief` is the current paragraph's brief (footer chip + overview),
     /// recomputed only when the open paragraph changes.
     scene_world: Option<SceneWorld>,
+    /// The `world.hjson` mtime the cached `scene_world` was built from — so a
+    /// mid-session edit to the world invalidates the compile.
+    scene_world_mtime: Option<std::time::SystemTime>,
     scene_last_para: Option<Uuid>,
     scene_brief: Option<crate::world::scene::SceneBrief>,
     /// NARR-1 — ambient prose check toggle (`Ctrl+V Shift+V`); seeded from
@@ -3029,6 +3031,7 @@ impl App {
             theo_activity_at: None,
             theo_needs_check: false,
             scene_world: None,
+            scene_world_mtime: None,
             scene_last_para: None,
             scene_brief: None,
             ie_auto: false,
@@ -14882,21 +14885,31 @@ impl App {
         let Some(id) = cur else { return };
 
         // Cheap gate before any compile: does this paragraph link to anything?
+        // The events are gathered once here and reused by scene_place_and_date.
+        let events = crate::world::timeline_context::gather_events(&self.hierarchy);
         let has_para_link =
             self.hierarchy.get(id).map(|n| !n.linked_paragraphs.is_empty()).unwrap_or(false);
-        let has_event = crate::world::timeline_context::gather_events(&self.hierarchy)
-            .iter()
-            .any(|e| e.linked_paragraphs.contains(&id));
+        let has_event = events.iter().any(|e| e.linked_paragraphs.contains(&id));
         if !has_para_link && !has_event {
             return;
         }
 
-        if self.scene_world.is_none() {
-            let w = self.compute_scene_world();
-            self.scene_world = w;
+        // Refresh the cached world compile when world.hjson is first read or has
+        // changed since (mtime) — otherwise a mid-session edit is ignored until
+        // restart. Place links are read fresh below, so an accepted Place shows
+        // immediately without recompiling the world.
+        let world_path = self.store.project_root().join("world.hjson");
+        let mtime = std::fs::metadata(&world_path).and_then(|m| m.modified()).ok();
+        if self.scene_world.is_none() || self.scene_world_mtime != mtime {
+            self.scene_world = self.compute_scene_world();
+            self.scene_world_mtime = mtime;
         }
         let Some(sw) = self.scene_world.as_ref() else { return };
-        let (place, date) = self.scene_place_and_date(id, &sw.place_links);
+        let place_links = crate::world::storage::WorldStore::open_for_project(self.store.project_root())
+            .ok()
+            .and_then(|s| s.list_place_links().ok())
+            .unwrap_or_default();
+        let (place, date) = self.scene_place_and_date(id, &events, &place_links);
         if place.is_none() && date.is_none() {
             return;
         }
@@ -14944,11 +14957,7 @@ impl App {
             })
             .collect();
         let cul = compile_culture(&pol, &capital_biomes, &def.cultures, seed);
-        let place_links = crate::world::storage::WorldStore::open_for_project(root)
-            .ok()
-            .and_then(|s| s.list_place_links().ok())
-            .unwrap_or_default();
-        Some(SceneWorld { astro, pol, cul, height: climate.height, place_links })
+        Some(SceneWorld { astro, pol, cul, height: climate.height })
     }
 
     /// Resolve the open paragraph's place + date: a place-linked Timeline event
@@ -14956,9 +14965,9 @@ impl App {
     fn scene_place_and_date(
         &self,
         para_id: Uuid,
+        events: &[crate::world::timeline_context::TlEvent],
         place_links: &[crate::world::proposals::PlaceLink],
     ) -> (Option<crate::world::proposals::PlaceLink>, Option<i64>) {
-        let events = crate::world::timeline_context::gather_events(&self.hierarchy);
         let anchor = events
             .iter()
             .filter(|e| e.linked_paragraphs.contains(&para_id))
