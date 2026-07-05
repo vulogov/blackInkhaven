@@ -2096,6 +2096,19 @@ pub enum SourcesCommand {
         #[arg(long)]
         book_name: Option<String>,
     },
+    /// Export the Sources book's entries to `bibtex` or `csl-json` (for Zotero /
+    /// other citation managers). Writes to `--out`, else stdout.
+    Export {
+        /// `bibtex` (default) or `csl-json`.
+        #[arg(long, default_value = "bibtex")]
+        format: String,
+        /// Limit to the chapter named after this book.
+        #[arg(long)]
+        book_name: Option<String>,
+        /// Write to this file instead of stdout.
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+    },
 }
 
 /// 1.4.1+ BOOK_RAG-1 — `inkhaven book-rag …` sub-subcommands. The terminal

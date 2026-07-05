@@ -10,7 +10,7 @@
 //! S-P0 is the foundation; later phases (S-P1…S-P5) consume it. The
 //! module-level `dead_code` allow covers items not yet wired; it tightens as
 //! phases land.
-#![allow(dead_code)]
+
 
 use serde::Deserialize;
 
@@ -197,6 +197,72 @@ pub fn compile_bibtex(entries: &[BibEntry]) -> (String, usize) {
     let valid: Vec<&BibEntry> = entries.iter().filter(|e| e.is_valid()).collect();
     let body = valid.iter().map(|e| e.to_bibtex()).collect::<Vec<_>>().join("\n");
     (body, valid.len())
+}
+
+/// SOURCES-2 — serialize entries to a CSL-JSON array (the inverse of the Research
+/// Assistant's CSL-JSON import), for interop with Zotero / citation managers.
+/// Returns `(json, count)`; the field/type mapping round-trips with the importer.
+pub fn compile_csl_json(entries: &[BibEntry]) -> (String, usize) {
+    use serde_json::{json, Map, Value};
+    let valid: Vec<&BibEntry> = entries.iter().filter(|e| e.is_valid()).collect();
+    let opt = |m: &mut Map<String, Value>, k: &str, v: &Option<String>| {
+        if let Some(s) = v {
+            if !s.trim().is_empty() {
+                m.insert(k.into(), json!(s));
+            }
+        }
+    };
+    let items: Vec<Value> = valid
+        .iter()
+        .map(|e| {
+            let mut m = Map::new();
+            m.insert("id".into(), json!(e.key));
+            m.insert(
+                "type".into(),
+                json!(match e.entry_type.as_str() {
+                    "article" => "article-journal",
+                    "book" => "book",
+                    "incollection" => "chapter",
+                    "inproceedings" => "paper-conference",
+                    "phdthesis" | "mastersthesis" => "thesis",
+                    _ => "document",
+                }),
+            );
+            if !e.title.trim().is_empty() {
+                m.insert("title".into(), json!(e.title));
+            }
+            let authors: Vec<Value> = e
+                .author
+                .split(" and ")
+                .filter(|a| !a.trim().is_empty())
+                .map(|a| match a.split_once(',') {
+                    Some((fam, giv)) => json!({ "family": fam.trim(), "given": giv.trim() }),
+                    None => json!({ "literal": a.trim() }),
+                })
+                .collect();
+            if !authors.is_empty() {
+                m.insert("author".into(), json!(authors));
+            }
+            if let Ok(y) = e.year.trim().parse::<i64>() {
+                m.insert("issued".into(), json!({ "date-parts": [[y]] }));
+            } else if !e.year.trim().is_empty() {
+                m.insert("issued".into(), json!({ "literal": e.year }));
+            }
+            opt(&mut m, "container-title", &e.journal);
+            opt(&mut m, "volume", &e.volume);
+            opt(&mut m, "issue", &e.number);
+            opt(&mut m, "page", &e.pages);
+            opt(&mut m, "publisher", &e.publisher);
+            opt(&mut m, "URL", &e.url);
+            opt(&mut m, "DOI", &e.doi);
+            opt(&mut m, "ISBN", &e.isbn);
+            opt(&mut m, "note", &e.note);
+            opt(&mut m, "edition", &e.edition);
+            Value::Object(m)
+        })
+        .collect();
+    let json = serde_json::to_string_pretty(&items).unwrap_or_else(|_| "[]".to_string());
+    (json, valid.len())
 }
 
 /// The HJSON template seeded into a freshly-created Sources paragraph.
@@ -645,5 +711,32 @@ mod tests {
         assert_eq!(slugify_key("2024 review"), "review");
         // …and a non-Latin-only title falls back to the placeholder.
         assert_eq!(slugify_key("Влади"), "change-me");
+    }
+
+    #[test]
+    fn csl_json_export_shapes_entries() {
+        let e = BibEntry {
+            key: "smith2024".into(),
+            entry_type: "article".into(),
+            author: "Smith, Jane and Doe, John".into(),
+            title: "A Study".into(),
+            year: "2024".into(),
+            journal: Some("Nature".into()),
+            doi: Some("10.1/x".into()),
+            ..Default::default()
+        };
+        let (json, count) = compile_csl_json(&[e]);
+        assert_eq!(count, 1);
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let item = &v[0];
+        assert_eq!(item["id"], "smith2024");
+        assert_eq!(item["type"], "article-journal");
+        assert_eq!(item["title"], "A Study");
+        assert_eq!(item["container-title"], "Nature");
+        assert_eq!(item["DOI"], "10.1/x");
+        assert_eq!(item["issued"]["date-parts"][0][0], 2024);
+        assert_eq!(item["author"][0]["family"], "Smith");
+        assert_eq!(item["author"][0]["given"], "Jane");
+        assert_eq!(item["author"][1]["family"], "Doe");
     }
 }
