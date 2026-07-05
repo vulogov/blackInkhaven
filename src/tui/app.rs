@@ -13459,7 +13459,7 @@ impl App {
                 "  {} years · {} epoch(s) · {} founding(s) · {} event(s)",
                 hist.span_years, hist.epochs.len(), hist.foundings.len(), hist.events.len()
             ));
-            let eco = compile_ecology(&climate, seed);
+            let eco = compile_ecology(&climate, def.ecology.as_ref().map(|e| e.regions.as_slice()).unwrap_or(&[]), seed);
             rows.push(format!(
                 "Ecology  ·  {} land biome(s){}",
                 eco.biomes.len(),
@@ -13477,7 +13477,7 @@ impl App {
                         .unwrap_or_default()
                 })
                 .collect();
-            let cul = compile_culture(&pol, &capital_biomes, seed);
+            let cul = compile_culture(&pol, &capital_biomes, &def.cultures, seed);
             rows.push(format!("Peoples  ·  {} realm(s), {} culture(s)", pol.polities.len(), cul.cultures.len()));
             if let Some(c) = cul.cultures.first() {
                 rows.push(format!("  {} — {}", c.polity, c.ethos));
@@ -14943,7 +14943,7 @@ impl App {
                     .unwrap_or_default()
             })
             .collect();
-        let cul = compile_culture(&pol, &capital_biomes, seed);
+        let cul = compile_culture(&pol, &capital_biomes, &def.cultures, seed);
         let place_links = crate::world::storage::WorldStore::open_for_project(root)
             .ok()
             .and_then(|s| s.list_place_links().ok())
