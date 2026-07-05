@@ -148,6 +148,43 @@ what seed and star you are working with.
   came back.
 ]
 
+#section("You don't have to take the first world")
+
+The seed you were handed grew *one* world — but it is one of billions, and there
+is nothing sacred about it. If its coastlines or its balance of land and sea are
+not what your story wants, you do not edit them by hand; you audition a few more
+and keep the one you like. `realworld variants` does exactly that: it grows
+several candidate worlds from consecutive seeds and prints a one-line summary of
+each, so you can compare them at a glance.
+
+```
+realworld variants --count 6
+```
+
+Each row reports what that seed grew — how many continents, how much of the
+surface is sea, how many settlements and people, the dominant biome, the largest
+realm — beside the seed itself. When one of them is the world you want, you adopt
+it by writing that number into `world.hjson` and compiling as usual:
+
+#hjson[```
+seed: 1715007
+```]
+
+#note[
+  This is the same discipline the rest of the book will keep returning to: *the
+  world proposes, you choose.* `realworld variants` proposes whole worlds;
+  later, `realworld history`, `polities`, and the rest propose the pieces inside
+  one. Nothing is committed until you pick it — auditioning six worlds changes
+  nothing on disk until you set the seed and compile.
+]
+
+#tryit[
+  Run `realworld variants --count 6` and read the six worlds. Notice how different
+  a single number makes them — one seed a scatter of islands, the next a single
+  broad continent. Pick the one that most looks like the stage your story wants,
+  set its seed in `world.hjson`, and recompile. You have just chosen a world.
+]
+
 #section("What you now have")
 
 Take a moment with what just happened. From a file you could read in a minute — a
