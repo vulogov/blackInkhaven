@@ -4,6 +4,13 @@ A four-track adversarial audit (WORLD compile layers · WORLD desk+CLI · TUI
 scene-context · cross-cutting/non-WORLD) over everything 1.6.0 added. Findings
 ranked; each fix lands with a regression test.
 
+**Status (1.6.1-dev):** FIXED — BUG-1..7, BUG-9, BUG-10, BUG-11, BUG-13 (all P1 +
+P2 + the P3 slug), across three tested commits. **Deferred** (documented,
+low-severity): BUG-8 (Ctrl+B W synchronous compile — a one-shot jank on open, not
+per-frame), BUG-14 (duplicate declared nation names — author error), BUG-15 (EPUB
+image size cap — OOM only on a hostile archive the user chose to import), BUG-16
+(`row_to_latitude` half-cell — cosmetic ~0.75°).
+
 ## P1 — correctness / user-visible-wrong / broken recovery
 
 - **BUG-1 · RTF recovery still crashes the host.** `scrivener/rtf.rs:36` uses a
