@@ -155,6 +155,7 @@ mod tests {
         let cul = crate::world::compile::compile_culture(
             &pol,
             &["mediterranean".to_string()],
+            &[],
             7,
         );
         (pol, cul)

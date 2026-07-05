@@ -45,7 +45,13 @@ fn biome_ethos(biome: &str) -> &'static str {
 }
 
 /// `capital_biomes[i]` is polity `i`'s capital biome (parallel to `pol.polities`).
-pub fn compile_culture(pol: &PolitiesOutput, capital_biomes: &[String], seed: u64) -> CultureOutput {
+/// `declared` pins cultures by nation name, overriding the generated fields.
+pub fn compile_culture(
+    pol: &PolitiesOutput,
+    capital_biomes: &[String],
+    declared: &[crate::world::types::CultureDef],
+    seed: u64,
+) -> CultureOutput {
     const TEMPER: &[&str] =
         &["proud", "cautious", "curious", "devout", "stubborn", "generous", "secretive", "boisterous"];
     const BELIEF: &[&str] = &[
@@ -69,7 +75,7 @@ pub fn compile_culture(pol: &PolitiesOutput, capital_biomes: &[String], seed: u6
         .map(|(i, p)| {
             let biome = capital_biomes.get(i).map(String::as_str).unwrap_or("");
             let s = seed.wrapping_add((i as u64) << 8);
-            Culture {
+            let mut c = Culture {
                 polity: p.name.clone(),
                 ethos: format!("{}, {}", biome_ethos(biome), pick(TEMPER, h(s, 1))),
                 belief: pick(BELIEF, h(s, 2)).to_string(),
@@ -80,10 +86,53 @@ pub fn compile_culture(pol: &PolitiesOutput, capital_biomes: &[String], seed: u6
                     pick(SOUND, h(s, 5))
                 ),
                 naming_sample: format!("{}{}", pick(ONSET, h(s, 6)), pick(TAIL, h(s, 7))),
+            };
+            // A declared culture for this nation overrides the generated fields.
+            if let Some(d) = declared.iter().find(|d| d.nation.eq_ignore_ascii_case(&p.name)) {
+                if !d.ethos.trim().is_empty() {
+                    c.ethos = d.ethos.clone();
+                }
+                if !d.belief.trim().is_empty() {
+                    c.belief = d.belief.clone();
+                }
+                if !d.language.trim().is_empty() {
+                    c.language_profile = d.language.clone();
+                }
             }
+            c
         })
         .collect();
     CultureOutput { cultures }
+}
+
+/// WORLD-11 (W11-P4) — verify pinned cultures: a maritime ethos on a dry inland
+/// capital, or a culture pinned to a nation that does not exist, is flagged.
+pub fn lint_culture(
+    declared: &[crate::world::types::CultureDef],
+    pol: &PolitiesOutput,
+    capital_biomes: &[String],
+) -> Vec<String> {
+    let mut w = Vec::new();
+    for d in declared {
+        match pol.polities.iter().position(|p| p.name.eq_ignore_ascii_case(&d.nation)) {
+            None => w.push(format!("culture: pinned to nation `{}`, which is not among the world's realms", d.nation)),
+            Some(i) => {
+                let biome = capital_biomes.get(i).map(String::as_str).unwrap_or("");
+                let e = d.ethos.to_lowercase();
+                let maritime = ["seafaring", "maritime", "naval", "coastal", "harbour", "harbor", "sea-"]
+                    .iter()
+                    .any(|k| e.contains(k));
+                let dry_inland = biome.contains("desert") || biome.contains("grassland") || biome == "savanna";
+                if maritime && dry_inland {
+                    w.push(format!(
+                        "culture `{}`: a seafaring ethos, but its capital sits in a dry inland biome ({biome})",
+                        d.nation
+                    ));
+                }
+            }
+        }
+    }
+    w
 }
 
 #[cfg(test)]
@@ -111,7 +160,7 @@ mod tests {
     fn one_culture_per_polity_with_all_facets() {
         let p = pol(&["Karon", "Serai"]);
         let biomes = vec!["hot_desert".to_string(), "temperate_forest".to_string()];
-        let c = compile_culture(&p, &biomes, 0x33);
+        let c = compile_culture(&p, &biomes, &[], 0x33);
         assert_eq!(c.cultures.len(), 2);
         // Ethos reflects the capital biome.
         assert!(c.cultures[0].ethos.starts_with("austere and hospitable"));
@@ -127,6 +176,25 @@ mod tests {
     fn is_deterministic() {
         let p = pol(&["Karon"]);
         let b = vec!["savanna".to_string()];
-        assert_eq!(compile_culture(&p, &b, 9), compile_culture(&p, &b, 9));
+        assert_eq!(compile_culture(&p, &b, &[], 9), compile_culture(&p, &b, &[], 9));
+    }
+
+    #[test]
+    fn declared_culture_overrides_and_maritime_desert_is_flagged() {
+        use crate::world::types::CultureDef;
+        let p = pol(&["Karon"]);
+        let b = vec!["hot_desert".to_string()];
+        let declared = vec![CultureDef {
+            nation: "Karon".into(),
+            ethos: "seafaring and bold".into(),
+            belief: "the tide-mother".into(),
+            language: "VSO · fusional · tonal".into(),
+        }];
+        let c = compile_culture(&p, &b, &declared, 1);
+        assert_eq!(c.cultures[0].ethos, "seafaring and bold");
+        assert_eq!(c.cultures[0].belief, "the tide-mother");
+        assert_eq!(c.cultures[0].language_profile, "VSO · fusional · tonal");
+        // A seafaring people whose capital is a hot desert is flagged.
+        assert!(lint_culture(&declared, &p, &b).iter().any(|s| s.contains("seafaring")));
     }
 }

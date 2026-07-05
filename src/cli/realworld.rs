@@ -756,7 +756,7 @@ fn scene(project: &Path, place: Option<String>, day: f64, lat: Option<f64>) -> R
                 .unwrap_or_default()
         })
         .collect();
-    let cul = compile_culture(&pol, &capital_biomes, seed);
+    let cul = compile_culture(&pol, &capital_biomes, &def.cultures, seed);
     let brief = crate::world::scene::scene_brief(&astro, &pol, &cul, link.as_ref(), Some(day), latitude);
 
     println!("scene · {}", def.name);
@@ -865,7 +865,7 @@ fn culture(project: &Path) -> Result<()> {
                 .unwrap_or_default()
         })
         .collect();
-    let cul = compile_culture(&pol, &capital_biomes, def.seed_u64());
+    let cul = compile_culture(&pol, &capital_biomes, &def.cultures, def.seed_u64());
 
     println!("culture · {} — {} culture(s)", def.name, cul.cultures.len());
     for c in &cul.cultures {
@@ -931,7 +931,7 @@ fn ecology(project: &Path) -> Result<()> {
     let astro = compile_astronomy(&def.astronomy);
     let geo = geology_for(project, &def)?;
     let climate = compile_climate(&def, &astro, &geo);
-    let eco = compile_ecology(&climate, def.seed_u64());
+    let eco = compile_ecology(&climate, def.ecology.as_ref().map(|e| e.regions.as_slice()).unwrap_or(&[]), def.seed_u64());
     println!("ecology · {} — {} land biome(s)", def.name, eco.biomes.len());
     for b in &eco.biomes {
         println!("\n  {} ({:.0}% of land)  · keystone: {}", b.biome, b.area_pct, b.keystone);
@@ -1576,6 +1576,41 @@ fn validate(project: &Path) -> Result<()> {
                 for x in &w {
                     println!("                  ⚠ {x}");
                 }
+            }
+        }
+    }
+    // W11-P4 — verify pinned cultures + ecology (advisory).
+    if !def.cultures.is_empty() {
+        let pol = crate::world::compile::compile_polities(&demo, &def.nations, def.seed_u64());
+        let capital_biomes: Vec<String> = pol
+            .polities
+            .iter()
+            .map(|q| {
+                demo.settlements
+                    .iter()
+                    .find(|s| (s.x, s.y) == q.capital_pos)
+                    .map(|s| s.biome.clone())
+                    .unwrap_or_default()
+            })
+            .collect();
+        let w = crate::world::compile::culture_layer::lint_culture(&def.cultures, &pol, &capital_biomes);
+        if w.is_empty() {
+            println!("  cultures:     ok · {} pinned", def.cultures.len());
+        } else {
+            println!("  cultures:     {} pinned, {} warning(s):", def.cultures.len(), w.len());
+            for x in &w {
+                println!("                  ⚠ {x}");
+            }
+        }
+    }
+    if let Some(eco) = def.ecology.as_ref().filter(|e| !e.regions.is_empty()) {
+        let w = crate::world::compile::ecology_layer::lint_ecology(&eco.regions, &climate);
+        if w.is_empty() {
+            println!("  ecology:      ok · {} pinned biome(s)", eco.regions.len());
+        } else {
+            println!("  ecology:      {} pinned, {} warning(s):", eco.regions.len(), w.len());
+            for x in &w {
+                println!("                  ⚠ {x}");
             }
         }
     }

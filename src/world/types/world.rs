@@ -40,6 +40,46 @@ pub struct WorldDefinition {
     /// capital cell; the remaining settlements cluster into generated realms.
     #[serde(default)]
     pub nations: Vec<NationDef>,
+    /// WORLD-11 (W11-P4) — author-pinned cultures, matched to a nation by name.
+    #[serde(default)]
+    pub cultures: Vec<CultureDef>,
+    /// WORLD-11 (W11-P4) — author-pinned ecology, matched to a biome.
+    #[serde(default)]
+    pub ecology: Option<EcologyDef>,
+}
+
+/// WORLD-11 — an author-pinned culture, overriding the generated one for its
+/// nation.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CultureDef {
+    /// The nation whose culture this pins (matched by name).
+    pub nation: String,
+    #[serde(default)]
+    pub ethos: String,
+    #[serde(default)]
+    pub belief: String,
+    /// A conlang typology profile, e.g. "SOV · agglutinative · tonal".
+    #[serde(default)]
+    pub language: String,
+}
+
+/// WORLD-11 — the declared `ecology:` block.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct EcologyDef {
+    #[serde(default)]
+    pub regions: Vec<EcologyRegionDef>,
+}
+
+/// An author-pinned ecology for one biome, overriding the generated one.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct EcologyRegionDef {
+    pub biome: String,
+    #[serde(default)]
+    pub flora: Vec<String>,
+    #[serde(default)]
+    pub fauna: Vec<String>,
+    #[serde(default)]
+    pub keystone: String,
 }
 
 /// WORLD-11 — a declared nation.
