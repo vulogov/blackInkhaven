@@ -88,35 +88,88 @@ geology: {
 
 #subsection("Producing a heightmap")
 
-A DEM is just a greyscale image, so any of several roads leads to one — pick the
-one that matches how much control you want.
+You do not need special software or any artistic skill to make a DEM — it is an
+ordinary greyscale image, and a free image editor is enough. Before the recipe,
+three facts about how Inkhaven reads the file, so nothing about it is a guess:
 
 #list(
-  [*Draw it by hand.* In any image editor — GIMP, Krita, Photoshop, even a
-   free web canvas — make a greyscale picture: paint the seas near-black, the
-   lowlands dark grey, the highlands pale, the peaks white, and blur it so the
-   slopes are smooth rather than stepped. Save as `.png`. This is the most direct
-   way to get *exactly* the continents you have already imagined.],
-  [*Generate it procedurally.* Terrain tools built for the job — World Machine,
-   Gaea, the free Wilbur, or Blender's built-in A.N.T. Landscape — grow realistic
-   erosion, ranges, and river valleys from noise, and export a heightmap. Good
-   when you want plausible terrain without drawing every ridge.],
-  [*Borrow the real Earth.* Exporters such as `terrain.party`, an online
-   height-mapper, or QGIS working over public elevation data (SRTM) hand you a
-   real region's terrain as a greyscale image — a quiet way to give a fantasy map
-   the bones of a real coastline.],
+  [*Any common image format works* — PNG, JPEG, TIFF, BMP. Prefer *PNG*: it is
+   lossless, so it will not smear your coastlines the way JPEG can.],
+  [*The size does not matter.* Inkhaven resamples your image onto its own grid, so
+   a 512×512 or 1024×512 picture is plenty; you do not need to match any exact
+   dimension.],
+  [*Brightness is height, and it is read relatively.* Inkhaven finds the darkest
+   and brightest pixels in your image and stretches that range to fit — your
+   darkest pixel becomes the deepest sea floor, your brightest the highest peak.
+   So use the *whole* range from black to white; the absolute grey values do not
+   matter, only which areas are darker than which.],
 )
 
-Whichever road you take, the rule is the same: *brighter means higher.* Inkhaven
-reads the brightness as elevation, treats everything at or below your
-`sea_level_pixel_value` as ocean, and runs the whole climate-and-rivers machine
-over the shape you supplied — exactly as it would over a shape it invented.
+#subsection("Drawing one by hand, step by step")
+
+This is the most direct road — you get exactly the continents you imagined. Using
+*GIMP* (free, from `gimp.org`; the same steps work almost unchanged in Krita or
+Photoshop):
+
+#list(
+  [*Make a new greyscale image.* `File → New`, set the size to `1024 × 512`
+   pixels, then `Image → Mode → Grayscale`.],
+  [*Fill it with black* — this is your open ocean. `Edit → Fill with FG Color`
+   with the foreground set to black.],
+  [*Paint your land in white.* Take a soft-edged brush, set the colour to white
+   and the brush opacity low (about 20%), and paint where you want land. Build
+   the brightness up in passes: one pass for coastal lowland (dim grey), more
+   passes stacked in the interior for hills, brightest of all along the spines
+   where you want mountains. Think of the brush as *raising* the ground each time
+   you stroke.],
+  [*Smooth the slopes.* `Filters → Blur → Gaussian Blur` with a radius of about
+   `20` pixels. This is the important step (see the Pitfall): it turns your
+   painted patches into gentle grades that rivers can run down.],
+  [*Export it.* `File → Export As…`, name it `my-continent.png`, and save it into a
+   `maps` folder next to your `world.hjson`.],
+)
+
+Then point the world at it, exactly as shown above:
+
+#hjson[```
+geology: {
+  dem: { path: "maps/my-continent.png" }
+}
+```]
+
+Compile, and Inkhaven runs the entire climate-and-rivers machine over *your* land.
+
+#subsection("Where the coastline falls")
+
+The simplest way to set the sea is to *not* set it: leave `sea_level_pixel_value`
+out, and Inkhaven puts the shoreline at 40% up your height range — the lowest 40%
+of the land becomes ocean. To get more sea, paint more of your image dark; for
+more land, paint more of it bright. That trial-and-error is usually all you need.
+(If you want to place the coast at an exact brightness, `sea_level_pixel_value`
+takes a number from `0` to `65535`, where `0` is black and `65535` is white;
+everything at or below it is sea.)
+
+#subsection("Two shortcuts")
+
+If drawing is not your strength, two roads hand you a heightmap ready-made:
+
+#list(
+  [*Generate one.* Free terrain tools — *Wilbur*, or Blender's built-in *A.N.T.
+   Landscape* generator (and the paid *World Machine* and *Gaea*) — grow realistic
+   erosion, ranges, and valleys from noise and export a greyscale heightmap
+   directly. Good when you want plausible terrain without placing every ridge.],
+  [*Borrow the real Earth.* The website `tangrams.github.io/heightmapper` lets you
+   pan to any real region and download its terrain as a greyscale PNG; *QGIS* (free)
+   can do the same over public SRTM elevation data. A quiet way to give a fantasy
+   map the bones of a real coastline.],
+)
 
 #pitfall[
   A crisp, high-contrast image with hard edges makes for cliff-walled, unnatural
-  terrain and confused rivers. Real land is smooth: blur your heightmap, keep the
-  transitions gradual, and let the sea meet the land along a soft grey coast, not
-  a black-to-white wall.
+  terrain and confused rivers. Real land is smooth: always blur your heightmap
+  (the Gaussian Blur step above), keep the transitions gradual, and let the sea
+  meet the land along a soft grey coast, not a black-to-white wall. If your rivers
+  come out strange, the usual cure is *more blur*.
 ]
 
 #section("Compiling the land")
