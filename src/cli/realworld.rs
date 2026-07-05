@@ -19,6 +19,7 @@ pub fn run(project: &Path, cmd: RealworldCommand) -> Result<()> {
     match cmd {
         RealworldCommand::New { name, force } => new(project, &name, force),
         RealworldCommand::Validate => validate(project),
+        RealworldCommand::Variants { count } => variants(project, count),
         RealworldCommand::Show { json } => show(project, json),
         RealworldCommand::Compile { layer, json, materialize } => {
             compile(project, layer.as_deref(), json, materialize)
@@ -1518,6 +1519,59 @@ fn new(project: &Path, name: &str, force: bool) -> Result<()> {
         .map_err(|e| Error::Store(format!("writing {}: {e}", path.display())))?;
     println!("scaffolded {} for world `{name}`", path.display());
     println!("edit it, then `inkhaven realworld compile`");
+    Ok(())
+}
+
+/// WORLD (1.6.1) — propose N candidate worlds from consecutive seeds. Each row is
+/// a one-line summary + the seed that grows it, so the author can pick one.
+fn variants(project: &Path, count: usize) -> Result<()> {
+    use crate::world::compile::{
+        compile_astronomy, compile_climate, compile_demographics, compile_hydrology,
+        compile_polities,
+    };
+    let def = load(project)?;
+    let base = def.seed_u64();
+    let n = count.clamp(1, 24);
+    let dem = def.geology.as_ref().and_then(|g| g.dem.as_ref()).is_some();
+
+    println!("variants · {n} candidate world(s) from seed {base}");
+    if dem {
+        println!("  (geology is DEM-sourced: the terrain is fixed; settlements and realms vary by seed)");
+    }
+    for i in 0..n as u64 {
+        let seed = base.wrapping_add(i);
+        let mut d = def.clone();
+        d.seed = crate::world::types::SeedValue::Int(seed as i64);
+        let astro = compile_astronomy(&d.astronomy);
+        let geo = geology_for(project, &d)?;
+        let climate = compile_climate(&d, &astro, &geo);
+        let hydro = compile_hydrology(&geo, &climate);
+        let demo = compile_demographics(&climate, &hydro);
+        let pol = compile_polities(&demo, &d.nations, seed);
+        let top_biome = climate
+            .zones
+            .iter()
+            .filter(|z| z.biome != "ocean")
+            .max_by(|a, b| a.area_pct.partial_cmp(&b.area_pct).unwrap_or(std::cmp::Ordering::Equal))
+            .map(|z| z.biome.as_str())
+            .unwrap_or("—");
+        let top_realm = pol
+            .polities
+            .iter()
+            .max_by_key(|p| p.population)
+            .map(|p| format!(" · top realm {} (pop {})", p.name, fmt_pop(p.population)))
+            .unwrap_or_default();
+        println!("\n  seed {seed}{}", if i == 0 { "  (current)" } else { "" });
+        println!(
+            "    {} continent(s) · {:.0}% sea · {} settlement(s) · pop {}",
+            geo.continents,
+            geo.sea_coverage_pct,
+            demo.settlements.len(),
+            fmt_pop(demo.total_population)
+        );
+        println!("    dominant biome: {top_biome}{top_realm}");
+    }
+    println!("\n  To adopt one, set `seed: <value>` in world.hjson and run `realworld compile`.");
     Ok(())
 }
 

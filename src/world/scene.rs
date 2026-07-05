@@ -93,7 +93,10 @@ pub fn scene_brief(
         if let Some((i, pol)) = polities.polities.iter().enumerate().min_by_key(|(_, q)| {
             let dx = q.capital_pos.0 as i64 - p.x as i64;
             let dy = q.capital_pos.1 as i64 - p.y as i64;
-            dx * dx + dy * dy
+            // The grid is equirectangular (an x-cell spans more ground than a
+            // y-cell, ~3:2), so weight the axes before comparing squared distance
+            // — otherwise the *geometrically* nearer realm can lose to a farther.
+            9 * dx * dx + 4 * dy * dy
         }) {
             b.realm = Some(pol.name.clone());
             if let Some(c) = cultures.cultures.get(i) {
