@@ -198,8 +198,8 @@ long island chain curving to the south-east, a wide bay on the east coast."*
      hand-drawn map, and crop out any leftover frame or label.],
   )
   One more watch-point: some models *invert* the convention and paint mountains
-  dark. If your continents come out as oceans, invert the image (`Colors →
-  Invert`) so that bright is high again.
+  dark. If your continents come out as oceans, invert the image (`Colors → Invert`)
+  so that bright is high again.
 ]
 
 #pitfall[
