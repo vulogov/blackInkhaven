@@ -740,6 +740,12 @@ impl Store {
             .map_err(|e| Error::Store(format!("embed_batch: {e}")))
     }
 
+    /// Whether the embedding model has been loaded this session (HAIKU-2 gates
+    /// its semantic path on this so a cold engine never blocks the UI thread).
+    pub fn embedding_is_loaded(&self) -> bool {
+        self.inner.embedding_is_loaded()
+    }
+
     pub fn get_content(&self, id: Uuid) -> Result<Option<Vec<u8>>> {
         self.inner
             .get_content(id)

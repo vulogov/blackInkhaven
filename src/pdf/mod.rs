@@ -20,7 +20,7 @@
 // remaining unused surface (`paper`, imposition-only `geometry`,
 // `inject_outline`) is built ahead of P1/P2 (imposition, cover) + the
 // `ink.pdf.*` Bund layer.  This `allow` retires when those land.
-#![allow(dead_code)]
+
 
 pub mod barcode;
 pub mod cover;
@@ -50,6 +50,7 @@ pub enum Error {
     Io(std::io::Error),
     /// A tree-aware operation (outline injection, by-chapter ops) was
     /// requested on a PDF inkhaven didn't author.
+    #[allow(dead_code)] // raised once by-chapter ops gate on provenance (PDF-1 P3)
     NotInkhavenSource,
     /// Anything else, with a message.
     Other(String),

@@ -395,7 +395,8 @@ fn write_heightmap_png(root: &Path, out: &GeologyOutput) -> Result<PathBuf> {
     let mut img = image::GrayImage::new(out.width as u32, out.height as u32);
     for y in 0..out.height {
         for x in 0..out.width {
-            let v = (out.heightmap[y * out.width + x].clamp(0.0, 1.0) * 255.0).round() as u8;
+            let v = (out.heightmap.get(y * out.width + x).copied().unwrap_or(0.0).clamp(0.0, 1.0) * 255.0)
+                .round() as u8;
             img.put_pixel(x as u32, y as u32, image::Luma([v]));
         }
     }

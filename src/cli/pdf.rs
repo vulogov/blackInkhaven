@@ -130,7 +130,10 @@ pub fn run(cmd: PdfCommand, project: &Path) -> Result<()> {
             keywords,
             out,
         } => metadata(&input, strip, title, author, subject, keywords, out),
-        PdfCommand::Outline { input } => outline_list(&input),
+        PdfCommand::Outline { input, set, out } => match set {
+            Some(toc) => outline_set(&input, &toc, out),
+            None => outline_list(&input),
+        },
         PdfCommand::Preflight {
             input,
             profile,
@@ -692,6 +695,71 @@ fn outline_list(input: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Inject a bookmark tree from a TOC file: indented `Title :: page` lines,
+/// where the leading whitespace sets the nesting depth. 1-based page numbers.
+fn outline_set(input: &Path, toc: &Path, out: Option<PathBuf>) -> Result<()> {
+    let text = std::fs::read_to_string(toc)
+        .map_err(|e| Error::Config(format!("reading {}: {e}", toc.display())))?;
+    let items = parse_toc(&text)?;
+    if items.is_empty() {
+        return Err(Error::Config("pdf outline --set: the TOC file has no entries".into()));
+    }
+    let mut doc = load(input)?;
+    pdf::outline::inject_outline(&mut doc, &items).map_err(pdferr)?;
+    let path = out_or_default(input, out, "outline");
+    write_pdf(&mut doc, &path)?;
+    println!("pdf outline: injected {} bookmark(s) → {}", count_outline(&items), path.display());
+    Ok(())
+}
+
+fn count_outline(items: &[OutlineItem]) -> usize {
+    items.iter().map(|i| 1 + count_outline(&i.children)).sum()
+}
+
+fn parse_toc(text: &str) -> Result<Vec<OutlineItem>> {
+    let mut rows: Vec<(usize, String, usize)> = Vec::new();
+    for (lineno, raw) in text.lines().enumerate() {
+        if raw.trim().is_empty() {
+            continue;
+        }
+        let indent = raw.chars().take_while(|c| *c == ' ' || *c == '\t').count();
+        let (title, page) = raw.trim().rsplit_once("::").ok_or_else(|| {
+            Error::Config(format!("pdf outline TOC line {}: expected `Title :: page`", lineno + 1))
+        })?;
+        let page: usize = page.trim().parse().map_err(|_| {
+            Error::Config(format!(
+                "pdf outline TOC line {}: `{}` is not a page number",
+                lineno + 1,
+                page.trim()
+            ))
+        })?;
+        rows.push((indent, title.trim().to_string(), page.saturating_sub(1)));
+    }
+    let mut i = 0;
+    Ok(build_toc(&rows, &mut i, 0))
+}
+
+/// Fold the indent-tagged rows into a tree: deeper-indented rows become the
+/// children of the entry above them.
+fn build_toc(rows: &[(usize, String, usize)], i: &mut usize, level: usize) -> Vec<OutlineItem> {
+    let mut out = Vec::new();
+    while *i < rows.len() {
+        let indent = rows[*i].0;
+        if indent < level {
+            break;
+        }
+        let (_, title, page) = rows[*i].clone();
+        *i += 1;
+        let mut item = OutlineItem::new(title, page);
+        if *i < rows.len() && rows[*i].0 > indent {
+            let child_level = rows[*i].0;
+            item = item.with_children(build_toc(rows, i, child_level));
+        }
+        out.push(item);
+    }
+    out
+}
+
 fn print_outline(items: &[OutlineItem], depth: usize) {
     for it in items {
         println!("{}{}  → p.{}", "  ".repeat(depth), it.title, it.page + 1);
@@ -738,4 +806,29 @@ fn out_or_default(input: &Path, out: Option<PathBuf>, suffix: &str) -> PathBuf {
         let dir = input.parent().unwrap_or_else(|| Path::new("."));
         dir.join(format!("{}-{suffix}.pdf", file_stem(input)))
     })
+}
+
+#[cfg(test)]
+mod toc_tests {
+    use super::parse_toc;
+
+    #[test]
+    fn parses_nested_toc_and_converts_to_zero_based() {
+        let toc = "Chapter 1 :: 1\n  Scene A :: 2\n  Scene B :: 4\nChapter 2 :: 7\n";
+        let items = parse_toc(toc).unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].title, "Chapter 1");
+        assert_eq!(items[0].page, 0); // 1-based → 0-based
+        assert_eq!(items[0].children.len(), 2);
+        assert_eq!(items[0].children[1].title, "Scene B");
+        assert_eq!(items[0].children[1].page, 3);
+        assert_eq!(items[1].title, "Chapter 2");
+        assert!(items[1].children.is_empty());
+    }
+
+    #[test]
+    fn rejects_a_line_without_a_page() {
+        assert!(parse_toc("Chapter 1 :: 1\nBroken line\n").is_err());
+        assert!(parse_toc("Chapter :: not-a-number\n").is_err());
+    }
 }

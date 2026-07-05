@@ -27,7 +27,41 @@ pub fn run(project: &Path, cmd: SourcesCommand) -> Result<()> {
         SourcesCommand::Import { file, book_name } => {
             import(project, &file, book_name.as_deref())
         }
+        SourcesCommand::Export { format, book_name, out } => {
+            export(project, &format, book_name.as_deref(), out.as_deref())
+        }
     }
+}
+
+/// SOURCES-2 — export the Sources book to `bibtex` or `csl-json`.
+fn export(project: &Path, format: &str, book_name: Option<&str>, out: Option<&Path>) -> Result<()> {
+    let (_cfg, store, h) = open(project)?;
+    let sources = sources_book(&h)?;
+    let mut entries = collect_entries(&store, &h, sources);
+    if let Some(name) = book_name {
+        let needle = name.trim();
+        entries.retain(|(chapter, _)| chapter == needle);
+    }
+    entries.sort_by(|a, b| a.1.key.to_lowercase().cmp(&b.1.key.to_lowercase()));
+    let bibs: Vec<BibEntry> = entries.into_iter().map(|(_, e)| e).collect();
+
+    let (text, count) = match format.to_ascii_lowercase().as_str() {
+        "csl-json" | "csl" | "json" => sources::compile_csl_json(&bibs),
+        "bibtex" | "bib" => sources::compile_bibtex(&bibs),
+        other => {
+            return Err(Error::Config(format!(
+                "sources export: unknown format `{other}` (use `bibtex` or `csl-json`)"
+            )))
+        }
+    };
+    match out {
+        Some(p) => {
+            std::fs::write(p, text.as_bytes()).map_err(Error::Io)?;
+            println!("sources export: {count} entry(ies) → {}", p.display());
+        }
+        None => println!("{text}"),
+    }
+    Ok(())
 }
 
 /// Open the project + load the hierarchy. Shared boilerplate.

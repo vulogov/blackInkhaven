@@ -2096,6 +2096,19 @@ pub enum SourcesCommand {
         #[arg(long)]
         book_name: Option<String>,
     },
+    /// Export the Sources book's entries to `bibtex` or `csl-json` (for Zotero /
+    /// other citation managers). Writes to `--out`, else stdout.
+    Export {
+        /// `bibtex` (default) or `csl-json`.
+        #[arg(long, default_value = "bibtex")]
+        format: String,
+        /// Limit to the chapter named after this book.
+        #[arg(long)]
+        book_name: Option<String>,
+        /// Write to this file instead of stdout.
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
+    },
 }
 
 /// 1.4.1+ BOOK_RAG-1 — `inkhaven book-rag …` sub-subcommands. The terminal
@@ -2298,9 +2311,17 @@ pub enum PdfCommand {
         #[arg(long)]
         out: Option<std::path::PathBuf>,
     },
-    /// List the document outline (bookmarks).
+    /// List the document outline (bookmarks), or inject one from a TOC file
+    /// with `--set` (indented `Title :: page` lines; indentation nests).
     Outline {
         input: std::path::PathBuf,
+        /// A table-of-contents file to inject as bookmarks. Each line is
+        /// `Title :: page` (1-based); leading spaces/tabs set the nesting.
+        #[arg(long, value_name = "TOC")]
+        set: Option<std::path::PathBuf>,
+        /// Where to write the injected PDF (default: `<stem>-outline.pdf`).
+        #[arg(long)]
+        out: Option<std::path::PathBuf>,
     },
     /// Check a PDF is print-ready (RFC §8.6): effective image DPI, font
     /// embedding, page-size consistency, blank/colour pages.  Profile
@@ -4226,6 +4247,13 @@ pub enum RealworldCommand {
     },
     /// Parse `world.hjson` and report whether it is valid.
     Validate,
+    /// Propose several candidate worlds from consecutive seeds (each row is a
+    /// seed you can adopt in `world.hjson`) — the world proposes, you choose.
+    Variants {
+        /// How many candidates to summarize (1–24).
+        #[arg(long, default_value_t = 5)]
+        count: usize,
+    },
     /// Show the parsed world definition.
     Show {
         /// Emit the full definition as JSON.
@@ -4896,6 +4924,18 @@ fn command_mutates(command: &Command) -> bool {
             | Command::Replace { .. }
             | Command::ImportScrivener { .. }
             | Command::ImportEpub { .. }
+            | Command::ImportHelp { .. }
+            | Command::ImportTypstHelp
+            | Command::Recover { .. }
+            | Command::Event(EventCommand::Add { .. })
+            | Command::Sources(SourcesCommand::Import { .. })
+            | Command::Thread(ThreadCommand::Add { .. })
+            | Command::Language(
+                LanguageCommand::Init { .. }
+                    | LanguageCommand::AddWord { .. }
+                    | LanguageCommand::RemoveWord { .. }
+                    | LanguageCommand::Import { .. }
+            )
     )
 }
 

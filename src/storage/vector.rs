@@ -35,6 +35,12 @@ pub struct VectorEngine {
 }
 
 impl VectorEngine {
+    /// Whether the embedding model has been lazily loaded yet (HAIKU-2 gates the
+    /// semantic path on this so a cold engine never blocks the UI thread).
+    pub fn embedding_is_loaded(&self) -> bool {
+        self.embedding.as_ref().map(|e| e.is_loaded()).unwrap_or(false)
+    }
+
     pub fn with_embedding(path: &str, engine: EmbeddingEngine) -> Result<Self> {
         Ok(Self {
             path: path.to_string(),

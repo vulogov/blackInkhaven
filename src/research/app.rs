@@ -5285,40 +5285,65 @@ fn looks_contradictory(new_body: &str, dup_body: &str) -> bool {
         return true;
     }
     let (a, b) = (numbers(new_body), numbers(dup_body));
-    !a.is_empty() && !b.is_empty() && a != b
+    if a.is_empty() || b.is_empty() {
+        return false;
+    }
+    // A genuine value mismatch — not one fact merely *adding* numeric detail. If
+    // one set is a subset of the other (e.g. "1200 m long" vs "1200 m long, 20 m
+    // wide"), that is elaboration, not a contradiction.
+    a != b && !a.is_subset(&b) && !b.is_subset(&a)
 }
 
-/// Whether the text carries a *net* negation (an odd count of negation words).
+/// Whether the text carries a *net* negation (an odd count of negation words),
+/// after stripping idioms whose "no"/"not" does not actually negate the clause.
 fn net_negated(s: &str) -> bool {
+    const IDIOMS: &[&str] = &[
+        "no doubt", "no longer", "not only", "no wonder", "none too", "no fewer", "no less",
+        "no more", "no matter",
+    ];
+    let mut t = s.to_lowercase();
+    for idiom in IDIOMS {
+        t = t.replace(idiom, " ");
+    }
     const NEG: &[&str] = &[
         "not", "no", "never", "cannot", "can't", "without", "neither", "nor", "none", "isn't",
         "aren't", "wasn't", "weren't", "don't", "doesn't", "didn't", "won't", "hasn't", "haven't",
         "hadn't", "couldn't", "wouldn't", "shouldn't",
     ];
-    let count = s
-        .to_lowercase()
+    let count = t
         .split(|c: char| !c.is_alphanumeric() && c != '\'')
         .filter(|w| NEG.contains(w))
         .count();
     count % 2 == 1
 }
 
-/// Sorted numeric tokens (digit runs) in the text, for value-mismatch detection.
-fn numbers(s: &str) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
+/// Normalized numeric tokens in the text, for value-mismatch detection. Digit
+/// runs may carry grouping commas and a decimal point; each is normalized so
+/// `1,000,000` == `1000000` and `5.0` == `5` (formatting is not a contradiction).
+fn numbers(s: &str) -> std::collections::BTreeSet<String> {
+    let mut out = std::collections::BTreeSet::new();
     let mut cur = String::new();
     for ch in s.chars() {
-        if ch.is_ascii_digit() {
+        if ch.is_ascii_digit() || ((ch == ',' || ch == '.') && !cur.is_empty()) {
             cur.push(ch);
         } else if !cur.is_empty() {
-            out.push(std::mem::take(&mut cur));
+            out.insert(normalize_number(std::mem::take(&mut cur)));
         }
     }
     if !cur.is_empty() {
-        out.push(cur);
+        out.insert(normalize_number(cur));
     }
-    out.sort();
     out
+}
+
+fn normalize_number(raw: String) -> String {
+    let cleaned: String = raw.chars().filter(|c| *c != ',').collect();
+    let cleaned = cleaned.trim_end_matches('.');
+    match cleaned.parse::<f64>() {
+        Ok(v) if v.fract() == 0.0 && v.abs() < 1e15 => (v as i64).to_string(),
+        Ok(v) => v.to_string(),
+        Err(_) => cleaned.to_string(),
+    }
 }
 
 /// R2-E — the char index where a completable Facts slug path begins in `text`:
@@ -5382,6 +5407,23 @@ mod contradiction_tests {
         assert!(!looks_contradictory("Paris is the capital.", "The capital is Paris."));
         // Incidental negation words ("note"/"know") must not trip the word test.
         assert!(!looks_contradictory("Note that the city grew.", "Note the city grew."));
+    }
+
+    #[test]
+    fn added_detail_and_formatting_are_not_contradictions() {
+        // BUG-6: a more-detailed fact (numeric superset) is elaboration.
+        assert!(!looks_contradictory(
+            "The bridge is 1200 metres long.",
+            "The bridge is 1200 metres long and 20 metres wide."
+        ));
+        // Comma grouping and a trailing .0 are formatting, not a value change.
+        assert!(!looks_contradictory("The population is 1000000.", "The population is 1,000,000."));
+        assert!(!looks_contradictory("It is worth 5 million.", "It is worth 5.0 million."));
+        // Idiomatic "no" does not flip polarity.
+        assert!(!looks_contradictory(
+            "There is no doubt the treaty was ratified.",
+            "The treaty was ratified."
+        ));
     }
 }
 

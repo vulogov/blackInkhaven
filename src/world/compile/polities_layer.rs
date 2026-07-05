@@ -32,9 +32,11 @@ pub struct PolitiesOutput {
 }
 
 fn dist2(a: (usize, usize), b: (usize, usize)) -> i64 {
+    // Saturating: a wildly-out-of-range declared capital coordinate must not
+    // panic (debug) or wrap to a negative "nearest" (release).
     let dx = a.0 as i64 - b.0 as i64;
     let dy = a.1 as i64 - b.1 as i64;
-    dx * dx + dy * dy
+    dx.saturating_mul(dx).saturating_add(dy.saturating_mul(dy))
 }
 
 fn hash3(a: u64, b: u64, seed: u64) -> u64 {
@@ -85,13 +87,16 @@ pub fn compile_polities(
     let mut used: HashSet<(usize, usize)> = HashSet::new();
     let mut caps: Vec<(&Settlement, Option<&crate::world::types::NationDef>)> = Vec::new();
     for nd in declared {
+        // The nearest settlement not already seated by an earlier declared
+        // capital — so two declared nations near one settlement don't collapse
+        // into one (the second would otherwise be silently dropped).
         if let Some(s) = settlements
             .iter()
+            .filter(|s| !used.contains(&(s.x, s.y)))
             .min_by_key(|s| dist2((s.x, s.y), (nd.capital[0], nd.capital[1])))
         {
-            if used.insert((s.x, s.y)) {
-                caps.push((s, Some(nd)));
-            }
+            used.insert((s.x, s.y));
+            caps.push((s, Some(nd)));
         }
     }
     let mut ranked: Vec<&Settlement> = settlements.iter().collect();
@@ -284,6 +289,32 @@ mod tests {
         use crate::world::types::NationDef;
         let d = demo(vec![settle(0, 0, 5000)]);
         let declared = vec![NationDef { name: "Faraway".into(), capital: [900, 900], relations: vec![] }];
+        assert!(lint_polities(&declared, &d).iter().any(|s| s.contains("wilderness")));
+    }
+
+    #[test]
+    fn two_declared_nations_near_one_settlement_both_survive() {
+        use crate::world::types::NationDef;
+        // Both declared capitals are nearest to (0,0); each must seat a distinct
+        // settlement rather than the second being silently dropped.
+        let d = demo(vec![settle(0, 0, 50_000), settle(80, 80, 40_000)]);
+        let declared = vec![
+            NationDef { name: "Aa".into(), capital: [1, 1], relations: vec![] },
+            NationDef { name: "Bb".into(), capital: [2, 2], relations: vec![] },
+        ];
+        let p = compile_polities(&d, &declared, 1);
+        assert!(p.polities.iter().any(|x| x.name == "Aa"));
+        assert!(p.polities.iter().any(|x| x.name == "Bb"));
+    }
+
+    #[test]
+    fn an_extreme_declared_capital_does_not_panic() {
+        use crate::world::types::NationDef;
+        let d = demo(vec![settle(0, 0, 5000)]);
+        let declared =
+            vec![NationDef { name: "Far".into(), capital: [3_000_000_000, 0], relations: vec![] }];
+        let p = compile_polities(&d, &declared, 1); // must not overflow-panic
+        assert_eq!(p.polities.len(), 1);
         assert!(lint_polities(&declared, &d).iter().any(|s| s.contains("wilderness")));
     }
 }

@@ -1579,7 +1579,6 @@ struct SceneWorld {
     pol: crate::world::compile::polities_layer::PolitiesOutput,
     cul: crate::world::compile::culture_layer::CultureOutput,
     height: usize,
-    place_links: Vec<crate::world::proposals::PlaceLink>,
 }
 
 impl RightPane {
@@ -1750,6 +1749,9 @@ pub(crate) struct App {
     /// `scene_brief` is the current paragraph's brief (footer chip + overview),
     /// recomputed only when the open paragraph changes.
     scene_world: Option<SceneWorld>,
+    /// The `world.hjson` mtime the cached `scene_world` was built from — so a
+    /// mid-session edit to the world invalidates the compile.
+    scene_world_mtime: Option<std::time::SystemTime>,
     scene_last_para: Option<Uuid>,
     scene_brief: Option<crate::world::scene::SceneBrief>,
     /// NARR-1 — ambient prose check toggle (`Ctrl+V Shift+V`); seeded from
@@ -3029,6 +3031,7 @@ impl App {
             theo_activity_at: None,
             theo_needs_check: false,
             scene_world: None,
+            scene_world_mtime: None,
             scene_last_para: None,
             scene_brief: None,
             ie_auto: false,
@@ -3367,6 +3370,7 @@ impl App {
             self.tick_inner_socrates();
             self.tick_inner_theologian();
             self.tick_scene_context();
+            self.tick_pending_haiku();
             self.tick_inner_editor();
             self.tick_tree_badges();
             // 1.2.9+ — close the TTS playback modal as
@@ -11417,7 +11421,22 @@ impl App {
             A::BundShellSelection => self.toggle_shell_selection_mode(),
             A::BundEditProjectHjson => self.open_hjson_editor(),
             A::ShowHaiku => {
-                crate::haiku::emit_for_lang(&self.cfg.language);
+                // HAIKU-2 (T3): semantic when the engine is already warm, using
+                // the open paragraph as the query; else the HAIKU-1 rotation.
+                let ctx: Option<String> = self
+                    .opened
+                    .as_ref()
+                    .map(|doc| doc.textarea.lines().join(" ").chars().take(512).collect());
+                if self.cfg.editor.haiku_semantic && self.store.embedding_is_loaded() {
+                    let store = self.store.clone();
+                    crate::haiku::emit_with_context(
+                        &self.cfg.language,
+                        ctx.as_deref(),
+                        Some(&|texts| store.embed_batch(texts).map_err(|e| anyhow::anyhow!("{e}"))),
+                    );
+                } else {
+                    crate::haiku::emit_with_context(&self.cfg.language, ctx.as_deref(), None);
+                }
                 self.status = "✦ haiku written to Output".into();
             }
             A::ToggleRightPaneFullscreen => self.toggle_right_pane_fullscreen(),
@@ -14872,6 +14891,47 @@ impl App {
     /// Self-gating: only paragraphs with links (a place-linked Timeline event or a
     /// paragraph link to a Place) get a brief, so the footer chip appears only
     /// where there is genuine scene context. The world compile is cached.
+    /// HAIKU-2 (T2) — once the freshly-created paragraph is the one open in the
+    /// editor, emit its on-new-paragraph haiku: semantic (context = chapter title
+    /// + any body) when the engine is warm, else the HAIKU-1 rotation.
+    fn tick_pending_haiku(&mut self) {
+        let Some(pending) = self.pending_haiku_paragraph else {
+            return;
+        };
+        match self.opened.as_ref() {
+            Some(doc) if doc.id == pending => {}
+            _ => return,
+        }
+        self.pending_haiku_paragraph = None;
+        if !self.cfg.editor.startup_haiku {
+            return;
+        }
+        let body: String = self
+            .opened
+            .as_ref()
+            .map(|d| d.textarea.lines().join(" ").chars().take(256).collect())
+            .unwrap_or_default();
+        let branch_title = self
+            .hierarchy
+            .get(pending)
+            .and_then(|n| n.parent_id)
+            .and_then(|pid| self.hierarchy.get(pid))
+            .map(|p| p.title.clone())
+            .unwrap_or_default();
+        let ctx = format!("{branch_title} {body}").trim().to_string();
+
+        if self.cfg.editor.haiku_semantic && self.store.embedding_is_loaded() {
+            let store = self.store.clone();
+            crate::haiku::emit_with_context(
+                &self.cfg.language,
+                Some(&ctx),
+                Some(&|texts| store.embed_batch(texts).map_err(|e| anyhow::anyhow!("{e}"))),
+            );
+        } else {
+            crate::haiku::emit_with_context(&self.cfg.language, Some(&ctx), None);
+        }
+    }
+
     fn tick_scene_context(&mut self) {
         let cur = self.opened.as_ref().map(|d| d.id);
         if cur == self.scene_last_para {
@@ -14882,21 +14942,31 @@ impl App {
         let Some(id) = cur else { return };
 
         // Cheap gate before any compile: does this paragraph link to anything?
+        // The events are gathered once here and reused by scene_place_and_date.
+        let events = crate::world::timeline_context::gather_events(&self.hierarchy);
         let has_para_link =
             self.hierarchy.get(id).map(|n| !n.linked_paragraphs.is_empty()).unwrap_or(false);
-        let has_event = crate::world::timeline_context::gather_events(&self.hierarchy)
-            .iter()
-            .any(|e| e.linked_paragraphs.contains(&id));
+        let has_event = events.iter().any(|e| e.linked_paragraphs.contains(&id));
         if !has_para_link && !has_event {
             return;
         }
 
-        if self.scene_world.is_none() {
-            let w = self.compute_scene_world();
-            self.scene_world = w;
+        // Refresh the cached world compile when world.hjson is first read or has
+        // changed since (mtime) — otherwise a mid-session edit is ignored until
+        // restart. Place links are read fresh below, so an accepted Place shows
+        // immediately without recompiling the world.
+        let world_path = self.store.project_root().join("world.hjson");
+        let mtime = std::fs::metadata(&world_path).and_then(|m| m.modified()).ok();
+        if self.scene_world.is_none() || self.scene_world_mtime != mtime {
+            self.scene_world = self.compute_scene_world();
+            self.scene_world_mtime = mtime;
         }
         let Some(sw) = self.scene_world.as_ref() else { return };
-        let (place, date) = self.scene_place_and_date(id, &sw.place_links);
+        let place_links = crate::world::storage::WorldStore::open_for_project(self.store.project_root())
+            .ok()
+            .and_then(|s| s.list_place_links().ok())
+            .unwrap_or_default();
+        let (place, date) = self.scene_place_and_date(id, &events, &place_links);
         if place.is_none() && date.is_none() {
             return;
         }
@@ -14944,11 +15014,7 @@ impl App {
             })
             .collect();
         let cul = compile_culture(&pol, &capital_biomes, &def.cultures, seed);
-        let place_links = crate::world::storage::WorldStore::open_for_project(root)
-            .ok()
-            .and_then(|s| s.list_place_links().ok())
-            .unwrap_or_default();
-        Some(SceneWorld { astro, pol, cul, height: climate.height, place_links })
+        Some(SceneWorld { astro, pol, cul, height: climate.height })
     }
 
     /// Resolve the open paragraph's place + date: a place-linked Timeline event
@@ -14956,9 +15022,9 @@ impl App {
     fn scene_place_and_date(
         &self,
         para_id: Uuid,
+        events: &[crate::world::timeline_context::TlEvent],
         place_links: &[crate::world::proposals::PlaceLink],
     ) -> (Option<crate::world::proposals::PlaceLink>, Option<i64>) {
-        let events = crate::world::timeline_context::gather_events(&self.hierarchy);
         let anchor = events
             .iter()
             .filter(|e| e.linked_paragraphs.contains(&para_id))
