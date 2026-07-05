@@ -144,8 +144,7 @@ own guide:
 plakat map --map-spec maps/world.mapspec.json --map-render world.png --map-style parchment
 ```
 
-`--map-style` takes `parchment`, `inked`, or `blueprint`; `--map-render-sd
-PATH` paints the map with a diffusion model instead of drawing it flat; and
+`--map-style` takes `parchment`, `inked`, or `blueprint`; `--map-render-sd PATH` paints the map with a diffusion model instead of drawing it flat; and
 `--map-export-svg` / `--map-export-geojson` write vector versions. The spec is a
 pure function of your world, so the same compiled world always yields the same
 map.
@@ -162,8 +161,7 @@ map.
 The reverse direction you have already used once, and can use more fully:
 
 #list(
-  [*The land.* A plakat heightmap (`plakat map … --map-dump-heightmap
-   heightmap.png`) becomes your terrain through `geology.dem` — the recipe from
+  [*The land.* A plakat heightmap (`plakat map … --map-dump-heightmap heightmap.png`) becomes your terrain through `geology.dem` — the recipe from
    the chapter on the land. This is how a shape you drew or generated in plakat
    becomes the ground Inkhaven grows climate, rivers, and cities over.],
   [*The named features.* A plakat map also gives names and positions — regions,
@@ -186,8 +184,7 @@ The reverse direction you have already used once, and can use more fully:
 #tryit[
   Run `realworld map --spec-only`, then open `maps/world.mapspec.json` — this is
   your whole world, distilled to the shape plakat draws from. If you have plakat
-  installed, render it: `plakat map --map-spec maps/world.mapspec.json --map-render
-  world.png`, and hang the result over your desk.
+  installed, render it: `plakat map --map-spec maps/world.mapspec.json --map-render world.png`, and hang the result over your desk.
 ]
 
 #section("The world touches the page")
