@@ -9,7 +9,23 @@ aim here is only to see the whole machine turn over once, from a definition to
 pages you can read, so that everything after this has something concrete to stand
 on.
 
-Every command lives under one program, `realworld`, run from your project folder.
+Every world command belongs to Inkhaven itself. `realworld` is not a separate
+program — it is the *part of Inkhaven that builds worlds*, one of its
+subcommands, run from your project folder.
+
+#note[
+  *Read every `realworld` in this book as `inkhaven realworld`.* The full command
+  you type at the terminal always begins with `inkhaven` — for example, the
+  scaffolding command just below is really:
+
+  ```
+  inkhaven realworld new myworld
+  ```
+
+  From here on the book writes only the `realworld …` part, for brevity; the
+  `inkhaven` in front is always understood. (Inside Inkhaven's own command
+  palette you drop it too.)
+]
 
 #section("Scaffolding a world")
 
@@ -120,8 +136,7 @@ Here is the whole path you have just walked, from definition to readable pages:
 
 #compile_flow()
 
-If you would rather glance at the definition than read the full book, `realworld
-show` prints the world's current shape to your terminal — a fast way to confirm
+If you would rather glance at the definition than read the full book, `realworld show` prints the world's current shape to your terminal — a fast way to confirm
 what seed and star you are working with.
 
 #tryit[

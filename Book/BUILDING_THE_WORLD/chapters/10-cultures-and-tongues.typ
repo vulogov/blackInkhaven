@@ -10,8 +10,7 @@ a tongue in which it names its children and its towns. Two realms with identical
 populations can be nothing alike — a desert khanate and a forest confederacy are
 different peoples before either of them has done a single thing in your story.
 
-The command that gives each of your polities that character is `realworld
-culture`. It reads the nations you already have and, for each one, proposes three
+The command that gives each of your polities that character is `realworld culture`. It reads the nations you already have and, for each one, proposes three
 things at once: an *ethos* drawn from the land its capital stands on, a *belief*
 its people live by, and a *language profile* — a compact sketch of the tongue
 they speak. Together these turn a shaded region into a people you could sit down
@@ -108,8 +107,7 @@ tongue this people speaks. It does not speak it.
 #section("The bridge to the ConLang suite")
 
 To turn the profile into a real language you cross from the World system into
-Inkhaven's *ConLang suite* — its constructed-language workshop — with `inkhaven
-language`. That is where the profile stops being a sketch and becomes a tongue: a
+Inkhaven's *ConLang suite* — its constructed-language workshop — with `inkhaven language`. That is where the profile stops being a sketch and becomes a tongue: a
 sound inventory, rules for how syllables combine, a lexicon that actually contains
 words, a grammar that inflects them. You hand the ConLang suite the profile as its
 starting brief — `SOV · agglutinative · tonal` — and it helps you build the

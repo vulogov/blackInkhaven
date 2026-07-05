@@ -63,8 +63,7 @@ time.
   falls in.
 ]
 
-The astronomy's calendar adopts into `timeline.calendar`: run `realworld
-calendar` and the world hands you the months, weekdays, and new-year alignment it
+The astronomy's calendar adopts into `timeline.calendar`: run `realworld calendar` and the world hands you the months, weekdays, and new-year alignment it
 derived from the sky, as lines you adopt so that your scene dates and your world's
 seasons share one root. The history adopts the same way — `realworld history`
 emits its epochs and events as ready-made `inkhaven event add` lines, one per
@@ -121,8 +120,7 @@ the page* — and here, on every bridge at once, it is kept.
    and page you already write with.],
   [Settlements cross into the *Places book* by `realworld propose` and your
    acceptance — the world proposes, you decide.],
-  [The astronomy's calendar adopts into `timeline.calendar` via `realworld
-   calendar`, and history's epochs and events adopt as `inkhaven event add` lines
+  [The astronomy's calendar adopts into `timeline.calendar` via `realworld calendar`, and history's epochs and events adopt as `inkhaven event add` lines
    from `realworld history`.],
   [`realworld gazetteer --output <path>` writes the whole world as one Markdown
    reference — a series bible or manuscript appendix that agrees with every other

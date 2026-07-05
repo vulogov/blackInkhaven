@@ -62,6 +62,33 @@ exception was declared, and *stops flagging it*. A one-time act of declaration
 turns an endless stream of false warnings into silence — while every travel-time
 claim your rule does *not* cover is still checked as strictly as before.
 
+#hjson[```
+magic: {
+  enabled: true
+  rules: [
+    {
+      kind: "messenger_birds"
+      covers: ["travel_time"]
+      description: "Royal pelicans fly day and night, far faster than any rider."
+      applicable_to: { roles: ["royal_messenger"], regions: ["any"] }
+    }
+  ]
+}
+```]
+
+A second rule follows the same shape. Your order of long-lived monks breaks a
+different law — age, not travel — so it `covers` a different category and scopes
+itself to its own role:
+
+#hjson[```
+{
+  kind: "long_lived_priests"
+  covers: ["character_age"]
+  description: "The monks of the Grey Cloister live ten normal lifetimes."
+  applicable_to: { roles: ["cloister_monk"], regions: ["any"] }
+}
+```]
+
 #note[
   A rule suppresses only the categories in its `covers` list, only within its
   `applicable_to` scope. Declaring that couriers outrun a horse does not excuse

@@ -122,6 +122,7 @@
     inset: (left: 9pt, right: 9pt, top: 7pt, bottom: 7pt),
     width: 100%, radius: 1pt, breakable: false,
     {
+      set par(justify: false, first-line-indent: 0pt)
       text(font: body_family, size: 8pt, weight: "bold", fill: ink_term, tracking: 1pt, "TERM")
       h(6pt)
       text(font: body_family, size: 11pt, weight: "bold", fill: ink_term, name)
@@ -141,7 +142,29 @@
     inset: (left: 9pt, right: 9pt, top: 7pt, bottom: 7pt),
     width: 100%, radius: 1pt, breakable: false,
     {
+      // Callouts are set ragged (justify: false) with no first-line indent: a
+      // justified narrow box stretches a line to fit, and an unbreakable inline
+      // code box near the line end then overflows / floats. Ragged avoids that.
+      set par(justify: false, first-line-indent: 0pt)
       text(font: body_family, size: 8pt, weight: "bold", fill: accent, tracking: 1.5pt, upper(label))
+      v(2mm)
+      body
+    },
+  )
+  v(2mm)
+}
+
+// ── An edit to world.hjson — the concrete snippet for a change the text just
+//    described, so the reader always sees exactly what to type. ──────────
+#let hjson(body) = {
+  v(2mm)
+  block(
+    fill: white, stroke: (left: 2pt + ink_accent),
+    inset: (left: 9pt, right: 9pt, top: 6pt, bottom: 8pt),
+    width: 100%, radius: 1pt, breakable: false,
+    {
+      set par(justify: false, first-line-indent: 0pt)
+      text(font: body_family, size: 8pt, weight: "bold", fill: ink_accent, tracking: 1.5pt, "EDIT · world.hjson")
       v(2mm)
       body
     },
@@ -168,6 +191,7 @@
     inset: (left: 9pt, right: 9pt, top: 8pt, bottom: 8pt),
     width: 100%, radius: 1pt, breakable: false,
     {
+      set par(justify: false, first-line-indent: 0pt)
       text(font: body_family, size: 9pt, weight: "bold", fill: ink_green, tracking: 1.5pt, "WHAT YOU LEARNED")
       v(2mm)
       list(..items)

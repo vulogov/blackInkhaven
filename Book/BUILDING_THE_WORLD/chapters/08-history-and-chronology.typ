@@ -144,7 +144,6 @@ as always, the author has the last word over which yesterday the world remembers
    and dates everything in years *before the present (year 0)*.],
   [It generates events a historian would recount — the *rise and fall of realms*
    and *migrations between biomes* — on the world's own calendar.],
-  [`--json` and `--materialize` record the proposal; the printed `inkhaven event
-   add …` lines let you *adopt* chosen events onto the story Timeline — you pick
+  [`--json` and `--materialize` record the proposal; the printed `inkhaven event add …` lines let you *adopt* chosen events onto the story Timeline — you pick
    which yesterdays are real.],
 ))
