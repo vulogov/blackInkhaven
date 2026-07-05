@@ -31,6 +31,34 @@ pub struct WorldDefinition {
     pub economy: Option<EconomyDef>,
     #[serde(default)]
     pub magic: Option<super::magic::MagicLedger>,
+    /// WORLD-11 (W11-P1) — author-declared history: events merged into the
+    /// generated chronology, pinned to an epoch (declared or inferred), and
+    /// adoptable onto the story Timeline.
+    #[serde(default)]
+    pub history: Option<HistoryDef>,
+}
+
+/// WORLD-11 — the declared `history:` block.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct HistoryDef {
+    #[serde(default)]
+    pub events: Vec<HistEventDef>,
+}
+
+/// One author-declared historical event.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct HistEventDef {
+    /// Years relative to the present (0); negative is the past.
+    pub year: i64,
+    pub title: String,
+    /// Optional epoch name; when omitted, inferred from the year.
+    #[serde(default)]
+    pub epoch: Option<String>,
+    /// Optional accepted-Place names this event happened at (for Timeline links).
+    #[serde(default)]
+    pub places: Option<Vec<String>>,
+    #[serde(default)]
+    pub description: String,
 }
 
 impl WorldDefinition {

@@ -13452,7 +13452,8 @@ impl App {
             ));
 
             // WORLD-8/9 — the derived history + peoples passes.
-            let hist = compile_history(&demo, seed);
+            let declared_hist = def.history.as_ref().map(|h| h.events.as_slice()).unwrap_or(&[]);
+            let hist = compile_history(&demo, declared_hist, seed);
             rows.push(format!("History  (derived)  {}", mark("History")));
             rows.push(format!(
                 "  {} years · {} epoch(s) · {} founding(s) · {} event(s)",

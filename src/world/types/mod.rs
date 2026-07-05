@@ -30,6 +30,6 @@ pub use geology::{
 pub use hydrology::{HydrologyOutput, RiverSummary, SettlementPrior};
 pub use magic::{Applicability, CheckContext, MagicLedger, MagicRule};
 pub use world::{
-    AstronomyDef, Calendar, DemGeology, GeneratedGeology, GeologyDef, Moon, Orbit, Planet,
-    SeedValue, Star, WorldDefinition,
+    AstronomyDef, Calendar, DemGeology, GeneratedGeology, GeologyDef, HistEventDef, HistoryDef,
+    Moon, Orbit, Planet, SeedValue, Star, WorldDefinition,
 };

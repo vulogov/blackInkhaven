@@ -964,7 +964,8 @@ fn history(project: &Path, json: bool, materialize: bool) -> Result<()> {
     let climate = compile_climate(&def, &astro, &geo);
     let hydro = compile_hydrology(&geo, &climate);
     let demo = compile_demographics(&climate, &hydro);
-    let hist = compile_history(&demo, def.seed_u64());
+    let declared = def.history.as_ref().map(|h| h.events.as_slice()).unwrap_or(&[]);
+    let hist = compile_history(&demo, declared, def.seed_u64());
 
     let mat_report = if materialize {
         use crate::config::Config;
@@ -1015,7 +1016,26 @@ fn history(project: &Path, json: bool, materialize: bool) -> Result<()> {
             r.updated.len()
         );
     }
+    // W11-P1 — verify the author's declared events (advisory).
+    let warnings = crate::world::compile::history_layer::lint_history(declared, &hist);
+    if !warnings.is_empty() {
+        println!("\n  {} declared-event warning(s):", warnings.len());
+        for w in &warnings {
+            println!("    ⚠ {w}");
+        }
+    }
+
     println!("\nAdopt into the story Timeline (rename as you like):");
+    // Declared events first — those are the ones you meant to keep.
+    for d in declared {
+        let place = d
+            .places
+            .as_ref()
+            .and_then(|p| p.first())
+            .map(|p| format!(" (at {p})"))
+            .unwrap_or_default();
+        println!("  inkhaven event add --start \"{}\" \"{}{place}\"", d.year, d.title);
+    }
     for f in &hist.foundings {
         println!("  inkhaven event add --start \"{}\" \"{} founded\"", f.year, f.label);
     }
@@ -1505,6 +1525,20 @@ fn validate(project: &Path) -> Result<()> {
     println!("  hydrology:    ok · {} river(s), {} lake(s)", hydro.river_count, hydro.lake_count);
     let demo = compile_demographics(&climate, &hydro);
     println!("  demographics: ok · {} settlement(s)", demo.settlements.len());
+    // W11-P1 — verify declared history events (advisory).
+    let declared_hist = def.history.as_ref().map(|h| h.events.as_slice()).unwrap_or(&[]);
+    if !declared_hist.is_empty() {
+        let hist = crate::world::compile::compile_history(&demo, declared_hist, def.seed_u64());
+        let w = crate::world::compile::history_layer::lint_history(declared_hist, &hist);
+        if w.is_empty() {
+            println!("  history:      ok · {} declared event(s)", declared_hist.len());
+        } else {
+            println!("  history:      {} declared event(s), {} warning(s):", declared_hist.len(), w.len());
+            for x in &w {
+                println!("                  ⚠ {x}");
+            }
+        }
+    }
     if let Some(m) = def.magic.as_ref() {
         let issues = m.lint();
         if issues.is_empty() {
@@ -1572,7 +1606,8 @@ fn compile_all_cli(project: &Path, json: bool, materialize: bool) -> Result<()> 
         reports.push(m::materialize_hydrology(&store, &cfg, &hydro)?);
         reports.push(m::materialize_demographics(&store, &cfg, &demo)?);
         // WORLD-8 — the world's past lands with the whole-world compile.
-        let hist = crate::world::compile::compile_history(&demo, def.seed_u64());
+        let declared_hist = def.history.as_ref().map(|h| h.events.as_slice()).unwrap_or(&[]);
+        let hist = crate::world::compile::compile_history(&demo, declared_hist, def.seed_u64());
         reports.push(m::materialize_history(&store, &cfg, &hist)?);
         reports.push(m::materialize_setting(&store, &cfg, &def)?);
     }
