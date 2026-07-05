@@ -8,7 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Default, Deserialize, Serialize)]
 pub struct GeologyOutput {
     /// Whether the model was generated from the seed or imported from a DEM.
     pub source: String,
@@ -68,7 +68,7 @@ pub struct MineralHint {
     pub context: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Default, Deserialize, Serialize)]
 pub struct ElevationStats {
     pub min: f32,
     pub max: f32,

@@ -1564,6 +1564,21 @@ fn validate(project: &Path) -> Result<()> {
             }
         }
     }
+    // W11-P3 — verify declared river courses (downhill; reaches water). Advisory.
+    if let Some(hy) = def.hydrology.as_ref() {
+        let courses = hy.rivers.iter().filter(|r| r.from.is_some() && r.to.is_some()).count();
+        if courses > 0 {
+            let w = crate::world::compile::hydrology_layer::lint_rivers(hy, &geo);
+            if w.is_empty() {
+                println!("  rivers:       ok · {courses} declared course(s) run downhill to water");
+            } else {
+                println!("  rivers:       {courses} declared course(s), {} warning(s):", w.len());
+                for x in &w {
+                    println!("                  ⚠ {x}");
+                }
+            }
+        }
+    }
     if let Some(m) = def.magic.as_ref() {
         let issues = m.lint();
         if issues.is_empty() {
