@@ -744,7 +744,7 @@ fn scene(project: &Path, place: Option<String>, day: f64, lat: Option<f64>) -> R
     let latitude = lat.or_else(|| link.as_ref().map(|l| row_to_latitude(l.y, climate.height)));
 
     // Peoples for the nearest-realm culture, then the shared composition.
-    let pol = compile_polities(&demo, seed);
+    let pol = compile_polities(&demo, &def.nations, seed);
     let capital_biomes: Vec<String> = pol
         .polities
         .iter()
@@ -853,7 +853,7 @@ fn culture(project: &Path) -> Result<()> {
     let climate = compile_climate(&def, &astro, &geo);
     let hydro = compile_hydrology(&geo, &climate);
     let demo = compile_demographics(&climate, &hydro);
-    let pol = compile_polities(&demo, def.seed_u64());
+    let pol = compile_polities(&demo, &def.nations, def.seed_u64());
     let capital_biomes: Vec<String> = pol
         .polities
         .iter()
@@ -889,9 +889,22 @@ fn polities(project: &Path) -> Result<()> {
     let climate = compile_climate(&def, &astro, &geo);
     let hydro = compile_hydrology(&geo, &climate);
     let demo = compile_demographics(&climate, &hydro);
-    let pol = compile_polities(&demo, def.seed_u64());
+    let pol = compile_polities(&demo, &def.nations, def.seed_u64());
 
-    println!("polities · {} — {} realm(s)", def.name, pol.polities.len());
+    let warnings = crate::world::compile::polities_layer::lint_polities(&def.nations, &demo);
+    if !warnings.is_empty() {
+        println!("  {} declared-nation warning(s):", warnings.len());
+        for w in &warnings {
+            println!("    ⚠ {w}");
+        }
+    }
+    let declared_n = def.nations.len();
+    println!(
+        "polities · {} — {} realm(s){}",
+        def.name,
+        pol.polities.len(),
+        if declared_n > 0 { format!(" ({declared_n} declared)") } else { String::new() }
+    );
     for (i, p) in pol.polities.iter().enumerate() {
         println!(
             "\n  [{i}] {} · capital {} at ({}, {})",
@@ -1534,6 +1547,18 @@ fn validate(project: &Path) -> Result<()> {
             println!("  history:      ok · {} declared event(s)", declared_hist.len());
         } else {
             println!("  history:      {} declared event(s), {} warning(s):", declared_hist.len(), w.len());
+            for x in &w {
+                println!("                  ⚠ {x}");
+            }
+        }
+    }
+    // W11-P2 — verify declared nations (advisory).
+    if !def.nations.is_empty() {
+        let w = crate::world::compile::polities_layer::lint_polities(&def.nations, &demo);
+        if w.is_empty() {
+            println!("  nations:      ok · {} declared", def.nations.len());
+        } else {
+            println!("  nations:      {} declared, {} warning(s):", def.nations.len(), w.len());
             for x in &w {
                 println!("                  ⚠ {x}");
             }

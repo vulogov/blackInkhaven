@@ -134,7 +134,7 @@ pub fn compile_history(
 
     // Richer events: polity rise/fall + migrations between biomes.
     let mut events: Vec<HistEvent> = Vec::new();
-    let pol = super::polities_layer::compile_polities(demo, seed);
+    let pol = super::polities_layer::compile_polities(demo, &[], seed);
     for (i, p) in pol.polities.iter().enumerate() {
         // Realms rise across the early epochs, spread out.
         let rise = -span + third * ((mix(i as u64, seed) % 3) as i64);

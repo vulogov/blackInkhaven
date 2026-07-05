@@ -36,6 +36,28 @@ pub struct WorldDefinition {
     /// adoptable onto the story Timeline.
     #[serde(default)]
     pub history: Option<HistoryDef>,
+    /// WORLD-11 (W11-P2) — author-declared nations. Each pins a named realm to a
+    /// capital cell; the remaining settlements cluster into generated realms.
+    #[serde(default)]
+    pub nations: Vec<NationDef>,
+}
+
+/// WORLD-11 — a declared nation.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct NationDef {
+    pub name: String,
+    /// The capital's map cell `[x, y]`; the nearest settlement becomes its seat.
+    pub capital: [usize; 2],
+    /// Declared relations with other named nations (override the seeded ones).
+    #[serde(default)]
+    pub relations: Vec<NationRelation>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct NationRelation {
+    pub with: String,
+    /// "allied" | "rival" | "neutral".
+    pub stance: String,
 }
 
 /// WORLD-11 — the declared `history:` block.
