@@ -64,30 +64,53 @@ fn describe(s: &Settlement) -> String {
     format!("the {} {}", s.biome, s.class)
 }
 
-pub fn compile_polities(demo: &DemographicsOutput, seed: u64) -> PolitiesOutput {
+pub fn compile_polities(
+    demo: &DemographicsOutput,
+    declared: &[crate::world::types::NationDef],
+    seed: u64,
+) -> PolitiesOutput {
+    use std::collections::{HashMap, HashSet};
     let settlements = &demo.settlements;
     if settlements.is_empty() {
         return PolitiesOutput { polities: Vec::new(), relations: Vec::new() };
     }
 
-    // One realm per ~6 settlements, at least 1, capped at 8.
-    let k = ((settlements.len() + 5) / 6).clamp(1, 8).min(settlements.len());
+    // Target realm count: ~one per six settlements (1..8), but at least enough for
+    // every declared nation.
+    let generated_k = ((settlements.len() + 5) / 6).clamp(1, 8).min(settlements.len());
+    let k_target = generated_k.max(declared.len()).min(settlements.len());
 
-    // Capitals = the k largest settlements (stable order by population, then pos).
+    // Capitals: each declared nation first (the settlement nearest its declared
+    // capital cell), then the largest remaining settlements fill to the target.
+    let mut used: HashSet<(usize, usize)> = HashSet::new();
+    let mut caps: Vec<(&Settlement, Option<&crate::world::types::NationDef>)> = Vec::new();
+    for nd in declared {
+        if let Some(s) = settlements
+            .iter()
+            .min_by_key(|s| dist2((s.x, s.y), (nd.capital[0], nd.capital[1])))
+        {
+            if used.insert((s.x, s.y)) {
+                caps.push((s, Some(nd)));
+            }
+        }
+    }
     let mut ranked: Vec<&Settlement> = settlements.iter().collect();
-    ranked.sort_by(|a, b| {
-        b.population
-            .cmp(&a.population)
-            .then((a.x, a.y).cmp(&(b.x, b.y)))
-    });
-    let capitals: Vec<&Settlement> = ranked.iter().take(k).copied().collect();
+    ranked.sort_by(|a, b| b.population.cmp(&a.population).then((a.x, a.y).cmp(&(b.x, b.y))));
+    for s in ranked {
+        if caps.len() >= k_target {
+            break;
+        }
+        if used.insert((s.x, s.y)) {
+            caps.push((s, None));
+        }
+    }
+    let k = caps.len();
 
     let mut members = vec![0usize; k];
     let mut pops = vec![0u64; k];
     for s in settlements {
-        // Nearest capital.
         let (mut best, mut best_d) = (0usize, i64::MAX);
-        for (ci, cap) in capitals.iter().enumerate() {
+        for (ci, (cap, _)) in caps.iter().enumerate() {
             let d = dist2((s.x, s.y), (cap.x, cap.y));
             if d < best_d {
                 best_d = d;
@@ -98,11 +121,14 @@ pub fn compile_polities(demo: &DemographicsOutput, seed: u64) -> PolitiesOutput 
         pops[best] += s.population;
     }
 
-    let polities: Vec<Polity> = capitals
+    let polities: Vec<Polity> = caps
         .iter()
         .enumerate()
-        .map(|(i, cap)| Polity {
-            name: realm_name(seed.wrapping_add((cap.x as u64) << 16).wrapping_add(cap.y as u64)),
+        .map(|(i, (cap, nd))| Polity {
+            name: match nd {
+                Some(n) => n.name.clone(),
+                None => realm_name(seed.wrapping_add((cap.x as u64) << 16).wrapping_add(cap.y as u64)),
+            },
             capital: describe(cap),
             capital_pos: (cap.x, cap.y),
             member_count: members[i],
@@ -110,21 +136,64 @@ pub fn compile_polities(demo: &DemographicsOutput, seed: u64) -> PolitiesOutput 
         })
         .collect();
 
-    // Seeded pairwise relations.
+    // Declared relations override the seeded pairwise ones (matched by name).
+    let mut declared_pairs: HashMap<(usize, usize), String> = HashMap::new();
+    for (i, (_, nd)) in caps.iter().enumerate() {
+        if let Some(n) = nd {
+            for r in &n.relations {
+                if let Some(j) = polities.iter().position(|p| p.name.eq_ignore_ascii_case(&r.with)) {
+                    let (a, b) = if i < j { (i, j) } else { (j, i) };
+                    if a != b {
+                        declared_pairs.insert((a, b), r.stance.clone());
+                    }
+                }
+            }
+        }
+    }
     let mut relations = Vec::new();
     for a in 0..k {
         for b in (a + 1)..k {
-            let stance = match hash3(a as u64, b as u64, seed) % 5 {
-                0 => "allied",
-                1 => "rival",
-                2 => "rival",
-                _ => "neutral",
-            };
-            relations.push(Relation { a, b, stance: stance.to_string() });
+            let stance = declared_pairs.get(&(a, b)).cloned().unwrap_or_else(|| {
+                match hash3(a as u64, b as u64, seed) % 5 {
+                    0 => "allied",
+                    1 | 2 => "rival",
+                    _ => "neutral",
+                }
+                .to_string()
+            });
+            relations.push(Relation { a, b, stance });
         }
     }
 
     PolitiesOutput { polities, relations }
+}
+
+/// WORLD-11 (W11-P2) — verify declared nations for plausibility. Advisory.
+pub fn lint_polities(
+    declared: &[crate::world::types::NationDef],
+    demo: &DemographicsOutput,
+) -> Vec<String> {
+    let mut w = Vec::new();
+    for nd in declared {
+        match demo
+            .settlements
+            .iter()
+            .map(|s| dist2((s.x, s.y), (nd.capital[0], nd.capital[1])))
+            .min()
+        {
+            None => w.push(format!("nation `{}`: the world has no settlements to seat a capital", nd.name)),
+            Some(d2) => {
+                let d = (d2 as f64).sqrt();
+                if d > 10.0 {
+                    w.push(format!(
+                        "nation `{}`: capital cell ({}, {}) is {:.0} cells from the nearest settlement — is it in the wilderness?",
+                        nd.name, nd.capital[0], nd.capital[1], d
+                    ));
+                }
+            }
+        }
+    }
+    w
 }
 
 #[cfg(test)]
@@ -169,7 +238,7 @@ mod tests {
             settle(50, 47, 500),
             settle(46, 46, 400),
         ]);
-        let p = compile_polities(&d, 0x2024);
+        let p = compile_polities(&d, &[], 0x2024);
         assert_eq!(p.polities.len(), 2);
         // Every settlement is accounted for.
         let total: usize = p.polities.iter().map(|x| x.member_count).sum();
@@ -181,6 +250,40 @@ mod tests {
     #[test]
     fn is_deterministic() {
         let d = demo(vec![settle(0, 0, 5000), settle(9, 9, 4000)]);
-        assert_eq!(compile_polities(&d, 3), compile_polities(&d, 3));
+        assert_eq!(compile_polities(&d, &[], 3), compile_polities(&d, &[], 3));
+    }
+
+    #[test]
+    fn declared_nations_name_their_realms_and_relations() {
+        use crate::world::types::{NationDef, NationRelation};
+        let d = demo(vec![
+            settle(0, 0, 90_000),
+            settle(1, 1, 2_000),
+            settle(50, 50, 80_000),
+            settle(51, 49, 3_000),
+        ]);
+        let declared = vec![
+            NationDef {
+                name: "Karon".into(),
+                capital: [0, 0],
+                relations: vec![NationRelation { with: "Serai".into(), stance: "rival".into() }],
+            },
+            NationDef { name: "Serai".into(), capital: [50, 50], relations: vec![] },
+        ];
+        let p = compile_polities(&d, &declared, 0x1);
+        assert!(p.polities.iter().any(|x| x.name == "Karon"));
+        assert!(p.polities.iter().any(|x| x.name == "Serai"));
+        let ki = p.polities.iter().position(|x| x.name == "Karon").unwrap();
+        let si = p.polities.iter().position(|x| x.name == "Serai").unwrap();
+        let (a, b) = if ki < si { (ki, si) } else { (si, ki) };
+        assert!(p.relations.iter().any(|r| r.a == a && r.b == b && r.stance == "rival"));
+    }
+
+    #[test]
+    fn a_wilderness_capital_is_flagged() {
+        use crate::world::types::NationDef;
+        let d = demo(vec![settle(0, 0, 5000)]);
+        let declared = vec![NationDef { name: "Faraway".into(), capital: [900, 900], relations: vec![] }];
+        assert!(lint_polities(&declared, &d).iter().any(|s| s.contains("wilderness")));
     }
 }

@@ -13465,7 +13465,7 @@ impl App {
                 eco.biomes.len(),
                 eco.biomes.first().map(|b| format!(" · keystone {}", b.keystone)).unwrap_or_default()
             ));
-            let pol = compile_polities(&demo, seed);
+            let pol = compile_polities(&demo, &def.nations, seed);
             let capital_biomes: Vec<String> = pol
                 .polities
                 .iter()
@@ -14931,7 +14931,7 @@ impl App {
         let climate = compile_climate(&def, &astro, &geo);
         let hydro = compile_hydrology(&geo, &climate);
         let demo = compile_demographics(&climate, &hydro);
-        let pol = compile_polities(&demo, seed);
+        let pol = compile_polities(&demo, &def.nations, seed);
         let capital_biomes: Vec<String> = pol
             .polities
             .iter()
