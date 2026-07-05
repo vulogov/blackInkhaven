@@ -4247,6 +4247,13 @@ pub enum RealworldCommand {
     },
     /// Parse `world.hjson` and report whether it is valid.
     Validate,
+    /// Propose several candidate worlds from consecutive seeds (each row is a
+    /// seed you can adopt in `world.hjson`) — the world proposes, you choose.
+    Variants {
+        /// How many candidates to summarize (1–24).
+        #[arg(long, default_value_t = 5)]
+        count: usize,
+    },
     /// Show the parsed world definition.
     Show {
         /// Emit the full definition as JSON.
