@@ -799,7 +799,9 @@ fn travel(
 ) -> Result<()> {
     let def = load(project)?;
     let geo = geology_for(project, &def)?;
-    let kpc = crate::world::travel::km_per_cell(def.astronomy.planet.radius_earth, geo.width);
+    if !crate::world::travel::mode_recognized(mode) {
+        println!("  ⚠ unrecognized mode `{mode}` — assessing at foot pace (30 km/day)");
+    }
     // Named places (accepted Places / world links) resolve to coordinates;
     // otherwise the explicit --from-x/--to-x coordinates are used.
     let (from_x, from_y) = match &from {
@@ -811,7 +813,14 @@ fn travel(
         None => (to_x, to_y),
     };
     let cells = ((to_x - from_x).powi(2) + (to_y - from_y).powi(2)).sqrt();
-    let a = crate::world::travel::assess(cells * kpc, days, mode);
+    let dist = crate::world::travel::distance_km(
+        def.astronomy.planet.radius_earth,
+        geo.width,
+        geo.height,
+        to_x - from_x,
+        to_y - from_y,
+    );
+    let a = crate::world::travel::assess(dist, days, mode);
 
     if from.is_some() || to.is_some() {
         println!("travel · {} → {}", from.as_deref().unwrap_or("start"), to.as_deref().unwrap_or("end"));
