@@ -150,6 +150,40 @@ never the last word. The last word, here as everywhere, is yours.
   *where* a language lives to a suite that will help you *speak* it.
 ]
 
+#section("Pinning a culture")
+
+`realworld culture` generates a culture for every nation, and much of the time its
+proposal is the right one — the land it read is the land you built. But now and
+then you have a people already alive in your head, with a character no biome would
+have guessed, and you want to hold it fast against anything the generator might
+say. You can *pin* your own culture with a `cultures:` block, matched to a nation
+by name. Whatever you declare — the *ethos*, the *belief*, the *language* profile —
+overrides the generated one for that nation.
+
+#hjson[```
+cultures: [
+  {
+    nation: "Karon"
+    ethos: "mercantile and open"
+    belief: "the tide-mother"
+    language: "SOV · agglutinative · tonal"
+  }
+]
+```]
+
+You do not have to pin all three; declare only the fields you mean to fix, and the
+generator still fills the rest. A pinned culture is you taking the last word early
+— telling the world *this* people is settled, build the others around it.
+
+#note[
+  The world still checks a pinned culture for plausibility. It warns if a
+  *seafaring* ethos is pinned to a dry, inland capital that touches no coast — a
+  people of the tides with no tide to speak of — or if the `nation` you named does
+  not exist among the polities you clustered. The warning does not overrule you;
+  the author always wins. It only asks whether the people you pinned truly belongs
+  to the land you gave them.
+]
+
 #recap((
   [`realworld culture` gives each polity a *culture*: an *ethos* drawn from the
    capital's biome, a *belief* the people live by, and a *language profile*.],

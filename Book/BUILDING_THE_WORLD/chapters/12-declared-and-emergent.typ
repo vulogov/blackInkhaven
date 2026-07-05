@@ -34,14 +34,17 @@ met the required `astronomy` block and the optional `geology`; `magic` gets its
 own chapter next.)
 
 #insight[
-  *Everything else emerges — and has no block to edit.* There is no `climate:`,
-  no `demographics:`, no `history:`, no `polities:`, no `culture:`, and no
-  `ecology:` in `world.hjson`. Those layers are pure consequences of the sky, the
-  land, and the seed, so the only way to change them is to change what they grow
-  from. If you go looking for a `history:` or a `nations:` block to hand-set,
-  you will not find one — and that is the whole point of an emergent world. The
-  commands that read them (`realworld history`, `polities`, `culture`, `ecology`)
-  take *no input but the world you already compiled*.
+  There are three kinds of layer, not two. A few are *purely emergent*: you
+  cannot declare `climate:` or `demographics:`, because they are pure consequences
+  of the physics — to change them, change what they grow from. A few are *purely
+  declared*: `economy` and `magic` are all intention. And most of the rest are
+  *both*. `history`, `nations`, `cultures`, `ecology`, and a river's course all
+  generate a complete answer on their own, but let you *pin your own* facts on top
+  — and when you do, the world checks your hand for plausibility (a river that
+  climbs, a polar beast in the tropics, a seafaring people in a landlocked desert)
+  and tells you, without ever overruling you. Generate, declare, or both: the
+  author always wins, and the world is a second pair of eyes. The rest of this
+  chapter, and the ones before it, show how to declare each.
 ]
 
 `geography` is where you name the land. You declare *regions* — a named stretch of

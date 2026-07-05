@@ -193,6 +193,38 @@ now built four of the five, and the fifth is already half-decided: the hydrology
 has quietly pointed at every river mouth and fertile valley where a town would
 want to stand. In the next chapter you let people arrive and take them up.
 
+#section("Declaring a river's course")
+
+The procedural rivers run on their own — the D8 rule braids them out of the
+slopes whether you say anything or not. But sometimes a particular river matters
+to your story, and you want it to run *just there*: from a spring you have named
+to a mouth on a coast you have already imagined. You can *assert* a course by
+adding a named river to a `hydrology` block, giving it a `from` cell and a `to`
+cell, and the world will check that the course you drew is one water could
+actually take.
+
+#hjson[```
+hydrology: {
+  rivers: [
+    { name: "The Aldermere", from: [12, 4], to: [40, 30] }
+  ]
+}
+```]
+
+The `from` and `to` are grid cells — a source high in the land and a mouth where
+the river ends. You are not switching the procedural rivers off; they still run.
+You are pinning one named course on top of them and asking the world to vouch for
+it.
+
+#note[
+  The world runs a plausibility check on the course you declare. It warns if the
+  source sits *below* the mouth — a river that would have to run uphill — or if
+  the mouth is above the shoreline and so reaches no sea or lake. The warning does
+  not stop the compile, and the procedural rivers run regardless; it simply tells
+  you the course you asserted quarrels with the land beneath it, so you can move a
+  cell or reconsider where your Aldermere truly rises.
+]
+
 #recap((
   [*Climate* is derived, not drawn: sunlight by latitude sets temperature, and
    mountains casting *rain shadows* set where the rain falls — together they sort
