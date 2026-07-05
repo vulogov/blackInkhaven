@@ -105,6 +105,75 @@ three facts about how Inkhaven reads the file, so nothing about it is a guess:
    matter, only which areas are darker than which.],
 )
 
+#subsection("The easiest road: generate a DEM with plakat")
+
+Inkhaven has a companion tool, *plakat*, that can grow a heightmap for you from a
+single sentence of description — no drawing, no image editor, and no graphics
+card. It is the same tool `realworld map` uses to paint a world map, and its
+terrain engine can write out exactly the greyscale DEM the land layer wants,
+*deterministically*: the same description and seed always produce the same
+heightmap. If you already have plakat installed, start here.
+
+#term("plakat")[
+  Inkhaven's companion image-and-map tool. Among its features, `plakat map` turns
+  a prose world description into a fantasy map through a geometry engine (terrain
+  → rivers → coastline → biomes), and can dump any layer of that engine — the
+  tectonic *heightmap* included — as a PNG. The heightmap step is pure and
+  offline (no model, no GPU); only the prose-to-spec parse uses a language model.
+]
+
+Here is the whole recipe, start to finish.
+
+#tryit[
+  *1. Describe the land and parse it to a reusable spec.* This one step uses a
+  language model to turn your sentence into a `MapSpec` file. Pick a `--map-scale`
+  that matches how much of the world you are drawing — `region` for a continent,
+  `inland-sea` or `hemisphere` for a whole world:
+
+  ```
+  plakat map "a broad continent with a mountain spine down its west coast, a wide
+    river valley opening to the east, and an inland sea in the north" \
+    --map-scale region --map-dump-spec world.spec.json
+  ```
+
+  *2. Dump the heightmap from that spec — deterministic, offline, no model.* The
+  `--seed` fixes the terrain; change it for a different continent from the same
+  description:
+
+  ```
+  plakat map --map-spec world.spec.json --seed 7 --map-dump-heightmap heightmap.png
+  ```
+
+  You now have `heightmap.png`: a greyscale DEM, brighter where the land is
+  higher — the same convention Inkhaven reads.
+
+  *3. Put it in your project and point the world at it.* Move the PNG into a
+  `maps` folder beside your `world.hjson`:
+]
+
+#hjson[```
+geology: {
+  dem: { path: "maps/heightmap.png" }
+}
+```]
+
+#tryit[
+  *4. Compile the land and look.* Run `realworld compile --layer geology` and read
+  what came up — the continents, the ranges, the coastlines — all grown over the
+  terrain plakat handed you. From here, every downstream layer (climate, rivers,
+  cities) follows from *your* land.
+]
+
+#note[
+  Because a plakat spec + seed is byte-stable, your world stays reproducible:
+  commit `world.spec.json` alongside `world.hjson` and anyone can regenerate the
+  exact same `heightmap.png`. You can skip step 1 entirely if you are offline —
+  hand-write a small `MapSpec` JSON, or reuse a committed one — since only the
+  prose parse needs a model; the heightmap itself is pure geometry. And while you
+  are there, plakat can dump the matching `--map-dump-rivers` and
+  `--map-dump-coast` layers, a useful preview of what Inkhaven will grow.
+]
+
 #subsection("Drawing one by hand, step by step")
 
 This is the most direct road — you get exactly the continents you imagined. Using
