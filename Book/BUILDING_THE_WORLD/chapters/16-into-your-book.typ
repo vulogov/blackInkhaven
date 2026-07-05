@@ -103,6 +103,93 @@ same world every other bridge draws on, and so guaranteed to agree with them.
   next; where it reads rich, you have found what your prose can safely lean on.
 ]
 
+#section("A rendered map, and the plakat round-trip")
+
+One bridge leads not into your prose but onto your wall: your compiled world can
+become a *labelled, painted map*. Back in the chapter on the land you met
+*plakat*, Inkhaven's companion tool, and used it to grow a heightmap. The two
+tools pass a world back and forth, and it is worth seeing the whole loop, because
+each does what the other cannot: plakat draws shapes and paints pictures;
+Inkhaven runs the physics and grows the life.
+
+#subsection("Inkhaven → plakat: render your world as a map")
+
+The `realworld map` command compiles your world, assembles a plakat *MapSpec*
+from its geology, climate, rivers, and settlements — together with the Places you
+have accepted — and hands that spec to plakat, which draws a finished, labelled
+map:
+
+```
+inkhaven realworld map
+```
+
+This writes `maps/world.mapspec.json`, a rendered map image, and a GeoJSON of the
+features, all under your project. It runs plakat for you, so plakat must be
+installed and on your `PATH` (Inkhaven checks by calling `plakat --version`). One
+quiet extra happens on the way back: the map's resolved landmark positions are
+read in to *refine the coordinates* of your accepted Places, so the map and your
+Places agree — pass `--no-ingest` to skip that.
+
+If you would rather drive plakat yourself — to choose a style, or paint the map
+with a model — ask Inkhaven for the spec alone and stop there:
+
+```
+inkhaven realworld map --spec-only
+```
+
+Then run plakat on the spec it wrote, exactly as in the map chapter of plakat's
+own guide:
+
+```
+plakat map --map-spec maps/world.mapspec.json --map-render world.png --map-style parchment
+```
+
+`--map-style` takes `parchment`, `inked`, or `blueprint`; `--map-render-sd
+PATH` paints the map with a diffusion model instead of drawing it flat; and
+`--map-export-svg` / `--map-export-geojson` write vector versions. The spec is a
+pure function of your world, so the same compiled world always yields the same
+map.
+
+#note[
+  `realworld map` needs plakat on your `PATH`; `realworld map --spec-only` does
+  not — it only writes `maps/world.mapspec.json`, which you can hand to plakat on
+  another machine, or keep as the portable, byte-stable description of your
+  world's map.
+]
+
+#subsection("plakat → inkhaven: bring a map in")
+
+The reverse direction you have already used once, and can use more fully:
+
+#list(
+  [*The land.* A plakat heightmap (`plakat map … --map-dump-heightmap
+   heightmap.png`) becomes your terrain through `geology.dem` — the recipe from
+   the chapter on the land. This is how a shape you drew or generated in plakat
+   becomes the ground Inkhaven grows climate, rivers, and cities over.],
+  [*The named features.* A plakat map also gives names and positions — regions,
+   rivers, notable places. Copy the ones that matter into Inkhaven's declared
+   blocks: a plakat region becomes a `geography.regions` entry, a named river a
+   `hydrology.rivers` entry, a labelled town a `geography.landmarks` entry. Now
+   the same names live in both tools, and Inkhaven's fact-checker knows them.],
+)
+
+#insight[
+  The full loop is worth holding in your head: *draw or generate a shape in
+  plakat → its heightmap becomes Inkhaven's land → Inkhaven grows the living world
+  (climate, rivers, cities, history, peoples) → `realworld map` hands that world
+  back to plakat → plakat paints the finished, labelled map.* One world passes
+  between the two tools, each turn adding what only it can. You can start from
+  either end — a hand-drawn coastline or a simulated one — and arrive at the same
+  place: a world that is both *true* and *beautiful*.
+]
+
+#tryit[
+  Run `realworld map --spec-only`, then open `maps/world.mapspec.json` — this is
+  your whole world, distilled to the shape plakat draws from. If you have plakat
+  installed, render it: `plakat map --map-spec maps/world.mapspec.json --map-render
+  world.png`, and hang the result over your desk.
+]
+
 #section("The world touches the page")
 
 Step back and look at what the bridges add up to. A settlement your climate and
@@ -125,6 +212,10 @@ the page* — and here, on every bridge at once, it is kept.
   [`realworld gazetteer --output <path>` writes the whole world as one Markdown
    reference — a series bible or manuscript appendix that agrees with every other
    bridge.],
+  [The world round-trips with *plakat*: `realworld map` renders your compiled
+   world (and refines your Places from the result), while a plakat heightmap and
+   named features come back the other way into `geology.dem` and the declared
+   blocks.],
   [Every bridge keeps the same discipline — the world offers, the author chooses —
    and together they close the seam between the world and the book.],
 ))
