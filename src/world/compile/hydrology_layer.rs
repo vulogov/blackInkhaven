@@ -223,6 +223,82 @@ fn settlement_priors(
     priors
 }
 
+/// WORLD-11 (W11-P3) — verify declared river courses against the terrain: a
+/// river must run *downhill* from its declared source to its declared mouth, and
+/// its mouth should reach a sea (or, noted, an inland lake). Advisory only.
+pub fn lint_rivers(
+    hydro_def: &crate::world::types::HydrologyDef,
+    geo: &GeologyOutput,
+) -> Vec<String> {
+    let (w, h) = (geo.width, geo.height);
+    let elev_at = |p: [usize; 2]| -> Option<f32> {
+        (p[0] < w && p[1] < h).then(|| geo.heightmap[p[1] * w + p[0]])
+    };
+    let mut warnings = Vec::new();
+    for r in &hydro_def.rivers {
+        let (from, to) = match (r.from, r.to) {
+            (Some(f), Some(t)) => (f, t),
+            _ => continue, // no declared course — the procedural river stands
+        };
+        match (elev_at(from), elev_at(to)) {
+            (Some(ef), Some(et)) => {
+                if ef < et {
+                    warnings.push(format!(
+                        "river `{}`: runs uphill — its source ({}, {}) sits below its mouth ({}, {})",
+                        r.name, from[0], from[1], to[0], to[1]
+                    ));
+                }
+                if et > geo.sea_level {
+                    warnings.push(format!(
+                        "river `{}`: its mouth ({}, {}) is above the shoreline — a river should reach a sea (or an inland lake)",
+                        r.name, to[0], to[1]
+                    ));
+                }
+            }
+            _ => warnings.push(format!("river `{}`: its source or mouth is off the map", r.name)),
+        }
+    }
+    warnings
+}
+
+#[cfg(test)]
+mod river_lint_tests {
+    use super::*;
+    use crate::world::types::{HydrologyDef, NamedWater};
+
+    fn river(from: [usize; 2], to: [usize; 2]) -> HydrologyDef {
+        HydrologyDef {
+            rainfall: String::new(),
+            rivers: vec![NamedWater {
+                name: "R".into(),
+                description: String::new(),
+                from: Some(from),
+                to: Some(to),
+            }],
+            lakes: vec![],
+            seas: vec![],
+        }
+    }
+
+    #[test]
+    fn uphill_and_dry_mouth_are_flagged_downhill_is_clean() {
+        // 3×1 grid: x=0 high (0.9), x=2 low (0.1); sea at 0.2.
+        let geo = GeologyOutput {
+            width: 3,
+            height: 1,
+            sea_level: 0.2,
+            heightmap: vec![0.9, 0.5, 0.1],
+            ..Default::default()
+        };
+        // Downhill from high (0,0) to low (2,0), which is below the sea: clean.
+        assert!(lint_rivers(&river([0, 0], [2, 0]), &geo).is_empty());
+        // Uphill from low (2,0) to high (0,0): runs uphill AND ends on dry land.
+        let w = lint_rivers(&river([2, 0], [0, 0]), &geo);
+        assert!(w.iter().any(|s| s.contains("uphill")));
+        assert!(w.iter().any(|s| s.contains("above the shoreline")));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

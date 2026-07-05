@@ -318,6 +318,12 @@ pub struct NamedWater {
     pub name: String,
     #[serde(default)]
     pub description: String,
+    /// WORLD-11 (W11-P3) — optional declared source cell `[x, y]` (rivers).
+    #[serde(default)]
+    pub from: Option<[usize; 2]>,
+    /// WORLD-11 (W11-P3) — optional declared mouth cell `[x, y]` (rivers).
+    #[serde(default)]
+    pub to: Option<[usize; 2]>,
 }
 
 /// The `economy` declaration block.
