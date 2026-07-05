@@ -148,6 +148,11 @@ impl DocumentStorage {
         self.vectors.embed_batch(texts)
     }
 
+    /// Whether the embedding model is already warm (HAIKU-2 warmth gate).
+    pub fn embedding_is_loaded(&self) -> bool {
+        self.vectors.embedding_is_loaded()
+    }
+
     pub fn list_metadata(&self) -> Result<Vec<(Uuid, JsonValue)>> {
         self.meta.list_all()
     }

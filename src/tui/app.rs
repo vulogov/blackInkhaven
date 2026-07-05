@@ -3370,6 +3370,7 @@ impl App {
             self.tick_inner_socrates();
             self.tick_inner_theologian();
             self.tick_scene_context();
+            self.tick_pending_haiku();
             self.tick_inner_editor();
             self.tick_tree_badges();
             // 1.2.9+ — close the TTS playback modal as
@@ -11420,7 +11421,22 @@ impl App {
             A::BundShellSelection => self.toggle_shell_selection_mode(),
             A::BundEditProjectHjson => self.open_hjson_editor(),
             A::ShowHaiku => {
-                crate::haiku::emit_for_lang(&self.cfg.language);
+                // HAIKU-2 (T3): semantic when the engine is already warm, using
+                // the open paragraph as the query; else the HAIKU-1 rotation.
+                let ctx: Option<String> = self
+                    .opened
+                    .as_ref()
+                    .map(|doc| doc.textarea.lines().join(" ").chars().take(512).collect());
+                if self.cfg.editor.haiku_semantic && self.store.embedding_is_loaded() {
+                    let store = self.store.clone();
+                    crate::haiku::emit_with_context(
+                        &self.cfg.language,
+                        ctx.as_deref(),
+                        Some(&|texts| store.embed_batch(texts).map_err(|e| anyhow::anyhow!("{e}"))),
+                    );
+                } else {
+                    crate::haiku::emit_with_context(&self.cfg.language, ctx.as_deref(), None);
+                }
                 self.status = "✦ haiku written to Output".into();
             }
             A::ToggleRightPaneFullscreen => self.toggle_right_pane_fullscreen(),
@@ -14875,6 +14891,47 @@ impl App {
     /// Self-gating: only paragraphs with links (a place-linked Timeline event or a
     /// paragraph link to a Place) get a brief, so the footer chip appears only
     /// where there is genuine scene context. The world compile is cached.
+    /// HAIKU-2 (T2) — once the freshly-created paragraph is the one open in the
+    /// editor, emit its on-new-paragraph haiku: semantic (context = chapter title
+    /// + any body) when the engine is warm, else the HAIKU-1 rotation.
+    fn tick_pending_haiku(&mut self) {
+        let Some(pending) = self.pending_haiku_paragraph else {
+            return;
+        };
+        match self.opened.as_ref() {
+            Some(doc) if doc.id == pending => {}
+            _ => return,
+        }
+        self.pending_haiku_paragraph = None;
+        if !self.cfg.editor.startup_haiku {
+            return;
+        }
+        let body: String = self
+            .opened
+            .as_ref()
+            .map(|d| d.textarea.lines().join(" ").chars().take(256).collect())
+            .unwrap_or_default();
+        let branch_title = self
+            .hierarchy
+            .get(pending)
+            .and_then(|n| n.parent_id)
+            .and_then(|pid| self.hierarchy.get(pid))
+            .map(|p| p.title.clone())
+            .unwrap_or_default();
+        let ctx = format!("{branch_title} {body}").trim().to_string();
+
+        if self.cfg.editor.haiku_semantic && self.store.embedding_is_loaded() {
+            let store = self.store.clone();
+            crate::haiku::emit_with_context(
+                &self.cfg.language,
+                Some(&ctx),
+                Some(&|texts| store.embed_batch(texts).map_err(|e| anyhow::anyhow!("{e}"))),
+            );
+        } else {
+            crate::haiku::emit_with_context(&self.cfg.language, Some(&ctx), None);
+        }
+    }
+
     fn tick_scene_context(&mut self) {
         let cur = self.opened.as_ref().map(|d| d.id);
         if cur == self.scene_last_para {

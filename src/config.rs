@@ -1601,6 +1601,12 @@ pub struct EditorConfig {
     /// on `Ctrl+Z p`. No AI, no network. Default: true.
     #[serde(default = "default_startup_haiku")]
     pub startup_haiku: bool,
+    /// HAIKU-2 — prefer *semantic* poem selection (nearest the writing context)
+    /// when the fastembed engine is already warm; falls back to the HAIKU-1
+    /// rotation when it is cold (always at startup). No effect when
+    /// `startup_haiku` is false. No AI API, no network. Default: true.
+    #[serde(default = "default_startup_haiku")]
+    pub haiku_semantic: bool,
     /// 1.3.37 — cap on the browser-style visited-paragraph history
     /// (persisted in `.session.json`). `0` (default) = unbounded,
     /// preserving prior behaviour; set e.g. 200 to bound session growth.
@@ -3002,6 +3008,7 @@ impl Default for EditorConfig {
             external_change_auto_reload: default_external_change_auto_reload(),
             fact_check_idle_seconds: default_fact_check_idle_seconds(),
             startup_haiku: default_startup_haiku(),
+            haiku_semantic: default_startup_haiku(),
             visited_history_cap: default_visited_history_cap(),
             stemming: StemmingConfig::default(),
             startup_splash: default_startup_splash(),
