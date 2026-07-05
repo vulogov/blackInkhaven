@@ -59,17 +59,19 @@ rivers, cities — running on *your* chosen shape of land.
   layer reads your land instead of inventing it.
 ]
 
-To use it, add the field to your geology block:
+To use it, add a `dem` block to your geology block. At its simplest it is just a
+`path` to the image:
 
-```
+#hjson[```
 geology: {
-  dem: "maps/my-continent.png"
-  sea_level: 0.42
+  dem: { path: "maps/my-continent.png" }
 }
-```
+```]
 
-The `dem` block also carries the scale that turns pixels into real ground, and
-the brightness Inkhaven should read as the shoreline:
+The `dem` block also carries the `scale_km_per_pixel` that turns pixels into real
+ground — so that later, when a rider crosses your map, the distance is true — and
+the `sea_level_pixel_value`, the pixel brightness (0–255) Inkhaven reads as the
+shoreline: anything at or below it is sea.
 
 #hjson[```
 geology: {
@@ -82,6 +84,39 @@ geology: {
   standing in the terminal — `maps/my-continent.png` means the `maps` folder
   beside your `world.hjson`. Keep the image in the project and the world stays
   portable: the definition and the map travel together.
+]
+
+#subsection("Producing a heightmap")
+
+A DEM is just a greyscale image, so any of several roads leads to one — pick the
+one that matches how much control you want.
+
+#list(
+  [*Draw it by hand.* In any image editor — GIMP, Krita, Photoshop, even a
+   free web canvas — make a greyscale picture: paint the seas near-black, the
+   lowlands dark grey, the highlands pale, the peaks white, and blur it so the
+   slopes are smooth rather than stepped. Save as `.png`. This is the most direct
+   way to get *exactly* the continents you have already imagined.],
+  [*Generate it procedurally.* Terrain tools built for the job — World Machine,
+   Gaea, the free Wilbur, or Blender's built-in A.N.T. Landscape — grow realistic
+   erosion, ranges, and river valleys from noise, and export a heightmap. Good
+   when you want plausible terrain without drawing every ridge.],
+  [*Borrow the real Earth.* Exporters such as `terrain.party`, an online
+   height-mapper, or QGIS working over public elevation data (SRTM) hand you a
+   real region's terrain as a greyscale image — a quiet way to give a fantasy map
+   the bones of a real coastline.],
+)
+
+Whichever road you take, the rule is the same: *brighter means higher.* Inkhaven
+reads the brightness as elevation, treats everything at or below your
+`sea_level_pixel_value` as ocean, and runs the whole climate-and-rivers machine
+over the shape you supplied — exactly as it would over a shape it invented.
+
+#pitfall[
+  A crisp, high-contrast image with hard edges makes for cliff-walled, unnatural
+  terrain and confused rivers. Real land is smooth: blur your heightmap, keep the
+  transitions gradual, and let the sea meet the land along a soft grey coast, not
+  a black-to-white wall.
 ]
 
 #section("Compiling the land")

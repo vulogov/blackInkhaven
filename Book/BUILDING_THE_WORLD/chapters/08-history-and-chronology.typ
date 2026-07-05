@@ -35,6 +35,16 @@ reads it. It sorts your settlements by how good their site is and how large they
 grew, infers a *founding order* from that ranking, and lays those foundings out
 along a single axis of time — measured backward from now.
 
+#note[
+  There is no `history:` block in `world.hjson`, and you will not find one. A past
+  is not something you *declare* — it is something the world already implies, so
+  `realworld history` takes no input but the world you have already compiled.
+  To change the history, change what it grows from: a different `seed`, or a land
+  that settles its cities differently, tells a different story. (The one date you
+  *do* set is the world's calendar, back in the `astronomy` block — that is what
+  the years below are counted in.)
+]
+
 #term("Chronology")[
   The ordering of events along time — what came before what, and how long ago.
   Your world's chronology is inferred from its settlements: the better a city's

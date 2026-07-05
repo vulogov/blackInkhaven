@@ -111,11 +111,13 @@ federation the map would have split in two. Redraw them. Merge two clusters the
 history joined; split one a civil war tore apart.
 
 #note[
-  The world proposes the realms; you rule them. `polities` reads nations out of
-  where your cities sit and seeds their relations from the world seed — but it
-  writes nothing into your manuscript. You rename the realms, redraw the borders,
-  and rewrite the grudges as the story needs, exactly as you accept or reject the
-  places the world proposes. The map is the world's; the politics is yours.
+  The world proposes the realms; you rule them. Like history, nations have no
+  block in `world.hjson` — there is no `polities:` to hand-edit. `realworld polities`
+  reads the nations out of where your cities already sit and seeds their
+  relations from the world seed, taking no other input, and it writes nothing into
+  your manuscript. You rename the realms, redraw the borders, and rewrite the
+  grudges as the story needs, exactly as you accept or reject the places the world
+  proposes. The map is the world's; the politics is yours.
 ]
 
 #recap((

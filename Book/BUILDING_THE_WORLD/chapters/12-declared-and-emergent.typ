@@ -27,8 +27,22 @@ no equation was ever going to invent the word your characters use for home.
 
 #section("The declared blocks")
 
-Three optional blocks in `world.hjson` exist for your intentions. None of them is
-computed; each is read exactly as you wrote it.
+Only a handful of things take a block in `world.hjson` at all. Three of them are
+for the world's named and social detail — `geography`, `hydrology`, and `economy`
+— and none is computed; each is read exactly as you wrote it. (You have already
+met the required `astronomy` block and the optional `geology`; `magic` gets its
+own chapter next.)
+
+#insight[
+  *Everything else emerges — and has no block to edit.* There is no `climate:`,
+  no `demographics:`, no `history:`, no `polities:`, no `culture:`, and no
+  `ecology:` in `world.hjson`. Those layers are pure consequences of the sky, the
+  land, and the seed, so the only way to change them is to change what they grow
+  from. If you go looking for a `history:` or a `nations:` block to hand-set,
+  you will not find one — and that is the whole point of an emergent world. The
+  commands that read them (`realworld history`, `polities`, `culture`, `ecology`)
+  take *no input but the world you already compiled*.
+]
 
 `geography` is where you name the land. You declare *regions* — a named stretch of
 the map — and *landmarks* — a single notable point. These are not decoration.
@@ -40,7 +54,21 @@ not in the world.
 `hydrology` you have already met as an emergent layer — the compiler runs the
 rivers downhill on its own. But the descriptive `hydrology` block lets you *name*
 the waters it found: this river is the Aldermere, that inland sea is the Bitter
-Gulf. The water flows by physics; the names are yours.
+Gulf. The water flows by physics; the names are yours. You may set a `rainfall`
+note, and give a `name` and `description` to as many `rivers`, `lakes`, and `seas`
+as your story cares about — the unnamed ones still flow, they simply go unmarked.
+
+#hjson[```
+hydrology: {
+  rainfall: "temperate"
+  rivers: [
+    { name: "The Aldermere", description: "The long river that feeds the capital." }
+  ]
+  seas: [
+    { name: "The Bitter Gulf", description: "The cold inland sea north of the reach." }
+  ]
+}
+```]
 
 `economy` is pure declaration — the compiler has no opinion on trade. Here you set
 `tech_level`, the `currency` people count in, the `trade_goods` that move between
