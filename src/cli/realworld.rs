@@ -27,10 +27,12 @@ pub fn run(project: &Path, cmd: RealworldCommand) -> Result<()> {
         RealworldCommand::Propose => propose(project),
         RealworldCommand::ProposeMyth => propose_myth(project),
         RealworldCommand::ProposeRulers => propose_rulers(project),
+        RealworldCommand::ProposeLanguage => propose_language(project),
         RealworldCommand::Proposals { cmd } => proposals(project, cmd),
         RealworldCommand::Places => places(project),
         RealworldCommand::SetCoords { name, x, y, lat, lon } => set_coords(project, &name, x, y, lat, lon),
         RealworldCommand::Calendar => calendar(project),
+        RealworldCommand::Chronicle { json } => chronicle(project, json),
         RealworldCommand::Gazetteer { output } => gazetteer(project, output.as_deref()),
         RealworldCommand::History { json, materialize } => history(project, json, materialize),
         RealworldCommand::Weather { day, lat } => weather(project, day, lat),
@@ -908,7 +910,51 @@ fn scene(project: &Path, place: Option<String>, day: f64, lat: Option<f64>) -> R
             println!("            belief: {b} · tongue: {t}");
         }
     }
+    // WORLD-13 — nearest neighbouring Place, for spatial context while writing.
+    // Any coordinate-bearing Place (compiler-born or hand-positioned via
+    // `set-coords`) can be the anchor or the neighbour.
+    if let Some(here) = &link {
+        if let Some((name, km, dir)) = nearest_place(project, &def, geo.width, geo.height, here) {
+            println!("  nearby:   {name} — {km:.0} km {dir}");
+        }
+    }
     Ok(())
+}
+
+/// The nearest other coordinate-bearing Place to `here`, as (name, km, bearing).
+/// `None` when the world store is absent or no other Place has coordinates.
+fn nearest_place(
+    project: &Path,
+    def: &WorldDefinition,
+    w: usize,
+    h: usize,
+    here: &crate::world::proposals::PlaceLink,
+) -> Option<(String, f64, &'static str)> {
+    let ws = crate::world::storage::WorldStore::open_for_project(project).ok()?;
+    let links = ws.list_place_links().ok()?;
+    let radius = def.astronomy.planet.radius_earth;
+    links
+        .iter()
+        .filter(|l| l.place_id != here.place_id)
+        .map(|l| {
+            let dx = l.x as f64 - here.x as f64;
+            let dy = l.y as f64 - here.y as f64;
+            let km = crate::world::travel::distance_km(radius, w, h, dx, dy);
+            (l.name.clone(), km, bearing(here.x, here.y, l.x, l.y))
+        })
+        .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+}
+
+/// A rough 8-point compass bearing from cell `(x0,y0)` to `(x1,y1)`. Grid row 0
+/// is north, so a larger `y` lies further south.
+fn bearing(x0: usize, y0: usize, x1: usize, y1: usize) -> &'static str {
+    let dx = x1 as f64 - x0 as f64; // east positive
+    let dy = y0 as f64 - y1 as f64; // north positive (row 0 = north pole)
+    if dx == 0.0 && dy == 0.0 {
+        return "adjacent";
+    }
+    let a = (dy.atan2(dx).to_degrees() + 360.0) % 360.0; // 0° = east, 90° = north
+    ["E", "NE", "N", "NW", "W", "SW", "S", "SE"][(((a + 22.5) / 45.0) as usize) % 8]
 }
 
 /// WORLD-10 — `realworld travel`: is a journey between two map cells plausible
@@ -1190,6 +1236,92 @@ fn history(project: &Path, json: bool, materialize: bool) -> Result<()> {
     for f in &hist.foundings {
         println!("  inkhaven event add --start \"{}\" \"{} founded\"", f.year, f.label);
     }
+    Ok(())
+}
+
+/// WORLD-13 — `realworld chronicle`: the world's compiled past as a *state
+/// trajectory*. Where `realworld history` lists the events, the chronicle reports
+/// how far the world had grown by the close of each epoch — settlements (by
+/// class), settled population, and realms standing — alongside that epoch's
+/// events. Pure presentation of the history layer; no simulation, no new data.
+fn chronicle(project: &Path, json: bool) -> Result<()> {
+    use crate::world::compile::history_layer::state_at;
+    use crate::world::compile::{
+        compile_astronomy, compile_climate, compile_demographics, compile_history, compile_hydrology,
+    };
+    let def = load(project)?;
+    let astro = compile_astronomy(&def.astronomy);
+    let geo = geology_for(project, &def)?;
+    let climate = compile_climate(&def, &astro, &geo);
+    let hydro = compile_hydrology(&geo, &climate);
+    let demo = compile_demographics(&climate, &hydro);
+    let declared = def.history.as_ref().map(|h| h.events.as_slice()).unwrap_or(&[]);
+    let hist = compile_history(&demo, declared, def.seed_u64());
+
+    if json {
+        let v = serde_json::json!({
+            "span_years": hist.span_years,
+            "epochs": hist.epochs.iter().map(|e| {
+                // State by the last year still inside the epoch.
+                let st = state_at(&hist, e.end_year - 1);
+                serde_json::json!({
+                    "name": e.name, "start_year": e.start_year, "end_year": e.end_year, "note": e.note,
+                    "by_close": {
+                        "settlements": st.settlements, "cities": st.cities, "towns": st.towns,
+                        "villages": st.villages, "settled_population": st.settled_population,
+                        "realms_active": st.realms_active(), "realms_risen": st.realms_risen,
+                        "realms_fallen": st.realms_fallen,
+                    },
+                    "events": hist.events.iter()
+                        .filter(|v| v.year >= e.start_year && v.year < e.end_year)
+                        .map(|v| serde_json::json!({ "year": v.year, "kind": v.kind, "description": v.description }))
+                        .collect::<Vec<_>>(),
+                })
+            }).collect::<Vec<_>>(),
+        });
+        println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
+        return Ok(());
+    }
+
+    println!(
+        "chronicle · {} — {} epoch(s) across {} years of recorded past",
+        def.name,
+        hist.epochs.len(),
+        hist.span_years
+    );
+    for e in &hist.epochs {
+        let st = state_at(&hist, e.end_year - 1);
+        println!("\n  {} ({}…{})", e.name, e.start_year, e.end_year);
+        println!("    {}", e.note);
+        let mut classes: Vec<String> = Vec::new();
+        if st.cities > 0 {
+            classes.push(format!("{} cities", st.cities));
+        }
+        if st.towns > 0 {
+            classes.push(format!("{} towns", st.towns));
+        }
+        if st.villages > 0 {
+            classes.push(format!("{} villages", st.villages));
+        }
+        let breakdown = if classes.is_empty() { "no settlements yet".into() } else { classes.join(", ") };
+        println!(
+            "    by its close: {} settlement(s) ({}) · ~{} settled · {} realm(s) standing",
+            st.settlements,
+            breakdown,
+            fmt_pop(st.settled_population),
+            st.realms_active(),
+        );
+        let events: Vec<&crate::world::compile::history_layer::HistEvent> =
+            hist.events.iter().filter(|v| v.year >= e.start_year && v.year < e.end_year).collect();
+        if events.is_empty() {
+            println!("    (a quiet age — no recorded upheavals)");
+        } else {
+            for ev in events {
+                println!("    · year {:>5}  [{}] {}", ev.year, ev.kind, ev.description);
+            }
+        }
+    }
+    println!("\nThe events are adoptable onto the story Timeline with `realworld history`.");
     Ok(())
 }
 
@@ -1602,6 +1734,68 @@ fn propose_rulers(project: &Path) -> Result<()> {
     Ok(())
 }
 
+/// WORLD-13 — compile the polities + cultures and propose one language per realm
+/// (from the culture's language profile) into the same proposal queue. Accepting
+/// scaffolds a language book in the ConLang suite seeded with the world's brief.
+fn propose_language(project: &Path) -> Result<()> {
+    use crate::world::compile::{
+        compile_astronomy, compile_climate, compile_culture, compile_demographics, compile_hydrology,
+        compile_polities,
+    };
+    use crate::world::language_proposals::language_proposals;
+    use crate::world::storage::WorldStore;
+
+    let def = load(project)?;
+    let seed = def.seed_u64();
+    let astro = compile_astronomy(&def.astronomy);
+    let geo = geology_for(project, &def)?;
+    let climate = compile_climate(&def, &astro, &geo);
+    let hydro = compile_hydrology(&geo, &climate);
+    let demo = compile_demographics(&climate, &hydro);
+    let pol = compile_polities(&demo, &def.nations, seed);
+    let capital_biomes: Vec<String> = pol
+        .polities
+        .iter()
+        .map(|q| {
+            demo.settlements
+                .iter()
+                .find(|s| (s.x, s.y) == q.capital_pos)
+                .map(|s| s.biome.clone())
+                .unwrap_or_default()
+        })
+        .collect();
+    let cultures = compile_culture(&pol, &capital_biomes, &def.cultures, seed);
+
+    let store = WorldStore::open_for_project(project)
+        .map_err(|e| Error::Store(format!("opening world store: {e}")))?;
+    let resolved = store
+        .resolved_signatures()
+        .map_err(|e| Error::Store(format!("reading proposals: {e}")))?;
+    store
+        .clear_pending_kinds("language")
+        .map_err(|e| Error::Store(format!("clearing proposals: {e}")))?;
+
+    let proposals = language_proposals(&pol, &cultures, seed);
+    let (mut added, mut skipped) = (0usize, 0usize);
+    for p in &proposals {
+        if resolved.contains(&p.signature) {
+            skipped += 1;
+            continue;
+        }
+        store.insert(p).map_err(|e| Error::Store(format!("inserting proposal: {e}")))?;
+        added += 1;
+    }
+    if proposals.is_empty() {
+        println!("no cultures with a language profile — compile a peopled world first (see `realworld culture`)");
+        return Ok(());
+    }
+    println!(
+        "proposed {added} language(s) into the queue ({skipped} already resolved, skipped)"
+    );
+    println!("review with `inkhaven realworld proposals list`, then accept to scaffold in the ConLang suite");
+    Ok(())
+}
+
 fn proposals(project: &Path, cmd: ProposalsCommand) -> Result<()> {
     use crate::world::storage::WorldStore;
     let store = WorldStore::open_for_project(project)
@@ -1668,153 +1862,14 @@ fn parse_id(store: &crate::world::storage::WorldStore, id: &str) -> Result<uuid:
 /// accepted. The `kind` selects the target system book.
 fn accept_one(
     project: &Path,
-    store: &crate::world::storage::WorldStore,
+    _store: &crate::world::storage::WorldStore,
     id: uuid::Uuid,
 ) -> Result<()> {
-    let p = store
-        .get(id)
-        .map_err(|e| Error::Store(format!("get proposal: {e}")))?
-        .ok_or_else(|| Error::Config(format!("no proposal `{id}`")))?;
-    if p.status == "accepted" {
-        println!("{} already accepted", p.name);
-        return Ok(());
-    }
-    if p.kind.starts_with("myth-") {
-        create_myth_entry(project, &p)?;
-        store.set_status(id, "accepted").map_err(|e| Error::Store(format!("accept: {e}")))?;
-        println!("accepted {} → Mythology", p.name);
-        return Ok(());
-    }
-    if p.kind == "character" {
-        create_character(project, &p)?;
-        store.set_status(id, "accepted").map_err(|e| Error::Store(format!("accept: {e}")))?;
-        println!("accepted {} → Characters", p.name);
-        return Ok(());
-    }
-    let place_id = create_place(project, &p)?;
-    store
-        .insert_place_link(&crate::world::proposals::PlaceLink::from_proposal(place_id, &p))
-        .map_err(|e| Error::Store(format!("place link: {e}")))?;
-    store.set_status(id, "accepted").map_err(|e| Error::Store(format!("accept: {e}")))?;
-    println!("accepted {} → Places", p.name);
+    // The shared committer (used by the TUI too) dispatches on the proposal's
+    // kind — Place, Mythology, Character, or language — and flips its status.
+    let (label, name) = crate::world::commit::accept_by_id(project, id)?;
+    println!("accepted {name} → {label}");
     Ok(())
-}
-
-/// Commit an accepted Mythology proposal as a `para:myth-*` paragraph under the
-/// Mythology system book — the same block `src/myth/parse.rs` reads back, tagged
-/// and typed as HJSON so the myth reader / scan pick it up.
-fn create_myth_entry(project: &Path, p: &crate::world::proposals::PlaceProposal) -> Result<()> {
-    use crate::config::Config;
-    use crate::project::ProjectLayout;
-    use crate::store::hierarchy::Hierarchy;
-    use crate::store::{InsertPosition, NodeKind, Store, SYSTEM_TAG_MYTHOLOGY};
-
-    let layout = ProjectLayout::new(project);
-    layout.require_initialized()?;
-    let cfg = Config::load_layered(&layout.config_path())?;
-    let store = Store::open(layout, &cfg)?;
-
-    let myth_book = Hierarchy::load(&store)?
-        .iter()
-        .find(|n| n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(SYSTEM_TAG_MYTHOLOGY))
-        .cloned()
-        .ok_or_else(|| Error::Store("Mythology system book missing".into()))?;
-
-    let tag = p.payload.get("tag").and_then(|v| v.as_str()).unwrap_or("para:myth-symbol").to_string();
-    let body = crate::world::myth_proposals::myth_entry_body(p);
-
-    let h = Hierarchy::load(&store)?;
-    let mut node = store
-        .create_node(&cfg, &h, NodeKind::Paragraph, &p.name, Some(&myth_book), None, InsertPosition::End)
-        .map_err(|e| Error::Store(format!("creating Mythology entry: {e}")))?;
-    node.tags = vec![tag];
-    node.content_type = Some("hjson".to_string());
-    if let Some(rel) = &node.file {
-        std::fs::write(store.project_root().join(rel), body.as_bytes())
-            .map_err(|e| Error::Store(format!("writing Mythology entry: {e}")))?;
-    }
-    // Persists tags + content_type (via to_json) and the HJSON body.
-    store
-        .update_paragraph_content(&mut node, body.as_bytes())
-        .map_err(|e| Error::Store(format!("saving Mythology entry: {e}")))?;
-    Ok(())
-}
-
-/// Commit an accepted ruler proposal as a Character paragraph under the
-/// Characters book — a plain prose stub (the `create_place` write path pointed
-/// at Characters). The author renames and fleshes out from there.
-fn create_character(project: &Path, p: &crate::world::proposals::PlaceProposal) -> Result<()> {
-    use crate::config::Config;
-    use crate::project::ProjectLayout;
-    use crate::store::hierarchy::Hierarchy;
-    use crate::store::{InsertPosition, NodeKind, Store, SYSTEM_TAG_CHARACTERS};
-
-    let layout = ProjectLayout::new(project);
-    layout.require_initialized()?;
-    let cfg = Config::load_layered(&layout.config_path())?;
-    let store = Store::open(layout, &cfg)?;
-
-    let chars_book = Hierarchy::load(&store)?
-        .iter()
-        .find(|n| n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(SYSTEM_TAG_CHARACTERS))
-        .cloned()
-        .ok_or_else(|| Error::Store("Characters system book missing".into()))?;
-
-    let body = crate::world::ruler_proposals::ruler_body(p);
-    let h = Hierarchy::load(&store)?;
-    let mut node = store
-        .create_node(&cfg, &h, NodeKind::Paragraph, &p.name, Some(&chars_book), None, InsertPosition::End)
-        .map_err(|e| Error::Store(format!("creating Character: {e}")))?;
-    if let Some(rel) = &node.file {
-        std::fs::write(store.project_root().join(rel), body.as_bytes())
-            .map_err(|e| Error::Store(format!("writing Character: {e}")))?;
-    }
-    store
-        .update_paragraph_content(&mut node, body.as_bytes())
-        .map_err(|e| Error::Store(format!("saving Character: {e}")))?;
-    Ok(())
-}
-
-/// Commit an accepted Place proposal as a prose paragraph under the Places book.
-/// Returns the created Place node id (for the world cross-reference link).
-fn create_place(project: &Path, p: &crate::world::proposals::PlaceProposal) -> Result<uuid::Uuid> {
-    use crate::config::Config;
-    use crate::project::ProjectLayout;
-    use crate::store::hierarchy::Hierarchy;
-    use crate::store::{InsertPosition, NodeKind, Store, SYSTEM_TAG_PLACES};
-
-    let layout = ProjectLayout::new(project);
-    layout.require_initialized()?;
-    let cfg = Config::load_layered(&layout.config_path())?;
-    let store = Store::open(layout, &cfg)?;
-
-    let places = Hierarchy::load(&store)?
-        .iter()
-        .find(|n| n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(SYSTEM_TAG_PLACES))
-        .cloned()
-        .ok_or_else(|| Error::Store("Places system book missing".into()))?;
-
-    let pop = p.payload.get("population").and_then(|v| v.as_u64()).unwrap_or(0);
-    let class = p.payload.get("class").and_then(|v| v.as_str()).unwrap_or("settlement");
-    let basis = p.payload.get("basis").and_then(|v| v.as_str()).unwrap_or("").replace('_', " ");
-    let biome = p.payload.get("biome").and_then(|v| v.as_str()).unwrap_or("").replace('_', " ");
-    let prose = format!(
-        "{} is a {} of roughly {} people, set at a {} in a {} zone.\n\n// world-compiler proposal {}\n",
-        p.name, class, pop, basis, biome, p.signature
-    );
-
-    let h = Hierarchy::load(&store)?;
-    let mut node = store
-        .create_node(&cfg, &h, NodeKind::Paragraph, &p.name, Some(&places), None, InsertPosition::End)
-        .map_err(|e| Error::Store(format!("creating Place: {e}")))?;
-    if let Some(rel) = &node.file {
-        std::fs::write(store.project_root().join(rel), prose.as_bytes())
-            .map_err(|e| Error::Store(format!("writing Place: {e}")))?;
-    }
-    store
-        .update_paragraph_content(&mut node, prose.as_bytes())
-        .map_err(|e| Error::Store(format!("saving Place: {e}")))?;
-    Ok(node.id)
 }
 
 /// Load + parse the project's `world.hjson`.
@@ -2881,6 +2936,18 @@ mod tests {
         assert!((super::row_to_latitude(180, 181) + 90.0).abs() < 1e-9); // south pole
         assert!((super::row_to_latitude(90, 181)).abs() < 1e-9); // equator
         assert_eq!(super::row_to_latitude(0, 1), 0.0); // degenerate grid
+    }
+
+    #[test]
+    fn bearing_reads_the_compass_with_north_at_row_zero() {
+        // Row 0 = north pole, so a smaller y is north of a larger y.
+        assert_eq!(bearing(10, 10, 20, 10), "E"); // +x = east
+        assert_eq!(bearing(10, 10, 0, 10), "W");
+        assert_eq!(bearing(10, 10, 10, 0), "N"); // smaller y = north
+        assert_eq!(bearing(10, 10, 10, 20), "S");
+        assert_eq!(bearing(10, 10, 20, 0), "NE");
+        assert_eq!(bearing(10, 10, 0, 20), "SW");
+        assert_eq!(bearing(5, 5, 5, 5), "adjacent");
     }
 
     #[test]
