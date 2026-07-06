@@ -182,6 +182,49 @@ geography: {
 }
 ```]
 
+#section("An AI reading of your world")
+
+The world checks itself as far as arithmetic can: `realworld validate` compiles
+every layer and runs the deterministic lints — a river that flows uphill, a
+seafaring people with no coast, a declared nation that sits on no land. Those
+checks are certain, but they are narrow. They cannot tell you that a 360-day
+calendar quietly disagrees with a 365-day orbit, or that an Earth-like planet has
+no business freezing to a mean of five below. For the judgements that need a
+reader rather than a rule, there is one more pass, and it is the only place in the
+whole world system that asks a model to *think about your world as a whole*:
+
+```
+inkhaven realworld critique
+```
+
+It hands an AI your declared `world.hjson` together with a summary of everything
+it compiles to, and asks for three things: *inconsistencies* (a declared value
+that fights its own consequence), *implausibilities* (numbers that would not
+produce the world described), and *missed chances* to make the world more real.
+What comes back is a ranked list of concrete recommendations — each an aspect, an
+issue, and a fix. Add `--write-notes` and every recommendation is filed as a
+paragraph in your Notes book, waiting for the morning you sit down to deepen the
+world:
+
+```
+inkhaven realworld critique --write-notes
+```
+
+#note[
+  The critique never edits `world.hjson`. It reads, it advises, it writes into
+  Notes — and there it stops. Like the deterministic lints, its findings are
+  advisory: you weigh each one and change the world by your own hand, or decide
+  the oddity is exactly the world you meant to build. The call is cost-capped and
+  the cap only informs; you can turn the pass off entirely with `world.critique_enabled = false`.
+]
+
+#insight[
+  The lints tell you what is *broken*; the critique tells you what is *unconvincing*.
+  A world can pass every deterministic check and still read as thin — a tilt that
+  gives no seasons anyone notices, a belief that fits no land, a population the
+  land could never feed. The AI reading is the outside eye that catches the plausible-looking mistake, and turns it into a note you can act on.
+]
+
 #recap((
   [A world has two hands: what *emerges* from the physics you set, and what you
    *declare* by intention. The `geography`, descriptive `hydrology`, and `economy`
@@ -195,4 +238,8 @@ geography: {
   [Where declared and generated disagree, the *author always wins* — so declare any
    name your story leans on rather than trusting the generator to keep it. Export
    the lot with `realworld gazetteer` as a manuscript appendix.],
+  [`realworld validate` runs the deterministic lints; `realworld critique` asks an
+   AI to judge the world's consistency and realism and, with `--write-notes`, files
+   its recommendations into the Notes book. Both advise; neither edits — the world
+   changes only by your hand.],
 ))

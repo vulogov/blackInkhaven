@@ -21,53 +21,52 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.6.1 — Harden & Polish
+## Latest release · 1.6.2 — The Woven World
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.6.1.md`](Documentation/RELEASE_NOTES/1.6.1.md)
-· Plan: [`BUGFIX_PLAN_1.6.1`](Documentation/PROPOSALS/BUGFIX_PLAN_1.6.1.md) · Book:
-[`Building the World with Inkhaven`](Book/BUILDING_THE_WORLD/)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.6.2.md`](Documentation/RELEASE_NOTES/1.6.2.md)
+· Book: [`Building the World with Inkhaven`](Book/BUILDING_THE_WORLD/)
 
-A consolidation release after the big 1.6.0 "Living World" cycle: a stability
-audit over the new code, two subsystems finished, a world-choosing command, and a
-semantic upgrade to the startup haiku. **No new crates.**
+A worldbuilding-polish release that weaves the deterministic World simulation into
+the rest of the project — its cultures, realms, and coordinates now flow into the
+Mythology, Characters, Places, and Notes books. **No new crates.**
 
-### A stability pass
+### The world into your books
 
-A four-track adversarial audit over everything 1.6.0 added → **10 bugs fixed**
-with regression tests: the 1.6.0 RTF panic fix was incomplete (the crash hook
-still fired — now suppressed); the scene-context cache never invalidated
-(mid-session world edits ignored until restart — now mtime-keyed); a declared
-nation could be silently dropped; `realworld travel` overstated north–south
-distance ~1.5× on the equirectangular grid; plus lock coverage, contradiction
-false-positives, and a sweep of lower-severity fixes.
+**`inkhaven realworld propose-myth`** turns each culture's *belief* into a
+Mythology symbol or motif you accept into the Mythology book (which now seeds a
+guide + example on first creation). **`inkhaven realworld propose-rulers`**
+proposes one ruler per realm as a Character stub, named in the world's style and
+rooted in its culture. Both flow through the same proposal queue as Places — the
+world proposes, you decide.
 
-### Two subsystems finished
+### Any place, onto the map
 
-**`inkhaven pdf outline --set <TOC>`** injects a bookmark tree from an indented
-`Title :: page` file, and **`inkhaven sources export --format bibtex|csl-json`**
-closes the CSL-JSON round-trip with Zotero and other citation managers. Both
-retire a `dead_code` allow — the PDF and citation subsystems were already fully
-built and are now warning-clean.
+**`inkhaven realworld set-coords <name>`** gives *any* Place a location on the
+world grid — by `--lat`/`--lon` or `--x`/`--y` — so a place you wrote by hand
+draws and round-trips on the plakat map exactly like a compiler-born one. The
+biome under the cell is filled from the compiled climate.
 
-### Choose a world
+### An AI reading of your world
 
-**`inkhaven realworld variants [--count N]`** grows N candidate worlds from
-consecutive seeds and summarizes each beside the seed that grows it — *the world
-proposes, you choose*, now at the world level (documented in ch. 3 of the book).
+**`inkhaven realworld critique`** runs the free deterministic lints, then asks a
+model to judge the whole world's *consistency* and *plausibility*, returning
+ranked recommendations — **`--write-notes`** files each into the Notes book. It
+never edits `world.hjson`; the cost cap informs, never blocks. Tuned by a new
+`world:` config block.
 
-### Semantic haiku (HAIKU-2)
+### The book
 
-When the local embedding engine is warm, the poem shown on a new paragraph or
-`Ctrl+Z p` is chosen by **cosine similarity** to your writing context — a chapter
-on frost gets a different poem than one on beginnings. Startup and any cold moment
-keep the rotation. **Zero AI API, zero network.** Toggle with
-`editor.haiku_semantic` (default on).
+A new chapter, **"Myth and Belief"**, and an introduction that reframes Inkhaven
+as **one environment, not a toolbox** — where your *Characters*, *Places*, and
+*Artefacts* books are yours to author by hand, and the world only proposes into
+them.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** New commands `pdf outline --set`, `sources export`,
-`realworld variants`; new config `editor.haiku_semantic`; two `dead_code` allows
-retired. All additive — existing projects are unaffected.
+**No new runtime crates.** New commands `realworld propose-myth`,
+`realworld propose-rulers`, `realworld set-coords`, `realworld critique`; new
+`world:` config block; the proposal queue is now multi-book. All additive —
+existing projects are unaffected.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
