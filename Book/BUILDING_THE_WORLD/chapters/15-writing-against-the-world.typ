@@ -99,12 +99,20 @@ realworld scene --place Rivenmouth --day 300
 
 For a named place on a given day, Inkhaven assembles the *scene context* in a
 single reading: the season and weather at that place's latitude, the biome and
-climate it sits in, and the culture of the nearest realm — the people whose land
-this is, the ethos and beliefs you gave them back when you grew the cultures. It
-is the difference between remembering that Rivenmouth is "up north somewhere" and
-being told, before the first sentence, that it is a cold-coast town in the last
-grey week before the frost, in the lands of a people who hold the sea sacred. You
-write a truer scene when the brief comes first.
+climate it sits in, the culture of the nearest realm — the people whose land this
+is, the ethos and beliefs you gave them back when you grew the cultures — and the
+nearest neighbouring place, with the distance and the direction to it. It is the
+difference between remembering that Rivenmouth is "up north somewhere" and being
+told, before the first sentence, that it is a cold-coast town in the last grey
+week before the frost, in the lands of a people who hold the sea sacred, two days'
+ride south of Karsholt. You write a truer scene when the brief comes first.
+
+#note[
+  The neighbouring place is drawn from any Place that has a position on the world
+  grid — whether the world proposed it, or you set it yourself with `realworld set-coords`. So the moment you give a hand-made place a location, it starts
+  appearing in the briefs of its neighbours, and theirs in its. The map you build
+  quietly makes every scene more grounded than the last.
+]
 
 #section("The world while you type")
 

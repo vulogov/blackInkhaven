@@ -194,6 +194,34 @@ historian would.
   and leaves the reconciling to you.
 ]
 
+#section("The past as a rising tide")
+
+`realworld history` gives you the events — the foundings, the rises and falls, the
+migrations — dated on the world's own calendar. But sometimes what you want is not
+the events but the *shape* of the past: how big the world was as it grew, how many
+realms stood at once, when the tide of settlement was rising and when it turned.
+For that there is `realworld chronicle`:
+
+```
+inkhaven realworld chronicle
+```
+
+It reads the same compiled history, but instead of a list of events it reports, at
+the close of each epoch, *how far the world had grown by then* — how many
+settlements of each kind, how many people they held, how many realms were
+standing. You watch the Founding Age hold a handful of towns, the Age of Expansion
+swell with cities, and the Present Age settle into the world your story opens in,
+a realm or two having risen and waned along the way.
+
+#note[
+  The chronicle invents nothing. It is the *same* deterministic history, read as a
+  running total rather than a timeline — a presentation, not a simulation. The
+  world does not model growth year by year; it shows you the state its own
+  chronology already implies at each turning of the age. When you need a felt sense
+  of scale over time — for a prologue, a founding myth, a fallen empire in the
+  backstory — the chronicle is where you read it.
+]
+
 #recap((
   [A world with no past is a stage set; a *chronology* — inferred from where the
    cities sit and how large they grew — gives the present its weight.],
