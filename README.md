@@ -21,52 +21,50 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.6.2 — The Woven World
+## Latest release · 1.6.3 — The World Remembered
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.6.2.md`](Documentation/RELEASE_NOTES/1.6.2.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.6.3.md`](Documentation/RELEASE_NOTES/1.6.3.md)
 · Book: [`Building the World with Inkhaven`](Book/BUILDING_THE_WORLD/)
 
-A worldbuilding-polish release that weaves the deterministic World simulation into
-the rest of the project — its cultures, realms, and coordinates now flow into the
-Mythology, Characters, Places, and Notes books. **No new crates.**
+A worldbuilding-polish release that finishes the World→books weave and gives the
+world a memory of its own past — the last subsystem is bridged, every proposal
+commits through one shared path, and a new chronicle reads the compiled history as
+the world's growth over the ages. **No new crates.**
 
-### The world into your books
+### The last bridge — into the ConLang suite
 
-**`inkhaven realworld propose-myth`** turns each culture's *belief* into a
-Mythology symbol or motif you accept into the Mythology book (which now seeds a
-guide + example on first creation). **`inkhaven realworld propose-rulers`**
-proposes one ruler per realm as a Character stub, named in the world's style and
-rooted in its culture. Both flow through the same proposal queue as Places — the
-world proposes, you decide.
+**`inkhaven realworld propose-language`** reads each culture's language profile and
+naming sample and proposes a *language* per people. Accepting scaffolds a full
+language book in the ConLang suite — Meta, Phonology, Grammar, Dictionary, Sample
+texts — seeded with a `world-profile` brief, so the World × ConLang handoff is now
+automatic. The making of the language stays yours.
 
-### Any place, onto the map
+### One shared committer — and a fix
 
-**`inkhaven realworld set-coords <name>`** gives *any* Place a location on the
-world grid — by `--lat`/`--lon` or `--x`/`--y` — so a place you wrote by hand
-draws and round-trips on the plakat map exactly like a compiler-born one. The
-biome under the cell is filled from the compiled climate.
+Every world proposal — Place, Mythology, Character, or language — now commits
+through a single dispatcher shared by the CLI and the TUI. This **fixes a bug**:
+accepting a non-Place proposal in the TUI used to create a broken Place. The TUI's
+`Ctrl+B W → C` compile now proposes all four kinds, and its queue-clear is
+kind-scoped so a CLI-made proposal survives a later compile.
 
-### An AI reading of your world
+### A chronicle of the past
 
-**`inkhaven realworld critique`** runs the free deterministic lints, then asks a
-model to judge the whole world's *consistency* and *plausibility*, returning
-ranked recommendations — **`--write-notes`** files each into the Notes book. It
-never edits `world.hjson`; the cost cap informs, never blocks. Tuned by a new
-`world:` config block.
+**`inkhaven realworld chronicle`** reads the compiled history as a *state
+trajectory*: at the close of each epoch, how far the world had grown —
+settlements, settled population, realms standing — beside its events. Pure
+presentation of the deterministic history; no simulation.
 
-### The book
+### The world at the desk, deeper
 
-A new chapter, **"Myth and Belief"**, and an introduction that reframes Inkhaven
-as **one environment, not a toolbox** — where your *Characters*, *Places*, and
-*Artefacts* books are yours to author by hand, and the world only proposes into
-them.
+**`Ctrl+B W` no longer freezes** — the overview compiles on a background thread
+with an mtime cache. And the **scene brief names your neighbours**: `realworld scene` reports the nearest coordinate-bearing Place with distance + bearing, so a
+place you positioned by hand grounds the scenes around it.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** New commands `realworld propose-myth`,
-`realworld propose-rulers`, `realworld set-coords`, `realworld critique`; new
-`world:` config block; the proposal queue is now multi-book. All additive —
-existing projects are unaffected.
+**No new runtime crates.** New commands `realworld propose-language`,
+`realworld chronicle`; every proposal kind commits through one shared path (CLI +
+TUI). All additive — existing projects are unaffected.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

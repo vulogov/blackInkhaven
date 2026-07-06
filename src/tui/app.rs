@@ -1752,6 +1752,10 @@ pub(crate) struct App {
     /// The `world.hjson` mtime the cached `scene_world` was built from — so a
     /// mid-session edit to the world invalidates the compile.
     scene_world_mtime: Option<std::time::SystemTime>,
+    /// BUG-8 — the last-computed World-overview rows + the `world.hjson` mtime
+    /// they were built from. A matching mtime re-opens the overview instantly;
+    /// otherwise it recompiles off-thread (no UI freeze on DEM / large worlds).
+    world_overview_cache: Option<(std::time::SystemTime, Vec<String>)>,
     scene_last_para: Option<Uuid>,
     scene_brief: Option<crate::world::scene::SceneBrief>,
     /// NARR-1 — ambient prose check toggle (`Ctrl+V Shift+V`); seeded from
@@ -3032,6 +3036,7 @@ impl App {
             theo_needs_check: false,
             scene_world: None,
             scene_world_mtime: None,
+            world_overview_cache: None,
             scene_last_para: None,
             scene_brief: None,
             ie_auto: false,
@@ -3882,6 +3887,25 @@ impl App {
                         "⚖ Inner Theologian — in the Thoughts pane (↑↓ scroll · Ctrl+Z f fullscreen)".into();
                 }
                 Err(e) => self.status = format!("Inner Theologian skipped: {e}"),
+            },
+            BgJobKind::WorldOverview => match result {
+                Ok(joined) => {
+                    let rows: Vec<String> = joined.split('\n').map(str::to_string).collect();
+                    // Cache against the current world.hjson mtime for instant re-open.
+                    let root = self.store.project_root().to_path_buf();
+                    if let Ok(mt) = std::fs::metadata(root.join("world.hjson")).and_then(|m| m.modified()) {
+                        self.world_overview_cache = Some((mt, rows.clone()));
+                    }
+                    // Fill the overview only if it's still the open modal (the
+                    // author may have moved on while it compiled).
+                    if let Modal::WorldOverview { rows: r, cursor } = &mut self.modal {
+                        *cursor = (*cursor).min(rows.len().saturating_sub(1));
+                        *r = rows;
+                        self.status =
+                            "World · ↑↓ scroll · C compile · P proposals · F fact-check · M map · Esc".into();
+                    }
+                }
+                Err(e) => self.status = format!("world overview failed: {e}"),
             },
         }
     }
@@ -6832,6 +6856,9 @@ pub(super) enum BgJobKind {
     /// J→T`. The worker calls the persona over the open paragraph and emits its
     /// questions to Output; the `Ok` payload is "1" when a question landed.
     TheologianSlow,
+    /// BUG-8 — the `Ctrl+B W` world overview compiled off-thread (deterministic,
+    /// zero-AI). The `Ok` payload is the overview rows joined by `\n`.
+    WorldOverview,
 }
 
 /// An in-flight background job: its progress/result channel + a label + which
@@ -13309,16 +13336,84 @@ impl App {
 
     /// WORLD-4 — `Ctrl+B W`. Build the read-only World overview: the world
     /// definition + compiled astronomy + materialization status.
-    fn open_world_overview(&mut self) {
-        let rows = self.build_world_overview_rows();
-        self.modal = Modal::WorldOverview { rows, cursor: 0 };
-        self.status = "World · ↑↓ scroll · C compile · P proposals · F fact-check · M map · Esc".into();
+    /// The chapter titles materialized under the World book — captured on the
+    /// main thread and handed to the (off-thread) overview compute.
+    fn world_book_chapters(&self) -> Vec<String> {
+        self.hierarchy
+            .iter()
+            .find(|n| {
+                n.kind == crate::store::node::NodeKind::Book
+                    && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_WORLD)
+            })
+            .map(|world| {
+                self.hierarchy
+                    .children_of(Some(world.id))
+                    .iter()
+                    .map(|c| c.title.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
-    fn build_world_overview_rows(&self) -> Vec<String> {
+    /// `Ctrl+B W`. BUG-8 — the overview compiles the whole world chain, which
+    /// freezes the UI on DEM / large worlds. So: reuse a cached render when
+    /// `world.hjson` is unchanged, otherwise show a placeholder and compile on a
+    /// background thread, filling the modal when it lands.
+    fn open_world_overview(&mut self) {
+        let root = self.store.project_root().to_path_buf();
+        let mtime = std::fs::metadata(root.join("world.hjson")).and_then(|m| m.modified()).ok();
+
+        // Fresh cache (same world.hjson) → open instantly.
+        if let (Some(mt), Some((cached_mt, rows))) = (mtime, &self.world_overview_cache) {
+            if *cached_mt == mt {
+                self.modal = Modal::WorldOverview { rows: rows.clone(), cursor: 0 };
+                self.status = "World · ↑↓ scroll · C compile · P proposals · F fact-check · M map · Esc".into();
+                return;
+            }
+        }
+
+        let scene_brief = self.scene_brief.clone();
+        let chapters = self.world_book_chapters();
+        let slow_auto = self.slow_auto;
+        // Clones for the worker so the synchronous fallback can still use the
+        // originals if `start_bg_job` refuses (a job is already running).
+        let (root_worker, scene_worker, chapters_worker) = (root.clone(), scene_brief.clone(), chapters.clone());
+        let started = self.start_bg_job(BgJobKind::WorldOverview, "world overview", move |tx, _cancel| {
+            let rows = Self::compute_world_overview_rows(&root_worker, scene_worker.as_ref(), &chapters_worker, slow_auto);
+            let _ = tx.send(BgMsg::Done(Ok(rows.join("\n"))));
+        });
+        if started {
+            // Placeholder while the chain compiles off-thread.
+            self.modal = Modal::WorldOverview {
+                rows: vec!["Compiling the world… (this can take a moment on large / DEM worlds)".into()],
+                cursor: 0,
+            };
+            self.status = "World · compiling…".into();
+        } else {
+            // A job is already running — fall back to a synchronous compile so the
+            // overview always opens (rare; the freeze only applies this once).
+            let rows = Self::compute_world_overview_rows(&root, scene_brief.as_ref(), &chapters, slow_auto);
+            if let Some(mt) = mtime {
+                self.world_overview_cache = Some((mt, rows.clone()));
+            }
+            self.modal = Modal::WorldOverview { rows, cursor: 0 };
+            self.status = "World · ↑↓ scroll · C compile · P proposals · F fact-check · M map · Esc".into();
+        }
+    }
+
+    /// Compute the World-overview rows. A free function (no `&self`) so it can run
+    /// on a background thread — BUG-8: compiling the whole chain here used to
+    /// freeze the UI on DEM / large worlds. `world_chapters` (the titles already
+    /// materialized under the World book) and `slow_auto` are captured up front on
+    /// the main thread; everything else is read from disk + compiled off-thread.
+    fn compute_world_overview_rows(
+        root: &std::path::Path,
+        scene_brief: Option<&crate::world::scene::SceneBrief>,
+        world_chapters: &[String],
+        slow_auto: bool,
+    ) -> Vec<String> {
         use crate::world::compile::compile_astronomy;
         use crate::world::types::WorldDefinition;
-        let root = self.store.project_root();
         let path = root.join("world.hjson");
         let mut rows: Vec<String> = Vec::new();
         let Ok(raw) = std::fs::read_to_string(&path) else {
@@ -13344,7 +13439,7 @@ impl App {
         rows.push("".into());
 
         // WORLD-10 (S-P4) — the current scene, focused, above the world layers.
-        if let Some(b) = &self.scene_brief {
+        if let Some(b) = scene_brief {
             rows.push("This scene".into());
             if let Some(p) = &b.place {
                 let extras: Vec<&str> =
@@ -13402,23 +13497,8 @@ impl App {
         ));
         rows.push("".into());
 
-        // The chapter titles already materialized under the World book — drives
-        // the per-layer ✓ / pending status below.
-        let world_chapters: Vec<String> = self
-            .hierarchy
-            .iter()
-            .find(|n| {
-                n.kind == crate::store::node::NodeKind::Book
-                    && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_WORLD)
-            })
-            .map(|world| {
-                self.hierarchy
-                    .children_of(Some(world.id))
-                    .iter()
-                    .map(|c| c.title.clone())
-                    .collect()
-            })
-            .unwrap_or_default();
+        // The chapter titles already materialized under the World book (captured
+        // on the main thread) drive the per-layer ✓ / pending status below.
         let has = |title: &str| world_chapters.iter().any(|c| c.eq_ignore_ascii_case(title));
 
         // WORLD-7 (W7-P2) — surface every physical layer, not just astronomy.
@@ -13516,7 +13596,7 @@ impl App {
         rows.push("".into());
         rows.push(format!(
             "Keys:  C compile · P proposals · F fact-check (→P/B/R) · M map · S slow-auto [{}]",
-            if self.slow_auto { "on" } else { "off" }
+            if slow_auto { "on" } else { "off" }
         ));
         rows.push("CLI: inkhaven realworld new / validate / compile [--materialize]".into());
         rows
@@ -13707,21 +13787,48 @@ impl App {
             }
         }
 
-        // Seed the proposal queue, skipping already-resolved sites.
+        // Everything the world offers: Places, plus the culture-derived bridges
+        // (Mythology symbols, realm rulers, and languages). Each kind clears only
+        // its own pending set and skips sites the author already resolved.
+        let seed = def.seed_u64();
+        let pol = compile_polities(&demo, &def.nations, seed);
+        let capital_biomes: Vec<String> = pol
+            .polities
+            .iter()
+            .map(|q| {
+                demo.settlements
+                    .iter()
+                    .find(|s| (s.x, s.y) == q.capital_pos)
+                    .map(|s| s.biome.clone())
+                    .unwrap_or_default()
+            })
+            .collect();
+        let cultures = compile_culture(&pol, &capital_biomes, &def.cultures, seed);
         let n_proposed = (|| -> crate::error::Result<usize> {
+            use crate::world::language_proposals::language_proposals;
+            use crate::world::myth_proposals::myth_proposals;
             use crate::world::proposals::place_proposals;
+            use crate::world::ruler_proposals::ruler_proposals;
             use crate::world::storage::WorldStore;
             let ws = WorldStore::open_for_project(&root)
                 .map_err(|e| crate::error::Error::Store(format!("world store: {e}")))?;
             let resolved = ws
                 .resolved_signatures()
                 .map_err(|e| crate::error::Error::Store(format!("{e}")))?;
-            ws.clear_pending().map_err(|e| crate::error::Error::Store(format!("{e}")))?;
+            let batches: Vec<(&str, Vec<crate::world::proposals::PlaceProposal>)> = vec![
+                ("place", place_proposals(&demo, seed)),
+                ("myth-%", myth_proposals(&cultures, seed)),
+                ("character", ruler_proposals(&pol, &cultures, seed)),
+                ("language", language_proposals(&pol, &cultures, seed)),
+            ];
             let mut n = 0;
-            for p in place_proposals(&demo, def.seed_u64()) {
-                if !resolved.contains(&p.signature) {
-                    ws.insert(&p).map_err(|e| crate::error::Error::Store(format!("{e}")))?;
-                    n += 1;
+            for (like, batch) in batches {
+                ws.clear_pending_kinds(like).map_err(|e| crate::error::Error::Store(format!("{e}")))?;
+                for p in batch {
+                    if !resolved.contains(&p.signature) {
+                        ws.insert(&p).map_err(|e| crate::error::Error::Store(format!("{e}")))?;
+                        n += 1;
+                    }
                 }
             }
             Ok(n)
@@ -13729,9 +13836,10 @@ impl App {
         match n_proposed {
             Ok(n) => {
                 self.fact_check_enabled = true; // a compiled world → live checking
+                self.world_overview_cache = None; // materialized layers → re-render marks
                 self.refresh_hierarchy_after_world_write();
                 self.status = format!(
-                    "world compiled — 5 layers materialized, {n} Place proposal(s) (Ctrl+B W → P)"
+                    "world compiled — 5 layers materialized, {n} proposal(s) across Places · Mythology · Characters · Languages (Ctrl+B W → P)"
                 );
             }
             Err(e) => self.status = format!("world proposals: {e}"),
@@ -15154,14 +15262,14 @@ impl App {
             },
             _ => return,
         };
-        let result = if accept { self.accept_world_proposal(id) } else { self.reject_world_proposal(id) };
-        match result {
-            Ok(()) => {
-                self.status = if accept {
-                    format!("accepted {name} → Places")
-                } else {
-                    format!("rejected {name}")
-                };
+        let outcome = if accept {
+            self.accept_world_proposal(id).map(|label| format!("accepted {name} → {label}"))
+        } else {
+            self.reject_world_proposal(id).map(|_| format!("rejected {name}"))
+        };
+        match outcome {
+            Ok(msg) => {
+                self.status = msg;
                 // Reload pending proposals; close the overlay when none remain.
                 use crate::world::storage::WorldStore;
                 let root = self.store.project_root().to_path_buf();
@@ -15180,9 +15288,10 @@ impl App {
         }
     }
 
-    fn accept_world_proposal(&mut self, id: uuid::Uuid) -> crate::error::Result<()> {
-        use crate::store::hierarchy::Hierarchy;
-        use crate::store::{InsertPosition, NodeKind, SYSTEM_TAG_PLACES};
+    /// Accept the proposal into its target book (Place · Mythology · Character ·
+    /// language) via the shared committer, then flip its status. Returns the book
+    /// label for the status line.
+    fn accept_world_proposal(&mut self, id: uuid::Uuid) -> crate::error::Result<&'static str> {
         use crate::world::storage::WorldStore;
         let root = self.store.project_root().to_path_buf();
         let ws = WorldStore::open_for_project(&root)
@@ -15191,42 +15300,9 @@ impl App {
             .get(id)
             .map_err(|e| crate::error::Error::Store(format!("{e}")))?
             .ok_or_else(|| crate::error::Error::Config("proposal not found".into()))?;
-
-        let places = self
-            .hierarchy
-            .iter()
-            .find(|n| n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(SYSTEM_TAG_PLACES))
-            .cloned()
-            .ok_or_else(|| crate::error::Error::Store("Places book missing".into()))?;
-        let pop = p.payload.get("population").and_then(|v| v.as_u64()).unwrap_or(0);
-        let class = p.payload.get("class").and_then(|v| v.as_str()).unwrap_or("settlement");
-        let basis = p.payload.get("basis").and_then(|v| v.as_str()).unwrap_or("").replace('_', " ");
-        let biome = p.payload.get("biome").and_then(|v| v.as_str()).unwrap_or("").replace('_', " ");
-        let prose = format!(
-            "{} is a {} of roughly {} people, set at a {} in a {} zone.\n\n// world-compiler proposal {}\n",
-            p.name, class, pop, basis, biome, p.signature
-        );
-        let h = Hierarchy::load(&self.store)?;
-        let mut node = self.store.create_node(
-            &self.cfg,
-            &h,
-            NodeKind::Paragraph,
-            &p.name,
-            Some(&places),
-            None,
-            InsertPosition::End,
-        )?;
-        if let Some(rel) = &node.file {
-            std::fs::write(self.store.project_root().join(rel), prose.as_bytes())
-                .map_err(|e| crate::error::Error::Store(format!("writing Place: {e}")))?;
-        }
-        self.store.update_paragraph_content(&mut node, prose.as_bytes())?;
-        // Record the Place ↔ World cross-reference (climate zone / biome /
-        // hydrology basis / coordinates), keyed to the new Place's node id.
-        ws.insert_place_link(&crate::world::proposals::PlaceLink::from_proposal(node.id, &p))
-            .map_err(|e| crate::error::Error::Store(format!("{e}")))?;
+        let label = crate::world::commit::commit_proposal(&self.store, &self.cfg, &ws, &p)?;
         ws.set_status(id, "accepted").map_err(|e| crate::error::Error::Store(format!("{e}")))?;
-        Ok(())
+        Ok(label)
     }
 
     fn reject_world_proposal(&mut self, id: uuid::Uuid) -> crate::error::Result<()> {

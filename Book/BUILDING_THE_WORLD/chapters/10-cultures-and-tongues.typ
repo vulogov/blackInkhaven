@@ -117,6 +117,14 @@ one.
 
 #propose_accept()
 
+You do not have to carry the profile across by hand. Run `realworld propose-language` and the world reads every culture's profile and naming sample and
+proposes a *language* per people — waiting in the same queue as your Places and
+rulers. Accept one and the world scaffolds a fresh language book in the ConLang
+suite for you: its Meta, Phonology, Grammar, Dictionary, and Sample-texts
+chapters, with a `world-profile` brief already written in — the word order, the
+morphology, the sound, and the naming sample the world proposed. The handoff is
+done; what remains is the making, which was always yours.
+
 This is the *World × ConLang bridge*, and it is the reason the two systems exist
 side by side rather than as one. The World system is very good at *where a
 language sits* — it can read the biome, the isolation of a mountain valley, the

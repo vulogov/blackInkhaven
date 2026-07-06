@@ -191,6 +191,51 @@ pub fn epoch_of(year: i64, epochs: &[Epoch]) -> Option<&Epoch> {
     epochs.iter().find(|e| year >= e.start_year && year < e.end_year)
 }
 
+/// WORLD-13 — the world's *accumulated* state at a given year, derived purely
+/// from the compiled foundings + events (no new dynamics — this is presentation,
+/// not simulation). Powers `realworld chronicle`: at each epoch we report how far
+/// the world had grown by then.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct HistoryState {
+    pub settlements: usize,
+    pub cities: usize,
+    pub towns: usize,
+    pub villages: usize,
+    /// Summed population of the settlements founded by this year.
+    pub settled_population: u64,
+    pub realms_risen: usize,
+    pub realms_fallen: usize,
+}
+
+impl HistoryState {
+    /// Realms standing = risen minus fallen (never below zero).
+    pub fn realms_active(&self) -> usize {
+        self.realms_risen.saturating_sub(self.realms_fallen)
+    }
+}
+
+/// Accumulate every founding / rise / fall dated at or before `year`.
+pub fn state_at(hist: &HistoryOutput, year: i64) -> HistoryState {
+    let mut st = HistoryState::default();
+    for f in hist.foundings.iter().filter(|f| f.year <= year) {
+        st.settlements += 1;
+        st.settled_population = st.settled_population.saturating_add(f.population);
+        match f.class.as_str() {
+            "city" => st.cities += 1,
+            "town" => st.towns += 1,
+            _ => st.villages += 1,
+        }
+    }
+    for e in hist.events.iter().filter(|e| e.year <= year) {
+        match e.kind.as_str() {
+            "rise" => st.realms_risen += 1,
+            "fall" => st.realms_fallen += 1,
+            _ => {}
+        }
+    }
+    st
+}
+
 /// WORLD-11 — verify declared history events for plausibility. Advisory only.
 pub fn lint_history(declared: &[crate::world::types::HistEventDef], out: &HistoryOutput) -> Vec<String> {
     let mut warnings = Vec::new();
@@ -259,6 +304,32 @@ mod tests {
         assert!(h.foundings.first().unwrap().year < h.foundings.last().unwrap().year);
         assert_eq!(h.foundings.len(), 3);
         assert_eq!(h.epochs.len(), 3);
+    }
+
+    #[test]
+    fn state_accumulates_monotonically_through_time() {
+        let d = demo(vec![
+            settle(0, 0, 90_000, "city", "river_mouth"),
+            settle(40, 40, 80_000, "city", "confluence"),
+            settle(1, 1, 3_000, "town", "fertile_valley"),
+            settle(41, 39, 2_000, "village", "coast"),
+        ]);
+        let h = compile_history(&d, &[], 0x55);
+        // Nothing exists before recorded history begins.
+        let before = state_at(&h, h.span_years * -2);
+        assert_eq!(before.settlements, 0);
+        assert_eq!(before.settled_population, 0);
+        // By the present, every founding has landed and populations sum up.
+        let now = state_at(&h, 0);
+        assert_eq!(now.settlements, 4);
+        assert_eq!(now.settled_population, 175_000);
+        assert_eq!(now.cities + now.towns + now.villages, 4);
+        // Monotonic: an earlier cut never has more than a later one.
+        let mid = state_at(&h, -h.span_years / 2);
+        assert!(mid.settlements <= now.settlements);
+        assert!(mid.settled_population <= now.settled_population);
+        // Active realms never go negative.
+        assert!(now.realms_active() <= now.realms_risen);
     }
 
     #[test]
