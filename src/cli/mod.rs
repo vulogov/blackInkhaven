@@ -4278,6 +4278,14 @@ pub enum RealworldCommand {
     /// queue (nothing commits until you accept). Re-running skips sites already
     /// accepted or rejected.
     Propose,
+    /// WORLD-12 — generate Mythology proposals (symbols / motifs) from the
+    /// world's cultures' beliefs into the proposal queue. Accept them like Place
+    /// proposals to commit `para:myth-*` entries into the Mythology book.
+    ProposeMyth,
+    /// WORLD-12 — propose one ruler per polity (named in the world's style,
+    /// rooted in the realm's culture) into the proposal queue. Accept them like
+    /// Place proposals to commit Character stubs into the Characters book.
+    ProposeRulers,
     /// Work the proposal queue (list / accept / reject).
     Proposals {
         #[command(subcommand)]
@@ -4286,6 +4294,26 @@ pub enum RealworldCommand {
     /// List the Place ↔ World cross-references (accepted compiler Places + their
     /// climate zone / biome / hydrology basis / coordinates).
     Places,
+    /// WORLD-12 — give a Place (from the Places book) a location on the world
+    /// grid so it appears on the plakat map. Pass grid cells (`--x`/`--y`) or
+    /// geographic degrees (`--lat`/`--lon`); the biome under the cell is filled
+    /// from the compiled climate. Works for any Place, hand-authored or compiled.
+    SetCoords {
+        /// The Place's name (its paragraph title in the Places book).
+        name: String,
+        /// Grid column (0..width-1). Use with `--y`.
+        #[arg(long)]
+        x: Option<usize>,
+        /// Grid row (0..height-1, row 0 = north). Use with `--x`.
+        #[arg(long)]
+        y: Option<usize>,
+        /// Latitude in degrees (−90 south .. 90 north). Use with `--lon`.
+        #[arg(long, allow_hyphen_values = true)]
+        lat: Option<f64>,
+        /// Longitude in degrees (−180 .. 180). Use with `--lat`.
+        #[arg(long, allow_hyphen_values = true)]
+        lon: Option<f64>,
+    },
     /// WORLD-7 — derive a story-Timeline calendar from the world's astronomy
     /// (months, season markers) and print it to adopt under `timeline.calendar`.
     Calendar,
@@ -4382,6 +4410,25 @@ pub enum RealworldCommand {
         /// Run even if the cost estimate exceeds `--max-cost`.
         #[arg(long)]
         force: bool,
+    },
+    /// WORLD-12 — an AI pass over `world.hjson`: compile + run the deterministic
+    /// lints (free), then ask an LLM to critique the world's consistency and
+    /// realism and recommend improvements. `--write-notes` files each
+    /// recommendation into the Notes book. Cost-capped; the cap informs, never
+    /// blocks.
+    Critique {
+        /// Per-call soft cap (estimated tokens); overrides `world.critique_max_tokens`.
+        #[arg(long)]
+        max_cost: Option<usize>,
+        /// Run even if the cost estimate exceeds the soft cap.
+        #[arg(long)]
+        force: bool,
+        /// File each recommendation as a paragraph in the Notes book.
+        #[arg(long)]
+        write_notes: bool,
+        /// Run only the deterministic lints; skip the LLM call entirely.
+        #[arg(long)]
+        lints_only: bool,
     },
     /// Render the world map with `plakat`: compile every layer, emit a MapSpec,
     /// and write a features PNG + GeoJSON under `assets/maps/`. Resolved landmark

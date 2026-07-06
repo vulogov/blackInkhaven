@@ -439,6 +439,76 @@ impl Store {
         Ok(())
     }
 
+    /// MYTH-1 — seed the freshly-created **Mythology** system book with a short
+    /// guide paragraph (prose — never parsed as a declaration) and one live
+    /// example `para:myth-symbol` entry, so the author opens a book that teaches
+    /// its own schema instead of a blank page. Mirrors `ensure_sources_chapter`:
+    /// called ONLY on first creation (from `ensure_system_books`), so deleting
+    /// the seeds won't make them reappear.
+    ///
+    /// Only a *symbol* is seeded live (not a motif or archetype): symbols raise
+    /// no deterministic `myth check` finding on an empty manuscript, whereas a
+    /// seeded motif/archetype would (absent-from-final-act / vacant-role). The
+    /// motif and archetype schemas are shown in the guide prose instead.
+    fn seed_mythology_book(&self, cfg: &Config, book_id: Uuid) -> Result<()> {
+        const GUIDE: &str = "\
+This is the Mythology book — your declared symbolic vocabulary. Tag a paragraph \
+`para:myth-symbol`, `para:myth-motif`, or `para:myth-archetype` and give it an \
+HJSON block; `inkhaven myth scan` / `check` read only what you declare here.\n\n\
+Symbol — a vocabulary that carries a meaning:\n\
+{ myth_symbol: {\n  vocabulary: [\"raven\", \"ravens\"]\n  meaning: \"a herald of betrayal\"\n  valence: \"negative\"\n  traditions: [\"the northern clans\"]\n} }\n\n\
+Motif — a recurring pattern:\n\
+{ myth_motif: {\n  name: \"the locked door\"\n  description: \"a threshold refused, then crossed\"\n  valence: \"ambiguous\"\n} }\n\n\
+Archetype — a narrative role bound to a character:\n\
+{ myth_archetype: {\n  role: \"herald\"\n  character: \"Seren\"\n  function: \"announces the rupture that starts the story\"\n} }\n\n\
+Tip: `inkhaven realworld propose-myth` turns your world's cultural beliefs into \
+symbol/motif proposals you can accept straight into this book.";
+        const EXAMPLE_SYMBOL: &str = "\
+{ myth_symbol: {\n  vocabulary: [\"the tide\", \"the deep\"]\n  meaning: \"what returns, and what it takes\"\n  valence: \"ambiguous\"\n  traditions: [\"example — replace or delete\"]\n} }\n";
+
+        let h = Hierarchy::load(self)?;
+        let book = h
+            .get(book_id)
+            .cloned()
+            .ok_or_else(|| Error::Store(format!("seed_mythology_book: book {book_id} missing")))?;
+
+        // (a) The guide paragraph — plain prose, untagged, so the parser skips it.
+        let mut guide = self.create_node(
+            cfg,
+            &h,
+            NK::Paragraph,
+            "How to use this book",
+            Some(&book),
+            None,
+            InsertPosition::End,
+        )?;
+        if let Some(rel) = &guide.file {
+            crate::io_atomic::write(&self.layout.root.join(rel), GUIDE.as_bytes()).map_err(Error::Io)?;
+        }
+        self.update_paragraph_content(&mut guide, GUIDE.as_bytes())?;
+
+        // (b) One live example symbol — tagged + HJSON so the highlight and
+        //     `myth profile` show something immediately.
+        let h2 = Hierarchy::load(self)?;
+        let mut example = self.create_node(
+            cfg,
+            &h2,
+            NK::Paragraph,
+            "Example symbol — the tide",
+            Some(&book),
+            None,
+            InsertPosition::End,
+        )?;
+        example.tags = vec!["para:myth-symbol".to_string()];
+        example.content_type = Some("hjson".to_string());
+        if let Some(rel) = &example.file {
+            crate::io_atomic::write(&self.layout.root.join(rel), EXAMPLE_SYMBOL.as_bytes())
+                .map_err(Error::Io)?;
+        }
+        self.update_paragraph_content(&mut example, EXAMPLE_SYMBOL.as_bytes())?;
+        Ok(())
+    }
+
     /// Ensure a chapter named after `book_title` exists inside the
     /// Typst system book, and that it contains paragraphs `index.typ`,
     /// `settings.typ`, `globals.typ`. Each part is created only if
@@ -607,6 +677,12 @@ impl Store {
                     self.inner
                         .update_metadata(node.id, node.to_json())
                         .map_err(|e| Error::Store(format!("update_metadata: {e}")))?;
+                    // MYTH-1 — a freshly-created Mythology book gets a guide +
+                    // one example symbol so it teaches its own schema. First
+                    // creation only (this arm never runs for an existing book).
+                    if *tag == SYSTEM_TAG_MYTHOLOGY {
+                        self.seed_mythology_book(cfg, node.id)?;
+                    }
                 }
             }
         }

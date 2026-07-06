@@ -30,6 +30,19 @@ pub(crate) use pipeline::{
 };
 pub(crate) use store::MythStore;
 
+/// Test-only: parse a `myth_symbol` HJSON block (used by the World→Mythology
+/// bridge test to prove the proposed body round-trips through the real parser).
+#[cfg(test)]
+pub(crate) fn parse_symbol_block_for_test(id: &str, body: &str) -> Option<MythSymbol> {
+    parse::parse_symbol_block(id, body)
+}
+
+/// Test-only: parse a `myth_motif` HJSON block (see `parse_symbol_block_for_test`).
+#[cfg(test)]
+pub(crate) fn parse_motif_block_for_test(id: &str, body: &str) -> Option<MythMotif> {
+    parse::parse_motif_block(id, body)
+}
+
 /// The registered `para:myth-*` tag values, their tree glyphs, and labels. Valid
 /// only inside the Mythology system book (the `myth` reader filters by ancestor).
 /// Parallel to WORLD-6's `UTOPIA_TYPES`: declarations with no seeded boilerplate,

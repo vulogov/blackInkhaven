@@ -1,6 +1,6 @@
 #import "../design.typ": *
 
-#chapter(number: 16, title: "Into Your Book")
+#chapter(number: 17, title: "Into Your Book")
 
 You have a world that comes to your cursor and a world that checks your prose.
 The last step of the whole journey is the quietest and, in a way, the most
@@ -154,6 +154,33 @@ map.
   not — it only writes `maps/world.mapspec.json`, which you can hand to plakat on
   another machine, or keep as the portable, byte-stable description of your
   world's map.
+]
+
+#subsection("Placing a Place by hand")
+
+The map draws the settlements the world proposed and you accepted — each of those
+carries a grid position from the moment you accepted it. But some places on your
+map were never the world's idea: a hidden monastery, a ruined tower, a city you
+typed straight into the Places book because the story needed it. A Place authored
+by hand has no coordinates, so the map does not know where to draw it. You give
+it one with `realworld set-coords`:
+
+```
+inkhaven realworld set-coords "Skyhold" --lat 55 --lon -20
+```
+
+You may pass geographic degrees (`--lat`/`--lon`) or raw grid cells
+(`--x`/`--y`); Inkhaven fills in the biome under that cell from the compiled
+climate, so a hand-placed Place arrives knowing what land it stands on. From then
+on it is a first-class location: `realworld map` draws and labels it like any
+other, and the round-trip refines its position just the same. Move it later by
+running the command again with new coordinates.
+
+#note[
+  `set-coords` works on any Place in the Places book, whether the world proposed
+  it or you wrote it. It does not invent a settlement or a population — it only
+  answers the one question the map needs: *where on the world does this place
+  stand?* Everything else about the Place remains yours.
 ]
 
 #subsection("plakat → inkhaven: bring a map in")

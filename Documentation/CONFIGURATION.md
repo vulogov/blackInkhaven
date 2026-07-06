@@ -2411,6 +2411,37 @@ myth: {
 
 See [Tutorial 102 — Mythological & Symbolic Pattern Library](Tutorials/102-mythology.md).
 
+## 1.6.2 — AI world critique (WORLD-12)
+
+The optional `world:` block tunes the AI world-critique pass
+(`inkhaven realworld critique`). Omit it for the defaults below;
+`critique_enabled: false` makes `critique` run the deterministic lints only and
+skip the LLM call.
+
+```hjson
+world: {
+  // Master switch for the AI critique pass. false => lints only, no LLM call.
+  critique_enabled: true
+  // Per-call soft cap (estimated tokens) for the critique LLM call. Informs via
+  // the preflight; --force / --max-cost override it. 0 disables the soft cap.
+  critique_max_tokens: 24000
+  // Warn (inform, never block) when a critique run is estimated to exceed this
+  // many USD.
+  critique_cost_warn: 0.10
+}
+```
+
+- **`inkhaven realworld critique`** compiles the world, prints the free
+  deterministic lints (`lint_history` / `lint_polities` / `lint_rivers` /
+  `lint_culture` / `lint_ecology` / magic), then asks a model to judge the whole
+  world's consistency + plausibility over the declared `world.hjson` and a compiled
+  summary, returning ranked `{aspect, issue, recommendation, severity}` findings.
+- **`--write-notes`** files each recommendation as a paragraph in the Notes book;
+  **`--lints-only`** skips the AI; **`--max-cost <tokens>`** / **`--force`**
+  override the soft cap. Advisory: it never edits `world.hjson`. The call is
+  cost-capped on the shared world slow-track budget (`cost.world_daily_call_cap`) —
+  the cap informs, never blocks.
+
 ## 1.5.0 — Research Assistant (RESRCH-1)
 
 The optional `research:` block tunes `inkhaven research` — a separate TUI screen

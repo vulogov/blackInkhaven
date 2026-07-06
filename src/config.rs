@@ -80,6 +80,9 @@ pub struct Config {
     /// MYTH-1 — mythological & symbolic pattern library.
     #[serde(default)]
     pub myth: MythConfig,
+    /// WORLD-12 — the AI world-critique pass (`realworld critique`).
+    #[serde(default)]
+    pub world: WorldConfig,
     /// RESRCH-1 — the Research Assistant (`inkhaven research`).
     #[serde(default)]
     pub research: ResearchConfig,
@@ -237,6 +240,7 @@ impl Default for Config {
             char: CharConfig::default(),
             theologian: TheologianConfig::default(),
             myth: MythConfig::default(),
+            world: WorldConfig::default(),
             research: ResearchConfig::default(),
             genre: None,
             inner_socrates_default_persona: None,
@@ -3973,6 +3977,28 @@ impl Default for MythConfig {
             final_act_pct: 25,
             check_cost_warn: 0.08,
         }
+    }
+}
+
+/// WORLD-12 — `world:` block. Tunes the AI world-critique pass (`inkhaven
+/// realworld critique`). All optional; omitting the block uses these defaults.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WorldConfig {
+    /// Master switch for the AI critique pass. `false` makes `realworld critique`
+    /// run the deterministic lints only, skipping the LLM call.
+    pub critique_enabled: bool,
+    /// Per-call soft cap (estimated tokens) for the critique LLM call. Informs
+    /// via the preflight; `--force` / `--max-cost` override it. `0` disables.
+    pub critique_max_tokens: usize,
+    /// Warn (inform, never block) when a critique run is estimated to exceed this
+    /// many USD.
+    pub critique_cost_warn: f32,
+}
+
+impl Default for WorldConfig {
+    fn default() -> Self {
+        Self { critique_enabled: true, critique_max_tokens: 24_000, critique_cost_warn: 0.10 }
     }
 }
 

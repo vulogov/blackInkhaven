@@ -106,25 +106,56 @@ By the last page you will be able to:
    world's places and calendar flowing straight into your manuscript.],
 )
 
-#section("Where worldbuilding sits in Inkhaven")
+#section("Not a set of tools — one environment")
 
-Inkhaven is a whole writing environment, and the World Simulation is one
-subsystem inside it. It is worth seeing, from the start, how the world connects
-to everything else — because a world that sits in its own corner is just a
-prettier binder. Inkhaven's world does not sit in a corner.
+It is easy to meet Inkhaven as a *toolbox*: a world compiler here, a map renderer
+there, a place to keep character notes, a checker for your prose. Each of those is
+real, and this book will teach you to use them. But if a toolbox is all you see,
+you will use these the way you used the binder and the spreadsheet before them —
+side by side, and quietly drifting apart by chapter twelve. Inkhaven is built on
+the opposite premise. Its parts are not a set of instruments laid out on a bench;
+they are one *environment*, and every part knows about the others.
 
 #term("System book")[
   Inkhaven keeps certain kinds of project-wide material in dedicated *system
-  books* — Places, Characters, the Timeline, and (for us) a World book — that
-  live alongside your manuscript and can be read, searched, and cited from it.
-  Your compiled world is written into the World book; its settlements can become
-  entries in the Places book; its calendar can drive the Timeline.
+  books* that live alongside your manuscript and can be read, searched, and cited
+  from it. Some you fill *by hand* — *Characters* for your cast, *Places* for your
+  settings, *Artefacts* for the objects that matter to your story — and some the
+  tools maintain for you, like the *Timeline* of your story's events and the
+  *World* book that holds your compiled world. They are all the same kind of
+  thing, and they all speak to the same manuscript.
 ]
 
-So the world you build here is not a separate program. It feeds the same Places
-you tag in your prose, the same Timeline your scenes are dated on, and — as you
-will see in Part VI — the very paragraph you are typing. Worldbuilding in
-Inkhaven is a source that pours into the rest of your writing.
+The characters, places, and artefacts of your world are *yours to author*, first
+and always. You open the Characters book and write your protagonist; you open
+Places and set down the city your story opens in; you open Artefacts and record
+the sword, the letter, the stolen crown. These entries are not outputs of the
+simulation — they are your own worldbuilding, kept where the rest of Inkhaven can
+see them. The World Simulation is one *contributor* to that shared world, never
+its author: it can *propose* a settlement into Places, or a realm's ruler into
+Characters, for you to accept or refuse — but the books are yours, the entries are
+yours, and most of what fills them you will have written by hand. The world never
+touches the Artefacts book at all; the objects of your story are wholly your own.
+
+Because these books are shared, the connections cost you nothing. A place you tag
+in your prose is the same place the world gave a climate and a position on the
+map. A character you wrote is the same character an event on the Timeline is dated
+around. The season at your cursor is read from the same astronomy that raised your
+mountains. Nothing has to be kept in step by hand, because nothing lives in its
+own corner to begin with.
+
+#insight[
+  A toolbox asks you to remember which tool holds which truth, and to reconcile
+  them yourself. An environment holds *one* truth and lets every tool read it.
+  That is the difference this book is really teaching: not a set of commands, but a
+  place where your world, your cast, your map, and your manuscript are all the same
+  world, seen from different windows.
+]
+
+So the world you build here is not a separate program bolted onto your writing. It
+feeds the same Places you tag in your prose, the same Timeline your scenes are
+dated on, the same cast and objects you invented — and, as you will see in Part
+VI, the very paragraph you are typing.
 
 #insight[
   A setting is only worth the trouble if it *touches the page*. The measure of a
@@ -194,7 +225,8 @@ Turn the page, and let us talk about why you would build a world at all.
    Try It* — plus boxed *Term* definitions for every piece of jargon.],
   [You do not draw a world; you set its starting conditions and a *seed*, and a
    deterministic compiler grows the rest — the same way every time.],
-  [The world is not a separate binder: it feeds Inkhaven's Places, Timeline, and
-   the page you are writing. A built world is only worth it if it *touches the
-   page*.],
+  [Inkhaven is not a toolbox but one *environment*: your *Characters*, *Places*,
+   and *Artefacts* books are yours to author by hand, and the World Simulation is
+   one contributor that *proposes* into them — never their author. A built world is
+   only worth it if it *touches the page*.],
 ))
