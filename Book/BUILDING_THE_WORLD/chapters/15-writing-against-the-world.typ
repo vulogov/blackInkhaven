@@ -1,6 +1,6 @@
 #import "../design.typ": *
 
-#chapter(number: 14, title: "Writing Against the World")
+#chapter(number: 15, title: "Writing Against the World")
 
 Everything so far has been building. You raised a sky, grew a climate, ran the
 rivers down the mountains, settled people where the land would hold them, gave

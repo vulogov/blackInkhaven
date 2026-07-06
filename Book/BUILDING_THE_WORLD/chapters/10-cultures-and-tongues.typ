@@ -184,6 +184,33 @@ generator still fills the rest. A pinned culture is you taking the last word ear
   to the land you gave them.
 ]
 
+#section("The realm's ruler, into your cast")
+
+A realm implies a person at its head, and that is the one individual the world
+can hand you without inventing a life out of nothing. `realworld propose-rulers`
+reads your polities and proposes, for each, a *ruler* — a Character named in the
+same style the world uses for its towns, rooted in that realm's ethos and belief:
+
+```
+inkhaven realworld propose-rulers
+```
+
+Each proposal waits in the same queue as your Places and Mythology entries. Accept
+one and it becomes a paragraph in the Characters book — a short, factual stub: who
+they rule, from what capital, over how many people, and what their people hold
+sacred. It is a starting point, not a character. The world will not give you their
+wound, their want, or the choice that breaks them; those are the work only you can
+do. What it gives you is a name to rename and a throne to fill, so your cast begins
+already standing on the map you built.
+
+#note[
+  The world proposes *one* ruler per realm and nothing more — it does not model
+  individuals, so it will not populate your book with courtiers, rivals, or kin.
+  That restraint is deliberate: a generated crowd of empty names is a burden, not
+  a gift. One rooted figure per realm, offered for you to accept or ignore, is the
+  honest limit of what a deterministic world can know about people.
+]
+
 #recap((
   [`realworld culture` gives each polity a *culture*: an *ethos* drawn from the
    capital's biome, a *belief* the people live by, and a *language profile*.],
@@ -197,4 +224,7 @@ generator still fills the rest. A pinned culture is you taking the last word ear
    bridge*, and the reason the two systems exist together.],
   [As always, the world *proposes* a people's character; the author decides. A
    people is where they live, what they believe, and how they speak.],
+  [`realworld propose-rulers` offers one ruler per realm as a *Character* stub,
+   named in style and rooted in the culture — a name to rename and a throne to
+   fill. The world models no one else; the rest of the cast is yours.],
 ))
