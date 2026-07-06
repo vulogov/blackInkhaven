@@ -34,6 +34,7 @@ The `realworld` group is Inkhaven's world builder; the few rows outside it
 
 #chord_table((
   chord_row("realworld history", "Infer a founding chronology, three epochs (Founding / Expansion / Present Age), and events (realm rise & fall, migrations), dated in years before the present."),
+  chord_row("realworld chronicle", "The same past as a state trajectory: for each epoch, how far the world had grown by then — settlements, settled population, realms standing — beside its events."),
   chord_row("… --materialize", "Write the chronology as a History chapter in the World book."),
   chord_row("… --json", "Emit the whole chronology as structured data."),
   chord_row("realworld polities", "Cluster settlements into nations around their largest capitals — names, populations, seeded relations (allied / rival / neutral)."),
@@ -49,6 +50,7 @@ The `realworld` group is Inkhaven's world builder; the few rows outside it
   chord_row("realworld propose", "The world proposes its settlements as Place entries for you to accept or reject."),
   chord_row("realworld propose-myth", "The world reads your cultures' beliefs and proposes Mythology symbols and motifs for you to accept into the Mythology book."),
   chord_row("realworld propose-rulers", "Propose one ruler per realm — a Character stub named in style and rooted in the culture — for you to accept into the Characters book."),
+  chord_row("realworld propose-language", "Propose one language per culture (from its profile + naming sample); accept to scaffold a language book in the ConLang suite, seeded with the world's brief."),
   chord_row("realworld proposals", "List the pending proposals — Places, Mythology entries, and rulers alike — awaiting your decision."),
   chord_row("realworld critique", "An AI reading of the whole world: consistency + realism recommendations. `--write-notes` files them into the Notes book. `--lints-only` skips the AI."),
 ))
@@ -56,7 +58,7 @@ The `realworld` group is Inkhaven's world builder; the few rows outside it
 #section("At the desk")
 
 #chord_table((
-  chord_row("realworld scene --place <name> --day <N>", "A scene brief: season and weather at the place's latitude, its biome and climate, and the nearest realm's culture."),
+  chord_row("realworld scene --place <name> --day <N>", "A scene brief: season and weather at the place's latitude, its biome and climate, the nearest realm's culture, and the nearest neighbouring Place (distance + bearing)."),
   chord_row("realworld weather --day <N> --lat <deg>", "The local season and weather at a day-of-year and latitude."),
   chord_row("realworld travel --from <p> --to <p>", "Is a journey plausible? Checks real distance against the mode's pace; consults the magic ledger's travel_time rules."),
   chord_row("… --days <D> --mode <m>", "Set the days allowed and the mode: foot, horse, cart, or ship. (Also --from-x/--from-y coordinates.)"),
