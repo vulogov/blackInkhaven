@@ -25,8 +25,11 @@ pub fn run(project: &Path, cmd: RealworldCommand) -> Result<()> {
             compile(project, layer.as_deref(), json, materialize)
         }
         RealworldCommand::Propose => propose(project),
+        RealworldCommand::ProposeMyth => propose_myth(project),
+        RealworldCommand::ProposeRulers => propose_rulers(project),
         RealworldCommand::Proposals { cmd } => proposals(project, cmd),
         RealworldCommand::Places => places(project),
+        RealworldCommand::SetCoords { name, x, y, lat, lon } => set_coords(project, &name, x, y, lat, lon),
         RealworldCommand::Calendar => calendar(project),
         RealworldCommand::Gazetteer { output } => gazetteer(project, output.as_deref()),
         RealworldCommand::History { json, materialize } => history(project, json, materialize),
@@ -43,6 +46,9 @@ pub fn run(project: &Path, cmd: RealworldCommand) -> Result<()> {
         RealworldCommand::CoLocation => co_location(project),
         RealworldCommand::Coherence { node, max_cost, force } => {
             coherence(project, &node, max_cost, force)
+        }
+        RealworldCommand::Critique { max_cost, force, write_notes, lints_only } => {
+            critique(project, max_cost, force, write_notes, lints_only)
         }
     }
 }
@@ -605,6 +611,102 @@ fn places(project: &Path) -> Result<()> {
     Ok(())
 }
 
+/// WORLD-12 — position a Place on the world grid so `realworld map` can draw it.
+/// Resolves the Place by name in the Places book, converts geographic degrees to
+/// grid cells when given, fills the biome from the compiled climate under the
+/// cell, and writes (or moves) the Place ↔ World coordinate link. Works for a
+/// hand-authored Place that never came from a compiler proposal.
+fn set_coords(
+    project: &Path,
+    name: &str,
+    x: Option<usize>,
+    y: Option<usize>,
+    lat: Option<f64>,
+    lon: Option<f64>,
+) -> Result<()> {
+    use crate::config::Config;
+    use crate::project::ProjectLayout;
+    use crate::store::hierarchy::Hierarchy;
+    use crate::store::{NodeKind, Store, SYSTEM_TAG_PLACES};
+    use crate::world::compile::{compile_astronomy, compile_climate};
+    use crate::world::proposals::PlaceLink;
+    use crate::world::storage::WorldStore;
+
+    let def = load(project)?;
+    let astro = compile_astronomy(&def.astronomy);
+    let geo = geology_for(project, &def)?;
+    let climate = compile_climate(&def, &astro, &geo);
+    let (w, h) = (climate.width, climate.height);
+
+    // Resolve the target cell from grid args or geographic degrees.
+    let (cx, cy) = match (x, y, lat, lon) {
+        (Some(gx), Some(gy), _, _) => (gx.min(w.saturating_sub(1)), gy.min(h.saturating_sub(1))),
+        (_, _, Some(la), Some(lo)) => (lon_to_col(lo, w), lat_to_row(la, h)),
+        _ => {
+            return Err(Error::Config(
+                "pass a location: --x <col> --y <row>, or --lat <deg> --lon <deg>".into(),
+            ))
+        }
+    };
+
+    // Resolve the Place node (by title) in the Places book to get its id.
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout, &cfg)?;
+    let h_tree = Hierarchy::load(&store)?;
+    let places_book = h_tree
+        .iter()
+        .find(|n| n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(SYSTEM_TAG_PLACES))
+        .cloned()
+        .ok_or_else(|| Error::Store("Places system book missing".into()))?;
+    let node = h_tree
+        .collect_subtree(places_book.id)
+        .into_iter()
+        .filter_map(|id| h_tree.get(id))
+        .find(|n| n.kind == NodeKind::Paragraph && n.title.eq_ignore_ascii_case(name))
+        .cloned()
+        .ok_or_else(|| Error::Config(format!("no Place named `{name}` in the Places book")))?;
+
+    let ws = WorldStore::open_for_project(project)
+        .map_err(|e| Error::Store(format!("opening world store: {e}")))?;
+    let existing = ws
+        .list_place_links()
+        .map_err(|e| Error::Store(format!("listing places: {e}")))?
+        .into_iter()
+        .find(|l| l.place_id == node.id);
+
+    let biome = climate.biome.get(cy * w + cx).map(|b| b.as_str().to_string()).unwrap_or_default();
+
+    // INSERT OR REPLACE keys on place_id, so a fresh link and a move both go
+    // through insert_place_link; the biome is refreshed under the (new) cell.
+    let link = PlaceLink {
+        place_id: node.id,
+        name: node.title.clone(),
+        biome: biome.clone(),
+        climate_zone: biome.clone(),
+        hydrology_basis: existing.as_ref().map(|l| l.hydrology_basis.clone()).unwrap_or_default(),
+        population: existing.as_ref().map(|l| l.population).unwrap_or(0),
+        x: cx,
+        y: cy,
+    };
+    ws.insert_place_link(&link).map_err(|e| Error::Store(format!("writing link: {e}")))?;
+
+    let latd = row_to_latitude(cy, h);
+    let lond = col_to_lon(cx, w);
+    println!(
+        "{} · cell ({cx},{cy}) · {:.1}°{} {:.1}°{}{}",
+        node.title,
+        latd.abs(),
+        if latd >= 0.0 { "N" } else { "S" },
+        lond.abs(),
+        if lond >= 0.0 { "E" } else { "W" },
+        if biome.is_empty() { String::new() } else { format!(" · {biome}") },
+    );
+    println!("  {} — render it with `inkhaven realworld map`", if existing.is_some() { "moved" } else { "placed" });
+    Ok(())
+}
+
 /// WORLD-7 (W7-P3) — derive a story-Timeline calendar (`timeline.calendar`) from
 /// the world's astronomy: the day→month→year unit stack (carrying any author
 /// month names) and the four season markers. Pure + testable.
@@ -721,6 +823,32 @@ fn row_to_latitude(y: usize, height: usize) -> f64 {
         return 0.0;
     }
     90.0 - (y as f64 / (height - 1) as f64) * 180.0
+}
+
+/// Latitude (−90..90) → grid row (inverse of [`row_to_latitude`]), clamped.
+fn lat_to_row(lat: f64, height: usize) -> usize {
+    if height <= 1 {
+        return 0;
+    }
+    let frac = (90.0 - lat.clamp(-90.0, 90.0)) / 180.0;
+    (frac * (height - 1) as f64).round().clamp(0.0, (height - 1) as f64) as usize
+}
+
+/// Grid column → longitude in degrees (col 0 = −180°, spanning the full 360°).
+fn col_to_lon(x: usize, width: usize) -> f64 {
+    if width <= 1 {
+        return 0.0;
+    }
+    (x as f64 / (width - 1) as f64) * 360.0 - 180.0
+}
+
+/// Longitude (−180..180) → grid column (inverse of [`col_to_lon`]), clamped.
+fn lon_to_col(lon: f64, width: usize) -> usize {
+    if width <= 1 {
+        return 0;
+    }
+    let frac = (lon.clamp(-180.0, 180.0) + 180.0) / 360.0;
+    (frac * (width - 1) as f64).round().clamp(0.0, (width - 1) as f64) as usize
 }
 
 /// WORLD-10 — `realworld scene --place <name> --day <N>`: a scene brief for the
@@ -1331,7 +1459,7 @@ fn propose(project: &Path) -> Result<()> {
     let resolved = store
         .resolved_signatures()
         .map_err(|e| Error::Store(format!("reading proposals: {e}")))?;
-    store.clear_pending().map_err(|e| Error::Store(format!("clearing proposals: {e}")))?;
+    store.clear_pending_kinds("place").map_err(|e| Error::Store(format!("clearing proposals: {e}")))?;
 
     let proposals = place_proposals(&demo, def.seed_u64());
     let (mut added, mut skipped) = (0usize, 0usize);
@@ -1347,6 +1475,130 @@ fn propose(project: &Path) -> Result<()> {
         "proposed {added} Place(s) into the queue ({skipped} already resolved, skipped)"
     );
     println!("review with `inkhaven realworld proposals list`");
+    Ok(())
+}
+
+/// WORLD-12 — compile the culture layer and propose one Mythology entry per
+/// distinct belief into the same proposal queue. Accepting commits a
+/// `para:myth-*` paragraph into the Mythology book.
+fn propose_myth(project: &Path) -> Result<()> {
+    use crate::world::compile::{
+        compile_astronomy, compile_climate, compile_culture, compile_demographics, compile_hydrology,
+        compile_polities,
+    };
+    use crate::world::myth_proposals::myth_proposals;
+    use crate::world::storage::WorldStore;
+
+    let def = load(project)?;
+    let seed = def.seed_u64();
+    let astro = compile_astronomy(&def.astronomy);
+    let geo = geology_for(project, &def)?;
+    let climate = compile_climate(&def, &astro, &geo);
+    let hydro = compile_hydrology(&geo, &climate);
+    let demo = compile_demographics(&climate, &hydro);
+    let pol = compile_polities(&demo, &def.nations, seed);
+    let capital_biomes: Vec<String> = pol
+        .polities
+        .iter()
+        .map(|q| {
+            demo.settlements
+                .iter()
+                .find(|s| (s.x, s.y) == q.capital_pos)
+                .map(|s| s.biome.clone())
+                .unwrap_or_default()
+        })
+        .collect();
+    let cul = compile_culture(&pol, &capital_biomes, &def.cultures, seed);
+
+    let store = WorldStore::open_for_project(project)
+        .map_err(|e| Error::Store(format!("opening world store: {e}")))?;
+    let resolved = store
+        .resolved_signatures()
+        .map_err(|e| Error::Store(format!("reading proposals: {e}")))?;
+    store
+        .clear_pending_kinds("myth-%")
+        .map_err(|e| Error::Store(format!("clearing proposals: {e}")))?;
+
+    let proposals = myth_proposals(&cul, seed);
+    let (mut added, mut skipped) = (0usize, 0usize);
+    for p in &proposals {
+        if resolved.contains(&p.signature) {
+            skipped += 1; // already accepted or rejected — don't re-propose
+            continue;
+        }
+        store.insert(p).map_err(|e| Error::Store(format!("inserting proposal: {e}")))?;
+        added += 1;
+    }
+    if proposals.is_empty() {
+        println!("no cultures with beliefs — compile a peopled world first (see `realworld compile`)");
+        return Ok(());
+    }
+    println!(
+        "proposed {added} Mythology entr{} into the queue ({skipped} already resolved, skipped)",
+        if added == 1 { "y" } else { "ies" }
+    );
+    println!("review with `inkhaven realworld proposals list`, then accept into the Mythology book");
+    Ok(())
+}
+
+/// WORLD-12 — compile the polities + cultures and propose one ruler Character per
+/// realm into the same proposal queue. Accepting commits a Character stub.
+fn propose_rulers(project: &Path) -> Result<()> {
+    use crate::world::compile::{
+        compile_astronomy, compile_climate, compile_culture, compile_demographics, compile_hydrology,
+        compile_polities,
+    };
+    use crate::world::ruler_proposals::ruler_proposals;
+    use crate::world::storage::WorldStore;
+
+    let def = load(project)?;
+    let seed = def.seed_u64();
+    let astro = compile_astronomy(&def.astronomy);
+    let geo = geology_for(project, &def)?;
+    let climate = compile_climate(&def, &astro, &geo);
+    let hydro = compile_hydrology(&geo, &climate);
+    let demo = compile_demographics(&climate, &hydro);
+    let pol = compile_polities(&demo, &def.nations, seed);
+    let capital_biomes: Vec<String> = pol
+        .polities
+        .iter()
+        .map(|q| {
+            demo.settlements
+                .iter()
+                .find(|s| (s.x, s.y) == q.capital_pos)
+                .map(|s| s.biome.clone())
+                .unwrap_or_default()
+        })
+        .collect();
+    let cultures = compile_culture(&pol, &capital_biomes, &def.cultures, seed);
+
+    let store = WorldStore::open_for_project(project)
+        .map_err(|e| Error::Store(format!("opening world store: {e}")))?;
+    let resolved = store
+        .resolved_signatures()
+        .map_err(|e| Error::Store(format!("reading proposals: {e}")))?;
+    store
+        .clear_pending_kinds("character")
+        .map_err(|e| Error::Store(format!("clearing proposals: {e}")))?;
+
+    let proposals = ruler_proposals(&pol, &cultures, seed);
+    let (mut added, mut skipped) = (0usize, 0usize);
+    for p in &proposals {
+        if resolved.contains(&p.signature) {
+            skipped += 1;
+            continue;
+        }
+        store.insert(p).map_err(|e| Error::Store(format!("inserting proposal: {e}")))?;
+        added += 1;
+    }
+    if proposals.is_empty() {
+        println!("no realms yet — compile a peopled world first (see `realworld polities`)");
+        return Ok(());
+    }
+    println!(
+        "proposed {added} ruler(s) into the queue ({skipped} already resolved, skipped)"
+    );
+    println!("review with `inkhaven realworld proposals list`, then accept into the Characters book");
     Ok(())
 }
 
@@ -1412,7 +1664,8 @@ fn parse_id(store: &crate::world::storage::WorldStore, id: &str) -> Result<uuid:
         .ok_or_else(|| Error::Config(format!("no proposal matching id `{id}`")))
 }
 
-/// Accept a proposal: create the Place and mark it accepted.
+/// Accept a proposal: commit its record (Place or Mythology entry) and mark it
+/// accepted. The `kind` selects the target system book.
 fn accept_one(
     project: &Path,
     store: &crate::world::storage::WorldStore,
@@ -1426,12 +1679,99 @@ fn accept_one(
         println!("{} already accepted", p.name);
         return Ok(());
     }
+    if p.kind.starts_with("myth-") {
+        create_myth_entry(project, &p)?;
+        store.set_status(id, "accepted").map_err(|e| Error::Store(format!("accept: {e}")))?;
+        println!("accepted {} → Mythology", p.name);
+        return Ok(());
+    }
+    if p.kind == "character" {
+        create_character(project, &p)?;
+        store.set_status(id, "accepted").map_err(|e| Error::Store(format!("accept: {e}")))?;
+        println!("accepted {} → Characters", p.name);
+        return Ok(());
+    }
     let place_id = create_place(project, &p)?;
     store
         .insert_place_link(&crate::world::proposals::PlaceLink::from_proposal(place_id, &p))
         .map_err(|e| Error::Store(format!("place link: {e}")))?;
     store.set_status(id, "accepted").map_err(|e| Error::Store(format!("accept: {e}")))?;
     println!("accepted {} → Places", p.name);
+    Ok(())
+}
+
+/// Commit an accepted Mythology proposal as a `para:myth-*` paragraph under the
+/// Mythology system book — the same block `src/myth/parse.rs` reads back, tagged
+/// and typed as HJSON so the myth reader / scan pick it up.
+fn create_myth_entry(project: &Path, p: &crate::world::proposals::PlaceProposal) -> Result<()> {
+    use crate::config::Config;
+    use crate::project::ProjectLayout;
+    use crate::store::hierarchy::Hierarchy;
+    use crate::store::{InsertPosition, NodeKind, Store, SYSTEM_TAG_MYTHOLOGY};
+
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout, &cfg)?;
+
+    let myth_book = Hierarchy::load(&store)?
+        .iter()
+        .find(|n| n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(SYSTEM_TAG_MYTHOLOGY))
+        .cloned()
+        .ok_or_else(|| Error::Store("Mythology system book missing".into()))?;
+
+    let tag = p.payload.get("tag").and_then(|v| v.as_str()).unwrap_or("para:myth-symbol").to_string();
+    let body = crate::world::myth_proposals::myth_entry_body(p);
+
+    let h = Hierarchy::load(&store)?;
+    let mut node = store
+        .create_node(&cfg, &h, NodeKind::Paragraph, &p.name, Some(&myth_book), None, InsertPosition::End)
+        .map_err(|e| Error::Store(format!("creating Mythology entry: {e}")))?;
+    node.tags = vec![tag];
+    node.content_type = Some("hjson".to_string());
+    if let Some(rel) = &node.file {
+        std::fs::write(store.project_root().join(rel), body.as_bytes())
+            .map_err(|e| Error::Store(format!("writing Mythology entry: {e}")))?;
+    }
+    // Persists tags + content_type (via to_json) and the HJSON body.
+    store
+        .update_paragraph_content(&mut node, body.as_bytes())
+        .map_err(|e| Error::Store(format!("saving Mythology entry: {e}")))?;
+    Ok(())
+}
+
+/// Commit an accepted ruler proposal as a Character paragraph under the
+/// Characters book — a plain prose stub (the `create_place` write path pointed
+/// at Characters). The author renames and fleshes out from there.
+fn create_character(project: &Path, p: &crate::world::proposals::PlaceProposal) -> Result<()> {
+    use crate::config::Config;
+    use crate::project::ProjectLayout;
+    use crate::store::hierarchy::Hierarchy;
+    use crate::store::{InsertPosition, NodeKind, Store, SYSTEM_TAG_CHARACTERS};
+
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout, &cfg)?;
+
+    let chars_book = Hierarchy::load(&store)?
+        .iter()
+        .find(|n| n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(SYSTEM_TAG_CHARACTERS))
+        .cloned()
+        .ok_or_else(|| Error::Store("Characters system book missing".into()))?;
+
+    let body = crate::world::ruler_proposals::ruler_body(p);
+    let h = Hierarchy::load(&store)?;
+    let mut node = store
+        .create_node(&cfg, &h, NodeKind::Paragraph, &p.name, Some(&chars_book), None, InsertPosition::End)
+        .map_err(|e| Error::Store(format!("creating Character: {e}")))?;
+    if let Some(rel) = &node.file {
+        std::fs::write(store.project_root().join(rel), body.as_bytes())
+            .map_err(|e| Error::Store(format!("writing Character: {e}")))?;
+    }
+    store
+        .update_paragraph_content(&mut node, body.as_bytes())
+        .map_err(|e| Error::Store(format!("saving Character: {e}")))?;
     Ok(())
 }
 
@@ -1573,6 +1913,372 @@ fn variants(project: &Path, count: usize) -> Result<()> {
     }
     println!("\n  To adopt one, set `seed: <value>` in world.hjson and run `realworld compile`.");
     Ok(())
+}
+
+/// WORLD-12 — the AI world-critique pass. Compile the world, print the free
+/// deterministic lints, then (unless `--lints-only`) ask an LLM to critique the
+/// world's consistency and realism, printing each finding and optionally filing
+/// it as a Notes-book recommendation. Advisory: it never edits `world.hjson`.
+fn critique(
+    project: &Path,
+    max_cost: Option<usize>,
+    force: bool,
+    write_notes: bool,
+    lints_only: bool,
+) -> Result<()> {
+    use crate::config::Config;
+    use crate::project::ProjectLayout;
+    use crate::world::compile::{
+        compile_astronomy, compile_climate, compile_culture, compile_demographics, compile_hydrology,
+        compile_polities,
+    };
+
+    let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
+    let def = load(project)?;
+    let seed = def.seed_u64();
+    let astro = compile_astronomy(&def.astronomy);
+    let geo = geology_for(project, &def)?;
+    let climate = compile_climate(&def, &astro, &geo);
+    let hydro = compile_hydrology(&geo, &climate);
+    let demo = compile_demographics(&climate, &hydro);
+    let pol = compile_polities(&demo, &def.nations, seed);
+    let capital_biomes: Vec<String> = pol
+        .polities
+        .iter()
+        .map(|q| {
+            demo.settlements
+                .iter()
+                .find(|s| (s.x, s.y) == q.capital_pos)
+                .map(|s| s.biome.clone())
+                .unwrap_or_default()
+        })
+        .collect();
+    let cultures = compile_culture(&pol, &capital_biomes, &def.cultures, seed);
+
+    println!("critique · {} (seed {:#x})", def.name, seed);
+
+    // (1) The free deterministic lints — the baseline, always shown.
+    let lints = collect_world_lints(&def, &geo, &climate, &demo, seed);
+    if lints.is_empty() {
+        println!("  lints:    ok · no deterministic issues");
+    } else {
+        println!("  lints:    {} advisory warning(s):", lints.len());
+        for l in &lints {
+            println!("    ⚠ {l}");
+        }
+    }
+
+    if lints_only || !cfg.world.critique_enabled {
+        if !cfg.world.critique_enabled && !lints_only {
+            println!("  (AI critique disabled via `world.critique_enabled = false`)");
+        }
+        return Ok(());
+    }
+
+    // (2) The AI pass — a compact summary of declared + compiled, one capped call.
+    let summary = compiled_summary(&def, &astro, &geo, &climate, &hydro, &demo, &pol, &cultures);
+    let hjson = std::fs::read_to_string(project.join(WORLD_FILE)).unwrap_or_default();
+    let lang = {
+        use crate::prose::{resolve_prose_language, ProseLanguage};
+        let (l, _) = resolve_prose_language(None, &cfg.language);
+        match l {
+            ProseLanguage::En | ProseLanguage::Other(_) => "English",
+            ProseLanguage::Ru => "Russian",
+            ProseLanguage::De => "German",
+            ProseLanguage::Fr => "French",
+            ProseLanguage::Es => "Spanish",
+        }
+        .to_string()
+    };
+    let system = crate::world::critique::critique_system(&lang);
+    let prompt = crate::world::critique::build_critique_prompt(&hjson, &summary);
+    let soft_cap = max_cost.unwrap_or(cfg.world.critique_max_tokens);
+
+    let raw = world_llm_text(project, "world critique", &system, prompt, soft_cap, force)?;
+    let items = crate::world::critique::parse_critique(&raw);
+
+    if items.is_empty() {
+        println!("  critique: the world reads as sound ✓");
+        return Ok(());
+    }
+    println!("\n  critique: {} recommendation(s)\n", items.len());
+    for it in &items {
+        let sev = match it.severity_rank() {
+            0 => "high",
+            2 => "low",
+            _ => "med",
+        };
+        println!("  • [{sev}] {} — {}", it.aspect.trim(), it.issue.trim());
+        println!("      → {}", it.recommendation.trim());
+    }
+
+    if write_notes {
+        let n = write_critique_notes(project, &def.name, &items)?;
+        println!("\n  wrote {n} recommendation(s) into the Notes book");
+    } else {
+        println!("\n  (re-run with `--write-notes` to file these into the Notes book)");
+    }
+    Ok(())
+}
+
+/// Gather every advisory deterministic lint into aspect-tagged lines (the same
+/// checks `realworld validate` prints, collected for the critique baseline).
+fn collect_world_lints(
+    def: &WorldDefinition,
+    geo: &crate::world::types::GeologyOutput,
+    climate: &crate::world::types::ClimateOutput,
+    demo: &crate::world::types::DemographicsOutput,
+    seed: u64,
+) -> Vec<String> {
+    use crate::world::compile::compile_polities;
+    let mut out = Vec::new();
+    let declared_hist = def.history.as_ref().map(|h| h.events.as_slice()).unwrap_or(&[]);
+    if !declared_hist.is_empty() {
+        let hist = crate::world::compile::compile_history(demo, declared_hist, seed);
+        for w in crate::world::compile::history_layer::lint_history(declared_hist, &hist) {
+            out.push(format!("history: {w}"));
+        }
+    }
+    if !def.nations.is_empty() {
+        for w in crate::world::compile::polities_layer::lint_polities(&def.nations, demo) {
+            out.push(format!("nations: {w}"));
+        }
+    }
+    if let Some(hy) = def.hydrology.as_ref() {
+        if hy.rivers.iter().any(|r| r.from.is_some() && r.to.is_some()) {
+            for w in crate::world::compile::hydrology_layer::lint_rivers(hy, geo) {
+                out.push(format!("rivers: {w}"));
+            }
+        }
+    }
+    if !def.cultures.is_empty() {
+        let pol = compile_polities(demo, &def.nations, seed);
+        let capital_biomes: Vec<String> = pol
+            .polities
+            .iter()
+            .map(|q| {
+                demo.settlements
+                    .iter()
+                    .find(|s| (s.x, s.y) == q.capital_pos)
+                    .map(|s| s.biome.clone())
+                    .unwrap_or_default()
+            })
+            .collect();
+        for w in crate::world::compile::culture_layer::lint_culture(&def.cultures, &pol, &capital_biomes) {
+            out.push(format!("culture: {w}"));
+        }
+    }
+    if let Some(eco) = def.ecology.as_ref().filter(|e| !e.regions.is_empty()) {
+        for w in crate::world::compile::ecology_layer::lint_ecology(&eco.regions, climate) {
+            out.push(format!("ecology: {w}"));
+        }
+    }
+    if let Some(m) = def.magic.as_ref() {
+        for w in m.lint() {
+            out.push(format!("magic: {w}"));
+        }
+    }
+    out
+}
+
+/// A compact declared+compiled summary for the critique prompt.
+#[allow(clippy::too_many_arguments)]
+fn compiled_summary(
+    def: &WorldDefinition,
+    astro: &crate::world::types::AstronomyOutput,
+    geo: &crate::world::types::GeologyOutput,
+    climate: &crate::world::types::ClimateOutput,
+    hydro: &crate::world::types::HydrologyOutput,
+    demo: &crate::world::types::DemographicsOutput,
+    pol: &crate::world::compile::polities_layer::PolitiesOutput,
+    cultures: &crate::world::compile::culture_layer::CultureOutput,
+) -> String {
+    use std::fmt::Write;
+    let mut s = String::new();
+    let st = &def.astronomy.star;
+    let pl = &def.astronomy.planet;
+    let _ = writeln!(
+        s,
+        "Sky: star class {} ({} L☉, {:.2} M☉); planet {:.2} M⊕, {:.2} R⊕, axial tilt {:.1}°, day {:.1} h; year {:.0} planet-days; {} moon(s).",
+        st.class, st.luminosity_solar, astro.stellar_mass_solar,
+        pl.mass_earth, pl.radius_earth, astro.axial_tilt_deg, pl.day_length_hours,
+        astro.year_length_planet_days, astro.moons.len(),
+    );
+    let _ = writeln!(
+        s,
+        "Land: {} continent(s), sea covers {:.0}% of the surface.",
+        geo.continents, geo.sea_coverage_pct
+    );
+    let mut biomes: Vec<&crate::world::types::ClimateZone> =
+        climate.zones.iter().filter(|z| z.biome != "ocean").collect();
+    biomes.sort_by(|a, b| b.area_pct.partial_cmp(&a.area_pct).unwrap_or(std::cmp::Ordering::Equal));
+    let top: Vec<String> = biomes
+        .iter()
+        .take(4)
+        .map(|z| format!("{} {:.0}%", z.biome.replace('_', " "), z.area_pct))
+        .collect();
+    let _ = writeln!(
+        s,
+        "Climate: mean land temp {:.1}°C, precip {:.0} mm/yr; dominant land biomes: {}.",
+        climate.mean_land_temp_c, climate.mean_land_precip_mm, top.join(", ")
+    );
+    let _ = writeln!(s, "Water: {} river(s), {} lake(s).", hydro.river_count, hydro.lake_count);
+    let _ = writeln!(
+        s,
+        "People: total ~{}, {} settlement(s), {} nation(s); common roles: {}.",
+        fmt_pop(demo.total_population),
+        demo.settlements.len(),
+        pol.polities.len(),
+        demo.role_archetypes.join(", ")
+    );
+    for (i, c) in cultures.cultures.iter().take(6).enumerate() {
+        let realm = pol.polities.get(i).map(|p| p.name.as_str()).unwrap_or("?");
+        let _ = writeln!(s, "  - {realm}: {} · believes in {}.", c.ethos, c.belief);
+    }
+    match def.magic.as_ref() {
+        Some(m) if m.enabled => {
+            let _ = writeln!(s, "Magic: enabled, {} declared rule(s).", m.rules.len());
+        }
+        _ => {
+            let _ = writeln!(s, "Magic: none declared (a mundane world).");
+        }
+    }
+    s
+}
+
+/// File each critique recommendation as a paragraph in the Notes system book —
+/// the `create_place` write path pointed at Notes. Returns the count written.
+fn write_critique_notes(
+    project: &Path,
+    world_name: &str,
+    items: &[crate::world::critique::CritiqueItem],
+) -> Result<usize> {
+    use crate::config::Config;
+    use crate::project::ProjectLayout;
+    use crate::store::hierarchy::Hierarchy;
+    use crate::store::{InsertPosition, NodeKind, Store, SYSTEM_TAG_NOTES};
+
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout, &cfg)?;
+    let notes = Hierarchy::load(&store)?
+        .iter()
+        .find(|n| n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(SYSTEM_TAG_NOTES))
+        .cloned()
+        .ok_or_else(|| Error::Store("Notes system book missing".into()))?;
+
+    let mut written = 0usize;
+    for it in items {
+        let sev = match it.severity_rank() {
+            0 => "high",
+            2 => "low",
+            _ => "medium",
+        };
+        let aspect = if it.aspect.trim().is_empty() { "world" } else { it.aspect.trim() };
+        let title = format!("World critique — {aspect} ({sev})");
+        let body = format!(
+            "Recommendation for the world `{world_name}` ({aspect}, {sev} severity).\n\n\
+             Issue: {}\n\nRecommendation: {}\n\n\
+             // from `inkhaven realworld critique` — advisory; edit world.hjson as you see fit\n",
+            it.issue.trim(),
+            it.recommendation.trim(),
+        );
+        let h = Hierarchy::load(&store)?;
+        let mut node = store
+            .create_node(&cfg, &h, NodeKind::Paragraph, &title, Some(&notes), None, InsertPosition::End)
+            .map_err(|e| Error::Store(format!("creating Note: {e}")))?;
+        if let Some(rel) = &node.file {
+            std::fs::write(store.project_root().join(rel), body.as_bytes())
+                .map_err(|e| Error::Store(format!("writing Note: {e}")))?;
+        }
+        store
+            .update_paragraph_content(&mut node, body.as_bytes())
+            .map_err(|e| Error::Store(format!("saving Note: {e}")))?;
+        written += 1;
+    }
+    Ok(written)
+}
+
+/// A cost-capped one-shot LLM call returning the raw reply text — the fact-check
+/// slow track's discipline (daily hard cap informs, per-call soft cap gates
+/// unless `--force`, retry-on-transient), reused for the world critique.
+fn world_llm_text(
+    project: &Path,
+    label: &str,
+    system: &str,
+    prompt: String,
+    soft_cap: usize,
+    force: bool,
+) -> Result<String> {
+    use crate::config::Config;
+    use crate::project::ProjectLayout;
+    use crate::world::fact_check_slow::{
+        backoff_delay, is_transient, slow_preflight, PreflightVerdict,
+    };
+    use crate::world::storage::WorldStore;
+
+    let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
+    crate::dayclock::set_boundary(cfg.goals.day_boundary);
+    let day = crate::dayclock::today_key();
+    let store = WorldStore::open_for_project(project)
+        .map_err(|e| Error::Store(format!("world store: {e}")))?;
+    let used = store.llm_calls_today(&day).map_err(|e| Error::Store(format!("{e}")))?;
+
+    let ai = crate::ai::AiClient::from_config(&cfg.llm)
+        .map_err(|e| Error::Config(format!("no LLM provider for the {label}: {e}")))?;
+    let (model, _env) = ai
+        .resolve_provider(&cfg.llm, None)
+        .map_err(|e| Error::Config(format!("resolving provider: {e}")))?;
+
+    let effective_soft = if force { 0 } else { soft_cap };
+    let (pf, verdict) =
+        slow_preflight(system, &prompt, used, cfg.cost.world_daily_call_cap, effective_soft);
+    match verdict {
+        PreflightVerdict::DailyCapReached => {
+            eprintln!(
+                "{label}: past today's slow-track budget ({}/{} calls) — continuing (the cap informs; see `inkhaven cost`).",
+                pf.calls_used, cfg.cost.world_daily_call_cap
+            );
+        }
+        PreflightVerdict::OverSoftCap { est_total_tokens, soft_cap } => {
+            return Err(Error::Config(format!(
+                "{label} skipped: estimated ~{est_total_tokens} tokens exceeds soft cap {soft_cap} — re-run with --force or raise --max-cost"
+            )));
+        }
+        PreflightVerdict::Proceed => {}
+    }
+    eprintln!(
+        "{label} · model: {model} · ~{} tokens · {}/{} calls today · analyzing…",
+        pf.est_total_tokens, pf.calls_used, pf.daily_cap
+    );
+
+    const MAX_ATTEMPTS: u32 = 3;
+    let mut last_err = String::new();
+    for attempt in 0..MAX_ATTEMPTS {
+        match crate::ai::stream::collect_blocking(
+            ai.client.clone(),
+            model.to_string(),
+            Some(system.to_string()),
+            prompt.clone(),
+        ) {
+            Ok(raw) => {
+                let _ = store.record_llm_call(&day);
+                return Ok(raw);
+            }
+            Err(e) => {
+                last_err = e.to_string();
+                if attempt + 1 < MAX_ATTEMPTS && is_transient(&last_err) {
+                    let d = backoff_delay(attempt);
+                    eprintln!("  transient error ({last_err}); retrying in {:.1}s…", d.as_secs_f32());
+                    std::thread::sleep(d);
+                    continue;
+                }
+                break;
+            }
+        }
+    }
+    Err(Error::Store(format!("LLM error: {last_err}")))
 }
 
 fn validate(project: &Path) -> Result<()> {
@@ -2175,6 +2881,26 @@ mod tests {
         assert!((super::row_to_latitude(180, 181) + 90.0).abs() < 1e-9); // south pole
         assert!((super::row_to_latitude(90, 181)).abs() < 1e-9); // equator
         assert_eq!(super::row_to_latitude(0, 1), 0.0); // degenerate grid
+    }
+
+    #[test]
+    fn geographic_degrees_round_trip_through_grid_cells() {
+        // WORLD-12 — lat/lon → cell → back stays close (rounding to the nearest cell).
+        let (w, h) = (160usize, 120usize);
+        // Latitude: row inverse of row_to_latitude, clamped.
+        assert_eq!(lat_to_row(90.0, h), 0); // north pole → row 0
+        assert_eq!(lat_to_row(-90.0, h), h - 1); // south pole → last row
+        assert_eq!(lat_to_row(0.0, h), (h - 1) / 2 + ((h - 1) % 2)); // ~equator, rounded
+        // Longitude: col 0 = −180°, last col ≈ +180°.
+        assert_eq!(lon_to_col(-180.0, w), 0);
+        assert_eq!(lon_to_col(180.0, w), w - 1);
+        assert!((col_to_lon(0, w) + 180.0).abs() < 1e-9);
+        // A mid latitude round-trips to within one cell.
+        let row = lat_to_row(45.0, h);
+        assert!((row_to_latitude(row, h) - 45.0).abs() <= 180.0 / (h - 1) as f64 + 1e-9);
+        // Out-of-range degrees clamp rather than panic.
+        assert_eq!(lat_to_row(200.0, h), 0);
+        assert_eq!(lon_to_col(999.0, w), w - 1);
     }
 
     #[test]

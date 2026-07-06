@@ -143,6 +143,16 @@ impl WorldStore {
         self.engine.execute_with("DELETE FROM world_proposals WHERE status = 'pending'", &[])
     }
 
+    /// Drop only the pending proposals whose `kind` matches a SQL LIKE pattern
+    /// (e.g. `"place"` or `"myth-%"`). Lets `propose` and `propose-myth` re-seed
+    /// their own queue without clobbering the other's pending set.
+    pub fn clear_pending_kinds(&self, kind_like: &str) -> Result<()> {
+        self.engine.execute_with(
+            "DELETE FROM world_proposals WHERE status = 'pending' AND kind LIKE ?",
+            &[&kind_like],
+        )
+    }
+
     pub fn count(&self, status: &str) -> Result<usize> {
         Ok(self.list(Some(status))?.len())
     }

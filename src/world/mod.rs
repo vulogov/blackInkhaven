@@ -30,12 +30,15 @@
 
 pub mod calc_read;
 pub mod compile;
+pub mod critique;
 pub mod fact_check;
 pub mod fact_check_lang;
 pub mod fact_check_slow;
 pub mod materialize;
 pub mod plakat;
+pub mod myth_proposals;
 pub mod proposals;
+pub mod ruler_proposals;
 pub mod scene;
 pub mod storage;
 pub mod timeline_context;
