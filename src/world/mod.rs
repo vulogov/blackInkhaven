@@ -29,10 +29,12 @@
 #![allow(dead_code)]
 
 pub mod calc_read;
+pub mod commit;
 pub mod compile;
 pub mod critique;
 pub mod fact_check;
 pub mod fact_check_lang;
+pub mod language_proposals;
 pub mod fact_check_slow;
 pub mod materialize;
 pub mod plakat;

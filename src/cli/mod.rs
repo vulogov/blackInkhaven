@@ -4286,6 +4286,10 @@ pub enum RealworldCommand {
     /// rooted in the realm's culture) into the proposal queue. Accept them like
     /// Place proposals to commit Character stubs into the Characters book.
     ProposeRulers,
+    /// WORLD-13 — propose one language per culture (from its language profile +
+    /// naming sample) into the proposal queue. Accept to scaffold a language book
+    /// in the ConLang suite, seeded with the world's design brief.
+    ProposeLanguage,
     /// Work the proposal queue (list / accept / reject).
     Proposals {
         #[command(subcommand)]
@@ -4317,6 +4321,14 @@ pub enum RealworldCommand {
     /// WORLD-7 — derive a story-Timeline calendar from the world's astronomy
     /// (months, season markers) and print it to adopt under `timeline.calendar`.
     Calendar,
+    /// WORLD-13 — a chronicle of the world's compiled past: for each epoch, how
+    /// far the world had grown by then (settlements, population, realms) alongside
+    /// its events. Pure presentation of the history layer — no simulation.
+    Chronicle {
+        /// Emit the chronicle as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// WORLD-7 — emit a consolidated Markdown world reference (calendar, sky,
     /// regions, landmarks, waters, settlements, economy, magic).
     Gazetteer {
