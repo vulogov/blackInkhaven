@@ -404,43 +404,64 @@ fn biome_centroid(climate: &ClimateOutput, biome: &str) -> (f64, f64, usize) {
     }
 }
 
-/// Landmark features from the settlements. The largest settlements lead (so the
-/// cap keeps the headline places); a coastal settlement becomes a `port`. Where a
-/// settlement coincides with an accepted Place link, the landmark carries that
-/// Place's `place_<uuid>` id so its resolved position can be read back.
+/// Landmark features. Every coordinate-bearing Place link is emitted first as a
+/// labeled `place_<uuid>` marker — whether or not a compiler settlement sits on
+/// its cell — so a Place positioned by hand (`realworld place set-coords`) draws
+/// and round-trips just like a compiler-born one. The remaining budget is filled
+/// with the largest settlements not already covered by a link, as anonymous
+/// landmarks. A coastal city becomes a `port`.
 fn landmark_features(geo: &GeologyOutput, demo: &DemographicsOutput, places: &[PlaceLink]) -> Vec<Value> {
     let (w, h) = (geo.width, geo.height);
+    let mut out: Vec<Value> = Vec::new();
+    let mut used: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+
+    // (1) One guaranteed marker per Place link — headline (most populous) first so
+    //     the cap keeps the biggest places; author-positioned Places (population 0)
+    //     still appear, only after the populous ones if the cap is tight.
+    let mut links: Vec<&PlaceLink> = places.iter().filter(|p| p.x < w && p.y < h).collect();
+    links.sort_by(|a, b| b.population.cmp(&a.population));
+    for p in links {
+        if out.len() >= MAX_LANDMARKS {
+            break;
+        }
+        if !used.insert((p.x, p.y)) {
+            continue; // one marker per cell
+        }
+        out.push(json!({
+            "id": format!("place_{}", p.place_id),
+            "name": p.name,
+            "kind": landmark_kind_for(p.population, is_coastal(geo, p.x, p.y)),
+            "anchor": canvas_anchor(p.x as f64, p.y as f64, w, h),
+            "size": size_hint(p.population.max(1)),
+        }));
+    }
+
+    // (2) Fill the rest with the largest settlements no link already covers.
     let mut settlements: Vec<&crate::world::types::Settlement> = demo.settlements.iter().collect();
     settlements.sort_by(|a, b| b.population.cmp(&a.population));
-    settlements
-        .iter()
-        .take(MAX_LANDMARKS)
-        .enumerate()
-        .map(|(i, s)| {
-            let id = places
-                .iter()
-                .find(|p| p.x == s.x && p.y == s.y)
-                .map(|p| format!("place_{}", p.place_id))
-                .unwrap_or_else(|| format!("settlement_{i}"));
-            let name = places
-                .iter()
-                .find(|p| p.x == s.x && p.y == s.y)
-                .map(|p| p.name.clone())
-                .unwrap_or_else(|| format!("{} {}", title(&s.class), i + 1));
-            let kind = if s.class == "city" && is_coastal(geo, s.x, s.y) {
-                "port"
-            } else {
-                landmark_kind(&s.class)
-            };
-            json!({
-                "id": id,
-                "name": name,
-                "kind": kind,
-                "anchor": canvas_anchor(s.x as f64, s.y as f64, w, h),
-                "size": size_hint(s.population),
-            })
-        })
-        .collect()
+    let mut anon = 0usize;
+    for s in settlements {
+        if out.len() >= MAX_LANDMARKS {
+            break;
+        }
+        if !used.insert((s.x, s.y)) {
+            continue; // a Place link already owns this cell
+        }
+        let kind = if s.class == "city" && is_coastal(geo, s.x, s.y) {
+            "port"
+        } else {
+            landmark_kind(&s.class)
+        };
+        out.push(json!({
+            "id": format!("settlement_{anon}"),
+            "name": format!("{} {}", title(&s.class), anon + 1),
+            "kind": kind,
+            "anchor": canvas_anchor(s.x as f64, s.y as f64, w, h),
+            "size": size_hint(s.population),
+        }));
+        anon += 1;
+    }
+    out
 }
 
 /// Map a demographics size class to a plakat landmark kind.
@@ -449,6 +470,24 @@ fn landmark_kind(class: &str) -> &'static str {
         "city" => "city",
         "town" => "town",
         _ => "village",
+    }
+}
+
+/// A plakat landmark kind for a Place link, which carries a population (0 when
+/// the Place was positioned by hand) but no size class. A populous coastal Place
+/// becomes a `port`; a Place with no population is drawn as a `town` marker.
+fn landmark_kind_for(pop: u64, coastal: bool) -> &'static str {
+    match pop {
+        p if p >= 100_000 => {
+            if coastal {
+                "port"
+            } else {
+                "city"
+            }
+        }
+        p if p >= 10_000 => "town",
+        1..=9_999 => "village",
+        _ => "town", // hand-positioned, no demographics — a plain visible marker
     }
 }
 
@@ -692,6 +731,65 @@ mod tests {
             let y = lm["anchor"]["y"].as_f64().unwrap();
             assert!((0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y));
         }
+    }
+
+    #[test]
+    fn hand_placed_link_without_a_settlement_still_gets_a_marker() {
+        // A Place positioned by hand (no compiler settlement on its cell,
+        // population 0) must still appear as a labeled `place_<uuid>` landmark
+        // that round-trips — the WORLD-12 fix.
+        let (geo, climate, hydro, demo) = layers();
+        // A cell the demographics layer almost certainly has no settlement on.
+        let (px, py) = (1usize, 1usize);
+        assert!(!demo.settlements.iter().any(|s| s.x == px && s.y == py));
+        let id = uuid::Uuid::new_v4();
+        let link = PlaceLink {
+            place_id: id,
+            name: "Hand-Placed Hold".into(),
+            biome: String::new(),
+            climate_zone: String::new(),
+            hydrology_basis: String::new(),
+            population: 0,
+            x: px,
+            y: py,
+        };
+        let spec = build_map_spec("W", &geo, &climate, &hydro, &demo, &[link]);
+        let lms = spec["landmarks"].as_array().unwrap();
+        let found = lms.iter().find(|lm| lm["id"] == format!("place_{id}")).expect("marker present");
+        assert_eq!(found["name"], "Hand-Placed Hold");
+        assert_eq!(found["kind"], "town"); // population 0 → plain visible marker
+    }
+
+    #[test]
+    fn landmarks_dedup_when_a_link_sits_on_a_settlement() {
+        let (geo, climate, hydro, demo) = layers();
+        let s = demo.settlements.first().cloned().expect("a settlement");
+        let id = uuid::Uuid::new_v4();
+        let link = PlaceLink {
+            place_id: id,
+            name: "Capital".into(),
+            biome: s.biome.clone(),
+            climate_zone: s.biome.clone(),
+            hydrology_basis: s.basis.clone(),
+            population: s.population,
+            x: s.x,
+            y: s.y,
+        };
+        let spec = build_map_spec("W", &geo, &climate, &hydro, &demo, &[link]);
+        let lms = spec["landmarks"].as_array().unwrap();
+        // Exactly one landmark on that cell — the place link, not a duplicate anon.
+        let on_cell: Vec<_> = lms
+            .iter()
+            .filter(|lm| {
+                let fx = lm["anchor"]["x"].as_f64().unwrap();
+                let fy = lm["anchor"]["y"].as_f64().unwrap();
+                let gx = (fx * (geo.width - 1) as f64).round() as usize;
+                let gy = (fy * (geo.height - 1) as f64).round() as usize;
+                gx == s.x && gy == s.y
+            })
+            .collect();
+        assert_eq!(on_cell.len(), 1);
+        assert_eq!(on_cell[0]["id"], format!("place_{id}"));
     }
 
     #[test]
