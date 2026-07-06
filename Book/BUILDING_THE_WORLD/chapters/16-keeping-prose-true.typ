@@ -1,6 +1,6 @@
 #import "../design.typ": *
 
-#chapter(number: 15, title: "Keeping Your Prose True")
+#chapter(number: 16, title: "Keeping Your Prose True")
 
 The last chapter put the world at your cursor so it could hand you a season, a
 distance, a people, before you wrote. This chapter turns the same world around to

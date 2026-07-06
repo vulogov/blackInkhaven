@@ -47,7 +47,10 @@ The `realworld` group is Inkhaven's world builder; the few rows outside it
   chord_row("realworld calendar", "Derive a story-Timeline calendar from the astronomy; prints lines you adopt into timeline.calendar."),
   chord_row("realworld magic", "Show and validate the magic ledger — the declared exceptions to physics."),
   chord_row("realworld propose", "The world proposes its settlements as Place entries for you to accept or reject."),
-  chord_row("realworld proposals", "List the pending settlement proposals awaiting your decision."),
+  chord_row("realworld propose-myth", "The world reads your cultures' beliefs and proposes Mythology symbols and motifs for you to accept into the Mythology book."),
+  chord_row("realworld propose-rulers", "Propose one ruler per realm — a Character stub named in style and rooted in the culture — for you to accept into the Characters book."),
+  chord_row("realworld proposals", "List the pending proposals — Places, Mythology entries, and rulers alike — awaiting your decision."),
+  chord_row("realworld critique", "An AI reading of the whole world: consistency + realism recommendations. `--write-notes` files them into the Notes book. `--lints-only` skips the AI."),
 ))
 
 #section("At the desk")
@@ -67,6 +70,9 @@ The `realworld` group is Inkhaven's world builder; the few rows outside it
   chord_row("realworld gazetteer", "A consolidated Markdown world reference — calendar, sky, regions, landmarks, waters, settlements, economy, magic."),
   chord_row("… --output <path>", "Write the gazetteer to a chosen path."),
   chord_row("realworld map", "Render a map with the external plakat tool (optional)."),
+  chord_row("realworld set-coords <name> --lat <d> --lon <d>", "Give a Place (compiler-born or hand-authored) a location on the world grid so plakat draws it. Grid `--x`/`--y` also accepted."),
   chord_row("inkhaven event add …", "Adopt a chosen history event onto the story Timeline — the lines realworld history prints for you."),
   chord_row("inkhaven language", "Realise a culture's language profile in the ConLang suite."),
+  chord_row("inkhaven myth scan", "Map where your declared symbols fall across the chapters — a density heatmap, zero-AI."),
+  chord_row("inkhaven myth check", "Ask whether the prose keeps faith with your declared symbols, motifs, and archetypes — advisory, never edits."),
 ))

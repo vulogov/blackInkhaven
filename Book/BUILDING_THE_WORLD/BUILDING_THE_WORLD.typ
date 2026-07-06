@@ -39,14 +39,15 @@
   part(number: "V", title: "The Author's Hand"),
   include "chapters/12-declared-and-emergent.typ",
   include "chapters/13-rules-and-magic.typ",
+  include "chapters/14-myth-and-belief.typ",
 
   part(number: "VI", title: "The World at the Desk"),
-  include "chapters/14-writing-against-the-world.typ",
-  include "chapters/15-keeping-prose-true.typ",
-  include "chapters/16-into-your-book.typ",
+  include "chapters/15-writing-against-the-world.typ",
+  include "chapters/16-keeping-prose-true.typ",
+  include "chapters/17-into-your-book.typ",
 
   part(number: "VII", title: "A Complete Walkthrough"),
-  include "chapters/17-walkthrough.typ",
+  include "chapters/18-walkthrough.typ",
 
   include "chapters/a-command-reference.typ",
   include "chapters/b-glossary.typ",
