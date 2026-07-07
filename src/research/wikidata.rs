@@ -37,6 +37,7 @@ pub(super) async fn fetch(cfg: WikidataConfig, query: String, language: String) 
     let api = format!("{base}/w/api.php");
     let client = reqwest::Client::builder()
         .user_agent("inkhaven-research/1.0 (https://crates.io/crates/inkhaven)")
+        .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| anyhow!("http client: {e}"))?;
 

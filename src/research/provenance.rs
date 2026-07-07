@@ -96,11 +96,14 @@ impl Provenance {
         Ok(())
     }
 
-    /// Record (or overwrite) a fact's source and persist.
-    pub(super) fn record(layout: &ProjectLayout, node_id: &str, rec: SourceRecord) {
+    /// Record (or overwrite) a fact's source and persist. Returns the write
+    /// error so the caller can tell the user the fact committed *without* its
+    /// provenance row — this sidecar is the keystone of the trust release and a
+    /// silent failure must not read as "✓ Inserted".
+    pub(super) fn record(layout: &ProjectLayout, node_id: &str, rec: SourceRecord) -> Result<()> {
         let mut prov = Provenance::load(layout);
         prov.facts.insert(node_id.to_string(), rec);
-        let _ = prov.save(layout);
+        prov.save(layout)
     }
 
     /// The source record for a node, if any.
@@ -127,7 +130,8 @@ mod tests {
             &layout,
             "node-1",
             SourceRecord::new("model", "", "why is the sky green?", "rome", "2026-07-01T10:00:00Z".into()),
-        );
+        )
+        .unwrap();
         let prov = Provenance::load(&layout);
         let rec = prov.for_node("node-1").unwrap();
         assert_eq!(rec.origin, "model");

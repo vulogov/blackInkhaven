@@ -76,8 +76,20 @@ pub fn compile_geology_dem(
         .as_ref()
         .and_then(|d| d.dem.as_ref())
         .ok_or_else(|| "no `geology.dem` block in the definition".to_string())?;
-    let img = image::open(dem_path)
+    // Cap the decode: a huge or decompression-bomb DEM must not OOM the process
+    // (the model resamples to a fixed 160×120 grid anyway). 16384² is far beyond
+    // any real heightmap.
+    let mut reader = image::ImageReader::open(dem_path)
         .map_err(|e| format!("reading DEM {}: {e}", dem_path.display()))?
+        .with_guessed_format()
+        .map_err(|e| format!("reading DEM {}: {e}", dem_path.display()))?;
+    let mut limits = image::Limits::default();
+    limits.max_image_width = Some(16_384);
+    limits.max_image_height = Some(16_384);
+    reader.limits(limits);
+    let img = reader
+        .decode()
+        .map_err(|e| format!("decoding DEM {}: {e}", dem_path.display()))?
         .to_luma16();
     let (iw, ih) = (img.width() as usize, img.height() as usize);
     if iw == 0 || ih == 0 {
@@ -134,8 +146,14 @@ pub fn compile_geology_dem(
 
 // ── Plates ───────────────────────────────────────────────────────────────
 
+/// Upper bound on tectonic plates. The heightmap + mountain search are O(cells·
+/// plates), so an uncapped `plates` (a typo like `7000`, or a hostile huge value)
+/// would freeze the compile or OOM the process — now also from the async overview
+/// thread. 64 is far beyond any plausible world; `validate` warns when it clamps.
+pub const MAX_PLATES: u32 = 64;
+
 fn generate_plates(rng: &mut SplitMix64, g: &GeneratedGeology) -> Vec<Plate> {
-    let n = g.plates.max(2) as usize;
+    let n = g.plates.clamp(2, MAX_PLATES) as usize;
     let want_continental = (g.continents as usize).min(n);
     let mut plates: Vec<Plate> = (0..n)
         .map(|id| {
@@ -477,6 +495,17 @@ mod tests {
         let a = compile_geology(&world(1, 7, 4, 0.4, "active"));
         let b = compile_geology(&world(2, 7, 4, 0.4, "active"));
         assert_ne!(a.heightmap, b.heightmap);
+    }
+
+    #[test]
+    fn a_runaway_plate_count_is_capped() {
+        // H2: an uncapped `plates` (e.g. a typo `7000`) would freeze/OOM the
+        // compile. It is clamped to MAX_PLATES.
+        let out = compile_geology(&world(42, 7000, 4, 0.4, "active"));
+        assert_eq!(out.plates.len(), MAX_PLATES as usize);
+        // Still deterministic + non-empty at the cap.
+        assert_eq!(out.plates.len(), compile_geology(&world(42, 7000, 4, 0.4, "active")).plates.len());
+        assert!(!out.heightmap.is_empty());
     }
 
     #[test]

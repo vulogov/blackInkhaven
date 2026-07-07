@@ -469,6 +469,12 @@ fn do_ink_tree_delete(vm: &mut VM) -> Result<&mut VM> {
         .cloned()
         .ok_or_else(|| anyhow!("{tag}: node {node_id} vanished"))?;
     let ids: Vec<uuid::Uuid> = hierarchy.collect_subtree(node.id).into_iter().collect();
+    // Refuse to delete a protected node (or a subtree containing one) — a system
+    // book like Notes/Places must not be erased from a script the way the editor
+    // itself forbids.
+    if let Some(p) = ids.iter().find_map(|id| hierarchy.get(*id).filter(|n| n.protected)) {
+        return Err(anyhow!("{tag}: `{}` is protected and cannot be deleted", p.slug));
+    }
     // The `layout` arg to `Hierarchy::fs_path` is currently
     // ignored by the implementation; pass a layout reconstructed
     // from project root.
@@ -496,6 +502,9 @@ fn do_ink_tree_rename(vm: &mut VM) -> Result<&mut VM> {
     let hierarchy = Hierarchy::load(store).map_err(|e| anyhow!("{tag} hierarchy: {e}"))?;
     let node_id = resolve_path(&hierarchy, &path, tag)?
         .ok_or_else(|| anyhow!("{tag}: cannot rename root"))?;
+    if hierarchy.get(node_id).is_some_and(|n| n.protected) {
+        return Err(anyhow!("{tag}: `{path}` is protected and cannot be renamed"));
+    }
     store
         .rename_node(&hierarchy, node_id, &new_title)
         .map_err(|e| anyhow!("{tag}: {e}"))?;

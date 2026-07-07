@@ -87,6 +87,8 @@ pub fn prose(
     if nouns.is_empty() || verbs.is_empty() {
         return Vec::new();
     }
+    // Cap the batch — an unbounded `--count` would build a runaway Vec.
+    let count = count.min(crate::conlang::generate::word::MAX_GENERATE_BATCH);
     let mut out = Vec::new();
     for i in 0..count {
         let s = seed_at(seed, i);

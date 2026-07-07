@@ -393,7 +393,10 @@ fn import(project: &Path, file: &Path, book_name: Option<&str>) -> Result<()> {
         let body = entry.to_hjson();
         if let Some(rel) = &node.file {
             let abs = store.project_root().join(rel);
-            let _ = crate::io_atomic::write(&abs, body.as_bytes());
+            // This is the authoritative on-disk copy that `sources check/list/
+            // export` and `inkhaven build` read — a swallowed failure here left
+            // the citation silently absent while import reported success.
+            crate::io_atomic::write(&abs, body.as_bytes()).map_err(Error::Io)?;
         }
         store.update_paragraph_content(&mut node, body.as_bytes())?;
         created += 1;

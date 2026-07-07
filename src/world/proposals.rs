@@ -147,6 +147,32 @@ pub(crate) fn now_secs() -> i64 {
         .unwrap_or(0)
 }
 
+/// A stable lowercase slug of `name`, runs of non-alphanumerics collapsed to
+/// `sep`. H8 — falls back to a hash of the raw name when the slug would be empty
+/// (an all-non-ASCII name), so two distinct such names never collide to the same
+/// proposal signature or landmark id (which would silently drop one on re-propose).
+pub(crate) fn stable_slug(name: &str, sep: char) -> String {
+    let mut s = String::new();
+    for c in name.trim().to_lowercase().chars() {
+        if c.is_ascii_alphanumeric() {
+            s.push(c);
+        } else if !s.ends_with(sep) {
+            s.push(sep);
+        }
+    }
+    let s = s.trim_matches(sep).to_string();
+    if !s.is_empty() {
+        return s;
+    }
+    // FNV-1a of the raw bytes → a short, stable, name-unique tag.
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in name.bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("x{h:012x}")
+}
+
 struct SplitMix64(u64);
 impl SplitMix64 {
     fn new(seed: u64) -> Self {
@@ -164,6 +190,19 @@ impl SplitMix64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stable_slug_is_unique_and_deterministic_for_non_ascii_names() {
+        // Ordinary names slug normally.
+        assert_eq!(stable_slug("A Sky-Pantheon", '-'), "a-sky-pantheon");
+        // H8: two distinct all-non-ASCII names must NOT collide to "" — each gets
+        // a stable hash tag, and they differ.
+        let a = stable_slug("名の国", '-');
+        let b = stable_slug("彼の国", '-');
+        assert!(!a.is_empty() && !b.is_empty());
+        assert_ne!(a, b, "distinct non-ASCII names collided");
+        assert_eq!(a, stable_slug("名の国", '-')); // deterministic
+    }
 
     #[test]
     fn names_are_deterministic_and_vary_by_position() {
