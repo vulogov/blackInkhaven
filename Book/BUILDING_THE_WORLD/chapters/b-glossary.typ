@@ -30,7 +30,11 @@ without hunting for the chapter that first introduced it.
 
 #gloss("Continuity")[Consistency held across time and across your manuscript — the same tower the same age in chapter three and chapter twelve, the same season the same date wherever it recurs. The shared root of calendar and climate is what keeps continuity from drifting.]
 
+#gloss("Continuity error")[A place where the manuscript contradicts the world or itself — a journey too fast for the distance, a season wrong for the date, a tower two different ages. The fact-checker exists to catch them before a reader does.]
+
 #gloss("Culture")[The way of life of a people — one per polity — with an ethos drawn from its capital's biome, a belief, a language profile, and a naming sample. Cultures give a world its peoples, not just its populations.]
+
+#gloss("Declared")[A fact you set by intention in world.hjson — a name, an economy, a magic rule, a river's course — as opposed to one the compiler emerges from the seed. The world honours what you declare and grows the rest around it.]
 
 #gloss("DEM")[A digital elevation model — a real heightmap image. If geology.dem is set, the geology layer builds its terrain from that image instead of from the seed, letting you ground a world on real or hand-made relief.]
 
@@ -56,11 +60,21 @@ without hunting for the chapter that first introduced it.
 
 #gloss("Keystone species")[The one animal per land biome that anchors its ecology — the creature a scene in that biome would most naturally put on the page. The ecology layer names one for each land biome.]
 
+#gloss("Language typology")[A description of a language by its structural type rather than its words — word order (SVO, SOV, …), morphology (isolating, agglutinative, fusional), and sound. A culture's language profile is a typology sketch the ConLang suite realises into a real tongue.]
+
 #gloss("Layer")[One stage of the compiled world — astronomy, geology, climate, hydrology, or demographics — each computed in order and each a consequence of the ones before it. The layers are the physical world, grown one at a time.]
 
 #gloss("Magic ledger")[The magic block of world.hjson: declared exceptions to physics, each a rule naming what it covers and whom it applies to. The fact-checker consults it so a deliberate departure from physics is honoured rather than flagged.]
 
+#gloss("MapSpec")[The JSON bridge between Inkhaven and plakat — a description of a world's cartography (coast, mountains, rivers, regions, labelled places, roads) emitted from the compiled layers and drawn by plakat. A pure function of the world and its seed, so the same world always yields the same map.]
+
 #gloss("Materialize")[To write the compiled world down as readable chapters in the World system book, with compile --materialize (or history --materialize). Materialising records the world's proposal; it does not touch your manuscript.]
+
+#gloss("Mythology")[The system book of an author's declared symbols, motifs, and archetypes. Inkhaven reads only what you declare there and checks the manuscript keeps faith with it; realworld propose-myth seeds it from your cultures' beliefs.]
+
+#gloss("Places book")[The system book of your settings — towns, cities, regions, landmarks. The world proposes its settlements into it; you author the rest, and give any of them a position on the map with realworld set-coords.]
+
+#gloss("plakat")[Inkhaven's companion cartography tool — a separate binary that reads a MapSpec and draws a finished, labelled map, and that can grow or dump a heightmap. Optional, installed with cargo install plakat.]
 
 #gloss("Polity")[A nation — a cluster of settlements gathered around a capital, with a name, a population, and seeded relations (allied, rival, or neutral) with its neighbours. Polities are read out of the settled world by realworld polities.]
 
@@ -70,6 +84,8 @@ without hunting for the chapter that first introduced it.
 
 #gloss("Rank-size hierarchy")[The orderly spread of settlement sizes — a few large cities, more towns, many villages — that the demographics layer arranges, mirroring how real settlement sizes distribute rather than clumping at one scale.]
 
+#gloss("Rule")[One entry in the magic ledger — a named exception to physics that says which fact-check categories it may cover and whom it applies to. A rule is how you teach the world that a departure from physics is intended, not an error.]
+
 #gloss("Scene context")[What the desk knows about the scene at your cursor — its place, season, and people — surfaced by realworld scene, the ambient footer chip, and the "This scene" header in the World overview. The world present while you write.]
 
 #gloss("Seed")[A single number that fixes all the \"random\" choices a world involves — where coastlines fall, which valley grows the first city. The same seed always produces the same world, so your world is reproducible.]
@@ -78,13 +94,21 @@ without hunting for the chapter that first introduced it.
 
 #gloss("Solstice / Equinox")[The four turning points of the year. At an equinox the tilt favours neither hemisphere, so day and night are equal; at a solstice one hemisphere leans most toward the star (its summer) and the other away (its winter).]
 
+#gloss("Sphere of influence")[The reach of a polity around its capital — the settlements it gathers and the ground it claims. Where two spheres meet is where a contested border belongs.]
+
 #gloss("Synodic period")[The time a moon takes to return to the same phase as seen from the ground — new moon to new moon. It differs from the raw orbital period because the planet is itself moving, and it is the rhythm a lunar month keeps.]
 
 #gloss("System book")[A dedicated project-wide book Inkhaven keeps beside your manuscript — Places, Characters, the Timeline, and the World book — readable, searchable, and citable from your prose.]
 
 #gloss("Tectonic plate")[A section of the planet's crust whose movements the geology layer simulates. Where plates meet and part, the world raises mountains, opens seas, and shapes continents.]
 
+#gloss("The present (year 0)")[The moment your story is set, from which the world's history is dated. Events before it carry negative years; the compiled chronology runs up to it.]
+
 #gloss("The World book")[The system book that holds your compiled world — every materialised layer written as readable chapters, opened read-only with Ctrl+B W. It is where the world you grew is written down.]
+
+#gloss("Timeline")[The system book that holds your story's dated events. The world's calendar drives it, and history events can be adopted onto it with inkhaven event add.]
+
+#gloss("Trade route")[A link in the trade network between two non-rival realms — a land road or a sea lane, by whether their capitals sit on a coast. Read out by realworld trade and drawn on the map. Connectivity, not simulated economics.]
 
 #gloss("Watershed")[The area of land that drains to a single river or lake — the catchment whose rainfall a river gathers. The hydrology layer traces watersheds as it runs water downhill across the terrain.]
 

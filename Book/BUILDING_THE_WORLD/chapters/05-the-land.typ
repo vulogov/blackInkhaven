@@ -44,9 +44,31 @@ and the land is fixed forever.
   the conditions; the coastline is the consequence.
 ]
 
-The second source is for when the emergent land is not what your story needs.
-Instead of the seed, you can hand the layer a real heightmap — a *DEM* — and it
-will build the continents from your image rather than from noise. This is the
+You need not take the seed's land exactly as it comes, either. A `generated` block
+lets you *steer* the generation without abandoning it — how many plates and
+continents to start from, how tall the mountains rise, and where the sea sits:
+
+#hjson[```
+geology: {
+  generated: {
+    plates: 9
+    continents: 3
+    mountain_orogeny: "ancient"
+    sea_level: 0.45
+    notable_minerals: ["iron", "silver", "obsidian"]
+  }
+}
+```]
+
+Every key is optional; each nudges the same emergent process rather than replacing
+it. `mountain_orogeny: "ancient"` wears the ranges down to old, low hills; a higher
+`sea_level` drowns more of the map; `notable_minerals` names what the ground holds,
+which the economy fact-checker later uses to catch a claim about a metal your world
+does not have.
+
+The second source is for when the emergent land is not what your story needs at
+all. Instead of the seed, you can hand the layer a real heightmap — a *DEM* — and
+it will build the continents from your image rather than from noise. This is the
 bring-your-own-map door: the whole of Inkhaven's downstream machinery — climate,
 rivers, cities — running on *your* chosen shape of land.
 

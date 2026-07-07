@@ -1,6 +1,6 @@
 #import "../design.typ": *
 
-#chapter(number: 26, title: "Building your conlang with Bund")
+#chapter(number: 27, title: "Building your conlang with Bund")
 
 Everything you have built so far, you built by *describing* it. You wrote blocks
 of HJSON — a list of phonemes, a set of templates, a table of affixes — and

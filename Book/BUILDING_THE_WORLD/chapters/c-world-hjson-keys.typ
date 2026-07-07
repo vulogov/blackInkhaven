@@ -25,8 +25,11 @@ settlement — depends on it.
 #subsection("star")
 #gloss("class")[`text` — spectral class, e.g. `"G2V"` (a sun like ours) or `"K"`,
   `"M"` for cooler, redder stars.]
-#gloss("luminosity_solar")[`number` — brightness in units of our Sun. `1.0` is
-  Sun-like; raise it for a hotter, wetter world, lower it for a colder one.]
+#gloss("luminosity_solar")[`number`, required — brightness in units of our Sun.
+  `1.0` is Sun-like; raise it for a hotter, wetter world, lower it for a colder
+  one.]
+#gloss("mass_solar")[`number`, optional — mass in units of our Sun. Omit it and
+  the sky derives a plausible mass from the luminosity; set it to override.]
 #gloss("age_gyr")[`number` — the star's age in billions of years. Descriptive.]
 
 #subsection("planet")
@@ -56,6 +59,8 @@ A `list` of moons, each a `block`:
   bigger tides.]
 #gloss("period_days")[`number` — orbital period in days, from which the synodic
   period (the visible month) is computed.]
+#gloss("eccentricity")[`number`, optional — how elliptical the moon's orbit is
+  (`0` is a circle). Descriptive.]
 
 #subsection("calendar")
 #gloss("months")[`number` — months in the year.]
@@ -63,14 +68,34 @@ A `list` of moons, each a `block`:
 #gloss("weekdays")[`number` — days in a week.]
 #gloss("month_names")[`list` of `text` — optional names for the months; used when
   the calendar is adopted into the story Timeline.]
+#gloss("day_names")[`list` of `text` — optional names for the days of the week.]
 #gloss("new_year_aligns_to")[`text` — the season marker the new year begins on,
   e.g. `"winter_solstice"`, `"vernal_equinox"`.]
 
 #section("geology — the land (optional)")
 
-Omit this block and the land is generated from the `seed`. Include it only to
-supply your own heightmap.
+Omit this block and the land is generated from the `seed`. Include it to *steer*
+that generation with a `generated` sub-block, or to supply your own heightmap with
+a `dem` sub-block. If both are present, the `dem` wins.
 
+#subsection("generated")
+Knobs on the seed-grown land. Every key is optional; the values below are the
+defaults.
+#gloss("plates")[`number` — how many tectonic plates the world starts with
+  (default `7`). More plates → more, smaller landmasses and coastlines.]
+#gloss("continents")[`number` — the target number of continents (default `4`).]
+#gloss("mountain_orogeny")[`text` — `"active"` (default, tall young ranges),
+  `"quiet"`, or `"ancient"` (low, worn-down ranges). Drives peak elevation.]
+#gloss("sea_level")[`number` `0.0`–`1.0` — the land/sea threshold on the height
+  scale (default `0.4`). Raise it to drown the map, lower it to expose more land.]
+#gloss("volcanism")[`text` — `"quiet"` / `"moderate"` / `"active"`. Descriptive.]
+#gloss("mineral_richness")[`text` — `"sparse"` / `"normal"` / `"rich"`.
+  Descriptive.]
+#gloss("notable_minerals")[`list` of `text` — named minerals the land holds; fed
+  to the economy fact-checker (alongside `economy.resources`) so a claim about a
+  metal the world does not have is flagged.]
+
+#subsection("dem")
 #gloss("dem")[`block` — bring-your-own-map. `dem.path` (`text`) is the heightmap
   image, relative to the project root; `dem.scale_km_per_pixel` (`number`) sets
   its real scale; `dem.sea_level_pixel_value` (`number`) marks the pixel level at
