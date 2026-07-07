@@ -72,6 +72,16 @@ in — the material of a hundred scenes.
   land would teach *these* people to fear and to honour.
 ]
 
+#note[
+  Every world has the same handful of social roles — someone farms, someone
+  fights, someone tends the sacred — but each people *names* them differently, and
+  `realworld culture` now shows you how. The common "priest" becomes a *keeper of
+  the founding dead* in one realm and a *keeper of the sky-pantheon* in another;
+  the "warrior" wears the realm's ethos, the "farmer" the realm's ground — an
+  ice-tiller here, a temperate-tiller there. They are the world's roles, spoken in
+  each realm's own tongue, ready to drop into a scene.
+]
+
 #section("A language profile — a proposal, not a language")
 
 The third thing a culture carries is a *language profile*: a short typological
