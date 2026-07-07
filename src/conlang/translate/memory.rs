@@ -84,13 +84,18 @@ fn tokens(s: &str) -> Vec<String> {
         .collect()
 }
 
-/// Token-set Jaccard similarity, `0.0..=1.0`.
+/// Token-set Jaccard similarity, `0.0..=1.0`. Deduplicates first — over a raw
+/// slice a repeated query token over-counts the intersection and pushes the score
+/// above 1.0 (and could underflow the union), mis-ranking fuzzy memory hits.
 fn jaccard(a: &[String], b: &[String]) -> f32 {
-    if a.is_empty() || b.is_empty() {
+    use std::collections::BTreeSet;
+    let sa: BTreeSet<&String> = a.iter().collect();
+    let sb: BTreeSet<&String> = b.iter().collect();
+    if sa.is_empty() || sb.is_empty() {
         return 0.0;
     }
-    let inter = a.iter().filter(|t| b.contains(t)).count();
-    let union = a.len() + b.len() - inter;
+    let inter = sa.intersection(&sb).count();
+    let union = sa.len() + sb.len() - inter;
     if union == 0 {
         0.0
     } else {
@@ -229,6 +234,18 @@ impl TranslationMemory {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn jaccard_stays_within_unit_range_with_repeated_tokens() {
+        // C7: a repeated query token used to over-count the intersection and push
+        // the score above 1.0 (mis-ranking fuzzy hits).
+        let a = tokens("the the bird");
+        let b = tokens("the bird");
+        let s = jaccard(&a, &b);
+        assert!((0.0..=1.0).contains(&s), "jaccard out of range: {s}");
+        // Same token set → exactly 1.0.
+        assert_eq!(jaccard(&tokens("the the bird"), &tokens("bird the")), 1.0);
+    }
 
     #[test]
     fn exact_match_is_normalized() {

@@ -2561,6 +2561,15 @@ fn validate(project: &Path) -> Result<()> {
     );
     let geo = geology_for(project, &def)?;
     println!("  geology:      ok · {} plate(s), {} continent(s)", geo.plates.len(), geo.continents);
+    if let Some(declared) = def.geology.as_ref().and_then(|g| g.generated.as_ref()) {
+        if declared.plates > crate::world::compile::geology_layer::MAX_PLATES {
+            println!(
+                "                  ⚠ geology.generated.plates {} exceeds the cap {} — clamped (a typo for a small number?)",
+                declared.plates,
+                crate::world::compile::geology_layer::MAX_PLATES
+            );
+        }
+    }
     let climate = compile_climate(&def, &astro, &geo);
     println!("  climate:      ok · {} biome(s)", climate.zones.len());
     let hydro = compile_hydrology(&geo, &climate);

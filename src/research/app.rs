@@ -1411,14 +1411,18 @@ impl ResearchApp {
         let (report, status) = match corroborator {
             Some(origin) => {
                 let now = chrono::Utc::now().to_rfc3339();
-                super::provenance::Provenance::record(
+                let prov_err = super::provenance::Provenance::record(
                     &self.layout,
                     &up.node_id.to_string(),
                     super::provenance::SourceRecord::new(&origin, "corroborated (was model)", &up.query, &self.thread.name, now),
-                );
+                )
+                .err();
                 self.fact_provenance = super::provenance::Provenance::load(&self.layout);
+                let warn = prov_err
+                    .map(|e| format!(" (warning: provenance not saved: {e})"))
+                    .unwrap_or_default();
                 (
-                    format!("[/upgrade] ✓ corroborated by {origin} — provenance raised to `{origin}` (the fact text is unchanged)."),
+                    format!("[/upgrade] ✓ corroborated by {origin} — provenance raised to `{origin}` (the fact text is unchanged).{warn}"),
                     format!("upgraded → {origin}"),
                 )
             }
@@ -3858,9 +3862,10 @@ impl ResearchApp {
                     &self.layout,
                 );
                 // T-P2 — record provenance for Facts inserts.
+                let mut prov_note = String::new();
                 if c.book == TargetBook::Facts {
                     let now2 = chrono::Utc::now().to_rfc3339();
-                    super::provenance::Provenance::record(
+                    if let Err(e) = super::provenance::Provenance::record(
                         &self.layout,
                         &new_id.to_string(),
                         super::provenance::SourceRecord::new(
@@ -3870,7 +3875,9 @@ impl ResearchApp {
                             &self.thread.name,
                             now2,
                         ),
-                    );
+                    ) {
+                        prov_note = format!("  · provenance not recorded: {e}");
+                    }
                 }
                 self.rebuild_prompt_history();
                 // R3-B — auto-create the SOURCES-1 citation for a scholarly `/fact`.
@@ -3887,8 +3894,10 @@ impl ResearchApp {
                         }
                     }
                 }
-                self.status_message =
-                    Some(format!("✓ Inserted: '{}' → {path}{cite_note}", title.trim()));
+                self.status_message = Some(format!(
+                    "✓ Inserted: '{}' → {path}{cite_note}{prov_note}",
+                    title.trim()
+                ));
             }
             Err(e) => self.status_message = Some(format!("insert failed: {e}")),
         }
@@ -4541,7 +4550,7 @@ impl ResearchApp {
                 self.reload_hierarchy();
                 let _ = self.facts_tree.reveal(&self.hierarchy, new_id);
                 // T-P2 — manual-entry provenance.
-                super::provenance::Provenance::record(
+                let prov_note = super::provenance::Provenance::record(
                     &self.layout,
                     &new_id.to_string(),
                     super::provenance::SourceRecord::new(
@@ -4551,8 +4560,11 @@ impl ResearchApp {
                         &self.thread.name,
                         chrono::Utc::now().to_rfc3339(),
                     ),
-                );
-                self.status_message = Some(format!("✓ added fact: {}", m.title.trim()));
+                )
+                .err()
+                .map(|e| format!(" · provenance not recorded: {e}"))
+                .unwrap_or_default();
+                self.status_message = Some(format!("✓ added fact: {}{prov_note}", m.title.trim()));
             }
             Err(e) => self.status_message = Some(format!("insert failed: {e}")),
         }

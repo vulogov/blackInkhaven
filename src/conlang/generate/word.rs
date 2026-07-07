@@ -40,10 +40,16 @@ pub fn generate_word(phon: &Phonology, role: TemplateRole, seed: u64) -> Option<
 /// satisfy the constraints are skipped (so the result may be shorter than
 /// `count`); duplicates are allowed — the lexicon layer dedups later.
 pub fn generate_words(phon: &Phonology, role: TemplateRole, count: usize) -> Vec<String> {
+    // Cap the batch — an unbounded `--count` (a dropped digit) would loop billions
+    // of times and collect a multi-GB Vec. No real lexicon needs more at once.
+    let count = count.min(MAX_GENERATE_BATCH);
     (0..count as u64)
         .filter_map(|i| generate_word(phon, role, i))
         .collect()
 }
+
+/// Upper bound on a single generate batch — far beyond any real use.
+pub const MAX_GENERATE_BATCH: usize = 100_000;
 
 /// Realize a (weighted) template into a phoneme sequence by filling each
 /// atom from its class. Returns `None` if a required class is empty or the
