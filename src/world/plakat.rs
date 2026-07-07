@@ -18,6 +18,8 @@
 //! The only impurity is the subprocess in [`render`]; the map geometry it produces
 //! is itself seeded and reproducible.
 
+use crate::world::compile::polities_layer::PolitiesOutput;
+use crate::world::compile::trade_layer::TradeOutput;
 use crate::world::proposals::PlaceLink;
 use crate::world::types::{ClimateOutput, DemographicsOutput, GeologyOutput, HydrologyOutput};
 use serde_json::{json, Value};
@@ -64,6 +66,7 @@ pub struct DeclaredLandmark {
     pub y: usize,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn build_map_spec(
     name: &str,
     geo: &GeologyOutput,
@@ -72,6 +75,8 @@ pub fn build_map_spec(
     demo: &DemographicsOutput,
     places: &[PlaceLink],
     declared: &[DeclaredLandmark],
+    pol: &PolitiesOutput,
+    trade: &TradeOutput,
 ) -> Value {
     json!({
         "version": SPEC_VERSION,
@@ -94,10 +99,28 @@ pub fn build_map_spec(
             "lakes": [],
         },
         "regions": region_features(climate),
-        "landmarks": landmark_features(geo, demo, places, declared),
-        "infrastructure": { "roads": [], "walls": [], "bridges": [] },
+        "landmarks": landmark_features(geo, demo, places, declared, pol),
+        "infrastructure": { "roads": road_features(trade), "walls": [], "bridges": [] },
         "bund_hooks": null,
     })
+}
+
+/// Trade routes → plakat `RoadSpec`s connecting realm-capital hubs
+/// (`hub_<i>`). A sea route is a `sea-lane`; a land route a `road`.
+fn road_features(trade: &TradeOutput) -> Vec<Value> {
+    trade
+        .routes
+        .iter()
+        .enumerate()
+        .map(|(i, r)| {
+            json!({
+                "id": format!("trade_{i}"),
+                "from": format!("hub_{}", r.from),
+                "to": format!("hub_{}", r.to),
+                "kind": if r.mode == "sea" { "sea-lane" } else { "road" },
+            })
+        })
+        .collect()
 }
 
 /// One-word climate hint from the mean land temperature.
@@ -427,10 +450,31 @@ fn landmark_features(
     demo: &DemographicsOutput,
     places: &[PlaceLink],
     declared: &[DeclaredLandmark],
+    pol: &PolitiesOutput,
 ) -> Vec<Value> {
     let (w, h) = (geo.width, geo.height);
     let mut out: Vec<Value> = Vec::new();
     let mut used: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+
+    // (−1) Realm capitals as trade hubs (`hub_<i>`), labeled by realm, so the
+    //      trade roads have stable endpoints to connect. Emitted first so the
+    //      capital cell is owned by its hub.
+    for (i, p) in pol.polities.iter().enumerate() {
+        let (x, y) = p.capital_pos;
+        if x >= w || y >= h || out.len() >= MAX_LANDMARKS {
+            continue;
+        }
+        if !used.insert((x, y)) {
+            continue;
+        }
+        out.push(json!({
+            "id": format!("hub_{i}"),
+            "name": p.name,
+            "kind": if is_coastal(geo, x, y) { "port" } else { "city" },
+            "anchor": canvas_anchor(x as f64, y as f64, w, h),
+            "size": size_hint(p.population),
+        }));
+    }
 
     // (0) Author-declared landmarks with a position always draw, labeled by name,
     //     with a stable `decl_<slug>` id (they don't round-trip back to a node).
@@ -738,6 +782,11 @@ mod tests {
         WorldDefinition::from_hjson(body).unwrap()
     }
 
+    /// An empty polities set for map tests that don't exercise trade hubs.
+    fn tpol() -> PolitiesOutput {
+        PolitiesOutput { polities: Vec::new(), relations: Vec::new() }
+    }
+
     fn layers() -> (GeologyOutput, ClimateOutput, HydrologyOutput, DemographicsOutput) {
         let def = world();
         let astro = compile_astronomy(&def.astronomy);
@@ -751,7 +800,7 @@ mod tests {
     #[test]
     fn spec_has_v2_shape() {
         let (geo, climate, hydro, demo) = layers();
-        let spec = build_map_spec("Testworld", &geo, &climate, &hydro, &demo, &[], &[]);
+        let spec = build_map_spec("Testworld", &geo, &climate, &hydro, &demo, &[], &[], &tpol(), &TradeOutput::default());
         assert_eq!(spec["version"], 2);
         assert_eq!(spec["name"], "Testworld");
         assert!(spec["terrain"]["mountain_ranges"].is_array());
@@ -763,15 +812,15 @@ mod tests {
     #[test]
     fn spec_is_deterministic() {
         let (geo, climate, hydro, demo) = layers();
-        let a = build_map_spec("W", &geo, &climate, &hydro, &demo, &[], &[]);
-        let b = build_map_spec("W", &geo, &climate, &hydro, &demo, &[], &[]);
+        let a = build_map_spec("W", &geo, &climate, &hydro, &demo, &[], &[], &tpol(), &TradeOutput::default());
+        let b = build_map_spec("W", &geo, &climate, &hydro, &demo, &[], &[], &tpol(), &TradeOutput::default());
         assert_eq!(a, b);
     }
 
     #[test]
     fn landmarks_are_capped_and_anchored() {
         let (geo, climate, hydro, demo) = layers();
-        let spec = build_map_spec("W", &geo, &climate, &hydro, &demo, &[], &[]);
+        let spec = build_map_spec("W", &geo, &climate, &hydro, &demo, &[], &[], &tpol(), &TradeOutput::default());
         let lms = spec["landmarks"].as_array().unwrap();
         assert!(lms.len() <= MAX_LANDMARKS);
         for lm in lms {
@@ -783,10 +832,36 @@ mod tests {
     }
 
     #[test]
+    fn trade_routes_become_roads_between_capital_hubs() {
+        use crate::world::compile::polities_layer::{Polity, Relation};
+        use crate::world::compile::trade_layer::TradeOutput;
+        let (geo, climate, hydro, demo) = layers();
+        let pol = PolitiesOutput {
+            polities: vec![
+                Polity { name: "Karon".into(), capital: "c".into(), capital_pos: (5, 5), member_count: 1, population: 40_000 },
+                Polity { name: "Serai".into(), capital: "c".into(), capital_pos: (30, 30), member_count: 1, population: 30_000 },
+            ],
+            relations: vec![Relation { a: 0, b: 1, stance: "allied".into() }],
+        };
+        let trade = crate::world::compile::compile_trade(&pol, &geo, 1.0);
+        let spec = build_map_spec("W", &geo, &climate, &hydro, &demo, &[], &[], &pol, &trade);
+        // Capitals became hub landmarks.
+        let lms = spec["landmarks"].as_array().unwrap();
+        assert!(lms.iter().any(|l| l["id"] == "hub_0" && l["name"] == "Karon"));
+        assert!(lms.iter().any(|l| l["id"] == "hub_1" && l["name"] == "Serai"));
+        // The route is a road connecting the two hubs.
+        let roads = spec["infrastructure"]["roads"].as_array().unwrap();
+        assert_eq!(roads.len(), 1);
+        assert_eq!(roads[0]["from"], "hub_0");
+        assert_eq!(roads[0]["to"], "hub_1");
+        assert_eq!(roads[0]["kind"], "road");
+    }
+
+    #[test]
     fn a_declared_landmark_with_coords_is_drawn() {
         let (geo, climate, hydro, demo) = layers();
         let d = DeclaredLandmark { name: "The Ashen Peak".into(), kind: "mountain".into(), x: 3, y: 4 };
-        let spec = build_map_spec("W", &geo, &climate, &hydro, &demo, &[], &[d]);
+        let spec = build_map_spec("W", &geo, &climate, &hydro, &demo, &[], &[d], &tpol(), &TradeOutput::default());
         let lms = spec["landmarks"].as_array().unwrap();
         let found = lms.iter().find(|lm| lm["id"] == "decl_the_ashen_peak").expect("declared marker");
         assert_eq!(found["name"], "The Ashen Peak");
@@ -832,7 +907,7 @@ mod tests {
             x: px,
             y: py,
         };
-        let spec = build_map_spec("W", &geo, &climate, &hydro, &demo, &[link], &[]);
+        let spec = build_map_spec("W", &geo, &climate, &hydro, &demo, &[link], &[], &tpol(), &TradeOutput::default());
         let lms = spec["landmarks"].as_array().unwrap();
         let found = lms.iter().find(|lm| lm["id"] == format!("place_{id}")).expect("marker present");
         assert_eq!(found["name"], "Hand-Placed Hold");
@@ -854,7 +929,7 @@ mod tests {
             x: s.x,
             y: s.y,
         };
-        let spec = build_map_spec("W", &geo, &climate, &hydro, &demo, &[link], &[]);
+        let spec = build_map_spec("W", &geo, &climate, &hydro, &demo, &[link], &[], &tpol(), &TradeOutput::default());
         let lms = spec["landmarks"].as_array().unwrap();
         // Exactly one landmark on that cell — the place link, not a duplicate anon.
         let on_cell: Vec<_> = lms
@@ -874,7 +949,7 @@ mod tests {
     #[test]
     fn ranges_capped() {
         let (geo, climate, hydro, demo) = layers();
-        let spec = build_map_spec("W", &geo, &climate, &hydro, &demo, &[], &[]);
+        let spec = build_map_spec("W", &geo, &climate, &hydro, &demo, &[], &[], &tpol(), &TradeOutput::default());
         assert!(spec["terrain"]["mountain_ranges"].as_array().unwrap().len() <= MAX_RANGES);
     }
 
