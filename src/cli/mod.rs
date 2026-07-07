@@ -4337,6 +4337,14 @@ pub enum RealworldCommand {
         #[arg(long)]
         json: bool,
     },
+    /// WORLD-15 — the trade network: which realms are linked (each to its nearest
+    /// non-rival neighbours) and how (land road or sea lane). Connectivity, not
+    /// simulated economics. Drawn on the plakat map as roads.
+    Trade {
+        /// Emit the routes as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// WORLD-7 — emit a consolidated Markdown world reference (calendar, sky,
     /// regions, landmarks, waters, settlements, economy, magic).
     Gazetteer {
