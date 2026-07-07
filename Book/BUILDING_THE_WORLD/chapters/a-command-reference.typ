@@ -38,9 +38,10 @@ The `realworld` group is Inkhaven's world builder; the few rows outside it
   chord_row("… --materialize", "Write the chronology as a History chapter in the World book."),
   chord_row("… --json", "Emit the whole chronology as structured data."),
   chord_row("realworld polities", "Cluster settlements into nations around their largest capitals — names, populations, seeded relations (allied / rival / neutral)."),
-  chord_row("realworld culture", "Give each polity a culture — an ethos from its capital's biome, a belief, a language profile for the ConLang suite, and a naming sample."),
+  chord_row("realworld culture", "Give each polity a culture — an ethos from its capital's biome, a belief, a language profile for the ConLang suite, a naming sample, and the world's common social roles in that realm's own terms."),
   chord_row("realworld name", "Propose a name for each settlement in its realm's own phonic style, so a realm's towns share a family sound instead of the generic placeholders. A naming aid you adopt on accept."),
   chord_row("realworld ecology", "Generate flora and fauna archetypes, with a keystone animal per land biome."),
+  chord_row("realworld trade", "The trade network: each realm links to its nearest non-rival neighbours, by land road or sea lane. Connectivity, not simulated economics — drawn on the map as roads."),
 ))
 
 #section("Declare & the author's hand")
@@ -72,7 +73,7 @@ The `realworld` group is Inkhaven's world builder; the few rows outside it
 #chord_table((
   chord_row("realworld gazetteer", "A consolidated Markdown world reference — calendar, sky, regions, landmarks, waters, settlements, economy, magic."),
   chord_row("… --output <path>", "Write the gazetteer to a chosen path."),
-  chord_row("realworld map", "Render a map with the external plakat tool (optional). Draws your settlements, coordinate-bearing Places, and any declared `geography.landmarks` given a `lat`/`lon` (or `x`/`y`)."),
+  chord_row("realworld map", "Render a map with the external plakat tool (optional). Draws your settlements, coordinate-bearing Places, declared `geography.landmarks` with a position, realm-capital hubs, and the trade routes between them as roads."),
   chord_row("realworld set-coords <name> --lat <d> --lon <d>", "Give a Place (compiler-born or hand-authored) a location on the world grid so plakat draws it. Grid `--x`/`--y` also accepted."),
   chord_row("inkhaven event add …", "Adopt a chosen history event onto the story Timeline — the lines realworld history prints for you."),
   chord_row("inkhaven language", "Realise a culture's language profile in the ConLang suite."),

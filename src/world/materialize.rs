@@ -312,19 +312,28 @@ pub fn materialize_culture(
     store: &Store,
     cfg: &Config,
     cul: &crate::world::compile::culture_layer::CultureOutput,
+    base_roles: &[String],
+    biomes: &[String],
 ) -> Result<MaterializeReport> {
+    use crate::world::compile::culture_layer::elaborate_role;
     let world = world_book(store)?;
     let chapter = ensure_chapter(store, cfg, &world, "Cultures")?;
     let payload = serde_json::json!(cul
         .cultures
         .iter()
-        .map(|c| serde_json::json!({
-            "polity": c.polity,
-            "ethos": c.ethos,
-            "belief": c.belief,
-            "language_profile": c.language_profile,
-            "naming_sample": c.naming_sample,
-        }))
+        .enumerate()
+        .map(|(i, c)| {
+            let biome = biomes.get(i).map(String::as_str).unwrap_or("");
+            let roles: Vec<String> = base_roles.iter().map(|r| elaborate_role(r, c, biome)).collect();
+            serde_json::json!({
+                "polity": c.polity,
+                "ethos": c.ethos,
+                "belief": c.belief,
+                "language_profile": c.language_profile,
+                "naming_sample": c.naming_sample,
+                "roles": roles,
+            })
+        })
         .collect::<Vec<_>>());
     let body =
         serde_json::to_string_pretty(&payload).map_err(|e| Error::Store(format!("serializing cultures: {e}")))?;
@@ -362,6 +371,38 @@ pub fn materialize_ecology(
     match ensure_paragraph(store, cfg, &chapter, "Life by biome", &body)? {
         Outcome::Created => report.created.push("Life by biome".into()),
         Outcome::Updated => report.updated.push("Life by biome".into()),
+    }
+    Ok(report)
+}
+
+/// WORLD-15 — materialize the compiled **Trade** network (routes between realms)
+/// into the World book. Connectivity only — which realms are linked and how, not
+/// simulated economics.
+pub fn materialize_trade(
+    store: &Store,
+    cfg: &Config,
+    pol: &crate::world::compile::polities_layer::PolitiesOutput,
+    trade: &crate::world::compile::trade_layer::TradeOutput,
+) -> Result<MaterializeReport> {
+    let world = world_book(store)?;
+    let chapter = ensure_chapter(store, cfg, &world, "Trade")?;
+    let payload = serde_json::json!(trade
+        .routes
+        .iter()
+        .map(|r| serde_json::json!({
+            "from": pol.polities.get(r.from).map(|p| p.name.clone()).unwrap_or_default(),
+            "to": pol.polities.get(r.to).map(|p| p.name.clone()).unwrap_or_default(),
+            "mode": r.mode,
+            "stance": r.stance,
+            "distance_km": r.distance_km.round() as i64,
+        }))
+        .collect::<Vec<_>>());
+    let body =
+        serde_json::to_string_pretty(&payload).map_err(|e| Error::Store(format!("serializing trade: {e}")))?;
+    let mut report = MaterializeReport { chapter: "Trade".into(), ..Default::default() };
+    match ensure_paragraph(store, cfg, &chapter, "Routes", &body)? {
+        Outcome::Created => report.created.push("Routes".into()),
+        Outcome::Updated => report.updated.push("Routes".into()),
     }
     Ok(report)
 }

@@ -163,6 +163,30 @@ inside a map of otherwise generated neighbours.
   lets you move it.
 ]
 
+#section("Trade follows the peace")
+
+Relations are not only grudges; they are also the shape of commerce. Realms that
+are *not* rivals trade with their nearest neighbours, and `realworld trade` reads
+that straight out of the map:
+
+```
+inkhaven realworld trade
+```
+
+Each realm links to the closest few realms it is not at odds with; the route is a
+land road if the capitals sit inland, a sea lane if they sit on a coast. Rivals
+never trade — a border of suspicion is a border with no road across it. What comes
+back is the commercial geography of your world: which realms are bound by exchange
+and which are cut off, before you have written a single caravan or embargo.
+
+#note[
+  The trade layer is *connectivity, not economics*. It tells you that Karon and
+  Serai are linked by a sea lane and that neither trades with the realm they both
+  fear — it does not invent prices, goods, or volumes, which are yours to write.
+  When you render the map with `realworld map`, the routes are drawn as roads
+  between the realm capitals, so the web of trade is there to see.
+]
+
 #recap((
   [Your settlements already cluster around dominant cities; `realworld polities`
    reads those clusters into *nations*, each a *polity* built around its
@@ -174,4 +198,7 @@ inside a map of otherwise generated neighbours.
   [A nation is settlements *plus a story of who rules whom and who resents it*.
    The realms emerge from where the cities are; the author renames and re-draws
    as the story demands.],
+  [`realworld trade` turns the relations into a *trade network* — each realm
+   linked to its nearest non-rivals by land road or sea lane, drawn on the map.
+   Connectivity, not economics: which realms are bound, and which are cut off.],
 ))
