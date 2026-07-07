@@ -85,8 +85,10 @@ fact-checker resolve places you name in prose.
   `climate` (`text`), `description` (`text`).]
 #gloss("landmarks")[`list` of `block`, each: `name` (`text`), `kind` (`text`, e.g.
   `"city"`, `"port"`, `"mountain"`), `climate_zone` (`text`), `population`
-  (`number`), `description` (`text`). A landmark with a `climate_zone` becomes a
-  gazetteer entry the fact-checker knows by name.]
+  (`number`), `description` (`text`). Optional position: `lat` + `lon` (`number`,
+  degrees) or raw grid `x` + `y` (`number`, cells). A landmark with a
+  `climate_zone` becomes a gazetteer entry the fact-checker knows by name; a
+  landmark with a position is also drawn on the plakat map.]
 
 #section("hydrology — named waters (optional)")
 

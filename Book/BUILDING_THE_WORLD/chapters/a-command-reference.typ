@@ -21,7 +21,7 @@ The `realworld` group is Inkhaven's world builder; the few rows outside it
 #chord_table((
   chord_row("realworld new <name>", "Scaffold a starter world.hjson with Earth-like defaults; never overwrites an existing one."),
   chord_row("realworld validate", "Compile every layer in turn and report each one ok — your proof the definition is sound before you build on it."),
-  chord_row("realworld compile", "Compile the whole world — every layer, in order: astronomy → geology → climate → hydrology → demographics."),
+  chord_row("realworld compile", "Compile the whole world — every layer, in order: astronomy → geology → climate → hydrology → demographics. `--materialize` writes it all into the World book, the human half (nations, cultures, ecology) included."),
   chord_row("… --layer <name>", "Compile just one named layer (or all) and read what it found on its own."),
   chord_row("… --materialize", "Write the compiled layers as chapters into the World system book."),
   chord_row("… --json", "Emit the result as structured data, for tools and scripts."),
@@ -39,6 +39,7 @@ The `realworld` group is Inkhaven's world builder; the few rows outside it
   chord_row("… --json", "Emit the whole chronology as structured data."),
   chord_row("realworld polities", "Cluster settlements into nations around their largest capitals — names, populations, seeded relations (allied / rival / neutral)."),
   chord_row("realworld culture", "Give each polity a culture — an ethos from its capital's biome, a belief, a language profile for the ConLang suite, and a naming sample."),
+  chord_row("realworld name", "Propose a name for each settlement in its realm's own phonic style, so a realm's towns share a family sound instead of the generic placeholders. A naming aid you adopt on accept."),
   chord_row("realworld ecology", "Generate flora and fauna archetypes, with a keystone animal per land biome."),
 ))
 
@@ -58,7 +59,7 @@ The `realworld` group is Inkhaven's world builder; the few rows outside it
 #section("At the desk")
 
 #chord_table((
-  chord_row("realworld scene --place <name> --day <N>", "A scene brief: season and weather at the place's latitude, its biome and climate, the nearest realm's culture, and the nearest neighbouring Place (distance + bearing)."),
+  chord_row("realworld scene --place <name> --day <N>", "A scene brief: season and weather at the place's latitude, its biome and climate, the nearest realm's culture, and the nearest named feature — Place, declared landmark, or named water (distance + bearing)."),
   chord_row("realworld weather --day <N> --lat <deg>", "The local season and weather at a day-of-year and latitude."),
   chord_row("realworld travel --from <p> --to <p>", "Is a journey plausible? Checks real distance against the mode's pace; consults the magic ledger's travel_time rules."),
   chord_row("… --days <D> --mode <m>", "Set the days allowed and the mode: foot, horse, cart, or ship. (Also --from-x/--from-y coordinates.)"),
@@ -71,7 +72,7 @@ The `realworld` group is Inkhaven's world builder; the few rows outside it
 #chord_table((
   chord_row("realworld gazetteer", "A consolidated Markdown world reference — calendar, sky, regions, landmarks, waters, settlements, economy, magic."),
   chord_row("… --output <path>", "Write the gazetteer to a chosen path."),
-  chord_row("realworld map", "Render a map with the external plakat tool (optional)."),
+  chord_row("realworld map", "Render a map with the external plakat tool (optional). Draws your settlements, coordinate-bearing Places, and any declared `geography.landmarks` given a `lat`/`lon` (or `x`/`y`)."),
   chord_row("realworld set-coords <name> --lat <d> --lon <d>", "Give a Place (compiler-born or hand-authored) a location on the world grid so plakat draws it. Grid `--x`/`--y` also accepted."),
   chord_row("inkhaven event add …", "Adopt a chosen history event onto the story Timeline — the lines realworld history prints for you."),
   chord_row("inkhaven language", "Realise a culture's language profile in the ConLang suite."),
