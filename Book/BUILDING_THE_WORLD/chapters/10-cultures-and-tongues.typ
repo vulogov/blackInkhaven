@@ -104,6 +104,14 @@ tongue this people speaks. It does not speak it.
   is the language you want this people to have before you build it for real.
 ]
 
+The sample is one name; a realm has many towns. `realworld name` extends the
+sample into a whole gazetteer: it proposes a name for every settlement in its
+realm's phonic style, so a realm's towns share a family sound — a Karon coast of
+Torvelras and Velkaeths, a Serai valley that sounds nothing like it — instead of
+the generic placeholder names. They are proposals in the world's style; adopt one
+when you accept its Place, or, once you have realised the realm's tongue in the
+ConLang suite, name in the real language instead.
+
 #section("The bridge to the ConLang suite")
 
 To turn the profile into a real language you cross from the World system into
