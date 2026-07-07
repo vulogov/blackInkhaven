@@ -14,6 +14,10 @@ command palette — you never have to memorise these; this list is for browsing.
   [`/fact <claim>` — keep a claim as a trusted *Fact*; crosses the confirmation
    gate.],
   [`/note <claim>` — keep a speculative claim as a *Note* instead.],
+  [`/verify` — probe the model's confidence in its last answer before you keep it,
+   so a shaky reply doesn't become a Fact.],
+  [`/diff <claim>` — check a claim against what you have already kept and warn if it
+   near-duplicates an existing fact (tuned by `research.dedup_warn_score`).],
   [`/promote` — promote a selected Note into the Facts book.],
   [`u` *(key, in the Facts tree)* — toggle the selected fact *undisputed* (※): an
    authorial axiom, exempt from fact-checking.],
@@ -51,6 +55,11 @@ command palette — you never have to memorise these; this list is for browsing.
    re-verification.],
   [`/undisputed` — check your undisputed (authorial) facts for *internal coherence*
    (PLAUSIBLE / ODD / INCOHERENT), in the project language.],
+  [`/deadsources` — scan your kept web sources for link-rot and flag the ones that
+   no longer resolve, so a citation does not quietly die under you.],
+  [`/sources` — list every fact's provenance in one view — the interactive
+   companion to the provenance ladder.],
+  [`/forget <source>` — remove an imported source and the material it brought in.],
 )
 
 #section("Computing")
@@ -60,6 +69,11 @@ command palette — you never have to memorise these; this list is for browsing.
    compound growth, list reductions, and domain formulas (geography, astronomy,
    climate, economy). Provenance `computed`.],
   [`/world` — browse the project's World-simulation facts; `/calc` can read them.],
+  [`/rag <mode>` — choose what an ordinary question is grounded on: `facts+full`
+   (both, the default), `facts` (your kept facts only), or `full` (the whole
+   corpus).],
+  [`/chain <q1 → q2 → q3>` — run a sequence of questions as a pipeline, each
+   building on the last, for a multi-step line of research.],
 )
 
 #section("Composing out")
@@ -71,6 +85,23 @@ command palette — you never have to memorise these; this list is for browsing.
    marked `(needs research)`.],
   [`/gaps <topic>` — the open questions your corpus cannot yet answer.],
   [`/bibliography` — collect the Sources book's citations into BibTeX.],
+)
+
+#section("Citations — the Sources book")
+
+The Research Assistant files a citation to the *Sources* system book every time it
+grounds an answer on a scholarly work or a page. A separate `inkhaven sources`
+command manages that book from the shell, for interchange with reference managers.
+
+#list(
+  [`inkhaven sources list` — list every citation in the Sources book.],
+  [`inkhaven sources check` — validate the entries (missing keys, malformed
+   fields); exits non-zero on a problem, so it fits a CI step.],
+  [`inkhaven sources import <file.bib>` — bring citations in from a BibTeX file
+   (e.g. exported from Zotero).],
+  [`inkhaven sources export --format bibtex|csl-json [--out <file>]` — write the
+   citations out. *CSL-JSON* closes the round-trip with Zotero and other
+   citation managers; BibTeX suits LaTeX.],
 )
 
 #section("Headless (command line)")
@@ -88,4 +119,17 @@ command palette — you never have to memorise these; this list is for browsing.
    headlessly (accepts a leading `--chapter N`).],
   [`inkhaven research --bibliography [--out refs.bib]` — write the bibliography to
    a file, or to standard output.],
+  [`… --thread <name>` — open (or, headless, act on) a named research thread;
+   `--list-threads` shows them, `--export-thread <name> --format <fmt> --out <file>`
+   writes one out.],
+)
+
+#section("Window and navigation")
+
+Housekeeping inside the Research screen — none of it changes your corpus:
+
+#list(
+  [`/goto <path>` — jump the Facts tree to a book, chapter, or fact by path.],
+  [`/save` — save the current thread; `/clear` — clear the conversation window
+   (your kept facts are untouched).],
 )

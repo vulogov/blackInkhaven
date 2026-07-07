@@ -6,6 +6,37 @@ The HJSON blocks you place into your language's chapters, in one place. Remember
 the rule: quote short word-like values (`kind: "consonant"`), and run `inkhaven
 reindex --adopt` after editing files by hand.
 
+#section("Meta chapter — the overview block")
+
+The `Meta/overview` paragraph (seeded by `language init`) holds the language's
+identity and the defaults the rest of the suite reads. Every key is optional:
+
+```
+{
+  name: "Eldar"
+  family: "Elvish"
+  language_kind: "constructed"   // "constructed" | "natural"
+  iso_code: "qya"                // optional ISO 639-3 code
+  alphabet: ["Aa", "Bb", "Cc"]   // canonical order; drives Dictionary buckets
+  reading_direction: "ltr"       // "ltr" | "rtl"
+  script: "latin"
+  word_order: "SVO"
+  morphology: "fusional"
+  tonal: false
+  has_cases: true
+  has_gender: false
+  stemmer: "suffix"              // how search strips inflection
+  example_corpus_ref: ""
+  notes: ""
+}
+```
+
+A few of these do real work: `language_kind` tightens how strictly the AI
+translator adheres to your rules (`constructed`) versus leaning on its pretraining
+(`natural`); `alphabet` drives the Dictionary's letter buckets and `add-word`'s
+placement; `reading_direction` and `script` shape rendering; `stemmer` governs how
+`query` strips inflection when it searches. The rest are descriptive.
+
 #section("Phonology chapter")
 
 The full phonology block. Every field except `phonemes` is optional.
@@ -134,11 +165,29 @@ The `contact` block — the language's membership in a linguistic area / Sprachb
 
 #section("Dictionary chapter")
 
-Each word is one small block (written for you by `add-word`):
+Each word is one small block (written for you by `add-word`). The required fields
+are `word`, `type`, and `translation`; the rest are optional and add depth:
 
 ```hjson
 { word: "makil", type: "noun", translation: "sword",
-  register: "formal", domain: ["weapon"], era: "third_age" }
+  register: "formal", domain: ["weapon"], era: "third_age",
+  pronunciation: "ˈma.kil", etymology: "from mak- 'to cut'",
+  related: ["makilya", "makta"], inflection: { plural: "makili" },
+  examples: ["The king drew his makil."], notes: "ceremonial, not a field blade" }
+```
+
+`pronunciation`, `etymology`, `related` (cross-references), `inflection` (a small
+map of forms), `examples`, and `notes` are all preserved and shown in the rendered
+dictionary and grammar book.
+
+Idioms and conceptual metaphors also live in the Dictionary chapter, written by
+`idiom-add` / `metaphor-add`, under an `expressions` block:
+
+```hjson
+{ expressions: {
+  idioms:    [ { form: "cold hands", literal: "hands of ice", meaning: "a hard bargainer", register: ["colloquial"] } ]
+  metaphors: [ { source: "journey", target: "life", examples: ["the long road of his years"], note: "very common" } ]
+} }
 ```
 
 #section("SPE rule notation")

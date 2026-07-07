@@ -77,6 +77,35 @@ whether you are inside Inkhaven or scripting around it.
   about building a corpus that could give this much back.
 ]
 
+#section("Managing the Sources book from the shell")
+
+`/bibliography` is the quick path; the Sources book is also a first-class thing you
+can manage directly, with a dedicated `inkhaven sources` command, for working with
+reference managers like Zotero. It reads and writes the same Sources book, from
+outside the Research screen:
+
+```
+inkhaven sources list
+inkhaven sources export --format csl-json --out sources.json
+inkhaven sources import zotero-export.bib
+inkhaven sources check
+```
+
+`export` writes your citations out in one of two formats: *BibTeX*, as
+`/bibliography` does, or *CSL-JSON* — the format Zotero, Mendeley, and the wider
+citation ecosystem read and write. Because Inkhaven also *imports* BibTeX, the
+round-trip is complete: a library curated in Zotero comes in, your research adds to
+it, and it goes back out. And `sources check` validates the book — flagging a
+missing key or a malformed entry, and exiting non-zero — so you can wire it into a
+continuous-integration step and never ship a broken reference.
+
+#term("CSL-JSON")[
+  *CSL-JSON* is the JSON citation format of the Citation Style Language ecosystem —
+  what Zotero and most modern reference managers speak natively. Where BibTeX is the
+  LaTeX world's lingua franca, CSL-JSON is the interchange format between citation
+  tools. `sources export --format csl-json` closes the round-trip with them.
+]
+
 #section("The loop closes")
 
 Step back to the project arc you met in Chapter 2 — acquire, cross-check, maintain,

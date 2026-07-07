@@ -1,6 +1,6 @@
 #import "../design.typ": *
 
-#chapter(number: 18, title: "A World, End to End")
+#chapter(number: 19, title: "A World, End to End")
 
 Every chapter so far has taught one movement of the work in isolation — the sky
 on its own, the rivers on their own, the history on its own. That is how a craft

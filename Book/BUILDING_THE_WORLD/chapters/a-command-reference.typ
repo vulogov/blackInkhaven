@@ -66,6 +66,8 @@ The `realworld` group is Inkhaven's world builder; the few rows outside it
   chord_row("… --days <D> --mode <m>", "Set the days allowed and the mode: foot, horse, cart, or ship. (Also --from-x/--from-y coordinates.)"),
   chord_row("realworld fact-check --text \"…\"", "Check prose against the world — travel time, climate, date coherence — with declared magic exceptions suppressed."),
   chord_row("… --paragraph <id>", "Fact-check a manuscript paragraph by its id instead of literal text."),
+  chord_row("realworld co-location", "Flag co-location conflicts — a character in two places at overlapping times — from the story Timeline; respects the magic ledger. Deterministic, zero-AI."),
+  chord_row("realworld coherence <node>", "An LLM pass over every paragraph under a node (book / chapter), looking for contradictions between them. Cost-capped (`--max-cost`, `--force`)."),
 ))
 
 #section("Bridges to your book")
@@ -75,6 +77,7 @@ The `realworld` group is Inkhaven's world builder; the few rows outside it
   chord_row("… --output <path>", "Write the gazetteer to a chosen path."),
   chord_row("realworld map", "Render a map with the external plakat tool (optional). Draws your settlements, coordinate-bearing Places, declared `geography.landmarks` with a position, realm-capital hubs, and the trade routes between them as roads."),
   chord_row("realworld set-coords <name> --lat <d> --lon <d>", "Give a Place (compiler-born or hand-authored) a location on the world grid so plakat draws it. Grid `--x`/`--y` also accepted."),
+  chord_row("realworld places", "List the Place ↔ World cross-references — each accepted Place with its climate zone, biome, hydrology basis, and grid coordinates."),
   chord_row("inkhaven event add …", "Adopt a chosen history event onto the story Timeline — the lines realworld history prints for you."),
   chord_row("inkhaven language", "Realise a culture's language profile in the ConLang suite."),
   chord_row("inkhaven myth scan", "Map where your declared symbols fall across the chapters — a density heatmap, zero-AI."),

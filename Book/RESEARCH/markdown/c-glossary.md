@@ -14,6 +14,8 @@ Every term this book defined, gathered in one place. Each was introduced in a ma
 
 **Corpus** — The whole body of research material gathered for a project — Facts, Notes, Sources, and imported documents. It grows as you work, and you can search and compose from it.
 
+**CSL-JSON** — The JSON citation format of the Citation Style Language ecosystem — what Zotero and most modern reference managers read and write. Where BibTeX serves LaTeX, CSL-JSON is the interchange format between citation tools; `inkhaven sources export --format csl-json` produces it.
+
 **Deterministic** — Following from inputs by a fixed rule, so anyone who runs the same computation gets the same answer. Deterministic facts (computed, simulated) are the firmest rung — you trust arithmetic, not a source.
 
 **DOI** — A permanent code pointing to a specific scholarly work — the scholarly equivalent of a Q-id. A claim cited by DOI can be resolved to the exact paper by any reader.

@@ -2,13 +2,18 @@
 
 #appendix(letter: "A", title: "Command reference")
 
-Every conlang command, grouped by what it does. All take the form `inkhaven
-language <action> <language> [options]`. Add `--help` to any for full details.
+Every conlang command, grouped by what it does. Most follow the shape
+`inkhaven language <action> <language> [options]`.
+A few order their arguments differently — `cross <from> <to>`,
+`link-place <place> <lang>`, `reconstruct --forms` — and the project-wide
+`list`, `family-tree`, and `ecology` take no language at all.
+Add `--help` to any command for its full signature.
 
 #section("Setup")
 
 / `init <name>`: Create a language sub-book with its five chapters.
 / `list`: List every defined language with summary counts.
+/ `doctor <lang> [--json]`: A health check — phonotactic and lexical problems plus how much of your manuscript's language-words the lexicon already covers.
 
 #section("Phonology")
 
@@ -40,6 +45,7 @@ language <action> <language> [options]`. Add `--help` to any for full details.
 / `gloss <lang> --text "…"`: Interlinear (word-by-word) gloss of a sentence.
 / `derive <lang> --root R --gloss G --pos P [--yes]`: Coin derived words from a root.
 / `grammar <lang> [--set feature=value]`: View or set the typology questionnaire.
+/ `define-rule <lang>`: Open your `$EDITOR` to hand-author a grammar or phonology rule — the direct authoring path when a rule is easier written than configured.
 / `sentence <lang> --subject W --verb W --object W [--*-adj W] [--*-number N] [--negate --negator W] [--question --q-particle W]`: Assemble a clause — order, case, agreement, optional negation / yes-no question — with an interlinear gloss.
 / `relative <lang> --head H --role subject|object --verb V [--with O] [--relativizer W]`: Build a noun phrase modified by a relative clause.
 / `coordinate <lang> [--np W …] [--clause "subj verb obj" …] --conjunction W`: Join nouns or clauses with a conjunction.
@@ -69,6 +75,20 @@ language <action> <language> [options]`. Add `--help` to any for full details.
 / `areal-check <lang>`: (AI) Judge whether a declared Sprachbund is typologically plausible.
 / `ecology [--svg F]`: Report who speaks what variety where (or write a node-link atlas).
 / `idiolect <character> --word W | --text "…"`: Render a form or text in a character's native variety.
+
+#section("Translation")
+
+A rule-based translation engine that runs on the phonology, lexicon, and grammar
+you built — with a growing memory of the sentences you approve.
+
+/ `translate <lang> --text "…"`: Translate English into your language, using its lexicon and grammar.
+/ `reverse <lang> --text "…"`: Translate a sentence in your language back into English.
+/ `cross <from> <to> --text "…"`: Translate between two of your own languages.
+/ `remember <lang> --source "…" --target "…"`: Add an approved sentence pair to the translation memory.
+/ `memory <lang> [--json]`: Show the translation memory — the approved pairs the engine reuses.
+/ `corpus <lang> [--json]`: Show the parallel corpus gathered from your Sample-texts chapter.
+/ `eval <lang> [--json]`: Score the engine against the corpus — how much it gets right, and where it fails.
+/ `export-translation <lang> --out F`: Write an `.itm` translation-memory pack for backup or interchange.
 
 #section("Writing systems")
 

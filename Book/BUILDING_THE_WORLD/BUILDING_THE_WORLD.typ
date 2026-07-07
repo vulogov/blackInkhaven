@@ -45,9 +45,10 @@
   include "chapters/15-writing-against-the-world.typ",
   include "chapters/16-keeping-prose-true.typ",
   include "chapters/17-into-your-book.typ",
+  include "chapters/18-the-map.typ",
 
   part(number: "VII", title: "A Complete Walkthrough"),
-  include "chapters/18-walkthrough.typ",
+  include "chapters/19-walkthrough.typ",
 
   include "chapters/a-command-reference.typ",
   include "chapters/b-glossary.typ",
