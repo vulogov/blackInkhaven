@@ -33,6 +33,7 @@ pub fn run(project: &Path, cmd: RealworldCommand) -> Result<()> {
         RealworldCommand::SetCoords { name, x, y, lat, lon } => set_coords(project, &name, x, y, lat, lon),
         RealworldCommand::Calendar => calendar(project),
         RealworldCommand::Chronicle { json } => chronicle(project, json),
+        RealworldCommand::Name { json } => name(project, json),
         RealworldCommand::Gazetteer { output } => gazetteer(project, output.as_deref()),
         RealworldCommand::History { json, materialize } => history(project, json, materialize),
         RealworldCommand::Weather { day, lat } => weather(project, day, lat),
@@ -819,38 +820,42 @@ fn resolve_place(project: &Path, name: &str) -> Result<(f64, f64)> {
     Ok((l.x as f64, l.y as f64))
 }
 
-/// Grid row → latitude in degrees (row 0 = north pole, last row = south pole).
+/// Grid row → latitude in degrees, at the row's *cell centre* — the same
+/// convention the climate layer uses (`90 − (y+0.5)/h·180`, climate_layer.rs).
+/// BUG-16: the old `y/(h−1)` edge convention disagreed with the climate a
+/// settlement actually experiences by a half-cell (~0.75° on the 120-row grid).
 fn row_to_latitude(y: usize, height: usize) -> f64 {
-    if height <= 1 {
+    if height == 0 {
         return 0.0;
     }
-    90.0 - (y as f64 / (height - 1) as f64) * 180.0
+    90.0 - (y as f64 + 0.5) / height as f64 * 180.0
 }
 
 /// Latitude (−90..90) → grid row (inverse of [`row_to_latitude`]), clamped.
 fn lat_to_row(lat: f64, height: usize) -> usize {
-    if height <= 1 {
+    if height == 0 {
         return 0;
     }
-    let frac = (90.0 - lat.clamp(-90.0, 90.0)) / 180.0;
-    (frac * (height - 1) as f64).round().clamp(0.0, (height - 1) as f64) as usize
+    let y = (90.0 - lat.clamp(-90.0, 90.0)) / 180.0 * height as f64 - 0.5;
+    y.round().clamp(0.0, (height - 1) as f64) as usize
 }
 
-/// Grid column → longitude in degrees (col 0 = −180°, spanning the full 360°).
+/// Grid column → longitude in degrees, at the column's cell centre (col 0's
+/// centre is just east of −180°, spanning the full 360°).
 fn col_to_lon(x: usize, width: usize) -> f64 {
-    if width <= 1 {
+    if width == 0 {
         return 0.0;
     }
-    (x as f64 / (width - 1) as f64) * 360.0 - 180.0
+    (x as f64 + 0.5) / width as f64 * 360.0 - 180.0
 }
 
 /// Longitude (−180..180) → grid column (inverse of [`col_to_lon`]), clamped.
 fn lon_to_col(lon: f64, width: usize) -> usize {
-    if width <= 1 {
+    if width == 0 {
         return 0;
     }
-    let frac = (lon.clamp(-180.0, 180.0) + 180.0) / 360.0;
-    (frac * (width - 1) as f64).round().clamp(0.0, (width - 1) as f64) as usize
+    let x = (lon.clamp(-180.0, 180.0) + 180.0) / 360.0 * width as f64 - 0.5;
+    x.round().clamp(0.0, (width - 1) as f64) as usize
 }
 
 /// WORLD-10 — `realworld scene --place <name> --day <N>`: a scene brief for the
@@ -914,8 +919,8 @@ fn scene(project: &Path, place: Option<String>, day: f64, lat: Option<f64>) -> R
     // Any coordinate-bearing Place (compiler-born or hand-positioned via
     // `set-coords`) can be the anchor or the neighbour.
     if let Some(here) = &link {
-        if let Some((name, km, dir)) = nearest_place(project, &def, geo.width, geo.height, here) {
-            println!("  nearby:   {name} — {km:.0} km {dir}");
+        if let Some((name, kind, km, dir)) = nearest_feature(project, &def, geo.width, geo.height, here) {
+            println!("  nearby:   {name} ({kind}) — {km:.0} km {dir}");
         }
     }
     Ok(())
@@ -923,26 +928,55 @@ fn scene(project: &Path, place: Option<String>, day: f64, lat: Option<f64>) -> R
 
 /// The nearest other coordinate-bearing Place to `here`, as (name, km, bearing).
 /// `None` when the world store is absent or no other Place has coordinates.
-fn nearest_place(
+/// The nearest named feature to `here` — a coordinate-bearing Place, a declared
+/// landmark (`geography.landmarks` with a position), or a declared named water
+/// (`hydrology.rivers/lakes/seas` with a `from`/`to` cell) — as
+/// (name, kind, km, bearing). `None` when nothing else has coordinates.
+fn nearest_feature(
     project: &Path,
     def: &WorldDefinition,
     w: usize,
     h: usize,
     here: &crate::world::proposals::PlaceLink,
-) -> Option<(String, f64, &'static str)> {
-    let ws = crate::world::storage::WorldStore::open_for_project(project).ok()?;
-    let links = ws.list_place_links().ok()?;
+) -> Option<(String, &'static str, f64, &'static str)> {
+    // Candidate coordinate-bearing named features (excluding the anchor's cell).
+    let mut cands: Vec<(String, &'static str, usize, usize)> = Vec::new();
+    if let Ok(ws) = crate::world::storage::WorldStore::open_for_project(project) {
+        if let Ok(links) = ws.list_place_links() {
+            for l in links {
+                if l.place_id != here.place_id {
+                    cands.push((l.name, "place", l.x, l.y));
+                }
+            }
+        }
+    }
+    if let Some(g) = def.geography.as_ref() {
+        for lm in &g.landmarks {
+            if let Some((x, y)) = lm.grid(w, h) {
+                if (x, y) != (here.x, here.y) {
+                    cands.push((lm.name.clone(), "landmark", x, y));
+                }
+            }
+        }
+    }
+    if let Some(hy) = def.hydrology.as_ref() {
+        for wtr in hy.rivers.iter().chain(hy.lakes.iter()).chain(hy.seas.iter()) {
+            if let Some([x, y]) = wtr.from.or(wtr.to) {
+                if (x, y) != (here.x, here.y) {
+                    cands.push((wtr.name.clone(), "water", x, y));
+                }
+            }
+        }
+    }
     let radius = def.astronomy.planet.radius_earth;
-    links
-        .iter()
-        .filter(|l| l.place_id != here.place_id)
-        .map(|l| {
-            let dx = l.x as f64 - here.x as f64;
-            let dy = l.y as f64 - here.y as f64;
-            let km = crate::world::travel::distance_km(radius, w, h, dx, dy);
-            (l.name.clone(), km, bearing(here.x, here.y, l.x, l.y))
+    cands
+        .into_iter()
+        .map(|(name, kind, x, y)| {
+            let dx = x as f64 - here.x as f64;
+            let dy = y as f64 - here.y as f64;
+            (name, kind, crate::world::travel::distance_km(radius, w, h, dx, dy), bearing(here.x, here.y, x, y))
         })
-        .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+        .min_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
 }
 
 /// A rough 8-point compass bearing from cell `(x0,y0)` to `(x1,y1)`. Grid row 0
@@ -1325,6 +1359,86 @@ fn chronicle(project: &Path, json: bool) -> Result<()> {
     Ok(())
 }
 
+/// WORLD-14 — `realworld name`: propose a name for each settlement in its realm's
+/// phonic style, so a realm's towns share a family sound rather than the generic
+/// placeholder names. Deterministic; a naming aid the author adopts on accept.
+fn name(project: &Path, json: bool) -> Result<()> {
+    use crate::world::compile::culture_layer::culture_style_name;
+    use crate::world::compile::{
+        compile_astronomy, compile_climate, compile_culture, compile_demographics, compile_hydrology,
+        compile_polities,
+    };
+    use crate::world::proposals::settlement_name;
+
+    let def = load(project)?;
+    let seed = def.seed_u64();
+    let astro = compile_astronomy(&def.astronomy);
+    let geo = geology_for(project, &def)?;
+    let climate = compile_climate(&def, &astro, &geo);
+    let hydro = compile_hydrology(&geo, &climate);
+    let demo = compile_demographics(&climate, &hydro);
+    let pol = compile_polities(&demo, &def.nations, seed);
+    let capital_biomes: Vec<String> = pol
+        .polities
+        .iter()
+        .map(|q| {
+            demo.settlements
+                .iter()
+                .find(|s| (s.x, s.y) == q.capital_pos)
+                .map(|s| s.biome.clone())
+                .unwrap_or_default()
+        })
+        .collect();
+    let cul = compile_culture(&pol, &capital_biomes, &def.cultures, seed);
+
+    // Each settlement → its nearest realm (anisotropic grid weighting), indexed
+    // within that realm so the culture-style names don't collide.
+    let mut per_realm: Vec<usize> = vec![0; pol.polities.len()];
+    let mut rows: Vec<(String, String, String)> = Vec::new(); // (generic, styled, realm)
+    for s in &demo.settlements {
+        let realm = pol.polities.iter().enumerate().min_by_key(|(_, q)| {
+            let dx = q.capital_pos.0 as i64 - s.x as i64;
+            let dy = q.capital_pos.1 as i64 - s.y as i64;
+            9 * dx * dx + 4 * dy * dy
+        });
+        let generic = settlement_name(seed, s.x, s.y);
+        match realm {
+            Some((i, p)) => {
+                let idx = per_realm[i];
+                per_realm[i] += 1;
+                let styled = cul
+                    .cultures
+                    .get(i)
+                    .map(|c| culture_style_name(c, seed, idx))
+                    .unwrap_or_else(|| generic.clone());
+                rows.push((generic, styled, p.name.clone()));
+            }
+            None => rows.push((generic.clone(), generic, "—".into())),
+        }
+    }
+
+    if json {
+        let v = serde_json::json!(rows
+            .iter()
+            .map(|(g, s, r)| serde_json::json!({ "placeholder": g, "name": s, "realm": r }))
+            .collect::<Vec<_>>());
+        println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
+        return Ok(());
+    }
+
+    println!("names · {} — {} settlement(s) in their realm's style", def.name, rows.len());
+    let cap = 60;
+    for (g, styled, realm) in rows.iter().take(cap) {
+        println!("  {g:<15} → {styled:<15} ({realm})");
+    }
+    if rows.len() > cap {
+        println!("  … and {} more", rows.len() - cap);
+    }
+    println!("\nThese are proposals in the world's style — adopt one when you accept its Place,");
+    println!("or realise a realm's tongue in full with `realworld propose-language` + `inkhaven language`.");
+    Ok(())
+}
+
 /// WORLD-7 (W7-P4) — `realworld gazetteer [--output PATH]`: a consolidated,
 /// Markdown world reference (calendar, sky, regions, landmarks, waters,
 /// settlements, economy, magic) from the definition + compiled layers. Print to
@@ -1498,6 +1612,31 @@ fn gazetteer(project: &Path, output: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+/// WORLD-14 — coordinate-bearing declared landmarks (`geography.landmarks` given
+/// a `lat`/`lon` or `x`/`y`), projected to grid cells for the plakat map.
+fn declared_map_landmarks(
+    def: &WorldDefinition,
+    w: usize,
+    h: usize,
+) -> Vec<crate::world::plakat::DeclaredLandmark> {
+    def.geography
+        .as_ref()
+        .map(|g| {
+            g.landmarks
+                .iter()
+                .filter_map(|lm| {
+                    lm.grid(w, h).map(|(x, y)| crate::world::plakat::DeclaredLandmark {
+                        name: lm.name.clone(),
+                        kind: lm.kind.clone(),
+                        x,
+                        y,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Render the world map with plakat. Compiles every layer, emits a MapSpec from
 /// the geology/climate/hydrology/demographics outputs, hands it to `plakat map`,
 /// and reads the resolved landmark positions back to refine Place coordinates.
@@ -1517,8 +1656,9 @@ fn map(project: &Path, spec_only: bool, no_ingest: bool) -> Result<()> {
     // positions back onto the right cross-reference. An absent store is fine.
     let store = WorldStore::open_for_project(project).ok();
     let links = store.as_ref().and_then(|s| s.list_place_links().ok()).unwrap_or_default();
+    let declared = declared_map_landmarks(&def, geo.width, geo.height);
 
-    let spec = plakat::build_map_spec(&def.name, &geo, &climate, &hydro, &demo, &links);
+    let spec = plakat::build_map_spec(&def.name, &geo, &climate, &hydro, &demo, &links, &declared);
     let (gw, gh) = (geo.width, geo.height);
 
     if spec_only {
@@ -2508,6 +2648,26 @@ fn compile_all_cli(project: &Path, json: bool, materialize: bool) -> Result<()> 
         let declared_hist = def.history.as_ref().map(|h| h.events.as_slice()).unwrap_or(&[]);
         let hist = crate::world::compile::compile_history(&demo, declared_hist, def.seed_u64());
         reports.push(m::materialize_history(&store, &cfg, &hist)?);
+        // WORLD-14 — the human half of the world (nations, cultures, ecology).
+        let seed = def.seed_u64();
+        let pol = crate::world::compile::compile_polities(&demo, &def.nations, seed);
+        let capital_biomes: Vec<String> = pol
+            .polities
+            .iter()
+            .map(|q| {
+                demo.settlements
+                    .iter()
+                    .find(|s| (s.x, s.y) == q.capital_pos)
+                    .map(|s| s.biome.clone())
+                    .unwrap_or_default()
+            })
+            .collect();
+        let cul = crate::world::compile::compile_culture(&pol, &capital_biomes, &def.cultures, seed);
+        let eco_declared = def.ecology.as_ref().map(|e| e.regions.as_slice()).unwrap_or(&[]);
+        let eco = crate::world::compile::compile_ecology(&climate, eco_declared, seed);
+        reports.push(m::materialize_polities(&store, &cfg, &pol)?);
+        reports.push(m::materialize_culture(&store, &cfg, &cul)?);
+        reports.push(m::materialize_ecology(&store, &cfg, &eco)?);
         reports.push(m::materialize_setting(&store, &cfg, &def)?);
     }
 
@@ -2932,10 +3092,14 @@ mod tests {
 
     #[test]
     fn row_to_latitude_maps_poles_and_equator() {
-        assert!((super::row_to_latitude(0, 181) - 90.0).abs() < 1e-9); // north pole
-        assert!((super::row_to_latitude(180, 181) + 90.0).abs() < 1e-9); // south pole
-        assert!((super::row_to_latitude(90, 181)).abs() < 1e-9); // equator
-        assert_eq!(super::row_to_latitude(0, 1), 0.0); // degenerate grid
+        // BUG-16: cell-centre convention (matches the climate layer). The top
+        // row's *centre* is half a cell south of the pole, not exactly 90°.
+        let half = 180.0 / 181.0; // one cell, in degrees
+        assert!((super::row_to_latitude(0, 181) - (90.0 - half / 2.0)).abs() < 1e-9);
+        assert!((super::row_to_latitude(180, 181) + (90.0 - half / 2.0)).abs() < 1e-9);
+        assert!((super::row_to_latitude(90, 181)).abs() < 1e-9); // equator (odd height)
+        assert!(super::row_to_latitude(0, 181) < 90.0 && super::row_to_latitude(0, 181) > 89.0);
+        assert_eq!(super::row_to_latitude(0, 1), 0.0); // degenerate grid → equator
     }
 
     #[test]
@@ -2958,13 +3122,13 @@ mod tests {
         assert_eq!(lat_to_row(90.0, h), 0); // north pole → row 0
         assert_eq!(lat_to_row(-90.0, h), h - 1); // south pole → last row
         assert_eq!(lat_to_row(0.0, h), (h - 1) / 2 + ((h - 1) % 2)); // ~equator, rounded
-        // Longitude: col 0 = −180°, last col ≈ +180°.
+        // Longitude: col 0's centre is just east of −180°, last col near +180°.
         assert_eq!(lon_to_col(-180.0, w), 0);
         assert_eq!(lon_to_col(180.0, w), w - 1);
-        assert!((col_to_lon(0, w) + 180.0).abs() < 1e-9);
+        assert!(col_to_lon(0, w) > -180.0 && col_to_lon(0, w) < -180.0 + 360.0 / w as f64);
         // A mid latitude round-trips to within one cell.
         let row = lat_to_row(45.0, h);
-        assert!((row_to_latitude(row, h) - 45.0).abs() <= 180.0 / (h - 1) as f64 + 1e-9);
+        assert!((row_to_latitude(row, h) - 45.0).abs() <= 180.0 / h as f64 + 1e-9);
         // Out-of-range degrees clamp rather than panic.
         assert_eq!(lat_to_row(200.0, h), 0);
         assert_eq!(lon_to_col(999.0, w), w - 1);

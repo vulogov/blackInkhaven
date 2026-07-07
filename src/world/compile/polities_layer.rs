@@ -179,6 +179,20 @@ pub fn lint_polities(
     demo: &DemographicsOutput,
 ) -> Vec<String> {
     let mut w = Vec::new();
+    // BUG-14 — two declared nations sharing a name make relations ambiguous: a
+    // `with: <name>` reference binds to the first match only. We cannot guess
+    // which was meant, so we warn (deterministic order via BTreeMap).
+    let mut name_counts: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    for nd in declared {
+        *name_counts.entry(nd.name.trim().to_lowercase()).or_insert(0) += 1;
+    }
+    for (name, count) in &name_counts {
+        if *count > 1 {
+            w.push(format!(
+                "nation name `{name}` is declared {count} times — a `with` relation to it binds to the first realm only; give each realm a distinct name"
+            ));
+        }
+    }
     for nd in declared {
         match demo
             .settlements
@@ -224,6 +238,24 @@ mod tests {
             size_classes: Default::default(),
             role_archetypes: Vec::new(),
         }
+    }
+
+    #[test]
+    fn duplicate_declared_nation_names_are_flagged() {
+        use crate::world::types::NationDef;
+        let d = demo(vec![settle(0, 0, 90_000), settle(40, 40, 80_000)]);
+        let declared = vec![
+            NationDef { name: "Karon".into(), capital: [0, 0], relations: Vec::new() },
+            NationDef { name: "karon".into(), capital: [40, 40], relations: Vec::new() },
+        ];
+        let w = lint_polities(&declared, &d);
+        assert!(w.iter().any(|s| s.contains("declared 2 times")), "no dup-name warning: {w:?}");
+        // A distinct-named set produces no dup warning.
+        let ok = vec![
+            NationDef { name: "Karon".into(), capital: [0, 0], relations: Vec::new() },
+            NationDef { name: "Serai".into(), capital: [40, 40], relations: Vec::new() },
+        ];
+        assert!(!lint_polities(&ok, &d).iter().any(|s| s.contains("times")));
     }
 
     #[test]

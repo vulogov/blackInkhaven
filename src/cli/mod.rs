@@ -4329,6 +4329,14 @@ pub enum RealworldCommand {
         #[arg(long)]
         json: bool,
     },
+    /// WORLD-14 — propose settlement names in each realm's own phonic style
+    /// (deterministic), so a realm's towns share a family sound instead of the
+    /// generic placeholder names. A naming aid you adopt when you accept Places.
+    Name {
+        /// Emit the names as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// WORLD-7 — emit a consolidated Markdown world reference (calendar, sky,
     /// regions, landmarks, waters, settlements, economy, magic).
     Gazetteer {

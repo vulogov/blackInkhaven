@@ -183,6 +183,22 @@ running the command again with new coordinates.
   stand?* Everything else about the Place remains yours.
 ]
 
+A declared *landmark* can be placed the same way, without going through the Places
+book at all. Give any `geography.landmarks` entry a `lat`/`lon` (or raw grid
+`x`/`y`) and the map draws it where you put it:
+
+#hjson[```
+geography: {
+  landmarks: [
+    { name: "The Ashen Peak", kind: "mountain", lat: 40, lon: -30 }
+  ]
+}
+```]
+
+A landmark with no position stays a gazetteer entry the fact-checker knows by
+name; a landmark with one becomes a labelled marker on the map — and, like any
+positioned feature, it starts appearing in the scene briefs of the places near it.
+
 #subsection("plakat → inkhaven: bring a map in")
 
 The reverse direction you have already used once, and can use more fully:

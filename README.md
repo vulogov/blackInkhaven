@@ -21,50 +21,50 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.6.3 — The World Remembered
+## Latest release · 1.6.4 — The Whole World
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.6.3.md`](Documentation/RELEASE_NOTES/1.6.3.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.6.4.md`](Documentation/RELEASE_NOTES/1.6.4.md)
 · Book: [`Building the World with Inkhaven`](Book/BUILDING_THE_WORLD/)
 
-A worldbuilding-polish release that finishes the World→books weave and gives the
-world a memory of its own past — the last subsystem is bridged, every proposal
-commits through one shared path, and a new chronicle reads the compiled history as
-the world's growth over the ages. **No new crates.**
+A worldbuilding gap-fill release: the human half of the world now persists in the
+book, settlements can be named in each realm's own style, declared landmarks reach
+the map, and two long-deferred correctness bugs are fixed. **No new crates.**
 
-### The last bridge — into the ConLang suite
+### The human half, in the book
 
-**`inkhaven realworld propose-language`** reads each culture's language profile and
-naming sample and proposes a *language* per people. Accepting scaffolds a full
-language book in the ConLang suite — Meta, Phonology, Grammar, Dictionary, Sample
-texts — seeded with a `world-profile` brief, so the World × ConLang handoff is now
-automatic. The making of the language stays yours.
+`realworld compile --materialize` (and `Ctrl+B W → C`) now writes the compiled
+**Nations**, **Cultures**, and **Ecology** into the World book beside the physical
+layers — the whole world, physical and human, is searchable and citable from your
+prose.
 
-### One shared committer — and a fix
+### Names in the world's own style
 
-Every world proposal — Place, Mythology, Character, or language — now commits
-through a single dispatcher shared by the CLI and the TUI. This **fixes a bug**:
-accepting a non-Place proposal in the TUI used to create a broken Place. The TUI's
-`Ctrl+B W → C` compile now proposes all four kinds, and its queue-clear is
-kind-scoped so a CLI-made proposal survives a later compile.
+**`inkhaven realworld name`** proposes a name for every settlement in its realm's
+phonic style, so a realm's towns share a family sound instead of the generic
+placeholders — a naming aid you adopt on accept, or supersede once you've realised
+the realm's tongue in the ConLang suite.
 
-### A chronicle of the past
+### Declared landmarks on the map
 
-**`inkhaven realworld chronicle`** reads the compiled history as a *state
-trajectory*: at the close of each epoch, how far the world had grown —
-settlements, settled population, realms standing — beside its events. Pure
-presentation of the deterministic history; no simulation.
+A `geography.landmarks` entry given a `lat`/`lon` (or grid `x`/`y`) is now **drawn
+on the plakat map** and appears in the scene briefs of the places near it.
 
-### The world at the desk, deeper
+### A wider view from the desk
 
-**`Ctrl+B W` no longer freezes** — the overview compiles on a background thread
-with an mtime cache. And the **scene brief names your neighbours**: `realworld scene` reports the nearest coordinate-bearing Place with distance + bearing, so a
-place you positioned by hand grounds the scenes around it.
+The **scene brief** now reports the nearest *named feature* — a Place, a declared
+landmark, or a named water — with distance and bearing, not just the nearest Place.
+
+### Correctness
+
+Duplicate declared nation names now **warn** (relation binding was silently
+ambiguous), and `row_to_latitude` now matches the climate grid's cell-centre
+convention (it was a half-cell off).
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** New commands `realworld propose-language`,
-`realworld chronicle`; every proposal kind commits through one shared path (CLI +
-TUI). All additive — existing projects are unaffected.
+**No new runtime crates.** New command `realworld name`; `compile --materialize`
+writes three more chapters; new optional `geography.landmarks` position keys. All
+additive — existing projects are unaffected.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
