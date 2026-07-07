@@ -53,6 +53,17 @@ pub fn detect() -> Option<String> {
 /// byte-identical spec. `places` (the accepted Place ↔ World links) let the
 /// emitted landmarks carry stable `place_<uuid>` ids so [`parse_landmark_coords`]
 /// can map plakat's resolved positions back onto the right Place.
+/// A coordinate-bearing author-declared landmark (from `geography.landmarks`),
+/// pre-projected to a grid cell for the map. Unlike a Place it does not round-trip
+/// back to a node — it is drawn where the author placed it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeclaredLandmark {
+    pub name: String,
+    pub kind: String,
+    pub x: usize,
+    pub y: usize,
+}
+
 pub fn build_map_spec(
     name: &str,
     geo: &GeologyOutput,
@@ -60,6 +71,7 @@ pub fn build_map_spec(
     hydro: &HydrologyOutput,
     demo: &DemographicsOutput,
     places: &[PlaceLink],
+    declared: &[DeclaredLandmark],
 ) -> Value {
     json!({
         "version": SPEC_VERSION,
@@ -82,7 +94,7 @@ pub fn build_map_spec(
             "lakes": [],
         },
         "regions": region_features(climate),
-        "landmarks": landmark_features(geo, demo, places),
+        "landmarks": landmark_features(geo, demo, places, declared),
         "infrastructure": { "roads": [], "walls": [], "bridges": [] },
         "bund_hooks": null,
     })
@@ -410,10 +422,34 @@ fn biome_centroid(climate: &ClimateOutput, biome: &str) -> (f64, f64, usize) {
 /// and round-trips just like a compiler-born one. The remaining budget is filled
 /// with the largest settlements not already covered by a link, as anonymous
 /// landmarks. A coastal city becomes a `port`.
-fn landmark_features(geo: &GeologyOutput, demo: &DemographicsOutput, places: &[PlaceLink]) -> Vec<Value> {
+fn landmark_features(
+    geo: &GeologyOutput,
+    demo: &DemographicsOutput,
+    places: &[PlaceLink],
+    declared: &[DeclaredLandmark],
+) -> Vec<Value> {
     let (w, h) = (geo.width, geo.height);
     let mut out: Vec<Value> = Vec::new();
     let mut used: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+
+    // (0) Author-declared landmarks with a position always draw, labeled by name,
+    //     with a stable `decl_<slug>` id (they don't round-trip back to a node).
+    for d in declared {
+        if d.x >= w || d.y >= h || out.len() >= MAX_LANDMARKS {
+            continue;
+        }
+        if !used.insert((d.x, d.y)) {
+            continue;
+        }
+        let kind = if d.kind.trim().is_empty() { "city" } else { d.kind.trim() };
+        out.push(json!({
+            "id": format!("decl_{}", slugify(&d.name)),
+            "name": d.name,
+            "kind": kind,
+            "anchor": canvas_anchor(d.x as f64, d.y as f64, w, h),
+            "size": "medium",
+        }));
+    }
 
     // (1) One guaranteed marker per Place link — headline (most populous) first so
     //     the cap keeps the biggest places; author-positioned Places (population 0)
@@ -462,6 +498,19 @@ fn landmark_features(geo: &GeologyOutput, demo: &DemographicsOutput, places: &[P
         anon += 1;
     }
     out
+}
+
+/// A stable lowercase slug for a declared landmark id (`decl_<slug>`).
+fn slugify(name: &str) -> String {
+    let mut s = String::new();
+    for c in name.trim().to_lowercase().chars() {
+        if c.is_ascii_alphanumeric() {
+            s.push(c);
+        } else if !s.ends_with('_') {
+            s.push('_');
+        }
+    }
+    s.trim_matches('_').to_string()
 }
 
 /// Map a demographics size class to a plakat landmark kind.
@@ -702,7 +751,7 @@ mod tests {
     #[test]
     fn spec_has_v2_shape() {
         let (geo, climate, hydro, demo) = layers();
-        let spec = build_map_spec("Testworld", &geo, &climate, &hydro, &demo, &[]);
+        let spec = build_map_spec("Testworld", &geo, &climate, &hydro, &demo, &[], &[]);
         assert_eq!(spec["version"], 2);
         assert_eq!(spec["name"], "Testworld");
         assert!(spec["terrain"]["mountain_ranges"].is_array());
@@ -714,15 +763,15 @@ mod tests {
     #[test]
     fn spec_is_deterministic() {
         let (geo, climate, hydro, demo) = layers();
-        let a = build_map_spec("W", &geo, &climate, &hydro, &demo, &[]);
-        let b = build_map_spec("W", &geo, &climate, &hydro, &demo, &[]);
+        let a = build_map_spec("W", &geo, &climate, &hydro, &demo, &[], &[]);
+        let b = build_map_spec("W", &geo, &climate, &hydro, &demo, &[], &[]);
         assert_eq!(a, b);
     }
 
     #[test]
     fn landmarks_are_capped_and_anchored() {
         let (geo, climate, hydro, demo) = layers();
-        let spec = build_map_spec("W", &geo, &climate, &hydro, &demo, &[]);
+        let spec = build_map_spec("W", &geo, &climate, &hydro, &demo, &[], &[]);
         let lms = spec["landmarks"].as_array().unwrap();
         assert!(lms.len() <= MAX_LANDMARKS);
         for lm in lms {
@@ -731,6 +780,36 @@ mod tests {
             let y = lm["anchor"]["y"].as_f64().unwrap();
             assert!((0.0..=1.0).contains(&x) && (0.0..=1.0).contains(&y));
         }
+    }
+
+    #[test]
+    fn a_declared_landmark_with_coords_is_drawn() {
+        let (geo, climate, hydro, demo) = layers();
+        let d = DeclaredLandmark { name: "The Ashen Peak".into(), kind: "mountain".into(), x: 3, y: 4 };
+        let spec = build_map_spec("W", &geo, &climate, &hydro, &demo, &[], &[d]);
+        let lms = spec["landmarks"].as_array().unwrap();
+        let found = lms.iter().find(|lm| lm["id"] == "decl_the_ashen_peak").expect("declared marker");
+        assert_eq!(found["name"], "The Ashen Peak");
+        assert_eq!(found["kind"], "mountain");
+    }
+
+    #[test]
+    fn geo_landmark_projects_lat_lon_to_a_cell() {
+        use crate::world::types::world::GeoLandmark;
+        let lm = GeoLandmark {
+            name: "X".into(), kind: "port".into(), climate_zone: String::new(),
+            population: 0, description: String::new(),
+            lat: Some(0.0), lon: Some(0.0), x: None, y: None,
+        };
+        // Equator/prime-meridian on a 160×120 grid → mid grid, in range.
+        let (gx, gy) = lm.grid(160, 120).expect("has a position");
+        assert!(gx < 160 && gy < 120);
+        // Raw x/y takes precedence and clamps.
+        let lm2 = GeoLandmark { x: Some(999), y: Some(999), ..lm.clone() };
+        assert_eq!(lm2.grid(160, 120), Some((159, 119)));
+        // No position → None.
+        let lm3 = GeoLandmark { lat: None, lon: None, x: None, y: None, ..lm };
+        assert_eq!(lm3.grid(160, 120), None);
     }
 
     #[test]
@@ -753,7 +832,7 @@ mod tests {
             x: px,
             y: py,
         };
-        let spec = build_map_spec("W", &geo, &climate, &hydro, &demo, &[link]);
+        let spec = build_map_spec("W", &geo, &climate, &hydro, &demo, &[link], &[]);
         let lms = spec["landmarks"].as_array().unwrap();
         let found = lms.iter().find(|lm| lm["id"] == format!("place_{id}")).expect("marker present");
         assert_eq!(found["name"], "Hand-Placed Hold");
@@ -775,7 +854,7 @@ mod tests {
             x: s.x,
             y: s.y,
         };
-        let spec = build_map_spec("W", &geo, &climate, &hydro, &demo, &[link]);
+        let spec = build_map_spec("W", &geo, &climate, &hydro, &demo, &[link], &[]);
         let lms = spec["landmarks"].as_array().unwrap();
         // Exactly one landmark on that cell — the place link, not a duplicate anon.
         let on_cell: Vec<_> = lms
@@ -795,7 +874,7 @@ mod tests {
     #[test]
     fn ranges_capped() {
         let (geo, climate, hydro, demo) = layers();
-        let spec = build_map_spec("W", &geo, &climate, &hydro, &demo, &[]);
+        let spec = build_map_spec("W", &geo, &climate, &hydro, &demo, &[], &[]);
         assert!(spec["terrain"]["mountain_ranges"].as_array().unwrap().len() <= MAX_RANGES);
     }
 

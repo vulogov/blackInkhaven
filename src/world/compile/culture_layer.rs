@@ -105,6 +105,31 @@ pub fn compile_culture(
     CultureOutput { cultures }
 }
 
+/// WORLD-14 — a settlement name in a culture's phonic style. Each realm draws a
+/// small onset/tail palette (seeded from its polity name), recombined by `index`,
+/// so a realm's towns share a family sound and differ from another realm's. This
+/// fulfils the deferred "elaborate names in the world's style" (proposals.rs) —
+/// deterministic; the author adopts what rings true. (Not tied to a built conlang;
+/// an accepted ConLang can later supersede these.)
+pub fn culture_style_name(culture: &Culture, seed: u64, index: usize) -> String {
+    const ONSET: &[&str] = &[
+        "Ka", "Ser", "Tho", "Vae", "Mor", "Ilu", "Bra", "Nen", "Kor", "Ael", "Dun", "Syl", "Tor", "Vel",
+    ];
+    const TAIL: &[&str] =
+        &["ra", "eth", "is", "un", "ora", "ai", "el", "or", "yn", "ath", "ir", "une", "wen", "dar"];
+    // A per-culture base from the polity name, so each realm names distinctly.
+    let base = culture.polity.bytes().fold(seed ^ 0x5EED, |a, b| h(a, b as u64));
+    let on = |k: u64| ONSET[(h(base, k) as usize) % ONSET.len()];
+    let ta = |k: u64| TAIL[(h(base, 100 + k) as usize) % TAIL.len()];
+    let i = index as u64;
+    if h(base, 900 + i) % 3 == 0 {
+        // A longer, two-onset name.
+        format!("{}{}{}", on(i % 3), on((i + 1) % 3).to_lowercase(), ta(i % 3))
+    } else {
+        format!("{}{}", on(i % 3), ta((i + 1) % 3))
+    }
+}
+
 /// WORLD-11 (W11-P4) — verify pinned cultures: a maritime ethos on a dry inland
 /// capital, or a culture pinned to a nation that does not exist, is flagged.
 pub fn lint_culture(
@@ -177,6 +202,22 @@ mod tests {
         let p = pol(&["Karon"]);
         let b = vec!["savanna".to_string()];
         assert_eq!(compile_culture(&p, &b, &[], 9), compile_culture(&p, &b, &[], 9));
+    }
+
+    #[test]
+    fn culture_style_names_are_deterministic_and_realm_distinct() {
+        let p = pol(&["Karon", "Serai"]);
+        let b = vec!["mediterranean".to_string(), "temperate_forest".to_string()];
+        let c = compile_culture(&p, &b, &[], 0x33);
+        let (k0, s0) = (&c.cultures[0], &c.cultures[1]);
+        // Deterministic.
+        assert_eq!(culture_style_name(k0, 7, 3), culture_style_name(k0, 7, 3));
+        // Non-empty, capitalised, alphabetic.
+        let n = culture_style_name(k0, 7, 0);
+        assert!(n.chars().next().unwrap().is_uppercase() && n.chars().all(|ch| ch.is_alphabetic()));
+        // Two realms with the same seed+index usually name differently (distinct palettes).
+        let differ = (0..8).filter(|&i| culture_style_name(k0, 7, i) != culture_style_name(s0, 7, i)).count();
+        assert!(differ >= 5, "realms name too alike: {differ}/8 differ");
     }
 
     #[test]

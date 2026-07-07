@@ -13707,7 +13707,24 @@ impl App {
 
         let store = WorldStore::open_for_project(&root).ok();
         let links = store.as_ref().and_then(|s| s.list_place_links().ok()).unwrap_or_default();
-        let spec = plakat::build_map_spec(&def.name, &geo, &climate, &hydro, &demo, &links);
+        let declared: Vec<plakat::DeclaredLandmark> = def
+            .geography
+            .as_ref()
+            .map(|g| {
+                g.landmarks
+                    .iter()
+                    .filter_map(|lm| {
+                        lm.grid(geo.width, geo.height).map(|(x, y)| plakat::DeclaredLandmark {
+                            name: lm.name.clone(),
+                            kind: lm.kind.clone(),
+                            x,
+                            y,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let spec = plakat::build_map_spec(&def.name, &geo, &climate, &hydro, &demo, &links, &declared);
 
         self.status = "map: rendering with plakat…".into();
         match plakat::render(&root, &spec, def.seed_u64(), geo.width, geo.height) {
@@ -13770,26 +13787,8 @@ impl App {
         let hydro = compile_hydrology(&geo, &climate);
         let demo = compile_demographics(&climate, &hydro);
 
-        use crate::world::materialize as m;
-        let steps: Vec<crate::error::Result<m::MaterializeReport>> = vec![
-            m::materialize_astronomy(&self.store, &self.cfg, &astro),
-            m::materialize_geology(&self.store, &self.cfg, &geo),
-            m::materialize_climate(&self.store, &self.cfg, &climate),
-            m::materialize_hydrology(&self.store, &self.cfg, &hydro),
-            m::materialize_demographics(&self.store, &self.cfg, &demo),
-            m::materialize_magic(&self.store, &self.cfg, &def.magic.clone().unwrap_or_default()),
-            m::materialize_setting(&self.store, &self.cfg, &def),
-        ];
-        for s in &steps {
-            if let Err(e) = s {
-                self.status = format!("world materialize: {e}");
-                return;
-            }
-        }
-
-        // Everything the world offers: Places, plus the culture-derived bridges
-        // (Mythology symbols, realm rulers, and languages). Each kind clears only
-        // its own pending set and skips sites the author already resolved.
+        // The human half of the world, compiled up front so it materializes with
+        // the physical layers and seeds the proposal queue below.
         let seed = def.seed_u64();
         let pol = compile_polities(&demo, &def.nations, seed);
         let capital_biomes: Vec<String> = pol
@@ -13804,6 +13803,32 @@ impl App {
             })
             .collect();
         let cultures = compile_culture(&pol, &capital_biomes, &def.cultures, seed);
+        let eco_declared = def.ecology.as_ref().map(|e| e.regions.as_slice()).unwrap_or(&[]);
+        let eco = compile_ecology(&climate, eco_declared, seed);
+
+        use crate::world::materialize as m;
+        let steps: Vec<crate::error::Result<m::MaterializeReport>> = vec![
+            m::materialize_astronomy(&self.store, &self.cfg, &astro),
+            m::materialize_geology(&self.store, &self.cfg, &geo),
+            m::materialize_climate(&self.store, &self.cfg, &climate),
+            m::materialize_hydrology(&self.store, &self.cfg, &hydro),
+            m::materialize_demographics(&self.store, &self.cfg, &demo),
+            m::materialize_polities(&self.store, &self.cfg, &pol),
+            m::materialize_culture(&self.store, &self.cfg, &cultures),
+            m::materialize_ecology(&self.store, &self.cfg, &eco),
+            m::materialize_magic(&self.store, &self.cfg, &def.magic.clone().unwrap_or_default()),
+            m::materialize_setting(&self.store, &self.cfg, &def),
+        ];
+        for s in &steps {
+            if let Err(e) = s {
+                self.status = format!("world materialize: {e}");
+                return;
+            }
+        }
+
+        // Everything the world offers: Places, plus the culture-derived bridges
+        // (Mythology symbols, realm rulers, and languages). Each kind clears only
+        // its own pending set and skips sites the author already resolved.
         let n_proposed = (|| -> crate::error::Result<usize> {
             use crate::world::language_proposals::language_proposals;
             use crate::world::myth_proposals::myth_proposals;

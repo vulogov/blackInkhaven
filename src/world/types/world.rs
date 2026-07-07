@@ -324,7 +324,9 @@ pub struct GeoRegion {
 }
 
 /// A named landmark (city, port, mountain, …). Cities/ports with a `climate_zone`
-/// become gazetteer entries the fact-checker can resolve by name.
+/// become gazetteer entries the fact-checker can resolve by name. WORLD-14: a
+/// landmark given a position (`lat`/`lon` degrees, or raw grid `x`/`y`) is also
+/// drawn on the plakat map.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct GeoLandmark {
     pub name: String,
@@ -336,6 +338,40 @@ pub struct GeoLandmark {
     pub population: u64,
     #[serde(default)]
     pub description: String,
+    /// Optional position — geographic degrees (preferred) …
+    #[serde(default)]
+    pub lat: Option<f64>,
+    #[serde(default)]
+    pub lon: Option<f64>,
+    /// … or raw grid cells (0-based; row 0 = north).
+    #[serde(default)]
+    pub x: Option<usize>,
+    #[serde(default)]
+    pub y: Option<usize>,
+}
+
+impl GeoLandmark {
+    /// The landmark's grid cell on a `w × h` map: raw `x`/`y` if given, else the
+    /// cell-centre conversion of `lat`/`lon` (matching the climate convention),
+    /// else `None` when the landmark carries no position.
+    pub fn grid(&self, w: usize, h: usize) -> Option<(usize, usize)> {
+        if let (Some(x), Some(y)) = (self.x, self.y) {
+            return Some((x.min(w.saturating_sub(1)), y.min(h.saturating_sub(1))));
+        }
+        if let (Some(lat), Some(lon)) = (self.lat, self.lon) {
+            if w == 0 || h == 0 {
+                return None;
+            }
+            let gy = ((90.0 - lat.clamp(-90.0, 90.0)) / 180.0 * h as f64 - 0.5)
+                .round()
+                .clamp(0.0, (h - 1) as f64) as usize;
+            let gx = ((lon.clamp(-180.0, 180.0) + 180.0) / 360.0 * w as f64 - 0.5)
+                .round()
+                .clamp(0.0, (w - 1) as f64) as usize;
+            return Some((gx, gy));
+        }
+        None
+    }
 }
 
 /// The `hydrology` declaration block — author-named waters + a rainfall note.

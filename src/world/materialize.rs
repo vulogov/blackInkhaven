@@ -264,6 +264,108 @@ pub fn materialize_demographics(
     Ok(report)
 }
 
+/// WORLD-14 — materialize the compiled **Nations** (polities + relations) into
+/// the World book, so the human half of the world persists in the book beside
+/// the physical layers, searchable and citable.
+pub fn materialize_polities(
+    store: &Store,
+    cfg: &Config,
+    pol: &crate::world::compile::polities_layer::PolitiesOutput,
+) -> Result<MaterializeReport> {
+    let world = world_book(store)?;
+    let chapter = ensure_chapter(store, cfg, &world, "Nations")?;
+    let realms = serde_json::json!(pol
+        .polities
+        .iter()
+        .map(|p| serde_json::json!({
+            "name": p.name,
+            "capital": p.capital,
+            "capital_pos": [p.capital_pos.0, p.capital_pos.1],
+            "member_count": p.member_count,
+            "population": p.population,
+        }))
+        .collect::<Vec<_>>());
+    let relations = serde_json::json!(pol
+        .relations
+        .iter()
+        .map(|r| serde_json::json!({
+            "a": pol.polities.get(r.a).map(|p| p.name.clone()).unwrap_or_default(),
+            "b": pol.polities.get(r.b).map(|p| p.name.clone()).unwrap_or_default(),
+            "stance": r.stance,
+        }))
+        .collect::<Vec<_>>());
+    let mut report = MaterializeReport { chapter: "Nations".into(), ..Default::default() };
+    for (title, payload) in [("Realms", realms), ("Relations", relations)] {
+        let body =
+            serde_json::to_string_pretty(&payload).map_err(|e| Error::Store(format!("serializing {title}: {e}")))?;
+        match ensure_paragraph(store, cfg, &chapter, title, &body)? {
+            Outcome::Created => report.created.push(title.to_string()),
+            Outcome::Updated => report.updated.push(title.to_string()),
+        }
+    }
+    Ok(report)
+}
+
+/// WORLD-14 — materialize the compiled **Cultures** (one per realm) into the
+/// World book.
+pub fn materialize_culture(
+    store: &Store,
+    cfg: &Config,
+    cul: &crate::world::compile::culture_layer::CultureOutput,
+) -> Result<MaterializeReport> {
+    let world = world_book(store)?;
+    let chapter = ensure_chapter(store, cfg, &world, "Cultures")?;
+    let payload = serde_json::json!(cul
+        .cultures
+        .iter()
+        .map(|c| serde_json::json!({
+            "polity": c.polity,
+            "ethos": c.ethos,
+            "belief": c.belief,
+            "language_profile": c.language_profile,
+            "naming_sample": c.naming_sample,
+        }))
+        .collect::<Vec<_>>());
+    let body =
+        serde_json::to_string_pretty(&payload).map_err(|e| Error::Store(format!("serializing cultures: {e}")))?;
+    let mut report = MaterializeReport { chapter: "Cultures".into(), ..Default::default() };
+    match ensure_paragraph(store, cfg, &chapter, "Peoples", &body)? {
+        Outcome::Created => report.created.push("Peoples".into()),
+        Outcome::Updated => report.updated.push("Peoples".into()),
+    }
+    Ok(report)
+}
+
+/// WORLD-14 — materialize the compiled **Ecology** (flora / fauna / keystone per
+/// biome) into the World book.
+pub fn materialize_ecology(
+    store: &Store,
+    cfg: &Config,
+    eco: &crate::world::compile::ecology_layer::EcologyOutput,
+) -> Result<MaterializeReport> {
+    let world = world_book(store)?;
+    let chapter = ensure_chapter(store, cfg, &world, "Ecology")?;
+    let payload = serde_json::json!(eco
+        .biomes
+        .iter()
+        .map(|b| serde_json::json!({
+            "biome": b.biome,
+            "area_pct": b.area_pct,
+            "flora": b.flora,
+            "fauna": b.fauna,
+            "keystone": b.keystone,
+        }))
+        .collect::<Vec<_>>());
+    let body =
+        serde_json::to_string_pretty(&payload).map_err(|e| Error::Store(format!("serializing ecology: {e}")))?;
+    let mut report = MaterializeReport { chapter: "Ecology".into(), ..Default::default() };
+    match ensure_paragraph(store, cfg, &chapter, "Life by biome", &body)? {
+        Outcome::Created => report.created.push("Life by biome".into()),
+        Outcome::Updated => report.updated.push("Life by biome".into()),
+    }
+    Ok(report)
+}
+
 /// Materialize the magic ledger into `World / Magic Ledger / Rules` so the
 /// declared exceptions to physics live in the book alongside the world.
 pub fn materialize_magic(
