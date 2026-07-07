@@ -49,7 +49,10 @@ async fn tavily(cfg: &WebConfig, query: &str) -> Result<Vec<WebResult>> {
         "search_depth": "basic",
         "include_raw_content": cfg.fetch,
     });
-    let resp = reqwest::Client::new()
+    let resp = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| anyhow!("http client: {e}"))?
         .post("https://api.tavily.com/search")
         .json(&body)
         .send()
@@ -65,7 +68,10 @@ async fn tavily(cfg: &WebConfig, query: &str) -> Result<Vec<WebResult>> {
 /// SearXNG — JSON search, then fetch + strip each page when `fetch` is on.
 async fn searxng(cfg: &WebConfig, query: &str) -> Result<Vec<WebResult>> {
     let base = cfg.endpoint.trim_end_matches('/');
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| anyhow!("http client: {e}"))?;
     let resp = client
         .get(format!("{base}/search"))
         .query(&[("q", query), ("format", "json")])

@@ -1,6 +1,6 @@
 #import "../design.typ": *
 
-#chapter(number: 24, title: "Sharing your language")
+#chapter(number: 25, title: "Sharing your language")
 
 Your language does not have to live only inside Inkhaven. You may want to typeset
 a paper about it, study it on your phone, hand the lexicon to a collaborator,
@@ -123,8 +123,18 @@ example —
   If you want to *read it back into Inkhaven later*, use `csv` (the one
   round-trippable format). If you want a *backup* or to feed your own scripts, use
   `json`. To *study* the words, use `anki`. To *typeset* them, use `linguex` (a
-  paper) or the Typst formats (a finished book). If you *translate text* into your
-  language, use `xliff`. The IPA chart is for a quick reference.
+  paper) or the Typst formats (a finished book). To carry your lexicon into an
+  *external CAT tool* (OmegaT, memoQ, Weblate), use `xliff`. The IPA chart is for a
+  quick reference.
+]
+
+#term("Translating without leaving Inkhaven")[
+  XLIFF is for handing your words to *another* program. You do not need to leave
+  Inkhaven to translate at all: the previous chapter's built-in engine
+  (`language translate` / `reverse` / `cross`) turns sentences into and out of your
+  language using its own lexicon and grammar, and keeps its own *translation memory*
+  — exported as an `.itm` pack, not XLIFF. Reach for XLIFF only when the translating
+  happens in a tool other than Inkhaven.
 ]
 
 #section("Importing a lexicon")

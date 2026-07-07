@@ -89,15 +89,7 @@ fn belief_to_seed(belief: &str) -> Option<MythSeed> {
 /// A stable, deterministic slug for a belief, for the proposal signature. Keeps
 /// re-`propose-myth` from re-proposing a belief the author already accepted.
 fn belief_slug(belief: &str) -> String {
-    let mut s = String::new();
-    for c in belief.trim().to_lowercase().chars() {
-        if c.is_ascii_alphanumeric() {
-            s.push(c);
-        } else if !s.ends_with('-') {
-            s.push('-');
-        }
-    }
-    s.trim_matches('-').to_string()
+    crate::world::proposals::stable_slug(belief, '-')
 }
 
 /// Words from a declared belief worth using as a symbol vocabulary: lowercased,

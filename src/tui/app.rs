@@ -15230,6 +15230,10 @@ impl App {
     /// Reload the hierarchy after the compiler wrote into the World/Places books,
     /// so the new paragraphs show in the tree without a restart.
     fn refresh_hierarchy_after_world_write(&mut self) {
+        // H6 — any world write (compile, accept/reject a proposal, map ingest)
+        // can change what the overview reports, and the mtime cache keys only on
+        // world.hjson. Drop it here so the next `Ctrl+B W` recomputes.
+        self.world_overview_cache = None;
         if let Ok(h) = crate::store::hierarchy::Hierarchy::load(&self.store) {
             self.hierarchy = h;
             self.rebuild_rows_preserving_cursor();

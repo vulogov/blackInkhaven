@@ -236,7 +236,17 @@ fn aggregate_zones(biome: &[Biome], temp: &[f32], precip: &[f32]) -> Vec<Climate
             precip_max_mm: pmax,
         })
         .collect();
-    zones.sort_by(|a, b| b.area_pct.partial_cmp(&a.area_pct).unwrap());
+    // Largest area first, with the biome name as a stable tiebreak — the source
+    // is a HashMap, so without it two equal-area biomes would order randomly
+    // across runs, breaking the pure-function-of-(world, seed) contract (and
+    // propagating the nondeterminism into ecology, the map's regions, and the
+    // materialized book).
+    zones.sort_by(|a, b| {
+        b.area_pct
+            .partial_cmp(&a.area_pct)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.biome.cmp(&b.biome))
+    });
     zones
 }
 

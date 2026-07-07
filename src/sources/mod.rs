@@ -167,6 +167,11 @@ impl BibEntry {
         let mut push = |name: &str, value: &str| {
             let v = value.trim();
             if !v.is_empty() {
+                // Escape braces — an unbalanced `}` in a field value (common in
+                // messy imported .bib) would otherwise truncate the field and
+                // corrupt every entry that follows, breaking the Typst build.
+                // (Braces only: don't touch backslashes, which carry LaTeX accents.)
+                let v = v.replace('{', "\\{").replace('}', "\\}");
                 lines.push(format!("  {name} = {{{v}}}"));
             }
         };
@@ -576,6 +581,18 @@ mod tests {
         // Absent optionals are omitted.
         assert!(!bib.contains("doi"));
         assert!(bib.trim_end().ends_with('}'));
+    }
+
+    #[test]
+    fn to_bibtex_escapes_braces_in_values() {
+        // R2: an unbalanced `}` in a field would otherwise truncate it and
+        // corrupt every following entry / break the Typst build.
+        let e = BibEntry::from_hjson("{\n  key: k\n  title: Repair of a } valve {x}\n}").unwrap();
+        let bib = e.to_bibtex();
+        assert!(bib.contains(r"title = {Repair of a \} valve \{x\}}"), "{bib}");
+        // With the escaped braces removed, the structural braces balance.
+        let structural = bib.replace("\\{", "").replace("\\}", "");
+        assert_eq!(structural.matches('{').count(), structural.matches('}').count(), "{bib}");
     }
 
     #[test]

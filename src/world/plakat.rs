@@ -78,6 +78,15 @@ pub fn build_map_spec(
     pol: &PolitiesOutput,
     trade: &TradeOutput,
 ) -> Value {
+    // Landmarks first, so roads can reference only hubs that were actually
+    // emitted (a dense world past the landmark cap drops some hubs — H7).
+    let landmarks = landmark_features(geo, demo, places, declared, pol);
+    let emitted_hubs: std::collections::HashSet<String> = landmarks
+        .iter()
+        .filter_map(|l| l.get("id").and_then(|v| v.as_str()))
+        .filter(|id| id.starts_with("hub_"))
+        .map(str::to_string)
+        .collect();
     json!({
         "version": SPEC_VERSION,
         "name": name,
@@ -99,26 +108,32 @@ pub fn build_map_spec(
             "lakes": [],
         },
         "regions": region_features(climate),
-        "landmarks": landmark_features(geo, demo, places, declared, pol),
-        "infrastructure": { "roads": road_features(trade), "walls": [], "bridges": [] },
+        "landmarks": landmarks,
+        "infrastructure": { "roads": road_features(trade, &emitted_hubs), "walls": [], "bridges": [] },
         "bund_hooks": null,
     })
 }
 
-/// Trade routes → plakat `RoadSpec`s connecting realm-capital hubs
-/// (`hub_<i>`). A sea route is a `sea-lane`; a land route a `road`.
-fn road_features(trade: &TradeOutput) -> Vec<Value> {
+/// Trade routes → plakat `RoadSpec`s connecting realm-capital hubs (`hub_<i>`). A
+/// sea route is a `sea-lane`; a land route a `road`. A route is dropped when
+/// either capital's hub was not emitted (the landmark cap was hit), so no road
+/// points at a landmark that isn't on the map.
+fn road_features(trade: &TradeOutput, emitted_hubs: &std::collections::HashSet<String>) -> Vec<Value> {
     trade
         .routes
         .iter()
         .enumerate()
-        .map(|(i, r)| {
-            json!({
+        .filter_map(|(i, r)| {
+            let (from, to) = (format!("hub_{}", r.from), format!("hub_{}", r.to));
+            if !emitted_hubs.contains(&from) || !emitted_hubs.contains(&to) {
+                return None;
+            }
+            Some(json!({
                 "id": format!("trade_{i}"),
-                "from": format!("hub_{}", r.from),
-                "to": format!("hub_{}", r.to),
+                "from": from,
+                "to": to,
                 "kind": if r.mode == "sea" { "sea-lane" } else { "road" },
-            })
+            }))
         })
         .collect()
 }
@@ -364,9 +379,10 @@ fn trace_source(
             let (nx, ny) = (nx as usize, ny as usize);
             let ni = ny * w + nx;
             // Does this neighbour flow into `cur`? Its D8 direction must point back
-            // at us: neighbour + its offset == current cell.
-            let nd = flow_dir[ni];
-            if nd < 0 {
+            // at us: neighbour + its offset == current cell. (Bounds-guarded — the
+            // sibling flow_accum read below already is; keep the two symmetric.)
+            let nd = flow_dir.get(ni).copied().unwrap_or(-1);
+            if !(0..8).contains(&nd) {
                 continue;
             }
             let nd = nd as usize;
@@ -546,15 +562,7 @@ fn landmark_features(
 
 /// A stable lowercase slug for a declared landmark id (`decl_<slug>`).
 fn slugify(name: &str) -> String {
-    let mut s = String::new();
-    for c in name.trim().to_lowercase().chars() {
-        if c.is_ascii_alphanumeric() {
-            s.push(c);
-        } else if !s.ends_with('_') {
-            s.push('_');
-        }
-    }
-    s.trim_matches('_').to_string()
+    crate::world::proposals::stable_slug(name, '_')
 }
 
 /// Map a demographics size class to a plakat landmark kind.

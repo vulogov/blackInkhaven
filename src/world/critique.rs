@@ -69,9 +69,15 @@ pub fn critique_system(lang: &str) -> String {
 /// Assemble the user prompt from the raw declaration and the compiled summary.
 pub fn build_critique_prompt(hjson: &str, compiled_summary: &str) -> String {
     // Bound the declaration so a huge hand-edited file can't blow the context.
+    // Cut on a char boundary — a byte slice would panic on a world.hjson whose
+    // byte MAX_HJSON lands mid-character (non-ASCII names are common).
     const MAX_HJSON: usize = 8_000;
     let decl = if hjson.len() > MAX_HJSON {
-        format!("{}\n… (truncated)", &hjson[..MAX_HJSON])
+        let mut cut = MAX_HJSON;
+        while cut > 0 && !hjson.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        format!("{}\n… (truncated)", &hjson[..cut])
     } else {
         hjson.to_string()
     };
@@ -158,6 +164,16 @@ Hope this helps."#;
         // Unparseable → empty, never panics.
         assert!(parse_critique("no json here").is_empty());
         assert!(parse_critique("").is_empty());
+    }
+
+    #[test]
+    fn a_large_multibyte_hjson_truncates_without_panicking() {
+        // H1: a >8000-byte file of 3-byte chars would panic on a byte slice at a
+        // non-boundary. Build one that straddles the cut and confirm no panic.
+        let big = "名".repeat(5000); // 3 bytes each → 15000 bytes
+        let prompt = build_critique_prompt(&big, "summary");
+        assert!(prompt.contains("(truncated)"));
+        assert!(prompt.contains("COMPILED consequences"));
     }
 
     #[test]

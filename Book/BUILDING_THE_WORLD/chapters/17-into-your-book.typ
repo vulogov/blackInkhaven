@@ -110,7 +110,9 @@ become a *labelled, painted map*. Back in the chapter on the land you met
 *plakat*, Inkhaven's companion tool, and used it to grow a heightmap. The two
 tools pass a world back and forth, and it is worth seeing the whole loop, because
 each does what the other cannot: plakat draws shapes and paints pictures;
-Inkhaven runs the physics and grows the life.
+Inkhaven runs the physics and grows the life. This section is the short version;
+the next chapter, *Drawing the Map with plakat*, walks the whole thing in full —
+with real maps, three styles, and every step for someone who has never done it.
 
 #subsection("Inkhaven → plakat: render your world as a map")
 

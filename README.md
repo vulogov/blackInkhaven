@@ -21,36 +21,40 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.6.5 — The Trade Roads
+## Latest release · 1.6.6 — Books & Hardening
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.6.5.md`](Documentation/RELEASE_NOTES/1.6.5.md)
-· Book: [`Building the World with Inkhaven`](Book/BUILDING_THE_WORLD/)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.6.6.md`](Documentation/RELEASE_NOTES/1.6.6.md)
+· Books: [`Building the World`](Book/BUILDING_THE_WORLD/) · [`Constructed Language Development`](Book/CONLANG_DEVELOPMENT/) · [`The Research Assistant`](Book/RESEARCH/)
 
-The last two grounded worldbuilding pieces: a trade network that links your realms
-and draws itself on the map, and the world's common social roles named in each
-realm's own terms. **No new crates.**
+A consolidation release: the three companion books brought up to the current
+feature scope, and a two-round adversarial hardening pass across the codebase. **No
+new features, no behavioural changes, no new crates.**
 
-### The trade roads
+### The books, brought to current scope
 
-**`inkhaven realworld trade`** reads your realms' relations into a trade network:
-each realm links to its nearest **non-rival** neighbours, by a **land road** if the
-capitals sit inland or a **sea lane** if they sit on a coast (rivals never trade).
-It is *connectivity, not economics* — which realms are bound and which are cut off,
-never invented prices or goods. The routes draw themselves on the map (`realworld
-map` emits capital hubs + roads) and materialize into a `Trade` chapter.
+Each companion book was audited against the actual code and the gaps filled.
+*Building the World* gains a full **"Drawing the Map with plakat"** chapter with
+five real generated maps; *Constructed Language Development* gains a
+**"Translating with your language"** chapter for the previously-undocumented
+translation engine (`translate` / `reverse` / `cross`, translation memory,
+`corpus` / `eval`); *The Research Assistant* completes its command reference and
+documents the **`inkhaven sources` CLI** — BibTeX and CSL-JSON for a full Zotero
+round-trip.
 
-### Roles in each realm's own terms
+### Hardening
 
-**`realworld culture`** now renders the world's common social roles — the same
-farmer, priest, warrior every world has — in *each realm's own words*, coloured by
-its biome, ethos, and belief: a *keeper of the founding dead* in one realm, an
-*ice-tiller* on the tundra, a *woodland-reverent warrior* in the forest.
+Two rounds of adversarial audit found and fixed **21 issues** with regression
+tests — two reachable UTF-8 panics, several DoS caps (`plates`, DEM, `--meter`,
+`--count`, the rewrite engine), a wrong-target script delete, BibTeX corruption,
+three silent write failures, a determinism tie, and missing HTTP timeouts. The full
+ledger is in
+[`Documentation/PROPOSALS/HARDENING_PLAN_1.6.6.md`](Documentation/PROPOSALS/HARDENING_PLAN_1.6.6.md).
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** New command `realworld trade`; `realworld culture` gains
-a roles line; `compile --materialize` writes a Trade chapter; the map draws capital
-hubs and trade roads. All additive — existing projects are unaffected.
+**No new runtime crates.** Every change either documents an existing feature,
+removes a crash, closes a resource hole, or corrects a silent failure — existing
+projects are unaffected. Test suite 2313 → 2319.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

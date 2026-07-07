@@ -4938,10 +4938,13 @@ fn compose(
             }
         }
         "poem" | "poetry" | "verse" => {
+            // Clamp each line's syllable count to a sane range — an unbounded
+            // value (a dropped digit → `--meter 5000000000`) would spin the poem
+            // generator for billions of tries and overflow `target * 4`.
             let meter: Vec<usize> = meter
                 .split(',')
                 .filter_map(|s| s.trim().parse::<usize>().ok())
-                .filter(|n| *n > 0)
+                .filter(|n| (1..=64).contains(n))
                 .collect();
             if meter.is_empty() {
                 return Err(Error::Config(

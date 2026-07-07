@@ -159,7 +159,12 @@ pub fn semantic_filter(
     let mut accepted = Vec::new();
     let mut rejected = Vec::new();
     for (i, p) in kept.into_iter().enumerate() {
-        let v = &kept_vecs[i];
+        // Guard the parallel-index assumption: a caller whose vecs don't align
+        // 1:1 with `kept` must not panic. Keep the proposal unfiltered on a miss.
+        let Some(v) = kept_vecs.get(i) else {
+            accepted.push(p);
+            continue;
+        };
         let max = accepted_vecs.iter().map(|e| cosine(v, e)).fold(0.0f32, f32::max);
         if max > threshold {
             rejected.push((p, max));
