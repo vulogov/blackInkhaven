@@ -108,10 +108,12 @@ week before the frost, in the lands of a people who hold the sea sacred, two day
 ride south of Karsholt. You write a truer scene when the brief comes first.
 
 #note[
-  The neighbouring place is drawn from any Place that has a position on the world
-  grid — whether the world proposed it, or you set it yourself with `realworld set-coords`. So the moment you give a hand-made place a location, it starts
-  appearing in the briefs of its neighbours, and theirs in its. The map you build
-  quietly makes every scene more grounded than the last.
+  The neighbour can be any named feature with a position on the world grid — a
+  Place (whether the world proposed it or you set it with `realworld set-coords`),
+  a declared landmark given a `lat`/`lon`, or a named water with a source or mouth
+  cell. So the moment you give any of them a location, it starts appearing in the
+  briefs of its neighbours, and theirs in its. The map you build quietly makes
+  every scene more grounded than the last.
 ]
 
 #section("The world while you type")
