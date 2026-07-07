@@ -13724,7 +13724,9 @@ impl App {
                     .collect()
             })
             .unwrap_or_default();
-        let spec = plakat::build_map_spec(&def.name, &geo, &climate, &hydro, &demo, &links, &declared);
+        let pol = compile_polities(&demo, &def.nations, def.seed_u64());
+        let trade = compile_trade(&pol, &geo, def.astronomy.planet.radius_earth);
+        let spec = plakat::build_map_spec(&def.name, &geo, &climate, &hydro, &demo, &links, &declared, &pol, &trade);
 
         self.status = "map: rendering with plakat…".into();
         match plakat::render(&root, &spec, def.seed_u64(), geo.width, geo.height) {
@@ -13805,6 +13807,7 @@ impl App {
         let cultures = compile_culture(&pol, &capital_biomes, &def.cultures, seed);
         let eco_declared = def.ecology.as_ref().map(|e| e.regions.as_slice()).unwrap_or(&[]);
         let eco = compile_ecology(&climate, eco_declared, seed);
+        let trade = compile_trade(&pol, &geo, def.astronomy.planet.radius_earth);
 
         use crate::world::materialize as m;
         let steps: Vec<crate::error::Result<m::MaterializeReport>> = vec![
@@ -13814,8 +13817,9 @@ impl App {
             m::materialize_hydrology(&self.store, &self.cfg, &hydro),
             m::materialize_demographics(&self.store, &self.cfg, &demo),
             m::materialize_polities(&self.store, &self.cfg, &pol),
-            m::materialize_culture(&self.store, &self.cfg, &cultures),
+            m::materialize_culture(&self.store, &self.cfg, &cultures, &demo.role_archetypes, &capital_biomes),
             m::materialize_ecology(&self.store, &self.cfg, &eco),
+            m::materialize_trade(&self.store, &self.cfg, &pol, &trade),
             m::materialize_magic(&self.store, &self.cfg, &def.magic.clone().unwrap_or_default()),
             m::materialize_setting(&self.store, &self.cfg, &def),
         ];

@@ -130,6 +130,48 @@ pub fn culture_style_name(culture: &Culture, seed: u64, index: usize) -> String 
     }
 }
 
+/// WORLD-15 — elaborate a generic social role (from demographics' `role_archetypes`
+/// — farmer, priest, warrior, …) into a realm's own term, coloured by its ethos,
+/// belief, and capital biome. Deterministic; fulfils the deferred role-elaboration
+/// noted in `demographics.rs`. The world names the same roles differently in each
+/// realm — a Karon `factor` where a forest people keep a `keeper of the founding
+/// dead`.
+pub fn elaborate_role(base: &str, culture: &Culture, biome: &str) -> String {
+    let biome_word = biome.split('_').next().filter(|s| !s.is_empty()).unwrap_or("home");
+    let ethos_head = culture.ethos.split([',', ' ']).find(|s| !s.is_empty()).unwrap_or("");
+    let belief = culture.belief.trim();
+    match base {
+        "priest" => {
+            if belief.is_empty() {
+                "priest".into()
+            } else {
+                format!("keeper of {belief}")
+            }
+        }
+        "warrior" => {
+            if ethos_head.is_empty() {
+                "warrior".into()
+            } else {
+                format!("{ethos_head} warrior")
+            }
+        }
+        "farmer" => format!("{biome_word}-tiller"),
+        "fisher" => "netcaster".into(),
+        "herder" => format!("{biome_word}-herder"),
+        "woodcutter" => "forester".into(),
+        "smith" => "forge-master".into(),
+        "merchant" => {
+            if culture.ethos.contains("mercantile") {
+                "factor".into()
+            } else {
+                "trader".into()
+            }
+        }
+        "vintner" => "vine-keeper".into(),
+        other => other.to_string(),
+    }
+}
+
 /// WORLD-11 (W11-P4) — verify pinned cultures: a maritime ethos on a dry inland
 /// capital, or a culture pinned to a nation that does not exist, is flagged.
 pub fn lint_culture(
@@ -202,6 +244,30 @@ mod tests {
         let p = pol(&["Karon"]);
         let b = vec!["savanna".to_string()];
         assert_eq!(compile_culture(&p, &b, &[], 9), compile_culture(&p, &b, &[], 9));
+    }
+
+    #[test]
+    fn roles_elaborate_into_realm_terms() {
+        let p = pol(&["Karon"]);
+        let b = vec!["mediterranean".to_string()];
+        let c = compile_culture(&p, &b, &[], 0x33);
+        let cu = &c.cultures[0];
+        // priest folds in the belief; warrior the ethos; farmer the biome.
+        assert!(elaborate_role("priest", cu, "mediterranean").starts_with("keeper of "));
+        assert!(elaborate_role("warrior", cu, "mediterranean").ends_with(" warrior"));
+        assert_eq!(elaborate_role("farmer", cu, "temperate_forest"), "temperate-tiller");
+        assert_eq!(elaborate_role("smith", cu, "mediterranean"), "forge-master");
+        // A mercantile culture's merchant is a factor.
+        let merc = Culture {
+            polity: "Karon".into(),
+            ethos: "mercantile and civic".into(),
+            belief: "a sky-pantheon".into(),
+            language_profile: String::new(),
+            naming_sample: String::new(),
+        };
+        assert_eq!(elaborate_role("merchant", &merc, "mediterranean"), "factor");
+        // An unknown role passes through unchanged.
+        assert_eq!(elaborate_role("scribe", cu, "mediterranean"), "scribe");
     }
 
     #[test]

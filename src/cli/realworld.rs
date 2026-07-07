@@ -34,6 +34,7 @@ pub fn run(project: &Path, cmd: RealworldCommand) -> Result<()> {
         RealworldCommand::Calendar => calendar(project),
         RealworldCommand::Chronicle { json } => chronicle(project, json),
         RealworldCommand::Name { json } => name(project, json),
+        RealworldCommand::Trade { json } => trade(project, json),
         RealworldCommand::Gazetteer { output } => gazetteer(project, output.as_deref()),
         RealworldCommand::History { json, materialize } => history(project, json, materialize),
         RealworldCommand::Weather { day, lat } => weather(project, day, lat),
@@ -1085,12 +1086,20 @@ fn culture(project: &Path) -> Result<()> {
         .collect();
     let cul = compile_culture(&pol, &capital_biomes, &def.cultures, def.seed_u64());
 
+    use crate::world::compile::culture_layer::elaborate_role;
     println!("culture · {} — {} culture(s)", def.name, cul.cultures.len());
-    for c in &cul.cultures {
+    for (i, c) in cul.cultures.iter().enumerate() {
         println!("\n  {} — {}", c.polity, c.ethos);
         println!("    belief:   {}", c.belief);
         println!("    language: {}  (realise with `inkhaven language`)", c.language_profile);
         println!("    naming:   e.g. {}", c.naming_sample);
+        // WORLD-15 — the world's common social roles, in this realm's own terms.
+        let biome = capital_biomes.get(i).map(String::as_str).unwrap_or("");
+        let roles: Vec<String> =
+            demo.role_archetypes.iter().map(|r| elaborate_role(r, c, biome)).collect();
+        if !roles.is_empty() {
+            println!("    roles:    {}", roles.join(", "));
+        }
     }
     Ok(())
 }
@@ -1439,6 +1448,57 @@ fn name(project: &Path, json: bool) -> Result<()> {
     Ok(())
 }
 
+/// WORLD-15 — `realworld trade`: the trade network between realms. Each realm
+/// links to its nearest non-rival neighbours; the route is a land road or a sea
+/// lane by the two capitals' coasts. Connectivity, not simulated economics.
+fn trade(project: &Path, json: bool) -> Result<()> {
+    use crate::world::compile::{
+        compile_astronomy, compile_climate, compile_demographics, compile_hydrology, compile_polities,
+        compile_trade,
+    };
+    let def = load(project)?;
+    let seed = def.seed_u64();
+    let astro = compile_astronomy(&def.astronomy);
+    let geo = geology_for(project, &def)?;
+    let climate = compile_climate(&def, &astro, &geo);
+    let hydro = compile_hydrology(&geo, &climate);
+    let demo = compile_demographics(&climate, &hydro);
+    let pol = compile_polities(&demo, &def.nations, seed);
+    let t = compile_trade(&pol, &geo, def.astronomy.planet.radius_earth);
+    let realm = |i: usize| pol.polities.get(i).map(|p| p.name.as_str()).unwrap_or("?");
+
+    if json {
+        let v = serde_json::json!(t
+            .routes
+            .iter()
+            .map(|r| serde_json::json!({
+                "from": realm(r.from), "to": realm(r.to), "mode": r.mode,
+                "stance": r.stance, "distance_km": r.distance_km.round() as i64,
+            }))
+            .collect::<Vec<_>>());
+        println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
+        return Ok(());
+    }
+
+    println!("trade · {} — {} route(s) between {} realm(s)", def.name, t.routes.len(), pol.polities.len());
+    if t.routes.is_empty() {
+        println!("  (no routes — a lone realm, or every pair is a rival)");
+        return Ok(());
+    }
+    for r in &t.routes {
+        let via = if r.mode == "sea" { "by sea" } else { "overland" };
+        println!(
+            "  {:<14} ⇄ {:<14} · {via} · {:.0} km ({})",
+            realm(r.from),
+            realm(r.to),
+            r.distance_km,
+            r.stance
+        );
+    }
+    println!("\nRivals never trade; each realm links to its nearest few non-rivals. Drawn on the map by `realworld map`.");
+    Ok(())
+}
+
 /// WORLD-7 (W7-P4) — `realworld gazetteer [--output PATH]`: a consolidated,
 /// Markdown world reference (calendar, sky, regions, landmarks, waters,
 /// settlements, economy, magic) from the definition + compiled layers. Print to
@@ -1641,7 +1701,10 @@ fn declared_map_landmarks(
 /// the geology/climate/hydrology/demographics outputs, hands it to `plakat map`,
 /// and reads the resolved landmark positions back to refine Place coordinates.
 fn map(project: &Path, spec_only: bool, no_ingest: bool) -> Result<()> {
-    use crate::world::compile::{compile_astronomy, compile_climate, compile_demographics, compile_hydrology};
+    use crate::world::compile::{
+        compile_astronomy, compile_climate, compile_demographics, compile_hydrology, compile_polities,
+        compile_trade,
+    };
     use crate::world::plakat;
     use crate::world::storage::WorldStore;
 
@@ -1657,8 +1720,10 @@ fn map(project: &Path, spec_only: bool, no_ingest: bool) -> Result<()> {
     let store = WorldStore::open_for_project(project).ok();
     let links = store.as_ref().and_then(|s| s.list_place_links().ok()).unwrap_or_default();
     let declared = declared_map_landmarks(&def, geo.width, geo.height);
+    let pol = compile_polities(&demo, &def.nations, def.seed_u64());
+    let trade = compile_trade(&pol, &geo, def.astronomy.planet.radius_earth);
 
-    let spec = plakat::build_map_spec(&def.name, &geo, &climate, &hydro, &demo, &links, &declared);
+    let spec = plakat::build_map_spec(&def.name, &geo, &climate, &hydro, &demo, &links, &declared, &pol, &trade);
     let (gw, gh) = (geo.width, geo.height);
 
     if spec_only {
@@ -2665,9 +2730,11 @@ fn compile_all_cli(project: &Path, json: bool, materialize: bool) -> Result<()> 
         let cul = crate::world::compile::compile_culture(&pol, &capital_biomes, &def.cultures, seed);
         let eco_declared = def.ecology.as_ref().map(|e| e.regions.as_slice()).unwrap_or(&[]);
         let eco = crate::world::compile::compile_ecology(&climate, eco_declared, seed);
+        let trade = crate::world::compile::compile_trade(&pol, &geo, def.astronomy.planet.radius_earth);
         reports.push(m::materialize_polities(&store, &cfg, &pol)?);
-        reports.push(m::materialize_culture(&store, &cfg, &cul)?);
+        reports.push(m::materialize_culture(&store, &cfg, &cul, &demo.role_archetypes, &capital_biomes)?);
         reports.push(m::materialize_ecology(&store, &cfg, &eco)?);
+        reports.push(m::materialize_trade(&store, &cfg, &pol, &trade)?);
         reports.push(m::materialize_setting(&store, &cfg, &def)?);
     }
 
