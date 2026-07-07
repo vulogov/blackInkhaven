@@ -17,15 +17,7 @@ use crate::world::proposals::{now_secs, PlaceProposal};
 
 /// A stable slug for a realm name, for the proposal signature (dedup key).
 fn realm_slug(name: &str) -> String {
-    let mut s = String::new();
-    for c in name.trim().to_lowercase().chars() {
-        if c.is_ascii_alphanumeric() {
-            s.push(c);
-        } else if !s.ends_with('-') {
-            s.push('-');
-        }
-    }
-    s.trim_matches('-').to_string()
+    crate::world::proposals::stable_slug(name, '-')
 }
 
 /// Split a `"SVO · agglutinative · tonal"` profile into its three axes

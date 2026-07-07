@@ -15,9 +15,17 @@ type Classes = BTreeMap<String, Vec<String>>;
 
 /// Apply every non-optional rule in order to `items`.
 pub fn apply_ordered(items: &[String], rules: &[AllophonyRule], classes: &Classes) -> Vec<String> {
+    // An insertion rule (empty focus, empty context) emits its RHS at every
+    // position, so one pass can double the length; k such rules chain to 2^k·L.
+    // Bound the working sequence so a pathological hand-authored phonology can't
+    // OOM/hang every surface derivation. len·64 is far beyond any real allophony.
+    let cap = items.len().saturating_mul(64).max(256);
     let mut seq = items.to_vec();
     for rule in rules.iter().filter(|r| !r.optional) {
         seq = apply_rule(&seq, rule, classes);
+        if seq.len() > cap {
+            seq.truncate(cap);
+        }
     }
     seq
 }

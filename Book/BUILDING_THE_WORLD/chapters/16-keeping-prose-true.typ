@@ -80,6 +80,16 @@ measurement of it.
   slower reading pays for itself.
 ]
 
+Two commands sit either side of that line. `realworld co-location` is a
+deterministic check of a different kind: it reads your story Timeline and flags a
+*character in two places at overlapping times* — the oldest continuity slip in
+fiction — honouring any magic-ledger rule that would allow it.
+`realworld coherence <node>` is the LLM track pointed at a whole container: hand
+it a book or chapter and it reads every paragraph under it *together*, for the
+contradictions that only show up between passages — a fact stated one way in
+chapter three and another in chapter nine. One is a free, constant guard; the
+other a considered, cost-capped pass over a finished stretch.
+
 #section("Why a checked world does not drown you")
 
 There is an obvious fear here, and it is worth meeting head-on: a checker strict

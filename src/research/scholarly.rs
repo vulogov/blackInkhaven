@@ -220,6 +220,7 @@ fn clean(s: &str) -> String {
 fn client() -> Result<reqwest::Client> {
     reqwest::Client::builder()
         .user_agent("inkhaven-research/1.0 (https://crates.io/crates/inkhaven)")
+        .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| anyhow!("http client: {e}"))
 }

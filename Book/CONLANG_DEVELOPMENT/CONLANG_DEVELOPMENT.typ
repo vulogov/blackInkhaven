@@ -51,14 +51,17 @@
   part(number: "VIII", title: "Producing the Books"),
   include "chapters/23-the-books.typ",
 
-  part(number: "IX", title: "Sharing Your Language"),
-  include "chapters/24-interchange.typ",
+  part(number: "IX", title: "Putting the Language to Work"),
+  include "chapters/24-translating.typ",
 
-  part(number: "X", title: "A Complete Walkthrough"),
-  include "chapters/25-walkthrough.typ",
+  part(number: "X", title: "Sharing Your Language"),
+  include "chapters/25-interchange.typ",
 
-  part(number: "XI", title: "Scripting Your Language"),
-  include "chapters/26-scripting-with-bund.typ",
+  part(number: "XI", title: "A Complete Walkthrough"),
+  include "chapters/26-walkthrough.typ",
+
+  part(number: "XII", title: "Scripting Your Language"),
+  include "chapters/27-scripting-with-bund.typ",
 
   include "chapters/a-command-reference.typ",
   include "chapters/b-hjson-reference.typ",

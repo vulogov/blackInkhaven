@@ -144,14 +144,17 @@ fn process_one(
         match super::insert::insert_paragraph(store, cfg, hierarchy, book_id, None, &fact.title, &fact.text) {
             Ok(new_id) => {
                 let now = chrono::Utc::now().to_rfc3339();
-                super::provenance::Provenance::record(
+                let prov_note = super::provenance::Provenance::record(
                     layout,
                     &new_id.to_string(),
                     super::provenance::SourceRecord::new("model", "", question, "batch", now),
-                );
+                )
+                .err()
+                .map(|e| format!(" (provenance not recorded: {e})"))
+                .unwrap_or_default();
                 let path =
                     Hierarchy::load(store).ok().and_then(|h| h.get(new_id).map(|n| h.slug_path(n))).unwrap_or_default();
-                format!("inserted → {path}")
+                format!("inserted → {path}{prov_note}")
             }
             Err(e) => format!("skipped (insert failed: {e})"),
         }

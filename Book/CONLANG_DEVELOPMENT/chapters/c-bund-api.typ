@@ -78,6 +78,18 @@ These read the language and return a value; all are `store_read` (always allowed
 / `lang.areal ( lang -- {region,with,convergence} )`: A language's areal-convergence overlay.
 / `lang.ecology ( -- {places,characters} )`: The whole speech-community picture.
 
+#section("Inspectors — translation")
+
+The rule-based translation engine (`store_read`). `remember` and `export` change
+the project / write a file and appear under their own categories below.
+
+/ `lang.translate ( lang text -- {surface,gloss,literal} )`: Translate English into the language.
+/ `lang.reverse ( lang text -- english )`: Translate a sentence in the language back into English.
+/ `lang.cross ( from to text -- {surface,gloss} )`: Translate between two of your own languages.
+/ `lang.memory ( lang -- pairs )`: The approved translation-memory pairs the engine reuses.
+/ `lang.corpus ( lang -- pairs )`: The parallel corpus gathered from the Sample-texts chapter.
+/ `lang.eval ( lang -- report )`: Score the engine against the corpus.
+
 #section("Data constructor")
 
 Uncategorised (always allowed) — it builds a value, touching nothing.
@@ -96,6 +108,7 @@ These change the project; all are `store_write` (enable `"store_write"`).
 / `lang.grammar_set ( lang feature value -- )`: Set one typology answer.
 / `lang.idiom_add ( lang form literal meaning -- )`: Add an idiom.
 / `lang.metaphor_add ( lang source target -- )`: Add a conceptual metaphor.
+/ `lang.remember ( lang source target -- )`: Add an approved sentence pair to the translation memory.
 
 #section("AI-backed words")
 
@@ -118,3 +131,4 @@ These read or write files (always inside the project sandbox).
 / `lang.grammar_book ( lang format out font -- out-path )`: Render the reference grammar to a file. (`fs_write`)
 / `lang.font_build ( lang format out -- out-stem )`: Compile the font (`format` = `ufo`, `ttf`, or `both`). (`fs_write`)
 / `lang.glyph_draft ( lang describe phoneme out provider -- out-path )`: AI-draft a glyph SVG, preflight it, and write it (advisory). (`fs_write`, calls the AI)
+/ `lang.export ( lang format out -- out-path )`: Export the lexicon / translation memory to a portable format (`format` = `json`, `csv`, `anki`, `xliff`, `itm`, …). (`fs_write`)

@@ -126,25 +126,23 @@ pub fn resolve_path(
     }
     let mut current: Option<uuid::Uuid> = None;
     for raw in trimmed.split('/') {
-        // Strip `NN-` order prefix so the writer can paste in a
-        // path from `fs_name()` and have it still resolve.
-        let segment = raw
+        // The order-prefix-stripped form (`01-x` → `x`) so a path pasted from
+        // `fs_name()` still resolves — but only as a FALLBACK. A real slug like
+        // `2024-review` or `3-body-problem` must match itself first, or we'd
+        // silently resolve (and delete/rename) the wrong sibling.
+        let stripped = raw
             .split_once('-')
-            .map(|(prefix, rest)| {
-                if prefix.chars().all(|c| c.is_ascii_digit()) && !prefix.is_empty() {
-                    rest
-                } else {
-                    raw
-                }
-            })
+            .filter(|(prefix, _)| !prefix.is_empty() && prefix.chars().all(|c| c.is_ascii_digit()))
+            .map(|(_, rest)| rest)
             .unwrap_or(raw);
         let candidates = hierarchy.children_of(current);
         let found = candidates
             .iter()
-            .find(|n| n.slug == segment)
+            .find(|n| n.slug == raw)
+            .or_else(|| candidates.iter().find(|n| n.slug == stripped))
             .ok_or_else(|| {
                 anyhow!(
-                    "{err_prefix} segment `{segment}` not found under {}",
+                    "{err_prefix} segment `{raw}` not found under {}",
                     match current {
                         Some(id) => hierarchy
                             .get(id)

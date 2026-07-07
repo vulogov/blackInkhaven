@@ -941,7 +941,13 @@ pub fn markdown_to_typst(md: &str) -> String {
 
         // Heading.
         if let Some(level) = heading_level(trimmed) {
-            let text = trimmed[level..].trim();
+            // Slice after trim_start: `heading_level` counted the `#`s on the
+            // trimmed-start form, so the first `level` bytes here are ASCII `#`
+            // (a valid char boundary). Slicing `trimmed` directly would panic on
+            // a leading multibyte space (U+00A0 etc.), which an LLM-emitted
+            // markdown heading routinely carries. Also fixes stray `#`s rendering
+            // when the indent was plain ASCII spaces.
+            let text = trimmed.trim_start()[level..].trim();
             // Drop the very first H1 — the scaffold already has a title page.
             if level == 1 && !dropped_title {
                 dropped_title = true;
@@ -1321,6 +1327,16 @@ mod tests {
         let s = tutorial_typst_scaffold("Avesha", None, None);
         assert!(s.contains("#let native(cp) = text(size: 1.3em)"));
         assert!(!s.contains("font: \"Avesha\""));
+    }
+
+    #[test]
+    fn markdown_to_typst_heading_with_multibyte_indent_does_not_panic() {
+        // C1: an LLM-emitted heading led by a non-breaking space (U+00A0, 2 bytes)
+        // used to panic on a mid-char byte slice. It must convert cleanly.
+        let md = "\u{00A0}## Lesson 2\n\nbody\n";
+        let typ = markdown_to_typst(md);
+        assert!(typ.contains("== Lesson 2"), "{typ}");
+        assert!(!typ.contains("##"), "{typ}");
     }
 
     #[test]

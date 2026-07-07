@@ -38,8 +38,12 @@ pub(crate) fn commit_proposal(
         Ok("Language")
     } else {
         let place_id = commit_place(store, cfg, p)?;
-        ws.insert_place_link(&PlaceLink::from_proposal(place_id, p))
-            .map_err(|e| Error::Store(format!("place link: {e}")))?;
+        // H10 — the Place node is already created; a failed cross-reference write
+        // must NOT bubble up and leave the proposal un-accepted, or a retry would
+        // create a duplicate Place. Record the link best-effort and proceed.
+        if let Err(e) = ws.insert_place_link(&PlaceLink::from_proposal(place_id, p)) {
+            eprintln!("warning: Place `{}` created but its world cross-reference did not save: {e}", p.name);
+        }
         Ok("Places")
     }
 }
