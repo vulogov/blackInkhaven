@@ -70,6 +70,56 @@ flags where the manuscript has drifted — a "component" where the glossary says
   guessing game.
 ]
 
+#section("Keep the examples true — verified code blocks")
+
+The most common way documentation goes stale is the code example that no longer
+compiles against the current release. Inkhaven can catch that the way the fiction
+track catches a contradiction: by running the example. Mark a `para:code` listing's
+fence with `verify` and name a runner for its language, and Inkhaven will run the
+snippet and flag it if it fails — a stale example becomes a red mark on the exact
+paragraph, like any other finding.
+
+#config("inkhaven.hjson", [```hjson
+docs: {
+  verify: {
+    enabled: true
+    runners: {
+      rust:   "rustc --edition 2021 --crate-type lib {file} -o /dev/null"
+      python: "python -m py_compile {file}"
+      bash:   "bash -n {file}"
+    }
+  }
+}
+```])
+
+Only blocks that opt in are run — the fence carries the flag:
+
+````
+```rust verify
+fn greet(name: &str) -> String { format!("Hello, {name}") }
+```
+````
+
+Then `Ctrl+B Shift+D` verifies the open listing, or — for the whole book, or a CI
+step — `inkhaven docs verify` (exits non-zero when any block fails; `--dry-run`
+previews the commands, `--yes` confirms execution).
+
+#pitfall[
+  Verification runs the commands your config names, with your privileges — so it is
+  *opt-in twice*: nothing runs unless you enable it and name a runner, and only
+  blocks marked `verify` are executed (illustrative or pseudo-code stays untouched).
+  Prefer compile-only or lint-only runners (`rustc`, `py_compile`, `bash -n`) over
+  full test runners, and never point a runner at code you haven't read. Inkhaven
+  will not run a freshly-cloned project's examples without your explicit `--yes`.
+]
+
+#insight[
+  A verified example is the technical track's version of the fiction track's
+  fact-check: a deterministic, zero-AI check against ground truth. The prose can
+  still drift, but the _code_ in your docs now answers to the compiler — and the
+  compiler doesn't forget what changed last release.
+]
+
 #section("Read — precision, and the reader who has your context and the one who doesn't")
 
 The reading pass here is about clarity and completeness, not craft. Turn the
