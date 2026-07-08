@@ -22,7 +22,7 @@ pub(super) struct DeadLink {
 }
 
 /// A shared client with a bounded timeout and redirect budget.
-pub(super) fn client() -> reqwest::Result<reqwest::Client> {
+pub(crate) fn client() -> reqwest::Result<reqwest::Client> {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .user_agent("inkhaven-research (dead-source check)")
@@ -32,7 +32,7 @@ pub(super) fn client() -> reqwest::Result<reqwest::Client> {
 
 /// Classify a single web URL: `None` = reachable (or blocked/transient — not our
 /// call to flag); `Some(reason)` = confirmed dead.
-pub(super) async fn check_web(client: &reqwest::Client, url: &str) -> Option<String> {
+pub(crate) async fn check_web(client: &reqwest::Client, url: &str) -> Option<String> {
     match client.head(url).send().await {
         Ok(resp) => {
             // Some servers reject HEAD (405) — confirm with a GET before judging.

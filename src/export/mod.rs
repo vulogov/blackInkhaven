@@ -74,6 +74,29 @@ pub fn assemble_typst_source_filtered(
     status_floor_idx: Option<usize>,
     tag_filter: Option<&str>,
 ) -> Result<String> {
+    assemble_typst_source_profiled(layout, hierarchy, root_id, status_floor_idx, tag_filter, &[])
+}
+
+/// TDOC-3 — [`assemble_typst_source_filtered`] plus *single-sourcing*:
+/// * **Profiles** — `profiles` is a list of `(dimension, value)` from `export
+///   --profile`. A paragraph tagged `profile:<dim>:<v>` is emitted only when a
+///   requested `(dim, value)` matches; a paragraph with no `profile:<dim>:*` tag
+///   for a requested dimension is unconditional (always emitted). Dimensions not
+///   requested are ignored (all their variants pass) — the DITA convention.
+/// * **Variables** — `{{key}}` in a body is replaced by `docs.variables.key` from
+///   config, in every export.
+pub fn assemble_typst_source_profiled(
+    layout: &ProjectLayout,
+    hierarchy: &Hierarchy,
+    root_id: Option<uuid::Uuid>,
+    status_floor_idx: Option<usize>,
+    tag_filter: Option<&str>,
+    profiles: &[(String, String)],
+) -> Result<String> {
+    // TDOC-3 variables — loaded once; applied to every emitted body.
+    let variables = crate::config::Config::load_layered(&layout.config_path())
+        .map(|c| c.docs.variables)
+        .unwrap_or_default();
     let tag_filter_norm =
         tag_filter.map(|t| t.trim().to_ascii_lowercase());
     let mut out = String::new();
@@ -136,11 +159,21 @@ pub fn assemble_typst_source_filtered(
                 continue;
             }
         }
+        // TDOC-3 — conditional (profiled) content.
+        if !profile_matches(&node.tags, profiles) {
+            continue;
+        }
         let Some(rel) = node.file.as_ref() else {
             continue;
         };
         let abs = layout.root.join(rel);
-        let body = std::fs::read_to_string(&abs)?;
+        let mut body = std::fs::read_to_string(&abs)?;
+        // TDOC-3 — resolve single-sourcing variables.
+        if !variables.is_empty() {
+            for (k, v) in &variables {
+                body = body.replace(&format!("{{{{{k}}}}}"), v);
+            }
+        }
         if !out.is_empty() && !out.ends_with("\n\n") {
             if out.ends_with('\n') {
                 out.push('\n');
@@ -154,6 +187,27 @@ pub fn assemble_typst_source_filtered(
         }
     }
     Ok(out)
+}
+
+/// TDOC-3 — whether a node passes the requested profiles. For each requested
+/// `(dimension, value)`: if the node carries any `profile:<dimension>:*` tag, at
+/// least one must equal `value`; a node with no tag for that dimension is
+/// unconditional. Dimensions not requested never exclude.
+fn profile_matches(tags: &[String], profiles: &[(String, String)]) -> bool {
+    for (dim, want) in profiles {
+        let prefix = format!("profile:{}:", dim.to_ascii_lowercase());
+        let vals: Vec<String> = tags
+            .iter()
+            .filter_map(|t| t.to_ascii_lowercase().strip_prefix(&prefix).map(str::to_string))
+            .collect();
+        if vals.is_empty() {
+            continue; // unconditional for this dimension
+        }
+        if !vals.iter().any(|v| v == &want.to_ascii_lowercase()) {
+            return false; // tagged for this dimension, but not the requested value
+        }
+    }
+    true
 }
 
 /// Map a paragraph's `status` field to its ladder index. Unknown
@@ -234,4 +288,38 @@ pub fn build_epub(markdown_src: &str, title: &str) -> Result<Artefact> {
 /// so every output lands next to the PDF with the same stem.
 pub fn with_artefact_extension(path: &Path, artefact: &Artefact) -> PathBuf {
     path.with_extension(artefact.extension())
+}
+
+#[cfg(test)]
+mod profile_tests {
+    use super::profile_matches;
+
+    fn tags(ts: &[&str]) -> Vec<String> {
+        ts.iter().map(|s| s.to_string()).collect()
+    }
+    fn prof(ps: &[(&str, &str)]) -> Vec<(String, String)> {
+        ps.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    }
+
+    #[test]
+    fn tdoc3_profile_matching() {
+        // No profiles requested → everything passes.
+        assert!(profile_matches(&tags(&["profile:edition:enterprise"]), &[]));
+        // Untagged for a requested dimension → unconditional (passes).
+        assert!(profile_matches(&tags(&["para:code"]), &prof(&[("edition", "enterprise")])));
+        // Tagged with the requested value → passes (case-insensitive).
+        assert!(profile_matches(&tags(&["profile:edition:enterprise"]), &prof(&[("edition", "Enterprise")])));
+        // Tagged for the dimension but a different value → excluded.
+        assert!(!profile_matches(&tags(&["profile:edition:community"]), &prof(&[("edition", "enterprise")])));
+        // Multiple values on one dimension → any match passes.
+        assert!(profile_matches(
+            &tags(&["profile:audience:beginner", "profile:audience:expert"]),
+            &prof(&[("audience", "expert")])
+        ));
+        // A dimension the node isn't tagged for never excludes, even if another is checked.
+        assert!(profile_matches(
+            &tags(&["profile:edition:enterprise"]),
+            &prof(&[("edition", "enterprise"), ("audience", "expert")])
+        ));
+    }
 }

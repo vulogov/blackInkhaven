@@ -7,6 +7,8 @@
 //! toolchain — is caught deterministically. Zero AI, zero network; the only code
 //! that runs is what the author's own config declares.
 
+pub mod links;
+
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
