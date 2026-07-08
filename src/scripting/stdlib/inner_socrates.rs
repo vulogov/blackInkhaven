@@ -9,7 +9,7 @@ use rust_dynamic::value::Value;
 use rust_multistackvm::multistackvm::VM;
 
 use super::helpers::{active_store, pull, push, require_depth, value_to_string};
-use crate::inner_socrates::intent::FindingContext;
+use crate::intent::FindingContext;
 use crate::inner_socrates::storage::InnerSocratesStore;
 use crate::inner_socrates::{fast, personas};
 

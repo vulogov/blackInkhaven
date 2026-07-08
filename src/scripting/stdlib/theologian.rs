@@ -27,6 +27,11 @@ pub fn register(vm: &mut VM) -> Result<()> {
     let words: &[(&str, fn(&mut VM) -> std::result::Result<&mut VM, BundError>)] = &[
         ("ink.theologian.signals", w_signals),
         ("ink.theologian.suppress", w_suppress),
+        // Namespace consistency with ink.inner_socrates.* / ink.inner_editor.* —
+        // registered as real, policy-gated words (not aliases, which would skip
+        // the store_write gate on `suppress`). The shorter names stay for compat.
+        ("ink.inner_theologian.signals", w_signals),
+        ("ink.inner_theologian.suppress", w_suppress),
     ];
     for (name, f) in words {
         vm.register_inline(name.to_string(), *f)

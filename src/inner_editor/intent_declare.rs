@@ -10,7 +10,7 @@ use std::path::Path;
 use anyhow::Result;
 use uuid::Uuid;
 
-use crate::inner_socrates::intent::{IntentKind, IntentScope, ScopeLevel};
+use crate::intent::{IntentKind, IntentScope, ScopeLevel};
 use crate::inner_socrates::storage::InnerSocratesStore;
 
 use super::types::EditorCategory;
@@ -59,7 +59,7 @@ mod tests {
     use super::*;
     use crate::inner_editor::intent_consult::consult;
     use crate::inner_editor::types::{EditorFinding, EditorSeverity};
-    use crate::inner_socrates::intent::FindingContext;
+    use crate::intent::FindingContext;
 
     fn finding(cat: EditorCategory) -> EditorFinding {
         EditorFinding {

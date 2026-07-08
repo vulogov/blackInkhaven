@@ -147,7 +147,7 @@ fn w_declare_intent(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
     do_declare_intent(vm).map_err(to_bund_err)
 }
 fn do_declare_intent(vm: &mut VM) -> Result<&mut VM> {
-    use crate::inner_socrates::intent::{IntentKind, IntentScope, ScopeLevel};
+    use crate::intent::{IntentKind, IntentScope, ScopeLevel};
     use crate::inner_socrates::storage::InnerSocratesStore;
     let tag = "ink.terms.declare_intent";
     require_depth(vm, 2, tag)?;

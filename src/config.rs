@@ -77,6 +77,10 @@ pub struct Config {
     /// INNER-THEOLOGIAN-1 — moral/theological reader.
     #[serde(default)]
     pub theologian: TheologianConfig,
+    /// TDOC-1 — technical-documentation tooling (verified code blocks). Off by
+    /// default; nothing runs until the author opts in and names runners.
+    #[serde(default)]
+    pub docs: DocsConfig,
     /// MYTH-1 — mythological & symbolic pattern library.
     #[serde(default)]
     pub myth: MythConfig,
@@ -239,6 +243,7 @@ impl Default for Config {
             utopia: UtopiaConfig::default(),
             char: CharConfig::default(),
             theologian: TheologianConfig::default(),
+            docs: DocsConfig::default(),
             myth: MythConfig::default(),
             world: WorldConfig::default(),
             research: ResearchConfig::default(),
@@ -3908,6 +3913,46 @@ impl Default for CharConfig {
 }
 
 /// INNER-THEOLOGIAN-1 — `theologian:` block. The tradition-neutral moral/
+/// TDOC-1 — technical-documentation tooling. Today: verified code blocks.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DocsConfig {
+    pub verify: DocsVerifyConfig,
+}
+
+/// TDOC-1 — verified code blocks (`inkhaven docs verify`). Off by default; a
+/// language runs only if `runners` names a command for it, and only for code
+/// blocks whose fence carries the `verify` flag.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DocsVerifyConfig {
+    /// Master switch — nothing runs unless `true`.
+    pub enabled: bool,
+    /// Per-block wall-clock cap in seconds.
+    pub timeout_seconds: u64,
+    /// language → shell command. `{file}` is replaced by a temp file holding the
+    /// block's code; `{dir}` by its parent directory. Run via `sh -c`.
+    pub runners: std::collections::BTreeMap<String, String>,
+    /// language → temp-file extension (rust→`rs`, …); seeded with common
+    /// languages, overridable. Unknown languages fall back to `.txt`.
+    pub extensions: std::collections::BTreeMap<String, String>,
+}
+
+impl Default for DocsVerifyConfig {
+    fn default() -> Self {
+        let extensions = [
+            ("rust", "rs"), ("python", "py"), ("bash", "sh"), ("sh", "sh"),
+            ("go", "go"), ("javascript", "js"), ("typescript", "ts"), ("c", "c"),
+            ("cpp", "cpp"), ("c++", "cpp"), ("java", "java"), ("ruby", "rb"),
+            ("toml", "toml"), ("json", "json"), ("yaml", "yaml"), ("html", "html"),
+        ]
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+        Self { enabled: false, timeout_seconds: 30, runners: std::collections::BTreeMap::new(), extensions }
+    }
+}
+
 /// theological reader. All optional; omitting the block uses these defaults
 /// (RFC §14). Fully opt-out via `enabled: false`.
 #[derive(Debug, Clone, Serialize, Deserialize)]

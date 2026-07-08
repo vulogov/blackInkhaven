@@ -59,6 +59,9 @@ pub mod kinds {
     /// MYTH-1 — a deterministic myth finding (archetype vacant/absent, motif
     /// absent from the final act). Always informational.
     pub const MYTH: &str = "myth";
+    /// TDOC-1 — a `verify`-marked code block that failed its runner (stale
+    /// example). Deterministic; the detail carries the runner's output.
+    pub const DOC_VERIFY: &str = "doc_verify";
 }
 
 /// Visual / priority class (RFC §7.4).

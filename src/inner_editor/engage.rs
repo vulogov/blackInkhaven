@@ -15,7 +15,7 @@ use anyhow::{anyhow, Result};
 use uuid::Uuid;
 
 use crate::config::Config;
-use crate::inner_socrates::intent::FindingContext;
+use crate::intent::FindingContext;
 use crate::inner_socrates::storage::InnerSocratesStore;
 use crate::project::ProjectLayout;
 use crate::store::hierarchy::Hierarchy;
