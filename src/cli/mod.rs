@@ -36,6 +36,7 @@ pub mod output;
 pub mod realworld;
 pub mod templates;
 pub mod thread;
+pub mod docs;
 pub mod sources;
 pub mod terms;
 pub mod snippets;
@@ -1065,6 +1066,11 @@ pub enum Command {
     /// file into the `Sources` system book.
     #[command(subcommand)]
     Sources(SourcesCommand),
+
+    /// Technical-documentation tooling (TDOC-1): verify the manuscript's
+    /// `verify`-marked code blocks against configured runners.
+    #[command(subcommand)]
+    Docs(DocsCommand),
 
     /// 1.4.8+ TERMS-1 — `inkhaven terms <subcommand>`.
     /// Terminology governance: scan prose for banned synonyms
@@ -2108,6 +2114,29 @@ pub enum SourcesCommand {
         /// Write to this file instead of stdout.
         #[arg(long)]
         out: Option<std::path::PathBuf>,
+    },
+}
+
+/// TDOC-1 — `inkhaven docs …` subcommands.
+#[derive(Debug, Subcommand)]
+pub enum DocsCommand {
+    /// Run every `verify`-marked code block through its configured runner. Exits
+    /// non-zero when any block fails, so it fits a pre-release / CI check. Requires
+    /// `docs.verify.enabled: true` and, to actually execute, `--yes` (or use
+    /// `--dry-run` to preview the commands).
+    Verify {
+        /// Limit to one user book (default: all user books).
+        #[arg(long)]
+        book_name: Option<String>,
+        /// Limit to one paragraph by its slug-path.
+        #[arg(long)]
+        paragraph: Option<String>,
+        /// List each block that would run and its resolved command; execute nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Confirm execution of the configured runner commands (required to run).
+        #[arg(long)]
+        yes: bool,
     },
 }
 
@@ -5376,6 +5405,7 @@ impl Cli {
             Command::Sources(cmd) => {
                 sources::run(&project, cmd).map_err(Into::into)
             }
+            Command::Docs(cmd) => docs::run(&project, cmd).map_err(Into::into),
             Command::Template(TemplateCommand::List) => {
                 templates::list_templates();
                 Ok(())
