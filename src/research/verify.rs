@@ -26,8 +26,13 @@ impl Confidence {
     }
 }
 
+/// The most claims one `/verify` probes at once — beyond this the single LLM call
+/// grows unbounded with the response length, for diminishing signal.
+pub(super) const MAX_CLAIMS: usize = 12;
+
 /// Split text into sentences (naive: on `.?!` boundaries) and keep the ones that
-/// look like specific factual claims of at least `min_words` words.
+/// look like specific factual claims of at least `min_words` words, capped at
+/// [`MAX_CLAIMS`].
 pub(super) fn extract_claims(text: &str, min_words: usize) -> Vec<String> {
     let mut claims = Vec::new();
     for sentence in split_sentences(text) {
@@ -37,6 +42,9 @@ pub(super) fn extract_claims(text: &str, min_words: usize) -> Vec<String> {
         }
         if is_claim(trimmed) {
             claims.push(trimmed.to_string());
+            if claims.len() >= MAX_CLAIMS {
+                break;
+            }
         }
     }
     claims

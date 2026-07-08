@@ -1756,6 +1756,10 @@ pub(crate) struct App {
     /// they were built from. A matching mtime re-opens the overview instantly;
     /// otherwise it recompiles off-thread (no UI freeze on DEM / large worlds).
     world_overview_cache: Option<(std::time::SystemTime, Vec<String>)>,
+    /// HAIKU-3 — cached whole-book centroid keyed on the manuscript paragraph
+    /// count, so the `haiku_scope: "book"` haiku doesn't re-embed the book on every
+    /// new-paragraph / on-demand trigger. Rebuilds when a paragraph is added/removed.
+    book_haiku_centroid: Option<(usize, Vec<f32>)>,
     scene_last_para: Option<Uuid>,
     scene_brief: Option<crate::world::scene::SceneBrief>,
     /// NARR-1 — ambient prose check toggle (`Ctrl+V Shift+V`); seeded from
@@ -3037,6 +3041,7 @@ impl App {
             scene_world: None,
             scene_world_mtime: None,
             world_overview_cache: None,
+            book_haiku_centroid: None,
             scene_last_para: None,
             scene_brief: None,
             ie_auto: false,
@@ -11448,21 +11453,34 @@ impl App {
             A::BundShellSelection => self.toggle_shell_selection_mode(),
             A::BundEditProjectHjson => self.open_hjson_editor(),
             A::ShowHaiku => {
-                // HAIKU-2 (T3): semantic when the engine is already warm, using
-                // the open paragraph as the query; else the HAIKU-1 rotation.
-                let ctx: Option<String> = self
-                    .opened
-                    .as_ref()
-                    .map(|doc| doc.textarea.lines().join(" ").chars().take(512).collect());
-                if self.cfg.editor.haiku_semantic && self.store.embedding_is_loaded() {
+                // HAIKU-2/3 (T3): semantic when the engine is already warm; else the
+                // HAIKU-1 rotation. `haiku_scope: "book"` reflects the whole
+                // manuscript (a centroid over a spread sample), otherwise the open
+                // paragraph.
+                let warm = self.cfg.editor.haiku_semantic && self.store.embedding_is_loaded();
+                if warm && self.cfg.editor.haiku_scope.eq_ignore_ascii_case("book") {
+                    let centroid = self.book_haiku_centroid();
                     let store = self.store.clone();
-                    crate::haiku::emit_with_context(
+                    crate::haiku::emit_book(
                         &self.cfg.language,
-                        ctx.as_deref(),
+                        centroid.as_deref(),
                         Some(&|texts| store.embed_batch(texts).map_err(|e| anyhow::anyhow!("{e}"))),
                     );
                 } else {
-                    crate::haiku::emit_with_context(&self.cfg.language, ctx.as_deref(), None);
+                    let ctx: Option<String> = self
+                        .opened
+                        .as_ref()
+                        .map(|doc| doc.textarea.lines().join(" ").chars().take(512).collect());
+                    if warm {
+                        let store = self.store.clone();
+                        crate::haiku::emit_with_context(
+                            &self.cfg.language,
+                            ctx.as_deref(),
+                            Some(&|texts| store.embed_batch(texts).map_err(|e| anyhow::anyhow!("{e}"))),
+                        );
+                    } else {
+                        crate::haiku::emit_with_context(&self.cfg.language, ctx.as_deref(), None);
+                    }
                 }
                 self.status = "✦ haiku written to Output".into();
             }
@@ -13969,6 +13987,75 @@ impl App {
             .map(|b| String::from_utf8_lossy(&b).into_owned())
     }
 
+    /// HAIKU-3 — a bounded, evenly-spread sample of the manuscript's paragraph
+    /// texts, for a haiku that reflects the whole book (a centroid over these).
+    /// Only manuscript (non-system) books contribute; the sample spans the book
+    /// from start to end and each entry is truncated, so the embed stays cheap.
+    fn book_haiku_samples(&self) -> Vec<String> {
+        use crate::store::node::NodeKind;
+        const MAX_SAMPLES: usize = 48;
+        const PER_CHARS: usize = 300;
+        let ids: Vec<uuid::Uuid> = self
+            .hierarchy
+            .flatten()
+            .into_iter()
+            .filter_map(|(n, _)| (n.kind == NodeKind::Paragraph).then_some(n))
+            .filter(|n| !self.is_under_system_book(n))
+            .map(|n| n.id)
+            .collect();
+        if ids.is_empty() {
+            return Vec::new();
+        }
+        let step = (ids.len() / MAX_SAMPLES).max(1);
+        ids.iter()
+            .step_by(step)
+            .take(MAX_SAMPLES)
+            .filter_map(|&id| self.paragraph_text(id))
+            .map(|t| t.trim().chars().take(PER_CHARS).collect::<String>())
+            .filter(|t| !t.is_empty())
+            .collect()
+    }
+
+    /// Whether a node sits under a *system* book (Places, World, Sources, …)
+    /// rather than a manuscript book — so the whole-book haiku ignores it.
+    fn is_under_system_book(&self, n: &crate::store::node::Node) -> bool {
+        use crate::store::node::NodeKind;
+        self.hierarchy
+            .ancestors(n)
+            .into_iter()
+            .find(|a| a.kind == NodeKind::Book)
+            .map(|b| b.system_tag.is_some())
+            .unwrap_or(false)
+    }
+
+    /// HAIKU-3 — the whole-book centroid, cached and keyed on the manuscript
+    /// paragraph count so it is rebuilt (by re-embedding a spread sample) only when
+    /// a paragraph is added or removed, not on every trigger. `None` when the book
+    /// is empty or the embed fails.
+    fn book_haiku_centroid(&mut self) -> Option<Vec<f32>> {
+        use crate::store::node::NodeKind;
+        let fingerprint = self
+            .hierarchy
+            .flatten()
+            .into_iter()
+            .filter(|(n, _)| n.kind == NodeKind::Paragraph && !self.is_under_system_book(n))
+            .count();
+        if let Some((fp, c)) = &self.book_haiku_centroid {
+            if *fp == fingerprint {
+                return Some(c.clone());
+            }
+        }
+        let samples = self.book_haiku_samples();
+        let refs: Vec<&str> = samples.iter().map(|s| s.as_str()).collect();
+        if refs.is_empty() {
+            return None;
+        }
+        let vecs = self.store.embed_batch(&refs).ok()?;
+        let c = crate::haiku::centroid(&vecs)?;
+        self.book_haiku_centroid = Some((fingerprint, c.clone()));
+        Some(c)
+    }
+
     /// WORLD-4 — `Ctrl+B W` → `F` → `B`. Fact-check every paragraph in the book
     /// that contains the open paragraph (fast track), surfacing all findings in
     /// Output.
@@ -15057,7 +15144,18 @@ impl App {
             .unwrap_or_default();
         let ctx = format!("{branch_title} {body}").trim().to_string();
 
-        if self.cfg.editor.haiku_semantic && self.store.embedding_is_loaded() {
+        let warm = self.cfg.editor.haiku_semantic && self.store.embedding_is_loaded();
+        if warm && self.cfg.editor.haiku_scope.eq_ignore_ascii_case("book") {
+            // HAIKU-3 — reflect the whole manuscript rather than the new paragraph
+            // (centroid cached across triggers, rebuilt on paragraph add/remove).
+            let centroid = self.book_haiku_centroid();
+            let store = self.store.clone();
+            crate::haiku::emit_book(
+                &self.cfg.language,
+                centroid.as_deref(),
+                Some(&|texts| store.embed_batch(texts).map_err(|e| anyhow::anyhow!("{e}"))),
+            );
+        } else if warm {
             let store = self.store.clone();
             crate::haiku::emit_with_context(
                 &self.cfg.language,
