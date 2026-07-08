@@ -21,7 +21,77 @@ pub fn run(project: &Path, cmd: DocsCommand) -> Result<()> {
         DocsCommand::Verify { book_name, paragraph, dry_run, yes } => {
             verify(project, book_name.as_deref(), paragraph.as_deref(), dry_run, yes)
         }
+        DocsCommand::Links { book_name, external } => links(project, book_name.as_deref(), external),
     }
+}
+
+/// TDOC-2 — check link integrity: internal cross-references always, external URLs
+/// with `--external`.
+fn links(project: &Path, book_name: Option<&str>, external: bool) -> Result<()> {
+    use std::collections::BTreeMap;
+    let (_cfg, store, h) = open(project)?;
+
+    // Internal cross-references (project-wide, deterministic).
+    let internal = crate::docs::links::check_internal(&h);
+    for f in &internal {
+        println!("  ✗ {} → {} ({})", f.loc, f.target, f.reason);
+    }
+
+    // External URLs (opt-in, network) — one location per URL.
+    let mut dead_external = 0usize;
+    if external {
+        let mut seen: BTreeMap<String, String> = BTreeMap::new();
+        for book in h
+            .children_of(None)
+            .into_iter()
+            .filter(|n| n.kind == NodeKind::Book && n.system_tag.is_none())
+        {
+            if let Some(name) = book_name {
+                if !book.title.eq_ignore_ascii_case(name.trim()) {
+                    continue;
+                }
+            }
+            for id in h.collect_subtree(book.id) {
+                let Some(node) = h.get(id) else { continue };
+                if node.kind != NodeKind::Paragraph {
+                    continue;
+                }
+                let body = read_body(&store, id);
+                let loc = h.slug_path(node);
+                for url in crate::docs::links::extract_urls(&body) {
+                    seen.entry(url).or_insert_with(|| loc.clone());
+                }
+            }
+        }
+        if seen.is_empty() {
+            println!("docs links: no external URLs found.");
+        } else {
+            let rt = tokio::runtime::Runtime::new().map_err(|e| anyhow::anyhow!("tokio: {e}"))?;
+            let dead: Vec<(String, String, String)> = rt.block_on(async {
+                let client = crate::research::deadlinks::client().map_err(|e| anyhow::anyhow!("http client: {e}"))?;
+                let mut out = Vec::new();
+                for (url, loc) in &seen {
+                    if let Some(reason) = crate::research::deadlinks::check_web(&client, url).await {
+                        out.push((loc.clone(), url.clone(), reason));
+                    }
+                }
+                Ok::<_, anyhow::Error>(out)
+            })?;
+            dead_external = dead.len();
+            for (loc, url, reason) in &dead {
+                println!("  ✗ {loc} → {url} ({reason})");
+            }
+            println!("  ({} external URL(s) checked)", seen.len());
+        }
+    }
+
+    let broken = internal.len() + dead_external;
+    let ext_note = if external { "" } else { " (internal only — pass --external to check URLs)" };
+    println!("\ndocs links: {} internal · {dead_external} external broken{ext_note}", internal.len());
+    if broken > 0 {
+        bail!("{broken} broken link(s)");
+    }
+    Ok(())
 }
 
 fn open(project: &Path) -> Result<(Config, Store, Hierarchy)> {

@@ -3918,6 +3918,10 @@ impl Default for CharConfig {
 #[serde(default)]
 pub struct DocsConfig {
     pub verify: DocsVerifyConfig,
+    /// TDOC-3 — single-sourcing variables. `{{key}}` in any paragraph body is
+    /// replaced by its value at assembly, across every export. Empty = no
+    /// substitution.
+    pub variables: std::collections::BTreeMap<String, String>,
 }
 
 /// TDOC-1 — verified code blocks (`inkhaven docs verify`). Off by default; a
