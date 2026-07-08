@@ -1695,6 +1695,9 @@ pub(crate) struct App {
     /// read-side view over `active()` so the pane and its key handler share one
     /// filtered list.
     output_filter: crate::pane::output::OutputFilter,
+    /// PANE-2 — while `true`, `/` opened the Output pane's free-text query line and
+    /// keystrokes edit `output_filter.text_query` live (Enter confirms, Esc clears).
+    output_query_focused: bool,
     /// 1.3.34+ — tree report-card badges: node id → (open-finding count under it,
     /// worst severity). Aggregated up the hierarchy from each finding's source
     /// paragraph. Refreshed on a throttle (see `tick_tree_badges`) + after a check.
@@ -3053,6 +3056,7 @@ impl App {
             ie_engage_para: None,
             output_expanded: std::collections::HashSet::new(),
             output_filter: crate::pane::output::OutputFilter::default(),
+            output_query_focused: false,
             tree_badges: std::collections::HashMap::new(),
             tree_badges_at: std::time::Instant::now(),
             tree_cursor: 0,
@@ -8208,7 +8212,41 @@ impl App {
         let plain = !key
             .modifiers
             .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER);
+        // PANE-2 — while the query line is focused, keystrokes edit the free-text
+        // filter live; Enter keeps it, Esc clears it, and only then do the pane's
+        // single-letter shortcuts resume.
+        if self.output_query_focused {
+            match key.code {
+                KeyCode::Esc => {
+                    self.output_filter.text_query = None;
+                    self.output_query_focused = false;
+                    self.after_output_filter_change("output search cleared".into());
+                }
+                KeyCode::Enter => {
+                    self.output_query_focused = false;
+                    self.status = self.output_filter_status();
+                }
+                KeyCode::Backspace => {
+                    if let Some(q) = self.output_filter.text_query.as_mut() {
+                        q.pop();
+                    }
+                    self.after_output_filter_change(self.output_filter_status());
+                }
+                KeyCode::Char(c) if plain => {
+                    self.output_filter.text_query.get_or_insert_with(String::new).push(c);
+                    self.after_output_filter_change(self.output_filter_status());
+                }
+                _ => {}
+            }
+            return Ok(true);
+        }
         match key.code {
+            // PANE-2 — open the free-text query line.
+            KeyCode::Char('/') if plain => {
+                self.output_query_focused = true;
+                self.output_filter.text_query.get_or_insert_with(String::new);
+                self.status = "search Output: type to filter · Enter keep · Esc clear".into();
+            }
             // PANE-1 filtering (road to 1.4.0): narrow the pane by source / severity
             // / the open paragraph. Filter changes reset the selection to the top.
             KeyCode::Char('f') if plain => {
@@ -11501,6 +11539,7 @@ impl App {
             A::TogglePromptLanguageMode => self.toggle_prompt_language_mode(),
             A::OpenSentenceRhythm => self.open_sentence_rhythm(),
             A::AnalyseShowDontTell => self.start_show_dont_tell_scan(),
+            A::DocsVerifyParagraph => self.docs_verify_open_paragraph(),
             A::FactCheck => self.start_fact_check(),
             A::SearchFacts => self.open_facts_search(),
             A::NextFactFinding => self.next_fact_finding(),
@@ -13937,6 +13976,67 @@ impl App {
         }
         let ctx = WorldContext::new(Gazetteer::new(places), moons, minerals);
         Some((doc.id, check_paragraph(&text, &ledger, &[], Some(&ctx))))
+    }
+
+    /// TDOC-1 (Ctrl+B Shift+D) — verify the `verify`-marked code blocks in the open
+    /// `para:code` paragraph against their configured runners, synchronously (one
+    /// listing is quick); failures land in the Output pane. Whole-book / CI is the
+    /// `inkhaven docs verify` CLI. Gated on `docs.verify.enabled`.
+    fn docs_verify_open_paragraph(&mut self) {
+        let vcfg = self.cfg.docs.verify.clone();
+        if !vcfg.enabled {
+            self.status =
+                "docs.verify is off — set docs.verify.enabled: true and configure runners".into();
+            return;
+        }
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "docs verify: open a code paragraph first".into();
+            return;
+        };
+        let id = doc.id;
+        let is_code = self
+            .hierarchy
+            .get(id)
+            .map(|n| n.tags.iter().any(|t| t == "para:code"))
+            .unwrap_or(false);
+        if !is_code {
+            self.status = "docs verify: the open paragraph is not a code listing (para:code)".into();
+            return;
+        }
+        let body = doc.textarea.lines().join("\n");
+        let blocks: Vec<crate::docs::CodeBlock> =
+            crate::docs::extract_verifiable(&body).into_iter().filter(|b| b.verify).collect();
+        if blocks.is_empty() {
+            self.status = "docs verify: no `verify`-marked blocks in this listing".into();
+            return;
+        }
+        // Clear this paragraph's prior verify findings before re-checking.
+        if let Some(store) = crate::pane::output::active() {
+            if let Ok(prior) = store.by_kind(crate::pane::output::kinds::DOC_VERIFY) {
+                for m in &prior {
+                    if m.source_paragraph_id == Some(id) {
+                        let _ = store.dismiss(m.id);
+                    }
+                }
+            }
+        }
+        let (mut pass, mut fail, mut skip) = (0usize, 0usize, 0usize);
+        for b in &blocks {
+            match crate::docs::run_block(b, &vcfg) {
+                crate::docs::VerifyOutcome::Pass => pass += 1,
+                crate::docs::VerifyOutcome::Fail { detail } => {
+                    fail += 1;
+                    crate::docs::emit_finding(id, &b.lang, &detail);
+                }
+                crate::docs::VerifyOutcome::Errored { reason } => {
+                    fail += 1;
+                    crate::docs::emit_finding(id, &b.lang, &reason);
+                }
+                crate::docs::VerifyOutcome::Skipped { .. } => skip += 1,
+            }
+        }
+        self.refresh_tree_badges();
+        self.status = format!("docs verify · {pass} passed · {fail} failed · {skip} skipped");
     }
 
     /// Build the fact-check world context (magic ledger + gazetteer/moons/minerals)

@@ -3,8 +3,7 @@
 //! the raw rows (coverage as strings) + `IntentScope::applies_to`, matched
 //! against the Editor's own category ids. Pure given the rows + context.
 
-use crate::inner_socrates::intent::FindingContext;
-use crate::inner_socrates::storage::RawIntentRow;
+use crate::intent::{FindingContext, RawIntentRow};
 
 use super::types::EditorFinding;
 
@@ -20,10 +19,8 @@ pub fn consult(
     let mut kept = Vec::new();
     let mut suppressed = Vec::new();
     for mut f in findings {
-        let hit = rows.iter().find(|r| {
-            r.coverage.iter().any(|c| c == f.category.id()) && r.scope.applies_to(ctx)
-        });
-        match hit {
+        // The suppression rule lives once, in the shared core.
+        match crate::intent::consult_raw(rows, f.category.id(), ctx) {
             Some(r) => {
                 f.suppressed_by =
                     Some(format!("consistent with declared intent: {}", r.description));
@@ -50,7 +47,7 @@ pub fn intent_summary(rows: &[RawIntentRow]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::inner_socrates::intent::IntentScope;
+    use crate::intent::IntentScope;
     use crate::inner_editor::types::{EditorCategory, EditorSeverity};
 
     fn finding(cat: EditorCategory) -> EditorFinding {

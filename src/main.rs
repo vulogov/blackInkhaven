@@ -30,6 +30,8 @@ mod book_digest;
 mod manuscript;
 mod pane;
 mod world;
+mod docs;
+mod intent;
 mod inner_socrates;
 mod inner_editor;
 mod inner_grounding;

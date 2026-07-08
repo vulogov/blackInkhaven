@@ -1751,6 +1751,7 @@ impl super::super::App {
                 crate::pane::output::kinds::HAIKU => "✦ ",
                 crate::pane::output::kinds::THEOLOGIAN => "⚖ ",
                 crate::pane::output::kinds::MYTH => "⊛ ",
+                crate::pane::output::kinds::DOC_VERIFY => "⌨ ",
                 _ => "",
             };
             lines.push(Line::from(vec![
@@ -1911,20 +1912,29 @@ impl super::super::App {
                 _ => " ↑↓ · o expand · r remember · a ask AI · d dismiss · p pin · ^B Tab",
             };
             // Compact filter cue: `f` cycles source, `S` severity, `t` this-¶,
-            // `c` clears the filter, `C` clears the pane. Full keys in the quick
-            // reference. Shown active when set.
+            // `/` free-text search, `c` clears the filter, `C` clears the pane.
             let filter_cue = if self.output_filter.is_active() {
-                " · C clear · filter:f/S/t c:clr"
+                " · C clear · filter:f/S/t · /:search · c:clr"
             } else {
-                " · C clear · f:filter"
+                " · C clear · f:filter · /:search"
             };
-            // Wrap so the longer hints don't truncate in a narrow pane (footer is
-            // up to two rows).
-            let hint = Paragraph::new(Line::from(Span::styled(
-                format!("{hint_text}{filter_cue}"),
-                Style::default().fg(Color::DarkGray),
-            )))
-            .wrap(ratatui::widgets::Wrap { trim: false });
+            // PANE-2 — while the query line is focused, the footer becomes a live
+            // search input; otherwise it shows the navigation + filter cues.
+            let hint = if self.output_query_focused {
+                let q = self.output_filter.text_query.as_deref().unwrap_or("");
+                Paragraph::new(Line::from(vec![
+                    Span::styled("  search /", Style::default().fg(Color::Cyan)),
+                    Span::styled(format!("{q}▏"), Style::default().fg(Color::White)),
+                    Span::styled("   ⏎ keep · Esc clear", Style::default().fg(Color::DarkGray)),
+                ]))
+            } else {
+                // Wrap so the longer hints don't truncate in a narrow pane.
+                Paragraph::new(Line::from(Span::styled(
+                    format!("{hint_text}{filter_cue}"),
+                    Style::default().fg(Color::DarkGray),
+                )))
+                .wrap(ratatui::widgets::Wrap { trim: false })
+            };
             f.render_widget(hint, footer);
         }
     }

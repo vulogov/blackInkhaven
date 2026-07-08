@@ -29,6 +29,7 @@ pub const SOURCES: &[&str] = &[
     "variety",
     "ai",
     "bund",
+    "docs",
     "other",
 ];
 
@@ -62,6 +63,7 @@ pub fn message_source(msg: &Message) -> &'static str {
         kinds::VARIETY_RENDERING => "variety",
         kinds::AI_TASK_COMPLETE => "ai",
         kinds::BUND_PRINT | kinds::BUND_LOG => "bund",
+        kinds::DOC_VERIFY => "docs",
         _ => "other",
     }
 }
@@ -88,12 +90,24 @@ pub struct OutputFilter {
     pub min_severity: Option<Severity>,
     /// Show only messages about the currently-open paragraph.
     pub only_open_paragraph: bool,
+    /// Free-text substring filter over a message's display text + kind (PANE-2);
+    /// `None`/empty = no text narrowing. Case-insensitive.
+    pub text_query: Option<String>,
+}
+
+/// A message's human-facing display text — the `text` metadata field the pane
+/// renders. Used by the free-text filter and available to callers.
+pub fn message_text(msg: &Message) -> &str {
+    msg.metadata.get("text").and_then(|v| v.as_str()).unwrap_or("")
 }
 
 impl OutputFilter {
     /// Whether any narrowing is in effect.
     pub fn is_active(&self) -> bool {
-        self.source.is_some() || self.min_severity.is_some() || self.only_open_paragraph
+        self.source.is_some()
+            || self.min_severity.is_some()
+            || self.only_open_paragraph
+            || self.text_query.as_deref().is_some_and(|q| !q.is_empty())
     }
 
     /// Reset to "show everything".
@@ -123,6 +137,13 @@ impl OutputFilter {
         {
             return false;
         }
+        if let Some(q) = self.text_query.as_deref().filter(|q| !q.is_empty()) {
+            let needle = q.to_lowercase();
+            let hay_text = message_text(msg).to_lowercase();
+            if !hay_text.contains(&needle) && !msg.kind.to_lowercase().contains(&needle) {
+                return false;
+            }
+        }
         true
     }
 
@@ -140,6 +161,9 @@ impl OutputFilter {
         }
         if self.only_open_paragraph {
             parts.push("¶ this paragraph".to_string());
+        }
+        if let Some(q) = self.text_query.as_deref().filter(|q| !q.is_empty()) {
+            parts.push(format!("/{q}"));
         }
         parts.join(" · ")
     }
@@ -199,6 +223,30 @@ mod tests {
         assert!(!f.is_active());
         assert!(f.matches(&msg(kinds::FACT_CHECK_WARNING, Severity::Info, None), None));
         assert!(f.summary().is_empty());
+    }
+
+    #[test]
+    fn text_query_filters_on_display_text_case_insensitively() {
+        let m = Message::new(
+            kinds::FACT_CHECK_WARNING,
+            Severity::Warning,
+            Lifetime::UntilActedOn,
+            serde_json::json!({ "text": "The rider crossed the Salt Road." }),
+        );
+        let mut f = OutputFilter::default();
+        f.text_query = Some("salt road".into());
+        assert!(f.is_active());
+        assert!(f.matches(&m, None), "case-insensitive substring of the text");
+        assert!(f.summary().contains("/salt road"));
+        f.text_query = Some("no such phrase".into());
+        assert!(!f.matches(&m, None));
+        // A matching substring of the kind also passes.
+        f.text_query = Some(m.kind.clone());
+        assert!(f.matches(&m, None));
+        // An empty query is inactive and matches everything.
+        f.text_query = Some(String::new());
+        assert!(!f.is_active());
+        assert!(f.matches(&m, None));
     }
 
     #[test]
@@ -325,7 +373,7 @@ mod tests {
                 only in any::<bool>(),
             ) {
                 let m = message(&kind, sev);
-                let f = OutputFilter { source: src, min_severity: Some(sev), only_open_paragraph: only };
+                let f = OutputFilter { source: src, min_severity: Some(sev), only_open_paragraph: only, text_query: None };
                 let _ = f.matches(&m, None);
                 let _ = f.matches(&m, Some(uuid::Uuid::new_v4()));
             }
