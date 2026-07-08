@@ -88,11 +88,15 @@ pub(super) fn truth_system(language: &str) -> String {
     )
 }
 
-/// The user message for a truth-check chunk: the numbered statements.
-pub(super) fn truth_user(chunk: &[&FactEntry], base: usize) -> String {
+/// The user message for a truth-check chunk: the numbered statements, numbered
+/// from 1 within the chunk. Each chunk is an independent model call, so its reply
+/// is parsed against this chunk's facts alone (see `finish` in the app) — absolute
+/// numbering across chunks was unreliable (a model renumbering each reply from 1
+/// silently misassigned every verdict past the first chunk).
+pub(super) fn truth_user(chunk: &[&FactEntry]) -> String {
     let mut s = String::from("Statements:\n");
     for (i, f) in chunk.iter().enumerate() {
-        s.push_str(&format!("{}. {}\n", base + i + 1, f.text));
+        s.push_str(&format!("{}. {}\n", i + 1, f.text));
     }
     s
 }
@@ -208,12 +212,13 @@ mod tests {
     }
 
     #[test]
-    fn truth_user_numbers_from_base() {
+    fn truth_user_numbers_each_chunk_from_one() {
+        // R3: numbering is chunk-relative (1-based) because each chunk is parsed
+        // against its own facts — not concatenated and parsed once.
         let a = fe("A"); let b = fe("B");
-        let refs = vec![&a, &b];
-        let u = truth_user(&refs, 8);
-        assert!(u.contains("9. A"));
-        assert!(u.contains("10. B"));
+        let u = truth_user(&[&a, &b]);
+        assert!(u.contains("1. A"));
+        assert!(u.contains("2. B"));
     }
 
     #[test]

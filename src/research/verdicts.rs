@@ -79,9 +79,25 @@ impl Verdicts {
     }
 
     fn load_file(layout: &ProjectLayout, file: &str) -> Verdicts {
-        match std::fs::read_to_string(Verdicts::path(layout, file)) {
-            Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
-            Err(_) => Verdicts::default(),
+        let path = Verdicts::path(layout, file);
+        let Ok(raw) = std::fs::read_to_string(&path) else {
+            return Verdicts::default();
+        };
+        match serde_json::from_str(&raw) {
+            Ok(v) => v,
+            Err(e) => {
+                // Don't silently reset a corrupt-but-present file: the next save
+                // would overwrite it and lose every verdict for good. Back it up
+                // (so it can be recovered by hand) and start fresh.
+                let backup = path.with_file_name(format!("{file}.corrupt"));
+                let _ = std::fs::rename(&path, &backup);
+                tracing::warn!(
+                    target: "inkhaven::research",
+                    "verdicts {file} unreadable ({e}); backed up to {}",
+                    backup.display()
+                );
+                Verdicts::default()
+            }
         }
     }
 
@@ -184,6 +200,20 @@ mod tests {
         let bad = &m[&ids[2].to_string()];
         assert_eq!(bad.level, Level::Inaccurate);
         assert!(bad.reason.contains("476"));
+    }
+
+    #[test]
+    fn per_chunk_parse_maps_to_that_chunks_slice() {
+        // R3: the truth pass now parses each chunk's reply (numbered from 1)
+        // against that chunk's own fact-id slice. A second chunk that renumbers
+        // from 1 must land on chunk-2's facts, not overwrite chunk-1's fact 1.
+        let ids: Vec<Uuid> = (0..16).map(|_| Uuid::new_v4()).collect();
+        let chunk2 = "1. INACCURATE — wrong\n2. ACCURATE — ok";
+        let parsed = parse_truth_report(chunk2, &ids[8..16], "now");
+        assert_eq!(parsed[&ids[8].to_string()].level, Level::Inaccurate);
+        assert_eq!(parsed[&ids[9].to_string()].level, Level::Accurate);
+        // Chunk 1's facts are untouched by chunk 2's reply.
+        assert!(!parsed.contains_key(&ids[0].to_string()));
     }
 
     #[test]

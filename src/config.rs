@@ -1611,6 +1611,13 @@ pub struct EditorConfig {
     /// `startup_haiku` is false. No AI API, no network. Default: true.
     #[serde(default = "default_startup_haiku")]
     pub haiku_semantic: bool,
+    /// HAIKU-3 — what the semantic haiku is chosen to reflect: `"paragraph"`
+    /// (the default — the writing context under the cursor) or `"book"` (a
+    /// centroid over a spread sample of the whole manuscript, so the poem reflects
+    /// the book as a whole rather than the current passage). No effect when
+    /// `haiku_semantic` is false or the engine is cold. No AI API, no network.
+    #[serde(default = "default_haiku_scope")]
+    pub haiku_scope: String,
     /// 1.3.37 — cap on the browser-style visited-paragraph history
     /// (persisted in `.session.json`). `0` (default) = unbounded,
     /// preserving prior behaviour; set e.g. 200 to bound session growth.
@@ -1850,6 +1857,10 @@ fn default_external_change_auto_reload() -> bool {
 
 fn default_startup_haiku() -> bool {
     true
+}
+
+fn default_haiku_scope() -> String {
+    "paragraph".to_string()
 }
 
 fn default_fact_check_idle_seconds() -> u64 {
@@ -3013,6 +3024,7 @@ impl Default for EditorConfig {
             fact_check_idle_seconds: default_fact_check_idle_seconds(),
             startup_haiku: default_startup_haiku(),
             haiku_semantic: default_startup_haiku(),
+            haiku_scope: default_haiku_scope(),
             visited_history_cap: default_visited_history_cap(),
             stemming: StemmingConfig::default(),
             startup_splash: default_startup_splash(),

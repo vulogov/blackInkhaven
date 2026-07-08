@@ -111,6 +111,14 @@ pub fn engage(input: EngageInput) -> Result<EngageOutcome> {
         &input.prose,
         language_name(&lang_code),
     );
+    // INNER-GROUND-1 — open with the shared reader grounding (declared cast,
+    // symbol library, open world tensions) as a labelled preamble, so a craft
+    // note respects the author's declared world rather than reading blind.
+    // Self-disables when nothing is declared.
+    let user = match crate::inner_grounding::build_grounding(&input.project) {
+        Some(g) => format!("{g}\n\n{user}"),
+        None => user,
+    };
     let system = input
         .system_override
         .clone()
