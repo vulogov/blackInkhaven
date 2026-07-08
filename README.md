@@ -21,44 +21,40 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.6.7 — Grounded Readers
+## Latest release · 1.6.8 — Verified Code
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.6.7.md`](Documentation/RELEASE_NOTES/1.6.7.md)
-· New book: [`Developing a story with Inkhaven`](Book/DEVELOPING/)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.6.8.md`](Documentation/RELEASE_NOTES/1.6.8.md)
+· Roadmap: [`TDOC_ROADMAP.md`](Documentation/PROPOSALS/TDOC_ROADMAP.md)
 
-The Inner family learns the world. The two AI readers that used to read your prose
-blind now read it against everything you have already declared, a new reader joins
-them, and a fifth companion book joins the shelf. **No new runtime crates.**
+Technical documentation's enemy is *staleness* — the example that was true two
+releases ago. This release gives the docs author the fiction author's weapon: run
+the example, flag it when it breaks. Plus free-text search in the Output pane. **No
+new runtime crates.**
 
-### The Inner family, grounded
+### Verified code blocks
 
-Inner Socrates and Inner Editor now open **grounded** on what you have declared — a
-shared module reads your characters and their arcs, your symbol library, the world's
-open coherence tensions, and the story timeline, and hands it to the reader so a
-question or a craft note is asked *against your world* rather than in a vacuum (each
-source self-disables when nothing is declared; the preamble is localised). A new
-persona, the **Inner Historian**, presses the page for chronological consistency
-against the world you built, and the world-coherence loop between the Inner
-Theologian and the utopian-architect is closed.
+Mark a `para:code` listing's fence with `verify` (`` ```rust verify ``) and name a
+runner in config; Inkhaven runs the snippet and flags it in the Output pane, on the
+exact paragraph, when it no longer compiles — the technical track's version of the
+fiction track's fact-check. `Ctrl+B Shift+D` verifies the open listing; `inkhaven
+docs verify` checks the whole book and exits non-zero on failure (a CI step). Zero
+AI, zero network, and opt-in twice: nothing runs unless you enable it *and* mark the
+block, and a cloned project can't run its examples without your explicit `--yes`.
+The first of the [TDOC technical-documentation program](Documentation/PROPOSALS/TDOC_ROADMAP.md).
 
-### A haiku for the whole book, in three more languages
+### Free-text search in the Output pane
 
-`editor.haiku_scope: "book"` chooses the zero-AI Output-pane haiku by a cached
-centroid over the **whole manuscript** rather than the current paragraph — and the
-haiku now speaks **Portuguese, Italian, and Japanese** alongside the existing five.
-
-### A new companion book
-
-*Developing a story with Inkhaven* — a process guide sorting authoring into eight
-**tracks** (fiction, utopia, science fiction, nonfiction, scenarios, technical,
-scientific, theology/philosophy), each with a full working guide, hands-on
-command-level procedures, and keybinding + CLI appendices.
+The pane where every reader reports — fact-check, Socratic, Inner Editor,
+translation, code-verification — gains a `/` text filter: a live query line that
+narrows by substring and composes with the source / severity / this-paragraph
+filters.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** New config `editor.haiku_scope`; the grounding and the new
-persona are additive and self-disabling — existing projects are unaffected. A round
-of deferred correctness fixes lands with regression tests. Test suite → 2329.
+**No new runtime crates.** New config `docs.verify` (off by default); new command
+`inkhaven docs verify` + the `Ctrl+B Shift+D` chord; the Output-pane `/` search. An
+internal cleanup unifies the inner readers' shared intent ledger with no behavioural
+change. Everything is additive — existing projects are unaffected. Test suite → 2332.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
