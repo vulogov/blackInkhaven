@@ -372,6 +372,34 @@ pub fn bundled() -> Vec<Persona> {
                 (FramingInterrogation, 1.1),
             ],
         ),
+        // ── inner-historian (1.6.7 INNER-GROUND-1) — chronological & historical
+        // consistency ── A Question-stance Slow persona that reads the page against
+        // the world the author has already declared: its timeline of events, its
+        // characters' arcs, its established past. It is grounded (via the shared
+        // reader grounding) on the declared chronology, so it asks whether the
+        // prose keeps faith with the order, spacing, and causality of what came
+        // before — never inventing history, only asking where the page and the
+        // record diverge.
+        p(
+            "inner-historian",
+            "The Inner Historian",
+            "Does this moment sit where the world's own chronology would place it?",
+            "You read for chronological and historical consistency against the world the author has \
+             declared. You ask whether an event's timing fits the established order of the timeline; \
+             whether the time said to have passed is consistent with what the prose shows; whether a \
+             character remembers, references, or is shaped by a past the record actually contains; \
+             whether cause reliably precedes effect, or an outcome arrives before what should have \
+             produced it. When the page invokes 'years ago', a season, an age, or a prior event, you \
+             ask whether that anchor holds against the declared history rather than drifting. You do \
+             not invent history or rewrite the timeline — you only ask where the page and the record \
+             seem to diverge, and let the author reconcile them.",
+            &[
+                (TemporalDensity, 1.4),
+                (ImplicationTracing, 1.3),
+                (ImplicitComparison, 1.2),
+                (AssumptionSurfacing, 1.1),
+            ],
+        ),
     ]
 }
 
@@ -485,13 +513,15 @@ mod tests {
         let ps = bundled();
         // 5 fiction (1.3.x) + 4 nonfiction (1.4.6 AUDIENCE-1)
         // + 3 ideas (1.4.7 AUDIENCE-1.1) + 2 verdict adversaries (1.4.7)
-        // + 1 theatergoer (1.4.14 DIALOG-1) + 1 myth-reader (1.4.19 MYTH-1).
-        assert_eq!(ps.len(), 16);
+        // + 1 theatergoer (1.4.14 DIALOG-1) + 1 myth-reader (1.4.19 MYTH-1)
+        // + 1 inner-historian (1.6.7 INNER-GROUND-1).
+        assert_eq!(ps.len(), 17);
         let ids: std::collections::BTreeSet<_> = ps.iter().map(|p| p.id.as_str()).collect();
-        assert_eq!(ids.len(), 16);
+        assert_eq!(ids.len(), 17);
         assert!(ids.contains("inner-socrates"));
         assert!(ids.contains("theatergoer"));
         assert!(ids.contains("myth-reader"));
+        assert!(ids.contains("inner-historian"));
         // Personas weight different categories (they read differently).
         let socr = ps.iter().find(|p| p.id == "inner-socrates").unwrap();
         let slow = ps.iter().find(|p| p.id == "slow-reader").unwrap();

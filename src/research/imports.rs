@@ -46,9 +46,25 @@ impl Imports {
     }
 
     pub(super) fn load(layout: &ProjectLayout) -> Imports {
-        match std::fs::read_to_string(Imports::path(layout)) {
-            Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
-            Err(_) => Imports::default(),
+        let path = Imports::path(layout);
+        let Ok(raw) = std::fs::read_to_string(&path) else {
+            return Imports::default();
+        };
+        match serde_json::from_str(&raw) {
+            Ok(v) => v,
+            Err(e) => {
+                // Don't silently reset: the next save would overwrite the corrupt
+                // file and orphan every imported source's vector-store chunks. Back
+                // it up and start fresh.
+                let backup = path.with_file_name("research-sources.json.corrupt");
+                let _ = std::fs::rename(&path, &backup);
+                tracing::warn!(
+                    target: "inkhaven::research",
+                    "research-sources.json unreadable ({e}); backed up to {}",
+                    backup.display()
+                );
+                Imports::default()
+            }
         }
     }
 

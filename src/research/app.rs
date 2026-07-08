@@ -7,7 +7,7 @@
 
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use ratatui::Terminal;
 use ratatui::backend::Backend;
@@ -218,6 +218,10 @@ pub(super) struct FactCheckState {
     truth_phase: bool,
     chunk_idx: usize,
     truth_report: String,
+    /// R3 — verdicts parsed per truth chunk against that chunk's own facts, as each
+    /// call returns. Accumulated here rather than re-parsing the concatenated
+    /// report, whose cross-chunk numbering a model can't be trusted to preserve.
+    truth_verdicts: std::collections::BTreeMap<String, super::verdicts::Verdict>,
     /// R2-E — the bounded consistency calls (built when the truth pass ends).
     consist_groups: Vec<super::factcheck::ConsistGroup>,
     consist_idx: usize,
@@ -295,6 +299,9 @@ pub(super) struct UndisputedState {
     facts: Vec<super::factcheck::FactEntry>,
     chunk_idx: usize,
     report: String,
+    /// R3 — verdicts parsed per chunk against that chunk's own facts (chunk-relative
+    /// numbering), like the truth pass. Accumulated as each call returns.
+    verdicts: std::collections::BTreeMap<String, super::verdicts::Verdict>,
     rx: Option<mpsc::UnboundedReceiver<StreamMsg>>,
     buf: String,
     preview_idx: Option<usize>,
@@ -2569,6 +2576,7 @@ impl ResearchApp {
             truth_phase: true,
             chunk_idx: 0,
             truth_report: String::new(),
+            truth_verdicts: std::collections::BTreeMap::new(),
             consist_groups: Vec::new(),
             consist_idx: 0,
             consist_report: String::new(),
@@ -2596,7 +2604,7 @@ impl ResearchApp {
                 fc.facts[base..(base + chunk_size).min(total)].iter().collect();
             (
                 super::factcheck::truth_system(language),
-                super::factcheck::truth_user(&chunk, base),
+                super::factcheck::truth_user(&chunk),
                 format!("fact-check: truth {}/{n_chunks}…", fc.chunk_idx + 1),
             )
         } else {
@@ -2703,6 +2711,15 @@ impl ResearchApp {
             fc.rx = None;
             let out = std::mem::take(&mut fc.buf);
             if fc.truth_phase {
+                // R3 — parse THIS chunk's reply against THIS chunk's facts, with
+                // its own 1-based numbering, and merge the verdicts now. (The text
+                // is still accumulated for the human-readable report below.)
+                let base = fc.chunk_idx * super::factcheck::TRUTH_CHUNK;
+                let end = (base + super::factcheck::TRUTH_CHUNK).min(fc.facts.len());
+                let chunk_ids: Vec<uuid::Uuid> = fc.facts[base..end].iter().map(|f| f.id).collect();
+                let now = chrono::Utc::now().to_rfc3339();
+                let parsed = super::verdicts::parse_truth_report(out.trim(), &chunk_ids, &now);
+                fc.truth_verdicts.extend(parsed);
                 fc.truth_report.push_str(out.trim());
                 fc.truth_report.push('\n');
                 fc.chunk_idx += 1;
@@ -2734,11 +2751,9 @@ impl ResearchApp {
         let n_groups = fc.consist_groups.len();
         let undisputed = fc.undisputed;
 
-        // RE-P5 — capture per-fact verdicts (✓ / ? / ✗) from the truth pass and
-        // persist them so the Facts tree can flag problem paragraphs.
-        let now = chrono::Utc::now().to_rfc3339();
-        let fact_ids: Vec<uuid::Uuid> = fc.facts.iter().map(|f| f.id).collect();
-        let parsed = super::verdicts::parse_truth_report(&fc.truth_report, &fact_ids, &now);
+        // RE-P5 — persist the per-fact verdicts (✓ / ? / ✗) accumulated per truth
+        // chunk (R3), so the Facts tree can flag problem paragraphs.
+        let parsed = fc.truth_verdicts.clone();
         let (mut accurate, mut dubious, mut inaccurate) = (0usize, 0usize, 0usize);
         for v in parsed.values() {
             match v.level {
@@ -2811,6 +2826,7 @@ impl ResearchApp {
             facts,
             chunk_idx: 0,
             report: String::new(),
+            verdicts: std::collections::BTreeMap::new(),
             rx: None,
             buf: String::new(),
             preview_idx,
@@ -2838,7 +2854,7 @@ impl ResearchApp {
                 [base..(base + super::factcheck::TRUTH_CHUNK).min(total)]
                 .iter()
                 .collect();
-            (super::factcheck::undisputed_system(language), super::factcheck::truth_user(&chunk, base))
+            (super::factcheck::undisputed_system(language), super::factcheck::truth_user(&chunk))
         };
         let ai = match crate::ai::AiClient::from_config(&self.cfg.llm) {
             Ok(a) => a,
@@ -2911,6 +2927,14 @@ impl ResearchApp {
             let uc = self.undisputed_check.as_mut().unwrap();
             uc.rx = None;
             let out = std::mem::take(&mut uc.buf);
+            // R3 — parse this chunk's reply against this chunk's facts (its own
+            // 1-based numbering) and merge, rather than re-parsing the concatenation.
+            let base = uc.chunk_idx * super::factcheck::TRUTH_CHUNK;
+            let end = (base + super::factcheck::TRUTH_CHUNK).min(uc.facts.len());
+            let chunk_ids: Vec<uuid::Uuid> = uc.facts[base..end].iter().map(|f| f.id).collect();
+            let now = chrono::Utc::now().to_rfc3339();
+            let parsed = super::verdicts::parse_undisputed_report(out.trim(), &chunk_ids, &now);
+            uc.verdicts.extend(parsed);
             uc.report.push_str(out.trim());
             uc.report.push('\n');
             uc.chunk_idx += 1;
@@ -2923,26 +2947,22 @@ impl ResearchApp {
     fn finish_undisputed(&mut self) {
         let Some(uc) = self.undisputed_check.as_ref() else { return };
         let total = uc.facts.len();
-        // UD-P4 — persist per-fact common-sense verdicts (colour the ※ glyph).
-        let now = chrono::Utc::now().to_rfc3339();
-        let fact_ids: Vec<uuid::Uuid> = uc.facts.iter().map(|f| f.id).collect();
-        let parsed = super::verdicts::parse_undisputed_report(&uc.report, &fact_ids, &now);
+        // UD-P4 — persist the per-fact common-sense verdicts accumulated per chunk
+        // (R3), and tally from the SAME parsed verdicts so the header count agrees
+        // with the persisted ※ glyphs (was a substring scan of the report text).
+        let parsed = uc.verdicts.clone();
+        let (mut plausible, mut odd, mut incoherent) = (0usize, 0usize, 0usize);
+        for v in parsed.values() {
+            match v.level {
+                super::verdicts::Level::Accurate => plausible += 1,
+                super::verdicts::Level::Dubious => odd += 1,
+                super::verdicts::Level::Inaccurate => incoherent += 1,
+            }
+        }
         for (k, v) in parsed {
             self.undisputed_verdicts.facts.insert(k, v);
         }
         let _ = self.undisputed_verdicts.save_undisputed(&self.layout);
-        let (mut plausible, mut odd, mut incoherent) = (0usize, 0usize, 0usize);
-        for line in uc.report.lines() {
-            let head = line.to_ascii_uppercase();
-            let head = head.split('—').next().unwrap_or("");
-            if head.contains("INCOHERENT") {
-                incoherent += 1;
-            } else if head.contains("ODD") {
-                odd += 1;
-            } else if head.contains("PLAUSIBLE") {
-                plausible += 1;
-            }
-        }
         let report = format!(
             "[/undisputed — {total} authorial fact(s)]\n\
              ✓ {plausible} plausible · ? {odd} odd · ✗ {incoherent} incoherent \
@@ -3051,6 +3071,7 @@ impl ResearchApp {
         let Some(rx) = chain.rx.as_mut() else { return };
         let idx = chain.turn_idx;
         let mut done = false;
+        let mut errored = false;
         loop {
             match rx.try_recv() {
                 Ok(StreamMsg::Token(t)) => {
@@ -3074,6 +3095,7 @@ impl ResearchApp {
                         turn.response.push_str(&format!("\n[error: {e}]"));
                     }
                     done = true;
+                    errored = true;
                     break;
                 }
                 Err(mpsc::error::TryRecvError::Empty) => break,
@@ -3099,6 +3121,14 @@ impl ResearchApp {
         }
         let Some(chain) = self.chain.as_mut() else { return };
         chain.rx = None;
+        // A failed step must not feed its `[error: …]` text forward as "previous
+        // research" for the next step — stop the chain here instead.
+        if errored {
+            let step = chain.current + 1;
+            self.chain = None;
+            self.status_message = Some(format!("chain stopped: step {step} failed"));
+            return;
+        }
         chain.accumulated.push(response);
         chain.current += 1;
         if chain.current < chain.steps.len() {
@@ -3172,9 +3202,33 @@ impl ResearchApp {
             }
         };
 
-        // Replay completed turns as conversation history.
-        let history: Vec<AiTurn> = self
-            .chat_history
+        // R8 — replay only genuine Q&A turns, most-recent first, bounded by count
+        // and characters. Unbounded replay grows every query until the provider
+        // rejects it; and command outputs (`/diff`, `/world`, …) and error
+        // placeholders replayed as assistant messages only pollute the context.
+        const MAX_REPLAY_TURNS: usize = 12;
+        const MAX_REPLAY_CHARS: usize = 24_000;
+        let mut picked: Vec<&ChatTurn> = Vec::new();
+        let mut budget = MAX_REPLAY_CHARS;
+        for t in self.chat_history.iter().rev() {
+            if t.streaming || t.prompt.trim_start().starts_with('/') {
+                continue; // in-flight, or a slash-command output
+            }
+            let is_placeholder = t.response.starts_with("[no ")
+                || t.response.starts_with("[provider error")
+                || t.response.starts_with("[error");
+            if is_placeholder || t.response.trim().is_empty() {
+                continue;
+            }
+            let cost = t.prompt.len() + t.response.len();
+            if picked.len() >= MAX_REPLAY_TURNS || cost > budget {
+                break;
+            }
+            budget -= cost;
+            picked.push(t);
+        }
+        picked.reverse();
+        let history: Vec<AiTurn> = picked
             .iter()
             .flat_map(|t| {
                 [AiTurn::User(t.prompt.clone()), AiTurn::Assistant(t.response.clone())]
@@ -5032,7 +5086,10 @@ pub(crate) fn add_bibentry(
     node.content_type = Some("hjson".to_string());
     let body = entry.to_hjson();
     if let Some(rel) = &node.file {
-        let _ = crate::io_atomic::write(&store.project_root().join(rel), body.as_bytes());
+        // The on-disk copy is what `build`/`export`/`sources` read; a swallowed
+        // failure here left the citation present in the DB but absent from disk.
+        crate::io_atomic::write(&store.project_root().join(rel), body.as_bytes())
+            .with_context(|| format!("write citation {}", entry.key))?;
     }
     store.update_paragraph_content(&mut node, body.as_bytes())?;
     Ok(true)

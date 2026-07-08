@@ -372,7 +372,17 @@ fn run_slow(
             None => prose,
         }
     } else {
-        prose
+        // INNER-GROUND-1 — every other persona now opens with the shared reader
+        // grounding (declared cast, symbol library, open world tensions), so a
+        // general Socratic question is asked against the author's declared world
+        // rather than blind. Self-disables when nothing is declared.
+        match crate::inner_grounding::build_grounding(project) {
+            Some(g) => {
+                grounded = format!("{g}\n\n--- MANUSCRIPT ---\n{prose}");
+                &grounded
+            }
+            None => prose,
+        }
     };
     let prompt = if persona.stance.is_verdict() {
         build_verdict_prompt(persona, prose, &intent_summary(ledger), lang)

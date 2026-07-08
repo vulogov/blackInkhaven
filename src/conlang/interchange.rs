@@ -304,7 +304,15 @@ pub fn parse_toolbox(src: &str) -> Vec<ImportedLexeme> {
 
     let mut out: Vec<ImportedLexeme> = Vec::new();
     let mut cur = ImportedLexeme::default();
-    let flush = |cur: &mut ImportedLexeme, out: &mut Vec<ImportedLexeme>| {
+    // The definition (`\de`) is only a fallback for the gloss; keep it separate so
+    // field order can't let a definition win over a gloss it precedes.
+    let mut def = String::new();
+    let flush = |cur: &mut ImportedLexeme, def: &mut String, out: &mut Vec<ImportedLexeme>| {
+        if cur.translation.is_empty() {
+            cur.translation = std::mem::take(def);
+        } else {
+            def.clear();
+        }
         if !cur.is_empty() {
             out.push(std::mem::take(cur));
         } else {
@@ -314,21 +322,21 @@ pub fn parse_toolbox(src: &str) -> Vec<ImportedLexeme> {
     for (mkr, val) in fields {
         match mkr.as_str() {
             "lx" => {
-                flush(&mut cur, &mut out);
+                flush(&mut cur, &mut def, &mut out);
                 cur.word = val;
             }
             "ph" => cur.pronunciation = val,
             "ps" => cur.pos = val,
-            // Glosses: prefer the first declared; `\de` is a definition we fall
-            // back to only when no gloss was given.
+            // The gloss is preferred; the definition (`\de`) is only used when no
+            // gloss is given — applied at flush, so order doesn't matter.
             "ge" | "gn" | "gloss" | "g" => {
                 if cur.translation.is_empty() {
                     cur.translation = val;
                 }
             }
             "de" => {
-                if cur.translation.is_empty() {
-                    cur.translation = val;
+                if def.is_empty() {
+                    def = val;
                 }
             }
             "xv" => {
@@ -348,7 +356,7 @@ pub fn parse_toolbox(src: &str) -> Vec<ImportedLexeme> {
             _ => {}
         }
     }
-    flush(&mut cur, &mut out);
+    flush(&mut cur, &mut def, &mut out);
     out
 }
 
@@ -367,10 +375,12 @@ pub fn parse_polyglot(xml: &str) -> Result<Vec<ImportedLexeme>, String> {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
 
-    // First pass: collect the part-of-speech id → name table so words can
-    // resolve their `wordTypeId` to a readable POS.
+    // The POS-node table (id → name) and the words are both filled during the one
+    // streaming pass, but a word can appear BEFORE the table entry it references,
+    // so POS is resolved in a genuine second pass after the loop — each word is
+    // kept with its raw `wordTypeId` until the whole table is known.
     let mut pos_table: BTreeMap<String, String> = BTreeMap::new();
-    let mut words: Vec<ImportedLexeme> = Vec::new();
+    let mut words: Vec<(ImportedLexeme, String)> = Vec::new();
 
     // Streaming state.
     let mut path: Vec<String> = Vec::new();
@@ -438,13 +448,12 @@ pub fn parse_polyglot(xml: &str) -> Result<Vec<ImportedLexeme>, String> {
                         }
                         "wordetymologynotes" | "etymology" => w.etymology = val.clone(),
                         "word" => {
-                            // Closing the word: resolve POS then commit.
-                            let mut w = cur_word.take().unwrap();
-                            if let Some(name) = pos_table.get(&cur_word_type_id) {
-                                w.pos = name.clone();
-                            }
+                            // Closing the word: keep it with its raw type id; POS
+                            // is resolved after the loop (the table may not be
+                            // built yet — words can precede it).
+                            let w = cur_word.take().unwrap();
                             if !w.is_empty() {
-                                words.push(w);
+                                words.push((w, cur_word_type_id.clone()));
                             }
                         }
                         _ => {}
@@ -472,7 +481,16 @@ pub fn parse_polyglot(xml: &str) -> Result<Vec<ImportedLexeme>, String> {
         }
         buf.clear();
     }
-    Ok(words)
+    // Second pass: now the POS table is complete, resolve every word's type id.
+    Ok(words
+        .into_iter()
+        .map(|(mut w, tid)| {
+            if let Some(name) = pos_table.get(&tid) {
+                w.pos = name.clone();
+            }
+            w
+        })
+        .collect())
 }
 
 /// Crude HTML-tag stripper for PolyGlot definitions, which may be rich text.
@@ -578,6 +596,15 @@ mod tests {
         assert_eq!(got.len(), 1);
         // \de used as translation when no \ge; continuation line folded in.
         assert_eq!(got[0].translation, "bright, shining, radiant");
+    }
+
+    #[test]
+    fn toolbox_prefers_gloss_over_definition_regardless_of_order() {
+        // \de precedes \ge here; the gloss must still win (was a field-order bug).
+        let src = "\\lx mira\n\\de a long definition\n\\ge light\n";
+        let got = parse_toolbox(src);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].translation, "light");
     }
 
     #[test]

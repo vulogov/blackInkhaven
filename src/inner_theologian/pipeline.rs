@@ -65,6 +65,9 @@ pub(crate) fn run_fast_scan(
     let now = chrono::Utc::now().to_rfc3339();
 
     let mut count = 0;
+    // INNER-GROUND-1 — mirror of the emitted findings, written into the WORLD-6
+    // coherence store's reserved `theological` domain below (closing the loop).
+    let mut mirror: Vec<crate::world::utopia::UtopiaFinding> = Vec::new();
     for (idx, ch) in chapters_of(h, book).iter().enumerate() {
         let ord = (idx + 1) as u32;
         let paras = chapter_paragraphs(layout, h, ch.id);
@@ -76,7 +79,45 @@ pub(crate) fn run_fast_scan(
             let th = hashes.get(f.para_id.as_str()).copied().unwrap_or(0);
             store.upsert_finding(&book.slug, f, th, &now)?;
             count += 1;
+            mirror.push(crate::world::utopia::UtopiaFinding {
+                finding_id: format!("theo:{}:{}:{}", ord, f.para_id, f.signal_type.as_code()),
+                premise_group: THEOLOGICAL_GROUP.to_string(),
+                finding_type: crate::world::utopia::FindingType::ConsequenceGap,
+                finding_domain: crate::world::utopia::FindingDomain::Theological,
+                description: f.description.clone(),
+                evidence: None,
+                chapter_ord: Some(ord),
+                para_id: Some(f.para_id.clone()),
+                suppressed: f.suppressed,
+                grounded_by_research: false,
+            });
+        }
+    }
+
+    // Close the WORLD-6 → Inner Theologian loop: mirror the findings into the
+    // world-coherence store's reserved `theological` domain (the theologian's own
+    // store already holds the authoritative copy, so this is best-effort). Both
+    // the utopian-architect's grounding and the theologian's own read that domain,
+    // which was always empty until now. Replaces the prior mirror wholesale — this
+    // is a whole-book pass.
+    if let Ok(us) = crate::world::utopia::UtopiaStore::open(&layout.root) {
+        if us
+            .clear_group_findings_by_domain(
+                &book.slug,
+                THEOLOGICAL_GROUP,
+                crate::world::utopia::FindingDomain::Theological,
+            )
+            .is_ok()
+        {
+            for uf in &mirror {
+                let _ = us.upsert_finding(&book.slug, uf, &now, None);
+            }
         }
     }
     Ok(count)
 }
+
+/// The synthetic premise-group the theologian's mirrored findings live under in
+/// the WORLD-6 store (they aren't tied to a declared premise), so the whole set
+/// can be cleared and rewritten per scan.
+const THEOLOGICAL_GROUP: &str = "theological";

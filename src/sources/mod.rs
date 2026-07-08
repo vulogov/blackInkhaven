@@ -99,10 +99,46 @@ fn de_string<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error>
     d.deserialize_any(ScalarString)
 }
 
+/// Like [`ScalarString`] but for `Option<String>` — a present scalar coerces to
+/// `Some`, and an explicit `null` (unit / none) yields `None` instead of erroring
+/// the whole entry.
+struct OptScalarString;
+impl<'de> serde::de::Visitor<'de> for OptScalarString {
+    type Value = Option<String>;
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("a string, number, boolean, or null")
+    }
+    fn visit_unit<E>(self) -> Result<Option<String>, E> {
+        Ok(None)
+    }
+    fn visit_none<E>(self) -> Result<Option<String>, E> {
+        Ok(None)
+    }
+    fn visit_some<D: serde::Deserializer<'de>>(self, d: D) -> Result<Option<String>, D::Error> {
+        Ok(Some(d.deserialize_any(ScalarString)?))
+    }
+    fn visit_str<E>(self, v: &str) -> Result<Option<String>, E> {
+        Ok(Some(v.to_string()))
+    }
+    fn visit_string<E>(self, v: String) -> Result<Option<String>, E> {
+        Ok(Some(v))
+    }
+    fn visit_i64<E>(self, v: i64) -> Result<Option<String>, E> {
+        Ok(Some(v.to_string()))
+    }
+    fn visit_u64<E>(self, v: u64) -> Result<Option<String>, E> {
+        Ok(Some(v.to_string()))
+    }
+    fn visit_f64<E>(self, v: f64) -> Result<Option<String>, E> {
+        Ok(Some(v.to_string()))
+    }
+    fn visit_bool<E>(self, v: bool) -> Result<Option<String>, E> {
+        Ok(Some(v.to_string()))
+    }
+}
+
 fn de_opt_string<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
-    // Present field → coerce its scalar; an explicit `null` deserializes here as
-    // a unit, which `deserialize_any` routes to a None via the option wrapper.
-    Ok(Some(d.deserialize_any(ScalarString)?))
+    d.deserialize_any(OptScalarString)
 }
 
 impl BibEntry {
@@ -396,18 +432,19 @@ pub fn parse_bibtex(input: &str) -> Vec<BibEntry> {
             i += 1;
             continue;
         }
-        // entry type: letters after '@', up to the opening delimiter.
+        // entry type: the letters right after '@'.
         let mut j = i + 1;
         let mut etype = String::new();
-        while j < chars.len() && chars[j] != '{' && chars[j] != '(' {
-            // A stray '@' or whitespace before any delimiter → not an entry.
-            if chars[j] == '@' || chars[j] == '\n' {
-                break;
-            }
+        while j < chars.len() && chars[j].is_ascii_alphabetic() {
             etype.push(chars[j]);
             j += 1;
         }
-        if j >= chars.len() || (chars[j] != '{' && chars[j] != '(') {
+        // Tolerate whitespace between the type and the opening delimiter
+        // (`@article\n{key,…}` and `@article {key,…}` are valid BibTeX).
+        while j < chars.len() && chars[j].is_whitespace() {
+            j += 1;
+        }
+        if etype.is_empty() || j >= chars.len() || (chars[j] != '{' && chars[j] != '(') {
             i += 1;
             continue;
         }
@@ -718,6 +755,25 @@ mod tests {
         assert_eq!(back.author, "Last, First");
         assert_eq!(back.title, "A, B: C");
         assert_eq!(back.year, "2020");
+    }
+
+    #[test]
+    fn parse_bibtex_tolerates_whitespace_before_brace() {
+        // A newline (or space) between the type and `{` is valid BibTeX; it used
+        // to silently drop the entry.
+        assert_eq!(parse_bibtex("@article\n{k, title = {T}, year = 2020}").len(), 1);
+        assert_eq!(parse_bibtex("@book   {k2, title = {U}}").len(), 1);
+        // A stray `@` with no type is still ignored.
+        assert_eq!(parse_bibtex("email me @ home {not an entry}").len(), 0);
+    }
+
+    #[test]
+    fn from_hjson_treats_null_field_as_absent() {
+        // An explicit `null` used to error the whole entry; now it parses.
+        let e = BibEntry::from_hjson("{\n  key: k\n  title: T\n  doi: null\n}").expect("null ok");
+        assert_eq!(e.key, "k");
+        assert_eq!(e.title, "T");
+        assert!(e.doi.is_none());
     }
 
     #[test]
