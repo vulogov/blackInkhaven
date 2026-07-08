@@ -1,0 +1,120 @@
+#import "../design.typ": *
+
+#chapter(number: 8, title: "The technical track")
+
+Technical documentation describes something that _exists and keeps changing_ — a
+piece of software, an API, a machine. You invent almost nothing; the system is
+already there. Your obligations are three: be precise, be findable, and stay in
+sync with the thing you describe. The characteristic failure is not a wrong idea
+but _staleness_ — prose that was true of last release and is now a quiet lie. This
+track leans hardest on structure, on controlled terminology, and on reuse, and
+lightest of all on invention.
+
+#section("Frame — the reference template and the audience")
+
+Start from the template shaped for it, and set the genre:
+
+```
+inkhaven init "widget-api-guide" --template technical
+```
+
+#config("inkhaven.hjson", [```hjson
+genre: "technical"
+```])
+
+`documentation`, `docs`, `api_docs`, and `reference` share this frame. It tells the
+readers to judge for precision and for the reader's task, never for imagery or
+voice. And because documentation is read by someone _trying to do a thing_, decide
+early who that someone is — the newcomer with none of your context, or the
+practitioner who knows the domain and wants the specific answer. The track's
+readers can be either, and the difference changes every sentence.
+
+#section("Structure — the deepest investment on this track")
+
+Nobody reads a manual front to back; they arrive by search, mid-task, needing one
+answer. So structure is not scaffolding here — it is the product. Build the tree so
+every node is _reachable and self-contained_: a task has its own page, a reference
+entry stands alone, nothing requires the section before it. Use the Outline
+(`Ctrl+2`) and `inkhaven outline` to keep the whole shape in view, and the status
+marks (`Ctrl+B r`) to track which pages are current and which are stubs awaiting the
+next release.
+
+#subsection("Reusable blocks")
+
+Documentation repeats itself — the same warning, the same setup snippet, the same
+parameter table — and every copy is a copy that can go stale independently. The
+*Snippets* book holds a reusable block once and lets every page include it, so a
+fix lands everywhere at once.
+
+#term("Snippet")[
+  A block of content authored once in the Snippets book and referenced from many
+  pages, rather than copied into each. On a track whose enemy is staleness, the
+  snippet is a direct weapon: the boilerplate that appears in forty places lives in
+  one, so correcting it is one edit, not a hunt.
+]
+
+#section("Terminology — say the same thing the same way")
+
+In technical writing, a synonym is a bug. If a thing is a "widget" on one page and a
+"component" on another, the reader cannot tell whether they are the same. The
+*Glossary* book governs this: it holds your canonical terms and the synonyms you
+have banned, and an overlay (`inkhaven terms check`, or `Ctrl+V z` in the editor)
+flags where the manuscript has drifted — a "component" where the glossary says
+"widget."
+
+#note[
+  Terminology governance feels bureaucratic until the first time a reader files a
+  bug that was really a naming inconsistency. `terms suggest` can propose canonical
+  terms from the manuscript itself; `terms check` enforces them. On a large document
+  with more than one author, this is the difference between a reference and a
+  guessing game.
+]
+
+#section("Read — precision, and the reader who has your context and the one who doesn't")
+
+The reading pass here is about clarity and completeness, not craft. Turn the
+audience personas on a finished page: the `domain-newcomer` will show you every
+place you assumed knowledge the reader lacks; the `end-user` will show you where the
+page describes the system instead of helping them _do_ something; the
+`expert-reviewer` will find the imprecise claim. Ask the Inner Socrates what a
+procedure _presupposes_ — the installed dependency you never mention, the state the
+reader must already be in — because an unstated precondition is the most common way
+a correct instruction fails a real user.
+
+#insight[
+  Everything on this track serves one goal: that the document keep matching the
+  system as the system moves. Snippets shrink the surface that can drift;
+  terminology governance keeps the naming stable; status marks show what has been
+  reviewed against the current release; reference structure means a change touches
+  one findable page. You cannot stop the software from changing. You can make your
+  documentation cheap to change with it.
+]
+
+#section("Produce")
+
+`export pdf|epub|docx` renders the manual; scope by status so a release ships only
+the pages reviewed against it (`--status ready`), leaving the stubs for next time.
+Many technical documents also live as a website or a wiki — the structured tree and
+the Markdown export make that a mechanical step rather than a rewrite.
+
+#section("Hands-on: two procedures")
+
+#subsection("Reuse a block so a fix lands everywhere")
+
++ Open the Snippets book and author the block once — a warning, a setup step, a parameter table — as its own paragraph.
++ From any page that needs it, reference the snippet with a `#include` rather than pasting a copy.
++ When the block changes, edit it once in the Snippets book. Every page that included it now shows the correction — no hunt through forty copies.
+
+#subsection("Govern a term across the whole document")
+
++ Let Inkhaven propose canonical terms from your own prose: `inkhaven terms suggest`.
++ In the Glossary book, record the canonical word and the synonyms you are banning — "widget", not "component" or "part".
++ Enforce it: `inkhaven terms check` reports every place the manuscript drifted from the canonical term, and the overlay `Ctrl+V z` shows the same inside the editor as you write.
++ Read a finished page through the reader who lacks your context: `Ctrl+B J`, then the `domain-newcomer` persona, to surface every assumed step; and the `end-user` persona to catch where the page describes the system instead of helping the reader _do_ something.
+
+#recap((
+  [Technical writing describes a *changing system*; its enemy is *staleness*. Set `genre: "technical"` (or `documentation`) and the `technical` template, and decide whether your reader is the newcomer or the practitioner.],
+  [*Structure is the product*: build a reachable, self-contained reference tree, and track currency with status marks.],
+  [Fight repetition with *Snippets* (one block, many pages) and enforce naming with the *Glossary* and `terms check` (`Ctrl+V z`) — a synonym is a bug.],
+  [*Read for precision and unstated preconditions* through the audience personas (`domain-newcomer`, `end-user`, `expert-reviewer`); ship only status-`ready` pages so the doc matches the current release.],
+))
