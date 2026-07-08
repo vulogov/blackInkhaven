@@ -120,6 +120,57 @@ previews the commands, `--yes` confirms execution).
   compiler doesn't forget what changed last release.
 ]
 
+#section("Links that resolve")
+
+The other face of staleness is the broken link — a cross-reference to a section you
+renamed, or an external URL that has rotted away. `inkhaven docs links` checks both.
+Internal cross-references are checked always and cost nothing: a link to a paragraph
+that no longer exists is reported with its location. External URLs are opt-in behind
+`--external` (it makes network requests), and — like the research dead-source sweep —
+it is deliberately conservative: only a hard `404`/`410` or an unreachable host
+counts as dead, so a bot-block or a transient hiccup never cries wolf.
+
+```
+inkhaven docs links              # internal cross-references (fast, offline)
+inkhaven docs links --external   # also check http(s) URLs for link-rot
+```
+
+Like `docs verify`, it exits non-zero when anything is broken — drop it into the same
+pre-release check.
+
+#section("Write once — variables and profiles")
+
+Two mechanisms let one source serve many outputs. *Variables* replace a token
+everywhere at build time: define them once and write `{{product}}` or `{{version}}`
+in your prose, and every export resolves them. Change the product name in one place
+and the whole book follows.
+
+#config("inkhaven.hjson", [```hjson
+docs: {
+  variables: { product: "Inkhaven", version: "1.6.9" }
+}
+```])
+
+*Profiles* let one manuscript carry more than one edition. Tag a paragraph
+`profile:edition:enterprise` or `profile:audience:expert` (the ordinary tagging
+surface, `Ctrl+B ]`), then choose a slice at export:
+
+```
+inkhaven export pdf --profile edition=enterprise --profile audience=expert
+```
+
+A paragraph tagged for a dimension is emitted only when a matching value is
+requested; a paragraph with no tag for that dimension is unconditional and always
+appears. Dimensions you do not name are left alone — so the plain `export` with no
+`--profile` gives you the full authoring view with every variant present.
+
+#insight[
+  Variables and profiles are the technical author's answer to duplication. The moment
+  you find yourself maintaining two near-identical pages — a community and an
+  enterprise version, a beginner and an expert path — reach for a profile before you
+  reach for copy-paste. Two copies drift; one source with two profiles cannot.
+]
+
 #section("Read — precision, and the reader who has your context and the one who doesn't")
 
 The reading pass here is about clarity and completeness, not craft. Turn the
