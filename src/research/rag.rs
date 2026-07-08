@@ -15,6 +15,13 @@ use super::thread::RagMode;
 /// Assemble the RAG context block for a query, or `None` when nothing grounds it
 /// (or the mode is `FullOnly`). Pinned nodes come first (always), then the
 /// semantic Facts retrieval (deduplicated against the pins).
+/// Cap any single retrieved passage — a huge pinned node or imported source would
+/// otherwise dominate (or blow) the context window on its own.
+fn clip_passage(s: &str) -> String {
+    const MAX_PASSAGE_CHARS: usize = 2000;
+    s.chars().take(MAX_PASSAGE_CHARS).collect()
+}
+
 pub(super) fn build_context(
     store: &Store,
     cfg: &Config,
@@ -39,7 +46,7 @@ pub(super) fn build_context(
                     continue;
                 }
                 let loc = hierarchy.get(*id).map(|n| hierarchy.slug_path(n)).unwrap_or_default();
-                pinned_block.push_str(&format!("[pinned: {loc}]\n{}\n\n", body.trim()));
+                pinned_block.push_str(&format!("[pinned: {loc}]\n{}\n\n", clip_passage(body.trim())));
             }
         }
         if !pinned_block.trim().is_empty() {
@@ -100,7 +107,7 @@ fn retrieve_sources(store: &Store, cfg: &Config, query: &str, sections: &mut Vec
         if body.is_empty() {
             continue;
         }
-        block.push_str(&format!("[source: {name}]\n{body}\n\n"));
+        block.push_str(&format!("[source: {name}]\n{}\n\n", clip_passage(body)));
         if !names.contains(&name) {
             names.push(name);
         }

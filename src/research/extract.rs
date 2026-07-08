@@ -111,17 +111,59 @@ pub(super) fn parse(raw: &str) -> ExtractedFact {
     ExtractedFact { title: String::new(), text: raw.trim().to_string() }
 }
 
-/// First top-level `{…}` object (models wrap JSON in prose / fences).
+/// First top-level `{…}` object (models wrap JSON in prose / fences). Scans from
+/// the first `{` to its *matching* `}`, honouring string literals — so a reply
+/// like `{…} — see {x}` yields the first object, not first-brace-to-last-brace
+/// (which is invalid JSON and silently dumped the whole reply as the fact body).
 fn extract_json_object(raw: &str) -> &str {
-    match (raw.find('{'), raw.rfind('}')) {
-        (Some(a), Some(b)) if b > a => &raw[a..=b],
-        _ => raw.trim(),
+    let Some(start) = raw.find('{') else { return raw.trim() };
+    let (mut depth, mut in_str, mut esc) = (0i32, false, false);
+    // Delimiters are ASCII, so byte offsets land on char boundaries.
+    for (idx, &b) in raw.as_bytes().iter().enumerate().skip(start) {
+        if in_str {
+            match b {
+                _ if esc => esc = false,
+                b'\\' => esc = true,
+                b'"' => in_str = false,
+                _ => {}
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_str = true,
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return &raw[start..=idx];
+                }
+            }
+            _ => {}
+        }
     }
+    raw.trim() // unbalanced → fall back
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extracts_first_object_despite_trailing_braces() {
+        // A trailing `{…}` in the prose used to make the slice invalid JSON, so
+        // parse() dumped the whole reply as the fact body.
+        let raw = "{\"title\":\"T\",\"fact\":\"a claim\"} — see also {ref}";
+        let f = parse(raw);
+        assert_eq!(f.title, "T");
+        assert_eq!(f.text, "a claim");
+    }
+
+    #[test]
+    fn brace_inside_a_string_value_does_not_close_early() {
+        let raw = "{\"title\":\"T\",\"fact\":\"uses } and { literally\"}";
+        let f = parse(raw);
+        assert!(f.text.contains("} and {"), "{}", f.text);
+    }
 
     #[test]
     fn parses_fenced_json() {

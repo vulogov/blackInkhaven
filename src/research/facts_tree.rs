@@ -57,6 +57,13 @@ impl FactsTree {
     }
 
     fn push_children(&mut self, h: &Hierarchy, parent: Uuid, depth: usize) {
+        // Defensive cap: a Facts book is only book → chapter → subchapter →
+        // paragraph deep, so any recursion past this means a malformed (cyclic)
+        // hierarchy — bail rather than overflow the stack.
+        const MAX_DEPTH: usize = 32;
+        if depth > MAX_DEPTH {
+            return;
+        }
         for child in h.children_of(Some(parent)) {
             // Skip non-content nodes (images/scripts) — facts are paragraphs and
             // their containing chapters/subchapters.

@@ -32,6 +32,7 @@ mod pane;
 mod world;
 mod inner_socrates;
 mod inner_editor;
+mod inner_grounding;
 mod sources;
 mod glossary;
 mod planning;
