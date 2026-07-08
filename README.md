@@ -21,40 +21,44 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.6.6 — Books & Hardening
+## Latest release · 1.6.7 — Grounded Readers
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.6.6.md`](Documentation/RELEASE_NOTES/1.6.6.md)
-· Books: [`Building the World`](Book/BUILDING_THE_WORLD/) · [`Constructed Language Development`](Book/CONLANG_DEVELOPMENT/) · [`The Research Assistant`](Book/RESEARCH/)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.6.7.md`](Documentation/RELEASE_NOTES/1.6.7.md)
+· New book: [`Developing a story with Inkhaven`](Book/DEVELOPING/)
 
-A consolidation release: the three companion books brought up to the current
-feature scope, and a two-round adversarial hardening pass across the codebase. **No
-new features, no behavioural changes, no new crates.**
+The Inner family learns the world. The two AI readers that used to read your prose
+blind now read it against everything you have already declared, a new reader joins
+them, and a fifth companion book joins the shelf. **No new runtime crates.**
 
-### The books, brought to current scope
+### The Inner family, grounded
 
-Each companion book was audited against the actual code and the gaps filled.
-*Building the World* gains a full **"Drawing the Map with plakat"** chapter with
-five real generated maps; *Constructed Language Development* gains a
-**"Translating with your language"** chapter for the previously-undocumented
-translation engine (`translate` / `reverse` / `cross`, translation memory,
-`corpus` / `eval`); *The Research Assistant* completes its command reference and
-documents the **`inkhaven sources` CLI** — BibTeX and CSL-JSON for a full Zotero
-round-trip.
+Inner Socrates and Inner Editor now open **grounded** on what you have declared — a
+shared module reads your characters and their arcs, your symbol library, the world's
+open coherence tensions, and the story timeline, and hands it to the reader so a
+question or a craft note is asked *against your world* rather than in a vacuum (each
+source self-disables when nothing is declared; the preamble is localised). A new
+persona, the **Inner Historian**, presses the page for chronological consistency
+against the world you built, and the world-coherence loop between the Inner
+Theologian and the utopian-architect is closed.
 
-### Hardening
+### A haiku for the whole book, in three more languages
 
-Two rounds of adversarial audit found and fixed **21 issues** with regression
-tests — two reachable UTF-8 panics, several DoS caps (`plates`, DEM, `--meter`,
-`--count`, the rewrite engine), a wrong-target script delete, BibTeX corruption,
-three silent write failures, a determinism tie, and missing HTTP timeouts. The full
-ledger is in
-[`Documentation/PROPOSALS/HARDENING_PLAN_1.6.6.md`](Documentation/PROPOSALS/HARDENING_PLAN_1.6.6.md).
+`editor.haiku_scope: "book"` chooses the zero-AI Output-pane haiku by a cached
+centroid over the **whole manuscript** rather than the current paragraph — and the
+haiku now speaks **Portuguese, Italian, and Japanese** alongside the existing five.
+
+### A new companion book
+
+*Developing a story with Inkhaven* — a process guide sorting authoring into eight
+**tracks** (fiction, utopia, science fiction, nonfiction, scenarios, technical,
+scientific, theology/philosophy), each with a full working guide, hands-on
+command-level procedures, and keybinding + CLI appendices.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Every change either documents an existing feature,
-removes a crash, closes a resource hole, or corrects a silent failure — existing
-projects are unaffected. Test suite 2313 → 2319.
+**No new runtime crates.** New config `editor.haiku_scope`; the grounding and the new
+persona are additive and self-disabling — existing projects are unaffected. A round
+of deferred correctness fixes lands with regression tests. Test suite → 2329.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
