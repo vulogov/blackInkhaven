@@ -137,6 +137,7 @@ mod tests {
                 source: Some("socrates".into()),
                 min_severity: Some(Severity::Warning),
                 only_open_paragraph: true,
+                text_query: None,
             },
             ..SessionState::default()
         };

@@ -182,7 +182,11 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.char.refresh", category::STORE_READ),
     // INNER-THEOLOGIAN-1 — `signals` recomputes only the derived inner_theologian.db
     // cache (store_read); `suppress` mutates the suppression flag (store_write, below).
+    // The `inner_theologian.*` spelling matches the other two readers'
+    // (`ink.inner_socrates.*` / `ink.inner_editor.*`); the shorter `theologian.*`
+    // names are kept for back-compat. Both are real, policy-gated words.
     ("ink.theologian.signals", category::STORE_READ),
+    ("ink.inner_theologian.signals", category::STORE_READ),
     // MYTH-1 — declared-inventory + deterministic reads (symbols/motifs/
     // archetypes/density/findings) recompute only derived caches → store_read;
     // `suppress` mutates the findings table → store_write (below).
@@ -217,6 +221,7 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.utopia.suppress", category::STORE_WRITE),
     // INNER-THEOLOGIAN-1 — suppressing a signal mutates the suppression flag.
     ("ink.theologian.suppress", category::STORE_WRITE),
+    ("ink.inner_theologian.suppress", category::STORE_WRITE),
     // MYTH-1 — suppressing a myth finding mutates the findings table.
     ("ink.myth.suppress", category::STORE_WRITE),
     ("ink.paragraph.set_status", category::STORE_WRITE),

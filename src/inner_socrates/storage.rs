@@ -99,15 +99,10 @@ pub struct PromotionCandidate {
     pub count: i64,
 }
 
-/// A ledger entry with `coverage` left as raw category-id strings — for
-/// cross-feature consultation (see [`InnerSocratesStore::list_intent_rows_raw`]).
-#[derive(Debug, Clone)]
-pub struct RawIntentRow {
-    pub kind: String,
-    pub description: String,
-    pub scope: IntentScope,
-    pub coverage: Vec<String>,
-}
+// The raw (string-coverage) ledger row now lives in the shared `crate::intent`
+// core; re-exported here so `inner_socrates::storage::RawIntentRow` keeps
+// resolving for cross-feature consumers (see `list_intent_rows_raw`).
+pub use crate::intent::RawIntentRow;
 
 /// A persisted finding plus the paragraph it was emitted against.
 #[derive(Debug, Clone)]
