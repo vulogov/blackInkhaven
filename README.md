@@ -21,40 +21,38 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.6.8 — Verified Code
+## Latest release · 1.6.9 — Links & Single-Sourcing
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.6.8.md`](Documentation/RELEASE_NOTES/1.6.8.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.6.9.md`](Documentation/RELEASE_NOTES/1.6.9.md)
 · Roadmap: [`TDOC_ROADMAP.md`](Documentation/PROPOSALS/TDOC_ROADMAP.md)
 
-Technical documentation's enemy is *staleness* — the example that was true two
-releases ago. This release gives the docs author the fiction author's weapon: run
-the example, flag it when it breaks. Plus free-text search in the Output pane. **No
-new runtime crates.**
+The "docs that answer to the system" arc completes. 1.6.8 taught the docs author to
+run their examples; 1.6.9 keeps their links honest and lets one source serve many
+outputs. **No new runtime crates.**
 
-### Verified code blocks
+### Link integrity
 
-Mark a `para:code` listing's fence with `verify` (`` ```rust verify ``) and name a
-runner in config; Inkhaven runs the snippet and flags it in the Output pane, on the
-exact paragraph, when it no longer compiles — the technical track's version of the
-fiction track's fact-check. `Ctrl+B Shift+D` verifies the open listing; `inkhaven
-docs verify` checks the whole book and exits non-zero on failure (a CI step). Zero
-AI, zero network, and opt-in twice: nothing runs unless you enable it *and* mark the
-block, and a cloned project can't run its examples without your explicit `--yes`.
-The first of the [TDOC technical-documentation program](Documentation/PROPOSALS/TDOC_ROADMAP.md).
+`inkhaven docs links` checks the other face of staleness — the broken reference.
+Internal cross-references are checked always and offline (a link to a renamed or
+deleted paragraph is reported); external `http(s)` URLs are checked for link-rot with
+`--external`, using the same conservative classifier as the research dead-source
+sweep (only a hard 404/410 or an unreachable host counts). Like `docs verify`, it
+exits non-zero on breakage — the same pre-release / CI check.
 
-### Free-text search in the Output pane
+### Single-sourcing — write once, render many
 
-The pane where every reader reports — fact-check, Socratic, Inner Editor,
-translation, code-verification — gains a `/` text filter: a live query line that
-narrows by substring and composes with the source / severity / this-paragraph
-filters.
+*Variables* replace a token everywhere at build time: define `docs.variables` once
+and write `{{product}}` / `{{version}}` in prose, and every export resolves them.
+*Profiles* let one manuscript carry several editions: tag a paragraph
+`profile:edition:enterprise` (`Ctrl+B ]`), then `inkhaven export pdf --profile
+edition=enterprise` ships only the matching slice plus unconditional content — the
+DITA profiling convention, on tags Inkhaven already has.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** New config `docs.verify` (off by default); new command
-`inkhaven docs verify` + the `Ctrl+B Shift+D` chord; the Output-pane `/` search. An
-internal cleanup unifies the inner readers' shared intent ledger with no behavioural
-change. Everything is additive — existing projects are unaffected. Test suite → 2332.
+**No new runtime crates.** New command `inkhaven docs links`; new `export --profile`
+flag; new config `docs.variables` (empty by default). Everything is additive —
+existing projects are unaffected. Test suite → 2335.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

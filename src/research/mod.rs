@@ -20,7 +20,7 @@
 mod app;
 mod chat;
 mod command;
-mod deadlinks;
+pub(crate) mod deadlinks;
 mod extract;
 mod factcheck;
 mod facts_tree;
