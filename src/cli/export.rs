@@ -17,6 +17,7 @@ pub fn run(
     book_name: Option<&str>,
     status_floor: Option<&str>,
     tag: Option<&str>,
+    profiles: &[(String, String)],
 ) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
@@ -26,7 +27,7 @@ pub fn run(
 
     let scope = resolve_export_scope(&h, book_name)?;
     let floor_idx = parse_status_floor(status_floor)?;
-    let combined = build_combined(&layout, &h, scope.root_id, floor_idx, tag)?;
+    let combined = build_combined(&layout, &h, scope.root_id, floor_idx, tag, profiles)?;
     let epub_title = scope.title_for_epub(project);
 
     match format {
@@ -197,8 +198,9 @@ fn build_combined(
     root_id: Option<uuid::Uuid>,
     status_floor: Option<usize>,
     tag: Option<&str>,
+    profiles: &[(String, String)],
 ) -> Result<String> {
-    export::assemble_typst_source_filtered(layout, h, root_id, status_floor, tag)
+    export::assemble_typst_source_profiled(layout, h, root_id, status_floor, tag, profiles)
         .map_err(|e| Error::Store(format!("assemble: {e:#}")))
 }
 

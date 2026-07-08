@@ -350,6 +350,12 @@ pub enum Command {
         /// ship just that slice.
         #[arg(long)]
         tag: Option<String>,
+        /// TDOC-3 — conditional-content profile as `dimension=value`, repeatable
+        /// (e.g. `--profile edition=enterprise --profile audience=expert`). A
+        /// paragraph tagged `profile:dimension:v` is emitted only when a matching
+        /// value is requested; untagged paragraphs are always emitted.
+        #[arg(long = "profile")]
+        profiles: Vec<String>,
     },
 
     /// Run a one-shot AI inference from the command line.
@@ -2137,6 +2143,17 @@ pub enum DocsCommand {
         /// Confirm execution of the configured runner commands (required to run).
         #[arg(long)]
         yes: bool,
+    },
+    /// Check link integrity across the manuscript: internal cross-references that
+    /// no longer resolve (always) and, with `--external`, `http(s)` URLs in prose
+    /// for link-rot. Exits non-zero when any link is broken.
+    Links {
+        /// Limit to one user book (default: all user books).
+        #[arg(long)]
+        book_name: Option<String>,
+        /// Also check external `http(s)` URLs for link-rot (network access).
+        #[arg(long)]
+        external: bool,
     },
 }
 
@@ -5167,15 +5184,24 @@ impl Cli {
                 book_name,
                 status,
                 tag,
-            } => export::run(
-                &project,
-                format,
-                output.as_deref(),
-                book_name.as_deref(),
-                status.as_deref(),
-                tag.as_deref(),
-            )
-            .map_err(Into::into),
+                profiles,
+            } => {
+                // TDOC-3 — parse `--profile dim=value` pairs.
+                let profile_pairs: Vec<(String, String)> = profiles
+                    .iter()
+                    .filter_map(|p| p.split_once('=').map(|(k, v)| (k.trim().to_string(), v.trim().to_string())))
+                    .collect();
+                export::run(
+                    &project,
+                    format,
+                    output.as_deref(),
+                    book_name.as_deref(),
+                    status.as_deref(),
+                    tag.as_deref(),
+                    &profile_pairs,
+                )
+                .map_err(Into::into)
+            }
             Command::Ai { prompt, provider } => {
                 ai::run(&project, &prompt, provider.as_deref()).map_err(Into::into)
             }
