@@ -25,7 +25,11 @@ pub fn render_body(tags: &[String], body: &str, variables: &BTreeMap<String, Str
         return render_code_listing(&body);
     }
     if tags.iter().any(|t| t == "para:math") {
-        return format!("<div class=\"math\">{}</div>\n", escape_html(body.trim()));
+        let inner = body.trim().trim_matches('$').trim();
+        return format!("<div class=\"math-block\">{}</div>\n", super::math_html::render_block(inner));
+    }
+    if tags.iter().any(|t| t == "para:table") {
+        return render_table(&body);
     }
     if tags.iter().any(|t| t == "para:procedure") {
         // Typst `+ item` numbered list → markdown ordered list.
@@ -125,6 +129,152 @@ fn extract_caption(body: &str) -> String {
     String::new()
 }
 
+/// Render a `para:table` (`#table(columns: …, table.header(…), [cell]…)`) as an
+/// HTML `<table>`. Degrades to the normal converter if it can't be parsed.
+fn render_table(body: &str) -> String {
+    let Some(inner) = extract_call(body, "#table") else {
+        return markdown_to_html(&typst_to_markdown(body));
+    };
+    let ncols = count_columns(inner).max(1);
+    let (header, rest) = split_header(inner);
+    let header_cells = parse_cells(&header);
+    let body_cells = parse_cells(&rest);
+
+    let mut out = String::from("<table>");
+    if !header_cells.is_empty() {
+        out.push_str("<thead><tr>");
+        for c in &header_cells {
+            out.push_str(&format!("<th>{}</th>", render_cell(c)));
+        }
+        out.push_str("</tr></thead>");
+    }
+    out.push_str("<tbody>");
+    for row in body_cells.chunks(ncols) {
+        out.push_str("<tr>");
+        for c in row {
+            out.push_str(&format!("<td>{}</td>", render_cell(c)));
+        }
+        out.push_str("</tr>");
+    }
+    out.push_str("</tbody></table>\n");
+    out
+}
+
+/// The content inside the outermost `(...)` following `name` (e.g. `#table`).
+fn extract_call<'a>(body: &'a str, name: &str) -> Option<&'a str> {
+    let start = body.find(name)?;
+    let after = &body[start + name.len()..];
+    let open = after.find('(')?;
+    let mut depth = 0i32;
+    for (idx, ch) in after.char_indices() {
+        if idx < open {
+            continue;
+        }
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&after[open + 1..idx]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Column count from the `columns:` value (a tuple's non-empty entries, or a number).
+fn count_columns(inner: &str) -> usize {
+    let Some(p) = inner.find("columns:") else { return 1 };
+    let after = inner[p + "columns:".len()..].trim_start();
+    if after.starts_with('(') {
+        if let Some(tuple) = extract_call(after, "") {
+            return split_top_level(tuple, ',').iter().filter(|s| !s.trim().is_empty()).count().max(1);
+        }
+    }
+    after.chars().take_while(|c| c.is_ascii_digit()).collect::<String>().parse().unwrap_or(1)
+}
+
+/// Split off the `table.header(...)` cells; return (header-region, the rest).
+fn split_header(inner: &str) -> (String, String) {
+    if let Some(start) = inner.find("table.header") {
+        let after = &inner[start..];
+        if let Some(hdr) = extract_call(after, "table.header") {
+            let hdr = hdr.to_string();
+            // Everything before + after the header call is the body region.
+            let call_len = "table.header".len()
+                + after["table.header".len()..].find('(').map(|o| o + 1).unwrap_or(0)
+                + hdr.len()
+                + 1;
+            let mut rest = inner[..start].to_string();
+            rest.push_str(&inner[start + call_len.min(after.len())..]);
+            return (hdr, rest);
+        }
+    }
+    (String::new(), inner.to_string())
+}
+
+/// Top-level `[...]` cells (bracket-depth aware).
+fn parse_cells(s: &str) -> Vec<String> {
+    let mut cells = Vec::new();
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '[' {
+            let mut depth = 1;
+            let start = i + 1;
+            i += 1;
+            while i < chars.len() && depth > 0 {
+                match chars[i] {
+                    '[' => depth += 1,
+                    ']' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+            cells.push(chars[start..i].iter().collect());
+        }
+        i += 1;
+    }
+    cells
+}
+
+/// Split a string on `sep` at bracket/paren depth zero.
+fn split_top_level(s: &str, sep: char) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut depth = 0i32;
+    let mut cur = String::new();
+    for ch in s.chars() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            c if c == sep && depth == 0 => {
+                parts.push(std::mem::take(&mut cur));
+                continue;
+            }
+            _ => {}
+        }
+        cur.push(ch);
+    }
+    parts.push(cur);
+    parts
+}
+
+/// A table cell's Typst content → inline HTML (stripping a wrapping `<p>`).
+fn render_cell(cell: &str) -> String {
+    let html = markdown_to_html(&typst_to_markdown(cell.trim()));
+    let h = html.trim();
+    let h = h.strip_prefix("<p>").unwrap_or(h);
+    let h = h.strip_suffix("</p>").unwrap_or(h);
+    h.trim().to_string()
+}
+
 /// Demote ATX headings by `by` levels (so a chapter page keeps a single `<h1>`).
 fn demote_headings(md: &str, by: u8) -> String {
     md.lines()
@@ -161,6 +311,22 @@ mod tests {
         assert!(html.contains("<figure class=\"listing\">"));
         assert!(html.contains("<code class=\"language-rust\">fn main() {}"));
         assert!(html.contains("<figcaption>A greeting.</figcaption>"));
+    }
+
+    #[test]
+    fn table_renders_html_grid() {
+        let body = "#table(\n  columns: (auto, 1fr),\n  table.header([*A*], [*B*],),\n  [1], [2],\n  [3], [4],\n)\n";
+        let html = render_body(&["para:table".to_string()], body, &BTreeMap::new());
+        assert!(html.contains("<table><thead><tr><th>"), "got: {html}");
+        assert!(html.contains("<td>1</td><td>2</td></tr>"), "got: {html}");
+        assert!(html.contains("<td>3</td><td>4</td></tr>"));
+    }
+
+    #[test]
+    fn math_renders_mathml() {
+        let html = render_body(&["para:math".to_string()], "$\n  x^2\n$\n", &BTreeMap::new());
+        assert!(html.contains("<math display=\"block\""), "got: {html}");
+        assert!(html.contains("<msup>"));
     }
 
     #[test]

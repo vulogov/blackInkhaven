@@ -7,6 +7,7 @@ mod assets;
 mod companions;
 mod labels;
 mod markdown_html;
+mod math_html;
 mod render;
 mod search;
 mod templates;
@@ -36,6 +37,7 @@ pub use templates::eject as eject_templates;
 #[allow(clippy::too_many_arguments)]
 pub fn export_html(
     layout: &ProjectLayout,
+    store: &crate::store::Store,
     h: &Hierarchy,
     cfg: &Config,
     root_id: Option<Uuid>,
@@ -142,7 +144,7 @@ pub fn export_html(
 
     // TDOC-4.3 — enabled companion books (Sources, Glossary, Places, the Language,
     // the World, …) become appendix pages of the same site.
-    let companion_pages = companions::build(layout, h, cfg);
+    let companion_pages = companions::build(layout, store, h, cfg);
     for cp in companion_pages {
         pages.push(Page {
             file: cp.file,

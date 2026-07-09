@@ -158,8 +158,10 @@ a:hover { color: var(--link-hover); text-decoration: underline; text-underline-o
 .admonition.warning, .admonition.pitfall { border-left-color: var(--warning-fg); background: var(--warning-bg); }
 .admonition.warning .admonition-title, .admonition.pitfall .admonition-title { color: var(--warning-fg); }
 
-/* Math (placeholder rendering) */
-.math { overflow-x: auto; margin: 1.2rem 0; font-family: var(--mono); color: var(--muted); }
+/* Math — native MathML */
+.prose .math-block { margin: 1.4rem 0; text-align: center; overflow-x: auto; }
+.prose math { font-size: 1.15em; }
+.prose math[display="block"] { display: block; }
 
 /* Companion appendices — entries, field lists, bibliography */
 .prose .entry { margin: 0 0 1.6rem; padding-bottom: 1.2rem; border-bottom: 1px solid var(--rule); }
@@ -171,6 +173,8 @@ a:hover { color: var(--link-hover); text-decoration: underline; text-underline-o
 .prose .bibliography .ref { margin: 0 0 .8rem; padding-left: 1.6rem; text-indent: -1.6rem; }
 .prose .bibliography .ref-title { font-style: italic; }
 .prose .bibliography .ref-author { font-weight: 650; }
+.prose .bibliography.numeric .ref { padding-left: 2.4rem; text-indent: -2.4rem; }
+.prose .bibliography .ref-num { color: var(--accent); font-weight: 650; }
 .prose .card { margin: .6rem 0; padding: .7rem .9rem; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; }
 .prose .card h4 { margin: 0 0 .4rem; color: var(--accent); }
 .prose .card dl.fields { margin: 0; }
