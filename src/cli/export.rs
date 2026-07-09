@@ -10,6 +10,7 @@ use crate::store::Store;
 use crate::store::hierarchy::Hierarchy;
 use crate::store::node::{Node, NodeKind};
 
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     project: &Path,
     format: ExportFormat,
@@ -18,6 +19,8 @@ pub fn run(
     status_floor: Option<&str>,
     tag: Option<&str>,
     profiles: &[(String, String)],
+    templates: Option<&Path>,
+    eject_templates: Option<&Path>,
 ) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
@@ -51,6 +54,29 @@ pub fn run(
             let artefact = export::build_epub(&md, &epub_title)
                 .map_err(|e| Error::Store(format!("epub: {e:#}")))?;
             write_artefact(artefact, output, "epub")
+        }
+        ExportFormat::Html => {
+            // `--eject-templates <dir>` scaffolds the bundled defaults and exits.
+            if let Some(dir) = eject_templates {
+                export::html::eject_templates(dir)
+                    .map_err(|e| Error::Store(format!("eject templates: {e:#}")))?;
+                eprintln!(
+                    "wrote default HTML templates to {} — edit them and export with --templates {}",
+                    dir.display(),
+                    dir.display()
+                );
+                Ok(())
+            } else {
+                // TDOC-4 — a directory of HTML, not a single artefact; the exporter
+                // reads bodies itself (it does not use `combined`).
+                let out = output.ok_or_else(|| {
+                    Error::Store("HTML export needs --output <dir>".into())
+                })?;
+                export::html::export_html(&layout, &h, &cfg, scope.root_id, profiles, out, templates)
+                    .map_err(|e| Error::Store(format!("html export: {e:#}")))?;
+                eprintln!("wrote HTML site to {}", out.display());
+                Ok(())
+            }
         }
     }
 }

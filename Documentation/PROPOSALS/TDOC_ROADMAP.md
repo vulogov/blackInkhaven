@@ -94,12 +94,30 @@ export html`: a multi-page static site with
   of vanilla JS), and
 - admonitions rendered as styled callouts.
 
-- **Effort/risk**: medium–high (an HTML generator + a search index). The largest
-  track; worth a dedicated release.
+- **Effort/risk**: high. Now a **sub-program** of five point releases — full spec in
+  [`TDOC-4_PLAN.md`](TDOC-4_PLAN.md).
 
 **Decision (2026-07-08): build our own exporter — do NOT use Typst's HTML target.**
 It is document-oriented (not a site) and heavy/unstable; it would give us none of
 what matters (nav, per-page split, search, profiles, semantic admonitions).
+
+**Scope expanded (2026-07-08, Vladimir).** TDOC-4 is no longer just "manuscript →
+HTML" — it publishes the whole shelf. Ten requirements: (1) **multilingual** by the
+book's `Config.language` (chrome via `Labels::for_language`, en/ru/fr/de/es);
+(2) **templateable** (reuse `minijinja`); (3) **HJSON as jinja variables** (a `site`
+vars file + the existing linked-HJSON path); (4) **images + clean Typst→HTML**
+(reuse `typst_to_markdown`, copy assets); (5) **Sources** with proper formatting
+(`BibEntry` + `@key` resolution); (6) a **reliable TOC** (from the tree + heading
+scan); (7) **separate "visual" from "functional"** in the templates (two overridable
+namespaces — `functional/` machinery vs `theme/` look); (8) **enable/disable system
+books** (People/Places/Glossary/Notes/Mythology as appendix sections); (9) the
+**Language** book as a full HTML **dictionary/grammar/study** (reuse
+`conlang::output`); (10) the **World** book as a formatted world guide (materialised
+world HJSON). Research confirmed heavy reuse — conlang/sources renderers, the jinja
+HJSON context, and the assembler already exist; system books are already excluded
+from normal assembly, so folding them in is opt-in. Phasing: **4.1** the site
+skeleton (engine + templating + i18n + TOC + images), **4.2** search + Sources,
+**4.3** companion books, **4.4** the living language, **4.5** the world guide.
 
 *Architecture — structure from the tree/metadata, prose via the existing converter:*
 - The exporter is a **third consumer of the same node tree** the PDF/DOCX/Markdown
