@@ -356,6 +356,16 @@ pub enum Command {
         /// value is requested; untagged paragraphs are always emitted.
         #[arg(long = "profile")]
         profiles: Vec<String>,
+        /// TDOC-4 (HTML) — directory of custom templates (`functional/` and/or
+        /// `theme/`); a file present there overrides the bundled default. Overrides
+        /// `docs.html.template_dir`. Absolute or project-relative.
+        #[arg(long)]
+        templates: Option<PathBuf>,
+        /// TDOC-4 (HTML) — write the bundled default templates to this directory
+        /// (a starting point for customisation) and exit. Use `export html
+        /// --eject-templates <dir>`.
+        #[arg(long)]
+        eject_templates: Option<PathBuf>,
     },
 
     /// Run a one-shot AI inference from the command line.
@@ -4991,6 +5001,9 @@ pub enum ExportFormat {
     /// EPUB3 zip — markdown intermediate, written via the bundled
     /// `zip` crate.
     Epub,
+    /// TDOC-4 — a self-contained HTML static site (a directory).
+    /// Needs `--output <dir>`.
+    Html,
 }
 
 /// 1.2.12+ — output formats for
@@ -5185,6 +5198,8 @@ impl Cli {
                 status,
                 tag,
                 profiles,
+                templates,
+                eject_templates,
             } => {
                 // TDOC-3 — parse `--profile dim=value` pairs.
                 let profile_pairs: Vec<(String, String)> = profiles
@@ -5199,6 +5214,8 @@ impl Cli {
                     status.as_deref(),
                     tag.as_deref(),
                     &profile_pairs,
+                    templates.as_deref(),
+                    eject_templates.as_deref(),
                 )
                 .map_err(Into::into)
             }

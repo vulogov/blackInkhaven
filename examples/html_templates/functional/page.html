@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="{{ lang }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% if page.is_index %}{{ site.title | default(book.title) }}{% else %}{{ page.title }} · {{ site.title | default(book.title) }}{% endif %}</title>
+  <link rel="stylesheet" href="{{ page.root }}theme.css">
+</head>
+<body>
+  <a class="skip-link" href="#content">{{ labels.skip }}</a>
+  <input type="checkbox" id="nav-toggle" class="nav-toggle" hidden>
+  <div class="layout">
+    <aside class="sidebar">
+      {% include "header.html" %}
+      <label for="nav-toggle" class="nav-close" aria-hidden="true">×</label>
+      <nav class="toc" aria-label="{{ labels.contents }}">
+        <p class="toc-title">{{ labels.contents }}</p>
+        <ul class="nav">
+          <li class="{% if page.is_index %}current{% endif %}">
+            <a href="{{ page.root }}index.html">{{ labels.home }}</a>
+          </li>
+          {% for item in nav %}
+          <li class="{% if item.current %}current{% endif %}">
+            <a href="{{ page.root }}{{ item.href }}">{{ item.title }}</a>
+            {% if item.sections %}
+            <ul class="nav-sub">
+              {% for s in item.sections %}
+              <li><a href="{{ page.root }}{{ s.href }}">{{ s.title }}</a></li>
+              {% endfor %}
+            </ul>
+            {% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+      </nav>
+    </aside>
+
+    <main id="content" class="content">
+      <label for="nav-toggle" class="nav-open" aria-label="{{ labels.contents }}">☰</label>
+      <article class="prose">
+        {{ page.content | safe }}
+      </article>
+
+      {% if page.prev or page.next %}
+      <nav class="pager" aria-label="pagination">
+        {% if page.prev %}<a class="pager-prev" href="{{ page.root }}{{ page.prev.href }}"><span class="pager-dir">←</span> {{ page.prev.title }}</a>{% else %}<span></span>{% endif %}
+        {% if page.next %}<a class="pager-next" href="{{ page.root }}{{ page.next.href }}">{{ page.next.title }} <span class="pager-dir">→</span></a>{% endif %}
+      </nav>
+      {% endif %}
+
+      {% include "footer.html" %}
+    </main>
+  </div>
+</body>
+</html>

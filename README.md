@@ -21,38 +21,45 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.6.9 — Links & Single-Sourcing
+## Latest release · 1.6.10 — Publish to the Web
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.6.9.md`](Documentation/RELEASE_NOTES/1.6.9.md)
-· Roadmap: [`TDOC_ROADMAP.md`](Documentation/PROPOSALS/TDOC_ROADMAP.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.6.10.md`](Documentation/RELEASE_NOTES/1.6.10.md)
+· New book: [`Publish Your Book to the Web`](Book/WEBSITE/)
 
-The "docs that answer to the system" arc completes. 1.6.8 taught the docs author to
-run their examples; 1.6.9 keeps their links honest and lets one source serve many
-outputs. **No new runtime crates.**
+A book you can visit. This release turns any manuscript into a self-contained HTML
+website — one command, no web expertise, nothing that phones home. **No new runtime
+crates.**
 
-### Link integrity
+### The HTML site exporter
 
-`inkhaven docs links` checks the other face of staleness — the broken reference.
-Internal cross-references are checked always and offline (a link to a renamed or
-deleted paragraph is reported); external `http(s)` URLs are checked for link-rot with
-`--external`, using the same conservative classifier as the research dead-source
-sweep (only a hard 404/410 or an unreachable host counts). Like `docs verify`, it
-exits non-zero on breakage — the same pre-release / CI check.
+`inkhaven export html -o site/` renders your book as a **self-contained static
+website**: a page per chapter, a sidebar table of contents, a clean reading theme,
+your images copied alongside — with **zero external dependencies** (no CDN, no web
+fonts, no external scripts), localised to the book's language, honouring your
+single-sourcing variables and `--profile` editions.
 
-### Single-sourcing — write once, render many
+### Templates you own, and your whole shelf
 
-*Variables* replace a token everywhere at build time: define `docs.variables` once
-and write `{{product}}` / `{{version}}` in prose, and every export resolves them.
-*Profiles* let one manuscript carry several editions: tag a paragraph
-`profile:edition:enterprise` (`Ctrl+B ]`), then `inkhaven export pdf --profile
-edition=enterprise` ships only the matching slice plus unconditional content — the
-DITA profiling convention, on tags Inkhaven already has.
+Templates are minijinja, split into **`functional/`** (the machinery) and **`theme/`**
+(the look) so a designer can restyle without touching the plumbing — embedded as
+defaults, overridable with `--templates`, scaffolded with `--eject-templates`. And
+`docs.html.include.*` folds your companion books into the same site: Sources as a
+**bibliography**, the Language as a **sortable, filterable lexicon table**, the World
+as a **narrative guide** written up from your `world.hjson`, plus your cast, places,
+and glossary.
+
+### A new companion book
+
+*Publish Your Book to the Web* — a plain-language guide to all of the above for authors
+who are neither web nor Inkhaven experts: every term defined, every command shown with
+an example, and full chapters on styling, templates, variables, and going live.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** New command `inkhaven docs links`; new `export --profile`
-flag; new config `docs.variables` (empty by default). Everything is additive —
-existing projects are unaffected. Test suite → 2335.
+**No new runtime crates.** New export format `html`; new config `docs.html`; new flags
+`--templates` / `--eject-templates`. The default templates ship inside the binary and
+under `examples/html_templates/`. Everything is additive — existing projects are
+unaffected. Test suite → 2349.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

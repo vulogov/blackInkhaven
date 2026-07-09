@@ -1,0 +1,6 @@
+<div class="brand">
+  <a class="brand-link" href="{{ page.root }}index.html">
+    <span class="brand-title">{{ site.title | default(book.title) }}</span>
+    {% if site.subtitle %}<span class="brand-sub">{{ site.subtitle }}</span>{% endif %}
+  </a>
+</div>
