@@ -215,14 +215,49 @@ fn parse_image(s: &str) -> Option<(String, String)> {
     Some((alt.to_string(), after[..close].to_string()))
 }
 
-/// Inline markup → HTML. Input is escaped first, then span markers applied.
+/// Inline markup → HTML. Inline math (`$…$`) is rendered to MathML and stashed out
+/// first so its content is not escaped or treated as markdown; input is then escaped
+/// and span markers applied; finally the math is restored.
 fn inline(s: &str) -> String {
-    let escaped = escape_html(s);
+    let mut stash: Vec<String> = Vec::new();
+    let protected = stash_math(s, &mut stash);
+    let escaped = escape_html(&protected);
     let with_media = replace_media(&escaped);
     let with_code = replace_code_spans(&with_media);
     let with_strong = replace_pair(&with_code, "**", "<strong>", "</strong>");
     let with_em = replace_pair(&with_strong, "_", "<em>", "</em>");
-    replace_pair(&with_em, "*", "<em>", "</em>")
+    let done = replace_pair(&with_em, "*", "<em>", "</em>");
+    restore_math(&done, &stash)
+}
+
+/// Replace each `$…$` with a private-use placeholder, stashing its rendered MathML.
+/// (In Typst prose, `$` always delimits math.)
+fn stash_math(s: &str, stash: &mut Vec<String>) -> String {
+    let mut out = String::new();
+    let mut rest = s;
+    while let Some(start) = rest.find('$') {
+        let after = &rest[start + 1..];
+        let Some(end) = after.find('$') else {
+            break;
+        };
+        out.push_str(&rest[..start]);
+        let idx = stash.len();
+        stash.push(super::math_html::render_inline(&after[..end]));
+        out.push('\u{E000}');
+        out.push_str(&idx.to_string());
+        out.push('\u{E001}');
+        rest = &after[end + 1..];
+    }
+    out.push_str(rest);
+    out
+}
+
+fn restore_math(s: &str, stash: &[String]) -> String {
+    let mut out = s.to_string();
+    for (i, m) in stash.iter().enumerate() {
+        out = out.replace(&format!("\u{E000}{i}\u{E001}"), m);
+    }
+    out
 }
 
 /// Replace `![alt](src)` (image) and `[text](url)` (link). Runs before other
@@ -336,6 +371,16 @@ mod tests {
         assert!(html.contains("<ul>\n<li>one</li>\n<li>two</li>\n</ul>"));
         assert!(html.contains("<a href=\"https://x.example\">docs</a>"));
         assert!(html.contains("<img src=\"cat.png\" alt=\"a cat\">"));
+    }
+
+    #[test]
+    fn inline_math_becomes_mathml() {
+        let html = markdown_to_html("The area is $pi r^2$ exactly.\n");
+        assert!(html.contains("<math>"), "got: {html}");
+        assert!(html.contains("<mi>π</mi>"));
+        assert!(html.contains("<msup>"));
+        assert!(html.contains("The area is"));
+        assert!(html.contains("exactly."));
     }
 
     #[test]
