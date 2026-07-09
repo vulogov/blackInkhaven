@@ -21,39 +21,34 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.6.11 — Search & Review
+## Latest release · 1.6.12 — Math & Tables
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.6.11.md`](Documentation/RELEASE_NOTES/1.6.11.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.6.12.md`](Documentation/RELEASE_NOTES/1.6.12.md)
 
-Refinements to the web-publishing release, plus a review dashboard. **No new runtime
-crates.**
+The finishing pass on the HTML exporter. **No new runtime crates.**
 
-### Site search
+### Math and tables
 
-Exported websites now have **search** built in — a sidebar box that finds any word
-across every page as the reader types, entirely on their own machine with no server or
-library. The site stays self-contained: the index and script are ordinary files loaded
-with a `<script>` tag, so search works even opened straight from disk. On by default.
+Math now renders as native **MathML** — drawn by the browser, so there is no
+JavaScript library and no font download, and the site stays self-contained. Both block
+math (a `para:math` paragraph) and inline `$…$` are converted. And a `para:table`
+renders as a real HTML `<table>` instead of raw markup — so scientific and technical
+books export cleanly.
 
-### Status-aware export, and a review dashboard
+### Bibliographies and languages, finished
 
-`export html --status ready` now ships only the paragraphs you have marked ready, like
-every other format. And `inkhaven docs review` reports your manuscript's readiness — a
-per-chapter status breakdown and the list of what is still below the line, exiting
-non-zero for a pre-release check. `docs review --since <release-tag>` flags the pages
-whose source changed since a release, so you re-read exactly those.
-
-### Fixes
-
-Long inline `code` spans now wrap instead of running past the page margin in the
-companion books, and *Publish Your Book to the Web* gains an appendix reference on
-tags, structural subtypes, and status.
+Bibliographies can now be numbered (`docs.html.citation_style: numeric`, Vancouver
+style) as an alternative to author-year. And when you publish your invented Language,
+its **grammar** now renders in full — phonology, morphology, typology, and sample texts
+— alongside the sortable lexicon table, using the same renderer as the CLI's
+grammar-book export. The HTML exporter is now feature-complete: nothing it produces is
+inert or degraded.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** New command `inkhaven docs review`; new config
-`docs.html.search` (on by default); `export html` now reads `--status`. Everything is
-additive — existing projects are unaffected. Test suite → 2352.
+**No new runtime crates.** No new config beyond values already accepted. Everything is
+additive — math, tables, numbered citations, and the full grammar simply appear where
+the content calls for them. Test suite → 2359.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
