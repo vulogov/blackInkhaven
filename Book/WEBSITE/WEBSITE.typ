@@ -29,5 +29,7 @@
   part(number: "V", title: "Going Live"),
   include "chapters/07-going-live.typ",
 
+  include "chapters/a-tags-and-status.typ",
+
   include "chapters/99-about-the-author.typ",
 ))

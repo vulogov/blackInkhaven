@@ -7,7 +7,7 @@
 #let book_subtitle = "A Plain-Language Guide to Inkhaven's HTML Export — Styling, Templates, and Going Live"
 #let book_author   = "Vladimir Ulogov"
 #let book_year     = "2026"
-#let book_version  = "Inkhaven 1.6.10"
+#let book_version  = "Inkhaven 1.6.11"
 
 // ── Palette — warm paper, earth ink, growth-green accents ───────────
 #let ink_black   = rgb("#1e1a15")
@@ -64,6 +64,23 @@
     #text(font: body_family, size: 9pt, tracking: 2pt, fill: ink_gray, upper("Chapter " + str(number)))
     #v(1mm)
     #text(font: body_family, size: 84pt, weight: "bold", fill: ink_accent, str(number))
+    #v(-6mm)
+    #text(font: body_family, size: 25pt, weight: "regular", fill: ink_black, title)
+  ]
+  v(1cm)
+  line(length: 100%, stroke: 0.5pt + ink_rule)
+  v(8mm)
+}
+
+// ── Appendix opening ────────────────────────────────────────────────
+#let appendix(letter: "A", title: "") = {
+  pagebreak(weak: true)
+  hide(heading(level: 1, numbering: none, outlined: true, bookmarked: true, [Appendix #letter — #title]))
+  v(1.6cm)
+  align(left)[
+    #text(font: body_family, size: 9pt, tracking: 2pt, fill: ink_gray, upper("Appendix " + letter))
+    #v(1mm)
+    #text(font: body_family, size: 84pt, weight: "bold", fill: ink_accent, letter)
     #v(-6mm)
     #text(font: body_family, size: 25pt, weight: "regular", fill: ink_black, title)
   ]
@@ -211,8 +228,8 @@
     fill: ink_code_bg, stroke: 0.5pt + ink_rule, inset: 7pt, radius: 2pt, width: 100%,
     text(font: mono_family, size: 9pt, it),
   )
-  show raw.where(block: false): it => box(
-    fill: ink_code_bg, inset: (x: 2pt, y: 0pt), outset: (y: 2pt), radius: 1pt,
+  show raw.where(block: false): it => highlight(
+    fill: ink_code_bg, extent: 1.5pt, radius: 1pt,
     text(font: mono_family, size: 9.5pt, it),
   )
 

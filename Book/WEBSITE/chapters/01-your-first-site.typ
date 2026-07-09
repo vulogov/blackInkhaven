@@ -76,6 +76,13 @@ it yet — that is the final chapter — but everything is here.
   the times you want more.
 ]
 
+#note[
+  Your site comes with *search* built in — a box at the top of the sidebar that finds
+  any word across every page as you type, working entirely on the reader's own
+  machine with no server. It is on by default; if you ever want it off, set
+  `docs: { html: { search: false } }` in your settings.
+]
+
 #pitfall[
   If the terminal answers with `command not found: inkhaven`, the program is not on
   your system's list of commands yet. That is an installation matter, not an export

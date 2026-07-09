@@ -21,45 +21,39 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.6.10 — Publish to the Web
+## Latest release · 1.6.11 — Search & Review
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.6.10.md`](Documentation/RELEASE_NOTES/1.6.10.md)
-· New book: [`Publish Your Book to the Web`](Book/WEBSITE/)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.6.11.md`](Documentation/RELEASE_NOTES/1.6.11.md)
 
-A book you can visit. This release turns any manuscript into a self-contained HTML
-website — one command, no web expertise, nothing that phones home. **No new runtime
+Refinements to the web-publishing release, plus a review dashboard. **No new runtime
 crates.**
 
-### The HTML site exporter
+### Site search
 
-`inkhaven export html -o site/` renders your book as a **self-contained static
-website**: a page per chapter, a sidebar table of contents, a clean reading theme,
-your images copied alongside — with **zero external dependencies** (no CDN, no web
-fonts, no external scripts), localised to the book's language, honouring your
-single-sourcing variables and `--profile` editions.
+Exported websites now have **search** built in — a sidebar box that finds any word
+across every page as the reader types, entirely on their own machine with no server or
+library. The site stays self-contained: the index and script are ordinary files loaded
+with a `<script>` tag, so search works even opened straight from disk. On by default.
 
-### Templates you own, and your whole shelf
+### Status-aware export, and a review dashboard
 
-Templates are minijinja, split into **`functional/`** (the machinery) and **`theme/`**
-(the look) so a designer can restyle without touching the plumbing — embedded as
-defaults, overridable with `--templates`, scaffolded with `--eject-templates`. And
-`docs.html.include.*` folds your companion books into the same site: Sources as a
-**bibliography**, the Language as a **sortable, filterable lexicon table**, the World
-as a **narrative guide** written up from your `world.hjson`, plus your cast, places,
-and glossary.
+`export html --status ready` now ships only the paragraphs you have marked ready, like
+every other format. And `inkhaven docs review` reports your manuscript's readiness — a
+per-chapter status breakdown and the list of what is still below the line, exiting
+non-zero for a pre-release check. `docs review --since <release-tag>` flags the pages
+whose source changed since a release, so you re-read exactly those.
 
-### A new companion book
+### Fixes
 
-*Publish Your Book to the Web* — a plain-language guide to all of the above for authors
-who are neither web nor Inkhaven experts: every term defined, every command shown with
-an example, and full chapters on styling, templates, variables, and going live.
+Long inline `code` spans now wrap instead of running past the page margin in the
+companion books, and *Publish Your Book to the Web* gains an appendix reference on
+tags, structural subtypes, and status.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** New export format `html`; new config `docs.html`; new flags
-`--templates` / `--eject-templates`. The default templates ship inside the binary and
-under `examples/html_templates/`. Everything is additive — existing projects are
-unaffected. Test suite → 2349.
+**No new runtime crates.** New command `inkhaven docs review`; new config
+`docs.html.search` (on by default); `export html` now reads `--status`. Everything is
+additive — existing projects are unaffected. Test suite → 2352.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
