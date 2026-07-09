@@ -1,13 +1,10 @@
-// Developing a story with Inkhaven — design tokens + page chrome.
+// Publish Your Book to the Web — design tokens + page chrome.
 //
 // Visual style follows Book/BUILDING_THE_WORLD/design.typ (same warm earth
-// palette, same named callouts, same typography) so the two books read as one
-// shelf. Diagrams are drawn with fletcher rather than screenshots.
+// palette, same named callouts, same typography) so the books read as one shelf.
 
-#import "@preview/fletcher:0.5.8" as fletcher: diagram, node, edge
-
-#let book_title    = "Developing a story with Inkhaven"
-#let book_subtitle = "An Author's Guide to Every Kind of Book — Choosing a Track and Building It"
+#let book_title    = "Publish Your Book to the Web"
+#let book_subtitle = "A Plain-Language Guide to Inkhaven's HTML Export — Styling, Templates, and Going Live"
 #let book_author   = "Vladimir Ulogov"
 #let book_year     = "2026"
 #let book_version  = "Inkhaven 1.6.10"
@@ -34,7 +31,6 @@
 #let ink_teal    = rgb("#2f6668")            // teal    — NOTE / TRY IT
 #let ink_teal_bg = rgb("#e3eeee")
 
-// Bundled families only (no host-font setup, no warnings).
 #let body_family = ("Libertinus Serif", "New Computer Modern")
 #let sans_family = ("Libertinus Serif", "New Computer Modern")
 #let mono_family = ("DejaVu Sans Mono",)
@@ -68,23 +64,6 @@
     #text(font: body_family, size: 9pt, tracking: 2pt, fill: ink_gray, upper("Chapter " + str(number)))
     #v(1mm)
     #text(font: body_family, size: 84pt, weight: "bold", fill: ink_accent, str(number))
-    #v(-6mm)
-    #text(font: body_family, size: 25pt, weight: "regular", fill: ink_black, title)
-  ]
-  v(1cm)
-  line(length: 100%, stroke: 0.5pt + ink_rule)
-  v(8mm)
-}
-
-// ── Appendix opening ────────────────────────────────────────────────
-#let appendix(letter: "A", title: "") = {
-  pagebreak(weak: true)
-  hide(heading(level: 1, numbering: none, outlined: true, bookmarked: true, [Appendix #letter — #title]))
-  v(1.6cm)
-  align(left)[
-    #text(font: body_family, size: 9pt, tracking: 2pt, fill: ink_gray, upper("Appendix " + letter))
-    #v(1mm)
-    #text(font: body_family, size: 84pt, weight: "bold", fill: ink_accent, letter)
     #v(-6mm)
     #text(font: body_family, size: 25pt, weight: "regular", fill: ink_black, title)
   ]
@@ -161,15 +140,27 @@
   v(2mm)
 }
 
-// A practical remark about how Inkhaven behaves.
+// A concrete command to type at the terminal.
+#let run(body) = {
+  v(2mm)
+  block(
+    fill: white, stroke: (left: 2pt + ink_teal),
+    inset: (left: 9pt, right: 9pt, top: 6pt, bottom: 8pt),
+    width: 100%, radius: 1pt, breakable: false,
+    {
+      set par(justify: false, first-line-indent: 0pt)
+      text(font: body_family, size: 8pt, weight: "bold", fill: ink_teal, tracking: 1.5pt, "AT THE TERMINAL")
+      v(2mm)
+      body
+    },
+  )
+  v(2mm)
+}
+
 #let note(body) = _callout("Note", ink_teal, ink_teal_bg, body)
-// A deeper principle — the "why", the thing to remember.
 #let insight(body) = _callout("Insight", ink_green, ink_green_bg, body)
-// A question to put to yourself before you begin.
 #let question(body) = _callout("Ask Yourself", ink_gold, ink_gold_bg, body)
-// A common mistake, and how to avoid it.
 #let pitfall(body) = _callout("Pitfall", ink_rust, ink_rust_bg, body)
-// A short hands-on exercise at the keyboard.
 #let tryit(body) = _callout("Try It", ink_accent, ink_term_bg, body)
 
 // ── Chapter-end recap ───────────────────────────────────────────────
@@ -188,9 +179,11 @@
   )
 }
 
-// ── Afterword helpers ───────────────────────────────────────────────
 #let dropcap(letter) = box(baseline: 0.62em,
   text(font: body_family, size: 2.7em, weight: "bold", fill: ink_accent, letter))
+
+#let figure_note(body) = align(center,
+  text(font: body_family, style: "italic", size: 9pt, fill: ink_gray, body))
 
 #let chord_row(name, desc) = (name, desc)
 #let chord_table(rows) = block(width: 100%, {
@@ -202,52 +195,11 @@
   }
 })
 
-#let figure_note(body) = align(center,
-  text(font: body_family, style: "italic", size: 9pt, fill: ink_gray, body))
-
 // A glossary entry — a term in bold followed by its definition.
 #let gloss(name, body) = {
   block(above: 4.5mm, below: 1.6mm, sticky: true,
     text(font: body_family, size: 11pt, weight: "bold", fill: ink_accent, name))
   body
-}
-
-// ── Diagram helpers (fletcher) ──────────────────────────────────────
-#let dnode(pos, body, fill: ink_term_bg) = node(
-  pos, align(center, text(font: body_family, size: 8.5pt, body)),
-  stroke: 0.6pt + ink_rule, fill: fill, corner-radius: 2pt, inset: 6pt,
-)
-
-// The four faculties Inkhaven brings to any book — the shared toolkit every
-// track draws on, in its own proportions.
-#let four_faculties() = {
-  v(3mm)
-  align(center, diagram(
-    spacing: (10mm, 5mm),
-    dnode((0, 0), [*Structure*\ books · chapters\ · scenes]),
-    dnode((1, 0), [*Grounding*\ world · research\ · facts]),
-    dnode((2, 0), [*Reading*\ inner readers\ · fact-check]),
-    dnode((3, 0), [*Production*\ PDF · EPUB\ · DOCX], fill: ink_green_bg),
-    edge((0, 0), (1, 0), "->"), edge((1, 0), (2, 0), "->"), edge((2, 0), (3, 0), "->"),
-  ))
-  figure_note[Every kind of book uses the same four faculties — a place to build structure, a way to ground it, a set of readers to test it, and a press to publish it — in proportions its track decides.]
-  v(3mm)
-}
-
-// The working arc that recurs across the track guides.
-#let work_arc() = {
-  v(3mm)
-  align(center, diagram(
-    spacing: 9mm,
-    dnode((0, 0), [*Frame*\ pick a track,\ set the genre]),
-    dnode((1, 0), [*Gather*\ world · research\ · sources]),
-    dnode((1, 1), [*Draft*\ against what\ you gathered]),
-    dnode((0, 1), [*Read & revise*\ inner readers,\ fact-check], fill: ink_green_bg),
-    edge((0, 0), (1, 0), "->"), edge((1, 0), (1, 1), "->"),
-    edge((1, 1), (0, 1), "->"), edge((0, 1), (0, 0), "->", stroke: (dash: "dashed")),
-  ))
-  figure_note[The work is a loop, not a line: you frame the book, gather what grounds it, draft against that ground, then read and revise — returning to gather more as the work demands.]
-  v(3mm)
 }
 
 // ── Master document wrapper ─────────────────────────────────────────
