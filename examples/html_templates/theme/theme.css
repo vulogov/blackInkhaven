@@ -1,0 +1,198 @@
+/* Inkhaven default HTML theme — warm cream/sienna literary palette,
+   after the "Building the World" companion book. Light + dark, responsive. */
+
+:root {
+  --bg:        #fbf6ea;
+  --surface:   #f4eede;
+  --text:      #1e1a15;
+  --muted:     #5d564c;
+  --faint:     #9a9084;
+  --rule:      #c9bfa9;
+  --accent:    #8a5a2b;
+  --accent-2:  #9c4526;
+  --code-bg:   #f2ecdd;
+  --code-text: #3a2f22;
+  --link:      #8a5a2b;
+  --link-hover:#6e4620;
+
+  --note-fg: #2f6668; --note-bg: #e3eeee;
+  --tip-fg:  #2f6668; --tip-bg:  #e3eeee;
+  --insight-fg: #3f6b4a; --insight-bg: #e8f1e9;
+  --question-fg:#94711f; --question-bg:#f6efd6;
+  --caution-fg: #94711f; --caution-bg: #f6efd6;
+  --warning-fg: #9c4526; --warning-bg: #f6e6df;
+  --pitfall-fg: #9c4526; --pitfall-bg: #f6e6df;
+
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+  --mono:  "SFMono-Regular", "DejaVu Sans Mono", "Menlo", Consolas, monospace;
+  --sidebar-w: 19rem;
+  --measure: 42rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg:#1a1712; --surface:#221d17; --text:#ece3d3; --muted:#b3a894;
+    --faint:#7d7365; --rule:#3a332a; --accent:#c78a4f; --accent-2:#d0754e;
+    --code-bg:#26201a; --code-text:#dcd2c2; --link:#c78a4f; --link-hover:#dda366;
+    --note-fg:#79b7ba; --note-bg:#1d2b2c; --tip-fg:#79b7ba; --tip-bg:#1d2b2c;
+    --insight-fg:#8fc79f; --insight-bg:#1c2a21; --question-fg:#d5ac52; --question-bg:#2a2413;
+    --caution-fg:#d5ac52; --caution-bg:#2a2413; --warning-fg:#e0916c; --warning-bg:#2c1d16;
+    --pitfall-fg:#e0916c; --pitfall-bg:#2c1d16;
+  }
+}
+:root[data-theme="dark"] {
+  --bg:#1a1712; --surface:#221d17; --text:#ece3d3; --muted:#b3a894;
+  --faint:#7d7365; --rule:#3a332a; --accent:#c78a4f; --accent-2:#d0754e;
+  --code-bg:#26201a; --code-text:#dcd2c2; --link:#c78a4f; --link-hover:#dda366;
+  --note-fg:#79b7ba; --note-bg:#1d2b2c; --tip-fg:#79b7ba; --tip-bg:#1d2b2c;
+  --insight-fg:#8fc79f; --insight-bg:#1c2a21; --question-fg:#d5ac52; --question-bg:#2a2413;
+  --caution-fg:#d5ac52; --caution-bg:#2a2413; --warning-fg:#e0916c; --warning-bg:#2c1d16;
+  --pitfall-fg:#e0916c; --pitfall-bg:#2c1d16;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font-family: var(--serif); font-size: 1.06rem; line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--link); text-decoration: none; }
+a:hover { color: var(--link-hover); text-decoration: underline; text-underline-offset: 2px; }
+
+.skip-link { position: absolute; left: -999px; }
+.skip-link:focus { left: 1rem; top: 1rem; background: var(--surface); padding: .5rem 1rem; z-index: 10; }
+
+/* Layout */
+.layout { display: flex; align-items: flex-start; }
+.sidebar {
+  width: var(--sidebar-w); flex: 0 0 var(--sidebar-w);
+  position: sticky; top: 0; height: 100vh; overflow-y: auto;
+  background: var(--surface); border-right: 1px solid var(--rule);
+  padding: 1.6rem 1.2rem 2rem;
+}
+.content {
+  flex: 1 1 auto; min-width: 0;
+  padding: 2.4rem clamp(1.2rem, 5vw, 4rem) 4rem;
+}
+.prose { max-width: var(--measure); margin: 0 auto; }
+
+/* Brand */
+.brand { margin-bottom: 1.4rem; padding-bottom: 1.2rem; border-bottom: 1px solid var(--rule); }
+.brand-link { display: block; }
+.brand-title { display: block; font-size: 1.22rem; font-weight: 600; color: var(--text); line-height: 1.25; }
+.brand-sub { display: block; margin-top: .25rem; font-size: .86rem; font-style: italic; color: var(--muted); }
+
+/* Nav / TOC */
+.toc-title { margin: 0 0 .5rem; font-size: .72rem; letter-spacing: .12em; text-transform: uppercase; color: var(--faint); font-family: var(--mono); }
+.nav, .nav-sub { list-style: none; margin: 0; padding: 0; }
+.nav > li { margin: .1rem 0; }
+.nav a { display: block; padding: .28rem .5rem; border-radius: 5px; color: var(--muted); font-size: .96rem; }
+.nav a:hover { background: var(--code-bg); color: var(--text); text-decoration: none; }
+.nav > li.current > a { color: var(--accent); font-weight: 600; background: var(--code-bg); }
+.nav-sub { margin: .1rem 0 .4rem .6rem; border-left: 1px solid var(--rule); }
+.nav-sub a { font-size: .9rem; padding: .2rem .6rem; }
+
+/* Typography */
+.prose h1, .prose h2, .prose h3, .prose h4 { line-height: 1.25; color: var(--text); font-weight: 600; }
+.prose h1 { font-size: 2.1rem; margin: 0 0 1.4rem; letter-spacing: -0.01em; }
+.prose h2 { font-size: 1.5rem; margin: 2.4rem 0 .9rem; padding-top: .6rem; border-top: 1px solid var(--rule); }
+.prose h3 { font-size: 1.2rem; margin: 1.8rem 0 .6rem; }
+.prose h4 { font-size: 1.02rem; margin: 1.4rem 0 .5rem; color: var(--muted); }
+.prose p { margin: 0 0 1.1rem; }
+.prose a { text-decoration: underline; text-underline-offset: 2px; text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent); }
+.prose strong { font-weight: 650; }
+.prose ul, .prose ol { margin: 0 0 1.1rem; padding-left: 1.4rem; }
+.prose li { margin: .3rem 0; }
+.prose blockquote {
+  margin: 1.2rem 0; padding: .2rem 1.1rem; border-left: 3px solid var(--accent);
+  color: var(--muted); font-style: italic;
+}
+.prose hr { border: 0; border-top: 1px solid var(--rule); margin: 2rem 0; }
+
+/* Code */
+.prose code { font-family: var(--mono); font-size: .88em; background: var(--code-bg); color: var(--code-text); padding: .12em .4em; border-radius: 4px; }
+.prose pre {
+  background: var(--code-bg); color: var(--code-text); font-family: var(--mono); font-size: .86rem;
+  line-height: 1.55; padding: 1rem 1.1rem; border-radius: 8px; overflow-x: auto;
+  border: 1px solid var(--rule); margin: 1.2rem 0;
+}
+.prose pre code { background: none; padding: 0; font-size: inherit; }
+
+/* Figures / images */
+.prose figure { margin: 1.6rem 0; text-align: center; }
+.prose img { max-width: 100%; height: auto; border-radius: 6px; }
+.prose figcaption { margin-top: .5rem; font-size: .88rem; font-style: italic; color: var(--muted); }
+
+/* Tables */
+.prose table { width: 100%; border-collapse: collapse; margin: 1.4rem 0; font-size: .95rem; display: block; overflow-x: auto; }
+.prose th, .prose td { text-align: left; padding: .5rem .7rem; border-bottom: 1px solid var(--rule); }
+.prose th { font-weight: 650; color: var(--muted); border-bottom: 2px solid var(--rule); }
+
+/* Admonitions */
+.admonition {
+  margin: 1.4rem 0; padding: .85rem 1.1rem; border-radius: 8px;
+  border-left: 4px solid var(--note-fg); background: var(--note-bg);
+}
+.admonition > :first-child { margin-top: 0; }
+.admonition > :last-child { margin-bottom: 0; }
+.admonition .admonition-title { font-weight: 650; color: var(--note-fg); font-size: .8rem; letter-spacing: .08em; text-transform: uppercase; margin-bottom: .35rem; font-family: var(--mono); }
+.admonition.note, .admonition.tip { border-left-color: var(--note-fg); background: var(--note-bg); }
+.admonition.note .admonition-title, .admonition.tip .admonition-title { color: var(--note-fg); }
+.admonition.insight { border-left-color: var(--insight-fg); background: var(--insight-bg); }
+.admonition.insight .admonition-title { color: var(--insight-fg); }
+.admonition.question, .admonition.caution { border-left-color: var(--caution-fg); background: var(--caution-bg); }
+.admonition.question .admonition-title, .admonition.caution .admonition-title { color: var(--caution-fg); }
+.admonition.warning, .admonition.pitfall { border-left-color: var(--warning-fg); background: var(--warning-bg); }
+.admonition.warning .admonition-title, .admonition.pitfall .admonition-title { color: var(--warning-fg); }
+
+/* Math (placeholder rendering) */
+.math { overflow-x: auto; margin: 1.2rem 0; font-family: var(--mono); color: var(--muted); }
+
+/* Companion appendices — entries, field lists, bibliography */
+.prose .entry { margin: 0 0 1.6rem; padding-bottom: 1.2rem; border-bottom: 1px solid var(--rule); }
+.prose .entry:last-child { border-bottom: 0; }
+.prose dl.fields { display: grid; grid-template-columns: max-content 1fr; gap: .2rem .9rem; margin: .4rem 0; }
+.prose dl.fields dt { font-weight: 650; color: var(--muted); font-size: .9rem; }
+.prose dl.fields dd { margin: 0; }
+.prose dl.fields dl.fields { grid-column: 1 / -1; margin-left: 1rem; }
+.prose .bibliography .ref { margin: 0 0 .8rem; padding-left: 1.6rem; text-indent: -1.6rem; }
+.prose .bibliography .ref-title { font-style: italic; }
+.prose .bibliography .ref-author { font-weight: 650; }
+.prose .card { margin: .6rem 0; padding: .7rem .9rem; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; }
+.prose .card h4 { margin: 0 0 .4rem; color: var(--accent); }
+.prose .card dl.fields { margin: 0; }
+
+/* Sortable / filterable lexicon (Language) */
+.prose .lexicon-count { color: var(--faint); font-size: .85rem; margin: 0 0 .5rem; }
+.prose .lexicon-filter { width: 100%; max-width: 24rem; padding: .45rem .7rem; margin: 0 0 .8rem; font: inherit; font-size: .95rem; color: var(--text); background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; }
+.prose table.lexicon th { cursor: pointer; user-select: none; white-space: nowrap; }
+.prose table.lexicon th:hover { color: var(--accent); }
+.prose table.lexicon th[aria-sort="ascending"]::after { content: " ▲"; color: var(--accent); font-size: .7em; }
+.prose table.lexicon th[aria-sort="descending"]::after { content: " ▼"; color: var(--accent); font-size: .7em; }
+.prose table.lexicon td:first-child { font-weight: 650; }
+
+/* Pager */
+.pager { display: flex; justify-content: space-between; gap: 1rem; margin: 3rem auto 0; max-width: var(--measure); padding-top: 1.4rem; border-top: 1px solid var(--rule); }
+.pager a { color: var(--muted); font-size: .95rem; }
+.pager a:hover { color: var(--accent); text-decoration: none; }
+.pager-dir { color: var(--accent); }
+.pager-next { text-align: right; margin-left: auto; }
+
+/* Footer */
+.site-footer { max-width: var(--measure); margin: 3rem auto 0; padding-top: 1.2rem; border-top: 1px solid var(--rule); color: var(--faint); font-size: .85rem; }
+.site-footer p { margin: .2rem 0; }
+.footer-built { font-family: var(--mono); font-size: .78rem; }
+
+/* Mobile nav toggle */
+.nav-open, .nav-close { display: none; }
+@media (max-width: 52rem) {
+  .sidebar {
+    position: fixed; left: 0; top: 0; z-index: 20; transform: translateX(-100%);
+    transition: transform .2s ease; box-shadow: 0 0 2rem rgba(0,0,0,.15);
+  }
+  .nav-toggle:checked ~ .layout .sidebar { transform: translateX(0); }
+  .nav-open { display: inline-block; font-size: 1.5rem; color: var(--muted); cursor: pointer; margin-bottom: 1rem; }
+  .nav-close { display: block; position: absolute; right: 1rem; top: .8rem; font-size: 1.6rem; color: var(--muted); cursor: pointer; line-height: 1; }
+  .content { padding-top: 1.4rem; }
+}
