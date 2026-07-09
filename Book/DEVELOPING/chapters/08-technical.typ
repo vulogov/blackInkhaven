@@ -231,10 +231,13 @@ a correct instruction fails a real user.
 
 #section("Produce")
 
-`export pdf|epub|docx` renders the manual; scope by status so a release ships only
-the pages reviewed against it (`--status ready`), leaving the stubs for next time.
-Many technical documents also live as a website or a wiki — the structured tree and
-the Markdown export make that a mechanical step rather than a rewrite.
+`export pdf|epub|docx|html` renders the manual; scope by status so a release ships
+only the pages reviewed against it (`--status ready`), leaving the stubs for next
+time. Before you cut, `inkhaven docs review` shows the readiness of every chapter and
+lists what is still below `ready` — and `docs review --since <release-tag>` flags the
+pages whose source changed since your last release, so you re-read exactly those.
+Many technical documents also live as a website — `export html` renders a
+self-contained one directly (see the companion, _Publish Your Book to the Web_).
 
 #section("Hands-on: two procedures")
 

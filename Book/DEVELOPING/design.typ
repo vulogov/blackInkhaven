@@ -10,7 +10,7 @@
 #let book_subtitle = "An Author's Guide to Every Kind of Book — Choosing a Track and Building It"
 #let book_author   = "Vladimir Ulogov"
 #let book_year     = "2026"
-#let book_version  = "Inkhaven 1.6.10"
+#let book_version  = "Inkhaven 1.6.11"
 
 // ── Palette — warm paper, earth ink, growth-green accents ───────────
 #let ink_black   = rgb("#1e1a15")
@@ -259,8 +259,8 @@
     fill: ink_code_bg, stroke: 0.5pt + ink_rule, inset: 7pt, radius: 2pt, width: 100%,
     text(font: mono_family, size: 9pt, it),
   )
-  show raw.where(block: false): it => box(
-    fill: ink_code_bg, inset: (x: 2pt, y: 0pt), outset: (y: 2pt), radius: 1pt,
+  show raw.where(block: false): it => highlight(
+    fill: ink_code_bg, extent: 1.5pt, radius: 1pt,
     text(font: mono_family, size: 9.5pt, it),
   )
 
