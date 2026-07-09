@@ -22,6 +22,122 @@ pub fn run(project: &Path, cmd: DocsCommand) -> Result<()> {
             verify(project, book_name.as_deref(), paragraph.as_deref(), dry_run, yes)
         }
         DocsCommand::Links { book_name, external } => links(project, book_name.as_deref(), external),
+        DocsCommand::Review { book_name, floor, since } => {
+            review(project, book_name.as_deref(), &floor, since.as_deref())
+        }
+    }
+}
+
+/// TDOC-5 — the canonical status ladder (lowest → highest).
+const STATUS_NAMES: &[&str] = &["none", "napkin", "first", "second", "third", "final", "ready"];
+
+/// TDOC-5 — a review/currency dashboard.
+fn review(project: &Path, book_name: Option<&str>, floor: &str, since: Option<&str>) -> Result<()> {
+    let (_cfg, _store, h) = open(project)?;
+    let floor_idx = STATUS_NAMES
+        .iter()
+        .position(|n| n.eq_ignore_ascii_case(floor.trim()))
+        .ok_or_else(|| anyhow::anyhow!("unknown --floor `{floor}`. Valid: {}", STATUS_NAMES.join(", ")))?;
+
+    // `--since <ref>`: files changed since a git ref (relative to the project).
+    let changed: Option<std::collections::HashSet<String>> = since.map(|r| git_changed_files(project, r));
+
+    let mut total = 0usize;
+    let mut ready = 0usize;
+    let mut below: Vec<(String, String, bool)> = Vec::new(); // (loc, status, changed)
+    let mut changed_count = 0usize;
+
+    for book in h
+        .children_of(None)
+        .into_iter()
+        .filter(|n| n.kind == NodeKind::Book && n.system_tag.is_none())
+    {
+        if let Some(name) = book_name {
+            if !book.title.eq_ignore_ascii_case(name.trim()) {
+                continue;
+            }
+        }
+        println!("\ndocs review — {}", book.title);
+        for chapter in h.children_of(Some(book.id)).into_iter().filter(|n| n.kind == NodeKind::Chapter) {
+            let mut counts: std::collections::BTreeMap<usize, usize> = std::collections::BTreeMap::new();
+            let mut ch_below = 0usize;
+            for id in h.collect_subtree(chapter.id) {
+                let Some(node) = h.get(id) else { continue };
+                if node.kind != NodeKind::Paragraph || node.event.is_some() {
+                    continue;
+                }
+                total += 1;
+                let idx = crate::export::status_ladder_index(node.status.as_deref());
+                *counts.entry(idx).or_default() += 1;
+                if idx >= 6 {
+                    ready += 1;
+                }
+                let is_changed = node
+                    .file
+                    .as_deref()
+                    .zip(changed.as_ref())
+                    .is_some_and(|(f, set)| set.contains(f));
+                if is_changed {
+                    changed_count += 1;
+                }
+                if idx < floor_idx {
+                    ch_below += 1;
+                    below.push((h.slug_path(node), STATUS_NAMES[idx].to_string(), is_changed));
+                }
+            }
+            if counts.is_empty() {
+                continue;
+            }
+            let breakdown: Vec<String> = counts
+                .iter()
+                .rev()
+                .map(|(idx, n)| format!("{} {}", STATUS_NAMES[*idx], n))
+                .collect();
+            let flag = if ch_below > 0 { format!("   [{ch_below} below `{floor}`]") } else { String::new() };
+            println!("  {}\n    {}{flag}", chapter.title, breakdown.join(" · "));
+        }
+    }
+
+    if !below.is_empty() {
+        println!("\nBelow `{floor}` (needs work):");
+        for (loc, status, is_changed) in &below {
+            let mark = if *is_changed { "   ← changed since ref" } else { "" };
+            println!("  - {loc}  ({status}){mark}");
+        }
+    }
+
+    let since_note = match since {
+        Some(r) => format!(" · {changed_count} changed since {r}"),
+        None => String::new(),
+    };
+    println!(
+        "\ndocs review: {total} paragraphs · {ready} ready · {} below `{floor}`{since_note}",
+        below.len()
+    );
+    if !below.is_empty() {
+        bail!("{} paragraph(s) below `{floor}`", below.len());
+    }
+    Ok(())
+}
+
+/// Files changed since a git ref, relative to the project. Empty (with a note) when
+/// the project is not a git repo or the ref is unknown.
+fn git_changed_files(project: &Path, since: &str) -> std::collections::HashSet<String> {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(project)
+        .args(["diff", "--name-only", "--relative", since, "--", "."])
+        .output();
+    match out {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect(),
+        _ => {
+            eprintln!("docs review: --since needs a git repo and a valid ref; skipping change detection");
+            std::collections::HashSet::new()
+        }
     }
 }
 

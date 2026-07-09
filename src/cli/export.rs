@@ -72,7 +72,7 @@ pub fn run(
                 let out = output.ok_or_else(|| {
                     Error::Store("HTML export needs --output <dir>".into())
                 })?;
-                export::html::export_html(&layout, &h, &cfg, scope.root_id, profiles, out, templates)
+                export::html::export_html(&layout, &h, &cfg, scope.root_id, profiles, floor_idx, out, templates)
                     .map_err(|e| Error::Store(format!("html export: {e:#}")))?;
                 eprintln!("wrote HTML site to {}", out.display());
                 Ok(())
