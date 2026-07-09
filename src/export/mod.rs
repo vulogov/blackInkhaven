@@ -213,7 +213,7 @@ fn profile_matches(tags: &[String], profiles: &[(String, String)]) -> bool {
 
 /// Map a paragraph's `status` field to its ladder index. Unknown
 /// values + None both collapse to 0 (`none`).
-fn status_ladder_index(s: Option<&str>) -> usize {
+pub(crate) fn status_ladder_index(s: Option<&str>) -> usize {
     let Some(s) = s else { return 0 };
     match s.trim().to_ascii_lowercase().as_str() {
         "none" | "" => 0,
