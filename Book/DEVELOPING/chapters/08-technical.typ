@@ -171,6 +171,44 @@ appears. Dimensions you do not name are left alone — so the plain `export` wit
   reach for copy-paste. Two copies drift; one source with two profiles cannot.
 ]
 
+#section("Publish it as a website")
+
+Technical documentation usually lives as a website, so Inkhaven exports one directly:
+
+```
+inkhaven export html -o site/
+```
+
+That produces a *100% self-contained* static site — one page per chapter, a sidebar
+table of contents, a clean reading theme, and your images copied alongside. There are
+no external dependencies: no CDN, no web fonts, no scripts loaded from elsewhere, so
+the folder opens from disk or drops onto any static host and renders identically
+offline. The chrome is localised to the book's `language`, single-sourcing variables
+and `--profile` slices apply exactly as they do for PDF, and site-wide values (title,
+author, subtitle) come from an `html.hjson` file.
+
+You do not need to write any templates — a bare `export html` renders a complete,
+styled book from templates embedded in the binary. When you want to customise, write
+the defaults out and point the exporter at your copy:
+
+```
+inkhaven export html --eject-templates my-templates/
+inkhaven export html -o site/ --templates my-templates/
+```
+
+The templates split into `functional/` (the page skeleton and navigation — the
+machinery) and `theme/` (the stylesheet and visual partials — the look). Any file you
+keep overrides that one default; everything else keeps working. So a designer can
+restyle `theme/theme.css` without ever touching the navigation logic.
+
+#insight[
+  The split between _functional_ and _visual_ templates is deliberate. The machinery
+  — how the contents tree becomes a sidebar, how pages link — is the part you want to
+  leave alone; the look is the part you want to own. Keeping them apart means you can
+  make the site yours without inheriting the maintenance of the parts you did not
+  change.
+]
+
 #section("Read — precision, and the reader who has your context and the one who doesn't")
 
 The reading pass here is about clarity and completeness, not craft. Turn the
