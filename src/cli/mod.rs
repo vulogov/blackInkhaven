@@ -2165,6 +2165,23 @@ pub enum DocsCommand {
         #[arg(long)]
         external: bool,
     },
+    /// TDOC-5 — a review/currency dashboard: per-chapter status breakdown, the
+    /// paragraphs still below a readiness floor, and — with `--since <ref>` — the
+    /// paragraphs whose file changed since a git tag/commit (so they want a
+    /// re-read). Exits non-zero when any paragraph is below the floor.
+    Review {
+        /// Limit to one user book (default: all user books).
+        #[arg(long)]
+        book_name: Option<String>,
+        /// Readiness floor to measure against: `napkin` | `first` | `second` |
+        /// `third` | `final` | `ready`. Default `ready`.
+        #[arg(long, default_value = "ready")]
+        floor: String,
+        /// Flag paragraphs whose `.typ` file changed since this git ref (a tag or
+        /// commit) — the "re-review since the last release" view.
+        #[arg(long)]
+        since: Option<String>,
+    },
 }
 
 /// 1.4.1+ BOOK_RAG-1 — `inkhaven book-rag …` sub-subcommands. The terminal

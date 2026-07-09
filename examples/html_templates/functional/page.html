@@ -13,6 +13,12 @@
     <aside class="sidebar">
       {% include "header.html" %}
       <label for="nav-toggle" class="nav-close" aria-hidden="true">×</label>
+      {% if search %}
+      <div class="site-search-box">
+        <input type="search" class="site-search" placeholder="{{ labels.search }}…" aria-label="{{ labels.search }}">
+        <ul class="site-search-results"></ul>
+      </div>
+      {% endif %}
       <nav class="toc" aria-label="{{ labels.contents }}">
         <p class="toc-title">{{ labels.contents }}</p>
         <ul class="nav">
@@ -51,5 +57,9 @@
       {% include "footer.html" %}
     </main>
   </div>
+  {% if search %}
+  <script src="{{ page.root }}search-index.js"></script>
+  <script src="{{ page.root }}search.js"></script>
+  {% endif %}
 </body>
 </html>

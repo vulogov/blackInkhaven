@@ -83,6 +83,18 @@ a:hover { color: var(--link-hover); text-decoration: underline; text-underline-o
 .brand-title { display: block; font-size: 1.22rem; font-weight: 600; color: var(--text); line-height: 1.25; }
 .brand-sub { display: block; margin-top: .25rem; font-size: .86rem; font-style: italic; color: var(--muted); }
 
+/* Site search */
+.site-search-box { position: relative; margin: 0 0 1rem; }
+.site-search { width: 100%; padding: .45rem .7rem; font: inherit; font-size: .9rem; color: var(--text); background: var(--bg); border: 1px solid var(--rule); border-radius: 6px; }
+.site-search:focus { outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: 1px; }
+.site-search-results { list-style: none; margin: .3rem 0 0; padding: 0; display: none; }
+.site-search-results[data-open] { display: block; max-height: 60vh; overflow-y: auto; border: 1px solid var(--rule); border-radius: 6px; background: var(--bg); }
+.site-search-results li { padding: .4rem .6rem; border-bottom: 1px solid var(--rule); font-size: .9rem; }
+.site-search-results li:last-child { border-bottom: 0; }
+.site-search-results li.no-hit { color: var(--faint); font-style: italic; }
+.site-search-results a { display: block; color: var(--accent); font-weight: 600; }
+.search-snip { display: block; color: var(--muted); font-size: .82rem; margin-top: .15rem; }
+
 /* Nav / TOC */
 .toc-title { margin: 0 0 .5rem; font-size: .72rem; letter-spacing: .12em; text-transform: uppercase; color: var(--faint); font-family: var(--mono); }
 .nav, .nav-sub { list-style: none; margin: 0; padding: 0; }

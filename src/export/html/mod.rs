@@ -8,6 +8,7 @@ mod companions;
 mod labels;
 mod markdown_html;
 mod render;
+mod search;
 mod templates;
 mod toc;
 mod world_html;
@@ -32,12 +33,14 @@ pub use templates::eject as eject_templates;
 ///
 /// `templates_override` (from `--templates <dir>`) wins over the config
 /// `docs.html.template_dir`; either may be absolute or project-relative.
+#[allow(clippy::too_many_arguments)]
 pub fn export_html(
     layout: &ProjectLayout,
     h: &Hierarchy,
     cfg: &Config,
     root_id: Option<Uuid>,
     profiles: &[(String, String)],
+    status_floor: Option<usize>,
     out_dir: &Path,
     templates_override: Option<&Path>,
 ) -> Result<()> {
@@ -84,7 +87,7 @@ pub fn export_html(
     let mut index_html = String::new();
     for id in &model.front_matter {
         let Some(node) = h.get(*id) else { continue };
-        if !super::profile_matches(&node.tags, profiles) {
+        if !super::profile_matches(&node.tags, profiles) || below_floor(node, status_floor) {
             continue;
         }
         if let Some(body) = read_body(layout, node) {
@@ -119,6 +122,9 @@ pub fn export_html(
                     ));
                 }
                 NodeKind::Paragraph => {
+                    if below_floor(n, status_floor) {
+                        continue;
+                    }
                     if let Some(body) = read_body(layout, n) {
                         content.push_str(&render::render_body(&n.tags, &body, variables));
                     }
@@ -160,8 +166,16 @@ pub fn export_html(
 
     // Render each page through the template.
     let mut collected = BTreeSet::new();
+    let mut search_docs: Vec<search::SearchDoc> = Vec::new();
     for i in 0..pages.len() {
         let content = assets::rewrite_images(&pages[i].content, &mut collected);
+        if hcfg.search {
+            search_docs.push(search::SearchDoc {
+                title: pages[i].title.clone(),
+                url: pages[i].file.clone(),
+                text: search::strip_html(&content),
+            });
+        }
         let nav: Vec<toc::NavItem> = base_nav
             .iter()
             .map(|it| toc::NavItem { current: it.href == pages[i].file, ..it.clone() })
@@ -178,6 +192,7 @@ pub fn export_html(
             site => site,
             vars => variables,
             labels => labels,
+            search => hcfg.search,
             nav => nav,
             page => minijinja::context! {
                 title => pages[i].title,
@@ -190,6 +205,12 @@ pub fn export_html(
         };
         let rendered = tmpl.render_page(ctx)?;
         std::fs::write(out_dir.join(&pages[i].file), rendered)?;
+    }
+
+    // TDOC-4.2 — the client-side search corpus + script (self-contained).
+    if hcfg.search {
+        std::fs::write(out_dir.join("search-index.js"), search::build_index_js(&search_docs))?;
+        std::fs::write(out_dir.join("search.js"), search::SEARCH_JS)?;
     }
 
     assets::copy_assets(&layout.root, out_dir, &collected)?;
@@ -221,6 +242,14 @@ fn resolve_book(h: &Hierarchy, root_id: Option<Uuid>) -> Result<&Node> {
 fn read_body(layout: &ProjectLayout, node: &Node) -> Option<String> {
     let rel = node.file.as_ref()?;
     std::fs::read_to_string(layout.root.join(rel)).ok()
+}
+
+/// Whether a paragraph sits below the `--status` floor (so the export skips it).
+fn below_floor(node: &Node, floor: Option<usize>) -> bool {
+    match floor {
+        Some(f) => super::status_ladder_index(node.status.as_deref()) < f,
+        None => false,
+    }
 }
 
 /// Parse the site variables file (`html.hjson`) into a JSON value for templates.
