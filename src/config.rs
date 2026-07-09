@@ -3922,6 +3922,74 @@ pub struct DocsConfig {
     /// replaced by its value at assembly, across every export. Empty = no
     /// substitution.
     pub variables: std::collections::BTreeMap<String, String>,
+    /// TDOC-4 — HTML static-site export (`inkhaven export html -o <dir>`).
+    pub html: DocsHtmlConfig,
+}
+
+/// TDOC-4 — HTML static-site export settings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DocsHtmlConfig {
+    /// Site title; `null` → the exported user book's title.
+    pub site_title: Option<String>,
+    /// Bundled theme name (only `default` today).
+    pub theme: String,
+    /// Optional project override root holding `functional/` and/or `theme/`
+    /// template files (default `html/`); a file present there wins over the
+    /// bundled default. See `examples/html_templates/`.
+    pub template_dir: String,
+    /// HJSON file whose parsed contents are exposed to templates as `site`.
+    pub variables_file: String,
+    /// TDOC-4.2 — build the client-side search index (accepted now, wired later).
+    pub search: bool,
+    /// TDOC-4.2 — `author-year` | `numeric` (accepted now, wired later).
+    pub citation_style: String,
+    /// TDOC-4.3+ — which companion books to fold into the site (accepted now,
+    /// wired in later phases).
+    pub include: DocsHtmlInclude,
+}
+
+impl Default for DocsHtmlConfig {
+    fn default() -> Self {
+        Self {
+            site_title: None,
+            theme: "default".into(),
+            template_dir: "html".into(),
+            variables_file: "html.hjson".into(),
+            search: true,
+            citation_style: "author-year".into(),
+            include: DocsHtmlInclude::default(),
+        }
+    }
+}
+
+/// TDOC-4 — companion-book inclusion toggles for the HTML site.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DocsHtmlInclude {
+    pub sources: bool,
+    pub glossary: bool,
+    pub characters: bool,
+    pub places: bool,
+    pub language: bool,
+    pub world: bool,
+    pub mythology: bool,
+    pub notes: bool,
+}
+
+impl Default for DocsHtmlInclude {
+    fn default() -> Self {
+        Self {
+            sources: true,
+            glossary: true,
+            characters: false,
+            places: false,
+            language: false,
+            world: false,
+            mythology: false,
+            notes: false,
+        }
+    }
 }
 
 /// TDOC-1 — verified code blocks (`inkhaven docs verify`). Off by default; a
