@@ -7,6 +7,7 @@ use crate::config::Config;
 use crate::project::ProjectLayout;
 use crate::store::hierarchy::Hierarchy;
 use crate::store::node::{Node, NodeKind};
+use crate::store::Store;
 
 use super::markdown_html::{escape_html, slugify};
 use super::render;
@@ -19,7 +20,7 @@ pub struct CompanionPage {
 }
 
 /// Build an appendix page for each enabled companion book, in a stable order.
-pub fn build(layout: &ProjectLayout, h: &Hierarchy, cfg: &Config) -> Vec<CompanionPage> {
+pub fn build(layout: &ProjectLayout, store: &Store, h: &Hierarchy, cfg: &Config) -> Vec<CompanionPage> {
     use crate::store::{
         SYSTEM_TAG_CHARACTERS, SYSTEM_TAG_GLOSSARY, SYSTEM_TAG_LANGUAGES, SYSTEM_TAG_MYTHOLOGY,
         SYSTEM_TAG_NOTES, SYSTEM_TAG_PLACES, SYSTEM_TAG_SOURCES, SYSTEM_TAG_WORLD,
@@ -47,9 +48,9 @@ pub fn build(layout: &ProjectLayout, h: &Hierarchy, cfg: &Config) -> Vec<Compani
             continue;
         };
         let content = if *tag == SYSTEM_TAG_SOURCES {
-            render_sources(layout, h, book.id)
+            render_sources(layout, h, book.id, &cfg.docs.html.citation_style)
         } else if *tag == SYSTEM_TAG_LANGUAGES {
-            render_language(layout, h, book.id)
+            render_language(store, h, book.id)
         } else if *tag == SYSTEM_TAG_WORLD {
             render_world(layout, h, book.id)
         } else {
@@ -110,7 +111,15 @@ fn render_generic(layout: &ProjectLayout, h: &Hierarchy, book_id: uuid::Uuid, ti
 
 /// TDOC-4.4 — the Language book: a sortable/filterable lexicon table per invented
 /// language, plus any grammar / sample prose. Returns `""` when nothing is defined.
-fn render_language(layout: &ProjectLayout, h: &Hierarchy, lang_root_id: uuid::Uuid) -> String {
+fn render_language(store: &Store, h: &Hierarchy, lang_root_id: uuid::Uuid) -> String {
+    use crate::cli::language::{
+        load_dictionary, load_expressions, load_grammar_spec, load_morphology, load_phonology,
+        load_samples,
+    };
+    use crate::conlang::analysis;
+    use crate::conlang::output::{grammar_markdown, GrammarBook};
+    use super::markdown_html::markdown_to_html;
+
     let mut body = String::new();
     let mut any_table = false;
     for lang in h
@@ -118,38 +127,56 @@ fn render_language(layout: &ProjectLayout, h: &Hierarchy, lang_root_id: uuid::Uu
         .into_iter()
         .filter(|n| n.kind == NodeKind::Book)
     {
-        let entries = load_dictionary_from_disk(layout, h, lang.id);
+        let entries = load_dictionary(store, h, lang).unwrap_or_default();
         if !entries.is_empty() {
             body.push_str(&lexicon_table(&lang.title, &entries));
             any_table = true;
         }
 
-        // Grammar / Phonology / Sample-text chapters — rendered as prose/HJSON.
-        for ch in h
-            .children_of(Some(lang.id))
-            .into_iter()
-            .filter(|n| n.kind == NodeKind::Chapter)
-        {
-            let t = ch.title.to_ascii_lowercase();
-            if t == "dictionary" || t == "meta" {
-                continue;
-            }
-            let mut sec = String::new();
-            for id in h.collect_subtree(ch.id) {
-                let Some(n) = h.get(id) else { continue };
-                if n.kind != NodeKind::Paragraph {
-                    continue;
-                }
-                let Some(raw) = read_body(layout, n) else { continue };
-                sec.push_str(&render_entry(&n.title, n.content_type.as_deref(), &raw));
-            }
-            if !sec.trim().is_empty() {
-                body.push_str(&format!(
-                    "<h2 id=\"{}\">{} — {}</h2>\n{sec}",
-                    slugify(&format!("{}-{}", lang.title, ch.title)),
-                    escape_html(&lang.title),
-                    escape_html(&ch.title)
-                ));
+        // A full grammar reference, as the CLI's grammar-book Markdown export
+        // assembles it (without the AI study guide / example sentence / variation).
+        let phon = load_phonology(store, h, lang).ok().flatten().unwrap_or_default();
+        let morphology = load_morphology(store, h, lang).ok().flatten();
+        let grammar_spec = load_grammar_spec(store, h, lang).map(|(g, _)| g).unwrap_or_default();
+        let expressions = load_expressions(store, h, lang).map(|(e, _)| e).unwrap_or_default();
+        let samples = load_samples(store, h, lang).unwrap_or_default();
+        let has_grammar = morphology.is_some()
+            || !samples.is_empty()
+            || !grammar_spec.grammar.is_empty()
+            || !expressions.idioms.is_empty();
+        if !entries.is_empty() || has_grammar {
+            let profile = analysis::profile(&phon, &entries);
+            let has_expr = !expressions.idioms.is_empty() || !expressions.metaphors.is_empty();
+            let gbook = GrammarBook {
+                language: &lang.title,
+                font_family: None,
+                profile: &profile,
+                phonology: &phon,
+                morphology: morphology.as_ref(),
+                typology: &grammar_spec.grammar,
+                expressions: has_expr.then_some(&expressions),
+                samples: &samples,
+                study: None,
+                example_sentence: None,
+                variation: None,
+            };
+            let gmd = grammar_markdown(&gbook);
+            if !gmd.trim().is_empty() {
+                // Demote its headings one level so `# … Grammar` sits under the
+                // page's single `<h1>Language</h1>`.
+                let demoted: String = gmd
+                    .lines()
+                    .map(|l| {
+                        let h = l.chars().take_while(|c| *c == '#').count();
+                        if (1..=5).contains(&h) && l.as_bytes().get(h) == Some(&b' ') {
+                            format!("#{l}")
+                        } else {
+                            l.to_string()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                body.push_str(&markdown_to_html(&demoted));
             }
         }
     }
@@ -345,7 +372,7 @@ fn scalar_text(v: &serde_json::Value) -> String {
 }
 
 /// Sources → a formatted, author-sorted bibliography.
-fn render_sources(layout: &ProjectLayout, h: &Hierarchy, book_id: uuid::Uuid) -> String {
+fn render_sources(layout: &ProjectLayout, h: &Hierarchy, book_id: uuid::Uuid, style: &str) -> String {
     let mut entries: Vec<crate::sources::BibEntry> = Vec::new();
     for id in h.collect_subtree(book_id) {
         let Some(n) = h.get(id) else { continue };
@@ -362,20 +389,28 @@ fn render_sources(layout: &ProjectLayout, h: &Hierarchy, book_id: uuid::Uuid) ->
     }
     entries.sort_by(|a, b| a.author.cmp(&b.author).then(a.year.cmp(&b.year)));
 
-    let mut out = String::from("<h1>Sources</h1>\n<div class=\"bibliography\">\n");
-    for e in &entries {
-        out.push_str(&format_reference(e));
+    let numeric = style.trim().eq_ignore_ascii_case("numeric");
+    let mut out = format!("<h1>Sources</h1>\n<div class=\"bibliography{}\">\n", if numeric { " numeric" } else { "" });
+    for (i, e) in entries.iter().enumerate() {
+        out.push_str(&format_reference(e, numeric.then_some(i + 1)));
     }
     out.push_str("</div>\n");
     out
 }
 
-fn format_reference(e: &crate::sources::BibEntry) -> String {
+/// Format one reference. `number = Some(n)` selects a numbered (Vancouver-ish)
+/// style; `None` selects author-year.
+fn format_reference(e: &crate::sources::BibEntry, number: Option<usize>) -> String {
     let mut s = format!("<p class=\"ref\" id=\"{}\">", escape_html(&e.key));
-    if !e.author.is_empty() {
-        s.push_str(&format!("<span class=\"ref-author\">{}</span> ", escape_html(&e.author)));
+    if let Some(n) = number {
+        s.push_str(&format!("<span class=\"ref-num\">[{n}]</span> "));
     }
-    if !e.year.is_empty() {
+    if !e.author.is_empty() {
+        s.push_str(&format!("<span class=\"ref-author\">{}</span>", escape_html(&e.author)));
+        s.push_str(if number.is_some() { ". " } else { " " });
+    }
+    // Author-year puts the year right after the author, in parentheses.
+    if number.is_none() && !e.year.is_empty() {
         s.push_str(&format!("({}). ", escape_html(&e.year)));
     }
     if !e.title.is_empty() {
@@ -385,6 +420,10 @@ fn format_reference(e: &crate::sources::BibEntry) -> String {
         s.push_str(&format!("<em>{}</em>. ", escape_html(j)));
     } else if let Some(p) = e.publisher.as_deref().filter(|s| !s.is_empty()) {
         s.push_str(&format!("{}. ", escape_html(p)));
+    }
+    // Numbered style puts the year here, at the end.
+    if number.is_some() && !e.year.is_empty() {
+        s.push_str(&format!("{}. ", escape_html(&e.year)));
     }
     if let Some(url) = e.url.as_deref().filter(|s| !s.is_empty()) {
         s.push_str(&format!("<a href=\"{}\">{}</a>", escape_html(url), escape_html(url)));
@@ -431,10 +470,15 @@ mod tests {
             url: Some("https://x.example".into()),
             ..Default::default()
         };
-        let s = format_reference(&e);
-        assert!(s.contains("id=\"smith2020\""));
-        assert!(s.contains("<span class=\"ref-author\">Smith, J.</span>"));
-        assert!(s.contains("(2020)."));
-        assert!(s.contains("<a href=\"https://x.example\">"));
+        let ay = format_reference(&e, None);
+        assert!(ay.contains("id=\"smith2020\""));
+        assert!(ay.contains("<span class=\"ref-author\">Smith, J.</span>"));
+        assert!(ay.contains("(2020)."), "author-year: {ay}");
+        assert!(ay.contains("<a href=\"https://x.example\">"));
+
+        let num = format_reference(&e, Some(3));
+        assert!(num.contains("<span class=\"ref-num\">[3]</span>"), "numeric: {num}");
+        assert!(!num.contains("(2020)"), "numeric puts year at the end, no parens");
+        assert!(num.contains("A Study</span>. "));
     }
 }
