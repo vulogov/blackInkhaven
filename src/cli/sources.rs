@@ -23,6 +23,13 @@ use super::SourcesCommand;
 pub fn run(project: &Path, cmd: SourcesCommand) -> Result<()> {
     match cmd {
         SourcesCommand::Check { book_name, json } => check(project, book_name.as_deref(), json),
+        SourcesCommand::Coverage { book_name, json, ai, provider } => {
+            if ai {
+                coverage_ai(project, book_name.as_deref(), provider.as_deref(), json)
+            } else {
+                coverage(project, book_name.as_deref(), json)
+            }
+        }
         SourcesCommand::List { book_name, json } => list(project, book_name.as_deref(), json),
         SourcesCommand::Import { file, book_name } => {
             import(project, &file, book_name.as_deref())
@@ -214,6 +221,257 @@ struct MissingCite {
     book: String,
     paragraph: String,
     key: String,
+}
+
+/// NF-CITE — the Sourcing pass: flag uncited factual claims across the manuscript.
+fn coverage(project: &Path, book_name: Option<&str>, json: bool) -> Result<()> {
+    let (_cfg, store, h) = open(project)?;
+
+    let user_books: Vec<&Node> = match book_name {
+        Some(_) => vec![
+            super::resolve_user_book(&h, book_name, "sources coverage").map_err(Error::Store)?,
+        ],
+        None => h
+            .children_of(None)
+            .into_iter()
+            .filter(|n| n.kind == NodeKind::Book && n.system_tag.is_none())
+            .collect(),
+    };
+
+    let mut findings: Vec<CoverageFinding> = Vec::new();
+    for book in &user_books {
+        for id in h.collect_subtree(book.id) {
+            let Some(node) = h.get(id) else { continue };
+            if node.kind != NodeKind::Paragraph {
+                continue;
+            }
+            // The author's "this section is common knowledge" override.
+            if node.tags.iter().any(|t| t == "no-cite") {
+                continue;
+            }
+            let Some(body) = read_body(&store, node) else { continue };
+            for claim in crate::sources::coverage::scan(&body) {
+                findings.push(CoverageFinding {
+                    book: book.title.clone(),
+                    loc: h.slug_path(node),
+                    sentence: claim.sentence,
+                    signals: claim.signals.join(", "),
+                });
+            }
+        }
+    }
+
+    if json {
+        let arr: Vec<_> = findings
+            .iter()
+            .map(|f| {
+                serde_json::json!({
+                    "book": f.book, "location": f.loc,
+                    "sentence": f.sentence, "signals": f.signals,
+                })
+            })
+            .collect();
+        println!("{}", serde_json::json!({ "uncited_claims": arr, "count": findings.len() }));
+    } else if findings.is_empty() {
+        println!("sources coverage: every checkable claim carries a citation.");
+    } else {
+        let mut last = String::new();
+        for f in &findings {
+            let head = format!("{} · {}", f.book, f.loc);
+            if head != last {
+                println!("\n{head}");
+                last = head;
+            }
+            println!("  \u{201C}{}\u{201D}   [{}]", clip_sentence(&f.sentence, 100), f.signals);
+        }
+        println!(
+            "\nsources coverage: {} uncited claim(s). Cite them, or tag a paragraph `no-cite`.",
+            findings.len()
+        );
+    }
+
+    if findings.is_empty() {
+        Ok(())
+    } else {
+        std::process::exit(1);
+    }
+}
+
+struct CoverageFinding {
+    book: String,
+    loc: String,
+    sentence: String,
+    signals: String,
+}
+
+fn clip_sentence(s: &str, n: usize) -> String {
+    if s.chars().count() <= n {
+        s.to_string()
+    } else {
+        format!("{}\u{2026}", s.chars().take(n).collect::<String>())
+    }
+}
+
+const SOURCING_SYSTEM: &str = "You are a meticulous fact-checking editor for a nonfiction \
+manuscript. You are given a PASSAGE and a list of the author's RESEARCHED FACTS. Find \
+sentences in the PASSAGE that make a CHECKABLE FACTUAL CLAIM — a statistic, a specific date \
+or figure, an attributed finding, a historical or scientific assertion — and that do NOT \
+already contain a citation token (an @-word such as @smith2020). For each such sentence decide \
+whether one of the RESEARCHED FACTS supports it. Output ONE line per claim, exactly:\n\
+  <sentence> ||| SUPPORTED ||| <the supporting fact>\n\
+or\n\
+  <sentence> ||| UNSUPPORTED |||\n\
+Quote the sentence briefly (you may truncate with …). Do NOT invent facts, and do NOT flag \
+opinions, definitions, or common knowledge. If there are no such claims, output exactly: NONE";
+
+struct AiClaim {
+    book: String,
+    chapter: String,
+    sentence: String,
+    supported: bool,
+    fact: String,
+}
+
+fn build_sourcing_prompt(chapter: &str, prose: &str, facts: &[String]) -> String {
+    let facts_block = if facts.is_empty() {
+        "(none provided)".to_string()
+    } else {
+        facts.iter().map(|f| format!("- {f}")).collect::<Vec<_>>().join("\n")
+    };
+    format!(
+        "PASSAGE (chapter \"{chapter}\"):\n{prose}\n\nRESEARCHED FACTS:\n{facts_block}\n\n\
+         List the uncited checkable claims, one per line, in the required format."
+    )
+}
+
+fn parse_sourcing(raw: &str, book: &str, chapter: &str) -> Vec<AiClaim> {
+    let mut out = Vec::new();
+    for line in raw.lines() {
+        let line = line.trim().trim_start_matches(['-', '*', ' ']);
+        if line.is_empty() || line.eq_ignore_ascii_case("none") {
+            continue;
+        }
+        let parts: Vec<&str> = line.splitn(3, "|||").map(str::trim).collect();
+        if parts.len() < 2 {
+            continue;
+        }
+        let sentence = parts[0].trim_matches('"').trim().to_string();
+        if sentence.is_empty() {
+            continue;
+        }
+        let verdict = parts[1].to_lowercase();
+        let supported = verdict.contains("support") && !verdict.contains("unsupport");
+        out.push(AiClaim {
+            book: book.to_string(),
+            chapter: chapter.to_string(),
+            sentence,
+            supported,
+            fact: parts.get(2).map(|s| s.trim().to_string()).unwrap_or_default(),
+        });
+    }
+    out
+}
+
+/// NF-CITE AI track — catch subtler uncited claims and check each against the Facts book.
+fn coverage_ai(project: &Path, book_name: Option<&str>, provider: Option<&str>, json: bool) -> Result<()> {
+    use std::collections::HashSet;
+    use uuid::Uuid;
+
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
+    let h = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
+
+    // Facts book is optional — support-checking degrades gracefully to claim-finding.
+    let facts_ids: HashSet<Uuid> = h
+        .iter()
+        .find(|n| {
+            n.kind == NodeKind::Book
+                && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_FACTS)
+        })
+        .map(|n| h.collect_subtree(n.id).into_iter().collect())
+        .unwrap_or_default();
+
+    let ai = crate::ai::AiClient::from_config(&cfg.llm).map_err(|e| Error::Store(format!("{e:#}")))?;
+    let (model, _env) = ai
+        .resolve_provider(&cfg.llm, provider)
+        .map_err(|e| Error::Store(format!("{e:#}")))?;
+
+    let user_books: Vec<&Node> = match book_name {
+        Some(_) => vec![
+            super::resolve_user_book(&h, book_name, "sources coverage").map_err(Error::Store)?,
+        ],
+        None => h
+            .children_of(None)
+            .into_iter()
+            .filter(|n| n.kind == NodeKind::Book && n.system_tag.is_none())
+            .collect(),
+    };
+
+    let mut findings: Vec<AiClaim> = Vec::new();
+    for book in &user_books {
+        for chapter in h.children_of(Some(book.id)).into_iter().filter(|n| n.kind == NodeKind::Chapter) {
+            let prose = crate::cli::book_walk::chapter_raw_prose(&layout, &h, chapter.id);
+            let plain = crate::audiobook::typst_to_plain(&prose);
+            if plain.trim().is_empty() {
+                continue;
+            }
+            let facts = crate::cli::facts_scan::relevant_facts(&store, &h, &facts_ids, &plain, 12);
+            let prompt = build_sourcing_prompt(&chapter.title, &plain, &facts);
+            let raw = crate::cli::facts_scan::run_blocking(&ai, model, SOURCING_SYSTEM, &prompt)
+                .map_err(|e| Error::Store(format!("{e:#}")))?;
+            let claims = parse_sourcing(&raw, &book.title, &chapter.title);
+            eprintln!("cite coverage · {} → {} claim(s)", chapter.title, claims.len());
+            findings.extend(claims);
+        }
+    }
+
+    let unsupported = findings.iter().filter(|f| !f.supported).count();
+    let backed = findings.len() - unsupported;
+
+    if json {
+        let arr: Vec<_> = findings
+            .iter()
+            .map(|f| {
+                serde_json::json!({
+                    "book": f.book, "chapter": f.chapter, "sentence": f.sentence,
+                    "supported": f.supported, "supporting_fact": f.fact,
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::json!({ "claims": arr, "count": findings.len(), "unsupported": unsupported, "backed_by_facts": backed })
+        );
+    } else if findings.is_empty() {
+        println!("sources coverage (AI): every checkable claim carries a citation.");
+    } else {
+        let unsup: Vec<&AiClaim> = findings.iter().filter(|f| !f.supported).collect();
+        let sup: Vec<&AiClaim> = findings.iter().filter(|f| f.supported).collect();
+        if !unsup.is_empty() {
+            println!("\nUncited — your Facts don't cover these (research or cite):");
+            for f in &unsup {
+                println!("  {} · \u{201C}{}\u{201D}", f.chapter, clip_sentence(&f.sentence, 90));
+            }
+        }
+        if !sup.is_empty() {
+            println!("\nUncited — but your Facts support these (add the citation):");
+            for f in &sup {
+                println!("  {} · \u{201C}{}\u{201D}", f.chapter, clip_sentence(&f.sentence, 80));
+                if !f.fact.is_empty() {
+                    println!("      \u{2190} {}", clip_sentence(&f.fact, 90));
+                }
+            }
+        }
+        println!("\nsources coverage: {} uncited claim(s) — {unsupported} unsupported, {backed} backed by your Facts", findings.len());
+    }
+
+    if findings.is_empty() {
+        Ok(())
+    } else {
+        std::process::exit(1);
+    }
 }
 
 fn emit_check_human(total: usize, missing: &[MissingCite], all_scope: bool) {
@@ -411,4 +669,23 @@ fn import(project: &Path, file: &Path, book_name: Option<&str>) -> Result<()> {
         }
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod coverage_tests {
+    use super::{parse_sourcing};
+
+    #[test]
+    fn parse_sourcing_reads_verdicts_and_facts() {
+        let raw = "preamble without pipes to ignore\n\
+                   \"Deaths fell by 42%.\" ||| UNSUPPORTED |||\n\
+                   - \"Violence has declined.\" ||| SUPPORTED ||| Pinker (2011): homicide fell\n\
+                   malformed line\nNONE";
+        let claims = parse_sourcing(raw, "Bk", "Ch1");
+        assert_eq!(claims.len(), 2, "got {}", claims.len());
+        assert!(!claims[0].supported);
+        assert_eq!(claims[0].sentence, "Deaths fell by 42%.");
+        assert!(claims[1].supported);
+        assert_eq!(claims[1].fact, "Pinker (2011): homicide fell");
+    }
 }

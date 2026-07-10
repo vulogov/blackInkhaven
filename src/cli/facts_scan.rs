@@ -826,7 +826,7 @@ fn import(project: &Path, from: Option<&str>, yes: bool) -> Result<()> {
 /// to the Facts subtree; full bodies read from the store and flattened
 /// to plain text.  Keeps each chapter's prompt small even for a large
 /// Facts book (the FF.1 RAG idea, applied to the scan).
-fn relevant_facts(
+pub(crate) fn relevant_facts(
     store: &Store,
     hierarchy: &Hierarchy,
     facts_ids: &HashSet<Uuid>,
@@ -886,7 +886,7 @@ fn build_check_prompt(language: &str, chapter: &str, prose: &str, facts: &[Strin
     )
 }
 
-fn run_blocking(ai: &AiClient, model: &str, system: &str, prompt: &str) -> Result<String> {
+pub(crate) fn run_blocking(ai: &AiClient, model: &str, system: &str, prompt: &str) -> Result<String> {
     crate::ai::stream::collect_blocking(
         ai.client.clone(),
         model.to_string(),
