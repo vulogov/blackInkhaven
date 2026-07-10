@@ -684,6 +684,10 @@ pub enum Action {
     /// blocks against their configured runners; failures land in the Output pane.
     #[serde(rename = "docs.verify_paragraph")]
     DocsVerifyParagraph,
+    /// Ctrl+V Shift+C (NF-CITE) — the Sourcing pass on the open paragraph: flag
+    /// sentences that make a checkable factual claim but carry no `@key` citation.
+    #[serde(rename = "sources.coverage_paragraph")]
+    SourcingCheckParagraph,
     /// Ctrl+B Shift+X (1.2.21+) — AI fact-check of the
     /// open paragraph against the project's Facts book.
     /// Locks the AI scope to the local paragraph and
@@ -1065,6 +1069,7 @@ impl Action {
             Action::AiRewriteRhythm => "rhythm rewrite".into(),
             Action::AnalyseShowDontTell => "show↛tell AI".into(),
             Action::DocsVerifyParagraph => "verify code".into(),
+            Action::SourcingCheckParagraph => "cite check".into(),
             Action::FactCheck => "fact check".into(),
             Action::SearchFacts => "search facts".into(),
             Action::NextFactFinding => "next fact finding".into(),
@@ -1398,6 +1403,8 @@ impl Action {
                 "AI-driven show-don't-tell scan of the open paragraph (1.2.9+, Ctrl+B Shift+T). Sends the paragraph to the configured LLM with a system prompt asking for telling passages plus suggested rewrites. The response streams into the AI pane. Complements the always-on regex overlay (`editor.style_warnings.show_dont_tell`) with deeper analysis — the regex catches the obvious 2-grams (`was angry`, `realised`); the AI scan catches subtler instances and proposes alternatives. Mnemonic: T for tell.".into(),
             Action::DocsVerifyParagraph =>
                 "TDOC-1 — verify the open paragraph's code (Ctrl+B Shift+D). If the paragraph is a `para:code` listing, every fenced block marked `verify` in its info string (e.g. ```rust verify```) is written to a temp file and run through the project-configured runner for its language (`docs.verify.runners.<lang>`, via `sh -c`, with a per-block timeout). A block that exits non-zero — a stale example that no longer compiles — is flagged in the Output pane with the runner's output; passing blocks are quiet. Deterministic, zero AI, zero network. Requires `docs.verify.enabled: true`. For a whole-book / CI check, use `inkhaven docs verify`.".into(),
+            Action::SourcingCheckParagraph =>
+                "NF-CITE — the Sourcing pass on the open paragraph (Ctrl+V Shift+C). Splits the prose into sentences and flags any that make a checkable factual claim — a statistic, a date, a 6+-word quotation, or an attributed finding (\"according to…\", \"a study found…\") — while carrying no `@key` citation. Findings land in the Output pane on the paragraph, so you can source them (Ctrl+V @ inserts a citation) or, where a passage is genuine common knowledge, tag the paragraph `no-cite` to silence it. Deterministic, zero-AI, zero-network — the fast track. For the whole book, or a CI gate, use `inkhaven sources coverage`; its AI track adds Facts-book support. Mnemonic: C for Cite / Claim coverage, beside the Ctrl+V @ cite picker.".into(),
             Action::FactCheck =>
                 "AI fact-check of the open paragraph against the project's Facts book (1.2.21+, Ctrl+B Shift+X). Locks the AI scope to the local paragraph and grounds the check against every established world fact (climate, geography, seasons, distances, chronology), so the model flags any claim that contradicts the world — snow in a tropical region, a three-day ride that should be three weeks. With an empty Facts book it degrades to a generic local fact-check. Multilingual fact-analysis system prompt (en/ru/de/fr/es); prompt resolution: Prompts-book `fact-check` paragraph → `prompts.hjson` → embedded default. Streams the verdict into the AI pane. Mnemonic: X for fact eXamination. Pairs with the F9 `Facts` scope, which loads the same facts as a chat session.".into(),
             Action::SearchFacts =>
@@ -1720,6 +1727,9 @@ impl KeyBindings {
                 // 1.4.5+ SOURCES-1 — Ctrl+V @ cite picker (insert @key).
                 // Editor-scoped: the pick lands in the open buffer.
                 entry("@", Action::ViewCitePicker, Scope::Editor),
+                // NF-CITE — Ctrl+V Shift+C: the Sourcing pass on the open paragraph
+                // (Cite/Claim coverage), beside the cite picker.
+                entry("Shift+c", Action::SourcingCheckParagraph, Scope::Any),
                 // 1.4.9+ REUSE-1 — Ctrl+V x snippet insert/replace picker;
                 // Ctrl+V Shift+X the snippets overview.
                 entry("x", Action::InsertSnippetInclude, Scope::Editor),

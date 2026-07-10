@@ -2101,6 +2101,25 @@ pub enum SourcesCommand {
         #[arg(long)]
         json: bool,
     },
+    /// NF-CITE — the Sourcing pass: flag sentences that make a checkable factual
+    /// claim (a statistic, a date, a quotation, an attributed finding) but carry no
+    /// `@key` citation. A paragraph tagged `no-cite` is skipped. Exits non-zero when
+    /// any uncited claim is found — a pre-publish / CI gate for nonfiction.
+    Coverage {
+        /// Limit the scan to one user book (default: all user books).
+        #[arg(long)]
+        book_name: Option<String>,
+        /// Machine-readable JSON report.
+        #[arg(long)]
+        json: bool,
+        /// AI track: also catch subtler uncited claims and check each against your
+        /// Facts book for support (needs a configured model; costs tokens).
+        #[arg(long)]
+        ai: bool,
+        /// LLM provider override for the `--ai` track.
+        #[arg(long)]
+        provider: Option<String>,
+    },
     /// List the citation entries defined in the Sources book.
     List {
         /// Limit to the chapter named after this book.
