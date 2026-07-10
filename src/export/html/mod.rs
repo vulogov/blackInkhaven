@@ -154,6 +154,18 @@ pub fn export_html(
         });
     }
 
+    // INDEX-1 — a back-of-book index page, with each location a real anchor link.
+    if hcfg.include.index {
+        if let Some(content) = build_index_page(layout, store, h, cfg, &model) {
+            pages.push(Page {
+                file: "appendix-index.html".into(),
+                title: "Index".into(),
+                content,
+                is_index: false,
+            });
+        }
+    }
+
     // The nav lists every page (chapters, with their subsection anchors, then the
     // companion appendices) — one website, one contents list.
     let mut base_nav: Vec<toc::NavItem> = toc::nav(&model.chapters, "");
@@ -252,6 +264,80 @@ fn below_floor(node: &Node, floor: Option<usize>) -> bool {
         Some(f) => super::status_ladder_index(node.status.as_deref()) < f,
         None => false,
     }
+}
+
+/// INDEX-1 — build the back-of-book index page HTML (each location an anchor link),
+/// or `None` when there are no terms or no matches.
+fn build_index_page(
+    layout: &ProjectLayout,
+    store: &crate::store::Store,
+    h: &Hierarchy,
+    cfg: &Config,
+    model: &toc::SiteModel,
+) -> Option<String> {
+    let icfg = &cfg.docs.index;
+    let mut terms: Vec<String> = Vec::new();
+    let mut see_refs: Vec<(String, String)> = Vec::new();
+    if icfg.from_glossary {
+        for e in crate::glossary::glossary_entries_from_store(store, h, None) {
+            for syn in &e.synonyms {
+                see_refs.push((syn.clone(), e.term.clone()));
+            }
+            terms.push(e.term);
+        }
+    }
+    terms.extend(icfg.terms.iter().cloned());
+    if terms.is_empty() {
+        return None;
+    }
+
+    let mut units: Vec<crate::book_index::IndexUnit> = Vec::new();
+    for ch in &model.chapters {
+        for cnode in &ch.content {
+            if cnode.kind != NodeKind::Paragraph {
+                continue;
+            }
+            let Some(n) = h.get(cnode.id) else { continue };
+            if let Some(body) = read_body(layout, n) {
+                units.push(crate::book_index::IndexUnit {
+                    chapter: ch.title.clone(),
+                    anchor: ch.file.clone(),
+                    text: crate::audiobook::typst_to_plain(&body),
+                });
+            }
+        }
+    }
+    let entries = crate::book_index::build(&terms, &see_refs, &units);
+    if entries.is_empty() {
+        return None;
+    }
+
+    let mut s = String::from("<h1>Index</h1>\n<div class=\"book-index\">\n");
+    for e in &entries {
+        s.push_str(&format!(
+            "<p class=\"idx\"><span class=\"idx-term\">{}</span> — ",
+            markdown_html::escape_html(&e.term)
+        ));
+        if let Some(canonical) = &e.see {
+            s.push_str(&format!("<em>see</em> {}", markdown_html::escape_html(canonical)));
+        } else {
+            let links: Vec<String> = e
+                .locations
+                .iter()
+                .map(|l| {
+                    format!(
+                        "<a href=\"{}\">{}</a>",
+                        markdown_html::escape_html(&l.anchor),
+                        markdown_html::escape_html(&l.chapter)
+                    )
+                })
+                .collect();
+            s.push_str(&links.join(", "));
+        }
+        s.push_str("</p>\n");
+    }
+    s.push_str("</div>\n");
+    Some(s)
 }
 
 /// Parse the site variables file (`html.hjson`) into a JSON value for templates.

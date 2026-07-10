@@ -9564,7 +9564,14 @@ impl App {
             self.status = "cite: open a paragraph first (Ctrl+V @ inserts into the editor)".into();
             return;
         }
-        let entries = self.collect_cite_entries();
+        // The claim→prose bridge: rank sources by the paragraph you're writing, so the
+        // one that fits your claim floats to the top (★).
+        let context = self
+            .opened
+            .as_ref()
+            .map(|d| d.textarea.lines().join(" "))
+            .unwrap_or_default();
+        let entries = self.collect_cite_entries(&context);
         if entries.is_empty() {
             self.status =
                 "cite: no citation entries — add them to the Sources book (or `inkhaven sources import`)".into();
@@ -9577,19 +9584,21 @@ impl App {
             scroll: 0,
         };
         self.status =
-            "cite: type to filter · ↑↓ select · Enter inserts @key · Esc".into();
+            "cite: ★ = relevant to this paragraph · type to filter · ↑↓ · Enter inserts @key · Esc".into();
     }
 
     /// Gather every valid citation entry under the Sources book as picker rows
-    /// (`title` = the @key, `slug_path` = a human descriptor). Sorted by key.
-    fn collect_cite_entries(&self) -> Vec<ScriptPickerEntry> {
+    /// (`title` = the @key, `slug_path` = a human descriptor). Ranked most-relevant to
+    /// `context` (the prose being written) first, then by key — the claim→prose bridge.
+    fn collect_cite_entries(&self, context: &str) -> Vec<ScriptPickerEntry> {
         let Some(sources) = self.hierarchy.iter().find(|n| {
             n.kind == NodeKind::Book
                 && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_SOURCES)
         }) else {
             return Vec::new();
         };
-        let mut out: Vec<ScriptPickerEntry> = Vec::new();
+        let terms = crate::sources::context_terms(context);
+        let mut scored: Vec<(usize, ScriptPickerEntry)> = Vec::new();
         for id in self.hierarchy.collect_subtree(sources.id) {
             let Some(node) = self.hierarchy.get(id) else { continue };
             if node.kind != NodeKind::Paragraph {
@@ -9607,17 +9616,22 @@ impl App {
             if !e.is_valid() {
                 continue;
             }
+            let score = crate::sources::relevance_score(&e.searchable(), &terms);
             let year = if e.year.is_empty() { "----" } else { e.year.as_str() };
             let who = if e.author.is_empty() { "(no author)" } else { e.author.as_str() };
-            let label = format!("{year} · {who} — {}", e.title);
-            out.push(ScriptPickerEntry {
-                id: uuid::Uuid::nil(),
-                title: e.key,
-                slug_path: label,
-            });
+            let mark = if score > 0 { "★ " } else { "" };
+            let label = format!("{mark}{year} · {who} — {}", e.title);
+            scored.push((
+                score,
+                ScriptPickerEntry { id: uuid::Uuid::nil(), title: e.key, slug_path: label },
+            ));
         }
-        out.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
-        out
+        // Most-relevant first; ties broken by key.
+        scored.sort_by(|a, b| {
+            b.0.cmp(&a.0)
+                .then_with(|| a.1.title.to_lowercase().cmp(&b.1.title.to_lowercase()))
+        });
+        scored.into_iter().map(|(_, e)| e).collect()
     }
 
     /// Cite-picker key handling — mirrors the fuzzy paragraph picker, but Enter

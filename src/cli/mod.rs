@@ -36,6 +36,8 @@ pub mod output;
 pub mod realworld;
 pub mod templates;
 pub mod thread;
+pub mod argue;
+pub mod book_index;
 pub mod docs;
 pub mod sources;
 pub mod terms;
@@ -366,6 +368,35 @@ pub enum Command {
         /// --eject-templates <dir>`.
         #[arg(long)]
         eject_templates: Option<PathBuf>,
+    },
+
+    /// INDEX-1 — generate a back-of-book index (terms → the chapters they appear in)
+    /// from the Glossary's canonical terms and `docs.index.terms`.
+    Index {
+        /// Limit to one user book (default: all user books).
+        #[arg(long)]
+        book_name: Option<String>,
+        /// Output format: `md` (default), `typst`, or `json`.
+        #[arg(long, default_value = "md")]
+        format: String,
+        /// Write to this file instead of stdout.
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+    },
+
+    /// ARG-1 — extract each chapter's central claims and their support (an argument
+    /// outline), flagging unsupported claims and orphan citations. AI-driven; exits
+    /// non-zero when any gap is found.
+    Argue {
+        /// Limit to one user book (default: all user books).
+        #[arg(long)]
+        book_name: Option<String>,
+        /// LLM provider override.
+        #[arg(long)]
+        provider: Option<String>,
+        /// Machine-readable JSON report.
+        #[arg(long)]
+        json: bool,
     },
 
     /// Run a one-shot AI inference from the command line.
@@ -5254,6 +5285,14 @@ impl Cli {
                     eject_templates.as_deref(),
                 )
                 .map_err(Into::into)
+            }
+            Command::Index { book_name, format, out } => {
+                book_index::run(&project, book_name.as_deref(), &format, out.as_deref())
+                    .map_err(Into::into)
+            }
+            Command::Argue { book_name, provider, json } => {
+                argue::run(&project, book_name.as_deref(), provider.as_deref(), json)
+                    .map_err(Into::into)
             }
             Command::Ai { prompt, provider } => {
                 ai::run(&project, &prompt, provider.as_deref()).map_err(Into::into)

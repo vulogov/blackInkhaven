@@ -66,6 +66,9 @@ pub mod kinds {
     /// attributed finding with no `@key`). Deterministic (fast track); the AI track
     /// adds Facts-book support.
     pub const SOURCING: &str = "sourcing";
+    /// ARG-1 — an argument gap: a central claim with no support, or a citation that
+    /// supports no claim. Semantic (AI); anchored to the chapter.
+    pub const ARGUMENT: &str = "argument";
 }
 
 /// Visual / priority class (RFC §7.4).

@@ -21,34 +21,38 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.6.13 — Cite Your Claims
+## Latest release · 1.6.14 — Index & Argument
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.6.13.md`](Documentation/RELEASE_NOTES/1.6.13.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.6.14.md`](Documentation/RELEASE_NOTES/1.6.14.md)
 
-A new check for nonfiction: every checkable claim should carry a source. **No new
-runtime crates.**
+More for the nonfiction desk. **No new runtime crates.**
 
-### The Sourcing pass
+### A real back-of-book index
 
-`inkhaven sources check` has always caught a `@key` you cite but never defined.
-`inkhaven sources coverage` catches the opposite: a sentence that makes a **checkable
-factual claim and cites nothing at all** — a statistic, a date, a quotation, an
-attributed finding. It's deterministic, exits non-zero for CI, and quietens with a
-`no-cite` tag on genuine common knowledge. While drafting, `Ctrl+V Shift+C` runs it on
-the open paragraph and lists the flags in the Output pane, beside the `Ctrl+V @` cite
-picker you use to fix them.
+`inkhaven index` builds an alphabetised index from terms you already curate — every
+canonical Glossary term (synonyms become *see*-references) plus any extra names or
+topics — and writes it as Markdown, Typst, or JSON. On the web,
+`docs.html.include.index` folds an Index page into the site where every entry is a
+real anchor link to the section it names.
 
-### Tied to your research
+### The citation bridge
 
-`inkhaven sources coverage --ai` retrieves the relevant entries from your Facts book
-and checks each uncited claim against them — telling you which claims your own research
-already backs (just add the citation) and which still need a source.
+The `Ctrl+V @` cite picker now **ranks by the paragraph you're writing**, floating the
+source your claim needs to the top (★) instead of listing everything in key order.
+
+### A first look at the argument
+
+`inkhaven argue` reads a chapter and writes back its central claims and the support
+each rests on, flagging the two cheapest weak joints: a load-bearing claim backed by
+nothing, and a citation that supports no claim. It quotes your own sentences rather
+than inventing an argument — an outline, not a diagram, but often enough to show where
+your case rests on air.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** New command `inkhaven sources coverage`; new chord `Ctrl+V
-Shift+C`. Everything is additive — the pass runs only when you ask for it. Test suite →
-2364.
+**No new runtime crates.** New commands `inkhaven index` and `inkhaven argue`; new config
+`docs.index`. Everything is additive — existing projects are unaffected. Test suite →
+2370.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

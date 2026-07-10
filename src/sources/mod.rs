@@ -418,6 +418,52 @@ pub fn extract_cite_keys(prose: &str) -> Vec<String> {
     keys
 }
 
+impl BibEntry {
+    /// Lowercased searchable text (title, author, venue, keywords, abstract…) used
+    /// to rank a source's relevance to the prose being written.
+    pub fn searchable(&self) -> String {
+        let mut s = format!("{} {} {}", self.title, self.author, self.year);
+        for opt in [
+            &self.journal,
+            &self.booktitle,
+            &self.publisher,
+            &self.keywords,
+            &self.abstract_,
+            &self.note,
+        ] {
+            if let Some(v) = opt {
+                s.push(' ');
+                s.push_str(v);
+            }
+        }
+        s.to_lowercase()
+    }
+}
+
+/// INDEX/BRIDGE — significant terms from prose (lowercased, ≥4 chars, stopwords
+/// dropped), for ranking sources by relevance to what the author is writing.
+pub fn context_terms(text: &str) -> std::collections::HashSet<String> {
+    const STOP: &[&str] = &[
+        "that", "this", "with", "from", "have", "which", "were", "their", "there",
+        "would", "about", "these", "those", "been", "they", "them", "then", "than",
+        "when", "what", "your", "will", "some", "more", "only", "also", "into", "over",
+        "such", "many", "other", "between", "because", "through", "during", "after",
+        "before", "under", "while", "being", "where", "could", "should", "might",
+        "must", "every", "most", "much", "very", "just", "like", "make", "made",
+        "both", "each", "upon", "here", "does", "done", "same", "still", "even",
+    ];
+    text.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w: &&str| w.len() >= 4 && !STOP.contains(w))
+        .map(|w| w.to_string())
+        .collect()
+}
+
+/// How many distinct context terms appear in an entry's searchable text.
+pub fn relevance_score(searchable_lc: &str, terms: &std::collections::HashSet<String>) -> usize {
+    terms.iter().filter(|t| searchable_lc.contains(t.as_str())).count()
+}
+
 /// A minimal, dependency-free BibTeX reader. Handles `@type{key, field = …}`
 /// with brace-`{…}`, quote-`"…"`, and bare (numeric/word) values; nested
 /// braces are balanced; `@comment` / `@string` / `@preamble` blocks are
@@ -689,6 +735,29 @@ mod tests {
         let e = BibEntry::from_hjson(&body).expect("seeded body parses");
         assert_eq!(e.key, "smith2024");
         assert_eq!(e.entry_type, "article");
+    }
+
+    #[test]
+    fn context_ranking_scores_relevant_sources_higher() {
+        let ctx = context_terms("The long peace: homicide and warfare have declined sharply.");
+        let pinker = BibEntry {
+            key: "pinker2011".into(),
+            author: "Pinker, S.".into(),
+            title: "The Better Angels of Our Nature: the decline of violence".into(),
+            keywords: Some("homicide warfare peace decline".into()),
+            ..Default::default()
+        };
+        let cook = BibEntry {
+            key: "cook2019".into(),
+            author: "Cook, J.".into(),
+            title: "A History of Bread".into(),
+            ..Default::default()
+        };
+        let s_pinker = relevance_score(&pinker.searchable(), &ctx);
+        let s_cook = relevance_score(&cook.searchable(), &ctx);
+        assert!(s_pinker > s_cook, "pinker {s_pinker} should beat cook {s_cook}");
+        assert!(s_pinker >= 3, "matched homicide/warfare/peace/decline: {s_pinker}");
+        assert_eq!(s_cook, 0);
     }
 
     #[test]
