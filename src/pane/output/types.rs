@@ -62,6 +62,10 @@ pub mod kinds {
     /// TDOC-1 — a `verify`-marked code block that failed its runner (stale
     /// example). Deterministic; the detail carries the runner's output.
     pub const DOC_VERIFY: &str = "doc_verify";
+    /// NF-CITE — an uncited factual claim (a statistic / date / quotation /
+    /// attributed finding with no `@key`). Deterministic (fast track); the AI track
+    /// adds Facts-book support.
+    pub const SOURCING: &str = "sourcing";
 }
 
 /// Visual / priority class (RFC §7.4).

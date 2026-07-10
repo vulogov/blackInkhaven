@@ -1752,6 +1752,7 @@ impl super::super::App {
                 crate::pane::output::kinds::THEOLOGIAN => "⚖ ",
                 crate::pane::output::kinds::MYTH => "⊛ ",
                 crate::pane::output::kinds::DOC_VERIFY => "⌨ ",
+                crate::pane::output::kinds::SOURCING => "❝ ",
                 _ => "",
             };
             lines.push(Line::from(vec![

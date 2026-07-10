@@ -11540,6 +11540,7 @@ impl App {
             A::OpenSentenceRhythm => self.open_sentence_rhythm(),
             A::AnalyseShowDontTell => self.start_show_dont_tell_scan(),
             A::DocsVerifyParagraph => self.docs_verify_open_paragraph(),
+            A::SourcingCheckParagraph => self.sourcing_check_open_paragraph(),
             A::FactCheck => self.start_fact_check(),
             A::SearchFacts => self.open_facts_search(),
             A::NextFactFinding => self.next_fact_finding(),
@@ -14037,6 +14038,46 @@ impl App {
         }
         self.refresh_tree_badges();
         self.status = format!("docs verify · {pass} passed · {fail} failed · {skip} skipped");
+    }
+
+    /// NF-CITE (Ctrl+V Shift+C) — the deterministic Sourcing pass on the open
+    /// paragraph; uncited factual claims land in the Output pane on the paragraph.
+    fn sourcing_check_open_paragraph(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "cite check: open a paragraph first".into();
+            return;
+        };
+        let id = doc.id;
+        if self
+            .hierarchy
+            .get(id)
+            .map(|n| n.tags.iter().any(|t| t == "no-cite"))
+            .unwrap_or(false)
+        {
+            self.status = "cite check: this paragraph is tagged `no-cite`".into();
+            return;
+        }
+        let body = doc.textarea.lines().join("\n");
+        let claims = crate::sources::coverage::scan(&body);
+        // Clear this paragraph's prior sourcing findings before re-checking.
+        if let Some(store) = crate::pane::output::active() {
+            if let Ok(prior) = store.by_kind(crate::pane::output::kinds::SOURCING) {
+                for m in &prior {
+                    if m.source_paragraph_id == Some(id) {
+                        let _ = store.dismiss(m.id);
+                    }
+                }
+            }
+        }
+        for c in &claims {
+            crate::sources::coverage::emit_finding(id, c);
+        }
+        self.refresh_tree_badges();
+        self.status = if claims.is_empty() {
+            "cite check · every claim here carries a citation".into()
+        } else {
+            format!("cite check · {} uncited claim(s) — see the Output pane", claims.len())
+        };
     }
 
     /// Build the fact-check world context (magic ledger + gazetteer/moons/minerals)
