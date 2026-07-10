@@ -3924,6 +3924,24 @@ pub struct DocsConfig {
     pub variables: std::collections::BTreeMap<String, String>,
     /// TDOC-4 — HTML static-site export (`inkhaven export html -o <dir>`).
     pub html: DocsHtmlConfig,
+    /// INDEX-1 — back-of-book index (`inkhaven index`).
+    pub index: DocsIndexConfig,
+}
+
+/// INDEX-1 — back-of-book index settings.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DocsIndexConfig {
+    /// Include every Glossary canonical term (and its synonyms as `see`-refs).
+    pub from_glossary: bool,
+    /// Extra index terms (names, topics) beyond the Glossary.
+    pub terms: Vec<String>,
+}
+
+impl Default for DocsIndexConfig {
+    fn default() -> Self {
+        Self { from_glossary: true, terms: Vec::new() }
+    }
 }
 
 /// TDOC-4 — HTML static-site export settings.
@@ -3975,6 +3993,8 @@ pub struct DocsHtmlInclude {
     pub world: bool,
     pub mythology: bool,
     pub notes: bool,
+    /// INDEX-1 — fold a back-of-book index page into the site.
+    pub index: bool,
 }
 
 impl Default for DocsHtmlInclude {
@@ -3988,6 +4008,7 @@ impl Default for DocsHtmlInclude {
             world: false,
             mythology: false,
             notes: false,
+            index: false,
         }
     }
 }

@@ -175,6 +175,11 @@ a:hover { color: var(--link-hover); text-decoration: underline; text-underline-o
 .prose .bibliography .ref-author { font-weight: 650; }
 .prose .bibliography.numeric .ref { padding-left: 2.4rem; text-indent: -2.4rem; }
 .prose .bibliography .ref-num { color: var(--accent); font-weight: 650; }
+/* Back-of-book index */
+.prose .book-index { column-width: 16rem; column-gap: 2rem; }
+.prose .book-index .idx { margin: 0 0 .35rem; padding-left: 1.4rem; text-indent: -1.4rem; break-inside: avoid; font-size: .95rem; }
+.prose .book-index .idx-term { font-weight: 650; }
+
 .prose .card { margin: .6rem 0; padding: .7rem .9rem; background: var(--surface); border: 1px solid var(--rule); border-radius: 6px; }
 .prose .card h4 { margin: 0 0 .4rem; color: var(--accent); }
 .prose .card dl.fields { margin: 0; }
