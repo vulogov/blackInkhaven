@@ -101,6 +101,20 @@ Mark chapters ready and `export pdf|epub|docx`. If your nonfiction carries citat
 scientist; the next chapters on the scientific and scholarly tracks cover that
 machinery in full, and everything there applies to any nonfiction that cites.
 
+Two checks guard the citation itself. `inkhaven sources check` catches a `@key` you
+cite but never defined. Its mirror, `inkhaven sources coverage`, catches the opposite
+and more insidious slip — a sentence that makes a checkable claim (a statistic, a
+date, a quotation, an attributed finding) and cites _nothing_. It lists each such
+sentence so you can source it before you publish; where a passage is genuine common
+knowledge, tag the paragraph `no-cite` and it stops asking.
+While drafting, `Ctrl+V Shift+C` runs the same pass on the open paragraph and drops
+the flags into the Output pane, right beside the `Ctrl+V @` cite picker you use to fix
+them. And `sources coverage --ai` goes further: it finds subtler claims the plain scan
+misses and checks each against your Facts book, telling you which claims your own
+research already backs — just add the citation — and which still need a source.
+Between them, every claim you make either carries a source or is a choice you made on
+purpose.
+
 #section("Hands-on: two procedures")
 
 #subsection("From a question to a cited paragraph")

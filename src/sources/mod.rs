@@ -11,6 +11,7 @@
 //! module-level `dead_code` allow covers items not yet wired; it tightens as
 //! phases land.
 
+pub mod coverage;
 
 use serde::Deserialize;
 

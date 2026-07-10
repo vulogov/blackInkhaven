@@ -30,6 +30,7 @@ pub const SOURCES: &[&str] = &[
     "ai",
     "bund",
     "docs",
+    "sourcing",
     "other",
 ];
 
@@ -64,6 +65,7 @@ pub fn message_source(msg: &Message) -> &'static str {
         kinds::AI_TASK_COMPLETE => "ai",
         kinds::BUND_PRINT | kinds::BUND_LOG => "bund",
         kinds::DOC_VERIFY => "docs",
+        kinds::SOURCING => "sourcing",
         _ => "other",
     }
 }

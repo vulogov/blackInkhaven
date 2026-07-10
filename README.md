@@ -21,34 +21,34 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.6.12 — Math & Tables
+## Latest release · 1.6.13 — Cite Your Claims
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.6.12.md`](Documentation/RELEASE_NOTES/1.6.12.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.6.13.md`](Documentation/RELEASE_NOTES/1.6.13.md)
 
-The finishing pass on the HTML exporter. **No new runtime crates.**
+A new check for nonfiction: every checkable claim should carry a source. **No new
+runtime crates.**
 
-### Math and tables
+### The Sourcing pass
 
-Math now renders as native **MathML** — drawn by the browser, so there is no
-JavaScript library and no font download, and the site stays self-contained. Both block
-math (a `para:math` paragraph) and inline `$…$` are converted. And a `para:table`
-renders as a real HTML `<table>` instead of raw markup — so scientific and technical
-books export cleanly.
+`inkhaven sources check` has always caught a `@key` you cite but never defined.
+`inkhaven sources coverage` catches the opposite: a sentence that makes a **checkable
+factual claim and cites nothing at all** — a statistic, a date, a quotation, an
+attributed finding. It's deterministic, exits non-zero for CI, and quietens with a
+`no-cite` tag on genuine common knowledge. While drafting, `Ctrl+V Shift+C` runs it on
+the open paragraph and lists the flags in the Output pane, beside the `Ctrl+V @` cite
+picker you use to fix them.
 
-### Bibliographies and languages, finished
+### Tied to your research
 
-Bibliographies can now be numbered (`docs.html.citation_style: numeric`, Vancouver
-style) as an alternative to author-year. And when you publish your invented Language,
-its **grammar** now renders in full — phonology, morphology, typology, and sample texts
-— alongside the sortable lexicon table, using the same renderer as the CLI's
-grammar-book export. The HTML exporter is now feature-complete: nothing it produces is
-inert or degraded.
+`inkhaven sources coverage --ai` retrieves the relevant entries from your Facts book
+and checks each uncited claim against them — telling you which claims your own research
+already backs (just add the citation) and which still need a source.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** No new config beyond values already accepted. Everything is
-additive — math, tables, numbered citations, and the full grammar simply appear where
-the content calls for them. Test suite → 2359.
+**No new runtime crates.** New command `inkhaven sources coverage`; new chord `Ctrl+V
+Shift+C`. Everything is additive — the pass runs only when you ask for it. Test suite →
+2364.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
