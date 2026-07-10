@@ -109,11 +109,29 @@ sentence so you can source it before you publish; where a passage is genuine com
 knowledge, tag the paragraph `no-cite` and it stops asking.
 While drafting, `Ctrl+V Shift+C` runs the same pass on the open paragraph and drops
 the flags into the Output pane, right beside the `Ctrl+V @` cite picker you use to fix
-them. And `sources coverage --ai` goes further: it finds subtler claims the plain scan
+them — a picker that now floats the sources most relevant to the paragraph you are
+writing to the top, marked with a star, so the citation your claim needs is usually the
+first one you see. And `sources coverage --ai` goes further: it finds subtler claims the plain scan
 misses and checks each against your Facts book, telling you which claims your own
 research already backs — just add the citation — and which still need a source.
 Between them, every claim you make either carries a source or is a choice you made on
 purpose.
+
+A finished nonfiction book usually wants an index, and Inkhaven builds one from terms
+you already curate. `inkhaven index` takes your Glossary's canonical terms (and any
+extra names or topics you list under `docs.index.terms`), finds where each appears,
+and writes an alphabetised index — a synonym becomes a _see_-reference to its
+canonical term. It emits Markdown, Typst, or JSON, and on the web the index folds into
+the site (`docs.html.include.index`) with every entry a real link to the section it
+names.
+
+There is also a first, modest look at the _shape_ of your argument. `inkhaven argue`
+reads a chapter and writes back its central claims and the support each one rests on —
+a citation, a line of reasoning, or nothing — and flags the two cheapest weak joints: a
+load-bearing claim the text backs with nothing, and a citation that supports no claim at
+all. It is deliberately small — an outline, not a diagram, and it quotes your own
+sentences rather than inventing an argument on your behalf — but it is often enough to
+show you the one place your case rests on air.
 
 #section("Hands-on: two procedures")
 

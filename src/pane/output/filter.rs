@@ -31,6 +31,7 @@ pub const SOURCES: &[&str] = &[
     "bund",
     "docs",
     "sourcing",
+    "argument",
     "other",
 ];
 
@@ -66,6 +67,7 @@ pub fn message_source(msg: &Message) -> &'static str {
         kinds::BUND_PRINT | kinds::BUND_LOG => "bund",
         kinds::DOC_VERIFY => "docs",
         kinds::SOURCING => "sourcing",
+        kinds::ARGUMENT => "argument",
         _ => "other",
     }
 }
