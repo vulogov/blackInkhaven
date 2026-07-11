@@ -145,7 +145,7 @@ fn do_tex(vm: &mut VM) -> Result<&mut VM> {
     let tag = "ink.export.tex";
     let ctx = prologue(vm, tag)?;
     let combined = combined(&ctx, tag)?;
-    crate::export::build_tex(&combined)
+    crate::export::build_tex(&combined, &ctx.cfg.tex_export)
         .write_to(&ctx.path)
         .map_err(|e| anyhow!("{tag}: write {}: {e}", ctx.path.display()))?;
     Ok(vm)

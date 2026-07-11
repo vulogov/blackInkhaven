@@ -2688,6 +2688,186 @@ impl super::super::App {
         );
     }
 
+    /// 1.6.15+ TYPST-UNIVERSE — the Ctrl+V # package import picker. Each row is
+    /// `@preview/<name>:<version>  ★stars · description`; the input box
+    /// fuzzy-filters; Enter inserts a `#import` line.
+    pub(in crate::tui::app) fn draw_universe_picker_modal(
+        &mut self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::UniversePicker { input, entries, cursor, scroll } = &self.modal
+        else {
+            return;
+        };
+        let matches = fuzzy_filter_entries(entries, input.as_str());
+
+        let width = area.width.saturating_sub(8).max(60);
+        let height = area.height.saturating_sub(4).max(14);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let header = format!(" Typst Universe ({}/{}) ", matches.len(), entries.len());
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(header)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let input_rect = Rect { x: inner.x, y: inner.y, width: inner.width, height: 1 };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y + 1,
+            width: inner.width,
+            height: inner.height.saturating_sub(2),
+        };
+
+        f.render_widget(
+            Paragraph::new(Line::from(format!(" › {}", input.render_with_cursor('│')))),
+            input_rect,
+        );
+
+        let body_h = body_rect.height as usize;
+        let lines: Vec<Line<'_>> = matches
+            .iter()
+            .enumerate()
+            .skip(*scroll)
+            .take(body_h)
+            .filter_map(|(i, idx)| {
+                let e = entries.get(*idx)?;
+                let head = format!(" {}", e.title);
+                let desc = format!("    {}", e.slug_path);
+                let spans: Vec<Span> = vec![
+                    Span::raw(head),
+                    Span::styled(desc, Style::default().add_modifier(Modifier::DIM)),
+                ];
+                let mut line = Line::from(spans);
+                if i == *cursor {
+                    line = line.style(Style::default().add_modifier(Modifier::REVERSED));
+                }
+                Some(line)
+            })
+            .collect();
+        f.render_widget(Paragraph::new(lines), body_rect);
+
+        let hint = " ↑↓ select · Enter inserts #import · Ctrl+R refresh · Esc closes ";
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                hint,
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
+    /// 1.6.15+ XREF-2 — the Ctrl+V & cross-reference picker. Each row is
+    /// `@label  category · where`; the input box fuzzy-filters; Enter inserts a
+    /// `@label` reference.
+    pub(in crate::tui::app) fn draw_xref_picker_modal(
+        &mut self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::XrefPicker { input, entries, cursor, scroll } = &self.modal
+        else {
+            return;
+        };
+        let matches = fuzzy_filter_entries(entries, input.as_str());
+
+        let width = area.width.saturating_sub(8).max(60);
+        let height = area.height.saturating_sub(4).max(14);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let header = format!(" Cross-reference ({}/{}) ", matches.len(), entries.len());
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(header)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let input_rect = Rect { x: inner.x, y: inner.y, width: inner.width, height: 1 };
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y + 1,
+            width: inner.width,
+            height: inner.height.saturating_sub(2),
+        };
+
+        f.render_widget(
+            Paragraph::new(Line::from(format!(" › {}", input.render_with_cursor('│')))),
+            input_rect,
+        );
+
+        let body_h = body_rect.height as usize;
+        let lines: Vec<Line<'_>> = matches
+            .iter()
+            .enumerate()
+            .skip(*scroll)
+            .take(body_h)
+            .filter_map(|(i, idx)| {
+                let e = entries.get(*idx)?;
+                let head = format!(" @{}", e.title);
+                let desc = format!("    {}", e.slug_path);
+                let spans: Vec<Span> = vec![
+                    Span::raw(head),
+                    Span::styled(desc, Style::default().add_modifier(Modifier::DIM)),
+                ];
+                let mut line = Line::from(spans);
+                if i == *cursor {
+                    line = line.style(Style::default().add_modifier(Modifier::REVERSED));
+                }
+                Some(line)
+            })
+            .collect();
+        f.render_widget(Paragraph::new(lines), body_rect);
+
+        let hint = " ↑↓ select · Enter inserts @label · Esc closes ";
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                hint,
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
     /// 1.4.9+ REUSE-1 — the Ctrl+V x snippet include picker. Each row is
     /// `slug  preview`; the input box fuzzy-filters; Enter inserts/replaces a
     /// `#include`.

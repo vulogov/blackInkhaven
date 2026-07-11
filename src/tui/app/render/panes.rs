@@ -1754,6 +1754,7 @@ impl super::super::App {
                 crate::pane::output::kinds::DOC_VERIFY => "⌨ ",
                 crate::pane::output::kinds::SOURCING => "❝ ",
                 crate::pane::output::kinds::ARGUMENT => "⇉ ",
+                crate::pane::output::kinds::XREF => "⌘ ",
                 _ => "",
             };
             lines.push(Line::from(vec![

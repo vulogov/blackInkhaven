@@ -269,34 +269,6 @@ fn render_world(layout: &ProjectLayout, h: &Hierarchy, book_id: uuid::Uuid) -> S
     render_generic(layout, h, book_id, "World")
 }
 
-/// Load every parseable `DictionaryEntry` under a language's `Dictionary` chapter,
-/// reading bodies from disk (the exporter never touches the store).
-fn load_dictionary_from_disk(
-    layout: &ProjectLayout,
-    h: &Hierarchy,
-    lang_book_id: uuid::Uuid,
-) -> Vec<crate::language_entry::DictionaryEntry> {
-    let Some(chapter) = h
-        .children_of(Some(lang_book_id))
-        .into_iter()
-        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Dictionary"))
-    else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    for id in h.collect_subtree(chapter.id) {
-        let Some(n) = h.get(id) else { continue };
-        if n.kind != NodeKind::Paragraph {
-            continue;
-        }
-        let Some(body) = read_body(layout, n) else { continue };
-        if let Ok(Some(entry)) = crate::language_entry::parse(&body) {
-            out.push(entry);
-        }
-    }
-    out
-}
-
 /// One entry: an HJSON body becomes a titled field list; prose goes through the
 /// normal renderer.
 fn render_entry(title: &str, content_type: Option<&str>, body: &str) -> String {

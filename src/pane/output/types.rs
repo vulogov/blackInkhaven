@@ -69,6 +69,10 @@ pub mod kinds {
     /// ARG-1 — an argument gap: a central claim with no support, or a citation that
     /// supports no claim. Semantic (AI); anchored to the chapter.
     pub const ARGUMENT: &str = "argument";
+    /// XREF (1.6.15+) — an unresolved Typst cross-reference (`@ref` to a label
+    /// that doesn't exist). Deterministic; promoted from the compile diagnostics
+    /// so a dangling `@fig:`/`@eq:`/`@tbl:` is actionable, not buried in stderr.
+    pub const XREF: &str = "xref";
 }
 
 /// Visual / priority class (RFC §7.4).
