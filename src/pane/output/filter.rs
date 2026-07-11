@@ -68,6 +68,7 @@ pub fn message_source(msg: &Message) -> &'static str {
         kinds::DOC_VERIFY => "docs",
         kinds::SOURCING => "sourcing",
         kinds::ARGUMENT => "argument",
+        kinds::XREF => "xref",
         _ => "other",
     }
 }

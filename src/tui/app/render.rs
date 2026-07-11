@@ -179,6 +179,14 @@ impl super::App {
             self.draw_cite_picker_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::UniversePicker { .. }) {
+            self.draw_universe_picker_modal(f, area);
+            return;
+        }
+        if matches!(self.modal, Modal::XrefPicker { .. }) {
+            self.draw_xref_picker_modal(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::SnippetIncludePicker { .. }) {
             self.draw_snippet_include_picker_modal(f, area);
             return;

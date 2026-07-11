@@ -84,6 +84,7 @@ pub const TEMPLATES: &[ProjectTemplate] = &[
     EMPTY,
     NOVEL,
     NONFICTION,
+    SCIENTIFIC,
     RPG_SOURCEBOOK,
     TECHNICAL,
     NANOWRIMO,
@@ -196,6 +197,42 @@ pub const NONFICTION: ProjectTemplate = ProjectTemplate {
          · Outline Introduction → state thesis, scope, audience\n  \
          · Edit Research/methodology before adding citation paragraphs\n  \
          · Set `project.word_count_goal: 60000` in inkhaven.hjson\n",
+};
+
+pub const SCIENTIFIC: ProjectTemplate = ProjectTemplate {
+    name: "scientific",
+    description:
+        "IMRaD paper — Introduction / Methods / Results / Discussion \
+         chapters + Research book seeded with a methodology paragraph. \
+         Abstract, authors, and affiliations live in the `[frontmatter]` \
+         config block; `[tex_export]` targets a journal LaTeX class.  No \
+         word-count goal (papers are bounded by the work, not length).",
+    manuscript_book: Some(ManuscriptBook {
+        title: "Paper",
+        chapters: &["Introduction", "Methods", "Results", "Discussion"],
+        paragraph_content_type: None,
+    }),
+    seeds: &[SystemBookSeed {
+        system_tag: "research",
+        paragraphs: &[(
+            "methodology",
+            "= methodology\n\n\
+             How the study was conducted — design, data, instruments,\n\
+             inclusion / exclusion criteria, and anything a reader needs\n\
+             to reproduce it.\n\n\
+             // Feeds the Methods chapter and a reproducibility statement;\n\
+             // `sources check` gates every @key against the Sources book.\n",
+        )],
+    }],
+    post_init_message:
+        "Recommended next steps:\n  \
+         · Fill `[frontmatter]` in inkhaven.hjson — authors, affiliations,\n   \
+            abstract, keywords (renders the paper title block; multilingual)\n  \
+         · Set `[tex_export] document_class` for your target journal\n   \
+            (e.g. \"IEEEtran\" / \"elsarticle\") — `inkhaven export tex`\n  \
+         · Set `genre: \"science\"` so the Inner readers tune to a paper\n  \
+         · Cite with the Sources book + `@key`; gate with `inkhaven sources check`\n  \
+         · Draft Introduction → Methods → Results → Discussion (IMRaD)\n",
 };
 
 pub const RPG_SOURCEBOOK: ProjectTemplate = ProjectTemplate {
@@ -1233,9 +1270,15 @@ mod tests {
     #[test]
     fn registry_contains_every_named_template() {
         let names: Vec<&str> = TEMPLATES.iter().map(|t| t.name).collect();
-        for required in
-            ["empty", "novel", "nonfiction", "rpg-sourcebook", "technical", "nanowrimo"]
-        {
+        for required in [
+            "empty",
+            "novel",
+            "nonfiction",
+            "scientific",
+            "rpg-sourcebook",
+            "technical",
+            "nanowrimo",
+        ] {
             assert!(
                 names.contains(&required),
                 "missing template `{required}` in TEMPLATES"

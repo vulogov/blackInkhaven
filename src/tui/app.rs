@@ -4387,6 +4387,18 @@ impl App {
                 entries,
                 ..
             }
+            | Modal::UniversePicker {
+                cursor,
+                scroll,
+                entries,
+                ..
+            }
+            | Modal::XrefPicker {
+                cursor,
+                scroll,
+                entries,
+                ..
+            }
             | Modal::SnippetIncludePicker {
                 cursor,
                 scroll,
@@ -9691,6 +9703,296 @@ impl App {
         }
     }
 
+    /// 1.6.15+ TYPST-UNIVERSE — Ctrl+V #. Open the package import picker. Loads
+    /// (and caches) the Typst Universe manifest, then lets the author fuzzy-pick
+    /// a package; Enter inserts a `#import "@preview/<name>:<version>": *` line.
+    fn open_universe_picker(&mut self) {
+        if self.opened.is_none() {
+            self.status =
+                "universe: open a paragraph first (Ctrl+V # inserts an #import)".into();
+            return;
+        }
+        self.status = "universe: fetching package list…".into();
+        let Some(entries) = self.load_universe_entries(false) else {
+            return; // loader set the status
+        };
+        self.status =
+            "universe: type to filter · ↑↓ · Enter inserts #import · Ctrl+R refresh · Esc".into();
+        self.modal = Modal::UniversePicker {
+            input: TextInput::new(),
+            entries,
+            cursor: 0,
+            scroll: 0,
+        };
+    }
+
+    /// Load the Typst Universe manifest and map it to picker rows. `force`
+    /// bypasses the TTL cache (the `Ctrl+R` refresh). Returns `None` and sets a
+    /// status message on error / empty list.
+    fn load_universe_entries(&mut self, force: bool) -> Option<Vec<ScriptPickerEntry>> {
+        let cache_dir = self.layout.root.join(".inkhaven");
+        let url = &self.cfg.typst_universe.url;
+        let loaded = if force {
+            crate::typst_universe::load_forced(
+                &cache_dir,
+                url,
+                crate::typst_universe::reqwest_fetch,
+            )
+        } else {
+            let ttl = std::time::Duration::from_secs(
+                self.cfg.typst_universe.ttl_hours as u64 * 3600,
+            );
+            crate::typst_universe::load(
+                &cache_dir,
+                url,
+                ttl,
+                crate::typst_universe::reqwest_fetch,
+            )
+        };
+        let packages = match loaded {
+            Ok(p) => p,
+            Err(e) => {
+                self.status = format!("universe: {e}");
+                return None;
+            }
+        };
+        if packages.is_empty() {
+            self.status = "universe: package list is empty".into();
+            return None;
+        }
+        Some(
+            packages
+                .into_iter()
+                .map(|p| {
+                    let stars = if p.stars > 0 {
+                        format!("★{} · ", p.stars)
+                    } else {
+                        String::new()
+                    };
+                    let desc = if p.description.trim().is_empty() {
+                        String::new()
+                    } else {
+                        p.description.trim().chars().take(70).collect::<String>()
+                    };
+                    ScriptPickerEntry {
+                        id: uuid::Uuid::nil(),
+                        title: p.spec(),
+                        slug_path: format!("{stars}{desc}"),
+                    }
+                })
+                .collect(),
+        )
+    }
+
+    /// Universe-picker key handling — mirrors the cite picker, but Enter inserts
+    /// a Typst `#import "<spec>": *` line into the editor buffer.
+    fn universe_picker_handle_key(&mut self, key: KeyEvent) {
+        // Ctrl+R — force a refresh of the package list (ignores the TTL cache),
+        // preserving the typed filter and closing over the network call outside
+        // the modal borrow.
+        if matches!(key.code, KeyCode::Char('r'))
+            && key.modifiers.contains(KeyModifiers::CONTROL)
+        {
+            let query = match &self.modal {
+                Modal::UniversePicker { input, .. } => input.as_str().to_string(),
+                _ => return,
+            };
+            self.status = "universe: refreshing package list…".into();
+            if let Some(entries) = self.load_universe_entries(true) {
+                let n = entries.len();
+                let mut input = TextInput::new();
+                let qlen = query.chars().count();
+                input.set_with_cursor(query, qlen);
+                self.modal = Modal::UniversePicker { input, entries, cursor: 0, scroll: 0 };
+                self.status = format!(
+                    "universe: refreshed ({n} packages) · type to filter · Enter inserts #import · Esc"
+                );
+            }
+            // On error the loader set the status; leave the modal as-is.
+            return;
+        }
+
+        let to_insert = {
+            let Modal::UniversePicker { input, entries, cursor, scroll } = &mut self.modal
+            else {
+                return;
+            };
+            let matches = fuzzy_filter_entries(entries, input.as_str());
+            let total = matches.len();
+            let page: usize = 12;
+            let mut chosen: Option<String> = None;
+            match key.code {
+                KeyCode::Up => {
+                    if *cursor > 0 {
+                        *cursor -= 1;
+                    }
+                }
+                KeyCode::Down => {
+                    if *cursor + 1 < total {
+                        *cursor += 1;
+                    }
+                }
+                KeyCode::PageUp => *cursor = cursor.saturating_sub(page),
+                KeyCode::PageDown => {
+                    *cursor = (*cursor + page).min(total.saturating_sub(1));
+                }
+                KeyCode::Enter => {
+                    if let Some(idx) = matches.get(*cursor).copied() {
+                        if let Some(e) = entries.get(idx) {
+                            chosen = Some(e.title.clone());
+                        }
+                    }
+                }
+                _ => {
+                    handle_text_input_key(input, key);
+                    *cursor = 0;
+                    *scroll = 0;
+                }
+            }
+            if *cursor < *scroll {
+                *scroll = *cursor;
+            } else if *cursor >= *scroll + page {
+                *scroll = *cursor + 1 - page;
+            }
+            chosen
+        };
+
+        if let Some(spec) = to_insert {
+            self.modal = Modal::None;
+            let line = format!("#import \"{spec}\": *\n");
+            match self.ink_editor_insert(&line) {
+                Ok(()) => self.status = format!("inserted #import for {spec}"),
+                Err(e) => self.status = format!("import insert failed: {e}"),
+            }
+        }
+    }
+
+    /// 1.6.15+ XREF-2 — Ctrl+V &. Open the cross-reference picker: fuzzy-find a
+    /// label defined anywhere in the manuscript and insert `@<label>` at the
+    /// cursor. The mirror of the XREF Output finding — that catches a reference
+    /// with no label; this stops you writing one.
+    fn open_xref_picker(&mut self) {
+        if self.opened.is_none() {
+            self.status =
+                "xref: open a paragraph first (Ctrl+V & inserts a @label reference)".into();
+            return;
+        }
+        let entries = self.collect_xref_entries();
+        if entries.is_empty() {
+            self.status =
+                "xref: no labels found — define one with `<fig:name>` after a figure/heading/equation".into();
+            return;
+        }
+        self.status =
+            "xref: type to filter · ↑↓ · Enter inserts @label · Esc".into();
+        self.modal = Modal::XrefPicker {
+            input: TextInput::new(),
+            entries,
+            cursor: 0,
+            scroll: 0,
+        };
+    }
+
+    /// Gather every Typst label defined across the manuscript (and the open,
+    /// possibly-unsaved buffer) as picker rows: `title` = the label name,
+    /// `slug_path` = its category + where it was found.
+    fn collect_xref_entries(&self) -> Vec<ScriptPickerEntry> {
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut out: Vec<ScriptPickerEntry> = Vec::new();
+        let mut push = |label: String, where_: &str, out: &mut Vec<ScriptPickerEntry>| {
+            if seen.insert(label.clone()) {
+                let cat = crate::xref::label_category(&label);
+                out.push(ScriptPickerEntry {
+                    id: uuid::Uuid::nil(),
+                    title: label,
+                    slug_path: format!("{cat} · {where_}"),
+                });
+            }
+        };
+        // The open buffer first — freshest, may hold just-typed labels.
+        if let Some(doc) = self.opened.as_ref() {
+            let text = doc.textarea.lines().join("\n");
+            for label in crate::xref::collect_labels(&text) {
+                push(label, "open paragraph", &mut out);
+            }
+        }
+        // Every stored paragraph.
+        for node in self.hierarchy.iter() {
+            if node.kind != NodeKind::Paragraph {
+                continue;
+            }
+            let Ok(Some(bytes)) = self.store.get_content(node.id) else { continue };
+            let Ok(text) = std::str::from_utf8(&bytes) else { continue };
+            let where_ = if node.title.trim().is_empty() {
+                node.slug.clone()
+            } else {
+                node.title.clone()
+            };
+            for label in crate::xref::collect_labels(text) {
+                push(label, &where_, &mut out);
+            }
+        }
+        out.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+        out
+    }
+
+    /// Xref-picker key handling — mirrors the cite picker, but Enter inserts
+    /// `@<label>` into the editor buffer.
+    fn xref_picker_handle_key(&mut self, key: KeyEvent) {
+        let to_insert = {
+            let Modal::XrefPicker { input, entries, cursor, scroll } = &mut self.modal
+            else {
+                return;
+            };
+            let matches = fuzzy_filter_entries(entries, input.as_str());
+            let total = matches.len();
+            let page: usize = 12;
+            let mut chosen: Option<String> = None;
+            match key.code {
+                KeyCode::Up => {
+                    if *cursor > 0 {
+                        *cursor -= 1;
+                    }
+                }
+                KeyCode::Down => {
+                    if *cursor + 1 < total {
+                        *cursor += 1;
+                    }
+                }
+                KeyCode::PageUp => *cursor = cursor.saturating_sub(page),
+                KeyCode::PageDown => {
+                    *cursor = (*cursor + page).min(total.saturating_sub(1));
+                }
+                KeyCode::Enter => {
+                    if let Some(idx) = matches.get(*cursor).copied() {
+                        if let Some(e) = entries.get(idx) {
+                            chosen = Some(e.title.clone());
+                        }
+                    }
+                }
+                _ => {
+                    handle_text_input_key(input, key);
+                    *cursor = 0;
+                    *scroll = 0;
+                }
+            }
+            if *cursor < *scroll {
+                *scroll = *cursor;
+            } else if *cursor >= *scroll + page {
+                *scroll = *cursor + 1 - page;
+            }
+            chosen
+        };
+
+        if let Some(label) = to_insert {
+            self.modal = Modal::None;
+            match self.ink_editor_insert(&format!("@{label}")) {
+                Ok(()) => self.status = format!("inserted @{label}"),
+                Err(e) => self.status = format!("xref insert failed: {e}"),
+            }
+        }
+    }
+
     /// 1.4.9+ REUSE-1 — Ctrl+V x. Open the snippet picker. If the cursor sits
     /// inside an existing `#include "…"` path, opens in Replace mode (pre-selecting
     /// the current snippet); otherwise Insert mode.
@@ -11577,6 +11879,8 @@ impl App {
             A::ViewToggleBookmark => self.toggle_bookmark(),
             A::ViewListBookmarks => self.open_bookmark_picker_modal(),
             A::ViewCitePicker => self.open_cite_picker(),
+            A::ViewUniversePicker => self.open_universe_picker(),
+            A::ViewXrefPicker => self.open_xref_picker(),
             A::InsertSnippetInclude => self.open_snippet_insert_picker(),
             A::OpenSnippetsOverview => self.open_snippets_overview(),
             A::ViewToggleTermsOverlay => self.toggle_terms_overlay(),
@@ -22392,6 +22696,11 @@ impl App {
         } else {
             outcome.stderr.clone()
         };
+        // XREF (1.6.15+): promote any unresolved cross-reference from the raw
+        // diagnostics into first-class Output-pane findings before handing the
+        // blob to the AI analyser — a dangling `@fig:`/`@eq:` is a precise,
+        // actionable defect, not just noise in a wall of stderr.
+        crate::xref::scan_and_emit(&error_text);
         self.start_typst_error_analysis(&book, &root_typ, &error_text);
     }
 
@@ -22829,7 +23138,7 @@ impl App {
     ) -> Option<anyhow::Result<crate::export::Artefact>> {
         match fmt {
             "markdown" | "md" => Some(Ok(crate::export::build_markdown(combined))),
-            "tex" | "latex" => Some(Ok(crate::export::build_tex(combined))),
+            "tex" | "latex" => Some(Ok(crate::export::build_tex(combined, &self.cfg.tex_export))),
             "epub" => {
                 let md = crate::export::markdown::typst_to_markdown(combined);
                 Some(crate::export::build_epub(&md, book_title))
@@ -23461,6 +23770,8 @@ impl App {
         let is_bookmark_picker = matches!(self.modal, Modal::BookmarkPicker { .. });
         let is_fuzzy_paragraph_picker = matches!(self.modal, Modal::FuzzyParagraphPicker { .. });
         let is_cite_picker = matches!(self.modal, Modal::CitePicker { .. });
+        let is_universe_picker = matches!(self.modal, Modal::UniversePicker { .. });
+        let is_xref_picker = matches!(self.modal, Modal::XrefPicker { .. });
         let is_snippet_include_picker = matches!(self.modal, Modal::SnippetIncludePicker { .. });
         let is_command_palette = matches!(self.modal, Modal::CommandPalette { .. });
         let is_kill_ring_picker = matches!(self.modal, Modal::KillRingPicker { .. });
@@ -23778,6 +24089,14 @@ impl App {
         }
         if is_cite_picker {
             self.cite_picker_handle_key(key);
+            return Ok(false);
+        }
+        if is_universe_picker {
+            self.universe_picker_handle_key(key);
+            return Ok(false);
+        }
+        if is_xref_picker {
+            self.xref_picker_handle_key(key);
             return Ok(false);
         }
         if is_snippet_include_picker {

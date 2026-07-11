@@ -273,8 +273,8 @@ pub fn build_markdown(combined: &str) -> Artefact {
 /// converter is best-effort: it returns whatever LaTeX it could
 /// emit; unknown macros land verbatim. We don't second-guess —
 /// the caller writes the bytes out and moves on.
-pub fn build_tex(combined: &str) -> Artefact {
-    Artefact::Tex(tex::typst_to_tex(combined))
+pub fn build_tex(combined: &str, tex_cfg: &crate::config::TexExportConfig) -> Artefact {
+    Artefact::Tex(tex::typst_to_tex(combined, tex_cfg))
 }
 
 /// Build `Artefact::Epub` from a markdown source string. `title`

@@ -368,6 +368,13 @@ pub enum Command {
         /// --eject-templates <dir>`.
         #[arg(long)]
         eject_templates: Option<PathBuf>,
+        /// Double-blind submission (1.6.15+) — omit identifying front matter
+        /// (authors, affiliations, ORCID, corresponding author, funding) from the
+        /// rendered title block, keeping title, abstract, keywords, and the
+        /// data/code-availability statements. For a `pdf`/`tex`/`typst` export you
+        /// send to a double-blind review. No effect when no `frontmatter` is set.
+        #[arg(long)]
+        blind: bool,
     },
 
     /// INDEX-1 — generate a back-of-book index (terms → the chapters they appear in)
@@ -5267,6 +5274,7 @@ impl Cli {
                 profiles,
                 templates,
                 eject_templates,
+                blind,
             } => {
                 // TDOC-3 — parse `--profile dim=value` pairs.
                 let profile_pairs: Vec<(String, String)> = profiles
@@ -5283,6 +5291,7 @@ impl Cli {
                     &profile_pairs,
                     templates.as_deref(),
                     eject_templates.as_deref(),
+                    blind,
                 )
                 .map_err(Into::into)
             }
