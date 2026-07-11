@@ -12,7 +12,16 @@ and reading adversarially.
 
 #section("Frame — the academic genre")
 
-Set the genre so the readers hold you to evidence and to a hostile standard:
+The scientific template scaffolds the whole track in one step — an IMRaD manuscript
+(Introduction, Methods, Results, Discussion) with the academic genre already set and
+the paper's front-matter block (below) waiting to be filled:
+
+```
+inkhaven init --template scientific my-paper
+```
+
+If you are already in a project, set the genre by hand so the readers hold you to
+evidence and to a hostile standard:
 
 #config("inkhaven.hjson", [```hjson
 genre: "science"
@@ -93,12 +102,86 @@ because arithmetic is its own authority.
   credible.
 ]
 
-#section("Produce")
+#section("Produce — the paper, formatted for its venue")
 
-`export pdf|docx` renders the paper or the book with its reference list assembled
-from the Sources you gathered. Because every citation was filed from a real source
-with a real identifier, the bibliography is not a hand-typed hope that a reference
-looks right — it is the actual, resolvable record of what grounded the work.
+A paper is not only its prose. Declare its _front matter_ — the title block a
+journal expects — in one config block, and it renders into the PDF and the LaTeX
+alike:
+
+#config("inkhaven.hjson", [```hjson
+frontmatter: {
+  abstract: "One paragraph — the problem, the method, the finding."
+  keywords: ["specificity", "CRISPR", "off-target"]
+  authors: [
+    { name: "Ada Lovelace", affiliation: "Analytical Engine Co.", orcid: "0000-0002-1825-0097", email: "ada@example.org", corresponding: true }
+    { name: "Charles Babbage", affiliation: "Analytical Engine Co." }
+  ]
+  funding: "Supported by grant No. 42."
+}
+```])
+
+Authors sharing an affiliation share one superscript; the corresponding author is
+marked and their address noted. The labels — _Abstract_, _Keywords_, _Corresponding
+author_, _Funding_ — follow the book's language, so a Russian or French paper reads
+in its own tongue. Leave the block empty and nothing renders, so a book that is not
+a paper is untouched.
+
+Then render. `export pdf` produces the paper with its reference list assembled from
+the Sources you gathered — every citation filed from a real source with a real
+identifier, so the bibliography is the resolvable record of what grounded the work,
+not a hand-typed hope. `export tex` hands you LaTeX for a journal's submission
+system, and it targets the journal's document class when you name one:
+
+#config("inkhaven.hjson", [```hjson
+tex_export: {
+  document_class: "IEEEtran"
+  class_options: "conference"
+  extra_packages: ["amsmath"]
+}
+```])
+
+Left unset, the export keeps the sensible `article` class the converter emits. Name
+a class — `IEEEtran`, `elsarticle`, or `article` with `twocolumn` in the options —
+and Inkhaven rewrites the document class and folds in whatever extra packages the
+venue needs.
+
+#note[
+  A cross-reference that does not resolve — `@fig:flux` with no figure labelled
+  `<fig:flux>` — is a hard error in Typst: the paper will not compile, and the
+  reason is easy to lose in a wall of compiler output. When a build fails on one,
+  Inkhaven lifts it out as a cross-reference finding in the Output pane, naming the
+  label and the line, so a dangling reference is as findable as an uncited claim.
+  To stop writing one in the first place, `Ctrl+V &` opens a cross-reference
+  picker — every label defined across the manuscript, fuzzy-searchable — and drops
+  the matching `@label` where the cursor sits.
+]
+
+#section("Submit — double-blind and the availability statements")
+
+A submission is not the desk copy. For a double-blind venue, `export tex --blind`
+(or `--blind` on the `pdf`/`typst` export) renders the title block with the
+identifying front matter withheld — authors, affiliations, ORCID, funding — while
+keeping the title, abstract, keywords, and the availability statements the reviewer
+still needs. And those statements are front matter of their own:
+
+#config("inkhaven.hjson", [```hjson
+frontmatter: {
+  data_availability: "The dataset is archived at the repository DOI on acceptance."
+  code_availability: "Analysis code is released under an open licence at the same DOI."
+}
+```])
+
+They render as their own labelled blocks — in the book's language — and, unlike the
+author line, survive `--blind` (you anonymise the links yourself for review).
+
+#section("Reach for a package")
+
+Scientific typesetting often wants a package the community has already written — a
+diagram library, a units formatter, a journal template. `Ctrl+V #` opens the Typst
+Universe picker: fuzzy-find a package by name, and Inkhaven inserts its
+`#import` line where the cursor sits. The catalogue is fetched once and cached under
+`.inkhaven/`; `Ctrl+R` inside the picker forces a fresh pull when you want the
+latest, and `typst_universe.url` points it at a different index if you keep one.
 
 #section("Hands-on: two procedures")
 
@@ -122,4 +205,6 @@ looks right — it is the actual, resolvable record of what grounded the work.
   [*Gather* from the literature with the Research Assistant's scholarly reach (DOI, arXiv), which auto-files citations; *triangulate* and *refute* so a claim is concurred and stress-tested, not merely stated.],
   [*Cite* through the *Sources* book — `sources import/export` (BibTeX, CSL-JSON) round-trips with Zotero, `sources check` fits CI, the cite picker (`Ctrl+V @`) drops references inline, and `/deadsources` catches link-rot.],
   [*Read adversarially* with the `prosecutor`/`defender` verdict personas and the `expert-reviewer`; verify with `/factcheck`, `/undisputed`, and computed `/calc` facts — find the hole yourself before the referee does.],
+  [*Produce* for the venue: `inkhaven init --template scientific` scaffolds IMRaD; a `frontmatter` block renders the title page (authors, affiliations, ORCID, abstract, keywords, data/code availability — in the book's language); `export tex` targets a journal `document_class`; `Ctrl+V #` pulls in a Typst Universe package; `Ctrl+V &` inserts a cross-reference, and a dangling one surfaces as an Output finding.],
+  [*Submit* clean: `export tex --blind` withholds the identifying front matter (authors, affiliations, ORCID, funding) for double-blind review while keeping the abstract, keywords, and availability statements.],
 ))
