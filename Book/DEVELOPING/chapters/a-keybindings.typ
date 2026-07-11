@@ -148,6 +148,8 @@ The view chords open the readers and the web of connections between nodes.
 
 #chord_table((
   chord_row("Ctrl+V @", "The cite picker — drop a citation where the cursor is."),
+  chord_row("Ctrl+V #", "The Typst Universe picker — insert a package #import (Ctrl+R refreshes)."),
+  chord_row("Ctrl+V &", "The cross-reference picker — insert a @label reference to a defined label."),
   chord_row("Ctrl+V a / i", "Add a link / show incoming links to this node."),
   chord_row("Ctrl+V l / k", "List this node's links / backlinks."),
   chord_row("Ctrl+V t", "Open the link target under the cursor."),
