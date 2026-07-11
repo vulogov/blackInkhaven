@@ -81,6 +81,19 @@ pub struct Config {
     /// default; nothing runs until the author opts in and names runners.
     #[serde(default)]
     pub docs: DocsConfig,
+    /// PAPER (1.6.15+) — journal-article front matter (title block: authors,
+    /// affiliations, abstract, keywords, funding). Empty by default → renders
+    /// nothing, so existing books are unaffected.
+    #[serde(default)]
+    pub frontmatter: FrontmatterConfig,
+    /// PAPER (1.6.15+) — LaTeX export document class + preamble. Defaults
+    /// reproduce the historical book preamble; override to target a journal
+    /// class (article / IEEEtran / elsarticle / two-column).
+    #[serde(default)]
+    pub tex_export: TexExportConfig,
+    /// TYPST-UNIVERSE (1.6.15+) — the `Ctrl+V #` package import picker source.
+    #[serde(default)]
+    pub typst_universe: TypstUniverseConfig,
     /// MYTH-1 — mythological & symbolic pattern library.
     #[serde(default)]
     pub myth: MythConfig,
@@ -244,6 +257,9 @@ impl Default for Config {
             char: CharConfig::default(),
             theologian: TheologianConfig::default(),
             docs: DocsConfig::default(),
+            frontmatter: FrontmatterConfig::default(),
+            tex_export: TexExportConfig::default(),
+            typst_universe: TypstUniverseConfig::default(),
             myth: MythConfig::default(),
             world: WorldConfig::default(),
             research: ResearchConfig::default(),
@@ -3715,6 +3731,441 @@ pub struct SourcesConfig {
 impl Default for SourcesConfig {
     fn default() -> Self {
         Self { all: true, bibliography_style: "ieee".into(), auto_bibliography: true }
+    }
+}
+
+/// PAPER (1.6.15+) — one author of a scientific paper. All fields optional; an
+/// author with an empty `name` is skipped when rendering the title block.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct Author {
+    pub name: String,
+    /// Institutional affiliation. Authors sharing an affiliation share one
+    /// superscript number in the rendered block.
+    pub affiliation: String,
+    /// ORCID iD (bare `0000-0000-0000-0000` or a full URL — rendered verbatim).
+    pub orcid: String,
+    pub email: String,
+    /// The corresponding author gets a `*` mark and an email note.
+    pub corresponding: bool,
+}
+
+/// PAPER (1.6.15+) — journal-article front matter. Rendered into a Typst title
+/// block (title, authors + affiliations, abstract, keywords, funding) that is
+/// prepended to the assembled document for the `typst`/`pdf`/`tex` exports and
+/// the TUI book assembly. Empty (no authors, abstract, or keywords) → renders
+/// nothing, so books that don't opt in are byte-for-byte unchanged. Labels key
+/// off the project language ([`Config::language`]).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct FrontmatterConfig {
+    /// The paper abstract (a single paragraph of plain prose).
+    #[serde(rename = "abstract")]
+    pub abstract_text: String,
+    pub keywords: Vec<String>,
+    pub authors: Vec<Author>,
+    /// Funding / acknowledgements statement. Identifying — dropped under `--blind`.
+    pub funding: String,
+    /// Data-availability statement (where the study's data lives). Kept under
+    /// `--blind` (the author anonymises repository links themselves).
+    pub data_availability: String,
+    /// Code-availability statement (where the analysis code lives). Kept under
+    /// `--blind`.
+    pub code_availability: String,
+}
+
+/// Localized front-matter labels, in the five first-class languages (English
+/// fallback). Mirrors the `Labels::for_language` pattern used elsewhere.
+struct FrontmatterLabels {
+    abstract_: &'static str,
+    keywords: &'static str,
+    corresponding: &'static str,
+    funding: &'static str,
+    data_availability: &'static str,
+    code_availability: &'static str,
+}
+
+impl FrontmatterLabels {
+    fn for_language(language: &str) -> FrontmatterLabels {
+        match language.trim().to_lowercase().as_str() {
+            "ru" | "russian" | "русский" => FrontmatterLabels {
+                abstract_: "Аннотация",
+                keywords: "Ключевые слова",
+                corresponding: "Автор для корреспонденции",
+                funding: "Финансирование",
+                data_availability: "Доступность данных",
+                code_availability: "Доступность кода",
+            },
+            "fr" | "french" | "français" | "francais" => FrontmatterLabels {
+                abstract_: "Résumé",
+                keywords: "Mots-clés",
+                corresponding: "Auteur correspondant",
+                funding: "Financement",
+                data_availability: "Disponibilité des données",
+                code_availability: "Disponibilité du code",
+            },
+            "de" | "german" | "deutsch" => FrontmatterLabels {
+                abstract_: "Zusammenfassung",
+                keywords: "Schlüsselwörter",
+                corresponding: "Korrespondierender Autor",
+                funding: "Förderung",
+                data_availability: "Datenverfügbarkeit",
+                code_availability: "Codeverfügbarkeit",
+            },
+            "es" | "spanish" | "español" | "espanol" => FrontmatterLabels {
+                abstract_: "Resumen",
+                keywords: "Palabras clave",
+                corresponding: "Autor para correspondencia",
+                funding: "Financiación",
+                data_availability: "Disponibilidad de datos",
+                code_availability: "Disponibilidad del código",
+            },
+            _ => FrontmatterLabels {
+                abstract_: "Abstract",
+                keywords: "Keywords",
+                corresponding: "Corresponding author",
+                funding: "Funding",
+                data_availability: "Data availability",
+                code_availability: "Code availability",
+            },
+        }
+    }
+}
+
+/// Escape Typst markup-special characters so author-supplied plain text sits
+/// safely in content (`[...]`) mode. Mirrors `conlang::output::typst_text`.
+fn frontmatter_escape_content(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if matches!(
+            c,
+            '#' | '*' | '_' | '`' | '$' | '\\' | '<' | '>' | '@' | '[' | ']'
+        ) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+impl FrontmatterConfig {
+    /// `true` when any renderable front matter is configured.
+    fn has_content(&self) -> bool {
+        self.authors.iter().any(|a| !a.name.trim().is_empty())
+            || !self.abstract_text.trim().is_empty()
+            || self.keywords.iter().any(|k| !k.trim().is_empty())
+            || !self.data_availability.trim().is_empty()
+            || !self.code_availability.trim().is_empty()
+    }
+
+    /// Render the front matter as a Typst title block. Returns an empty string
+    /// when nothing is configured (so existing exports are unchanged). `title`
+    /// is the book/paper title; `language` selects the localized labels. When
+    /// `blind` is set (double-blind submission), the identifying parts — authors,
+    /// affiliations, ORCID, corresponding author, funding — are omitted, keeping
+    /// the title, abstract, keywords, and availability statements.
+    pub fn to_typst_block(&self, language: &str, title: &str, blind: bool) -> String {
+        if !self.has_content() {
+            return String::new();
+        }
+        let lx = FrontmatterLabels::for_language(language);
+        let esc = frontmatter_escape_content;
+        let show_identity = !blind;
+        let mut s = String::new();
+        s.push_str("// inkhaven front matter — paper title block\n");
+
+        // Document metadata (PDF outline / accessibility). Authors omitted under
+        // blind so the PDF metadata doesn't leak identity either.
+        s.push_str(&format!("#set document(title: \"{}\"", typst_escape(title)));
+        if show_identity {
+            let author_names: Vec<String> = self
+                .authors
+                .iter()
+                .filter(|a| !a.name.trim().is_empty())
+                .map(|a| format!("\"{}\"", typst_escape(a.name.trim())))
+                .collect();
+            if !author_names.is_empty() {
+                s.push_str(&format!(", author: ({},)", author_names.join(", ")));
+            }
+        }
+        s.push_str(")\n\n");
+
+        // Distinct affiliations → shared superscript numbers.
+        let mut affils: Vec<String> = Vec::new();
+        if show_identity {
+            for a in &self.authors {
+                let aff = a.affiliation.trim();
+                if !aff.is_empty() && !affils.iter().any(|x| x == aff) {
+                    affils.push(aff.to_string());
+                }
+            }
+        }
+
+        // Centered title + author line.
+        s.push_str("#align(center)[\n");
+        s.push_str(&format!(
+            "  #text(size: 1.6em, weight: \"bold\")[{}]\n\n",
+            esc(title)
+        ));
+        let mut author_bits: Vec<String> = Vec::new();
+        if show_identity {
+            for a in &self.authors {
+                let name = a.name.trim();
+                if name.is_empty() {
+                    continue;
+                }
+                let mut bit = esc(name);
+                let aff = a.affiliation.trim();
+                if !aff.is_empty() {
+                    if let Some(idx) = affils.iter().position(|x| x == aff) {
+                        bit.push_str(&format!("#super[{}]", idx + 1));
+                    }
+                }
+                if a.corresponding {
+                    bit.push_str("#super[\\*]");
+                }
+                if !a.orcid.trim().is_empty() {
+                    bit.push_str(&format!(
+                        " #box[#text(size: 0.7em)[ORCID {}]]",
+                        esc(a.orcid.trim())
+                    ));
+                }
+                author_bits.push(bit);
+            }
+        }
+        if !author_bits.is_empty() {
+            s.push_str(&format!("  #v(0.5em)\n  {}\n", author_bits.join(", ")));
+        }
+        if !affils.is_empty() {
+            s.push_str("\n  #text(size: 0.85em)[\n");
+            let mut lines: Vec<String> = affils
+                .iter()
+                .enumerate()
+                .map(|(i, aff)| format!("    #super[{}]{}", i + 1, esc(aff)))
+                .collect();
+            if let Some(corr) = self
+                .authors
+                .iter()
+                .find(|a| a.corresponding && !a.email.trim().is_empty())
+            {
+                lines.push(format!(
+                    "    #super[\\*]{}: {}",
+                    esc(lx.corresponding),
+                    esc(corr.email.trim())
+                ));
+            }
+            s.push_str(&lines.join(" \\\n"));
+            s.push_str("\n  ]\n");
+        }
+        s.push_str("]\n\n");
+
+        // Abstract.
+        if !self.abstract_text.trim().is_empty() {
+            s.push_str(&format!(
+                "#block(inset: (x: 2em))[\n  *{}.* {}\n]\n\n",
+                esc(lx.abstract_),
+                esc(self.abstract_text.trim())
+            ));
+        }
+
+        // Keywords.
+        let kws: Vec<String> = self
+            .keywords
+            .iter()
+            .map(|k| k.trim())
+            .filter(|k| !k.is_empty())
+            .map(esc)
+            .collect();
+        if !kws.is_empty() {
+            s.push_str(&format!(
+                "#block(inset: (x: 2em))[\n  *{}:* {}\n]\n\n",
+                esc(lx.keywords),
+                kws.join(", ")
+            ));
+        }
+
+        // Data-availability statement (kept under blind — author anonymises).
+        if !self.data_availability.trim().is_empty() {
+            s.push_str(&format!(
+                "#block(inset: (x: 2em))[\n  *{}:* {}\n]\n\n",
+                esc(lx.data_availability),
+                esc(self.data_availability.trim())
+            ));
+        }
+
+        // Code-availability statement (kept under blind).
+        if !self.code_availability.trim().is_empty() {
+            s.push_str(&format!(
+                "#block(inset: (x: 2em))[\n  *{}:* {}\n]\n\n",
+                esc(lx.code_availability),
+                esc(self.code_availability.trim())
+            ));
+        }
+
+        // Funding — identifying (grant numbers), dropped under blind.
+        if show_identity && !self.funding.trim().is_empty() {
+            s.push_str(&format!(
+                "#block(inset: (x: 2em))[\n  *{}:* {}\n]\n\n",
+                esc(lx.funding),
+                esc(self.funding.trim())
+            ));
+        }
+
+        s
+    }
+}
+
+/// PAPER (1.6.15+) — LaTeX export document class + preamble. `inkhaven export
+/// tex` runs tylax, which already emits a complete `\documentclass{article}`
+/// document. When `document_class` is set, inkhaven rewrites that line to the
+/// named journal class (`IEEEtran`, `elsarticle`, `article`, …) and injects
+/// `extra_packages` + raw `preamble` lines before `\begin{document}`. All
+/// fields empty (the default) → tylax's `article` output is left untouched, so
+/// existing exports are byte-for-byte unchanged.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct TexExportConfig {
+    /// Journal document class, e.g. `IEEEtran`, `elsarticle`, `article`. Empty
+    /// → keep tylax's `article`.
+    pub document_class: String,
+    /// Class options, e.g. `conference`, `twocolumn`, `11pt,a4paper`. Empty →
+    /// `\documentclass{class}` with no bracket.
+    pub class_options: String,
+    /// Extra `\usepackage`s — bare names (`amsmath`) or full `\usepackage{...}`
+    /// lines (for options like `\usepackage[numbers]{natbib}`).
+    pub extra_packages: Vec<String>,
+    /// Raw preamble lines inserted verbatim before `\begin{document}`.
+    pub preamble: Vec<String>,
+}
+
+/// TYPST-UNIVERSE (1.6.15+) — the `Ctrl+V #` import picker's package source.
+/// The manifest is fetched once and cached under `.inkhaven/`; `ttl_hours`
+/// bounds cache freshness.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TypstUniverseConfig {
+    /// Package manifest URL. Defaults to the community "with-stars" list.
+    pub url: String,
+    /// Cache freshness window, in hours.
+    pub ttl_hours: u32,
+}
+
+impl Default for TypstUniverseConfig {
+    fn default() -> Self {
+        Self {
+            url: crate::typst_universe::DEFAULT_URL.to_string(),
+            ttl_hours: 24,
+        }
+    }
+}
+
+#[cfg(test)]
+mod frontmatter_tests {
+    use super::*;
+
+    #[test]
+    fn empty_frontmatter_renders_nothing() {
+        let fm = FrontmatterConfig::default();
+        assert_eq!(fm.to_typst_block("english", "A Book", false), "");
+    }
+
+    #[test]
+    fn renders_title_authors_affiliations_and_abstract() {
+        let fm = FrontmatterConfig {
+            abstract_text: "We show a thing.".into(),
+            keywords: vec!["alpha".into(), "beta".into()],
+            authors: vec![
+                Author {
+                    name: "Ada Lovelace".into(),
+                    affiliation: "Analytical Engine Co.".into(),
+                    orcid: "0000-0000-0000-0001".into(),
+                    email: "ada@example.org".into(),
+                    corresponding: true,
+                },
+                Author {
+                    name: "Charles Babbage".into(),
+                    affiliation: "Analytical Engine Co.".into(),
+                    ..Default::default()
+                },
+            ],
+            funding: "Grant 42.".into(),
+            ..Default::default()
+        };
+        let out = fm.to_typst_block("english", "On Engines", false);
+        assert!(out.contains("#set document(title: \"On Engines\""));
+        assert!(out.contains("Ada Lovelace"));
+        assert!(out.contains("Charles Babbage"));
+        // Shared affiliation → a single superscript group.
+        assert!(out.contains("#super[1]Analytical Engine Co."));
+        assert!(!out.contains("#super[2]"));
+        assert!(out.contains("*Abstract.*"));
+        assert!(out.contains("*Keywords:* alpha, beta"));
+        assert!(out.contains("*Funding:*"));
+        assert!(out.contains("ORCID 0000-0000-0000-0001"));
+        // `@` is escaped in Typst content mode (bare `@` starts a reference).
+        assert!(out.contains("Corresponding author"));
+        assert!(out.contains("ada\\@example.org"), "{out}");
+    }
+
+    #[test]
+    fn labels_key_off_project_language() {
+        let fm = FrontmatterConfig {
+            abstract_text: "Резюме текста.".into(),
+            keywords: vec!["ключ".into()],
+            ..Default::default()
+        };
+        let ru = fm.to_typst_block("russian", "Труд", false);
+        assert!(ru.contains("*Аннотация.*"), "{ru}");
+        assert!(ru.contains("*Ключевые слова:*"), "{ru}");
+        let fr = fm.to_typst_block("fr", "Œuvre", false);
+        assert!(fr.contains("*Résumé.*"), "{fr}");
+    }
+
+    #[test]
+    fn blind_omits_identity_but_keeps_content_and_availability() {
+        let fm = FrontmatterConfig {
+            abstract_text: "A finding.".into(),
+            keywords: vec!["k".into()],
+            authors: vec![Author {
+                name: "Ada Lovelace".into(),
+                affiliation: "Engine Co.".into(),
+                orcid: "0000-0000-0000-0001".into(),
+                email: "ada@example.org".into(),
+                corresponding: true,
+            }],
+            funding: "Grant 42.".into(),
+            data_availability: "Data at example.org/data.".into(),
+            code_availability: "Code at example.org/code.".into(),
+        };
+        let blind = fm.to_typst_block("english", "T", true);
+        // Identity stripped.
+        assert!(!blind.contains("Ada Lovelace"), "{blind}");
+        assert!(!blind.contains("Engine Co."), "{blind}");
+        assert!(!blind.contains("ORCID"), "{blind}");
+        assert!(!blind.contains("*Funding:*"), "{blind}");
+        assert!(!blind.contains("author: ("), "{blind}");
+        // Content kept.
+        assert!(blind.contains("*Abstract.*"), "{blind}");
+        assert!(blind.contains("*Keywords:*"), "{blind}");
+        assert!(blind.contains("*Data availability:*"), "{blind}");
+        assert!(blind.contains("*Code availability:*"), "{blind}");
+        // Non-blind keeps identity + funding.
+        let open = fm.to_typst_block("english", "T", false);
+        assert!(open.contains("Ada Lovelace"));
+        assert!(open.contains("*Funding:*"));
+    }
+
+    #[test]
+    fn markup_specials_in_author_text_are_escaped() {
+        let fm = FrontmatterConfig {
+            authors: vec![Author {
+                name: "A #hash* Name".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let out = fm.to_typst_block("english", "T", false);
+        assert!(out.contains("A \\#hash\\* Name"), "{out}");
     }
 }
 

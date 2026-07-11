@@ -33,6 +33,8 @@ mod world;
 mod argue;
 mod book_index;
 mod docs;
+mod xref;
+mod typst_universe;
 mod intent;
 mod inner_socrates;
 mod inner_editor;

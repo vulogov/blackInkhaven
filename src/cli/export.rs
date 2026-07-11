@@ -21,6 +21,7 @@ pub fn run(
     profiles: &[(String, String)],
     templates: Option<&Path>,
     eject_templates: Option<&Path>,
+    blind: bool,
 ) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
@@ -33,16 +34,31 @@ pub fn run(
     let combined = build_combined(&layout, &h, scope.root_id, floor_idx, tag, profiles)?;
     let epub_title = scope.title_for_epub(project);
 
+    // PAPER (1.6.15+): prepend the front-matter title block (authors,
+    // affiliations, abstract, keywords, funding) to the Typst-based exports.
+    // Empty front matter renders "" so non-paper books are unchanged. Markdown
+    // / EPUB / HTML derive their own front matter and are left as-is.
+    let front = cfg
+        .frontmatter
+        .to_typst_block(&cfg.language, &epub_title, blind);
+    let with_front = |body: &str| -> String {
+        if front.is_empty() {
+            body.to_string()
+        } else {
+            format!("{front}{body}")
+        }
+    };
+
     match format {
-        ExportFormat::Typst => write_typst(&combined, output),
-        ExportFormat::Pdf => write_pdf(&combined, output),
+        ExportFormat::Typst => write_typst(&with_front(&combined), output),
+        ExportFormat::Pdf => write_pdf(&with_front(&combined), output),
         ExportFormat::Markdown => write_artefact(
             export::build_markdown(&combined),
             output,
             "markdown",
         ),
         ExportFormat::Tex => write_artefact(
-            export::build_tex(&combined),
+            export::build_tex(&with_front(&combined), &cfg.tex_export),
             output,
             "tex",
         ),
