@@ -496,6 +496,14 @@ pub enum Action {
     /// defined citation key and insert `@key` at the editor cursor.
     #[serde(rename = "view.cite_picker")]
     ViewCitePicker,
+    /// Ctrl+V # (1.6.15+ TYPST-UNIVERSE) — package import picker. Fuzzy-find a
+    /// Typst Universe package and insert a `#import "@preview/…": *` line.
+    #[serde(rename = "view.universe_picker")]
+    ViewUniversePicker,
+    /// Ctrl+V & (1.6.15+ XREF-2) — cross-reference picker. Fuzzy-find a label
+    /// defined in the manuscript and insert `@label` at the editor cursor.
+    #[serde(rename = "view.xref_picker")]
+    ViewXrefPicker,
     /// Ctrl+V x (1.4.9+ REUSE-1) — insert/replace a snippet `#include` via a
     /// fuzzy picker over the Snippets book.
     #[serde(rename = "view.insert_snippet_include")]
@@ -1038,6 +1046,8 @@ impl Action {
             Action::ViewToggleBookmark => "bookmark".into(),
             Action::ViewListBookmarks => "bookmarks".into(),
             Action::ViewCitePicker => "cite".into(),
+            Action::ViewUniversePicker => "import".into(),
+            Action::ViewXrefPicker => "xref".into(),
             Action::InsertSnippetInclude => "snippet".into(),
             Action::OpenSnippetsOverview => "snippets".into(),
             Action::ViewToggleTermsOverlay => "terms overlay".into(),
@@ -1341,6 +1351,10 @@ impl Action {
                 "Open the bookmark picker — every bookmarked paragraph in the project. Enter opens; D removes the bookmark.".into(),
             Action::ViewCitePicker =>
                 "Cite picker (1.4.5+ SOURCES-1, Ctrl+V @) — fuzzy-find a citation defined in the Sources book by key / author / title, Enter inserts `@key` at the editor cursor. Empty list → add entries to the Sources book first.".into(),
+            Action::ViewUniversePicker =>
+                "Typst Universe import picker (1.6.15+, Ctrl+V #) — fuzzy-find a Typst Universe package by name / description and insert a `#import \"@preview/<name>:<version>\": *` line at the editor cursor. The package list is fetched once from a configurable URL (`typst_universe.url`) and cached under `.inkhaven/` (TTL `typst_universe.ttl_hours`, default 24h); sorted by GitHub stars. Ctrl+R inside the modal forces a refresh, ignoring the cache. Handy for pulling in `cetz`, `fletcher`, journal templates, etc.".into(),
+            Action::ViewXrefPicker =>
+                "Cross-reference picker (1.6.15+ XREF-2, Ctrl+V &) — fuzzy-find a label defined anywhere in the manuscript (`<fig:flux>`, `<eq:energy>`, `<sec:intro>`, …) and insert an `@label` reference at the cursor, so a cross-reference always points at a label that exists. The mirror of the XREF Output finding, which catches a reference whose label is missing. Empty list → define a label first by placing `<name>` after a figure, heading, or equation.".into(),
             Action::InsertSnippetInclude =>
                 "Snippet include (1.4.9+ REUSE-1, Ctrl+V x) — fuzzy-pick a reusable snippet from the Snippets book and insert a Typst `#include` for it at the cursor (depth-relative path computed automatically). With the cursor inside an existing `#include \"…/snippets/…\"` path, it replaces that path in place (pre-selecting the current snippet). Define snippets as paragraphs under the Snippets book; assembly copies them to a `snippets/` sidecar so the include resolves.".into(),
             Action::OpenSnippetsOverview =>
@@ -1727,6 +1741,17 @@ impl KeyBindings {
                 // 1.4.5+ SOURCES-1 — Ctrl+V @ cite picker (insert @key).
                 // Editor-scoped: the pick lands in the open buffer.
                 entry("@", Action::ViewCitePicker, Scope::Editor),
+                // 1.6.15+ TYPST-UNIVERSE — Ctrl+V # package import picker. `#`
+                // mirrors Typst's import sigil, beside the `@` cite chord. Scope
+                // Any (not Editor): the #import lands in the currently-open
+                // paragraph regardless of which pane holds focus, and the
+                // handler gives a friendly "open a paragraph first" when none is
+                // open — friendlier than an "unknown chord" from the tree pane.
+                entry("#", Action::ViewUniversePicker, Scope::Any),
+                // 1.6.15+ XREF-2 — Ctrl+V & cross-reference picker (insert
+                // @label). Scope Any for the same reason as `#`; `&` reads as
+                // "reference to", beside the `@` cite chord.
+                entry("&", Action::ViewXrefPicker, Scope::Any),
                 // NF-CITE — Ctrl+V Shift+C: the Sourcing pass on the open paragraph
                 // (Cite/Claim coverage), beside the cite picker.
                 entry("Shift+c", Action::SourcingCheckParagraph, Scope::Any),
@@ -2369,6 +2394,70 @@ mod tests {
         );
         // Editor-scoped — not bound in the tree pane.
         assert_eq!(k.resolve_view_sub(&bare, Focus::Tree), None);
+    }
+
+    #[test]
+    fn view_hash_opens_universe_picker_on_any_terminal() {
+        // TYPST-UNIVERSE — Ctrl+V # → import picker. `#` is Shift+3 on US
+        // layouts; both the shifted and bare reports must resolve.
+        let k = KeyBindings::defaults();
+        let shifted = KeyEvent::new(KeyCode::Char('#'), KeyModifiers::SHIFT);
+        let bare = KeyEvent::new(KeyCode::Char('#'), KeyModifiers::NONE);
+        assert_eq!(
+            k.resolve_view_sub(&shifted, Focus::Editor),
+            Some(Action::ViewUniversePicker)
+        );
+        assert_eq!(
+            k.resolve_view_sub(&bare, Focus::Editor),
+            Some(Action::ViewUniversePicker)
+        );
+        // Scope::Any — resolves from the tree pane too (the handler guards the
+        // no-open-paragraph case), so the chord never reads as "unknown".
+        assert_eq!(
+            k.resolve_view_sub(&bare, Focus::Tree),
+            Some(Action::ViewUniversePicker)
+        );
+    }
+
+    #[test]
+    fn view_ampersand_opens_xref_picker_on_any_terminal() {
+        // XREF-2 — Ctrl+V & → cross-reference picker. `&` is Shift+7 on US
+        // layouts; both shifted and bare reports must resolve, from any pane.
+        let k = KeyBindings::defaults();
+        let shifted = KeyEvent::new(KeyCode::Char('&'), KeyModifiers::SHIFT);
+        let bare = KeyEvent::new(KeyCode::Char('&'), KeyModifiers::NONE);
+        assert_eq!(
+            k.resolve_view_sub(&shifted, Focus::Editor),
+            Some(Action::ViewXrefPicker)
+        );
+        assert_eq!(
+            k.resolve_view_sub(&bare, Focus::Tree),
+            Some(Action::ViewXrefPicker)
+        );
+    }
+
+    #[test]
+    fn universe_chord_survives_the_from_overrides_install_path() {
+        // The runtime resolves against `from_overrides(defaults + overlay)`, not
+        // bare `defaults()`. Prove the `#` binding is present in that table with
+        // an empty overlay, so a config with no `keys.bindings` still gets it.
+        let d = KeyBindings::defaults();
+        let k = KeyBindings::from_overrides(
+            d.meta_prefix,
+            d.bund_prefix,
+            d.view_prefix,
+            &[],
+        )
+        .unwrap();
+        let bare = KeyEvent::new(KeyCode::Char('#'), KeyModifiers::NONE);
+        assert_eq!(
+            k.resolve_view_sub(&bare, Focus::Editor),
+            Some(Action::ViewUniversePicker)
+        );
+        assert_eq!(
+            k.resolve_view_sub(&bare, Focus::Tree),
+            Some(Action::ViewUniversePicker)
+        );
     }
 
     #[test]

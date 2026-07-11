@@ -21,11 +21,13 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.6.14 — Index & Argument
+## Latest release · 1.6.15 — Scientific Papers
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.6.14.md`](Documentation/RELEASE_NOTES/1.6.14.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.6.15.md`](Documentation/RELEASE_NOTES/1.6.15.md)
 
-More for the nonfiction desk. **No new runtime crates.**
+What a journal article needs — a title block, a journal LaTeX target, an IMRaD
+scaffold, cross-references you can insert and see break, a double-blind build, and a
+Typst Universe package picker. **No new runtime crates.**
 
 ### A real back-of-book index
 

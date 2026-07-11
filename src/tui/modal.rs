@@ -377,6 +377,26 @@ pub(super) enum Modal {
         cursor: usize,
         scroll: usize,
     },
+    /// 1.6.15+ TYPST-UNIVERSE — Ctrl+V # package import picker. Reuses
+    /// `ScriptPickerEntry`: `title` holds the `@preview/<name>:<version>` spec,
+    /// `slug_path` the "★stars · description" descriptor; `id` is unused
+    /// (`Uuid::nil()`). Enter inserts a `#import "<spec>": *` line.
+    UniversePicker {
+        input: TextInput,
+        entries: Vec<ScriptPickerEntry>,
+        cursor: usize,
+        scroll: usize,
+    },
+    /// 1.6.15+ XREF-2 — Ctrl+V & cross-reference label picker. Reuses
+    /// `ScriptPickerEntry`: `title` holds a label name (`fig:flux`), `slug_path`
+    /// the "figure · where" descriptor; `id` is unused (`Uuid::nil()`). Enter
+    /// inserts `@<label>` at the cursor.
+    XrefPicker {
+        input: TextInput,
+        entries: Vec<ScriptPickerEntry>,
+        cursor: usize,
+        scroll: usize,
+    },
     /// 1.4.9+ REUSE-1 — Ctrl+V x snippet `#include` insert/replace picker
     /// (distinct from the text-expansion `SnippetPicker`). Reuses
     /// `ScriptPickerEntry`: `title` holds the snippet slug, `slug_path` the

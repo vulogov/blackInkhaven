@@ -74,19 +74,6 @@ fn quote_present(claim_lc: &str, prose_lc: &str) -> bool {
     hits * 100 >= words.len() * 60
 }
 
-/// Emit an argument-gap finding to the Output pane (for a future TUI chord / pass).
-pub fn emit_finding(para_id: uuid::Uuid, text: &str, detail: &str) {
-    use crate::pane::output::{emit, kinds, Lifetime, Message, Severity};
-    let msg = Message::new(
-        kinds::ARGUMENT,
-        Severity::Warning,
-        Lifetime::UntilActedOn,
-        serde_json::json!({ "text": text, "category": "argument", "detail": detail }),
-    )
-    .with_source_paragraph(para_id);
-    emit(&msg);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
