@@ -174,6 +174,25 @@ frontmatter: {
 They render as their own labelled blocks — in the book's language — and, unlike the
 author line, survive `--blind` (you anonymise the links yourself for review).
 
+For a preprint server, `export tex --bundle` writes the whole submission as one
+self-contained package — the `.tex`, a `sources.bib` harvested from your Sources
+book, every figure the prose references (copied in, paths flattened), and a
+`MANIFEST.txt` of what to check before you upload:
+
+```
+inkhaven export tex --bundle paper.zip     # a single archive, ready for arXiv
+inkhaven export tex --bundle paper/         # or a plain directory
+```
+
+Because arXiv compiles the source on its own machines, the bundle carries
+everything the build needs. Two rough edges of the Typst→LaTeX conversion are
+smoothed on the way out: a bibliography citation is emitted as `@key` and would
+otherwise become a broken `\ref` — the bundle rewrites it to `\cite{key}` for the
+keys that are actually in your `sources.bib`, leaving genuine cross-references
+(`@fig:flux`) as `\ref`; and the bibliography style is mapped to a real `.bst`.
+Any figure the prose names but that isn't on disk is listed in the MANIFEST rather
+than silently dropped, so nothing goes missing without your seeing it.
+
 #section("Reach for a package")
 
 Scientific typesetting often wants a package the community has already written — a
@@ -206,5 +225,5 @@ latest, and `typst_universe.url` points it at a different index if you keep one.
   [*Cite* through the *Sources* book — `sources import/export` (BibTeX, CSL-JSON) round-trips with Zotero, `sources check` fits CI, the cite picker (`Ctrl+V @`) drops references inline, and `/deadsources` catches link-rot.],
   [*Read adversarially* with the `prosecutor`/`defender` verdict personas and the `expert-reviewer`; verify with `/factcheck`, `/undisputed`, and computed `/calc` facts — find the hole yourself before the referee does.],
   [*Produce* for the venue: `inkhaven init --template scientific` scaffolds IMRaD; a `frontmatter` block renders the title page (authors, affiliations, ORCID, abstract, keywords, data/code availability — in the book's language); `export tex` targets a journal `document_class`; `Ctrl+V #` pulls in a Typst Universe package; `Ctrl+V &` inserts a cross-reference, and a dangling one surfaces as an Output finding.],
-  [*Submit* clean: `export tex --blind` withholds the identifying front matter (authors, affiliations, ORCID, funding) for double-blind review while keeping the abstract, keywords, and availability statements.],
+  [*Submit* clean: `export tex --blind` withholds the identifying front matter (authors, affiliations, ORCID, funding) for double-blind review while keeping the abstract, keywords, and availability statements; `export tex --bundle paper.zip` writes a self-contained arXiv/preprint package — `.tex`, `sources.bib`, figures, and a MANIFEST — with citations and the bibliography style fixed up for LaTeX.],
 ))
