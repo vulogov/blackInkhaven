@@ -4655,6 +4655,10 @@ pub struct ResearchConfig {
     pub geonames: GeonamesConfig,
     /// RESRCH-GUTENBERG — `research.gutenberg` block for `/gutenberg`.
     pub gutenberg: GutenbergConfig,
+    /// RESRCH-ARCHIVE — `research.archive` block for `/archive`.
+    pub archive: ArchiveConfig,
+    /// RESRCH-WIKISOURCE — `research.wikisource` block for `/wikisource`.
+    pub wikisource: WikisourceConfig,
 }
 
 /// RESRCH-GUTENBERG — `research.gutenberg` block. `/gutenberg` searches the
@@ -4678,6 +4682,63 @@ impl Default for GutenbergConfig {
         Self {
             enabled: true,
             endpoint: "https://gutendex.com".to_string(),
+            max_chars: 300_000,
+            auto_cite: true,
+        }
+    }
+}
+
+/// RESRCH-ARCHIVE (1.6.16+) — `research.archive` block. `/archive` searches the
+/// keyless **Internet Archive** (`advancedsearch.php`, scoped to `mediatype:texts`)
+/// and ingests a public-domain text's OCR plain text as a research source.
+/// `max_chars` bounds the embedded portion.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ArchiveConfig {
+    /// Master switch for `/archive` (keyless — on by default).
+    pub enabled: bool,
+    /// Base URL of the Internet Archive host (override for a mirror).
+    pub endpoint: String,
+    /// Max characters of a text to ingest (bounds embedding cost).
+    pub max_chars: usize,
+    /// Auto-create a SOURCES-1 `BibEntry` for an ingested text.
+    pub auto_cite: bool,
+}
+
+impl Default for ArchiveConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            endpoint: "https://archive.org".to_string(),
+            max_chars: 300_000,
+            auto_cite: true,
+        }
+    }
+}
+
+/// RESRCH-WIKISOURCE (1.6.16+) — `research.wikisource` block. `/wikisource`
+/// searches `{lang}.wikisource.org` via the keyless MediaWiki API and ingests a
+/// public-domain page's plain-text extract as a research source. The subdomain
+/// is the book's language code (falling back to `default_lang`), so a native
+/// author gets native public-domain texts.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WikisourceConfig {
+    /// Master switch for `/wikisource` (keyless — on by default).
+    pub enabled: bool,
+    /// Language subdomain used when the book language can't be resolved.
+    pub default_lang: String,
+    /// Max characters of a page to ingest (bounds embedding cost).
+    pub max_chars: usize,
+    /// Auto-create a SOURCES-1 `BibEntry` for an ingested page.
+    pub auto_cite: bool,
+}
+
+impl Default for WikisourceConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            default_lang: "en".to_string(),
             max_chars: 300_000,
             auto_cite: true,
         }
@@ -4813,6 +4874,8 @@ impl Default for ResearchConfig {
             scholarly: ScholarlyConfig::default(),
             geonames: GeonamesConfig::default(),
             gutenberg: GutenbergConfig::default(),
+            archive: ArchiveConfig::default(),
+            wikisource: WikisourceConfig::default(),
         }
     }
 }

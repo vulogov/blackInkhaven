@@ -23,6 +23,7 @@
 //! same source-of-truth produces every artefact regardless of how
 //! the user triggered it.
 
+pub mod bundle;
 pub mod docx;
 pub mod epub;
 pub mod html;
