@@ -279,6 +279,16 @@ pub(super) struct RelateState {
     preview_idx: Option<usize>,
 }
 
+/// SCHOLAR — an in-flight `/socrates` reading (a single Dialectician call over a
+/// facts block; the reply is parsed into Socratic questions).
+pub(super) struct SocratesState {
+    topic: String,
+    persona_id: String,
+    rx: Option<mpsc::UnboundedReceiver<StreamMsg>>,
+    buf: String,
+    preview_idx: Option<usize>,
+}
+
 /// RESRCH-5 (R5-A/B/C) — the kind of grounded output over the retrieved facts.
 #[derive(Clone, Copy)]
 pub(super) enum GroundedKind {
@@ -421,6 +431,7 @@ pub(crate) struct ResearchApp {
     factcheck: Option<FactCheckState>,
     contradict: Option<ContradictState>,
     relate: Option<RelateState>,
+    socrates: Option<SocratesState>,
     undisputed_check: Option<UndisputedState>,
     /// In-flight `/web` search (R2-C).
     web: Option<WebState>,
@@ -531,6 +542,7 @@ impl ResearchApp {
             factcheck: None,
             contradict: None,
             relate: None,
+            socrates: None,
             undisputed_check: None,
             web: None,
             wikidata_state: None,
@@ -578,6 +590,7 @@ impl ResearchApp {
             || self.factcheck.is_some()
             || self.contradict.is_some()
             || self.relate.is_some()
+            || self.socrates.is_some()
             || self.undisputed_check.is_some()
             || self.web.is_some()
             || self.wikidata_state.is_some()
@@ -604,6 +617,7 @@ impl ResearchApp {
             self.poll_factcheck();
             self.poll_contradict();
             self.poll_relate();
+            self.poll_socrates();
             self.poll_undisputed();
             self.poll_web();
             self.poll_wikidata();
@@ -1035,6 +1049,7 @@ impl ResearchApp {
             Command::FactCheck => self.start_factcheck(),
             Command::Contradict => self.start_contradict(),
             Command::Relate(claim) => self.start_relate(claim),
+            Command::Socrates(topic) => self.start_socrates(topic),
             Command::Undisputed => self.start_undisputed(),
             Command::Synthesize(topic) => self.run_grounded(&topic, GroundedKind::Synthesize),
             Command::Outline(topic) => self.run_grounded(&topic, GroundedKind::Outline),
@@ -3474,6 +3489,179 @@ impl ResearchApp {
         }
         self.chat_scroll = 0;
         self.status_message = Some(format!("relate complete · {n} relation(s)"));
+    }
+
+    /// SCHOLAR — `/socrates [topic]`: point Inner Socrates' Dialectician at the
+    /// Facts corpus. Retrieval is synchronous (nearest facts for a topic, or a
+    /// bounded sample of the whole corpus); one async Socratic call follows.
+    fn start_socrates(&mut self, topic: String) {
+        if self.socrates.is_some() {
+            self.status_message = Some("a Socratic reading is already running".to_string());
+            return;
+        }
+        let topic = topic.trim().to_string();
+        let Some(book_id) = self.facts_tree.root else {
+            self.status_message = Some("no Facts book".to_string());
+            return;
+        };
+        // Build the facts block: nearest facts for a topic, else a bounded sample.
+        const CAP: usize = 6000;
+        let mut facts_block = String::new();
+        if topic.is_empty() {
+            let facts = super::factcheck::gather_facts(&self.store, &self.hierarchy, book_id);
+            for f in facts.iter() {
+                facts_block.push_str(f.text.trim());
+                facts_block.push_str("\n\n");
+                if facts_block.len() > CAP {
+                    break;
+                }
+            }
+        } else {
+            match crate::book_rag::retrieval::retrieve(
+                &self.store,
+                &self.hierarchy,
+                &self.cfg.book_rag,
+                book_id,
+                &topic,
+            ) {
+                Ok(passages) => {
+                    for p in passages.into_iter().filter(|p| p.is_hit) {
+                        facts_block.push_str(p.body.trim());
+                        facts_block.push_str("\n\n");
+                        if facts_block.len() > CAP {
+                            break;
+                        }
+                    }
+                }
+                Err(e) => {
+                    self.status_message = Some(format!("socrates: retrieval failed: {e}"));
+                    return;
+                }
+            }
+        }
+        if facts_block.trim().is_empty() {
+            self.status_message = Some(
+                "socrates: no facts to examine — collect some (/fact, /archive, …) first"
+                    .to_string(),
+            );
+            return;
+        }
+
+        let persona = super::socrates::dialectician(&self.layout.root);
+        // A facts corpus has no fiction frame; prefer the project genre, else academic.
+        let genre = self
+            .cfg
+            .genre
+            .as_deref()
+            .filter(|g| !g.trim().is_empty())
+            .unwrap_or("academic");
+        let (system, user) = super::socrates::build_prompts(&persona, Some(genre), &facts_block);
+
+        let ai = match crate::ai::AiClient::from_config(&self.cfg.llm) {
+            Ok(a) => a,
+            Err(e) => {
+                self.status_message = Some(format!("socrates: no LLM provider: {e}"));
+                return;
+            }
+        };
+        let (model, _env) = match ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(m) => m,
+            Err(e) => {
+                self.status_message = Some(format!("socrates: provider: {e}"));
+                return;
+            }
+        };
+        let rx = spawn_chat_stream(
+            ai.client.clone(),
+            model.to_string(),
+            Some(system),
+            Vec::new(),
+            user,
+            llm::CATEGORY,
+        );
+
+        let prompt = if topic.is_empty() {
+            "/socrates".to_string()
+        } else {
+            format!("/socrates {topic}")
+        };
+        let mut preview = ChatTurn::new(prompt);
+        preview.streaming = true;
+        preview.response = "⋯ the Dialectician is reading the corpus…".to_string();
+        self.chat_history.push(preview);
+        let preview_idx = Some(self.chat_history.len() - 1);
+        self.chat_scroll = 0;
+        self.socrates = Some(SocratesState {
+            topic,
+            persona_id: persona.id,
+            rx: Some(rx),
+            buf: String::new(),
+            preview_idx,
+        });
+        self.status_message = Some("Socratic reading of the corpus…".to_string());
+    }
+
+    /// Drain the Socratic call; the reply is JSON, so we accumulate silently and
+    /// parse on completion (no raw-token mirroring).
+    fn poll_socrates(&mut self) {
+        let mut done = false;
+        let mut err: Option<String> = None;
+        {
+            let Some(ss) = self.socrates.as_mut() else { return };
+            let Some(rx) = ss.rx.as_mut() else { return };
+            loop {
+                match rx.try_recv() {
+                    Ok(StreamMsg::Token(t)) => ss.buf.push_str(&t),
+                    Ok(StreamMsg::Done(_)) => {
+                        done = true;
+                        break;
+                    }
+                    Ok(StreamMsg::Error(e)) => {
+                        err = Some(e);
+                        break;
+                    }
+                    Err(mpsc::error::TryRecvError::Empty) => break,
+                    Err(mpsc::error::TryRecvError::Disconnected) => {
+                        done = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if let Some(e) = err {
+            let idx = self.socrates.as_ref().and_then(|s| s.preview_idx);
+            self.drop_preview(idx);
+            self.socrates = None;
+            self.status_message = Some(format!("socrates: {e}"));
+            return;
+        }
+        if done {
+            self.finish_socrates();
+        }
+    }
+
+    /// Parse the reply into Socratic questions and render them into the preview.
+    fn finish_socrates(&mut self) {
+        let Some(ss) = self.socrates.take() else { return };
+        let findings = super::socrates::parse(&ss.buf, &ss.persona_id);
+        let n = findings.len();
+        let report = super::socrates::render(&ss.topic, &findings);
+        match ss.preview_idx.and_then(|i| self.chat_history.get_mut(i)) {
+            Some(turn) => {
+                turn.response = report;
+                turn.streaming = false;
+            }
+            None => {
+                let prompt = if ss.topic.is_empty() {
+                    "/socrates".to_string()
+                } else {
+                    format!("/socrates {}", ss.topic)
+                };
+                self.chat_history.push(ChatTurn::with_response(prompt, report));
+            }
+        }
+        self.chat_scroll = 0;
+        self.status_message = Some(format!("socrates · {n} question(s)"));
     }
 
     /// RESRCH-UNDISPUTED (UD-P3) — `/undisputed`: a chunked, language-aware
@@ -6146,6 +6334,55 @@ pub(crate) fn contradict_cli(layout: &ProjectLayout, cfg: &Config, store: &Store
     }
     let clashes = super::contradiction::dedupe(clashes);
     println!("{}", super::contradiction::render_report(&clashes));
+    Ok(())
+}
+
+/// SCHOLAR — headless `inkhaven research --socrates [topic]`. The Dialectician's
+/// Socratic questions over the Facts corpus (nearest facts for a topic, else a
+/// bounded sample). Blocking LLM call.
+pub(crate) fn socrates_cli(layout: &ProjectLayout, cfg: &Config, store: &Store, topic: &str) -> Result<()> {
+    use crate::store::NodeKind;
+    let h = Hierarchy::load(store).map_err(anyhow::Error::from)?;
+    let Some(facts_book) = h.iter().find(|n| {
+        n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_FACTS)
+    }) else {
+        anyhow::bail!("no Facts book in this project");
+    };
+    let topic = topic.trim();
+    const CAP: usize = 6000;
+    let mut facts_block = String::new();
+    if topic.is_empty() {
+        for f in super::factcheck::gather_facts(store, &h, facts_book.id) {
+            facts_block.push_str(f.text.trim());
+            facts_block.push_str("\n\n");
+            if facts_block.len() > CAP {
+                break;
+            }
+        }
+    } else {
+        let passages = crate::book_rag::retrieval::retrieve(store, &h, &cfg.book_rag, facts_book.id, topic)
+            .map_err(|e| anyhow::anyhow!("retrieval: {e}"))?;
+        for p in passages.into_iter().filter(|p| p.is_hit) {
+            facts_block.push_str(p.body.trim());
+            facts_block.push_str("\n\n");
+            if facts_block.len() > CAP {
+                break;
+            }
+        }
+    }
+    if facts_block.trim().is_empty() {
+        anyhow::bail!("no facts to examine — collect some (/fact, /archive, …) first");
+    }
+
+    let persona = super::socrates::dialectician(&layout.root);
+    let genre = cfg.genre.as_deref().filter(|g| !g.trim().is_empty()).unwrap_or("academic");
+    let (system, user) = super::socrates::build_prompts(&persona, Some(genre), &facts_block);
+    let ai = crate::ai::AiClient::from_config(&cfg.llm).map_err(|e| anyhow::anyhow!("no LLM provider: {e}"))?;
+    let (model, _env) = ai.resolve_provider(&cfg.llm, None).map_err(|e| anyhow::anyhow!("provider: {e}"))?;
+    let raw = crate::ai::stream::collect_blocking(ai.client.clone(), model.to_string(), Some(system), user)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    let findings = super::socrates::parse(&raw, &persona.id);
+    println!("{}", super::socrates::render(topic, &findings));
     Ok(())
 }
 

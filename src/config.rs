@@ -1518,6 +1518,11 @@ impl Default for EmbeddingsConfig {
 pub struct LlmConfig {
     pub default: String,
     pub providers: std::collections::BTreeMap<String, LlmProvider>,
+    /// When the `default` provider's API key is unset, fall back to any other
+    /// configured provider whose key IS available (or a keyless local provider).
+    /// `true` (default) → "use whatever works"; `false` → fail with a clear error
+    /// instead, for users who want the configured provider or nothing.
+    pub auto_fallback: bool,
 }
 
 impl Default for LlmConfig {
@@ -1572,6 +1577,7 @@ impl Default for LlmConfig {
         Self {
             default: "gemini".into(),
             providers,
+            auto_fallback: true,
         }
     }
 }
