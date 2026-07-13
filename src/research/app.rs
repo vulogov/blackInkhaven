@@ -171,6 +171,24 @@ pub(super) struct GutenbergState {
     chapter: Option<usize>,
 }
 
+/// RESRCH-ARCHIVE — an in-flight `/archive` fetch.
+type ArchiveFetch = (super::archive::ArchiveItem, String, Vec<super::archive::ArchiveItem>);
+pub(super) struct ArchiveState {
+    rx: mpsc::UnboundedReceiver<std::result::Result<ArchiveFetch, String>>,
+    query: String,
+}
+
+/// RESRCH-WIKISOURCE — an in-flight `/wikisource` fetch.
+type WikisourceFetch = (
+    super::wikisource::WikisourcePage,
+    String,
+    Vec<super::wikisource::WikisourcePage>,
+);
+pub(super) struct WikisourceState {
+    rx: mpsc::UnboundedReceiver<std::result::Result<WikisourceFetch, String>>,
+    query: String,
+}
+
 /// R3-B — an in-flight `/openalex` or `/arxiv` fetch.
 pub(super) struct ScholarlyState {
     rx: mpsc::UnboundedReceiver<std::result::Result<super::scholarly::Paper, String>>,
@@ -234,6 +252,31 @@ pub(super) struct FactCheckState {
     /// RESRCH-UNDISPUTED (UD-P2) — count of authorial facts excluded from this
     /// audit, reported in the final report.
     undisputed: usize,
+}
+
+/// SCHOLAR P1 — an in-flight `/contradict` scan (a self-drained multi-group
+/// consistency pass over source-attributed facts, mirroring `FactCheckState`).
+pub(super) struct ContradictState {
+    /// All Facts, joined with provenance (indexed by the group idxs).
+    sourced: Vec<super::contradiction::SourcedFact>,
+    groups: Vec<super::factcheck::ConsistGroup>,
+    group_idx: usize,
+    /// The group currently being judged (its reply is parsed against these).
+    current: Vec<super::contradiction::SourcedFact>,
+    clashes: Vec<super::contradiction::Clash>,
+    rx: Option<mpsc::UnboundedReceiver<StreamMsg>>,
+    buf: String,
+    preview_idx: Option<usize>,
+}
+
+/// SCHOLAR P2 — an in-flight `/relate` judge (a single graded-stance call over
+/// retrieved facts + source passages for one claim).
+pub(super) struct RelateState {
+    claim: String,
+    evidence: Vec<super::contradiction::Evidence>,
+    rx: Option<mpsc::UnboundedReceiver<StreamMsg>>,
+    buf: String,
+    preview_idx: Option<usize>,
 }
 
 /// RESRCH-5 (R5-A/B/C) — the kind of grounded output over the retrieved facts.
@@ -376,6 +419,8 @@ pub(crate) struct ResearchApp {
     chain: Option<ChainState>,
     /// In-flight `/factcheck` corpus audit.
     factcheck: Option<FactCheckState>,
+    contradict: Option<ContradictState>,
+    relate: Option<RelateState>,
     undisputed_check: Option<UndisputedState>,
     /// In-flight `/web` search (R2-C).
     web: Option<WebState>,
@@ -383,6 +428,8 @@ pub(crate) struct ResearchApp {
     geonames_state: Option<GeonamesState>,
     deadlinks_state: Option<DeadLinksState>,
     gutenberg_state: Option<GutenbergState>,
+    archive_state: Option<ArchiveState>,
+    wikisource_state: Option<WikisourceState>,
     scholarly_state: Option<ScholarlyState>,
     triangulate: Option<TriangulateState>,
     tri_gate: Option<TriGate>,
@@ -482,12 +529,16 @@ impl ResearchApp {
             verify_rx: None,
             chain: None,
             factcheck: None,
+            contradict: None,
+            relate: None,
             undisputed_check: None,
             web: None,
             wikidata_state: None,
             geonames_state: None,
             deadlinks_state: None,
             gutenberg_state: None,
+            archive_state: None,
+            wikisource_state: None,
             scholarly_state: None,
             triangulate: None,
             tri_gate: None,
@@ -525,11 +576,15 @@ impl ResearchApp {
             || self.verify_rx.is_some()
             || self.chain.is_some()
             || self.factcheck.is_some()
+            || self.contradict.is_some()
+            || self.relate.is_some()
             || self.undisputed_check.is_some()
             || self.web.is_some()
             || self.wikidata_state.is_some()
             || self.geonames_state.is_some()
             || self.gutenberg_state.is_some()
+            || self.archive_state.is_some()
+            || self.wikisource_state.is_some()
             || self.scholarly_state.is_some()
             || self.triangulate.is_some()
             || self.tri_gate.is_some()
@@ -547,12 +602,16 @@ impl ResearchApp {
             self.poll_verify();
             self.poll_chain();
             self.poll_factcheck();
+            self.poll_contradict();
+            self.poll_relate();
             self.poll_undisputed();
             self.poll_web();
             self.poll_wikidata();
             self.poll_geonames();
             self.poll_deadlinks();
             self.poll_gutenberg();
+            self.poll_archive();
+            self.poll_wikisource();
             self.poll_scholarly();
             self.poll_triangulate();
             self.poll_tri_gate();
@@ -974,6 +1033,8 @@ impl ResearchApp {
             Command::Diff => self.run_diff(),
             Command::Verify => self.run_verify(),
             Command::FactCheck => self.start_factcheck(),
+            Command::Contradict => self.start_contradict(),
+            Command::Relate(claim) => self.start_relate(claim),
             Command::Undisputed => self.start_undisputed(),
             Command::Synthesize(topic) => self.run_grounded(&topic, GroundedKind::Synthesize),
             Command::Outline(topic) => self.run_grounded(&topic, GroundedKind::Outline),
@@ -995,6 +1056,8 @@ impl ResearchApp {
             Command::Wikidata(query) => self.start_wikidata(query),
             Command::Geonames(query) => self.start_geonames(query),
             Command::Gutenberg(query) => self.start_gutenberg(query),
+            Command::Archive(query) => self.start_archive(query),
+            Command::Wikisource(query) => self.start_wikisource(query),
             Command::OpenAlex(query) => self.start_scholarly("openalex", query),
             Command::Arxiv(query) => self.start_scholarly("arxiv", query),
             Command::Triangulate(claim) => self.start_triangulate(claim),
@@ -1948,6 +2011,278 @@ impl ResearchApp {
         self.status_message = Some(format!("✓ Project Gutenberg: {chunks_n} chunk(s) from `{}`", book.title));
     }
 
+    /// RESRCH-ARCHIVE — `/archive <query>`: search the Internet Archive for a
+    /// public-domain text and ingest it. Mirrors `start_gutenberg` (no `--chapter`).
+    fn start_archive(&mut self, query: String) {
+        if self.archive_state.is_some() {
+            self.status_message = Some("an Internet Archive fetch is already running".to_string());
+            return;
+        }
+        let query = query.trim().to_string();
+        if query.is_empty() {
+            self.status_message = Some("usage: /archive <query>".to_string());
+            return;
+        }
+        if !super::archive::available(&self.cfg.research.archive) {
+            self.status_message = Some("archive disabled (research.archive.enabled)".to_string());
+            return;
+        }
+        let (lang, _note) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        let code = match lang.as_code() {
+            "other" => String::new(),
+            c => c.to_string(),
+        };
+        let cfg = self.cfg.research.archive.clone();
+        let q = query.clone();
+        let (tx, rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let r = super::archive::fetch(cfg, q, code).await.map_err(|e| e.to_string());
+            let _ = tx.send(r);
+        });
+        self.archive_state = Some(ArchiveState { rx, query });
+        self.status_message = Some("Searching the Internet Archive…".to_string());
+    }
+
+    /// Drain the in-flight `/archive` fetch; on success, ingest the text as a
+    /// research source (chunked, `origin=archive`).
+    fn poll_archive(&mut self) {
+        let Some(ar) = self.archive_state.as_mut() else { return };
+        let result = match ar.rx.try_recv() {
+            Ok(r) => r,
+            Err(mpsc::error::TryRecvError::Empty) => return,
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                self.archive_state = None;
+                self.status_message = Some("archive: request cancelled".to_string());
+                return;
+            }
+        };
+        let ArchiveState { query, .. } = self.archive_state.take().unwrap();
+        let (item, text, alternatives) = match result {
+            Ok(it) => it,
+            Err(e) => {
+                self.status_message = Some(format!("archive: {e}"));
+                return;
+            }
+        };
+        self.ingest_archive(&query, &item, &text, &alternatives);
+    }
+
+    /// Ingest an Internet Archive text as a `research_source` (mirrors the Gutenberg
+    /// path); `origin=archive`. Auto-cites the item as a SOURCES-1 `BibEntry`.
+    fn ingest_archive(
+        &mut self,
+        query: &str,
+        item: &super::archive::ArchiveItem,
+        text: &str,
+        alternatives: &[super::archive::ArchiveItem],
+    ) {
+        use super::imports;
+        if text.trim().is_empty() {
+            self.status_message = Some("archive: no text extracted".to_string());
+            return;
+        }
+        let chunk_chars = self.cfg.research.import_chunk_chars.max(200);
+        let now = chrono::Utc::now().to_rfc3339();
+        let name = format!("{} (IA:{})", item.title, item.identifier);
+        let source_url = format!("https://archive.org/details/{}", item.identifier);
+        let chunks = imports::chunk_text(text, chunk_chars);
+        let mut doc_ids = Vec::new();
+        for (i, chunk) in chunks.iter().enumerate() {
+            let meta = serde_json::json!({
+                "kind": imports::SOURCE_KIND, "source": source_url, "name": name,
+                "thread": self.thread.name, "chunk": i, "imported_at": now,
+                "origin": "archive", "title": item.title,
+            });
+            if let Ok(id) = self.store.raw().add_document(meta, chunk.as_bytes()) {
+                doc_ids.push(id.to_string());
+            }
+        }
+        let mut imports_store = imports::Imports::load(&self.layout);
+        if let Some(old) = imports_store.sources.get(&name) {
+            for id in &old.doc_ids {
+                if let Ok(u) = uuid::Uuid::parse_str(id) {
+                    let _ = self.store.raw().delete_document(u);
+                }
+            }
+        }
+        let chunks_n = doc_ids.len();
+        imports_store.sources.insert(
+            name.clone(),
+            imports::ImportedSource {
+                name: name.clone(),
+                path: source_url.clone(),
+                doc_ids,
+                thread: self.thread.name.clone(),
+                imported_at: now,
+                chunks: chunks_n,
+            },
+        );
+        let _ = imports_store.save(&self.layout);
+
+        // Auto-cite the text as a SOURCES-1 BibEntry (feeds /bibliography).
+        let mut cite_note = String::new();
+        if self.cfg.research.archive.auto_cite {
+            let entry = item.to_bibentry();
+            if let Ok(true) = add_bibentry(&self.store, &self.cfg, &entry) {
+                self.reload_hierarchy();
+                cite_note = format!("\nCited as `@{}` (see /bibliography).", entry.key);
+            }
+        }
+        // Offer the runner-up matches for a re-run.
+        let mut alt_note = String::new();
+        if !alternatives.is_empty() {
+            alt_note.push_str("\n\nOther matches (re-run `/archive <exact title>`):");
+            for a in alternatives {
+                let who = a.authors.first().map(|s| format!(" — {s}")).unwrap_or_default();
+                alt_note.push_str(&format!("\n  · IA:{}  {}{who}", a.identifier, a.title));
+            }
+        }
+
+        let who = if item.authors.is_empty() { String::new() } else { format!(" · {}", item.authors.join(", ")) };
+        let body = format!(
+            "Ingested **{}**{who} as a research source ({chunks_n} chunk(s)).\n{source_url}\n\n\
+             Ask about it — the relevant passages are now retrieved and cited `[source: {}]`.{cite_note}{alt_note}",
+            item.title, name
+        );
+        self.chat_history.push(ChatTurn::with_response(format!("/archive {query}"), body));
+        self.chat_scroll = 0;
+        self.status_message = Some(format!("✓ Internet Archive: {chunks_n} chunk(s) from `{}`", item.title));
+    }
+
+    /// RESRCH-WIKISOURCE — `/wikisource <query>`: search `{lang}.wikisource.org`
+    /// (the book's language) for a public-domain page and ingest its plain text.
+    fn start_wikisource(&mut self, query: String) {
+        if self.wikisource_state.is_some() {
+            self.status_message = Some("a Wikisource fetch is already running".to_string());
+            return;
+        }
+        let query = query.trim().to_string();
+        if query.is_empty() {
+            self.status_message = Some("usage: /wikisource <query>".to_string());
+            return;
+        }
+        if !super::wikisource::available(&self.cfg.research.wikisource) {
+            self.status_message = Some("wikisource disabled (research.wikisource.enabled)".to_string());
+            return;
+        }
+        let (lang, _note) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        let code = match lang.as_code() {
+            "other" => String::new(),
+            c => c.to_string(),
+        };
+        let cfg = self.cfg.research.wikisource.clone();
+        let q = query.clone();
+        let (tx, rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let r = super::wikisource::fetch(cfg, q, code).await.map_err(|e| e.to_string());
+            let _ = tx.send(r);
+        });
+        self.wikisource_state = Some(WikisourceState { rx, query });
+        self.status_message = Some("Searching Wikisource…".to_string());
+    }
+
+    /// Drain the in-flight `/wikisource` fetch; on success, ingest the page text
+    /// as a research source (chunked, `origin=wikisource`).
+    fn poll_wikisource(&mut self) {
+        let Some(ws) = self.wikisource_state.as_mut() else { return };
+        let result = match ws.rx.try_recv() {
+            Ok(r) => r,
+            Err(mpsc::error::TryRecvError::Empty) => return,
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                self.wikisource_state = None;
+                self.status_message = Some("wikisource: request cancelled".to_string());
+                return;
+            }
+        };
+        let WikisourceState { query, .. } = self.wikisource_state.take().unwrap();
+        let (page, text, alternatives) = match result {
+            Ok(p) => p,
+            Err(e) => {
+                self.status_message = Some(format!("wikisource: {e}"));
+                return;
+            }
+        };
+        self.ingest_wikisource(&query, &page, &text, &alternatives);
+    }
+
+    /// Ingest a Wikisource page as a `research_source`; `origin=wikisource`.
+    /// Auto-cites the page as a SOURCES-1 `BibEntry`.
+    fn ingest_wikisource(
+        &mut self,
+        query: &str,
+        page: &super::wikisource::WikisourcePage,
+        text: &str,
+        alternatives: &[super::wikisource::WikisourcePage],
+    ) {
+        use super::imports;
+        if text.trim().is_empty() {
+            self.status_message = Some("wikisource: no text extracted".to_string());
+            return;
+        }
+        let chunk_chars = self.cfg.research.import_chunk_chars.max(200);
+        let now = chrono::Utc::now().to_rfc3339();
+        let name = format!("{} (WS:{})", page.title, page.lang);
+        let source_url = page.url();
+        let chunks = imports::chunk_text(text, chunk_chars);
+        let mut doc_ids = Vec::new();
+        for (i, chunk) in chunks.iter().enumerate() {
+            let meta = serde_json::json!({
+                "kind": imports::SOURCE_KIND, "source": source_url, "name": name,
+                "thread": self.thread.name, "chunk": i, "imported_at": now,
+                "origin": "wikisource", "title": page.title,
+            });
+            if let Ok(id) = self.store.raw().add_document(meta, chunk.as_bytes()) {
+                doc_ids.push(id.to_string());
+            }
+        }
+        let mut imports_store = imports::Imports::load(&self.layout);
+        if let Some(old) = imports_store.sources.get(&name) {
+            for id in &old.doc_ids {
+                if let Ok(u) = uuid::Uuid::parse_str(id) {
+                    let _ = self.store.raw().delete_document(u);
+                }
+            }
+        }
+        let chunks_n = doc_ids.len();
+        imports_store.sources.insert(
+            name.clone(),
+            imports::ImportedSource {
+                name: name.clone(),
+                path: source_url.clone(),
+                doc_ids,
+                thread: self.thread.name.clone(),
+                imported_at: now,
+                chunks: chunks_n,
+            },
+        );
+        let _ = imports_store.save(&self.layout);
+
+        let mut cite_note = String::new();
+        if self.cfg.research.wikisource.auto_cite {
+            let entry = page.to_bibentry();
+            if let Ok(true) = add_bibentry(&self.store, &self.cfg, &entry) {
+                self.reload_hierarchy();
+                cite_note = format!("\nCited as `@{}` (see /bibliography).", entry.key);
+            }
+        }
+        let mut alt_note = String::new();
+        if !alternatives.is_empty() {
+            alt_note.push_str("\n\nOther matches (re-run `/wikisource <exact title>`):");
+            for a in alternatives {
+                alt_note.push_str(&format!("\n  · {} ({})", a.title, a.lang));
+            }
+        }
+
+        let body = format!(
+            "Ingested **{}** (Wikisource {}) as a research source ({chunks_n} chunk(s)).\n{source_url}\n\n\
+             Ask about it — the relevant passages are now retrieved and cited `[source: {}]`.{cite_note}{alt_note}",
+            page.title, page.lang, name
+        );
+        self.chat_history.push(ChatTurn::with_response(format!("/wikisource {query}"), body));
+        self.chat_scroll = 0;
+        self.status_message = Some(format!("✓ Wikisource: {chunks_n} chunk(s) from `{}`", page.title));
+    }
+
     /// Drain the in-flight Wikidata fetch; on success, show the structured entity.
     fn poll_wikidata(&mut self) {
         let Some(wd) = self.wikidata_state.as_mut() else { return };
@@ -2797,6 +3132,348 @@ impl ResearchApp {
         self.status_message = Some(format!(
             "fact-check complete · {total} fact(s) · ✓{accurate} ?{dubious} ✗{inaccurate}"
         ));
+    }
+
+    /// SCHOLAR P1 — `/contradict`: a source-attributed contradiction scan of the
+    /// Facts corpus. Self-drained multi-group consistency pass; each group's reply
+    /// is parsed into `Clash` objects joined to each fact's provenance.
+    fn start_contradict(&mut self) {
+        if self.contradict.is_some() {
+            self.status_message = Some("a contradiction scan is already running".to_string());
+            return;
+        }
+        let Some(book_id) = self.facts_tree.root else {
+            self.status_message = Some("no Facts book".to_string());
+            return;
+        };
+        let facts = super::factcheck::gather_facts(&self.store, &self.hierarchy, book_id);
+        if facts.len() < 2 {
+            self.status_message = Some(format!(
+                "need at least 2 facts to check ({} found — collect sources + /fact first)",
+                facts.len()
+            ));
+            return;
+        }
+        let prov = super::provenance::Provenance::load(&self.layout);
+        let sourced = super::contradiction::join_provenance(&facts, &prov);
+        let groups = super::factcheck::consistency_groups(&facts, super::factcheck::CONSIST_MAX);
+
+        let mut preview = ChatTurn::new("/contradict".to_string());
+        preview.streaming = true;
+        self.chat_history.push(preview);
+        let preview_idx = Some(self.chat_history.len() - 1);
+        self.chat_scroll = 0;
+        self.contradict = Some(ContradictState {
+            sourced,
+            groups,
+            group_idx: 0,
+            current: Vec::new(),
+            clashes: Vec::new(),
+            rx: None,
+            buf: String::new(),
+            preview_idx,
+        });
+        self.contradict_next_call();
+    }
+
+    /// Advance to the next consistency group (or finish when done), spawning its
+    /// LLM stream. Skips groups with fewer than two facts.
+    fn contradict_next_call(&mut self) {
+        loop {
+            let (finished, gf, label, group_no, total) = {
+                let Some(cs) = self.contradict.as_ref() else { return };
+                if cs.group_idx >= cs.groups.len() {
+                    (true, Vec::new(), String::new(), 0, 0)
+                } else {
+                    let g = &cs.groups[cs.group_idx];
+                    let gf: Vec<_> = g.idxs.iter().filter_map(|&i| cs.sourced.get(i).cloned()).collect();
+                    (false, gf, g.label.clone(), cs.group_idx + 1, cs.groups.len())
+                }
+            };
+            if finished {
+                self.finish_contradict();
+                return;
+            }
+            if gf.len() < 2 {
+                if let Some(cs) = self.contradict.as_mut() {
+                    cs.group_idx += 1;
+                }
+                continue;
+            }
+            let (lang, _n) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+            let language = super::extract::language_name(&lang);
+            let system = super::factcheck::consistency_system(language);
+            let user = super::contradiction::consistency_user(&gf);
+            let ai = match crate::ai::AiClient::from_config(&self.cfg.llm) {
+                Ok(a) => a,
+                Err(e) => return self.contradict_error(format!("no LLM provider: {e}")),
+            };
+            let (model, _env) = match ai.resolve_provider(&self.cfg.llm, None) {
+                Ok(m) => m,
+                Err(e) => return self.contradict_error(format!("provider: {e}")),
+            };
+            let rx = spawn_chat_stream(
+                ai.client.clone(),
+                model.to_string(),
+                Some(system),
+                Vec::new(),
+                user,
+                llm::CATEGORY,
+            );
+            let preview_idx = self.contradict.as_ref().and_then(|c| c.preview_idx);
+            if let Some(cs) = self.contradict.as_mut() {
+                cs.rx = Some(rx);
+                cs.buf.clear();
+                cs.current = gf;
+            }
+            if let Some(turn) = preview_idx.and_then(|i| self.chat_history.get_mut(i)) {
+                turn.response = format!("⋯ checking {label} ({group_no}/{total})…\n");
+            }
+            return;
+        }
+    }
+
+    /// Drain the in-flight group's stream; on completion parse it into clashes and
+    /// advance to the next group.
+    fn poll_contradict(&mut self) {
+        let mut done = false;
+        let mut new_tokens = String::new();
+        let mut err: Option<String> = None;
+        {
+            let Some(cs) = self.contradict.as_mut() else { return };
+            let Some(rx) = cs.rx.as_mut() else { return };
+            loop {
+                match rx.try_recv() {
+                    Ok(StreamMsg::Token(t)) => {
+                        new_tokens.push_str(&t);
+                        cs.buf.push_str(&t);
+                    }
+                    Ok(StreamMsg::Done(_)) => {
+                        done = true;
+                        break;
+                    }
+                    Ok(StreamMsg::Error(e)) => {
+                        err = Some(e);
+                        break;
+                    }
+                    Err(mpsc::error::TryRecvError::Empty) => break,
+                    Err(mpsc::error::TryRecvError::Disconnected) => {
+                        done = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if let Some(e) = err {
+            return self.contradict_error(e);
+        }
+        if !new_tokens.is_empty() {
+            let idx = self.contradict.as_ref().and_then(|c| c.preview_idx);
+            if let Some(turn) = idx.and_then(|i| self.chat_history.get_mut(i)) {
+                turn.response.push_str(&new_tokens);
+            }
+        }
+        if !done {
+            return;
+        }
+        let parsed = {
+            let cs = self.contradict.as_mut().unwrap();
+            cs.rx = None;
+            let buf = std::mem::take(&mut cs.buf);
+            let current = std::mem::take(&mut cs.current);
+            super::contradiction::parse_clashes(&buf, &current)
+        };
+        if let Some(cs) = self.contradict.as_mut() {
+            cs.clashes.extend(parsed);
+            cs.group_idx += 1;
+        }
+        self.contradict_next_call();
+    }
+
+    /// Render the accumulated clashes into the preview turn and clear the scan.
+    fn finish_contradict(&mut self) {
+        let Some(cs) = self.contradict.take() else { return };
+        let clashes = super::contradiction::dedupe(cs.clashes);
+        let n = clashes.len();
+        let report = super::contradiction::render_report(&clashes);
+        match cs.preview_idx.and_then(|i| self.chat_history.get_mut(i)) {
+            Some(turn) => {
+                turn.response = report;
+                turn.streaming = false;
+            }
+            None => self
+                .chat_history
+                .push(ChatTurn::with_response("/contradict".to_string(), report)),
+        }
+        self.chat_scroll = 0;
+        self.status_message = Some(format!("contradict complete · {n} finding(s)"));
+    }
+
+    /// Abort the scan on an LLM error, dropping the preview turn.
+    fn contradict_error(&mut self, msg: String) {
+        let idx = self.contradict.as_ref().and_then(|c| c.preview_idx);
+        self.drop_preview(idx);
+        self.contradict = None;
+        self.status_message = Some(format!("contradict: {msg}"));
+    }
+
+    /// SCHOLAR P2 — `/relate <claim>`: relate a claim to the corpus (nearest facts
+    /// + source passages), grading each as contradiction (a risk) or confirmation
+    /// (support to cite). Retrieval is synchronous (local vector queries); only the
+    /// graded judge call is async.
+    fn start_relate(&mut self, claim: String) {
+        if self.relate.is_some() {
+            self.status_message = Some("a relate judge is already running".to_string());
+            return;
+        }
+        let claim = claim.trim().to_string();
+        if claim.is_empty() {
+            self.status_message = Some("usage: /relate <claim>".to_string());
+            return;
+        }
+        // Retrieve evidence: nearest facts + nearest ingested-source passages.
+        let mut evidence: Vec<super::contradiction::Evidence> = Vec::new();
+        if let Some(book_id) = self.facts_tree.root {
+            if let Ok(passages) = crate::book_rag::retrieval::retrieve(
+                &self.store,
+                &self.hierarchy,
+                &self.cfg.book_rag,
+                book_id,
+                &claim,
+            ) {
+                for p in passages.into_iter().filter(|p| p.is_hit).take(6) {
+                    evidence.push(super::contradiction::Evidence {
+                        label: format!("fact: {}", p.breadcrumb),
+                        body: p.body,
+                    });
+                }
+            }
+        }
+        for sp in super::rag::retrieve_source_passages(&self.store, &claim, 6) {
+            evidence.push(super::contradiction::Evidence {
+                label: format!("source: {}", sp.name),
+                body: sp.body,
+            });
+        }
+        if evidence.is_empty() {
+            self.status_message = Some(
+                "relate: no facts or sources bear on that — collect some (/fact, /archive, …) first"
+                    .to_string(),
+            );
+            return;
+        }
+
+        // Resolve the client BEFORE pushing the preview, so a provider error
+        // leaves no orphan turn.
+        let ai = match crate::ai::AiClient::from_config(&self.cfg.llm) {
+            Ok(a) => a,
+            Err(e) => {
+                self.status_message = Some(format!("relate: no LLM provider: {e}"));
+                return;
+            }
+        };
+        let (model, _env) = match ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(m) => m,
+            Err(e) => {
+                self.status_message = Some(format!("relate: provider: {e}"));
+                return;
+            }
+        };
+        let (lang, _n) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        let language = super::extract::language_name(&lang);
+        let system = super::contradiction::relate_system(language);
+        let user = super::contradiction::relate_user(&claim, &evidence);
+        let rx = spawn_chat_stream(
+            ai.client.clone(),
+            model.to_string(),
+            Some(system),
+            Vec::new(),
+            user,
+            llm::CATEGORY,
+        );
+
+        let mut preview = ChatTurn::new(format!("/relate {claim}"));
+        preview.streaming = true;
+        self.chat_history.push(preview);
+        let preview_idx = Some(self.chat_history.len() - 1);
+        self.chat_scroll = 0;
+        self.relate = Some(RelateState {
+            claim,
+            evidence,
+            rx: Some(rx),
+            buf: String::new(),
+            preview_idx,
+        });
+        self.status_message = Some("Relating claim to the corpus…".to_string());
+    }
+
+    /// Drain the graded-judge stream; on completion parse + render the relations.
+    fn poll_relate(&mut self) {
+        let mut done = false;
+        let mut new_tokens = String::new();
+        let mut err: Option<String> = None;
+        {
+            let Some(rs) = self.relate.as_mut() else { return };
+            let Some(rx) = rs.rx.as_mut() else { return };
+            loop {
+                match rx.try_recv() {
+                    Ok(StreamMsg::Token(t)) => {
+                        new_tokens.push_str(&t);
+                        rs.buf.push_str(&t);
+                    }
+                    Ok(StreamMsg::Done(_)) => {
+                        done = true;
+                        break;
+                    }
+                    Ok(StreamMsg::Error(e)) => {
+                        err = Some(e);
+                        break;
+                    }
+                    Err(mpsc::error::TryRecvError::Empty) => break,
+                    Err(mpsc::error::TryRecvError::Disconnected) => {
+                        done = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if let Some(e) = err {
+            let idx = self.relate.as_ref().and_then(|r| r.preview_idx);
+            self.drop_preview(idx);
+            self.relate = None;
+            self.status_message = Some(format!("relate: {e}"));
+            return;
+        }
+        if !new_tokens.is_empty() {
+            let idx = self.relate.as_ref().and_then(|r| r.preview_idx);
+            if let Some(turn) = idx.and_then(|i| self.chat_history.get_mut(i)) {
+                turn.response.push_str(&new_tokens);
+            }
+        }
+        if !done {
+            return;
+        }
+        self.finish_relate();
+    }
+
+    /// Parse the judge reply into graded relations and render them into the
+    /// preview turn (contradictions and confirmations, split).
+    fn finish_relate(&mut self) {
+        let Some(rs) = self.relate.take() else { return };
+        let relations = super::contradiction::parse_relations(&rs.buf, &rs.evidence);
+        let n = relations.len();
+        let report = super::contradiction::render_relations(&rs.claim, &relations);
+        match rs.preview_idx.and_then(|i| self.chat_history.get_mut(i)) {
+            Some(turn) => {
+                turn.response = report;
+                turn.streaming = false;
+            }
+            None => self
+                .chat_history
+                .push(ChatTurn::with_response(format!("/relate {}", rs.claim), report)),
+        }
+        self.chat_scroll = 0;
+        self.status_message = Some(format!("relate complete · {n} relation(s)"));
     }
 
     /// RESRCH-UNDISPUTED (UD-P3) — `/undisputed`: a chunked, language-aware
@@ -5275,6 +5952,200 @@ pub(crate) fn gutenberg_cli(layout: &ProjectLayout, cfg: &Config, store: &Store,
         }
     }
     eprintln!("✓ ingested {} — {chunks_n} chunk(s){cite}\n  {source_url}", book.title);
+    Ok(())
+}
+
+/// RESRCH-ARCHIVE — headless `inkhaven research --archive <query>`. Mirrors
+/// `gutenberg_cli`: fetch the top public-domain Internet Archive text, ingest it.
+pub(crate) fn archive_cli(layout: &ProjectLayout, cfg: &Config, store: &Store, query: &str) -> Result<()> {
+    use super::imports;
+    if !super::archive::available(&cfg.research.archive) {
+        anyhow::bail!("archive disabled (research.archive.enabled)");
+    }
+    let q = query.trim().to_string();
+    if q.is_empty() {
+        anyhow::bail!("usage: --archive <query>");
+    }
+    let (lang, _note) = crate::prose::resolve_prose_language(None, &cfg.language);
+    let code = match lang.as_code() {
+        "other" => String::new(),
+        c => c.to_string(),
+    };
+    let acfg = cfg.research.archive.clone();
+    let qq = q.clone();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    tokio::spawn(async move {
+        let r = super::archive::fetch(acfg, qq, code).await.map_err(|e| e.to_string());
+        let _ = tx.send(r);
+    });
+    let (item, text, _alts) = rx
+        .blocking_recv()
+        .ok_or_else(|| anyhow::anyhow!("archive fetch cancelled"))?
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let chunks = imports::chunk_text(&text, cfg.research.import_chunk_chars.max(200));
+    if chunks.is_empty() {
+        anyhow::bail!("no text extracted");
+    }
+    let name = format!("{} (IA:{})", item.title, item.identifier);
+    let source_url = format!("https://archive.org/details/{}", item.identifier);
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut doc_ids = Vec::new();
+    for (i, chunk) in chunks.iter().enumerate() {
+        let meta = serde_json::json!({
+            "kind": imports::SOURCE_KIND, "source": source_url, "name": name,
+            "thread": "", "chunk": i, "imported_at": now, "origin": "archive", "title": item.title,
+        });
+        if let Ok(id) = store.raw().add_document(meta, chunk.as_bytes()) {
+            doc_ids.push(id.to_string());
+        }
+    }
+    let mut imports_store = imports::Imports::load(layout);
+    if let Some(old) = imports_store.sources.get(&name) {
+        for id in &old.doc_ids {
+            if let Ok(u) = uuid::Uuid::parse_str(id) {
+                let _ = store.raw().delete_document(u);
+            }
+        }
+    }
+    let chunks_n = doc_ids.len();
+    imports_store.sources.insert(
+        name.clone(),
+        imports::ImportedSource { name: name.clone(), path: source_url.clone(), doc_ids, thread: String::new(), imported_at: now, chunks: chunks_n },
+    );
+    imports_store.save(layout)?;
+    let mut cite = String::new();
+    if cfg.research.archive.auto_cite {
+        let entry = item.to_bibentry();
+        if let Ok(true) = add_bibentry(store, cfg, &entry) {
+            cite = format!(" · cited @{}", entry.key);
+        }
+    }
+    eprintln!("✓ ingested {} — {chunks_n} chunk(s){cite}\n  {source_url}", item.title);
+    Ok(())
+}
+
+/// RESRCH-WIKISOURCE — headless `inkhaven research --wikisource <query>`.
+pub(crate) fn wikisource_cli(layout: &ProjectLayout, cfg: &Config, store: &Store, query: &str) -> Result<()> {
+    use super::imports;
+    if !super::wikisource::available(&cfg.research.wikisource) {
+        anyhow::bail!("wikisource disabled (research.wikisource.enabled)");
+    }
+    let q = query.trim().to_string();
+    if q.is_empty() {
+        anyhow::bail!("usage: --wikisource <query>");
+    }
+    let (lang, _note) = crate::prose::resolve_prose_language(None, &cfg.language);
+    let code = match lang.as_code() {
+        "other" => String::new(),
+        c => c.to_string(),
+    };
+    let wcfg = cfg.research.wikisource.clone();
+    let qq = q.clone();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    tokio::spawn(async move {
+        let r = super::wikisource::fetch(wcfg, qq, code).await.map_err(|e| e.to_string());
+        let _ = tx.send(r);
+    });
+    let (page, text, _alts) = rx
+        .blocking_recv()
+        .ok_or_else(|| anyhow::anyhow!("wikisource fetch cancelled"))?
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let chunks = imports::chunk_text(&text, cfg.research.import_chunk_chars.max(200));
+    if chunks.is_empty() {
+        anyhow::bail!("no text extracted");
+    }
+    let name = format!("{} (WS:{})", page.title, page.lang);
+    let source_url = page.url();
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut doc_ids = Vec::new();
+    for (i, chunk) in chunks.iter().enumerate() {
+        let meta = serde_json::json!({
+            "kind": imports::SOURCE_KIND, "source": source_url, "name": name,
+            "thread": "", "chunk": i, "imported_at": now, "origin": "wikisource", "title": page.title,
+        });
+        if let Ok(id) = store.raw().add_document(meta, chunk.as_bytes()) {
+            doc_ids.push(id.to_string());
+        }
+    }
+    let mut imports_store = imports::Imports::load(layout);
+    if let Some(old) = imports_store.sources.get(&name) {
+        for id in &old.doc_ids {
+            if let Ok(u) = uuid::Uuid::parse_str(id) {
+                let _ = store.raw().delete_document(u);
+            }
+        }
+    }
+    let chunks_n = doc_ids.len();
+    imports_store.sources.insert(
+        name.clone(),
+        imports::ImportedSource { name: name.clone(), path: source_url.clone(), doc_ids, thread: String::new(), imported_at: now, chunks: chunks_n },
+    );
+    imports_store.save(layout)?;
+    let mut cite = String::new();
+    if cfg.research.wikisource.auto_cite {
+        let entry = page.to_bibentry();
+        if let Ok(true) = add_bibentry(store, cfg, &entry) {
+            cite = format!(" · cited @{}", entry.key);
+        }
+    }
+    eprintln!("✓ ingested {} — {chunks_n} chunk(s){cite}\n  {source_url}", page.title);
+    Ok(())
+}
+
+/// SCHOLAR P1 — headless `inkhaven research --contradict`. Scans the Facts book
+/// for contradictions, structured and attributed to each fact's source (cross-
+/// source vs within-source). Blocking LLM calls (one per consistency group).
+pub(crate) fn contradict_cli(layout: &ProjectLayout, cfg: &Config, store: &Store) -> Result<()> {
+    use crate::store::NodeKind;
+    let h = Hierarchy::load(store).map_err(anyhow::Error::from)?;
+    let Some(facts_book) = h.iter().find(|n| {
+        n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_FACTS)
+    }) else {
+        anyhow::bail!("no Facts book in this project");
+    };
+
+    let facts = super::factcheck::gather_facts(store, &h, facts_book.id);
+    if facts.len() < 2 {
+        eprintln!(
+            "need at least 2 facts to check for contradictions ({} found — collect sources + /fact first)",
+            facts.len()
+        );
+        return Ok(());
+    }
+    let prov = super::provenance::Provenance::load(layout);
+    let sourced = super::contradiction::join_provenance(&facts, &prov);
+    let groups = super::factcheck::consistency_groups(&facts, super::factcheck::CONSIST_MAX);
+
+    let ai = crate::ai::AiClient::from_config(&cfg.llm)
+        .map_err(|e| anyhow::anyhow!("no LLM provider: {e}"))?;
+    let (model, _env) = ai
+        .resolve_provider(&cfg.llm, None)
+        .map_err(|e| anyhow::anyhow!("provider: {e}"))?;
+    let (lang, _n) = crate::prose::resolve_prose_language(None, &cfg.language);
+    let language = super::extract::language_name(&lang);
+    let system = super::factcheck::consistency_system(language);
+
+    let mut clashes = Vec::new();
+    for g in &groups {
+        let gf: Vec<_> = g.idxs.iter().filter_map(|&i| sourced.get(i).cloned()).collect();
+        if gf.len() < 2 {
+            continue;
+        }
+        eprintln!("· checking {} ({} facts)…", g.label, gf.len());
+        let user = super::contradiction::consistency_user(&gf);
+        let reply = crate::ai::stream::collect_blocking(
+            ai.client.clone(),
+            model.to_string(),
+            Some(system.clone()),
+            user,
+        )
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+        clashes.extend(super::contradiction::parse_clashes(&reply, &gf));
+    }
+    let clashes = super::contradiction::dedupe(clashes);
+    println!("{}", super::contradiction::render_report(&clashes));
     Ok(())
 }
 

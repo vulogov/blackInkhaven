@@ -188,3 +188,4 @@ mod tests {
         assert!(out.contains("\\usepackage{amsmath}"));
     }
 }
+
