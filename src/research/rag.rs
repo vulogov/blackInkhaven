@@ -120,3 +120,45 @@ fn retrieve_sources(store: &Store, cfg: &Config, query: &str, sections: &mut Vec
     }
     names
 }
+
+/// SCHOLAR P2 — one ingested source chunk as a structured passage.
+pub(super) struct SourcePassage {
+    pub name: String,
+    pub body: String,
+}
+
+/// SCHOLAR P2 — retrieve the `k` ingested source chunks nearest `query` as
+/// STRUCTURED passages (unlike `retrieve_sources`, which side-effects a context
+/// string and returns names). Feeds the graded-relation judge.
+pub(super) fn retrieve_source_passages(store: &Store, query: &str, k: usize) -> Vec<SourcePassage> {
+    let hits = match store.search_text(query, k * 4 + 8) {
+        Ok(h) => h,
+        Err(_) => return Vec::new(),
+    };
+    let mut out = Vec::new();
+    for v in hits {
+        let meta = v.get("metadata");
+        let is_source = meta
+            .and_then(|m| m.get("kind"))
+            .and_then(|kk| kk.as_str())
+            .map(|kk| kk == super::imports::SOURCE_KIND)
+            .unwrap_or(false);
+        if !is_source {
+            continue;
+        }
+        let name = meta
+            .and_then(|m| m.get("name"))
+            .and_then(|n| n.as_str())
+            .unwrap_or("source")
+            .to_string();
+        let body = v.get("document").and_then(|d| d.as_str()).unwrap_or("").trim().to_string();
+        if body.is_empty() {
+            continue;
+        }
+        out.push(SourcePassage { name, body });
+        if out.len() >= k {
+            break;
+        }
+    }
+    out
+}

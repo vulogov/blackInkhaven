@@ -18,6 +18,12 @@ pub(super) enum Command {
     /// `/factcheck` — audit the whole Facts corpus for truth + mutual
     /// consistency (multi-call).
     FactCheck,
+    /// `/contradict` — SCHOLAR P1: structured, source-attributed contradiction
+    /// scan of the Facts corpus (cross-source vs within-source; multi-call).
+    Contradict,
+    /// `/relate <claim>` — SCHOLAR P2: relate a claim to the corpus (facts +
+    /// sources), grading each as contradiction or confirmation.
+    Relate(String),
     /// `/undisputed` — common-sense check of the authorial (undisputed) facts
     /// (RESRCH-UNDISPUTED; read-only, never rewrites).
     Undisputed,
@@ -60,6 +66,12 @@ pub(super) enum Command {
     /// `/gutenberg <query>` — ingest a public-domain Project Gutenberg book as a
     /// research source (RESRCH-GUTENBERG).
     Gutenberg(String),
+    /// `/archive <query>` — ingest a public-domain Internet Archive text as a
+    /// research source (RESRCH-ARCHIVE).
+    Archive(String),
+    /// `/wikisource <query>` — ingest a public-domain Wikisource page (in the
+    /// book's language) as a research source (RESRCH-WIKISOURCE).
+    Wikisource(String),
     /// `/openalex <query>` — fetch the top OpenAlex paper (R3-B).
     OpenAlex(String),
     /// `/arxiv <query>` — fetch the top arXiv paper (R3-B).
@@ -117,6 +129,10 @@ pub(super) const SPECS: &[CommandSpec] = &[
     CommandSpec { name: "wikidata", summary: "structured triples (Q-ID)", usage: "/wikidata <query>" },
     CommandSpec { name: "geonames", summary: "real-world places (GeoNames)", usage: "/geonames <query>" },
     CommandSpec { name: "gutenberg", summary: "ingest a public-domain book (Project Gutenberg)", usage: "/gutenberg <query>" },
+    CommandSpec { name: "archive", summary: "ingest a public-domain text (Internet Archive)", usage: "/archive <query>" },
+    CommandSpec { name: "wikisource", summary: "ingest a public-domain page (Wikisource, book language)", usage: "/wikisource <query>" },
+    CommandSpec { name: "contradict", summary: "source-attributed contradiction scan of the Facts", usage: "/contradict" },
+    CommandSpec { name: "relate", summary: "relate a claim to the corpus (contradiction + confirmation)", usage: "/relate <claim>" },
     CommandSpec { name: "openalex", summary: "scholarly paper (DOI)", usage: "/openalex <query>" },
     CommandSpec { name: "arxiv", summary: "arXiv preprint", usage: "/arxiv <query>" },
     CommandSpec { name: "triangulate", summary: "cross-check a claim across sources", usage: "/triangulate [claim]" },
@@ -236,6 +252,10 @@ pub(super) fn parse(input: &str) -> Option<Command> {
         "wikidata" => Command::Wikidata(rest.to_string()),
         "geonames" | "geo" => Command::Geonames(rest.to_string()),
         "gutenberg" | "pg" => Command::Gutenberg(rest.to_string()),
+        "archive" | "ia" => Command::Archive(rest.to_string()),
+        "wikisource" | "ws" => Command::Wikisource(rest.to_string()),
+        "contradict" => Command::Contradict,
+        "relate" => Command::Relate(rest.to_string()),
         "openalex" => Command::OpenAlex(rest.to_string()),
         "arxiv" => Command::Arxiv(rest.to_string()),
         "triangulate" | "tri" => Command::Triangulate(rest.to_string()),
@@ -350,6 +370,10 @@ mod tests {
         assert_eq!(parse("/geo Rome").unwrap(), Command::Geonames("Rome".into()));
         assert_eq!(parse("/gutenberg pride and prejudice").unwrap(), Command::Gutenberg("pride and prejudice".into()));
         assert_eq!(parse("/pg dickens").unwrap(), Command::Gutenberg("dickens".into()));
+        assert_eq!(parse("/archive bhagavad gita").unwrap(), Command::Archive("bhagavad gita".into()));
+        assert_eq!(parse("/ia charaka samhita").unwrap(), Command::Archive("charaka samhita".into()));
+        assert_eq!(parse("/wikisource meditations").unwrap(), Command::Wikisource("meditations".into()));
+        assert_eq!(parse("/ws война и мир").unwrap(), Command::Wikisource("война и мир".into()));
         assert_eq!(parse("/openalex aqueduct").unwrap(), Command::OpenAlex("aqueduct".into()));
         assert_eq!(parse("/arxiv attention").unwrap(), Command::Arxiv("attention".into()));
         assert_eq!(parse("/triangulate the sky is blue").unwrap(), Command::Triangulate("the sky is blue".into()));

@@ -43,6 +43,9 @@ mod wikidata;
 mod batch;
 mod geonames;
 mod gutenberg;
+mod archive;
+mod wikisource;
+mod contradiction;
 
 pub(crate) use focus::Focus;
 
@@ -93,6 +96,15 @@ pub(crate) struct ResearchInvocation {
     /// RESRCH-GUTENBERG (PG-P2) — `--gutenberg <query|PG#>`: ingest a public-domain
     /// Project Gutenberg book non-interactively and exit.
     pub gutenberg: Option<String>,
+    /// RESRCH-ARCHIVE — `--archive <query>`: ingest a public-domain Internet Archive
+    /// text non-interactively and exit.
+    pub archive: Option<String>,
+    /// RESRCH-WIKISOURCE — `--wikisource <query>`: ingest a public-domain Wikisource
+    /// page (book language) non-interactively and exit.
+    pub wikisource: Option<String>,
+    /// SCHOLAR P1 — `--contradict`: scan the Facts book for source-attributed
+    /// contradictions non-interactively and exit.
+    pub contradict: bool,
 }
 
 /// Launch the Research Assistant, or run a non-interactive thread operation.
@@ -113,6 +125,18 @@ pub(crate) fn run(project: &Path, inv: ResearchInvocation) -> Result<()> {
     if let Some(query) = inv.gutenberg.as_deref() {
         let store = Store::open(layout.clone(), &cfg).map_err(anyhow::Error::from)?;
         return app::gutenberg_cli(&layout, &cfg, &store, query);
+    }
+    if let Some(query) = inv.archive.as_deref() {
+        let store = Store::open(layout.clone(), &cfg).map_err(anyhow::Error::from)?;
+        return app::archive_cli(&layout, &cfg, &store, query);
+    }
+    if let Some(query) = inv.wikisource.as_deref() {
+        let store = Store::open(layout.clone(), &cfg).map_err(anyhow::Error::from)?;
+        return app::wikisource_cli(&layout, &cfg, &store, query);
+    }
+    if inv.contradict {
+        let store = Store::open(layout.clone(), &cfg).map_err(anyhow::Error::from)?;
+        return app::contradict_cli(&layout, &cfg, &store);
     }
     if inv.bibliography {
         let store = Store::open(layout.clone(), &cfg).map_err(anyhow::Error::from)?;

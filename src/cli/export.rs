@@ -22,6 +22,7 @@ pub fn run(
     templates: Option<&Path>,
     eject_templates: Option<&Path>,
     blind: bool,
+    bundle: Option<&Path>,
 ) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
@@ -48,6 +49,36 @@ pub fn run(
             format!("{front}{body}")
         }
     };
+
+    // ARXIV-1 (1.6.16+): `--bundle` writes a self-contained LaTeX submission
+    // (implies tex; composes with `--blind` via `with_front`). Handled before the
+    // format match so `export tex --bundle` and `export pdf --bundle` both work.
+    if let Some(bundle_path) = bundle {
+        let report = export::bundle::build_bundle(
+            &layout,
+            &h,
+            &cfg,
+            &with_front(&combined),
+            &epub_title,
+            bundle_path,
+        )
+        .map_err(|e| Error::Store(format!("bundle: {e:#}")))?;
+        eprintln!(
+            "wrote {} bundle to {} — {}, {} bib {}, {} figure(s){}",
+            if report.zipped { "zip" } else { "directory" },
+            bundle_path.display(),
+            report.tex_name,
+            report.bib_entries,
+            if report.bib_entries == 1 { "entry" } else { "entries" },
+            report.figures.len(),
+            if report.missing_figures.is_empty() {
+                String::new()
+            } else {
+                format!(" · {} figure(s) NOT found (see MANIFEST)", report.missing_figures.len())
+            },
+        );
+        return Ok(());
+    }
 
     match format {
         ExportFormat::Typst => write_typst(&with_front(&combined), output),

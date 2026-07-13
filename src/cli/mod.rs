@@ -375,6 +375,13 @@ pub enum Command {
         /// send to a double-blind review. No effect when no `frontmatter` is set.
         #[arg(long)]
         blind: bool,
+        /// arXiv / preprint bundle (1.6.16+) — write a self-contained LaTeX
+        /// submission to this path: the `.tex`, `sources.bib`, every referenced
+        /// figure (copied with paths rewritten), and a `MANIFEST.txt`. A `.zip`
+        /// extension writes a single archive; otherwise a directory. Implies the
+        /// `tex` format (composes with `--blind`).
+        #[arg(long)]
+        bundle: Option<PathBuf>,
     },
 
     /// INDEX-1 — generate a back-of-book index (terms → the chapters they appear in)
@@ -1041,6 +1048,18 @@ pub enum Command {
         /// (search query or bare PG id; accepts a leading `--chapter N`) and exit.
         #[arg(long, value_name = "QUERY")]
         gutenberg: Option<String>,
+        /// 1.6.16 RESRCH-ARCHIVE — ingest a public-domain Internet Archive text
+        /// (search query) and exit.
+        #[arg(long, value_name = "QUERY")]
+        archive: Option<String>,
+        /// 1.6.16 RESRCH-WIKISOURCE — ingest a public-domain Wikisource page
+        /// (search query, in the book's language) and exit.
+        #[arg(long, value_name = "QUERY")]
+        wikisource: Option<String>,
+        /// 1.6.16 SCHOLAR P1 — scan the Facts book for source-attributed
+        /// contradictions (cross-source vs within-source) and exit.
+        #[arg(long)]
+        contradict: bool,
     },
 
     /// 1.2.10+ — launch the standalone TUI configuration
@@ -5275,6 +5294,7 @@ impl Cli {
                 templates,
                 eject_templates,
                 blind,
+                bundle,
             } => {
                 // TDOC-3 — parse `--profile dim=value` pairs.
                 let profile_pairs: Vec<(String, String)> = profiles
@@ -5292,6 +5312,7 @@ impl Cli {
                     templates.as_deref(),
                     eject_templates.as_deref(),
                     blind,
+                    bundle.as_deref(),
                 )
                 .map_err(Into::into)
             }
@@ -5463,6 +5484,9 @@ impl Cli {
                 confidence,
                 bibliography,
                 gutenberg,
+                archive,
+                wikisource,
+                contradict,
             } => crate::research::run(
                 &project,
                 crate::research::ResearchInvocation {
@@ -5478,6 +5502,9 @@ impl Cli {
                     confidence,
                     bibliography,
                     gutenberg,
+                    archive,
+                    wikisource,
+                    contradict,
                 },
             )
             .map_err(Into::into),
