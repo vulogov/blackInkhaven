@@ -30,6 +30,10 @@
     // Add / rename providers freely — only the model string + env var
     // matter to the dispatcher.
     default: gemini
+    // When `default`'s API key is unset, fall back to any other provider
+    // below whose key IS set (or a keyless local one). Set to false to fail
+    // with a clear error instead of switching providers.
+    auto_fallback: true
     providers: {
       gemini: {
         model: gemini-2.5-pro

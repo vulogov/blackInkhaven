@@ -24,6 +24,9 @@ pub(super) enum Command {
     /// `/relate <claim>` — SCHOLAR P2: relate a claim to the corpus (facts +
     /// sources), grading each as contradiction or confirmation.
     Relate(String),
+    /// `/socrates [topic]` — SCHOLAR: Inner Socrates' Dialectician over the Facts
+    /// corpus — the questions the collected facts must answer to stand.
+    Socrates(String),
     /// `/undisputed` — common-sense check of the authorial (undisputed) facts
     /// (RESRCH-UNDISPUTED; read-only, never rewrites).
     Undisputed,
@@ -133,6 +136,7 @@ pub(super) const SPECS: &[CommandSpec] = &[
     CommandSpec { name: "wikisource", summary: "ingest a public-domain page (Wikisource, book language)", usage: "/wikisource <query>" },
     CommandSpec { name: "contradict", summary: "source-attributed contradiction scan of the Facts", usage: "/contradict" },
     CommandSpec { name: "relate", summary: "relate a claim to the corpus (contradiction + confirmation)", usage: "/relate <claim>" },
+    CommandSpec { name: "socrates", summary: "Socratic questions the Facts must answer (the Dialectician)", usage: "/socrates [topic]" },
     CommandSpec { name: "openalex", summary: "scholarly paper (DOI)", usage: "/openalex <query>" },
     CommandSpec { name: "arxiv", summary: "arXiv preprint", usage: "/arxiv <query>" },
     CommandSpec { name: "triangulate", summary: "cross-check a claim across sources", usage: "/triangulate [claim]" },
@@ -256,6 +260,7 @@ pub(super) fn parse(input: &str) -> Option<Command> {
         "wikisource" | "ws" => Command::Wikisource(rest.to_string()),
         "contradict" => Command::Contradict,
         "relate" => Command::Relate(rest.to_string()),
+        "socrates" => Command::Socrates(rest.to_string()),
         "openalex" => Command::OpenAlex(rest.to_string()),
         "arxiv" => Command::Arxiv(rest.to_string()),
         "triangulate" | "tri" => Command::Triangulate(rest.to_string()),
