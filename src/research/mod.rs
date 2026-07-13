@@ -46,6 +46,7 @@ mod gutenberg;
 mod archive;
 mod wikisource;
 mod contradiction;
+mod socrates;
 
 pub(crate) use focus::Focus;
 
@@ -105,6 +106,9 @@ pub(crate) struct ResearchInvocation {
     /// SCHOLAR P1 — `--contradict`: scan the Facts book for source-attributed
     /// contradictions non-interactively and exit.
     pub contradict: bool,
+    /// SCHOLAR — `--socrates [topic]`: the Dialectician's Socratic questions over
+    /// the Facts corpus, non-interactively.
+    pub socrates: Option<String>,
 }
 
 /// Launch the Research Assistant, or run a non-interactive thread operation.
@@ -137,6 +141,10 @@ pub(crate) fn run(project: &Path, inv: ResearchInvocation) -> Result<()> {
     if inv.contradict {
         let store = Store::open(layout.clone(), &cfg).map_err(anyhow::Error::from)?;
         return app::contradict_cli(&layout, &cfg, &store);
+    }
+    if let Some(topic) = inv.socrates.as_deref() {
+        let store = Store::open(layout.clone(), &cfg).map_err(anyhow::Error::from)?;
+        return app::socrates_cli(&layout, &cfg, &store, topic);
     }
     if inv.bibliography {
         let store = Store::open(layout.clone(), &cfg).map_err(anyhow::Error::from)?;

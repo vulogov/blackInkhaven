@@ -21,14 +21,14 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.6.16 — Sources & Contradiction
+## Latest release · 1.6.17 — The Dialectician & Any Provider
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.6.16.md`](Documentation/RELEASE_NOTES/1.6.16.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.6.17.md`](Documentation/RELEASE_NOTES/1.6.17.md)
 
-Public-domain source adapters (`/archive`, `/wikisource`), an arXiv/preprint bundle,
-and the first slices of SCHOLAR — `/contradict` (source-attributed contradictions in
-the Facts) and `/relate` (contradiction *and* confirmation between a claim and the
-corpus). Multilingual, Unicode-hardened. **No new runtime crates.**
+`/socrates` turns Inner Socrates' Dialectician on the collected Facts — the questions
+your corpus must answer to stand. And the LLM client now falls back to any provider
+whose key you actually have set (configurable), so a project runs against the model
+you've got. **No new runtime crates.**
 
 ### A real back-of-book index
 

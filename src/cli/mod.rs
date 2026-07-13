@@ -1060,6 +1060,10 @@ pub enum Command {
         /// contradictions (cross-source vs within-source) and exit.
         #[arg(long)]
         contradict: bool,
+        /// 1.6.17 SCHOLAR — the Dialectician's Socratic questions over the Facts
+        /// corpus (nearest facts for the given topic) and exit.
+        #[arg(long, value_name = "TOPIC")]
+        socrates: Option<String>,
     },
 
     /// 1.2.10+ — launch the standalone TUI configuration
@@ -5487,6 +5491,7 @@ impl Cli {
                 archive,
                 wikisource,
                 contradict,
+                socrates,
             } => crate::research::run(
                 &project,
                 crate::research::ResearchInvocation {
@@ -5505,6 +5510,7 @@ impl Cli {
                     archive,
                     wikisource,
                     contradict,
+                    socrates,
                 },
             )
             .map_err(Into::into),
