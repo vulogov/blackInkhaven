@@ -21,13 +21,14 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.6.15 — Scientific Papers
+## Latest release · 1.6.16 — Sources & Contradiction
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.6.15.md`](Documentation/RELEASE_NOTES/1.6.15.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.6.16.md`](Documentation/RELEASE_NOTES/1.6.16.md)
 
-What a journal article needs — a title block, a journal LaTeX target, an IMRaD
-scaffold, cross-references you can insert and see break, a double-blind build, and a
-Typst Universe package picker. **No new runtime crates.**
+Public-domain source adapters (`/archive`, `/wikisource`), an arXiv/preprint bundle,
+and the first slices of SCHOLAR — `/contradict` (source-attributed contradictions in
+the Facts) and `/relate` (contradiction *and* confirmation between a claim and the
+corpus). Multilingual, Unicode-hardened. **No new runtime crates.**
 
 ### A real back-of-book index
 
