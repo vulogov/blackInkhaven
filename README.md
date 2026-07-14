@@ -21,42 +21,41 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.6.18 — Scripture & Loci
+## Latest release · 1.6.19 — Validated Loci
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.6.18.md`](Documentation/RELEASE_NOTES/1.6.18.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.6.19.md`](Documentation/RELEASE_NOTES/1.6.19.md)
 
-Public-domain scripture as a research source, citation down to the passage, and
-SCHOLAR brought into the manuscript editor — the primary-source apparatus a work of
-theology or philosophy actually needs. **No new runtime crates.**
+A cited passage is only as good as the passage being real. `@key[locus]` citations are
+now checked against a reference scheme, canonicalized so variant spellings collapse,
+and linted live in the editor — completing the primary-source apparatus from 1.6.18.
+**No new runtime crates.**
 
-### Scripture as a research source
+### Reference schemes
 
-`/bible`, `/quran`, and `/bookofmormon` ingest scripture verse-by-verse from keyless,
-public-domain translations, each auto-cited under a **stable key** so every passage of
-a work files under one source. Translation follows the project `language` — English
-draws the World English Bible and Sahih International, Russian the Synodal Bible and
-Kuliev, and so on. CLI twins on `inkhaven research`.
+A locus is validated against a grammar for its source — built-in for the scripture
+keys (`bible`, `quran`, `book-of-mormon`), user-defined via `sources.ref_schemes` for
+the rest (Kant's A/B pagination, a Stephanus number). A malformed reference like
+`@bible[John 3:sixteen]` is reported, never silently dropped: `inkhaven index-locorum
+--strict` fails a CI step, and `inkhaven build` warns.
 
-### Primary-source loci and the Index Locorum
+### Canonical loci
 
-Cite a passage, not a work: `@bible[John 3:16]`, `@kant[A51/B75]` is native Typst, and
-`inkhaven index-locorum` harvests every locus into an apparatus grouped by source and
-sorted by passage. Set `sources.index_locorum: true` to fold it into the built book
-after the bibliography.
+The scheme also canonicalizes: `@bible[Jn 3.16]`, `@bible[John 3:16]`, and (in a
+Russian project) `@bible[Иоанна 3:16]` all resolve to one Index Locorum entry, `John
+3:16`, instead of three near-duplicates.
 
-### SCHOLAR — a persistent report, and confront in the editor
+### A live editor lint
 
-`/contradict`, `/converge`, and `/relate` now merge into a persistent, topic-clustered
-`/report` that flags staleness when the corpus moves. And `Ctrl+V ?` confronts the
-open paragraph against the corpus from inside the editor — anchored ⚔ findings, the
-manuscript-side twin of `/relate`.
+`Ctrl+V c` lints the open paragraph's `@key[locus]` citations against their schemes,
+dropping a ⚑ warning into the Output pane for each malformed one — deterministic,
+zero-AI, anchored to the paragraph.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** New commands `/bible`, `/quran`, `/bookofmormon`, `/report`,
-`inkhaven index-locorum`; new chord `Ctrl+V ?`; new config `research.scripture` and
-`sources.index_locorum`. Everything is additive and opt-in — existing projects are
-unaffected. Test suite → 2440.
+**No new runtime crates.** New config `sources.ref_schemes` + `BibEntry.scheme`; new
+chord `Ctrl+V c`; new `--strict` on `inkhaven index-locorum`. Everything is additive
+and opt-in — a source with no scheme is unvalidated exactly as before. Test suite →
+2448.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
