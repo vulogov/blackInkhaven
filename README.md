@@ -21,41 +21,41 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.6.19 — Validated Loci
+## Latest release · 1.6.20 — The Rigor Reader
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.6.19.md`](Documentation/RELEASE_NOTES/1.6.19.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.6.20.md`](Documentation/RELEASE_NOTES/1.6.20.md)
 
-A cited passage is only as good as the passage being real. `@key[locus]` citations are
-now checked against a reference scheme, canonicalized so variant spellings collapse,
-and linted live in the editor — completing the primary-source apparatus from 1.6.18.
-**No new runtime crates.**
+A deterministic reader for the shape of your argument. Where the Inner Theologian
+reads a passage for its moral weight, the reasoning-rigor reader reads it for its
+validity — whether the argument, on its own terms, actually follows. Zero-AI,
+multilingual, advisory. **No new runtime crates.**
 
-### Reference schemes
+### Five argument failures, by the cue that gives them away
 
-A locus is validated against a grammar for its source — built-in for the scripture
-keys (`bible`, `quran`, `book-of-mormon`), user-defined via `sources.ref_schemes` for
-the rest (Kant's A/B pagination, a Stephanus number). A malformed reference like
-`@bible[John 3:sixteen]` is reported, never silently dropped: `inkhaven index-locorum
---strict` fails a CI step, and `inkhaven build` warns.
+The reader flags **false dichotomy** ("either … or"), **question-begging**
+("obviously"), **straw man** ("so-called"), **overgeneralization** ("always" /
+"never"), and **non-sequitur** (a "therefore" with no "because" in the paragraph). It
+does not judge whether you are right — only whether the prose has slipped into a form
+a reader who wanted to break it would seize on. Advisory, never a verdict.
 
-### Canonical loci
+### Multilingual
 
-The scheme also canonicalizes: `@bible[Jn 3.16]`, `@bible[John 3:16]`, and (in a
-Russian project) `@bible[Иоанна 3:16]` all resolve to one Index Locorum entry, `John
-3:16`, instead of three near-duplicates.
+Fully multilingual (en/ru/fr/de/es) with localized cues *and* advisories: a Russian
+argument is read against Russian cues and answered in Russian («очевидно» →
+question-begging).
 
-### A live editor lint
+### Three surfaces
 
-`Ctrl+V c` lints the open paragraph's `@key[locus]` citations against their schemes,
-dropping a ⚑ warning into the Output pane for each malformed one — deterministic,
-zero-AI, anchored to the paragraph.
+`Ctrl+B J → R` reads the open paragraph (instant, zero-AI); the review pass runs it
+across the book alongside the theologian check; and `inkhaven rigor scan` runs it as a
+pre-submission pass (`--signal`, `--json`, `--strict` for CI). Per-category toggles
+mute a signal a genre uses legitimately.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** New config `sources.ref_schemes` + `BibEntry.scheme`; new
-chord `Ctrl+V c`; new `--strict` on `inkhaven index-locorum`. Everything is additive
-and opt-in — a source with no scheme is unvalidated exactly as before. Test suite →
-2448.
+**No new runtime crates.** New command `inkhaven rigor scan`; new chord `Ctrl+B J →
+R`; new config `rigor.*` (on by default, per-category toggles). Everything is additive
+and advisory — existing projects are unaffected. Test suite → 2455.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
