@@ -11,7 +11,7 @@
 #let book_subtitle = "Researching, Writing, and Composing a Work of Argument — A Worked Example"
 #let book_author   = "Vladimir Ulogov"
 #let book_year     = "2026"
-#let book_version  = "Inkhaven 1.6.20"
+#let book_version  = "Inkhaven 1.6.21"
 
 // ── Palette — warm paper, earth ink, growth-green accents ───────────
 #let ink_black   = rgb("#1e1a15")

@@ -154,10 +154,66 @@ it is the natural close of the citation story.
   can check each one.
 ]
 
+#section("Keep your terms honest")
+
+A study's citations can be perfect and its argument still fail on a single word. In
+philosophy and theology the load-bearing terms — _reason_, _being_, _grace_, _law_,
+_substance_ — rarely have one meaning; they fracture into senses, and the classic way
+an argument goes wrong is to slide between them without noticing. Inkhaven's Glossary
+already keeps your terms _consistent_; the *scholarly lexicon* keeps them _honest_ —
+it records, for a term, its original-language form and its distinct senses:
+
+#config("a Glossary entry, as a lexicon term", [```hjson
+term: reason
+original_forms: [ Vernunft ]
+senses: [
+  {
+    label: Vernunft
+    gloss: the faculty of the unconditioned
+  }
+  {
+    label: Verstand
+    gloss: the faculty of concepts
+  }
+]
+watch_equivocation: true
+```])
+
+That last line arms the reader. With a term declared multi-sense and _watched_, the
+reasoning-rigor reader of Chapter 5 gains a sixth signal it could not have had
+otherwise — *equivocation*: when a watched term recurs in a paragraph without one
+sense pinned, `Ctrl+B J → R` (and `inkhaven rigor scan`) asks whether the argument is
+using the same sense throughout, or has quietly changed the subject mid-sentence.
+
+#insight[
+  This is why the lexicon completes the rigor reader rather than merely accompanying
+  it. Deterministic marker-matching can catch a "therefore" with nothing behind it,
+  but it cannot know that _reason_ has two meanings unless you tell it — the ambiguity
+  is in the world, not in the words. So you curate: mark the handful of terms your
+  argument actually turns on, and the reader polices exactly those, in any of the five
+  project languages, and nothing else. You decide which words are dangerous; the tool
+  watches them for you.
+]
+
+And the lexicon has an apparatus of its own — the *Index Verborum*, the term-level twin
+of the Index Locorum:
+
+```
+inkhaven index-verborum                   # Markdown (also --format typst|json)
+```
+
+It lists every lexicon term the manuscript actually uses, with its source-language
+form, its senses, and the chapters that use it — the glossary a critical edition
+prints at the back. Set `sources.index_verborum: true` and `inkhaven build` folds it
+into the finished book after the Index Locorum, so the volume closes with all three
+apparatus: the works, the passages, and the terms — each generated from what the prose
+genuinely contains.
+
 #recap((
   [Cite a *passage*, not a work: `@key[locus]` (`@kant-cpr[Ak. 5:122]`, `@bible[Matthew 5:48]`) is native Typst — the bracket is the supplement — so the prose needs no special handling and the locus renders as a real citation.],
   [The cite picker (`Ctrl+V @`) gets the *key* right from the Sources book; you name the *locus*. A locus on a key with no entry is a compile error — so the index can never list a source you never filed.],
   [`inkhaven index-locorum` harvests every `@key[locus]`, resolves titles, and renders the apparatus (Markdown / Typst / JSON) — grouped by source, loci sorted naturally, each tagged with the chapter it was cited in.],
   [*Validate* loci against a *reference scheme* — built-in for the scripture keys, `sources.ref_schemes` for the rest: `--strict` fails a build on a malformed reference, and `Ctrl+V c` lints the open paragraph as you write. The scheme also *canonicalizes*, so `Jn 3.16`, `John 3:16`, and `Иоанна 3:16` collapse to one entry.],
   [Set `sources.index_locorum: true` and `inkhaven build` folds the Index Locorum into the finished book after the bibliography — the works *and* the passages, both generated from what the manuscript actually cites.],
+  [Keep your *terms* honest with the *scholarly lexicon* — a Glossary entry's `original_forms` + distinct `senses`; `watch_equivocation` arms the rigor reader's sixth signal, so a watched term used in two senses is flagged (`Ctrl+B J → R`). `inkhaven index-verborum` (and `sources.index_verborum: true`) prints the *Index Verborum* — the terms, their senses, and where each is used — the third apparatus beside the works and the passages.],
 ))
