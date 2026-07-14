@@ -3740,6 +3740,10 @@ pub struct SourcesConfig {
     /// cited across the book, grouped by source) after the bibliography. Off by
     /// default — a specialized apparatus for scripture / classics / law.
     pub index_locorum: bool,
+    /// LEXICON — `true`: the assembler emits an **Index Verborum** (every scholarly
+    /// lexicon term used in the book — its original-language form, senses, and the
+    /// chapters that use it) after the Index Locorum. Off by default.
+    pub index_verborum: bool,
     /// LOCI — named **reference schemes** for validating `@key[locus]` citations.
     /// A source declares which it uses via a `scheme:` line in its Sources entry
     /// (the value is a key here); the three scripture keys — `bible`, `quran`,
@@ -3769,6 +3773,7 @@ impl Default for SourcesConfig {
             bibliography_style: "ieee".into(),
             auto_bibliography: true,
             index_locorum: false,
+            index_verborum: false,
             ref_schemes: std::collections::BTreeMap::new(),
         }
     }
@@ -4611,6 +4616,9 @@ pub struct RigorConfig {
     pub overgeneralization: bool,
     /// Flag a conclusion connective with no warrant marker in the paragraph.
     pub non_sequitur: bool,
+    /// LEXICON — flag an equivocation-watched, multi-sense term (declared in the
+    /// Glossary with `watch_equivocation`) used repeatedly without pinning a sense.
+    pub equivocation: bool,
 }
 
 impl Default for RigorConfig {
@@ -4624,6 +4632,7 @@ impl Default for RigorConfig {
             straw_man: true,
             overgeneralization: true,
             non_sequitur: true,
+            equivocation: true,
         }
     }
 }
