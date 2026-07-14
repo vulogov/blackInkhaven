@@ -504,6 +504,11 @@ pub enum Action {
     /// defined in the manuscript and insert `@label` at the editor cursor.
     #[serde(rename = "view.xref_picker")]
     ViewXrefPicker,
+    /// Ctrl+V ? (1.6.18+ SCHOLAR P4) — confront the open paragraph against the
+    /// research corpus (Facts + ingested Sources), emitting graded relation
+    /// findings (against / supporting) anchored to the paragraph in the Output pane.
+    #[serde(rename = "view.confront_paragraph")]
+    ConfrontParagraph,
     /// Ctrl+V x (1.4.9+ REUSE-1) — insert/replace a snippet `#include` via a
     /// fuzzy picker over the Snippets book.
     #[serde(rename = "view.insert_snippet_include")]
@@ -1048,6 +1053,7 @@ impl Action {
             Action::ViewCitePicker => "cite".into(),
             Action::ViewUniversePicker => "import".into(),
             Action::ViewXrefPicker => "xref".into(),
+            Action::ConfrontParagraph => "confront".into(),
             Action::InsertSnippetInclude => "snippet".into(),
             Action::OpenSnippetsOverview => "snippets".into(),
             Action::ViewToggleTermsOverlay => "terms overlay".into(),
@@ -1355,6 +1361,8 @@ impl Action {
                 "Typst Universe import picker (1.6.15+, Ctrl+V #) — fuzzy-find a Typst Universe package by name / description and insert a `#import \"@preview/<name>:<version>\": *` line at the editor cursor. The package list is fetched once from a configurable URL (`typst_universe.url`) and cached under `.inkhaven/` (TTL `typst_universe.ttl_hours`, default 24h); sorted by GitHub stars. Ctrl+R inside the modal forces a refresh, ignoring the cache. Handy for pulling in `cetz`, `fletcher`, journal templates, etc.".into(),
             Action::ViewXrefPicker =>
                 "Cross-reference picker (1.6.15+ XREF-2, Ctrl+V &) — fuzzy-find a label defined anywhere in the manuscript (`<fig:flux>`, `<eq:energy>`, `<sec:intro>`, …) and insert an `@label` reference at the cursor, so a cross-reference always points at a label that exists. The mirror of the XREF Output finding, which catches a reference whose label is missing. Empty list → define a label first by placing `<name>` after a figure, heading, or equation.".into(),
+            Action::ConfrontParagraph =>
+                "Confront paragraph (1.6.18+ SCHOLAR P4, Ctrl+V ?) — judge the open paragraph against the research corpus (the Facts book + ingested Sources), grading each retrieved fact/source as contradicts / tension / qualifies / agrees / silent. Anchored findings land in the Output pane: ⚔ Warnings for material that works against the paragraph (address these), Info for supporting material to cite. The manuscript-side twin of `/relate` in `inkhaven research`. Needs an LLM provider and some collected facts/sources — gather them with the research assistant (`/fact`, `/archive`, `/wikisource`, …) first.".into(),
             Action::InsertSnippetInclude =>
                 "Snippet include (1.4.9+ REUSE-1, Ctrl+V x) — fuzzy-pick a reusable snippet from the Snippets book and insert a Typst `#include` for it at the cursor (depth-relative path computed automatically). With the cursor inside an existing `#include \"…/snippets/…\"` path, it replaces that path in place (pre-selecting the current snippet). Define snippets as paragraphs under the Snippets book; assembly copies them to a `snippets/` sidecar so the include resolves.".into(),
             Action::OpenSnippetsOverview =>
@@ -1752,6 +1760,10 @@ impl KeyBindings {
                 // @label). Scope Any for the same reason as `#`; `&` reads as
                 // "reference to", beside the `@` cite chord.
                 entry("&", Action::ViewXrefPicker, Scope::Any),
+                // 1.6.18+ SCHOLAR P4 — Ctrl+V ? confront the open paragraph against
+                // the research corpus (Facts + Sources). `?` reads as "question this
+                // paragraph against what we've gathered".
+                entry("?", Action::ConfrontParagraph, Scope::Any),
                 // NF-CITE — Ctrl+V Shift+C: the Sourcing pass on the open paragraph
                 // (Cite/Claim coverage), beside the cite picker.
                 entry("Shift+c", Action::SourcingCheckParagraph, Scope::Any),

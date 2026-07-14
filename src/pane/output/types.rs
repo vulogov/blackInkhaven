@@ -73,6 +73,10 @@ pub mod kinds {
     /// that doesn't exist). Deterministic; promoted from the compile diagnostics
     /// so a dangling `@fig:`/`@eq:`/`@tbl:` is actionable, not buried in stderr.
     pub const XREF: &str = "xref";
+    /// SCHOLAR P4 (1.6.18+) — a `Ctrl+V ?` confront finding: the open paragraph
+    /// judged against the research corpus (Facts + Sources). Anchored to the
+    /// paragraph; against-relations are Warnings, supporting ones Info.
+    pub const CONFRONT: &str = "confront";
 }
 
 /// Visual / priority class (RFC §7.4).

@@ -79,17 +79,17 @@ pub(super) fn consistency_user(facts: &[SourcedFact]) -> String {
     s
 }
 
-/// Parse a consistency reply (`<a> ⇄ <b> — <what conflicts>` lines, or exactly
-/// "No contradictions found.") into structured clashes over `facts` (1-based).
+/// Parse a paired reply (`<a> SEP <b> — <reason>` lines) into structured pairs
+/// over `facts` (1-based). `sep` is `⇄` for contradictions, `≈` for convergence.
 /// Out-of-range and self-pairs are dropped.
-pub(super) fn parse_clashes(reply: &str, facts: &[SourcedFact]) -> Vec<Clash> {
+pub(super) fn parse_pairs(reply: &str, facts: &[SourcedFact], sep: char) -> Vec<Clash> {
     let mut out = Vec::new();
     for line in reply.lines() {
         let line = line
             .trim()
             .trim_start_matches(['-', '*', '•', ' '])
             .trim();
-        let Some((left, right)) = line.split_once('⇄') else {
+        let Some((left, right)) = line.split_once(sep) else {
             continue;
         };
         let Some(a) = leading_index(left) else { continue };
@@ -108,6 +108,16 @@ pub(super) fn parse_clashes(reply: &str, facts: &[SourcedFact]) -> Vec<Clash> {
         });
     }
     out
+}
+
+/// Parse a consistency reply (`<a> ⇄ <b> — <what conflicts>`) into clashes.
+pub(super) fn parse_clashes(reply: &str, facts: &[SourcedFact]) -> Vec<Clash> {
+    parse_pairs(reply, facts, '⇄')
+}
+
+/// Parse a convergence reply (`<a> ≈ <b> — <shared claim>`) into agreeing pairs.
+pub(super) fn parse_concords(reply: &str, facts: &[SourcedFact]) -> Vec<Clash> {
+    parse_pairs(reply, facts, '≈')
 }
 
 /// The decimal value of a digit char across the common scripts a model might
@@ -189,6 +199,49 @@ fn source_label(f: &SourcedFact) -> String {
     }
 }
 
+/// The convergence (agreeing-pairs) system prompt — the confirmation counterpart
+/// to `factcheck::consistency_system`. Reuses `consistency_user` for the numbered
+/// facts.
+pub(super) fn agreement_system(language: &str) -> String {
+    format!(
+        "You are checking a writer's reference database for CONVERGING evidence. Below are \
+         numbered facts. Identify every PAIR of facts that AGREE — that independently support \
+         the same conclusion (not mere restatement; genuine mutual support). Respond with one \
+         line per converging pair, in this exact shape:\n\
+         <a> ≈ <b> — <the shared claim>\n\
+         If no facts converge, reply exactly: No convergence found. Write the explanations in {language}."
+    )
+}
+
+/// Render converging pairs. Cross-source convergence is *independent
+/// triangulation* — the strongest evidence — so it's called out first.
+pub(super) fn render_convergence(concords: &[Clash]) -> String {
+    if concords.is_empty() {
+        return "No convergence found across the collected facts.".to_string();
+    }
+    let triangulated = concords.iter().filter(|c| c.is_cross_source()).count();
+    let same = concords.len() - triangulated;
+    let mut s = format!(
+        "Found {} point(s) of convergence — {triangulated} across independent sources (triangulated), {same} within a source.\n",
+        concords.len()
+    );
+    for (i, c) in concords.iter().enumerate() {
+        let tag = if c.is_cross_source() { "triangulated" } else { "same-source" };
+        let sa = source_label(&c.a);
+        let sb = source_label(&c.b);
+        s.push_str(&format!(
+            "\n{}. [{tag}]\n   · {}  ⟨{sa}⟩\n   ≈ {}  ⟨{sb}⟩\n",
+            i + 1,
+            truncate(&c.a.text, 160),
+            truncate(&c.b.text, 160),
+        ));
+        if !c.reason.is_empty() {
+            s.push_str(&format!("   shared: {}\n", c.reason));
+        }
+    }
+    s
+}
+
 fn truncate(s: &str, n: usize) -> String {
     let t = s.trim();
     if t.chars().count() <= n {
@@ -202,7 +255,7 @@ fn truncate(s: &str, n: usize) -> String {
 
 /// The graded relation between a claim and a source passage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Stance {
+pub(crate) enum Stance {
     Contradicts,
     Tension,
     Qualifies,
@@ -211,7 +264,7 @@ pub(super) enum Stance {
 }
 
 impl Stance {
-    pub(super) fn parse(word: &str) -> Option<Stance> {
+    pub(crate) fn parse(word: &str) -> Option<Stance> {
         match word.trim().to_ascii_uppercase().as_str() {
             "CONTRADICTS" | "CONTRADICT" => Some(Stance::Contradicts),
             "TENSION" => Some(Stance::Tension),
@@ -221,7 +274,7 @@ impl Stance {
             _ => None,
         }
     }
-    fn label(self) -> &'static str {
+    pub(crate) fn label(self) -> &'static str {
         match self {
             Stance::Contradicts => "contradicts",
             Stance::Tension => "tension",
@@ -230,31 +283,31 @@ impl Stance {
             Stance::Silent => "silent",
         }
     }
-    fn is_against(self) -> bool {
+    pub(crate) fn is_against(self) -> bool {
         matches!(self, Stance::Contradicts | Stance::Tension)
     }
-    fn is_support(self) -> bool {
+    pub(crate) fn is_support(self) -> bool {
         matches!(self, Stance::Agrees | Stance::Qualifies)
     }
 }
 
 /// One retrieved piece of evidence for a claim (a fact or a source passage).
 #[derive(Debug, Clone)]
-pub(super) struct Evidence {
+pub(crate) struct Evidence {
     pub label: String,
     pub body: String,
 }
 
 /// A judged relation between the claim and one evidence item.
 #[derive(Debug, Clone)]
-pub(super) struct Relation {
+pub(crate) struct Relation {
     pub label: String,
     pub stance: Stance,
     pub reason: String,
 }
 
 /// The graded-judge system prompt (generalizes `/triangulate`'s three-way judge).
-pub(super) fn relate_system(language: &str) -> String {
+pub(crate) fn relate_system(language: &str) -> String {
     format!(
         "You are relating a CLAIM to independent sources. Judge ONLY from the sources below — \
          do not use outside knowledge. For EACH source, output exactly one line:\n\
@@ -266,7 +319,7 @@ pub(super) fn relate_system(language: &str) -> String {
 }
 
 /// The user message: the claim + numbered evidence.
-pub(super) fn relate_user(claim: &str, evidence: &[Evidence]) -> String {
+pub(crate) fn relate_user(claim: &str, evidence: &[Evidence]) -> String {
     let mut s = format!("Claim:\n{claim}\n\nSources:\n");
     for (i, e) in evidence.iter().enumerate() {
         let body: String = e.body.chars().take(1200).collect();
@@ -277,7 +330,7 @@ pub(super) fn relate_user(claim: &str, evidence: &[Evidence]) -> String {
 
 /// Parse the graded-judge reply (numbered `<n>. STANCE — reason` lines) against
 /// the evidence order.
-pub(super) fn parse_relations(reply: &str, evidence: &[Evidence]) -> Vec<Relation> {
+pub(crate) fn parse_relations(reply: &str, evidence: &[Evidence]) -> Vec<Relation> {
     let mut out = Vec::new();
     for line in reply.lines() {
         let line = line.trim();
@@ -423,6 +476,24 @@ mod tests {
         assert_eq!(leading_index("٢"), Some(2));
         assert_eq!(leading_index("۵"), Some(5));
         assert_eq!(leading_index("३."), Some(3));
+    }
+
+    #[test]
+    fn convergence_parses_and_triangulates() {
+        let facts = vec![
+            sf(1, "archive", "War deaths fell across the period."),
+            sf(2, "web", "Battlefield mortality declined over the same era."),
+            sf(3, "archive", "Peace lengthened between conflicts."),
+        ];
+        // `≈` pairs, not `⇄`.
+        let concords = parse_concords("1 ≈ 2 — both report a decline in war deaths\n", &facts);
+        assert_eq!(concords.len(), 1);
+        assert!(concords[0].is_cross_source()); // archive ≈ web = independent
+        // parse_clashes (⇄) must NOT pick up ≈ lines.
+        assert!(parse_clashes("1 ≈ 2 — x", &facts).is_empty());
+        let report = render_convergence(&concords);
+        assert!(report.contains("1 point(s) of convergence"), "{report}");
+        assert!(report.contains("triangulated"), "{report}");
     }
 
     #[test]
