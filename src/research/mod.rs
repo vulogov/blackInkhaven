@@ -30,7 +30,7 @@ mod insert;
 mod llm;
 mod picker;
 mod provenance;
-mod rag;
+pub(crate) mod rag;
 mod render;
 mod scholarly;
 mod thread;
@@ -45,7 +45,11 @@ mod geonames;
 mod gutenberg;
 mod archive;
 mod wikisource;
-mod contradiction;
+mod scripture;
+/// SCHOLAR — the contradiction/relation engine; `pub(crate)` so the manuscript
+/// editor (`Ctrl+V ?` confront) can reuse the graded judge.
+pub(crate) mod contradiction;
+mod scholar_report;
 mod socrates;
 
 pub(crate) use focus::Focus;
@@ -103,12 +107,26 @@ pub(crate) struct ResearchInvocation {
     /// RESRCH-WIKISOURCE — `--wikisource <query>`: ingest a public-domain Wikisource
     /// page (book language) non-interactively and exit.
     pub wikisource: Option<String>,
+    /// RESRCH-SCRIPTURE — `--bible <ref>`: ingest a public-domain Bible passage
+    /// (by project language) non-interactively and exit.
+    pub bible: Option<String>,
+    /// RESRCH-SCRIPTURE — `--quran <surah>`: ingest a public-domain Qur'an surah.
+    pub quran: Option<String>,
+    /// RESRCH-SCRIPTURE — `--bookofmormon <ref>`: ingest a public-domain Book of
+    /// Mormon passage.
+    pub bookofmormon: Option<String>,
     /// SCHOLAR P1 — `--contradict`: scan the Facts book for source-attributed
     /// contradictions non-interactively and exit.
     pub contradict: bool,
+    /// SCHOLAR — `--converge`: scan the Facts book for converging (triangulated)
+    /// evidence non-interactively and exit.
+    pub converge: bool,
     /// SCHOLAR — `--socrates [topic]`: the Dialectician's Socratic questions over
     /// the Facts corpus, non-interactively.
     pub socrates: Option<String>,
+    /// SCHOLAR P3 — `--report`: print the persisted, topic-clustered report of the
+    /// accumulated contradiction / convergence / relation findings, and exit.
+    pub report: bool,
 }
 
 /// Launch the Research Assistant, or run a non-interactive thread operation.
@@ -138,13 +156,33 @@ pub(crate) fn run(project: &Path, inv: ResearchInvocation) -> Result<()> {
         let store = Store::open(layout.clone(), &cfg).map_err(anyhow::Error::from)?;
         return app::wikisource_cli(&layout, &cfg, &store, query);
     }
+    if let Some(query) = inv.bible.as_deref() {
+        let store = Store::open(layout.clone(), &cfg).map_err(anyhow::Error::from)?;
+        return app::scripture_cli(&layout, &cfg, &store, scripture::Work::Bible, query);
+    }
+    if let Some(query) = inv.quran.as_deref() {
+        let store = Store::open(layout.clone(), &cfg).map_err(anyhow::Error::from)?;
+        return app::scripture_cli(&layout, &cfg, &store, scripture::Work::Quran, query);
+    }
+    if let Some(query) = inv.bookofmormon.as_deref() {
+        let store = Store::open(layout.clone(), &cfg).map_err(anyhow::Error::from)?;
+        return app::scripture_cli(&layout, &cfg, &store, scripture::Work::BookOfMormon, query);
+    }
     if inv.contradict {
         let store = Store::open(layout.clone(), &cfg).map_err(anyhow::Error::from)?;
-        return app::contradict_cli(&layout, &cfg, &store);
+        return app::contradict_cli(&layout, &cfg, &store, false);
+    }
+    if inv.converge {
+        let store = Store::open(layout.clone(), &cfg).map_err(anyhow::Error::from)?;
+        return app::contradict_cli(&layout, &cfg, &store, true);
     }
     if let Some(topic) = inv.socrates.as_deref() {
         let store = Store::open(layout.clone(), &cfg).map_err(anyhow::Error::from)?;
         return app::socrates_cli(&layout, &cfg, &store, topic);
+    }
+    if inv.report {
+        let store = Store::open(layout.clone(), &cfg).map_err(anyhow::Error::from)?;
+        return app::report_cli(&layout, &cfg, &store);
     }
     if inv.bibliography {
         let store = Store::open(layout.clone(), &cfg).map_err(anyhow::Error::from)?;

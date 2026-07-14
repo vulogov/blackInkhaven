@@ -32,6 +32,7 @@ mod pane;
 mod world;
 mod argue;
 mod book_index;
+mod index_locorum;
 mod docs;
 mod xref;
 mod typst_universe;

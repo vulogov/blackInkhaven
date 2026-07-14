@@ -418,6 +418,76 @@ pub fn extract_cite_keys(prose: &str) -> Vec<String> {
     keys
 }
 
+/// LOCI (1.6.18+) — like [`extract_cite_keys`], but also captures the optional
+/// Typst **supplement** — `@key[locus]` — as the citation's *locus* (a specific
+/// passage: `@kant[A51/B75]`, `@bible[John 3:16]`, `@quran[2:255]`). This is
+/// native Typst (the bracket is the supplement), so the on-disk prose is
+/// unchanged — this only *harvests* the pair for the Index Locorum. Returns
+/// `(key, Some(locus))` when a bracket follows the key, else `(key, None)`, in
+/// first-seen order with duplicates preserved. A bracket is matched with balanced
+/// nesting; an unterminated `[` yields no locus.
+pub fn extract_cite_loci(prose: &str) -> Vec<(String, Option<String>)> {
+    let chars: Vec<char> = prose.chars().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '@' {
+            let prev_ok = i == 0 || !chars[i - 1].is_alphanumeric();
+            let starts_letter = i + 1 < chars.len() && chars[i + 1].is_ascii_alphabetic();
+            if prev_ok && starts_letter {
+                let mut j = i + 1;
+                let mut key = String::new();
+                while j < chars.len()
+                    && (chars[j].is_ascii_alphanumeric() || matches!(chars[j], '_' | ':' | '-'))
+                {
+                    key.push(chars[j]);
+                    j += 1;
+                }
+                // An immediately-following `[…]` is the supplement (locus).
+                let mut locus = None;
+                if j < chars.len() && chars[j] == '[' {
+                    let mut depth = 0usize;
+                    let mut buf = String::new();
+                    let mut k = j;
+                    while k < chars.len() {
+                        match chars[k] {
+                            '[' => {
+                                depth += 1;
+                                if depth > 1 {
+                                    buf.push('[');
+                                }
+                            }
+                            ']' => {
+                                depth -= 1;
+                                if depth == 0 {
+                                    k += 1;
+                                    break;
+                                }
+                                buf.push(']');
+                            }
+                            c => buf.push(c),
+                        }
+                        k += 1;
+                    }
+                    // Only accept a properly closed bracket.
+                    if depth == 0 {
+                        let trimmed = buf.trim();
+                        if !trimmed.is_empty() {
+                            locus = Some(trimmed.to_string());
+                        }
+                        j = k;
+                    }
+                }
+                out.push((key, locus));
+                i = j;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
 impl BibEntry {
     /// Lowercased searchable text (title, author, venue, keywords, abstract…) used
     /// to rank a source's relevance to the prose being written.
@@ -775,6 +845,35 @@ mod tests {
         // Russian prose with a citation — the @ must still be found.
         let keys = extract_cite_keys("Как показано в @ivanov2020, текст продолжается.");
         assert_eq!(keys, vec!["ivanov2020"]);
+    }
+
+    #[test]
+    fn extract_cite_loci_captures_supplement() {
+        let prose = "As @kant[A51/B75] argues, and @bible[John 3:16] confirms, unlike @plato.";
+        let loci = extract_cite_loci(prose);
+        assert_eq!(
+            loci,
+            vec![
+                ("kant".to_string(), Some("A51/B75".to_string())),
+                ("bible".to_string(), Some("John 3:16".to_string())),
+                ("plato".to_string(), None),
+            ]
+        );
+    }
+
+    #[test]
+    fn extract_cite_loci_handles_nesting_unicode_and_unterminated() {
+        // Nested brackets inside the supplement are preserved.
+        let nested = extract_cite_loci("see @src[a [inner] b]");
+        assert_eq!(nested, vec![("src".to_string(), Some("a [inner] b".to_string()))]);
+        // An unterminated bracket yields no locus (and doesn't hang).
+        let open = extract_cite_loci("@src[John 3");
+        assert_eq!(open, vec![("src".to_string(), None)]);
+        // Russian locus text survives.
+        let ru = extract_cite_loci("как в @synod[Иоанна 3:16]");
+        assert_eq!(ru, vec![("synod".to_string(), Some("Иоанна 3:16".to_string()))]);
+        // An empty bracket is not a locus.
+        assert_eq!(extract_cite_loci("@src[]"), vec![("src".to_string(), None)]);
     }
 
     #[test]

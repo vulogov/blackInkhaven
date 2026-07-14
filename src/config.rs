@@ -3732,11 +3732,15 @@ pub struct SourcesConfig {
     /// `true` (default): the assembler appends `#bibliography(...)` after
     /// `#wrap_book(...)`. `false`: place it manually (e.g. in `globals.typ`).
     pub auto_bibliography: bool,
+    /// LOCI — `true`: the assembler emits an **Index Locorum** (every `@key[locus]`
+    /// cited across the book, grouped by source) after the bibliography. Off by
+    /// default — a specialized apparatus for scripture / classics / law.
+    pub index_locorum: bool,
 }
 
 impl Default for SourcesConfig {
     fn default() -> Self {
-        Self { all: true, bibliography_style: "ieee".into(), auto_bibliography: true }
+        Self { all: true, bibliography_style: "ieee".into(), auto_bibliography: true, index_locorum: false }
     }
 }
 
@@ -4665,6 +4669,9 @@ pub struct ResearchConfig {
     pub archive: ArchiveConfig,
     /// RESRCH-WIKISOURCE — `research.wikisource` block for `/wikisource`.
     pub wikisource: WikisourceConfig,
+    /// RESRCH-SCRIPTURE — `research.scripture` block for `/bible` + `/quran` +
+    /// `/bookofmormon`.
+    pub scripture: ScriptureConfig,
 }
 
 /// RESRCH-GUTENBERG — `research.gutenberg` block. `/gutenberg` searches the
@@ -4746,6 +4753,52 @@ impl Default for WikisourceConfig {
             enabled: true,
             default_lang: "en".to_string(),
             max_chars: 300_000,
+            auto_cite: true,
+        }
+    }
+}
+
+/// RESRCH-SCRIPTURE (1.6.18+) — `research.scripture` block for `/bible`, `/quran`,
+/// `/bookofmormon`. All keyless and public-domain: bolls.life (Bible; en=WEB,
+/// ru=SYNOD, fr=FRLSG, de=LUT, es=RV1960 by project language), api.alquran.cloud
+/// (Qur'an; en=en.sahih, ru=ru.kuliev, … + Arabic `quran-uthmani`), and the
+/// bcbooks public-domain 1830 Book of Mormon corpus. Each ingest auto-cites a
+/// *stable* key (`bible` / `quran` / `book-of-mormon`) so loci — `@bible[John
+/// 3:16]` — group in the Index Locorum.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ScriptureConfig {
+    /// Master switch for `/bible` + `/quran` + `/bookofmormon` (keyless — on).
+    pub enabled: bool,
+    /// bolls.life base URL (override for a mirror).
+    pub bible_endpoint: String,
+    /// api.alquran.cloud v1 base URL.
+    pub quran_endpoint: String,
+    /// The public-domain Book of Mormon JSON corpus (1830 English).
+    pub bom_url: String,
+    /// Force a bolls translation code regardless of project language (null = pick
+    /// by language: en=WEB, ru=SYNOD, fr=FRLSG, de=LUT, es=RV1960).
+    pub bible_translation: Option<String>,
+    /// Force an alquran.cloud edition regardless of language (null = pick by
+    /// language; set `quran-uthmani` for the Arabic original).
+    pub quran_translation: Option<String>,
+    /// Max characters of a passage to ingest (bounds embedding cost).
+    pub max_chars: usize,
+    /// Auto-create the stable SOURCES-1 `BibEntry` for an ingested passage.
+    pub auto_cite: bool,
+}
+
+impl Default for ScriptureConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            bible_endpoint: "https://bolls.life".to_string(),
+            quran_endpoint: "https://api.alquran.cloud/v1".to_string(),
+            bom_url: "https://raw.githubusercontent.com/bcbooks/scriptures-json/master/book-of-mormon.json"
+                .to_string(),
+            bible_translation: None,
+            quran_translation: None,
+            max_chars: 200_000,
             auto_cite: true,
         }
     }
@@ -4882,6 +4935,7 @@ impl Default for ResearchConfig {
             gutenberg: GutenbergConfig::default(),
             archive: ArchiveConfig::default(),
             wikisource: WikisourceConfig::default(),
+            scripture: ScriptureConfig::default(),
         }
     }
 }
