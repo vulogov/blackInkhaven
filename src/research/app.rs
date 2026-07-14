@@ -189,6 +189,13 @@ pub(super) struct WikisourceState {
     query: String,
 }
 
+/// RESRCH-SCRIPTURE — an in-flight `/bible` / `/quran` / `/bookofmormon` fetch.
+pub(super) struct ScriptureState {
+    rx: mpsc::UnboundedReceiver<std::result::Result<super::scripture::ScripturePassage, String>>,
+    work: super::scripture::Work,
+    query: String,
+}
+
 /// R3-B — an in-flight `/openalex` or `/arxiv` fetch.
 pub(super) struct ScholarlyState {
     rx: mpsc::UnboundedReceiver<std::result::Result<super::scholarly::Paper, String>>,
@@ -267,6 +274,8 @@ pub(super) struct ContradictState {
     rx: Option<mpsc::UnboundedReceiver<StreamMsg>>,
     buf: String,
     preview_idx: Option<usize>,
+    /// `false` → `/contradict` (contradictions); `true` → `/converge` (agreement).
+    converge: bool,
 }
 
 /// SCHOLAR P2 — an in-flight `/relate` judge (a single graded-stance call over
@@ -441,6 +450,7 @@ pub(crate) struct ResearchApp {
     gutenberg_state: Option<GutenbergState>,
     archive_state: Option<ArchiveState>,
     wikisource_state: Option<WikisourceState>,
+    scripture_state: Option<ScriptureState>,
     scholarly_state: Option<ScholarlyState>,
     triangulate: Option<TriangulateState>,
     tri_gate: Option<TriGate>,
@@ -551,6 +561,7 @@ impl ResearchApp {
             gutenberg_state: None,
             archive_state: None,
             wikisource_state: None,
+            scripture_state: None,
             scholarly_state: None,
             triangulate: None,
             tri_gate: None,
@@ -626,6 +637,7 @@ impl ResearchApp {
             self.poll_gutenberg();
             self.poll_archive();
             self.poll_wikisource();
+            self.poll_scripture();
             self.poll_scholarly();
             self.poll_triangulate();
             self.poll_tri_gate();
@@ -1048,8 +1060,10 @@ impl ResearchApp {
             Command::Verify => self.run_verify(),
             Command::FactCheck => self.start_factcheck(),
             Command::Contradict => self.start_contradict(),
+            Command::Converge => self.start_converge(),
             Command::Relate(claim) => self.start_relate(claim),
             Command::Socrates(topic) => self.start_socrates(topic),
+            Command::Report => self.show_report(),
             Command::Undisputed => self.start_undisputed(),
             Command::Synthesize(topic) => self.run_grounded(&topic, GroundedKind::Synthesize),
             Command::Outline(topic) => self.run_grounded(&topic, GroundedKind::Outline),
@@ -1073,6 +1087,11 @@ impl ResearchApp {
             Command::Gutenberg(query) => self.start_gutenberg(query),
             Command::Archive(query) => self.start_archive(query),
             Command::Wikisource(query) => self.start_wikisource(query),
+            Command::Bible(query) => self.start_scripture(super::scripture::Work::Bible, query),
+            Command::Quran(query) => self.start_scripture(super::scripture::Work::Quran, query),
+            Command::BookOfMormon(query) => {
+                self.start_scripture(super::scripture::Work::BookOfMormon, query)
+            }
             Command::OpenAlex(query) => self.start_scholarly("openalex", query),
             Command::Arxiv(query) => self.start_scholarly("arxiv", query),
             Command::Triangulate(claim) => self.start_triangulate(claim),
@@ -2298,6 +2317,143 @@ impl ResearchApp {
         self.status_message = Some(format!("✓ Wikisource: {chunks_n} chunk(s) from `{}`", page.title));
     }
 
+    /// RESRCH-SCRIPTURE — `/bible` / `/quran` / `/bookofmormon`: fetch a
+    /// verse-structured public-domain passage for the project language and ingest
+    /// it as a research source with a stable cite key (so `@bible[John 3:16]`
+    /// loci resolve).
+    fn start_scripture(&mut self, work: super::scripture::Work, query: String) {
+        if self.scripture_state.is_some() {
+            self.status_message = Some("a scripture fetch is already running".to_string());
+            return;
+        }
+        let query = query.trim().to_string();
+        if query.is_empty() {
+            let ex = match work {
+                super::scripture::Work::Bible => "John 3",
+                super::scripture::Work::Quran => "2",
+                super::scripture::Work::BookOfMormon => "1 Nephi 3",
+            };
+            self.status_message = Some(format!("usage: {} <{ex}>", work.command()));
+            return;
+        }
+        if !super::scripture::available(&self.cfg.research.scripture) {
+            self.status_message = Some("scripture disabled (research.scripture.enabled)".to_string());
+            return;
+        }
+        let (lang, _note) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        let code = match lang.as_code() {
+            "other" => String::new(),
+            c => c.to_string(),
+        };
+        let cfg = self.cfg.research.scripture.clone();
+        let q = query.clone();
+        let (tx, rx) = mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            let r = super::scripture::fetch(cfg, work, q, code).await.map_err(|e| e.to_string());
+            let _ = tx.send(r);
+        });
+        self.scripture_state = Some(ScriptureState { rx, work, query });
+        self.status_message = Some(format!("Fetching {}…", work.command().trim_start_matches('/')));
+    }
+
+    /// Drain the in-flight scripture fetch; on success, ingest the passage.
+    fn poll_scripture(&mut self) {
+        let Some(sc) = self.scripture_state.as_mut() else { return };
+        let result = match sc.rx.try_recv() {
+            Ok(r) => r,
+            Err(mpsc::error::TryRecvError::Empty) => return,
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                self.scripture_state = None;
+                self.status_message = Some("scripture: request cancelled".to_string());
+                return;
+            }
+        };
+        let ScriptureState { work, query, .. } = self.scripture_state.take().unwrap();
+        let passage = match result {
+            Ok(p) => p,
+            Err(e) => {
+                self.status_message = Some(format!("{}: {e}", work.id()));
+                return;
+            }
+        };
+        self.ingest_scripture(&query, &passage);
+    }
+
+    /// Ingest a scripture passage as a `research_source` (`origin=scripture`,
+    /// `work=<id>`), verse-chunked, auto-citing the work's stable SOURCES-1 key.
+    fn ingest_scripture(&mut self, query: &str, passage: &super::scripture::ScripturePassage) {
+        use super::imports;
+        let body: String = passage.body_text().chars().take(self.cfg.research.scripture.max_chars.max(1000)).collect();
+        if body.trim().is_empty() {
+            self.status_message = Some("scripture: no text extracted".to_string());
+            return;
+        }
+        let chunk_chars = self.cfg.research.import_chunk_chars.max(200);
+        let now = chrono::Utc::now().to_rfc3339();
+        let name = passage.source_name();
+        let source_url = passage.source_url.clone();
+        let chunks = imports::chunk_text(&body, chunk_chars);
+        let mut doc_ids = Vec::new();
+        for (i, chunk) in chunks.iter().enumerate() {
+            let meta = serde_json::json!({
+                "kind": imports::SOURCE_KIND, "source": source_url, "name": name,
+                "thread": self.thread.name, "chunk": i, "imported_at": now,
+                "origin": "scripture", "work": passage.work.id(),
+                "translation": passage.translation, "reference": passage.reference,
+            });
+            if let Ok(id) = self.store.raw().add_document(meta, chunk.as_bytes()) {
+                doc_ids.push(id.to_string());
+            }
+        }
+        let mut imports_store = imports::Imports::load(&self.layout);
+        if let Some(old) = imports_store.sources.get(&name) {
+            for id in &old.doc_ids {
+                if let Ok(u) = uuid::Uuid::parse_str(id) {
+                    let _ = self.store.raw().delete_document(u);
+                }
+            }
+        }
+        let chunks_n = doc_ids.len();
+        imports_store.sources.insert(
+            name.clone(),
+            imports::ImportedSource {
+                name: name.clone(),
+                path: source_url.clone(),
+                doc_ids,
+                thread: self.thread.name.clone(),
+                imported_at: now,
+                chunks: chunks_n,
+            },
+        );
+        let _ = imports_store.save(&self.layout);
+
+        // Auto-cite under the work's stable key so loci group in the Index Locorum.
+        let mut cite_note = String::new();
+        if self.cfg.research.scripture.auto_cite {
+            let entry = passage.to_bibentry();
+            if let Ok(true) = add_bibentry(&self.store, &self.cfg, &entry) {
+                self.reload_hierarchy();
+                cite_note = format!(
+                    "\nCited as `@{}` — reference a locus with `{}`.",
+                    passage.work.cite_key(),
+                    passage.locus_hint(),
+                );
+            }
+        }
+
+        let body_msg = format!(
+            "Ingested **{}** ({} verses, {chunks_n} chunk(s)) as a research source.\n{source_url}\n\n\
+             Ask about it — the relevant verses are now retrieved and cited `[source: {}]`.{cite_note}",
+            name,
+            passage.verses.len(),
+            name,
+        );
+        self.chat_history.push(ChatTurn::with_response(format!("{} {query}", passage.work.command()), body_msg));
+        self.chat_scroll = 0;
+        self.status_message =
+            Some(format!("✓ {}: {chunks_n} chunk(s) from `{}`", passage.work.id(), passage.reference));
+    }
+
     /// Drain the in-flight Wikidata fetch; on success, show the structured entity.
     fn poll_wikidata(&mut self) {
         let Some(wd) = self.wikidata_state.as_mut() else { return };
@@ -3153,8 +3309,21 @@ impl ResearchApp {
     /// Facts corpus. Self-drained multi-group consistency pass; each group's reply
     /// is parsed into `Clash` objects joined to each fact's provenance.
     fn start_contradict(&mut self) {
+        self.start_pair_scan(false);
+    }
+
+    /// SCHOLAR — `/converge`: the confirmation counterpart to `/contradict`, over
+    /// the same engine — where independent sources triangulate the same claim.
+    fn start_converge(&mut self) {
+        self.start_pair_scan(true);
+    }
+
+    /// The shared multi-group pair scan behind `/contradict` (`converge=false`) and
+    /// `/converge` (`converge=true`): same gather + grouping + streaming machinery,
+    /// differing only in the per-group prompt, the parse separator, and the render.
+    fn start_pair_scan(&mut self, converge: bool) {
         if self.contradict.is_some() {
-            self.status_message = Some("a contradiction scan is already running".to_string());
+            self.status_message = Some("a Facts scan is already running".to_string());
             return;
         }
         let Some(book_id) = self.facts_tree.root else {
@@ -3164,7 +3333,7 @@ impl ResearchApp {
         let facts = super::factcheck::gather_facts(&self.store, &self.hierarchy, book_id);
         if facts.len() < 2 {
             self.status_message = Some(format!(
-                "need at least 2 facts to check ({} found — collect sources + /fact first)",
+                "need at least 2 facts to scan ({} found — collect sources + /fact first)",
                 facts.len()
             ));
             return;
@@ -3173,7 +3342,7 @@ impl ResearchApp {
         let sourced = super::contradiction::join_provenance(&facts, &prov);
         let groups = super::factcheck::consistency_groups(&facts, super::factcheck::CONSIST_MAX);
 
-        let mut preview = ChatTurn::new("/contradict".to_string());
+        let mut preview = ChatTurn::new(if converge { "/converge" } else { "/contradict" }.to_string());
         preview.streaming = true;
         self.chat_history.push(preview);
         let preview_idx = Some(self.chat_history.len() - 1);
@@ -3187,6 +3356,7 @@ impl ResearchApp {
             rx: None,
             buf: String::new(),
             preview_idx,
+            converge,
         });
         self.contradict_next_call();
     }
@@ -3215,9 +3385,14 @@ impl ResearchApp {
                 }
                 continue;
             }
+            let converge = self.contradict.as_ref().is_some_and(|c| c.converge);
             let (lang, _n) = crate::prose::resolve_prose_language(None, &self.cfg.language);
             let language = super::extract::language_name(&lang);
-            let system = super::factcheck::consistency_system(language);
+            let system = if converge {
+                super::contradiction::agreement_system(language)
+            } else {
+                super::factcheck::consistency_system(language)
+            };
             let user = super::contradiction::consistency_user(&gf);
             let ai = match crate::ai::AiClient::from_config(&self.cfg.llm) {
                 Ok(a) => a,
@@ -3296,7 +3471,11 @@ impl ResearchApp {
             cs.rx = None;
             let buf = std::mem::take(&mut cs.buf);
             let current = std::mem::take(&mut cs.current);
-            super::contradiction::parse_clashes(&buf, &current)
+            if cs.converge {
+                super::contradiction::parse_concords(&buf, &current)
+            } else {
+                super::contradiction::parse_clashes(&buf, &current)
+            }
         };
         if let Some(cs) = self.contradict.as_mut() {
             cs.clashes.extend(parsed);
@@ -3305,12 +3484,29 @@ impl ResearchApp {
         self.contradict_next_call();
     }
 
-    /// Render the accumulated clashes into the preview turn and clear the scan.
+    /// Render the accumulated pairs into the preview turn and clear the scan.
     fn finish_contradict(&mut self) {
         let Some(cs) = self.contradict.take() else { return };
-        let clashes = super::contradiction::dedupe(cs.clashes);
-        let n = clashes.len();
-        let report = super::contradiction::render_report(&clashes);
+        let converge = cs.converge;
+        let pairs = super::contradiction::dedupe(cs.clashes);
+        // SCHOLAR P3 — persist the topic-clustered findings before they're stringified.
+        if let Some(book_id) = self.facts_tree.root {
+            let facts = super::factcheck::gather_facts(&self.store, &self.hierarchy, book_id);
+            let hash = super::scholar_report::ScholarReport::corpus_hash(&facts);
+            super::scholar_report::ScholarReport::record_pairs(
+                &self.layout,
+                &self.cfg.language,
+                converge,
+                &pairs,
+                hash,
+            );
+        }
+        let n = pairs.len();
+        let (report, prompt, verb) = if converge {
+            (super::contradiction::render_convergence(&pairs), "/converge", "converge")
+        } else {
+            (super::contradiction::render_report(&pairs), "/contradict", "contradict")
+        };
         match cs.preview_idx.and_then(|i| self.chat_history.get_mut(i)) {
             Some(turn) => {
                 turn.response = report;
@@ -3318,10 +3514,10 @@ impl ResearchApp {
             }
             None => self
                 .chat_history
-                .push(ChatTurn::with_response("/contradict".to_string(), report)),
+                .push(ChatTurn::with_response(prompt.to_string(), report)),
         }
         self.chat_scroll = 0;
-        self.status_message = Some(format!("contradict complete · {n} finding(s)"));
+        self.status_message = Some(format!("{verb} complete · {n} finding(s)"));
     }
 
     /// Abort the scan on an LLM error, dropping the preview turn.
@@ -3476,6 +3672,18 @@ impl ResearchApp {
     fn finish_relate(&mut self) {
         let Some(rs) = self.relate.take() else { return };
         let relations = super::contradiction::parse_relations(&rs.buf, &rs.evidence);
+        // SCHOLAR P3 — merge these relations (for this claim) into the persistent report.
+        if let Some(book_id) = self.facts_tree.root {
+            let facts = super::factcheck::gather_facts(&self.store, &self.hierarchy, book_id);
+            let hash = super::scholar_report::ScholarReport::corpus_hash(&facts);
+            super::scholar_report::ScholarReport::record_relations(
+                &self.layout,
+                &self.cfg.language,
+                &rs.claim,
+                &relations,
+                hash,
+            );
+        }
         let n = relations.len();
         let report = super::contradiction::render_relations(&rs.claim, &relations);
         match rs.preview_idx.and_then(|i| self.chat_history.get_mut(i)) {
@@ -3489,6 +3697,22 @@ impl ResearchApp {
         }
         self.chat_scroll = 0;
         self.status_message = Some(format!("relate complete · {n} relation(s)"));
+    }
+
+    /// SCHOLAR P3 — `/report`: render the persisted, topic-clustered SCHOLAR report
+    /// (accumulated `/contradict` + `/converge` + `/relate` findings), flagging
+    /// staleness if the Facts corpus has changed since.
+    fn show_report(&mut self) {
+        let body = report_render(
+            &self.store,
+            &self.hierarchy,
+            &self.layout,
+            self.facts_tree.root,
+            &self.cfg.language,
+        );
+        self.chat_history.push(ChatTurn::with_response("/report".to_string(), body));
+        self.chat_scroll = 0;
+        self.status_message = Some("SCHOLAR report".to_string());
     }
 
     /// SCHOLAR — `/socrates [topic]`: point Inner Socrates' Dialectician at the
@@ -6282,10 +6506,99 @@ pub(crate) fn wikisource_cli(layout: &ProjectLayout, cfg: &Config, store: &Store
     Ok(())
 }
 
-/// SCHOLAR P1 — headless `inkhaven research --contradict`. Scans the Facts book
-/// for contradictions, structured and attributed to each fact's source (cross-
-/// source vs within-source). Blocking LLM calls (one per consistency group).
-pub(crate) fn contradict_cli(layout: &ProjectLayout, cfg: &Config, store: &Store) -> Result<()> {
+/// RESRCH-SCRIPTURE — headless `inkhaven research --bible/--quran/--bookofmormon
+/// <ref>`. Fetches a verse-structured public-domain passage for the project
+/// language and ingests it, auto-citing the work's stable key.
+pub(crate) fn scripture_cli(
+    layout: &ProjectLayout,
+    cfg: &Config,
+    store: &Store,
+    work: super::scripture::Work,
+    query: &str,
+) -> Result<()> {
+    use super::imports;
+    if !super::scripture::available(&cfg.research.scripture) {
+        anyhow::bail!("scripture disabled (research.scripture.enabled)");
+    }
+    let q = query.trim().to_string();
+    if q.is_empty() {
+        anyhow::bail!("usage: {} <reference>", work.command());
+    }
+    let (lang, _note) = crate::prose::resolve_prose_language(None, &cfg.language);
+    let code = match lang.as_code() {
+        "other" => String::new(),
+        c => c.to_string(),
+    };
+    let scfg = cfg.research.scripture.clone();
+    let qq = q.clone();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    tokio::spawn(async move {
+        let r = super::scripture::fetch(scfg, work, qq, code).await.map_err(|e| e.to_string());
+        let _ = tx.send(r);
+    });
+    let passage = rx
+        .blocking_recv()
+        .ok_or_else(|| anyhow::anyhow!("scripture fetch cancelled"))?
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let body: String =
+        passage.body_text().chars().take(cfg.research.scripture.max_chars.max(1000)).collect();
+    let chunks = imports::chunk_text(&body, cfg.research.import_chunk_chars.max(200));
+    if chunks.is_empty() {
+        anyhow::bail!("no text extracted");
+    }
+    let name = passage.source_name();
+    let source_url = passage.source_url.clone();
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut doc_ids = Vec::new();
+    for (i, chunk) in chunks.iter().enumerate() {
+        let meta = serde_json::json!({
+            "kind": imports::SOURCE_KIND, "source": source_url, "name": name,
+            "thread": "", "chunk": i, "imported_at": now, "origin": "scripture",
+            "work": passage.work.id(), "translation": passage.translation, "reference": passage.reference,
+        });
+        if let Ok(id) = store.raw().add_document(meta, chunk.as_bytes()) {
+            doc_ids.push(id.to_string());
+        }
+    }
+    let mut imports_store = imports::Imports::load(layout);
+    if let Some(old) = imports_store.sources.get(&name) {
+        for id in &old.doc_ids {
+            if let Ok(u) = uuid::Uuid::parse_str(id) {
+                let _ = store.raw().delete_document(u);
+            }
+        }
+    }
+    let chunks_n = doc_ids.len();
+    imports_store.sources.insert(
+        name.clone(),
+        imports::ImportedSource { name: name.clone(), path: source_url.clone(), doc_ids, thread: String::new(), imported_at: now, chunks: chunks_n },
+    );
+    imports_store.save(layout)?;
+    let mut cite = String::new();
+    if cfg.research.scripture.auto_cite {
+        let entry = passage.to_bibentry();
+        if let Ok(true) = add_bibentry(store, cfg, &entry) {
+            cite = format!(" · cited @{} (loci: {})", entry.key, passage.locus_hint());
+        }
+    }
+    eprintln!(
+        "✓ ingested {} — {} verse(s), {chunks_n} chunk(s){cite}\n  {source_url}",
+        name,
+        passage.verses.len()
+    );
+    Ok(())
+}
+
+/// SCHOLAR — headless `inkhaven research --contradict` / `--converge`. Scans the
+/// Facts book for source-attributed contradictions (`converge=false`) or
+/// convergence/triangulation (`converge=true`). Blocking LLM calls (one per group).
+pub(crate) fn contradict_cli(
+    layout: &ProjectLayout,
+    cfg: &Config,
+    store: &Store,
+    converge: bool,
+) -> Result<()> {
     use crate::store::NodeKind;
     let h = Hierarchy::load(store).map_err(anyhow::Error::from)?;
     let Some(facts_book) = h.iter().find(|n| {
@@ -6297,7 +6610,7 @@ pub(crate) fn contradict_cli(layout: &ProjectLayout, cfg: &Config, store: &Store
     let facts = super::factcheck::gather_facts(store, &h, facts_book.id);
     if facts.len() < 2 {
         eprintln!(
-            "need at least 2 facts to check for contradictions ({} found — collect sources + /fact first)",
+            "need at least 2 facts to scan ({} found — collect sources + /fact first)",
             facts.len()
         );
         return Ok(());
@@ -6313,15 +6626,19 @@ pub(crate) fn contradict_cli(layout: &ProjectLayout, cfg: &Config, store: &Store
         .map_err(|e| anyhow::anyhow!("provider: {e}"))?;
     let (lang, _n) = crate::prose::resolve_prose_language(None, &cfg.language);
     let language = super::extract::language_name(&lang);
-    let system = super::factcheck::consistency_system(language);
+    let system = if converge {
+        super::contradiction::agreement_system(language)
+    } else {
+        super::factcheck::consistency_system(language)
+    };
 
-    let mut clashes = Vec::new();
+    let mut pairs = Vec::new();
     for g in &groups {
         let gf: Vec<_> = g.idxs.iter().filter_map(|&i| sourced.get(i).cloned()).collect();
         if gf.len() < 2 {
             continue;
         }
-        eprintln!("· checking {} ({} facts)…", g.label, gf.len());
+        eprintln!("· scanning {} ({} facts)…", g.label, gf.len());
         let user = super::contradiction::consistency_user(&gf);
         let reply = crate::ai::stream::collect_blocking(
             ai.client.clone(),
@@ -6330,10 +6647,57 @@ pub(crate) fn contradict_cli(layout: &ProjectLayout, cfg: &Config, store: &Store
             user,
         )
         .map_err(|e| anyhow::anyhow!("{e}"))?;
-        clashes.extend(super::contradiction::parse_clashes(&reply, &gf));
+        if converge {
+            pairs.extend(super::contradiction::parse_concords(&reply, &gf));
+        } else {
+            pairs.extend(super::contradiction::parse_clashes(&reply, &gf));
+        }
     }
-    let clashes = super::contradiction::dedupe(clashes);
-    println!("{}", super::contradiction::render_report(&clashes));
+    let pairs = super::contradiction::dedupe(pairs);
+    // SCHOLAR P3 — persist the topic-clustered findings to the report sidecar.
+    let hash = super::scholar_report::ScholarReport::corpus_hash(&facts);
+    super::scholar_report::ScholarReport::record_pairs(layout, &cfg.language, converge, &pairs, hash);
+    if converge {
+        println!("{}", super::contradiction::render_convergence(&pairs));
+    } else {
+        println!("{}", super::contradiction::render_report(&pairs));
+    }
+    Ok(())
+}
+
+/// SCHOLAR P3 — `/report` in the TUI: render the persisted, topic-clustered
+/// SCHOLAR report, flagging staleness if the Facts corpus moved since the scans.
+fn report_render(
+    store: &Store,
+    hierarchy: &Hierarchy,
+    layout: &ProjectLayout,
+    facts_book: Option<Uuid>,
+    project_lang: &str,
+) -> String {
+    let mut report = super::scholar_report::ScholarReport::load(layout);
+    // An unwritten report has no stored language yet — localize its empty-state
+    // hint to the project language.
+    report.set_language_if_unset(project_lang);
+    let current_hash = facts_book
+        .map(|id| {
+            let facts = super::factcheck::gather_facts(store, hierarchy, id);
+            super::scholar_report::ScholarReport::corpus_hash(&facts)
+        })
+        .unwrap_or(0);
+    report.render(current_hash)
+}
+
+/// SCHOLAR P3 — headless `inkhaven research --report`: print the persisted report.
+pub(crate) fn report_cli(layout: &ProjectLayout, cfg: &Config, store: &Store) -> Result<()> {
+    use crate::store::NodeKind;
+    let h = Hierarchy::load(store).map_err(anyhow::Error::from)?;
+    let facts_book = h
+        .iter()
+        .find(|n| {
+            n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_FACTS)
+        })
+        .map(|n| n.id);
+    println!("{}", report_render(store, &h, layout, facts_book, &cfg.language));
     Ok(())
 }
 

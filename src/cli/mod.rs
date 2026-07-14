@@ -38,6 +38,7 @@ pub mod templates;
 pub mod thread;
 pub mod argue;
 pub mod book_index;
+pub mod index_locorum;
 pub mod docs;
 pub mod sources;
 pub mod terms;
@@ -387,6 +388,21 @@ pub enum Command {
     /// INDEX-1 — generate a back-of-book index (terms → the chapters they appear in)
     /// from the Glossary's canonical terms and `docs.index.terms`.
     Index {
+        /// Limit to one user book (default: all user books).
+        #[arg(long)]
+        book_name: Option<String>,
+        /// Output format: `md` (default), `typst`, or `json`.
+        #[arg(long, default_value = "md")]
+        format: String,
+        /// Write to this file instead of stdout.
+        #[arg(short, long)]
+        out: Option<PathBuf>,
+    },
+
+    /// LOCI — generate an Index Locorum: every `@key[locus]` cited across the
+    /// manuscript, grouped by source and sorted by passage. For scripture,
+    /// classics, and law (`@bible[John 3:16]`, `@kant[A51/B75]`).
+    IndexLocorum {
         /// Limit to one user book (default: all user books).
         #[arg(long)]
         book_name: Option<String>,
@@ -1056,14 +1072,34 @@ pub enum Command {
         /// (search query, in the book's language) and exit.
         #[arg(long, value_name = "QUERY")]
         wikisource: Option<String>,
+        /// 1.6.18 RESRCH-SCRIPTURE — ingest a public-domain Bible passage
+        /// (`<book> <chapter>`, by project language) and exit.
+        #[arg(long, value_name = "REF")]
+        bible: Option<String>,
+        /// 1.6.18 RESRCH-SCRIPTURE — ingest a public-domain Qur'an surah
+        /// (`<surah number or name>`, by project language) and exit.
+        #[arg(long, value_name = "SURAH")]
+        quran: Option<String>,
+        /// 1.6.18 RESRCH-SCRIPTURE — ingest a public-domain Book of Mormon passage
+        /// (`<book> <chapter>`) and exit.
+        #[arg(long, value_name = "REF")]
+        bookofmormon: Option<String>,
         /// 1.6.16 SCHOLAR P1 — scan the Facts book for source-attributed
         /// contradictions (cross-source vs within-source) and exit.
         #[arg(long)]
         contradict: bool,
+        /// 1.6.18 SCHOLAR — scan the Facts book for converging (triangulated)
+        /// evidence across independent sources and exit.
+        #[arg(long)]
+        converge: bool,
         /// 1.6.17 SCHOLAR — the Dialectician's Socratic questions over the Facts
         /// corpus (nearest facts for the given topic) and exit.
         #[arg(long, value_name = "TOPIC")]
         socrates: Option<String>,
+        /// 1.6.18 SCHOLAR P3 — print the persisted, topic-clustered report of the
+        /// accumulated contradiction / convergence / relation findings and exit.
+        #[arg(long)]
+        report: bool,
     },
 
     /// 1.2.10+ — launch the standalone TUI configuration
@@ -5324,6 +5360,10 @@ impl Cli {
                 book_index::run(&project, book_name.as_deref(), &format, out.as_deref())
                     .map_err(Into::into)
             }
+            Command::IndexLocorum { book_name, format, out } => {
+                index_locorum::run(&project, book_name.as_deref(), &format, out.as_deref())
+                    .map_err(Into::into)
+            }
             Command::Argue { book_name, provider, json } => {
                 argue::run(&project, book_name.as_deref(), provider.as_deref(), json)
                     .map_err(Into::into)
@@ -5490,8 +5530,13 @@ impl Cli {
                 gutenberg,
                 archive,
                 wikisource,
+                bible,
+                quran,
+                bookofmormon,
                 contradict,
+                converge,
                 socrates,
+                report,
             } => crate::research::run(
                 &project,
                 crate::research::ResearchInvocation {
@@ -5509,8 +5554,13 @@ impl Cli {
                     gutenberg,
                     archive,
                     wikisource,
+                    bible,
+                    quran,
+                    bookofmormon,
                     contradict,
+                    converge,
                     socrates,
+                    report,
                 },
             )
             .map_err(Into::into),

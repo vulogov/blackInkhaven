@@ -32,6 +32,8 @@ pub const SOURCES: &[&str] = &[
     "docs",
     "sourcing",
     "argument",
+    "xref",
+    "confront",
     "other",
 ];
 
@@ -69,6 +71,7 @@ pub fn message_source(msg: &Message) -> &'static str {
         kinds::SOURCING => "sourcing",
         kinds::ARGUMENT => "argument",
         kinds::XREF => "xref",
+        kinds::CONFRONT => "confront",
         _ => "other",
     }
 }

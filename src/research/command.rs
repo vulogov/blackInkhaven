@@ -21,12 +21,18 @@ pub(super) enum Command {
     /// `/contradict` — SCHOLAR P1: structured, source-attributed contradiction
     /// scan of the Facts corpus (cross-source vs within-source; multi-call).
     Contradict,
+    /// `/converge` — SCHOLAR: the confirmation counterpart — where independent
+    /// sources triangulate the same claim (multi-call).
+    Converge,
     /// `/relate <claim>` — SCHOLAR P2: relate a claim to the corpus (facts +
     /// sources), grading each as contradiction or confirmation.
     Relate(String),
     /// `/socrates [topic]` — SCHOLAR: Inner Socrates' Dialectician over the Facts
     /// corpus — the questions the collected facts must answer to stand.
     Socrates(String),
+    /// `/report` — SCHOLAR P3: render the persisted, topic-clustered report of the
+    /// accumulated contradiction / convergence / relation findings.
+    Report,
     /// `/undisputed` — common-sense check of the authorial (undisputed) facts
     /// (RESRCH-UNDISPUTED; read-only, never rewrites).
     Undisputed,
@@ -75,6 +81,15 @@ pub(super) enum Command {
     /// `/wikisource <query>` — ingest a public-domain Wikisource page (in the
     /// book's language) as a research source (RESRCH-WIKISOURCE).
     Wikisource(String),
+    /// `/bible <book> <chapter>` — ingest a public-domain Bible passage
+    /// (verse-structured) as a research source (RESRCH-SCRIPTURE).
+    Bible(String),
+    /// `/quran <surah>` — ingest a public-domain Qur'an surah (verse-structured)
+    /// as a research source (RESRCH-SCRIPTURE).
+    Quran(String),
+    /// `/bookofmormon <book> <chapter>` — ingest a public-domain Book of Mormon
+    /// passage (verse-structured) as a research source (RESRCH-SCRIPTURE).
+    BookOfMormon(String),
     /// `/openalex <query>` — fetch the top OpenAlex paper (R3-B).
     OpenAlex(String),
     /// `/arxiv <query>` — fetch the top arXiv paper (R3-B).
@@ -134,9 +149,14 @@ pub(super) const SPECS: &[CommandSpec] = &[
     CommandSpec { name: "gutenberg", summary: "ingest a public-domain book (Project Gutenberg)", usage: "/gutenberg <query>" },
     CommandSpec { name: "archive", summary: "ingest a public-domain text (Internet Archive)", usage: "/archive <query>" },
     CommandSpec { name: "wikisource", summary: "ingest a public-domain page (Wikisource, book language)", usage: "/wikisource <query>" },
+    CommandSpec { name: "bible", summary: "ingest a public-domain Bible passage (by project language)", usage: "/bible <book> <chapter>" },
+    CommandSpec { name: "quran", summary: "ingest a public-domain Qur'an surah (by project language)", usage: "/quran <surah>" },
+    CommandSpec { name: "bookofmormon", summary: "ingest a public-domain Book of Mormon passage", usage: "/bookofmormon <book> <chapter>" },
     CommandSpec { name: "contradict", summary: "source-attributed contradiction scan of the Facts", usage: "/contradict" },
+    CommandSpec { name: "converge", summary: "where independent sources triangulate the same claim", usage: "/converge" },
     CommandSpec { name: "relate", summary: "relate a claim to the corpus (contradiction + confirmation)", usage: "/relate <claim>" },
     CommandSpec { name: "socrates", summary: "Socratic questions the Facts must answer (the Dialectician)", usage: "/socrates [topic]" },
+    CommandSpec { name: "report", summary: "the persisted, topic-clustered SCHOLAR report", usage: "/report" },
     CommandSpec { name: "openalex", summary: "scholarly paper (DOI)", usage: "/openalex <query>" },
     CommandSpec { name: "arxiv", summary: "arXiv preprint", usage: "/arxiv <query>" },
     CommandSpec { name: "triangulate", summary: "cross-check a claim across sources", usage: "/triangulate [claim]" },
@@ -258,9 +278,14 @@ pub(super) fn parse(input: &str) -> Option<Command> {
         "gutenberg" | "pg" => Command::Gutenberg(rest.to_string()),
         "archive" | "ia" => Command::Archive(rest.to_string()),
         "wikisource" | "ws" => Command::Wikisource(rest.to_string()),
+        "bible" => Command::Bible(rest.to_string()),
+        "quran" | "koran" => Command::Quran(rest.to_string()),
+        "bookofmormon" | "bom" => Command::BookOfMormon(rest.to_string()),
         "contradict" => Command::Contradict,
+        "converge" => Command::Converge,
         "relate" => Command::Relate(rest.to_string()),
         "socrates" => Command::Socrates(rest.to_string()),
+        "report" => Command::Report,
         "openalex" => Command::OpenAlex(rest.to_string()),
         "arxiv" => Command::Arxiv(rest.to_string()),
         "triangulate" | "tri" => Command::Triangulate(rest.to_string()),

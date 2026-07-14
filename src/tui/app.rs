@@ -1773,6 +1773,8 @@ pub(crate) struct App {
     ie_last_engage_at: Option<std::time::Instant>,
     /// The paragraph a spawned engagement targets, for the completion report.
     ie_engage_para: Option<Uuid>,
+    /// SCHOLAR P4 — the paragraph a spawned confront pass targets, for the report.
+    confront_para: Option<Uuid>,
     tree_cursor: usize,
     tree_scroll: usize,
 
@@ -3054,6 +3056,7 @@ impl App {
             ie_last_engaged_fp: None,
             ie_last_engage_at: None,
             ie_engage_para: None,
+            confront_para: None,
             output_expanded: std::collections::HashSet::new(),
             output_filter: crate::pane::output::OutputFilter::default(),
             output_query_focused: false,
@@ -3916,6 +3919,29 @@ impl App {
                 }
                 Err(e) => self.status = format!("world overview failed: {e}"),
             },
+            BgJobKind::Confront => {
+                let target = self.confront_para.take();
+                match result {
+                    Ok(n) => {
+                        let count: usize = n.parse().unwrap_or(0);
+                        self.status = if count == 0 {
+                            "⚔ Confront: no source bears on this ¶ (nothing for/against)".into()
+                        } else {
+                            format!("⚔ Confront: {count} relation(s) to sources in this ¶ — ^B Tab → Output")
+                        };
+                        if count > 0 {
+                            self.refresh_tree_badges();
+                            self.emit_ai_task_complete(
+                                "confront_paragraph",
+                                &format!("Confront judged {count} relation(s) to the sources."),
+                                elapsed_secs,
+                                target,
+                            );
+                        }
+                    }
+                    Err(e) => self.status = format!("Confront skipped: {e}"),
+                }
+            }
         }
     }
 
@@ -6880,6 +6906,10 @@ pub(super) enum BgJobKind {
     /// BUG-8 — the `Ctrl+B W` world overview compiled off-thread (deterministic,
     /// zero-AI). The `Ok` payload is the overview rows joined by `\n`.
     WorldOverview,
+    /// SCHOLAR P4 — the `Ctrl+V ?` confront pass (LLM). The worker grades the open
+    /// paragraph against the research corpus and emits the anchored relation
+    /// findings to Output directly; the `Ok` payload is the emitted count.
+    Confront,
 }
 
 /// An in-flight background job: its progress/result channel + a label + which
@@ -6894,6 +6924,51 @@ fn content_fingerprint(doc: &OpenedDoc) -> (Uuid, u64) {
         line.hash(&mut h);
     }
     (doc.id, h.finish())
+}
+
+/// SCHOLAR P4 — replace the open paragraph's prior confront findings with the
+/// graded relations, emitting each as an anchored `confront` Output message
+/// (against → Warning, supporting → Info; silent relations are dropped). Returns
+/// how many findings were emitted. Runs on the confront worker thread, which
+/// writes straight to the global Output store (the terminal stays untouched).
+fn emit_confront_findings(
+    paragraph_id: Uuid,
+    relations: &[crate::research::contradiction::Relation],
+) -> usize {
+    use crate::pane::output::{active, emit, kinds, Lifetime, Message, Severity};
+    // Replace this paragraph's prior confront findings.
+    if let Some(s) = active() {
+        if let Ok(msgs) = s.by_kind(kinds::CONFRONT) {
+            for m in msgs.iter().filter(|m| m.source_paragraph_id == Some(paragraph_id)) {
+                let _ = s.dismiss(m.id);
+            }
+        }
+    }
+    let mut emitted = 0usize;
+    for r in relations {
+        let severity = if r.stance.is_against() {
+            Severity::Warning
+        } else if r.stance.is_support() {
+            Severity::Info
+        } else {
+            continue; // Silent — nothing to surface.
+        };
+        let text = if r.reason.is_empty() {
+            format!("[{}] {}", r.stance.label(), r.label)
+        } else {
+            format!("[{}] {} — {}", r.stance.label(), r.label, r.reason)
+        };
+        let msg = Message::new(
+            kinds::CONFRONT,
+            severity,
+            Lifetime::UntilActedOn,
+            serde_json::json!({ "text": text, "label": r.label, "stance": r.stance.label() }),
+        )
+        .with_source_paragraph(paragraph_id);
+        let _ = emit(&msg);
+        emitted += 1;
+    }
+    emitted
 }
 
 pub(super) struct BgJob {
@@ -11881,6 +11956,7 @@ impl App {
             A::ViewCitePicker => self.open_cite_picker(),
             A::ViewUniversePicker => self.open_universe_picker(),
             A::ViewXrefPicker => self.open_xref_picker(),
+            A::ConfrontParagraph => self.confront_open_paragraph(),
             A::InsertSnippetInclude => self.open_snippet_insert_picker(),
             A::OpenSnippetsOverview => self.open_snippets_overview(),
             A::ViewToggleTermsOverlay => self.toggle_terms_overlay(),
@@ -15165,6 +15241,80 @@ impl App {
     /// INNER-THEOLOGIAN-1 — `Ctrl+B J→T`. Run a slow-track theological session
     /// over the open paragraph (Category 1) in the background; the worker calls
     /// the persona and emits its questions to the Output `theologian` category.
+    /// SCHOLAR P4 (`Ctrl+V ?`) — confront the open paragraph against the research
+    /// corpus: retrieve the nearest Facts + ingested Source passages (synchronously,
+    /// on the main thread), then grade each against the paragraph off-thread with the
+    /// `/relate` judge. Emits anchored `confront` findings to Output — Warnings for
+    /// material that works *against* the paragraph, Info for *supporting* material to
+    /// cite. The manuscript-side twin of `inkhaven research`'s `/relate`.
+    fn confront_open_paragraph(&mut self) {
+        use crate::research::contradiction::{self, Evidence};
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "Confront: no paragraph open".into();
+            return;
+        };
+        if doc.content_type.as_deref() == Some("jinja")
+            || self.hierarchy.get(doc.id).is_some_and(is_structural_nonprose)
+        {
+            self.status =
+                "Confront: structural / template paragraphs are skipped (not prose)".into();
+            return;
+        }
+        let id = doc.id;
+        let prose = doc.textarea.lines().join("\n");
+        if prose.trim().is_empty() {
+            self.status = "Confront: the paragraph is empty".into();
+            return;
+        }
+        // Pre-flight the provider so a missing key fails fast (no orphan job).
+        let model = match self.ai.resolve_provider(&self.cfg.llm, None) {
+            Ok((m, _env)) => m.to_string(),
+            Err(e) => {
+                self.status = format!("Confront needs an LLM provider: {e}");
+                return;
+            }
+        };
+        // Retrieve evidence on the main thread (local vector queries): the nearest
+        // Facts-book passages + the nearest ingested Source chunks.
+        let mut evidence: Vec<Evidence> = Vec::new();
+        if let Some(facts_id) = self.system_book_id(crate::store::SYSTEM_TAG_FACTS) {
+            if let Ok(passages) = crate::book_rag::retrieval::retrieve(
+                &self.store,
+                &self.hierarchy,
+                &self.cfg.book_rag,
+                facts_id,
+                &prose,
+            ) {
+                for p in passages.into_iter().filter(|p| p.is_hit).take(6) {
+                    evidence.push(Evidence { label: format!("fact: {}", p.breadcrumb), body: p.body });
+                }
+            }
+        }
+        for sp in crate::research::rag::retrieve_source_passages(&self.store, &prose, 6) {
+            evidence.push(Evidence { label: format!("source: {}", sp.name), body: sp.body });
+        }
+        if evidence.is_empty() {
+            self.status = "Confront: no facts or sources bear on this ¶ — collect some in \
+                           `inkhaven research` (/fact, /archive, …) first"
+                .into();
+            return;
+        }
+        let lang = self.active_prompt_language();
+        let language = crate::inner_editor::prompt::language_name(&lang).to_string();
+        let system = contradiction::relate_system(&language);
+        let user = contradiction::relate_user(&prose, &evidence);
+        let client = self.ai.client.clone();
+        self.confront_para = Some(id);
+        self.start_bg_job(BgJobKind::Confront, "confront", move |tx, _cancel| {
+            let result = crate::ai::stream::collect_blocking(client, model, Some(system), user)
+                .map(|raw| {
+                    let relations = contradiction::parse_relations(&raw, &evidence);
+                    emit_confront_findings(id, &relations).to_string()
+                });
+            let _ = tx.send(BgMsg::Done(result));
+        });
+    }
+
     fn theologian_engage_open_paragraph(&mut self) {
         if !self.cfg.theologian.enabled {
             self.status = "Inner Theologian is disabled (theologian.enabled = false)".into();
@@ -30686,5 +30836,35 @@ mod tests_snippet_include {
         let col = line.chars().take_while(|&c| c != 'g').count();
         let ctx = detect_include_context(line, col).expect("inside the string");
         assert!(ctx.snippet_slug.is_none(), "globals.typ is not a snippet");
+    }
+}
+
+#[cfg(test)]
+mod tests_confront {
+    use super::*;
+    use crate::research::contradiction::{Relation, Stance};
+
+    fn rel(stance: Stance) -> Relation {
+        Relation { label: "source: X".into(), stance, reason: "why".into() }
+    }
+
+    /// SCHOLAR P4 — the emitter counts against/supporting relations and drops
+    /// silent ones. (No Output store is installed in the unit context, so this
+    /// exercises the pure counting/classification, not the side-effecting emit.)
+    #[test]
+    fn confront_counts_actionable_relations_and_drops_silent() {
+        let id = uuid::Uuid::now_v7();
+        let relations = vec![
+            rel(Stance::Contradicts),
+            rel(Stance::Tension),
+            rel(Stance::Agrees),
+            rel(Stance::Qualifies),
+            rel(Stance::Silent),
+            rel(Stance::Silent),
+        ];
+        // 2 against + 2 supporting = 4; the 2 silent are dropped.
+        assert_eq!(emit_confront_findings(id, &relations), 4);
+        assert_eq!(emit_confront_findings(id, &[]), 0);
+        assert_eq!(emit_confront_findings(id, &[rel(Stance::Silent)]), 0);
     }
 }
