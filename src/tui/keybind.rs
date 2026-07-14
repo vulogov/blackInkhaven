@@ -509,6 +509,11 @@ pub enum Action {
     /// findings (against / supporting) anchored to the paragraph in the Output pane.
     #[serde(rename = "view.confront_paragraph")]
     ConfrontParagraph,
+    /// Ctrl+V c (1.6.19+ LOCI) — lint the open paragraph's `@key[locus]` citations
+    /// against their sources' reference schemes, flagging a malformed locus as an
+    /// anchored Output finding (deterministic, zero-AI).
+    #[serde(rename = "view.lint_loci")]
+    LintLoci,
     /// Ctrl+V x (1.4.9+ REUSE-1) — insert/replace a snippet `#include` via a
     /// fuzzy picker over the Snippets book.
     #[serde(rename = "view.insert_snippet_include")]
@@ -1054,6 +1059,7 @@ impl Action {
             Action::ViewUniversePicker => "import".into(),
             Action::ViewXrefPicker => "xref".into(),
             Action::ConfrontParagraph => "confront".into(),
+            Action::LintLoci => "lint loci".into(),
             Action::InsertSnippetInclude => "snippet".into(),
             Action::OpenSnippetsOverview => "snippets".into(),
             Action::ViewToggleTermsOverlay => "terms overlay".into(),
@@ -1363,6 +1369,8 @@ impl Action {
                 "Cross-reference picker (1.6.15+ XREF-2, Ctrl+V &) — fuzzy-find a label defined anywhere in the manuscript (`<fig:flux>`, `<eq:energy>`, `<sec:intro>`, …) and insert an `@label` reference at the cursor, so a cross-reference always points at a label that exists. The mirror of the XREF Output finding, which catches a reference whose label is missing. Empty list → define a label first by placing `<name>` after a figure, heading, or equation.".into(),
             Action::ConfrontParagraph =>
                 "Confront paragraph (1.6.18+ SCHOLAR P4, Ctrl+V ?) — judge the open paragraph against the research corpus (the Facts book + ingested Sources), grading each retrieved fact/source as contradicts / tension / qualifies / agrees / silent. Anchored findings land in the Output pane: ⚔ Warnings for material that works against the paragraph (address these), Info for supporting material to cite. The manuscript-side twin of `/relate` in `inkhaven research`. Needs an LLM provider and some collected facts/sources — gather them with the research assistant (`/fact`, `/archive`, `/wikisource`, …) first.".into(),
+            Action::LintLoci =>
+                "Lint loci (1.6.19+ LOCI, Ctrl+V c) — check every `@key[locus]` citation in the open paragraph against its source's reference scheme (built-in for the scripture keys `bible`/`quran`/`book-of-mormon`; `sources.ref_schemes` for the rest), flagging a malformed reference like `@bible[John 3:sixteen]` as a ⚑ Warning anchored to the paragraph in the Output pane. Deterministic and zero-AI — the editor-side twin of `inkhaven index-locorum`'s validation. A source with no scheme leaves its loci unchecked.".into(),
             Action::InsertSnippetInclude =>
                 "Snippet include (1.4.9+ REUSE-1, Ctrl+V x) — fuzzy-pick a reusable snippet from the Snippets book and insert a Typst `#include` for it at the cursor (depth-relative path computed automatically). With the cursor inside an existing `#include \"…/snippets/…\"` path, it replaces that path in place (pre-selecting the current snippet). Define snippets as paragraphs under the Snippets book; assembly copies them to a `snippets/` sidecar so the include resolves.".into(),
             Action::OpenSnippetsOverview =>
@@ -1764,6 +1772,10 @@ impl KeyBindings {
                 // the research corpus (Facts + Sources). `?` reads as "question this
                 // paragraph against what we've gathered".
                 entry("?", Action::ConfrontParagraph, Scope::Any),
+                // 1.6.19+ LOCI — Ctrl+V c: lint the open paragraph's @key[locus]
+                // citations against their sources' reference schemes. Beside the
+                // Shift+C sourcing pass — both are citation checks.
+                entry("c", Action::LintLoci, Scope::Any),
                 // NF-CITE — Ctrl+V Shift+C: the Sourcing pass on the open paragraph
                 // (Cite/Claim coverage), beside the cite picker.
                 entry("Shift+c", Action::SourcingCheckParagraph, Scope::Any),

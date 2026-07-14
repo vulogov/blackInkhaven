@@ -3736,11 +3736,37 @@ pub struct SourcesConfig {
     /// cited across the book, grouped by source) after the bibliography. Off by
     /// default — a specialized apparatus for scripture / classics / law.
     pub index_locorum: bool,
+    /// LOCI — named **reference schemes** for validating `@key[locus]` citations.
+    /// A source declares which it uses via a `scheme:` line in its Sources entry
+    /// (the value is a key here); the three scripture keys — `bible`, `quran`,
+    /// `book-of-mormon` — carry built-in schemes and need no entry. A locus that
+    /// does not match its source's scheme is reported by `inkhaven index-locorum`
+    /// (and `inkhaven build`), so `@bible[John 3:sixteen]` is caught before it
+    /// ships. Example: `kant-ab: { pattern: "^A\\d+(/B\\d+)?$", format: "A{n}/B{n}" }`.
+    #[serde(default)]
+    pub ref_schemes: std::collections::BTreeMap<String, RefScheme>,
+}
+
+/// LOCI — one reference scheme: a regex a locus must fully match to be valid, and
+/// a human `format` hint shown when it doesn't.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RefScheme {
+    /// A regular expression the locus must fully match (anchored automatically).
+    pub pattern: String,
+    /// A human hint shown for a malformed locus, e.g. `{book} {ch}:{v}`.
+    pub format: String,
 }
 
 impl Default for SourcesConfig {
     fn default() -> Self {
-        Self { all: true, bibliography_style: "ieee".into(), auto_bibliography: true, index_locorum: false }
+        Self {
+            all: true,
+            bibliography_style: "ieee".into(),
+            auto_bibliography: true,
+            index_locorum: false,
+            ref_schemes: std::collections::BTreeMap::new(),
+        }
     }
 }
 
