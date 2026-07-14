@@ -21,41 +21,40 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.6.20 — The Rigor Reader
+## Latest release · 1.6.21 — The Scholarly Lexicon
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.6.20.md`](Documentation/RELEASE_NOTES/1.6.20.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.6.21.md`](Documentation/RELEASE_NOTES/1.6.21.md)
 
-A deterministic reader for the shape of your argument. Where the Inner Theologian
-reads a passage for its moral weight, the reasoning-rigor reader reads it for its
-validity — whether the argument, on its own terms, actually follows. Zero-AI,
-multilingual, advisory. **No new runtime crates.**
+A study's citations can be perfect and its argument still fail on a single word. This
+release keeps a work's **terms** as disciplined as its citations. **No new runtime
+crates.**
 
-### Five argument failures, by the cue that gives them away
+### Terms with senses
 
-The reader flags **false dichotomy** ("either … or"), **question-begging**
-("obviously"), **straw man** ("so-called"), **overgeneralization** ("always" /
-"never"), and **non-sequitur** (a "therefore" with no "because" in the paragraph). It
-does not judge whether you are right — only whether the prose has slipped into a form
-a reader who wanted to break it would seize on. Advisory, never a verdict.
+A Glossary entry can now carry its **original-language forms** and its **distinct
+senses** (`reason` → Vernunft / Verstand) — the discipline a critical edition needs,
+where a load-bearing word legitimately means several things.
 
-### Multilingual
+### Equivocation — the rigor reader's sixth signal
 
-Fully multilingual (en/ru/fr/de/es) with localized cues *and* advisories: a Russian
-argument is read against Russian cues and answered in Russian («очевидно» →
-question-begging).
+Mark a multi-sense term `watch_equivocation` and the reasoning-rigor reader gains a
+signal it could not have had otherwise: a watched term used in two senses without one
+pinned is flagged (`Ctrl+B J → R`, `inkhaven rigor scan`). You curate which words are
+dangerous; the reader watches exactly those, in any of the five languages.
 
-### Three surfaces
+### The Index Verborum
 
-`Ctrl+B J → R` reads the open paragraph (instant, zero-AI); the review pass runs it
-across the book alongside the theologian check; and `inkhaven rigor scan` runs it as a
-pre-submission pass (`--signal`, `--json`, `--strict` for CI). Per-category toggles
-mute a signal a genre uses legitimately.
+`inkhaven index-verborum` (and `inkhaven lexicon list`) prints the term-level twin of
+the Index Locorum — each lexicon term, its senses, and where it is used. Set
+`sources.index_verborum: true` and the finished book closes with all three apparatus:
+the works, the passages, and the terms.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** New command `inkhaven rigor scan`; new chord `Ctrl+B J →
-R`; new config `rigor.*` (on by default, per-category toggles). Everything is additive
-and advisory — existing projects are unaffected. Test suite → 2455.
+**No new runtime crates.** New commands `inkhaven lexicon list` and `inkhaven
+index-verborum`; new Glossary fields and config (`rigor.equivocation`,
+`sources.index_verborum`) — all opt-in. Everything is additive; existing projects are
+unaffected. Test suite → 2462.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
