@@ -5,10 +5,11 @@
 Everything in the last chapter happened in the Research Assistant — a separate room
 from the one you write in. But a study is drafted _while_ the corpus is still
 growing, and the readers that matter most are the ones you can turn on the
-paragraph in front of you without leaving the editor. This track keeps two, and
+paragraph in front of you without leaving the editor. This track keeps three, and
 they ask different questions of the same prose: one confronts the paragraph with
-your _sources_, the other reads it for its _theological weight_. Between them they
-are the second pair of eyes this kind of writing most needs.
+your _sources_, one reads it for its _theological weight_, and one reads it for its
+_validity_ — whether the argument, on its own terms, actually follows. Between them
+they are the second pair of eyes this kind of writing most needs.
 
 #section("Confront the paragraph against the corpus")
 
@@ -103,6 +104,50 @@ opens that deeper look on a passage from the shell. Run the scan across a finish
 draft and it hands you the list of passages carrying more than they say; open a
 session on each, and the Inner Theologian reads it as it read the paragraph above.
 
+#section("Read the argument for rigor")
+
+Confront reads a paragraph against your sources; the Inner Theologian reads it for
+its weight. Neither reads it for its _validity_ — whether the argument, taken on its
+own terms, actually follows. That is the *reasoning-rigor reader's* work, and like
+the Inner Theologian it is deterministic and zero-AI: it does not judge whether you
+are right, only whether the prose has slipped into one of the recurring shapes of a
+weak argument. Press `Ctrl+B J`, then `R`, on the open paragraph:
+
+#transcript("Ctrl+B J → R  — read the open paragraph for rigor", [
+  ⊬ *false dichotomy* — "either freedom or determinism": presented as an exhaustive
+  binary — is there a third alternative you have ruled out without argument? \
+  ⊬ *question-begging* — "obviously": asserted as self-evident — is the claim argued,
+  or assumed to spare the argument? \
+  ⊬ *non-sequitur* — "therefore": a conclusion is drawn with no visible warrant in
+  the paragraph — what supports the inference?
+])
+
+It flags five recurring failures — the false dichotomy that hides a third option,
+the assertion smuggled in as _obviously_, the straw man that answers a weaker
+opponent, the overgeneralization a single counterexample would break, and the
+_therefore_ with nothing behind it — each by the cue word that gave it away, and each
+as an advisory, never a verdict. On our essay it caught the sentence that had leaned
+on "obviously" where the fourth movement in fact required a careful concession; the
+prose said the argument was settled, and the reader asked whether it was.
+
+#insight[
+  The three readers of this chapter divide the labour of a good editor exactly.
+  Confront asks _is it true to the sources?_ The Inner Theologian asks _does it carry
+  its weight?_ The rigor reader asks _does it follow?_ — and because that last
+  question is purely formal, it can be answered deterministically, in any of the five
+  project languages, with no model in the loop. A Russian argument is read against
+  Russian cues; the advisory comes back in Russian. The reader does not make your
+  argument valid. It tells you, cheaply and in your own tongue, where a reader who
+  wanted to break it would begin.
+]
+
+Reach it across the whole manuscript with `inkhaven rigor scan` — the same reader as
+a pre-submission pass, `--signal <category>` to focus on one failure, `--strict` to
+fail a continuous-integration step on any hit. Mute a category your genre uses
+legitimately (a rhetorical "never", say) with `rigor.overgeneralization: false` and
+its kin; the reader is advisory by design, and you decide which of its questions your
+work is obliged to answer.
+
 #section("Press the argument — the Socratic personas")
 
 Alongside the Theologian, the Inner Socrates roster carries two readers built to
@@ -129,8 +174,8 @@ comparison rather than a polemic.
 ]
 
 #recap((
-  [This track turns two *manuscript readers* on the growing draft: `Ctrl+V ?` *confronts* the paragraph with your sources (the graded relation engine, anchored findings), and the *Inner Theologian* (`Ctrl+B J → T`) reads it for *theological weight*.],
-  [Confront catches a claim that reaches past its evidence; the *Inner Theologian* catches the sentence that carries more moral freight than it admits — the consequence left undepicted, the word that decides more than it defends. It is the signature reader of the track.],
-  [Reach the Theologian three ways: the `Ctrl+B J → T` chord in the editor, `inkhaven theologian scan` (a whole-manuscript, zero-AI weight pass), and `inkhaven theologian session` (a deep read on one passage).],
+  [This track turns three *manuscript readers* on the growing draft, dividing an editor's labour: `Ctrl+V ?` *confronts* the paragraph with your sources (is it true to them?), the *Inner Theologian* (`Ctrl+B J → T`) reads it for *theological weight* (does it carry it?), and the *rigor reader* (`Ctrl+B J → R`) reads it for *validity* (does it follow?).],
+  [Confront catches a claim that reaches past its evidence; the *Inner Theologian* catches the sentence that carries more moral freight than it admits — the consequence left undepicted, the word that decides more than it defends.],
+  [The *reasoning-rigor reader* is deterministic and zero-AI: it flags five recurring failures — false dichotomy, question-begging, straw man, overgeneralization, non-sequitur — by the cue word that gave each away, in any of the five project languages. Advisory, never a verdict; `inkhaven rigor scan` runs it as a pre-submission pass (`--strict` for CI).],
   [Press your own argument with the `philosophical-reader` / `theological-reader` Socratic personas — ask for the *strongest* objection, to defeat the best opposing case rather than a caricature — and *snapshot* (`F5`) before acting on any reading.],
 ))
