@@ -21,41 +21,42 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.6.17 — The Dialectician & Any Provider
+## Latest release · 1.6.18 — Scripture & Loci
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.6.17.md`](Documentation/RELEASE_NOTES/1.6.17.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.6.18.md`](Documentation/RELEASE_NOTES/1.6.18.md)
 
-`/socrates` turns Inner Socrates' Dialectician on the collected Facts — the questions
-your corpus must answer to stand. And the LLM client now falls back to any provider
-whose key you actually have set (configurable), so a project runs against the model
-you've got. **No new runtime crates.**
+Public-domain scripture as a research source, citation down to the passage, and
+SCHOLAR brought into the manuscript editor — the primary-source apparatus a work of
+theology or philosophy actually needs. **No new runtime crates.**
 
-### A real back-of-book index
+### Scripture as a research source
 
-`inkhaven index` builds an alphabetised index from terms you already curate — every
-canonical Glossary term (synonyms become *see*-references) plus any extra names or
-topics — and writes it as Markdown, Typst, or JSON. On the web,
-`docs.html.include.index` folds an Index page into the site where every entry is a
-real anchor link to the section it names.
+`/bible`, `/quran`, and `/bookofmormon` ingest scripture verse-by-verse from keyless,
+public-domain translations, each auto-cited under a **stable key** so every passage of
+a work files under one source. Translation follows the project `language` — English
+draws the World English Bible and Sahih International, Russian the Synodal Bible and
+Kuliev, and so on. CLI twins on `inkhaven research`.
 
-### The citation bridge
+### Primary-source loci and the Index Locorum
 
-The `Ctrl+V @` cite picker now **ranks by the paragraph you're writing**, floating the
-source your claim needs to the top (★) instead of listing everything in key order.
+Cite a passage, not a work: `@bible[John 3:16]`, `@kant[A51/B75]` is native Typst, and
+`inkhaven index-locorum` harvests every locus into an apparatus grouped by source and
+sorted by passage. Set `sources.index_locorum: true` to fold it into the built book
+after the bibliography.
 
-### A first look at the argument
+### SCHOLAR — a persistent report, and confront in the editor
 
-`inkhaven argue` reads a chapter and writes back its central claims and the support
-each rests on, flagging the two cheapest weak joints: a load-bearing claim backed by
-nothing, and a citation that supports no claim. It quotes your own sentences rather
-than inventing an argument — an outline, not a diagram, but often enough to show where
-your case rests on air.
+`/contradict`, `/converge`, and `/relate` now merge into a persistent, topic-clustered
+`/report` that flags staleness when the corpus moves. And `Ctrl+V ?` confronts the
+open paragraph against the corpus from inside the editor — anchored ⚔ findings, the
+manuscript-side twin of `/relate`.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** New commands `inkhaven index` and `inkhaven argue`; new config
-`docs.index`. Everything is additive — existing projects are unaffected. Test suite →
-2370.
+**No new runtime crates.** New commands `/bible`, `/quran`, `/bookofmormon`, `/report`,
+`inkhaven index-locorum`; new chord `Ctrl+V ?`; new config `research.scripture` and
+`sources.index_locorum`. Everything is additive and opt-in — existing projects are
+unaffected. Test suite → 2440.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
