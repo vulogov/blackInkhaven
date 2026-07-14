@@ -37,6 +37,7 @@ pub(super) struct RigorText {
     pub straw_man: &'static str,
     pub overgeneralization: &'static str,
     pub non_sequitur: &'static str,
+    pub equivocation: &'static str,
 }
 
 pub(super) fn lists_for(lang: &ProseLanguage) -> &'static RigorLists {
@@ -86,6 +87,21 @@ pub(super) fn matches_pair(text_lc: &str, pairs: &[(&'static str, &'static str)]
         }
     }
     None
+}
+
+/// The number of whole-word occurrences of `needle` in `text_lc` (both already
+/// lowercased). Multi-word needles match as a bounded substring.
+pub(super) fn count_word(text_lc: &str, needle: &str) -> usize {
+    if needle.is_empty() {
+        return 0;
+    }
+    let mut n = 0;
+    let mut from = 0;
+    while let Some(pos) = word_pos(text_lc, needle, from) {
+        n += 1;
+        from = pos + text_lc[pos..].chars().next().map_or(1, |c| c.len_utf8());
+    }
+    n
 }
 
 /// The byte offset of the first whole-word `needle` in `hay` at/after `from`.
@@ -141,6 +157,7 @@ static EN_TEXT: RigorText = RigorText {
     straw_man: "Characterizes a view dismissively (\"{cue}\") — are you answering its strongest form, or a weaker one?",
     overgeneralization: "A universal claim (\"{cue}\") — would a single counterexample break it? If so, qualify it.",
     non_sequitur: "A conclusion is drawn (\"{cue}\") with no visible warrant in the paragraph — what supports the inference?",
+    equivocation: "The term \"{cue}\" recurs here and carries more than one declared sense — is it used in one sense throughout, or has the argument shifted between them?",
 };
 
 // ── Russian ─────────────────────────────────────────────────────────────────
@@ -177,6 +194,7 @@ static RU_TEXT: RigorText = RigorText {
     straw_man: "Взгляд подан пренебрежительно («{cue}») — возражаете ли вы его сильнейшей форме?",
     overgeneralization: "Универсальное утверждение («{cue}») — не опровергнет ли его один контрпример? Уточните его.",
     non_sequitur: "Вывод сделан («{cue}»), но в абзаце нет видимого основания — что поддерживает этот переход?",
+    equivocation: "Термин «{cue}» повторяется здесь и имеет несколько заявленных значений — используется ли он в одном значении, или довод сместился между ними?",
 };
 
 // ── German ──────────────────────────────────────────────────────────────────
@@ -209,6 +227,7 @@ static DE_TEXT: RigorText = RigorText {
     straw_man: "Eine Sicht wird abschätzig charakterisiert (\"{cue}\") — antworten Sie ihrer stärksten Form?",
     overgeneralization: "Eine universelle Behauptung (\"{cue}\") — würde ein einziges Gegenbeispiel sie widerlegen? Dann relativieren Sie sie.",
     non_sequitur: "Eine Schlussfolgerung wird gezogen (\"{cue}\"), ohne erkennbaren Grund im Absatz — was stützt den Schluss?",
+    equivocation: "Der Begriff \"{cue}\" wiederholt sich hier und trägt mehrere erklärte Bedeutungen — wird er durchgehend in einem Sinn gebraucht, oder ist das Argument zwischen ihnen gewechselt?",
 };
 
 // ── French ──────────────────────────────────────────────────────────────────
@@ -242,6 +261,7 @@ static FR_TEXT: RigorText = RigorText {
     straw_man: "Une thèse est caractérisée avec dédain (« {cue} ») — répondez-vous à sa forme la plus forte ?",
     overgeneralization: "Une affirmation universelle (« {cue} ») — un seul contre-exemple la briserait-il ? Alors nuancez-la.",
     non_sequitur: "Une conclusion est tirée (« {cue} ») sans justification visible dans le paragraphe — qu'est-ce qui soutient l'inférence ?",
+    equivocation: "Le terme « {cue} » revient ici et porte plusieurs sens déclarés — est-il employé dans un seul sens, ou l'argument a-t-il glissé entre eux ?",
 };
 
 // ── Spanish ─────────────────────────────────────────────────────────────────
@@ -275,4 +295,5 @@ static ES_TEXT: RigorText = RigorText {
     straw_man: "Una postura se caracteriza con desdén (\"{cue}\") — ¿respondes a su forma más fuerte?",
     overgeneralization: "Una afirmación universal (\"{cue}\") — ¿la rompería un solo contraejemplo? Entonces matízala.",
     non_sequitur: "Se saca una conclusión (\"{cue}\") sin justificación visible en el párrafo — ¿qué sostiene la inferencia?",
+    equivocation: "El término \"{cue}\" reaparece aquí y tiene varios sentidos declarados — ¿se usa en un solo sentido, o el argumento se ha deslizado entre ellos?",
 };

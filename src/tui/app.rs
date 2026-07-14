@@ -2862,7 +2862,9 @@ fn run_rigor_check(
 
     let h = crate::store::hierarchy::Hierarchy::load(store).map_err(|e| e.to_string())?;
     let book = crate::cli::resolve_user_book(&h, None, "rigor")?.clone();
-    let findings = crate::inner_rigor::scan_book(layout, &h, cfg, &book);
+    let entries = crate::glossary::glossary_entries_from_store(store, &h, Some(&book.slug));
+    let watched = crate::inner_rigor::watched_terms_from_glossary(&entries);
+    let findings = crate::inner_rigor::scan_book(layout, &h, cfg, &book, &watched);
 
     clear();
     for f in &findings {
@@ -15488,6 +15490,8 @@ impl App {
         let (lang, _note) =
             crate::prose::resolve_prose_language(self.cfg.rigor.language.as_deref(), &self.cfg.language);
         let cats = crate::inner_rigor::RigorCats::from_config(&self.cfg.rigor);
+        let entries = crate::glossary::glossary_entries_from_store(&self.store, &self.hierarchy, None);
+        let watched = crate::inner_rigor::watched_terms_from_glossary(&entries);
 
         // Replace this paragraph's prior rigor findings.
         if let Some(s) = crate::pane::output::active() {
@@ -15498,7 +15502,7 @@ impl App {
             }
         }
 
-        let findings = crate::inner_rigor::detect_paragraph(&plain, &lang, &cats);
+        let findings = crate::inner_rigor::detect_paragraph(&plain, &lang, &cats, &watched);
         for (signal, description) in &findings {
             let text = format!("[{}] {}", signal.label(), description);
             let msg = Message::new(

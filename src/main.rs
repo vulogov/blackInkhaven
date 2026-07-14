@@ -56,6 +56,7 @@ mod haiku;
 // INNER-THEOLOGIAN-1 — tradition-neutral moral/theological reader.
 mod inner_theologian;
 mod inner_rigor;
+mod index_verborum;
 // MYTH-1 — mythological & symbolic pattern library. Built across M-P0…M-P15;
 // gated until the store / scan / CLI consume the types.
 mod myth;
