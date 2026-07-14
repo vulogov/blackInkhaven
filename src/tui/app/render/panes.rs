@@ -1757,6 +1757,7 @@ impl super::super::App {
                 crate::pane::output::kinds::XREF => "⌘ ",
                 crate::pane::output::kinds::CONFRONT => "⚔ ",
                 crate::pane::output::kinds::LOCUS => "⚑ ",
+                crate::pane::output::kinds::RIGOR => "⊬ ",
                 _ => "",
             };
             lines.push(Line::from(vec![

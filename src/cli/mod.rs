@@ -68,6 +68,7 @@ pub mod world;
 pub mod utopia;
 pub mod character;
 pub mod theologian;
+pub mod rigor;
 pub mod lang;
 pub mod world_prompts;
 pub mod prompts;
@@ -958,6 +959,13 @@ pub enum Command {
     /// questions; `suppress` mutes a signal. It asks, never judges.
     #[command(subcommand)]
     Theologian(TheologianCommand),
+
+    /// RIGOR — the deterministic reasoning-rigor reader. `scan` flags argument-rigor
+    /// signals (false dichotomy, question-begging, straw man, overgeneralization,
+    /// non-sequitur) via language-keyed cue markers. Advisory; the argument-side
+    /// complement to `theologian`. Zero-AI.
+    #[command(subcommand)]
+    Rigor(RigorCommand),
 
     /// 1.4.19 MYTH-1 — `inkhaven myth <subcommand>`. The mythological & symbolic
     /// pattern library over the **declared** Mythology book. `scan` prints the
@@ -4372,6 +4380,27 @@ pub enum TheologianCommand {
     },
 }
 
+/// RIGOR (1.6.20+) — sub-subcommands under `inkhaven rigor …`.
+#[derive(Debug, Subcommand)]
+pub enum RigorCommand {
+    /// Run the deterministic reasoning-rigor reader across the book — false
+    /// dichotomy, question-begging, straw man, overgeneralization, non-sequitur.
+    /// Advisory (exits 0) unless `--strict`.
+    Scan {
+        #[arg(long)]
+        book: Option<String>,
+        /// `false-dichotomy` | `question-begging` | `straw-man` |
+        /// `overgeneralization` | `non-sequitur` | `all`.
+        #[arg(long)]
+        signal: Option<String>,
+        #[arg(long)]
+        json: bool,
+        /// Exit non-zero when any signal is found (for a CI gate).
+        #[arg(long)]
+        strict: bool,
+    },
+}
+
 /// 1.4.19 MYTH-1 — sub-subcommands under `inkhaven myth …`.
 #[derive(Debug, Subcommand)]
 pub enum MythCommand {
@@ -5643,6 +5672,7 @@ impl Cli {
             Command::Lang(cmd) => lang::run(&project, cmd).map_err(Into::into),
             Command::Character(cmd) => character::run(&project, cmd).map_err(Into::into),
             Command::Theologian(cmd) => theologian::run(&project, cmd).map_err(Into::into),
+            Command::Rigor(cmd) => rigor::run(&project, cmd).map_err(Into::into),
             Command::Myth(cmd) => myth::run(&project, cmd).map_err(Into::into),
             Command::World { json, deep, provider, entity, sub } => match sub {
                 Some(cmd) => utopia::run(&project, cmd).map_err(Into::into),

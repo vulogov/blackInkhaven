@@ -77,6 +77,9 @@ pub struct Config {
     /// INNER-THEOLOGIAN-1 — moral/theological reader.
     #[serde(default)]
     pub theologian: TheologianConfig,
+    /// RIGOR — the deterministic reasoning-rigor reader (`rigor:` block).
+    #[serde(default)]
+    pub rigor: RigorConfig,
     /// TDOC-1 — technical-documentation tooling (verified code blocks). Off by
     /// default; nothing runs until the author opts in and names runners.
     #[serde(default)]
@@ -256,6 +259,7 @@ impl Default for Config {
             utopia: UtopiaConfig::default(),
             char: CharConfig::default(),
             theologian: TheologianConfig::default(),
+            rigor: RigorConfig::default(),
             docs: DocsConfig::default(),
             frontmatter: FrontmatterConfig::default(),
             tex_export: TexExportConfig::default(),
@@ -4577,6 +4581,49 @@ impl Default for TheologianConfig {
             sacred_levity_signal: true,
             disabled_lenses: Vec::new(),
             language: None,
+        }
+    }
+}
+
+/// RIGOR (1.6.20+) — `rigor:` block. The deterministic, zero-AI reasoning-rigor
+/// reader (`⊬`) that flags argument-rigor signals — false dichotomy,
+/// question-begging, straw man, overgeneralization, non-sequitur — via
+/// language-keyed cue markers. Advisory, never a verdict; the argument-side
+/// complement to the Inner Theologian. Per-category toggles let a project mute a
+/// signal that its genre uses legitimately.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RigorConfig {
+    /// Master switch. `false` gates everything.
+    pub enabled: bool,
+    /// Run the reader in the review pass / deep-refresh (the ambient surface).
+    pub fast_track: bool,
+    /// Marker language override (`en`/`ru`/`de`/`fr`/`es`); `null` → project
+    /// language → English.
+    pub language: Option<String>,
+    /// Flag forced-binary framings ("either … or", "the only alternative").
+    pub false_dichotomy: bool,
+    /// Flag unargued assertions ("obviously", "of course").
+    pub question_begging: bool,
+    /// Flag dismissive characterizations ("so-called", "would have us believe").
+    pub straw_man: bool,
+    /// Flag strong absolutes ("always", "never", "without exception").
+    pub overgeneralization: bool,
+    /// Flag a conclusion connective with no warrant marker in the paragraph.
+    pub non_sequitur: bool,
+}
+
+impl Default for RigorConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            fast_track: true,
+            language: None,
+            false_dichotomy: true,
+            question_begging: true,
+            straw_man: true,
+            overgeneralization: true,
+            non_sequitur: true,
         }
     }
 }

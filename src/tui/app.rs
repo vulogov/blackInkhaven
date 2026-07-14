@@ -2835,6 +2835,57 @@ fn run_theologian_check(
     Ok(findings.len())
 }
 
+/// RIGOR — the deterministic reasoning-rigor findings over the book of the open
+/// paragraph. Zero-AI; clears the prior `kinds::RIGOR` messages and re-emits the
+/// current set, each anchored + advisory. Gated on `rigor.enabled && fast_track`.
+fn run_rigor_check(
+    store: &Store,
+    cfg: &Config,
+    layout: &ProjectLayout,
+) -> std::result::Result<usize, String> {
+    use crate::pane::output::{Lifetime, Message, Severity, kinds};
+
+    let clear = || {
+        if let Some(s) = crate::pane::output::active() {
+            if let Ok(msgs) = s.by_kind(kinds::RIGOR) {
+                for m in &msgs {
+                    let _ = s.dismiss(m.id);
+                }
+            }
+        }
+    };
+
+    if !cfg.rigor.enabled || !cfg.rigor.fast_track {
+        clear();
+        return Ok(0);
+    }
+
+    let h = crate::store::hierarchy::Hierarchy::load(store).map_err(|e| e.to_string())?;
+    let book = crate::cli::resolve_user_book(&h, None, "rigor")?.clone();
+    let findings = crate::inner_rigor::scan_book(layout, &h, cfg, &book);
+
+    clear();
+    for f in &findings {
+        let text = format!("[rigor · ch.{} · {}] {}", f.chapter_ord, f.signal.label(), f.description);
+        let mut msg = Message::new(
+            kinds::RIGOR,
+            Severity::Info,
+            Lifetime::UntilActedOn,
+            serde_json::json!({
+                "text": text,
+                "category": "rigor",
+                "signal": f.signal.as_code(),
+                "chapter": f.chapter_ord,
+            }),
+        );
+        if let Ok(pid) = uuid::Uuid::parse_str(&f.para_id) {
+            msg = msg.with_source_paragraph(pid);
+        }
+        crate::pane::output::emit(&msg);
+    }
+    Ok(findings.len())
+}
+
 /// MYTH-1 — the deterministic myth findings (archetype vacancy/absence, motif
 /// absent from final act) in the review pass. Refreshes the declared inventory +
 /// density + explicit motifs first (zero-AI). The LLM consistency/completeness
@@ -14777,6 +14828,10 @@ impl App {
         // `inkhaven myth check`; the heatmap is on Ctrl+V Shift+M).
         let myth = run_myth_check(&self.store, &self.cfg, &self.layout).unwrap_or(0);
 
+        // RIGOR — deterministic reasoning-rigor signals (the argument-side
+        // complement to the theologian's moral reader).
+        let rigor = run_rigor_check(&self.store, &self.cfg, &self.layout).unwrap_or(0);
+
         // Reflect the instant findings in the tree report-card immediately.
         self.refresh_tree_badges();
 
@@ -14787,7 +14842,7 @@ impl App {
         // seconds later (and re-badge the tree on completion).
         let editor_spawned = self.maybe_spawn_check_editor();
 
-        let total = fact + soc + tl + dlg + uto + chr + theo + myth;
+        let total = fact + soc + tl + dlg + uto + chr + theo + myth + rigor;
         if total == 0 && !editor_spawned {
             self.status = if checked == 0 {
                 "review pass: clean (no open paragraph; timeline + dialogue + utopia + character + theologian + myth included)".into()
@@ -15054,7 +15109,7 @@ impl App {
         let rows = self.build_inner_socrates_rows();
         self.modal = Modal::InnerSocratesOverview { rows, cursor: 0 };
         self.status =
-            "Inner Socrates · F fast-check ¶ · E engage (slow/LLM) · T theologian · S persona · L ledger · A auto · Esc".into();
+            "Inner Socrates · F fast-check ¶ · E engage (slow/LLM) · T theologian · R rigor ¶ · S persona · L ledger · A auto · Esc".into();
     }
 
     fn build_inner_socrates_rows(&self) -> Vec<String> {
@@ -15131,6 +15186,7 @@ impl App {
             KeyCode::Char('s') | KeyCode::Char('S') => self.socratic_cycle_persona(),
             KeyCode::Char('c') | KeyCode::Char('C') => self.socratic_open_conversation(),
             KeyCode::Char('t') | KeyCode::Char('T') => self.theologian_engage_open_paragraph(),
+            KeyCode::Char('r') | KeyCode::Char('R') => self.rigor_check_open_paragraph(),
             KeyCode::Char('n') | KeyCode::Char('N') => self.socratic_persona_wizard(),
             KeyCode::Char('a') | KeyCode::Char('A') => {
                 self.socratic_auto = !self.socratic_auto;
@@ -15412,6 +15468,57 @@ impl App {
             }
         }
         (titles, declared)
+    }
+
+    /// RIGOR (`Ctrl+B J → R`) — run the deterministic reasoning-rigor reader over
+    /// the open paragraph, emitting anchored ⊬ advisory findings to Output.
+    /// Zero-AI, synchronous.
+    fn rigor_check_open_paragraph(&mut self) {
+        use crate::pane::output::{kinds, Lifetime, Message, Severity};
+        if !self.cfg.rigor.enabled {
+            self.status = "Reasoning-rigor reader is disabled (rigor.enabled = false)".into();
+            return;
+        }
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "Rigor: no paragraph open".into();
+            return;
+        };
+        let id = doc.id;
+        let plain = crate::audiobook::typst_to_plain(&doc.textarea.lines().join("\n"));
+        let (lang, _note) =
+            crate::prose::resolve_prose_language(self.cfg.rigor.language.as_deref(), &self.cfg.language);
+        let cats = crate::inner_rigor::RigorCats::from_config(&self.cfg.rigor);
+
+        // Replace this paragraph's prior rigor findings.
+        if let Some(s) = crate::pane::output::active() {
+            if let Ok(msgs) = s.by_kind(kinds::RIGOR) {
+                for m in msgs.iter().filter(|m| m.source_paragraph_id == Some(id)) {
+                    let _ = s.dismiss(m.id);
+                }
+            }
+        }
+
+        let findings = crate::inner_rigor::detect_paragraph(&plain, &lang, &cats);
+        for (signal, description) in &findings {
+            let text = format!("[{}] {}", signal.label(), description);
+            let msg = Message::new(
+                kinds::RIGOR,
+                Severity::Info,
+                Lifetime::UntilActedOn,
+                serde_json::json!({ "text": text, "signal": signal.as_code() }),
+            )
+            .with_source_paragraph(id);
+            crate::pane::output::emit(&msg);
+        }
+
+        let n = findings.len();
+        self.modal = Modal::None;
+        if n > 0 {
+            self.refresh_tree_badges();
+            self.status = format!("⊬ Rigor: {n} signal(s) in this ¶ — ^B Tab → Output");
+        } else {
+            self.status = "⊬ Rigor: no rigor signals in this ¶".into();
+        }
     }
 
     fn theologian_engage_open_paragraph(&mut self) {
