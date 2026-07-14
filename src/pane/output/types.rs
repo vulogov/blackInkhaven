@@ -81,6 +81,10 @@ pub mod kinds {
     /// open paragraph whose reference does not match its source's scheme.
     /// Deterministic; anchored to the paragraph; always a Warning.
     pub const LOCUS: &str = "locus";
+    /// RIGOR (1.6.20+) — a reasoning-rigor finding (false dichotomy /
+    /// question-begging / straw man / overgeneralization / non-sequitur).
+    /// Deterministic, zero-AI; anchored to the paragraph; always advisory (Info).
+    pub const RIGOR: &str = "rigor";
 }
 
 /// Visual / priority class (RFC §7.4).
