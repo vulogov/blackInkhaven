@@ -27,6 +27,9 @@ pub enum RigorSignal {
     StrawMan,
     Overgeneralization,
     NonSequitur,
+    /// A lexicon term with ≥2 declared senses used repeatedly without pinning one
+    /// (needs the scholarly lexicon — see [`WatchedTerm`]).
+    Equivocation,
 }
 
 impl RigorSignal {
@@ -37,6 +40,7 @@ impl RigorSignal {
             RigorSignal::StrawMan => "straw-man",
             RigorSignal::Overgeneralization => "overgeneralization",
             RigorSignal::NonSequitur => "non-sequitur",
+            RigorSignal::Equivocation => "equivocation",
         }
     }
 
@@ -47,6 +51,7 @@ impl RigorSignal {
             "straw-man" => RigorSignal::StrawMan,
             "overgeneralization" => RigorSignal::Overgeneralization,
             "non-sequitur" => RigorSignal::NonSequitur,
+            "equivocation" => RigorSignal::Equivocation,
             _ => return None,
         })
     }
@@ -59,8 +64,32 @@ impl RigorSignal {
             RigorSignal::StrawMan => "straw man",
             RigorSignal::Overgeneralization => "overgeneralization",
             RigorSignal::NonSequitur => "non-sequitur",
+            RigorSignal::Equivocation => "equivocation",
         }
     }
+}
+
+/// A lexicon term the author has flagged as equivocation-prone — projected from a
+/// `GlossaryEntry` with ≥2 senses and `watch_equivocation`. The reader counts the
+/// term's surface forms in a paragraph; repeated unpinned use is a candidate
+/// equivocation.
+#[derive(Debug, Clone)]
+pub struct WatchedTerm {
+    /// The canonical term (as displayed in the advisory).
+    pub term: String,
+    /// Surface forms to count in prose (canonical + synonyms), lowercased.
+    pub forms: Vec<String>,
+}
+
+/// Project the equivocation-watched, multi-sense terms of a glossary into
+/// [`WatchedTerm`]s. Terms with fewer than two senses (nothing to conflate) are
+/// dropped by [`crate::glossary::GlossaryEntry::is_equivocation_watched`].
+pub fn watched_terms_from_glossary(entries: &[crate::glossary::GlossaryEntry]) -> Vec<WatchedTerm> {
+    entries
+        .iter()
+        .filter(|e| e.is_valid() && e.is_equivocation_watched())
+        .map(|e| WatchedTerm { term: e.term.trim().to_string(), forms: e.surface_forms() })
+        .collect()
 }
 
 /// One rigor finding, anchored to a paragraph.
@@ -81,6 +110,7 @@ pub struct RigorCats {
     pub straw_man: bool,
     pub overgeneralization: bool,
     pub non_sequitur: bool,
+    pub equivocation: bool,
 }
 
 impl RigorCats {
@@ -91,6 +121,7 @@ impl RigorCats {
             straw_man: cfg.straw_man,
             overgeneralization: cfg.overgeneralization,
             non_sequitur: cfg.non_sequitur,
+            equivocation: cfg.equivocation,
         }
     }
     /// All categories on — for tests and ad-hoc scans.
@@ -102,17 +133,21 @@ impl RigorCats {
             straw_man: true,
             overgeneralization: true,
             non_sequitur: true,
+            equivocation: true,
         }
     }
 }
 
 /// Detect rigor signals in one paragraph's plain text (Typst already stripped).
-/// At most one finding per category per paragraph — the first matched cue — so a
-/// dense paragraph does not flood the pane. Returns `(signal, localized description)`.
+/// At most one finding per marker category per paragraph — the first matched cue —
+/// so a dense paragraph does not flood the pane. `watched` are the lexicon's
+/// equivocation-prone terms (empty to skip the equivocation check). Returns
+/// `(signal, localized description)`.
 pub fn detect_paragraph(
     text: &str,
     lang: &crate::prose::ProseLanguage,
     cats: &RigorCats,
+    watched: &[WatchedTerm],
 ) -> Vec<(RigorSignal, String)> {
     let lc = text.to_lowercase();
     let v = vocab::lists_for(lang);
@@ -149,17 +184,31 @@ pub fn detect_paragraph(
             }
         }
     }
+    if cats.equivocation {
+        // A watched, multi-sense term used ≥2 times without pinning a sense — the
+        // author flagged it equivocation-prone, so repeated unqualified use is
+        // worth a glance. One finding per term.
+        for wt in watched {
+            let uses: usize = wt.forms.iter().map(|f| vocab::count_word(&lc, f)).sum();
+            if uses >= 2 {
+                out.push((RigorSignal::Equivocation, t.equivocation.replace("{cue}", &wt.term)));
+            }
+        }
+    }
     out
 }
 
 /// Scan a whole book's prose paragraphs for rigor signals. Language and enabled
-/// categories come from `cfg.rigor` (falling back to the project language). Pure
-/// over the store's files — no AI, no persistence.
+/// categories come from `cfg.rigor` (falling back to the project language).
+/// `watched` are the lexicon's equivocation-prone terms (see
+/// [`watched_terms_from_glossary`]). Pure over the store's files — no AI, no
+/// persistence.
 pub fn scan_book(
     layout: &ProjectLayout,
     h: &Hierarchy,
     cfg: &Config,
     book: &Node,
+    watched: &[WatchedTerm],
 ) -> Vec<RigorFinding> {
     let (lang, _note) = crate::prose::resolve_prose_language(cfg.rigor.language.as_deref(), &cfg.language);
     let cats = RigorCats::from_config(&cfg.rigor);
@@ -179,7 +228,7 @@ pub fn scan_book(
             let Some(rel) = p.file.as_ref() else { continue };
             let Ok(raw) = std::fs::read_to_string(layout.root.join(rel)) else { continue };
             let plain = crate::audiobook::typst_to_plain(&raw);
-            for (signal, description) in detect_paragraph(&plain, &lang, &cats) {
+            for (signal, description) in detect_paragraph(&plain, &lang, &cats, watched) {
                 out.push(RigorFinding { signal, para_id: id.to_string(), chapter_ord: ord, description });
             }
         }
@@ -193,7 +242,11 @@ mod tests {
     use crate::prose::ProseLanguage;
 
     fn en(text: &str) -> Vec<(RigorSignal, String)> {
-        detect_paragraph(text, &ProseLanguage::En, &RigorCats::all())
+        detect_paragraph(text, &ProseLanguage::En, &RigorCats::all(), &[])
+    }
+
+    fn watched(term: &str) -> WatchedTerm {
+        WatchedTerm { term: term.into(), forms: vec![term.to_lowercase()] }
     }
     fn sigs(text: &str) -> Vec<RigorSignal> {
         en(text).into_iter().map(|(s, _)| s).collect()
@@ -231,7 +284,7 @@ mod tests {
     #[test]
     fn category_toggle_respected() {
         let cats = RigorCats { question_begging: false, ..RigorCats::all() };
-        let s: Vec<_> = detect_paragraph("Obviously true.", &ProseLanguage::En, &cats)
+        let s: Vec<_> = detect_paragraph("Obviously true.", &ProseLanguage::En, &cats, &[])
             .into_iter()
             .map(|(s, _)| s)
             .collect();
@@ -244,10 +297,68 @@ mod tests {
             "Очевидно, что душа бессмертна.",
             &ProseLanguage::Ru,
             &RigorCats::all(),
+            &[],
         );
         let qb = out.iter().find(|(s, _)| *s == RigorSignal::QuestionBegging).expect("question-begging");
         // Localized description (Cyrillic), naming the matched cue.
         assert!(qb.1.contains("самоочевидное") && qb.1.contains("очевидно"));
+    }
+
+    #[test]
+    fn equivocation_flags_repeated_watched_term() {
+        let terms = [watched("reason")];
+        // "reason" used twice → candidate equivocation.
+        let out = detect_paragraph(
+            "Pure reason demands the unconditioned, so reason requires an object beyond sense.",
+            &ProseLanguage::En,
+            &RigorCats::all(),
+            &terms,
+        );
+        let eq = out.iter().find(|(s, _)| *s == RigorSignal::Equivocation).expect("equivocation");
+        assert!(eq.1.contains("reason"));
+        // A single use does not flag.
+        let single = detect_paragraph("Reason is a faculty.", &ProseLanguage::En, &RigorCats::all(), &terms);
+        assert!(!single.iter().any(|(s, _)| *s == RigorSignal::Equivocation));
+    }
+
+    #[test]
+    fn equivocation_needs_a_watched_multi_sense_term() {
+        // No lexicon → no equivocation finding, even on a repeated word.
+        let out = en("Reason and reason and reason again.");
+        assert!(!out.iter().any(|(s, _)| *s == RigorSignal::Equivocation));
+    }
+
+    #[test]
+    fn watched_terms_filters_to_multi_sense_watched() {
+        use crate::glossary::{GlossaryEntry, Sense};
+        let s = |g: &str| Sense { label: String::new(), gloss: g.into() };
+        let entries = vec![
+            // Watched + 2 senses → included.
+            GlossaryEntry {
+                term: "reason".into(),
+                senses: vec![s("Vernunft"), s("Verstand")],
+                watch_equivocation: true,
+                ..Default::default()
+            },
+            // Watched but only 1 sense → dropped (nothing to conflate).
+            GlossaryEntry {
+                term: "grace".into(),
+                senses: vec![s("favor")],
+                watch_equivocation: true,
+                ..Default::default()
+            },
+            // 2 senses but not watched → dropped.
+            GlossaryEntry {
+                term: "being".into(),
+                senses: vec![s("existence"), s("essence")],
+                watch_equivocation: false,
+                ..Default::default()
+            },
+        ];
+        let w = watched_terms_from_glossary(&entries);
+        assert_eq!(w.len(), 1);
+        assert_eq!(w[0].term, "reason");
+
     }
 
     #[test]
@@ -258,6 +369,7 @@ mod tests {
             RigorSignal::StrawMan,
             RigorSignal::Overgeneralization,
             RigorSignal::NonSequitur,
+            RigorSignal::Equivocation,
         ] {
             assert_eq!(RigorSignal::from_code(s.as_code()), Some(s));
         }

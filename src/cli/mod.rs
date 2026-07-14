@@ -39,6 +39,7 @@ pub mod thread;
 pub mod argue;
 pub mod book_index;
 pub mod index_locorum;
+pub mod index_verborum;
 pub mod docs;
 pub mod sources;
 pub mod terms;
@@ -69,6 +70,7 @@ pub mod utopia;
 pub mod character;
 pub mod theologian;
 pub mod rigor;
+pub mod lexicon;
 pub mod lang;
 pub mod world_prompts;
 pub mod prompts;
@@ -417,6 +419,21 @@ pub enum Command {
         /// scheme) — fits a continuous-integration step.
         #[arg(long)]
         strict: bool,
+    },
+
+    /// LEXICON — generate an Index Verborum: every scholarly-lexicon term used in
+    /// the manuscript, with its original-language form, its distinct senses, and
+    /// the chapters that use it. For theology / philosophy / classics.
+    IndexVerborum {
+        /// Limit to one user book (default: all user books).
+        #[arg(long)]
+        book_name: Option<String>,
+        /// Output format: `md` (default), `typst`, or `json`.
+        #[arg(long, default_value = "md")]
+        format: String,
+        /// Write to this file instead of stdout.
+        #[arg(short, long)]
+        out: Option<PathBuf>,
     },
 
     /// ARG-1 — extract each chapter's central claims and their support (an argument
@@ -966,6 +983,12 @@ pub enum Command {
     /// complement to `theologian`. Zero-AI.
     #[command(subcommand)]
     Rigor(RigorCommand),
+
+    /// LEXICON — the scholarly lexicon: `list` the terms with their
+    /// original-language forms and distinct senses. A term with ≥2 senses marked
+    /// `watch_equivocation` in the Glossary is policed by the rigor reader.
+    #[command(subcommand)]
+    Lexicon(LexiconCommand),
 
     /// 1.4.19 MYTH-1 — `inkhaven myth <subcommand>`. The mythological & symbolic
     /// pattern library over the **declared** Mythology book. `scan` prints the
@@ -4380,6 +4403,22 @@ pub enum TheologianCommand {
     },
 }
 
+/// LEXICON (1.6.21+) — sub-subcommands under `inkhaven lexicon …`.
+#[derive(Debug, Subcommand)]
+pub enum LexiconCommand {
+    /// List the scholarly-lexicon terms — original-language forms, distinct senses,
+    /// and which are watched for equivocation.
+    List {
+        #[arg(long)]
+        book: Option<String>,
+        /// Only the equivocation-watched, multi-sense terms.
+        #[arg(long)]
+        watched: bool,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 /// RIGOR (1.6.20+) — sub-subcommands under `inkhaven rigor …`.
 #[derive(Debug, Subcommand)]
 pub enum RigorCommand {
@@ -5397,6 +5436,10 @@ impl Cli {
                 index_locorum::run(&project, book_name.as_deref(), &format, out.as_deref(), strict)
                     .map_err(Into::into)
             }
+            Command::IndexVerborum { book_name, format, out } => {
+                index_verborum::run(&project, book_name.as_deref(), &format, out.as_deref())
+                    .map_err(Into::into)
+            }
             Command::Argue { book_name, provider, json } => {
                 argue::run(&project, book_name.as_deref(), provider.as_deref(), json)
                     .map_err(Into::into)
@@ -5673,6 +5716,7 @@ impl Cli {
             Command::Character(cmd) => character::run(&project, cmd).map_err(Into::into),
             Command::Theologian(cmd) => theologian::run(&project, cmd).map_err(Into::into),
             Command::Rigor(cmd) => rigor::run(&project, cmd).map_err(Into::into),
+            Command::Lexicon(cmd) => lexicon::run(&project, cmd).map_err(Into::into),
             Command::Myth(cmd) => myth::run(&project, cmd).map_err(Into::into),
             Command::World { json, deep, provider, entity, sub } => match sub {
                 Some(cmd) => utopia::run(&project, cmd).map_err(Into::into),

@@ -29,6 +29,29 @@ pub struct GlossaryEntry {
     pub scope: Option<String>,
     /// Authorial note — why this canonical form was chosen.
     pub note: Option<String>,
+    /// LEXICON (1.6.21+) — the term's original-language form(s): the Greek /
+    /// Hebrew / Latin / German source words a scholarly work tracks (e.g.
+    /// `["Vernunft"]`, `["λόγος (logos)"]`). Empty for an ordinary glossary term.
+    pub original_forms: Vec<String>,
+    /// LEXICON — the *distinct senses* this term carries. A philosophical term
+    /// often fractures into several (`reason` → Vernunft / Verstand); listing them
+    /// is what lets the reader tell a legitimate polysemy from an equivocation.
+    /// Empty → a simple one-meaning term (uses `definition`).
+    pub senses: Vec<Sense>,
+    /// LEXICON — police this term for **equivocation** (an argument sliding between
+    /// its senses). Actionable only with ≥2 `senses`; the reader then flags a
+    /// paragraph that leans on the term repeatedly without pinning one sense.
+    pub watch_equivocation: bool,
+}
+
+/// LEXICON (1.6.21+) — one declared sense of a lexicon term.
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(default)]
+pub struct Sense {
+    /// A short label for the sense (e.g. `Vernunft`, `the faculty of concepts`).
+    pub label: String,
+    /// The sense's gloss.
+    pub gloss: String,
 }
 
 impl GlossaryEntry {
@@ -50,6 +73,29 @@ impl GlossaryEntry {
             .iter()
             .map(|s| s.trim().to_lowercase())
             .filter(|s| !s.is_empty())
+    }
+
+    /// LEXICON — whether this term is watched for equivocation *and* actually
+    /// ambiguous (declares ≥2 senses). Only such terms are policed by the reader.
+    pub fn is_equivocation_watched(&self) -> bool {
+        self.watch_equivocation && self.senses.len() >= 2
+    }
+
+    /// LEXICON — whether this is a *scholarly* lexicon term (carries an
+    /// original-language form or distinct senses), as opposed to a plain
+    /// consistency-glossary entry. Only these appear in the Index Verborum.
+    pub fn is_lexicon_term(&self) -> bool {
+        !self.original_forms.is_empty() || !self.senses.is_empty()
+    }
+
+    /// LEXICON — the surface forms to count in prose when checking for
+    /// equivocation: the canonical term plus its listed synonyms (variants of the
+    /// same lemma), lowercased + trimmed, empties skipped.
+    pub fn surface_forms(&self) -> Vec<String> {
+        std::iter::once(self.term.trim().to_lowercase())
+            .chain(self.synonyms.iter().map(|s| s.trim().to_lowercase()))
+            .filter(|s| !s.is_empty())
+            .collect()
     }
 
     /// Whether this entry is enforced given a book scope. A `global` entry
@@ -79,6 +125,23 @@ pub const GLOSSARY_TEMPLATE: &str = "{
   ]
   // scope: global   // (own line) or a book slug to limit enforcement to one book
   // note: Why this canonical form was chosen.
+  //
+  // LEXICON (scholarly works) — original-language forms + distinct senses.
+  // Keep every field on its own line (HJSON quoteless values run to end-of-line).
+  // original_forms: [
+  //   Vernunft
+  // ]
+  // senses: [
+  //   {
+  //     label: Vernunft
+  //     gloss: the faculty of the unconditioned
+  //   }
+  //   {
+  //     label: Verstand
+  //     gloss: the faculty of concepts
+  //   }
+  // ]
+  // watch_equivocation: true
 }
 ";
 

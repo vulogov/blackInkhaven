@@ -36,7 +36,10 @@ fn scan(
     let h = Hierarchy::load(&store)?;
     let book = super::resolve_user_book(&h, book_name, "rigor").map_err(Error::Store)?;
 
-    let mut findings = crate::inner_rigor::scan_book(&layout, &h, &cfg, book);
+    // The lexicon's equivocation-watched terms (Glossary entries with ≥2 senses).
+    let entries = crate::glossary::glossary_entries_from_store(&store, &h, Some(&book.slug));
+    let watched = crate::inner_rigor::watched_terms_from_glossary(&entries);
+    let mut findings = crate::inner_rigor::scan_book(&layout, &h, &cfg, book, &watched);
     if let Some(sig) = signal {
         if sig != "all" {
             if crate::inner_rigor::RigorSignal::from_code(sig).is_none() {
