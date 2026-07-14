@@ -77,6 +77,10 @@ pub mod kinds {
     /// judged against the research corpus (Facts + Sources). Anchored to the
     /// paragraph; against-relations are Warnings, supporting ones Info.
     pub const CONFRONT: &str = "confront";
+    /// LOCI (1.6.19+) — a `Ctrl+V c` locus-lint finding: an `@key[locus]` in the
+    /// open paragraph whose reference does not match its source's scheme.
+    /// Deterministic; anchored to the paragraph; always a Warning.
+    pub const LOCUS: &str = "locus";
 }
 
 /// Visual / priority class (RFC §7.4).

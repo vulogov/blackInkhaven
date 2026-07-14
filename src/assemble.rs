@@ -269,8 +269,10 @@ fn emit_index_locorum(
         }
     }
 
-    // Resolve key → source title from the Sources book (all valid entries).
+    // Resolve key → source title and key → declared reference scheme from the
+    // Sources book (all valid entries).
     let mut titles = std::collections::HashMap::new();
+    let mut declared = std::collections::HashMap::new();
     if let Some(sources_book) = hierarchy.iter().find(|n| {
         n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_SOURCES)
     }) {
@@ -285,13 +287,34 @@ fn emit_index_locorum(
                 if e.is_valid() && !e.title.trim().is_empty() {
                     titles.insert(e.key.clone(), e.title.clone());
                 }
+                if let Some(scheme) = e.scheme.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+                    declared.insert(e.key.clone(), scheme.to_string());
+                }
             }
         }
     }
 
-    let entries = crate::index_locorum::build(&cites, &titles);
+    // Validate loci against their sources' reference schemes; a malformed locus is
+    // a warning at build time (it still renders — nothing is silently dropped).
+    let keys: Vec<String> = {
+        let mut ks: Vec<String> = cites.iter().map(|c| c.key.clone()).collect();
+        ks.sort();
+        ks.dedup();
+        ks
+    };
+    let (schemes, _errs) =
+        crate::index_locorum::resolve_schemes(&cfg.sources.ref_schemes, &declared, &keys);
+    let entries = crate::index_locorum::build(&cites, &titles, &schemes);
     if entries.is_empty() {
         return Ok(0);
+    }
+    for m in crate::index_locorum::malformed(&entries, &schemes) {
+        tracing::warn!(
+            "index locorum: malformed locus @{}[{}] — expected {}",
+            m.key,
+            m.locus,
+            m.expected
+        );
     }
     let heading = crate::index_locorum::heading_for_language(&cfg.language);
     let body = crate::index_locorum::render_typst(&entries, heading);

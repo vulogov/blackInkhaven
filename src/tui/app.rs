@@ -11957,6 +11957,7 @@ impl App {
             A::ViewUniversePicker => self.open_universe_picker(),
             A::ViewXrefPicker => self.open_xref_picker(),
             A::ConfrontParagraph => self.confront_open_paragraph(),
+            A::LintLoci => self.lint_open_paragraph_loci(),
             A::InsertSnippetInclude => self.open_snippet_insert_picker(),
             A::OpenSnippetsOverview => self.open_snippets_overview(),
             A::ViewToggleTermsOverlay => self.toggle_terms_overlay(),
@@ -15313,6 +15314,104 @@ impl App {
                 });
             let _ = tx.send(BgMsg::Done(result));
         });
+    }
+
+    /// LOCI (`Ctrl+V c`) — lint the open paragraph's `@key[locus]` citations
+    /// against their sources' reference schemes, emitting an anchored ⚑ Output
+    /// warning for each malformed locus. Deterministic and zero-AI — the
+    /// editor-side twin of `inkhaven index-locorum`'s validation.
+    fn lint_open_paragraph_loci(&mut self) {
+        use crate::index_locorum::{self, LocusCitation};
+        use crate::pane::output::kinds;
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "Lint loci: no paragraph open".into();
+            return;
+        };
+        let id = doc.id;
+        let prose = doc.textarea.lines().join("\n");
+
+        // Clear this paragraph's prior locus findings before re-linting.
+        if let Some(s) = crate::pane::output::active() {
+            if let Ok(msgs) = s.by_kind(kinds::LOCUS) {
+                for m in msgs.iter().filter(|m| m.source_paragraph_id == Some(id)) {
+                    let _ = s.dismiss(m.id);
+                }
+            }
+        }
+
+        let with_loci: Vec<LocusCitation> = crate::sources::extract_cite_loci(&prose)
+            .into_iter()
+            .filter_map(|(key, locus)| {
+                locus.map(|l| LocusCitation { key, locus: Some(l), chapter: String::new() })
+            })
+            .collect();
+        if with_loci.is_empty() {
+            self.status = "Lint loci: no @key[locus] citations in this ¶".into();
+            return;
+        }
+
+        let (titles, declared) = self.collect_source_titles_and_schemes();
+        let mut keys: Vec<String> = with_loci.iter().map(|c| c.key.clone()).collect();
+        keys.sort();
+        keys.dedup();
+        let (schemes, _errs) =
+            index_locorum::resolve_schemes(&self.cfg.sources.ref_schemes, &declared, &keys);
+        let entries = index_locorum::build(&with_loci, &titles, &schemes);
+        let bad = index_locorum::malformed(&entries, &schemes);
+
+        for m in &bad {
+            let text =
+                format!("malformed locus @{}[{}] — expected {}", m.key, m.locus, m.expected);
+            let msg = crate::pane::output::Message::new(
+                kinds::LOCUS,
+                crate::pane::output::Severity::Warning,
+                crate::pane::output::Lifetime::UntilActedOn,
+                serde_json::json!({ "text": text, "key": m.key, "locus": m.locus, "expected": m.expected }),
+            )
+            .with_source_paragraph(id);
+            crate::pane::output::emit(&msg);
+        }
+
+        let n = bad.len();
+        if n > 0 {
+            self.refresh_tree_badges();
+            self.status = format!("⚑ Lint loci: {n} malformed locus(es) in this ¶ — ^B Tab → Output");
+        } else {
+            self.status = "⚑ Lint loci: all citations well-formed".into();
+        }
+    }
+
+    /// Walk the Sources book, returning `(key → title, key → declared scheme)` for
+    /// locus validation. Reads paragraph bodies from the store.
+    fn collect_source_titles_and_schemes(
+        &self,
+    ) -> (
+        std::collections::HashMap<String, String>,
+        std::collections::HashMap<String, String>,
+    ) {
+        let mut titles = std::collections::HashMap::new();
+        let mut declared = std::collections::HashMap::new();
+        let Some(book_id) = self.system_book_id(crate::store::SYSTEM_TAG_SOURCES) else {
+            return (titles, declared);
+        };
+        for id in self.hierarchy.collect_subtree(book_id) {
+            let Some(n) = self.hierarchy.get(id) else { continue };
+            if n.kind != NodeKind::Paragraph {
+                continue;
+            }
+            let Some(bytes) = self.store.get_content(id).ok().flatten() else { continue };
+            let raw = String::from_utf8_lossy(&bytes);
+            let body = crate::typst_prose::strip_leading_heading(&raw);
+            if let Some(e) = crate::sources::BibEntry::from_hjson(&body) {
+                if e.is_valid() && !e.title.trim().is_empty() {
+                    titles.insert(e.key.clone(), e.title.clone());
+                }
+                if let Some(s) = e.scheme.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+                    declared.insert(e.key.clone(), s.to_string());
+                }
+            }
+        }
+        (titles, declared)
     }
 
     fn theologian_engage_open_paragraph(&mut self) {

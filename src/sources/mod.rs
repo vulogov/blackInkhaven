@@ -66,6 +66,12 @@ pub struct BibEntry {
     pub abstract_: Option<String>,
     #[serde(deserialize_with = "de_opt_string")]
     pub keywords: Option<String>,
+    /// LOCI — the reference scheme this source's loci follow: a key into
+    /// `sources.ref_schemes`, or a built-in (`bible` / `quran` / `book-of-mormon`).
+    /// Absent → loci on this source are unvalidated (free-text). Inkhaven metadata,
+    /// not a BibTeX field — never emitted into the `.bib`.
+    #[serde(deserialize_with = "de_opt_string")]
+    pub scheme: Option<String>,
 }
 
 /// A serde visitor that coerces any scalar (string / number / bool) to a

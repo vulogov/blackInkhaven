@@ -15,7 +15,13 @@ use crate::store::hierarchy::Hierarchy;
 use crate::store::node::{Node, NodeKind};
 use crate::store::{Store, SYSTEM_TAG_SOURCES};
 
-pub fn run(project: &Path, book_name: Option<&str>, format: &str, out: Option<&Path>) -> Result<()> {
+pub fn run(
+    project: &Path,
+    book_name: Option<&str>,
+    format: &str,
+    out: Option<&Path>,
+    strict: bool,
+) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
     let cfg = Config::load_layered(&layout.config_path())?;
@@ -23,8 +29,21 @@ pub fn run(project: &Path, book_name: Option<&str>, format: &str, out: Option<&P
     let h = Hierarchy::load(&store)?;
 
     let cites = gather_citations(&layout, &h, book_name)?;
-    let titles = collect_titles(&layout, &h);
-    let entries = index_locorum::build(&cites, &titles);
+    let (titles, declared) = collect_titles_and_schemes(&layout, &h);
+    // Resolve a reference scheme for every cited key (built-in for scripture keys,
+    // configured for the rest) and validate each locus against it.
+    let keys: Vec<String> = {
+        let mut ks: Vec<String> = cites.iter().map(|c| c.key.clone()).collect();
+        ks.sort();
+        ks.dedup();
+        ks
+    };
+    let (schemes, scheme_errs) =
+        index_locorum::resolve_schemes(&cfg.sources.ref_schemes, &declared, &keys);
+    for (name, err) in &scheme_errs {
+        eprintln!("index-locorum: reference scheme `{name}` has an invalid pattern: {err}");
+    }
+    let entries = index_locorum::build(&cites, &titles, &schemes);
     let heading = index_locorum::heading_for_language(&cfg.language);
 
     let rendered = match format.to_ascii_lowercase().as_str() {
@@ -49,6 +68,21 @@ pub fn run(project: &Path, book_name: Option<&str>, format: &str, out: Option<&P
             );
         }
         None => print!("{rendered}"),
+    }
+
+    // Report malformed loci — a reference that does not match its source's scheme.
+    let bad = index_locorum::malformed(&entries, &schemes);
+    if !bad.is_empty() {
+        eprintln!("\nindex-locorum: {} malformed locus(es):", bad.len());
+        for m in &bad {
+            eprintln!("  ⚠ @{}[{}] — expected {} ({})", m.key, m.locus, m.expected, m.title);
+        }
+        if strict {
+            return Err(Error::Config(format!(
+                "index-locorum: {} malformed locus(es) (--strict)",
+                bad.len()
+            )));
+        }
     }
     Ok(())
 }
@@ -88,15 +122,20 @@ fn gather_citations(
     Ok(cites)
 }
 
-/// Map each Sources-book cite key to its title (for the index headings). Reads
-/// all valid `BibEntry` paragraphs regardless of `sources.all` scoping — the
-/// index locorum spans whatever the manuscript actually cites.
-fn collect_titles(layout: &ProjectLayout, h: &Hierarchy) -> HashMap<String, String> {
+/// Map each Sources-book cite key to its title (for the index headings) and to the
+/// reference-scheme name it declared (for validation). Reads all valid `BibEntry`
+/// paragraphs regardless of `sources.all` scoping — the index locorum spans
+/// whatever the manuscript actually cites.
+fn collect_titles_and_schemes(
+    layout: &ProjectLayout,
+    h: &Hierarchy,
+) -> (HashMap<String, String>, HashMap<String, String>) {
     let mut titles = HashMap::new();
+    let mut declared = HashMap::new();
     let Some(sources_book) =
         h.iter().find(|n| n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(SYSTEM_TAG_SOURCES))
     else {
-        return titles;
+        return (titles, declared);
     };
     for id in h.collect_subtree(sources_book.id) {
         let Some(n) = h.get(id) else { continue };
@@ -110,7 +149,10 @@ fn collect_titles(layout: &ProjectLayout, h: &Hierarchy) -> HashMap<String, Stri
             if e.is_valid() && !e.title.trim().is_empty() {
                 titles.insert(e.key.clone(), e.title.clone());
             }
+            if let Some(scheme) = e.scheme.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+                declared.insert(e.key.clone(), scheme.to_string());
+            }
         }
     }
-    titles
+    (titles, declared)
 }
