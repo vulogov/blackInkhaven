@@ -81,6 +81,51 @@ passages but a small map of where in your argument each one does its work. The s
 scripture keys from Chapter 2 pay off here: every Bible passage you ever cited, from
 whichever ingested chapter, gathers under the one "The Holy Bible" heading.
 
+#section("Validate the loci, and let them canonicalize")
+
+A citation to a passage is only as good as the passage being real. `@bible[John
+3:sixteen]` compiles without complaint — Typst has no idea "sixteen" is not a verse —
+and quietly ships a reference no reader can follow. So a locus is checked against a
+_reference scheme_: a grammar for what a well-formed reference to that source looks
+like. The three scripture keys carry built-in schemes (`{book} {ch}:{v}` for the
+Bible, `{surah}:{ayah}` for the Qur'an), so their loci validate with nothing to
+configure; for anything else — Kant's A/B pagination, a Stephanus number — you
+declare the scheme once:
+
+#config("inkhaven.hjson", [```hjson
+sources: {
+  ref_schemes: {
+    kant-ab: { pattern: "^A\\d+(/B\\d+)?$", format: "A{n}/B{n}" }
+  }
+}
+```])
+
+and name it on the source (a `scheme: kant-ab` line in its Sources entry). A locus
+that does not match its scheme is flagged — never silently dropped. Catch them from
+the shell, where `--strict` turns a malformed locus into a failed exit fit for a
+continuous-integration step:
+
+#transcript("inkhaven index-locorum --strict", [
+  ⚑ `@bible[John 3:sixteen]` — expected {book} {ch}:{v} (The Holy Bible) \
+  ⚑ `@bible[Romans 8]` — expected {book} {ch}:{v} (The Holy Bible) \
+  index-locorum: 2 malformed locus(es) → _exit 1_
+])
+
+or catch them as you write: `Ctrl+V c` lints the open paragraph's loci against their
+schemes and drops a ⚑ warning into the Output pane for each malformed one, anchored
+to the paragraph — the deterministic, editor-side twin of the check above, beside the
+`Ctrl+V Shift+C` sourcing pass.
+
+#insight[
+  The scheme does a second, quieter service: it _canonicalizes_. Write `@bible[Jn
+  3.16]` today and `@bible[John 3:16]` tomorrow — or, in a Russian project,
+  `@bible[Иоанна 3:16]` — and the index resolves all three to one entry, "John 3:16",
+  rather than three near-duplicates scattered under the same source. A reference
+  scheme is not only a gate that rejects the malformed; it is the rule that makes the
+  well-formed _consistent_, so the apparatus reads as one hand wrote it even when your
+  citations, across months of drafting, did not.
+]
+
 #section("Fold it into the finished book")
 
 You do not have to run the command by hand. Turn one switch on, and the Index
@@ -113,5 +158,6 @@ it is the natural close of the citation story.
   [Cite a *passage*, not a work: `@key[locus]` (`@kant-cpr[Ak. 5:122]`, `@bible[Matthew 5:48]`) is native Typst — the bracket is the supplement — so the prose needs no special handling and the locus renders as a real citation.],
   [The cite picker (`Ctrl+V @`) gets the *key* right from the Sources book; you name the *locus*. A locus on a key with no entry is a compile error — so the index can never list a source you never filed.],
   [`inkhaven index-locorum` harvests every `@key[locus]`, resolves titles, and renders the apparatus (Markdown / Typst / JSON) — grouped by source, loci sorted naturally, each tagged with the chapter it was cited in.],
+  [*Validate* loci against a *reference scheme* — built-in for the scripture keys, `sources.ref_schemes` for the rest: `--strict` fails a build on a malformed reference, and `Ctrl+V c` lints the open paragraph as you write. The scheme also *canonicalizes*, so `Jn 3.16`, `John 3:16`, and `Иоанна 3:16` collapse to one entry.],
   [Set `sources.index_locorum: true` and `inkhaven build` folds the Index Locorum into the finished book after the bibliography — the works *and* the passages, both generated from what the manuscript actually cites.],
 ))
