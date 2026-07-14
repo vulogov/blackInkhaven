@@ -45,7 +45,9 @@ mod geonames;
 mod gutenberg;
 mod archive;
 mod wikisource;
-mod scripture;
+/// SCRIPTURE — the /bible · /quran · /bookofmormon adapters; `pub(crate)` so the
+/// Index Locorum can reuse the Bible book-name canonicalizer for loci.
+pub(crate) mod scripture;
 /// SCHOLAR — the contradiction/relation engine; `pub(crate)` so the manuscript
 /// editor (`Ctrl+V ?` confront) can reuse the graded judge.
 pub(crate) mod contradiction;

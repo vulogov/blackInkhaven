@@ -154,6 +154,9 @@ impl ScripturePassage {
                 self.work.cite_key(),
                 sample_locus(self.work),
             )),
+            // The stable cite key doubles as the built-in reference-scheme name, so
+            // loci like `@bible[John 3:16]` validate with no configuration.
+            scheme: Some(self.work.cite_key().to_string()),
             ..Default::default()
         }
     }
@@ -308,6 +311,14 @@ fn resolve_book(input: &str) -> Option<(u32, &'static str)> {
         }
     }
     None
+}
+
+/// LOCI — canonicalize a Bible book name / abbreviation / Russian (Synodal) name
+/// to its canonical English form, for the Index Locorum (so `Иоанна`, `Joh`, and
+/// `John` collapse to one). `None` when unrecognized. Reuses [`resolve_book`], so
+/// it accepts exact names, a bare number (1–66), and unambiguous ≥3-char prefixes.
+pub(crate) fn canonical_bible_book(input: &str) -> Option<&'static str> {
+    resolve_book(input).map(|(_, en)| en)
 }
 
 /// Lowercase + collapse internal whitespace (Unicode-aware) for name matching.

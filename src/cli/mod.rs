@@ -412,6 +412,10 @@ pub enum Command {
         /// Write to this file instead of stdout.
         #[arg(short, long)]
         out: Option<PathBuf>,
+        /// Exit non-zero if any locus is malformed (fails its source's reference
+        /// scheme) — fits a continuous-integration step.
+        #[arg(long)]
+        strict: bool,
     },
 
     /// ARG-1 — extract each chapter's central claims and their support (an argument
@@ -5360,8 +5364,8 @@ impl Cli {
                 book_index::run(&project, book_name.as_deref(), &format, out.as_deref())
                     .map_err(Into::into)
             }
-            Command::IndexLocorum { book_name, format, out } => {
-                index_locorum::run(&project, book_name.as_deref(), &format, out.as_deref())
+            Command::IndexLocorum { book_name, format, out, strict } => {
+                index_locorum::run(&project, book_name.as_deref(), &format, out.as_deref(), strict)
                     .map_err(Into::into)
             }
             Command::Argue { book_name, provider, json } => {
