@@ -3744,6 +3744,10 @@ pub struct SourcesConfig {
     /// lexicon term used in the book — its original-language form, senses, and the
     /// chapters that use it) after the Index Locorum. Off by default.
     pub index_verborum: bool,
+    /// LEXICON — `true`: the assembler emits a **Glossary** chapter (every defined
+    /// term, alphabetical — a lexicon term shows its original-language form and its
+    /// distinct senses; an ordinary term shows its definition). Off by default.
+    pub glossary: bool,
     /// LOCI — named **reference schemes** for validating `@key[locus]` citations.
     /// A source declares which it uses via a `scheme:` line in its Sources entry
     /// (the value is a key here); the three scripture keys — `bible`, `quran`,
@@ -3774,6 +3778,7 @@ impl Default for SourcesConfig {
             auto_bibliography: true,
             index_locorum: false,
             index_verborum: false,
+            glossary: false,
             ref_schemes: std::collections::BTreeMap::new(),
         }
     }

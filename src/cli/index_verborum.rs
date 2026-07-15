@@ -8,7 +8,7 @@ use std::path::Path;
 use crate::config::Config;
 use crate::error::{Error, Result};
 use crate::glossary::{self, GlossaryEntry};
-use crate::index_verborum::{self, LexTerm, SenseRow, TermUsage};
+use crate::index_verborum::{self, LexTerm, SenseRow, SenseUsage, TermUsage};
 use crate::project::ProjectLayout;
 use crate::store::hierarchy::Hierarchy;
 use crate::store::node::{Node, NodeKind};
@@ -26,8 +26,8 @@ pub fn run(project: &Path, book_name: Option<&str>, format: &str, out: Option<&P
     lex_entries.retain(|e| e.is_valid() && e.is_lexicon_term());
     let lexicon: Vec<LexTerm> = lex_entries.iter().map(to_lex_term).collect();
 
-    let usages = harvest_usages(&layout, &h, book_name, &lex_entries)?;
-    let entries = index_verborum::build(&lexicon, &usages);
+    let (usages, sense_usages) = harvest_usages(&layout, &h, book_name, &lex_entries)?;
+    let entries = index_verborum::build(&lexicon, &usages, &sense_usages);
     let heading = index_verborum::heading_for_language(&cfg.language);
 
     let rendered = match format.to_ascii_lowercase().as_str() {
@@ -59,20 +59,24 @@ fn to_lex_term(e: &GlossaryEntry) -> LexTerm {
         senses: e
             .senses
             .iter()
-            .map(|s| SenseRow { label: s.label.trim().to_string(), gloss: s.gloss.trim().to_string() })
+            .map(|s| SenseRow {
+                label: s.label.trim().to_string(),
+                gloss: s.gloss.trim().to_string(),
+                chapters: Vec::new(),
+            })
             .collect(),
     }
 }
 
-/// Record `(term, chapter)` for every lexicon term that appears (whole-word, any
-/// surface form) in a chapter's prose. Reads plain text (Typst stripped).
+/// Harvest term-level and sense-level usages. Term-level: a term appears (whole-word,
+/// any surface form) in a chapter's plain prose. Sense-level: a `term#super[N]` tag
+/// in the raw prose attributes that use to sense N.
 fn harvest_usages(
     layout: &ProjectLayout,
     h: &Hierarchy,
     book_name: Option<&str>,
     lex: &[GlossaryEntry],
-) -> Result<Vec<TermUsage>> {
-    // Precompute each term's surface forms once.
+) -> Result<(Vec<TermUsage>, Vec<SenseUsage>)> {
     let forms: Vec<(String, Vec<String>)> =
         lex.iter().map(|e| (e.term.trim().to_string(), e.surface_forms())).collect();
 
@@ -85,10 +89,11 @@ fn harvest_usages(
             .collect(),
     };
     let mut usages = Vec::new();
+    let mut sense_usages = Vec::new();
     for book in &books {
         for chapter in h.children_of(Some(book.id)).into_iter().filter(|n| n.kind == NodeKind::Chapter) {
-            // Aggregate the chapter's prose (lowercased) once.
-            let mut text = String::new();
+            // Aggregate the chapter's raw prose once; plain text is derived from it.
+            let mut raw_all = String::new();
             for id in h.collect_subtree(chapter.id) {
                 let Some(n) = h.get(id) else { continue };
                 if n.kind != NodeKind::Paragraph || n.content_type.as_deref() == Some("jinja") {
@@ -96,20 +101,23 @@ fn harvest_usages(
                 }
                 let Some(rel) = n.file.as_ref() else { continue };
                 if let Ok(raw) = std::fs::read_to_string(layout.root.join(rel)) {
-                    text.push_str(&crate::audiobook::typst_to_plain(&raw));
-                    text.push('\n');
+                    raw_all.push_str(&raw);
+                    raw_all.push('\n');
                 }
             }
-            let lc = text.to_lowercase();
+            let lc_raw = raw_all.to_lowercase();
+            let lc_plain = crate::audiobook::typst_to_plain(&raw_all).to_lowercase();
             for (term, surface) in &forms {
-                let used = surface
-                    .iter()
-                    .any(|f| crate::world::fact_check_lang::contains_word(&lc, f));
-                if used {
+                if surface.iter().any(|f| crate::world::fact_check_lang::contains_word(&lc_plain, f)) {
                     usages.push(TermUsage { term: term.clone(), chapter: chapter.title.clone() });
+                }
+                for f in surface {
+                    for n in index_verborum::sense_tags(&lc_raw, f) {
+                        sense_usages.push(SenseUsage { term: term.clone(), sense: n, chapter: chapter.title.clone() });
+                    }
                 }
             }
         }
     }
-    Ok(usages)
+    Ok((usages, sense_usages))
 }

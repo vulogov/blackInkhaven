@@ -9824,8 +9824,29 @@ impl App {
 
         if let Some(key_str) = to_insert {
             self.modal = Modal::None;
-            match self.ink_editor_insert(&format!("@{key_str}")) {
-                Ok(()) => self.status = format!("inserted @{key_str}"),
+            // LOCI affordance — when the cited source has a reference scheme
+            // (scripture, or a `scheme:` in its Sources entry), insert `@key[]` and
+            // drop the cursor inside the brackets, ready for the locus. An ordinary
+            // source gets a bare `@key` as before.
+            let (_titles, declared) = self.collect_source_titles_and_schemes();
+            let (schemes, _errs) = crate::index_locorum::resolve_schemes(
+                &self.cfg.sources.ref_schemes,
+                &declared,
+                std::slice::from_ref(&key_str),
+            );
+            let loci = schemes.contains_key(&key_str);
+            let text = if loci { format!("@{key_str}[]") } else { format!("@{key_str}") };
+            match self.ink_editor_insert(&text) {
+                Ok(()) => {
+                    if loci {
+                        if let Some(doc) = self.opened.as_mut() {
+                            doc.textarea.move_cursor(tui_textarea::CursorMove::Back);
+                        }
+                        self.status = format!("inserted @{key_str}[…] — type the locus");
+                    } else {
+                        self.status = format!("inserted @{key_str}");
+                    }
+                }
                 Err(e) => self.status = format!("cite insert failed: {e}"),
             }
         }
