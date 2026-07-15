@@ -139,6 +139,14 @@ pub fn assemble_book(
         0
     };
 
+    // LEXICON: a Glossary chapter (every defined term with its senses / definition),
+    // when enabled. Written as `glossary.typ`, `#include`d after the indices.
+    let glossary_terms = if cfg.sources.glossary {
+        emit_glossary(store, cfg, &hierarchy, book_node, &out_book)?
+    } else {
+        0
+    };
+
     // REUSE-1: copy reusable snippets to `<out_book>/snippets/` so prose
     // `#include "…/snippets/…"` calls resolve. No-op when no Snippets book.
     let _snippets_written =
@@ -166,6 +174,7 @@ pub fn assemble_book(
         &front_matter,
         index_locorum_sources > 0,
         index_verborum_terms > 0,
+        glossary_terms > 0,
     );
     std::fs::write(&root_typ, root_body.as_bytes()).map_err(Error::Io)?;
     done += 1;
@@ -362,17 +371,23 @@ fn emit_index_verborum(
             senses: e
                 .senses
                 .iter()
-                .map(|s| SenseRow { label: s.label.trim().to_string(), gloss: s.gloss.trim().to_string() })
+                .map(|s| SenseRow {
+                    label: s.label.trim().to_string(),
+                    gloss: s.gloss.trim().to_string(),
+                    chapters: Vec::new(),
+                })
                 .collect(),
         })
         .collect();
 
-    // Harvest usages: per chapter, aggregate its prose and match each term's forms.
+    // Harvest term-level usages (plain prose) and sense-level tags (`term#super[N]`
+    // in raw prose), per chapter.
     let forms: Vec<(String, Vec<String>)> =
         lex.iter().map(|e| (e.term.trim().to_string(), e.surface_forms())).collect();
     let mut usages: Vec<TermUsage> = Vec::new();
+    let mut sense_usages: Vec<crate::index_verborum::SenseUsage> = Vec::new();
     for chapter in hierarchy.children_of(Some(book_node.id)).into_iter().filter(|n| n.kind == NodeKind::Chapter) {
-        let mut text = String::new();
+        let mut raw_all = String::new();
         for id in hierarchy.collect_subtree(chapter.id) {
             let Some(n) = hierarchy.get(id) else { continue };
             if n.kind != NodeKind::Paragraph || n.content_type.as_deref() == Some("jinja") {
@@ -380,19 +395,29 @@ fn emit_index_verborum(
             }
             let Some(rel) = &n.file else { continue };
             if let Ok(raw) = std::fs::read_to_string(layout.root.join(rel)) {
-                text.push_str(&crate::audiobook::typst_to_plain(&raw));
-                text.push('\n');
+                raw_all.push_str(&raw);
+                raw_all.push('\n');
             }
         }
-        let lc = text.to_lowercase();
+        let lc_raw = raw_all.to_lowercase();
+        let lc_plain = crate::audiobook::typst_to_plain(&raw_all).to_lowercase();
         for (term, surface) in &forms {
-            if surface.iter().any(|f| crate::world::fact_check_lang::contains_word(&lc, f)) {
+            if surface.iter().any(|f| crate::world::fact_check_lang::contains_word(&lc_plain, f)) {
                 usages.push(TermUsage { term: term.clone(), chapter: chapter.title.clone() });
+            }
+            for f in surface {
+                for n in crate::index_verborum::sense_tags(&lc_raw, f) {
+                    sense_usages.push(crate::index_verborum::SenseUsage {
+                        term: term.clone(),
+                        sense: n,
+                        chapter: chapter.title.clone(),
+                    });
+                }
             }
         }
     }
 
-    let idx = crate::index_verborum::build(&lexicon, &usages);
+    let idx = crate::index_verborum::build(&lexicon, &usages, &sense_usages);
     if idx.is_empty() {
         return Ok(0);
     }
@@ -400,6 +425,70 @@ fn emit_index_verborum(
     let body = crate::index_verborum::render_typst(&idx, heading);
     std::fs::write(out_book.join("index_verborum.typ"), body.as_bytes()).map_err(Error::Io)?;
     Ok(idx.len())
+}
+
+/// LEXICON — render a **Glossary** chapter from the Glossary book: every valid term,
+/// alphabetical. A lexicon term shows its original-language form (italic) and its
+/// numbered senses; an ordinary term shows its definition. Returns the number of
+/// terms written (0 → nothing written). Gated by `cfg.sources.glossary`.
+fn emit_glossary(
+    store: &Store,
+    cfg: &Config,
+    hierarchy: &Hierarchy,
+    book_node: &Node,
+    out_book: &Path,
+) -> Result<usize> {
+    let mut entries = crate::glossary::glossary_entries_from_store(store, hierarchy, Some(&book_node.slug));
+    entries.retain(|e| e.is_valid());
+    if entries.is_empty() {
+        return Ok(0);
+    }
+    entries.sort_by(|a, b| a.term.to_lowercase().cmp(&b.term.to_lowercase()));
+
+    let esc = |s: &str| -> String {
+        let mut o = String::with_capacity(s.len());
+        for c in s.chars() {
+            if matches!(c, '#' | '*' | '_' | '`' | '$' | '@' | '<' | '>' | '\\' | '[' | ']') {
+                o.push('\\');
+            }
+            o.push(c);
+        }
+        o
+    };
+
+    let heading = match cfg.language.trim().to_lowercase().as_str() {
+        "ru" | "russian" | "русский" => "Глоссарий",
+        "fr" | "french" | "français" => "Glossaire",
+        "de" | "german" | "deutsch" => "Glossar",
+        "es" | "spanish" | "español" => "Glosario",
+        _ => "Glossary",
+    };
+    let mut body = format!("= {heading}\n\n");
+    for e in &entries {
+        let forms = if e.original_forms.is_empty() {
+            String::new()
+        } else {
+            format!(" #h(0.5em) #text(style: \"italic\")[{}]", esc(&e.original_forms.join(", ")))
+        };
+        body.push_str(&format!("*{}*{forms}\n\n", esc(e.term.trim())));
+        if e.senses.is_empty() {
+            if !e.definition.trim().is_empty() {
+                body.push_str(&format!("{}\n\n", esc(e.definition.trim())));
+            }
+        } else {
+            for s in &e.senses {
+                let label = if s.label.trim().is_empty() {
+                    String::new()
+                } else {
+                    format!("*{}* — ", esc(s.label.trim()))
+                };
+                body.push_str(&format!("+ {label}{}\n", esc(s.gloss.trim())));
+            }
+            body.push('\n');
+        }
+    }
+    std::fs::write(out_book.join("glossary.typ"), body.as_bytes()).map_err(Error::Io)?;
+    Ok(entries.len())
 }
 
 /// REUSE-1: copy every paragraph in the **Snippets** system book to
@@ -1133,6 +1222,7 @@ fn build_root_typ(
     front_matter: &str,
     index_locorum: bool,
     index_verborum: bool,
+    glossary: bool,
 ) -> String {
     let mut out = String::new();
     out.push_str("// Auto-generated by inkhaven Book assembly.\n");
@@ -1169,6 +1259,10 @@ fn build_root_typ(
     // LEXICON: the Index Verborum chapter, after the Index Locorum.
     if index_verborum {
         out.push_str("\n#include \"index_verborum.typ\"\n");
+    }
+    // LEXICON: the Glossary chapter, after the indices.
+    if glossary {
+        out.push_str("\n#include \"glossary.typ\"\n");
     }
     out
 }
@@ -1480,7 +1574,7 @@ mod tests {
     #[test]
     fn build_root_typ_bibliography_line_is_style_gated() {
         let book = mk_node(NodeKind::Book, "My Book", "my-book", 0);
-        let with = build_root_typ(&book, "", Some("ieee"), "", false, false);
+        let with = build_root_typ(&book, "", Some("ieee"), "", false, false, false);
         assert!(
             with.contains("#bibliography(\"sources.bib\", style: \"ieee\")"),
             "{with}"
@@ -1491,15 +1585,16 @@ mod tests {
         assert!(bib > wrap, "bibliography must follow wrap_book");
         assert!(!with.contains("index_locorum.typ"), "no loci include when disabled");
 
-        let without = build_root_typ(&book, "", None, "", false, false);
+        let without = build_root_typ(&book, "", None, "", false, false, false);
         assert!(!without.contains("#bibliography"), "{without}");
 
-        // The Index Locorum then the Index Verborum follow the bibliography in order.
-        let idx = build_root_typ(&book, "", Some("ieee"), "", true, true);
+        // The apparatus follow the bibliography in order: locorum → verborum → glossary.
+        let idx = build_root_typ(&book, "", Some("ieee"), "", true, true, true);
         let bib_i = idx.find("#bibliography").unwrap();
         let loci_i = idx.find("#include \"index_locorum.typ\"").expect("loci include");
         let verb_i = idx.find("#include \"index_verborum.typ\"").expect("verborum include");
-        assert!(bib_i < loci_i && loci_i < verb_i, "order: bibliography → locorum → verborum");
+        let gloss_i = idx.find("#include \"glossary.typ\"").expect("glossary include");
+        assert!(bib_i < loci_i && loci_i < verb_i && verb_i < gloss_i, "order: bib → locorum → verborum → glossary");
     }
 
     #[test]
