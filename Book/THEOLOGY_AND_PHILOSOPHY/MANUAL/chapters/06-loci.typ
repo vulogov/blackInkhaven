@@ -38,8 +38,11 @@ exactly as a page-numbered citation would. Inkhaven's only addition is to _harve
 these loci for the index.
 
 The cite picker helps you not to mistype a key: `Ctrl+V @` opens a fuzzy search over
-the Sources book and drops the matching `@key` where the cursor sits. You add the
-`[locus]` yourself — the picker gets the key right, and the passage is yours to name.
+the Sources book and drops the matching `@key` where the cursor sits. When the source
+you pick has a reference scheme — scripture, or anything you declared one for — the
+picker knows a locus is expected: it inserts `@key[]` and leaves the cursor _inside_
+the brackets, ready for you to type the passage. An ordinary source gets a bare
+`@key`, as before. The picker gets the key right; the passage is always yours to name.
 
 #note[
   Because a locus is a native Typst supplement, the key must resolve to a real
@@ -203,17 +206,49 @@ inkhaven index-verborum                   # Markdown (also --format typst|json)
 ```
 
 It lists every lexicon term the manuscript actually uses, with its source-language
-form, its senses, and the chapters that use it — the glossary a critical edition
-prints at the back. Set `sources.index_verborum: true` and `inkhaven build` folds it
-into the finished book after the Index Locorum, so the volume closes with all three
-apparatus: the works, the passages, and the terms — each generated from what the prose
-genuinely contains.
+form, its senses, and the chapters that use it. By default it records where a _term_
+appears; if you want it to record where each _sense_ appears, tag the use. A sense tag
+is a plain Typst superscript — the same mark a printed lexicon uses — so it both reads
+correctly on the page and tells the index which sense you meant:
+
+#config("in the manuscript", [```typst
+Pure reason#super[1] demands the unconditioned; but reason#super[2],
+the faculty of concepts, cannot reach so far.
+```])
+
+Now the Index Verborum lists, under _reason_'s first sense, the chapters that used it
+in that sense, and under the second sense the chapters that used _that_ — the finest
+grain a study of a fractured term can want. Tagging is entirely optional; an untagged
+term still indexes at the term level.
+
+#section("Close the volume with its apparatus")
+
+Two switches turn the lexicon into pages of the finished book. `sources.index_verborum:
+true` folds the Index Verborum in after the Index Locorum; `sources.glossary: true`
+adds a *Glossary* chapter — every defined term alphabetically, a lexicon term showing
+its original-language form and its numbered senses, an ordinary term its definition —
+the reference a reader consults, as opposed to the index a critic checks. With both
+set, `inkhaven build` closes the volume with the full critical apparatus, in order:
+
+#config("inkhaven.hjson", [```hjson
+sources: {
+  index_locorum: true      // the passages
+  index_verborum: true     // the terms, indexed by use
+  glossary: true           // the terms, defined
+}
+```])
+
+the bibliography (the works), the Index Locorum (the passages), the Index Verborum (the
+terms and where each is used), and the Glossary (the terms and what each means) — every
+one of them generated from what the prose genuinely contains, and none of them a
+hand-kept list that can drift from the book it describes.
 
 #recap((
   [Cite a *passage*, not a work: `@key[locus]` (`@kant-cpr[Ak. 5:122]`, `@bible[Matthew 5:48]`) is native Typst — the bracket is the supplement — so the prose needs no special handling and the locus renders as a real citation.],
-  [The cite picker (`Ctrl+V @`) gets the *key* right from the Sources book; you name the *locus*. A locus on a key with no entry is a compile error — so the index can never list a source you never filed.],
+  [The cite picker (`Ctrl+V @`) gets the *key* right from the Sources book; for a source with a reference scheme it inserts `@key[]` with the cursor *inside the brackets*, ready for the locus. A locus on a key with no entry is a compile error — so the index can never list a source you never filed.],
   [`inkhaven index-locorum` harvests every `@key[locus]`, resolves titles, and renders the apparatus (Markdown / Typst / JSON) — grouped by source, loci sorted naturally, each tagged with the chapter it was cited in.],
   [*Validate* loci against a *reference scheme* — built-in for the scripture keys, `sources.ref_schemes` for the rest: `--strict` fails a build on a malformed reference, and `Ctrl+V c` lints the open paragraph as you write. The scheme also *canonicalizes*, so `Jn 3.16`, `John 3:16`, and `Иоанна 3:16` collapse to one entry.],
   [Set `sources.index_locorum: true` and `inkhaven build` folds the Index Locorum into the finished book after the bibliography — the works *and* the passages, both generated from what the manuscript actually cites.],
-  [Keep your *terms* honest with the *scholarly lexicon* — a Glossary entry's `original_forms` + distinct `senses`; `watch_equivocation` arms the rigor reader's sixth signal, so a watched term used in two senses is flagged (`Ctrl+B J → R`). `inkhaven index-verborum` (and `sources.index_verborum: true`) prints the *Index Verborum* — the terms, their senses, and where each is used — the third apparatus beside the works and the passages.],
+  [Keep your *terms* honest with the *scholarly lexicon* — a Glossary entry's `original_forms` + distinct `senses`; `watch_equivocation` arms the rigor reader's sixth signal, so a watched term used in two senses is flagged (`Ctrl+B J → R`). Tag a use with a superscript (`reason#super[1]`) to index it by *sense*.],
+  [Close the volume with its full apparatus: `sources.index_verborum: true` (the *Index Verborum* — the terms and where each is used) and `sources.glossary: true` (the *Glossary* — the terms defined), joining the bibliography (works) and Index Locorum (passages) — four registers, every one generated from the prose itself.],
 ))
