@@ -21,40 +21,40 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.6.21 — The Scholarly Lexicon
+## Latest release · 1.6.22 — The Book's Own Apparatus
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.6.21.md`](Documentation/RELEASE_NOTES/1.6.21.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.6.22.md`](Documentation/RELEASE_NOTES/1.6.22.md)
 
-A study's citations can be perfect and its argument still fail on a single word. This
-release keeps a work's **terms** as disciplined as its citations. **No new runtime
-crates.**
+A critical edition is judged as much by its back matter as its argument. The finished
+book can now carry all four registers — each generated from the prose itself. **No new
+runtime crates.**
 
-### Terms with senses
+### Four registers
 
-A Glossary entry can now carry its **original-language forms** and its **distinct
-senses** (`reason` → Vernunft / Verstand) — the discipline a critical edition needs,
-where a load-bearing word legitimately means several things.
+With `sources.glossary: true` (joining `index_locorum` and `index_verborum`), `inkhaven
+build` closes the volume with the full apparatus, in order: the **bibliography** (the
+works), the **Index Locorum** (the passages), the **Index Verborum** (the terms,
+indexed by use), and the **Glossary** (the terms, defined). None of them a hand-kept
+list that can drift from the book it describes.
 
-### Equivocation — the rigor reader's sixth signal
+### Sense-level indexing
 
-Mark a multi-sense term `watch_equivocation` and the reasoning-rigor reader gains a
-signal it could not have had otherwise: a watched term used in two senses without one
-pinned is flagged (`Ctrl+B J → R`, `inkhaven rigor scan`). You curate which words are
-dangerous; the reader watches exactly those, in any of the five languages.
+Tag a use with a plain Typst superscript — `reason#super[1]` — and the Index Verborum
+records where each *sense* appears, not just each term. It reads correctly on the page
+*and* tells the index which sense you meant. Optional; untagged terms index at the term
+level.
 
-### The Index Verborum
+### A citation affordance
 
-`inkhaven index-verborum` (and `inkhaven lexicon list`) prints the term-level twin of
-the Index Locorum — each lexicon term, its senses, and where it is used. Set
-`sources.index_verborum: true` and the finished book closes with all three apparatus:
-the works, the passages, and the terms.
+Pick a citation whose source has a reference scheme and the cite picker (`Ctrl+V @`)
+inserts `@key[]` with the cursor *inside the brackets*, ready for the locus — an
+ordinary source still gets a bare `@key`.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** New commands `inkhaven lexicon list` and `inkhaven
-index-verborum`; new Glossary fields and config (`rigor.equivocation`,
-`sources.index_verborum`) — all opt-in. Everything is additive; existing projects are
-unaffected. Test suite → 2462.
+**No new runtime crates.** New config `sources.glossary`; the `term#super[N]` sense
+tag; the scheme-aware cite-picker insert — all opt-in. Everything is additive; existing
+projects are unaffected. Test suite → 2464.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
