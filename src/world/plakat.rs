@@ -842,7 +842,6 @@ mod tests {
     #[test]
     fn trade_routes_become_roads_between_capital_hubs() {
         use crate::world::compile::polities_layer::{Polity, Relation};
-        use crate::world::compile::trade_layer::TradeOutput;
         let (geo, climate, hydro, demo) = layers();
         let pol = PolitiesOutput {
             polities: vec![
