@@ -121,7 +121,16 @@ TUI shell + system-tag-parameterised tree + hardened ConLang core are ready for 
 - [ ] **Fix invented bindings/glyphs:** `→ L` collides with "view ledger" — pick a free
       letter; `✎` is Inner Editor's — pick distinct Linguist glyphs; `Ctrl+B ]` picker
       doesn't exist — reuse the `i`-in-Tree structural picker.
-- [ ] **Split `cli/language.rs`** (9.3 k lines, flat match) into submodules before +40 arms.
+- [x] **Split `cli/language.rs`** (9.3 k-line flat match) into a directory module before
+      +40 arms. `language.rs` → `language/mod.rs` (run dispatch + shared core: loaders,
+      dictionary CRUD, scaffold, stats) + **11 per-family submodules**: render, import,
+      writing, translate, syntax, varieties, books, diachronic, phonology, contact,
+      morphology. Each does `use super::*`; mod.rs does `pub(crate) use <sub>::*` so every
+      external `crate::cli::language::*` path (stdlib::lang, export::html::companions) stays
+      stable. mod.rs **9314 → 4233 lines (−55%)**; the +40 linguistic-layer arms now have
+      logical homes. Pure code move, zero warnings (bin + tests), suite 2470. 5 signed commits
+      on `1.7.0-dev`. *(Remaining shared-core families — dictionary CRUD, scaffold, expressions
+      — are interleaved with loaders; tidy opportunistically during L-P0.)*
 - [ ] **Add `inkhaven assemble`** as a thin verb over `assemble_book`.
 - [ ] **Module naming:** `src/linguistic/` new, wrapping `src/conlang/` primitives.
 - [ ] **Rebase test baseline** 2395 → 2464; target ≈ 2834.
