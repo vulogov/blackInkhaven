@@ -85,17 +85,32 @@ kinds + glyph. · Config nested `#[serde(default)]` sub-structs. · `include_str
 - [ ] Triage the 1.6 backlog (Output-pane free-text search + fullscreen) → ship or defer.
 
 *Gate-A result: suite 2464 → **2466** (net +2 policy tests), 0 failed, clean build, no
-warnings, no attribution. Changes on `1.6.23-dev`, uncommitted.*
+warnings, no attribution. Committed on `1.6.23-dev` (GPG-signed).*
 
 ### Gate B — enabling refactors (non-behavioral, land on 1.6.23-dev)
-- [ ] **Extract a reusable research-TUI shell** (terminal lifecycle + sync poll +
-      stream-drain + confirmation overlay) so `inkhaven linguistic` isn't a copy-fork of a
-      large research-specific file. *Highest-leverage de-risk.*
-- [ ] **Parameterize the left-pane tree by system-tag** (`FactsTree` → `SystemBookTree`).
-- [ ] **Harden the ConLang suite to the durable bar** — it will be fed adversarial/partial
-      input (parse unknown forms, eval arbitrary strings). Audit `phonology::segment`,
-      `paradigm::generate`, the HJSON parsers for panics/unbounded loops.
-- [ ] *(optional)* Give INNER-GROUND-1 a small source registry.
+- [x] **Extract a reusable companion-TUI shell** — new `src/tui_host.rs`: `TuiHost` trait +
+      `run_loop`/`run_loop_with` (injectable `InputSource` → headless-testable) +
+      `with_terminal` lifecycle. Research TUI rides it (behaviour unchanged; 24 pollers →
+      `poll_all`, spinner → `tick`, `on_key` → `handle_key`). 3 shell tests. Committed.
+- [x] **Parameterize the left-pane tree by system-tag** — `FactsTree::new(h, system_tag)`;
+      root resolution was the only tag-specific step. Research passes `SYSTEM_TAG_FACTS`; the
+      Languages pane passes its own. Promotion to a shared `SystemBookTree` deferred to L-P0
+      (shape the API against the real second consumer). Committed.
+- [x] **Harden the ConLang suite to the durable bar** — adversarial panic-surface audit
+      across all input-facing modules found the suite already *total* against panics (guarded
+      `chars().next()`, `saturating_sub`, `is_empty` before indexing; a prior panic-audit
+      trail). The real exposure was **unbounded-allocation DoS in paradigm generation**: a
+      cell may list a stem-growing morpheme any number of times — `full` reduplication doubles
+      the stem per pass (`2^N`), ablaut rules multiply it (`~64^N`) — OOMing the process the
+      first time any paradigm generates (also drives gloss/reverse/translate). Fixed with a
+      `MAX_STEM_SEGMENTS` (256) cap + adversarial test; also made the `poem` meter arithmetic
+      saturating. Committed. *(No HIGH panic surface existed — the suite was in good shape.)*
+- [ ] *(optional, deferred)* Give INNER-GROUND-1 a small source registry — additive; do it
+      with the Language source at L-P0.
+
+*Gate-B result: suite 2466 → **2470** (+4: 3 shell, 1 DoS cap), 0 failed, **zero warnings
+tree-wide** (bin + tests), no attribution. Four GPG-signed commits on `1.6.23-dev`. Companion
+TUI shell + system-tag-parameterised tree + hardened ConLang core are ready for L-P0.*
 
 ### Gate C — architecture decisions (amend the RFC)
 - [ ] **Reframe net-new pieces as new, not reuse**; re-estimate L-P5/L-P6b upward.
