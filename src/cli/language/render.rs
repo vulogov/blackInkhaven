@@ -10,6 +10,10 @@ use crate::store::Store;
 
 use super::*;
 
+/// export a language's content
+/// to a portable artefact.  Three formats land in
+/// Phase D; `grammar` and `phrasebook` from the
+/// proposal §12 are deferred to D.2.
 pub(crate) fn export(
     project: &Path,
     language: &str,
