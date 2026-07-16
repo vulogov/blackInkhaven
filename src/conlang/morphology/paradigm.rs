@@ -12,6 +12,17 @@ use crate::conlang::types::morphology::{AffixPosition, MorphProcess, Morphology,
 use crate::conlang::types::phoneme::PhonemeKind;
 use crate::conlang::types::Phonology;
 
+/// Defensive cap on stem length during cell assembly. Stem-growing processes —
+/// reduplication (`full` mode *doubles* the stem) and ablaut insertion rules
+/// (each pass can multiply it) — compound as `2^N` / `64^N` when a cell lists
+/// many such morphemes, so a crafted or careless morphology spec would OOM the
+/// process the first time any paradigm is generated (which also drives glossing,
+/// reverse lookup and translation over every lexicon entry). A natural
+/// phonological word is a few dozen segments; past this bound the spec is
+/// pathological, so we stop reshaping and let the outer affixes finish a bounded
+/// row rather than explode. Generous enough that no real language is affected.
+const MAX_STEM_SEGMENTS: usize = 256;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParadigmRow {
     pub features: BTreeMap<String, String>,
@@ -70,6 +81,13 @@ pub fn generate(
                         }
                         None => {} // no position and no process — nothing to do.
                     },
+                }
+                // Bail the moment a stem-growing process runs away (see
+                // `MAX_STEM_SEGMENTS`). Truncating bounds the one extra doubling
+                // that may have just happened before this check.
+                if stem.len() > MAX_STEM_SEGMENTS {
+                    stem.truncate(MAX_STEM_SEGMENTS);
+                    break;
                 }
             }
 
@@ -189,11 +207,6 @@ fn render(phon: &Phonology, seq: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::conlang::types::{Phoneme, PhonemeKind};
-
-    fn ph(ipa: &str, kind: PhonemeKind) -> Phoneme {
-        Phoneme { ipa: ipa.into(), romanize: Some(ipa.into()), kind, sonority: None }
-    }
 
     /// Inventory + a final-devoicing allophony rule (d → t / _ #).
     fn phon() -> Phonology {
@@ -239,6 +252,33 @@ mod tests {
         assert_eq!(rows[1].gloss, "stone-PL");
         assert_eq!(rows[3].form, "nakata"); // DEF prefix
         assert_eq!(rows[3].gloss, "DEF-stone");
+    }
+
+    #[test]
+    fn runaway_reduplication_is_capped_not_exponential() {
+        // A cell that lists a `full`-reduplication morpheme many times doubles the
+        // stem each pass (2^N). Without MAX_STEM_SEGMENTS this OOMs the process the
+        // first time any paradigm generates — which also drives glossing, reverse
+        // lookup and translation over every lexicon entry. The cap must bound it so
+        // generation stays fast and finite. (If this test hangs, the guard is gone.)
+        let p = phon();
+        let ids = vec!["\"dbl\""; 40].join(",");
+        let body = r#"{
+            morphemes: [ { id: "dbl", gloss: "DBL", process: "reduplication", reduplicate: "full" } ]
+            paradigms: [ { name: "n", cells: [ { features: {}, morphemes: [IDS] } ] } ]
+        }"#
+        .replace("IDS", &ids);
+        let m = Morphology::from_hjson(&body).unwrap().unwrap();
+        let rows = generate(&p, &m, m.paradigm("n").unwrap(), "kata", "stone");
+        assert_eq!(rows.len(), 1);
+        assert!(!rows[0].form.is_empty());
+        // Bounded: 2^40 segments uncapped; the cap keeps the rendered form small
+        // (≤ MAX_STEM_SEGMENTS segments, each a few graphemes).
+        assert!(
+            rows[0].form.chars().count() <= MAX_STEM_SEGMENTS * 4,
+            "reduplication runaway not capped: form is {} chars",
+            rows[0].form.chars().count(),
+        );
     }
 
     #[test]

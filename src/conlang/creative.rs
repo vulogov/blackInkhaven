@@ -192,7 +192,7 @@ pub fn poem(
         let mut words: Vec<String> = Vec::new();
         let mut total = 0usize;
         let mut tries = 0usize;
-        while total < target && tries < target * 4 + 8 {
+        while total < target && tries < target.saturating_mul(4).saturating_add(8) {
             let w = &pool[(seed_at(seed, li * 31 + cursor) as usize) % pool.len()];
             cursor += 1;
             tries += 1;
