@@ -205,7 +205,7 @@ mod tests {
 
         // Set up an active file + .log.1 … .log.5 with
         // distinct content, then trigger rotation.
-        let mut tag = |n: usize| -> Vec<u8> {
+        let tag = |n: usize| -> Vec<u8> {
             let mut v = format!("tag{n}-").into_bytes();
             v.extend(std::iter::repeat(b'.').take((MAX_LOG_BYTES as usize) + 16));
             v

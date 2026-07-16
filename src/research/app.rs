@@ -5,10 +5,9 @@
 //! panes are placeholders; later phases fill them (Facts tree R-P4, chat R-P6,
 //! query prompt R-P5) and add the streaming receiver drained per tick (R-P7).
 
-use std::time::Duration;
-
 use anyhow::{Context, Result};
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use ratatui::Frame;
 use ratatui::Terminal;
 use ratatui::backend::Backend;
 
@@ -493,6 +492,37 @@ pub(crate) struct ResearchApp {
     should_quit: bool,
 }
 
+impl crate::tui_host::TuiHost for ResearchApp {
+    fn should_quit(&self) -> bool {
+        self.should_quit
+    }
+
+    fn poll_async(&mut self) {
+        self.poll_all();
+    }
+
+    fn tick(&mut self) {
+        // UX-P3 — drive the status-bar spinner: start the timer when work is in
+        // flight, clear it when the last async op finishes.
+        self.spin_tick = self.spin_tick.wrapping_add(1);
+        if self.is_busy() {
+            if self.async_started.is_none() {
+                self.async_started = Some(std::time::Instant::now());
+            }
+        } else {
+            self.async_started = None;
+        }
+    }
+
+    fn render(&self, frame: &mut Frame) {
+        render::render(frame, self);
+    }
+
+    fn on_key(&mut self, key: KeyEvent) {
+        self.handle_key(key);
+    }
+}
+
 impl ResearchApp {
     pub(crate) fn new(
         layout: ProjectLayout,
@@ -506,7 +536,7 @@ impl ResearchApp {
         let name = thread_name.unwrap_or_else(|| "default".to_string());
         let now = chrono::Utc::now().to_rfc3339();
         let thread = ResearchThread::open_or_create(&layout, &name, now)?;
-        let facts_tree = FactsTree::new(&hierarchy);
+        let facts_tree = FactsTree::new(&hierarchy, crate::store::SYSTEM_TAG_FACTS);
         // G4 — restore pins persisted in the thread (skip any that no longer exist).
         let pinned_nodes: Vec<Uuid> = thread
             .pinned_nodes
@@ -620,53 +650,39 @@ impl ResearchApp {
     /// The synchronous event loop: draw, then block up to 100 ms for a key.
     /// Later phases also drain the `StreamMsg` receiver here each tick (R-P7).
     pub(crate) fn run<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
-        while !self.should_quit {
-            self.poll_stream();
-            self.poll_extraction();
-            self.poll_verify();
-            self.poll_chain();
-            self.poll_factcheck();
-            self.poll_contradict();
-            self.poll_relate();
-            self.poll_socrates();
-            self.poll_undisputed();
-            self.poll_web();
-            self.poll_wikidata();
-            self.poll_geonames();
-            self.poll_deadlinks();
-            self.poll_gutenberg();
-            self.poll_archive();
-            self.poll_wikisource();
-            self.poll_scripture();
-            self.poll_scholarly();
-            self.poll_triangulate();
-            self.poll_tri_gate();
-            self.poll_upgrade();
-            self.poll_fc_confirm();
-            self.poll_refute();
-            // UX-P3 — drive the status-bar spinner: start the timer when work is
-            // in flight, clear it when the last async op finishes.
-            self.spin_tick = self.spin_tick.wrapping_add(1);
-            if self.is_busy() {
-                if self.async_started.is_none() {
-                    self.async_started = Some(std::time::Instant::now());
-                }
-            } else {
-                self.async_started = None;
-            }
-            terminal.draw(|f| render::render(f, self))?;
-            if event::poll(Duration::from_millis(100))? {
-                if let Event::Key(key) = event::read()? {
-                    if key.kind != KeyEventKind::Release {
-                        self.on_key(key);
-                    }
-                }
-            }
-        }
-        Ok(())
+        crate::tui_host::run_loop(self, terminal)
     }
 
-    fn on_key(&mut self, key: KeyEvent) {
+    /// Drain every async worker. Called once per frame by the shell before the
+    /// draw; each `poll_*` is a non-blocking channel drain that advances one
+    /// research subsystem's in-flight work.
+    fn poll_all(&mut self) {
+        self.poll_stream();
+        self.poll_extraction();
+        self.poll_verify();
+        self.poll_chain();
+        self.poll_factcheck();
+        self.poll_contradict();
+        self.poll_relate();
+        self.poll_socrates();
+        self.poll_undisputed();
+        self.poll_web();
+        self.poll_wikidata();
+        self.poll_geonames();
+        self.poll_deadlinks();
+        self.poll_gutenberg();
+        self.poll_archive();
+        self.poll_wikisource();
+        self.poll_scripture();
+        self.poll_scholarly();
+        self.poll_triangulate();
+        self.poll_tri_gate();
+        self.poll_upgrade();
+        self.poll_fc_confirm();
+        self.poll_refute();
+    }
+
+    fn handle_key(&mut self, key: KeyEvent) {
         // Ctrl+C and Ctrl+Q always exit, from any pane or overlay (the plain `q`
         // only quits outside a text field; Ctrl+Q is the universal escape hatch).
         if key.modifiers.contains(KeyModifiers::CONTROL)

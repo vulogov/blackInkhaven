@@ -78,6 +78,7 @@ mod tension;
 mod text;
 mod timeline;
 mod tui;
+mod tui_host;
 mod typst_check;
 mod typst_compile;
 mod typst_inprocess;

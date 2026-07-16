@@ -19,7 +19,8 @@ pub(super) struct FactsRow {
 }
 
 pub(super) struct FactsTree {
-    /// The Facts system book id (the tree root; its children are the top rows).
+    /// The system book id resolved from the tag passed to [`FactsTree::new`]
+    /// (the tree root; its children are the top rows).
     pub root: Option<Uuid>,
     expanded: HashSet<Uuid>,
     pub cursor: usize,
@@ -28,13 +29,16 @@ pub(super) struct FactsTree {
 }
 
 impl FactsTree {
-    pub(super) fn new(h: &Hierarchy) -> FactsTree {
+    /// Build a tree rooted at the system book carrying `system_tag`. The Research
+    /// pane passes `SYSTEM_TAG_FACTS`; the root resolution is the only tag-specific
+    /// step — everything below (fold state, navigation, reveal) is generic over the
+    /// hierarchy, so a companion pane (e.g. the 1.7 Languages book) reuses it by
+    /// passing its own tag. (Promotion to a shared `SystemBookTree` module lands
+    /// with that second consumer.)
+    pub(super) fn new(h: &Hierarchy, system_tag: &str) -> FactsTree {
         let root = h
             .iter()
-            .find(|n| {
-                n.kind == NodeKind::Book
-                    && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_FACTS)
-            })
+            .find(|n| n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(system_tag))
             .map(|n| n.id);
         let mut expanded = HashSet::new();
         if let Some(r) = root {
@@ -238,7 +242,7 @@ mod tests {
     #[test]
     fn finds_root_and_folds() {
         let (h, book, ch1, _p1, _p2) = sample();
-        let mut t = FactsTree::new(&h);
+        let mut t = FactsTree::new(&h, crate::store::SYSTEM_TAG_FACTS);
         assert_eq!(t.root, Some(book));
         // ch1 visible, collapsed by default → its paragraphs hidden.
         assert_eq!(t.rows().len(), 1);
@@ -254,7 +258,7 @@ mod tests {
     #[test]
     fn reveal_expands_ancestors() {
         let (h, _book, ch1, _p1, p2) = sample();
-        let mut t = FactsTree::new(&h);
+        let mut t = FactsTree::new(&h, crate::store::SYSTEM_TAG_FACTS);
         assert_eq!(t.rows().len(), 1); // collapsed
         assert!(t.reveal(&h, p2));
         assert_eq!(t.selected(), Some(p2));
