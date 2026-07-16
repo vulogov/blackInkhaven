@@ -9,6 +9,35 @@ use crate::error::{Error, Result};
 
 use super::*;
 
+/// `inkhaven language list`.
+/// Walks the `Language` system book and emits one
+/// row per language with summary counts.  Quick
+/// at-a-glance complement to `language doctor`.
+/// `inkhaven language add-word
+/// <lang> --import <path.csv>`.  Bulk-load a CSV
+/// dictionary.  Format described in the CLI variant
+/// docstring; mechanically:
+///   * RFC 4180 quoting (`"…"` for fields with
+///     commas / quotes / newlines; `""` for embedded
+///     quotes).
+///   * Header row maps column NAMES to row positions
+///     so the CSV's columns can appear in any order
+///     and any subset.
+///   * Complex fields parsed inside the row:
+///       - `inflection`: `;`-separated `key=value` pairs
+///       - `examples`:   `|`-separated sentences
+///       - `related`:    `;`-separated word slugs
+///   * Skip rules: empty `word` cell + `word` starting
+///     with `#` both treated as skip-this-row; duplicate
+///     `word` (already in the dictionary) skipped with
+///     warning.
+///   * Tally printed at end (imported / skipped /
+///     failed counts).
+/// 1.3.19 LANG-1 P6 — import a dictionary from a foreign conlang/linguistics
+/// tool (Toolbox/MDF SFM, PolyGlot). Parses the file into neutral lexemes
+/// (`conlang::interchange`), previews them by default, and writes them into the
+/// Dictionary only with `--yes`. Deterministic format conversion — no AI — but
+/// non-committal by default so an author reviews before the book changes.
 pub(crate) fn import_foreign(
     project: &Path,
     language: &str,
