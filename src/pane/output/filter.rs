@@ -35,6 +35,7 @@ pub const SOURCES: &[&str] = &[
     "xref",
     "confront",
     "locus",
+    "rigor",
     "other",
 ];
 
@@ -74,6 +75,7 @@ pub fn message_source(msg: &Message) -> &'static str {
         kinds::XREF => "xref",
         kinds::CONFRONT => "confront",
         kinds::LOCUS => "locus",
+        kinds::RIGOR => "rigor",
         _ => "other",
     }
 }
@@ -224,6 +226,11 @@ mod tests {
         assert_eq!(message_source(&msg(kinds::SOCRATIC_INQUIRY, Severity::Info, None)), "socrates");
         assert_eq!(message_source(&msg(kinds::TIMELINE_ORPHAN_WARNING, Severity::Warning, None)), "timeline-critique");
         assert_eq!(message_source(&msg(kinds::TRANSLATION_RESULT, Severity::Info, None)), "translation");
+        // SCHOLAR/theology reader kinds each classify to their own filterable source
+        // (not "other") — every first-class Output kind is filterable by provenance.
+        assert_eq!(message_source(&msg(kinds::CONFRONT, Severity::Warning, None)), "confront");
+        assert_eq!(message_source(&msg(kinds::LOCUS, Severity::Warning, None)), "locus");
+        assert_eq!(message_source(&msg(kinds::RIGOR, Severity::Info, None)), "rigor");
         assert_eq!(message_source(&msg("something_unknown", Severity::Info, None)), "other");
     }
 

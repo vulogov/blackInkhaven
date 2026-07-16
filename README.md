@@ -21,40 +21,41 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.6.22 — The Book's Own Apparatus
+## Latest release · 1.6.23 — Hardening & Foundations
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.6.22.md`](Documentation/RELEASE_NOTES/1.6.22.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.6.23.md`](Documentation/RELEASE_NOTES/1.6.23.md)
 
-A critical edition is judged as much by its back matter as its argument. The finished
-book can now carry all four registers — each generated from the prose itself. **No new
-runtime crates.**
+A stability release: it tightens the script sandbox, bounds an allocation surface in
+language generation, and lays two reusable foundations for the work ahead. **No new
+features, no new runtime crates.** Test suite → 2470, warning-free.
 
-### Four registers
+### The script sandbox closes a gap
 
-With `sources.glossary: true` (joining `index_locorum` and `index_verborum`), `inkhaven
-build` closes the volume with the full apparatus, in order: the **bibliography** (the
-works), the **Index Locorum** (the passages), the **Index Verborum** (the terms,
-indexed by use), and the **Glossary** (the terms, defined). None of them a hand-kept
-list that can drift from the book it describes.
+A Bund verb missing from the policy category table was silently *allowed*, slipping past
+any category you had disabled. A new coverage test requires every registered `ink.*`
+verb to be either categorised or on an explicit pure-allowlist — and it found **16**
+store-reading verbs (timeline-critique, Inner Socrates inspectors, world timeline
+queries) that were outside the system. All are now gated `store_read`, and a forgotten
+category fails the test rather than escaping the sandbox.
 
-### Sense-level indexing
+### Language generation can't run away
 
-Tag a use with a plain Typst superscript — `reason#super[1]` — and the Index Verborum
-records where each *sense* appears, not just each term. It reads correctly on the page
-*and* tells the index which sense you meant. Optional; untagged terms index at the term
-level.
+Stem-growing morphology processes (`full` reduplication, ablaut) could compound as
+`2^N`/`64^N` from a crafted spec and exhaust memory. Paradigm generation now caps the
+working stem and finishes a bounded form instead of exploding; an audit confirmed the
+rest of the language suite already total against panics.
 
-### A citation affordance
+### Foundations for what's next
 
-Pick a citation whose source has a reference scheme and the cite picker (`Ctrl+V @`)
-inserts `@key[]` with the cursor *inside the brackets*, ready for the locus — an
-ordinary source still gets a bare `@key`.
+Two behaviour-preserving refactors: a reusable full-screen-TUI shell (`tui_host`) and a
+companion tree-pane that roots on any system book by tag — groundwork the next companion
+app builds on rather than forks.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** New config `sources.glossary`; the `term#super[N]` sense
-tag; the scheme-aware cite-picker insert — all opt-in. Everything is additive; existing
-projects are unaffected. Test suite → 2464.
+**No new runtime crates.** Everything is hardening or internal; projects and scripts
+behave identically, except the 16 newly-gated verbs now honour a `store_read` denial if
+you set one. Warning-free (binary and tests). Test suite → 2470.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

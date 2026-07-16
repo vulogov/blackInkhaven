@@ -61,16 +61,9 @@ pub(crate) use focus::Focus;
 /// by `/undisputed`. A `Node.tags` value; see the RESRCH-UNDISPUTED track.
 pub(super) const UNDISPUTED_TAG: &str = "fact:undisputed";
 
-use std::io;
 use std::path::Path;
 
 use anyhow::Result;
-use crossterm::execute;
-use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
-};
-use ratatui::Terminal;
-use ratatui::backend::CrosstermBackend;
 
 use crate::config::Config;
 use crate::project::ProjectLayout;
@@ -265,31 +258,17 @@ fn launch_tui(
     hierarchy: Hierarchy,
     thread: Option<String>,
 ) -> Result<()> {
-    crate::crash::set_terminal_restore(Some(Box::new(|| {
-        let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen);
-    })));
-
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
-
-    // R-P3: resolve which thread to open (the picker fires for >1 thread when
-    // no --thread was given). `None` → the user cancelled; exit cleanly.
-    let result = match picker::resolve_thread(&mut terminal, &layout, thread)? {
-        Some(name) => {
-            let mut app = ResearchApp::new(layout, cfg, store, hierarchy, Some(name))?;
-            app.run(&mut terminal)
+    // The raw-mode / alternate-screen lifecycle + crash-restore hook are shared
+    // with the other companion TUIs; only the picker + app wiring is ours.
+    crate::tui_host::with_terminal(|terminal| {
+        // R-P3: resolve which thread to open (the picker fires for >1 thread when
+        // no --thread was given). `None` → the user cancelled; exit cleanly.
+        match picker::resolve_thread(terminal, &layout, thread)? {
+            Some(name) => {
+                let mut app = ResearchApp::new(layout, cfg, store, hierarchy, Some(name))?;
+                app.run(terminal)
+            }
+            None => Ok(()),
         }
-        None => Ok(()),
-    };
-
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-    terminal.show_cursor()?;
-    crate::crash::set_terminal_restore(None);
-
-    result
+    })
 }
