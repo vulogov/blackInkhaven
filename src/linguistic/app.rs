@@ -27,6 +27,7 @@ use crate::store::{Store, SYSTEM_TAG_LANGUAGES};
 use crate::system_tree::SystemBookTree;
 use crate::tui_host::TuiHost;
 
+use super::session::{Session, SessionTurn};
 use super::LinguisticInvocation;
 
 /// AI-usage category for the cost dashboard.
@@ -62,7 +63,6 @@ enum RightPane {
 }
 
 pub struct LinguisticApp {
-    #[allow(dead_code)] // held for the session-persistence path (next L-P0 increment)
     layout: ProjectLayout,
     cfg: Config,
     store: Store,
@@ -83,6 +83,9 @@ pub struct LinguisticApp {
     streaming_turn: Option<usize>,
     /// Transient status line (hints, errors).
     status: String,
+    /// The persisted chat session (`--session`); transcript is saved on each
+    /// completed turn and replayed on open.
+    session: Session,
     should_quit: bool,
 }
 
@@ -101,6 +104,21 @@ impl LinguisticApp {
             }
         }
 
+        // Open (or create) the named session and replay its transcript.
+        let now = chrono::Utc::now().to_rfc3339();
+        let session_name = inv.session.as_deref().unwrap_or("default");
+        let session = Session::open_or_create(&layout, session_name, now)?;
+        let chat: Vec<Turn> = session
+            .turns
+            .iter()
+            .map(|t| Turn {
+                prompt: t.prompt.clone(),
+                response: t.response.clone(),
+                streaming: false,
+                scope: t.scope.clone(),
+            })
+            .collect();
+
         let status = if tree.root.is_none() {
             "No Language system book yet — open the editor and create a language first."
                 .to_string()
@@ -118,13 +136,14 @@ impl LinguisticApp {
             tree,
             preview: String::new(),
             right: RightPane::Chat,
-            chat: Vec::new(),
-            chat_scroll: 0,
+            chat,
+            chat_scroll: u16::MAX, // open scrolled to the latest turn
             input: String::new(),
             input_focused: false,
             stream_rx: None,
             streaming_turn: None,
             status,
+            session,
             should_quit: false,
         };
         app.refresh_preview();
@@ -379,10 +398,28 @@ impl TuiHost for LinguisticApp {
         if done {
             self.stream_rx = None;
             self.streaming_turn = None;
+            let mut to_record = None;
             if let Some(turn) = self.chat.get_mut(idx) {
                 turn.streaming = false;
+                // Persist genuine answers; skip empty or error-placeholder turns.
+                let ok = !turn.response.trim().is_empty() && !turn.response.starts_with('[');
+                if ok {
+                    to_record = Some(SessionTurn {
+                        prompt: turn.prompt.clone(),
+                        response: turn.response.clone(),
+                        scope: turn.scope.clone(),
+                        timestamp: chrono::Utc::now().to_rfc3339(),
+                    });
+                }
             }
-            self.status = "i ask · Tab preview/chat · ↑↓/jk move · q quit".to_string();
+            self.status = if let Some(t) = to_record {
+                match self.session.record(t, &self.layout) {
+                    Ok(()) => "i ask · Tab preview/chat · ↑↓/jk move · q quit".to_string(),
+                    Err(e) => format!("answer received, but the session didn't save: {e}"),
+                }
+            } else {
+                "i ask · Tab preview/chat · ↑↓/jk move · q quit".to_string()
+            };
         }
     }
 

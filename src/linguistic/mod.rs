@@ -21,6 +21,7 @@ use crate::store::hierarchy::Hierarchy;
 use crate::store::Store;
 
 mod app;
+mod session;
 
 pub use app::LinguisticApp;
 
@@ -32,8 +33,7 @@ pub struct LinguisticInvocation {
     /// tree opens at the Languages book root.
     pub language: Option<String>,
     /// `--session <name>`: open (or create) a named chat session. Defaults to
-    /// `default`. Wired into the grounded chat in the next L-P0 increment.
-    #[allow(dead_code)]
+    /// `default`.
     pub session: Option<String>,
 }
 
