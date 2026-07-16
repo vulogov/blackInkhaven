@@ -142,6 +142,27 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     // 1.2.6+ events — reads.
     ("ink.event.list", category::STORE_READ),
     ("ink.event.list_orphans", category::STORE_READ),
+    // Timeline-critique reads — all pull events/calendar/config and push a
+    // report; none mutate the store.
+    ("ink.event.critique.run", category::STORE_READ),
+    ("ink.event.critique.orphan_check", category::STORE_READ),
+    ("ink.event.critique.fuzzy_overlap_check", category::STORE_READ),
+    ("ink.event.critique.config", category::STORE_READ),
+    ("ink.event.critique.custom", category::STORE_READ),
+    // Inner Socrates inspectors — read persona/findings/ledger/usage; the
+    // Fast track runs in-memory over supplied text and persists nothing.
+    ("ink.inner_socrates.check.fast", category::STORE_READ),
+    ("ink.inner_socrates.findings.list", category::STORE_READ),
+    ("ink.inner_socrates.ledger.list", category::STORE_READ),
+    ("ink.inner_socrates.persona.active", category::STORE_READ),
+    ("ink.inner_socrates.personas.list", category::STORE_READ),
+    ("ink.inner_socrates.usage.today", category::STORE_READ),
+    // World fact-check timeline queries — read-only lookups over the calendar.
+    ("ink.world.fact_check.timeline.effective_date", category::STORE_READ),
+    ("ink.world.fact_check.timeline.events_for_character", category::STORE_READ),
+    ("ink.world.fact_check.timeline.events_for_place", category::STORE_READ),
+    ("ink.world.fact_check.timeline.events_near", category::STORE_READ),
+    ("ink.world.fact_check.timeline.season_for", category::STORE_READ),
     // 1.2.16+ Phase I.4.a — threads (read) +
     // review (read).
     ("ink.thread.list", category::STORE_READ),
@@ -441,6 +462,46 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.inner_editor.engage", category::AI_WRITE),
 ];
 
+/// Words that are **deliberately** left out of [`WORD_CATEGORIES`] because they
+/// touch none of the protected resources (store / filesystem / network / AI /
+/// editor). They are pure, in-memory value transforms: a script can observe or
+/// reshape data it already holds, but cannot read or persist anything through
+/// them. Any effect reaches the outside world only via a *categorised* word
+/// (e.g. `ink.pdf.load`/`ink.pdf.save` gate the whole PDF pipeline; the
+/// intermediate ops mutate an in-memory handle only).
+///
+/// This list exists so `every_registered_word_is_classified` can tell a
+/// genuinely-pure word apart from one whose category was simply forgotten — the
+/// latter would be silently allowed, escaping `disabled_categories`. It has no
+/// runtime role (a pure word is allowed precisely *by its absence* from
+/// [`WORD_CATEGORIES`]); it is the intentional-purity ledger the coverage test
+/// checks against.
+#[allow(dead_code)] // consumed by the classification tests; a documentation artifact otherwise
+pub const PURE_UNCATEGORISED: &[&str] = &[
+    // Pure data constructor — builds a Bund dict from stack values.
+    "ink.lang.dict",
+    // PDF pipeline: `load` (fs_read) and `save` (fs_write) are the only FS gates;
+    // every op below transforms an in-memory `PdfDoc` handle and never touches disk.
+    "ink.pdf.pages",
+    "ink.pdf.extract",
+    "ink.pdf.delete",
+    "ink.pdf.rotate",
+    "ink.pdf.reorder",
+    "ink.pdf.merge",
+    "ink.pdf.impose",
+    "ink.pdf.cover",
+    "ink.pdf.barcode",
+    "ink.pdf.preflight",
+    "ink.pdf.grayscale",
+    "ink.pdf.optimize",
+    "ink.pdf.watermark",
+    "ink.pdf.sample",
+    "ink.pdf.title",
+    "ink.pdf.set_title",
+    "ink.pdf.set_author",
+    "ink.pdf.strip_metadata",
+];
+
 /// Policy loaded from `inkhaven.hjson`'s `scripting` stanza. All
 /// three lists default to empty — combined with
 /// `DEFAULT_DENIED_CATEGORIES` they give the conservative
@@ -637,6 +698,68 @@ fn denied_stub(_vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Guards the policy footgun: a word registered but absent from BOTH
+    /// [`WORD_CATEGORIES`] and [`PURE_UNCATEGORISED`] is silently *allowed* —
+    /// it escapes `disabled_categories` entirely. Every `ink.*` verb the stdlib
+    /// registers must therefore be consciously classified as either gated (a
+    /// category) or pure (the allowlist). Adding a verb without doing so fails
+    /// here, not in production.
+    #[test]
+    fn every_registered_word_is_classified() {
+        use rust_multistackvm::multistackvm::VM;
+        let mut vm = VM::new();
+        crate::scripting::stdlib::register_ink_stdlib(&mut vm).unwrap();
+
+        let gated: std::collections::HashSet<&str> =
+            WORD_CATEGORIES.iter().map(|(w, _)| *w).collect();
+        let pure: std::collections::HashSet<&str> =
+            PURE_UNCATEGORISED.iter().copied().collect();
+
+        // `register_inline` keys the handler as `<name>_inline`; aliases live in
+        // `name_mapping` and inherit the canonical word's gate, so we only police
+        // the canonical `ink.*` names here.
+        let mut unclassified: Vec<String> = vm
+            .inline_fun
+            .keys()
+            .filter_map(|k| k.strip_suffix("_inline"))
+            .filter(|name| name.starts_with("ink."))
+            .filter(|name| !gated.contains(*name) && !pure.contains(*name))
+            .map(String::from)
+            .collect();
+        unclassified.sort();
+
+        assert!(
+            unclassified.is_empty(),
+            "{} ink.* verb(s) are neither in WORD_CATEGORIES nor PURE_UNCATEGORISED \
+             (they would be silently allowed, bypassing disabled_categories). \
+             Classify each — add a category or, if it touches no protected resource, \
+             add it to PURE_UNCATEGORISED:\n{}",
+            unclassified.len(),
+            unclassified.join("\n"),
+        );
+    }
+
+    /// The pure-allowlist must not rot: every entry must still be a registered
+    /// word, and must not also carry a category (which would be contradictory).
+    #[test]
+    fn pure_allowlist_has_no_stale_or_conflicting_entries() {
+        use rust_multistackvm::multistackvm::VM;
+        let mut vm = VM::new();
+        crate::scripting::stdlib::register_ink_stdlib(&mut vm).unwrap();
+        let gated: std::collections::HashSet<&str> =
+            WORD_CATEGORIES.iter().map(|(w, _)| *w).collect();
+        for word in PURE_UNCATEGORISED {
+            assert!(
+                vm.inline_fun.contains_key(&format!("{word}_inline")),
+                "{word} is on PURE_UNCATEGORISED but is not a registered word (stale entry)",
+            );
+            assert!(
+                !gated.contains(word),
+                "{word} is on PURE_UNCATEGORISED and also in WORD_CATEGORIES — pick one",
+            );
+        }
+    }
 
     #[test]
     fn default_policy_is_conservative() {
