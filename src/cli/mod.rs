@@ -1137,6 +1137,21 @@ pub enum Command {
         report: bool,
     },
 
+    /// 1.7 LING-1 — launch the Linguistic companion (`inkhaven linguistic`): a
+    /// full-screen TUI for developing, verifying, analysing and researching the
+    /// project's constructed languages, over the `Language` system book. The
+    /// non-interactive `inkhaven language …` family hosts the same operations
+    /// as one-shot commands.
+    Linguistic {
+        /// Open with this language selected (case-insensitive). Without it, the
+        /// tree opens at the Languages book root.
+        #[arg(long, value_name = "NAME")]
+        language: Option<String>,
+        /// Open (or create) a named chat session. Defaults to `default`.
+        #[arg(long, value_name = "NAME")]
+        session: Option<String>,
+    },
+
     /// 1.2.10+ — launch the standalone TUI configuration
     /// editor for `<project>/inkhaven.hjson`.  Tree-pane
     /// hierarchy on the left, schema-aware widgets on the
@@ -5638,6 +5653,11 @@ impl Cli {
                     socrates,
                     report,
                 },
+            )
+            .map_err(Into::into),
+            Command::Linguistic { language, session } => crate::linguistic::run(
+                &project,
+                crate::linguistic::LinguisticInvocation { language, session },
             )
             .map_err(Into::into),
             Command::Config => crate::config_tui::run(&project).map_err(Into::into),
