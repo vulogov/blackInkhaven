@@ -536,7 +536,7 @@ impl ResearchApp {
         let name = thread_name.unwrap_or_else(|| "default".to_string());
         let now = chrono::Utc::now().to_rfc3339();
         let thread = ResearchThread::open_or_create(&layout, &name, now)?;
-        let facts_tree = FactsTree::new(&hierarchy);
+        let facts_tree = FactsTree::new(&hierarchy, crate::store::SYSTEM_TAG_FACTS);
         // G4 — restore pins persisted in the thread (skip any that no longer exist).
         let pinned_nodes: Vec<Uuid> = thread
             .pinned_nodes
