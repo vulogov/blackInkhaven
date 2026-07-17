@@ -3276,6 +3276,19 @@ pub enum LanguageCommand {
         out: Option<String>,
     },
 
+    /// 1.7 LING-1 Wave-2 — recommend phonemes that would round out the inventory
+    /// (the voiced counterpart missing beside a voiceless obstruent, a
+    /// near-universal segment the inventory lacks), via the feature matrix.
+    /// Advisory; changes nothing.
+    #[command(name = "suggest-phonemes")]
+    SuggestPhonemes {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Emit the report as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
     /// 1.7 LING-1 L-P1 — the Consequence Tracer. Preview a pending sound change
     /// across the current lexicon (which words shift, which distinctions merge,
     /// which new homophones appear) without committing it. The rule uses the

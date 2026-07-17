@@ -223,6 +223,37 @@ fn print_harmony(language: &str, r: &HarmonyReport) {
     }
 }
 
+/// LING-1 Wave-2 — `inkhaven language suggest-phonemes <lang>`: recommend
+/// phonemes that would round out the inventory (voiced counterparts, missing
+/// near-universals), via the feature matrix. Advisory; changes nothing.
+pub(crate) fn suggest_phonemes(project: &Path, language: &str, json: bool) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let report = crate::conlang::suggest::suggest(&phon);
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report)
+                .map_err(|e| Error::Store(format!("serializing suggestions: {e}")))?
+        );
+        return Ok(());
+    }
+
+    println!("phoneme suggestions · {language}");
+    if report.phoneme_count == 0 {
+        println!("  (no phoneme inventory — define one in the Phonology chapter)");
+    } else if report.suggestions.is_empty() {
+        println!("  the inventory is well-rounded — nothing obvious to add.");
+    } else {
+        for s in &report.suggestions {
+            println!("      + /{}/  — {}", s.ipa, s.reason);
+        }
+        println!("  (advisory — add any you like in the Phonology chapter; nothing changed.)");
+    }
+    Ok(())
+}
+
 /// LING-1 L-P4 — `inkhaven language sketch <lang>`: a one-page, deterministic
 /// overview of the language, assembling the whole analysis suite into prose.
 pub(crate) fn sketch(project: &Path, language: &str, out: Option<&str>) -> Result<()> {
