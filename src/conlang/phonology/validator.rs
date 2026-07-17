@@ -20,6 +20,32 @@ pub fn is_legal(phon: &Phonology, seq: &[String]) -> bool {
         .all(|c| satisfies(phon, seq, sylls.as_deref(), c))
 }
 
+/// LING-1 L-P6 (Oracle) — describe each constraint `seq` violates (empty when
+/// legal). Reuses the exact per-constraint check `is_legal` runs.
+pub fn violations(phon: &Phonology, seq: &[String]) -> Vec<String> {
+    let sylls = if phon.constraints.iter().any(|c| c.needs_syllables()) {
+        Some(syllabify(phon, seq))
+    } else {
+        None
+    };
+    phon.constraints
+        .iter()
+        .filter(|c| !satisfies(phon, seq, sylls.as_deref(), c))
+        .map(describe_constraint)
+        .collect()
+}
+
+fn describe_constraint(c: &PhonotacticConstraint) -> String {
+    match c {
+        PhonotacticConstraint::MaxClusterSize(n) => format!("consonant cluster longer than {n}"),
+        PhonotacticConstraint::NoGeminate => "a geminate (doubled) segment".to_string(),
+        PhonotacticConstraint::ForbidBigram(a, b) => format!("the forbidden sequence /{a}{b}/"),
+        PhonotacticConstraint::ForbidInOnset(cs) => format!("a forbidden onset ({})", cs.join(", ")),
+        PhonotacticConstraint::ForbidInCoda(cs) => format!("a forbidden coda ({})", cs.join(", ")),
+        PhonotacticConstraint::SonoritySequencing => "a sonority-sequencing violation".to_string(),
+    }
+}
+
 fn satisfies(
     phon: &Phonology,
     seq: &[String],

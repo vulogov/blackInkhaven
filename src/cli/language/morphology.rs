@@ -8,6 +8,117 @@ use crate::error::{Error, Result};
 
 use super::*;
 
+/// LING-1 L-P6 — `inkhaven language check <lang> --word W`: the Oracle. Judge a
+/// candidate word for well-formedness by level (phonotactics, morphology).
+pub(crate) fn oracle_check(project: &Path, language: &str, word: &str, json: bool) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let morph = load_morphology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+    let report = crate::conlang::oracle::check_word(&phon, &morph, &entries, word);
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report)
+                .map_err(|e| Error::Store(format!("serializing oracle: {e}")))?
+        );
+        return Ok(());
+    }
+
+    println!("oracle · {language} · {word}");
+    if report.ok() {
+        println!("  ✓ a well-formed word of the language.");
+    } else {
+        for f in &report.findings {
+            println!("      ✗ [{}] {}", f.level, f.message);
+        }
+    }
+    Ok(())
+}
+
+/// LING-1 L-P5 — `inkhaven language link <lang> --verb V --args "a,b,c"`: work
+/// out a clause's argument structure — thematic roles, RRG macroroles, and
+/// grammatical relations — from the verb's valence.
+pub(crate) fn link_args(
+    project: &Path,
+    language: &str,
+    verb: &str,
+    args_csv: &str,
+    valence: Option<&str>,
+    json: bool,
+) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let (spec, _) = load_grammar_spec(&store, &hierarchy, &lang_book)?;
+
+    // Resolve the valence: explicit flag, else the declared verb class, else "" so
+    // the linker infers it from the argument count.
+    let resolved = valence.map(str::to_string).unwrap_or_else(|| {
+        spec.verb_classes
+            .iter()
+            .find(|vc| vc.name.eq_ignore_ascii_case(verb))
+            .map(|vc| vc.valence.clone())
+            .unwrap_or_default()
+    });
+    let args: Vec<String> =
+        args_csv.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+
+    let report = crate::conlang::link::link(verb, &resolved, &args);
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report)
+                .map_err(|e| Error::Store(format!("serializing link: {e}")))?
+        );
+        return Ok(());
+    }
+
+    let val = if report.valence.trim().is_empty() { "(inferred)".to_string() } else { report.valence.clone() };
+    println!("argument linking · {language} · {verb} [{val}]");
+    for a in &report.args {
+        println!("      {:<10} {:<10} {:<13} {}", a.arg, a.theta_role, a.macrorole, a.relation);
+    }
+    for i in &report.issues {
+        println!("  ⚠ {i}");
+    }
+    Ok(())
+}
+
+/// LING-1 L-P5 — `inkhaven language parse <lang> --word W`: analyse a surface
+/// word into root + affixes by reversing the morphology (the morphological
+/// parser).
+pub(crate) fn parse_surface(project: &Path, language: &str, word: &str, json: bool) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let morph = load_morphology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+    let report = crate::conlang::parse::parse(&phon, &morph, &entries, word);
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report)
+                .map_err(|e| Error::Store(format!("serializing parse: {e}")))?
+        );
+        return Ok(());
+    }
+
+    println!("parse · {language} · {word}");
+    if report.parses.is_empty() {
+        println!("  no analysis — no root + affix combination reaches a dictionary word.");
+        return Ok(());
+    }
+    for p in &report.parses {
+        if p.affixes.is_empty() {
+            println!("      {} ‘{}’  (bare root)", p.root, p.gloss);
+        } else {
+            println!("      {} ‘{}’ + {}", p.root, p.gloss, p.affixes.join(" + "));
+        }
+    }
+    Ok(())
+}
+
 /// Load the `{ grammar: { … } }` typology block from the Grammar chapter,
 /// returning the spec + the paragraph node that holds it (for in-place edits).
 pub(crate) fn load_grammar_spec(
