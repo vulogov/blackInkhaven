@@ -3306,6 +3306,20 @@ pub enum LanguageCommand {
         provider: Option<String>,
     },
 
+    /// 1.7 LING-1 L-P5 — the morphological parser: analyse a surface word into
+    /// root + affixes by reversing the morphology (strip known affixes until what
+    /// remains is a dictionary root). The inverse of paradigm generation.
+    Parse {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The surface word to analyse.
+        #[arg(long, value_name = "WORD")]
+        word: String,
+        /// Emit the analyses as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
     /// 1.7 LING-1 L-P1 — the Consequence Tracer. Preview a pending sound change
     /// across the current lexicon (which words shift, which distinctions merge,
     /// which new homophones appear) without committing it. The rule uses the
