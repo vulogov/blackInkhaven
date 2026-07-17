@@ -177,6 +177,9 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::Stats { language, json } => stats(project, &language, json),
         LanguageCommand::Metrics { language, json } => metrics(project, &language, json),
         LanguageCommand::Universals { language, json } => universals(project, &language, json),
+        LanguageCommand::GrammarCheck { language, json } => {
+            grammar_check(project, &language, json)
+        }
         LanguageCommand::Pairs { language, limit, json } => {
             pairs(project, &language, limit, json)
         }

@@ -20,6 +20,7 @@ pub mod diachronic;
 pub mod gaps;
 pub mod generate;
 pub mod grammar;
+pub mod grammar_check;
 pub mod interchange;
 pub mod lexicon;
 pub mod links;
