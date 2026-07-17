@@ -44,6 +44,8 @@ Add `--help` to any command for its full signature.
 / `paradigm <lang> --root R --template T --gloss G`: Generate a word's inflected forms.
 / `agree <lang> --word W --pos P --features "number=pl,case=nom" [--gloss G]`: Inflect a dependent word to agree with its head's features.
 / `gloss <lang> --text "…"`: Interlinear (word-by-word) gloss of a sentence.
+/ `parse <lang> --word W [--json]`: Analyse a surface word into root + affixes (the morphological parser — the inverse of paradigm generation).
+/ `link <lang> --verb V --args "a,b,c" [--valence V] [--json]`: Work out a clause's thematic roles, RRG macroroles (actor / undergoer) and grammatical relations from the verb's valence.
 / `derive <lang> --root R --gloss G --pos P [--yes]`: Coin derived words from a root.
 / `grammar <lang> [--set feature=value]`: View or set the typology questionnaire.
 / `define-rule <lang>`: Open your `$EDITOR` to hand-author a grammar or phonology rule — the direct authoring path when a rule is easier written than configured.
@@ -75,6 +77,7 @@ Add `--help` to any command for its full signature.
 / `distribution <lang> [--json]`: Where each phoneme appears (onset / nucleus / coda, word edges) and any restricted distributions.
 / `universals <lang> [--json]`: Check the grammar's head-directionality harmony and the classic implicational universals (Greenberg/Dryer).
 / `grammar-check <lang> [--json]`: Validate the typed grammar blocks (`ug_parameters`, `verb_classes`) and their consistency with the WALS feature answers.
+/ `check <lang> --word W [--json]`: The Oracle — judge a candidate word for well-formedness by level (phonotactics, morphology).
 / `sketch <lang> [--out F]`: A one-page prose overview of the language, assembling all of the above.
 
 #section("The Linguistic companion")
