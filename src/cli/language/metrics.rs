@@ -6,6 +6,8 @@
 use std::path::Path;
 
 use crate::conlang::metrics::LanguageMetrics;
+use crate::conlang::naturalness::NaturalnessReport;
+use crate::conlang::pairs::PairsReport;
 use crate::error::{Error, Result};
 
 use super::*;
@@ -61,4 +63,117 @@ fn print_report(language: &str, m: &LanguageMetrics) {
         m.mean_moras,
         m.heavy_ratio * 100.0,
     );
+}
+
+/// LING-1 Wave-2 — `inkhaven language pairs <lang>`: minimal pairs in the lexicon
+/// and the distinctive feature each turns on (the functional load of the
+/// language's contrasts).
+pub(crate) fn pairs(project: &Path, language: &str, limit: usize, json: bool) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+    let report = crate::conlang::pairs::minimal_pairs(&phon, &entries, limit.max(1));
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report)
+                .map_err(|e| Error::Store(format!("serializing pairs: {e}")))?
+        );
+        return Ok(());
+    }
+
+    print_pairs(language, &report);
+    Ok(())
+}
+
+fn print_pairs(language: &str, r: &PairsReport) {
+    println!("minimal pairs · {language}");
+    if r.analyzable_words == 0 {
+        println!("  (no analyzable words — define a phoneme inventory and add dictionary entries)");
+        return;
+    }
+    println!(
+        "  {} minimal pair(s) across {} analyzable words",
+        r.pair_count, r.analyzable_words
+    );
+    if !r.contrast_load.is_empty() {
+        println!("  functional load (single-feature contrasts):");
+        let max = r.contrast_load.iter().map(|(_, c)| *c).max().unwrap_or(1).max(1);
+        for (feat, count) in &r.contrast_load {
+            let bar = "█".repeat(((*count * 20) / max).max(1));
+            println!("      {feat:<12} {bar} {count}");
+        }
+    }
+    if r.complex_contrasts > 0 {
+        println!("  {} pair(s) contrast in more than one feature", r.complex_contrasts);
+    }
+    if !r.pairs.is_empty() {
+        println!("  examples:");
+        for p in &r.pairs {
+            let contrast = if p.features.is_empty() {
+                "(outside the feature matrix)".to_string()
+            } else {
+                format!("[{}]", p.features.join(", "))
+            };
+            println!("      {} / {}   {}~{} {}", p.a, p.b, p.seg_a, p.seg_b, contrast);
+        }
+    }
+}
+
+/// LING-1 Wave-2 — `inkhaven language naturalness <lang>`: judge the phoneme
+/// inventory against cross-linguistic tendencies (voicing symmetry, place
+/// coverage, near-universal segments, size) via the feature matrix.
+pub(crate) fn naturalness(project: &Path, language: &str, json: bool) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let report = crate::conlang::naturalness::naturalness(&phon);
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report)
+                .map_err(|e| Error::Store(format!("serializing naturalness: {e}")))?
+        );
+        return Ok(());
+    }
+
+    print_naturalness(language, &report);
+    Ok(())
+}
+
+fn print_naturalness(language: &str, r: &NaturalnessReport) {
+    use crate::conlang::naturalness::SizeClass;
+    println!("inventory naturalness · {language}");
+    if r.phoneme_count == 0 {
+        println!("  (no phoneme inventory — define one in the Phonology chapter)");
+        return;
+    }
+    let size = match r.size_class {
+        SizeClass::Small => "small",
+        SizeClass::Typical => "typical",
+        SizeClass::Large => "large",
+    };
+    println!(
+        "  inventory  · {} phonemes ({} C / {} V) — {size}",
+        r.phoneme_count, r.consonants, r.vowels
+    );
+    if !r.voicing_pairs.is_empty() {
+        let pairs =
+            r.voicing_pairs.iter().map(|(a, b)| format!("{a}/{b}")).collect::<Vec<_>>().join(" ");
+        println!("  voicing    · {pairs}");
+    }
+    if !r.voicing_gaps.is_empty() {
+        println!("  voicing gap· {} (no counterpart)", r.voicing_gaps.join(" "));
+    }
+    println!("  places     · {}", r.places_present.join(" "));
+    if r.missing_common.is_empty() {
+        println!("  common     · all near-universal segments present");
+    } else {
+        println!("  missing    · {} (near-universal)", r.missing_common.join(" "));
+    }
+    if !r.unknown_segments.is_empty() {
+        println!("  outside    · {} (not in the feature matrix)", r.unknown_segments.join(" "));
+    }
+    println!("  score      · {:.2} (0–1; higher = more typologically ordinary)", r.score);
 }

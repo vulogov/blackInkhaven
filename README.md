@@ -21,45 +21,42 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.7.0 — The Linguist's Desk
+## Latest release · 1.7.1 — The Phonologist's Toolkit
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.7.0.md`](Documentation/RELEASE_NOTES/1.7.0.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.7.1.md`](Documentation/RELEASE_NOTES/1.7.1.md)
 
-The 1.7 flagship opens: a full-spectrum linguistic layer for the constructed languages a
-book invents. This first cut is the companion and its first analysis instruments. **No
-new runtime crates.** Test suite → 2484, warning-free.
+The 1.7 linguistic layer grows its first analysis family: a distinctive-feature matrix,
+and two instruments that read a language's sound system through it. **No new runtime
+crates.** Test suite → 2495, warning-free.
 
-### A companion for your languages
+### A distinctive-feature matrix
 
-`inkhaven linguistic` launches a new full-screen TUI over the Language book — the tree of
-your languages on the left, and a right pane that cycles (Tab) through **Preview**,
-**Chat**, **Metrics** and **Universals**. The chat is a streaming, **grounded**
-conversation with the Inner Linguist: each answer is retrieved from the language sub-book
-you're in (the same book-RAG the Research companion uses), so it reasons about *your*
-phonology, lexicon and grammar, and answers in the project language. Sessions are named
-and resumable (`--session`); `--language` opens focused.
+A curated, PHOIBLE-aligned lookup from IPA segments to their distinctive features (place,
+manner, voicing, height…) for ~85 common segments — answering the question every
+phonological analysis needs: *how do these two sounds differ?*
 
-### Metrics — a language measured against itself
+### Minimal pairs — the functional load of your contrasts
 
-`inkhaven language metrics <lang>` reports the information-theoretic complement to
-`stats`: phoneme-distribution **entropy** (+ evenness, perplexity), the **Zipf fit** of
-that distribution, **phonotactic saturation** (attested vs possible syllables), and
-**mora weight**. Deterministic and corpus-free.
+`inkhaven language pairs <lang>` finds every minimal pair in the dictionary (two words
+identical but for one segment) and, through the matrix, reports the single feature each
+turns on — so you see which contrasts your language leans on and which are barely used.
 
-### Universals — a language against the typological baseline
+### Naturalness — your inventory against the baseline
 
-`inkhaven language universals <lang>` judges your grammar block against how the world's
-languages behave: **head-directionality harmony** (Dryer), the classic **implicational
-universals** (Greenberg 2/3/4, OV↔GenN, OV↔RelN) judged satisfied / violated / n-a, and a
-word-order + morphotype survey. A violation is a flag, not an error. The typological
-catalogue grew 16 → 22 features.
+`inkhaven language naturalness <lang>` judges the phoneme inventory against
+cross-linguistic tendencies: voicing-pair symmetry (a `/k/`-without-`/ɡ/` gap?),
+place-series coverage, the near-universal segments, and size — a transparent 0–1 score. A
+gap is a flag, not an error.
+
+Both surface in the Linguistic companion: the right-pane **Phonology** view now shows the
+metrics *and* naturalness together, and a new **Minimal pairs** view (`p`) lists the
+contrasts.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Everything is additive — a new `linguistic` command and two
-new `language` subcommands (`metrics`, `universals`); existing projects, languages and
-scripts are unchanged. Warning-free (binary and tests). Test suite → 2484. Later 1.7.x
-releases bring the analysis Oracle, feature-matrix metrics, and the Inner Linguist reader.
+**No new runtime crates.** Everything is additive — two new `language` subcommands
+(`pairs`, `naturalness`) and a bundled feature-data file; existing projects and languages
+are unchanged. Warning-free (binary and tests). Test suite → 2495.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
