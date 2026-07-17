@@ -190,6 +190,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::Distribution { language, json } => {
             distribution(project, &language, json)
         }
+        LanguageCommand::Sketch { language, out } => sketch(project, &language, out.as_deref()),
         LanguageCommand::Trace { language, rule, limit, json } => {
             trace(project, &language, &rule, limit, json)
         }
