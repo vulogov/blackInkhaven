@@ -60,6 +60,17 @@ impl Turn {
 enum RightPane {
     Chat,
     Preview,
+    Metrics,
+}
+
+impl RightPane {
+    fn next(self) -> RightPane {
+        match self {
+            RightPane::Chat => RightPane::Preview,
+            RightPane::Preview => RightPane::Metrics,
+            RightPane::Metrics => RightPane::Chat,
+        }
+    }
 }
 
 pub struct LinguisticApp {
@@ -71,6 +82,8 @@ pub struct LinguisticApp {
     tree: SystemBookTree,
     /// Cached preview text for the selected node (recomputed on move).
     preview: String,
+    /// Cached metrics report for the current language (recomputed on `m`).
+    metrics_text: String,
     right: RightPane,
     /// The chat transcript.
     chat: Vec<Turn>,
@@ -125,7 +138,7 @@ impl LinguisticApp {
         } else if tree.is_empty() {
             "No languages yet. `inkhaven language init <name>` scaffolds one.".to_string()
         } else {
-            "i ask · Tab preview/chat · ↑↓/jk move · →/l ←/h fold · q quit".to_string()
+            "i ask · m metrics · Tab cycle · ↑↓/jk move · →/l ←/h fold · q quit".to_string()
         };
 
         let mut app = LinguisticApp {
@@ -135,6 +148,7 @@ impl LinguisticApp {
             hierarchy,
             tree,
             preview: String::new(),
+            metrics_text: String::new(),
             right: RightPane::Chat,
             chat,
             chat_scroll: u16::MAX, // open scrolled to the latest turn
@@ -193,6 +207,26 @@ impl LinguisticApp {
     /// the current selection — the grounding scope. `None` at/above that level.
     fn current_language_book(&self) -> Option<Uuid> {
         language_book_of(&self.hierarchy, self.tree.root?, self.tree.selected()?)
+    }
+
+    /// Compute (and cache) the L-P2 metrics report for the current language.
+    fn compute_metrics(&mut self) {
+        let Some(book_id) = self.current_language_book() else {
+            self.metrics_text = "Select a language to see its metrics.".to_string();
+            return;
+        };
+        let Some(book) = self.hierarchy.get(book_id).cloned() else {
+            self.metrics_text = "Select a language to see its metrics.".to_string();
+            return;
+        };
+        let phon = crate::cli::language::load_phonology(&self.store, &self.hierarchy, &book)
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let entries = crate::cli::language::load_dictionary(&self.store, &self.hierarchy, &book)
+            .unwrap_or_default();
+        let m = crate::conlang::metrics::metrics(&phon, &entries);
+        self.metrics_text = format_metrics(&book.title, &m);
     }
 
     /// Send `query` to the model, grounded on the current language sub-book.
@@ -347,6 +381,42 @@ fn language_book_of(hierarchy: &Hierarchy, root: Uuid, node: Uuid) -> Option<Uui
     }
 }
 
+/// Render the L-P2 metrics as a plain-text report for the right pane.
+fn format_metrics(language: &str, m: &crate::conlang::metrics::LanguageMetrics) -> String {
+    if m.analyzable_words == 0 {
+        return format!(
+            "{language}\n\nNo analyzable words yet.\n\nAdd dictionary entries that parse as \
+             the language's phonemes, and define a phoneme inventory in the Phonology chapter."
+        );
+    }
+    format!(
+        "{language}\n\n\
+         corpus     {} analyzable words, {} segments\n\n\
+         entropy    {:.2} bits (max {:.2})\n\
+         evenness   {:.0}%\n\
+         perplexity {:.1}\n\n\
+         zipf slope {:.2}  (≈ −1 is Zipfian)\n\
+         zipf fit   R² {:.2}\n\n\
+         syllables  {} attested / {} possible\n\
+         saturation {:.0}%\n\n\
+         moras/word {:.2}\n\
+         heavy      {:.0}% of syllables",
+        m.analyzable_words,
+        m.total_segments,
+        m.phoneme_entropy,
+        m.phoneme_entropy_max,
+        m.phoneme_evenness * 100.0,
+        m.phoneme_perplexity,
+        m.zipf_slope,
+        m.zipf_r2,
+        m.attested_syllables,
+        m.possible_syllables,
+        m.syllable_saturation * 100.0,
+        m.mean_moras,
+        m.heavy_ratio * 100.0,
+    )
+}
+
 /// Project-language → its English name, for the "write in X" instruction.
 fn language_name(lang: &crate::prose::ProseLanguage) -> &'static str {
     use crate::prose::ProseLanguage::*;
@@ -414,11 +484,11 @@ impl TuiHost for LinguisticApp {
             }
             self.status = if let Some(t) = to_record {
                 match self.session.record(t, &self.layout) {
-                    Ok(()) => "i ask · Tab preview/chat · ↑↓/jk move · q quit".to_string(),
+                    Ok(()) => "i ask · m metrics · Tab cycle · ↑↓/jk move · q quit".to_string(),
                     Err(e) => format!("answer received, but the session didn't save: {e}"),
                 }
             } else {
-                "i ask · Tab preview/chat · ↑↓/jk move · q quit".to_string()
+                "i ask · m metrics · Tab cycle · ↑↓/jk move · q quit".to_string()
             };
         }
     }
@@ -469,11 +539,14 @@ impl TuiHost for LinguisticApp {
                 self.input_focused = true;
             }
             KeyCode::Tab => {
-                self.right = if self.right == RightPane::Chat {
-                    RightPane::Preview
-                } else {
-                    RightPane::Chat
-                };
+                self.right = self.right.next();
+                if self.right == RightPane::Metrics {
+                    self.compute_metrics();
+                }
+            }
+            KeyCode::Char('m') => {
+                self.right = RightPane::Metrics;
+                self.compute_metrics();
             }
             KeyCode::PageDown => self.chat_scroll = self.chat_scroll.saturating_add(5),
             KeyCode::PageUp => self.chat_scroll = self.chat_scroll.saturating_sub(5),
@@ -509,6 +582,9 @@ impl TuiHost for LinguisticApp {
         }
         if moved {
             self.refresh_preview();
+            if self.right == RightPane::Metrics {
+                self.compute_metrics();
+            }
         }
     }
 }
@@ -537,7 +613,16 @@ impl LinguisticApp {
         match self.right {
             RightPane::Preview => self.render_preview(frame, cols[1]),
             RightPane::Chat => self.render_chat(frame, cols[1]),
+            RightPane::Metrics => self.render_metrics(frame, cols[1]),
         }
+    }
+
+    fn render_metrics(&self, frame: &mut Frame, area: Rect) {
+        let block = Block::default().borders(Borders::ALL).title(" Metrics ");
+        frame.render_widget(
+            Paragraph::new(self.metrics_text.as_str()).block(block).wrap(Wrap { trim: false }),
+            area,
+        );
     }
 
     fn render_tree(&self, frame: &mut Frame, area: Rect) {
