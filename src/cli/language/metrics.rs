@@ -223,6 +223,26 @@ fn print_harmony(language: &str, r: &HarmonyReport) {
     }
 }
 
+/// LING-1 L-P4 — `inkhaven language sketch <lang>`: a one-page, deterministic
+/// overview of the language, assembling the whole analysis suite into prose.
+pub(crate) fn sketch(project: &Path, language: &str, out: Option<&str>) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+    let (spec, _) = load_grammar_spec(&store, &hierarchy, &lang_book)?;
+    let text = crate::conlang::sketch::sketch(&lang_book.title, &phon, &entries, &spec);
+
+    match out {
+        Some(path) => {
+            crate::io_atomic::write(std::path::Path::new(path), text.as_bytes())
+                .map_err(|e| Error::Config(format!("write {path}: {e}")))?;
+            eprintln!("wrote sketch to {path}");
+        }
+        None => print!("{text}"),
+    }
+    Ok(())
+}
+
 /// LING-1 Wave-2 — `inkhaven language distribution <lang>`: where each phoneme
 /// appears (onset / nucleus / coda, word edges) and any restricted distributions.
 pub(crate) fn distribution(project: &Path, language: &str, json: bool) -> Result<()> {

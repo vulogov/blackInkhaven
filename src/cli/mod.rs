@@ -3265,6 +3265,17 @@ pub enum LanguageCommand {
         json: bool,
     },
 
+    /// 1.7 LING-1 L-P4 — a one-page grammar sketch: a deterministic prose
+    /// overview of the language, assembling the phonology, typology and lexicon
+    /// analyses. Instant and always current (no AI). `--out` writes to a file.
+    Sketch {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Write the sketch to this file (default: stdout).
+        #[arg(long, value_name = "PATH")]
+        out: Option<String>,
+    },
+
     /// 1.7 LING-1 L-P1 — the Consequence Tracer. Preview a pending sound change
     /// across the current lexicon (which words shift, which distinctions merge,
     /// which new homophones appear) without committing it. The rule uses the

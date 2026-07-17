@@ -14,6 +14,7 @@ pub mod creative;
 pub mod features;
 pub mod naturalness;
 pub mod pairs;
+pub mod sketch;
 pub mod metrics;
 pub mod trace;
 pub mod universals;
