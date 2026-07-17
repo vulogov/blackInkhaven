@@ -8,6 +8,54 @@ use crate::error::{Error, Result};
 
 use super::*;
 
+/// LING-1 L-P5 — `inkhaven language link <lang> --verb V --args "a,b,c"`: work
+/// out a clause's argument structure — thematic roles, RRG macroroles, and
+/// grammatical relations — from the verb's valence.
+pub(crate) fn link_args(
+    project: &Path,
+    language: &str,
+    verb: &str,
+    args_csv: &str,
+    valence: Option<&str>,
+    json: bool,
+) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let (spec, _) = load_grammar_spec(&store, &hierarchy, &lang_book)?;
+
+    // Resolve the valence: explicit flag, else the declared verb class, else "" so
+    // the linker infers it from the argument count.
+    let resolved = valence.map(str::to_string).unwrap_or_else(|| {
+        spec.verb_classes
+            .iter()
+            .find(|vc| vc.name.eq_ignore_ascii_case(verb))
+            .map(|vc| vc.valence.clone())
+            .unwrap_or_default()
+    });
+    let args: Vec<String> =
+        args_csv.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+
+    let report = crate::conlang::link::link(verb, &resolved, &args);
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report)
+                .map_err(|e| Error::Store(format!("serializing link: {e}")))?
+        );
+        return Ok(());
+    }
+
+    let val = if report.valence.trim().is_empty() { "(inferred)".to_string() } else { report.valence.clone() };
+    println!("argument linking · {language} · {verb} [{val}]");
+    for a in &report.args {
+        println!("      {:<10} {:<10} {:<13} {}", a.arg, a.theta_role, a.macrorole, a.relation);
+    }
+    for i in &report.issues {
+        println!("  ⚠ {i}");
+    }
+    Ok(())
+}
+
 /// LING-1 L-P5 — `inkhaven language parse <lang> --word W`: analyse a surface
 /// word into root + affixes by reversing the morphology (the morphological
 /// parser).

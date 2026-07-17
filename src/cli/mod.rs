@@ -3320,6 +3320,26 @@ pub enum LanguageCommand {
         json: bool,
     },
 
+    /// 1.7 LING-1 L-P5 — argument linking: work out a clause's thematic roles,
+    /// RRG macroroles (actor / undergoer) and grammatical relations from the
+    /// verb's valence. `--valence` overrides a declared verb class.
+    Link {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The verb (looked up in the `verb_classes` block for its valence).
+        #[arg(long, value_name = "VERB")]
+        verb: String,
+        /// The clause's arguments, comma-separated (subject first).
+        #[arg(long, value_name = "A,B,C")]
+        args: String,
+        /// Override the valence (intransitive | transitive | ditransitive | impersonal).
+        #[arg(long)]
+        valence: Option<String>,
+        /// Emit the linking as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
     /// 1.7 LING-1 L-P1 — the Consequence Tracer. Preview a pending sound change
     /// across the current lexicon (which words shift, which distinctions merge,
     /// which new homophones appear) without committing it. The rule uses the

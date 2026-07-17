@@ -200,6 +200,9 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::Parse { language, word, json } => {
             parse_surface(project, &language, &word, json)
         }
+        LanguageCommand::Link { language, verb, args, valence, json } => {
+            link_args(project, &language, &verb, &args, valence.as_deref(), json)
+        }
         LanguageCommand::Trace { language, rule, limit, json } => {
             trace(project, &language, &rule, limit, json)
         }
