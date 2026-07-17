@@ -62,6 +62,18 @@ Add `--help` to any command for its full signature.
 / `cognates <proto> --form W`: Trace a proto-form's reflex in every daughter.
 / `reconstruct --forms "…" [--gloss G]`: (AI) Propose a proto-form from cognates.
 / `realism-check <lang>`: (AI) Assess whether the sound-change chain is plausible.
+/ `trace <lang> --rule "s > ʃ / _ i" [--limit N] [--json]`: Preview a pending sound change across the lexicon — which words shift, which merge into new homophones — without committing it.
+
+#section("Analysis")
+
+/ `metrics <lang> [--json]`: Quantitative sound-system metrics — phoneme entropy, the Zipf fit, phonotactic saturation, mora weight.
+/ `naturalness <lang> [--json]`: Judge the phoneme inventory against cross-linguistic tendencies (voicing symmetry, place coverage, near-universals, size) into a 0–1 score.
+/ `pairs <lang> [--limit N] [--json]`: Find minimal pairs and the distinctive feature each turns on — the functional load of your contrasts.
+/ `universals <lang> [--json]`: Check the grammar's head-directionality harmony and the classic implicational universals (Greenberg/Dryer).
+
+#section("The Linguistic companion")
+
+/ `inkhaven linguistic [--language L] [--session S]`: Open the full-screen Linguistic companion over the `Language` book — the tree, a grounded chat with the Inner Linguist, and the phonology / universals / minimal-pair views. Not a `language` subcommand; run it directly.
 
 #section("Sociolinguistics and contact")
 

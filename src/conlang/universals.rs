@@ -280,7 +280,7 @@ mod tests {
         for (k, v) in pairs {
             g.insert(k.to_string(), v.to_string());
         }
-        GrammarSpec { grammar: g }
+        GrammarSpec { grammar: g, ..Default::default() }
     }
 
     fn verdict(r: &TypologyReport, id: &str) -> Verdict {

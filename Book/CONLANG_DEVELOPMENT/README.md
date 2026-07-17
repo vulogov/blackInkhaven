@@ -26,7 +26,7 @@ It uses only fonts Typst bundles, so it compiles warning-free with no font setup
 - **Design system:** [`design.typ`](design.typ) — page chrome, the cover (using
   the project logo), and the helper boxes (term definitions, callouts, recaps).
 - **Chapters:** [`chapters/`](chapters/) — one file per chapter, grouped into
-  eleven parts plus four appendices.
+  thirteen parts plus four appendices.
 
 ## What it covers
 

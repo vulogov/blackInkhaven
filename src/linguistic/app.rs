@@ -341,6 +341,36 @@ impl LinguisticApp {
         self.stream_rx = Some(rx);
     }
 
+    /// `/trace <rule>` — preview a pending sound change over the current
+    /// language and show the diff inline as a chat turn (no AI call).
+    fn run_trace(&mut self, rule: String) {
+        let prompt = format!("/trace {rule}");
+        if rule.is_empty() {
+            self.push_error_turn(prompt, "usage: /trace <rule>, e.g. /trace s > ʃ / _ i".into());
+            return;
+        }
+        let Some(book) = self.current_language_book().and_then(|id| self.hierarchy.get(id).cloned())
+        else {
+            self.push_error_turn(prompt, "select a language first".into());
+            return;
+        };
+        let phon = crate::cli::language::load_phonology(&self.store, &self.hierarchy, &book)
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let entries = crate::cli::language::load_dictionary(&self.store, &self.hierarchy, &book)
+            .unwrap_or_default();
+        let report = crate::conlang::trace::trace_sound_change(&phon, &entries, &rule, 12);
+        self.chat.push(Turn {
+            prompt,
+            response: format_trace(&report),
+            streaming: false,
+            scope: Some(book.title.clone()),
+        });
+        self.chat_scroll = u16::MAX;
+        self.right = RightPane::Chat;
+    }
+
     fn push_error_turn(&mut self, prompt: String, response: String) {
         self.chat.push(Turn {
             prompt,
@@ -508,6 +538,33 @@ fn format_universals(language: &str, r: &crate::conlang::universals::TypologyRep
     s
 }
 
+/// Format a Consequence-Tracer report for the chat transcript.
+fn format_trace(r: &crate::conlang::trace::TraceReport) -> String {
+    if !r.rule_valid {
+        return "could not parse the rule. Use `X > Y / A _ B`, e.g. `s > ʃ / _ i`.".to_string();
+    }
+    if r.analyzable_words == 0 {
+        return "no analyzable words to trace.".to_string();
+    }
+    let mut s = format!("affects {} of {} words\n", r.affected, r.analyzable_words);
+    for c in r.changes.iter().take(10) {
+        s.push_str(&format!("  {} > {}\n", c.from, c.to));
+    }
+    if r.new_homophones.is_empty() {
+        s.push_str("no new homophones — merges nothing.");
+    } else {
+        s.push_str(&format!(
+            "⚠ {} new homophone set(s), {} words merged:\n",
+            r.new_homophones.len(),
+            r.merged_words
+        ));
+        for h in r.new_homophones.iter().take(6) {
+            s.push_str(&format!("  {} ← {}\n", h.form, h.words.join(", ")));
+        }
+    }
+    s
+}
+
 /// A compact inventory-naturalness summary, appended to the Phonology view.
 fn format_naturalness(r: &crate::conlang::naturalness::NaturalnessReport) -> String {
     use crate::conlang::naturalness::SizeClass;
@@ -666,7 +723,13 @@ impl TuiHost for LinguisticApp {
                 KeyCode::Enter => {
                     let q = std::mem::take(&mut self.input);
                     self.input_focused = false;
-                    self.send_query(q);
+                    // `/trace <rule>` previews a pending sound change locally (no
+                    // AI call); anything else is a grounded chat query.
+                    if let Some(rule) = q.strip_prefix("/trace ") {
+                        self.run_trace(rule.trim().to_string());
+                    } else {
+                        self.send_query(q);
+                    }
                 }
                 KeyCode::Backspace => {
                     self.input.pop();
@@ -865,7 +928,7 @@ impl LinguisticApp {
         let mut lines: Vec<Line> = Vec::new();
         if self.chat.is_empty() {
             lines.push(Line::from(Span::styled(
-                "Press i to ask the Inner Linguist about the selected language.",
+                "Press i to ask the Inner Linguist, or /trace <rule> to preview a sound change.",
                 Style::default().add_modifier(Modifier::DIM),
             )));
         }

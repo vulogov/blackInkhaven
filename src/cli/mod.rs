@@ -3205,6 +3205,18 @@ pub enum LanguageCommand {
         json: bool,
     },
 
+    /// 1.7 LING-1 Wave-2 — validate the typed grammar blocks (`ug_parameters`,
+    /// `verb_classes`) in the Grammar chapter and check them for consistency
+    /// against the WALS feature answers (e.g. `head_final` vs `word_order`).
+    #[command(name = "grammar-check")]
+    GrammarCheck {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Emit the report as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
     /// 1.7 LING-1 Wave-2 — find minimal pairs in the lexicon and report the
     /// distinctive feature each turns on (the functional load of the language's
     /// contrasts), via the distinctive-feature matrix. Read-only.
@@ -3226,6 +3238,24 @@ pub enum LanguageCommand {
     Naturalness {
         /// Target language name (case-insensitive).
         language: String,
+        /// Emit the report as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// 1.7 LING-1 L-P1 — the Consequence Tracer. Preview a pending sound change
+    /// across the current lexicon (which words shift, which distinctions merge,
+    /// which new homophones appear) without committing it. The rule uses the
+    /// rewrite syntax `X > Y / A _ B`, e.g. `s > ʃ / _ i` or `d > t / _ #`.
+    Trace {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The pending sound-change rule to preview.
+        #[arg(long, value_name = "RULE")]
+        rule: String,
+        /// Maximum example changes to list (the counts reflect all of them).
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
         /// Emit the report as JSON.
         #[arg(long)]
         json: bool,
