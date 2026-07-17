@@ -3289,6 +3289,23 @@ pub enum LanguageCommand {
         json: bool,
     },
 
+    /// 1.7 LING-1 L-P4 — scaffold a starter phoneme inventory from a short
+    /// description (AI), as pasteable Phonology-chapter HJSON. Preview-only: it
+    /// prints (or `--out` writes) a validated block; it never touches an
+    /// existing language.
+    Scaffold {
+        /// A short description of the language's desired sound (e.g. "a flowing,
+        /// vowel-rich island language").
+        #[arg(long, value_name = "DESCRIPTION")]
+        from: String,
+        /// Write the proposal to this file (default: stdout).
+        #[arg(long, value_name = "PATH")]
+        out: Option<String>,
+        /// Override the LLM provider for this call.
+        #[arg(long)]
+        provider: Option<String>,
+    },
+
     /// 1.7 LING-1 L-P1 — the Consequence Tracer. Preview a pending sound change
     /// across the current lexicon (which words shift, which distinctions merge,
     /// which new homophones appear) without committing it. The rule uses the
