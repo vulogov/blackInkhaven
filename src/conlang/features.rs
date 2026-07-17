@@ -82,6 +82,15 @@ pub fn features(ipa: &str) -> Option<&'static FeatureSet> {
     TABLE.get(ipa)
 }
 
+/// The value of one named feature for `ipa` (`None` if the segment or the
+/// feature name is unknown). Lets consumers read features by name without
+/// depending on the column order.
+pub fn value(ipa: &str, feature: &str) -> Option<Feat> {
+    let fs = features(ipa)?;
+    let i = FEATURE_NAMES.iter().position(|&n| n == feature)?;
+    Some(fs.vals[i])
+}
+
 // `is_known`, `len` and `distance` are the feature-matrix's public primitives —
 // `differing_features` (below) drives the minimal-pair verb today; these back the
 // forthcoming feature-based verbs (`/naturalness`, `/distribution`) and are

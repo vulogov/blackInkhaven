@@ -236,7 +236,8 @@ impl LinguisticApp {
         let entries = crate::cli::language::load_dictionary(&self.store, &self.hierarchy, &book)
             .unwrap_or_default();
         let m = crate::conlang::metrics::metrics(&phon, &entries);
-        self.metrics_text = format_metrics(&book.title, &m);
+        let nat = crate::conlang::naturalness::naturalness(&phon);
+        self.metrics_text = format!("{}\n\n{}", format_metrics(&book.title, &m), format_naturalness(&nat));
     }
 
     /// Compute (and cache) the L-P3 typology report for the current language.
@@ -507,6 +508,33 @@ fn format_universals(language: &str, r: &crate::conlang::universals::TypologyRep
     s
 }
 
+/// A compact inventory-naturalness summary, appended to the Phonology view.
+fn format_naturalness(r: &crate::conlang::naturalness::NaturalnessReport) -> String {
+    use crate::conlang::naturalness::SizeClass;
+    if r.phoneme_count == 0 {
+        return "naturalness\n  (no phoneme inventory)".to_string();
+    }
+    let size = match r.size_class {
+        SizeClass::Small => "small",
+        SizeClass::Typical => "typical",
+        SizeClass::Large => "large",
+    };
+    let mut s = format!("naturalness  score {:.2} · {size} inventory\n", r.score);
+    if !r.voicing_gaps.is_empty() {
+        s.push_str(&format!("  voicing gap  {}\n", r.voicing_gaps.join(" ")));
+    }
+    if !r.missing_common.is_empty() {
+        s.push_str(&format!("  missing      {} (near-universal)\n", r.missing_common.join(" ")));
+    }
+    if !r.unknown_segments.is_empty() {
+        s.push_str(&format!("  outside      {}\n", r.unknown_segments.join(" ")));
+    }
+    if r.voicing_gaps.is_empty() && r.missing_common.is_empty() {
+        s.push_str("  typologically ordinary\n");
+    }
+    s
+}
+
 /// Render the Wave-2 minimal-pairs report for the right pane.
 fn format_pairs(language: &str, r: &crate::conlang::pairs::PairsReport) -> String {
     if r.analyzable_words == 0 {
@@ -764,7 +792,7 @@ impl LinguisticApp {
     }
 
     fn render_metrics(&self, frame: &mut Frame, area: Rect) {
-        let block = Block::default().borders(Borders::ALL).title(" Metrics ");
+        let block = Block::default().borders(Borders::ALL).title(" Phonology ");
         frame.render_widget(
             Paragraph::new(self.metrics_text.as_str()).block(block).wrap(Wrap { trim: false }),
             area,

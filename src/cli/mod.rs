@@ -3219,6 +3219,18 @@ pub enum LanguageCommand {
         json: bool,
     },
 
+    /// 1.7 LING-1 Wave-2 — judge the phoneme inventory against cross-linguistic
+    /// tendencies (voicing-pair symmetry, place-series coverage, near-universal
+    /// segments, size), via the distinctive-feature matrix. A gap is a flag, not
+    /// an error. Read-only; `--json` for machine use.
+    Naturalness {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Emit the report as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
     /// LANG-1 P6.2 — render the dictionary as a document.  Markdown (`md`) or
     /// Typst (`typ`); the Typst path is a paginated, two-column book that embeds
     /// the generated conscript font and shows each headword in the native script
