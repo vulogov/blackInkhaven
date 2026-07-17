@@ -63,6 +63,10 @@
   part(number: "XII", title: "Scripting Your Language"),
   include "chapters/27-scripting-with-bund.typ",
 
+  part(number: "XIII", title: "Analysing Your Language"),
+  include "chapters/28-the-inner-linguist.typ",
+  include "chapters/29-measuring-your-language.typ",
+
   include "chapters/a-command-reference.typ",
   include "chapters/b-hjson-reference.typ",
   include "chapters/c-bund-api.typ",
