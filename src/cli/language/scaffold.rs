@@ -8,6 +8,66 @@ use crate::error::{Error, Result};
 
 use super::*;
 
+const SCAFFOLD_SYSTEM: &str = "You are a phonologist scaffolding a starter phoneme inventory for a \
+constructed language from a short description. Output ONLY a single HJSON block in EXACTLY this shape, \
+no prose before or after:\n\
+{\n  phonemes: [\n    { ipa: \"p\", kind: \"consonant\" }\n    { ipa: \"a\", kind: \"vowel\" }\n  ]\n  \
+classes: { C: [\"p\", \"t\", \"k\"], V: [\"a\", \"i\", \"u\"] }\n  templates: [ { role: \"root\", pattern: \"CVCV\" } ]\n}\n\
+Use only standard IPA symbols in the `ipa` fields. Choose an inventory (roughly 12–28 phonemes) and a few \
+syllable templates that fit the described character. Keep it coherent and typologically plausible.";
+
+/// LING-1 L-P4 — `inkhaven language scaffold --from "<description>"`: AI-propose a
+/// starter phoneme inventory (as pasteable Phonology-chapter HJSON) from a short
+/// description. Preview-only: it prints (or writes with `--out`) a validated
+/// block; it never touches an existing language.
+pub(crate) fn scaffold_from(
+    project: &Path,
+    description: &str,
+    out: Option<&str>,
+    provider: Option<&str>,
+) -> Result<()> {
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let ai = crate::ai::AiClient::from_config(&cfg.llm)?;
+    let (model, _env) = ai.resolve_provider(&cfg.llm, provider)?;
+    eprintln!("inkhaven language scaffold · model: {model}");
+
+    let raw = crate::ai::stream::collect_blocking(
+        ai.client.clone(),
+        model.to_string(),
+        Some(SCAFFOLD_SYSTEM.to_string()),
+        format!("Description: {description}"),
+    )
+    .map_err(Error::Config)?;
+
+    // Validate: the proposal must parse as a Phonology, or we don't emit garbage.
+    let phon = crate::conlang::Phonology::from_hjson(&raw)
+        .map_err(|e| Error::Config(format!("the model's proposal did not parse: {e}")))?
+        .ok_or_else(|| Error::Config("the model produced an empty inventory".to_string()))?;
+
+    let block = crate::language_entry::extract_hjson_block(&raw).unwrap_or(raw.trim()).trim();
+    match out {
+        Some(path) => {
+            crate::io_atomic::write(Path::new(path), format!("{block}\n").as_bytes())
+                .map_err(|e| Error::Config(format!("write {path}: {e}")))?;
+            eprintln!(
+                "wrote a {}-phoneme starter inventory to {path}",
+                phon.phonemes.len()
+            );
+        }
+        None => {
+            eprintln!(
+                "proposed a {}-phoneme inventory — create a language with `inkhaven language init \
+                 <name>` and paste this into its Phonology chapter:\n",
+                phon.phonemes.len()
+            );
+            println!("{block}");
+        }
+    }
+    Ok(())
+}
+
 /// Open a project and resolve a language sub-book under the `Language`
 /// system book. The shared front-half of every conlang command — returns the
 /// open `Store` (kept alive for the DuckDB lock), the loaded `Hierarchy`, and

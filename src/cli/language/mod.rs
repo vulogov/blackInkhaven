@@ -194,6 +194,9 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::SuggestPhonemes { language, json } => {
             suggest_phonemes(project, &language, json)
         }
+        LanguageCommand::Scaffold { from, out, provider } => {
+            scaffold_from(project, &from, out.as_deref(), provider.as_deref())
+        }
         LanguageCommand::Trace { language, rule, limit, json } => {
             trace(project, &language, &rule, limit, json)
         }
