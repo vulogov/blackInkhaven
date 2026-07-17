@@ -21,34 +21,38 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.7.4 — Rounding Out the Sounds
+## Latest release · 1.7.5 — The Engine Begins
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.7.4.md`](Documentation/RELEASE_NOTES/1.7.4.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.7.5.md`](Documentation/RELEASE_NOTES/1.7.5.md)
 
-Two more phonology tools that go from analysis to advice: a recommender for what your
-inventory is missing, and an AI scaffold that proposes a starter inventory from a
-description. **No new runtime crates.** Test suite → 2514, warning-free.
+The linguistic layer starts building the other direction — a generative engine that reads
+structure rather than counting it: a morphological parser, argument linking, and an
+Oracle. All deterministic. **No new runtime crates.** Test suite → 2527, warning-free.
 
-### What is your inventory missing?
+### A morphological parser
 
-`inkhaven language suggest-phonemes <lang>` recommends the phonemes that would round out
-the inventory — the voiced counterpart missing beside a voiceless obstruent, a
-near-universal segment the inventory lacks — via the distinctive-feature matrix. Advisory;
-changes nothing.
+`inkhaven language parse <lang> --word W` strips the language's known affixes and asks
+whether what remains is a dictionary root — a genuine reverse of paradigm generation, not
+a lookup — returning every analysis, simplest first (`katai` → *kata* ‘stone’ + PL).
 
-### A starter inventory from a description
+### Argument linking
 
-`inkhaven language scaffold --from "a flowing, vowel-rich island language"` asks the model
-for a coherent starter phoneme inventory and syllable templates, **validates it by parsing
-it back**, and prints it as pasteable Phonology-chapter HJSON. Preview-only — a place to
-start a new language from a blank page.
+`inkhaven language link <lang> --verb V --args "a,b,c"` works out a clause's **thematic
+roles**, RRG **macroroles** (actor / undergoer) and **grammatical relations** from the
+verb's valence — the syntax–semantics interface made explicit.
+
+### The Oracle
+
+`inkhaven language check <lang> --word W` judges *arbitrary* input — a word you're about to
+coin — by linguistic level: phonotactics (segments outside the inventory, which declared
+constraints it breaks) and morphology (does it analyse as root + affixes?).
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Everything is additive — two new `language` subcommands
-(`suggest-phonemes`, `scaffold`); existing projects and languages are unchanged. The
-companion book's command reference is updated to match. Warning-free (binary and tests).
-Test suite → 2514.
+**No new runtime crates.** Everything is additive — three new `language` subcommands
+(`parse`, `link`, `check`); existing projects and languages are unchanged. The companion
+book's command reference is updated to match. Warning-free (binary and tests). Test suite
+→ 2527.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
