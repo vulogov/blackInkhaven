@@ -197,6 +197,9 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::Scaffold { from, out, provider } => {
             scaffold_from(project, &from, out.as_deref(), provider.as_deref())
         }
+        LanguageCommand::Parse { language, word, json } => {
+            parse_surface(project, &language, &word, json)
+        }
         LanguageCommand::Trace { language, rule, limit, json } => {
             trace(project, &language, &rule, limit, json)
         }

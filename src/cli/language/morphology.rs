@@ -8,6 +8,40 @@ use crate::error::{Error, Result};
 
 use super::*;
 
+/// LING-1 L-P5 — `inkhaven language parse <lang> --word W`: analyse a surface
+/// word into root + affixes by reversing the morphology (the morphological
+/// parser).
+pub(crate) fn parse_surface(project: &Path, language: &str, word: &str, json: bool) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let morph = load_morphology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+    let report = crate::conlang::parse::parse(&phon, &morph, &entries, word);
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report)
+                .map_err(|e| Error::Store(format!("serializing parse: {e}")))?
+        );
+        return Ok(());
+    }
+
+    println!("parse · {language} · {word}");
+    if report.parses.is_empty() {
+        println!("  no analysis — no root + affix combination reaches a dictionary word.");
+        return Ok(());
+    }
+    for p in &report.parses {
+        if p.affixes.is_empty() {
+            println!("      {} ‘{}’  (bare root)", p.root, p.gloss);
+        } else {
+            println!("      {} ‘{}’ + {}", p.root, p.gloss, p.affixes.join(" + "));
+        }
+    }
+    Ok(())
+}
+
 /// Load the `{ grammar: { … } }` typology block from the Grammar chapter,
 /// returning the spec + the paragraph node that holds it (for in-place edits).
 pub(crate) fn load_grammar_spec(
