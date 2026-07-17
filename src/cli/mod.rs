@@ -3180,6 +3180,18 @@ pub enum LanguageCommand {
         json: bool,
     },
 
+    /// 1.7 LING-1 L-P2 — deterministic quantitative metrics for a language:
+    /// phoneme-distribution entropy, the Zipf fit of that distribution,
+    /// phonotactic saturation, and mora weight. The information-theoretic
+    /// complement to `stats`. Read-only; `--json` for machine use.
+    Metrics {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Emit the metrics as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
     /// LANG-1 P6.2 — render the dictionary as a document.  Markdown (`md`) or
     /// Typst (`typ`); the Typst path is a paginated, two-column book that embeds
     /// the generated conscript font and shows each headword in the native script

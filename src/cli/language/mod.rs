@@ -40,6 +40,7 @@ mod doctor;
 mod expressions;
 mod import;
 mod lexicon;
+mod metrics;
 mod morphology;
 mod phonology;
 mod render;
@@ -56,6 +57,7 @@ pub(crate) use doctor::*;
 pub(crate) use expressions::*;
 pub(crate) use import::*;
 pub(crate) use lexicon::*;
+pub(crate) use metrics::*;
 pub(crate) use morphology::*;
 pub(crate) use phonology::*;
 pub(crate) use render::*;
@@ -171,6 +173,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::Tone { language, tones } => tone_sandhi(project, &language, &tones),
         LanguageCommand::Audit { language, json } => audit(project, &language, json),
         LanguageCommand::Stats { language, json } => stats(project, &language, json),
+        LanguageCommand::Metrics { language, json } => metrics(project, &language, json),
         LanguageCommand::Dictionary { language, format, out, font } => {
             dictionary(project, &language, &format, out.as_deref(), font.as_deref())
         }

@@ -10,6 +10,7 @@
 pub mod analysis;
 pub mod contact;
 pub mod creative;
+pub mod metrics;
 pub mod diachronic;
 pub mod gaps;
 pub mod generate;

@@ -1,0 +1,64 @@
+//! LING-1 L-P2 — `inkhaven language metrics <lang>`: deterministic quantitative
+//! metrics over a language's lexicon + phonology (entropy, Zipf fit, phonotactic
+//! saturation, mora weight). The information-theoretic complement to
+//! `language stats` (descriptive counts). Read-only; `--json` for machine use.
+
+use std::path::Path;
+
+use crate::conlang::metrics::LanguageMetrics;
+use crate::error::{Error, Result};
+
+use super::*;
+
+pub(crate) fn metrics(project: &Path, language: &str, json: bool) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+    let m = crate::conlang::metrics::metrics(&phon, &entries);
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&m)
+                .map_err(|e| Error::Store(format!("serializing metrics: {e}")))?
+        );
+        return Ok(());
+    }
+
+    print_report(language, &m);
+    Ok(())
+}
+
+fn print_report(language: &str, m: &LanguageMetrics) {
+    println!("language metrics · {language}");
+    if m.analyzable_words == 0 {
+        println!("  (no analyzable words — add dictionary entries that parse as the language's phonemes)");
+        return;
+    }
+    println!(
+        "  corpus    · {} analyzable word(s), {} segments",
+        m.analyzable_words, m.total_segments
+    );
+    println!(
+        "  entropy   · {:.2} bits (max {:.2}) · evenness {:.0}% · perplexity {:.1}",
+        m.phoneme_entropy,
+        m.phoneme_entropy_max,
+        m.phoneme_evenness * 100.0,
+        m.phoneme_perplexity,
+    );
+    println!(
+        "  zipf      · slope {:.2} (≈−1 is Zipfian) · fit R² {:.2}",
+        m.zipf_slope, m.zipf_r2
+    );
+    println!(
+        "  syllables · {} attested / {} possible · saturation {:.0}%",
+        m.attested_syllables,
+        m.possible_syllables,
+        m.syllable_saturation * 100.0,
+    );
+    println!(
+        "  prosody   · {:.2} moras/word · {:.0}% heavy syllables",
+        m.mean_moras,
+        m.heavy_ratio * 100.0,
+    );
+}
