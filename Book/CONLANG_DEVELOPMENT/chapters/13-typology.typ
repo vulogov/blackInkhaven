@@ -19,22 +19,26 @@ languages actually vary.
 
 #section("The questionnaire")
 
-Run the grammar command with no options to see the catalogue of sixteen features,
-your language's current answers, and how much you have filled in:
+Run the grammar command with no options to see the catalogue of twenty-two
+features, your language's current answers, and how much you have filled in:
 
 ```sh
 inkhaven language grammar Eldar
 ```
 
-The sixteen are word order, adjective order, genitive order, adpositions
+The core sixteen are word order, adjective order, genitive order, adpositions
 (prepositions versus postpositions), alignment, case, gender, number,
 definiteness, tense, aspect, mood, evidentiality, negation, question formation,
-and relative clauses. A few of these may be unfamiliar: *aspect* is how an action
-unfolds in time (ongoing versus completed), *mood* is the speaker's stance
-(fact, command, wish), *definiteness* is the "a" versus "the" distinction, and
-*evidentiality* is marking how you know something (witnessed, reported,
-inferred) — each has a glossary entry. You do not have to answer all sixteen;
-answer the ones that matter to your language and leave the rest.
+and relative clauses. Six more round out the picture: numeral and demonstrative
+order, morphological type (isolating, agglutinative, fusional, polysynthetic),
+head- versus dependent-marking, voice, and how comparison is expressed. A few of
+these may be unfamiliar: *aspect* is how an action unfolds in time (ongoing versus
+completed), *mood* is the speaker's stance (fact, command, wish), *definiteness*
+is the "a" versus "the" distinction, and *evidentiality* is marking how you know
+something (witnessed, reported, inferred) — each has a glossary entry. You do not
+have to answer them all; answer the ones that matter to your language and leave
+the rest. Once you have, `universals` (Chapter 29) tells you whether the answers
+you gave hang together the way real languages' do.
 
 #section("Three choices worth understanding")
 
@@ -233,7 +237,8 @@ its own object.
 
 #recap((
   [*Typology* is the set of high-level structural choices a grammar makes;
-   `grammar` lists sixteen, WALS-aligned.],
+   `grammar` lists twenty-two, WALS-aligned; `universals` checks your answers
+   against the cross-linguistic tendencies.],
   [*Word order* (SOV, SVO, …) sets the default subject–verb–object sequence.],
   [*Alignment* (nominative–accusative vs ergative–absolutive) decides how the
    subject is marked.],

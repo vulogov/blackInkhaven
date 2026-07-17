@@ -21,42 +21,41 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.7.1 — The Phonologist's Toolkit
+## Latest release · 1.7.2 — The Consequence Tracer
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.7.1.md`](Documentation/RELEASE_NOTES/1.7.1.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.7.2.md`](Documentation/RELEASE_NOTES/1.7.2.md)
 
-The 1.7 linguistic layer grows its first analysis family: a distinctive-feature matrix,
-and two instruments that read a language's sound system through it. **No new runtime
-crates.** Test suite → 2495, warning-free.
+The linguistic layer gains its first interactive-development tool and the first of the
+typed grammar blocks the deeper syntax work will read; the conlang companion book is
+brought up to date. **No new runtime crates.** Test suite → 2503, warning-free.
 
-### A distinctive-feature matrix
+### Preview a sound change before you make it
 
-A curated, PHOIBLE-aligned lookup from IPA segments to their distinctive features (place,
-manner, voicing, height…) for ~85 common segments — answering the question every
-phonological analysis needs: *how do these two sounds differ?*
+`inkhaven language trace <lang> --rule "s > ʃ / _ i"` applies a pending sound change to a
+copy of your whole lexicon, re-derives every word as a real change would, and reports
+which words shift and — the valuable part — whether it would collapse distinct words into
+**new homophones**. Nothing is written; it is a rehearsal. Inside the Linguistic companion,
+`/trace <rule>` in the chat prints the diff inline.
 
-### Minimal pairs — the functional load of your contrasts
+### Typed grammar blocks
 
-`inkhaven language pairs <lang>` finds every minimal pair in the dictionary (two words
-identical but for one segment) and, through the matrix, reports the single feature each
-turns on — so you see which contrasts your language leans on and which are barely used.
+The grammar block gains two optional typed blocks — `ug_parameters`
+(principles-and-parameters settings) and `verb_classes` (verbs by valence) — the schema
+the later syntax work reads. `inkhaven language grammar-check <lang>` validates them and
+flags when the generative parameters *contradict* the WALS feature answers (a
+`head_final: true` language whose word order is SVO). A finding is a flag, not an error.
 
-### Naturalness — your inventory against the baseline
+### The book, brought current
 
-`inkhaven language naturalness <lang>` judges the phoneme inventory against
-cross-linguistic tendencies: voicing-pair symmetry (a `/k/`-without-`/ɡ/` gap?),
-place-series coverage, the near-universal segments, and size — a transparent 0–1 score. A
-gap is a flag, not an error.
-
-Both surface in the Linguistic companion: the right-pane **Phonology** view now shows the
-metrics *and* naturalness together, and a new **Minimal pairs** view (`p`) lists the
-contrasts.
+*Developing a Constructed Language* gains a new part, **Analysing Your Language** — the
+Linguistic companion and the analysis verbs — and its typology chapter now covers all
+twenty-two features.
 
 ### Dependencies & compatibility
 
 **No new runtime crates.** Everything is additive — two new `language` subcommands
-(`pairs`, `naturalness`) and a bundled feature-data file; existing projects and languages
-are unchanged. Warning-free (binary and tests). Test suite → 2495.
+(`trace`, `grammar-check`) and two optional grammar blocks; existing projects, languages
+and grammar blocks are unchanged. Warning-free (binary and tests). Test suite → 2503.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
