@@ -11,6 +11,7 @@ pub mod analysis;
 pub mod contact;
 pub mod creative;
 pub mod features;
+pub mod naturalness;
 pub mod pairs;
 pub mod metrics;
 pub mod universals;
