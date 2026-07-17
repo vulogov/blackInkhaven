@@ -186,6 +186,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::Naturalness { language, json } => {
             naturalness(project, &language, json)
         }
+        LanguageCommand::Harmony { language, json } => harmony(project, &language, json),
         LanguageCommand::Trace { language, rule, limit, json } => {
             trace(project, &language, &rule, limit, json)
         }
