@@ -126,6 +126,45 @@ const CATALOG: &[GrammarFeature] = &[
         question: "Relative-clause strategy?",
         options: &[("postnominal", "after the head noun (English)"), ("prenominal", "before the head noun (Japanese, Chinese)"), ("internally_headed", "head inside the clause"), ("correlative", "correlative (Hindi)")],
     },
+    // 1.7 LING-1 L-P3 — six more WALS-aligned features. The word-order-correlated
+    // pair (numeral/demonstrative) feed the harmony check; morphological_type +
+    // head_marking drive the morphotype survey; voice + comparative round out the
+    // 22-feature catalog.
+    GrammarFeature {
+        id: "numeral_order",
+        question: "Where do cardinal numerals sit relative to the noun?",
+        options: &[("numeral_first", "numeral–noun (three books; English)"), ("noun_first", "noun–numeral (books three; Khmer)")],
+    },
+    GrammarFeature {
+        id: "demonstrative_order",
+        question: "Where do demonstratives sit relative to the noun?",
+        options: &[("demonstrative_first", "this book (English)"), ("noun_first", "book this (Indonesian)")],
+    },
+    GrammarFeature {
+        id: "morphological_type",
+        question: "Dominant morphological type?",
+        options: &[
+            ("isolating", "little/no inflection (Mandarin, Vietnamese)"),
+            ("agglutinative", "clear morpheme boundaries (Turkish, Finnish)"),
+            ("fusional", "portmanteau affixes (Latin, Russian)"),
+            ("polysynthetic", "many morphemes per word (Inuktitut)"),
+        ],
+    },
+    GrammarFeature {
+        id: "head_marking",
+        question: "Is agreement marked on the head or the dependent?",
+        options: &[("head_marking", "on the head (Mayan)"), ("dependent_marking", "on the dependent / by case (Latin)"), ("double", "both"), ("none", "neither")],
+    },
+    GrammarFeature {
+        id: "voice",
+        question: "Valence-changing voice operations?",
+        options: &[("none", "no voice morphology"), ("passive", "a passive"), ("passive_antipassive", "passive + antipassive"), ("rich", "applicatives / causatives / …")],
+    },
+    GrammarFeature {
+        id: "comparative",
+        question: "How is the standard of comparison marked?",
+        options: &[("particle", "a comparative word (bigger than)"), ("locational", "a case/adposition ('big from Y')"), ("exceed", "a verb 'to exceed' (serial; many African/Asian langs)"), ("conjoined", "conjoined ('X is big, Y is small')")],
+    },
 ];
 
 #[cfg(test)]
@@ -134,11 +173,14 @@ mod tests {
 
     #[test]
     fn catalog_lookup_and_validation() {
-        assert!(catalog().len() >= 12);
+        assert_eq!(catalog().len(), 22); // 1.7 L-P3 extended 16 → 22
         let wo = feature("word_order").unwrap();
         assert!(wo.is_valid("SOV")); // case-insensitive
         assert!(!wo.is_valid("backwards"));
         assert!(feature("nonexistent").is_none());
         assert!(wo.values().contains("svo"));
+        // The L-P3 additions are present + validate.
+        assert!(feature("morphological_type").unwrap().is_valid("agglutinative"));
+        assert!(feature("numeral_order").unwrap().is_valid("noun_first"));
     }
 }

@@ -47,6 +47,7 @@ mod render;
 mod scaffold;
 mod syntax;
 mod translate;
+mod typology;
 mod varieties;
 mod writing;
 pub(crate) use authoring::*;
@@ -64,6 +65,7 @@ pub(crate) use render::*;
 pub(crate) use scaffold::*;
 pub(crate) use syntax::*;
 pub(crate) use translate::*;
+pub(crate) use typology::*;
 pub(crate) use varieties::*;
 pub(crate) use writing::*;
 
@@ -174,6 +176,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::Audit { language, json } => audit(project, &language, json),
         LanguageCommand::Stats { language, json } => stats(project, &language, json),
         LanguageCommand::Metrics { language, json } => metrics(project, &language, json),
+        LanguageCommand::Universals { language, json } => universals(project, &language, json),
         LanguageCommand::Dictionary { language, format, out, font } => {
             dictionary(project, &language, &format, out.as_deref(), font.as_deref())
         }
