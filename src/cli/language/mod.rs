@@ -177,6 +177,12 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::Stats { language, json } => stats(project, &language, json),
         LanguageCommand::Metrics { language, json } => metrics(project, &language, json),
         LanguageCommand::Universals { language, json } => universals(project, &language, json),
+        LanguageCommand::Pairs { language, limit, json } => {
+            pairs(project, &language, limit, json)
+        }
+        LanguageCommand::Naturalness { language, json } => {
+            naturalness(project, &language, json)
+        }
         LanguageCommand::Dictionary { language, format, out, font } => {
             dictionary(project, &language, &format, out.as_deref(), font.as_deref())
         }
