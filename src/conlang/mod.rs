@@ -25,6 +25,7 @@ pub mod gaps;
 pub mod generate;
 pub mod grammar;
 pub mod grammar_check;
+pub mod link;
 pub mod harmony;
 pub mod interchange;
 pub mod lexicon;
