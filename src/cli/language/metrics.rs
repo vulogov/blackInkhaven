@@ -5,6 +5,7 @@
 
 use std::path::Path;
 
+use crate::conlang::harmony::HarmonyReport;
 use crate::conlang::metrics::LanguageMetrics;
 use crate::conlang::naturalness::NaturalnessReport;
 use crate::conlang::pairs::PairsReport;
@@ -176,4 +177,47 @@ fn print_naturalness(language: &str, r: &NaturalnessReport) {
         println!("  outside    · {} (not in the feature matrix)", r.unknown_segments.join(" "));
     }
     println!("  score      · {:.2} (0–1; higher = more typologically ordinary)", r.score);
+}
+
+/// LING-1 Wave-2 — `inkhaven language harmony <lang>`: detect vowel harmony
+/// (backness, rounding) by measuring how consistently a word's vowels agree.
+pub(crate) fn harmony(project: &Path, language: &str, json: bool) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+    let report = crate::conlang::harmony::analyze(&phon, &entries);
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report)
+                .map_err(|e| Error::Store(format!("serializing harmony: {e}")))?
+        );
+        return Ok(());
+    }
+
+    print_harmony(language, &report);
+    Ok(())
+}
+
+fn print_harmony(language: &str, r: &HarmonyReport) {
+    println!("vowel harmony · {language}");
+    if r.analyzable_words == 0 {
+        println!("  (no analyzable words — define a phoneme inventory and add dictionary entries)");
+        return;
+    }
+    println!("  {} analyzable word(s)", r.analyzable_words);
+    for d in &r.dimensions {
+        println!(
+            "  {:<9} · {:.0}% harmonic over {} word(s) — {}",
+            d.name,
+            d.rate * 100.0,
+            d.tested_words,
+            d.verdict,
+        );
+    }
+    let harmonic = r.dimensions.iter().any(|d| d.verdict == "strong" || d.verdict == "tendency");
+    if !harmonic {
+        println!("  no vowel-harmony pattern detected.");
+    }
 }
