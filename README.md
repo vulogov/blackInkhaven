@@ -21,41 +21,45 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.6.23 — Hardening & Foundations
+## Latest release · 1.7.0 — The Linguist's Desk
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.6.23.md`](Documentation/RELEASE_NOTES/1.6.23.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.7.0.md`](Documentation/RELEASE_NOTES/1.7.0.md)
 
-A stability release: it tightens the script sandbox, bounds an allocation surface in
-language generation, and lays two reusable foundations for the work ahead. **No new
-features, no new runtime crates.** Test suite → 2470, warning-free.
+The 1.7 flagship opens: a full-spectrum linguistic layer for the constructed languages a
+book invents. This first cut is the companion and its first analysis instruments. **No
+new runtime crates.** Test suite → 2484, warning-free.
 
-### The script sandbox closes a gap
+### A companion for your languages
 
-A Bund verb missing from the policy category table was silently *allowed*, slipping past
-any category you had disabled. A new coverage test requires every registered `ink.*`
-verb to be either categorised or on an explicit pure-allowlist — and it found **16**
-store-reading verbs (timeline-critique, Inner Socrates inspectors, world timeline
-queries) that were outside the system. All are now gated `store_read`, and a forgotten
-category fails the test rather than escaping the sandbox.
+`inkhaven linguistic` launches a new full-screen TUI over the Language book — the tree of
+your languages on the left, and a right pane that cycles (Tab) through **Preview**,
+**Chat**, **Metrics** and **Universals**. The chat is a streaming, **grounded**
+conversation with the Inner Linguist: each answer is retrieved from the language sub-book
+you're in (the same book-RAG the Research companion uses), so it reasons about *your*
+phonology, lexicon and grammar, and answers in the project language. Sessions are named
+and resumable (`--session`); `--language` opens focused.
 
-### Language generation can't run away
+### Metrics — a language measured against itself
 
-Stem-growing morphology processes (`full` reduplication, ablaut) could compound as
-`2^N`/`64^N` from a crafted spec and exhaust memory. Paradigm generation now caps the
-working stem and finishes a bounded form instead of exploding; an audit confirmed the
-rest of the language suite already total against panics.
+`inkhaven language metrics <lang>` reports the information-theoretic complement to
+`stats`: phoneme-distribution **entropy** (+ evenness, perplexity), the **Zipf fit** of
+that distribution, **phonotactic saturation** (attested vs possible syllables), and
+**mora weight**. Deterministic and corpus-free.
 
-### Foundations for what's next
+### Universals — a language against the typological baseline
 
-Two behaviour-preserving refactors: a reusable full-screen-TUI shell (`tui_host`) and a
-companion tree-pane that roots on any system book by tag — groundwork the next companion
-app builds on rather than forks.
+`inkhaven language universals <lang>` judges your grammar block against how the world's
+languages behave: **head-directionality harmony** (Dryer), the classic **implicational
+universals** (Greenberg 2/3/4, OV↔GenN, OV↔RelN) judged satisfied / violated / n-a, and a
+word-order + morphotype survey. A violation is a flag, not an error. The typological
+catalogue grew 16 → 22 features.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Everything is hardening or internal; projects and scripts
-behave identically, except the 16 newly-gated verbs now honour a `store_read` denial if
-you set one. Warning-free (binary and tests). Test suite → 2470.
+**No new runtime crates.** Everything is additive — a new `linguistic` command and two
+new `language` subcommands (`metrics`, `universals`); existing projects, languages and
+scripts are unchanged. Warning-free (binary and tests). Test suite → 2484. Later 1.7.x
+releases bring the analysis Oracle, feature-matrix metrics, and the Inner Linguist reader.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
