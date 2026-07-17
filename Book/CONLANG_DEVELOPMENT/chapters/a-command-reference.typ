@@ -69,7 +69,11 @@ Add `--help` to any command for its full signature.
 / `metrics <lang> [--json]`: Quantitative sound-system metrics — phoneme entropy, the Zipf fit, phonotactic saturation, mora weight.
 / `naturalness <lang> [--json]`: Judge the phoneme inventory against cross-linguistic tendencies (voicing symmetry, place coverage, near-universals, size) into a 0–1 score.
 / `pairs <lang> [--limit N] [--json]`: Find minimal pairs and the distinctive feature each turns on — the functional load of your contrasts.
+/ `harmony <lang> [--json]`: Detect vowel harmony (backness, rounding) by how consistently a word's vowels agree.
+/ `distribution <lang> [--json]`: Where each phoneme appears (onset / nucleus / coda, word edges) and any restricted distributions.
 / `universals <lang> [--json]`: Check the grammar's head-directionality harmony and the classic implicational universals (Greenberg/Dryer).
+/ `grammar-check <lang> [--json]`: Validate the typed grammar blocks (`ug_parameters`, `verb_classes`) and their consistency with the WALS feature answers.
+/ `sketch <lang> [--out F]`: A one-page prose overview of the language, assembling all of the above.
 
 #section("The Linguistic companion")
 
