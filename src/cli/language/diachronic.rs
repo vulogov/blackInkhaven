@@ -223,6 +223,62 @@ pub(crate) fn sound_change(project: &Path, language: &str, form: &str) -> Result
     Ok(())
 }
 
+/// LING-1 L-P1 — the Consequence Tracer. Preview a pending sound change across
+/// the current lexicon (which words shift, which distinctions merge) without
+/// committing it.
+pub(crate) fn trace(project: &Path, language: &str, rule: &str, limit: usize, json: bool) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+    let report = crate::conlang::trace::trace_sound_change(&phon, &entries, rule, limit.max(1));
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report)
+                .map_err(|e| Error::Store(format!("serializing trace: {e}")))?
+        );
+        return Ok(());
+    }
+
+    println!("consequence trace · {language} · rule  {rule}");
+    if !report.rule_valid {
+        println!(
+            "  ✗ could not parse the rule. Use the form `X > Y / A _ B`, e.g. `s > ʃ / _ i` \
+             or `d > t / _ #`."
+        );
+        return Ok(());
+    }
+    if report.analyzable_words == 0 {
+        println!("  (no analyzable words — define a phoneme inventory and add dictionary entries)");
+        return Ok(());
+    }
+    println!(
+        "  affects {} of {} analyzable word(s)",
+        report.affected, report.analyzable_words
+    );
+    if !report.changes.is_empty() {
+        println!("  changes:");
+        for c in &report.changes {
+            let gloss = if c.gloss.is_empty() { String::new() } else { format!("  ‘{}’", c.gloss) };
+            println!("      {}  >  {}{gloss}", c.from, c.to);
+        }
+    }
+    if report.new_homophones.is_empty() {
+        println!("  no new homophones — the change merges nothing.");
+    } else {
+        println!(
+            "  ⚠ {} new homophone set(s) ({} words merged):",
+            report.new_homophones.len(),
+            report.merged_words
+        );
+        for h in &report.new_homophones {
+            println!("      {} ← {}", h.form, h.words.join(", "));
+        }
+    }
+    Ok(())
+}
+
 /// LANG-1 P4.1 — derive a daughter lexicon from its proto.
 pub(crate) fn derive_lexicon_cmd(project: &Path, language: &str, yes: bool) -> Result<()> {
     let (store, hierarchy, daughter_book) = open_lang_book(project, language)?;

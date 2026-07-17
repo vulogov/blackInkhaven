@@ -183,6 +183,9 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::Naturalness { language, json } => {
             naturalness(project, &language, json)
         }
+        LanguageCommand::Trace { language, rule, limit, json } => {
+            trace(project, &language, &rule, limit, json)
+        }
         LanguageCommand::Dictionary { language, format, out, font } => {
             dictionary(project, &language, &format, out.as_deref(), font.as_deref())
         }
