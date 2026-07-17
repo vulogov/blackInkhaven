@@ -12,6 +12,7 @@ Add `--help` to any command for its full signature.
 #section("Setup")
 
 / `init <name>`: Create a language sub-book with its five chapters.
+/ `scaffold --from "<description>" [--out F]`: (AI) Propose a starter phoneme inventory from a short description, as pasteable Phonology-chapter HJSON (preview-only).
 / `list`: List every defined language with summary counts.
 / `doctor <lang> [--json]`: A health check — phonotactic and lexical problems plus how much of your manuscript's language-words the lexicon already covers.
 
@@ -68,6 +69,7 @@ Add `--help` to any command for its full signature.
 
 / `metrics <lang> [--json]`: Quantitative sound-system metrics — phoneme entropy, the Zipf fit, phonotactic saturation, mora weight.
 / `naturalness <lang> [--json]`: Judge the phoneme inventory against cross-linguistic tendencies (voicing symmetry, place coverage, near-universals, size) into a 0–1 score.
+/ `suggest-phonemes <lang> [--json]`: Recommend phonemes that would round out the inventory (voiced counterparts, missing near-universals). Advisory.
 / `pairs <lang> [--limit N] [--json]`: Find minimal pairs and the distinctive feature each turns on — the functional load of your contrasts.
 / `harmony <lang> [--json]`: Detect vowel harmony (backness, rounding) by how consistently a word's vowels agree.
 / `distribution <lang> [--json]`: Where each phoneme appears (onset / nucleus / coda, word edges) and any restricted distributions.
