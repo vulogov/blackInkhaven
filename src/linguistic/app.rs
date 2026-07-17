@@ -61,6 +61,7 @@ enum RightPane {
     Chat,
     Preview,
     Metrics,
+    Universals,
 }
 
 impl RightPane {
@@ -68,7 +69,8 @@ impl RightPane {
         match self {
             RightPane::Chat => RightPane::Preview,
             RightPane::Preview => RightPane::Metrics,
-            RightPane::Metrics => RightPane::Chat,
+            RightPane::Metrics => RightPane::Universals,
+            RightPane::Universals => RightPane::Chat,
         }
     }
 }
@@ -84,6 +86,8 @@ pub struct LinguisticApp {
     preview: String,
     /// Cached metrics report for the current language (recomputed on `m`).
     metrics_text: String,
+    /// Cached typology report for the current language (recomputed on `u`).
+    universals_text: String,
     right: RightPane,
     /// The chat transcript.
     chat: Vec<Turn>,
@@ -138,7 +142,7 @@ impl LinguisticApp {
         } else if tree.is_empty() {
             "No languages yet. `inkhaven language init <name>` scaffolds one.".to_string()
         } else {
-            "i ask · m metrics · Tab cycle · ↑↓/jk move · →/l ←/h fold · q quit".to_string()
+            "i ask · m metrics · u universals · Tab cycle · jk move · hl fold · q quit".to_string()
         };
 
         let mut app = LinguisticApp {
@@ -149,6 +153,7 @@ impl LinguisticApp {
             tree,
             preview: String::new(),
             metrics_text: String::new(),
+            universals_text: String::new(),
             right: RightPane::Chat,
             chat,
             chat_scroll: u16::MAX, // open scrolled to the latest turn
@@ -227,6 +232,23 @@ impl LinguisticApp {
             .unwrap_or_default();
         let m = crate::conlang::metrics::metrics(&phon, &entries);
         self.metrics_text = format_metrics(&book.title, &m);
+    }
+
+    /// Compute (and cache) the L-P3 typology report for the current language.
+    fn compute_universals(&mut self) {
+        let Some(book_id) = self.current_language_book() else {
+            self.universals_text = "Select a language to see its typology.".to_string();
+            return;
+        };
+        let Some(book) = self.hierarchy.get(book_id).cloned() else {
+            self.universals_text = "Select a language to see its typology.".to_string();
+            return;
+        };
+        let spec = crate::cli::language::load_grammar_spec(&self.store, &self.hierarchy, &book)
+            .map(|(s, _)| s)
+            .unwrap_or_default();
+        let report = crate::conlang::universals::survey(&spec);
+        self.universals_text = format_universals(&book.title, &report);
     }
 
     /// Send `query` to the model, grounded on the current language sub-book.
@@ -417,6 +439,49 @@ fn format_metrics(language: &str, m: &crate::conlang::metrics::LanguageMetrics) 
     )
 }
 
+/// Render the L-P3 typology report as a plain-text report for the right pane.
+fn format_universals(language: &str, r: &crate::conlang::universals::TypologyReport) -> String {
+    use crate::conlang::universals::{Branch, Verdict};
+    let branch = match r.branch {
+        Branch::HeadInitial => "head-initial",
+        Branch::HeadFinal => "head-final",
+        Branch::Mixed => "mixed / disharmonic",
+        Branch::Unknown => "unknown",
+    };
+    let mut s = format!(
+        "{language}\n\n\
+         order      {}\n\
+         branching  {}\n",
+        r.word_order.as_deref().unwrap_or("(unspecified)"),
+        branch,
+    );
+    if let Some(mt) = &r.morphological_type {
+        s.push_str(&format!("morphology {mt}\n"));
+    }
+    let measured = r.harmonic + r.disharmonic.len();
+    if measured > 0 {
+        s.push_str(&format!(
+            "harmony    {}/{} aligned ({:.0}%)\n",
+            r.harmonic,
+            measured,
+            r.harmony_score * 100.0
+        ));
+        if !r.disharmonic.is_empty() {
+            s.push_str(&format!("disharmony {}\n", r.disharmonic.join(", ")));
+        }
+    }
+    s.push_str("\nuniversals\n");
+    for c in &r.checks {
+        let g = match c.verdict {
+            Verdict::Satisfied => "✓",
+            Verdict::Violated => "✗",
+            Verdict::NotApplicable => "·",
+        };
+        s.push_str(&format!("  {g} {}\n     {}\n", c.statement, c.detail));
+    }
+    s
+}
+
 /// Project-language → its English name, for the "write in X" instruction.
 fn language_name(lang: &crate::prose::ProseLanguage) -> &'static str {
     use crate::prose::ProseLanguage::*;
@@ -484,11 +549,11 @@ impl TuiHost for LinguisticApp {
             }
             self.status = if let Some(t) = to_record {
                 match self.session.record(t, &self.layout) {
-                    Ok(()) => "i ask · m metrics · Tab cycle · ↑↓/jk move · q quit".to_string(),
+                    Ok(()) => "i ask · m metrics · u universals · Tab cycle · jk move · q quit".to_string(),
                     Err(e) => format!("answer received, but the session didn't save: {e}"),
                 }
             } else {
-                "i ask · m metrics · Tab cycle · ↑↓/jk move · q quit".to_string()
+                "i ask · m metrics · u universals · Tab cycle · jk move · q quit".to_string()
             };
         }
     }
@@ -540,13 +605,15 @@ impl TuiHost for LinguisticApp {
             }
             KeyCode::Tab => {
                 self.right = self.right.next();
-                if self.right == RightPane::Metrics {
-                    self.compute_metrics();
-                }
+                self.refresh_right_pane();
             }
             KeyCode::Char('m') => {
                 self.right = RightPane::Metrics;
                 self.compute_metrics();
+            }
+            KeyCode::Char('u') => {
+                self.right = RightPane::Universals;
+                self.compute_universals();
             }
             KeyCode::PageDown => self.chat_scroll = self.chat_scroll.saturating_add(5),
             KeyCode::PageUp => self.chat_scroll = self.chat_scroll.saturating_sub(5),
@@ -582,9 +649,19 @@ impl TuiHost for LinguisticApp {
         }
         if moved {
             self.refresh_preview();
-            if self.right == RightPane::Metrics {
-                self.compute_metrics();
-            }
+            self.refresh_right_pane();
+        }
+    }
+}
+
+impl LinguisticApp {
+    /// Recompute the active right-pane's cached content (after a selection move
+    /// or a Tab). Preview refreshes separately; Chat holds live state.
+    fn refresh_right_pane(&mut self) {
+        match self.right {
+            RightPane::Metrics => self.compute_metrics(),
+            RightPane::Universals => self.compute_universals(),
+            RightPane::Preview | RightPane::Chat => {}
         }
     }
 }
@@ -614,6 +691,7 @@ impl LinguisticApp {
             RightPane::Preview => self.render_preview(frame, cols[1]),
             RightPane::Chat => self.render_chat(frame, cols[1]),
             RightPane::Metrics => self.render_metrics(frame, cols[1]),
+            RightPane::Universals => self.render_universals(frame, cols[1]),
         }
     }
 
@@ -621,6 +699,14 @@ impl LinguisticApp {
         let block = Block::default().borders(Borders::ALL).title(" Metrics ");
         frame.render_widget(
             Paragraph::new(self.metrics_text.as_str()).block(block).wrap(Wrap { trim: false }),
+            area,
+        );
+    }
+
+    fn render_universals(&self, frame: &mut Frame, area: Rect) {
+        let block = Block::default().borders(Borders::ALL).title(" Universals ");
+        frame.render_widget(
+            Paragraph::new(self.universals_text.as_str()).block(block).wrap(Wrap { trim: false }),
             area,
         );
     }

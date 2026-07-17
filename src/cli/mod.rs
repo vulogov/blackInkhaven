@@ -3192,6 +3192,19 @@ pub enum LanguageCommand {
         json: bool,
     },
 
+    /// 1.7 LING-1 L-P3 — judge the language's grammar block against the
+    /// typological baseline: head-directionality harmony, the classic
+    /// implicational universals (Greenberg 2/3/4, the OV↔GenN / OV↔RelN
+    /// correlations), and a word-order + morphotype survey. A violation is a
+    /// flag, not an error. Read-only; `--json` for machine use.
+    Universals {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Emit the report as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
     /// LANG-1 P6.2 — render the dictionary as a document.  Markdown (`md`) or
     /// Typst (`typ`); the Typst path is a paginated, two-column book that embeds
     /// the generated conscript font and shows each headword in the native script
