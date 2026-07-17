@@ -3205,6 +3205,18 @@ pub enum LanguageCommand {
         json: bool,
     },
 
+    /// 1.7 LING-1 Wave-2 — validate the typed grammar blocks (`ug_parameters`,
+    /// `verb_classes`) in the Grammar chapter and check them for consistency
+    /// against the WALS feature answers (e.g. `head_final` vs `word_order`).
+    #[command(name = "grammar-check")]
+    GrammarCheck {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Emit the report as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
     /// 1.7 LING-1 Wave-2 — find minimal pairs in the lexicon and report the
     /// distinctive feature each turns on (the functional load of the language's
     /// contrasts), via the distinctive-feature matrix. Read-only.

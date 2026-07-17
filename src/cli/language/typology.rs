@@ -45,6 +45,39 @@ fn verdict_glyph(v: Verdict) -> &'static str {
     }
 }
 
+/// LING-1 Wave-2 — `inkhaven language grammar-check <lang>`: validate the typed
+/// grammar blocks (`ug_parameters`, `verb_classes`) and check them for
+/// consistency against the WALS feature answers.
+pub(crate) fn grammar_check(project: &Path, language: &str, json: bool) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let (spec, _) = load_grammar_spec(&store, &hierarchy, &lang_book)?;
+    let report = crate::conlang::grammar_check::check(&spec);
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report)
+                .map_err(|e| Error::Store(format!("serializing grammar check: {e}")))?
+        );
+        return Ok(());
+    }
+
+    println!("grammar check · {language}");
+    println!(
+        "  blocks     · {} parameter(s), {} verb class(es)",
+        report.parameter_count, report.verb_class_count
+    );
+    if report.ok() {
+        println!("  ✓ typed grammar blocks are valid and consistent with the feature answers.");
+    } else {
+        println!("  {} issue(s):", report.issues.len());
+        for i in &report.issues {
+            println!("      ✗ {}", i.message);
+        }
+    }
+    Ok(())
+}
+
 fn print_report(language: &str, r: &TypologyReport) {
     println!("typological universals · {language}");
     println!(

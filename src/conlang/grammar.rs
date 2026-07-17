@@ -167,6 +167,64 @@ const CATALOG: &[GrammarFeature] = &[
     },
 ];
 
+// ── 1.7 typed grammar blocks ──────────────────────────────────────────────
+
+/// A principles-and-parameters setting.
+pub struct UgParameter {
+    pub id: &'static str,
+    /// The elicitation prompt — catalog metadata for the forthcoming UG-parameter
+    /// questionnaire (parallel to `GrammarFeature::question`); read there, not by
+    /// the validator.
+    #[allow(dead_code)]
+    pub question: &'static str,
+    /// Valid values (all boolean here, but kept general).
+    pub values: &'static [&'static str],
+}
+
+impl UgParameter {
+    pub fn is_valid(&self, value: &str) -> bool {
+        self.values.iter().any(|v| v.eq_ignore_ascii_case(value))
+    }
+}
+
+/// The recognised UG parameters. `head_final` is cross-checked against the
+/// `word_order` / `adposition` features by the grammar validator.
+pub const UG_PARAMETERS: &[UgParameter] = &[
+    UgParameter {
+        id: "head_final",
+        question: "Are heads final (the dependent precedes the head)?",
+        values: &["true", "false"],
+    },
+    UgParameter {
+        id: "pro_drop",
+        question: "May subject pronouns be omitted (pro-drop)?",
+        values: &["true", "false"],
+    },
+    UgParameter {
+        id: "wh_movement",
+        question: "Do question words move to the clause front?",
+        values: &["true", "false"],
+    },
+    UgParameter {
+        id: "configurational",
+        question: "Is phrase structure fixed (vs free word order)?",
+        values: &["true", "false"],
+    },
+    UgParameter {
+        id: "polysynthesis",
+        question: "Does the verb incorporate its arguments (polysynthesis)?",
+        values: &["true", "false"],
+    },
+];
+
+/// Look up a UG parameter by id (case-insensitive).
+pub fn ug_parameter(id: &str) -> Option<&'static UgParameter> {
+    UG_PARAMETERS.iter().find(|p| p.id.eq_ignore_ascii_case(id))
+}
+
+/// Valid verb valences (argument structures).
+pub const VERB_VALENCES: &[&str] = &["intransitive", "transitive", "ditransitive", "impersonal"];
+
 #[cfg(test)]
 mod tests {
     use super::*;
