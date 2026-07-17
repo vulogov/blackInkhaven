@@ -3205,6 +3205,20 @@ pub enum LanguageCommand {
         json: bool,
     },
 
+    /// 1.7 LING-1 Wave-2 — find minimal pairs in the lexicon and report the
+    /// distinctive feature each turns on (the functional load of the language's
+    /// contrasts), via the distinctive-feature matrix. Read-only.
+    Pairs {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Maximum example pairs to list (the counts reflect all of them).
+        #[arg(long, default_value_t = 30)]
+        limit: usize,
+        /// Emit the report as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
     /// LANG-1 P6.2 — render the dictionary as a document.  Markdown (`md`) or
     /// Typst (`typ`); the Typst path is a paginated, two-column book that embeds
     /// the generated conscript font and shows each headword in the native script
