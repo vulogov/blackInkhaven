@@ -21,41 +21,34 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.7.2 — The Consequence Tracer
+## Latest release · 1.7.3 — The Analyst's Bench
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.7.2.md`](Documentation/RELEASE_NOTES/1.7.2.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.7.3.md`](Documentation/RELEASE_NOTES/1.7.3.md)
 
-The linguistic layer gains its first interactive-development tool and the first of the
-typed grammar blocks the deeper syntax work will read; the conlang companion book is
-brought up to date. **No new runtime crates.** Test suite → 2503, warning-free.
+Three more read-only analyses round out the phonology bench, plus a one-page grammar
+sketch that gathers the whole suite into a single readable overview. **No new runtime
+crates.** Test suite → 2511, warning-free.
 
-### Preview a sound change before you make it
+### Vowel harmony & positional distribution
 
-`inkhaven language trace <lang> --rule "s > ʃ / _ i"` applies a pending sound change to a
-copy of your whole lexicon, re-derives every word as a real change would, and reports
-which words shift and — the valuable part — whether it would collapse distinct words into
-**new homophones**. Nothing is written; it is a rehearsal. Inside the Linguistic companion,
-`/trace <rule>` in the chat prints the diff inline.
+`inkhaven language harmony <lang>` measures how consistently a word's vowels agree on
+backness and rounding — a *strong*/*tendency*/*none* verdict for vowel harmony.
+`inkhaven language distribution <lang>` reports *where* each phoneme appears (onset /
+nucleus / coda, word edges) and surfaces **restricted distributions** — the consonant
+confined to codas, or barred from a word edge.
 
-### Typed grammar blocks
+### A one-page sketch
 
-The grammar block gains two optional typed blocks — `ug_parameters`
-(principles-and-parameters settings) and `verb_classes` (verbs by valence) — the schema
-the later syntax work reads. `inkhaven language grammar-check <lang>` validates them and
-flags when the generative parameters *contradict* the WALS feature answers (a
-`head_final: true` language whose word order is SVO). A finding is a flag, not an error.
-
-### The book, brought current
-
-*Developing a Constructed Language* gains a new part, **Analysing Your Language** — the
-Linguistic companion and the analysis verbs — and its typology chapter now covers all
-twenty-two features.
+`inkhaven language sketch <lang>` assembles the phonology, typology and lexicon analyses
+into three short prose paragraphs — the analysis dashboard as a page you can read.
+Deterministic, needs no provider, always current; `--out` writes it to a file.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Everything is additive — two new `language` subcommands
-(`trace`, `grammar-check`) and two optional grammar blocks; existing projects, languages
-and grammar blocks are unchanged. Warning-free (binary and tests). Test suite → 2503.
+**No new runtime crates.** Everything is additive — three new `language` subcommands
+(`harmony`, `distribution`, `sketch`); existing projects and languages are unchanged. The
+companion book's command reference is updated to match. Warning-free (binary and tests).
+Test suite → 2511.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

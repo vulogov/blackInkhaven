@@ -9,10 +9,12 @@
 
 pub mod analysis;
 pub mod contact;
+pub mod distribution;
 pub mod creative;
 pub mod features;
 pub mod naturalness;
 pub mod pairs;
+pub mod sketch;
 pub mod metrics;
 pub mod trace;
 pub mod universals;
@@ -21,6 +23,7 @@ pub mod gaps;
 pub mod generate;
 pub mod grammar;
 pub mod grammar_check;
+pub mod harmony;
 pub mod interchange;
 pub mod lexicon;
 pub mod links;

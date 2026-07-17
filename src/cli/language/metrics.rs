@@ -5,6 +5,8 @@
 
 use std::path::Path;
 
+use crate::conlang::distribution::DistributionReport;
+use crate::conlang::harmony::HarmonyReport;
 use crate::conlang::metrics::LanguageMetrics;
 use crate::conlang::naturalness::NaturalnessReport;
 use crate::conlang::pairs::PairsReport;
@@ -176,4 +178,115 @@ fn print_naturalness(language: &str, r: &NaturalnessReport) {
         println!("  outside    · {} (not in the feature matrix)", r.unknown_segments.join(" "));
     }
     println!("  score      · {:.2} (0–1; higher = more typologically ordinary)", r.score);
+}
+
+/// LING-1 Wave-2 — `inkhaven language harmony <lang>`: detect vowel harmony
+/// (backness, rounding) by measuring how consistently a word's vowels agree.
+pub(crate) fn harmony(project: &Path, language: &str, json: bool) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+    let report = crate::conlang::harmony::analyze(&phon, &entries);
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report)
+                .map_err(|e| Error::Store(format!("serializing harmony: {e}")))?
+        );
+        return Ok(());
+    }
+
+    print_harmony(language, &report);
+    Ok(())
+}
+
+fn print_harmony(language: &str, r: &HarmonyReport) {
+    println!("vowel harmony · {language}");
+    if r.analyzable_words == 0 {
+        println!("  (no analyzable words — define a phoneme inventory and add dictionary entries)");
+        return;
+    }
+    println!("  {} analyzable word(s)", r.analyzable_words);
+    for d in &r.dimensions {
+        println!(
+            "  {:<9} · {:.0}% harmonic over {} word(s) — {}",
+            d.name,
+            d.rate * 100.0,
+            d.tested_words,
+            d.verdict,
+        );
+    }
+    let harmonic = r.dimensions.iter().any(|d| d.verdict == "strong" || d.verdict == "tendency");
+    if !harmonic {
+        println!("  no vowel-harmony pattern detected.");
+    }
+}
+
+/// LING-1 L-P4 — `inkhaven language sketch <lang>`: a one-page, deterministic
+/// overview of the language, assembling the whole analysis suite into prose.
+pub(crate) fn sketch(project: &Path, language: &str, out: Option<&str>) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+    let (spec, _) = load_grammar_spec(&store, &hierarchy, &lang_book)?;
+    let text = crate::conlang::sketch::sketch(&lang_book.title, &phon, &entries, &spec);
+
+    match out {
+        Some(path) => {
+            crate::io_atomic::write(std::path::Path::new(path), text.as_bytes())
+                .map_err(|e| Error::Config(format!("write {path}: {e}")))?;
+            eprintln!("wrote sketch to {path}");
+        }
+        None => print!("{text}"),
+    }
+    Ok(())
+}
+
+/// LING-1 Wave-2 — `inkhaven language distribution <lang>`: where each phoneme
+/// appears (onset / nucleus / coda, word edges) and any restricted distributions.
+pub(crate) fn distribution(project: &Path, language: &str, json: bool) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+    let report = crate::conlang::distribution::distribution(&phon, &entries);
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report)
+                .map_err(|e| Error::Store(format!("serializing distribution: {e}")))?
+        );
+        return Ok(());
+    }
+
+    print_distribution(language, &report);
+    Ok(())
+}
+
+fn print_distribution(language: &str, r: &DistributionReport) {
+    println!("phoneme distribution · {language}");
+    if r.analyzable_words == 0 {
+        println!("  (no analyzable words — define a phoneme inventory and add dictionary entries)");
+        return;
+    }
+    println!("  {} analyzable word(s)", r.analyzable_words);
+    println!("  onsets · {}", r.onset_inventory.join(" "));
+    println!("  codas  · {}", r.coda_inventory.join(" "));
+    if r.restricted.is_empty() {
+        println!("  no restricted distributions — every consonant appears freely.");
+    } else {
+        println!("  restricted distributions:");
+        for d in &r.restricted {
+            println!(
+                "      {:<4} {}  (onset {}, coda {}, initial {}, final {})",
+                d.ipa,
+                d.restriction.as_deref().unwrap_or(""),
+                d.as_onset,
+                d.as_coda,
+                d.word_initial,
+                d.word_final,
+            );
+        }
+    }
 }
