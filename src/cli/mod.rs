@@ -3320,6 +3320,21 @@ pub enum LanguageCommand {
         json: bool,
     },
 
+    /// 1.7 LING-1 L-P6 — the Oracle: judge a candidate word for well-formedness
+    /// by linguistic level — phonotactics (unknown segments, constraint
+    /// violations) and morphology (does it analyse as root + affixes?). Unlike
+    /// `audit`, it judges arbitrary input, not just the finished lexicon.
+    Check {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The candidate word to judge.
+        #[arg(long, value_name = "WORD")]
+        word: String,
+        /// Emit the findings as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
     /// 1.7 LING-1 L-P5 — argument linking: work out a clause's thematic roles,
     /// RRG macroroles (actor / undergoer) and grammatical relations from the
     /// verb's valence. `--valence` overrides a declared verb class.

@@ -14,6 +14,7 @@ pub mod creative;
 pub mod features;
 pub mod naturalness;
 pub mod pairs;
+pub mod oracle;
 pub mod parse;
 pub mod sketch;
 pub mod suggest;

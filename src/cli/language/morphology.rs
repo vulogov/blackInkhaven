@@ -8,6 +8,35 @@ use crate::error::{Error, Result};
 
 use super::*;
 
+/// LING-1 L-P6 — `inkhaven language check <lang> --word W`: the Oracle. Judge a
+/// candidate word for well-formedness by level (phonotactics, morphology).
+pub(crate) fn oracle_check(project: &Path, language: &str, word: &str, json: bool) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let morph = load_morphology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+    let report = crate::conlang::oracle::check_word(&phon, &morph, &entries, word);
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report)
+                .map_err(|e| Error::Store(format!("serializing oracle: {e}")))?
+        );
+        return Ok(());
+    }
+
+    println!("oracle · {language} · {word}");
+    if report.ok() {
+        println!("  ✓ a well-formed word of the language.");
+    } else {
+        for f in &report.findings {
+            println!("      ✗ [{}] {}", f.level, f.message);
+        }
+    }
+    Ok(())
+}
+
 /// LING-1 L-P5 — `inkhaven language link <lang> --verb V --args "a,b,c"`: work
 /// out a clause's argument structure — thematic roles, RRG macroroles, and
 /// grammatical relations — from the verb's valence.
