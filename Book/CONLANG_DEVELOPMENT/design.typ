@@ -210,7 +210,7 @@
     #place(bottom + center, dy: -30mm, align(center)[
       #text(font: body_family, size: 10pt, fill: ink_smoke, book_author)
       #v(2mm)
-      #text(font: body_family, size: 9pt, fill: ink_smoke, book_year + " · examples assume Inkhaven 1.7.1 or newer")
+      #text(font: body_family, size: 9pt, fill: ink_smoke, book_year + " · examples assume Inkhaven 1.7.2 or newer")
     ])
   ]
   pagebreak()
