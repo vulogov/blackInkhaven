@@ -203,6 +203,9 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::Link { language, verb, args, valence, json } => {
             link_args(project, &language, &verb, &args, valence.as_deref(), json)
         }
+        LanguageCommand::Check { language, word, json } => {
+            oracle_check(project, &language, &word, json)
+        }
         LanguageCommand::Trace { language, rule, limit, json } => {
             trace(project, &language, &rule, limit, json)
         }
