@@ -3306,6 +3306,55 @@ pub enum LanguageCommand {
         provider: Option<String>,
     },
 
+    /// 1.7 LING-1 L-P5 — the morphological parser: analyse a surface word into
+    /// root + affixes by reversing the morphology (strip known affixes until what
+    /// remains is a dictionary root). The inverse of paradigm generation.
+    Parse {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The surface word to analyse.
+        #[arg(long, value_name = "WORD")]
+        word: String,
+        /// Emit the analyses as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// 1.7 LING-1 L-P6 — the Oracle: judge a candidate word for well-formedness
+    /// by linguistic level — phonotactics (unknown segments, constraint
+    /// violations) and morphology (does it analyse as root + affixes?). Unlike
+    /// `audit`, it judges arbitrary input, not just the finished lexicon.
+    Check {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The candidate word to judge.
+        #[arg(long, value_name = "WORD")]
+        word: String,
+        /// Emit the findings as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// 1.7 LING-1 L-P5 — argument linking: work out a clause's thematic roles,
+    /// RRG macroroles (actor / undergoer) and grammatical relations from the
+    /// verb's valence. `--valence` overrides a declared verb class.
+    Link {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The verb (looked up in the `verb_classes` block for its valence).
+        #[arg(long, value_name = "VERB")]
+        verb: String,
+        /// The clause's arguments, comma-separated (subject first).
+        #[arg(long, value_name = "A,B,C")]
+        args: String,
+        /// Override the valence (intransitive | transitive | ditransitive | impersonal).
+        #[arg(long)]
+        valence: Option<String>,
+        /// Emit the linking as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
     /// 1.7 LING-1 L-P1 — the Consequence Tracer. Preview a pending sound change
     /// across the current lexicon (which words shift, which distinctions merge,
     /// which new homophones appear) without committing it. The rule uses the
