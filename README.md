@@ -21,34 +21,34 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.7.3 — The Analyst's Bench
+## Latest release · 1.7.4 — Rounding Out the Sounds
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.7.3.md`](Documentation/RELEASE_NOTES/1.7.3.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.7.4.md`](Documentation/RELEASE_NOTES/1.7.4.md)
 
-Three more read-only analyses round out the phonology bench, plus a one-page grammar
-sketch that gathers the whole suite into a single readable overview. **No new runtime
-crates.** Test suite → 2511, warning-free.
+Two more phonology tools that go from analysis to advice: a recommender for what your
+inventory is missing, and an AI scaffold that proposes a starter inventory from a
+description. **No new runtime crates.** Test suite → 2514, warning-free.
 
-### Vowel harmony & positional distribution
+### What is your inventory missing?
 
-`inkhaven language harmony <lang>` measures how consistently a word's vowels agree on
-backness and rounding — a *strong*/*tendency*/*none* verdict for vowel harmony.
-`inkhaven language distribution <lang>` reports *where* each phoneme appears (onset /
-nucleus / coda, word edges) and surfaces **restricted distributions** — the consonant
-confined to codas, or barred from a word edge.
+`inkhaven language suggest-phonemes <lang>` recommends the phonemes that would round out
+the inventory — the voiced counterpart missing beside a voiceless obstruent, a
+near-universal segment the inventory lacks — via the distinctive-feature matrix. Advisory;
+changes nothing.
 
-### A one-page sketch
+### A starter inventory from a description
 
-`inkhaven language sketch <lang>` assembles the phonology, typology and lexicon analyses
-into three short prose paragraphs — the analysis dashboard as a page you can read.
-Deterministic, needs no provider, always current; `--out` writes it to a file.
+`inkhaven language scaffold --from "a flowing, vowel-rich island language"` asks the model
+for a coherent starter phoneme inventory and syllable templates, **validates it by parsing
+it back**, and prints it as pasteable Phonology-chapter HJSON. Preview-only — a place to
+start a new language from a blank page.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Everything is additive — three new `language` subcommands
-(`harmony`, `distribution`, `sketch`); existing projects and languages are unchanged. The
+**No new runtime crates.** Everything is additive — two new `language` subcommands
+(`suggest-phonemes`, `scaffold`); existing projects and languages are unchanged. The
 companion book's command reference is updated to match. Warning-free (binary and tests).
-Test suite → 2511.
+Test suite → 2514.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
