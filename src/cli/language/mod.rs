@@ -191,6 +191,9 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             distribution(project, &language, json)
         }
         LanguageCommand::Sketch { language, out } => sketch(project, &language, out.as_deref()),
+        LanguageCommand::SuggestPhonemes { language, json } => {
+            suggest_phonemes(project, &language, json)
+        }
         LanguageCommand::Trace { language, rule, limit, json } => {
             trace(project, &language, &rule, limit, json)
         }
