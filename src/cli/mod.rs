@@ -3254,6 +3254,17 @@ pub enum LanguageCommand {
         json: bool,
     },
 
+    /// 1.7 LING-1 Wave-2 — where each phoneme appears (syllable onset / nucleus /
+    /// coda and the word edges), and any restricted (defective) distributions —
+    /// a consonant confined to codas, or barred from a word edge. Read-only.
+    Distribution {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Emit the report as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
     /// 1.7 LING-1 L-P1 — the Consequence Tracer. Preview a pending sound change
     /// across the current lexicon (which words shift, which distinctions merge,
     /// which new homophones appear) without committing it. The rule uses the
