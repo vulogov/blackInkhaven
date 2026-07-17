@@ -14,6 +14,7 @@ pub mod features;
 pub mod naturalness;
 pub mod pairs;
 pub mod metrics;
+pub mod trace;
 pub mod universals;
 pub mod diachronic;
 pub mod gaps;

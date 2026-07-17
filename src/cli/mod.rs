@@ -3231,6 +3231,24 @@ pub enum LanguageCommand {
         json: bool,
     },
 
+    /// 1.7 LING-1 L-P1 — the Consequence Tracer. Preview a pending sound change
+    /// across the current lexicon (which words shift, which distinctions merge,
+    /// which new homophones appear) without committing it. The rule uses the
+    /// rewrite syntax `X > Y / A _ B`, e.g. `s > ʃ / _ i` or `d > t / _ #`.
+    Trace {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The pending sound-change rule to preview.
+        #[arg(long, value_name = "RULE")]
+        rule: String,
+        /// Maximum example changes to list (the counts reflect all of them).
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        /// Emit the report as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
     /// LANG-1 P6.2 — render the dictionary as a document.  Markdown (`md`) or
     /// Typst (`typ`); the Typst path is a paginated, two-column book that embeds
     /// the generated conscript font and shows each headword in the native script
