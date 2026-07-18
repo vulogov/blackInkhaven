@@ -8,6 +8,48 @@ use crate::error::{Error, Result};
 
 use super::*;
 
+/// LING-1 L-P6b — `inkhaven language tree <lang> --verb V --args "subj,obj"`:
+/// build the X-bar phrase-structure tree of a clause, using the language's word
+/// order for head–complement placement.
+pub(crate) fn build_tree(
+    project: &Path,
+    language: &str,
+    verb: &str,
+    args_csv: &str,
+    word_order: Option<&str>,
+    json: bool,
+) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let (spec, _) = load_grammar_spec(&store, &hierarchy, &lang_book)?;
+
+    // Word order: explicit flag, else the declared feature, else SVO.
+    let order = word_order
+        .map(str::to_string)
+        .or_else(|| spec.grammar.get("word_order").cloned())
+        .unwrap_or_else(|| "svo".to_string());
+
+    let args: Vec<&str> = args_csv.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
+    let subject = *args.first().unwrap_or(&"(subject)");
+    let object = args.get(1).copied();
+    let indirect = args.get(2).copied();
+
+    let tree = crate::conlang::xbar::build(&order, verb, subject, object, indirect);
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&tree)
+                .map_err(|e| Error::Store(format!("serializing tree: {e}")))?
+        );
+        return Ok(());
+    }
+
+    println!("X-bar tree · {language} · {order}\n");
+    print!("{}", tree.render());
+    println!("\n{}", tree.bracketed());
+    Ok(())
+}
+
 /// LING-1 L-P6 — `inkhaven language check <lang> --word W`: the Oracle. Judge a
 /// candidate word for well-formedness by level (phonotactics, morphology).
 pub(crate) fn oracle_check(project: &Path, language: &str, word: &str, json: bool) -> Result<()> {

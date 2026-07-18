@@ -21,6 +21,7 @@ pub mod suggest;
 pub mod metrics;
 pub mod trace;
 pub mod universals;
+pub mod xbar;
 pub mod diachronic;
 pub mod gaps;
 pub mod generate;
