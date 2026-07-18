@@ -3340,6 +3340,57 @@ pub enum LanguageCommand {
         json: bool,
     },
 
+    /// 1.7 LING-1 L-P6b — syntactic movement: front a constituent (wh-movement /
+    /// topicalisation) over the X-bar tree, leaving a coindexed trace.
+    Movement {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The clause's verb.
+        #[arg(long, value_name = "VERB")]
+        verb: String,
+        /// The clause's arguments, comma-separated (subject, object, indirect).
+        #[arg(long, value_name = "SUBJ,OBJ,IOBJ")]
+        args: String,
+        /// Which role to front (subject | object | indirect).
+        #[arg(long = "move", value_name = "ROLE")]
+        r#move: String,
+        /// Override the word order.
+        #[arg(long, value_name = "ORDER")]
+        word_order: Option<String>,
+        /// Emit the derived tree as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// 1.7 LING-1 L-P6b — binding theory: decide whether one argument may refer to
+    /// another, by c-command and the binding principles (a reflexive object may
+    /// bind to the subject, a pronoun may not, a name is a Principle-C violation).
+    Binding {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The clause's verb.
+        #[arg(long, value_name = "VERB")]
+        verb: String,
+        /// The clause's arguments, comma-separated (subject, object, indirect).
+        #[arg(long, value_name = "SUBJ,OBJ,IOBJ")]
+        args: String,
+        /// The potential antecedent's role (default: subject).
+        #[arg(long, default_value = "subject")]
+        antecedent: String,
+        /// The anaphor's role (default: object).
+        #[arg(long, default_value = "object")]
+        anaphor: String,
+        /// The anaphor type (reflexive | pronoun | name).
+        #[arg(long, value_name = "TYPE", default_value = "reflexive")]
+        r#type: String,
+        /// Override the word order.
+        #[arg(long, value_name = "ORDER")]
+        word_order: Option<String>,
+        /// Emit the verdict as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
     /// 1.7 LING-1 L-P6 — the Oracle: judge a candidate word for well-formedness
     /// by linguistic level — phonotactics (unknown segments, constraint
     /// violations) and morphology (does it analyse as root + affixes?). Unlike
