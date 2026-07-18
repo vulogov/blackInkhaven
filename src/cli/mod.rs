@@ -3320,6 +3320,26 @@ pub enum LanguageCommand {
         json: bool,
     },
 
+    /// 1.7 LING-1 L-P6b — build the X-bar phrase-structure tree (CP → TP → VP) of
+    /// a clause from its subject / verb / object(s), placing heads and complements
+    /// by the language's word order. `--word-order` overrides the declared feature.
+    Tree {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The clause's verb.
+        #[arg(long, value_name = "VERB")]
+        verb: String,
+        /// The clause's arguments, comma-separated (subject, object, indirect).
+        #[arg(long, value_name = "SUBJ,OBJ,IOBJ")]
+        args: String,
+        /// Override the word order (svo | sov | vso | …).
+        #[arg(long, value_name = "ORDER")]
+        word_order: Option<String>,
+        /// Emit the tree as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
     /// 1.7 LING-1 L-P6 — the Oracle: judge a candidate word for well-formedness
     /// by linguistic level — phonotactics (unknown segments, constraint
     /// violations) and morphology (does it analyse as root + affixes?). Unlike
