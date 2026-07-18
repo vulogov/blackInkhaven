@@ -8,6 +8,119 @@ use crate::error::{Error, Result};
 
 use super::*;
 
+/// Resolve the clause's word order (flag → declared feature → SVO) + split args.
+fn clause_setup<'a>(
+    spec: &crate::conlang::types::grammar::GrammarSpec,
+    word_order: Option<&str>,
+    args_csv: &'a str,
+) -> (String, Vec<&'a str>) {
+    let order = word_order
+        .map(str::to_string)
+        .or_else(|| spec.grammar.get("word_order").cloned())
+        .unwrap_or_else(|| "svo".to_string());
+    let args: Vec<&str> = args_csv.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
+    (order, args)
+}
+
+/// LING-1 L-P6b — `inkhaven language movement <lang> --verb V --args "…" --move R`:
+/// front a constituent (wh-movement / topicalisation), leaving a coindexed trace.
+pub(crate) fn movement(
+    project: &Path,
+    language: &str,
+    verb: &str,
+    args_csv: &str,
+    role: &str,
+    word_order: Option<&str>,
+    json: bool,
+) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let (spec, _) = load_grammar_spec(&store, &hierarchy, &lang_book)?;
+    let (order, args) = clause_setup(&spec, word_order, args_csv);
+    let subject = *args.first().unwrap_or(&"(subject)");
+    let report =
+        crate::conlang::movement::front(&order, verb, subject, args.get(1).copied(), args.get(2).copied(), role);
+
+    let Some(report) = report else {
+        return Err(Error::Config(format!(
+            "cannot front `{role}` — the role is unfilled or unknown (use subject | object | indirect)"
+        )));
+    };
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report)
+                .map_err(|e| Error::Store(format!("serializing movement: {e}")))?
+        );
+        return Ok(());
+    }
+
+    println!("movement · {language} · {order}");
+    println!("  fronted `{}` ({}) to {}\n", report.moved, report.role, report.landing);
+    print!("{}", report.tree.render());
+    println!("\n{}", report.tree.bracketed());
+    Ok(())
+}
+
+/// LING-1 L-P6b — `inkhaven language binding <lang> …`: decide whether one
+/// argument may refer to another, by c-command + the binding principles.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn binding(
+    project: &Path,
+    language: &str,
+    verb: &str,
+    args_csv: &str,
+    antecedent: &str,
+    anaphor: &str,
+    anaphor_type: &str,
+    word_order: Option<&str>,
+    json: bool,
+) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let (spec, _) = load_grammar_spec(&store, &hierarchy, &lang_book)?;
+    let (order, args) = clause_setup(&spec, word_order, args_csv);
+    let subject = *args.first().unwrap_or(&"(subject)");
+    let report = crate::conlang::binding::analyze(
+        &order,
+        verb,
+        subject,
+        args.get(1).copied(),
+        args.get(2).copied(),
+        antecedent,
+        anaphor,
+        anaphor_type,
+    );
+
+    let Some(report) = report else {
+        return Err(Error::Config(
+            "cannot bind — an argument role is unfilled or unknown (use subject | object | indirect)".into(),
+        ));
+    };
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report)
+                .map_err(|e| Error::Store(format!("serializing binding: {e}")))?
+        );
+        return Ok(());
+    }
+
+    println!("binding · {language}");
+    println!(
+        "  can `{}` corefer with `{}` (as a {})?",
+        report.anaphor, report.antecedent, report.anaphor_type
+    );
+    println!(
+        "  c-command: {} · Principle {} · coreference {}",
+        if report.c_commands { "yes" } else { "no" },
+        report.principle,
+        report.coreference,
+    );
+    println!("  {}", report.note);
+    Ok(())
+}
+
 /// LING-1 L-P6b — `inkhaven language tree <lang> --verb V --args "subj,obj"`:
 /// build the X-bar phrase-structure tree of a clause, using the language's word
 /// order for head–complement placement.
