@@ -46,6 +46,9 @@ Add `--help` to any command for its full signature.
 / `gloss <lang> --text "…"`: Interlinear (word-by-word) gloss of a sentence.
 / `parse <lang> --word W [--json]`: Analyse a surface word into root + affixes (the morphological parser — the inverse of paradigm generation).
 / `link <lang> --verb V --args "a,b,c" [--valence V] [--json]`: Work out a clause's thematic roles, RRG macroroles (actor / undergoer) and grammatical relations from the verb's valence.
+/ `tree <lang> --verb V --args "subj,obj,iobj" [--word-order O] [--json]`: Build the X-bar phrase-structure tree (CP → TP → VP) of a clause, placing heads and complements by word order.
+/ `movement <lang> --verb V --args "…" --move ROLE [--word-order O] [--json]`: Front a constituent (wh-movement / topicalisation) over the tree, leaving a coindexed trace.
+/ `binding <lang> --verb V --args "…" [--antecedent R] [--anaphor R] [--type reflexive|pronoun|name] [--json]`: Decide whether one argument may refer to another, by c-command and the binding principles.
 / `derive <lang> --root R --gloss G --pos P [--yes]`: Coin derived words from a root.
 / `grammar <lang> [--set feature=value]`: View or set the typology questionnaire.
 / `define-rule <lang>`: Open your `$EDITOR` to hand-author a grammar or phonology rule — the direct authoring path when a rule is easier written than configured.
