@@ -76,6 +76,7 @@ pub fn message_source(msg: &Message) -> &'static str {
         kinds::CONFRONT => "confront",
         kinds::LOCUS => "locus",
         kinds::RIGOR => "rigor",
+        kinds::ORACLE => "oracle",
         _ => "other",
     }
 }

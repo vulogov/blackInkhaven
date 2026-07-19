@@ -95,6 +95,31 @@ inkhaven language scan-manuscript Eldar
 It lists candidate undefined words, so you can add the ones worth keeping. This
 closes the loop between writing and the lexicon.
 
+#section("The Oracle watches as you write")
+
+`scan-manuscript` finds the *well-formed* words you have not defined yet. Its
+mirror image runs automatically. Whenever you save a paragraph, the *Oracle* looks
+at the conlang words in it — words that segment fully into one of your languages'
+inventories — and quietly flags any that break that language's own phonotactics.
+The finding appears in the *Output pane* (`Ctrl+B` then `Tab`), marked `⌥`:
+
+```
+⌥ [Eldar] `ktal` breaks phonotactics — contains an illegal onset cluster
+```
+
+It is the same judgement as `inkhaven language check`, pointed at your prose
+instead of a single word — a proofreader for the shape of your invented words. It
+is purely advisory: it never changes a syllable of your writing, and it only
+speaks up in paragraphs that already contain a word of the language, so prose in
+your working language is left alone. A well-formed word you simply have not defined
+is `scan-manuscript`'s business, not the Oracle's, so it stays silent on those.
+
+#callout(label: "Turning it off")[
+  The guardian is on by default. To silence it, set `oracle.on_save: false` in
+  `inkhaven.hjson` (or `oracle.enabled: false` to disable the Oracle entirely).
+  Projects with no languages never trigger it.
+]
+
 #section("What is your lexicon still missing?")
 
 A young lexicon always has holes. Inkhaven can tell you *which* basic concepts you
@@ -131,7 +156,8 @@ domain you care about.
    `--semantic` also blocks near-synonyms.],
   [Nothing is added without `--yes`; AI is optional.],
   [`scan-manuscript` finds language-like words in your prose that are not yet
-   defined.],
+   defined; the *Oracle* watches every save and flags conlang words that break
+   your phonotactics (`⌥` in the Output pane) — advisory, never editing.],
   [`gaps` compares your lexicon against the *Swadesh-100* (or your own concept
    list) and reports what is still missing.],
 ))

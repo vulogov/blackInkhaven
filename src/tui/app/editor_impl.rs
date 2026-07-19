@@ -800,6 +800,11 @@ impl super::App {
         // No-op when the effective mode is `book_defined` (the
         // function itself short-circuits there).
         self.maybe_redetect_paragraph_language();
+        // 1.7.9+ ORACLE — the conlang phonotactic guardian over the saved
+        // paragraph: flag words that segment into a language's inventory but
+        // break its phonotactics, as advisory Output findings. No-op unless
+        // `oracle.on_save` and the project has languages.
+        self.oracle_scan_saved_paragraph(node.id, &body);
         Ok(())
     }
 
