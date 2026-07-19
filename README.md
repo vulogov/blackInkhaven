@@ -21,31 +21,30 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.7.10 — The Oracle Joins the Review Pass
+## Latest release · 1.7.11 — Partial Reduplication
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.7.10.md`](Documentation/RELEASE_NOTES/1.7.10.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.7.11.md`](Documentation/RELEASE_NOTES/1.7.11.md)
 
-1.7.9 gave the Oracle an eye on the paragraph you just saved; this release widens it to the
-whole book. The phonotactic guardian now runs in the review pass (`Ctrl+B J`), sweeping every
-chapter for malformed conlang words in one go — zero-AI, advisory, never editing. **No new
-runtime crates.** Test suite → 2549, warning-free.
+The parser learned full reduplication in 1.7.7 (`kata` → `kata-kata`); this release adds its
+partial cousin, where the reduplicant copies only the base's first syllable and prefixes it
+(`kata` → `ka~kata`). The morphological parser now recognises both, so an inflected,
+partially-reduplicated word analyses back to its root. **No new runtime crates.** Test suite
+→ 2552, warning-free.
 
-### Book-wide phonotactic sweep
+### Partial (initial-syllable) reduplication
 
-The review pass now runs the Oracle across the entire manuscript, alongside the other
-deterministic readers (fact, socrates, timeline, dialogue, utopia, character, theologian,
-myth, rigor). For each language it loads the phonology/morphology/lexicon once, scans every
-user-book paragraph (skipping system books, as `scan-manuscript` does), and surfaces each
-ill-formed conlang word as an advisory Output finding (`⌥`) — with an `oracle N` count in the
-review tally.
+`inkhaven language parse <lang> --word kakata` now analyses **partial reduplication** —
+`kakata` → `ka~ + kata`, composing with affixes (`kakatai` → `ka~ + kata + PL`). The parser
+detects a duplicated opening syllable (the CV or CVC reduplicant), strips it, and continues on
+the base; it is labelled `REDUP~` to set it apart from full `REDUP`, and only fires when a
+longer base genuinely follows. It surfaces everywhere the parser does — the CLI, the
+companion's `/parse`, and the Oracle's morphology level.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Purely additive — a book-wide `run_oracle_check` joins the unified
-review pass, reusing the `oracle::scan_prose` engine and `oracle:` config block from 1.7.9;
-gated on `oracle.enabled`; a no-op for projects with no languages. Existing projects,
-languages and prose are unchanged. The companion book notes the sweep. Warning-free (binary
-and tests). Test suite → 2549.
+**No new runtime crates.** Purely additive — an extension to `parse::strip`; existing analyses
+are unchanged, and words with no reduplication are unaffected. The companion book notes it in
+the parser's description. Warning-free (binary and tests). Test suite → 2552.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
