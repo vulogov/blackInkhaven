@@ -126,6 +126,13 @@ notation:
 /tree sees she bird
 ```
 
+`/clause <verb> <subject> [object] [indirect]` runs the Oracle over a whole clause
+rather than a single word, checking its argument structure against the verb's
+valence — an intransitive verb given two arguments is flagged, a transitive one
+given two is not. (Checking that the verb *agrees* with its subject needs the
+subject's grammatical features, so that half lives on the command line, as
+`language check-clause`.)
+
 We meet the tracer, the parser, the Oracle and the syntax engine properly — and
 the analyses the other views show — in the next chapter.
 
@@ -143,6 +150,7 @@ the analyses the other views show — in the next chapter.
    talking about a language never changes it.],
   [Slash-commands run *locally* over your book and print inline: `/trace <rule>`
    previews a sound change, `/parse <word>` analyses a surface form into root +
-   affixes, `/check <word>` is the Oracle's well-formedness verdict, and
-   `/tree <verb> <subject> …` builds the clause's X-bar tree. None commit.],
+   affixes, `/check <word>` is the word Oracle's verdict, `/tree <verb> <subject>
+   …` builds the clause's X-bar tree, and `/clause <verb> <subject> …` is the
+   clause Oracle's argument-structure check. None commit.],
 ))
