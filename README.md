@@ -21,38 +21,39 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.7.5 — The Engine Begins
+## Latest release · 1.7.6 — The Syntax Engine
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.7.5.md`](Documentation/RELEASE_NOTES/1.7.5.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.7.6.md`](Documentation/RELEASE_NOTES/1.7.6.md)
 
-The linguistic layer starts building the other direction — a generative engine that reads
-structure rather than counting it: a morphological parser, argument linking, and an
-Oracle. All deterministic. **No new runtime crates.** Test suite → 2527, warning-free.
+A sentence has structure, and this release builds it — a generative syntax engine that
+draws the X-bar tree of a clause, fronts constituents leaving traces, and resolves binding
+by c-command. All deterministic. **No new runtime crates.** Test suite → 2539, warning-free.
 
-### A morphological parser
+### The phrase-structure tree
 
-`inkhaven language parse <lang> --word W` strips the language's known affixes and asks
-whether what remains is a dictionary root — a genuine reverse of paradigm generation, not
-a lookup — returning every analysis, simplest first (`katai` → *kata* ‘stone’ + PL).
+`inkhaven language tree <lang> --verb V --args "subj,obj"` builds the X-bar tree
+(CP → TP → VP) of a clause, placing heads and complements by the language's word order — a
+head-final (SOV) language reverses it correctly.
 
-### Argument linking
+### Movement
 
-`inkhaven language link <lang> --verb V --args "a,b,c"` works out a clause's **thematic
-roles**, RRG **macroroles** (actor / undergoer) and **grammatical relations** from the
-verb's valence — the syntax–semantics interface made explicit.
+`inkhaven language movement <lang> --verb V --args "…" --move object` fronts a constituent
+(wh-movement / topicalisation) to the specifier of CP as `NP₁`, leaving a coindexed trace
+`t₁` — the derivation made visible.
 
-### The Oracle
+### Binding
 
-`inkhaven language check <lang> --word W` judges *arbitrary* input — a word you're about to
-coin — by linguistic level: phonotactics (segments outside the inventory, which declared
-constraints it breaks) and morphology (does it analyse as root + affixes?).
+`inkhaven language binding <lang> --verb V --args "she, herself" --type reflexive` decides
+whether one argument may refer to another by **c-command** and the binding principles: a
+reflexive object *may* bind to the subject, a pronoun *may not*, a name is a Principle-C
+violation.
 
 ### Dependencies & compatibility
 
 **No new runtime crates.** Everything is additive — three new `language` subcommands
-(`parse`, `link`, `check`); existing projects and languages are unchanged. The companion
-book's command reference is updated to match. Warning-free (binary and tests). Test suite
-→ 2527.
+(`tree`, `movement`, `binding`); existing projects and languages are unchanged. The
+companion book's command reference is updated to match. Warning-free (binary and tests).
+Test suite → 2539.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
