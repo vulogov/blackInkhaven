@@ -21,34 +21,37 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.7.7 — The Engine in the Companion
+## Latest release · 1.7.8 — The Oracle Deepens
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.7.7.md`](Documentation/RELEASE_NOTES/1.7.7.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.7.8.md`](Documentation/RELEASE_NOTES/1.7.8.md)
 
-The Wave-3 analysis engine has lived on the command line; this release brings it into the
-Linguistic companion's chat, where you actually think about a language. Four slash-commands
-run locally over your book and print inline, and the morphological parser learns full
-reduplication. **No new runtime crates.** Test suite → 2541, warning-free.
+The Oracle judged words — legal sounds, root + affixes. It now judges clauses. Two more
+levels join it: agreement (does the verb inflect for its subject?) and argument structure
+(does the clause have the right number of arguments for its verb?), built by reusing the
+agreement generator and the argument linker. **No new runtime crates.** Test suite → 2545,
+warning-free.
 
-### The analysers, in the chat
+### The clause Oracle
 
-The companion's grounded chat now runs three more Wave-3 analysers inline, alongside the
-existing `/trace`: `/parse <word>` reverses the morphology into root + affixes, `/check
-<word>` is the Oracle's well-formedness verdict, and `/tree <verb> <subject> [object]` builds
-the clause's X-bar tree. Each runs over the current language book; none commit.
+`inkhaven language check-clause <lang> --verb V --args "…" --verb-root R --subject-features
+"number=pl"` runs the Oracle over a whole clause. **Agreement (level 3):** it regenerates
+the verb form the agreement rule *should* produce and flags a mismatch (a plural subject
+with a singular verb → `expected `katai``). **Argument structure (level 4):** it checks the
+argument count against the verb's valence — an intransitive verb handed two arguments is
+flagged.
 
-### Reduplication in the parser
+### In the companion
 
-`inkhaven language parse <lang> --word katakata` now analyses **full reduplication** —
-`katakata` → `REDUP + kata`, composing with ordinary affixes (`katakatai` →
-`REDUP + kata + PL`). The parser's first non-concatenative process.
+The companion's chat gains `/clause <verb> <subject> [object]`, the clause Oracle's
+argument-structure check run inline — joining `/trace`, `/parse`, `/check` and `/tree`.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Everything is additive — three new chat slash-commands and a
-parser extension; existing projects, languages and CLI verbs are unchanged. The companion
-book documents the slash-commands and, for the first time, the full morphosyntax verb set
-in its command reference. Warning-free (binary and tests). Test suite → 2541.
+**No new runtime crates.** Everything is additive — one new `language` subcommand
+(`check-clause`), one new chat slash-command, and the clause-level Oracle built entirely
+from the existing agreement generator and argument linker; existing projects, languages and
+CLI verbs are unchanged. The companion book documents both. Warning-free (binary and tests).
+Test suite → 2545.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

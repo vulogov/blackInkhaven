@@ -466,6 +466,56 @@ impl LinguisticApp {
         self.right = RightPane::Chat;
     }
 
+    /// `/clause <verb> <subject> [object] [indirect]` — the Oracle over a clause:
+    /// argument structure against the verb's valence (agreement, which needs the
+    /// subject's features, is the CLI's `check-clause`).
+    fn run_clause(&mut self, spec_line: String) {
+        let prompt = format!("/clause {spec_line}");
+        let words: Vec<String> = spec_line.split_whitespace().map(str::to_string).collect();
+        if words.len() < 2 {
+            self.push_error_turn(prompt, "usage: /clause <verb> <subject> [object] [indirect]".into());
+            return;
+        }
+        let Some(book) = self.current_language_book().and_then(|id| self.hierarchy.get(id).cloned())
+        else {
+            self.push_error_turn(prompt, "select a language first".into());
+            return;
+        };
+        let phon = crate::cli::language::load_phonology(&self.store, &self.hierarchy, &book)
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let morph = crate::cli::language::load_morphology(&self.store, &self.hierarchy, &book)
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let verb = &words[0];
+        let valence = crate::cli::language::load_grammar_spec(&self.store, &self.hierarchy, &book)
+            .ok()
+            .and_then(|(spec, _)| {
+                spec.verb_classes.iter().find(|vc| vc.name.eq_ignore_ascii_case(verb)).map(|vc| vc.valence.clone())
+            })
+            .unwrap_or_default();
+        let args = words[1..].to_vec();
+        let features = std::collections::BTreeMap::new();
+        let clause = crate::conlang::oracle::ClauseInput {
+            verb,
+            verb_root: None,
+            valence: &valence,
+            args: &args,
+            subject_features: &features,
+        };
+        let report = crate::conlang::oracle::check_clause(&phon, &morph, &clause);
+        let response = if report.ok() {
+            "✓ a well-formed clause of the language.".to_string()
+        } else {
+            report.findings.iter().map(|f| format!("✗ [{}] {}", f.level, f.message)).collect::<Vec<_>>().join("\n")
+        };
+        self.chat.push(Turn { prompt, response, streaming: false, scope: Some(book.title.clone()) });
+        self.chat_scroll = u16::MAX;
+        self.right = RightPane::Chat;
+    }
+
     fn push_error_turn(&mut self, prompt: String, response: String) {
         self.chat.push(Turn {
             prompt,
@@ -828,6 +878,8 @@ impl TuiHost for LinguisticApp {
                         self.run_check(word.trim().to_string());
                     } else if let Some(clause) = q.strip_prefix("/tree ") {
                         self.run_tree(clause.trim().to_string());
+                    } else if let Some(clause) = q.strip_prefix("/clause ") {
+                        self.run_clause(clause.trim().to_string());
                     } else {
                         self.send_query(q);
                     }
@@ -1029,7 +1081,7 @@ impl LinguisticApp {
         let mut lines: Vec<Line> = Vec::new();
         if self.chat.is_empty() {
             lines.push(Line::from(Span::styled(
-                "Press i to ask; slash-commands: /trace, /parse, /check <word>, /tree <verb subj obj>.",
+                "Press i to ask; slash-commands: /trace, /parse, /check <word>, /tree, /clause <verb subj obj>.",
                 Style::default().add_modifier(Modifier::DIM),
             )));
         }

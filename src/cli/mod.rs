@@ -3406,6 +3406,33 @@ pub enum LanguageCommand {
         json: bool,
     },
 
+    /// 1.7 LING-1 L-P6 — the Oracle over a whole clause (levels 3–4): subject–verb
+    /// agreement and argument structure. Checks that the verb inflects for its
+    /// subject's features and that the argument count matches the verb's valence.
+    CheckClause {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The observed verb surface form.
+        #[arg(long, value_name = "VERB")]
+        verb: String,
+        /// The clause's arguments, comma-separated (subject first).
+        #[arg(long, value_name = "SUBJ,OBJ,IOBJ")]
+        args: String,
+        /// The verb's root, for regenerating its expected agreeing form.
+        #[arg(long, value_name = "ROOT")]
+        verb_root: Option<String>,
+        /// The subject's features, e.g. `number=pl,person=3` (enables the
+        /// agreement check).
+        #[arg(long, value_name = "K=V,…")]
+        subject_features: Option<String>,
+        /// Override the verb's valence (else read from its verb class).
+        #[arg(long)]
+        valence: Option<String>,
+        /// Emit the findings as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
     /// 1.7 LING-1 L-P5 — argument linking: work out a clause's thematic roles,
     /// RRG macroroles (actor / undergoer) and grammatical relations from the
     /// verb's valence. `--valence` overrides a declared verb class.
