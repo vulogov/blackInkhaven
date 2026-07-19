@@ -114,6 +114,10 @@ speaks up in paragraphs that already contain a word of the language, so prose in
 your working language is left alone. A well-formed word you simply have not defined
 is `scan-manuscript`'s business, not the Oracle's, so it stays silent on those.
 
+The same guardian runs across your *whole* manuscript in the review pass
+(`Ctrl+B J`), alongside the other readers — so you can sweep every chapter for
+malformed conlang words at once, not only the paragraph in front of you.
+
 #callout(label: "Turning it off")[
   The guardian is on by default. To silence it, set `oracle.on_save: false` in
   `inkhaven.hjson` (or `oracle.enabled: false` to disable the Oracle entirely).
