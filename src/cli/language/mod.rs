@@ -206,6 +206,18 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::Check { language, word, json } => {
             oracle_check(project, &language, &word, json)
         }
+        LanguageCommand::CheckClause { language, verb, args, verb_root, subject_features, valence, json } => {
+            oracle_check_clause(
+                project,
+                &language,
+                &verb,
+                &args,
+                verb_root.as_deref(),
+                subject_features.as_deref(),
+                valence.as_deref(),
+                json,
+            )
+        }
         LanguageCommand::Tree { language, verb, args, word_order, json } => {
             build_tree(project, &language, &verb, &args, word_order.as_deref(), json)
         }
