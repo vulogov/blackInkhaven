@@ -192,6 +192,78 @@ pub(crate) fn oracle_check(project: &Path, language: &str, word: &str, json: boo
     Ok(())
 }
 
+/// Parse a `key=value,key=value` feature string into a map (blank entries skipped).
+fn parse_features(spec: &str) -> std::collections::BTreeMap<String, String> {
+    spec.split(',')
+        .filter_map(|pair| {
+            let (k, v) = pair.split_once('=')?;
+            let (k, v) = (k.trim(), v.trim());
+            (!k.is_empty() && !v.is_empty()).then(|| (k.to_string(), v.to_string()))
+        })
+        .collect()
+}
+
+/// LING-1 L-P6 — `inkhaven language check-clause <lang> --verb V --args "…"`: the
+/// Oracle over a clause (levels 3–4) — subject–verb agreement and argument
+/// structure.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn oracle_check_clause(
+    project: &Path,
+    language: &str,
+    verb: &str,
+    args_csv: &str,
+    verb_root: Option<&str>,
+    subject_features: Option<&str>,
+    valence: Option<&str>,
+    json: bool,
+) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let morph = load_morphology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let (spec, _) = load_grammar_spec(&store, &hierarchy, &lang_book)?;
+
+    // Resolve the valence: explicit flag, else the declared verb class, else "".
+    let resolved = valence.map(str::to_string).unwrap_or_else(|| {
+        spec.verb_classes
+            .iter()
+            .find(|vc| vc.name.eq_ignore_ascii_case(verb))
+            .map(|vc| vc.valence.clone())
+            .unwrap_or_default()
+    });
+    let args: Vec<String> =
+        args_csv.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+    let features = subject_features.map(parse_features).unwrap_or_default();
+
+    let clause = crate::conlang::oracle::ClauseInput {
+        verb,
+        verb_root,
+        valence: &resolved,
+        args: &args,
+        subject_features: &features,
+    };
+    let report = crate::conlang::oracle::check_clause(&phon, &morph, &clause);
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report)
+                .map_err(|e| Error::Store(format!("serializing oracle: {e}")))?
+        );
+        return Ok(());
+    }
+
+    let val = if resolved.trim().is_empty() { "(inferred)".to_string() } else { resolved.clone() };
+    println!("oracle · clause · {language} · {verb} [{val}]");
+    if report.ok() {
+        println!("  ✓ a well-formed clause of the language.");
+    } else {
+        for f in &report.findings {
+            println!("      ✗ [{}] {}", f.level, f.message);
+        }
+    }
+    Ok(())
+}
+
 /// LING-1 L-P5 — `inkhaven language link <lang> --verb V --args "a,b,c"`: work
 /// out a clause's argument structure — thematic roles, RRG macroroles, and
 /// grammatical relations — from the verb's valence.

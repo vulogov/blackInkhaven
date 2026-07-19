@@ -5,10 +5,14 @@
 //! *arbitrary* input — a word you are about to coin, or one found in the prose —
 //! and says whether it could be a word of the language and why not.
 //!
-//! This first cut covers levels 1–2: phonotactics (unknown segments + declared
-//! constraint violations, reusing the phonology validator) and morphology (does
-//! it analyse as root + affixes?). Agreement and syntax (levels 3–4) join it with
-//! the clause engine.
+//! [`check_word`] covers levels 1–2 over a candidate word: phonotactics (unknown
+//! segments + declared constraint violations, reusing the phonology validator) and
+//! morphology (does it analyse as root + affixes?). [`check_clause`] adds levels
+//! 3–4 over a whole clause: agreement (does the verb inflect for its subject's
+//! features?) and syntax (does the argument count match the verb's valence?),
+//! reusing the agreement generator and the argument linker.
+
+use std::collections::BTreeMap;
 
 use serde::Serialize;
 
@@ -20,7 +24,7 @@ use crate::language_entry::DictionaryEntry;
 /// One Oracle finding, tagged by level.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct Finding {
-    /// `phonotactics` | `morphology`.
+    /// `phonotactics` | `morphology` | `agreement` | `syntax`.
     pub level: &'static str,
     pub message: String,
 }
@@ -83,6 +87,73 @@ pub fn check_word(
     r
 }
 
+/// A clause to judge — the observed verb form and its arguments, plus what the
+/// verb *should* agree with. Surface forms throughout; `verb_root` and
+/// `subject_features` are what a level-3 agreement check needs to regenerate the
+/// expected verb form.
+#[derive(Debug, Clone)]
+pub struct ClauseInput<'a> {
+    /// The observed verb surface form.
+    pub verb: &'a str,
+    /// The verb's root, for regenerating its expected agreeing form (level 3).
+    pub verb_root: Option<&'a str>,
+    /// The verb's valence (`transitive` etc.); empty ⇒ inferred, no arity check.
+    pub valence: &'a str,
+    /// The clause's core arguments, subject first.
+    pub args: &'a [String],
+    /// The subject's grammatical features (e.g. `number: pl`), for agreement.
+    pub subject_features: &'a BTreeMap<String, String>,
+}
+
+/// Run the Oracle's levels 3–4 over a clause: subject–verb agreement and
+/// argument structure. Level-1/2 word checks are [`check_word`]'s job.
+pub fn check_clause(phon: &Phonology, morph: &Morphology, clause: &ClauseInput) -> OracleReport {
+    let mut r = OracleReport { word: clause.verb.to_string(), ..Default::default() };
+
+    // ── Level 4: argument structure ──
+    // Reuse the argument linker; surface only genuine arity mismatches, not its
+    // informational "inferring from arity" note (which fires on an unknown valence).
+    let link = crate::conlang::link::link(clause.verb, clause.valence, clause.args);
+    for issue in link.issues.into_iter().filter(|i| !i.contains("inferring")) {
+        r.findings.push(Finding { level: "syntax", message: issue });
+    }
+
+    // ── Level 3: subject–verb agreement ──
+    // Only when the language declares a verb-agreement rule and we were given the
+    // subject's features and the verb's root to regenerate the expected form.
+    if let (Some(rule), Some(root)) = (morph.agreement_for("verb"), clause.verb_root) {
+        if !clause.subject_features.is_empty() {
+            match crate::conlang::morphology::agreement::agree(
+                phon,
+                morph,
+                rule,
+                root,
+                "V",
+                clause.subject_features,
+            ) {
+                Some(expected) if !expected.form.eq_ignore_ascii_case(clause.verb) => {
+                    r.findings.push(Finding {
+                        level: "agreement",
+                        message: format!(
+                            "verb `{}` does not agree with the subject — expected `{}` ({})",
+                            clause.verb, expected.form, expected.gloss
+                        ),
+                    });
+                }
+                None => {
+                    r.findings.push(Finding {
+                        level: "agreement",
+                        message: "cannot check agreement — the verb paradigm has no cell for the subject's features".into(),
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
+
+    r
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,5 +210,78 @@ mod tests {
         // "katai" = kata + PL — the parser reaches the root, so no morphology finding.
         let r = check_word(&phon(), &morph(), &[entry("kata")], "katai");
         assert!(!r.findings.iter().any(|f| f.level == "morphology"), "findings: {:?}", r.findings);
+    }
+
+    // A morphology with subject–verb agreement: the verb conjugates for the
+    // subject's number via the `vconj` paradigm (plural adds -i).
+    fn agreeing_morph() -> Morphology {
+        let body = r#"{
+            morphemes: [ { id: "pl", gloss: "PL", form: "i", position: "suffix" } ]
+            paradigms: [ { name: "vconj", cells: [
+                { features: { number: "sg" }, morphemes: [] }
+                { features: { number: "pl" }, morphemes: ["pl"] }
+            ] } ]
+            agreement: [ { dependent: "verb", head: "subject", features: ["number"], paradigm: "vconj" } ]
+        }"#;
+        Morphology::from_hjson(body).unwrap().unwrap()
+    }
+
+    fn feats(pairs: &[(&str, &str)]) -> std::collections::BTreeMap<String, String> {
+        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    }
+
+    #[test]
+    fn a_well_formed_transitive_clause_passes() {
+        let args = vec!["she".to_string(), "bird".to_string()];
+        let none = feats(&[]);
+        let clause = ClauseInput { verb: "kata", verb_root: None, valence: "transitive", args: &args, subject_features: &none };
+        let r = check_clause(&phon(), &agreeing_morph(), &clause);
+        assert!(r.ok(), "findings: {:?}", r.findings);
+    }
+
+    #[test]
+    fn an_arity_mismatch_is_flagged_at_syntax() {
+        // Two arguments for an intransitive verb.
+        let args = vec!["she".to_string(), "bed".to_string()];
+        let none = feats(&[]);
+        let clause = ClauseInput { verb: "kata", verb_root: None, valence: "intransitive", args: &args, subject_features: &none };
+        let r = check_clause(&phon(), &agreeing_morph(), &clause);
+        assert!(r.findings.iter().any(|f| f.level == "syntax"), "findings: {:?}", r.findings);
+    }
+
+    #[test]
+    fn a_verb_agreeing_with_its_subject_passes() {
+        // Plural subject → the verb should be "katai"; it is.
+        let args = vec!["she".to_string(), "bird".to_string()];
+        let pl = feats(&[("number", "pl")]);
+        let clause = ClauseInput {
+            verb: "katai",
+            verb_root: Some("kata"),
+            valence: "transitive",
+            args: &args,
+            subject_features: &pl,
+        };
+        let r = check_clause(&phon(), &agreeing_morph(), &clause);
+        assert!(!r.findings.iter().any(|f| f.level == "agreement"), "findings: {:?}", r.findings);
+    }
+
+    #[test]
+    fn a_verb_not_agreeing_with_its_subject_is_flagged() {
+        // Plural subject but the bare (singular) verb form → agreement finding.
+        let args = vec!["she".to_string(), "bird".to_string()];
+        let pl = feats(&[("number", "pl")]);
+        let clause = ClauseInput {
+            verb: "kata",
+            verb_root: Some("kata"),
+            valence: "transitive",
+            args: &args,
+            subject_features: &pl,
+        };
+        let r = check_clause(&phon(), &agreeing_morph(), &clause);
+        assert!(
+            r.findings.iter().any(|f| f.level == "agreement" && f.message.contains("expected `katai`")),
+            "findings: {:?}",
+            r.findings
+        );
     }
 }
