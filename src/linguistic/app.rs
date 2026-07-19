@@ -440,6 +440,32 @@ impl LinguisticApp {
         self.right = RightPane::Chat;
     }
 
+    /// `/tree <verb> <subject> [object] [indirect]` — the X-bar phrase-structure
+    /// tree of a clause, using the language's declared word order, inline.
+    fn run_tree(&mut self, spec_line: String) {
+        let prompt = format!("/tree {spec_line}");
+        let words: Vec<&str> = spec_line.split_whitespace().collect();
+        if words.len() < 2 {
+            self.push_error_turn(prompt, "usage: /tree <verb> <subject> [object] [indirect]".into());
+            return;
+        }
+        let Some(book) = self.current_language_book().and_then(|id| self.hierarchy.get(id).cloned())
+        else {
+            self.push_error_turn(prompt, "select a language first".into());
+            return;
+        };
+        let order = crate::cli::language::load_grammar_spec(&self.store, &self.hierarchy, &book)
+            .ok()
+            .and_then(|(spec, _)| spec.grammar.get("word_order").cloned())
+            .unwrap_or_else(|| "svo".to_string());
+        let tree =
+            crate::conlang::xbar::build(&order, words[0], words[1], words.get(2).copied(), words.get(3).copied());
+        let response = format!("{}\n{}\n\n{}", order, tree.render(), tree.bracketed());
+        self.chat.push(Turn { prompt, response, streaming: false, scope: Some(book.title.clone()) });
+        self.chat_scroll = u16::MAX;
+        self.right = RightPane::Chat;
+    }
+
     fn push_error_turn(&mut self, prompt: String, response: String) {
         self.chat.push(Turn {
             prompt,
@@ -800,6 +826,8 @@ impl TuiHost for LinguisticApp {
                         self.run_parse(word.trim().to_string());
                     } else if let Some(word) = q.strip_prefix("/check ") {
                         self.run_check(word.trim().to_string());
+                    } else if let Some(clause) = q.strip_prefix("/tree ") {
+                        self.run_tree(clause.trim().to_string());
                     } else {
                         self.send_query(q);
                     }
@@ -1001,7 +1029,7 @@ impl LinguisticApp {
         let mut lines: Vec<Line> = Vec::new();
         if self.chat.is_empty() {
             lines.push(Line::from(Span::styled(
-                "Press i to ask; slash-commands: /trace <rule>, /parse <word>, /check <word>.",
+                "Press i to ask; slash-commands: /trace, /parse, /check <word>, /tree <verb subj obj>.",
                 Style::default().add_modifier(Modifier::DIM),
             )));
         }
