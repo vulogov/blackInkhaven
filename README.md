@@ -21,37 +21,31 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.7.9 — The Oracle Watches
+## Latest release · 1.7.10 — The Oracle Joins the Review Pass
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.7.9.md`](Documentation/RELEASE_NOTES/1.7.9.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.7.10.md`](Documentation/RELEASE_NOTES/1.7.10.md)
 
-The Oracle has judged words and clauses on demand. Now it watches your prose. Save a
-paragraph and the phonotactic guardian checks the invented-language words in it, flagging
-any that break their language's own rules as an advisory Output finding — zero-AI, and it
-never touches a syllable of your writing. **No new runtime crates.** Test suite → 2549,
-warning-free.
+1.7.9 gave the Oracle an eye on the paragraph you just saved; this release widens it to the
+whole book. The phonotactic guardian now runs in the review pass (`Ctrl+B J`), sweeping every
+chapter for malformed conlang words in one go — zero-AI, advisory, never editing. **No new
+runtime crates.** Test suite → 2549, warning-free.
 
-### The on-save phonotactic guardian
+### Book-wide phonotactic sweep
 
-Save a paragraph and the Oracle scans it for conlang words — words that segment fully into a
-language's inventory but aren't listed — and flags any that violate its phonotactics, in the
-Output pane (marked `⌥`): `⌥ [Eldar] `ktal` breaks phonotactics — contains an illegal onset
-cluster`. It is the mirror of `scan-manuscript` (which lists *well-formed* undefined words);
-both share a precision guard, so prose in your working language is left alone. Multi-language
-projects are scanned language by language.
-
-### Configuration
-
-A new `oracle:` block controls it, on by default (`enabled` + `on_save`). Projects with no
-languages never trigger it.
+The review pass now runs the Oracle across the entire manuscript, alongside the other
+deterministic readers (fact, socrates, timeline, dialogue, utopia, character, theologian,
+myth, rigor). For each language it loads the phonology/morphology/lexicon once, scans every
+user-book paragraph (skipping system books, as `scan-manuscript` does), and surfaces each
+ill-formed conlang word as an advisory Output finding (`⌥`) — with an `oracle N` count in the
+review tally.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Everything is additive — a pure `oracle::scan_prose` (the
-complement of `scan-manuscript`), a new advisory Output kind (`oracle`, `⌥`), an `oracle:`
-config block, and one post-save hook; existing projects, languages and prose are unchanged,
-and the guardian is a no-op until a project has languages. The companion book documents it.
-Warning-free (binary and tests). Test suite → 2549.
+**No new runtime crates.** Purely additive — a book-wide `run_oracle_check` joins the unified
+review pass, reusing the `oracle::scan_prose` engine and `oracle:` config block from 1.7.9;
+gated on `oracle.enabled`; a no-op for projects with no languages. Existing projects,
+languages and prose are unchanged. The companion book notes the sweep. Warning-free (binary
+and tests). Test suite → 2549.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
