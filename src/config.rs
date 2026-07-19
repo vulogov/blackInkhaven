@@ -80,6 +80,9 @@ pub struct Config {
     /// RIGOR — the deterministic reasoning-rigor reader (`rigor:` block).
     #[serde(default)]
     pub rigor: RigorConfig,
+    /// ORACLE — the conlang well-formedness Oracle on save (`oracle:` block).
+    #[serde(default)]
+    pub oracle: OracleConfig,
     /// TDOC-1 — technical-documentation tooling (verified code blocks). Off by
     /// default; nothing runs until the author opts in and names runners.
     #[serde(default)]
@@ -260,6 +263,7 @@ impl Default for Config {
             char: CharConfig::default(),
             theologian: TheologianConfig::default(),
             rigor: RigorConfig::default(),
+            oracle: OracleConfig::default(),
             docs: DocsConfig::default(),
             frontmatter: FrontmatterConfig::default(),
             tex_export: TexExportConfig::default(),
@@ -4639,6 +4643,26 @@ impl Default for RigorConfig {
             non_sequitur: true,
             equivocation: true,
         }
+    }
+}
+
+/// ORACLE (1.7.9+) — `oracle:` block. The conlang well-formedness Oracle watching
+/// your prose. On save, the phonotactic guardian checks the conlang words in the
+/// saved paragraph — words that segment fully into a language's inventory but are
+/// not listed — and flags any that break that language's phonotactics, as an
+/// advisory Output finding. Zero-AI, deterministic, never edits prose.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OracleConfig {
+    /// Master switch. `false` gates the on-save scan entirely.
+    pub enabled: bool,
+    /// Run the phonotactic guardian when a paragraph is saved.
+    pub on_save: bool,
+}
+
+impl Default for OracleConfig {
+    fn default() -> Self {
+        Self { enabled: true, on_save: true }
     }
 }
 

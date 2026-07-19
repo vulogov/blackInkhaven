@@ -154,6 +154,67 @@ pub fn check_clause(phon: &Phonology, morph: &Morphology, clause: &ClauseInput) 
     r
 }
 
+/// One conlang word found in prose that the Oracle judged phonotactically
+/// ill-formed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProseFinding {
+    pub word: String,
+    /// The phonotactic findings against it.
+    pub findings: Vec<Finding>,
+}
+
+/// Scan a prose paragraph — already tokenised into `words` — for conlang words
+/// that break the language's *phonotactics*.
+///
+/// Precision guard (the same one `scan-manuscript` uses): the scan only runs when
+/// the paragraph is a *conlang context* — it contains at least one listed word —
+/// so prose written in the working language is skipped. A word is a candidate
+/// when it is not listed and segments (≥ 2 segments) *entirely* into the
+/// inventory, i.e. it is unmistakably a word of this language rather than natural
+/// prose. Each candidate is judged by [`check_word`], and only phonotactic
+/// findings are surfaced: an undefined word legitimately has no morphological
+/// analysis, so level-2 is `scan-manuscript`'s job, not an on-save warning. This
+/// is the complement of `scan-manuscript`, which lists *well-formed* undefined
+/// words; here we flag the *ill-formed* ones.
+pub fn scan_prose(
+    phon: &Phonology,
+    morph: &Morphology,
+    entries: &[DictionaryEntry],
+    words: &[String],
+) -> Vec<ProseFinding> {
+    use std::collections::HashSet;
+
+    let known: HashSet<String> =
+        entries.iter().flat_map(|e| e.surface_forms().into_iter().map(|s| s.to_lowercase())).collect();
+    // Conlang-context guard: skip prose with no anchoring listed word.
+    if !words.iter().any(|w| known.contains(&w.to_lowercase())) {
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for w in words {
+        let lc = w.to_lowercase();
+        if known.contains(&lc) || !seen.insert(lc.clone()) {
+            continue;
+        }
+        // Unmistakably a word of this language: ≥ 2 segments, all in the inventory.
+        let seq = phon.segment(&lc);
+        if seq.len() < 2 || !seq.iter().all(|s| phon.phoneme(s).is_some()) {
+            continue;
+        }
+        let findings: Vec<Finding> = check_word(phon, morph, entries, &lc)
+            .findings
+            .into_iter()
+            .filter(|f| f.level == "phonotactics")
+            .collect();
+        if !findings.is_empty() {
+            out.push(ProseFinding { word: w.clone(), findings });
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -283,5 +344,39 @@ mod tests {
             "findings: {:?}",
             r.findings
         );
+    }
+
+    fn words(ws: &[&str]) -> Vec<String> {
+        ws.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn scan_flags_an_illformed_conlang_word_in_context() {
+        // "kata" anchors the conlang context; "katta" has an illegal geminate.
+        let out = scan_prose(&phon(), &morph(), &[entry("kata")], &words(&["kata", "katta"]));
+        assert!(
+            out.iter().any(|p| p.word == "katta" && p.findings.iter().any(|f| f.level == "phonotactics")),
+            "got: {out:?}"
+        );
+    }
+
+    #[test]
+    fn scan_skips_prose_with_no_conlang_word() {
+        let out = scan_prose(&phon(), &morph(), &[entry("kata")], &words(&["hello", "world"]));
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn scan_does_not_flag_a_wellformed_undefined_word() {
+        // "nika" is legal but undefined — scan-manuscript's job, not a phonotactic warning.
+        let out = scan_prose(&phon(), &morph(), &[entry("kata")], &words(&["kata", "nika"]));
+        assert!(out.is_empty(), "got: {out:?}");
+    }
+
+    #[test]
+    fn scan_ignores_natural_language_words() {
+        // "sun" has segments outside the inventory → not a word of this language.
+        let out = scan_prose(&phon(), &morph(), &[entry("kata")], &words(&["kata", "sun"]));
+        assert!(out.is_empty());
     }
 }
