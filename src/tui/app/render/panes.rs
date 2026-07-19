@@ -1758,6 +1758,7 @@ impl super::super::App {
                 crate::pane::output::kinds::CONFRONT => "⚔ ",
                 crate::pane::output::kinds::LOCUS => "⚑ ",
                 crate::pane::output::kinds::RIGOR => "⊬ ",
+                crate::pane::output::kinds::ORACLE => "⌥ ",
                 _ => "",
             };
             lines.push(Line::from(vec![

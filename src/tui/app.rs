@@ -15496,6 +15496,77 @@ impl App {
     /// RIGOR (`Ctrl+B J → R`) — run the deterministic reasoning-rigor reader over
     /// the open paragraph, emitting anchored ⊬ advisory findings to Output.
     /// Zero-AI, synchronous.
+    /// ORACLE (1.7.9+) — on save, the conlang phonotactic guardian. For each
+    /// defined language, scan the just-saved paragraph for words that segment into
+    /// that language's inventory but break its phonotactics, and emit each as an
+    /// advisory Output finding. Zero-AI; clears this paragraph's prior findings and
+    /// re-emits. Gated on `oracle.enabled && oracle.on_save`; a no-op for projects
+    /// with no languages (nothing anchors the scan).
+    fn oracle_scan_saved_paragraph(&mut self, para_id: Uuid, body: &str) {
+        use crate::pane::output::{Lifetime, Message, Severity, kinds};
+        use unicode_segmentation::UnicodeSegmentation;
+
+        if !self.cfg.oracle.enabled || !self.cfg.oracle.on_save {
+            return;
+        }
+
+        // Clear this paragraph's prior Oracle findings (re-emitted below).
+        if let Some(s) = crate::pane::output::active() {
+            if let Ok(msgs) = s.by_kind(kinds::ORACLE) {
+                for m in msgs.iter().filter(|m| m.source_paragraph_id == Some(para_id)) {
+                    let _ = s.dismiss(m.id);
+                }
+            }
+        }
+
+        let Some(lang_root) = self.hierarchy.iter().find(|n| {
+            n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_LANGUAGES)
+        }) else {
+            return;
+        };
+        let langs: Vec<Node> = self
+            .hierarchy
+            .children_of(Some(lang_root.id))
+            .into_iter()
+            .filter(|n| n.kind == NodeKind::Book)
+            .cloned()
+            .collect();
+        if langs.is_empty() {
+            return;
+        }
+
+        let plain = crate::audiobook::typst_to_plain(body);
+        let words: Vec<String> = plain.unicode_words().map(String::from).collect();
+        if words.is_empty() {
+            return;
+        }
+
+        for lang in &langs {
+            let Ok(Some(phon)) = crate::cli::language::load_phonology(&self.store, &self.hierarchy, lang) else {
+                continue;
+            };
+            let morph = crate::cli::language::load_morphology(&self.store, &self.hierarchy, lang)
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+            let entries =
+                crate::cli::language::load_dictionary(&self.store, &self.hierarchy, lang).unwrap_or_default();
+            for pf in crate::conlang::oracle::scan_prose(&phon, &morph, &entries, &words) {
+                let detail = pf.findings.iter().map(|f| f.message.clone()).collect::<Vec<_>>().join("; ");
+                let text = format!("[{}] `{}` breaks phonotactics — {}", lang.title, pf.word, detail);
+                let msg = Message::new(
+                    kinds::ORACLE,
+                    Severity::Info,
+                    Lifetime::UntilActedOn,
+                    serde_json::json!({ "text": text, "word": pf.word, "language": lang.title }),
+                )
+                .with_source_paragraph(para_id)
+                .with_source_language(lang.title.clone());
+                crate::pane::output::emit(&msg);
+            }
+        }
+    }
+
     fn rigor_check_open_paragraph(&mut self) {
         use crate::pane::output::{kinds, Lifetime, Message, Severity};
         if !self.cfg.rigor.enabled {

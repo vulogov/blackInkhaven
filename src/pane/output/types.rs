@@ -85,6 +85,10 @@ pub mod kinds {
     /// question-begging / straw man / overgeneralization / non-sequitur).
     /// Deterministic, zero-AI; anchored to the paragraph; always advisory (Info).
     pub const RIGOR: &str = "rigor";
+    /// ORACLE (1.7.9+) — a conlang well-formedness finding: a word in the prose
+    /// that segments into a language's inventory but breaks its phonotactics.
+    /// Deterministic, zero-AI; anchored to the paragraph; always advisory (Info).
+    pub const ORACLE: &str = "oracle";
 }
 
 /// Visual / priority class (RFC §7.4).
