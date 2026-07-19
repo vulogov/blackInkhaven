@@ -90,12 +90,13 @@ Add `--help` to any command for its full signature.
 / `tree <lang> --verb V --args "subj,obj,iobj" [--word-order O] [--json]`: Build the X-bar phrase-structure tree (CP → TP → VP), placing heads and complements by the language's word order.
 / `movement <lang> --verb V --args "…" --move ROLE [--word-order O] [--json]`: Syntactic movement — front a constituent (wh-movement / topicalisation) over the tree, leaving a coindexed trace.
 / `binding <lang> --verb V --args "…" [--antecedent R] [--anaphor R] [--type reflexive|pronoun|name] [--json]`: Binding theory — decide whether one argument may refer to another, by c-command and Principles A / B / C.
+/ `check-clause <lang> --verb V --args "…" [--verb-root R] [--subject-features "number=pl,…"] [--valence …] [--json]`: The Oracle over a clause (levels 3–4) — subject–verb agreement (does the verb inflect for the subject's features?) and argument structure (does the argument count match the verb's valence?).
 / `trace <lang> --rule "X > Y / A _ B" [--limit N] [--json]`: The Consequence Tracer — preview a sound change across the lexicon (which words shift, which distinctions merge, which new homophones appear) without committing it.
 
 #section("The Linguistic companion")
 
 / `inkhaven linguistic [--language L] [--session S]`: Open the full-screen Linguistic companion over the `Language` book — the tree, a grounded chat with the Inner Linguist, and the phonology / universals / minimal-pair views. Not a `language` subcommand; run it directly.
-/ Chat slash-commands: `/trace <rule>` previews a sound change, `/parse <word>` analyses a surface form, `/check <word>` runs the Oracle, `/tree <verb> <subject> [object] [indirect]` builds the X-bar tree. Each runs locally over the current language book and prints inline; none commit.
+/ Chat slash-commands: `/trace <rule>` previews a sound change, `/parse <word>` analyses a surface form, `/check <word>` runs the word Oracle, `/tree <verb> <subject> [object] [indirect]` builds the X-bar tree, `/clause <verb> <subject> …` runs the clause Oracle's argument-structure check. Each runs locally over the current language book and prints inline; none commit.
 
 #section("Sociolinguistics and contact")
 
