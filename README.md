@@ -21,37 +21,37 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.7.8 — The Oracle Deepens
+## Latest release · 1.7.9 — The Oracle Watches
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.7.8.md`](Documentation/RELEASE_NOTES/1.7.8.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.7.9.md`](Documentation/RELEASE_NOTES/1.7.9.md)
 
-The Oracle judged words — legal sounds, root + affixes. It now judges clauses. Two more
-levels join it: agreement (does the verb inflect for its subject?) and argument structure
-(does the clause have the right number of arguments for its verb?), built by reusing the
-agreement generator and the argument linker. **No new runtime crates.** Test suite → 2545,
+The Oracle has judged words and clauses on demand. Now it watches your prose. Save a
+paragraph and the phonotactic guardian checks the invented-language words in it, flagging
+any that break their language's own rules as an advisory Output finding — zero-AI, and it
+never touches a syllable of your writing. **No new runtime crates.** Test suite → 2549,
 warning-free.
 
-### The clause Oracle
+### The on-save phonotactic guardian
 
-`inkhaven language check-clause <lang> --verb V --args "…" --verb-root R --subject-features
-"number=pl"` runs the Oracle over a whole clause. **Agreement (level 3):** it regenerates
-the verb form the agreement rule *should* produce and flags a mismatch (a plural subject
-with a singular verb → `expected `katai``). **Argument structure (level 4):** it checks the
-argument count against the verb's valence — an intransitive verb handed two arguments is
-flagged.
+Save a paragraph and the Oracle scans it for conlang words — words that segment fully into a
+language's inventory but aren't listed — and flags any that violate its phonotactics, in the
+Output pane (marked `⌥`): `⌥ [Eldar] `ktal` breaks phonotactics — contains an illegal onset
+cluster`. It is the mirror of `scan-manuscript` (which lists *well-formed* undefined words);
+both share a precision guard, so prose in your working language is left alone. Multi-language
+projects are scanned language by language.
 
-### In the companion
+### Configuration
 
-The companion's chat gains `/clause <verb> <subject> [object]`, the clause Oracle's
-argument-structure check run inline — joining `/trace`, `/parse`, `/check` and `/tree`.
+A new `oracle:` block controls it, on by default (`enabled` + `on_save`). Projects with no
+languages never trigger it.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Everything is additive — one new `language` subcommand
-(`check-clause`), one new chat slash-command, and the clause-level Oracle built entirely
-from the existing agreement generator and argument linker; existing projects, languages and
-CLI verbs are unchanged. The companion book documents both. Warning-free (binary and tests).
-Test suite → 2545.
+**No new runtime crates.** Everything is additive — a pure `oracle::scan_prose` (the
+complement of `scan-manuscript`), a new advisory Output kind (`oracle`, `⌥`), an `oracle:`
+config block, and one post-save hook; existing projects, languages and prose are unchanged,
+and the guardian is a no-op until a project has languages. The companion book documents it.
+Warning-free (binary and tests). Test suite → 2549.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
