@@ -2888,6 +2888,111 @@ fn run_rigor_check(
     Ok(findings.len())
 }
 
+/// ORACLE — the conlang phonotactic guardian over the whole manuscript in the
+/// review pass. For each defined language, scan every user-book paragraph for
+/// words that segment into that language's inventory but break its phonotactics,
+/// and emit each as an advisory finding. The book-wide counterpart of the on-save
+/// scan; zero-AI; clears the prior `kinds::ORACLE` messages and re-emits. Gated on
+/// `oracle.enabled`.
+fn run_oracle_check(
+    store: &Store,
+    cfg: &Config,
+    _layout: &ProjectLayout,
+) -> std::result::Result<usize, String> {
+    use crate::pane::output::{Lifetime, Message, Severity, kinds};
+    use unicode_segmentation::UnicodeSegmentation;
+
+    let clear = || {
+        if let Some(s) = crate::pane::output::active() {
+            if let Ok(msgs) = s.by_kind(kinds::ORACLE) {
+                for m in &msgs {
+                    let _ = s.dismiss(m.id);
+                }
+            }
+        }
+    };
+
+    if !cfg.oracle.enabled {
+        clear();
+        return Ok(0);
+    }
+
+    let h = crate::store::hierarchy::Hierarchy::load(store).map_err(|e| e.to_string())?;
+    let Some(lang_root) = h.iter().find(|n| {
+        n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_LANGUAGES)
+    }) else {
+        clear();
+        return Ok(0);
+    };
+
+    // Preload each language's phonology / morphology / lexicon once.
+    let langs: Vec<_> = h
+        .children_of(Some(lang_root.id))
+        .into_iter()
+        .filter(|n| n.kind == NodeKind::Book)
+        .filter_map(|lang| {
+            let phon = crate::cli::language::load_phonology(store, &h, lang).ok().flatten()?;
+            let morph =
+                crate::cli::language::load_morphology(store, &h, lang).ok().flatten().unwrap_or_default();
+            let entries = crate::cli::language::load_dictionary(store, &h, lang).unwrap_or_default();
+            Some((lang.title.clone(), phon, morph, entries))
+        })
+        .collect();
+    if langs.is_empty() {
+        clear();
+        return Ok(0);
+    }
+
+    clear();
+    let mut count = 0;
+    for node in h.iter() {
+        if node.kind != NodeKind::Paragraph {
+            continue;
+        }
+        // Skip system-book paragraphs (dictionaries, notes, …) — only manuscript
+        // prose is scanned, matching `scan-manuscript`.
+        let mut cursor = Some(node.id);
+        let mut is_system = false;
+        while let Some(id) = cursor {
+            match h.get(id) {
+                Some(n) if n.system_tag.is_some() => {
+                    is_system = true;
+                    break;
+                }
+                Some(n) => cursor = n.parent_id,
+                None => break,
+            }
+        }
+        if is_system {
+            continue;
+        }
+        let Ok(Some(bytes)) = store.get_content(node.id) else { continue };
+        let Ok(body) = std::str::from_utf8(&bytes) else { continue };
+        let plain = crate::audiobook::typst_to_plain(body);
+        let words: Vec<String> = plain.unicode_words().map(String::from).collect();
+        if words.is_empty() {
+            continue;
+        }
+        for (title, phon, morph, entries) in &langs {
+            for pf in crate::conlang::oracle::scan_prose(phon, morph, entries, &words) {
+                let detail = pf.findings.iter().map(|f| f.message.clone()).collect::<Vec<_>>().join("; ");
+                let text = format!("[{}] `{}` breaks phonotactics — {}", title, pf.word, detail);
+                let msg = Message::new(
+                    kinds::ORACLE,
+                    Severity::Info,
+                    Lifetime::UntilActedOn,
+                    serde_json::json!({ "text": text, "word": pf.word, "language": title }),
+                )
+                .with_source_paragraph(node.id)
+                .with_source_language(title.clone());
+                crate::pane::output::emit(&msg);
+                count += 1;
+            }
+        }
+    }
+    Ok(count)
+}
+
 /// MYTH-1 — the deterministic myth findings (archetype vacancy/absence, motif
 /// absent from final act) in the review pass. Refreshes the declared inventory +
 /// density + explicit motifs first (zero-AI). The LLM consistency/completeness
@@ -14855,6 +14960,10 @@ impl App {
         // complement to the theologian's moral reader).
         let rigor = run_rigor_check(&self.store, &self.cfg, &self.layout).unwrap_or(0);
 
+        // ORACLE — the conlang phonotactic guardian over the whole manuscript (the
+        // book-wide counterpart of the on-save scan).
+        let orc = run_oracle_check(&self.store, &self.cfg, &self.layout).unwrap_or(0);
+
         // Reflect the instant findings in the tree report-card immediately.
         self.refresh_tree_badges();
 
@@ -14865,7 +14974,7 @@ impl App {
         // seconds later (and re-badge the tree on completion).
         let editor_spawned = self.maybe_spawn_check_editor();
 
-        let total = fact + soc + tl + dlg + uto + chr + theo + myth + rigor;
+        let total = fact + soc + tl + dlg + uto + chr + theo + myth + rigor + orc;
         if total == 0 && !editor_spawned {
             self.status = if checked == 0 {
                 "review pass: clean (no open paragraph; timeline + dialogue + utopia + character + theologian + myth included)".into()
@@ -14884,7 +14993,7 @@ impl App {
             format!("review pass: instant checks clean{editor_note}")
         } else {
             format!(
-                "review pass: {total} finding(s) — fact {fact} · socrates {soc} · timeline {tl} · dialogue {dlg} · utopia {uto} · character {chr} · theologian {theo} · myth {myth}{editor_note} → Output (^B Tab)"
+                "review pass: {total} finding(s) — fact {fact} · socrates {soc} · timeline {tl} · dialogue {dlg} · utopia {uto} · character {chr} · theologian {theo} · myth {myth} · oracle {orc}{editor_note} → Output (^B Tab)"
             )
         };
     }
