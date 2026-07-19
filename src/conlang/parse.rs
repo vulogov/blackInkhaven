@@ -96,6 +96,18 @@ fn strip(
     if applied.len() >= MAX_AFFIXES {
         return;
     }
+
+    // Non-concatenative: full reduplication (X X → REDUP + X). The reduplicant
+    // reduces length by half, so the recursion terminates.
+    if segs.len() >= 2 && segs.len() % 2 == 0 {
+        let half = segs.len() / 2;
+        if segs[..half] == segs[half..] {
+            applied.push("REDUP".to_string());
+            strip(&segs[..half], phon, roots, affixes, applied, out);
+            applied.pop();
+        }
+    }
+
     for (form, label, is_prefix) in affixes {
         let stripped: Option<&[String]> = if *is_prefix {
             segs.strip_prefix(form.as_slice())
@@ -182,5 +194,25 @@ mod tests {
         // "sini" strips to nothing in the lexicon.
         let r = parse(&phon(), &morph(), &lex, "sini");
         assert!(r.parses.is_empty());
+    }
+
+    #[test]
+    fn full_reduplication_is_analysed() {
+        // "katakata" = REDUP + kata.
+        let lex = [entry("kata", "stone")];
+        let r = parse(&phon(), &morph(), &lex, "katakata");
+        assert!(r.parses.iter().any(|p| p.root == "kata" && p.affixes == vec!["REDUP".to_string()]));
+    }
+
+    #[test]
+    fn reduplication_combines_with_affixes() {
+        // "katakatai" = REDUP + kata + PL.
+        let lex = [entry("kata", "stone")];
+        let r = parse(&phon(), &morph(), &lex, "katakatai");
+        assert!(r.parses.iter().any(|p| {
+            p.root == "kata"
+                && p.affixes.contains(&"REDUP".to_string())
+                && p.affixes.contains(&"PL".to_string())
+        }));
     }
 }

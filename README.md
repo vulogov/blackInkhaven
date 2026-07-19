@@ -21,39 +21,34 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.7.6 — The Syntax Engine
+## Latest release · 1.7.7 — The Engine in the Companion
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.7.6.md`](Documentation/RELEASE_NOTES/1.7.6.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.7.7.md`](Documentation/RELEASE_NOTES/1.7.7.md)
 
-A sentence has structure, and this release builds it — a generative syntax engine that
-draws the X-bar tree of a clause, fronts constituents leaving traces, and resolves binding
-by c-command. All deterministic. **No new runtime crates.** Test suite → 2539, warning-free.
+The Wave-3 analysis engine has lived on the command line; this release brings it into the
+Linguistic companion's chat, where you actually think about a language. Four slash-commands
+run locally over your book and print inline, and the morphological parser learns full
+reduplication. **No new runtime crates.** Test suite → 2541, warning-free.
 
-### The phrase-structure tree
+### The analysers, in the chat
 
-`inkhaven language tree <lang> --verb V --args "subj,obj"` builds the X-bar tree
-(CP → TP → VP) of a clause, placing heads and complements by the language's word order — a
-head-final (SOV) language reverses it correctly.
+The companion's grounded chat now runs three more Wave-3 analysers inline, alongside the
+existing `/trace`: `/parse <word>` reverses the morphology into root + affixes, `/check
+<word>` is the Oracle's well-formedness verdict, and `/tree <verb> <subject> [object]` builds
+the clause's X-bar tree. Each runs over the current language book; none commit.
 
-### Movement
+### Reduplication in the parser
 
-`inkhaven language movement <lang> --verb V --args "…" --move object` fronts a constituent
-(wh-movement / topicalisation) to the specifier of CP as `NP₁`, leaving a coindexed trace
-`t₁` — the derivation made visible.
-
-### Binding
-
-`inkhaven language binding <lang> --verb V --args "she, herself" --type reflexive` decides
-whether one argument may refer to another by **c-command** and the binding principles: a
-reflexive object *may* bind to the subject, a pronoun *may not*, a name is a Principle-C
-violation.
+`inkhaven language parse <lang> --word katakata` now analyses **full reduplication** —
+`katakata` → `REDUP + kata`, composing with ordinary affixes (`katakatai` →
+`REDUP + kata + PL`). The parser's first non-concatenative process.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Everything is additive — three new `language` subcommands
-(`tree`, `movement`, `binding`); existing projects and languages are unchanged. The
-companion book's command reference is updated to match. Warning-free (binary and tests).
-Test suite → 2539.
+**No new runtime crates.** Everything is additive — three new chat slash-commands and a
+parser extension; existing projects, languages and CLI verbs are unchanged. The companion
+book documents the slash-commands and, for the first time, the full morphosyntax verb set
+in its command reference. Warning-free (binary and tests). Test suite → 2541.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

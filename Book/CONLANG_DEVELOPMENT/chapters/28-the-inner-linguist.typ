@@ -86,21 +86,48 @@ inkhaven linguistic --language Eldar --session phonology-review
 Without `--session` you get the `default` session. A session is just the chat
 transcript; nothing about your language is changed by talking about it.
 
-#section("Previewing a change in the chat")
+#section("Slash-commands in the chat")
 
-The chat input does one thing besides asking questions. Type `/trace` followed by
-a sound-change rule and, instead of sending the line to the assistant, the
-companion previews that change across your whole lexicon on the spot — which
-words would shift, and whether any would collide into new homophones — and
-prints the result inline. It is the Consequence Tracer of the next chapter, at
-your fingertips while you think:
+The chat input does more than ask questions. A line that begins with a slash is
+run *locally* — the companion answers it from your own language book instead of
+sending it to the assistant, and prints the result inline. None of them change
+anything; each is a look, not a leap. There are four.
+
+`/trace` followed by a sound-change rule previews that change across your whole
+lexicon — which words would shift, and whether any would collide into new
+homophones. It is the Consequence Tracer of the next chapter, at your fingertips
+while you think:
 
 ```
 /trace s > ʃ / _ i
 ```
 
-Nothing is committed; it is a look, not a leap. We meet the tracer properly, and
-the analyses the other views show, in the next chapter.
+`/parse <word>` runs the morphological parser *backwards*: it strips your
+language's known affixes from a surface form and reports every analysis that
+bottoms out at a dictionary root — including non-concatenative processes such as
+full reduplication. Where the gloss path builds a word from a root and features,
+`/parse` takes a word you have written and tells you how it could be built:
+
+```
+/parse katakatai
+```
+
+`/check <word>` is the Oracle: it judges a candidate word for well-formedness,
+level by level — first its phonotactics (are the segments and clusters legal?),
+then its morphology (does it parse to a root, or is it listed?) — and reports
+either a clean bill of health or the specific findings against it.
+
+`/tree <verb> <subject> [object] [indirect]` builds the X-bar phrase-structure
+tree of a clause, placing heads and complements according to your language's
+declared word order, and prints both the indented tree and its bracketed
+notation:
+
+```
+/tree sees she bird
+```
+
+We meet the tracer, the parser, the Oracle and the syntax engine properly — and
+the analyses the other views show — in the next chapter.
 
 #recap((
   [The *Linguistic companion* (`inkhaven linguistic`) is a full-screen workspace
@@ -114,6 +141,8 @@ the analyses the other views show, in the next chapter.
    language.],
   [Conversations are saved *sessions* (`--session <name>`), replayed on reopen;
    talking about a language never changes it.],
-  [`/trace <rule>` in the chat previews a sound change across the lexicon without
-   committing it.],
+  [Slash-commands run *locally* over your book and print inline: `/trace <rule>`
+   previews a sound change, `/parse <word>` analyses a surface form into root +
+   affixes, `/check <word>` is the Oracle's well-formedness verdict, and
+   `/tree <verb> <subject> …` builds the clause's X-bar tree. None commit.],
 ))

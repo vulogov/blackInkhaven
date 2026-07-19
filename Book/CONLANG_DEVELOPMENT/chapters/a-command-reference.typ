@@ -83,9 +83,19 @@ Add `--help` to any command for its full signature.
 / `check <lang> --word W [--json]`: The Oracle — judge a candidate word for well-formedness by level (phonotactics, morphology).
 / `sketch <lang> [--out F]`: A one-page prose overview of the language, assembling all of the above.
 
+#section("Morphology and syntax")
+
+/ `parse <lang> --word W [--json]`: The morphological parser — analyse a surface word into root + affixes by stripping known affixes (concatenative and reduplication) until what remains is a dictionary root. The inverse of paradigm generation.
+/ `link <lang> --verb V --args "A,B,C" [--valence …] [--json]`: Argument linking — a clause's thematic roles, RRG macroroles (actor / undergoer) and grammatical relations from the verb's valence.
+/ `tree <lang> --verb V --args "subj,obj,iobj" [--word-order O] [--json]`: Build the X-bar phrase-structure tree (CP → TP → VP), placing heads and complements by the language's word order.
+/ `movement <lang> --verb V --args "…" --move ROLE [--word-order O] [--json]`: Syntactic movement — front a constituent (wh-movement / topicalisation) over the tree, leaving a coindexed trace.
+/ `binding <lang> --verb V --args "…" [--antecedent R] [--anaphor R] [--type reflexive|pronoun|name] [--json]`: Binding theory — decide whether one argument may refer to another, by c-command and Principles A / B / C.
+/ `trace <lang> --rule "X > Y / A _ B" [--limit N] [--json]`: The Consequence Tracer — preview a sound change across the lexicon (which words shift, which distinctions merge, which new homophones appear) without committing it.
+
 #section("The Linguistic companion")
 
 / `inkhaven linguistic [--language L] [--session S]`: Open the full-screen Linguistic companion over the `Language` book — the tree, a grounded chat with the Inner Linguist, and the phonology / universals / minimal-pair views. Not a `language` subcommand; run it directly.
+/ Chat slash-commands: `/trace <rule>` previews a sound change, `/parse <word>` analyses a surface form, `/check <word>` runs the Oracle, `/tree <verb> <subject> [object] [indirect]` builds the X-bar tree. Each runs locally over the current language book and prints inline; none commit.
 
 #section("Sociolinguistics and contact")
 
