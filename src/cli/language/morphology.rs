@@ -877,6 +877,49 @@ pub(crate) fn concordance(
     Ok(())
 }
 
+/// CORPUS-1 (Wave 4) — `inkhaven language collocations <lang> --word W`: the words
+/// that keep company with a word across the stored texts, ranked by co-occurrence
+/// and PMI.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn collocations(
+    project: &Path,
+    language: &str,
+    word: &str,
+    by_lemma: bool,
+    window: usize,
+    top: usize,
+    json: bool,
+) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let texts = load_texts(&store, &hierarchy, &lang_book);
+    let corpus = crate::conlang::corpus::Corpus::from_texts(&texts);
+    let cols = corpus.collocates(word, by_lemma, window);
+
+    if json {
+        let rows: Vec<_> = cols.iter().take(top).collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&rows).map_err(|e| Error::Store(format!("serializing collocations: {e}")))?
+        );
+        return Ok(());
+    }
+
+    println!(
+        "collocations · {language} · \"{word}\"{} (window {window})",
+        if by_lemma { " (lemma)" } else { "" }
+    );
+    if cols.is_empty() {
+        println!("  no collocates.");
+        return Ok(());
+    }
+    println!("    co  tot    PMI  word");
+    for c in cols.iter().take(top) {
+        println!("    {:>3} {:>4}  {:>5.2}  {}", c.cooccur, c.total, c.pmi, c.word);
+    }
+    println!("\n  {} collocate(s)", cols.len());
+    Ok(())
+}
+
 /// LANG-1 P3.1 — generate + print a root's paradigm.
 pub(crate) fn paradigm(
     project: &Path,

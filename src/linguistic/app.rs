@@ -662,6 +662,35 @@ impl LinguisticApp {
         self.right = RightPane::Chat;
     }
 
+    /// `/coll <word>` — the collocates of a word across the stored texts, inline.
+    fn run_collocations(&mut self, word: String) {
+        let prompt = format!("/coll {word}");
+        if word.is_empty() {
+            self.push_error_turn(prompt, "usage: /coll <word>".into());
+            return;
+        }
+        let Some(book) = self.current_language_book().and_then(|id| self.hierarchy.get(id).cloned())
+        else {
+            self.push_error_turn(prompt, "select a language first".into());
+            return;
+        };
+        let texts = crate::cli::language::load_texts(&self.store, &self.hierarchy, &book);
+        let corpus = crate::conlang::corpus::Corpus::from_texts(&texts);
+        let cols = corpus.collocates(&word, false, 4);
+        let response = if cols.is_empty() {
+            format!("no collocates of `{word}` in the stored texts.")
+        } else {
+            let mut out = String::from("  co  tot    PMI  word\n");
+            for c in cols.iter().take(12) {
+                out.push_str(&format!("  {:>3} {:>4}  {:>5.2}  {}\n", c.cooccur, c.total, c.pmi, c.word));
+            }
+            out.trim_end().to_string()
+        };
+        self.chat.push(Turn { prompt, response, streaming: false, scope: Some(book.title.clone()) });
+        self.chat_scroll = u16::MAX;
+        self.right = RightPane::Chat;
+    }
+
     fn push_error_turn(&mut self, prompt: String, response: String) {
         self.chat.push(Turn {
             prompt,
@@ -1036,6 +1065,8 @@ impl TuiHost for LinguisticApp {
                         self.run_frequency();
                     } else if let Some(word) = q.strip_prefix("/kwic ") {
                         self.run_kwic(word.trim().to_string());
+                    } else if let Some(word) = q.strip_prefix("/coll ") {
+                        self.run_collocations(word.trim().to_string());
                     } else {
                         self.send_query(q);
                     }
@@ -1237,7 +1268,7 @@ impl LinguisticApp {
         let mut lines: Vec<Line> = Vec::new();
         if self.chat.is_empty() {
             lines.push(Line::from(Span::styled(
-                "Press i to ask; slash: /trace /parse /check /tree /clause /igt · /texts /settrans · /frequency /kwic <word>.",
+                "Press i to ask; slash: /trace /parse /check /tree /clause /igt · /texts /settrans · /frequency /kwic /coll <word>.",
                 Style::default().add_modifier(Modifier::DIM),
             )));
         }

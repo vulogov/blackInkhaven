@@ -21,29 +21,29 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.7.19 — The Corpus Engine
+## Latest release · 1.7.20 — Collocation
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.7.19.md`](Documentation/RELEASE_NOTES/1.7.19.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.7.20.md`](Documentation/RELEASE_NOTES/1.7.20.md)
 
-The Annotation Workbench gathered a language's texts; now you can query them. This opens **Track B**:
-a corpus engine over the stored interlinears — how *often* each word occurs, and *where* and in
-what context — plus the statistics only real usage can give. **No new runtime crates.** Test suite
-→ 2575, warning-free.
+The corpus can count words and show them in context; now it can tell you which words a word keeps
+company with. `collocations` finds a word's habitual neighbours across the stored texts and ranks
+them by how *distinctive* the pairing is — the third core corpus operation after frequency and
+concordance. **No new runtime crates.** Test suite → 2577, warning-free.
 
-### Frequency and concordance
+### Collocates
 
-`inkhaven language frequency <lang>` reads the stored texts as a corpus and reports a word-frequency
-list plus tokens, distinct types, their ratio, and the word-frequency Zipf fit — the corpus-based
-metrics the phoneme-level `metrics` verb couldn't give. `inkhaven language concordance <lang> --word
-W` shows every occurrence of a word lined up with its context — a KWIC (keyword-in-context) view.
-`--lemma` counts or matches a root's inflected forms together (each token carries its lemma from the
-gloss). Both are in the Linguistic companion, as `/frequency` and `/kwic <word>`.
+`inkhaven language collocations <lang> --word W` reports the words within a window of the target,
+ranked by co-occurrence and scored by PMI (pointwise mutual information) — so a genuine collocate
+outranks a word that is merely common everywhere. `--lemma` matches a root's inflected forms; the
+target's own repetitions are excluded. In the companion, `/coll <word>`. Collocations are much of
+what makes a language read as idiomatic (*strong tea*, not *powerful tea*), and a corpus is the only
+place they can be found.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Additive — a new `conlang::corpus` module over the stored interlinears,
-two `language` verbs (`frequency`, `concordance`) and two companion commands; `metrics::zipf_fit` is
-now shared with it. Nothing existing changes. Warning-free (binary and tests). Test suite → 2575.
+**No new runtime crates.** Additive — `Corpus::collocates` on the existing corpus module, a
+`collocations` verb, and a `/coll` companion command; nothing existing changes. Warning-free (binary
+and tests). Test suite → 2577.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
