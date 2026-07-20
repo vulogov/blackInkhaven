@@ -461,6 +461,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             provider,
         } => propose_loans(project, &language, &from, topic.as_deref(), count, provider.as_deref()),
         LanguageCommand::Gloss { language, text } => gloss_text(project, &language, &text),
+        LanguageCommand::Igt { language, text, json } => igt_text(project, &language, &text, json),
         LanguageCommand::Grammar { language, set, json } => {
             grammar_questionnaire(project, &language, set.as_deref(), json)
         }

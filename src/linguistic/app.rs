@@ -516,6 +516,39 @@ impl LinguisticApp {
         self.right = RightPane::Chat;
     }
 
+    /// `/igt <sentence>` — interlinear glossed text, inline: the sentence, its
+    /// gloss, and a literal translation as an aligned Leipzig block.
+    fn run_igt(&mut self, text: String) {
+        let prompt = format!("/igt {text}");
+        if text.is_empty() {
+            self.push_error_turn(prompt, "usage: /igt <sentence>".into());
+            return;
+        }
+        let Some(book) = self.current_language_book().and_then(|id| self.hierarchy.get(id).cloned())
+        else {
+            self.push_error_turn(prompt, "select a language first".into());
+            return;
+        };
+        let phon = crate::cli::language::load_phonology(&self.store, &self.hierarchy, &book)
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let morph = crate::cli::language::load_morphology(&self.store, &self.hierarchy, &book)
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let entries = crate::cli::language::load_dictionary(&self.store, &self.hierarchy, &book).unwrap_or_default();
+        let igt = crate::conlang::igt::build(&phon, &morph, &entries, &text);
+        let response = if igt.words.is_empty() {
+            "nothing to gloss.".to_string()
+        } else {
+            format!("{}\n\n{} / {} word(s) glossed", igt.render(), igt.recognised, igt.words.len())
+        };
+        self.chat.push(Turn { prompt, response, streaming: false, scope: Some(book.title.clone()) });
+        self.chat_scroll = u16::MAX;
+        self.right = RightPane::Chat;
+    }
+
     fn push_error_turn(&mut self, prompt: String, response: String) {
         self.chat.push(Turn {
             prompt,
@@ -880,6 +913,8 @@ impl TuiHost for LinguisticApp {
                         self.run_tree(clause.trim().to_string());
                     } else if let Some(clause) = q.strip_prefix("/clause ") {
                         self.run_clause(clause.trim().to_string());
+                    } else if let Some(sentence) = q.strip_prefix("/igt ") {
+                        self.run_igt(sentence.trim().to_string());
                     } else {
                         self.send_query(q);
                     }
@@ -1081,7 +1116,7 @@ impl LinguisticApp {
         let mut lines: Vec<Line> = Vec::new();
         if self.chat.is_empty() {
             lines.push(Line::from(Span::styled(
-                "Press i to ask; slash-commands: /trace, /parse, /check <word>, /tree, /clause <verb subj obj>.",
+                "Press i to ask; slash: /trace, /parse, /check <word>, /tree, /clause <verb subj obj>, /igt <sentence>.",
                 Style::default().add_modifier(Modifier::DIM),
             )));
         }

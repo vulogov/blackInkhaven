@@ -627,6 +627,34 @@ pub(crate) fn gloss_text(project: &Path, language: &str, text: &str) -> Result<(
     Ok(())
 }
 
+/// IGT-1 (Wave 4) — `inkhaven language igt <lang> --text "…"`: interlinear glossed
+/// text — the sentence, its gloss, and a literal translation, aligned as a Leipzig
+/// block.
+pub(crate) fn igt_text(project: &Path, language: &str, text: &str, json: bool) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let morph = load_morphology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+
+    let igt = crate::conlang::igt::build(&phon, &morph, &entries, text);
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&igt)
+                .map_err(|e| Error::Store(format!("serializing igt: {e}")))?
+        );
+        return Ok(());
+    }
+
+    if igt.words.is_empty() {
+        return Ok(());
+    }
+    println!("{}", igt.render());
+    eprintln!("\n{} / {} word(s) glossed", igt.recognised, igt.words.len());
+    Ok(())
+}
+
 /// LANG-1 P3.1 — generate + print a root's paradigm.
 pub(crate) fn paradigm(
     project: &Path,
