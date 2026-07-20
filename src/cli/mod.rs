@@ -3962,6 +3962,21 @@ pub enum LanguageCommand {
         text: String,
     },
 
+    /// 1.7 IGT-1 (Wave 4) — interlinear glossed text: auto-gloss a sentence and
+    /// lay it out as an aligned Leipzig block (the sentence, the gloss, a literal
+    /// translation). Reuses the auto-gloss index; `--json` emits the structured
+    /// IGT.
+    Igt {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The conlang sentence to gloss.
+        #[arg(long)]
+        text: String,
+        /// Emit the structured IGT as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
     /// LANG-1 P3.1 — generate the full paradigm of a root: apply a paradigm
     /// template's morpheme sequence (from the `Morphology` chapter) to the
     /// root, run the language's allophony across the affix boundaries, and
