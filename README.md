@@ -21,29 +21,30 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.7.21 — The Corpus Reads Your Book
+## Latest release · 1.7.22 — The Hypothesis Register
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.7.21.md`](Documentation/RELEASE_NOTES/1.7.21.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.7.22.md`](Documentation/RELEASE_NOTES/1.7.22.md)
 
-The corpus engine only knew the interlinears you had glossed by hand; now it reads the language as
-you actually write it. The conlang words in your manuscript prose join the corpus, so frequency,
-concordance and collocation reflect real usage, not just a handful of curated examples. **No new
-runtime crates.** Test suite → 2577, warning-free.
+The diachronic tools let you *test* a historical claim one at a time but never *record* it. This
+opens **Track C** with a register that does — a place to write down your sound-change, cognacy and
+borrowing hypotheses, their evidence, and their status as it moves from proposed to supported or
+refuted. Historical conlanging, made a method. **No new runtime crates.** Test suite → 2581,
+warning-free.
 
-### The corpus reaches into the prose
+### Recording a hypothesis
 
-Every corpus command takes `--source texts|prose|all` (default `all`). `prose` scans your manuscript
-the way `scan-manuscript` does — a paragraph counts only in a conlang context, and the words that
-are listed or *look* like the language become tokens, each lemma resolved through the auto-gloss
-index; ordinary prose in your working language is left out. `all` unions the stored interlinears with
-the manuscript, so the corpus reflects the language across everything you have written. It applies to
-`frequency`, `concordance` and `collocations`, and the companion's `/frequency`, `/kwic`, `/coll`.
+`inkhaven language hypothesize <lang> --kind sound-change --claim "k > tʃ / _ i" --evidence "kina →
+tʃina"` records a claim in the language's `Hypotheses` chapter, starting at *proposed*. `hypotheses
+<lang>` lists the register (each line marked with its status), `hypothesis --id N` shows one in full,
+and `hypothesis-status --id N --status supported` moves it along as the evidence comes in. The
+companion lists it with `/hypotheses`. Each hypothesis has a kind, a claim, a rationale, its
+evidence, and a status — durable documentation of the language's history as you reason about it.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Additive — a `build_corpus` assembler and a `--source` option on the three
-corpus verbs, reusing `scan-manuscript`'s detection and the auto-gloss index; nothing existing
-changes. Warning-free (binary and tests). Test suite → 2577.
+**No new runtime crates.** Additive — a new `conlang::hypothesis` model, four `language` verbs, and a
+`/hypotheses` companion command, persisted the same way the `Texts` chapter is; nothing existing
+changes. Warning-free (binary and tests). Test suite → 2581.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
