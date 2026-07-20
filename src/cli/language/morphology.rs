@@ -966,6 +966,42 @@ pub(crate) fn hypothesis_set_status(project: &Path, language: &str, id: &str, st
     Ok(())
 }
 
+/// HYP-1 (Wave 4) — `inkhaven language hypothesis-check <lang> --id N`: run the
+/// Consequence Tracer over a sound-change hypothesis's claim, turning it into a
+/// concrete, testable prediction (which words shift, which merge into homophones).
+pub(crate) fn hypothesis_check(project: &Path, language: &str, id: &str, limit: usize, json: bool) -> Result<()> {
+    use crate::conlang::hypothesis::Kind;
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let hyps = load_hypotheses(&store, &hierarchy, &lang_book);
+    let Some(h) = hyps.iter().find(|h| h.id.eq_ignore_ascii_case(id)) else {
+        return Err(Error::Config(format!("no hypothesis `{id}` in {language}/Hypotheses")));
+    };
+    if h.kind != Kind::SoundChange {
+        return Err(Error::Config(format!(
+            "`{id}` is a {} hypothesis — the consequence check runs only on sound-change hypotheses \
+             (its claim must be a rewrite rule like `k > tʃ / _ i`)",
+            h.kind.label()
+        )));
+    }
+
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+    let report = crate::conlang::trace::trace_sound_change(&phon, &entries, &h.claim, limit.max(1));
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).map_err(|e| Error::Store(format!("serializing trace: {e}")))?
+        );
+        return Ok(());
+    }
+
+    println!("{} hypothesis-check · {language} · `{id}` [{}]", h.status.icon(), h.status.label());
+    println!("  claim: {}", h.claim);
+    super::diachronic::print_trace_body(&report);
+    Ok(())
+}
+
 /// CORPUS-1 (Wave 4) — `inkhaven language corpus <lang>`: corpus statistics and a
 /// word-frequency list over the stored interlinear texts.
 #[allow(clippy::too_many_arguments)]

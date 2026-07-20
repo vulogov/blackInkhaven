@@ -242,21 +242,26 @@ pub(crate) fn trace(project: &Path, language: &str, rule: &str, limit: usize, js
     }
 
     println!("consequence trace · {language} · rule  {rule}");
+    print_trace_body(&report);
+    Ok(())
+}
+
+/// Print the body of a consequence trace — validity, affected count, the sample
+/// changes, and any new homophones. Shared by `trace` and the hypothesis
+/// consequence check; the caller prints its own header first.
+pub(crate) fn print_trace_body(report: &crate::conlang::trace::TraceReport) {
     if !report.rule_valid {
         println!(
             "  ✗ could not parse the rule. Use the form `X > Y / A _ B`, e.g. `s > ʃ / _ i` \
              or `d > t / _ #`."
         );
-        return Ok(());
+        return;
     }
     if report.analyzable_words == 0 {
         println!("  (no analyzable words — define a phoneme inventory and add dictionary entries)");
-        return Ok(());
+        return;
     }
-    println!(
-        "  affects {} of {} analyzable word(s)",
-        report.affected, report.analyzable_words
-    );
+    println!("  affects {} of {} analyzable word(s)", report.affected, report.analyzable_words);
     if !report.changes.is_empty() {
         println!("  changes:");
         for c in &report.changes {
@@ -276,7 +281,6 @@ pub(crate) fn trace(project: &Path, language: &str, rule: &str, limit: usize, js
             println!("      {} ← {}", h.form, h.words.join(", "));
         }
     }
-    Ok(())
 }
 
 /// LANG-1 P4.1 — derive a daughter lexicon from its proto.
