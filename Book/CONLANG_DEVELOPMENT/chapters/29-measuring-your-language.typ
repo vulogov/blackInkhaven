@@ -136,9 +136,13 @@ _ i` into the chat — so the rehearsal is always a keystroke away while you wor
 
 #section("A corpus of your own texts")
 
-Once you have gathered a few interlinear texts (Chapter 28), they become a small
-*corpus* — a body of real usage you can measure, not just a dictionary of isolated
-words. `inkhaven language frequency <lang>` counts how often each word occurs and
+Once you have gathered a few interlinear texts (Chapter 28) — or simply written
+prose in the language — they become a small *corpus*, a body of real usage you can
+measure, not just a dictionary of isolated words. By default the corpus is *both*
+your stored interlinears and the conlang words Inkhaven finds in your manuscript, so
+it reflects the language as you actually use it; `--source texts` or `--source
+prose` narrows it to one. `inkhaven language frequency <lang>` counts how often each
+word occurs and
 reports the statistics that only usage can give: how many word *tokens* and distinct
 *types* you have written, their ratio, and how closely the frequencies follow the
 *Zipf* law that natural languages obey. Add `--lemma` to count a root's inflected
