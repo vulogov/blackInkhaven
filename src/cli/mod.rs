@@ -4003,6 +4003,42 @@ pub enum LanguageCommand {
         json: bool,
     },
 
+    /// 1.7 CORPUS-1 (Wave 4) — a word-frequency list plus descriptive statistics
+    /// over the language's stored interlinear texts (type–token ratio, Zipf fit).
+    Frequency {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Count lemmas (grouping a root's inflected forms) rather than surfaces.
+        #[arg(long)]
+        lemma: bool,
+        /// How many frequency rows to list.
+        #[arg(long, default_value_t = 20)]
+        top: usize,
+        /// Emit as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// 1.7 CORPUS-1 (Wave 4) — a KWIC concordance of a word across the stored
+    /// texts: every occurrence with its context. `--lemma` matches a root's
+    /// inflected forms too.
+    Concordance {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The word (or, with `--lemma`, the root) to look up.
+        #[arg(long)]
+        word: String,
+        /// Match the lemma (a root and its inflected forms), not the surface.
+        #[arg(long)]
+        lemma: bool,
+        /// Words of context to show on each side.
+        #[arg(long, default_value_t = 5)]
+        window: usize,
+        /// Emit as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
     /// LANG-1 P3.1 — generate the full paradigm of a root: apply a paradigm
     /// template's morpheme sequence (from the `Morphology` chapter) to the
     /// root, run the language's allophony across the affix boundaries, and
