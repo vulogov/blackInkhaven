@@ -21,29 +21,29 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.7.20 — Collocation
+## Latest release · 1.7.21 — The Corpus Reads Your Book
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.7.20.md`](Documentation/RELEASE_NOTES/1.7.20.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.7.21.md`](Documentation/RELEASE_NOTES/1.7.21.md)
 
-The corpus can count words and show them in context; now it can tell you which words a word keeps
-company with. `collocations` finds a word's habitual neighbours across the stored texts and ranks
-them by how *distinctive* the pairing is — the third core corpus operation after frequency and
-concordance. **No new runtime crates.** Test suite → 2577, warning-free.
+The corpus engine only knew the interlinears you had glossed by hand; now it reads the language as
+you actually write it. The conlang words in your manuscript prose join the corpus, so frequency,
+concordance and collocation reflect real usage, not just a handful of curated examples. **No new
+runtime crates.** Test suite → 2577, warning-free.
 
-### Collocates
+### The corpus reaches into the prose
 
-`inkhaven language collocations <lang> --word W` reports the words within a window of the target,
-ranked by co-occurrence and scored by PMI (pointwise mutual information) — so a genuine collocate
-outranks a word that is merely common everywhere. `--lemma` matches a root's inflected forms; the
-target's own repetitions are excluded. In the companion, `/coll <word>`. Collocations are much of
-what makes a language read as idiomatic (*strong tea*, not *powerful tea*), and a corpus is the only
-place they can be found.
+Every corpus command takes `--source texts|prose|all` (default `all`). `prose` scans your manuscript
+the way `scan-manuscript` does — a paragraph counts only in a conlang context, and the words that
+are listed or *look* like the language become tokens, each lemma resolved through the auto-gloss
+index; ordinary prose in your working language is left out. `all` unions the stored interlinears with
+the manuscript, so the corpus reflects the language across everything you have written. It applies to
+`frequency`, `concordance` and `collocations`, and the companion's `/frequency`, `/kwic`, `/coll`.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Additive — `Corpus::collocates` on the existing corpus module, a
-`collocations` verb, and a `/coll` companion command; nothing existing changes. Warning-free (binary
-and tests). Test suite → 2577.
+**No new runtime crates.** Additive — a `build_corpus` assembler and a `--source` option on the three
+corpus verbs, reusing `scan-manuscript`'s detection and the auto-gloss index; nothing existing
+changes. Warning-free (binary and tests). Test suite → 2577.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
