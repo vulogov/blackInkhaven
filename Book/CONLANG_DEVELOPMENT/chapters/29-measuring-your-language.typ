@@ -155,8 +155,23 @@ And `inkhaven language concordance <lang> --word W` shows every place a word app
 across your texts, each occurrence lined up with its context on either side — a
 *KWIC* (keyword-in-context) concordance, the tool a lexicographer reaches for to see
 how a word is actually used before writing its definition. `--lemma` finds every
-inflected form of a root at once. Both are in the companion too, as `/frequency` and
-`/kwic <word>`.
+inflected form of a root at once.
+
+`inkhaven language collocations <lang> --word W` goes one step further and asks which
+words a word keeps *company* with — its *collocates*. It counts the neighbours that
+fall within a few words of the target across your texts and ranks them not just by
+raw count but by how *distinctive* the pairing is, so a word that genuinely belongs
+with the target rises above one that is merely common everywhere.
+
+#term("Collocation")[
+  A habitual pairing of words — *strong tea*, not *powerful tea*; *make a decision*,
+  not *do a decision*. Collocations are much of what makes a language idiomatic, and
+  a corpus is the only way to discover them, since they live in usage rather than in
+  any single definition.
+]
+
+All three are in the companion too, as `/frequency`, `/kwic <word>` and `/coll
+<word>`.
 
 #recap((
   [The analyses are *read-only*: they describe your language against the

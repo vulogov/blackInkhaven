@@ -473,6 +473,9 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::Concordance { language, word, lemma, window, json } => {
             concordance(project, &language, &word, lemma, window, json)
         }
+        LanguageCommand::Collocations { language, word, lemma, window, top, json } => {
+            collocations(project, &language, &word, lemma, window, top, json)
+        }
         LanguageCommand::Grammar { language, set, json } => {
             grammar_questionnaire(project, &language, set.as_deref(), json)
         }

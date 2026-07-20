@@ -46,6 +46,21 @@ pub struct Kwic {
     pub right: String,
 }
 
+/// One collocate of a target word: how often it falls within the target's window,
+/// how often it occurs overall, and how *distinctive* that association is.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct Collocate {
+    pub word: String,
+    /// Times it appears within the window of the target.
+    pub cooccur: usize,
+    /// Its total occurrences in the corpus.
+    pub total: usize,
+    /// Pointwise mutual information — how much more the word appears in the
+    /// target's context than its corpus-wide rate predicts (0 = as expected,
+    /// positive = attracted, negative = repelled).
+    pub pmi: f64,
+}
+
 /// Descriptive statistics over the corpus.
 #[derive(Debug, Clone, Serialize, PartialEq, Default)]
 pub struct CorpusStats {
@@ -122,6 +137,64 @@ impl Corpus {
                 });
             }
         }
+        out
+    }
+
+    /// The collocates of `target`: the words that fall within its `window` across
+    /// the corpus, ranked by co-occurrence and scored by PMI (so a distinctive
+    /// neighbour outranks a merely-frequent one). Matches on lemma when `by_lemma`,
+    /// else surface; the target word itself is excluded from its own list.
+    pub fn collocates(&self, target: &str, by_lemma: bool, window: usize) -> Vec<Collocate> {
+        let needle = target.to_lowercase();
+        let key = |t: &Token| if by_lemma { t.lemma.clone() } else { t.surface.clone() };
+
+        let totals: BTreeMap<String, usize> = self.frequency(by_lemma).into_iter().collect();
+        let n: usize = totals.values().sum();
+
+        // Count each neighbour's occurrences within the target's window.
+        let mut cooccur: BTreeMap<String, usize> = BTreeMap::new();
+        let mut context_total = 0usize;
+        for t in &self.texts {
+            for (i, tok) in t.tokens.iter().enumerate() {
+                if key(tok) != needle {
+                    continue;
+                }
+                let lo = i.saturating_sub(window);
+                let hi = (i + 1 + window).min(t.tokens.len());
+                for (pos, nb) in (lo..hi).zip(&t.tokens[lo..hi]) {
+                    if pos == i {
+                        continue;
+                    }
+                    let k = key(nb);
+                    if k == needle {
+                        continue; // the target's own repetitions aren't collocates
+                    }
+                    *cooccur.entry(k).or_default() += 1;
+                    context_total += 1;
+                }
+            }
+        }
+
+        let mut out: Vec<Collocate> = cooccur
+            .into_iter()
+            .map(|(word, c)| {
+                let total = totals.get(&word).copied().unwrap_or(0);
+                // PMI: how enriched the word is in the target's context vs the
+                // corpus overall — log2( p(w|context) / p(w) ).
+                let pmi = if context_total > 0 && total > 0 && n > 0 {
+                    ((c as f64 * n as f64) / (context_total as f64 * total as f64)).log2()
+                } else {
+                    0.0
+                };
+                Collocate { word, cooccur: c, total, pmi }
+            })
+            .collect();
+        out.sort_by(|a, b| {
+            b.cooccur
+                .cmp(&a.cooccur)
+                .then(b.pmi.partial_cmp(&a.pmi).unwrap_or(std::cmp::Ordering::Equal))
+                .then(a.word.cmp(&b.word))
+        });
         out
     }
 
@@ -219,6 +292,36 @@ mod tests {
         assert_eq!(s.tokens, 4);
         assert_eq!(s.types, 3); // kata, nilo, mira
         assert!((s.ttr - 3.0 / 4.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn collocates_rank_neighbours_by_co_occurrence() {
+        // "mira" at positions 1 and 3; with window 1 its neighbours are a, b, b, c.
+        let c = Corpus::from_texts(&[text(
+            "t1",
+            &[("a", None), ("mira", Some("mira")), ("b", None), ("mira", Some("mira")), ("c", None)],
+        )]);
+        let cols = c.collocates("mira", false, 1);
+        // `b` sits beside both occurrences → co-occurs twice, ranked first.
+        assert_eq!(cols[0].word, "b");
+        assert_eq!(cols[0].cooccur, 2);
+        assert!(cols.iter().any(|x| x.word == "a" && x.cooccur == 1));
+        assert!(cols.iter().any(|x| x.word == "c" && x.cooccur == 1));
+        // The target itself is not among its collocates.
+        assert!(!cols.iter().any(|x| x.word == "mira"));
+    }
+
+    #[test]
+    fn collocates_exclude_the_target_and_have_finite_pmi() {
+        let c = Corpus::from_texts(&[text("t1", &[("mira", Some("mira")), ("mira", Some("mira"))])]);
+        // Only the target beside itself → no collocates.
+        assert!(c.collocates("mira", false, 1).is_empty());
+        // A real neighbour gets a finite PMI.
+        let c2 = Corpus::from_texts(&[text("t1", &[("mira", Some("mira")), ("kata", Some("kata"))])]);
+        let cols = c2.collocates("mira", false, 1);
+        assert_eq!(cols.len(), 1);
+        assert_eq!(cols[0].word, "kata");
+        assert!(cols[0].pmi.is_finite());
     }
 
     #[test]
