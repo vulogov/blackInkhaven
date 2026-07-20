@@ -21,30 +21,29 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.7.16 — Stored Texts
+## Latest release · 1.7.17 — Texts to LaTeX
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.7.16.md`](Documentation/RELEASE_NOTES/1.7.16.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.7.17.md`](Documentation/RELEASE_NOTES/1.7.17.md)
 
-Interlinear glosses have been ephemeral — printed and gone. Now they persist. An IGT can be saved
-into a **`Texts` chapter** of the language book, alongside its phonology, grammar and dictionary,
-and read back later — the beginning of a documented corpus. **No new runtime crates.** Test suite
-→ 2567, warning-free.
+Stored interlinears can now leave the tool in the form linguists publish. `texts --format latex`
+renders them as a `linguex` LaTeX document — each text a numbered example with the segmented
+sentence over its gloss and a free translation, ready to paste into a grammar sketch or paper.
+**No new runtime crates.** Test suite → 2569, warning-free.
 
-### Keeping an interlinear
+### Exporting interlinears
 
-`inkhaven language igt <lang> --text "…" --save --name <n>` stores the gloss as a durable
-annotation in the language's `Texts` chapter (created on first use, like the `Dictionary`
-chapter). `inkhaven language texts <lang>` lists what you have gathered; `--name <n>` prints one
-back. Each stored text lives in the tree — versioned and navigable — and round-trips exactly, so a
-reopened text renders the same Leipzig block. Three Annotation-Workbench slices in (auto-gloss,
-segmentation, persistence); a TUI editing surface and export remain, and these stored texts are
-what the coming Corpus Engine will index.
+`inkhaven language texts <lang> --format latex` emits a `linguex` document of the stored texts
+(one with `--name`, or all). Each becomes a numbered `\ex.` with a `\gll` — the morpheme-segmented
+sentence over its gloss, word-aligned — and a `\glt` free translation. LaTeX specials are escaped,
+and a multi-word gloss keeps `\gll` aligned via a non-breaking space (`old~man`). Four
+Annotation-Workbench slices in (auto-gloss, segmentation, persistence, export); a TUI editing
+surface remains, and the stored `Texts` are what the coming Corpus Engine will index.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Additive — the IGT model gains `Deserialize`, an `igt --save/--name`
-flag, and a `texts` verb; existing projects and languages are unchanged, and the `Texts` chapter
-appears only once you save into it. Warning-free (binary and tests). Test suite → 2567.
+**No new runtime crates.** Additive — a new `interchange::igt_linguex` renderer and a `--format`
+option on the `texts` verb; the shared per-word columns moved onto `Igt::columns`, with no change
+to existing output. Warning-free (binary and tests). Test suite → 2569.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

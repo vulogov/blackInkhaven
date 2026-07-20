@@ -149,7 +149,9 @@ segmented `kata-t`):
 On the command line the same gloss can be *kept*: `inkhaven language igt <lang>
 --text "…" --save --name <n>` stores the interlinear in a `Texts` chapter of the
 language book, and `inkhaven language texts <lang>` lists what you have gathered —
-the beginning of a documented corpus of your language.
+the beginning of a documented corpus of your language. Add `--format latex` to
+export those texts as a `linguex` document, ready to paste into a grammar sketch or
+a paper.
 
 We meet the tracer, the parser, the Oracle and the syntax engine properly — and
 the analyses the other views show — in the next chapter.
