@@ -464,8 +464,8 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::Igt { language, text, save, name, json } => {
             igt_text(project, &language, &text, save, name.as_deref(), json)
         }
-        LanguageCommand::Texts { language, name, format, json } => {
-            list_texts(project, &language, name.as_deref(), &format, json)
+        LanguageCommand::Texts { language, name, set_translation, format, json } => {
+            list_texts(project, &language, name.as_deref(), set_translation.as_deref(), &format, json)
         }
         LanguageCommand::Grammar { language, set, json } => {
             grammar_questionnaire(project, &language, set.as_deref(), json)
@@ -1001,6 +1001,50 @@ pub(crate) fn load_texts(
         }
     }
     out
+}
+
+/// IGT-1 (Wave 4) — curate a stored text's free translation in place. Finds the
+/// paragraph named `name` under the language's `Texts` chapter, replaces the IGT's
+/// `translation`, and rewrites the paragraph. Returns `false` when no such text
+/// exists. The gloss/segmentation are untouched — only the free translation.
+pub(crate) fn set_text_translation(
+    store: &Store,
+    hierarchy: &Hierarchy,
+    lang_book: &crate::store::node::Node,
+    name: &str,
+    translation: &str,
+) -> Result<bool> {
+    let Some(chapter) = hierarchy
+        .children_of(Some(lang_book.id))
+        .into_iter()
+        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Texts"))
+        .cloned()
+    else {
+        return Ok(false);
+    };
+    let Some(mut node) = hierarchy
+        .collect_subtree(chapter.id)
+        .into_iter()
+        .filter_map(|id| hierarchy.get(id))
+        .find(|n| n.kind == NodeKind::Paragraph && n.title.eq_ignore_ascii_case(name))
+        .cloned()
+    else {
+        return Ok(false);
+    };
+    let Ok(Some(bytes)) = store.get_content(node.id) else { return Ok(false) };
+    let mut igt: crate::conlang::igt::Igt = serde_json::from_str(&String::from_utf8_lossy(&bytes))
+        .map_err(|e| Error::Store(format!("parsing stored text `{name}`: {e}")))?;
+    igt.translation = translation.to_string();
+
+    let body = serde_json::to_string_pretty(&igt).map_err(|e| Error::Store(format!("serialize igt: {e}")))?;
+    if let Some(rel) = &node.file {
+        let abs = store.project_root().join(rel);
+        std::fs::write(&abs, body.as_bytes()).map_err(|e| Error::Store(format!("write igt file: {e}")))?;
+    }
+    store
+        .update_paragraph_content(&mut node, body.as_bytes())
+        .map_err(|e| Error::Store(format!("write igt: {e}")))?;
+    Ok(true)
 }
 
 /// 1.3.19 LANG-1 P6 — semantic-gap finder. Diff the lexicon's glosses against a

@@ -3992,6 +3992,9 @@ pub enum LanguageCommand {
         /// Show the stored text with this name (else list / export all).
         #[arg(long)]
         name: Option<String>,
+        /// Replace the named text's free translation (curate the auto literal one).
+        #[arg(long, value_name = "TEXT")]
+        set_translation: Option<String>,
         /// Output format: `text` (default) or `latex` (a linguex document).
         #[arg(long, default_value = "text")]
         format: String,
