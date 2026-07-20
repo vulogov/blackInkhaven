@@ -104,10 +104,11 @@ while you think:
 
 `/parse <word>` runs the morphological parser *backwards*: it strips your
 language's known affixes from a surface form and reports every analysis that
-bottoms out at a dictionary root — including non-concatenative processes such as
-reduplication, both full (`kata-kata`) and partial, where only the base's first
-syllable copies to the front (`ka~kata`). Where the gloss path builds a word from
-a root and features, `/parse` takes a word you have written and tells you how it
+bottoms out at a dictionary root — including the non-concatenative processes:
+reduplication, both full (`kata-kata`) and partial (`ka~kata`), and ablaut, the
+internal vowel change of *sing/sang* (recovered by running each root forward
+through the ablaut rules and matching). Where the gloss path builds a word from a
+root and features, `/parse` takes a word you have written and tells you how it
 could be built:
 
 ```
