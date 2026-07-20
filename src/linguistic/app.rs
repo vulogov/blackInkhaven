@@ -549,6 +549,55 @@ impl LinguisticApp {
         self.right = RightPane::Chat;
     }
 
+    /// `/texts` — list the current language's stored interlinear texts, inline.
+    fn run_texts(&mut self) {
+        let prompt = "/texts".to_string();
+        let Some(book) = self.current_language_book().and_then(|id| self.hierarchy.get(id).cloned())
+        else {
+            self.push_error_turn(prompt, "select a language first".into());
+            return;
+        };
+        let texts = crate::cli::language::load_texts(&self.store, &self.hierarchy, &book);
+        let response = if texts.is_empty() {
+            "no stored texts yet — save one with `/igt` on the command line (`language igt … --save`).".to_string()
+        } else {
+            texts.iter().map(|(t, igt)| format!("{t} — '{}'", igt.translation)).collect::<Vec<_>>().join("\n")
+        };
+        self.chat.push(Turn { prompt, response, streaming: false, scope: Some(book.title.clone()) });
+        self.chat_scroll = u16::MAX;
+        self.right = RightPane::Chat;
+    }
+
+    /// `/settrans <name> = <translation>` — curate a stored text's free
+    /// translation (replacing the auto literal one) and persist it.
+    fn run_settrans(&mut self, spec: String) {
+        let prompt = format!("/settrans {spec}");
+        let Some((name, trans)) = spec.split_once('=') else {
+            self.push_error_turn(prompt, "usage: /settrans <name> = <new translation>".into());
+            return;
+        };
+        let (name, trans) = (name.trim(), trans.trim());
+        if name.is_empty() || trans.is_empty() {
+            self.push_error_turn(prompt, "usage: /settrans <name> = <new translation>".into());
+            return;
+        }
+        let Some(book) = self.current_language_book().and_then(|id| self.hierarchy.get(id).cloned())
+        else {
+            self.push_error_turn(prompt, "select a language first".into());
+            return;
+        };
+        match crate::cli::language::set_text_translation(&self.store, &self.hierarchy, &book, name, trans) {
+            Ok(true) => {
+                let response = format!("✓ set the translation of `{name}` to '{trans}'");
+                self.chat.push(Turn { prompt, response, streaming: false, scope: Some(book.title.clone()) });
+                self.chat_scroll = u16::MAX;
+                self.right = RightPane::Chat;
+            }
+            Ok(false) => self.push_error_turn(prompt, format!("no stored text named `{name}`")),
+            Err(e) => self.push_error_turn(prompt, format!("could not update `{name}`: {e}")),
+        }
+    }
+
     fn push_error_turn(&mut self, prompt: String, response: String) {
         self.chat.push(Turn {
             prompt,
@@ -915,6 +964,10 @@ impl TuiHost for LinguisticApp {
                         self.run_clause(clause.trim().to_string());
                     } else if let Some(sentence) = q.strip_prefix("/igt ") {
                         self.run_igt(sentence.trim().to_string());
+                    } else if q.trim_end() == "/texts" {
+                        self.run_texts();
+                    } else if let Some(spec) = q.strip_prefix("/settrans ") {
+                        self.run_settrans(spec.trim().to_string());
                     } else {
                         self.send_query(q);
                     }
@@ -1116,7 +1169,7 @@ impl LinguisticApp {
         let mut lines: Vec<Line> = Vec::new();
         if self.chat.is_empty() {
             lines.push(Line::from(Span::styled(
-                "Press i to ask; slash: /trace, /parse, /check <word>, /tree, /clause <verb subj obj>, /igt <sentence>.",
+                "Press i to ask; slash: /trace /parse /check /tree /clause /igt · /texts · /settrans <name> = <translation>.",
                 Style::default().add_modifier(Modifier::DIM),
             )));
         }

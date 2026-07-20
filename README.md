@@ -21,29 +21,29 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.7.17 — Texts to LaTeX
+## Latest release · 1.7.18 — Curating the Translation
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.7.17.md`](Documentation/RELEASE_NOTES/1.7.17.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.7.18.md`](Documentation/RELEASE_NOTES/1.7.18.md)
 
-Stored interlinears can now leave the tool in the form linguists publish. `texts --format latex`
-renders them as a `linguex` LaTeX document — each text a numbered example with the segmented
-sentence over its gloss and a free translation, ready to paste into a grammar sketch or paper.
-**No new runtime crates.** Test suite → 2569, warning-free.
+The interlinear's free translation has been auto-generated — a literal scaffold. Now you can
+rewrite it. This is the last slice of the Annotation Workbench: editing a stored text — and with
+it **Track A of Wave 4 is complete**. **No new runtime crates.** Test suite → 2569, warning-free.
 
-### Exporting interlinears
+### Editing a stored text
 
-`inkhaven language texts <lang> --format latex` emits a `linguex` document of the stored texts
-(one with `--name`, or all). Each becomes a numbered `\ex.` with a `\gll` — the morpheme-segmented
-sentence over its gloss, word-aligned — and a `\glt` free translation. LaTeX specials are escaped,
-and a multi-word gloss keeps `\gll` aligned via a non-breaking space (`old~man`). Four
-Annotation-Workbench slices in (auto-gloss, segmentation, persistence, export); a TUI editing
-surface remains, and the stored `Texts` are what the coming Corpus Engine will index.
+In the companion, `/texts` lists your stored interlinears and `/settrans <name> = <translation>`
+curates one's free translation; on the CLI, `inkhaven language texts <lang> --name <n>
+--set-translation "…"`. Only the free translation changes — the morpheme segmentation and gloss are
+left exactly as they were. The Annotation Workbench is now complete across five slices (auto-gloss,
+segmentation, persistence, LaTeX export, editing): your language can be *documented* — a corpus of
+glossed, translated, exportable texts — and those stored `Texts` are what the coming Corpus Engine
+will index.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Additive — a new `interchange::igt_linguex` renderer and a `--format`
-option on the `texts` verb; the shared per-word columns moved onto `Igt::columns`, with no change
-to existing output. Warning-free (binary and tests). Test suite → 2569.
+**No new runtime crates.** Additive — a `set_text_translation` helper, a `--set-translation`
+option on the `texts` verb, and two companion commands (`/texts`, `/settrans`); nothing existing
+changes. Warning-free (binary and tests). Test suite → 2569.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

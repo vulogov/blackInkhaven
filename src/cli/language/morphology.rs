@@ -719,14 +719,30 @@ fn save_igt(
 /// IGT-1 (Wave 4) — `inkhaven language texts <lang> [--name N] [--format latex]`:
 /// list the stored interlinear texts, print one, or export them as a linguex
 /// LaTeX document.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn list_texts(
     project: &Path,
     language: &str,
     name: Option<&str>,
+    set_translation: Option<&str>,
     format: &str,
     json: bool,
 ) -> Result<()> {
     let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+
+    // Edit mode: curate the named text's free translation, then fall through to
+    // printing it.
+    if let Some(new_translation) = set_translation {
+        let Some(n) = name else {
+            return Err(Error::Config("--set-translation needs --name <text>".into()));
+        };
+        if !set_text_translation(&store, &hierarchy, &lang_book, n, new_translation)? {
+            return Err(Error::Config(format!("no stored text named `{n}` in {language}/Texts")));
+        }
+        eprintln!("updated the translation of `{n}`");
+    }
+
+    let hierarchy = crate::store::hierarchy::Hierarchy::load(&store)?;
     let texts = load_texts(&store, &hierarchy, &lang_book);
 
     // The selection: the named text, or all of them.
