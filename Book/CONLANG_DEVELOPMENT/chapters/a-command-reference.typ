@@ -85,7 +85,7 @@ Add `--help` to any command for its full signature.
 
 #section("Morphology and syntax")
 
-/ `parse <lang> --word W [--json]`: The morphological parser — analyse a surface word into root + affixes by stripping known affixes (concatenative and reduplication) until what remains is a dictionary root. The inverse of paradigm generation.
+/ `parse <lang> --word W [--json]`: The morphological parser — analyse a surface word into root + affixes by stripping known affixes (concatenative, plus full and partial reduplication) until what remains is a dictionary root. The inverse of paradigm generation.
 / `link <lang> --verb V --args "A,B,C" [--valence …] [--json]`: Argument linking — a clause's thematic roles, RRG macroroles (actor / undergoer) and grammatical relations from the verb's valence.
 / `tree <lang> --verb V --args "subj,obj,iobj" [--word-order O] [--json]`: Build the X-bar phrase-structure tree (CP → TP → VP), placing heads and complements by the language's word order.
 / `movement <lang> --verb V --args "…" --move ROLE [--word-order O] [--json]`: Syntactic movement — front a constituent (wh-movement / topicalisation) over the tree, leaving a coindexed trace.

@@ -18,6 +18,7 @@ use serde::Serialize;
 
 use crate::conlang::types::Phonology;
 use crate::conlang::types::morphology::{AffixPosition, Morphology};
+use crate::conlang::types::phoneme::PhonemeKind;
 use crate::language_entry::DictionaryEntry;
 
 /// One analysis of a surface word.
@@ -108,6 +109,27 @@ fn strip(
         }
     }
 
+    // Non-concatenative: partial (initial-syllable) reduplication (CV~ + X). The
+    // reduplicant copies the base's first syllable and prefixes it, so the
+    // surface's opening syllable is duplicated — `segs[..k] == segs[k..2k]`. Try
+    // the CV reduplicant (onset + first vowel) and the CVC (adding a coda), and
+    // require a longer base after it so this is genuinely *partial*, not the full
+    // reduplication handled above. Stripping `k ≥ 1` segments terminates.
+    if let Some(cv) = first_syllable_len(phon, segs) {
+        let cvc = if segs.get(cv).map(|s| phon.kind_of(s) == Some(PhonemeKind::Consonant)).unwrap_or(false) {
+            Some(cv + 1)
+        } else {
+            None
+        };
+        for k in [Some(cv), cvc].into_iter().flatten() {
+            if k >= 1 && segs.len() > 2 * k && segs[..k] == segs[k..2 * k] {
+                applied.push("REDUP~".to_string());
+                strip(&segs[k..], phon, roots, affixes, applied, out);
+                applied.pop();
+            }
+        }
+    }
+
     for (form, label, is_prefix) in affixes {
         let stripped: Option<&[String]> = if *is_prefix {
             segs.strip_prefix(form.as_slice())
@@ -122,6 +144,13 @@ fn strip(
             }
         }
     }
+}
+
+/// The length (in segments) of the initial CV syllable — leading onset
+/// consonants plus the first vowel — or `None` when there is no vowel. This is
+/// the light-syllable reduplicant a partial reduplication copies.
+fn first_syllable_len(phon: &Phonology, segs: &[String]) -> Option<usize> {
+    segs.iter().position(|s| phon.kind_of(s) == Some(PhonemeKind::Vowel)).map(|v| v + 1)
 }
 
 fn affix_label(gloss: &str, id: &str) -> String {
@@ -214,5 +243,37 @@ mod tests {
                 && p.affixes.contains(&"REDUP".to_string())
                 && p.affixes.contains(&"PL".to_string())
         }));
+    }
+
+    #[test]
+    fn partial_reduplication_is_analysed() {
+        // "kakata" = ka~ + kata (the base's initial CV, "ka", prefixed).
+        let lex = [entry("kata", "stone")];
+        let r = parse(&phon(), &morph(), &lex, "kakata");
+        assert!(
+            r.parses.iter().any(|p| p.root == "kata" && p.affixes == vec!["REDUP~".to_string()]),
+            "parses: {:?}",
+            r.parses
+        );
+    }
+
+    #[test]
+    fn partial_reduplication_combines_with_affixes() {
+        // "kakatai" = ka~ + kata + PL.
+        let lex = [entry("kata", "stone")];
+        let r = parse(&phon(), &morph(), &lex, "kakatai");
+        assert!(r.parses.iter().any(|p| {
+            p.root == "kata"
+                && p.affixes.contains(&"REDUP~".to_string())
+                && p.affixes.contains(&"PL".to_string())
+        }));
+    }
+
+    #[test]
+    fn a_plain_suffixed_form_is_not_read_as_partial_reduplication() {
+        // "katai" = kata + PL; its opening CV ("ka") is not duplicated, so no REDUP~.
+        let lex = [entry("kata", "stone")];
+        let r = parse(&phon(), &morph(), &lex, "katai");
+        assert!(!r.parses.iter().any(|p| p.affixes.contains(&"REDUP~".to_string())), "parses: {:?}", r.parses);
     }
 }
