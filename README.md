@@ -21,30 +21,30 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.7.13 — Agreement, Generalised
+## Latest release · 1.7.14 — Interlinear Glossed Text
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.7.13.md`](Documentation/RELEASE_NOTES/1.7.13.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.7.14.md`](Documentation/RELEASE_NOTES/1.7.14.md)
 
-The clause Oracle could check that a verb agrees with its subject; that machinery was hard-wired
-to one pair. It is now general — the Oracle checks agreement over **any** head–dependent pair (an
-adjective with its noun, a determiner with its noun, a verb with its subject), under whatever
-rules the language declares. **No new runtime crates.** Test suite → 2558, warning-free.
+Wave 3 gave the language an engine; Wave 4 turns to the **texts** it works on, opening with the
+linguist's core artifact — interlinear glossed text. Give the companion a sentence of your
+language and it lays out the Leipzig block: the sentence, a gloss under each word, and a literal
+translation. **No new runtime crates.** Test suite → 2562, warning-free.
 
-### Agreement over any head–dependent pair
+### Interlinear glossed text
 
-`inkhaven language check-agreement <lang> --dependent adjective --form mira --root mira
---head-features "number=pl"` looks up the language's agreement rule for the dependent, regenerates
-the form it *should* produce, and flags the observed one if it differs (`expected `mirai``). The
-subject–verb check from 1.7.8 is now one application of this engine — `check-clause` calls it for
-the verb, and the new `check-agreement` verb opens it to every other dependent. A dependent with
-no declared rule is silently skipped.
+`inkhaven language igt <lang> --text "katai nilo"` auto-glosses a sentence and aligns it —
+`katai`/`stone-PL` over `nilo`/`friend`, with a literal `'stone friend'` translation. The gloss
+reuses the auto-gloss index (so inflected forms are recognised); the literal line drops
+grammatical tags as a scaffold you refine; unrecognised words pass through. `--json` emits the
+structured IGT. It is also a companion command — `/igt <sentence>` prints the block inline — and
+the first slice of Wave 4's Annotation Workbench (morpheme segmentation, curated translations, and
+stored annotations come next).
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Purely additive — `oracle::check_agreement` generalises the existing
-subject–verb logic (which now calls it, unchanged) and a new `language check-agreement` verb wraps
-it. Existing projects, languages and CLI verbs are unchanged. The companion book documents the
-verb. Warning-free (binary and tests). Test suite → 2558.
+**No new runtime crates.** Purely additive — a new `conlang::igt` module over the existing
+auto-gloss index, a `language igt` verb, and a `/igt` companion command; nothing existing changes.
+Warning-free (binary and tests). Test suite → 2562.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
