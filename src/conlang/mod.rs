@@ -30,6 +30,7 @@ pub mod generate;
 pub mod grammar;
 pub mod grammar_check;
 pub mod link;
+pub mod corpus;
 pub mod harmony;
 pub mod igt;
 pub mod interchange;
