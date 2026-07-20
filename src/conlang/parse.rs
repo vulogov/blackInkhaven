@@ -7,19 +7,22 @@
 //! generator (RFC amendment A-1), not a lookup. It returns every analysis it
 //! finds, simplest first.
 //!
-//! This is a first, deliberately conservative cut: concatenative prefixes and
-//! suffixes, bottoming out at a dictionary root. Non-concatenative processes
-//! (ablaut, reduplication) and scoring against a morphotactic grammar come with
-//! the rest of the Wave-3 engine.
+//! It handles concatenative prefixes and suffixes (bottoming out at a dictionary
+//! root) and the non-concatenative processes: full and partial reduplication, and
+//! ablaut (reversed by generate-and-test against the roots). Scoring against a
+//! morphotactic grammar is still to come.
 
 use std::collections::HashMap;
 
 use serde::Serialize;
 
 use crate::conlang::types::Phonology;
-use crate::conlang::types::morphology::{AffixPosition, Morphology};
+use crate::conlang::types::morphology::{AffixPosition, MorphProcess, Morphology};
 use crate::conlang::types::phoneme::PhonemeKind;
 use crate::language_entry::DictionaryEntry;
+
+/// A root reached by undoing an ablaut process: `(rendered root, gloss, label)`.
+type AblautForm = (String, String, String);
 
 /// One analysis of a surface word.
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -72,8 +75,36 @@ pub fn parse(phon: &Phonology, morph: &Morphology, entries: &[DictionaryEntry], 
         .filter(|(f, _, _)| !f.is_empty())
         .collect();
 
+    // Ablaut forms: run every root forward through each ablaut morpheme's rules
+    // and index it by the resulting (changed) surface. The parser reverses
+    // generation, so a surface that matches an ablaut image analyses as that root
+    // plus the ablaut morpheme. This is generate-and-test — running the real
+    // forward rewriter — rather than trying to invert an SPE rule, which is not
+    // generally invertible (context-sensitive / class-based rules).
+    let mut ablaut_forms: HashMap<Vec<String>, Vec<AblautForm>> = HashMap::new();
+    for m in &morph.morphemes {
+        if !matches!(m.process, Some(MorphProcess::Ablaut)) || m.rules.is_empty() {
+            continue;
+        }
+        let label = affix_label(&m.gloss, &m.id);
+        for e in entries {
+            let base = phon.segment(&e.word.to_lowercase());
+            if base.is_empty() {
+                continue;
+            }
+            let image = crate::conlang::phonology::rewrite::apply_ordered(&base, &m.rules, &phon.classes);
+            if image != base && !image.is_empty() {
+                ablaut_forms.entry(image).or_default().push((
+                    render(phon, &base),
+                    e.translation.clone(),
+                    label.clone(),
+                ));
+            }
+        }
+    }
+
     let mut applied: Vec<String> = Vec::new();
-    strip(&segs, phon, &roots, &affixes, &mut applied, &mut report.parses);
+    strip(&segs, phon, &roots, &affixes, &ablaut_forms, &mut applied, &mut report.parses);
 
     // Fewest affixes first, then by root for stability.
     report.parses.sort_by(|a, b| a.affixes.len().cmp(&b.affixes.len()).then_with(|| a.root.cmp(&b.root)));
@@ -87,12 +118,24 @@ fn strip(
     phon: &Phonology,
     roots: &HashMap<Vec<String>, String>,
     affixes: &[(Vec<String>, String, bool)],
+    ablaut_forms: &HashMap<Vec<String>, Vec<AblautForm>>,
     applied: &mut Vec<String>,
     out: &mut Vec<Parse>,
 ) {
     // A root here is a complete analysis (the bare stem is also allowed).
     if let Some(gloss) = roots.get(segs) {
         out.push(Parse { root: render(phon, segs), gloss: gloss.clone(), affixes: applied.clone() });
+    }
+    // Non-concatenative: ablaut. If this stem is the forward image of some root
+    // under an ablaut morpheme, that root — plus the ablaut gloss (innermost) — is
+    // an analysis. Ablaut changes the stem in place rather than shortening it, so
+    // it is a terminal step, not a recursion.
+    if let Some(forms) = ablaut_forms.get(segs) {
+        for (root, gloss, label) in forms {
+            let mut affixes = applied.clone();
+            affixes.push(label.clone());
+            out.push(Parse { root: root.clone(), gloss: gloss.clone(), affixes });
+        }
     }
     if applied.len() >= MAX_AFFIXES {
         return;
@@ -104,7 +147,7 @@ fn strip(
         let half = segs.len() / 2;
         if segs[..half] == segs[half..] {
             applied.push("REDUP".to_string());
-            strip(&segs[..half], phon, roots, affixes, applied, out);
+            strip(&segs[..half], phon, roots, affixes, ablaut_forms, applied, out);
             applied.pop();
         }
     }
@@ -124,7 +167,7 @@ fn strip(
         for k in [Some(cv), cvc].into_iter().flatten() {
             if k >= 1 && segs.len() > 2 * k && segs[..k] == segs[k..2 * k] {
                 applied.push("REDUP~".to_string());
-                strip(&segs[k..], phon, roots, affixes, applied, out);
+                strip(&segs[k..], phon, roots, affixes, ablaut_forms, applied, out);
                 applied.pop();
             }
         }
@@ -139,7 +182,7 @@ fn strip(
         if let Some(rem) = stripped {
             if rem.len() < segs.len() && !rem.is_empty() {
                 applied.push(label.clone());
-                strip(rem, phon, roots, affixes, applied, out);
+                strip(rem, phon, roots, affixes, ablaut_forms, applied, out);
                 applied.pop();
             }
         }
@@ -275,5 +318,48 @@ mod tests {
         let lex = [entry("kata", "stone")];
         let r = parse(&phon(), &morph(), &lex, "katai");
         assert!(!r.parses.iter().any(|p| p.affixes.contains(&"REDUP~".to_string())), "parses: {:?}", r.parses);
+    }
+
+    // A morphology whose past tense is an ablaut (a → i): "kat" → "kit".
+    fn ablaut_morph() -> Morphology {
+        let body = r#"{
+            morphemes: [
+                { id: "pl",  gloss: "PL",  form: "i", position: "suffix" }
+                { id: "pst", gloss: "PST", process: "ablaut", rules: [ { rule: "a > i" } ] }
+            ]
+        }"#;
+        Morphology::from_hjson(body).unwrap().unwrap()
+    }
+
+    #[test]
+    fn an_ablaut_form_analyses_to_its_root() {
+        // "kit" is the a→i image of the root "kat", so it parses as kat + PST.
+        let lex = [entry("kat", "cut")];
+        let r = parse(&phon(), &ablaut_morph(), &lex, "kit");
+        assert!(
+            r.parses.iter().any(|p| p.root == "kat" && p.affixes == vec!["PST".to_string()]),
+            "parses: {:?}",
+            r.parses
+        );
+    }
+
+    #[test]
+    fn ablaut_combines_with_a_suffix() {
+        // "kiti" = kat + PST(ablaut) + PL.
+        let lex = [entry("kat", "cut")];
+        let r = parse(&phon(), &ablaut_morph(), &lex, "kiti");
+        assert!(r.parses.iter().any(|p| {
+            p.root == "kat" && p.affixes.contains(&"PST".to_string()) && p.affixes.contains(&"PL".to_string())
+        }));
+    }
+
+    #[test]
+    fn a_bare_root_is_not_read_as_ablaut() {
+        // "kat" contains the vowel the rule rewrites, so it is never an a→i image;
+        // it parses only as the bare root.
+        let lex = [entry("kat", "cut")];
+        let r = parse(&phon(), &ablaut_morph(), &lex, "kat");
+        assert!(r.parses.iter().any(|p| p.root == "kat" && p.affixes.is_empty()));
+        assert!(!r.parses.iter().any(|p| p.affixes.contains(&"PST".to_string())), "parses: {:?}", r.parses);
     }
 }
