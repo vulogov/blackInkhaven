@@ -803,10 +803,17 @@ pub(crate) fn list_texts(
 
 /// CORPUS-1 (Wave 4) — `inkhaven language corpus <lang>`: corpus statistics and a
 /// word-frequency list over the stored interlinear texts.
-pub(crate) fn corpus_report(project: &Path, language: &str, by_lemma: bool, top: usize, json: bool) -> Result<()> {
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn corpus_report(
+    project: &Path,
+    language: &str,
+    by_lemma: bool,
+    source: &str,
+    top: usize,
+    json: bool,
+) -> Result<()> {
     let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
-    let texts = load_texts(&store, &hierarchy, &lang_book);
-    let corpus = crate::conlang::corpus::Corpus::from_texts(&texts);
+    let corpus = build_corpus(&store, &hierarchy, &lang_book, source)?;
     let stats = corpus.stats();
     let freq = corpus.frequency(by_lemma);
 
@@ -841,17 +848,18 @@ pub(crate) fn corpus_report(project: &Path, language: &str, by_lemma: bool, top:
 
 /// CORPUS-1 (Wave 4) — `inkhaven language concordance <lang> --word W`: a KWIC
 /// concordance of a word (or, with `--lemma`, a root) across the stored texts.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn concordance(
     project: &Path,
     language: &str,
     word: &str,
     by_lemma: bool,
+    source: &str,
     window: usize,
     json: bool,
 ) -> Result<()> {
     let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
-    let texts = load_texts(&store, &hierarchy, &lang_book);
-    let corpus = crate::conlang::corpus::Corpus::from_texts(&texts);
+    let corpus = build_corpus(&store, &hierarchy, &lang_book, source)?;
     let lines = corpus.concordance(word, by_lemma, window);
 
     if json {
@@ -886,13 +894,13 @@ pub(crate) fn collocations(
     language: &str,
     word: &str,
     by_lemma: bool,
+    source: &str,
     window: usize,
     top: usize,
     json: bool,
 ) -> Result<()> {
     let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
-    let texts = load_texts(&store, &hierarchy, &lang_book);
-    let corpus = crate::conlang::corpus::Corpus::from_texts(&texts);
+    let corpus = build_corpus(&store, &hierarchy, &lang_book, source)?;
     let cols = corpus.collocates(word, by_lemma, window);
 
     if json {

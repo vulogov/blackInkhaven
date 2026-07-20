@@ -467,14 +467,14 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::Texts { language, name, set_translation, format, json } => {
             list_texts(project, &language, name.as_deref(), set_translation.as_deref(), &format, json)
         }
-        LanguageCommand::Frequency { language, lemma, top, json } => {
-            corpus_report(project, &language, lemma, top, json)
+        LanguageCommand::Frequency { language, lemma, source, top, json } => {
+            corpus_report(project, &language, lemma, &source, top, json)
         }
-        LanguageCommand::Concordance { language, word, lemma, window, json } => {
-            concordance(project, &language, &word, lemma, window, json)
+        LanguageCommand::Concordance { language, word, lemma, source, window, json } => {
+            concordance(project, &language, &word, lemma, &source, window, json)
         }
-        LanguageCommand::Collocations { language, word, lemma, window, top, json } => {
-            collocations(project, &language, &word, lemma, window, top, json)
+        LanguageCommand::Collocations { language, word, lemma, source, window, top, json } => {
+            collocations(project, &language, &word, lemma, &source, window, top, json)
         }
         LanguageCommand::Grammar { language, set, json } => {
             grammar_questionnaire(project, &language, set.as_deref(), json)
@@ -1007,6 +1007,102 @@ pub(crate) fn load_texts(
         let body = String::from_utf8_lossy(&bytes);
         if let Ok(igt) = serde_json::from_str::<crate::conlang::igt::Igt>(&body) {
             out.push((node.title.clone(), igt));
+        }
+    }
+    out
+}
+
+/// CORPUS-1 (Wave 4) — assemble the corpus from `source`: the stored interlinear
+/// texts (`texts`), the conlang words used in the manuscript prose (`prose`), or
+/// both (`all`).
+pub(crate) fn build_corpus(
+    store: &Store,
+    hierarchy: &Hierarchy,
+    lang_book: &crate::store::node::Node,
+    source: &str,
+) -> Result<crate::conlang::corpus::Corpus> {
+    use crate::conlang::corpus::Corpus;
+    let (want_texts, want_prose) = match source {
+        "texts" => (true, false),
+        "prose" => (false, true),
+        "all" => (true, true),
+        other => return Err(Error::Config(format!("unknown --source `{other}` (texts | prose | all)"))),
+    };
+    let mut corpus = Corpus::default();
+    if want_texts {
+        let stored = load_texts(store, hierarchy, lang_book);
+        corpus.texts.extend(Corpus::from_texts(&stored).texts);
+    }
+    if want_prose {
+        corpus.texts.extend(manuscript_corpus_texts(store, hierarchy, lang_book));
+    }
+    Ok(corpus)
+}
+
+/// Build corpus texts from the conlang words used in the manuscript prose. A
+/// paragraph is scanned only when it is a *conlang context* (contains ≥1 listed
+/// word); within it, words that are listed or *look* like the language become
+/// tokens, each lemma resolved through the auto-gloss index. Mirrors
+/// `scan-manuscript`'s detection; system books (dictionaries, the Texts chapter)
+/// are skipped.
+fn manuscript_corpus_texts(
+    store: &Store,
+    hierarchy: &Hierarchy,
+    lang_book: &crate::store::node::Node,
+) -> Vec<crate::conlang::corpus::CorpusText> {
+    use crate::conlang::corpus::{CorpusText, Token};
+    use std::collections::HashSet;
+    use unicode_segmentation::UnicodeSegmentation;
+
+    let phon = load_phonology(store, hierarchy, lang_book).ok().flatten().unwrap_or_default();
+    let morph = load_morphology(store, hierarchy, lang_book).ok().flatten().unwrap_or_default();
+    let entries = load_dictionary(store, hierarchy, lang_book).unwrap_or_default();
+    let index = crate::conlang::morphology::gloss::build_index(&phon, &morph, &entries);
+    let known: HashSet<String> =
+        entries.iter().flat_map(|e| e.surface_forms().into_iter().map(|s| s.to_lowercase())).collect();
+
+    let mut out = Vec::new();
+    for node in hierarchy.iter() {
+        if node.kind != NodeKind::Paragraph {
+            continue;
+        }
+        // Skip system-book paragraphs (the language books, dictionaries, …).
+        let mut cursor = Some(node.id);
+        let mut is_system = false;
+        while let Some(id) = cursor {
+            match hierarchy.get(id) {
+                Some(n) if n.system_tag.is_some() => {
+                    is_system = true;
+                    break;
+                }
+                Some(n) => cursor = n.parent_id,
+                None => break,
+            }
+        }
+        if is_system {
+            continue;
+        }
+        let Ok(Some(bytes)) = store.get_content(node.id) else { continue };
+        let Ok(body) = std::str::from_utf8(&bytes) else { continue };
+        let plain = crate::audiobook::typst_to_plain(body);
+        let words: Vec<String> = plain.unicode_words().map(String::from).collect();
+        // Conlang-context guard: skip prose with no anchoring listed word.
+        if !words.iter().any(|w| known.contains(&w.to_lowercase())) {
+            continue;
+        }
+        let tokens: Vec<Token> = words
+            .iter()
+            .filter_map(|w| {
+                let lc = w.to_lowercase();
+                if !known.contains(&lc) && !crate::conlang::lexicon::looks_conlang(&phon, &lc) {
+                    return None;
+                }
+                let lemma = index.gloss_word(&lc).root.map(|r| r.to_lowercase()).unwrap_or_else(|| lc.clone());
+                Some(Token { surface: lc, lemma })
+            })
+            .collect();
+        if !tokens.is_empty() {
+            out.push(CorpusText { name: format!("¶ {}", node.title), tokens });
         }
     }
     out
