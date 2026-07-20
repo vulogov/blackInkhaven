@@ -4011,6 +4011,9 @@ pub enum LanguageCommand {
         /// Count lemmas (grouping a root's inflected forms) rather than surfaces.
         #[arg(long)]
         lemma: bool,
+        /// Corpus source: `texts` (stored), `prose` (the manuscript), or `all`.
+        #[arg(long, default_value = "all")]
+        source: String,
         /// How many frequency rows to list.
         #[arg(long, default_value_t = 20)]
         top: usize,
@@ -4031,6 +4034,9 @@ pub enum LanguageCommand {
         /// Match the lemma (a root and its inflected forms), not the surface.
         #[arg(long)]
         lemma: bool,
+        /// Corpus source: `texts` (stored), `prose` (the manuscript), or `all`.
+        #[arg(long, default_value = "all")]
+        source: String,
         /// Words of context to show on each side.
         #[arg(long, default_value_t = 5)]
         window: usize,
@@ -4051,6 +4057,9 @@ pub enum LanguageCommand {
         /// Match the lemma (a root and its inflected forms), not the surface.
         #[arg(long)]
         lemma: bool,
+        /// Corpus source: `texts` (stored), `prose` (the manuscript), or `all`.
+        #[arg(long, default_value = "all")]
+        source: String,
         /// Words of context on each side that count as the window.
         #[arg(long, default_value_t = 5)]
         window: usize,
