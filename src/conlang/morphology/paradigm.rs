@@ -7,7 +7,7 @@
 
 use std::collections::BTreeMap;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::conlang::phonology::{allophony_eval, rewrite, syllable};
 use crate::conlang::types::morphology::{AffixPosition, MorphProcess, Morphology, ParadigmTemplate};
@@ -28,7 +28,7 @@ const MAX_STEM_SEGMENTS: usize = 256;
 /// One morpheme of a segmented surface form: its surface piece (after allophony)
 /// and its gloss. The stem — root plus any stem-internal (non-concatenative)
 /// morphemes — is a single segment; concatenative affixes are separate.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MorphSeg {
     pub surface: String,
     pub gloss: String,

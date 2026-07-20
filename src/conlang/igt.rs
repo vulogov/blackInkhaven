@@ -1,17 +1,16 @@
 //! IGT-1 (Wave 4) — interlinear glossed text.
 //!
-//! Interlinear Glossed Text is the linguist's core artifact: a line of the
-//! language, a line glossing each word, and a free translation, aligned in
-//! columns so the reader can see how the sentence is built. This first slice
-//! *auto-glosses* — it reuses the forward auto-gloss index ([`gloss`]) to gloss
-//! every word of a sentence and lays the result out as an aligned Leipzig block.
-//!
-//! Alignment here is word-level (each word a column; its morphemes shown inside
-//! the gloss, `stone-PL`). True morpheme segmentation on a separate line, a
-//! curated free translation, and persisting an IGT as a stored annotation are the
-//! next slices of the Annotation Workbench. Pure and deterministic.
+//! Interlinear Glossed Text is the linguist's core artifact: the morpheme-
+//! segmented sentence, a gloss under each morpheme, and a free translation,
+//! aligned in columns so the reader can see how the sentence is built. [`build`]
+//! auto-glosses — it reuses the forward auto-gloss index ([`gloss`]), which
+//! carries the morpheme segmentation — and lays the result out as an aligned
+//! Leipzig block. Persisting an IGT as a stored annotation is the CLI's job (a
+//! `Texts` chapter in the language book); the model here round-trips through it.
+//! A curated free translation and a TUI editing surface are the next slices of the
+//! Annotation Workbench. Pure and deterministic.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::conlang::morphology::gloss;
 use crate::conlang::morphology::paradigm::MorphSeg;
@@ -20,7 +19,7 @@ use crate::conlang::types::morphology::Morphology;
 use crate::language_entry::DictionaryEntry;
 
 /// One glossed word — a column of the interlinear.
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct IgtWord {
     pub surface: String,
     /// The recognised root headword, if the word was glossed.
@@ -31,7 +30,7 @@ pub struct IgtWord {
     pub gloss: Option<String>,
     /// Morpheme segmentation of the surface form (`kata-t`), aligned to the gloss.
     /// Empty when the word wasn't recognised.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub segments: Vec<MorphSeg>,
 }
 
@@ -48,7 +47,7 @@ impl IgtWord {
 }
 
 /// One interlinear-glossed sentence.
-#[derive(Debug, Clone, Serialize, PartialEq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct Igt {
     /// The original sentence.
     pub text: String,
@@ -213,6 +212,18 @@ mod tests {
         let line1 = igt.render().lines().next().unwrap().to_string();
         // Line 1 is the morpheme-segmented surface, not the plain word.
         assert!(line1.contains("kata-i"), "line1: {line1}");
+    }
+
+    #[test]
+    fn igt_round_trips_through_json() {
+        // The stored form (a Texts-chapter paragraph) must reload identically —
+        // including an *unrecognised* word, whose empty fields are omitted on
+        // serialize and so must default on load.
+        let igt = build(&phon(), &morph(), &lex(), "katai zzz");
+        assert!(igt.words[1].gloss.is_none() && igt.words[1].segments.is_empty(), "zzz should be unrecognised");
+        let json = serde_json::to_string(&igt).unwrap();
+        let back: Igt = serde_json::from_str(&json).unwrap();
+        assert_eq!(igt, back);
     }
 
     #[test]

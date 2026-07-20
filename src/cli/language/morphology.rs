@@ -627,16 +627,30 @@ pub(crate) fn gloss_text(project: &Path, language: &str, text: &str) -> Result<(
     Ok(())
 }
 
-/// IGT-1 (Wave 4) — `inkhaven language igt <lang> --text "…"`: interlinear glossed
-/// text — the sentence, its gloss, and a literal translation, aligned as a Leipzig
-/// block.
-pub(crate) fn igt_text(project: &Path, language: &str, text: &str, json: bool) -> Result<()> {
+/// IGT-1 (Wave 4) — `inkhaven language igt <lang> --text "…" [--save --name N]`:
+/// interlinear glossed text — the segmented sentence, its gloss, and a literal
+/// translation, aligned as a Leipzig block; `--save` stores it in `Texts`.
+pub(crate) fn igt_text(
+    project: &Path,
+    language: &str,
+    text: &str,
+    save: bool,
+    name: Option<&str>,
+    json: bool,
+) -> Result<()> {
     let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
     let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
     let morph = load_morphology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
     let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
 
     let igt = crate::conlang::igt::build(&phon, &morph, &entries, text);
+
+    if save {
+        let title = name.map(str::trim).filter(|s| !s.is_empty()).unwrap_or_else(|| text.trim());
+        let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
+        save_igt(&store, &cfg, &lang_book, title, &igt)?;
+        eprintln!("saved to {language}/Texts as `{title}`");
+    }
 
     if json {
         println!(
@@ -652,6 +666,94 @@ pub(crate) fn igt_text(project: &Path, language: &str, text: &str, json: bool) -
     }
     println!("{}", igt.render());
     eprintln!("\n{} / {} word(s) glossed", igt.recognised, igt.words.len());
+    Ok(())
+}
+
+/// Store `igt` as a paragraph titled `name` under the language's `Texts` chapter,
+/// creating the chapter on first use. Rejects a duplicate name.
+fn save_igt(
+    store: &Store,
+    cfg: &Config,
+    lang_book: &crate::store::node::Node,
+    name: &str,
+    igt: &crate::conlang::igt::Igt,
+) -> Result<()> {
+    let hierarchy = Hierarchy::load(store)?;
+    let texts = match hierarchy
+        .children_of(Some(lang_book.id))
+        .into_iter()
+        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Texts"))
+        .cloned()
+    {
+        Some(existing) => existing,
+        None => store.create_node(cfg, &hierarchy, NodeKind::Chapter, "Texts", Some(lang_book), None, InsertPosition::End)?,
+    };
+
+    let hierarchy = Hierarchy::load(store)?;
+    if hierarchy.children_of(Some(texts.id)).iter().any(|n| n.title.eq_ignore_ascii_case(name)) {
+        return Err(Error::Config(format!(
+            "a text named `{name}` already exists in {}/Texts — choose another `--name`",
+            lang_book.title
+        )));
+    }
+
+    let hierarchy = Hierarchy::load(store)?;
+    let mut node =
+        store.create_node(cfg, &hierarchy, NodeKind::Paragraph, name, Some(&texts), None, InsertPosition::End)?;
+    // Flip the fresh paragraph to HJSON and overwrite its `.typ` file with the
+    // serialized IGT, then persist through the store (mirrors how the dictionary
+    // chapter seeds structured paragraphs).
+    node.content_type = Some("hjson".to_string());
+    let body =
+        serde_json::to_string_pretty(igt).map_err(|e| Error::Store(format!("serialize igt: {e}")))?;
+    if let Some(rel) = &node.file {
+        let abs = store.project_root().join(rel);
+        std::fs::write(&abs, body.as_bytes()).map_err(|e| Error::Store(format!("write igt file: {e}")))?;
+    }
+    store
+        .update_paragraph_content(&mut node, body.as_bytes())
+        .map_err(|e| Error::Store(format!("write igt: {e}")))?;
+    Ok(())
+}
+
+/// IGT-1 (Wave 4) — `inkhaven language texts <lang> [--name N]`: list the stored
+/// interlinear texts, or print one.
+pub(crate) fn list_texts(project: &Path, language: &str, name: Option<&str>, json: bool) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let texts = load_texts(&store, &hierarchy, &lang_book);
+
+    if let Some(n) = name {
+        let Some((_, igt)) = texts.iter().find(|(t, _)| t.eq_ignore_ascii_case(n)) else {
+            return Err(Error::Config(format!("no stored text named `{n}` in {language}/Texts")));
+        };
+        if json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(igt).map_err(|e| Error::Store(format!("serializing igt: {e}")))?
+            );
+        } else {
+            println!("{}", igt.render());
+        }
+        return Ok(());
+    }
+
+    if json {
+        let listing: Vec<_> = texts.iter().map(|(t, igt)| (t, &igt.text, &igt.translation)).collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&listing).map_err(|e| Error::Store(format!("serializing texts: {e}")))?
+        );
+        return Ok(());
+    }
+
+    if texts.is_empty() {
+        println!("no stored texts yet — `inkhaven language igt {language} --text \"…\" --save`");
+        return Ok(());
+    }
+    println!("texts · {language} ({})", texts.len());
+    for (title, igt) in &texts {
+        println!("  {title} — '{}'", igt.translation);
+    }
     Ok(())
 }
 
