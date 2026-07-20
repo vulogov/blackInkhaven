@@ -44,7 +44,8 @@ Add `--help` to any command for its full signature.
 / `paradigm <lang> --root R --template T --gloss G`: Generate a word's inflected forms.
 / `agree <lang> --word W --pos P --features "number=pl,case=nom" [--gloss G]`: Inflect a dependent word to agree with its head's features.
 / `gloss <lang> --text "…"`: Interlinear (word-by-word) gloss of a sentence.
-/ `igt <lang> --text "…" [--json]`: Interlinear glossed text — auto-gloss a sentence and lay it out as an aligned Leipzig block (the morpheme-segmented sentence, the gloss, a literal translation). `--json` emits the structured IGT.
+/ `igt <lang> --text "…" [--save] [--name N] [--json]`: Interlinear glossed text — auto-gloss a sentence and lay it out as an aligned Leipzig block (the morpheme-segmented sentence, the gloss, a literal translation). `--save` stores it in the language's `Texts` chapter; `--json` emits the structured IGT.
+/ `texts <lang> [--name N] [--json]`: The language's stored interlinear texts. With no `--name`, list them; with `--name`, print that one.
 / `parse <lang> --word W [--json]`: Analyse a surface word into root + affixes (the morphological parser — the inverse of paradigm generation).
 / `link <lang> --verb V --args "a,b,c" [--valence V] [--json]`: Work out a clause's thematic roles, RRG macroroles (actor / undergoer) and grammatical relations from the verb's valence.
 / `tree <lang> --verb V --args "subj,obj,iobj" [--word-order O] [--json]`: Build the X-bar phrase-structure tree (CP → TP → VP) of a clause, placing heads and complements by word order.
