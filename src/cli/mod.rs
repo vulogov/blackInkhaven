@@ -4039,6 +4039,29 @@ pub enum LanguageCommand {
         json: bool,
     },
 
+    /// 1.7 CORPUS-1 (Wave 4) — the collocates of a word: the neighbours that fall
+    /// within its window across the stored texts, ranked by co-occurrence and
+    /// scored by PMI (a distinctive collocate outranks a merely-frequent word).
+    Collocations {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The word (or, with `--lemma`, the root) to find collocates for.
+        #[arg(long)]
+        word: String,
+        /// Match the lemma (a root and its inflected forms), not the surface.
+        #[arg(long)]
+        lemma: bool,
+        /// Words of context on each side that count as the window.
+        #[arg(long, default_value_t = 5)]
+        window: usize,
+        /// How many collocates to list.
+        #[arg(long, default_value_t = 20)]
+        top: usize,
+        /// Emit as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
     /// LANG-1 P3.1 — generate the full paradigm of a root: apply a paradigm
     /// template's morpheme sequence (from the `Morphology` chapter) to the
     /// root, run the language's allophony across the affix boundaries, and
