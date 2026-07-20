@@ -716,36 +716,64 @@ fn save_igt(
     Ok(())
 }
 
-/// IGT-1 (Wave 4) — `inkhaven language texts <lang> [--name N]`: list the stored
-/// interlinear texts, or print one.
-pub(crate) fn list_texts(project: &Path, language: &str, name: Option<&str>, json: bool) -> Result<()> {
+/// IGT-1 (Wave 4) — `inkhaven language texts <lang> [--name N] [--format latex]`:
+/// list the stored interlinear texts, print one, or export them as a linguex
+/// LaTeX document.
+pub(crate) fn list_texts(
+    project: &Path,
+    language: &str,
+    name: Option<&str>,
+    format: &str,
+    json: bool,
+) -> Result<()> {
     let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
     let texts = load_texts(&store, &hierarchy, &lang_book);
 
-    if let Some(n) = name {
-        let Some((_, igt)) = texts.iter().find(|(t, _)| t.eq_ignore_ascii_case(n)) else {
-            return Err(Error::Config(format!("no stored text named `{n}` in {language}/Texts")));
-        };
-        if json {
+    // The selection: the named text, or all of them.
+    let selected: Vec<&(String, crate::conlang::igt::Igt)> = match name {
+        Some(n) => vec![
+            texts
+                .iter()
+                .find(|(t, _)| t.eq_ignore_ascii_case(n))
+                .ok_or_else(|| Error::Config(format!("no stored text named `{n}` in {language}/Texts")))?,
+        ],
+        None => texts.iter().collect(),
+    };
+
+    // LaTeX export (the selected text, or all).
+    if format.eq_ignore_ascii_case("latex") {
+        let owned: Vec<(String, crate::conlang::igt::Igt)> =
+            selected.iter().map(|(t, igt)| (t.clone(), igt.clone())).collect();
+        println!("{}", crate::conlang::interchange::igt_linguex(language, &owned));
+        return Ok(());
+    }
+    if !format.eq_ignore_ascii_case("text") {
+        return Err(Error::Config(format!("unknown --format `{format}` (text | latex)")));
+    }
+
+    if json {
+        if name.is_some() {
             println!(
                 "{}",
-                serde_json::to_string_pretty(igt).map_err(|e| Error::Store(format!("serializing igt: {e}")))?
+                serde_json::to_string_pretty(&selected[0].1)
+                    .map_err(|e| Error::Store(format!("serializing igt: {e}")))?
             );
         } else {
-            println!("{}", igt.render());
+            let listing: Vec<_> = texts.iter().map(|(t, igt)| (t, &igt.text, &igt.translation)).collect();
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&listing)
+                    .map_err(|e| Error::Store(format!("serializing texts: {e}")))?
+            );
         }
         return Ok(());
     }
 
-    if json {
-        let listing: Vec<_> = texts.iter().map(|(t, igt)| (t, &igt.text, &igt.translation)).collect();
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&listing).map_err(|e| Error::Store(format!("serializing texts: {e}")))?
-        );
+    // Plain text: a named text renders its block; the bare list is a summary.
+    if name.is_some() {
+        println!("{}", selected[0].1.render());
         return Ok(());
     }
-
     if texts.is_empty() {
         println!("no stored texts yet — `inkhaven language igt {language} --text \"…\" --save`");
         return Ok(());

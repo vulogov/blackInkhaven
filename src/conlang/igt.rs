@@ -93,18 +93,22 @@ pub fn build(phon: &Phonology, morph: &Morphology, entries: &[DictionaryEntry], 
 }
 
 impl Igt {
+    /// The two interlinear lines as per-word `(segmented surface, gloss)` columns.
+    /// The gloss cell falls back to the surface for an unrecognised word, so names
+    /// and undefined words pass through visibly. Shared by the text and LaTeX
+    /// renderings.
+    pub fn columns(&self) -> Vec<(String, String)> {
+        self.words
+            .iter()
+            .map(|w| (w.segmented(), w.gloss.clone().unwrap_or_else(|| w.surface.clone())))
+            .collect()
+    }
+
     /// Render as an aligned Leipzig block: the morpheme-segmented sentence, the
     /// gloss, and the literal translation. Columns are padded so each word's
     /// segmentation and its gloss line up.
     pub fn render(&self) -> String {
-        // Line 1 is the segmented surface (`kata-t`); the gloss cell shows the
-        // surface itself when a word wasn't recognised, so names and undefined
-        // words pass through visibly.
-        let cells: Vec<(String, String)> = self
-            .words
-            .iter()
-            .map(|w| (w.segmented(), w.gloss.clone().unwrap_or_else(|| w.surface.clone())))
-            .collect();
+        let cells = self.columns();
 
         let mut surface_line = String::new();
         let mut gloss_line = String::new();
