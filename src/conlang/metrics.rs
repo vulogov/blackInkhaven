@@ -145,8 +145,9 @@ pub fn metrics(phon: &Phonology, entries: &[DictionaryEntry]) -> LanguageMetrics
 }
 
 /// Least-squares slope + R² of `ln(freq_i)` on `ln(rank_i)` (rank 1-based, freq
-/// descending). Returns `(0, 0)` when there is too little spread to fit.
-fn zipf_fit(freqs_desc: &[usize]) -> (f64, f64) {
+/// descending). Returns `(0, 0)` when there is too little spread to fit. Shared
+/// with the corpus engine's word-frequency Zipf.
+pub(crate) fn zipf_fit(freqs_desc: &[usize]) -> (f64, f64) {
     if freqs_desc.len() < 2 {
         return (0.0, 0.0);
     }
