@@ -14,6 +14,7 @@
 use serde::Serialize;
 
 use crate::conlang::morphology::gloss;
+use crate::conlang::morphology::paradigm::MorphSeg;
 use crate::conlang::types::Phonology;
 use crate::conlang::types::morphology::Morphology;
 use crate::language_entry::DictionaryEntry;
@@ -28,6 +29,22 @@ pub struct IgtWord {
     /// The Leipzig gloss (`stone-PL`), or `None` when the word wasn't recognised.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gloss: Option<String>,
+    /// Morpheme segmentation of the surface form (`kata-t`), aligned to the gloss.
+    /// Empty when the word wasn't recognised.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub segments: Vec<MorphSeg>,
+}
+
+impl IgtWord {
+    /// The morpheme-segmented surface (`kata-t`), or the plain surface when the
+    /// word carries no segmentation.
+    fn segmented(&self) -> String {
+        if self.segments.is_empty() {
+            self.surface.clone()
+        } else {
+            self.segments.iter().map(|s| s.surface.as_str()).collect::<Vec<_>>().join("-")
+        }
+    }
 }
 
 /// One interlinear-glossed sentence.
@@ -66,21 +83,28 @@ pub fn build(phon: &Phonology, morph: &Morphology, entries: &[DictionaryEntry], 
             // Unrecognised (a name, an undefined word) passes through untranslated.
             None => literal.push(item.surface.clone()),
         }
-        words.push(IgtWord { surface: item.surface, root: item.root, gloss: item.gloss });
+        words.push(IgtWord {
+            surface: item.surface,
+            root: item.root,
+            gloss: item.gloss,
+            segments: item.segments,
+        });
     }
     Igt { text: text.to_string(), words, translation: literal.join(" "), recognised }
 }
 
 impl Igt {
-    /// Render as an aligned Leipzig block: the sentence, the gloss, the literal
-    /// translation. Columns are padded so each word and its gloss line up.
+    /// Render as an aligned Leipzig block: the morpheme-segmented sentence, the
+    /// gloss, and the literal translation. Columns are padded so each word's
+    /// segmentation and its gloss line up.
     pub fn render(&self) -> String {
-        // The gloss cell shows the surface itself when a word wasn't recognised,
-        // so proper names and undefined words pass through visibly.
-        let cells: Vec<(&str, &str)> = self
+        // Line 1 is the segmented surface (`kata-t`); the gloss cell shows the
+        // surface itself when a word wasn't recognised, so names and undefined
+        // words pass through visibly.
+        let cells: Vec<(String, String)> = self
             .words
             .iter()
-            .map(|w| (w.surface.as_str(), w.gloss.as_deref().unwrap_or(w.surface.as_str())))
+            .map(|w| (w.segmented(), w.gloss.clone().unwrap_or_else(|| w.surface.clone())))
             .collect();
 
         let mut surface_line = String::new();
@@ -170,6 +194,25 @@ mod tests {
         assert_eq!(igt.recognised, 1);
         // It appears untranslated in the literal line.
         assert!(igt.translation.starts_with("xyz"));
+    }
+
+    #[test]
+    fn segments_an_inflected_word() {
+        let igt = build(&phon(), &morph(), &lex(), "katai");
+        let w = &igt.words[0];
+        assert_eq!(w.segments.len(), 2);
+        assert_eq!(w.segments[0].surface, "kata");
+        assert_eq!(w.segments[0].gloss, "stone");
+        assert_eq!(w.segments[1].surface, "i");
+        assert_eq!(w.segments[1].gloss, "PL");
+    }
+
+    #[test]
+    fn the_segmented_line_shows_morpheme_boundaries() {
+        let igt = build(&phon(), &morph(), &lex(), "katai nilo");
+        let line1 = igt.render().lines().next().unwrap().to_string();
+        // Line 1 is the morpheme-segmented surface, not the plain word.
+        assert!(line1.contains("kata-i"), "line1: {line1}");
     }
 
     #[test]

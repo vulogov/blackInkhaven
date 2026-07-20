@@ -7,6 +7,8 @@
 
 use std::collections::BTreeMap;
 
+use serde::Serialize;
+
 use crate::conlang::phonology::{allophony_eval, rewrite, syllable};
 use crate::conlang::types::morphology::{AffixPosition, MorphProcess, Morphology, ParadigmTemplate};
 use crate::conlang::types::phoneme::PhonemeKind;
@@ -23,6 +25,15 @@ use crate::conlang::types::Phonology;
 /// row rather than explode. Generous enough that no real language is affected.
 const MAX_STEM_SEGMENTS: usize = 256;
 
+/// One morpheme of a segmented surface form: its surface piece (after allophony)
+/// and its gloss. The stem — root plus any stem-internal (non-concatenative)
+/// morphemes — is a single segment; concatenative affixes are separate.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct MorphSeg {
+    pub surface: String,
+    pub gloss: String,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParadigmRow {
     pub features: BTreeMap<String, String>,
@@ -30,6 +41,9 @@ pub struct ParadigmRow {
     pub form: String,
     /// Leipzig-style gloss, e.g. `PL-stone-DAT`.
     pub gloss: String,
+    /// Morpheme segmentation of `form`, aligned to `gloss`. Empty when allophony
+    /// inserted or deleted segments and the boundaries could not be aligned.
+    pub segments: Vec<MorphSeg>,
 }
 
 /// Generate the full paradigm of `root` (gloss `root_gloss`) under `template`.
@@ -97,13 +111,31 @@ pub fn generate(
             suffixes.sort_by_key(|m| key(m.precedence));
             prefixes.sort_by_key(|m| std::cmp::Reverse(key(m.precedence)));
 
+            // Assemble the underlying form, recording each morpheme chunk as a
+            // `(segment count, gloss)` so the surface can be re-segmented after
+            // allophony. The stem (root + any inner morphemes) is one chunk.
             let mut underlying: Vec<String> = Vec::new();
+            let mut chunks: Vec<(usize, String)> = Vec::new();
             for m in &prefixes {
-                underlying.extend(phon.segment(&m.form));
+                let segs = phon.segment(&m.form);
+                if !segs.is_empty() {
+                    chunks.push((segs.len(), m.gloss.clone()));
+                }
+                underlying.extend(segs);
             }
+            let stem_gloss = std::iter::once(root_gloss.to_string())
+                .chain(inner_gloss.iter().cloned())
+                .filter(|g| !g.is_empty())
+                .collect::<Vec<_>>()
+                .join("-");
+            chunks.push((stem.len(), stem_gloss));
             underlying.extend(stem);
             for m in &suffixes {
-                underlying.extend(phon.segment(&m.form));
+                let segs = phon.segment(&m.form);
+                if !segs.is_empty() {
+                    chunks.push((segs.len(), m.gloss.clone()));
+                }
+                underlying.extend(segs);
             }
 
             let surface = allophony_eval::surface_form(phon, &underlying);
@@ -115,7 +147,24 @@ pub fn generate(
             parts.extend(inner_gloss);
             parts.extend(suffixes.iter().filter(|m| !m.gloss.is_empty()).map(|m| m.gloss.clone()));
 
-            ParadigmRow { features: cell.features.clone(), form, gloss: parts.join("-") }
+            // Re-segment the surface at the chunk boundaries. Allophony that only
+            // rewrites segments in place preserves their positions, so the offsets
+            // still hold; if it inserted or deleted segments (length changed), the
+            // boundaries no longer align and we leave the segmentation empty.
+            let segments: Vec<MorphSeg> = if surface.len() == underlying.len() {
+                let mut segs = Vec::with_capacity(chunks.len());
+                let mut off = 0usize;
+                for (n, gloss) in &chunks {
+                    let piece = &surface[off..off + n];
+                    segs.push(MorphSeg { surface: render(phon, piece), gloss: gloss.clone() });
+                    off += n;
+                }
+                segs
+            } else {
+                Vec::new()
+            };
+
+            ParadigmRow { features: cell.features.clone(), form, gloss: parts.join("-"), segments }
         })
         .collect()
 }
