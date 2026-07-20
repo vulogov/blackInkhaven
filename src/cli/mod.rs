@@ -3963,16 +3963,35 @@ pub enum LanguageCommand {
     },
 
     /// 1.7 IGT-1 (Wave 4) — interlinear glossed text: auto-gloss a sentence and
-    /// lay it out as an aligned Leipzig block (the sentence, the gloss, a literal
-    /// translation). Reuses the auto-gloss index; `--json` emits the structured
-    /// IGT.
+    /// lay it out as an aligned Leipzig block (the morpheme-segmented sentence, the
+    /// gloss, a literal translation). `--save` stores it in the language's `Texts`
+    /// chapter; `--json` emits the structured IGT.
     Igt {
         /// Target language name (case-insensitive).
         language: String,
         /// The conlang sentence to gloss.
         #[arg(long)]
         text: String,
+        /// Store the interlinear in the language's `Texts` chapter.
+        #[arg(long)]
+        save: bool,
+        /// Name for the stored text (defaults to the sentence itself).
+        #[arg(long)]
+        name: Option<String>,
         /// Emit the structured IGT as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// 1.7 IGT-1 (Wave 4) — the language's stored interlinear texts. With no
+    /// `--name`, list every stored text; with `--name`, print that one.
+    Texts {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Show the stored text with this name (else list all).
+        #[arg(long)]
+        name: Option<String>,
+        /// Emit as JSON.
         #[arg(long)]
         json: bool,
     },
