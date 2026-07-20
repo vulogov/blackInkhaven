@@ -801,6 +801,171 @@ pub(crate) fn list_texts(
     Ok(())
 }
 
+/// HYP-1 (Wave 4) — store a new hypothesis under the language's `Hypotheses`
+/// chapter, creating the chapter on first use. Rejects a duplicate id.
+fn save_hypothesis(
+    store: &Store,
+    cfg: &Config,
+    lang_book: &crate::store::node::Node,
+    h: &crate::conlang::hypothesis::Hypothesis,
+) -> Result<()> {
+    let hierarchy = Hierarchy::load(store)?;
+    let chapter = match hierarchy
+        .children_of(Some(lang_book.id))
+        .into_iter()
+        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Hypotheses"))
+        .cloned()
+    {
+        Some(existing) => existing,
+        None => {
+            store.create_node(cfg, &hierarchy, NodeKind::Chapter, "Hypotheses", Some(lang_book), None, InsertPosition::End)?
+        }
+    };
+
+    let hierarchy = Hierarchy::load(store)?;
+    if hierarchy.children_of(Some(chapter.id)).iter().any(|n| n.title.eq_ignore_ascii_case(&h.id)) {
+        return Err(Error::Config(format!(
+            "a hypothesis `{}` already exists in {}/Hypotheses — choose another --id",
+            h.id, lang_book.title
+        )));
+    }
+
+    let hierarchy = Hierarchy::load(store)?;
+    let mut node =
+        store.create_node(cfg, &hierarchy, NodeKind::Paragraph, &h.id, Some(&chapter), None, InsertPosition::End)?;
+    node.content_type = Some("hjson".to_string());
+    let body = serde_json::to_string_pretty(h).map_err(|e| Error::Store(format!("serialize hypothesis: {e}")))?;
+    if let Some(rel) = &node.file {
+        let abs = store.project_root().join(rel);
+        std::fs::write(&abs, body.as_bytes()).map_err(|e| Error::Store(format!("write hypothesis file: {e}")))?;
+    }
+    store
+        .update_paragraph_content(&mut node, body.as_bytes())
+        .map_err(|e| Error::Store(format!("write hypothesis: {e}")))?;
+    Ok(())
+}
+
+/// HYP-1 (Wave 4) — `inkhaven language hypothesize <lang> --kind K --claim "…"`:
+/// record a diachronic/comparative hypothesis.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn hypothesis_add(
+    project: &Path,
+    language: &str,
+    kind: &str,
+    claim: &str,
+    note: &str,
+    evidence: &[String],
+    id: Option<&str>,
+    json: bool,
+) -> Result<()> {
+    use crate::conlang::hypothesis::{Hypothesis, Kind, Status};
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let _ = hierarchy;
+    let kind = Kind::parse(kind)
+        .ok_or_else(|| Error::Config(format!("unknown --kind `{kind}` (sound-change | cognacy | borrowing | other)")))?;
+    let id = match id.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(i) => slug::slugify(i),
+        None => slug::slugify(claim),
+    };
+    if id.is_empty() {
+        return Err(Error::Config("could not derive an id from the claim — pass --id".into()));
+    }
+    let h = Hypothesis {
+        id: id.clone(),
+        kind,
+        claim: claim.to_string(),
+        note: note.to_string(),
+        evidence: evidence.to_vec(),
+        status: Status::Proposed,
+    };
+    let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
+    save_hypothesis(&store, &cfg, &lang_book, &h)?;
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&h).map_err(|e| Error::Store(format!("serializing hypothesis: {e}")))?
+        );
+    } else {
+        eprintln!("recorded to {language}/Hypotheses as `{id}`");
+        println!("{}", h.summary());
+    }
+    Ok(())
+}
+
+/// HYP-1 (Wave 4) — `inkhaven language hypotheses <lang>`: list the register.
+pub(crate) fn hypotheses_list(project: &Path, language: &str, status: Option<&str>, json: bool) -> Result<()> {
+    use crate::conlang::hypothesis::Status;
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let mut hyps = load_hypotheses(&store, &hierarchy, &lang_book);
+    if let Some(s) = status {
+        let want = Status::parse(s)
+            .ok_or_else(|| Error::Config(format!("unknown --status `{s}` (proposed | supported | refuted | retired)")))?;
+        hyps.retain(|h| h.status == want);
+    }
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&hyps).map_err(|e| Error::Store(format!("serializing hypotheses: {e}")))?
+        );
+        return Ok(());
+    }
+    if hyps.is_empty() {
+        println!("no hypotheses yet — `inkhaven language hypothesize {language} --kind … --claim \"…\"`");
+        return Ok(());
+    }
+    println!("hypotheses · {language} ({})", hyps.len());
+    for h in &hyps {
+        println!("  {}", h.summary());
+    }
+    Ok(())
+}
+
+/// HYP-1 (Wave 4) — `inkhaven language hypothesis <lang> --id N`: show one.
+pub(crate) fn hypothesis_show(project: &Path, language: &str, id: &str, json: bool) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let hyps = load_hypotheses(&store, &hierarchy, &lang_book);
+    let Some(h) = hyps.iter().find(|h| h.id.eq_ignore_ascii_case(id)) else {
+        return Err(Error::Config(format!("no hypothesis `{id}` in {language}/Hypotheses")));
+    };
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(h).map_err(|e| Error::Store(format!("serializing hypothesis: {e}")))?
+        );
+        return Ok(());
+    }
+    println!("{} [{}] {}", h.status.icon(), h.kind.label(), h.id);
+    println!("  claim:  {}", h.claim);
+    println!("  status: {}", h.status.label());
+    if !h.note.trim().is_empty() {
+        println!("  note:   {}", h.note);
+    }
+    if !h.evidence.is_empty() {
+        println!("  evidence:");
+        for e in &h.evidence {
+            println!("    • {e}");
+        }
+    }
+    Ok(())
+}
+
+/// HYP-1 (Wave 4) — `inkhaven language hypothesis-status <lang> --id N --status S`:
+/// move a hypothesis along (proposed → supported / refuted / retired).
+pub(crate) fn hypothesis_set_status(project: &Path, language: &str, id: &str, status: &str) -> Result<()> {
+    use crate::conlang::hypothesis::Status;
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let st = Status::parse(status)
+        .ok_or_else(|| Error::Config(format!("unknown --status `{status}` (proposed | supported | refuted | retired)")))?;
+    if !update_hypothesis(&store, &hierarchy, &lang_book, id, |h| h.status = st)? {
+        return Err(Error::Config(format!("no hypothesis `{id}` in {language}/Hypotheses")));
+    }
+    println!("`{id}` → {}", st.label());
+    Ok(())
+}
+
 /// CORPUS-1 (Wave 4) — `inkhaven language corpus <lang>`: corpus statistics and a
 /// word-frequency list over the stored interlinear texts.
 #[allow(clippy::too_many_arguments)]

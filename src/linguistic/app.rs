@@ -691,6 +691,25 @@ impl LinguisticApp {
         self.right = RightPane::Chat;
     }
 
+    /// `/hypotheses` — list the current language's hypothesis register, inline.
+    fn run_hypotheses(&mut self) {
+        let prompt = "/hypotheses".to_string();
+        let Some(book) = self.current_language_book().and_then(|id| self.hierarchy.get(id).cloned())
+        else {
+            self.push_error_turn(prompt, "select a language first".into());
+            return;
+        };
+        let hyps = crate::cli::language::load_hypotheses(&self.store, &self.hierarchy, &book);
+        let response = if hyps.is_empty() {
+            "no hypotheses yet — record one with `language hypothesize …` on the command line.".to_string()
+        } else {
+            hyps.iter().map(|h| h.summary()).collect::<Vec<_>>().join("\n")
+        };
+        self.chat.push(Turn { prompt, response, streaming: false, scope: Some(book.title.clone()) });
+        self.chat_scroll = u16::MAX;
+        self.right = RightPane::Chat;
+    }
+
     fn push_error_turn(&mut self, prompt: String, response: String) {
         self.chat.push(Turn {
             prompt,
@@ -1067,6 +1086,8 @@ impl TuiHost for LinguisticApp {
                         self.run_kwic(word.trim().to_string());
                     } else if let Some(word) = q.strip_prefix("/coll ") {
                         self.run_collocations(word.trim().to_string());
+                    } else if q.trim_end() == "/hypotheses" {
+                        self.run_hypotheses();
                     } else {
                         self.send_query(q);
                     }
@@ -1268,7 +1289,7 @@ impl LinguisticApp {
         let mut lines: Vec<Line> = Vec::new();
         if self.chat.is_empty() {
             lines.push(Line::from(Span::styled(
-                "Press i to ask; slash: /trace /parse /check /tree /clause /igt · /texts /settrans · /frequency /kwic /coll <word>.",
+                "Press i to ask; slash: /trace /parse /check /tree /clause /igt · /texts /settrans · /frequency /kwic /coll <word> · /hypotheses.",
                 Style::default().add_modifier(Modifier::DIM),
             )));
         }
