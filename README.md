@@ -21,29 +21,29 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.7.18 — Curating the Translation
+## Latest release · 1.7.19 — The Corpus Engine
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.7.18.md`](Documentation/RELEASE_NOTES/1.7.18.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.7.19.md`](Documentation/RELEASE_NOTES/1.7.19.md)
 
-The interlinear's free translation has been auto-generated — a literal scaffold. Now you can
-rewrite it. This is the last slice of the Annotation Workbench: editing a stored text — and with
-it **Track A of Wave 4 is complete**. **No new runtime crates.** Test suite → 2569, warning-free.
+The Annotation Workbench gathered a language's texts; now you can query them. This opens **Track B**:
+a corpus engine over the stored interlinears — how *often* each word occurs, and *where* and in
+what context — plus the statistics only real usage can give. **No new runtime crates.** Test suite
+→ 2575, warning-free.
 
-### Editing a stored text
+### Frequency and concordance
 
-In the companion, `/texts` lists your stored interlinears and `/settrans <name> = <translation>`
-curates one's free translation; on the CLI, `inkhaven language texts <lang> --name <n>
---set-translation "…"`. Only the free translation changes — the morpheme segmentation and gloss are
-left exactly as they were. The Annotation Workbench is now complete across five slices (auto-gloss,
-segmentation, persistence, LaTeX export, editing): your language can be *documented* — a corpus of
-glossed, translated, exportable texts — and those stored `Texts` are what the coming Corpus Engine
-will index.
+`inkhaven language frequency <lang>` reads the stored texts as a corpus and reports a word-frequency
+list plus tokens, distinct types, their ratio, and the word-frequency Zipf fit — the corpus-based
+metrics the phoneme-level `metrics` verb couldn't give. `inkhaven language concordance <lang> --word
+W` shows every occurrence of a word lined up with its context — a KWIC (keyword-in-context) view.
+`--lemma` counts or matches a root's inflected forms together (each token carries its lemma from the
+gloss). Both are in the Linguistic companion, as `/frequency` and `/kwic <word>`.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Additive — a `set_text_translation` helper, a `--set-translation`
-option on the `texts` verb, and two companion commands (`/texts`, `/settrans`); nothing existing
-changes. Warning-free (binary and tests). Test suite → 2569.
+**No new runtime crates.** Additive — a new `conlang::corpus` module over the stored interlinears,
+two `language` verbs (`frequency`, `concordance`) and two companion commands; `metrics::zipf_fit` is
+now shared with it. Nothing existing changes. Warning-free (binary and tests). Test suite → 2575.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
