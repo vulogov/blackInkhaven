@@ -464,8 +464,8 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::Igt { language, text, save, name, json } => {
             igt_text(project, &language, &text, save, name.as_deref(), json)
         }
-        LanguageCommand::Texts { language, name, json } => {
-            list_texts(project, &language, name.as_deref(), json)
+        LanguageCommand::Texts { language, name, format, json } => {
+            list_texts(project, &language, name.as_deref(), &format, json)
         }
         LanguageCommand::Grammar { language, set, json } => {
             grammar_questionnaire(project, &language, set.as_deref(), json)
