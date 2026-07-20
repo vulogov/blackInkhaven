@@ -105,8 +105,10 @@ while you think:
 `/parse <word>` runs the morphological parser *backwards*: it strips your
 language's known affixes from a surface form and reports every analysis that
 bottoms out at a dictionary root — including non-concatenative processes such as
-full reduplication. Where the gloss path builds a word from a root and features,
-`/parse` takes a word you have written and tells you how it could be built:
+reduplication, both full (`kata-kata`) and partial, where only the base's first
+syllable copies to the front (`ka~kata`). Where the gloss path builds a word from
+a root and features, `/parse` takes a word you have written and tells you how it
+could be built:
 
 ```
 /parse katakatai
