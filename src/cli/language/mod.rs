@@ -461,7 +461,12 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             provider,
         } => propose_loans(project, &language, &from, topic.as_deref(), count, provider.as_deref()),
         LanguageCommand::Gloss { language, text } => gloss_text(project, &language, &text),
-        LanguageCommand::Igt { language, text, json } => igt_text(project, &language, &text, json),
+        LanguageCommand::Igt { language, text, save, name, json } => {
+            igt_text(project, &language, &text, save, name.as_deref(), json)
+        }
+        LanguageCommand::Texts { language, name, json } => {
+            list_texts(project, &language, name.as_deref(), json)
+        }
         LanguageCommand::Grammar { language, set, json } => {
             grammar_questionnaire(project, &language, set.as_deref(), json)
         }
@@ -965,6 +970,37 @@ pub(crate) fn load_dictionary(
         }
     }
     Ok(out)
+}
+
+/// IGT-1 (Wave 4) — load every stored interlinear under a language's `Texts`
+/// chapter, as `(title, Igt)` in tree order. Best-effort: unparseable paragraphs
+/// are skipped.
+pub(crate) fn load_texts(
+    store: &Store,
+    hierarchy: &Hierarchy,
+    lang_book: &crate::store::node::Node,
+) -> Vec<(String, crate::conlang::igt::Igt)> {
+    let Some(chapter) = hierarchy
+        .children_of(Some(lang_book.id))
+        .into_iter()
+        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Texts"))
+        .cloned()
+    else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for id in hierarchy.collect_subtree(chapter.id) {
+        let Some(node) = hierarchy.get(id) else { continue };
+        if node.kind != NodeKind::Paragraph {
+            continue;
+        }
+        let Ok(Some(bytes)) = store.get_content(node.id) else { continue };
+        let body = String::from_utf8_lossy(&bytes);
+        if let Ok(igt) = serde_json::from_str::<crate::conlang::igt::Igt>(&body) {
+            out.push((node.title.clone(), igt));
+        }
+    }
+    out
 }
 
 /// 1.3.19 LANG-1 P6 — semantic-gap finder. Diff the lexicon's glosses against a
