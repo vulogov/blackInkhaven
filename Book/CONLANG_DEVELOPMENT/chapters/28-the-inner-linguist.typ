@@ -136,6 +136,14 @@ given two is not. (Checking that the verb *agrees* with its subject needs the
 subject's grammatical features, so that half lives on the command line, as
 `language check-clause`.)
 
+`/igt <sentence>` glosses a whole sentence of your language as *interlinear glossed
+text* — the sentence, a line glossing each word (`stone-PL`), and a literal
+translation, aligned in columns:
+
+```
+/igt katai nilo
+```
+
 We meet the tracer, the parser, the Oracle and the syntax engine properly — and
 the analyses the other views show — in the next chapter.
 
@@ -154,6 +162,7 @@ the analyses the other views show — in the next chapter.
   [Slash-commands run *locally* over your book and print inline: `/trace <rule>`
    previews a sound change, `/parse <word>` analyses a surface form into root +
    affixes, `/check <word>` is the word Oracle's verdict, `/tree <verb> <subject>
-   …` builds the clause's X-bar tree, and `/clause <verb> <subject> …` is the
-   clause Oracle's argument-structure check. None commit.],
+   …` builds the clause's X-bar tree, `/clause <verb> <subject> …` is the clause
+   Oracle's argument-structure check, and `/igt <sentence>` glosses a sentence as
+   interlinear text. None commit.],
 ))
