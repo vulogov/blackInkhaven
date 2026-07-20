@@ -607,8 +607,8 @@ impl LinguisticApp {
             self.push_error_turn(prompt, "select a language first".into());
             return;
         };
-        let texts = crate::cli::language::load_texts(&self.store, &self.hierarchy, &book);
-        let corpus = crate::conlang::corpus::Corpus::from_texts(&texts);
+        let corpus =
+            crate::cli::language::build_corpus(&self.store, &self.hierarchy, &book, "all").unwrap_or_default();
         let freq = corpus.frequency(false);
         let response = if freq.is_empty() {
             "no stored texts yet — save some with `language igt … --save`.".to_string()
@@ -641,8 +641,8 @@ impl LinguisticApp {
             self.push_error_turn(prompt, "select a language first".into());
             return;
         };
-        let texts = crate::cli::language::load_texts(&self.store, &self.hierarchy, &book);
-        let corpus = crate::conlang::corpus::Corpus::from_texts(&texts);
+        let corpus =
+            crate::cli::language::build_corpus(&self.store, &self.hierarchy, &book, "all").unwrap_or_default();
         let lines = corpus.concordance(&word, false, 4);
         let response = if lines.is_empty() {
             format!("no occurrences of `{word}` in the stored texts.")
@@ -674,8 +674,8 @@ impl LinguisticApp {
             self.push_error_turn(prompt, "select a language first".into());
             return;
         };
-        let texts = crate::cli::language::load_texts(&self.store, &self.hierarchy, &book);
-        let corpus = crate::conlang::corpus::Corpus::from_texts(&texts);
+        let corpus =
+            crate::cli::language::build_corpus(&self.store, &self.hierarchy, &book, "all").unwrap_or_default();
         let cols = corpus.collocates(&word, false, 4);
         let response = if cols.is_empty() {
             format!("no collocates of `{word}` in the stored texts.")

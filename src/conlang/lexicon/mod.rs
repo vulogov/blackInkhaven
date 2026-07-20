@@ -109,8 +109,9 @@ pub struct UndefinedWord {
 
 /// True when `word_lc` (lowercased) reads entirely as this language's
 /// phonemes (no stray non-inventory characters) and satisfies its
-/// phonotactics — i.e. it *looks like* a valid word of the language.
-fn looks_conlang(phon: &Phonology, word_lc: &str) -> bool {
+/// phonotactics — i.e. it *looks like* a valid word of the language. Shared with
+/// the corpus engine's manuscript-prose ingestion.
+pub(crate) fn looks_conlang(phon: &Phonology, word_lc: &str) -> bool {
     let seq = phon.segment(word_lc);
     // ≥2 phonemes avoids flagging stray single letters ("a", "i") that
     // happen to be in the inventory.
