@@ -21,29 +21,30 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.7.15 — The Segmentation Line
+## Latest release · 1.7.16 — Stored Texts
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.7.15.md`](Documentation/RELEASE_NOTES/1.7.15.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.7.16.md`](Documentation/RELEASE_NOTES/1.7.16.md)
 
-The first interlinear slice glossed each word whole; this one splits it. IGT's top line is now
-the true Leipzig **morpheme segmentation** — `kata-t` over `stone-DAT` — with the boundaries
-recovered even when allophony has reshaped an affix at the seam. **No new runtime crates.** Test
-suite → 2566, warning-free.
+Interlinear glosses have been ephemeral — printed and gone. Now they persist. An IGT can be saved
+into a **`Texts` chapter** of the language book, alongside its phonology, grammar and dictionary,
+and read back later — the beginning of a documented corpus. **No new runtime crates.** Test suite
+→ 2567, warning-free.
 
-### Morpheme segmentation, aligned to the gloss
+### Keeping an interlinear
 
-`inkhaven language igt <lang> --text "katat nilo"` now shows `kata-t`/`stone-DAT` — split at every
-affix boundary. The hard part is that an affix's surface can change at the seam (a dative *kata +
-d* surfaces as *katat* after final devoicing); paradigm generation now tracks each morpheme's span
-in the underlying form and re-slices the *surface* after allophony, so the dative segments `-t`,
-not `-d`. Insertion/deletion allophony that breaks the spans degrades gracefully to an unsegmented
-piece. Applies to the `igt` verb, the `/igt` companion command, and the `--json` output.
+`inkhaven language igt <lang> --text "…" --save --name <n>` stores the gloss as a durable
+annotation in the language's `Texts` chapter (created on first use, like the `Dictionary`
+chapter). `inkhaven language texts <lang>` lists what you have gathered; `--name <n>` prints one
+back. Each stored text lives in the tree — versioned and navigable — and round-trips exactly, so a
+reopened text renders the same Leipzig block. Three Annotation-Workbench slices in (auto-gloss,
+segmentation, persistence); a TUI editing surface and export remain, and these stored texts are
+what the coming Corpus Engine will index.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Additive — `paradigm::generate` gains a `segments` field per row,
-threaded through the gloss index into IGT; existing forms and glosses are unchanged. Warning-free
-(binary and tests). Test suite → 2566.
+**No new runtime crates.** Additive — the IGT model gains `Deserialize`, an `igt --save/--name`
+flag, and a `texts` verb; existing projects and languages are unchanged, and the `Texts` chapter
+appears only once you save into it. Warning-free (binary and tests). Test suite → 2567.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

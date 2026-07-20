@@ -146,6 +146,11 @@ segmented `kata-t`):
 /igt katai nilo
 ```
 
+On the command line the same gloss can be *kept*: `inkhaven language igt <lang>
+--text "…" --save --name <n>` stores the interlinear in a `Texts` chapter of the
+language book, and `inkhaven language texts <lang>` lists what you have gathered —
+the beginning of a documented corpus of your language.
+
 We meet the tracer, the parser, the Oracle and the syntax engine properly — and
 the analyses the other views show — in the next chapter.
 
