@@ -488,6 +488,9 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::HypothesisStatus { language, id, status } => {
             hypothesis_set_status(project, &language, &id, &status)
         }
+        LanguageCommand::HypothesisCheck { language, id, limit, json } => {
+            hypothesis_check(project, &language, &id, limit, json)
+        }
         LanguageCommand::Grammar { language, set, json } => {
             grammar_questionnaire(project, &language, set.as_deref(), json)
         }

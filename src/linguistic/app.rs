@@ -710,6 +710,43 @@ impl LinguisticApp {
         self.right = RightPane::Chat;
     }
 
+    /// `/hcheck <id>` — run the Consequence Tracer over a sound-change hypothesis's
+    /// claim, inline: the predicted changes and any new homophones.
+    fn run_hcheck(&mut self, id: String) {
+        let prompt = format!("/hcheck {id}");
+        if id.is_empty() {
+            self.push_error_turn(prompt, "usage: /hcheck <hypothesis-id>".into());
+            return;
+        }
+        let Some(book) = self.current_language_book().and_then(|nid| self.hierarchy.get(nid).cloned())
+        else {
+            self.push_error_turn(prompt, "select a language first".into());
+            return;
+        };
+        let hyps = crate::cli::language::load_hypotheses(&self.store, &self.hierarchy, &book);
+        let Some(h) = hyps.iter().find(|h| h.id.eq_ignore_ascii_case(&id)) else {
+            self.push_error_turn(prompt, format!("no hypothesis `{id}`"));
+            return;
+        };
+        if h.kind != crate::conlang::hypothesis::Kind::SoundChange {
+            self.push_error_turn(
+                prompt,
+                format!("`{id}` is a {} hypothesis — the consequence check runs only on sound-change ones.", h.kind.label()),
+            );
+            return;
+        }
+        let phon = crate::cli::language::load_phonology(&self.store, &self.hierarchy, &book)
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let entries = crate::cli::language::load_dictionary(&self.store, &self.hierarchy, &book).unwrap_or_default();
+        let report = crate::conlang::trace::trace_sound_change(&phon, &entries, &h.claim, 12);
+        let response = format!("claim: {}\n{}", h.claim, format_trace(&report));
+        self.chat.push(Turn { prompt, response, streaming: false, scope: Some(book.title.clone()) });
+        self.chat_scroll = u16::MAX;
+        self.right = RightPane::Chat;
+    }
+
     fn push_error_turn(&mut self, prompt: String, response: String) {
         self.chat.push(Turn {
             prompt,
@@ -1088,6 +1125,8 @@ impl TuiHost for LinguisticApp {
                         self.run_collocations(word.trim().to_string());
                     } else if q.trim_end() == "/hypotheses" {
                         self.run_hypotheses();
+                    } else if let Some(hid) = q.strip_prefix("/hcheck ") {
+                        self.run_hcheck(hid.trim().to_string());
                     } else {
                         self.send_query(q);
                     }
@@ -1289,7 +1328,7 @@ impl LinguisticApp {
         let mut lines: Vec<Line> = Vec::new();
         if self.chat.is_empty() {
             lines.push(Line::from(Span::styled(
-                "Press i to ask; slash: /trace /parse /check /tree /clause /igt · /texts /settrans · /frequency /kwic /coll <word> · /hypotheses.",
+                "Press i to ask; slash: /trace /parse /check /tree /clause /igt · /texts /settrans · /frequency /kwic /coll <word> · /hypotheses /hcheck <id>.",
                 Style::default().add_modifier(Modifier::DIM),
             )));
         }
