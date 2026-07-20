@@ -4135,6 +4135,23 @@ pub enum LanguageCommand {
         status: String,
     },
 
+    /// 1.7 HYP-1 (Wave 4) — run the Consequence Tracer over a sound-change
+    /// hypothesis's claim: which words the change predicts, and which merge into
+    /// homophones. Turns the claim into a concrete, testable prediction.
+    HypothesisCheck {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The hypothesis handle.
+        #[arg(long)]
+        id: String,
+        /// Maximum example changes to list.
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
+        /// Emit the trace as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
     /// LANG-1 P3.1 — generate the full paradigm of a root: apply a paradigm
     /// template's morpheme sequence (from the `Morphology` chapter) to the
     /// root, run the language's allophony across the affix boundaries, and
