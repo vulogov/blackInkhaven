@@ -3433,6 +3433,30 @@ pub enum LanguageCommand {
         json: bool,
     },
 
+    /// 1.7 LING-1 L-P6 — the Oracle's agreement check over any head–dependent pair:
+    /// does a dependent word (an adjective, a determiner, a verb) correctly inflect
+    /// for its head's features, under the declared agreement rule?
+    CheckAgreement {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The dependent's category — the `dependent` of an agreement rule
+        /// (`adjective`, `determiner`, `verb`, …).
+        #[arg(long, value_name = "CATEGORY")]
+        dependent: String,
+        /// The dependent's observed surface form.
+        #[arg(long, value_name = "FORM")]
+        form: String,
+        /// The dependent's root, for regenerating its expected agreeing form.
+        #[arg(long, value_name = "ROOT")]
+        root: String,
+        /// The head's features, e.g. `number=pl,gender=fem`.
+        #[arg(long, value_name = "K=V,…")]
+        head_features: String,
+        /// Emit the findings as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
     /// 1.7 LING-1 L-P5 — argument linking: work out a clause's thematic roles,
     /// RRG macroroles (actor / undergoer) and grammatical relations from the
     /// verb's valence. `--valence` overrides a declared verb class.
