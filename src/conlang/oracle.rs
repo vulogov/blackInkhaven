@@ -119,39 +119,63 @@ pub fn check_clause(phon: &Phonology, morph: &Morphology, clause: &ClauseInput) 
     }
 
     // ── Level 3: subject–verb agreement ──
-    // Only when the language declares a verb-agreement rule and we were given the
-    // subject's features and the verb's root to regenerate the expected form.
-    if let (Some(rule), Some(root)) = (morph.agreement_for("verb"), clause.verb_root) {
-        if !clause.subject_features.is_empty() {
-            match crate::conlang::morphology::agreement::agree(
-                phon,
-                morph,
-                rule,
-                root,
-                "V",
-                clause.subject_features,
-            ) {
-                Some(expected) if !expected.form.eq_ignore_ascii_case(clause.verb) => {
-                    r.findings.push(Finding {
-                        level: "agreement",
-                        message: format!(
-                            "verb `{}` does not agree with the subject — expected `{}` ({})",
-                            clause.verb, expected.form, expected.gloss
-                        ),
-                    });
-                }
-                None => {
-                    r.findings.push(Finding {
-                        level: "agreement",
-                        message: "cannot check agreement — the verb paradigm has no cell for the subject's features".into(),
-                    });
-                }
-                _ => {}
-            }
+    // The verb is the dependent, the subject the head. Reuses the general
+    // head–dependent check below.
+    if let Some(root) = clause.verb_root {
+        if let Some(f) = check_agreement(phon, morph, "verb", root, clause.verb, clause.subject_features) {
+            r.findings.push(f);
         }
     }
 
     r
+}
+
+/// Check whether `dependent_form` — the surface form of a `dependent` word
+/// (`verb`, `adjective`, `determiner`, …) built on `dependent_root` — correctly
+/// agrees with a head whose grammatical features are `head_features`, under the
+/// language's declared agreement rule for that dependent.
+///
+/// Generalises the subject–verb check to *any* head–dependent pair: an adjective
+/// agreeing with its noun, a determiner with its noun, a verb with its subject.
+/// Returns the agreement [`Finding`] when the form is wrong (naming the expected
+/// one) or when the paradigm has no cell for the head's features; `None` when it
+/// agrees, when the language declares no agreement rule for the dependent, or when
+/// there are no head features to check against.
+pub fn check_agreement(
+    phon: &Phonology,
+    morph: &Morphology,
+    dependent: &str,
+    dependent_root: &str,
+    dependent_form: &str,
+    head_features: &BTreeMap<String, String>,
+) -> Option<Finding> {
+    if head_features.is_empty() {
+        return None;
+    }
+    let rule = morph.agreement_for(dependent)?;
+    match crate::conlang::morphology::agreement::agree(
+        phon,
+        morph,
+        rule,
+        dependent_root,
+        dependent,
+        head_features,
+    ) {
+        Some(expected) if !expected.form.eq_ignore_ascii_case(dependent_form) => Some(Finding {
+            level: "agreement",
+            message: format!(
+                "{dependent} `{dependent_form}` does not agree with its head — expected `{}` ({})",
+                expected.form, expected.gloss
+            ),
+        }),
+        None => Some(Finding {
+            level: "agreement",
+            message: format!(
+                "cannot check {dependent} agreement — the paradigm has no cell for the head's features"
+            ),
+        }),
+        _ => None,
+    }
 }
 
 /// One conlang word found in prose that the Oracle judged phonotactically
@@ -344,6 +368,44 @@ mod tests {
             "findings: {:?}",
             r.findings
         );
+    }
+
+    // A morphology whose adjectives agree with their noun in number (plural -i).
+    fn adj_morph() -> Morphology {
+        let body = r#"{
+            morphemes: [ { id: "pl", gloss: "PL", form: "i", position: "suffix" } ]
+            paradigms: [ { name: "adj", cells: [
+                { features: { number: "sg" }, morphemes: [] }
+                { features: { number: "pl" }, morphemes: ["pl"] }
+            ] } ]
+            agreement: [ { dependent: "adjective", head: "noun", features: ["number"], paradigm: "adj" } ]
+        }"#;
+        Morphology::from_hjson(body).unwrap().unwrap()
+    }
+
+    #[test]
+    fn an_adjective_agreeing_with_a_plural_noun_passes() {
+        // "katai" = kata + PL, modifying a plural noun → no finding.
+        let pl = feats(&[("number", "pl")]);
+        assert!(check_agreement(&phon(), &adj_morph(), "adjective", "kata", "katai", &pl).is_none());
+    }
+
+    #[test]
+    fn an_adjective_not_agreeing_with_its_noun_is_flagged() {
+        // bare "kata" modifying a plural noun → should be "katai".
+        let pl = feats(&[("number", "pl")]);
+        let f = check_agreement(&phon(), &adj_morph(), "adjective", "kata", "kata", &pl);
+        assert!(
+            f.is_some_and(|f| f.level == "agreement" && f.message.contains("expected `katai`")),
+            "expected an agreement finding"
+        );
+    }
+
+    #[test]
+    fn a_dependent_with_no_declared_agreement_rule_is_not_an_error() {
+        // The morphology declares no "determiner" rule → nothing to check.
+        let pl = feats(&[("number", "pl")]);
+        assert!(check_agreement(&phon(), &adj_morph(), "determiner", "kata", "kata", &pl).is_none());
     }
 
     fn words(ws: &[&str]) -> Vec<String> {

@@ -264,6 +264,43 @@ pub(crate) fn oracle_check_clause(
     Ok(())
 }
 
+/// LING-1 L-P6 — `inkhaven language check-agreement <lang> --dependent D --form W
+/// --root R --head-features "…"`: the Oracle's agreement check over any
+/// head–dependent pair (adjective–noun, determiner–noun, verb–subject).
+pub(crate) fn oracle_check_agreement(
+    project: &Path,
+    language: &str,
+    dependent: &str,
+    form: &str,
+    root: &str,
+    head_features: &str,
+    json: bool,
+) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phon = load_phonology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let morph = load_morphology(&store, &hierarchy, &lang_book)?.unwrap_or_default();
+    let features = parse_features(head_features);
+
+    let finding =
+        crate::conlang::oracle::check_agreement(&phon, &morph, dependent, root, form, &features);
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&finding)
+                .map_err(|e| Error::Store(format!("serializing oracle: {e}")))?
+        );
+        return Ok(());
+    }
+
+    println!("oracle · agreement · {language} · {dependent} `{form}`");
+    match finding {
+        Some(f) => println!("      ✗ [{}] {}", f.level, f.message),
+        None => println!("  ✓ agrees (or no agreement rule declared for `{dependent}`)."),
+    }
+    Ok(())
+}
+
 /// LING-1 L-P5 — `inkhaven language link <lang> --verb V --args "a,b,c"`: work
 /// out a clause's argument structure — thematic roles, RRG macroroles, and
 /// grammatical relations — from the verb's valence.
