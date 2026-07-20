@@ -218,6 +218,9 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
                 json,
             )
         }
+        LanguageCommand::CheckAgreement { language, dependent, form, root, head_features, json } => {
+            oracle_check_agreement(project, &language, &dependent, &form, &root, &head_features, json)
+        }
         LanguageCommand::Tree { language, verb, args, word_order, json } => {
             build_tree(project, &language, &verb, &args, word_order.as_deref(), json)
         }
