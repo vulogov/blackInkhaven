@@ -76,6 +76,10 @@ The corpus `--source` selects what the three commands read: `texts` (the stored 
 / `reconstruct --forms "…" [--gloss G]`: (AI) Propose a proto-form from cognates.
 / `realism-check <lang>`: (AI) Assess whether the sound-change chain is plausible.
 / `trace <lang> --rule "s > ʃ / _ i" [--limit N] [--json]`: Preview a pending sound change across the lexicon — which words shift, which merge into new homophones — without committing it.
+/ `hypothesize <lang> --kind sound-change|cognacy|borrowing|other --claim "…" [--note "…"] [--evidence "…" …] [--id N] [--json]`: Record a diachronic/comparative hypothesis in the `Hypotheses` chapter, starting at `proposed`.
+/ `hypotheses <lang> [--status proposed|supported|refuted|retired] [--json]`: List the hypothesis register, optionally filtered by status.
+/ `hypothesis <lang> --id N [--json]`: Show one hypothesis in full (claim, status, note, evidence).
+/ `hypothesis-status <lang> --id N --status S`: Move a hypothesis along as the evidence comes in.
 
 #section("Analysis")
 
@@ -104,7 +108,7 @@ The corpus `--source` selects what the three commands read: `texts` (the stored 
 #section("The Linguistic companion")
 
 / `inkhaven linguistic [--language L] [--session S]`: Open the full-screen Linguistic companion over the `Language` book — the tree, a grounded chat with the Inner Linguist, and the phonology / universals / minimal-pair views. Not a `language` subcommand; run it directly.
-/ Chat slash-commands: `/trace <rule>` previews a sound change, `/parse <word>` analyses a surface form, `/check <word>` runs the word Oracle, `/tree <verb> <subject> [object] [indirect]` builds the X-bar tree, `/clause <verb> <subject> …` runs the clause Oracle's argument-structure check, `/igt <sentence>` glosses a sentence as interlinear text, `/texts` lists the stored texts, `/settrans <name> = <translation>` curates a stored text's free translation, `/frequency` reports corpus statistics, `/kwic <word>` is a concordance over the stored texts, and `/coll <word>` lists a word's collocates. Most run locally over the current language book and print inline; only `/settrans` writes (the text's translation).
+/ Chat slash-commands: `/trace <rule>` previews a sound change, `/parse <word>` analyses a surface form, `/check <word>` runs the word Oracle, `/tree <verb> <subject> [object] [indirect]` builds the X-bar tree, `/clause <verb> <subject> …` runs the clause Oracle's argument-structure check, `/igt <sentence>` glosses a sentence as interlinear text, `/texts` lists the stored texts, `/settrans <name> = <translation>` curates a stored text's free translation, `/frequency` reports corpus statistics, `/kwic <word>` is a concordance over the corpus, `/coll <word>` lists a word's collocates, and `/hypotheses` lists the hypothesis register. Most run locally over the current language book and print inline; only `/settrans` writes (the text's translation).
 
 #section("Sociolinguistics and contact")
 

@@ -32,6 +32,7 @@ pub mod grammar_check;
 pub mod link;
 pub mod corpus;
 pub mod harmony;
+pub mod hypothesis;
 pub mod igt;
 pub mod interchange;
 pub mod lexicon;
