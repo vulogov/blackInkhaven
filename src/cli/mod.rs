@@ -3985,12 +3985,16 @@ pub enum LanguageCommand {
 
     /// 1.7 IGT-1 (Wave 4) — the language's stored interlinear texts. With no
     /// `--name`, list every stored text; with `--name`, print that one.
+    /// `--format latex` emits a `linguex` LaTeX document (the selected text, or all).
     Texts {
         /// Target language name (case-insensitive).
         language: String,
-        /// Show the stored text with this name (else list all).
+        /// Show the stored text with this name (else list / export all).
         #[arg(long)]
         name: Option<String>,
+        /// Output format: `text` (default) or `latex` (a linguex document).
+        #[arg(long, default_value = "text")]
+        format: String,
         /// Emit as JSON.
         #[arg(long)]
         json: bool,
