@@ -476,6 +476,18 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::Collocations { language, word, lemma, source, window, top, json } => {
             collocations(project, &language, &word, lemma, &source, window, top, json)
         }
+        LanguageCommand::Hypothesize { language, kind, claim, note, evidence, id, json } => {
+            hypothesis_add(project, &language, &kind, &claim, &note, &evidence, id.as_deref(), json)
+        }
+        LanguageCommand::Hypotheses { language, status, json } => {
+            hypotheses_list(project, &language, status.as_deref(), json)
+        }
+        LanguageCommand::Hypothesis { language, id, json } => {
+            hypothesis_show(project, &language, &id, json)
+        }
+        LanguageCommand::HypothesisStatus { language, id, status } => {
+            hypothesis_set_status(project, &language, &id, &status)
+        }
         LanguageCommand::Grammar { language, set, json } => {
             grammar_questionnaire(project, &language, set.as_deref(), json)
         }
@@ -1149,6 +1161,79 @@ pub(crate) fn set_text_translation(
     store
         .update_paragraph_content(&mut node, body.as_bytes())
         .map_err(|e| Error::Store(format!("write igt: {e}")))?;
+    Ok(true)
+}
+
+/// HYP-1 (Wave 4) — load every stored hypothesis under a language's `Hypotheses`
+/// chapter, in tree order. Best-effort: unparseable paragraphs are skipped.
+pub(crate) fn load_hypotheses(
+    store: &Store,
+    hierarchy: &Hierarchy,
+    lang_book: &crate::store::node::Node,
+) -> Vec<crate::conlang::hypothesis::Hypothesis> {
+    let Some(chapter) = hierarchy
+        .children_of(Some(lang_book.id))
+        .into_iter()
+        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Hypotheses"))
+        .cloned()
+    else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for id in hierarchy.collect_subtree(chapter.id) {
+        let Some(node) = hierarchy.get(id) else { continue };
+        if node.kind != NodeKind::Paragraph {
+            continue;
+        }
+        let Ok(Some(bytes)) = store.get_content(node.id) else { continue };
+        if let Ok(h) = serde_json::from_str::<crate::conlang::hypothesis::Hypothesis>(&String::from_utf8_lossy(&bytes))
+        {
+            out.push(h);
+        }
+    }
+    out
+}
+
+/// HYP-1 (Wave 4) — update a stored hypothesis in place with `mutate`, then
+/// rewrite its paragraph. Returns `false` when no hypothesis with `id` exists.
+pub(crate) fn update_hypothesis(
+    store: &Store,
+    hierarchy: &Hierarchy,
+    lang_book: &crate::store::node::Node,
+    id: &str,
+    mutate: impl FnOnce(&mut crate::conlang::hypothesis::Hypothesis),
+) -> Result<bool> {
+    let Some(chapter) = hierarchy
+        .children_of(Some(lang_book.id))
+        .into_iter()
+        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Hypotheses"))
+        .cloned()
+    else {
+        return Ok(false);
+    };
+    let Some(mut node) = hierarchy
+        .collect_subtree(chapter.id)
+        .into_iter()
+        .filter_map(|nid| hierarchy.get(nid))
+        .find(|n| n.kind == NodeKind::Paragraph && n.title.eq_ignore_ascii_case(id))
+        .cloned()
+    else {
+        return Ok(false);
+    };
+    let Ok(Some(bytes)) = store.get_content(node.id) else { return Ok(false) };
+    let mut h: crate::conlang::hypothesis::Hypothesis =
+        serde_json::from_str(&String::from_utf8_lossy(&bytes))
+            .map_err(|e| Error::Store(format!("parsing stored hypothesis `{id}`: {e}")))?;
+    mutate(&mut h);
+
+    let body = serde_json::to_string_pretty(&h).map_err(|e| Error::Store(format!("serialize hypothesis: {e}")))?;
+    if let Some(rel) = &node.file {
+        let abs = store.project_root().join(rel);
+        std::fs::write(&abs, body.as_bytes()).map_err(|e| Error::Store(format!("write hypothesis file: {e}")))?;
+    }
+    store
+        .update_paragraph_content(&mut node, body.as_bytes())
+        .map_err(|e| Error::Store(format!("write hypothesis: {e}")))?;
     Ok(true)
 }
 

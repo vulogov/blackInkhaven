@@ -4071,6 +4071,70 @@ pub enum LanguageCommand {
         json: bool,
     },
 
+    /// 1.7 HYP-1 (Wave 4) — record a diachronic/comparative hypothesis (a sound
+    /// change, a cognacy claim, a borrowing) in the language's `Hypotheses`
+    /// chapter, starting at `proposed`.
+    Hypothesize {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Kind: `sound-change` | `cognacy` | `borrowing` | `other`.
+        #[arg(long)]
+        kind: String,
+        /// The claim — a rewrite rule (`k > tʃ / _ i`), a cognate set, a loan.
+        #[arg(long)]
+        claim: String,
+        /// A rationale / discussion.
+        #[arg(long, default_value = "")]
+        note: String,
+        /// A supporting form or example (repeatable).
+        #[arg(long)]
+        evidence: Vec<String>,
+        /// Handle for the hypothesis (defaults to a slug of the claim).
+        #[arg(long)]
+        id: Option<String>,
+        /// Emit as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// 1.7 HYP-1 (Wave 4) — list the language's hypothesis register, optionally
+    /// filtered by status.
+    Hypotheses {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// Show only this status (`proposed` | `supported` | `refuted` | `retired`).
+        #[arg(long)]
+        status: Option<String>,
+        /// Emit as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// 1.7 HYP-1 (Wave 4) — show one stored hypothesis in full.
+    Hypothesis {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The hypothesis handle.
+        #[arg(long)]
+        id: String,
+        /// Emit as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// 1.7 HYP-1 (Wave 4) — move a hypothesis along as the evidence comes in
+    /// (proposed → supported / refuted / retired).
+    HypothesisStatus {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The hypothesis handle.
+        #[arg(long)]
+        id: String,
+        /// The new status (`proposed` | `supported` | `refuted` | `retired`).
+        #[arg(long)]
+        status: String,
+    },
+
     /// LANG-1 P3.1 — generate the full paradigm of a root: apply a paradigm
     /// template's morpheme sequence (from the `Morphology` chapter) to the
     /// root, run the language's allophony across the affix boundaries, and
