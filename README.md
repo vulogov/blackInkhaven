@@ -21,30 +21,30 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.7.22 — The Hypothesis Register
+## Latest release · 1.7.23 — Testing a Hypothesis
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.7.22.md`](Documentation/RELEASE_NOTES/1.7.22.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.7.23.md`](Documentation/RELEASE_NOTES/1.7.23.md)
 
-The diachronic tools let you *test* a historical claim one at a time but never *record* it. This
-opens **Track C** with a register that does — a place to write down your sound-change, cognacy and
-borrowing hypotheses, their evidence, and their status as it moves from proposed to supported or
-refuted. Historical conlanging, made a method. **No new runtime crates.** Test suite → 2581,
-warning-free.
+The register recorded your diachronic claims; now it can test them. A sound-change hypothesis can be
+run through the Consequence Tracer, turning "I think \*k became tʃ before front vowels" into a
+concrete prediction — these words shift, these two collapse into homophones — that the lexicon either
+bears out or refutes. The comparative method, closed into a loop. **No new runtime crates.** Test
+suite → 2581, warning-free.
 
-### Recording a hypothesis
+### Checking a hypothesis
 
-`inkhaven language hypothesize <lang> --kind sound-change --claim "k > tʃ / _ i" --evidence "kina →
-tʃina"` records a claim in the language's `Hypotheses` chapter, starting at *proposed*. `hypotheses
-<lang>` lists the register (each line marked with its status), `hypothesis --id N` shows one in full,
-and `hypothesis-status --id N --status supported` moves it along as the evidence comes in. The
-companion lists it with `/hypotheses`. Each hypothesis has a kind, a claim, a rationale, its
-evidence, and a status — durable documentation of the language's history as you reason about it.
+`inkhaven language hypothesis-check <lang> --id front-k` runs the Consequence Tracer over a
+sound-change hypothesis's claim and shows the words it predicts will shift plus any that merge into
+homophones. Now it is falsifiable: if the prediction matches, move it to *supported*; if it merges
+distinctions you meant to keep, that is your evidence to *refute* it. The check runs only on
+sound-change hypotheses, and is `/hcheck <id>` in the companion — closing the register's loop into
+the comparative method.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Additive — a new `conlang::hypothesis` model, four `language` verbs, and a
-`/hypotheses` companion command, persisted the same way the `Texts` chapter is; nothing existing
-changes. Warning-free (binary and tests). Test suite → 2581.
+**No new runtime crates.** Additive — a `hypothesis-check` verb and a `/hcheck` companion command,
+reusing the Consequence Tracer; the trace report body is now shared between `trace` and the check.
+Nothing existing changes. Warning-free (binary and tests). Test suite → 2581.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
