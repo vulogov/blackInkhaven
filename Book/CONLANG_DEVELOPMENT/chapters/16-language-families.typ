@@ -104,6 +104,31 @@ It assesses your sound-change chain and flags anything unnatural, so you can mak
 a history that feels real. Like reconstruction, it is advisory: a knowledgeable
 second opinion, not a verdict.
 
+#section("Keeping a register of hypotheses")
+
+Serious historical work is an accumulation of *claims*: "\*k became tʃ before front
+vowels in the Northern branch"; "these two daughter forms are cognate"; "this word
+is a loan". Each has evidence, and each is either holding up or falling apart as you
+find more of it. Inkhaven can keep that reasoning rather than leaving it in your
+head. `inkhaven language hypothesize <lang> --kind sound-change --claim "k > tʃ / _
+i" --evidence "kina → tʃina"` records a hypothesis; it starts *proposed*, and as the
+evidence comes in you move it along with `hypothesis-status ... --status supported`
+(or `refuted`). `inkhaven language hypotheses <lang>` shows the register at a glance,
+each line marked with its status, and `/hypotheses` lists it in the companion.
+
+#term("Hypothesis (in historical linguistics)")[
+  A proposed regular sound change, cognacy relation, or borrowing, held provisionally
+  and tested against the data. The comparative method is precisely the business of
+  proposing such hypotheses and keeping the ones that survive every relevant form —
+  which is why recording them, with their evidence and their fate, is how the work is
+  actually done.
+]
+
+The register turns the one-shot tools of this chapter into a *method*: propose a
+change, trace its consequences (Chapter 15), check the cognates it predicts, and
+write down whether it held. A refuted hypothesis kept on the books is as valuable as
+a supported one — it stops you proposing it again.
+
 #callout(label: "Where the suite shines")[
   Diachronics is where Inkhaven's design pays off most. Because sound change
   reuses the allophony engine, because daughters reuse the lexicon, and because
