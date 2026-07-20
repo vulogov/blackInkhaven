@@ -153,6 +153,11 @@ the beginning of a documented corpus of your language. Add `--format latex` to
 export those texts as a `linguex` document, ready to paste into a grammar sketch or
 a paper.
 
+Back in the chat, `/texts` lists your stored interlinears, and `/settrans <name> =
+<translation>` replaces one's free translation — the auto-generated literal line is
+only a scaffold, and this is where you write the sentence as it should read. The
+gloss underneath is left exactly as it was.
+
 We meet the tracer, the parser, the Oracle and the syntax engine properly — and
 the analyses the other views show — in the next chapter.
 
@@ -172,6 +177,7 @@ the analyses the other views show — in the next chapter.
    previews a sound change, `/parse <word>` analyses a surface form into root +
    affixes, `/check <word>` is the word Oracle's verdict, `/tree <verb> <subject>
    …` builds the clause's X-bar tree, `/clause <verb> <subject> …` is the clause
-   Oracle's argument-structure check, and `/igt <sentence>` glosses a sentence as
-   interlinear text. None commit.],
+   Oracle's argument-structure check, `/igt <sentence>` glosses a sentence, and
+   `/texts` lists your stored interlinears. All are read-only except `/settrans
+   <name> = <translation>`, which curates a stored text's free translation.],
 ))
