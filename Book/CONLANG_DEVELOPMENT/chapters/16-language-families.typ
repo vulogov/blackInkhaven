@@ -124,10 +124,18 @@ each line marked with its status, and `/hypotheses` lists it in the companion.
   actually done.
 ]
 
+A sound-change hypothesis can be *tested* on the spot: `inkhaven language
+hypothesis-check <lang> --id front-k` runs its claim through the Consequence Tracer
+of Chapter 15 and shows exactly which words it predicts will shift and which merge
+into homophones — the claim made falsifiable, not merely asserted. If the prediction
+matches the forms you expect, move it to *supported*; if it collapses distinctions
+you meant to keep, that is your evidence to *refute* it. In the companion the same
+check is `/hcheck <id>`.
+
 The register turns the one-shot tools of this chapter into a *method*: propose a
-change, trace its consequences (Chapter 15), check the cognates it predicts, and
-write down whether it held. A refuted hypothesis kept on the books is as valuable as
-a supported one — it stops you proposing it again.
+change, trace its consequences, check the cognates it predicts, and write down
+whether it held. A refuted hypothesis kept on the books is as valuable as a supported
+one — it stops you proposing it again.
 
 #callout(label: "Where the suite shines")[
   Diachronics is where Inkhaven's design pays off most. Because sound change
