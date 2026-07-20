@@ -21,30 +21,31 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.7.11 — Partial Reduplication
+## Latest release · 1.7.12 — Ablaut
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.7.11.md`](Documentation/RELEASE_NOTES/1.7.11.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.7.12.md`](Documentation/RELEASE_NOTES/1.7.12.md)
 
-The parser learned full reduplication in 1.7.7 (`kata` → `kata-kata`); this release adds its
-partial cousin, where the reduplicant copies only the base's first syllable and prefixes it
-(`kata` → `ka~kata`). The morphological parser now recognises both, so an inflected,
-partially-reduplicated word analyses back to its root. **No new runtime crates.** Test suite
-→ 2552, warning-free.
+The parser has learned to reverse affixes, then full reduplication, then partial. This release
+adds the last non-concatenative process: ablaut — the internal vowel change of *sing/sang*.
+With it, the morphological parser now undoes **every** process the generator can apply. **No
+new runtime crates.** Test suite → 2555, warning-free.
 
-### Partial (initial-syllable) reduplication
+### Ablaut in the parser
 
-`inkhaven language parse <lang> --word kakata` now analyses **partial reduplication** —
-`kakata` → `ka~ + kata`, composing with affixes (`kakatai` → `ka~ + kata + PL`). The parser
-detects a duplicated opening syllable (the CV or CVC reduplicant), strips it, and continues on
-the base; it is labelled `REDUP~` to set it apart from full `REDUP`, and only fires when a
-longer base genuinely follows. It surfaces everywhere the parser does — the CLI, the
-companion's `/parse`, and the Oracle's morphology level.
+Ablaut changes a vowel *inside* the stem (a conlang past tense rewriting `a → i` turns *kat*
+into *kit*). Because an in-place rewrite is not generally invertible, the parser runs
+generate-and-test: it pushes every root forward through each ablaut morpheme's rules and
+indexes the result, so `inkhaven language parse <lang> --word kit` analyses as `kat + PST`
+(and `kiti` → `kat + PST + PL`). It composes with affixes and surfaces everywhere the parser
+does — the CLI, the companion's `/parse`, and the Oracle's morphology level. The parser now
+reverses every process the generator applies: concatenative affixes, full and partial
+reduplication, and ablaut.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Purely additive — an extension to `parse::strip`; existing analyses
-are unchanged, and words with no reduplication are unaffected. The companion book notes it in
-the parser's description. Warning-free (binary and tests). Test suite → 2552.
+**No new runtime crates.** Purely additive — a precompute in `parse` reusing the existing
+forward rewriter; existing analyses are unchanged, and a morphology with no ablaut morphemes is
+unaffected. The companion book notes it. Warning-free (binary and tests). Test suite → 2555.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
