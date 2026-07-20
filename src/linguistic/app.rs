@@ -598,6 +598,70 @@ impl LinguisticApp {
         }
     }
 
+    /// `/frequency` — corpus statistics + top word frequencies over the stored
+    /// texts, inline.
+    fn run_frequency(&mut self) {
+        let prompt = "/frequency".to_string();
+        let Some(book) = self.current_language_book().and_then(|id| self.hierarchy.get(id).cloned())
+        else {
+            self.push_error_turn(prompt, "select a language first".into());
+            return;
+        };
+        let texts = crate::cli::language::load_texts(&self.store, &self.hierarchy, &book);
+        let corpus = crate::conlang::corpus::Corpus::from_texts(&texts);
+        let freq = corpus.frequency(false);
+        let response = if freq.is_empty() {
+            "no stored texts yet — save some with `language igt … --save`.".to_string()
+        } else {
+            let s = corpus.stats();
+            let mut out = format!(
+                "texts {} · tokens {} · types {} · TTR {:.2}\n",
+                s.texts, s.tokens, s.types, s.ttr
+            );
+            for (w, c) in freq.iter().take(15) {
+                out.push_str(&format!("  {c:>3}  {w}\n"));
+            }
+            out.trim_end().to_string()
+        };
+        self.chat.push(Turn { prompt, response, streaming: false, scope: Some(book.title.clone()) });
+        self.chat_scroll = u16::MAX;
+        self.right = RightPane::Chat;
+    }
+
+    /// `/kwic <word>` — a keyword-in-context concordance of a word across the
+    /// stored texts, inline.
+    fn run_kwic(&mut self, word: String) {
+        let prompt = format!("/kwic {word}");
+        if word.is_empty() {
+            self.push_error_turn(prompt, "usage: /kwic <word>".into());
+            return;
+        }
+        let Some(book) = self.current_language_book().and_then(|id| self.hierarchy.get(id).cloned())
+        else {
+            self.push_error_turn(prompt, "select a language first".into());
+            return;
+        };
+        let texts = crate::cli::language::load_texts(&self.store, &self.hierarchy, &book);
+        let corpus = crate::conlang::corpus::Corpus::from_texts(&texts);
+        let lines = corpus.concordance(&word, false, 4);
+        let response = if lines.is_empty() {
+            format!("no occurrences of `{word}` in the stored texts.")
+        } else {
+            let width = lines.iter().map(|k| k.left.chars().count()).max().unwrap_or(0);
+            lines
+                .iter()
+                .map(|k| {
+                    let pad = " ".repeat(width.saturating_sub(k.left.chars().count()));
+                    format!("{pad}{}  [{}]  {}", k.left, k.keyword, k.right)
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        self.chat.push(Turn { prompt, response, streaming: false, scope: Some(book.title.clone()) });
+        self.chat_scroll = u16::MAX;
+        self.right = RightPane::Chat;
+    }
+
     fn push_error_turn(&mut self, prompt: String, response: String) {
         self.chat.push(Turn {
             prompt,
@@ -968,6 +1032,10 @@ impl TuiHost for LinguisticApp {
                         self.run_texts();
                     } else if let Some(spec) = q.strip_prefix("/settrans ") {
                         self.run_settrans(spec.trim().to_string());
+                    } else if q.trim_end() == "/frequency" {
+                        self.run_frequency();
+                    } else if let Some(word) = q.strip_prefix("/kwic ") {
+                        self.run_kwic(word.trim().to_string());
                     } else {
                         self.send_query(q);
                     }
@@ -1169,7 +1237,7 @@ impl LinguisticApp {
         let mut lines: Vec<Line> = Vec::new();
         if self.chat.is_empty() {
             lines.push(Line::from(Span::styled(
-                "Press i to ask; slash: /trace /parse /check /tree /clause /igt · /texts · /settrans <name> = <translation>.",
+                "Press i to ask; slash: /trace /parse /check /tree /clause /igt · /texts /settrans · /frequency /kwic <word>.",
                 Style::default().add_modifier(Modifier::DIM),
             )));
         }

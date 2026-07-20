@@ -801,6 +801,82 @@ pub(crate) fn list_texts(
     Ok(())
 }
 
+/// CORPUS-1 (Wave 4) — `inkhaven language corpus <lang>`: corpus statistics and a
+/// word-frequency list over the stored interlinear texts.
+pub(crate) fn corpus_report(project: &Path, language: &str, by_lemma: bool, top: usize, json: bool) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let texts = load_texts(&store, &hierarchy, &lang_book);
+    let corpus = crate::conlang::corpus::Corpus::from_texts(&texts);
+    let stats = corpus.stats();
+    let freq = corpus.frequency(by_lemma);
+
+    if json {
+        let rows: Vec<_> = freq.iter().take(top).collect();
+        let out = serde_json::json!({ "stats": stats, "frequency": rows });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&out).map_err(|e| Error::Store(format!("serializing corpus: {e}")))?
+        );
+        return Ok(());
+    }
+
+    println!("corpus · {language}");
+    println!(
+        "  texts {} · tokens {} · types {} · lemmas {} · TTR {:.2}",
+        stats.texts, stats.tokens, stats.types, stats.lemmas, stats.ttr
+    );
+    if stats.tokens >= 2 {
+        println!("  Zipf slope {:.2} (R² {:.2})", stats.zipf_slope, stats.zipf_r2);
+    }
+    if freq.is_empty() {
+        println!("\n  no texts yet — save some with `inkhaven language igt {language} --text \"…\" --save`");
+        return Ok(());
+    }
+    println!("\n  frequency ({}, top {}):", if by_lemma { "by lemma" } else { "by surface" }, top);
+    for (w, c) in freq.iter().take(top) {
+        println!("    {c:>4}  {w}");
+    }
+    Ok(())
+}
+
+/// CORPUS-1 (Wave 4) — `inkhaven language concordance <lang> --word W`: a KWIC
+/// concordance of a word (or, with `--lemma`, a root) across the stored texts.
+pub(crate) fn concordance(
+    project: &Path,
+    language: &str,
+    word: &str,
+    by_lemma: bool,
+    window: usize,
+    json: bool,
+) -> Result<()> {
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let texts = load_texts(&store, &hierarchy, &lang_book);
+    let corpus = crate::conlang::corpus::Corpus::from_texts(&texts);
+    let lines = corpus.concordance(word, by_lemma, window);
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&lines).map_err(|e| Error::Store(format!("serializing concordance: {e}")))?
+        );
+        return Ok(());
+    }
+
+    println!("concordance · {language} · \"{word}\"{}", if by_lemma { " (lemma)" } else { "" });
+    if lines.is_empty() {
+        println!("  no occurrences.");
+        return Ok(());
+    }
+    // Right-align the left context so the keywords line up in a column.
+    let width = lines.iter().map(|k| k.left.chars().count()).max().unwrap_or(0);
+    for k in &lines {
+        let pad = " ".repeat(width.saturating_sub(k.left.chars().count()));
+        println!("  {pad}{}  [{}]  {}", k.left, k.keyword, k.right);
+    }
+    println!("\n  {} occurrence(s)", lines.len());
+    Ok(())
+}
+
 /// LANG-1 P3.1 — generate + print a root's paradigm.
 pub(crate) fn paradigm(
     project: &Path,

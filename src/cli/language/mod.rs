@@ -467,6 +467,12 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::Texts { language, name, set_translation, format, json } => {
             list_texts(project, &language, name.as_deref(), set_translation.as_deref(), &format, json)
         }
+        LanguageCommand::Frequency { language, lemma, top, json } => {
+            corpus_report(project, &language, lemma, top, json)
+        }
+        LanguageCommand::Concordance { language, word, lemma, window, json } => {
+            concordance(project, &language, &word, lemma, window, json)
+        }
         LanguageCommand::Grammar { language, set, json } => {
             grammar_questionnaire(project, &language, set.as_deref(), json)
         }

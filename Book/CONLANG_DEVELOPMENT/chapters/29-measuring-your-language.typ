@@ -134,6 +134,30 @@ and keep it or discard it with nothing lost.
 You can run the same trace inside the Linguistic companion — type `/trace s > ʃ /
 _ i` into the chat — so the rehearsal is always a keystroke away while you work.
 
+#section("A corpus of your own texts")
+
+Once you have gathered a few interlinear texts (Chapter 28), they become a small
+*corpus* — a body of real usage you can measure, not just a dictionary of isolated
+words. `inkhaven language frequency <lang>` counts how often each word occurs and
+reports the statistics that only usage can give: how many word *tokens* and distinct
+*types* you have written, their ratio, and how closely the frequencies follow the
+*Zipf* law that natural languages obey. Add `--lemma` to count a root's inflected
+forms together.
+
+#term("Type–token ratio")[
+  The number of distinct words (*types*) divided by the total number of words
+  (*tokens*) in a text. A high ratio means little repetition (a dense, varied
+  vocabulary); a low one means the same words recur. It is the standard first
+  measure of lexical variety.
+]
+
+And `inkhaven language concordance <lang> --word W` shows every place a word appears
+across your texts, each occurrence lined up with its context on either side — a
+*KWIC* (keyword-in-context) concordance, the tool a lexicographer reaches for to see
+how a word is actually used before writing its definition. `--lemma` finds every
+inflected form of a root at once. Both are in the companion too, as `/frequency` and
+`/kwic <word>`.
+
 #recap((
   [The analyses are *read-only*: they describe your language against the
    cross-linguistic baseline; a flag is a place to look, never an error.],
