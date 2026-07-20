@@ -137,8 +137,10 @@ subject's grammatical features, so that half lives on the command line, as
 `language check-clause`.)
 
 `/igt <sentence>` glosses a whole sentence of your language as *interlinear glossed
-text* — the sentence, a line glossing each word (`stone-PL`), and a literal
-translation, aligned in columns:
+text* — the morpheme-segmented sentence (`kata-i`), a line glossing each morpheme
+(`stone-PL`), and a literal translation, aligned in columns. An affix reshaped at
+its boundary is still split correctly (a dative *kata + d* surfacing as *katat* is
+segmented `kata-t`):
 
 ```
 /igt katai nilo

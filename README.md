@@ -21,30 +21,29 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.7.14 — Interlinear Glossed Text
+## Latest release · 1.7.15 — The Segmentation Line
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.7.14.md`](Documentation/RELEASE_NOTES/1.7.14.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.7.15.md`](Documentation/RELEASE_NOTES/1.7.15.md)
 
-Wave 3 gave the language an engine; Wave 4 turns to the **texts** it works on, opening with the
-linguist's core artifact — interlinear glossed text. Give the companion a sentence of your
-language and it lays out the Leipzig block: the sentence, a gloss under each word, and a literal
-translation. **No new runtime crates.** Test suite → 2562, warning-free.
+The first interlinear slice glossed each word whole; this one splits it. IGT's top line is now
+the true Leipzig **morpheme segmentation** — `kata-t` over `stone-DAT` — with the boundaries
+recovered even when allophony has reshaped an affix at the seam. **No new runtime crates.** Test
+suite → 2566, warning-free.
 
-### Interlinear glossed text
+### Morpheme segmentation, aligned to the gloss
 
-`inkhaven language igt <lang> --text "katai nilo"` auto-glosses a sentence and aligns it —
-`katai`/`stone-PL` over `nilo`/`friend`, with a literal `'stone friend'` translation. The gloss
-reuses the auto-gloss index (so inflected forms are recognised); the literal line drops
-grammatical tags as a scaffold you refine; unrecognised words pass through. `--json` emits the
-structured IGT. It is also a companion command — `/igt <sentence>` prints the block inline — and
-the first slice of Wave 4's Annotation Workbench (morpheme segmentation, curated translations, and
-stored annotations come next).
+`inkhaven language igt <lang> --text "katat nilo"` now shows `kata-t`/`stone-DAT` — split at every
+affix boundary. The hard part is that an affix's surface can change at the seam (a dative *kata +
+d* surfaces as *katat* after final devoicing); paradigm generation now tracks each morpheme's span
+in the underlying form and re-slices the *surface* after allophony, so the dative segments `-t`,
+not `-d`. Insertion/deletion allophony that breaks the spans degrades gracefully to an unsegmented
+piece. Applies to the `igt` verb, the `/igt` companion command, and the `--json` output.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Purely additive — a new `conlang::igt` module over the existing
-auto-gloss index, a `language igt` verb, and a `/igt` companion command; nothing existing changes.
-Warning-free (binary and tests). Test suite → 2562.
+**No new runtime crates.** Additive — `paradigm::generate` gains a `segments` field per row,
+threaded through the gloss index into IGT; existing forms and glosses are unchanged. Warning-free
+(binary and tests). Test suite → 2566.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

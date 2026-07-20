@@ -9,14 +9,21 @@
 
 use std::collections::HashMap;
 
-use crate::conlang::morphology::paradigm;
+use crate::conlang::morphology::paradigm::{self, MorphSeg};
 use crate::conlang::types::morphology::Morphology;
 use crate::conlang::types::Phonology;
 use crate::language_entry::DictionaryEntry;
 
-/// Surface-form → `(root headword, gloss)` index.
+/// One indexed surface form: its root headword, gloss, and morpheme segmentation.
+struct Indexed {
+    root: String,
+    gloss: String,
+    segments: Vec<MorphSeg>,
+}
+
+/// Surface-form → [`Indexed`] index.
 pub struct GlossIndex {
-    map: HashMap<String, (String, String)>,
+    map: HashMap<String, Indexed>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -25,6 +32,9 @@ pub struct GlossItem {
     /// `None` when the word wasn't recognised.
     pub root: Option<String>,
     pub gloss: Option<String>,
+    /// Morpheme segmentation (`kata-t` glossed `stone-DAT`); empty when the word
+    /// wasn't recognised or couldn't be segmented.
+    pub segments: Vec<MorphSeg>,
 }
 
 /// Build the reverse index from a dictionary. Every entry's bare form is
@@ -32,7 +42,7 @@ pub struct GlossItem {
 /// surface form. First write wins on a collision (note: ambiguity isn't
 /// resolved — that's a later refinement).
 pub fn build_index(phon: &Phonology, morph: &Morphology, entries: &[DictionaryEntry]) -> GlossIndex {
-    let mut map: HashMap<String, (String, String)> = HashMap::new();
+    let mut map: HashMap<String, Indexed> = HashMap::new();
     for e in entries {
         let word = e.word.trim();
         if word.is_empty() {
@@ -43,14 +53,21 @@ pub fn build_index(phon: &Phonology, morph: &Morphology, entries: &[DictionaryEn
         } else {
             e.translation.trim().to_string()
         };
-        map.entry(word.to_lowercase())
-            .or_insert((word.to_string(), base_gloss.clone()));
+        // The bare form is a single (unsegmented) morpheme.
+        map.entry(word.to_lowercase()).or_insert_with(|| Indexed {
+            root: word.to_string(),
+            gloss: base_gloss.clone(),
+            segments: vec![MorphSeg { surface: word.to_string(), gloss: base_gloss.clone() }],
+        });
 
         if let Some(pname) = &e.paradigm {
             if let Some(tmpl) = morph.paradigm(pname) {
                 for row in paradigm::generate(phon, morph, tmpl, word, &base_gloss) {
-                    map.entry(row.form.to_lowercase())
-                        .or_insert((word.to_string(), row.gloss));
+                    map.entry(row.form.to_lowercase()).or_insert_with(|| Indexed {
+                        root: word.to_string(),
+                        gloss: row.gloss,
+                        segments: row.segments,
+                    });
                 }
             }
         }
@@ -61,12 +78,13 @@ pub fn build_index(phon: &Phonology, morph: &Morphology, entries: &[DictionaryEn
 impl GlossIndex {
     pub fn gloss_word(&self, word: &str) -> GlossItem {
         match self.map.get(&word.to_lowercase()) {
-            Some((root, gloss)) => GlossItem {
+            Some(hit) => GlossItem {
                 surface: word.to_string(),
-                root: Some(root.clone()),
-                gloss: Some(gloss.clone()),
+                root: Some(hit.root.clone()),
+                gloss: Some(hit.gloss.clone()),
+                segments: hit.segments.clone(),
             },
-            None => GlossItem { surface: word.to_string(), root: None, gloss: None },
+            None => GlossItem { surface: word.to_string(), root: None, gloss: None, segments: Vec::new() },
         }
     }
 
@@ -139,6 +157,29 @@ mod tests {
         // unknown word.
         let unk = idx.gloss_word("xyz");
         assert!(unk.root.is_none() && unk.gloss.is_none());
+    }
+
+    #[test]
+    fn segments_a_form_across_a_boundary_allophony() {
+        let idx = build_index(&phon(), &morph(), &[entry("kata", "stone", Some("noun"))]);
+        // "kata" + DAT ("d"), with d→t at the word edge → surface "katat".
+        let item = idx.gloss_word("katat");
+        assert_eq!(item.gloss.as_deref(), Some("stone-DAT"));
+        // The boundary still aligns after allophony: kata-t, stone-DAT.
+        assert_eq!(item.segments.len(), 2);
+        assert_eq!(item.segments[0].surface, "kata");
+        assert_eq!(item.segments[0].gloss, "stone");
+        assert_eq!(item.segments[1].surface, "t");
+        assert_eq!(item.segments[1].gloss, "DAT");
+    }
+
+    #[test]
+    fn a_bare_form_is_a_single_segment() {
+        let idx = build_index(&phon(), &morph(), &[entry("nilo", "friend", None)]);
+        let item = idx.gloss_word("nilo");
+        assert_eq!(item.segments.len(), 1);
+        assert_eq!(item.segments[0].surface, "nilo");
+        assert_eq!(item.segments[0].gloss, "friend");
     }
 
     #[test]
