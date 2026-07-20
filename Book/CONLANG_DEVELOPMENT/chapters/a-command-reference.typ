@@ -91,6 +91,7 @@ Add `--help` to any command for its full signature.
 / `movement <lang> --verb V --args "…" --move ROLE [--word-order O] [--json]`: Syntactic movement — front a constituent (wh-movement / topicalisation) over the tree, leaving a coindexed trace.
 / `binding <lang> --verb V --args "…" [--antecedent R] [--anaphor R] [--type reflexive|pronoun|name] [--json]`: Binding theory — decide whether one argument may refer to another, by c-command and Principles A / B / C.
 / `check-clause <lang> --verb V --args "…" [--verb-root R] [--subject-features "number=pl,…"] [--valence …] [--json]`: The Oracle over a clause (levels 3–4) — subject–verb agreement (does the verb inflect for the subject's features?) and argument structure (does the argument count match the verb's valence?).
+/ `check-agreement <lang> --dependent D --form W --root R --head-features "number=pl,gender=fem" [--json]`: The Oracle's agreement check over any head–dependent pair — does a dependent word (adjective, determiner, verb) correctly inflect for its head's features, under the declared agreement rule?
 / `trace <lang> --rule "X > Y / A _ B" [--limit N] [--json]`: The Consequence Tracer — preview a sound change across the lexicon (which words shift, which distinctions merge, which new homophones appear) without committing it.
 
 #section("The Linguistic companion")

@@ -21,31 +21,30 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.7.12 — Ablaut
+## Latest release · 1.7.13 — Agreement, Generalised
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.7.12.md`](Documentation/RELEASE_NOTES/1.7.12.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.7.13.md`](Documentation/RELEASE_NOTES/1.7.13.md)
 
-The parser has learned to reverse affixes, then full reduplication, then partial. This release
-adds the last non-concatenative process: ablaut — the internal vowel change of *sing/sang*.
-With it, the morphological parser now undoes **every** process the generator can apply. **No
-new runtime crates.** Test suite → 2555, warning-free.
+The clause Oracle could check that a verb agrees with its subject; that machinery was hard-wired
+to one pair. It is now general — the Oracle checks agreement over **any** head–dependent pair (an
+adjective with its noun, a determiner with its noun, a verb with its subject), under whatever
+rules the language declares. **No new runtime crates.** Test suite → 2558, warning-free.
 
-### Ablaut in the parser
+### Agreement over any head–dependent pair
 
-Ablaut changes a vowel *inside* the stem (a conlang past tense rewriting `a → i` turns *kat*
-into *kit*). Because an in-place rewrite is not generally invertible, the parser runs
-generate-and-test: it pushes every root forward through each ablaut morpheme's rules and
-indexes the result, so `inkhaven language parse <lang> --word kit` analyses as `kat + PST`
-(and `kiti` → `kat + PST + PL`). It composes with affixes and surfaces everywhere the parser
-does — the CLI, the companion's `/parse`, and the Oracle's morphology level. The parser now
-reverses every process the generator applies: concatenative affixes, full and partial
-reduplication, and ablaut.
+`inkhaven language check-agreement <lang> --dependent adjective --form mira --root mira
+--head-features "number=pl"` looks up the language's agreement rule for the dependent, regenerates
+the form it *should* produce, and flags the observed one if it differs (`expected `mirai``). The
+subject–verb check from 1.7.8 is now one application of this engine — `check-clause` calls it for
+the verb, and the new `check-agreement` verb opens it to every other dependent. A dependent with
+no declared rule is silently skipped.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Purely additive — a precompute in `parse` reusing the existing
-forward rewriter; existing analyses are unchanged, and a morphology with no ablaut morphemes is
-unaffected. The companion book notes it. Warning-free (binary and tests). Test suite → 2555.
+**No new runtime crates.** Purely additive — `oracle::check_agreement` generalises the existing
+subject–verb logic (which now calls it, unchanged) and a new `language check-agreement` verb wraps
+it. Existing projects, languages and CLI verbs are unchanged. The companion book documents the
+verb. Warning-free (binary and tests). Test suite → 2558.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
