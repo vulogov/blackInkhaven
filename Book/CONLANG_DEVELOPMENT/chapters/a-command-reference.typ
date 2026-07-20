@@ -44,6 +44,7 @@ Add `--help` to any command for its full signature.
 / `paradigm <lang> --root R --template T --gloss G`: Generate a word's inflected forms.
 / `agree <lang> --word W --pos P --features "number=pl,case=nom" [--gloss G]`: Inflect a dependent word to agree with its head's features.
 / `gloss <lang> --text "…"`: Interlinear (word-by-word) gloss of a sentence.
+/ `igt <lang> --text "…" [--json]`: Interlinear glossed text — auto-gloss a sentence and lay it out as an aligned Leipzig block (the sentence, the gloss, a literal translation). `--json` emits the structured IGT.
 / `parse <lang> --word W [--json]`: Analyse a surface word into root + affixes (the morphological parser — the inverse of paradigm generation).
 / `link <lang> --verb V --args "a,b,c" [--valence V] [--json]`: Work out a clause's thematic roles, RRG macroroles (actor / undergoer) and grammatical relations from the verb's valence.
 / `tree <lang> --verb V --args "subj,obj,iobj" [--word-order O] [--json]`: Build the X-bar phrase-structure tree (CP → TP → VP) of a clause, placing heads and complements by word order.
@@ -97,7 +98,7 @@ Add `--help` to any command for its full signature.
 #section("The Linguistic companion")
 
 / `inkhaven linguistic [--language L] [--session S]`: Open the full-screen Linguistic companion over the `Language` book — the tree, a grounded chat with the Inner Linguist, and the phonology / universals / minimal-pair views. Not a `language` subcommand; run it directly.
-/ Chat slash-commands: `/trace <rule>` previews a sound change, `/parse <word>` analyses a surface form, `/check <word>` runs the word Oracle, `/tree <verb> <subject> [object] [indirect]` builds the X-bar tree, `/clause <verb> <subject> …` runs the clause Oracle's argument-structure check. Each runs locally over the current language book and prints inline; none commit.
+/ Chat slash-commands: `/trace <rule>` previews a sound change, `/parse <word>` analyses a surface form, `/check <word>` runs the word Oracle, `/tree <verb> <subject> [object] [indirect]` builds the X-bar tree, `/clause <verb> <subject> …` runs the clause Oracle's argument-structure check, `/igt <sentence>` glosses a sentence as interlinear text. Each runs locally over the current language book and prints inline; none commit.
 
 #section("Sociolinguistics and contact")
 
