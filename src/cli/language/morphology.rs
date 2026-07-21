@@ -520,7 +520,7 @@ pub(crate) fn upsert_chapter_paragraph(
     target.content_type = Some("hjson".to_string());
     if let Some(rel) = &target.file {
         let abs = store.project_root().join(rel);
-        std::fs::write(&abs, body.as_bytes())
+        crate::io_atomic::write(&abs, body.as_bytes())
             .map_err(|e| Error::Store(format!("write {para_title}: {e}")))?;
     }
     store
@@ -708,7 +708,7 @@ fn save_igt(
         serde_json::to_string_pretty(igt).map_err(|e| Error::Store(format!("serialize igt: {e}")))?;
     if let Some(rel) = &node.file {
         let abs = store.project_root().join(rel);
-        std::fs::write(&abs, body.as_bytes()).map_err(|e| Error::Store(format!("write igt file: {e}")))?;
+        crate::io_atomic::write(&abs, body.as_bytes()).map_err(|e| Error::Store(format!("write igt file: {e}")))?;
     }
     store
         .update_paragraph_content(&mut node, body.as_bytes())
@@ -837,7 +837,7 @@ fn save_hypothesis(
     let body = serde_json::to_string_pretty(h).map_err(|e| Error::Store(format!("serialize hypothesis: {e}")))?;
     if let Some(rel) = &node.file {
         let abs = store.project_root().join(rel);
-        std::fs::write(&abs, body.as_bytes()).map_err(|e| Error::Store(format!("write hypothesis file: {e}")))?;
+        crate::io_atomic::write(&abs, body.as_bytes()).map_err(|e| Error::Store(format!("write hypothesis file: {e}")))?;
     }
     store
         .update_paragraph_content(&mut node, body.as_bytes())

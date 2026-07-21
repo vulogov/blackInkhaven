@@ -107,6 +107,10 @@ pub struct LinguisticApp {
     /// The persisted chat session (`--session`); transcript is saved on each
     /// completed turn and replayed on open.
     session: Session,
+    /// Corpus cache for the `/frequency` `/kwic` `/coll` commands, keyed by the
+    /// language book — rebuilt only when the selection changes, so a session of
+    /// corpus queries doesn't rescan the whole manuscript every time.
+    corpus_cache: Option<(Uuid, crate::conlang::corpus::Corpus)>,
     should_quit: bool,
 }
 
@@ -168,6 +172,7 @@ impl LinguisticApp {
             streaming_turn: None,
             status,
             session,
+            corpus_cache: None,
             should_quit: false,
         };
         app.refresh_preview();
@@ -600,6 +605,19 @@ impl LinguisticApp {
 
     /// `/frequency` — corpus statistics + top word frequencies over the stored
     /// texts, inline.
+    /// The corpus (stored texts + manuscript prose) for `book`, built once per
+    /// language and cached for the session. Corpus tokens don't change within a
+    /// companion session, so the expensive manuscript scan + gloss-index build run
+    /// only when the selected language changes.
+    fn cached_corpus(&mut self, book: &crate::store::node::Node) -> crate::conlang::corpus::Corpus {
+        if self.corpus_cache.as_ref().map(|(id, _)| *id) != Some(book.id) {
+            let corpus = crate::cli::language::build_corpus(&self.store, &self.hierarchy, book, "all")
+                .unwrap_or_default();
+            self.corpus_cache = Some((book.id, corpus));
+        }
+        self.corpus_cache.as_ref().map(|(_, c)| c.clone()).unwrap_or_default()
+    }
+
     fn run_frequency(&mut self) {
         let prompt = "/frequency".to_string();
         let Some(book) = self.current_language_book().and_then(|id| self.hierarchy.get(id).cloned())
@@ -607,8 +625,7 @@ impl LinguisticApp {
             self.push_error_turn(prompt, "select a language first".into());
             return;
         };
-        let corpus =
-            crate::cli::language::build_corpus(&self.store, &self.hierarchy, &book, "all").unwrap_or_default();
+        let corpus = self.cached_corpus(&book);
         let freq = corpus.frequency(false);
         let response = if freq.is_empty() {
             "no stored texts yet — save some with `language igt … --save`.".to_string()
@@ -641,8 +658,7 @@ impl LinguisticApp {
             self.push_error_turn(prompt, "select a language first".into());
             return;
         };
-        let corpus =
-            crate::cli::language::build_corpus(&self.store, &self.hierarchy, &book, "all").unwrap_or_default();
+        let corpus = self.cached_corpus(&book);
         let lines = corpus.concordance(&word, false, 4);
         let response = if lines.is_empty() {
             format!("no occurrences of `{word}` in the stored texts.")
@@ -674,8 +690,7 @@ impl LinguisticApp {
             self.push_error_turn(prompt, "select a language first".into());
             return;
         };
-        let corpus =
-            crate::cli::language::build_corpus(&self.store, &self.hierarchy, &book, "all").unwrap_or_default();
+        let corpus = self.cached_corpus(&book);
         let cols = corpus.collocates(&word, false, 4);
         let response = if cols.is_empty() {
             format!("no collocates of `{word}` in the stored texts.")
