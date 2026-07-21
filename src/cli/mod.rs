@@ -76,6 +76,7 @@ pub mod world_prompts;
 pub mod prompts;
 pub mod show_dont_tell;
 pub mod style;
+pub mod wordnet;
 pub mod stats;
 pub mod book_rag;
 pub(crate) mod book_walk;
@@ -569,6 +570,14 @@ pub enum Command {
         /// Emit the report as JSON (per-kind totals + per-paragraph counts) for CI.
         #[arg(long)]
         json: bool,
+    },
+
+    /// 1.8.3 — a sense-based multilingual WordNet thesaurus for prose. Fetch
+    /// open WordNet data on demand, then look a word up for its senses with
+    /// synonyms, antonyms, and hypernyms/hyponyms.
+    Wordnet {
+        #[command(subcommand)]
+        cmd: WordnetCommand,
     },
 
     /// 1.2.12+ — export the project-wide concordance (every
@@ -2784,6 +2793,30 @@ pub enum TtsCatalogSubcommand {
     /// cached `voices.json` so the next operation
     /// fetches from `tts.catalog_url`.
     Refresh,
+}
+
+/// sub-subcommands under `inkhaven wordnet …`.
+#[derive(Debug, Subcommand)]
+pub enum WordnetCommand {
+    /// Download open WordNet data for one or more languages and build the local
+    /// index (e.g. `fetch en`). English is available now; the OMW languages
+    /// arrive in a later release.
+    Fetch {
+        /// Language codes to fetch (`en`, later `ru fr de es`).
+        #[arg(required = true)]
+        languages: Vec<String>,
+    },
+    /// Look a word up: its senses, each with synonyms / antonyms / hypernyms /
+    /// hyponyms.
+    Lookup {
+        /// The word to look up.
+        word: String,
+        /// Which language's wordnet to search (default: `en`).
+        #[arg(long)]
+        lang: Option<String>,
+    },
+    /// List the available sources and which are installed.
+    List,
 }
 
 /// sub-subcommands under
@@ -6032,6 +6065,17 @@ impl Cli {
             Command::Style { book_name, language, json } => {
                 style::run(&project, book_name, language, json).map_err(Into::into)
             }
+            // WordNet is user-global (its data is shared across projects), so it
+            // ignores `project`.
+            Command::Wordnet { cmd } => match cmd {
+                WordnetCommand::Fetch { languages } => {
+                    wordnet::fetch_langs(&languages).map_err(Into::into)
+                }
+                WordnetCommand::Lookup { word, lang } => {
+                    wordnet::lookup(&word, lang.as_deref()).map_err(Into::into)
+                }
+                WordnetCommand::List => wordnet::list().map_err(Into::into),
+            },
             Command::Doctor { voices, tts_test, filter_words_snippet, scan, json, class, autofix, yes } => {
                 if filter_words_snippet {
                     doctor::run_filter_words_snippet().map_err(Into::into)
