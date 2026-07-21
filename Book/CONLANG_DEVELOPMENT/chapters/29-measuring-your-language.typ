@@ -136,7 +136,7 @@ _ i` into the chat — so the rehearsal is always a keystroke away while you wor
 
 #section("A corpus of your own texts")
 
-Once you have gathered a few interlinear texts (Chapter 28) — or simply written
+Once you have gathered a few interlinear texts (Chapter 32) — or simply written
 prose in the language — they become a small *corpus*, a body of real usage you can
 measure, not just a dictionary of isolated words. By default the corpus is *both*
 your stored interlinears and the conlang words Inkhaven finds in your manuscript, so
