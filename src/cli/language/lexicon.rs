@@ -351,6 +351,7 @@ pub(crate) fn add_word(
     pos: &str,
     translation: &str,
     example: Option<&str>,
+    stress: Option<usize>,
 ) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
@@ -393,6 +394,7 @@ pub(crate) fn add_word(
         pos,
         translation,
         example,
+        stress,
     )?;
     let _ = entry;
     eprintln!(
@@ -428,8 +430,9 @@ pub(crate) fn add_dictionary_entry_impl(
     pos: &str,
     translation: &str,
     example: Option<&str>,
+    stress: Option<usize>,
 ) -> Result<(crate::store::node::Node, String)> {
-    let body = seed_dictionary_entry_body(word, pos, translation, example);
+    let body = seed_dictionary_entry_body(word, pos, translation, example, stress);
     create_dictionary_entry(store, cfg, lang_book, word, &body)
 }
 
@@ -938,8 +941,18 @@ pub(crate) fn seed_dictionary_entry_body(
     pos: &str,
     translation: &str,
     example: Option<&str>,
+    stress: Option<usize>,
 ) -> String {
     let example_value = example.unwrap_or("").trim();
+    // 1.8.2 — emit a real `stress` field only when the author gave one (lexical
+    // stress, for verse scansion); otherwise leave it out.
+    let stress_line = match stress {
+        Some(n) => format!(
+            "// Stressed syllable (1-based) — lexical stress for verse scansion.\n  \
+             stress:       {n}\n  \n  "
+        ),
+        None => String::new(),
+    };
     format!(
         "{{\n  \
          // ──────────────────────────────────────────────────\n  \
@@ -1025,11 +1038,13 @@ pub(crate) fn seed_dictionary_entry_body(
          // Free-form usage notes — register cues,\n  \
          // taboos, mnemonic etymology, whatever\n  \
          // helps you remember the word.\n  \
+         {stress_line}\
          notes:        \"\"\n\
          }}\n",
         word = escape_hjson(word),
         pos = escape_hjson(pos),
         translation = escape_hjson(translation),
         example = escape_hjson(example_value),
+        stress_line = stress_line,
     )
 }

@@ -92,6 +92,59 @@ pub(crate) fn stress_word(project: &Path, language: &str, word: &str) -> Result<
     Ok(())
 }
 
+/// 1.8.2 — scan a line (or stanza) of verse: mark each syllable's beat and name
+/// the metre. Stress per word resolves through explicit mark → lexicon → rule.
+pub(crate) fn scan_verse(project: &Path, language: &str, text: &str) -> Result<()> {
+    use crate::conlang::scansion;
+
+    let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
+    let phonology = load_phonology(&store, &hierarchy, &lang_book)?.ok_or_else(|| {
+        Error::Config(format!(
+            "language `{language}` has no phoneme block yet — add a `phonemes` block \
+             under its `Phonology` chapter before scanning verse"
+        ))
+    })?;
+    let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+
+    let lines = scansion::scan_text(&phonology, &entries, text);
+    if lines.is_empty() {
+        return Err(Error::Config("no verse to scan (the text is empty)".into()));
+    }
+
+    println!("scan · {language}   (/ stressed  × unstressed  · flexible)\n");
+    for line in &lines {
+        // Two aligned rows: the syllables, and their beat glyphs beneath.
+        let mut top: Vec<String> = Vec::new();
+        let mut bot: Vec<String> = Vec::new();
+        for (wi, w) in line.words.iter().enumerate() {
+            if wi > 0 {
+                top.push("|".into());
+                bot.push("|".into());
+            }
+            for s in &w.syllables {
+                let width = s.text.chars().count().max(1);
+                top.push(format!("{:<width$}", s.text, width = width));
+                bot.push(format!("{:^width$}", s.beat.glyph(), width = width));
+            }
+        }
+        println!("  {}", top.join(" "));
+        println!("  {}", bot.join(" "));
+        let n = line.beats().len();
+        match &line.meter {
+            Some(m) => println!("  → {} · {n} syllable(s) · fit {:.2}\n", m.name, m.conformance),
+            None => println!("  → irregular / free · {n} syllable(s)\n"),
+        }
+    }
+
+    if lines.len() > 1 {
+        match scansion::dominant_meter(&lines) {
+            Some(m) => println!("dominant metre · {} (fit {:.2})", m.name, m.conformance),
+            None => println!("dominant metre · irregular"),
+        }
+    }
+    Ok(())
+}
+
 /// LANG-1 P1.3 — derive and print a word's surface pronunciation by applying
 /// the language's allophony rules to its underlying form.
 pub(crate) fn ipa_surface(project: &Path, language: &str, word: &str) -> Result<()> {

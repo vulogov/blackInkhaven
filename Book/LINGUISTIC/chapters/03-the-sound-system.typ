@@ -212,6 +212,48 @@ passes through unchanged. Three words, three correct predictions from one rule.
   derivation, which is exactly the kind of hypothesis this lets you test.
 ]
 
+#section("Stress and the metre of verse")
+
+Russian has one more suprasegmental feature that no rule can predict: *stress*. Unlike
+Finnish (always initial) or Polish (always penultimate), Russian stress is *lexical* —
+it falls on a different syllable in different words, it *moves* within a word's
+paradigm, and it is *contrastive*: за́мок "castle" and замо́к "lock" differ in nothing
+but where the stress lands. Because no rule places it, you must *record* it — either
+with the lexicon's `stress` field (the stressed syllable, 1-based) when you add a word,
+or with an acute mark over the vowel in the text itself:
+
+```sh
+inkhaven language add-word зелёный --type adjective --translation green --stress 2
+```
+
+With stress known, Inkhaven can *scan* a line of verse — mark each syllable strong or
+weak and name the metre. Take the most famous opening in Russian poetry, Pushkin's
+#emph[Ruslan and Lyudmila], with its stresses marked:
+
+```sh
+inkhaven language scan Russian --text "У лукомо́рья ду́б зелёный"
+```
+
+```
+  У | лу ко мор ья | дуб | зе лё ный
+  · | ×  ×   /  ×  |  /  | ×  /   ×
+  → iambic tetrameter · 9 syllable(s) · fit 0.88
+```
+
+The line resolves to *iambic tetrameter* — four rising feet — the metre of the whole
+poem. Its ninth syllable is a *feminine ending*, an extra unstressed beat past the
+fourth foot, which is why nine syllables still scan as four feet. The little `у`, a
+monosyllable, is left *flexible* (`·`): a one-syllable word promotes or demotes to fit
+the metre, exactly as scansion by hand allows.
+
+#term("Scansion")[
+  Marking the stressed and unstressed syllables of a line of verse and identifying the
+  repeating *foot* they form — the *iamb* (weak–strong, `× /`), *trochee* (strong–weak),
+  *dactyl*, *anapest*. A line of _n_ feet is a dimeter, trimeter, tetrameter, and so on.
+  Scansion is where phonology (stress) meets poetics, and it works only once each word's
+  stress is known — which for Russian means the lexicon or the page, never a rule.
+]
+
 #section("Where each sound lives")
 
 `distribution` reports where in the word each segment tends to appear — onset,
@@ -239,4 +281,7 @@ your own model is how you learn to see them.
   [With a phonemic model you can declare *allophony* rules (`g > k / _ #`) and derive a
    word's surface form with `language ipa` — Russian final devoicing turns underlying
    *друг* into surface *друк*, one rule predicting a whole class of words.],
+  [Russian stress is *lexical* — unpredictable, mobile, contrastive (за́мок / замо́к) — so
+   you record it (the lexicon `stress` field or an acute mark); `language scan` then
+   scans a line of verse and names its metre (Pushkin's opening is iambic tetrameter).],
 ))
