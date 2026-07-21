@@ -75,6 +75,12 @@ pub struct DictionaryEntry {
     /// entry's inflected forms; `None` → only the bare form is recognised.
     #[serde(default)]
     pub paradigm: Option<String>,
+    /// 1.8.2 — the stressed syllable of the citation form, 1-based, for
+    /// languages whose stress is lexical (unpredictable) rather than rule-governed
+    /// — Russian above all. Read by verse scansion when the text carries no
+    /// explicit stress mark; `None` → fall back to the language's stress rule.
+    #[serde(default)]
+    pub stress: Option<usize>,
 }
 
 /// Accept either a single string (`"formal"`) or an array
