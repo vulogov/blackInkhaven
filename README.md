@@ -21,30 +21,29 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.7.23 — Testing a Hypothesis
+## Latest release · 1.7.24 — Pre-1.8 Hardening
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.7.23.md`](Documentation/RELEASE_NOTES/1.7.23.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.7.24.md`](Documentation/RELEASE_NOTES/1.7.24.md)
 
-The register recorded your diachronic claims; now it can test them. A sound-change hypothesis can be
-run through the Consequence Tracer, turning "I think \*k became tʃ before front vowels" into a
-concrete prediction — these words shift, these two collapse into homophones — that the lexicon either
-bears out or refutes. The comparative method, closed into a loop. **No new runtime crates.** Test
-suite → 2581, warning-free.
+A stability and performance pass over the linguistic layer ahead of 1.8 — no new features, nothing
+changes for the user, the internals are tightened. **No new runtime crates.** Test suite → 2581,
+warning-free.
 
-### Checking a hypothesis
+### What changed
 
-`inkhaven language hypothesis-check <lang> --id front-k` runs the Consequence Tracer over a
-sound-change hypothesis's claim and shows the words it predicts will shift plus any that merge into
-homophones. Now it is falsifiable: if the prediction matches, move it to *supported*; if it merges
-distinctions you meant to keep, that is your evidence to *refute* it. The check runs only on
-sound-change hypotheses, and is `/hcheck <id>` in the companion — closing the register's loop into
-the comparative method.
+The five linguistic store-writes (interlinear texts, hypotheses, curated translations) now go
+through `io_atomic` (temp-file + rename), so a crash mid-write can't leave a half-written file. In
+the Linguistic companion the corpus is built once per language and cached for the session, so
+`/frequency` → `/kwic` → `/coll` no longer rescan the whole manuscript and rebuild the gloss index
+each time; the manuscript scan also skips non-conlang prose without materialising its tokens. And
+`minimal_pairs` bounds its collected sample (the functional-load statistics stay exact) so a huge
+lexicon can't blow up memory before the truncation.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Additive — a `hypothesis-check` verb and a `/hcheck` companion command,
-reusing the Consequence Tracer; the trace report body is now shared between `trace` and the check.
-Nothing existing changes. Warning-free (binary and tests). Test suite → 2581.
+**No new runtime crates.** Internal-only — atomic writes, a session corpus cache, and a memory bound
+on minimal-pairs collection; no behaviour changes, no new or altered commands. Warning-free (binary
+and tests). Test suite → 2581.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
