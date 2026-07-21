@@ -42,6 +42,19 @@ inkhaven language stress Eldar --word takina
 It returns something like `ta.ˈki.na` — the mark `ˈ` sits before the stressed
 syllable.
 
+With stress known, you can *scan* a line of verse — mark every syllable strong or weak
+and name its metre:
+
+```sh
+inkhaven language scan Eldar --text "takina ómor takina"
+```
+
+Each word is syllabified and stressed (by the rule above, by a per-word `stress` field
+in the lexicon for irregular words, or by an acute mark you type over a vowel), and the
+line is matched against the metrical feet — iamb, trochee, dactyl, anapest — to report
+its metre, e.g. *trochaic trimeter*. A monosyllable is left flexible, free to fall on a
+strong or weak beat as the metre needs.
+
 #section("Romanization: writing it down")
 
 Your phonemes may include symbols like /ʃ/ that you do not want to type
