@@ -3985,7 +3985,9 @@ pub enum LanguageCommand {
 
     /// 1.7 IGT-1 (Wave 4) — the language's stored interlinear texts. With no
     /// `--name`, list every stored text; with `--name`, print that one.
-    /// `--format latex` emits a `linguex` LaTeX document (the selected text, or all).
+    /// `--format latex` emits a `linguex` LaTeX document; `--format conllu`
+    /// emits a CoNLL-U (Universal Dependencies) treebank with morphological
+    /// annotation (FORM, LEMMA, UPOS, FEATS) from the gloss and lexicon.
     Texts {
         /// Target language name (case-insensitive).
         language: String,
@@ -3995,7 +3997,8 @@ pub enum LanguageCommand {
         /// Replace the named text's free translation (curate the auto literal one).
         #[arg(long, value_name = "TEXT")]
         set_translation: Option<String>,
-        /// Output format: `text` (default) or `latex` (a linguex document).
+        /// Output format: `text` (default), `latex` (a linguex document), or
+        /// `conllu` (a Universal Dependencies treebank).
         #[arg(long, default_value = "text")]
         format: String,
         /// Emit as JSON.

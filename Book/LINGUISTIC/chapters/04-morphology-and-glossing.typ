@@ -97,6 +97,22 @@ know pass through untouched, telling you exactly which vocabulary to add next.
 You will store and reuse these glosses in Chapter 6, where a handful of them, plus a
 real text, become a corpus.
 
+#subsection("Exporting to standard formats")
+
+A gloss you have saved (with `igt --save`) need not stay inside Inkhaven. The `texts`
+command re-exports your stored interlinears for the tools linguists already use:
+
+```sh
+inkhaven language texts Russian --format conllu
+```
+
+`--format latex` emits a #emph[linguex] document for a paper; `--format conllu` emits a
+*CoNLL-U* file — the interchange format of the Universal Dependencies project — with
+each word's form, lemma, part of speech and grammatical features filled in from the
+gloss. A Russian genitive glossed `дом-а`, `house-GEN` becomes a token tagged
+`Case=Gen`, ready to load into the wider treebank ecosystem alongside UD's own Russian
+corpora.
+
 #section("Agreement")
 
 Russian adjectives agree with their nouns in gender, number and case — *новый дом*
