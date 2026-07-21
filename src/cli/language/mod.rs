@@ -1100,13 +1100,13 @@ fn manuscript_corpus_texts(
         let Ok(Some(bytes)) = store.get_content(node.id) else { continue };
         let Ok(body) = std::str::from_utf8(&bytes) else { continue };
         let plain = crate::audiobook::typst_to_plain(body);
-        let words: Vec<String> = plain.unicode_words().map(String::from).collect();
-        // Conlang-context guard: skip prose with no anchoring listed word.
-        if !words.iter().any(|w| known.contains(&w.to_lowercase())) {
+        // Conlang-context guard *first*, over the lazy word iterator — prose with
+        // no anchoring listed word is skipped without materialising its tokens.
+        if !plain.unicode_words().any(|w| known.contains(&w.to_lowercase())) {
             continue;
         }
-        let tokens: Vec<Token> = words
-            .iter()
+        let tokens: Vec<Token> = plain
+            .unicode_words()
             .filter_map(|w| {
                 let lc = w.to_lowercase();
                 if !known.contains(&lc) && !crate::conlang::lexicon::looks_conlang(&phon, &lc) {
@@ -1159,7 +1159,7 @@ pub(crate) fn set_text_translation(
     let body = serde_json::to_string_pretty(&igt).map_err(|e| Error::Store(format!("serialize igt: {e}")))?;
     if let Some(rel) = &node.file {
         let abs = store.project_root().join(rel);
-        std::fs::write(&abs, body.as_bytes()).map_err(|e| Error::Store(format!("write igt file: {e}")))?;
+        crate::io_atomic::write(&abs, body.as_bytes()).map_err(|e| Error::Store(format!("write igt file: {e}")))?;
     }
     store
         .update_paragraph_content(&mut node, body.as_bytes())
@@ -1232,7 +1232,7 @@ pub(crate) fn update_hypothesis(
     let body = serde_json::to_string_pretty(&h).map_err(|e| Error::Store(format!("serialize hypothesis: {e}")))?;
     if let Some(rel) = &node.file {
         let abs = store.project_root().join(rel);
-        std::fs::write(&abs, body.as_bytes()).map_err(|e| Error::Store(format!("write hypothesis file: {e}")))?;
+        crate::io_atomic::write(&abs, body.as_bytes()).map_err(|e| Error::Store(format!("write hypothesis file: {e}")))?;
     }
     store
         .update_paragraph_content(&mut node, body.as_bytes())
