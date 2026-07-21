@@ -21,31 +21,33 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.8.3 — WordNet
+## Latest release · 1.8.4 — WordNet Goes Multilingual
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.8.3.md`](Documentation/RELEASE_NOTES/1.8.3.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.8.4.md`](Documentation/RELEASE_NOTES/1.8.4.md)
 
-A sense-based thesaurus for your prose. `inkhaven wordnet` fetches open WordNet data on demand and
-looks a word up for its **senses** — each with synonyms, antonyms, and hypernyms/hyponyms. This
-release lays the foundation with English; the other standard languages and an in-editor chord follow.
+The sense-based thesaurus reaches the standard languages. `wordnet fetch` now installs **French,
+German, and Spanish** alongside English, and a non-English lookup inherits English's rich relation
+taxonomy through the interlingual index. **Russian** is supported by import (it has no open
+distribution).
 
 ### What's new
 
-- **`inkhaven wordnet`.** `wordnet fetch en` downloads Open English WordNet (CC-BY; 152k lemmas,
-  120k synsets), builds a compact local index in the user data dir, and every lookup is offline
-  thereafter. `wordnet lookup <word>` returns each **sense** separately (polysemy handled) with its
-  definition, synonyms, antonyms, and hypernyms/hyponyms; `wordnet list` shows sources + status.
-- **Fetch-on-demand, never bundled.** The open [WN-LMF](https://globalwordnet.github.io/schemas/)
-  data is downloaded and parsed locally; every synset is keyed by its interlingual index (ILI), the
-  hook the other languages link through.
-- **Foundation for what's next.** Russian, French, German and Spanish (OMW) land in the next
-  release, then the in-editor WordNet chord: stand on a word, pull its senses, replace it in place.
+- **Four fetchable languages.** `wordnet fetch en fr de es` — the OMW wordnets ship as `.tar.xz`,
+  which Inkhaven now unpacks with a **pure-Rust** xz decoder (no `liblzma`, no external binary).
+- **Cross-lingual relations via the ILI.** A translated wordnet lists lemmas but rarely the
+  hypernym/hyponym links; when a word's native synset has none, Inkhaven follows its interlingual
+  index into English's relation graph and maps the results back — so Spanish *perro* gets `hyponyms
+  basenji, caniche, mastín, pug…`, all in Spanish.
+- **Russian by import.** `wordnet import ru <file.xml>` builds an index from any local WN-LMF you
+  supply (RuWordNet is under a research licence, so it's imported rather than bundled).
+- **Versioned indexes.** A stale index is now rejected with a clear *re-fetch* message instead of
+  being silently misread.
 
 ### Dependencies & compatibility
 
-Promotes two crates already in the dependency tree — `bincode` (index serialisation) and `flate2`
-(gunzip) — to direct dependencies; no new crates enter the build. Purely additive: one new top-level
-`wordnet` command. Warning-free (binary and tests). Test suite → 2602.
+Adds `lzma-rs` (pure-Rust xz) and promotes `tar` to a direct dependency — no external binaries.
+Purely additive: `wordnet` gains `import` and three fetchable languages. Warning-free (binary and
+tests). Test suite → 2603.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
