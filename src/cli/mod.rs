@@ -2806,6 +2806,14 @@ pub enum WordnetCommand {
         #[arg(required = true)]
         languages: Vec<String>,
     },
+    /// Build a language's index from a local WN-LMF file (`.xml`, `.xml.gz`, or
+    /// `.tar.xz`) — for data that can't be openly fetched (e.g. Russian).
+    Import {
+        /// Language code to store the index under (`ru`, `en`, …).
+        lang: String,
+        /// Path to the WN-LMF file.
+        path: std::path::PathBuf,
+    },
     /// Look a word up: its senses, each with synonyms / antonyms / hypernyms /
     /// hyponyms.
     Lookup {
@@ -6070,6 +6078,9 @@ impl Cli {
             Command::Wordnet { cmd } => match cmd {
                 WordnetCommand::Fetch { languages } => {
                     wordnet::fetch_langs(&languages).map_err(Into::into)
+                }
+                WordnetCommand::Import { lang, path } => {
+                    wordnet::import(&lang, &path).map_err(Into::into)
                 }
                 WordnetCommand::Lookup { word, lang } => {
                     wordnet::lookup(&word, lang.as_deref()).map_err(Into::into)
