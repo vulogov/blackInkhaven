@@ -66,6 +66,9 @@
   part(number: "XIII", title: "Analysing Your Language"),
   include "chapters/28-the-inner-linguist.typ",
   include "chapters/29-measuring-your-language.typ",
+  include "chapters/30-syntax.typ",
+  include "chapters/31-the-oracle.typ",
+  include "chapters/32-interlinear-text.typ",
 
   include "chapters/a-command-reference.typ",
   include "chapters/b-hjson-reference.typ",

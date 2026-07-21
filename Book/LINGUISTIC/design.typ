@@ -1,11 +1,12 @@
-// Developing a Constructed Language with Inkhaven — design tokens + page chrome.
+// Linguistic Research with Inkhaven — design tokens + page chrome.
 //
-// Modelled on Book/1.2.6_MANUAL/design.typ, but self-contained and built on
-// fonts Typst bundles ("Libertinus Serif", "New Computer Modern") so the book
-// compiles warning-free anywhere with a bare `typst compile`.
+// Shares the voice and chrome of the companion book (Developing a Constructed
+// Language), self-contained and built on Typst-bundled fonts so it compiles
+// warning-free with a bare `typst compile`.
 
-#let book_title    = "Developing a Constructed Language"
-#let book_subtitle = "A Beginner's Guide to Conlanging with Inkhaven"
+#let book_title    = "Linguistic Research with Inkhaven"
+#let book_title_ru = "Лингвистическое исследование с Inkhaven"
+#let book_subtitle = "Analysing a Living Language — a Study of Russian"
 #let book_author   = "Vladimir Ulogov"
 #let book_year     = "2026"
 
@@ -30,7 +31,9 @@
 
 #let book_page = (
   paper: "iso-b5",
-  margin: (inside: 26mm, outside: 20mm, top: 22mm, bottom: 24mm),
+  // A roomier top margin so a section heading that lands at the top of a page has
+  // clear air beneath the running header rather than colliding with it.
+  margin: (inside: 26mm, outside: 20mm, top: 27mm, bottom: 24mm),
   numbering: "1",
 )
 
@@ -90,16 +93,16 @@
   hide(heading(level: 2, numbering: none, outlined: true, title))
   block(
     sticky: true,
-    above: 7mm,
-    below: 1.5mm,
+    above: 8mm,
+    below: 3.2mm,      // clear air below the heading — even when the body's first
     text(font: body_family, size: 15pt, weight: "bold", fill: ink_black, title),
-  )
+  )                    // line begins with an inline-code box (whose outset rises).
 }
 #let subsection(title) = {
   block(
     sticky: true,
-    above: 4mm,
-    below: 0.5mm,
+    above: 4.5mm,
+    below: 2mm,
     text(font: body_family, size: 11.5pt, weight: "bold", fill: ink_black, title),
   )
 }
@@ -168,12 +171,16 @@
   set document(title: book_title, author: book_author)
   set text(font: body_family, size: 11pt, fill: ink_black, lang: "en")
   set par(leading: 0.72em, justify: true, first-line-indent: 1em)
+  // `breakable: false` keeps a code block — and any ASCII diagram inside it, such
+  // as an X-bar tree — whole on one page rather than split across a page boundary.
+  // Keep individual code examples short enough to fit a page.
   show raw.where(block: true): it => block(
     fill: ink_code_bg, stroke: 0.5pt + ink_rule, inset: 7pt, radius: 2pt, width: 100%,
+    breakable: false,
     text(font: mono_family, size: 9pt, it),
   )
   show raw.where(block: false): it => box(
-    fill: ink_code_bg, inset: (x: 2pt, y: 0pt), outset: (y: 2pt), radius: 1pt,
+    fill: ink_code_bg, inset: (x: 2pt, y: 0pt), outset: (y: 1.5pt), radius: 1pt,
     text(font: mono_family, size: 9.5pt, it),
   )
 
@@ -197,9 +204,11 @@
     #place(top + center, dy: 64mm, block(width: 70%)[
       #set par(justify: false)
       #align(center)[
-        #text(font: body_family, size: 12pt, tracking: 4pt, fill: ink_smoke, upper("Conlanging with Inkhaven"))
+        #text(font: body_family, size: 12pt, tracking: 4pt, fill: ink_smoke, upper("Linguistics with Inkhaven"))
         #v(11mm)
         #text(font: body_family, size: 27pt, weight: "bold", fill: ink_black, book_title)
+        #v(4mm)
+        #text(font: body_family, size: 17pt, weight: "regular", fill: ink_smoke, book_title_ru)
         #v(6mm)
         #line(length: 55%, stroke: 0.6pt + ink_accent)
         #v(6mm)
