@@ -32,6 +32,12 @@ pub struct WordNet {
     sense_owner: HashMap<String, u32>,
     /// Synset id → the lemmas that are members of it.
     members: HashMap<String, Vec<String>>,
+    /// Interlingual index → the local synset id carrying it (for pivot lookup).
+    #[serde(default)]
+    ili_to_synset: HashMap<String, String>,
+    /// Interlingual index → this language's lemmas for that concept.
+    #[serde(default)]
+    ili_members: HashMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,10 +99,18 @@ impl Lookup {
 }
 
 impl WordNet {
-    /// Look a word up: gather every sense, each with synonyms (co-members of the
-    /// synset), antonyms (sense-level relations), and hypernyms/hyponyms
-    /// (synset-level relations). Case- and Unicode-insensitive on the lemma.
+    /// Look a word up in this wordnet alone (no cross-lingual expansion).
     pub fn lookup(&self, word: &str) -> Lookup {
+        self.lookup_with_pivot(word, None)
+    }
+
+    /// Look a word up, optionally expanding its taxonomy relations through a
+    /// `pivot` wordnet (English) by the interlingual index. A non-English
+    /// wordnet often lists only lemmas per synset, not the hypernym/hyponym
+    /// links; when the native synset has none, we follow its ILI into the
+    /// pivot's rich relation graph and map the results back to this language's
+    /// lemmas. Synonyms (synset co-members) are always native.
+    pub fn lookup_with_pivot(&self, word: &str, pivot: Option<&WordNet>) -> Lookup {
         let key = word.to_lowercase();
         let mut senses = Vec::new();
         for &ei in self.lemma_index.get(&key).map(Vec::as_slice).unwrap_or(&[]) {
@@ -114,8 +128,8 @@ impl WordNet {
                     .filter(|r| r.rel_type == "antonym")
                     .filter_map(|r| self.lemma_of_sense(&r.target))
                     .collect::<Vec<_>>();
-                let hypernyms = self.related_members(synset, "hypernym");
-                let hyponyms = self.related_members(synset, "hyponym");
+                let hypernyms = self.relation_lemmas(synset, "hypernym", pivot);
+                let hyponyms = self.relation_lemmas(synset, "hyponym", pivot);
                 senses.push(SenseView {
                     pos: pos_label(&entry.pos).to_string(),
                     definition: synset.definition.clone(),
@@ -127,6 +141,28 @@ impl WordNet {
             }
         }
         Lookup { word: word.to_string(), senses }
+    }
+
+    /// The lemmas reached by a synset-level relation — native if present, else
+    /// expanded through the pivot wordnet by ILI.
+    fn relation_lemmas(&self, synset: &Synset, rel_type: &str, pivot: Option<&WordNet>) -> Vec<String> {
+        let native = self.related_members(synset, rel_type);
+        if !native.is_empty() {
+            return native;
+        }
+        // Expand via the pivot: this synset's ILI → the pivot's synset → its
+        // relation targets' ILIs → this language's lemmas for those ILIs.
+        let (Some(ili), Some(pivot)) = (synset.ili.as_ref(), pivot) else {
+            return native;
+        };
+        let Some(psid) = pivot.ili_to_synset.get(ili) else { return native };
+        let Some(psyn) = pivot.synsets.get(psid) else { return native };
+        psyn.relations
+            .iter()
+            .filter(|r| r.rel_type == rel_type)
+            .filter_map(|r| pivot.synsets.get(&r.target).and_then(|s| s.ili.as_ref()))
+            .flat_map(|tili| self.ili_members.get(tili).cloned().unwrap_or_default())
+            .collect()
     }
 
     /// The interlingual (ILI) codes of a word's synsets — the key to the same
@@ -169,21 +205,40 @@ impl WordNet {
             .collect()
     }
 
-    /// Serialise the built index to `path` (bincode).
+    /// Serialise the built index to `path`, behind a 4-byte version header so a
+    /// stale index (from a build whose struct differed) is rejected loudly
+    /// rather than misread — bincode is positional and not self-describing.
     pub fn save(&self, path: &std::path::Path) -> Result<(), String> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
         }
-        let bytes = bincode::serialize(self).map_err(|e| format!("serialize wordnet: {e}"))?;
+        let mut bytes = Vec::from(INDEX_MAGIC);
+        bytes.push(INDEX_VERSION);
+        bytes.extend(bincode::serialize(self).map_err(|e| format!("serialize wordnet: {e}"))?);
         std::fs::write(path, bytes).map_err(|e| format!("write {}: {e}", path.display()))
     }
 
-    /// Load a previously-built index.
+    /// Load a previously-built index, verifying the version header.
     pub fn load(path: &std::path::Path) -> Result<Self, String> {
         let bytes = std::fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-        bincode::deserialize(&bytes).map_err(|e| format!("deserialize wordnet: {e}"))
+        if bytes.len() < 4 || &bytes[..3] != INDEX_MAGIC {
+            return Err("not an Inkhaven wordnet index (or built by an older version) — re-run `wordnet fetch`".into());
+        }
+        if bytes[3] != INDEX_VERSION {
+            return Err(format!(
+                "wordnet index format v{} but this build expects v{INDEX_VERSION} — re-run `wordnet fetch` to rebuild it",
+                bytes[3]
+            ));
+        }
+        bincode::deserialize(&bytes[4..]).map_err(|e| format!("deserialize wordnet: {e}"))
     }
 }
+
+/// Magic prefix of a persisted index (`IWN`), followed by [`INDEX_VERSION`].
+const INDEX_MAGIC: &[u8] = b"IWN";
+/// Bumped whenever the [`WordNet`] on-disk layout changes, so old indexes are
+/// rejected with a clear "re-fetch" message instead of silently misreading.
+const INDEX_VERSION: u8 = 2;
 
 fn dedup(mut v: Vec<String>) -> Vec<String> {
     v.sort();
@@ -405,7 +460,23 @@ fn build_index(language: String, entries: Vec<Entry>, synsets: HashMap<String, S
         v.dedup();
     }
 
-    WordNet { language, entries, synsets, lemma_index, sense_owner, members }
+    // ILI indexes: interlingual code → local synset, and → local lemmas.
+    let mut ili_to_synset: HashMap<String, String> = HashMap::new();
+    let mut ili_members: HashMap<String, Vec<String>> = HashMap::new();
+    for (sid, synset) in &synsets {
+        if let Some(ili) = &synset.ili {
+            ili_to_synset.entry(ili.clone()).or_insert_with(|| sid.clone());
+            if let Some(ms) = members.get(sid) {
+                ili_members.entry(ili.clone()).or_default().extend(ms.iter().cloned());
+            }
+        }
+    }
+    for v in ili_members.values_mut() {
+        v.sort();
+        v.dedup();
+    }
+
+    WordNet { language, entries, synsets, lemma_index, sense_owner, members, ili_to_synset, ili_members }
 }
 
 #[cfg(test)]
@@ -494,6 +565,37 @@ mod tests {
     fn ili_links_the_concept() {
         let wn = parse_lmf(SAMPLE).unwrap();
         assert_eq!(wn.ili_of("dog"), vec!["i3".to_string()]);
+    }
+
+    // A tiny "French" wordnet: lemmas mapped to synsets by ILI, but with NO
+    // relations of its own — the common OMW shape.
+    const FR: &str = r#"
+<LexicalResource>
+  <Lexicon id="fr" language="fr">
+    <LexicalEntry id="e-chien">
+      <Lemma writtenForm="chien" partOfSpeech="n"/>
+      <Sense id="s-chien" synset="fr-dog"/>
+    </LexicalEntry>
+    <LexicalEntry id="e-animal">
+      <Lemma writtenForm="animal" partOfSpeech="n"/>
+      <Sense id="s-animal" synset="fr-animal"/>
+    </LexicalEntry>
+    <Synset id="fr-dog" ili="i3" partOfSpeech="n"/>
+    <Synset id="fr-animal" ili="i4" partOfSpeech="n"/>
+  </Lexicon>
+</LexicalResource>
+"#;
+
+    #[test]
+    fn hypernyms_expand_through_the_english_pivot_by_ili() {
+        let en = parse_lmf(SAMPLE).unwrap();
+        let fr = parse_lmf(FR).unwrap();
+        // French `chien` has no native relations; its synset shares ILI i3 with
+        // English `dog`, whose hypernym (i4) is French `animal`.
+        let native = fr.lookup("chien");
+        assert!(native.senses[0].hypernyms.is_empty());
+        let expanded = fr.lookup_with_pivot("chien", Some(&en));
+        assert_eq!(expanded.senses[0].hypernyms, vec!["animal".to_string()]);
     }
 
     #[test]
