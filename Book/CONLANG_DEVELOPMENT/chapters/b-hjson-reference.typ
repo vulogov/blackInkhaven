@@ -163,6 +163,26 @@ The `contact` block — the language's membership in a linguistic area / Sprachb
 } }
 ```
 
+The `verb_classes` and `ug_parameters` blocks feed the syntax engine (Chapter 30)
+and the clause Oracle (Chapter 31). A verb class records a verb's *valence* — how
+many arguments it takes — so `link`, `tree`, `check-clause` and the rest read it
+rather than guessing from the argument count. The universal-grammar parameters are
+typological switches that `grammar-check` validates and cross-checks against your
+typology answers:
+
+```hjson
+{ verb_classes: [
+    { name: "see",  valence: "transitive",  note: "perception" }
+    { name: "give", valence: "ditransitive" }
+    { name: "rain", valence: "impersonal" }                   // intransitive | transitive | ditransitive | impersonal
+  ]
+  ug_parameters: {
+    head_final:  false                                        // checked against word_order
+    pro_drop:    true
+    wh_movement: true
+  } }
+```
+
 #section("Dictionary chapter")
 
 Each word is one small block (written for you by `add-word`). The required fields

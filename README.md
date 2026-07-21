@@ -21,29 +21,43 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.7.24 — Pre-1.8 Hardening
+## Latest release · 1.8.0 — The Linguistic Layer
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.7.24.md`](Documentation/RELEASE_NOTES/1.7.24.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.8.0.md`](Documentation/RELEASE_NOTES/1.8.0.md)
 
-A stability and performance pass over the linguistic layer ahead of 1.8 — no new features, nothing
-changes for the user, the internals are tightened. **No new runtime crates.** Test suite → 2581,
-warning-free.
+The flagship that consolidates the entire 1.7 series. Over twenty-four point releases Inkhaven grew
+from a constructed-language tool into a full **general linguistics workbench** — one that still
+builds imaginary languages beautifully, but now models, measures, and interrogates real ones just as
+well. **No new runtime crates.**
 
-### What changed
+### The `inkhaven language` toolset
 
-The five linguistic store-writes (interlinear texts, hypotheses, curated translations) now go
-through `io_atomic` (temp-file + rename), so a crash mid-write can't leave a half-written file. In
-the Linguistic companion the corpus is built once per language and cached for the session, so
-`/frequency` → `/kwic` → `/coll` no longer rescan the whole manuscript and rebuild the gloss index
-each time; the manuscript scan also skips non-conlang prose without materialising its tokens. And
-`minimal_pairs` bounds its collected sample (the functional-load statistics stay exact) so a huge
-lexicon can't blow up memory before the truncation.
+- **Phonology** — declare an inventory and measure it: `metrics` (entropy, Zipf fit, syllable
+  saturation), `pairs` (minimal pairs + functional load), `naturalness` (against a distinctive-
+  feature matrix), `distribution` (where each segment lives).
+- **Morphology** — a parser that handles affixation, full and partial reduplication, and ablaut.
+- **Syntax** — an X-bar engine with movement and binding, and a clause **Oracle** that checks
+  argument structure and head–dependent agreement against the grammar you declared.
+- **Interlinear glossed text** — Leipzig-style glosses auto-built from the lexicon, editable, saved
+  with the project, exportable to LaTeX.
+- **Corpus** — `frequency` (with lemma-folding), `concordance` (KWIC), and `collocations` (by
+  pointwise mutual information) over your stored texts or your manuscript prose.
+- **Hypotheses** — a persistent register for claims about a language, with sound-change consequence
+  tracing and proposed → supported/refuted testing.
+
+### Two companion books
+
+**Developing a Constructed Language** now covers the full toolset (new syntax / Oracle / IGT
+chapters). And a brand-new mirror-image companion, **Linguistic Research with Inkhaven**, studies a
+language you did *not* invent — Russian — end to end with the very same commands: its sound system,
+morphology, clause structure, a corpus from real public-domain texts, its typological profile, and
+its history.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Internal-only — atomic writes, a session corpus cache, and a memory bound
-on minimal-pairs collection; no behaviour changes, no new or altered commands. Warning-free (binary
-and tests). Test suite → 2581.
+**No new runtime crates** across the entire 1.7 series or this consolidation. Every command already
+shipped and is unchanged; 1.8.0 adds the new companion book and the flagship framing. Warning-free
+(binary and tests).
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
