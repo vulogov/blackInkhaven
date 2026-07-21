@@ -158,6 +158,60 @@ load of each feature can finally be weighed.
   right for its half of the subject; the mistake is expecting one model to do both.
 ]
 
+#section("From underlying to surface: allophony")
+
+A phonemic model buys more than a naturalness score. It lets you write the
+language's *rules* — the regular processes that reshape a word between the form
+stored in the mind and the form that reaches the mouth — and then *apply* them. The
+distinction is foundational: the *underlying* form is what the grammar builds, the
+*surface* form is what is pronounced, and the rules map one to the other.
+
+Russian's cleanest example is *final devoicing*: a voiced obstruent at the end of a
+word is pronounced voiceless. The word *друг* "friend" is built on an underlying
+`/g/`, but said with a final `[k]`. You declare the rule in the phonology's
+`allophony` block, in the standard notation #emph[target > result / left `_` right]:
+
+```hjson
+{ allophony: [
+    { name: "final devoicing", rule: "g > k / _ #" }
+    { name: "final devoicing", rule: "d > t / _ #" }
+    // …one per voiced obstruent; `#` is the word edge
+] }
+```
+
+Then ask Inkhaven to derive a word's pronunciation:
+
+```sh
+inkhaven language ipa RussianIPA --word друг
+```
+
+```
+  underlying  /drug/
+  surface     [druk]
+  romanized    друк
+```
+
+The engine segments the word into phonemes, runs the ordered rules
+(underlying → surface), and shows both the surface IPA and its written rendering.
+*год* "year" surfaces as *[got]*; *дом* "house", with no final obstruent to devoice,
+passes through unchanged. Three words, three correct predictions from one rule.
+
+#term("Allophony")[
+  The rule-governed variation in how a phoneme is pronounced depending on its
+  context — the underlying `/g/` of *друг* surfacing as `[k]` word-finally. Allophonic
+  rules are the synchronic (present-tense) processes of a living grammar, distinct
+  from the *diachronic* sound changes of Chapter 8, which act across centuries. The
+  same rewrite notation describes both.
+]
+
+#callout(label: "Rules apply in order")[
+  Allophony rules fire in the order you declare them, each seeing the output of the
+  last — the *feeding order* every phonology textbook teaches. If one rule palatalizes
+  a consonant and a later rule only affects palatalized consonants, the ordering is
+  what makes the second rule apply. Reorder the block and you can change the
+  derivation, which is exactly the kind of hypothesis this lets you test.
+]
+
 #section("Where each sound lives")
 
 `distribution` reports where in the word each segment tends to appear — onset,
@@ -182,4 +236,7 @@ your own model is how you learn to see them.
   [`naturalness` and functional load read an IPA-keyed feature table, so a Cyrillic
    *orthographic* model falls "outside the feature matrix": for feature analysis you
    would build a parallel IPA model; for everything else the orthographic one serves.],
+  [With a phonemic model you can declare *allophony* rules (`g > k / _ #`) and derive a
+   word's surface form with `language ipa` — Russian final devoicing turns underlying
+   *друг* into surface *друк*, one rule predicting a whole class of words.],
 ))
