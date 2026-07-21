@@ -85,6 +85,11 @@ pub fn minimal_pairs(phon: &Phonology, entries: &[DictionaryEntry], sample: usiz
 
     let mut load: HashMap<&'static str, usize> = HashMap::new();
     let mut pairs: Vec<MinimalPair> = Vec::new();
+    // The statistics (`pair_count`, `complex_contrasts`, functional `load`) are
+    // counted over *every* pair below, but the collected sample is bounded well
+    // above `sample` so a lexicon with a huge number of minimal pairs can't
+    // materialise them all before the final truncate.
+    let collect_cap = sample.saturating_mul(10).max(500);
     let mut seen: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
 
     for (key, members) in &buckets {
@@ -112,14 +117,16 @@ pub fn minimal_pairs(phon: &Phonology, entries: &[DictionaryEntry], sample: usiz
                 } else {
                     r.complex_contrasts += 1;
                 }
-                pairs.push(MinimalPair {
-                    a: words[ia].0.clone(),
-                    b: words[ib].0.clone(),
-                    position,
-                    seg_a: seg_a.clone(),
-                    seg_b: seg_b.clone(),
-                    features: feats.iter().map(|s| s.to_string()).collect(),
-                });
+                if pairs.len() < collect_cap {
+                    pairs.push(MinimalPair {
+                        a: words[ia].0.clone(),
+                        b: words[ib].0.clone(),
+                        position,
+                        seg_a: seg_a.clone(),
+                        seg_b: seg_b.clone(),
+                        features: feats.iter().map(|s| s.to_string()).collect(),
+                    });
+                }
             }
         }
     }
