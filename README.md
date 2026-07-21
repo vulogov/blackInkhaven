@@ -21,43 +21,33 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.8.0 — The Linguistic Layer
+## Latest release · 1.8.1 — Readability & Universal Dependencies
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.8.0.md`](Documentation/RELEASE_NOTES/1.8.0.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.8.1.md`](Documentation/RELEASE_NOTES/1.8.1.md)
 
-The flagship that consolidates the entire 1.7 series. Over twenty-four point releases Inkhaven grew
-from a constructed-language tool into a full **general linguistics workbench** — one that still
-builds imaginary languages beautifully, but now models, measures, and interrogates real ones just as
-well. **No new runtime crates.**
+Two additions that make the linguistic layer pay off in both directions — a quantitative
+**readability** pass over your own manuscript, and **CoNLL-U** export so glossed texts round-trip
+into the Universal Dependencies ecosystem — plus a new allophony chapter in the Linguistic companion.
+**No new runtime crates.**
 
-### The `inkhaven language` toolset
+### What's new
 
-- **Phonology** — declare an inventory and measure it: `metrics` (entropy, Zipf fit, syllable
-  saturation), `pairs` (minimal pairs + functional load), `naturalness` (against a distinctive-
-  feature matrix), `distribution` (where each segment lives).
-- **Morphology** — a parser that handles affixation, full and partial reduplication, and ablaut.
-- **Syntax** — an X-bar engine with movement and binding, and a clause **Oracle** that checks
-  argument structure and head–dependent agreement against the grammar you declared.
-- **Interlinear glossed text** — Leipzig-style glosses auto-built from the lexicon, editable, saved
-  with the project, exportable to LaTeX.
-- **Corpus** — `frequency` (with lemma-folding), `concordance` (KWIC), and `collocations` (by
-  pointwise mutual information) over your stored texts or your manuscript prose.
-- **Hypotheses** — a persistent register for claims about a language, with sound-change consequence
-  tracing and proposed → supported/refuted testing.
-
-### Two companion books
-
-**Developing a Constructed Language** now covers the full toolset (new syntax / Oracle / IGT
-chapters). And a brand-new mirror-image companion, **Linguistic Research with Inkhaven**, studies a
-language you did *not* invent — Russian — end to end with the very same commands: its sound system,
-morphology, clause structure, a corpus from real public-domain texts, its typological profile, and
-its history.
+- **Readability metrics.** `inkhaven style` now closes with a per-book readability section: lexical
+  diversity (type–token ratio) and sentence rhythm (mean length, its variation, longest sentence,
+  and a *monotone rhythm* flag). Unicode-aware, so it's meaningful in Russian, French, or any script.
+  Zero AI — it measures, you decide.
+- **CoNLL-U export.** `inkhaven language texts <lang> --format conllu` emits your stored interlinears
+  as a [Universal Dependencies](https://universaldependencies.org/) treebank — FORM, LEMMA, UPOS and
+  FEATS filled from the gloss (`-PL-GEN` → `Case=Gen|Number=Plur`), the same for a real language or
+  an invented one.
+- **Books.** *Linguistic Research with Inkhaven* gains an allophony section — declare ordered rules
+  (`g > k / _ #`) and derive surface forms with `language ipa` (Russian final devoicing, *друг* →
+  *друк*); both companions document CoNLL-U export.
 
 ### Dependencies & compatibility
 
-**No new runtime crates** across the entire 1.7 series or this consolidation. Every command already
-shipped and is unchanged; 1.8.0 adds the new companion book and the flagship framing. Warning-free
-(binary and tests).
+**No new runtime crates.** Purely additive — one new `--format conllu` value and a new report
+section, no behaviour changes to existing commands. Warning-free (binary and tests). Test suite → 2587.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
