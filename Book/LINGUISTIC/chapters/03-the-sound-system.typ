@@ -99,13 +99,63 @@ functional-load half of the minimal-pairs report, are computed from a table of
 segments are Cyrillic *letters*, which that table has never heard of — so it reports
 them "outside the feature matrix" and cannot grade them.
 
-#callout(label: "When to reach for the IPA")[
-  This is the moment to remember the choice of Chapter 2. To study Russian's
-  *features* — to ask whether its consonant system is symmetric, or how much work
-  each contrast does — you would build a second, phonemic model whose inventory is in
-  the IPA (`p`, `pʲ`, `t`, `tʲ`, `a`, `ɨ`…) and transcribe the lexicon into it. The
-  feature tools would then light up. For everything else in this book — statistics,
-  glossing, corpus, syntax — the orthographic model is exactly right, and simpler.
+#section("Building a phonemic model in the IPA")
+
+To make the feature tools work, give Russian a second inventory written in the
+International Phonetic Alphabet. The move is simple: each phoneme's `ipa` field holds
+its IPA symbol, and its `romanize` field holds the Cyrillic letter you want it *shown*
+as. Declare it in the Phonology chapter of a parallel language (call it `RussianIPA`)
+just as before, but phonemically:
+
+```hjson
+{ phonemes: [
+    { ipa: "a", kind: "vowel",     romanize: "а" }
+    { ipa: "ɨ", kind: "vowel",     romanize: "ы" }
+    { ipa: "p", kind: "consonant", romanize: "п" }
+    { ipa: "b", kind: "consonant", romanize: "б" }
+    { ipa: "s", kind: "consonant", romanize: "с" }
+    { ipa: "z", kind: "consonant", romanize: "з" }
+    { ipa: "ɡ", kind: "consonant", romanize: "г" }
+    // …the other vowels, consonants and the palatalized pairs…
+] }
+```
+
+The `romanize` field is the bridge: the model reasons over the IPA symbol `p`, but any
+form it prints shows the Cyrillic `п`. You would transcribe the lexicon phonemically
+too — `дом` becomes `dom`, `был` becomes `bɨl` — so that words and inventory share the
+IPA level.
+
+#section("Before and after")
+
+Now ask the same question of the phonemic model:
+
+```sh
+inkhaven language naturalness RussianIPA
+```
+
+```
+  inventory  · 24 phonemes (18 C / 6 V) — typical
+  voicing    · p/b  t/d  s/z  ʃ/ʒ
+  places     · labial coronal dorsal
+  missing    · w (near-universal)
+  score      · 0.94 (0–1; higher = more typologically ordinary)
+```
+
+The score jumps from 0.35 to *0.94*, and — more to the point — the analysis becomes
+real. Where the Cyrillic model could say nothing, the phonemic one recognizes that
+Russian's obstruents come in neat voicing pairs (`p`/`b`, `t`/`d`, `s`/`z`, `ʃ`/`ʒ`),
+that its consonants cover the major places of articulation, and that it lacks only the
+near-universal `w` — a fair and accurate portrait of a thoroughly ordinary, thoroughly
+natural sound system. The minimal-pairs report changes too: `мать`/`мять` is no longer
+"outside the feature matrix" but a contrast in *palatalization*, and the functional
+load of each feature can finally be weighed.
+
+#callout(label: "Two models, two jobs")[
+  This is the pattern for studying any language whose script is not the IPA: keep an
+  *orthographic* model for the work that lives in the writing system — glossing, the
+  corpus, syntax over real text — and a *phonemic* model in the IPA for the work that
+  lives in the sounds — naturalness, distinctive features, functional load. Each is
+  right for its half of the subject; the mistake is expecting one model to do both.
 ]
 
 #section("Where each sound lives")

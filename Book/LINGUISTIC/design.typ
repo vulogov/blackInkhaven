@@ -31,7 +31,9 @@
 
 #let book_page = (
   paper: "iso-b5",
-  margin: (inside: 26mm, outside: 20mm, top: 22mm, bottom: 24mm),
+  // A roomier top margin so a section heading that lands at the top of a page has
+  // clear air beneath the running header rather than colliding with it.
+  margin: (inside: 26mm, outside: 20mm, top: 27mm, bottom: 24mm),
   numbering: "1",
 )
 
@@ -91,16 +93,16 @@
   hide(heading(level: 2, numbering: none, outlined: true, title))
   block(
     sticky: true,
-    above: 7mm,
-    below: 1.5mm,
+    above: 8mm,
+    below: 3.2mm,      // clear air below the heading — even when the body's first
     text(font: body_family, size: 15pt, weight: "bold", fill: ink_black, title),
-  )
+  )                    // line begins with an inline-code box (whose outset rises).
 }
 #let subsection(title) = {
   block(
     sticky: true,
-    above: 4mm,
-    below: 0.5mm,
+    above: 4.5mm,
+    below: 2mm,
     text(font: body_family, size: 11.5pt, weight: "bold", fill: ink_black, title),
   )
 }
@@ -178,7 +180,7 @@
     text(font: mono_family, size: 9pt, it),
   )
   show raw.where(block: false): it => box(
-    fill: ink_code_bg, inset: (x: 2pt, y: 0pt), outset: (y: 2pt), radius: 1pt,
+    fill: ink_code_bg, inset: (x: 2pt, y: 0pt), outset: (y: 1.5pt), radius: 1pt,
     text(font: mono_family, size: 9.5pt, it),
   )
 
