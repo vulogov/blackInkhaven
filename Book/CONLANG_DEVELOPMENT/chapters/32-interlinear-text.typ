@@ -86,6 +86,15 @@ Every LaTeX special is escaped, and a multi-word gloss is bound so the two lines
 aligned. What you glossed in the terminal comes out as the numbered, typeset examples
 a linguist expects.
 
+For machine consumption rather than the page, `--format conllu` emits a *CoNLL-U*
+file — the interchange format of the Universal Dependencies project. Each word becomes
+a row with its form, lemma, part of speech, and grammatical features (read straight off
+the gloss: a `-PL` tag becomes `Number=Plur`), ready to load into any UD tool:
+
+```sh
+inkhaven language texts Eldar --format conllu
+```
+
 #recap((
   [`igt <lang> --text "…"` glosses a sentence as an aligned interlinear: the
    morpheme-segmented sentence, a gloss under each morpheme, and a literal
@@ -93,6 +102,7 @@ a linguist expects.
   [`--save --name N` keeps a text in the language's `Texts` chapter; `texts <lang>`
    lists them and `--name N` prints one — a growing corpus of documented sentences.],
   [`texts --name N --set-translation "…"` curates a text's free translation without
-   touching its gloss; `--format latex` exports the texts as a `linguex` document.],
+   touching its gloss; `--format latex` exports the texts as a `linguex` document, and
+   `--format conllu` as a Universal Dependencies (CoNLL-U) treebank.],
   [In the companion, `/igt`, `/texts` and `/settrans` do the same inline.],
 ))
