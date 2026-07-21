@@ -73,14 +73,6 @@ pub async fn fetch(lang: &str) -> Result<WordNet, String> {
         format!("no wordnet source for `{lang}` — known languages: {known}")
     })?;
 
-    if src.format == Format::TarXz {
-        return Err(format!(
-            "`{lang}` ({}) ships as a .tar.xz archive; only English (`en`) is fetchable in this \
-             release — the OMW languages arrive next",
-            src.name
-        ));
-    }
-
     let client = reqwest::Client::builder()
         .user_agent(concat!("inkhaven/", env!("CARGO_PKG_VERSION")))
         .build()
@@ -94,8 +86,35 @@ pub async fn fetch(lang: &str) -> Result<WordNet, String> {
         .map_err(|e| format!("download {}: {e}", src.url))?;
     let bytes = resp.bytes().await.map_err(|e| format!("read body: {e}"))?;
 
-    let xml = gunzip(&bytes)?;
+    let xml = decompress(&bytes, &src.format)?;
     parse_lmf(&xml)
+}
+
+/// Build a wordnet from a local WN-LMF file — the escape hatch for languages
+/// whose data isn't openly redistributable (Russian / RuWordNet): the user
+/// obtains it under its own licence and imports the file here. Accepts a plain
+/// `.xml`, a gzipped `.xml.gz`, or a `.tar.xz` archive.
+pub fn import_file(path: &std::path::Path) -> Result<WordNet, String> {
+    let bytes = std::fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+    let name = path.to_string_lossy();
+    let format = if name.ends_with(".tar.xz") || name.ends_with(".txz") {
+        Format::TarXz
+    } else if name.ends_with(".gz") {
+        Format::XmlGz
+    } else {
+        // Plain XML.
+        return parse_lmf(&String::from_utf8_lossy(&bytes));
+    };
+    let xml = decompress(&bytes, &format)?;
+    parse_lmf(&xml)
+}
+
+/// Decompress a downloaded/loaded blob to WN-LMF XML text.
+fn decompress(bytes: &[u8], format: &Format) -> Result<String, String> {
+    match format {
+        Format::XmlGz => gunzip(bytes),
+        Format::TarXz => untar_xz(bytes),
+    }
 }
 
 fn gunzip(bytes: &[u8]) -> Result<String, String> {
@@ -104,4 +123,28 @@ fn gunzip(bytes: &[u8]) -> Result<String, String> {
     let mut out = String::new();
     decoder.read_to_string(&mut out).map_err(|e| format!("gunzip: {e}"))?;
     Ok(out)
+}
+
+/// Decompress a `.tar.xz` and return the WN-LMF XML entry it contains. The OMW
+/// archives hold a single `.xml` document; we take the first one.
+fn untar_xz(bytes: &[u8]) -> Result<String, String> {
+    use std::io::Read;
+    // xz → raw tar bytes (pure-Rust decoder).
+    let mut tar_bytes = Vec::new();
+    lzma_rs::xz_decompress(&mut std::io::Cursor::new(bytes), &mut tar_bytes)
+        .map_err(|e| format!("xz decompress: {e}"))?;
+    let mut archive = tar::Archive::new(std::io::Cursor::new(tar_bytes));
+    for entry in archive.entries().map_err(|e| format!("read tar: {e}"))? {
+        let mut entry = entry.map_err(|e| format!("tar entry: {e}"))?;
+        let is_xml = entry
+            .path()
+            .map(|p| p.extension().map(|e| e.eq_ignore_ascii_case("xml")).unwrap_or(false))
+            .unwrap_or(false);
+        if is_xml {
+            let mut s = String::new();
+            entry.read_to_string(&mut s).map_err(|e| format!("read xml from tar: {e}"))?;
+            return Ok(s);
+        }
+    }
+    Err("no .xml WN-LMF document found in the .tar.xz archive".to_string())
 }
