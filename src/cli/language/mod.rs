@@ -78,6 +78,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             r#type,
             translation,
             example,
+            stress,
             import,
             new,
             force,
@@ -111,6 +112,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
                     &pos,
                     &translation,
                     example.as_deref(),
+                    stress,
                 )
             }
         }
@@ -166,6 +168,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         }
         LanguageCommand::Ipa { language, word } => ipa_surface(project, &language, &word),
         LanguageCommand::Stress { language, word } => stress_word(project, &language, &word),
+        LanguageCommand::Scan { language, text } => scan_verse(project, &language, &text),
         LanguageCommand::Romanize {
             language,
             text,
@@ -1853,7 +1856,7 @@ mod tests {
     #[test]
     fn dictionary_entry_seed_parses() {
         let body = seed_dictionary_entry_body(
-            "aiya", "interjection", "hail", Some("Aiya!"),
+            "aiya", "interjection", "hail", Some("Aiya!"), Some(2),
         );
         let _: serde_hjson::Value = serde_hjson::from_str(&body)
             .expect("dictionary entry seed must be valid HJSON");
@@ -1911,6 +1914,7 @@ mod tests {
             "interjection",
             "hail",
             Some("Aiya Eärendil!"),
+            None,
         );
         // The four core HJSON fields land in the
         // body.  Locking presence stops a future
