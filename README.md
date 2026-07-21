@@ -21,33 +21,33 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.8.1 — Readability & Universal Dependencies
+## Latest release · 1.8.2 — Scansion
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.8.1.md`](Documentation/RELEASE_NOTES/1.8.1.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.8.2.md`](Documentation/RELEASE_NOTES/1.8.2.md)
 
-Two additions that make the linguistic layer pay off in both directions — a quantitative
-**readability** pass over your own manuscript, and **CoNLL-U** export so glossed texts round-trip
-into the Universal Dependencies ecosystem — plus a new allophony chapter in the Linguistic companion.
-**No new runtime crates.**
+Read the metre of a line of poetry. `inkhaven language scan` marks each syllable strong or weak and
+names the foot — iambic tetrameter, trochaic trimeter — building on the phonology layer's syllabifier
+and stress model, and handling languages whose stress is lexical (Russian above all). **No new
+runtime crates.**
 
 ### What's new
 
-- **Readability metrics.** `inkhaven style` now closes with a per-book readability section: lexical
-  diversity (type–token ratio) and sentence rhythm (mean length, its variation, longest sentence,
-  and a *monotone rhythm* flag). Unicode-aware, so it's meaningful in Russian, French, or any script.
-  Zero AI — it measures, you decide.
-- **CoNLL-U export.** `inkhaven language texts <lang> --format conllu` emits your stored interlinears
-  as a [Universal Dependencies](https://universaldependencies.org/) treebank — FORM, LEMMA, UPOS and
-  FEATS filled from the gloss (`-PL-GEN` → `Case=Gen|Number=Plur`), the same for a real language or
-  an invented one.
-- **Books.** *Linguistic Research with Inkhaven* gains an allophony section — declare ordered rules
-  (`g > k / _ #`) and derive surface forms with `language ipa` (Russian final devoicing, *друг* →
-  *друк*); both companions document CoNLL-U export.
+- **Verse scansion.** `inkhaven language scan <lang> --text "…"` syllabifies each word, marks its
+  beats (`/` stressed, `×` unstressed, `·` flexible) and names the metre. It gets the nuances right —
+  a feminine ending keeps a 9-syllable iambic line as *tetrameter*, and a monosyllable stays flexible
+  to fit the foot.
+- **Lexical stress.** Because Russian stress is unpredictable (за́мок vs замо́к), scansion resolves it
+  per word through a chain: an acute mark in the text → the lexicon's new `stress` field
+  (`add-word … --stress 2`) → the language's stress rule. Language-independent throughout.
+- **Books.** *Linguistic Research with Inkhaven* gains a *Stress and the metre of verse* section
+  (scanning Pushkin's *Ruslan and Lyudmila* opening as iambic tetrameter); the constructed-language
+  companion's stress chapter shows `language scan`.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Purely additive — one new `--format conllu` value and a new report
-section, no behaviour changes to existing commands. Warning-free (binary and tests). Test suite → 2587.
+**No new runtime crates.** Scansion composes the existing syllabifier and stress evaluator; the only
+additions are the `scan` command, an optional `stress` lexicon field, and `add-word --stress`. Purely
+additive, warning-free (binary and tests). Test suite → 2595.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
