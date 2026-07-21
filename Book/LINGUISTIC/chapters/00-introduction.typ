@@ -6,22 +6,27 @@
 ]
 #v(6mm)
 
-Inkhaven was built to help you *invent* a language — to design a sound system, grow
-a lexicon, decline and conjugate, evolve a family, and print the grammar. But the
-machinery underneath does not care whether the language it is handed is imaginary or
-real. A phoneme inventory is a phoneme inventory; a corpus is a corpus; an
-interlinear gloss glosses whatever you give it. Point the same tools at a language
-that already exists, and Inkhaven becomes a small but genuine *linguistics
-workbench*: a place to model a language explicitly and interrogate the model.
+Inkhaven began life as a tool for *inventing* languages, and it is still very good at
+it — designing a sound system, growing a lexicon, declining and conjugating, evolving
+a family, printing the grammar. But over its 1.7 series it grew a full linguistic
+layer — glossing, corpus tools, a syntax engine, a typological questionnaire, a
+hypothesis register — and somewhere along the way it stopped being a conlang tool that
+could describe languages and became a *general linguistics workbench* that happens to
+be excellent at conlang. The machinery never cared whether the language it was handed
+was imaginary or real: a phoneme inventory is a phoneme inventory; a corpus is a
+corpus; an interlinear gloss glosses whatever you give it. Point the tools at a
+language that already exists, and you have a place to model it explicitly and
+interrogate the model — a laboratory for real linguistics that also, when you want it,
+builds worlds.
 
 This book is the mirror image of its companion, #emph[Developing a Constructed
-Language]. That book runs from nothing to a finished invented language. This one
-takes a language you did not invent — *Russian* — and shows how to study it with the
-same commands: measure its sound system, gloss its sentences, parse its rich
-morphology, draw the structure of its clauses, build a corpus from real texts, place
-it on the typological map, and reason about its history. Russian is the running
-example on every page; the *methods* are the point, and they transfer to any
-language you can write down.
+Language]. That book uses the workbench to run from nothing to a finished invented
+language. This one takes a language you did not invent — *Russian* — and shows how to
+study it with the very same commands: measure its sound system, gloss its sentences,
+parse its rich morphology, draw the structure of its clauses, build a corpus from real
+texts, place it on the typological map, and reason about its history. Russian is the
+running example on every page; the *methods* are the point, and they transfer to any
+language you can write down — invented or inherited.
 
 You do not need to speak Russian to follow along — every example is translated — and
 you do not need a linguistics degree, because each idea is defined where it first
