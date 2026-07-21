@@ -21,33 +21,31 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.8.2 — Scansion
+## Latest release · 1.8.3 — WordNet
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.8.2.md`](Documentation/RELEASE_NOTES/1.8.2.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.8.3.md`](Documentation/RELEASE_NOTES/1.8.3.md)
 
-Read the metre of a line of poetry. `inkhaven language scan` marks each syllable strong or weak and
-names the foot — iambic tetrameter, trochaic trimeter — building on the phonology layer's syllabifier
-and stress model, and handling languages whose stress is lexical (Russian above all). **No new
-runtime crates.**
+A sense-based thesaurus for your prose. `inkhaven wordnet` fetches open WordNet data on demand and
+looks a word up for its **senses** — each with synonyms, antonyms, and hypernyms/hyponyms. This
+release lays the foundation with English; the other standard languages and an in-editor chord follow.
 
 ### What's new
 
-- **Verse scansion.** `inkhaven language scan <lang> --text "…"` syllabifies each word, marks its
-  beats (`/` stressed, `×` unstressed, `·` flexible) and names the metre. It gets the nuances right —
-  a feminine ending keeps a 9-syllable iambic line as *tetrameter*, and a monosyllable stays flexible
-  to fit the foot.
-- **Lexical stress.** Because Russian stress is unpredictable (за́мок vs замо́к), scansion resolves it
-  per word through a chain: an acute mark in the text → the lexicon's new `stress` field
-  (`add-word … --stress 2`) → the language's stress rule. Language-independent throughout.
-- **Books.** *Linguistic Research with Inkhaven* gains a *Stress and the metre of verse* section
-  (scanning Pushkin's *Ruslan and Lyudmila* opening as iambic tetrameter); the constructed-language
-  companion's stress chapter shows `language scan`.
+- **`inkhaven wordnet`.** `wordnet fetch en` downloads Open English WordNet (CC-BY; 152k lemmas,
+  120k synsets), builds a compact local index in the user data dir, and every lookup is offline
+  thereafter. `wordnet lookup <word>` returns each **sense** separately (polysemy handled) with its
+  definition, synonyms, antonyms, and hypernyms/hyponyms; `wordnet list` shows sources + status.
+- **Fetch-on-demand, never bundled.** The open [WN-LMF](https://globalwordnet.github.io/schemas/)
+  data is downloaded and parsed locally; every synset is keyed by its interlingual index (ILI), the
+  hook the other languages link through.
+- **Foundation for what's next.** Russian, French, German and Spanish (OMW) land in the next
+  release, then the in-editor WordNet chord: stand on a word, pull its senses, replace it in place.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Scansion composes the existing syllabifier and stress evaluator; the only
-additions are the `scan` command, an optional `stress` lexicon field, and `add-word --stress`. Purely
-additive, warning-free (binary and tests). Test suite → 2595.
+Promotes two crates already in the dependency tree — `bincode` (index serialisation) and `flate2`
+(gunzip) — to direct dependencies; no new crates enter the build. Purely additive: one new top-level
+`wordnet` command. Warning-free (binary and tests). Test suite → 2602.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
