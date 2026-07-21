@@ -82,6 +82,7 @@ mod timeline;
 mod tui;
 mod tui_host;
 mod typst_check;
+mod wordnet;
 mod typst_compile;
 mod typst_inprocess;
 mod typst_paragraph_render;
