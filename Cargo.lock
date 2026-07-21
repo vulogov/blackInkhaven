@@ -1653,6 +1653,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "crc"
+version = "3.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5eb8a2a1cd12ab0d987a5d5e825195d372001a4094a0376319d5a0ad71c1ba0d"
+dependencies = [
+ "crc-catalog",
+]
+
+[[package]]
+name = "crc-catalog"
+version = "2.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "217698eaf96b4a3f0bc4f3662aaa55bdf913cd54d7204591faa790070c6d0853"
+
+[[package]]
 name = "crc32fast"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3920,7 +3935,7 @@ checksum = "a588916bfdfd92e71cacef98a63d9b1f0d74d6599980d11894290e7ddefffcf7"
 
 [[package]]
 name = "inkhaven"
-version = "1.8.4-dev"
+version = "1.8.4"
 dependencies = [
  "anyhow",
  "arboard",
@@ -3947,6 +3962,7 @@ dependencies = [
  "image 0.25.10",
  "kurbo 0.12.0",
  "lopdf 0.41.0",
+ "lzma-rs",
  "minijinja",
  "noise",
  "norad",
@@ -3978,6 +3994,7 @@ dependencies = [
  "skrifa",
  "slug",
  "syn 2.0.117",
+ "tar",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
@@ -4828,6 +4845,16 @@ checksum = "d60e266dfb1426eb2d24792602e041131fdc0236bb7007abc0e589acafd60929"
 dependencies = [
  "aho-corasick",
  "nu-ansi-term",
+]
+
+[[package]]
+name = "lzma-rs"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "297e814c836ae64db86b36cf2a557ba54368d03f6afcd7d947c266692f71115e"
+dependencies = [
+ "byteorder",
+ "crc",
 ]
 
 [[package]]
