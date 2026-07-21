@@ -72,8 +72,12 @@ pub fn run(
     let mut totals = Counts::default();
     let mut per_para: Vec<(String, Counts)> = Vec::new();
     let mut paragraphs = 0usize;
+    // 1.8.1 — quantitative readability (lexical diversity + sentence rhythm),
+    // accumulated per book alongside the span warnings.
+    let mut read_by_book: Vec<(String, crate::tui::readability::ReadabilityReport)> = Vec::new();
 
-    for (book_id, _) in &books {
+    for (book_id, book_title) in &books {
+        let mut rd = crate::tui::readability::Readability::default();
         for id in h.collect_subtree(*book_id) {
             let Some(node) = h.get(id) else { continue };
             if node.kind != NodeKind::Paragraph {
@@ -82,6 +86,7 @@ pub fn run(
             paragraphs += 1;
             let Ok(Some(bytes)) = store.get_content(id) else { continue };
             let text = String::from_utf8_lossy(&bytes);
+            rd.add(&text);
             let lines: Vec<String> = text.lines().map(str::to_string).collect();
 
             let mut c = Counts::default();
@@ -99,6 +104,9 @@ pub fn run(
                 totals.anachronism += c.anachronism;
                 per_para.push((node.title.clone(), c));
             }
+        }
+        if !rd.is_empty() {
+            read_by_book.push((book_title.clone(), rd.finish()));
         }
     }
 
@@ -119,6 +127,22 @@ pub fn run(
                 })
             })
             .collect();
+        let readability: Vec<_> = read_by_book
+            .iter()
+            .map(|(title, r)| {
+                serde_json::json!({
+                    "book": title,
+                    "tokens": r.tokens,
+                    "types": r.types,
+                    "ttr": r.ttr,
+                    "sentences": r.sentences,
+                    "mean_sentence_len": r.mean_sentence_len,
+                    "stdev_sentence_len": r.stdev_sentence_len,
+                    "rhythm_cv": r.rhythm_cv(),
+                    "longest_sentence": r.longest_sentence,
+                })
+            })
+            .collect();
         let out = serde_json::json!({
             "scope": scope,
             "language": lang,
@@ -132,6 +156,7 @@ pub fn run(
                 "total": totals.total(),
             },
             "paragraphs": paras,
+            "readability": readability,
         });
         println!("{}", serde_json::to_string_pretty(&out).unwrap_or_default());
         return Ok(());
@@ -158,6 +183,27 @@ pub fn run(
                 c.repeated,
                 c.show,
                 c.anachronism
+            );
+        }
+    }
+
+    if !read_by_book.is_empty() {
+        println!("\nreadability (per book):");
+        for (title, r) in &read_by_book {
+            let monotone = if r.sentences >= 8 && r.rhythm_cv() < 0.4 { "  ⚠ monotone rhythm" } else { "" };
+            println!("  {title}");
+            println!(
+                "    lexical diversity · {} types / {} tokens · TTR {:.2}",
+                r.types, r.tokens, r.ttr
+            );
+            println!(
+                "    sentence rhythm   · {} sentences · {:.1} words avg (±{:.1}, CV {:.2}) · longest {}{}",
+                r.sentences,
+                r.mean_sentence_len,
+                r.stdev_sentence_len,
+                r.rhythm_cv(),
+                r.longest_sentence,
+                monotone,
             );
         }
     }

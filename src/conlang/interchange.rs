@@ -219,6 +219,189 @@ pub fn igt_linguex(language: &str, texts: &[(String, crate::conlang::igt::Igt)])
     out
 }
 
+/// UD (1.8.1) — export stored interlinear texts as CoNLL-U, the Universal
+/// Dependencies interchange format. Emits morphological annotation: FORM,
+/// LEMMA, UPOS (mapped from the lexicon's part of speech), XPOS (the raw POS),
+/// and FEATS (the Leipzig grammatical glosses mapped to UD features). HEAD and
+/// DEPREL are left unspecified (`_`) — this is a valid morphology-only treebank
+/// that UD tooling accepts; a full dependency parse is a later increment. The
+/// tag→feature map is language-independent (Leipzig abbreviations are the same
+/// across languages), so a Russian gloss `stone-PL-GEN` yields
+/// `Case=Gen|Number=Plur` exactly as an invented language would. Pure.
+pub fn igt_conllu(
+    texts: &[(String, crate::conlang::igt::Igt)],
+    entries: &[DictionaryEntry],
+) -> String {
+    use std::collections::BTreeMap;
+    let pos_of: BTreeMap<&str, &str> =
+        entries.iter().map(|e| (e.word.as_str(), e.pos.as_str())).collect();
+
+    let mut out = String::new();
+    out.push_str("# generator = Inkhaven · language texts --format conllu\n");
+    for (name, igt) in texts {
+        out.push_str(&format!("# sent_id = {}\n", conllu_sent_id(name)));
+        out.push_str(&format!("# text = {}\n", conllu_meta(&igt.text)));
+        if !igt.translation.trim().is_empty() {
+            out.push_str(&format!("# text_translation = {}\n", conllu_meta(&igt.translation)));
+        }
+        for (i, w) in igt.words.iter().enumerate() {
+            let id = i + 1;
+            let form = conllu_field(&w.surface);
+            let root = w.root.as_deref().filter(|s| !s.trim().is_empty());
+            let lemma = conllu_field(root.unwrap_or(&w.surface));
+            let (upos, xpos) = match root.and_then(|r| pos_of.get(r)) {
+                Some(pos) => (conllu_upos(pos), conllu_field(pos)),
+                None => ("X", "_".to_string()),
+            };
+            let feats = conllu_feats(w.gloss.as_deref(), &w.segments);
+            out.push_str(&format!("{id}\t{form}\t{lemma}\t{upos}\t{xpos}\t{feats}\t_\t_\t_\t_\n"));
+        }
+        out.push('\n');
+    }
+    out
+}
+
+/// A CoNLL-U comment value: no tabs or newlines.
+fn conllu_meta(s: &str) -> String {
+    s.replace(['\t', '\n', '\r'], " ").trim().to_string()
+}
+
+/// A CoNLL-U column value: never empty (→ `_`), never a tab/newline.
+fn conllu_field(s: &str) -> String {
+    let t = s.replace(['\t', '\n', '\r'], " ");
+    let t = t.trim();
+    if t.is_empty() { "_".to_string() } else { t.to_string() }
+}
+
+/// A `sent_id` token — whitespace collapsed to underscores.
+fn conllu_sent_id(name: &str) -> String {
+    let s: String =
+        name.trim().chars().map(|c| if c.is_whitespace() { '_' } else { c }).collect();
+    if s.is_empty() { "s".to_string() } else { s }
+}
+
+/// Map a lexicon part-of-speech string to a UD universal POS tag. Accepts the
+/// common spellings and abbreviations; unknown → `X`.
+fn conllu_upos(pos: &str) -> &'static str {
+    match pos.trim().to_lowercase().as_str() {
+        "noun" | "n" => "NOUN",
+        "proper noun" | "propn" | "proper" | "name" => "PROPN",
+        "verb" | "v" => "VERB",
+        "auxiliary" | "aux" => "AUX",
+        "adjective" | "adj" | "a" => "ADJ",
+        "adverb" | "adv" => "ADV",
+        "pronoun" | "pron" => "PRON",
+        "preposition" | "postposition" | "adposition" | "adp" => "ADP",
+        "conjunction" | "conj" | "coordinating conjunction" | "cconj" => "CCONJ",
+        "subordinating conjunction" | "sconj" => "SCONJ",
+        "determiner" | "det" | "article" => "DET",
+        "numeral" | "num" | "number" => "NUM",
+        "interjection" | "intj" => "INTJ",
+        "particle" | "part" | "ptcl" => "PART",
+        "symbol" | "sym" => "SYM",
+        "punctuation" | "punct" => "PUNCT",
+        _ => "X",
+    }
+}
+
+/// Extract UD morphological features from a word's Leipzig gloss (or its
+/// per-morpheme segment glosses). Grammatical tags — all-caps and/or digits —
+/// map to UD `Key=Value` pairs; lexical (lowercase) glosses are skipped. The
+/// pairs are keyed in a `BTreeMap`, so the output is UD-canonical (alphabetical,
+/// `|`-joined). `_` when the word carries no recognised feature.
+fn conllu_feats(gloss: Option<&str>, segments: &[crate::conlang::morphology::paradigm::MorphSeg]) -> String {
+    use std::collections::BTreeMap;
+    let mut feats: BTreeMap<&'static str, &'static str> = BTreeMap::new();
+    let mut consume = |g: &str| {
+        for part in g.split(['-', '.', '=', ':']) {
+            let p = part.trim();
+            if is_grammatical_tag(p) {
+                if let Some((k, v)) = leipzig_to_ud(&p.to_uppercase()) {
+                    feats.insert(k, v);
+                }
+            }
+        }
+    };
+    if !segments.is_empty() {
+        for s in segments {
+            consume(&s.gloss);
+        }
+    } else if let Some(g) = gloss {
+        consume(g);
+    }
+    if feats.is_empty() {
+        "_".to_string()
+    } else {
+        feats.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join("|")
+    }
+}
+
+/// A Leipzig grammatical gloss is written in caps and/or digits (`NOM`, `PL`,
+/// `3`, `PST`); a lexical gloss carries lowercase letters (`stone`).
+fn is_grammatical_tag(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars().any(|c| c.is_alphanumeric())
+        && s.chars().all(|c| c.is_ascii_digit() || (c.is_alphabetic() && c.is_uppercase()))
+}
+
+/// Map a single Leipzig grammatical abbreviation to a UD feature `Key=Value`.
+/// Language-independent — the abbreviations are standard across the world's
+/// languages, so this serves Russian, an invented language, or anything else.
+fn leipzig_to_ud(tag: &str) -> Option<(&'static str, &'static str)> {
+    Some(match tag {
+        // Number
+        "SG" => ("Number", "Sing"),
+        "PL" => ("Number", "Plur"),
+        "DU" => ("Number", "Dual"),
+        // Case
+        "NOM" => ("Case", "Nom"),
+        "ACC" => ("Case", "Acc"),
+        "GEN" => ("Case", "Gen"),
+        "DAT" => ("Case", "Dat"),
+        "INS" | "INSTR" => ("Case", "Ins"),
+        "LOC" | "PREP" | "PRP" => ("Case", "Loc"),
+        "ABL" => ("Case", "Abl"),
+        "VOC" => ("Case", "Voc"),
+        "ERG" => ("Case", "Erg"),
+        "ABS" => ("Case", "Abs"),
+        // Person
+        "1" => ("Person", "1"),
+        "2" => ("Person", "2"),
+        "3" => ("Person", "3"),
+        // Gender
+        "M" | "MASC" => ("Gender", "Masc"),
+        "F" | "FEM" => ("Gender", "Fem"),
+        "N" | "NEUT" => ("Gender", "Neut"),
+        // Tense
+        "PST" | "PAST" => ("Tense", "Past"),
+        "PRS" | "PRES" => ("Tense", "Pres"),
+        "FUT" => ("Tense", "Fut"),
+        // Aspect
+        "PFV" | "PF" | "PERF" => ("Aspect", "Perf"),
+        "IPFV" | "IPF" | "IMPF" => ("Aspect", "Imp"),
+        // Mood
+        "IND" => ("Mood", "Ind"),
+        "SBJV" | "SUBJ" => ("Mood", "Sub"),
+        "IMP" => ("Mood", "Imp"),
+        "COND" | "CND" => ("Mood", "Cnd"),
+        // Voice
+        "PASS" => ("Voice", "Pass"),
+        "ACT" => ("Voice", "Act"),
+        "MID" => ("Voice", "Mid"),
+        // Definiteness / degree / polarity
+        "DEF" => ("Definite", "Def"),
+        "INDF" | "INDEF" => ("Definite", "Ind"),
+        "CMPR" | "COMP" => ("Degree", "Cmp"),
+        "SUP" | "SUPL" => ("Degree", "Sup"),
+        "NEG" => ("Polarity", "Neg"),
+        // Non-finite verb forms
+        "INF" => ("VerbForm", "Inf"),
+        "PTCP" => ("VerbForm", "Part"),
+        "GER" | "CVB" => ("VerbForm", "Conv"),
+        _ => return None,
+    })
+}
+
 /// Render the phoneme inventory as a printable IPA chart in Markdown. The
 /// data model carries IPA + romanization + a coarse vowel/consonant kind (a
 /// full place×manner grid needs the articulatory features that land later), so
@@ -647,6 +830,61 @@ mod tests {
         let out = igt_linguex("T", &[("t".into(), igt)]);
         // The multi-word gloss becomes one aligned unit via a non-breaking space.
         assert!(out.contains("old~man\\\\"), "{out}");
+    }
+
+    #[test]
+    fn conllu_emits_morphological_columns_and_metadata() {
+        use crate::conlang::igt::{Igt, IgtWord};
+        use crate::conlang::morphology::paradigm::MorphSeg;
+        use crate::language_entry::DictionaryEntry;
+        let seg = |s: &str, g: &str| MorphSeg { surface: s.into(), gloss: g.into() };
+        let igt = Igt {
+            text: "katat nilo".into(),
+            words: vec![
+                IgtWord {
+                    surface: "katat".into(),
+                    root: Some("kata".into()),
+                    gloss: Some("stone-PL-DAT".into()),
+                    segments: vec![seg("kata", "stone"), seg("t", "PL"), seg("", "DAT")],
+                },
+                // Unrecognised word → UPOS X, no features.
+                IgtWord { surface: "nilo".into(), root: None, gloss: None, segments: vec![] },
+            ],
+            translation: "to the stones, nilo".into(),
+            recognised: 1,
+        };
+        let entries = vec![DictionaryEntry { word: "kata".into(), pos: "noun".into(), ..Default::default() }];
+        let out = igt_conllu(&[("my text".into(), igt)], &entries);
+        // Metadata: sent_id with spaces collapsed, text, translation.
+        assert!(out.contains("# sent_id = my_text"), "{out}");
+        assert!(out.contains("# text = katat nilo"), "{out}");
+        assert!(out.contains("# text_translation = to the stones, nilo"), "{out}");
+        // Token 1: FORM LEMMA UPOS XPOS FEATS, features UD-canonical (alphabetical).
+        assert!(out.contains("1\tkatat\tkata\tNOUN\tnoun\tCase=Dat|Number=Plur\t_\t_\t_\t_"), "{out}");
+        // Token 2: unrecognised → lemma falls back to surface, UPOS X, no feats.
+        assert!(out.contains("2\tnilo\tnilo\tX\t_\t_\t_\t_\t_\t_"), "{out}");
+    }
+
+    #[test]
+    fn conllu_maps_russian_gloss_features() {
+        use crate::conlang::igt::{Igt, IgtWord};
+        use crate::language_entry::DictionaryEntry;
+        // Russian: окно 'window', genitive singular neuter → окна.
+        let igt = Igt {
+            text: "окна".into(),
+            words: vec![IgtWord {
+                surface: "окна".into(),
+                root: Some("окно".into()),
+                gloss: Some("window-GEN.SG.N".into()),
+                segments: vec![],
+            }],
+            translation: "of the window".into(),
+            recognised: 1,
+        };
+        let entries = vec![DictionaryEntry { word: "окно".into(), pos: "noun".into(), ..Default::default() }];
+        let out = igt_conllu(&[("ru1".into(), igt)], &entries);
+        // Portmanteau gloss split on '.', mapped to canonical UD FEATS.
+        assert!(out.contains("1\tокна\tокно\tNOUN\tnoun\tCase=Gen|Gender=Neut|Number=Sing\t_\t_\t_\t_"), "{out}");
     }
 
     #[test]

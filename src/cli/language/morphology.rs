@@ -763,8 +763,17 @@ pub(crate) fn list_texts(
         println!("{}", crate::conlang::interchange::igt_linguex(language, &owned));
         return Ok(());
     }
+    // CoNLL-U export (Universal Dependencies) — morphological annotation from
+    // the gloss + lexicon POS.
+    if format.eq_ignore_ascii_case("conllu") {
+        let owned: Vec<(String, crate::conlang::igt::Igt)> =
+            selected.iter().map(|(t, igt)| (t.clone(), igt.clone())).collect();
+        let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
+        print!("{}", crate::conlang::interchange::igt_conllu(&owned, &entries));
+        return Ok(());
+    }
     if !format.eq_ignore_ascii_case("text") {
-        return Err(Error::Config(format!("unknown --format `{format}` (text | latex)")));
+        return Err(Error::Config(format!("unknown --format `{format}` (text | latex | conllu)")));
     }
 
     if json {
