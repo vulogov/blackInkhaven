@@ -2849,6 +2849,13 @@ pub enum LanguageCommand {
         /// author wants frozen into the entry.
         #[arg(long)]
         example: Option<String>,
+        /// 1.8.2 — the stressed syllable of the
+        /// citation form (1-based), for languages
+        /// whose stress is lexical rather than
+        /// rule-governed (Russian). Read by verse
+        /// scansion (`language scan`).
+        #[arg(long)]
+        stress: Option<usize>,
         /// bulk-import a CSV
         /// dictionary.  When set, the positional
         /// <word> + the --type / --translation /
@@ -3121,6 +3128,21 @@ pub enum LanguageCommand {
         /// The word, in the language's romanization (or raw IPA).
         #[arg(long)]
         word: String,
+    },
+
+    /// 1.8.2 — scan a line (or several) of verse: syllabify each word, mark it
+    /// stressed or unstressed, and name the metre (iambic tetrameter, trochaic
+    /// trimeter, …). Stress is resolved per word from an explicit combining-acute
+    /// mark in the text (`лу́`), else the lexicon's `stress` field, else the
+    /// language's stress rule; an unmarked monosyllable stays flexible and may
+    /// promote or demote to fit the metre.
+    Scan {
+        /// Target language name (case-insensitive).
+        language: String,
+        /// The verse to scan (newline-separated lines are each scanned; a
+        /// stanza also gets a dominant-metre summary).
+        #[arg(long)]
+        text: String,
     },
 
     /// LANG-1 P1.5 — convert between IPA and a named romanization scheme.
