@@ -454,6 +454,16 @@ pub(super) enum Modal {
         cursor: usize,
         scroll: usize,
     },
+    /// Ctrl+V Shift+Y (1.8.5) — the WordNet thesaurus for the word under the
+    /// cursor. Picking a row replaces the word (bounded by row/start/end char
+    /// columns) with the chosen synonym / relation.
+    Thesaurus {
+        panel: super::wordnet_panel::WordnetPanel,
+        row: usize,
+        start_col: usize,
+        end_col: usize,
+        scroll: usize,
+    },
     /// 1.2.21+ FF.1 — Facts semantic-search modal.  Two-phase to
     /// avoid the Space-vs-space conflict (the query box accepts
     /// multi-word queries): `browsing == false` while editing the

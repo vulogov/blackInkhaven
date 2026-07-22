@@ -796,6 +796,10 @@ pub enum Action {
     /// toggle sort (count ↔ alphabetical), Esc closes.
     #[serde(rename = "view.open_concordance")]
     OpenConcordance,
+    /// Ctrl+V Shift+Y (1.8.5) — open the WordNet thesaurus for the word under
+    /// the cursor: pick a synonym / antonym / hypernym / hyponym to replace it.
+    #[serde(rename = "view.open_thesaurus")]
+    OpenThesaurus,
     /// Ctrl+V R (1.2.5+) — render the open paragraph in-process
     /// via typst-render and float a PNG preview on top of the
     /// editor. `Esc` closes, `S` opens a save-as picker for the
@@ -1085,6 +1089,7 @@ impl Action {
             Action::ToggleStyleWarnings => "style warnings".into(),
             Action::ToggleEchoOverlay => "echo overlay".into(),
             Action::OpenConcordance => "concordance".into(),
+            Action::OpenThesaurus => "thesaurus".into(),
             Action::TogglePovChip => "pov chip".into(),
             Action::TogglePromptLanguageMode => "prompt lang mode".into(),
             Action::OpenSentenceRhythm => "rhythm".into(),
@@ -1421,6 +1426,8 @@ impl Action {
                 "Toggle the live echo overlay (1.2.20+, Ctrl+B Shift+K). Underlines, in the open paragraph, any word echoing across nearby paragraphs of the chapter — the inline companion to the `echo-repetition` doctor scan, sharing the repeated-phrase highlight colour. Multilingual via the project's Snowball stemmer (ё-folded for Russian) and the shared `editor.echo_window` / `echo_min_repeats` / `echo_max_global` tunables. Session-local override on top of `editor.echo_overlay`.".into(),
             Action::OpenConcordance =>
                 "Open the project-wide concordance modal (1.2.9+, Ctrl+B Shift+L). Lists every distinct lexical stem in the project with its total count plus up to three KWIC samples. Stop-words, single-character tokens, and pure-digit runs are filtered out so the list surfaces the words actually carrying the prose's weight. System books (Prompts, Characters, Places, Lore, Help, Notes, Artefacts, etc.) are excluded from the corpus since they're metadata/scaffolding, not prose (1.2.11+). Multilingual via the same Snowball stemmer + stop-list plumbing as the repeated-phrase detector — `language` in HJSON drives the algorithm choice. Type to filter (substring match); Ctrl+S toggles sort (count ↔ alphabetical); Enter jumps to the first sample's source paragraph at the matching line (1.2.11+); Esc closes.".into(),
+            Action::OpenThesaurus =>
+                "Open the WordNet thesaurus for the word under the cursor (1.8.5+, Ctrl+V Shift+Y). Looks the word up in the sense-based WordNet index for the paragraph's language (from `inkhaven wordnet fetch`/`import`) and lists candidate replacements — synonyms first, then hypernyms, hyponyms, and antonyms. For a non-English language the taxonomy relations are expanded through the English wordnet by the interlingual index. ↑↓ select, Enter replaces the word in place, Esc cancels. Needs the language's index installed; nothing is sent to any server.".into(),
             Action::TogglePovChip =>
                 "Toggle the POV / character chip on the status bar (1.2.9+, Ctrl+B Shift+P). When enabled, the status bar shows the most-mentioned character in the open paragraph (the heuristic POV character) plus up to three additional named characters present. Driven by the project's existing `characters` lexicon — no separate tagging needed. Ties broken by first-mention order. Session-local override on top of `editor.pov_chip_enabled` in HJSON.".into(),
             Action::TogglePromptLanguageMode =>
@@ -1633,6 +1640,9 @@ impl KeyBindings {
                 // 1.2.20+ C.1.b — Ctrl+B Shift+K toggles the
                 // inline echo overlay (companion to Shift+F).
                 entry("Shift+k", Action::ToggleEchoOverlay, Scope::Editor),
+                // 1.8.5 — Ctrl+V Shift+Y opens the WordNet thesaurus for the
+                // word under the cursor and replaces it with a chosen relation.
+                entry("Shift+y", Action::OpenThesaurus, Scope::Editor),
                 // 1.2.9+ — Ctrl+B Shift+R saves the
                 // current paragraph as an audio file
                 // via macOS `say -o`.

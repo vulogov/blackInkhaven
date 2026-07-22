@@ -1763,6 +1763,12 @@ pub(crate) struct App {
     /// count, so the `haiku_scope: "book"` haiku doesn't re-embed the book on every
     /// new-paragraph / on-demand trigger. Rebuilds when a paragraph is added/removed.
     book_haiku_centroid: Option<(usize, Vec<f32>)>,
+    /// 1.8.5 — the WordNet index for the language last looked up, cached for the
+    /// session (loading the bincode index is ~1s), keyed by language code so a
+    /// language switch reloads. The English pivot is cached separately for
+    /// cross-lingual relation expansion.
+    wordnet_index: Option<(String, crate::wordnet::WordNet)>,
+    wordnet_pivot_en: Option<crate::wordnet::WordNet>,
     scene_last_para: Option<Uuid>,
     scene_brief: Option<crate::world::scene::SceneBrief>,
     /// NARR-1 — ambient prose check toggle (`Ctrl+V Shift+V`); seeded from
@@ -3205,6 +3211,8 @@ impl App {
             scene_world_mtime: None,
             world_overview_cache: None,
             book_haiku_centroid: None,
+            wordnet_index: None,
+            wordnet_pivot_en: None,
             scene_last_para: None,
             scene_brief: None,
             ie_auto: false,
@@ -12105,6 +12113,7 @@ impl App {
             A::ToggleStyleWarnings => self.toggle_style_warnings(),
             A::ToggleEchoOverlay => self.toggle_echo_overlay(),
             A::OpenConcordance => self.open_concordance(),
+            A::OpenThesaurus => self.open_thesaurus(),
             A::TogglePovChip => self.toggle_pov_chip(),
             A::TogglePromptLanguageMode => self.toggle_prompt_language_mode(),
             A::OpenSentenceRhythm => self.open_sentence_rhythm(),
@@ -24321,6 +24330,7 @@ impl App {
         let is_script_picker = matches!(self.modal, Modal::ScriptPicker { .. });
         let is_bund_input = matches!(self.modal, Modal::BundInput { .. });
         let is_similar_picker = matches!(self.modal, Modal::SimilarPicker { .. });
+        let is_thesaurus = matches!(self.modal, Modal::Thesaurus { .. });
         let is_progress = matches!(self.modal, Modal::Progress { .. });
         let is_goals_editor = matches!(self.modal, Modal::GoalsEditor { .. });
         let is_paragraph_target = matches!(self.modal, Modal::ParagraphTarget { .. });
@@ -24616,6 +24626,11 @@ impl App {
 
         if is_similar_picker {
             self.similar_picker_handle_key(key);
+            return Ok(false);
+        }
+
+        if is_thesaurus {
+            self.thesaurus_handle_key(key);
             return Ok(false);
         }
 
@@ -29747,6 +29762,217 @@ pub(super) fn current_word_or_selection(doc: &OpenedDoc) -> String {
     String::new()
 }
 
+/// The word under the cursor (or the single-line selection) and its char
+/// bounds `(word, row, start_col, end_col)`, for an in-place replacement.
+pub(super) fn current_word_bounds(doc: &OpenedDoc) -> Option<(String, usize, usize, usize)> {
+    if let Some(((r1, c1), (r2, c2))) = doc.textarea.selection_range() {
+        if r1 == r2 && c2 > c1 {
+            let text = slice_lines(doc.textarea.lines(), r1, c1, r2, c2).trim().to_string();
+            if !text.is_empty() {
+                return Some((text, r1, c1, c2));
+            }
+        }
+    }
+    let (row, col) = doc.textarea.cursor();
+    let line = doc.textarea.lines().get(row)?;
+    use unicode_segmentation::UnicodeSegmentation;
+    for (byte_off, w) in line.unicode_word_indices() {
+        let start_col = line[..byte_off].chars().count();
+        let end_col = start_col + w.chars().count();
+        if col >= start_col && col <= end_col {
+            return Some((w.to_string(), row, start_col, end_col));
+        }
+    }
+    None
+}
+
+/// Parse the AI thesaurus JSON into ordered, de-duplicated suggestions
+/// (synonyms first, then hypernyms/hyponyms/antonyms), excluding the word
+/// itself. Tolerant of prose or code-fence wrapping around the JSON object.
+fn parse_ai_thesaurus(raw: &str, word: &str) -> Vec<crate::wordnet::Suggestion> {
+    #[derive(serde::Deserialize, Default)]
+    struct Relations {
+        #[serde(default)]
+        synonyms: Vec<String>,
+        #[serde(default)]
+        antonyms: Vec<String>,
+        #[serde(default)]
+        hypernyms: Vec<String>,
+        #[serde(default)]
+        hyponyms: Vec<String>,
+    }
+    // Take the outermost { … } so surrounding prose / ```json fences don't break parsing.
+    let json = match (raw.find('{'), raw.rfind('}')) {
+        (Some(a), Some(b)) if b > a => &raw[a..=b],
+        _ => raw,
+    };
+    let rel: Relations = serde_json::from_str(json).unwrap_or_default();
+
+    let mut seen = std::collections::HashSet::new();
+    seen.insert(word.to_lowercase());
+    let mut out = Vec::new();
+    for (kind, list) in [
+        ("synonym", &rel.synonyms),
+        ("hypernym", &rel.hypernyms),
+        ("hyponym", &rel.hyponyms),
+        ("antonym", &rel.antonyms),
+    ] {
+        for w in list {
+            let w = w.trim();
+            if !w.is_empty() && seen.insert(w.to_lowercase()) {
+                out.push(crate::wordnet::Suggestion { kind, word: w.to_string() });
+            }
+        }
+    }
+    out
+}
+
+impl App {
+    /// Ctrl+V Shift+Y — open the WordNet thesaurus for the word under the cursor.
+    fn open_thesaurus(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "open a paragraph first".into();
+            return;
+        };
+        let Some((word, row, start_col, end_col)) = current_word_bounds(doc) else {
+            self.status = "put the cursor on a word first".into();
+            return;
+        };
+        let lang = self.active_prompt_language();
+
+        let (suggestions, source_tag) = if self.ensure_wordnet(&lang) {
+            // Local WordNet index: the offline path, with English-pivot expansion.
+            if !lang.eq_ignore_ascii_case("en") {
+                self.ensure_wordnet_pivot();
+            }
+            let s = {
+                let wn = &self.wordnet_index.as_ref().expect("just ensured").1;
+                let pivot = if lang.eq_ignore_ascii_case("en") {
+                    None
+                } else {
+                    self.wordnet_pivot_en.as_ref()
+                };
+                wn.lookup_with_pivot(&word, pivot).suggestions()
+            };
+            (s, lang.clone())
+        } else if crate::wordnet::fetch::source(&lang).is_some() {
+            // A wordnet exists for this language but isn't installed — point the
+            // user at `wordnet fetch` rather than silently using the AI.
+            self.status =
+                format!("no `{lang}` wordnet installed — run `inkhaven wordnet fetch {lang}`");
+            return;
+        } else {
+            // No wordnet and none to download (e.g. Russian) — fall back to the AI
+            // thesaurus. This blocks briefly while the model answers.
+            self.status = format!("no wordnet for {lang} — consulting AI…");
+            (self.ai_thesaurus_suggestions(&word, &lang), format!("{lang} · AI"))
+        };
+
+        if suggestions.is_empty() {
+            self.status = format!("`{word}` — no thesaurus suggestions ({lang})");
+            return;
+        }
+
+        let panel = super::wordnet_panel::WordnetPanel::new(word, source_tag, suggestions);
+        self.modal = Modal::Thesaurus { panel, row, start_col, end_col, scroll: 0 };
+        self.status = "thesaurus: ↑↓ select · Enter replace · Esc cancel".into();
+    }
+
+    /// AI fallback for languages with no WordNet (and none to download): ask the
+    /// configured model for the word's relations and parse them into the same
+    /// suggestion shape. Blocking (like the Inner Editor's slow track); returns
+    /// an empty list on any error so the caller reports "no suggestions".
+    fn ai_thesaurus_suggestions(&self, word: &str, lang: &str) -> Vec<crate::wordnet::Suggestion> {
+        let model = match self.ai.resolve_provider(&self.cfg.llm, None) {
+            Ok((model, _)) => model.to_string(),
+            Err(_) => return Vec::new(),
+        };
+        let system =
+            "You are a precise multilingual thesaurus. Reply with compact JSON only, no prose.".to_string();
+        let prompt = format!(
+            "For the word \"{word}\" in the language with ISO 639-1 code \"{lang}\", give its \
+             lexical relations. Respond ONLY as JSON of the form \
+             {{\"synonyms\":[],\"antonyms\":[],\"hypernyms\":[],\"hyponyms\":[]}}. All words must be \
+             in {lang}; do not include \"{word}\" itself; at most 8 items per list; use empty arrays \
+             when there are none."
+        );
+        match crate::ai::stream::collect_blocking(self.ai.client.clone(), model, Some(system), prompt) {
+            Ok(raw) => parse_ai_thesaurus(&raw, word),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    /// Ensure `self.wordnet_index` holds the index for `lang` (cached for the
+    /// session). Returns whether it is available.
+    fn ensure_wordnet(&mut self, lang: &str) -> bool {
+        if self.wordnet_index.as_ref().is_some_and(|(l, _)| l.eq_ignore_ascii_case(lang)) {
+            return true;
+        }
+        let loaded = crate::wordnet::index_path(lang)
+            .filter(|p| p.exists())
+            .and_then(|p| crate::wordnet::WordNet::load(&p).ok());
+        match loaded {
+            Some(wn) => {
+                self.wordnet_index = Some((lang.to_string(), wn));
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Load the English pivot once, for cross-lingual relation expansion.
+    fn ensure_wordnet_pivot(&mut self) {
+        if self.wordnet_pivot_en.is_none() {
+            self.wordnet_pivot_en = crate::wordnet::index_path("en")
+                .filter(|p| p.exists())
+                .and_then(|p| crate::wordnet::WordNet::load(&p).ok());
+        }
+    }
+
+    /// Key handling for the thesaurus modal (Esc is handled generically).
+    fn thesaurus_handle_key(&mut self, key: KeyEvent) {
+        const PAGE: usize = 12;
+        let Modal::Thesaurus { panel, row, start_col, end_col, scroll } = &mut self.modal else {
+            return;
+        };
+        match key.code {
+            KeyCode::Up => panel.up(),
+            KeyCode::Down => panel.down(),
+            KeyCode::Enter => {
+                let choice = panel.selected_word().map(str::to_string);
+                let (r, sc, ec) = (*row, *start_col, *end_col);
+                self.modal = Modal::None;
+                if let Some(w) = choice {
+                    self.thesaurus_replace(r, sc, ec, &w);
+                    self.status = format!("replaced with `{w}`");
+                }
+                return;
+            }
+            _ => {}
+        }
+        // Keep the highlighted row within the visible window.
+        if panel.selected < *scroll {
+            *scroll = panel.selected;
+        } else if panel.selected >= *scroll + PAGE {
+            *scroll = panel.selected + 1 - PAGE;
+        }
+    }
+
+    /// Replace the word at `(row, start_col..end_col)` with `replacement`.
+    fn thesaurus_replace(&mut self, row: usize, start_col: usize, end_col: usize, replacement: &str) {
+        use tui_textarea::CursorMove;
+        if let Some(doc) = self.opened.as_mut() {
+            doc.textarea.move_cursor(CursorMove::Jump(row as u16, start_col as u16));
+            doc.textarea.start_selection();
+            doc.textarea.move_cursor(CursorMove::Jump(row as u16, end_col as u16));
+            doc.textarea.cut();
+            doc.textarea.insert_str(replacement);
+            doc.dirty = true;
+        }
+        self.refresh_search_after_edit();
+    }
+}
+
 fn compute_book_stats(
     hierarchy: &Hierarchy,
     book: &Node,
@@ -31248,6 +31474,30 @@ mod tests_snippet_include {
         let col = line.chars().take_while(|&c| c != 'g').count();
         let ctx = detect_include_context(line, col).expect("inside the string");
         assert!(ctx.snippet_slug.is_none(), "globals.typ is not a snippet");
+    }
+}
+
+#[cfg(test)]
+mod tests_ai_thesaurus {
+    use super::parse_ai_thesaurus;
+
+    #[test]
+    fn parses_fenced_json_and_orders_and_dedupes() {
+        // Model output wrapped in prose + a code fence, with the word echoed back.
+        let raw = "Here you go:\n```json\n{\"synonyms\":[\"свет\",\"луч\",\"сияние\"],\
+                   \"antonyms\":[\"тьма\"],\"hypernyms\":[\"излучение\"],\"hyponyms\":[]}\n```";
+        let sug = parse_ai_thesaurus(raw, "свет");
+        // The word itself is dropped; order is synonym → hypernym → hyponym → antonym.
+        assert_eq!(sug[0].kind, "synonym");
+        assert_eq!(sug[0].word, "луч");
+        assert!(sug.iter().any(|s| s.kind == "hypernym" && s.word == "излучение"));
+        assert!(sug.iter().any(|s| s.kind == "antonym" && s.word == "тьма"));
+        assert!(!sug.iter().any(|s| s.word == "свет"));
+    }
+
+    #[test]
+    fn garbage_yields_no_suggestions() {
+        assert!(parse_ai_thesaurus("sorry, I cannot help", "x").is_empty());
     }
 }
 
