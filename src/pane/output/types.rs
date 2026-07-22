@@ -89,6 +89,10 @@ pub mod kinds {
     /// that segments into a language's inventory but breaks its phonotactics.
     /// Deterministic, zero-AI; anchored to the paragraph; always advisory (Info).
     pub const ORACLE: &str = "oracle";
+    /// POEM (1.8.11+) — an Inner Poet fast-track finding: a verse line's metre or
+    /// a stanza's rhyme measured against its declared `poem:` form. Deterministic,
+    /// zero-AI; anchored to the verse paragraph.
+    pub const POEM: &str = "poem";
 }
 
 /// Visual / priority class (RFC §7.4).
