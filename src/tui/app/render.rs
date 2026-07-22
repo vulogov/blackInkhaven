@@ -280,6 +280,10 @@ impl super::App {
             self.draw_inner_socrates_overview_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::InnerPoetOverview) {
+            self.draw_inner_poet_overview_modal(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::InnerEditorOverview { .. }) {
             self.draw_inner_editor_overview_modal(f, area);
             return;
