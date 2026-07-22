@@ -896,6 +896,10 @@ pub(super) enum Modal {
         rows: Vec<String>,
         cursor: usize,
     },
+    /// POEM-3 (PO-P6) — the Inner Poet overview (`Ctrl+B J → P`): `F` fast-scans
+    /// the open verse paragraph's metre + rhyme to Output, `E` engages the LLM
+    /// slow track to the Thoughts pane, `Esc` closes.
+    InnerPoetOverview,
     /// INNER_EDITOR-1 — the Inner Editor overview (`Ctrl+V O`): status, tuning,
     /// active categories, today's usage, recent observations. `↑↓` scroll,
     /// `Esc` closes; `E` engages the open paragraph, `A` toggles the ambient
