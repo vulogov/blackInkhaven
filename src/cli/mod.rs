@@ -75,6 +75,7 @@ pub mod lang;
 pub mod world_prompts;
 pub mod prompts;
 pub mod show_dont_tell;
+pub mod poetry;
 pub mod style;
 pub mod wordnet;
 pub mod stats;
@@ -578,6 +579,13 @@ pub enum Command {
     Wordnet {
         #[command(subcommand)]
         cmd: WordnetCommand,
+    },
+
+    /// 1.8.7 (POEM-1) — the poetry toolset. Poetry is observed and measured,
+    /// never generated. This slice: the forms library.
+    Poetry {
+        #[command(subcommand)]
+        cmd: PoetryCommand,
     },
 
     /// 1.2.12+ — export the project-wide concordance (every
@@ -2793,6 +2801,27 @@ pub enum TtsCatalogSubcommand {
     /// cached `voices.json` so the next operation
     /// fetches from `tts.catalog_url`.
     Refresh,
+}
+
+/// sub-subcommands under `inkhaven poetry …`.
+#[derive(Debug, Subcommand)]
+pub enum PoetryCommand {
+    /// List the built-in poetry forms, print one form's `poem:` block for a
+    /// language, or scaffold a custom form.
+    Forms {
+        /// Print this form's `poem:` block (else list all forms).
+        #[arg(long)]
+        form: Option<String>,
+        /// Language to tune the printed form for (`en` `ru` `fr` `de` `es`).
+        #[arg(long)]
+        language: Option<String>,
+        /// Scaffold a `form: custom` block instead of reading the library.
+        #[arg(long)]
+        new: bool,
+        /// Name for the `--new` scaffold.
+        #[arg(long)]
+        name: Option<String>,
+    },
 }
 
 /// sub-subcommands under `inkhaven wordnet …`.
@@ -6086,6 +6115,13 @@ impl Cli {
                     wordnet::lookup(&word, lang.as_deref()).map_err(Into::into)
                 }
                 WordnetCommand::List => wordnet::list().map_err(Into::into),
+            },
+            // Poetry is library/analysis; `forms` needs no project.
+            Command::Poetry { cmd } => match cmd {
+                PoetryCommand::Forms { form, language, new, name } => {
+                    poetry::forms(form.as_deref(), language.as_deref(), new, name.as_deref())
+                        .map_err(Into::into)
+                }
             },
             Command::Doctor { voices, tts_test, filter_words_snippet, scan, json, class, autofix, yes } => {
                 if filter_words_snippet {
