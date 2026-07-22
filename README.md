@@ -27,28 +27,28 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.8.7 — Poetry Forms
+## Latest release · 1.8.8 — The Syllabifier
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.8.7.md`](Documentation/RELEASE_NOTES/1.8.7.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.8.8.md`](Documentation/RELEASE_NOTES/1.8.8.md)
 
-The `poem:` form declaration and the built-in forms library. Declare what a poem *is* — its metre,
-foot count, rhyme scheme, and structure — and print a ready-to-paste template for any of the standard
-languages. Second phase of the POEM-1–7 arc.
+Natural-language syllabification for the five project languages — the layer every metre, rhyme, and
+Inner-Poet feature depends on. And the RFC's one proposed dependency turned out to be unnecessary.
 
 ### What's new
 
-- **`inkhaven poetry forms`** — list 18 canonical forms; print one form's `poem:` block for a
-  language (`--form sonnet --language ru`); or scaffold a custom form (`--new`). The library
-  **localizes** each form: a Russian sonnet gains `allow_pyrrhic`/`require_final_stress`, a French
-  form switches to the `syllabic` tradition with `elide_mute_e`.
-- **The `poem:` block** — the declared form (metre, feet, rhyme scheme, structure) the Inner Poet
-  will later measure against; bundled compiled-in, zero runtime I/O.
-- **README badges** — crates.io version, downloads, licence, Rust edition.
+- **`inkhaven poetry syllabify`** — break a word or a whole `--line` into syllables and mark the
+  stressed one, over English, Russian, German, French, Spanish (`лукоморья → лу·ˈко·мор·ья`,
+  `extensive → ex·ˈten·sive`).
+- **Reliable counts** — boundaries come from Liang hyphenation, but it under-counts, so the syllable
+  count is taken from vowel nuclei (≈exact for Russian), with English silent final-e handled. Stress
+  is a per-language rule layer (a lexical dictionary is a later refinement).
+- **No new dependency** — verification found that Typst already hyphenates internally via `hypher`,
+  so it was already in our tree; we use it directly and add no new crate — better than the RFC.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Purely additive — a new `poetry forms` command and the bundled catalogue.
-Warning-free (binary and tests). Test suite → 2616.
+**No new runtime crates.** `hypher` was already present transitively via Typst; this promotes it to a
+direct dependency. Warning-free (binary and tests). Test suite → 2625.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

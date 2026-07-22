@@ -3935,7 +3935,7 @@ checksum = "a588916bfdfd92e71cacef98a63d9b1f0d74d6599980d11894290e7ddefffcf7"
 
 [[package]]
 name = "inkhaven"
-version = "1.8.7"
+version = "1.8.8"
 dependencies = [
  "anyhow",
  "arboard",
@@ -3959,6 +3959,7 @@ dependencies = [
  "genai",
  "humantime",
  "humantime-serde",
+ "hypher",
  "image 0.25.10",
  "kurbo 0.12.0",
  "lopdf 0.41.0",
