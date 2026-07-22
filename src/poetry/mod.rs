@@ -14,6 +14,7 @@
 //! [`is_verse_paragraph`] predicate the Inner Poet (PO-P3) scopes on.
 
 pub mod form;
+pub mod form_check;
 pub mod metre;
 pub mod rhyme;
 pub mod syllabify;
