@@ -83,6 +83,12 @@ pub fn run(
             if node.kind != NodeKind::Paragraph {
                 continue;
             }
+            // POEM-1 — verse paragraphs are not prose: exclude them from the
+            // readability metrics and the style detectors (they have their own
+            // Inner Poet analysis).
+            if crate::poetry::is_verse_paragraph(node) {
+                continue;
+            }
             paragraphs += 1;
             let Ok(Some(bytes)) = store.get_content(id) else { continue };
             let text = String::from_utf8_lossy(&bytes);

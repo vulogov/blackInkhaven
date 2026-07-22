@@ -175,8 +175,10 @@ impl super::App {
                             // WORLD-6 — `para:utopia-*` declaration glyph
                             // (⊢ ⚙ ⇒ ∅); MYTH-1 — `para:myth-*` declaration
                             // glyph (⊛ ∿ ⍟); else prose `¶`.
+                            // POEM-1 — `para:verse-*` verse glyph (‖ ♩ ‗ ⁚ ⁛ ⇄).
                             _ => crate::myth::myth_glyph(node)
                                 .or_else(|| crate::world::utopia::utopia_glyph(node))
+                                .or_else(|| crate::poetry::verse_glyph(node))
                                 .or_else(|| super::structural_glyph(node))
                                 .unwrap_or("¶ "),
                         }

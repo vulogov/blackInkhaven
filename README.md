@@ -21,29 +21,27 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.8.5 — The Thesaurus Chord
+## Latest release · 1.8.6 — Verse Paragraphs
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.8.5.md`](Documentation/RELEASE_NOTES/1.8.5.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.8.6.md`](Documentation/RELEASE_NOTES/1.8.6.md)
 
-WordNet comes into the editor. Put the cursor on a word, press **Ctrl+V Shift+Y**, and a panel offers
-synonyms, antonyms, hypernyms, and hyponyms; pick one and it replaces the word in place. For a
-language with no WordNet and none to download — Russian — it falls back to your configured AI.
+The foundation of poetry support: a `para:verse-*` structural paragraph family, so a poem can live
+anywhere in a book — an epigraph, a recited stanza, song lyrics — without a separate project type or
+hierarchy. First phase of the POEM-1–7 arc; metre, rhyme, and the Inner Poet follow.
 
 ### What's new
 
-- **In-editor thesaurus chord.** `Ctrl+V Shift+Y` on a word opens a pick-list (synonyms first, then
-  hypernyms / hyponyms / antonyms); `↑↓` selects, `Enter` replaces the word in place, `Esc` cancels.
-  The lookup language follows the prose (book language or per-paragraph detection); non-English words
-  expand through the English pivot. The index is loaded once and cached for the session.
-- **AI fallback.** When a word's language has no installed index and none to download (Russian), the
-  chord asks your configured LLM for the same four relation lists and presents them the same way —
-  pick-and-replace is identical. A *downloadable* language instead points you at `wordnet fetch`.
+- **Six verse subtypes** — `para:verse-line/stanza/couplet/tercet/quatrain/translation` (`‖ ♩ ‗ ⁚ ⁛
+  ⇄`), in the same mechanism as `para:code`/`para:math`. They appear under a new **Verse** section in
+  the `i` picker, carry their own tree glyph, and work with the `Ctrl+B ]` tag inspector.
+- **Verse is not prose** — verse paragraphs are already excluded from the prose companions and the
+  word count (they're `para:*`); this release also skips them in `inkhaven style` (readability +
+  detectors). Their own analysis arrives with the Inner Poet.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** The chord reuses the WordNet index from 1.8.3/1.8.4 and, for the fallback,
-the existing blocking-completion path. Purely additive — a new editor chord and a cached index field.
-Warning-free (binary and tests). Test suite → 2608.
+**No new runtime crates.** Purely additive — a new `poetry` module, six pickable verse subtypes, a
+tree glyph, and a verse-skip in `inkhaven style`. Warning-free (binary and tests). Test suite → 2611.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
