@@ -1,5 +1,11 @@
 # Inkhaven (blackInkhaven)
 
+[![Crates.io](https://img.shields.io/crates/v/inkhaven.svg)](https://crates.io/crates/inkhaven)
+[![Downloads](https://img.shields.io/crates/d/inkhaven.svg)](https://crates.io/crates/inkhaven)
+[![License](https://img.shields.io/crates/l/inkhaven.svg)](https://crates.io/crates/inkhaven)
+[![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org)
+[![Edition](https://img.shields.io/badge/edition-2024-blue.svg)](https://doc.rust-lang.org/edition-guide/rust-2024/index.html)
+
 **Inkhaven** is a standalone terminal application for writing books and
 long-form technical documentation. It pairs a full-screen Typst editor with
 a local semantic index, an AI writing assistant, versioned snapshots, and a
@@ -21,27 +27,28 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.8.6 — Verse Paragraphs
+## Latest release · 1.8.7 — Poetry Forms
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.8.6.md`](Documentation/RELEASE_NOTES/1.8.6.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.8.7.md`](Documentation/RELEASE_NOTES/1.8.7.md)
 
-The foundation of poetry support: a `para:verse-*` structural paragraph family, so a poem can live
-anywhere in a book — an epigraph, a recited stanza, song lyrics — without a separate project type or
-hierarchy. First phase of the POEM-1–7 arc; metre, rhyme, and the Inner Poet follow.
+The `poem:` form declaration and the built-in forms library. Declare what a poem *is* — its metre,
+foot count, rhyme scheme, and structure — and print a ready-to-paste template for any of the standard
+languages. Second phase of the POEM-1–7 arc.
 
 ### What's new
 
-- **Six verse subtypes** — `para:verse-line/stanza/couplet/tercet/quatrain/translation` (`‖ ♩ ‗ ⁚ ⁛
-  ⇄`), in the same mechanism as `para:code`/`para:math`. They appear under a new **Verse** section in
-  the `i` picker, carry their own tree glyph, and work with the `Ctrl+B ]` tag inspector.
-- **Verse is not prose** — verse paragraphs are already excluded from the prose companions and the
-  word count (they're `para:*`); this release also skips them in `inkhaven style` (readability +
-  detectors). Their own analysis arrives with the Inner Poet.
+- **`inkhaven poetry forms`** — list 18 canonical forms; print one form's `poem:` block for a
+  language (`--form sonnet --language ru`); or scaffold a custom form (`--new`). The library
+  **localizes** each form: a Russian sonnet gains `allow_pyrrhic`/`require_final_stress`, a French
+  form switches to the `syllabic` tradition with `elide_mute_e`.
+- **The `poem:` block** — the declared form (metre, feet, rhyme scheme, structure) the Inner Poet
+  will later measure against; bundled compiled-in, zero runtime I/O.
+- **README badges** — crates.io version, downloads, licence, Rust edition.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Purely additive — a new `poetry` module, six pickable verse subtypes, a
-tree glyph, and a verse-skip in `inkhaven style`. Warning-free (binary and tests). Test suite → 2611.
+**No new runtime crates.** Purely additive — a new `poetry forms` command and the bundled catalogue.
+Warning-free (binary and tests). Test suite → 2616.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
