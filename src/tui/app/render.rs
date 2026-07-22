@@ -147,6 +147,10 @@ impl super::App {
             self.draw_similar_picker_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::Thesaurus { .. }) {
+            self.draw_thesaurus_modal(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::Progress { .. }) {
             self.draw_progress_modal(f, area);
             return;
