@@ -58,6 +58,7 @@ mod voice_picker;
 mod sentence_rhythm;
 pub(crate) mod readability;
 pub(crate) mod style_warnings;
+pub(crate) mod wordnet_panel;
 mod echo_overlay;
 mod quickref;
 mod sound;

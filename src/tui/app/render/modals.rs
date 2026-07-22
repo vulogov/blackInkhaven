@@ -4542,6 +4542,68 @@ impl super::super::App {
         );
     }
 
+    /// 1.8.5 — the WordNet thesaurus modal: the word under the cursor and a
+    /// pick-list of candidate replacements (synonym / antonym / hypernym /
+    /// hyponym), each tagged by its relation. Enter replaces the word.
+    pub(in crate::tui::app) fn draw_thesaurus_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
+        let Modal::Thesaurus { panel, scroll, .. } = &self.modal else {
+            return;
+        };
+        let width = area.width.saturating_sub(8).clamp(40, 64);
+        let height = area.height.saturating_sub(4).max(10);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let header = format!(" Thesaurus · {} ({}) ", panel.word, panel.lang);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(header)
+            .border_style(Style::default().fg(self.theme.modal_border).add_modifier(Modifier::BOLD))
+            .style(Style::default().bg(self.theme.modal_bg).fg(self.theme.modal_fg));
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let body_h = inner.height.saturating_sub(1) as usize;
+        let body_rect = Rect { x: inner.x, y: inner.y, width: inner.width, height: inner.height.saturating_sub(1) };
+        let footer_rect = Rect { x: inner.x, y: inner.y + inner.height.saturating_sub(1), width: inner.width, height: 1 };
+
+        let lines: Vec<Line<'_>> = panel
+            .suggestions
+            .iter()
+            .enumerate()
+            .skip(*scroll)
+            .take(body_h)
+            .map(|(i, s)| {
+                let row = format!(" {:<9} {}", s.kind, s.word);
+                let mut line = Line::from(vec![
+                    Span::styled(
+                        format!(" {:<9}", s.kind),
+                        Style::default().add_modifier(Modifier::DIM),
+                    ),
+                    Span::raw(format!(" {}", s.word)),
+                ]);
+                let _ = row;
+                if i == panel.selected {
+                    line = line.style(Style::default().add_modifier(Modifier::REVERSED));
+                }
+                line
+            })
+            .collect();
+        f.render_widget(Paragraph::new(lines), body_rect);
+
+        let hint = format!(
+            " ↑↓ select · Enter replace · Esc cancel    ({}/{}) ",
+            panel.selected + 1,
+            panel.suggestions.len()
+        );
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(hint, Style::default().add_modifier(Modifier::DIM)))),
+            footer_rect,
+        );
+    }
+
     /// 1.3.0 PDF-1 — `Ctrl+B Q` imposition preview: the plan (signatures
     /// / sheets / creep) + the first sheet's schematic, with an
     /// impose/cancel footer.

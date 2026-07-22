@@ -96,6 +96,41 @@ impl Lookup {
     pub fn is_empty(&self) -> bool {
         self.senses.is_empty()
     }
+
+    /// Flatten the senses into a de-duplicated, ordered pick-list of candidate
+    /// replacement words for the editor panel: synonyms first (the usual intent
+    /// of a thesaurus), then hypernyms, hyponyms, and antonyms. The original
+    /// word is never suggested. Each word appears once, tagged by the first
+    /// relation that surfaced it.
+    pub fn suggestions(&self) -> Vec<Suggestion> {
+        let mut seen = std::collections::HashSet::new();
+        seen.insert(self.word.to_lowercase());
+        let mut out = Vec::new();
+        for kind in ["synonym", "hypernym", "hyponym", "antonym"] {
+            for sense in &self.senses {
+                let words = match kind {
+                    "synonym" => &sense.synonyms,
+                    "hypernym" => &sense.hypernyms,
+                    "hyponym" => &sense.hyponyms,
+                    _ => &sense.antonyms,
+                };
+                for w in words {
+                    if seen.insert(w.to_lowercase()) {
+                        out.push(Suggestion { kind, word: w.clone() });
+                    }
+                }
+            }
+        }
+        out
+    }
+}
+
+/// One candidate replacement for the editor's WordNet panel.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Suggestion {
+    /// `synonym` | `antonym` | `hypernym` | `hyponym`.
+    pub kind: &'static str,
+    pub word: String,
 }
 
 impl WordNet {
@@ -596,6 +631,16 @@ mod tests {
         assert!(native.senses[0].hypernyms.is_empty());
         let expanded = fr.lookup_with_pivot("chien", Some(&en));
         assert_eq!(expanded.senses[0].hypernyms, vec!["animal".to_string()]);
+    }
+
+    #[test]
+    fn suggestions_are_ordered_and_deduped() {
+        let wn = parse_lmf(SAMPLE).unwrap();
+        let sug = wn.lookup("big").suggestions();
+        // Synonyms come before antonyms; the word itself is never suggested.
+        assert_eq!(sug[0], Suggestion { kind: "synonym", word: "large".into() });
+        assert!(sug.iter().any(|s| s.kind == "antonym" && s.word == "small"));
+        assert!(!sug.iter().any(|s| s.word.eq_ignore_ascii_case("big")));
     }
 
     #[test]
