@@ -27,28 +27,24 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.8.12 — The Inner Poet Listens
+## Latest release · 1.8.13 — Form Completion
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.8.12.md`](Documentation/RELEASE_NOTES/1.8.12.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.8.13.md`](Documentation/RELEASE_NOTES/1.8.13.md)
 
-The Inner Poet gains its LLM slow track. `Ctrl+B J → P` opens a small overview: **F** fast-scans the
-stanza's metre and rhyme (Output pane), and **E** engages the AI to observe what the verse is *doing*
-— enjambment, sound texture, caesura, the turn — in the Thoughts pane. Observations, never
-prescriptions; it never rewrites.
+Know where a poem stands against its form. `inkhaven poetry status` reports a completion ratio and
+flags the structural components a form requires but the text is missing or breaking.
 
 ### What's new
 
-- **The Inner Poet's slow track** — `Ctrl+B J → P → E` asks an LLM to read the open stanza and share
-  a few observations: whether the line breaks are enjambed to effect or cut across the syntax, the
-  alliterative/assonant texture, where the caesura falls, and — for a sonnet only — whether a real
-  **volta** appears at the expected position. The voice is "I notice…", never "should".
-- **Fast + slow in one overview** — `F` runs the deterministic metre/rhyme scan (1.8.11), `E` the AI
-  observations; `Esc` closes.
+- **`inkhaven poetry status`** — the line ratio against the form's expected total (14 for a sonnet,
+  19 for a villanelle, 3 for a haiku, or `stanzas × lines_per_stanza`), plus form-specific checks: a
+  **villanelle**'s refrain schedule, a **pantoum**'s carried lines, a **ghazal**'s signature (maqta),
+  a **sonnet**'s line count. Deterministic and offline — it measures, never rewrites.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** A new `inner_poet::slow` module, a `PoetSlow` background job, and a small
-overview modal. Warning-free (binary and tests). Test suite → 2643.
+**No new runtime crates.** A new `poetry::form_check` module and a `poetry status` command.
+Warning-free (binary and tests). Test suite → 2649.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
