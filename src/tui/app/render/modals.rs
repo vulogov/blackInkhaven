@@ -5942,6 +5942,39 @@ impl super::super::App {
 
     /// INNER_SOCRATES-1 — the `Ctrl+B J` overview (active persona, recent
     /// questions, the intent ledger). Same scrollable shape as the World overview.
+    /// POEM-3 — the Inner Poet overview: a small hint box (F fast · E engage).
+    pub(in crate::tui::app) fn draw_inner_poet_overview_modal(&self, f: &mut ratatui::Frame, area: Rect) {
+        if !matches!(self.modal, Modal::InnerPoetOverview) {
+            return;
+        }
+        let width = area.width.saturating_sub(8).clamp(40, 58);
+        let height = 9u16.min(area.height.saturating_sub(2));
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" ♪ Inner Poet ")
+            .border_style(Style::default().fg(self.theme.modal_border).add_modifier(Modifier::BOLD))
+            .style(Style::default().bg(self.theme.modal_bg).fg(self.theme.modal_fg));
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let dim = Style::default().add_modifier(Modifier::DIM);
+        let lines = vec![
+            Line::from(""),
+            Line::from("  F   fast-scan this stanza — metre + rhyme → Output"),
+            Line::from(""),
+            Line::from("  E   engage the AI — enjambment, sound, caesura,"),
+            Line::from("      the volta → Thoughts pane"),
+            Line::from(""),
+            Line::from(Span::styled("  the Inner Poet observes; it never rewrites.  Esc closes.", dim)),
+        ];
+        f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+    }
+
     pub(in crate::tui::app) fn draw_inner_socrates_overview_modal(
         &mut self,
         f: &mut ratatui::Frame,
