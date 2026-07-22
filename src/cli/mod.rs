@@ -2847,6 +2847,16 @@ pub enum PoetryCommand {
         #[arg(long)]
         language: Option<String>,
     },
+    /// Classify the rhyme between two words (quality + type).
+    Rhyme {
+        /// First word.
+        word1: String,
+        /// Second word.
+        word2: String,
+        /// Language (`en` `ru` `fr` `de` `es`; default `en`).
+        #[arg(long)]
+        language: Option<String>,
+    },
 }
 
 /// sub-subcommands under `inkhaven wordnet …`.
@@ -6153,6 +6163,9 @@ impl Cli {
                 }
                 PoetryCommand::Metre { line, form, language } => {
                     poetry::metre(&line, form.as_deref(), language.as_deref()).map_err(Into::into)
+                }
+                PoetryCommand::Rhyme { word1, word2, language } => {
+                    poetry::rhyme(&word1, &word2, language.as_deref()).map_err(Into::into)
                 }
             },
             Command::Doctor { voices, tts_test, filter_words_snippet, scan, json, class, autofix, yes } => {

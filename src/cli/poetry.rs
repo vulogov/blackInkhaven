@@ -42,6 +42,34 @@ pub fn syllabify(word: Option<&str>, line: Option<&str>, language: Option<&str>)
     }
 }
 
+/// `poetry rhyme <word1> <word2> [--language]` — classify a rhyme.
+pub fn rhyme(w1: &str, w2: &str, language: Option<&str>) -> Result<()> {
+    use crate::poetry::rhyme::{RhymeQuality, RhymeType, analyse_rhyme};
+    let lang = ProseLanguage::from_label(language.unwrap_or("en"));
+    let r = analyse_rhyme(w1, w2, lang);
+    let quality = match r.quality {
+        RhymeQuality::Perfect => "perfect",
+        RhymeQuality::Near => "near",
+        RhymeQuality::Eye => "eye",
+        RhymeQuality::None => "no",
+    };
+    let rtype = match r.rhyme_type {
+        RhymeType::Masculine => "masculine",
+        RhymeType::Feminine => "feminine",
+        RhymeType::Dactylic => "dactylic",
+    };
+    if matches!(r.quality, RhymeQuality::None) {
+        println!("  {w1} / {w2}: no rhyme");
+    } else {
+        let shared = if r.shared.is_empty() { String::new() } else { format!(" on “-{}”", r.shared) };
+        println!("  {w1} / {w2}: {quality} {rtype} rhyme{shared}");
+    }
+    if let Some(note) = r.note {
+        println!("  ({note})");
+    }
+    Ok(())
+}
+
 /// `poetry metre --line "…" [--form N] [--language L]` — scan a verse line.
 pub fn metre(line: &str, form: Option<&str>, language: Option<&str>) -> Result<()> {
     let lang = ProseLanguage::from_label(language.unwrap_or("en"));
