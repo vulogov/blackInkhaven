@@ -27,28 +27,27 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.8.9 — The Metre Scanner
+## Latest release · 1.8.10 — The Rhyme Engine
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.8.9.md`](Documentation/RELEASE_NOTES/1.8.9.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.8.10.md`](Documentation/RELEASE_NOTES/1.8.10.md)
 
-Scan a line of verse: mark its beats, detect its metre, and check it against a declared form. This
-reuses the scansion engine shipped in 1.8.2 — now fed by the natural-language syllabifier.
+Classify the rhyme between two words — its quality (perfect / near) and type (masculine / feminine /
+dactylic) — across the five languages, each with its own tradition. The last engine before the Inner
+Poet composes them.
 
 ### What's new
 
-- **`inkhaven poetry metre --line "…"`** — builds the beat sequence, detects the metre, and (with
-  `--form`) checks the line against that form's declared metre. Stress comes from an acute mark where
-  present (Russian verse) else the syllabifier's rule; a monosyllable is flexible; a feminine ending
-  is reported, not flagged (`У лукомо́рья ду́б зелё́ный → iambic tetrameter`).
-- **One engine, two front ends** — POEM-5 exposes the 1.8.2 scansion engine's beat→metre core and
-  feeds it beats from the POEM-2 syllabifier, so the poetry layer needs no second scanner. Adds a
-  `Foot` parsed from a `poem:` block, a declared-metre check (feminine ending / catalexis), the
-  syllabic and accentual traditions, and a free-verse profiler.
+- **`inkhaven poetry rhyme <a> <b>`** — reports the rhyme from the stressed vowel onward, keyed off
+  each language's rules: German **final devoicing** (`Hund`/`bunt` → perfect on `-unt`), Spanish
+  **assonance** (`cielo`/`viejo` → assonant), French mute-e, light Russian reduction (`мо́ре`/`го́ре`
+  → perfect feminine).
+- **Honest about limits** — without a phonemic dictionary it works on the orthographic rhyme tail
+  (accurate for Russian; English eye-rhyme like `love`/`prove` waits on the lexical phoneme dict).
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Reuses the scansion engine and the POEM-2 syllabifier; adds
-`src/poetry/metre.rs` and a `poetry metre` command. Warning-free (binary and tests). Test suite → 2632.
+**No new runtime crates.** Builds on the POEM-2 syllabifier; adds `src/poetry/rhyme.rs` and a
+`poetry rhyme` command. Warning-free (binary and tests). Test suite → 2637.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
