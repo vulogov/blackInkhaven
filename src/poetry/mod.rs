@@ -15,6 +15,7 @@
 
 pub mod form;
 pub mod metre;
+pub mod rhyme;
 pub mod syllabify;
 
 use crate::store::node::Node;

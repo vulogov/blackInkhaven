@@ -186,6 +186,11 @@ fn is_vowel(c: char, vowels: &str) -> bool {
     vowels.chars().any(|v| v == lc)
 }
 
+/// Whether `c` is a vowel in `lang` — for the rhyme engine's tail extraction.
+pub fn is_vowel_for(c: char, lang: &ProseLanguage) -> bool {
+    is_vowel(c, &vowels_for(lang))
+}
+
 /// The char index where each syllable nucleus begins. English silent final-e is
 /// dropped (a lone word-final `e` after a consonant, when the word has more than
 /// one nucleus), so "extensive" is three syllables, not four.
