@@ -2870,6 +2870,19 @@ pub enum PoetryCommand {
         #[arg(long)]
         language: Option<String>,
     },
+    /// Report a poem's completion against its declared form: the line ratio and
+    /// any missing/broken structural components (refrains, repetitions, maqta).
+    Status {
+        /// The poem text (newline-separated lines).
+        #[arg(long)]
+        text: String,
+        /// The declared form (e.g. `villanelle`).
+        #[arg(long)]
+        form: String,
+        /// Language (`en` `ru` `fr` `de` `es`; default `en`).
+        #[arg(long)]
+        language: Option<String>,
+    },
 }
 
 /// sub-subcommands under `inkhaven wordnet …`.
@@ -6182,6 +6195,9 @@ impl Cli {
                 }
                 PoetryCommand::Scan { text, form, language } => {
                     poetry::scan(&text, &form, language.as_deref()).map_err(Into::into)
+                }
+                PoetryCommand::Status { text, form, language } => {
+                    poetry::status(&text, &form, language.as_deref()).map_err(Into::into)
                 }
             },
             Command::Doctor { voices, tts_test, filter_words_snippet, scan, json, class, autofix, yes } => {

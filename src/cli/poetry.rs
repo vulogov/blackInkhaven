@@ -66,6 +66,30 @@ pub fn scan(text: &str, form_name: &str, language: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+/// `poetry status --text "…" --form N` — completion + missing components.
+pub fn status(text: &str, form_name: &str, language: Option<&str>) -> Result<()> {
+    let lang = language.unwrap_or("en");
+    let lib = FormsLibrary::builtin();
+    let form = lib
+        .localized(form_name, lang)
+        .ok_or_else(|| Error::Config(format!("unknown form `{form_name}` — run `inkhaven poetry forms`")))?;
+    let st = crate::poetry::form_check::check_form(text, &form);
+    let ratio = match st.expected_lines {
+        Some(e) => format!("{}/{}", st.lines_written, e),
+        None => format!("{} lines (open form)", st.lines_written),
+    };
+    let state = if st.complete { "complete" } else { "drafting" };
+    println!("♩ {} · {ratio} · {state}", form.form);
+    if st.issues.is_empty() {
+        println!("  no structural issues");
+    } else {
+        for i in &st.issues {
+            println!("  ⚠ {i}");
+        }
+    }
+    Ok(())
+}
+
 /// `poetry rhyme <word1> <word2> [--language]` — classify a rhyme.
 pub fn rhyme(w1: &str, w2: &str, language: Option<&str>) -> Result<()> {
     use crate::poetry::rhyme::{RhymeQuality, RhymeType, analyse_rhyme};
