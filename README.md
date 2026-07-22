@@ -21,33 +21,29 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.8.4 — WordNet Goes Multilingual
+## Latest release · 1.8.5 — The Thesaurus Chord
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.8.4.md`](Documentation/RELEASE_NOTES/1.8.4.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.8.5.md`](Documentation/RELEASE_NOTES/1.8.5.md)
 
-The sense-based thesaurus reaches the standard languages. `wordnet fetch` now installs **French,
-German, and Spanish** alongside English, and a non-English lookup inherits English's rich relation
-taxonomy through the interlingual index. **Russian** is supported by import (it has no open
-distribution).
+WordNet comes into the editor. Put the cursor on a word, press **Ctrl+V Shift+Y**, and a panel offers
+synonyms, antonyms, hypernyms, and hyponyms; pick one and it replaces the word in place. For a
+language with no WordNet and none to download — Russian — it falls back to your configured AI.
 
 ### What's new
 
-- **Four fetchable languages.** `wordnet fetch en fr de es` — the OMW wordnets ship as `.tar.xz`,
-  which Inkhaven now unpacks with a **pure-Rust** xz decoder (no `liblzma`, no external binary).
-- **Cross-lingual relations via the ILI.** A translated wordnet lists lemmas but rarely the
-  hypernym/hyponym links; when a word's native synset has none, Inkhaven follows its interlingual
-  index into English's relation graph and maps the results back — so Spanish *perro* gets `hyponyms
-  basenji, caniche, mastín, pug…`, all in Spanish.
-- **Russian by import.** `wordnet import ru <file.xml>` builds an index from any local WN-LMF you
-  supply (RuWordNet is under a research licence, so it's imported rather than bundled).
-- **Versioned indexes.** A stale index is now rejected with a clear *re-fetch* message instead of
-  being silently misread.
+- **In-editor thesaurus chord.** `Ctrl+V Shift+Y` on a word opens a pick-list (synonyms first, then
+  hypernyms / hyponyms / antonyms); `↑↓` selects, `Enter` replaces the word in place, `Esc` cancels.
+  The lookup language follows the prose (book language or per-paragraph detection); non-English words
+  expand through the English pivot. The index is loaded once and cached for the session.
+- **AI fallback.** When a word's language has no installed index and none to download (Russian), the
+  chord asks your configured LLM for the same four relation lists and presents them the same way —
+  pick-and-replace is identical. A *downloadable* language instead points you at `wordnet fetch`.
 
 ### Dependencies & compatibility
 
-Adds `lzma-rs` (pure-Rust xz) and promotes `tar` to a direct dependency — no external binaries.
-Purely additive: `wordnet` gains `import` and three fetchable languages. Warning-free (binary and
-tests). Test suite → 2603.
+**No new runtime crates.** The chord reuses the WordNet index from 1.8.3/1.8.4 and, for the fallback,
+the existing blocking-completion path. Purely additive — a new editor chord and a cached index field.
+Warning-free (binary and tests). Test suite → 2608.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
