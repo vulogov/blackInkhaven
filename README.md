@@ -27,28 +27,28 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.8.8 — The Syllabifier
+## Latest release · 1.8.9 — The Metre Scanner
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.8.8.md`](Documentation/RELEASE_NOTES/1.8.8.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.8.9.md`](Documentation/RELEASE_NOTES/1.8.9.md)
 
-Natural-language syllabification for the five project languages — the layer every metre, rhyme, and
-Inner-Poet feature depends on. And the RFC's one proposed dependency turned out to be unnecessary.
+Scan a line of verse: mark its beats, detect its metre, and check it against a declared form. This
+reuses the scansion engine shipped in 1.8.2 — now fed by the natural-language syllabifier.
 
 ### What's new
 
-- **`inkhaven poetry syllabify`** — break a word or a whole `--line` into syllables and mark the
-  stressed one, over English, Russian, German, French, Spanish (`лукоморья → лу·ˈко·мор·ья`,
-  `extensive → ex·ˈten·sive`).
-- **Reliable counts** — boundaries come from Liang hyphenation, but it under-counts, so the syllable
-  count is taken from vowel nuclei (≈exact for Russian), with English silent final-e handled. Stress
-  is a per-language rule layer (a lexical dictionary is a later refinement).
-- **No new dependency** — verification found that Typst already hyphenates internally via `hypher`,
-  so it was already in our tree; we use it directly and add no new crate — better than the RFC.
+- **`inkhaven poetry metre --line "…"`** — builds the beat sequence, detects the metre, and (with
+  `--form`) checks the line against that form's declared metre. Stress comes from an acute mark where
+  present (Russian verse) else the syllabifier's rule; a monosyllable is flexible; a feminine ending
+  is reported, not flagged (`У лукомо́рья ду́б зелё́ный → iambic tetrameter`).
+- **One engine, two front ends** — POEM-5 exposes the 1.8.2 scansion engine's beat→metre core and
+  feeds it beats from the POEM-2 syllabifier, so the poetry layer needs no second scanner. Adds a
+  `Foot` parsed from a `poem:` block, a declared-metre check (feminine ending / catalexis), the
+  syllabic and accentual traditions, and a free-verse profiler.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** `hypher` was already present transitively via Typst; this promotes it to a
-direct dependency. Warning-free (binary and tests). Test suite → 2625.
+**No new runtime crates.** Reuses the scansion engine and the POEM-2 syllabifier; adds
+`src/poetry/metre.rs` and a `poetry metre` command. Warning-free (binary and tests). Test suite → 2632.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
