@@ -18,6 +18,7 @@ mod health;
 mod io_atomic;
 mod path_safety;
 mod pdf;
+mod inner_poet;
 mod poetry;
 mod prompts_tui;
 mod echo;
