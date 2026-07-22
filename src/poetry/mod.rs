@@ -14,6 +14,7 @@
 //! [`is_verse_paragraph`] predicate the Inner Poet (PO-P3) scopes on.
 
 pub mod form;
+pub mod syllabify;
 
 use crate::store::node::Node;
 

@@ -5,6 +5,42 @@
 
 use crate::error::{Error, Result};
 use crate::poetry::form::{FormsLibrary, PoemForm};
+use crate::poetry::syllabify::{StressLevel, syllabify as syllabify_word};
+use crate::prose::ProseLanguage;
+
+/// `poetry syllabify <word> | --line "…" [--language]` — show syllable
+/// boundaries and the stressed syllable.
+pub fn syllabify(word: Option<&str>, line: Option<&str>, language: Option<&str>) -> Result<()> {
+    let lang = ProseLanguage::from_label(language.unwrap_or("en"));
+    let show = |w: &str| {
+        let clean = w.trim_matches(|c: char| !c.is_alphabetic());
+        if clean.is_empty() {
+            return;
+        }
+        let sylls = syllabify_word(clean, lang.clone());
+        let rendered: String = sylls
+            .iter()
+            .map(|s| {
+                let mark = if s.stress == StressLevel::Primary { "ˈ" } else { "" };
+                format!("{mark}{}", s.text)
+            })
+            .collect::<Vec<_>>()
+            .join("·");
+        println!("  {:<18} {rendered}  ({} syl)", w, sylls.len());
+    };
+
+    if let Some(l) = line {
+        for w in l.split_whitespace() {
+            show(w);
+        }
+        Ok(())
+    } else if let Some(w) = word {
+        show(w);
+        Ok(())
+    } else {
+        Err(Error::Config("syllabify needs a <WORD> or --line \"…\"".into()))
+    }
+}
 
 /// `poetry forms [--form N] [--language L] [--new --name M]`.
 pub fn forms(form: Option<&str>, language: Option<&str>, new: bool, name: Option<&str>) -> Result<()> {
