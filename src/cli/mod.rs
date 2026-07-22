@@ -2822,6 +2822,18 @@ pub enum PoetryCommand {
         #[arg(long)]
         name: Option<String>,
     },
+    /// Syllabify a word (or a whole `--line`), showing syllable boundaries and
+    /// the stressed syllable — a diagnostic for the POEM-2 syllabifier.
+    Syllabify {
+        /// The word to syllabify (omit when using `--line`).
+        word: Option<String>,
+        /// Syllabify every word of a line instead.
+        #[arg(long)]
+        line: Option<String>,
+        /// Language (`en` `ru` `fr` `de` `es`; default `en`).
+        #[arg(long)]
+        language: Option<String>,
+    },
 }
 
 /// sub-subcommands under `inkhaven wordnet …`.
@@ -6120,6 +6132,10 @@ impl Cli {
             Command::Poetry { cmd } => match cmd {
                 PoetryCommand::Forms { form, language, new, name } => {
                     poetry::forms(form.as_deref(), language.as_deref(), new, name.as_deref())
+                        .map_err(Into::into)
+                }
+                PoetryCommand::Syllabify { word, line, language } => {
+                    poetry::syllabify(word.as_deref(), line.as_deref(), language.as_deref())
                         .map_err(Into::into)
                 }
             },
