@@ -290,10 +290,12 @@ impl super::super::App {
         let Modal::StructuralTypePicker { cursor } = &self.modal else {
             return;
         };
-        let types = super::super::STRUCTURAL_TYPES;
+        let types = super::super::para_type_table();
+        let verse_start = super::super::STRUCTURAL_TYPES.len();
         let header_lines = 1;
         let footer_lines = 2;
-        let height = (header_lines + types.len() + footer_lines + 2) as u16;
+        // +1 for the "Verse" section separator.
+        let height = (header_lines + types.len() + 1 + footer_lines + 2) as u16;
         let height = height.clamp(8, area.height.saturating_sub(2));
         let width = 48u16.clamp(40, area.width.saturating_sub(6));
         let x = area.x + (area.width.saturating_sub(width)) / 2;
@@ -320,6 +322,13 @@ impl super::super::App {
         let mut lines: Vec<Line<'static>> = Vec::new();
         lines.push(Line::from(""));
         for (i, (_tag, glyph, label, _seed)) in types.iter().enumerate() {
+            // POEM-1 — a "Verse" separator opens the verse family.
+            if i == verse_start {
+                lines.push(Line::from(Span::styled(
+                    "  ── Verse ──────────────────────".to_string(),
+                    Style::default().add_modifier(Modifier::DIM),
+                )));
+            }
             let marker = if i == *cursor { "›" } else { " " };
             let row = format!("  {marker} {glyph} {label}");
             let style = if i == *cursor {

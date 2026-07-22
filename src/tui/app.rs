@@ -2457,9 +2457,18 @@ fn structural_glyph(node: &Node) -> Option<&'static str> {
 }
 
 /// True when the paragraph carries any `para:*` structural subtype tag. Gates
-/// the prose-companion skips and the prose word-count split.
+/// the prose-companion skips and the prose word-count split. Verse subtypes
+/// (`para:verse-*`, POEM-1) begin `para:` too, so they are covered here.
 fn is_structural_paragraph(node: &Node) -> bool {
     node.tags.iter().any(|t| t.starts_with("para:"))
+}
+
+/// The `i`-picker type table: the structural subtypes followed by the POEM-1
+/// verse family. `pending_structural_type` and the picker cursor index this flat
+/// list; the renderer draws a "Verse" separator before entry
+/// [`STRUCTURAL_TYPES`]`.len()`.
+fn para_type_table() -> Vec<(&'static str, &'static str, &'static str, &'static str)> {
+    STRUCTURAL_TYPES.iter().chain(crate::poetry::VERSE_TYPES.iter()).copied().collect()
 }
 
 /// True when the paragraph is structural **and not** a `para:procedure` — i.e.
@@ -7669,7 +7678,7 @@ impl App {
         let Modal::StructuralTypePicker { cursor } = &mut self.modal else {
             return false;
         };
-        let total = STRUCTURAL_TYPES.len();
+        let total = para_type_table().len();
         match key.code {
             KeyCode::Up => {
                 if *cursor > 0 {
@@ -7710,7 +7719,7 @@ impl App {
         self.open_add_modal_inner(NodeKind::Paragraph, InsertPosition::End);
         if matches!(self.modal, Modal::Adding { .. }) {
             self.pending_structural_type = Some(idx);
-            let label = STRUCTURAL_TYPES[idx].2;
+            let label = para_type_table()[idx].2;
             self.status =
                 format!("structural: {label} — type a name · Enter to create · Esc cancel");
         }
@@ -25618,7 +25627,7 @@ impl App {
                 // (content_type stays typst; the `para:*` tag, stamped after the
                 // reload below, is what marks it structural).
                 if let Some(idx) = structural_pick {
-                    let seed = STRUCTURAL_TYPES[idx].3;
+                    let seed = para_type_table()[idx].3;
                     if let Some(rel) = &node.file {
                         let abs = self.layout.root.join(rel);
                         let _ = std::fs::write(&abs, seed.as_bytes());
@@ -25715,7 +25724,7 @@ impl App {
                 // structural tag and reload again so the tree glyph + gates pick
                 // it up. Overrides the generic "added paragraph" status.
                 if let Some(idx) = structural_pick {
-                    let (tag, _glyph, label, _seed) = STRUCTURAL_TYPES[idx];
+                    let (tag, _glyph, label, _seed) = para_type_table()[idx];
                     if self.add_tags_to_node(new_id, &[tag.to_string()]) {
                         self.reload_hierarchy();
                     }
