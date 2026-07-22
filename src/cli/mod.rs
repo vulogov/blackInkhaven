@@ -2857,6 +2857,19 @@ pub enum PoetryCommand {
         #[arg(long)]
         language: Option<String>,
     },
+    /// Run the Inner Poet's deterministic fast-track scan (metre + rhyme) over a
+    /// stanza against a declared form. `--text` may span several newline lines.
+    Scan {
+        /// The stanza to scan (newline-separated lines).
+        #[arg(long)]
+        text: String,
+        /// The declared form to measure against (e.g. `shakespearean_sonnet`).
+        #[arg(long)]
+        form: String,
+        /// Language (`en` `ru` `fr` `de` `es`; default `en`).
+        #[arg(long)]
+        language: Option<String>,
+    },
 }
 
 /// sub-subcommands under `inkhaven wordnet …`.
@@ -6166,6 +6179,9 @@ impl Cli {
                 }
                 PoetryCommand::Rhyme { word1, word2, language } => {
                     poetry::rhyme(&word1, &word2, language.as_deref()).map_err(Into::into)
+                }
+                PoetryCommand::Scan { text, form, language } => {
+                    poetry::scan(&text, &form, language.as_deref()).map_err(Into::into)
                 }
             },
             Command::Doctor { voices, tts_test, filter_words_snippet, scan, json, class, autofix, yes } => {

@@ -42,6 +42,30 @@ pub fn syllabify(word: Option<&str>, line: Option<&str>, language: Option<&str>)
     }
 }
 
+/// `poetry scan --text "…" --form N [--language]` — the Inner Poet fast track.
+pub fn scan(text: &str, form_name: &str, language: Option<&str>) -> Result<()> {
+    use crate::inner_poet::fast::{Severity, scan_stanza};
+    let lang = language.unwrap_or("en");
+    let lib = FormsLibrary::builtin();
+    let form = lib
+        .localized(form_name, lang)
+        .ok_or_else(|| Error::Config(format!("unknown form `{form_name}` — run `inkhaven poetry forms`")))?;
+    let findings = scan_stanza(text, &form);
+    if findings.is_empty() {
+        println!("♪ no findings — the stanza matches its declared {} form.", form.form);
+        return Ok(());
+    }
+    for f in &findings {
+        let sev = match f.severity {
+            Severity::Praise => "Praise",
+            Severity::Note => "Note",
+            Severity::Concern => "Concern",
+        };
+        println!("♪ {sev:<8} [{}]  {}", f.kind, f.message);
+    }
+    Ok(())
+}
+
 /// `poetry rhyme <word1> <word2> [--language]` — classify a rhyme.
 pub fn rhyme(w1: &str, w2: &str, language: Option<&str>) -> Result<()> {
     use crate::poetry::rhyme::{RhymeQuality, RhymeType, analyse_rhyme};

@@ -27,27 +27,28 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.8.10 — The Rhyme Engine
+## Latest release · 1.8.11 — The Inner Poet
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.8.10.md`](Documentation/RELEASE_NOTES/1.8.10.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.8.11.md`](Documentation/RELEASE_NOTES/1.8.11.md)
 
-Classify the rhyme between two words — its quality (perfect / near) and type (masculine / feminine /
-dactylic) — across the five languages, each with its own tradition. The last engine before the Inner
-Poet composes them.
+The fifth Inner-family reader. Stand on a verse paragraph, press **Ctrl+B J → P**, and the Inner
+Poet scans its metre and rhyme against the declared `poem:` form — findings to the Output pane,
+deterministic and offline. It composes all four POEM engines into the first reader that reads a poem.
 
 ### What's new
 
-- **`inkhaven poetry rhyme <a> <b>`** — reports the rhyme from the stressed vowel onward, keyed off
-  each language's rules: German **final devoicing** (`Hund`/`bunt` → perfect on `-unt`), Spanish
-  **assonance** (`cielo`/`viejo` → assonant), French mute-e, light Russian reduction (`мо́ре`/`го́ре`
-  → perfect feminine).
-- **Honest about limits** — without a phonemic dictionary it works on the orthographic rhyme tail
-  (accurate for Russian; English eye-rhyme like `love`/`prove` waits on the lexical phoneme dict).
+- **The Inner Poet** (`Ctrl+B J → P`) — on a `para:verse-*` paragraph, checks each line's metre
+  against the form's foot (feminine endings noted, not flagged) and every rhyming pair the scheme
+  calls for. Findings land under a `♪` Output category — a `Concern` for a broken rhyme or overrun
+  line, a `Note` for a near-rhyme, and (unusually) **praise** for a cleanly-scanning line. It never
+  rewrites — observe and report.
+- **Composes the engines** — the `poem:` form (1.8.7), syllabifier (1.8.8), metre scanner (1.8.9),
+  and rhyme engine (1.8.10) come together. Also on the CLI: `inkhaven poetry scan --form … --text …`.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Builds on the POEM-2 syllabifier; adds `src/poetry/rhyme.rs` and a
-`poetry rhyme` command. Warning-free (binary and tests). Test suite → 2637.
+**No new runtime crates.** A new `inner_poet` module + a `poem` Output category + the `Ctrl+B J → P`
+sub-key + a `poetry scan` command. Warning-free (binary and tests). Test suite → 2641.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
