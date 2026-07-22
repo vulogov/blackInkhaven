@@ -4,3 +4,4 @@
 //! track** (metre + rhyme scan → Output pane); the LLM slow track lands later.
 
 pub mod fast;
+pub mod slow;

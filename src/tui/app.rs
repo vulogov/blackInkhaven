@@ -4075,6 +4075,19 @@ impl App {
                 }
                 Err(e) => self.status = format!("Inner Theologian skipped: {e}"),
             },
+            BgJobKind::PoetSlow => match result {
+                Ok(text) if text.trim().is_empty() => {
+                    self.status = "Inner Poet: nothing rose for this stanza".into();
+                }
+                Ok(text) => {
+                    self.push_thought(format!("## ♪ Inner Poet\n\n{text}"));
+                    self.right_pane = RightPane::Thoughts;
+                    self.focus_cycle(Focus::Ai);
+                    self.status =
+                        "♪ Inner Poet — in the Thoughts pane (↑↓ scroll · Ctrl+Z f fullscreen)".into();
+                }
+                Err(e) => self.status = format!("Inner Poet skipped: {e}"),
+            },
             BgJobKind::WorldOverview => match result {
                 Ok(joined) => {
                     let rows: Vec<String> = joined.split('\n').map(str::to_string).collect();
@@ -7078,6 +7091,10 @@ pub(super) enum BgJobKind {
     /// J→T`. The worker calls the persona over the open paragraph and emits its
     /// questions to Output; the `Ok` payload is "1" when a question landed.
     TheologianSlow,
+    /// POEM-3 (PO-P6) — the Inner Poet slow track (LLM), `Ctrl+B J → P → E`. The
+    /// worker observes the open stanza (enjambment / sound / caesura / volta) and
+    /// the `Ok` payload is the observation text, shown in the Thoughts pane.
+    PoetSlow,
     /// BUG-8 — the `Ctrl+B W` world overview compiled off-thread (deterministic,
     /// zero-AI). The `Ok` payload is the overview rows joined by `\n`.
     WorldOverview,
@@ -15337,7 +15354,7 @@ impl App {
             KeyCode::Char('c') | KeyCode::Char('C') => self.socratic_open_conversation(),
             KeyCode::Char('t') | KeyCode::Char('T') => self.theologian_engage_open_paragraph(),
             KeyCode::Char('r') | KeyCode::Char('R') => self.rigor_check_open_paragraph(),
-            KeyCode::Char('p') | KeyCode::Char('P') => self.poet_check_open_paragraph(),
+            KeyCode::Char('p') | KeyCode::Char('P') => self.open_inner_poet_overview(),
             KeyCode::Char('n') | KeyCode::Char('N') => self.socratic_persona_wizard(),
             KeyCode::Char('a') | KeyCode::Char('A') => {
                 self.socratic_auto = !self.socratic_auto;
@@ -15353,6 +15370,16 @@ impl App {
                     *cursor = 0;
                 }
             }
+            _ => {}
+        }
+        true
+    }
+
+    /// Key handling for the Inner Poet overview (Esc is handled generically).
+    fn inner_poet_overview_handle_key(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Char('f') | KeyCode::Char('F') => self.poet_check_open_paragraph(),
+            KeyCode::Char('e') | KeyCode::Char('E') => self.poet_engage_open_paragraph(),
             _ => {}
         }
         true
@@ -15825,6 +15852,60 @@ impl App {
             }
         }
         None
+    }
+
+    /// Open the Inner Poet overview (`Ctrl+B J → P`): F fast-scans, E engages the
+    /// LLM slow track.
+    fn open_inner_poet_overview(&mut self) {
+        self.modal = Modal::InnerPoetOverview;
+        self.status =
+            "Inner Poet · F fast-scan ¶ (metre + rhyme → Output) · E engage (AI → Thoughts) · Esc".into();
+    }
+
+    /// Inner Poet slow track (PO-P6) — an LLM reads the open verse stanza and
+    /// observes its enjambment / sound / caesura / volta in the Thoughts pane.
+    /// Non-prescriptive; never rewrites.
+    fn poet_engage_open_paragraph(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "Inner Poet: no paragraph open".into();
+            return;
+        };
+        let id = doc.id;
+        let is_verse = self.hierarchy.get(id).map(crate::poetry::is_verse_paragraph).unwrap_or(false);
+        if !is_verse {
+            self.modal = Modal::None;
+            self.status = "♪ Inner Poet reads verse paragraphs (para:verse-*)".into();
+            return;
+        }
+        let Some(form) = self.poem_form_for(id) else {
+            self.modal = Modal::None;
+            self.status = "♪ Inner Poet: no poem: block for this stanza (see `poetry forms`)".into();
+            return;
+        };
+        let stanza = crate::audiobook::typst_to_plain(&doc.textarea.lines().join("\n"));
+        if stanza.trim().is_empty() {
+            self.status = "♪ Inner Poet: the stanza is empty".into();
+            return;
+        }
+        if let Err(e) = self.ai.resolve_provider(&self.cfg.llm, None) {
+            self.status = format!("Inner Poet needs an LLM provider: {e}");
+            return;
+        }
+        let lang = crate::prose::ProseLanguage::from_label(if form.language.is_empty() {
+            &self.cfg.language
+        } else {
+            &form.language
+        });
+        let cfg = self.cfg.clone();
+        self.modal = Modal::None;
+        self.right_pane = RightPane::Thoughts;
+        self.status = "⟳ Inner Poet: reading the stanza…".into();
+        self.start_bg_job(BgJobKind::PoetSlow, "inner poet", move |tx, _cancel| {
+            use crate::inner_poet::slow;
+            let prompt = slow::build_observation_prompt(&stanza, &form, &lang);
+            let result = slow::poet_llm_call(&cfg, slow::POET_SYSTEM, &prompt);
+            let _ = tx.send(BgMsg::Done(result));
+        });
     }
 
     fn theologian_engage_open_paragraph(&mut self) {
@@ -24518,6 +24599,10 @@ impl App {
         }
         if matches!(self.modal, Modal::InnerSocratesOverview { .. }) {
             self.inner_socrates_overview_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::InnerPoetOverview) {
+            self.inner_poet_overview_handle_key(key);
             return Ok(false);
         }
         if matches!(self.modal, Modal::InnerEditorOverview { .. }) {
