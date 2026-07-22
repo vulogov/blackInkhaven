@@ -15337,6 +15337,7 @@ impl App {
             KeyCode::Char('c') | KeyCode::Char('C') => self.socratic_open_conversation(),
             KeyCode::Char('t') | KeyCode::Char('T') => self.theologian_engage_open_paragraph(),
             KeyCode::Char('r') | KeyCode::Char('R') => self.rigor_check_open_paragraph(),
+            KeyCode::Char('p') | KeyCode::Char('P') => self.poet_check_open_paragraph(),
             KeyCode::Char('n') | KeyCode::Char('N') => self.socratic_persona_wizard(),
             KeyCode::Char('a') | KeyCode::Char('A') => {
                 self.socratic_auto = !self.socratic_auto;
@@ -15742,6 +15743,88 @@ impl App {
         } else {
             self.status = "⊬ Rigor: no rigor signals in this ¶".into();
         }
+    }
+
+    /// Inner Poet fast track (PO-P5) — scan the open verse paragraph against its
+    /// declared `poem:` form and emit metre/rhyme findings to the Output pane.
+    /// Deterministic, zero-AI; observes and reports, never rewrites.
+    fn poet_check_open_paragraph(&mut self) {
+        use crate::pane::output::{kinds, Lifetime, Message, Severity};
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "Inner Poet: no paragraph open".into();
+            return;
+        };
+        let id = doc.id;
+        let is_verse = self.hierarchy.get(id).map(crate::poetry::is_verse_paragraph).unwrap_or(false);
+        if !is_verse {
+            self.modal = Modal::None;
+            self.status = "♪ Inner Poet reads verse paragraphs (para:verse-*)".into();
+            return;
+        }
+        let Some(form) = self.poem_form_for(id) else {
+            self.modal = Modal::None;
+            self.status = "♪ Inner Poet: no poem: block for this stanza (see `poetry forms`)".into();
+            return;
+        };
+        let plain = crate::audiobook::typst_to_plain(&doc.textarea.lines().join("\n"));
+
+        // Replace this paragraph's prior poem findings.
+        if let Some(s) = crate::pane::output::active() {
+            if let Ok(msgs) = s.by_kind(kinds::POEM) {
+                for m in msgs.iter().filter(|m| m.source_paragraph_id == Some(id)) {
+                    let _ = s.dismiss(m.id);
+                }
+            }
+        }
+
+        let findings = crate::inner_poet::fast::scan_stanza(&plain, &form);
+        for f in &findings {
+            let severity = match f.severity {
+                crate::inner_poet::fast::Severity::Concern => Severity::Warning,
+                _ => Severity::Info,
+            };
+            let text = format!("[{}] {}", f.kind, f.message);
+            let msg = Message::new(
+                kinds::POEM,
+                severity,
+                Lifetime::UntilActedOn,
+                serde_json::json!({ "text": text, "kind": f.kind }),
+            )
+            .with_source_paragraph(id);
+            crate::pane::output::emit(&msg);
+        }
+
+        let n = findings.len();
+        self.modal = Modal::None;
+        if n > 0 {
+            self.refresh_tree_badges();
+            self.status = format!("♪ Inner Poet: {n} finding(s) in this stanza — ^B Tab → Output");
+        } else {
+            self.status = "♪ Inner Poet: this stanza matches its declared form".into();
+        }
+    }
+
+    /// Find a node's declared `poem:` form — an HJSON leaf carrying a `poem:`
+    /// block among the node's siblings, else at its parent's level (cascade).
+    fn poem_form_for(&self, node_id: Uuid) -> Option<crate::poetry::form::PoemForm> {
+        let node = self.hierarchy.get(node_id)?;
+        let mut levels: Vec<Option<Uuid>> = vec![node.parent_id];
+        if let Some(pid) = node.parent_id {
+            if let Some(parent) = self.hierarchy.get(pid) {
+                levels.push(parent.parent_id);
+            }
+        }
+        for level in levels {
+            for sib in self.hierarchy.children_of(level) {
+                if let Ok(Some(bytes)) = self.store.get_content(sib.id) {
+                    let body = String::from_utf8_lossy(&bytes);
+                    if let Some(form) = crate::poetry::form::PoemForm::from_hjson(&body) {
+                        return Some(form);
+                    }
+                }
+            }
+        }
+        None
     }
 
     fn theologian_engage_open_paragraph(&mut self) {
