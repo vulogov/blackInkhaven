@@ -1,6 +1,6 @@
 [package]
 name = "inkhaven"
-version = "1.8.8-dev"
+version = "1.8.8"
 edition = "2024"
 # Rust 1.85 stabilised edition 2024. Bump alongside any toolchain-only
 # feature usage (let-else / chained-comparisons / etc. are already stable).
@@ -183,6 +183,13 @@ flate2 = "1"
 # pure-Rust xz decoder — no liblzma / external-binary dependency.
 tar = "0.4"
 lzma-rs = "0.3"
+# POEM-2 (1.8.8): Liang syllable-boundary hyphenation for verse scanning.
+# `hypher` is Typst's own hyphenation crate — ALREADY in the tree transitively
+# via typst, so this promotes it to a direct dep (no new crate in the closure).
+# We enable only the five project languages. NB: hypher gives typographic break
+# opportunities and undercounts syllables, so syllable COUNT comes from vowel
+# groups; hypher supplies boundary placement.
+hypher = { version = "0.1", default-features = false, features = ["alloc", "english", "russian", "german", "french", "spanish"] }
 uuid = { version = "1", features = ["v7", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 arboard = "3"
