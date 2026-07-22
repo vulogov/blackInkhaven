@@ -265,8 +265,9 @@ fn trim_punct(s: &str) -> &str {
 /// Detect the best-fitting metre for a beat sequence. Each foot template is
 /// tiled across the line; flexible beats match either value, fixed beats must
 /// agree. The template with the highest conformance (over the fixed beats) wins,
-/// requiring a clear majority to name a metre at all.
-fn detect_meter(beats: &[Beat]) -> Option<Meter> {
+/// requiring a clear majority to name a metre at all. Source-agnostic — the
+/// poetry layer (POEM-5) feeds it beats from natural-language syllabification.
+pub(crate) fn detect_meter(beats: &[Beat]) -> Option<Meter> {
     let n = beats.len();
     if n < 2 {
         return None;

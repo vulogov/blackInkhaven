@@ -42,6 +42,46 @@ pub fn syllabify(word: Option<&str>, line: Option<&str>, language: Option<&str>)
     }
 }
 
+/// `poetry metre --line "…" [--form N] [--language L]` — scan a verse line.
+pub fn metre(line: &str, form: Option<&str>, language: Option<&str>) -> Result<()> {
+    let lang = ProseLanguage::from_label(language.unwrap_or("en"));
+    let beats = crate::poetry::metre::line_to_beats(line, lang);
+    let pattern: String = beats.iter().map(|b| b.glyph().to_string()).collect::<Vec<_>>().join(" ");
+
+    println!("  {line}");
+    println!("  {pattern}   ({} syllables)", beats.len());
+
+    match crate::poetry::metre::detect(&beats) {
+        Some(m) => println!("  → detected: {} (fit {:.2})", m.name, m.conformance),
+        None => println!("  → detected: irregular / free"),
+    }
+
+    if let Some(f) = form {
+        let lib = FormsLibrary::builtin();
+        let pf = lib
+            .localized(f, language.unwrap_or("en"))
+            .ok_or_else(|| Error::Config(format!("unknown form `{f}`")))?;
+        match crate::poetry::metre::Foot::parse(&pf.metre) {
+            Some(foot) if pf.feet > 0 => {
+                let scan = crate::poetry::metre::scan_line(&beats, foot, pf.feet as usize);
+                let extra = if scan.feminine_ending {
+                    " · feminine ending"
+                } else if scan.catalectic {
+                    " · catalectic (one short)"
+                } else {
+                    ""
+                };
+                println!(
+                    "  → declared {} ({} feet): {} of {} syllables, fit {:.2}{extra}",
+                    pf.metre, pf.feet, scan.syllables, scan.expected_syllables, scan.conformance
+                );
+            }
+            _ => println!("  → form `{f}` declares no accentual-syllabic metre to check against"),
+        }
+    }
+    Ok(())
+}
+
 /// `poetry forms [--form N] [--language L] [--new --name M]`.
 pub fn forms(form: Option<&str>, language: Option<&str>, new: bool, name: Option<&str>) -> Result<()> {
     let lib = FormsLibrary::builtin();
