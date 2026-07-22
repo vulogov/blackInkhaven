@@ -133,6 +133,27 @@ pub fn syllabify_conlang(word: &str, phon: &crate::conlang::types::Phonology) ->
         .collect()
 }
 
+/// If the word carries a combining acute accent (`\u{301}`) over a vowel — the
+/// way verse is stress-marked — return the 0-based syllable index it marks (the
+/// nucleus ordinal of the accented vowel), else `None`. Used by the metre scanner
+/// to override rule-based stress with the author's marks.
+pub fn marked_syllable_index(word: &str, lang: ProseLanguage) -> Option<usize> {
+    let vowels = vowels_for(&lang);
+    let mut group_index: isize = -1;
+    let mut in_v = false;
+    for c in word.chars() {
+        if c == '\u{301}' {
+            return if group_index >= 0 { Some(group_index as usize) } else { None };
+        }
+        let v = is_vowel(c, &vowels);
+        if v && !in_v {
+            group_index += 1;
+        }
+        in_v = v;
+    }
+    None
+}
+
 // ── internals ───────────────────────────────────────────────────────
 
 fn hyph_lang(lang: &ProseLanguage) -> Option<hypher::Lang> {

@@ -2834,6 +2834,19 @@ pub enum PoetryCommand {
         #[arg(long)]
         language: Option<String>,
     },
+    /// Scan a `--line` of verse: mark its beats, detect its metre, and (with
+    /// `--form`) check it against that form's declared metre.
+    Metre {
+        /// The line of verse to scan.
+        #[arg(long)]
+        line: String,
+        /// Check against this built-in form's declared metre (e.g. `blank_verse`).
+        #[arg(long)]
+        form: Option<String>,
+        /// Language (`en` `ru` `fr` `de` `es`; default `en`).
+        #[arg(long)]
+        language: Option<String>,
+    },
 }
 
 /// sub-subcommands under `inkhaven wordnet …`.
@@ -6137,6 +6150,9 @@ impl Cli {
                 PoetryCommand::Syllabify { word, line, language } => {
                     poetry::syllabify(word.as_deref(), line.as_deref(), language.as_deref())
                         .map_err(Into::into)
+                }
+                PoetryCommand::Metre { line, form, language } => {
+                    poetry::metre(&line, form.as_deref(), language.as_deref()).map_err(Into::into)
                 }
             },
             Command::Doctor { voices, tts_test, filter_words_snippet, scan, json, class, autofix, yes } => {
