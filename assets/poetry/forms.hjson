@@ -1,0 +1,191 @@
+{
+  // POEM-1 — the built-in poetry forms library. Each entry is a language-neutral
+  // `poem:` template; the CLI applies per-language tuning (French → syllabic +
+  // mute-e; Russian → pyrrhic allowance + final stress) and sets `language`.
+  // `desc` is a one-line summary for `inkhaven poetry forms` (not part of the
+  // emitted poem: block). NB: HJSON quoteless strings run to end of line — one
+  // field per line, no inline commas.
+  forms: [
+    {
+      form: sonnet
+      desc: "14 lines of iambic pentameter (generic English scheme)"
+      metre: iambic
+      feet: 5
+      metre_tradition: accentual_syllabic
+      rhyme_scheme: "ABAB CDCD EFEF GG"
+      stanzas: 0
+      lines_per_stanza: 0
+    }
+    {
+      form: petrarchan_sonnet
+      desc: "Italian sonnet: octave (ABBAABBA) + sestet (CDECDE)"
+      metre: iambic
+      feet: 5
+      metre_tradition: accentual_syllabic
+      rhyme_scheme: "ABBAABBA CDECDE"
+      stanzas: 2
+      lines_per_stanza: 0
+    }
+    {
+      form: shakespearean_sonnet
+      desc: "English sonnet: 3 quatrains + a couplet, volta near line 12"
+      metre: iambic
+      feet: 5
+      metre_tradition: accentual_syllabic
+      rhyme_scheme: "ABAB CDCD EFEF GG"
+      stanzas: 4
+      lines_per_stanza: 0
+    }
+    {
+      form: haiku
+      desc: "3 lines, 5-7-5 syllables, unrhymed"
+      metre: syllabic
+      feet: 0
+      metre_tradition: syllabic
+      rhyme_scheme: "- - -"
+      stanzas: 1
+      lines_per_stanza: 3
+    }
+    {
+      form: senryuu
+      desc: "haiku form (5-7-5) on human nature rather than the seasons"
+      metre: syllabic
+      feet: 0
+      metre_tradition: syllabic
+      rhyme_scheme: "- - -"
+      stanzas: 1
+      lines_per_stanza: 3
+    }
+    {
+      form: tanka
+      desc: "5 lines, 5-7-5-7-7 syllables, unrhymed"
+      metre: syllabic
+      feet: 0
+      metre_tradition: syllabic
+      rhyme_scheme: "- - - - -"
+      stanzas: 1
+      lines_per_stanza: 5
+    }
+    {
+      form: ghazal
+      desc: "autonomous couplets sharing a radif; a signature in the closing maqta"
+      metre: free
+      feet: 0
+      metre_tradition: free
+      rhyme_scheme: "AA -A -A -A -A"
+      stanzas: 0
+      lines_per_stanza: 2
+      signature_word: ""
+    }
+    {
+      form: villanelle
+      desc: "19 lines: 5 tercets + a quatrain, two refrains on a schedule"
+      metre: iambic
+      feet: 5
+      metre_tradition: accentual_syllabic
+      rhyme_scheme: "ABA ABA ABA ABA ABA ABAA"
+      stanzas: 6
+      lines_per_stanza: 0
+    }
+    {
+      form: pantoum
+      desc: "interlocking quatrains: lines 2 and 4 recur as 1 and 3 of the next"
+      metre: iambic
+      feet: 5
+      metre_tradition: accentual_syllabic
+      rhyme_scheme: "ABAB BCBC CDCD"
+      stanzas: 0
+      lines_per_stanza: 4
+    }
+    {
+      form: terza_rima
+      desc: "chained tercets: ABA BCB CDC …"
+      metre: iambic
+      feet: 5
+      metre_tradition: accentual_syllabic
+      rhyme_scheme: "ABA BCB CDC DED"
+      stanzas: 0
+      lines_per_stanza: 3
+    }
+    {
+      form: ottava_rima
+      desc: "8-line stanzas rhyming ABABABCC"
+      metre: iambic
+      feet: 5
+      metre_tradition: accentual_syllabic
+      rhyme_scheme: "ABABABCC"
+      stanzas: 0
+      lines_per_stanza: 8
+    }
+    {
+      form: blank_verse
+      desc: "unrhymed iambic pentameter"
+      metre: iambic
+      feet: 5
+      metre_tradition: accentual_syllabic
+      rhyme_scheme: "-"
+      stanzas: 0
+      lines_per_stanza: 0
+    }
+    {
+      form: heroic_couplet
+      desc: "rhymed iambic-pentameter couplets (AA BB …)"
+      metre: iambic
+      feet: 5
+      metre_tradition: accentual_syllabic
+      rhyme_scheme: "AA BB CC"
+      stanzas: 0
+      lines_per_stanza: 2
+    }
+    {
+      form: limerick
+      desc: "5 anapestic lines rhyming AABBA (long-long-short-short-long)"
+      metre: anapestic
+      feet: 3
+      metre_tradition: accentual_syllabic
+      rhyme_scheme: "AABBA"
+      stanzas: 1
+      lines_per_stanza: 5
+    }
+    {
+      form: ode
+      desc: "elevated address; stanzaic but formally open"
+      metre: iambic
+      feet: 5
+      metre_tradition: accentual_syllabic
+      rhyme_scheme: ""
+      stanzas: 0
+      lines_per_stanza: 0
+    }
+    {
+      form: elegy
+      desc: "reflective lament; formally open, often iambic"
+      metre: iambic
+      feet: 5
+      metre_tradition: accentual_syllabic
+      rhyme_scheme: ""
+      stanzas: 0
+      lines_per_stanza: 0
+    }
+    {
+      form: free_verse
+      desc: "no metre or rhyme — the Inner Poet observes tendencies only"
+      metre: free
+      feet: 0
+      metre_tradition: free
+      rhyme_scheme: ""
+      stanzas: 0
+      lines_per_stanza: 0
+    }
+    {
+      form: prose_poem
+      desc: "poetic prose without line breaks"
+      metre: free
+      feet: 0
+      metre_tradition: free
+      rhyme_scheme: ""
+      stanzas: 0
+      lines_per_stanza: 0
+    }
+  ]
+}

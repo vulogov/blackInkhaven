@@ -13,6 +13,8 @@
 //! there. This module adds the verse-specific registry, the tree glyph, and the
 //! [`is_verse_paragraph`] predicate the Inner Poet (PO-P3) scopes on.
 
+pub mod form;
+
 use crate::store::node::Node;
 
 /// The `para:verse-*` subtype registry — the poetry parallel to
