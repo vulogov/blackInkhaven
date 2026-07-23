@@ -42,8 +42,14 @@ pub fn syllabify(word: Option<&str>, line: Option<&str>, language: Option<&str>)
     }
 }
 
-/// `poetry scan --text "…" --form N [--language]` — the Inner Poet fast track.
-pub fn scan(text: &str, form_name: &str, language: Option<&str>) -> Result<()> {
+/// `poetry scan --text "…" --form N [--language --json --fail-on-concern]`.
+pub fn scan(
+    text: &str,
+    form_name: &str,
+    language: Option<&str>,
+    json: bool,
+    fail_on_concern: bool,
+) -> Result<()> {
     use crate::inner_poet::fast::{Severity, scan_stanza};
     let lang = language.unwrap_or("en");
     let lib = FormsLibrary::builtin();
@@ -51,29 +57,73 @@ pub fn scan(text: &str, form_name: &str, language: Option<&str>) -> Result<()> {
         .localized(form_name, lang)
         .ok_or_else(|| Error::Config(format!("unknown form `{form_name}` — run `inkhaven poetry forms`")))?;
     let findings = scan_stanza(text, &form);
-    if findings.is_empty() {
+    let sev_str = |s: Severity| match s {
+        Severity::Praise => "praise",
+        Severity::Note => "note",
+        Severity::Concern => "concern",
+    };
+    let concerns = findings.iter().filter(|f| f.severity == Severity::Concern).count();
+
+    if json {
+        let arr: Vec<_> = findings
+            .iter()
+            .map(|f| {
+                serde_json::json!({
+                    "severity": sev_str(f.severity),
+                    "kind": f.kind,
+                    "line": f.line,
+                    "message": f.message,
+                })
+            })
+            .collect();
+        let out = serde_json::json!({
+            "form": form.form,
+            "language": lang,
+            "concerns": concerns,
+            "findings": arr,
+        });
+        println!("{}", serde_json::to_string_pretty(&out).unwrap_or_default());
+    } else if findings.is_empty() {
         println!("♪ no findings — the stanza matches its declared {} form.", form.form);
-        return Ok(());
+    } else {
+        for f in &findings {
+            let label = match f.severity {
+                Severity::Praise => "Praise",
+                Severity::Note => "Note",
+                Severity::Concern => "Concern",
+            };
+            println!("♪ {label:<8} [{}]  {}", f.kind, f.message);
+        }
     }
-    for f in &findings {
-        let sev = match f.severity {
-            Severity::Praise => "Praise",
-            Severity::Note => "Note",
-            Severity::Concern => "Concern",
-        };
-        println!("♪ {sev:<8} [{}]  {}", f.kind, f.message);
+
+    // CI gate: a Concern-level finding fails the run.
+    if fail_on_concern && concerns > 0 {
+        std::process::exit(1);
     }
     Ok(())
 }
 
-/// `poetry status --text "…" --form N` — completion + missing components.
-pub fn status(text: &str, form_name: &str, language: Option<&str>) -> Result<()> {
+/// `poetry status --text "…" --form N [--json]` — completion + missing components.
+pub fn status(text: &str, form_name: &str, language: Option<&str>, json: bool) -> Result<()> {
     let lang = language.unwrap_or("en");
     let lib = FormsLibrary::builtin();
     let form = lib
         .localized(form_name, lang)
         .ok_or_else(|| Error::Config(format!("unknown form `{form_name}` — run `inkhaven poetry forms`")))?;
     let st = crate::poetry::form_check::check_form(text, &form);
+
+    if json {
+        let out = serde_json::json!({
+            "form": form.form,
+            "lines_written": st.lines_written,
+            "expected_lines": st.expected_lines,
+            "complete": st.complete,
+            "issues": st.issues,
+        });
+        println!("{}", serde_json::to_string_pretty(&out).unwrap_or_default());
+        return Ok(());
+    }
+
     let ratio = match st.expected_lines {
         Some(e) => format!("{}/{}", st.lines_written, e),
         None => format!("{} lines (open form)", st.lines_written),
@@ -131,22 +181,33 @@ pub fn trilemma(
     Ok(())
 }
 
-/// `poetry rhyme <word1> <word2> [--language]` — classify a rhyme.
-pub fn rhyme(w1: &str, w2: &str, language: Option<&str>) -> Result<()> {
+/// `poetry rhyme <word1> <word2> [--language --json]` — classify a rhyme.
+pub fn rhyme(w1: &str, w2: &str, language: Option<&str>, json: bool) -> Result<()> {
     use crate::poetry::rhyme::{RhymeQuality, RhymeType, analyse_rhyme};
-    let lang = ProseLanguage::from_label(language.unwrap_or("en"));
-    let r = analyse_rhyme(w1, w2, lang);
+    let r = analyse_rhyme(w1, w2, ProseLanguage::from_label(language.unwrap_or("en")));
     let quality = match r.quality {
         RhymeQuality::Perfect => "perfect",
         RhymeQuality::Near => "near",
         RhymeQuality::Eye => "eye",
-        RhymeQuality::None => "no",
+        RhymeQuality::None => "none",
     };
     let rtype = match r.rhyme_type {
         RhymeType::Masculine => "masculine",
         RhymeType::Feminine => "feminine",
         RhymeType::Dactylic => "dactylic",
     };
+
+    if json {
+        let out = serde_json::json!({
+            "quality": quality,
+            "type": rtype,
+            "shared": r.shared,
+            "note": r.note,
+        });
+        println!("{}", serde_json::to_string_pretty(&out).unwrap_or_default());
+        return Ok(());
+    }
+
     if matches!(r.quality, RhymeQuality::None) {
         println!("  {w1} / {w2}: no rhyme");
     } else {
