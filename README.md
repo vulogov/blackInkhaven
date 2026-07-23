@@ -27,25 +27,30 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.8.16 — Poetry CLI Polish
+## Latest release · 1.8.17 — Poetry with Inkhaven
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.8.16.md`](Documentation/RELEASE_NOTES/1.8.16.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.8.17.md`](Documentation/RELEASE_NOTES/1.8.17.md)
 
-Machine-readable output and a CI gate for the poetry commands. `--json` gives structured findings and
-results; `--fail-on-concern` fails the run when a poem has drifted from its declared form.
+The poetry layer gets its companion book and its first proper editor affordance: a full
+standalone book teaching the whole toolset, and a way to **declare a form at the desk**.
 
 ### What's new
 
-- **`--json`** on `poetry scan` / `status` / `rhyme` — structured output for tooling and CI (findings
-  with severity/kind/line/message + a `concerns` count; completion ratio + issues; rhyme quality/type/tail).
-- **`--fail-on-concern`** on `poetry scan` — exits non-zero when any Concern-level finding is present,
-  so a CI job catches a poem that has drifted from its declared metre or rhyme. (`--dry-run` is a
-  no-op — the `poetry` commands never write to a store.)
+- **_Poetry with Inkhaven_** — a new 59-page companion book under [`Book/POETRY/`](Book/POETRY/),
+  for the poet and the critic alike: the `para:verse-*` family, syllabification and scansion across
+  five languages, rhyme, the Inner Poet, form completion, the translation trilemma, and scripting —
+  every example real output, every limitation stated plainly.
+- **Declare a form in the editor (PO-P12)** — in the Inner Poet overview (`Ctrl+B J → P`), press **`D`**
+  to pick a form; Inkhaven writes its `poem:` block (localised to the project language) as a sidecar
+  beside the stanza, so the fast track, `status`, and the slow track have a target. Generates no verse;
+  never duplicates an existing block.
+- **The `poetry` genre** — the prose readers now recognise `genre: "poetry"` (and `verse` / `poem`),
+  so line breaks and fragments read as craft, not error.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Adds `--json` to three commands and `--fail-on-concern` to `scan`; no
-change to the default text output. Warning-free (binary and tests). Test suite → 2653.
+**No new runtime crates.** The book is Typst-only; the editor feature reuses the shipped
+node-creation primitives. Warning-free (binary and tests). Test suite → 2654.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
