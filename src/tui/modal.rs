@@ -898,8 +898,17 @@ pub(super) enum Modal {
     },
     /// POEM-3 (PO-P6) — the Inner Poet overview (`Ctrl+B J → P`): `F` fast-scans
     /// the open verse paragraph's metre + rhyme to Output, `E` engages the LLM
-    /// slow track to the Thoughts pane, `Esc` closes.
+    /// slow track to the Thoughts pane, `D` declares a form, `Esc` closes.
     InnerPoetOverview,
+    /// POEM-TUI (PO-P12) — the form picker (`Ctrl+B J → P → D`): choose one of
+    /// the built-in forms and attach its `poem:` block to the open verse
+    /// paragraph as a sidecar leaf. `cursor` indexes `FormsLibrary::all()`;
+    /// `verse_id` is the stanza the block will describe. `↑↓` select, Enter
+    /// attach, Esc cancel.
+    PoemFormPicker {
+        verse_id: Uuid,
+        cursor: usize,
+    },
     /// INNER_EDITOR-1 — the Inner Editor overview (`Ctrl+V O`): status, tuning,
     /// active categories, today's usage, recent observations. `↑↓` scroll,
     /// `Esc` closes; `E` engages the open paragraph, `A` toggles the ambient

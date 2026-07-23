@@ -231,6 +231,25 @@ mod tests {
         assert_eq!(back.rhyme_scheme, ru.rhyme_scheme);
     }
 
+    // PO-P12 guard: the editor's form picker writes any built-in form's block as
+    // a sidecar, and `poem_form_for` must be able to read it straight back — in
+    // every project language. If a block a poet could attach failed to re-parse,
+    // the Inner Poet would silently report "no poem: block" on a stanza that has
+    // one. Assert the whole matrix round-trips.
+    #[test]
+    fn every_builtin_form_round_trips_in_every_language() {
+        let lib = FormsLibrary::builtin();
+        for pf in lib.all() {
+            for lang in ["en", "ru", "fr", "de", "es"] {
+                let localized = lib.localized(&pf.form, lang).unwrap_or_else(|| pf.clone());
+                let block = localized.to_poem_block();
+                let back = PoemForm::from_hjson(&block)
+                    .unwrap_or_else(|| panic!("form `{}` ({lang}) block did not re-parse", pf.form));
+                assert_eq!(back.form, pf.form, "form name lost round-tripping ({lang})");
+            }
+        }
+    }
+
     #[test]
     fn from_hjson_reads_a_wrapper_and_rejects_junk() {
         // One field per line — HJSON quoteless strings run to end of line.
