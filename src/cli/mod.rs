@@ -2856,6 +2856,9 @@ pub enum PoetryCommand {
         /// Language (`en` `ru` `fr` `de` `es`; default `en`).
         #[arg(long)]
         language: Option<String>,
+        /// Machine-readable JSON output.
+        #[arg(long)]
+        json: bool,
     },
     /// Run the Inner Poet's deterministic fast-track scan (metre + rhyme) over a
     /// stanza against a declared form. `--text` may span several newline lines.
@@ -2869,6 +2872,12 @@ pub enum PoetryCommand {
         /// Language (`en` `ru` `fr` `de` `es`; default `en`).
         #[arg(long)]
         language: Option<String>,
+        /// Machine-readable JSON findings.
+        #[arg(long)]
+        json: bool,
+        /// Exit non-zero if any Concern-level finding is present (CI gate).
+        #[arg(long)]
+        fail_on_concern: bool,
     },
     /// Report a poem's completion against its declared form: the line ratio and
     /// any missing/broken structural components (refrains, repetitions, maqta).
@@ -2882,6 +2891,9 @@ pub enum PoetryCommand {
         /// Language (`en` `ru` `fr` `de` `es`; default `en`).
         #[arg(long)]
         language: Option<String>,
+        /// Machine-readable JSON output.
+        #[arg(long)]
+        json: bool,
     },
     /// The translation trilemma — compare a source stanza and its verse
     /// translation on Form (metre + rhyme) and Sound (alliteration); the Meaning
@@ -6210,14 +6222,15 @@ impl Cli {
                 PoetryCommand::Metre { line, form, language } => {
                     poetry::metre(&line, form.as_deref(), language.as_deref()).map_err(Into::into)
                 }
-                PoetryCommand::Rhyme { word1, word2, language } => {
-                    poetry::rhyme(&word1, &word2, language.as_deref()).map_err(Into::into)
+                PoetryCommand::Rhyme { word1, word2, language, json } => {
+                    poetry::rhyme(&word1, &word2, language.as_deref(), json).map_err(Into::into)
                 }
-                PoetryCommand::Scan { text, form, language } => {
-                    poetry::scan(&text, &form, language.as_deref()).map_err(Into::into)
+                PoetryCommand::Scan { text, form, language, json, fail_on_concern } => {
+                    poetry::scan(&text, &form, language.as_deref(), json, fail_on_concern)
+                        .map_err(Into::into)
                 }
-                PoetryCommand::Status { text, form, language } => {
-                    poetry::status(&text, &form, language.as_deref()).map_err(Into::into)
+                PoetryCommand::Status { text, form, language, json } => {
+                    poetry::status(&text, &form, language.as_deref(), json).map_err(Into::into)
                 }
                 PoetryCommand::Trilemma { source, translation, form, language, to_language } => {
                     poetry::trilemma(
