@@ -2883,6 +2883,26 @@ pub enum PoetryCommand {
         #[arg(long)]
         language: Option<String>,
     },
+    /// The translation trilemma — compare a source stanza and its verse
+    /// translation on Form (metre + rhyme) and Sound (alliteration); the Meaning
+    /// axis is the AI's, in the editor.
+    Trilemma {
+        /// The source stanza (newline-separated lines).
+        #[arg(long)]
+        source: String,
+        /// The translation stanza.
+        #[arg(long)]
+        translation: String,
+        /// The declared form (for the rhyme scheme); optional.
+        #[arg(long)]
+        form: Option<String>,
+        /// Source language (default `en`).
+        #[arg(long)]
+        language: Option<String>,
+        /// Translation language (default `en`).
+        #[arg(long)]
+        to_language: Option<String>,
+    },
 }
 
 /// sub-subcommands under `inkhaven wordnet …`.
@@ -6198,6 +6218,16 @@ impl Cli {
                 }
                 PoetryCommand::Status { text, form, language } => {
                     poetry::status(&text, &form, language.as_deref()).map_err(Into::into)
+                }
+                PoetryCommand::Trilemma { source, translation, form, language, to_language } => {
+                    poetry::trilemma(
+                        &source,
+                        &translation,
+                        form.as_deref(),
+                        language.as_deref(),
+                        to_language.as_deref(),
+                    )
+                    .map_err(Into::into)
                 }
             },
             Command::Doctor { voices, tts_test, filter_words_snippet, scan, json, class, autofix, yes } => {

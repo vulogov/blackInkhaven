@@ -90,6 +90,47 @@ pub fn status(text: &str, form_name: &str, language: Option<&str>) -> Result<()>
     Ok(())
 }
 
+/// `poetry trilemma --source --translation [--form --language --to-language]`.
+pub fn trilemma(
+    source: &str,
+    translation: &str,
+    form_name: Option<&str>,
+    language: Option<&str>,
+    to_language: Option<&str>,
+) -> Result<()> {
+    let (from, to) = (language.unwrap_or("en"), to_language.unwrap_or("en"));
+    let form = match form_name {
+        Some(name) => FormsLibrary::builtin()
+            .localized(name, from)
+            .ok_or_else(|| Error::Config(format!("unknown form `{name}`")))?,
+        None => PoemForm::default(),
+    };
+    let (src_l, trans_l) =
+        (ProseLanguage::from_label(from), ProseLanguage::from_label(to));
+    let tri = crate::poetry::translation::trilemma(source, &src_l, translation, &trans_l, &form);
+
+    let bar = |score: f64| -> String {
+        let n = (score * 10.0).round().clamp(0.0, 10.0) as usize;
+        format!("{}{}", "█".repeat(n), "░".repeat(10 - n))
+    };
+    println!("Translation trilemma ({from} → {to}):\n");
+    println!(
+        "  Form     {}  {:>3.0}%   {} · {}",
+        bar(tri.form_score),
+        tri.form_score * 100.0,
+        tri.metre_note,
+        tri.rhyme_note
+    );
+    println!("  Meaning  ░░░░░░░░░░       (the AI axis — engage the Inner Poet in the editor)");
+    println!(
+        "  Sound    {}  {:>3.0}%   {}",
+        bar(tri.sound_score),
+        tri.sound_score * 100.0,
+        tri.sound_note
+    );
+    Ok(())
+}
+
 /// `poetry rhyme <word1> <word2> [--language]` — classify a rhyme.
 pub fn rhyme(w1: &str, w2: &str, language: Option<&str>) -> Result<()> {
     use crate::poetry::rhyme::{RhymeQuality, RhymeType, analyse_rhyme};
