@@ -18,6 +18,7 @@ pub mod form_check;
 pub mod metre;
 pub mod rhyme;
 pub mod syllabify;
+pub mod translation;
 
 use crate::store::node::Node;
 
