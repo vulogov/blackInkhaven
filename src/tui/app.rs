@@ -15380,6 +15380,7 @@ impl App {
         match key.code {
             KeyCode::Char('f') | KeyCode::Char('F') => self.poet_check_open_paragraph(),
             KeyCode::Char('e') | KeyCode::Char('E') => self.poet_engage_open_paragraph(),
+            KeyCode::Char('d') | KeyCode::Char('D') => self.open_poem_form_picker(),
             _ => {}
         }
         true
@@ -15855,11 +15856,177 @@ impl App {
     }
 
     /// Open the Inner Poet overview (`Ctrl+B J → P`): F fast-scans, E engages the
-    /// LLM slow track.
+    /// LLM slow track, D declares a form.
     fn open_inner_poet_overview(&mut self) {
         self.modal = Modal::InnerPoetOverview;
         self.status =
-            "Inner Poet · F fast-scan ¶ (metre + rhyme → Output) · E engage (AI → Thoughts) · Esc".into();
+            "Inner Poet · F fast-scan ¶ · E engage (AI) · D declare a form · Esc".into();
+    }
+
+    /// POEM-TUI (PO-P12) — `Ctrl+B J → P → D`: open the form picker for the open
+    /// verse paragraph. This is the editor counterpart to `inkhaven poetry forms`:
+    /// choosing a form writes its `poem:` block beside the stanza, so every
+    /// measuring tool (the fast track, `status`, the slow track) has a target to
+    /// measure against — the missing link that made in-editor creation shallow.
+    fn open_poem_form_picker(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "♪ Inner Poet: open a verse paragraph first".into();
+            return;
+        };
+        let id = doc.id;
+        let is_verse = self
+            .hierarchy
+            .get(id)
+            .map(crate::poetry::is_verse_paragraph)
+            .unwrap_or(false);
+        if !is_verse {
+            self.status = "♪ declare a form on a verse paragraph (para:verse-*)".into();
+            return;
+        }
+        self.modal = Modal::PoemFormPicker { verse_id: id, cursor: 0 };
+        self.status = "♪ declare a form — ↑↓ select · Enter attach · Esc cancel".into();
+    }
+
+    fn poem_form_picker_handle_key(&mut self, key: KeyEvent) -> bool {
+        let total = crate::poetry::form::FormsLibrary::builtin().all().len();
+        let Modal::PoemFormPicker { verse_id, cursor } = &mut self.modal else {
+            return false;
+        };
+        match key.code {
+            KeyCode::Up => {
+                if *cursor > 0 {
+                    *cursor -= 1;
+                }
+            }
+            KeyCode::Down => {
+                if *cursor + 1 < total {
+                    *cursor += 1;
+                }
+            }
+            KeyCode::Home => *cursor = 0,
+            KeyCode::End => *cursor = total.saturating_sub(1),
+            KeyCode::Enter => {
+                let (vid, idx) = (*verse_id, *cursor);
+                self.attach_poem_form(vid, idx);
+            }
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "♪ form declaration cancelled".into();
+            }
+            _ => {}
+        }
+        true
+    }
+
+    /// Attach (or replace) the `poem:` block for a verse paragraph. The block is
+    /// written as an HJSON sidecar leaf immediately after the stanza — exactly
+    /// where `poem_form_for` cascades to find it. If a sidecar already exists it
+    /// is rewritten in place rather than duplicated. This is a *structural* edit
+    /// the author invoked, not an AI one: it never touches the poem's own text.
+    fn attach_poem_form(&mut self, verse_id: Uuid, idx: usize) {
+        let lib = crate::poetry::form::FormsLibrary::builtin();
+        let Some(base) = lib.all().get(idx) else {
+            self.status = "♪ no such form".into();
+            self.modal = Modal::None;
+            return;
+        };
+        // Localise the block to the project language so a Russian book gets the
+        // Russian defaults (feminine-ending tolerance, final-stress rule, …).
+        let iso = crate::ai::prompts::iso_from_long(&self.cfg.language);
+        let form = lib.localized(&base.form, &iso).unwrap_or_else(|| base.clone());
+        let block = form.to_poem_block();
+        let form_name = form.form.clone();
+
+        // Is there already a poem: sidecar among the stanza's siblings? Rewrite it.
+        let existing = self.existing_poem_sidecar(verse_id);
+        let result = if let Some(sidecar_id) = existing {
+            self.rewrite_leaf_content(sidecar_id, &block)
+        } else {
+            self.create_poem_sidecar(verse_id, &form_name, &block)
+        };
+
+        match result {
+            Ok(new_id) => {
+                self.modal = Modal::None;
+                self.reload_hierarchy();
+                if let Some(i) = self.rows.iter().position(|(id, _)| *id == new_id) {
+                    self.tree_cursor = i;
+                }
+                self.status = format!(
+                    "♪ declared `{form_name}` — the Inner Poet now measures this stanza against it (F)"
+                );
+            }
+            Err(e) => {
+                self.modal = Modal::None;
+                self.status = format!("♪ could not declare the form: {e}");
+            }
+        }
+    }
+
+    /// Find an existing `poem:` sidecar leaf among a verse paragraph's siblings
+    /// (same level only — the level `create_poem_sidecar` writes to).
+    fn existing_poem_sidecar(&self, verse_id: Uuid) -> Option<Uuid> {
+        let node = self.hierarchy.get(verse_id)?;
+        for sib in self.hierarchy.children_of(node.parent_id) {
+            if sib.id == verse_id {
+                continue;
+            }
+            if let Ok(Some(bytes)) = self.store.get_content(sib.id) {
+                let body = String::from_utf8_lossy(&bytes);
+                if crate::poetry::form::PoemForm::from_hjson(&body).is_some() {
+                    return Some(sib.id);
+                }
+            }
+        }
+        None
+    }
+
+    /// Overwrite a leaf's content on disk and in the store. Returns the leaf id.
+    fn rewrite_leaf_content(&mut self, leaf_id: Uuid, body: &str) -> crate::error::Result<Uuid> {
+        let mut node = self
+            .hierarchy
+            .get(leaf_id)
+            .cloned()
+            .ok_or_else(|| crate::error::Error::Config("sidecar vanished".into()))?;
+        if let Some(rel) = &node.file {
+            let abs = self.layout.root.join(rel);
+            let _ = std::fs::write(&abs, body.as_bytes());
+        }
+        self.store.update_paragraph_content(&mut node, body.as_bytes())?;
+        Ok(leaf_id)
+    }
+
+    /// Create a new HJSON sidecar leaf carrying the `poem:` block, positioned
+    /// immediately after the verse paragraph so it reads as belonging to it.
+    fn create_poem_sidecar(
+        &mut self,
+        verse_id: Uuid,
+        form_name: &str,
+        body: &str,
+    ) -> crate::error::Result<Uuid> {
+        let verse = self
+            .hierarchy
+            .get(verse_id)
+            .cloned()
+            .ok_or_else(|| crate::error::Error::Config("verse paragraph vanished".into()))?;
+        let parent = verse.parent_id.and_then(|id| self.hierarchy.get(id)).cloned();
+        let title = format!("poem: {form_name}");
+        let mut node = self.store.create_node(
+            &self.cfg,
+            &self.hierarchy,
+            NodeKind::Paragraph,
+            &title,
+            parent.as_ref(),
+            None,
+            InsertPosition::After(verse_id),
+        )?;
+        node.content_type = Some("hjson".to_string());
+        if let Some(rel) = &node.file {
+            let abs = self.layout.root.join(rel);
+            let _ = std::fs::write(&abs, body.as_bytes());
+        }
+        self.store.update_paragraph_content(&mut node, body.as_bytes())?;
+        Ok(node.id)
     }
 
     /// Inner Poet slow track (PO-P6) — an LLM reads the open verse stanza and
@@ -24603,6 +24770,10 @@ impl App {
         }
         if matches!(self.modal, Modal::InnerPoetOverview) {
             self.inner_poet_overview_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::PoemFormPicker { .. }) {
+            self.poem_form_picker_handle_key(key);
             return Ok(false);
         }
         if matches!(self.modal, Modal::InnerEditorOverview { .. }) {

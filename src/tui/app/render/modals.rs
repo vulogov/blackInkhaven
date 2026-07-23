@@ -349,6 +349,87 @@ impl super::super::App {
         f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
     }
 
+    /// POEM-TUI (PO-P12) — the form picker (`Ctrl+B J → P → D`). Lists the
+    /// built-in forms; Enter attaches the chosen form's `poem:` block to the
+    /// open verse paragraph.
+    pub(in crate::tui::app) fn draw_poem_form_picker_modal(
+        &self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::PoemFormPicker { cursor, .. } = &self.modal else {
+            return;
+        };
+        let lib = crate::poetry::form::FormsLibrary::builtin();
+        let forms = lib.all();
+
+        let width = 60u16.clamp(44, area.width.saturating_sub(6));
+        let max_rows = area.height.saturating_sub(8).max(6) as usize;
+        let visible = forms.len().min(max_rows);
+        let height = (visible + 6) as u16;
+        let height = height.clamp(10, area.height.saturating_sub(2));
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" ♪ Declare a form · D ")
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        // Scroll window so the cursor stays visible with >max_rows forms.
+        let start = if *cursor >= visible {
+            (*cursor + 1).saturating_sub(visible)
+        } else {
+            0
+        };
+        let end = (start + visible).min(forms.len());
+
+        let name_w = forms.iter().map(|f| f.form.len()).max().unwrap_or(16).min(20);
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        lines.push(Line::from(""));
+        for (i, pf) in forms.iter().enumerate().take(end).skip(start) {
+            let marker = if i == *cursor { "›" } else { " " };
+            let desc_room = (width as usize).saturating_sub(name_w + 8);
+            let mut desc = pf.desc.clone();
+            if desc.chars().count() > desc_room {
+                desc = desc.chars().take(desc_room.saturating_sub(1)).collect::<String>() + "…";
+            }
+            let row = format!("  {marker} {:<name_w$}  {desc}", pf.form, name_w = name_w);
+            let style = if i == *cursor {
+                Style::default()
+                    .add_modifier(Modifier::REVERSED)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            lines.push(Line::from(Span::styled(row, style)));
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  writes a poem: block beside the stanza — no verse is generated".to_string(),
+            Style::default().add_modifier(Modifier::DIM),
+        )));
+        lines.push(Line::from(Span::styled(
+            "  ↑↓ select · Enter attach · Esc cancel".to_string(),
+            Style::default().add_modifier(Modifier::DIM),
+        )));
+
+        f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+    }
+
     pub(in crate::tui::app) fn draw_llm_picker_modal(&self, f: &mut ratatui::Frame, area: Rect) {
         let Modal::LlmPicker {
             providers,
