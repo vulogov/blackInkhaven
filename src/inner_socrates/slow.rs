@@ -92,6 +92,11 @@ pub fn slow_genre_context(genre: Option<&str>) -> Option<&'static str> {
             "philosophical work — the argument's structure is the substance; attend to unstated premises, terms that shift meaning, and objections left unanswered, not to empirical proof",
         "theology" | "theological" | "religious" =>
             "theological work — claims rest on revelation and tradition as much as reason; attend to internal coherence, fidelity to the source, and the scope of each claim, not empirical evidence",
+        // ── Verse (POEM PO-P11) — recalibrate the prose readers so line breaks,
+        //    fragments, and compression read as craft, not error. The Inner Poet
+        //    handles metre and rhyme; this only stops the prose reader misfiring. ──
+        "poetry" | "poem" | "verse" | "poetic" =>
+            "poem — line breaks, fragments, inversion, and compression are the medium, not errors; attend to image, rhythm, and whether the form's promise is kept, and leave metre and rhyme to the Inner Poet",
         _ => return None,
     })
 }
@@ -462,6 +467,9 @@ mod tests {
         // Non-empiricist framing: theology and philosophy explicitly disclaim empirical proof.
         assert!(slow_genre_context(Some("theology")).unwrap().contains("not empirical evidence"));
         assert!(slow_genre_context(Some("philosophy")).unwrap().contains("not to empirical proof"));
+        // POEM PO-P11 — verse recalibrates the prose reader; aliases resolve.
+        assert!(slow_genre_context(Some("poetry")).unwrap().contains("line breaks"));
+        assert!(slow_genre_context(Some("verse")).unwrap().contains("leave metre and rhyme to the Inner Poet"));
         // Every known genre yields a distinct, non-empty clause.
         let keys = [
             "literary", "fantasy", "scifi", "mystery", "memoir", "historical", "romance",
@@ -469,6 +477,8 @@ mod tests {
             "science", "business",
             // 1.4.7 AUDIENCE-1.1 — ideas genres.
             "utopian", "philosophy", "theology",
+            // POEM PO-P11 — verse.
+            "poetry",
         ];
         let mut seen = std::collections::BTreeSet::new();
         for k in keys {

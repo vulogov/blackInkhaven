@@ -63,6 +63,10 @@ impl super::App {
             self.draw_structural_type_picker_modal(f, area);
             return;
         }
+        if let Modal::PoemFormPicker { .. } = &self.modal {
+            self.draw_poem_form_picker_modal(f, area);
+            return;
+        }
         if let Modal::TranslationLanguagePicker { .. } = &self.modal {
             self.draw_translation_picker_modal(f, area);
             return;
