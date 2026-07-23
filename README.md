@@ -27,24 +27,25 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.8.13 — Form Completion
+## Latest release · 1.8.14 — The Translation Trilemma
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.8.13.md`](Documentation/RELEASE_NOTES/1.8.13.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.8.14.md`](Documentation/RELEASE_NOTES/1.8.14.md)
 
-Know where a poem stands against its form. `inkhaven poetry status` reports a completion ratio and
-flags the structural components a form requires but the text is missing or breaking.
+Translating verse forces a choice among three dimensions no translation can fully keep — **Form**
+(metre and rhyme), **Meaning**, and **Sound**. `inkhaven poetry trilemma` measures the two that are
+deterministic and makes the translator's trade-off visible; it never judges the choice.
 
 ### What's new
 
-- **`inkhaven poetry status`** — the line ratio against the form's expected total (14 for a sonnet,
-  19 for a villanelle, 3 for a haiku, or `stanzas × lines_per_stanza`), plus form-specific checks: a
-  **villanelle**'s refrain schedule, a **pantoum**'s carried lines, a **ghazal**'s signature (maqta),
-  a **sonnet**'s line count. Deterministic and offline — it measures, never rewrites.
+- **`inkhaven poetry trilemma`** — scans a source stanza and its translation: **Form** (per-line
+  foot match + how many of the source's rhymes survive) and **Sound** (alliterative-density
+  similarity), each as a 0–100% bar. The **Meaning** axis belongs to the LLM — the in-editor Inner
+  Poet names the specific sense that shifted (its prompt is built and ready).
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** A new `poetry::form_check` module and a `poetry status` command.
-Warning-free (binary and tests). Test suite → 2649.
+**No new runtime crates.** A new `poetry::translation` module and a `poetry trilemma` command,
+composing the metre and rhyme engines. Warning-free (binary and tests). Test suite → 2652.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
