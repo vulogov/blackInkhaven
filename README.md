@@ -27,25 +27,25 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.8.14 — The Translation Trilemma
+## Latest release · 1.8.15 — Poetry in Bund
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.8.14.md`](Documentation/RELEASE_NOTES/1.8.14.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.8.15.md`](Documentation/RELEASE_NOTES/1.8.15.md)
 
-Translating verse forces a choice among three dimensions no translation can fully keep — **Form**
-(metre and rhyme), **Meaning**, and **Sound**. `inkhaven poetry trilemma` measures the two that are
-deterministic and makes the translator's trade-off visible; it never judges the choice.
+The poetry engines reach the Bund scripting language. Four `ink.poem.*` words let a script
+syllabify, scan a line, classify a rhyme, and check a form's completion — all pure, read-only, and
+default-allowed.
 
 ### What's new
 
-- **`inkhaven poetry trilemma`** — scans a source stanza and its translation: **Form** (per-line
-  foot match + how many of the source's rhymes survive) and **Sound** (alliterative-density
-  similarity), each as a 0–100% bar. The **Meaning** axis belongs to the LLM — the in-editor Inner
-  Poet names the specific sense that shifted (its prompt is built and ready).
+- **`ink.poem.*`** — `syllable_count` ( word lang -- n ), `scan_line` ( line lang -- dict ), `rhyme`
+  ( word1 word2 lang -- dict ), `status` ( text form lang -- dict ). Each wraps a POEM engine, so a
+  Bund hook or custom rule reaches the same analysis the CLI and Inner Poet use; every `ink.poem.X`
+  also answers to `poem.X`. All `store_read` (default-allowed, no store needed).
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** A new `poetry::translation` module and a `poetry trilemma` command,
-composing the metre and rhyme engines. Warning-free (binary and tests). Test suite → 2652.
+**No new runtime crates.** A new `scripting::stdlib::poetry` module and its `store_read` policy
+entries. Warning-free (binary and tests). Test suite → 2653.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
