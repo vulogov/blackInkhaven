@@ -27,25 +27,25 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.8.15 — Poetry in Bund
+## Latest release · 1.8.16 — Poetry CLI Polish
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.8.15.md`](Documentation/RELEASE_NOTES/1.8.15.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.8.16.md`](Documentation/RELEASE_NOTES/1.8.16.md)
 
-The poetry engines reach the Bund scripting language. Four `ink.poem.*` words let a script
-syllabify, scan a line, classify a rhyme, and check a form's completion — all pure, read-only, and
-default-allowed.
+Machine-readable output and a CI gate for the poetry commands. `--json` gives structured findings and
+results; `--fail-on-concern` fails the run when a poem has drifted from its declared form.
 
 ### What's new
 
-- **`ink.poem.*`** — `syllable_count` ( word lang -- n ), `scan_line` ( line lang -- dict ), `rhyme`
-  ( word1 word2 lang -- dict ), `status` ( text form lang -- dict ). Each wraps a POEM engine, so a
-  Bund hook or custom rule reaches the same analysis the CLI and Inner Poet use; every `ink.poem.X`
-  also answers to `poem.X`. All `store_read` (default-allowed, no store needed).
+- **`--json`** on `poetry scan` / `status` / `rhyme` — structured output for tooling and CI (findings
+  with severity/kind/line/message + a `concerns` count; completion ratio + issues; rhyme quality/type/tail).
+- **`--fail-on-concern`** on `poetry scan` — exits non-zero when any Concern-level finding is present,
+  so a CI job catches a poem that has drifted from its declared metre or rhyme. (`--dry-run` is a
+  no-op — the `poetry` commands never write to a store.)
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** A new `scripting::stdlib::poetry` module and its `store_read` policy
-entries. Warning-free (binary and tests). Test suite → 2653.
+**No new runtime crates.** Adds `--json` to three commands and `--fail-on-concern` to `scan`; no
+change to the default text output. Warning-free (binary and tests). Test suite → 2653.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
