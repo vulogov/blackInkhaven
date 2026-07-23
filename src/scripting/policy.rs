@@ -375,6 +375,11 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     // language's book blocks + run the (pure) engine → store_read
     // (default-allowed).  init / define / add_word create book nodes, so they
     // inherit the store_write deny-by-default gate, exactly like ink.tree.*.
+    // POEM PO-P9 — the poetry engines (all read-only, default-allowed).
+    ("ink.poem.syllable_count", category::STORE_READ),
+    ("ink.poem.scan_line", category::STORE_READ),
+    ("ink.poem.rhyme", category::STORE_READ),
+    ("ink.poem.status", category::STORE_READ),
     ("ink.lang.list", category::STORE_READ),
     ("ink.lang.generate_word", category::STORE_READ),
     ("ink.lang.syllabify", category::STORE_READ),
@@ -846,6 +851,21 @@ mod tests {
             .find(|(w, _)| *w == "ink.thread.list")
             .map(|(_, c)| *c);
         assert_eq!(cat, Some(category::STORE_READ));
+    }
+
+    // POEM PO-P9 — the poetry engines are pure reads (default-allowed); pin them
+    // so a refactor can't accidentally gate them behind a category.
+    #[test]
+    fn poem_words_are_store_read() {
+        let cat = |w: &str| WORD_CATEGORIES.iter().find(|(n, _)| *n == w).map(|(_, c)| *c);
+        for w in [
+            "ink.poem.syllable_count",
+            "ink.poem.scan_line",
+            "ink.poem.rhyme",
+            "ink.poem.status",
+        ] {
+            assert_eq!(cat(w), Some(category::STORE_READ), "{w} must be store_read");
+        }
     }
 
     // 1.3.0 PDF-1 — pin the disk-crossing pdf words so a refactor can't
