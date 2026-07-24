@@ -27,30 +27,28 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.8.17 — Poetry with Inkhaven
+## Latest release · 1.8.18 — Building a poem at the desk
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.8.17.md`](Documentation/RELEASE_NOTES/1.8.17.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.8.18.md`](Documentation/RELEASE_NOTES/1.8.18.md)
 
-The poetry layer gets its companion book and its first proper editor affordance: a full
-standalone book teaching the whole toolset, and a way to **declare a form at the desk**.
+Fluid stanza-building and a live syllable readout — write a poem one stanza after another and
+watch each line's syllable count as you go.
 
 ### What's new
 
-- **_Poetry with Inkhaven_** — a new 59-page companion book under [`Book/POETRY/`](Book/POETRY/),
-  for the poet and the critic alike: the `para:verse-*` family, syllabification and scansion across
-  five languages, rhyme, the Inner Poet, form completion, the translation trilemma, and scripting —
-  every example real output, every limitation stated plainly.
-- **Declare a form in the editor (PO-P12)** — in the Inner Poet overview (`Ctrl+B J → P`), press **`D`**
-  to pick a form; Inkhaven writes its `poem:` block (localised to the project language) as a sidecar
-  beside the stanza, so the fast track, `status`, and the slow track have a target. Generates no verse;
-  never duplicates an existing block.
-- **The `poetry` genre** — the prose readers now recognise `genre: "poetry"` (and `verse` / `poem`),
-  so line breaks and fragments read as craft, not error.
+- **Next stanza — `Ctrl+B Shift+Y`** — create the next stanza (a sibling verse paragraph of the
+  same `para:verse-*` type, opened for editing), so a poem is built stanza by stanza without leaving
+  the flow. Writes structure only; never generates verse.
+- **Live verse readout** — while a verse paragraph is open, the status bar shows the current line's
+  syllable count and its position in the stanza (`♩ 8 syl · l2/4`), counted in the project language.
+- **Keybinding fix** — the WordNet thesaurus moved to its documented `Ctrl+V Shift+Y` home (it had
+  been mis-placed on `Ctrl+B Shift+Y`, whose name and docs always said Ctrl+V). A regression test pins
+  both chords.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** The book is Typst-only; the editor feature reuses the shipped
-node-creation primitives. Warning-free (binary and tests). Test suite → 2654.
+**No new runtime crates.** Reuses the shipped node-creation and status-chip machinery; one keybinding
+moved to where it was documented. Warning-free (binary and tests). Test suite → 2655.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
