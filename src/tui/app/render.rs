@@ -67,6 +67,10 @@ impl super::App {
             self.draw_poem_form_picker_modal(f, area);
             return;
         }
+        if let Modal::VerseTranslationView { .. } = &self.modal {
+            self.draw_verse_translation_modal(f, area);
+            return;
+        }
         if let Modal::TranslationLanguagePicker { .. } = &self.modal {
             self.draw_translation_picker_modal(f, area);
             return;
