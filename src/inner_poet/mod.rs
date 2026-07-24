@@ -5,3 +5,4 @@
 
 pub mod fast;
 pub mod slow;
+pub mod storage;

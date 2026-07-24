@@ -623,6 +623,12 @@ impl super::App {
                 self.visited_cursor = self.visited_history.len() - 1;
             }
         }
+        // POEM-TUI (PO-P16) — ambient Inner Poet: if enabled, scan the just-opened
+        // verse paragraph (no-op for non-verse or when ambient is off).
+        let opened_id = self.opened.as_ref().map(|d| d.id);
+        if let Some(id) = opened_id {
+            self.poet_ambient_scan(id);
+        }
         Ok(())
     }
 

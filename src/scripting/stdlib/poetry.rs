@@ -1,10 +1,12 @@
 //! Bund `ink.poem.*` (POEM PO-P9) — the poetry engines exposed to scripts.
 //!
-//! These are the pure, read-only words (`store_read`, default-allowed): syllable
-//! count, a line scan, rhyme classification, and form-completion status — each a
-//! thin wrapper over the POEM engines, needing no store. The store-dependent
-//! words the RFC also lists (`findings` / `suppress` / `set_form`, and the
-//! open-paragraph `form` lookup) ride with the deferred `inner_poet.db` store.
+//! The pure, read-only words (`store_read`, default-allowed): syllable count, a
+//! line scan, rhyme classification, and form-completion status — each a thin
+//! wrapper over the POEM engines, needing no store. PO-P16 adds two store-backed
+//! words over `inner_poet.db`: `findings` (read, `store_read`) and `suppress`
+//! (write, `store_write`). `set_form` is *not* here — it writes a sidecar in the
+//! manuscript hierarchy, which the stdlib has no handle on; it stays the editor's
+//! `Ctrl+B J → P → D`.
 
 use std::collections::HashMap;
 
@@ -13,7 +15,7 @@ use easy_error::Error as BundError;
 use rust_dynamic::value::Value;
 use rust_multistackvm::multistackvm::VM;
 
-use super::helpers::{pull, push, require_depth, value_to_string};
+use super::helpers::{active_store, pull, push, require_depth, value_to_string};
 use crate::prose::ProseLanguage;
 
 pub fn register(vm: &mut VM) -> Result<()> {
@@ -22,6 +24,12 @@ pub fn register(vm: &mut VM) -> Result<()> {
         ("ink.poem.scan_line", w_scan_line),
         ("ink.poem.rhyme", w_rhyme),
         ("ink.poem.status", w_status),
+        // PO-P16 — store-backed: read the persisted fast-track findings, and
+        // suppress one. (`set_form` writes a sidecar in the manuscript hierarchy,
+        // which the pure stdlib context has no handle on — it stays the editor's
+        // `Ctrl+B J → P → D`.)
+        ("ink.poem.findings", w_findings),
+        ("ink.poem.suppress", w_suppress),
     ];
     for (name, f) in words {
         vm.register_inline(name.to_string(), *f).map_err(|e| anyhow!("register {name}: {e}"))?;
@@ -133,5 +141,59 @@ fn do_status(vm: &mut VM) -> Result<&mut VM> {
     let issues: Vec<Value> = st.issues.into_iter().map(Value::from_string).collect();
     h.insert("issues".to_string(), Value::from_list(issues));
     push(vm, Value::from_dict(h));
+    Ok(vm)
+}
+
+// ( paragraph_id -- list )  persisted fast-track findings for a paragraph, as
+// {severity, kind, line, message, key} dicts. `key` is the suppression key.
+fn w_findings(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_findings(vm).map_err(to_bund_err)
+}
+fn do_findings(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.poem.findings";
+    require_depth(vm, 1, tag)?;
+    let pid = value_to_string(pull(vm, tag)?, "paragraph_id", tag)?;
+    let pid = uuid::Uuid::parse_str(pid.trim())
+        .map_err(|_| anyhow!("{tag}: paragraph_id must be a UUID"))?;
+    let store = crate::inner_poet::storage::InnerPoetStore::open_for_project(
+        active_store(tag)?.project_root(),
+    )
+    .map_err(|e| anyhow!("{tag}: {e}"))?;
+    let items: Vec<Value> = store
+        .findings_for(pid)
+        .unwrap_or_default()
+        .iter()
+        .map(|f| {
+            let mut h = HashMap::new();
+            h.insert("severity".to_string(), Value::from_string(f.severity.clone()));
+            h.insert("kind".to_string(), Value::from_string(f.kind.clone()));
+            h.insert("line".to_string(), Value::from_int(f.line as i64));
+            h.insert("message".to_string(), Value::from_string(f.message.clone()));
+            h.insert("key".to_string(), Value::from_string(f.key()));
+            Value::from_dict(h)
+        })
+        .collect();
+    push(vm, Value::from_list(items));
+    Ok(vm)
+}
+
+// ( paragraph_id finding_key -- bool )  suppress a finding so ambient + the fast
+// track stop reporting it. Returns true. STORE_WRITE — default-denied.
+fn w_suppress(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_suppress(vm).map_err(to_bund_err)
+}
+fn do_suppress(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.poem.suppress";
+    require_depth(vm, 2, tag)?;
+    let key = value_to_string(pull(vm, tag)?, "finding_key", tag)?;
+    let pid = value_to_string(pull(vm, tag)?, "paragraph_id", tag)?;
+    let pid = uuid::Uuid::parse_str(pid.trim())
+        .map_err(|_| anyhow!("{tag}: paragraph_id must be a UUID"))?;
+    let store = crate::inner_poet::storage::InnerPoetStore::open_for_project(
+        active_store(tag)?.project_root(),
+    )
+    .map_err(|e| anyhow!("{tag}: {e}"))?;
+    store.suppress(pid, key.trim()).map_err(|e| anyhow!("{tag}: {e}"))?;
+    push(vm, Value::from_bool(true));
     Ok(vm)
 }
