@@ -32,7 +32,10 @@ pub const VERSE_TYPES: &[(&str, &str, &str, &str)] = &[
     ("para:verse-couplet", "‗ ", "verse couplet", "\n\n"),
     ("para:verse-tercet", "⁚ ", "verse tercet", "\n\n\n"),
     ("para:verse-quatrain", "⁛ ", "verse quatrain", "\n\n\n\n"),
-    ("para:verse-translation", "⇄ ", "verse translation", "\n"),
+    // PO-P15 — the seed scaffolds the paired-translation format: source above
+    // the `---` rule, translation below (the two-column view + trilemma split on
+    // it; `⇄` works as a delimiter too).
+    ("para:verse-translation", "⇄ ", "verse translation", "\n---\n"),
 ];
 
 /// The tree glyph for a paragraph's `para:verse-*` subtype, if it carries one.

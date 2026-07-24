@@ -430,6 +430,164 @@ impl super::super::App {
         f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
     }
 
+    /// POEM-TUI (PO-P15) — the two-column translation view. Splits a
+    /// `para:verse-translation` paragraph into source ∥ translation, line-aligned,
+    /// with the Form/Sound trilemma beneath (Meaning stays the Inner Poet's axis).
+    /// Read-only review; never rewrites the poem.
+    pub(in crate::tui::app) fn draw_verse_translation_modal(
+        &self,
+        f: &mut ratatui::Frame,
+        area: Rect,
+    ) {
+        let Modal::VerseTranslationView { verse_id } = &self.modal else {
+            return;
+        };
+        let verse_id = *verse_id;
+
+        // Live buffer if this paragraph is open, else the stored body.
+        let body = if self.opened.as_ref().map(|d| d.id) == Some(verse_id) {
+            self.opened
+                .as_ref()
+                .map(|d| d.textarea.lines().join("\n"))
+                .unwrap_or_default()
+        } else {
+            self.store
+                .get_content(verse_id)
+                .ok()
+                .flatten()
+                .map(|b| String::from_utf8_lossy(&b).into_owned())
+                .unwrap_or_default()
+        };
+
+        let width = area.width.saturating_sub(6).clamp(48, area.width);
+        let height = area.height.saturating_sub(4).clamp(10, area.height);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" ⇄ Translation ")
+            .border_style(Style::default().fg(self.theme.modal_border).add_modifier(Modifier::BOLD))
+            .style(Style::default().bg(self.theme.modal_bg).fg(self.theme.modal_fg));
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let split = crate::poetry::translation::split_source_translation(&body);
+        let Some((source, translation)) = split else {
+            let hint = vec![
+                Line::from(""),
+                Line::from(Span::styled(
+                    "  This paragraph isn't a paired translation yet.".to_string(),
+                    Style::default().add_modifier(Modifier::BOLD),
+                )),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "  Put the source above a `---` (or `⇄`) line and the translation below it:".to_string(),
+                    Style::default().add_modifier(Modifier::DIM),
+                )),
+                Line::from(""),
+                Line::from(Span::styled("      Мой дядя самых честных правил".to_string(), Style::default())),
+                Line::from(Span::styled("      ---".to_string(), Style::default().add_modifier(Modifier::DIM))),
+                Line::from(Span::styled("      My uncle, a man of the purest honour".to_string(), Style::default())),
+                Line::from(""),
+                Line::from(Span::styled("  Esc closes.".to_string(), Style::default().add_modifier(Modifier::DIM))),
+            ];
+            f.render_widget(Paragraph::new(hint).wrap(Wrap { trim: false }), inner);
+            return;
+        };
+
+        // Languages: translation is the project language; source is detected
+        // (whatlang), falling back to the project language.
+        let trans_iso = crate::ai::prompts::iso_from_long(&self.cfg.language);
+        let trans_lang = crate::prose::ProseLanguage::from_label(trans_iso);
+        let src_iso = whatlang::detect(&source)
+            .filter(|i| i.is_reliable())
+            .and_then(|i| crate::ai::prompts::iso_from_alpha3(i.lang().code()))
+            .unwrap_or(trans_iso);
+        let src_lang = crate::prose::ProseLanguage::from_label(src_iso);
+        let form = self
+            .poem_form_for(verse_id)
+            .unwrap_or_else(crate::poetry::form::PoemForm::default);
+        let tri = crate::poetry::translation::trilemma(
+            &source, &src_lang, &translation, &trans_lang, &form,
+        );
+
+        // Layout: a two-column body over a 5-line trilemma footer.
+        let footer_h = 5u16.min(inner.height.saturating_sub(2));
+        let body_h = inner.height.saturating_sub(footer_h);
+        let col_w = (inner.width.saturating_sub(3) / 2) as usize;
+
+        let src_lines: Vec<&str> = source.lines().collect();
+        let trans_lines: Vec<&str> = translation.lines().collect();
+        let rows = src_lines.len().max(trans_lines.len());
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        lines.push(Line::from(vec![
+            Span::styled(
+                format!(" source ({src_iso}) "),
+                Style::default().fg(self.theme.tree_chapter_fg).add_modifier(Modifier::BOLD),
+            ),
+        ]));
+        for i in 0..rows.min(body_h.saturating_sub(1) as usize) {
+            let s = src_lines.get(i).copied().unwrap_or("");
+            let t = trans_lines.get(i).copied().unwrap_or("");
+            let s = truncate_to(s, col_w.max(1));
+            let t = truncate_to(t, col_w.max(1));
+            lines.push(Line::from(vec![
+                Span::styled(format!("{s:<col_w$}"), Style::default()),
+                Span::styled(" │ ", Style::default().fg(self.theme.modal_border)),
+                Span::styled(format!("→ {t}"), Style::default().fg(self.theme.tree_subchapter_fg)),
+            ]));
+        }
+        let body_rect = Rect { x: inner.x, y: inner.y, width: inner.width, height: body_h };
+        f.render_widget(Paragraph::new(lines), body_rect);
+
+        // Trilemma footer.
+        let bar = |score: f64| -> String {
+            let n = (score * 10.0).round().clamp(0.0, 10.0) as usize;
+            format!("{}{}", "█".repeat(n), "░".repeat(10 - n))
+        };
+        let mut foot: Vec<Line<'static>> = Vec::new();
+        foot.push(Line::from(Span::styled(
+            format!(" ── trilemma ({src_iso} → {trans_iso}) ────────"),
+            Style::default().fg(self.theme.modal_border).add_modifier(Modifier::DIM),
+        )));
+        foot.push(Line::from(vec![
+            Span::styled(" Form    ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(bar(tri.form_score), Style::default().fg(ratatui::style::Color::Green)),
+            Span::raw(format!("  {:>3.0}%  ", tri.form_score * 100.0)),
+            Span::styled(
+                truncate_to(&format!("{} · {}", tri.metre_note, tri.rhyme_note), col_w),
+                Style::default().add_modifier(Modifier::DIM),
+            ),
+        ]));
+        foot.push(Line::from(vec![
+            Span::styled(" Meaning ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled("░░░░░░░░░░", Style::default().add_modifier(Modifier::DIM)),
+            Span::raw("       "),
+            Span::styled(
+                "the AI axis — engage the Inner Poet (E)".to_string(),
+                Style::default().add_modifier(Modifier::DIM),
+            ),
+        ]));
+        foot.push(Line::from(vec![
+            Span::styled(" Sound   ", Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(bar(tri.sound_score), Style::default().fg(ratatui::style::Color::Green)),
+            Span::raw(format!("  {:>3.0}%  ", tri.sound_score * 100.0)),
+            Span::styled(
+                truncate_to(&tri.sound_note, col_w),
+                Style::default().add_modifier(Modifier::DIM),
+            ),
+        ]));
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + body_h,
+            width: inner.width,
+            height: footer_h,
+        };
+        f.render_widget(Paragraph::new(foot), footer_rect);
+    }
+
     pub(in crate::tui::app) fn draw_llm_picker_modal(&self, f: &mut ratatui::Frame, area: Rect) {
         let Modal::LlmPicker {
             providers,
