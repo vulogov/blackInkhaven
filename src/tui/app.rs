@@ -1775,6 +1775,11 @@ pub(crate) struct App {
     /// `prose.ambient`. `prose_last_run` is the cooldown floor.
     prose_auto: bool,
     prose_last_run: Option<std::time::Instant>,
+    /// POEM-TUI (PO-P16) — ambient Inner Poet: auto fast-scan a verse paragraph
+    /// on open when on (toggled `Ctrl+B J → P → A`). Free (no LLM), so no cost
+    /// cap; `poet_ambient_fp` debounces re-scans of identical (paragraph, text).
+    poet_ambient: bool,
+    poet_ambient_fp: Option<(Uuid, u64)>,
     ie_last_engaged_fp: Option<(Uuid, u64)>,
     ie_last_engage_at: Option<std::time::Instant>,
     /// The paragraph a spawned engagement targets, for the completion report.
@@ -3206,6 +3211,8 @@ impl App {
             fc_scope_armed: false,
             prose_auto: prose_ambient,
             prose_last_run: None,
+            poet_ambient: false,
+            poet_ambient_fp: None,
             slow_auto: false,
             slow_auto_para: None,
             fc_slow_last_fp: None,
@@ -15383,6 +15390,22 @@ impl App {
             KeyCode::Char('e') | KeyCode::Char('E') => self.poet_engage_open_paragraph(),
             KeyCode::Char('d') | KeyCode::Char('D') => self.open_poem_form_picker(),
             KeyCode::Char('t') | KeyCode::Char('T') => self.open_verse_translation_view(),
+            KeyCode::Char('a') | KeyCode::Char('A') => {
+                self.poet_ambient = !self.poet_ambient;
+                self.poet_ambient_fp = None;
+                self.modal = Modal::None;
+                self.status = if self.poet_ambient {
+                    "♪ Inner Poet ambient ON — verse paragraphs are scanned as you open them".into()
+                } else {
+                    "♪ Inner Poet ambient OFF".into()
+                };
+                // Scan the current paragraph immediately on enabling.
+                if self.poet_ambient {
+                    if let Some(id) = self.opened.as_ref().map(|d| d.id) {
+                        self.poet_ambient_scan(id);
+                    }
+                }
+            }
             _ => {}
         }
         true
@@ -15779,7 +15802,6 @@ impl App {
     /// declared `poem:` form and emit metre/rhyme findings to the Output pane.
     /// Deterministic, zero-AI; observes and reports, never rewrites.
     fn poet_check_open_paragraph(&mut self) {
-        use crate::pane::output::{kinds, Lifetime, Message, Severity};
         let Some(doc) = self.opened.as_ref() else {
             self.status = "Inner Poet: no paragraph open".into();
             return;
@@ -15797,8 +15819,37 @@ impl App {
             return;
         };
         let plain = crate::audiobook::typst_to_plain(&doc.textarea.lines().join("\n"));
+        let (total, shown) = self.poet_scan_paragraph(id, &form, &plain);
+        self.modal = Modal::None;
+        if total > 0 {
+            self.refresh_tree_badges();
+            let suppressed = total - shown;
+            let tail = if suppressed > 0 { format!(" ({suppressed} suppressed)") } else { String::new() };
+            self.status = format!("♪ Inner Poet: {shown} finding(s) in this stanza{tail} — ^B Tab → Output");
+        } else {
+            self.status = "♪ Inner Poet: this stanza matches its declared form".into();
+        }
+    }
 
-        // Replace this paragraph's prior poem findings.
+    /// Open the project's Inner Poet store (`inner_poet.db`); `None` if it can't
+    /// be opened. Cheap enough to open per scan, mirroring the Bund words.
+    fn inner_poet_store(&self) -> Option<crate::inner_poet::storage::InnerPoetStore> {
+        crate::inner_poet::storage::InnerPoetStore::open_for_project(self.store.project_root()).ok()
+    }
+
+    /// POEM-TUI (PO-P16) — the shared fast-track body: scan a verse paragraph,
+    /// persist the findings to `inner_poet.db`, and emit the *non-suppressed*
+    /// ones to the Output pane (replacing this paragraph's prior poem findings).
+    /// Returns `(total, shown)`. Used by the manual `F` chord and ambient mode.
+    /// Deterministic and zero-AI; observes and reports, never rewrites.
+    fn poet_scan_paragraph(
+        &mut self,
+        id: Uuid,
+        form: &crate::poetry::form::PoemForm,
+        plain: &str,
+    ) -> (usize, usize) {
+        use crate::pane::output::{kinds, Lifetime, Message, Severity};
+        // Clear this paragraph's prior poem findings from Output.
         if let Some(s) = crate::pane::output::active() {
             if let Ok(msgs) = s.by_kind(kinds::POEM) {
                 for m in msgs.iter().filter(|m| m.source_paragraph_id == Some(id)) {
@@ -15807,8 +15858,31 @@ impl App {
             }
         }
 
-        let findings = crate::inner_poet::fast::scan_stanza(&plain, &form);
+        let findings = crate::inner_poet::fast::scan_stanza(plain, form);
+
+        // Persist (best-effort) + gather this paragraph's suppressed keys.
+        let store = self.inner_poet_store();
+        if let Some(st) = &store {
+            let _ = st.replace_findings(id, &findings);
+        }
+        let suppressed: std::collections::HashSet<String> = store
+            .as_ref()
+            .and_then(|st| st.suppressions_for(id).ok())
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+
+        let sev_str = |s: crate::inner_poet::fast::Severity| match s {
+            crate::inner_poet::fast::Severity::Praise => "praise",
+            crate::inner_poet::fast::Severity::Note => "note",
+            crate::inner_poet::fast::Severity::Concern => "concern",
+        };
+        let mut shown = 0;
         for f in &findings {
+            let key = crate::inner_poet::storage::finding_key(sev_str(f.severity), f.kind, f.line);
+            if suppressed.contains(&key) {
+                continue;
+            }
             let severity = match f.severity {
                 crate::inner_poet::fast::Severity::Concern => Severity::Warning,
                 _ => Severity::Info,
@@ -15822,15 +15896,44 @@ impl App {
             )
             .with_source_paragraph(id);
             crate::pane::output::emit(&msg);
+            shown += 1;
         }
+        (findings.len(), shown)
+    }
 
-        let n = findings.len();
-        self.modal = Modal::None;
-        if n > 0 {
+    /// POEM-TUI (PO-P16) — ambient Inner Poet. When `poet_ambient` is on and a
+    /// verse paragraph with a declared form is opened, silently run the fast
+    /// track (persist + emit non-suppressed findings), debounced so identical
+    /// content isn't re-scanned. Free (no LLM), so unlike the slow-track ambients
+    /// it needs no cost cap — only the fingerprint guard. Called from
+    /// `load_paragraph`.
+    fn poet_ambient_scan(&mut self, id: Uuid) {
+        if !self.poet_ambient {
+            return;
+        }
+        let Some(node) = self.hierarchy.get(id) else { return };
+        if !crate::poetry::is_verse_paragraph(node) {
+            return;
+        }
+        let Some(form) = self.poem_form_for(id) else { return };
+        let plain = crate::audiobook::typst_to_plain(
+            &self.opened.as_ref().map(|d| d.textarea.lines().join("\n")).unwrap_or_default(),
+        );
+        // Debounce: skip if the same (paragraph, content) was just scanned.
+        let fp = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            plain.hash(&mut h);
+            h.finish()
+        };
+        if self.poet_ambient_fp == Some((id, fp)) {
+            return;
+        }
+        self.poet_ambient_fp = Some((id, fp));
+        let (total, shown) = self.poet_scan_paragraph(id, &form, &plain);
+        if total > 0 {
             self.refresh_tree_badges();
-            self.status = format!("♪ Inner Poet: {n} finding(s) in this stanza — ^B Tab → Output");
-        } else {
-            self.status = "♪ Inner Poet: this stanza matches its declared form".into();
+            self.status = format!("♪ Inner Poet (ambient): {shown} finding(s) — ^B Tab → Output");
         }
     }
 
@@ -15890,7 +15993,7 @@ impl App {
     fn open_inner_poet_overview(&mut self) {
         self.modal = Modal::InnerPoetOverview;
         self.status =
-            "Inner Poet · F fast-scan ¶ · E engage (AI) · D declare a form · T translation · Esc".into();
+            "Inner Poet · F fast-scan · E engage · D declare form · T translation · A ambient · Esc".into();
     }
 
     /// POEM-TUI (PO-P15) — `Ctrl+B J → P → T`: open the two-column translation
