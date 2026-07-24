@@ -380,6 +380,9 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.poem.scan_line", category::STORE_READ),
     ("ink.poem.rhyme", category::STORE_READ),
     ("ink.poem.status", category::STORE_READ),
+    // PO-P16 — inner_poet.db: reading findings is a read; suppressing writes.
+    ("ink.poem.findings", category::STORE_READ),
+    ("ink.poem.suppress", category::STORE_WRITE),
     ("ink.lang.list", category::STORE_READ),
     ("ink.lang.generate_word", category::STORE_READ),
     ("ink.lang.syllabify", category::STORE_READ),
@@ -863,9 +866,16 @@ mod tests {
             "ink.poem.scan_line",
             "ink.poem.rhyme",
             "ink.poem.status",
+            "ink.poem.findings",
         ] {
             assert_eq!(cat(w), Some(category::STORE_READ), "{w} must be store_read");
         }
+        // PO-P16 — suppressing a finding writes the store; it must be gated.
+        assert_eq!(
+            cat("ink.poem.suppress"),
+            Some(category::STORE_WRITE),
+            "ink.poem.suppress must be store_write (default-denied)"
+        );
     }
 
     // 1.3.0 PDF-1 — pin the disk-crossing pdf words so a refactor can't
