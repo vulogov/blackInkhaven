@@ -14,6 +14,41 @@ use crate::poetry::rhyme::{self, RhymeQuality};
 use crate::poetry::syllabify;
 use crate::prose::ProseLanguage;
 
+/// POEM-TUI (PO-P15) — a `para:verse-translation` paragraph holds the source
+/// stanza and its translation in one body, separated by a delimiter line: either
+/// the thematic `⇄`, or a rule of three-or-more dashes (`---`) that authors can
+/// actually type. Source is above the *first* delimiter, translation below.
+///
+/// Returns `None` when no delimiter is present (the paragraph isn't yet a paired
+/// translation) — the caller shows a hint rather than guessing. Blank lines are
+/// preserved within each half; only the halves are trimmed of leading/trailing
+/// blank lines.
+pub fn split_source_translation(body: &str) -> Option<(String, String)> {
+    let is_delim = |line: &str| {
+        let t = line.trim();
+        t == "⇄" || (t.len() >= 3 && t.chars().all(|c| c == '-'))
+    };
+    let mut lines = body.lines();
+    let mut source: Vec<&str> = Vec::new();
+    let mut found = false;
+    for line in lines.by_ref() {
+        if is_delim(line) {
+            found = true;
+            break;
+        }
+        source.push(line);
+    }
+    if !found {
+        return None;
+    }
+    let translation: Vec<&str> = lines.collect();
+    let trim_blank = |v: Vec<&str>| {
+        let s = v.join("\n");
+        s.trim_matches('\n').to_string()
+    };
+    Some((trim_blank(source), trim_blank(translation)))
+}
+
 /// The measurable half of the trilemma: how much Form and Sound survived.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Trilemma {
@@ -182,6 +217,23 @@ mod tests {
     use super::*;
     use crate::poetry::form::PoemForm;
     use crate::prose::ProseLanguage::*;
+
+    #[test]
+    fn split_source_translation_on_both_delimiters() {
+        // The typeable dash rule.
+        let (s, t) = split_source_translation("мой дядя\nсамых честных\n---\nmy uncle\nof honest ways").unwrap();
+        assert_eq!(s, "мой дядя\nсамых честных");
+        assert_eq!(t, "my uncle\nof honest ways");
+        // The thematic glyph, plus blank-line trimming around the halves.
+        let (s2, t2) = split_source_translation("source\n\n⇄\n\ntranslation\n").unwrap();
+        assert_eq!(s2, "source");
+        assert_eq!(t2, "translation");
+        // Only the FIRST delimiter splits; later dashes stay in the translation.
+        let (_, t3) = split_source_translation("a\n---\nb\n---\nc").unwrap();
+        assert_eq!(t3, "b\n---\nc");
+        // No delimiter → not a paired translation.
+        assert!(split_source_translation("just one block\nof lines").is_none());
+    }
 
     #[test]
     fn identical_text_preserves_everything() {

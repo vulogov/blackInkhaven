@@ -909,6 +909,13 @@ pub(super) enum Modal {
         verse_id: Uuid,
         cursor: usize,
     },
+    /// POEM-TUI (PO-P15) — the two-column translation view (`Ctrl+B J → P → T`):
+    /// a `para:verse-translation` paragraph's source and translation side by
+    /// side, with the Form/Sound trilemma beneath. Read-only review; `Esc`
+    /// closes. `verse_id` is the paired-translation paragraph.
+    VerseTranslationView {
+        verse_id: Uuid,
+    },
     /// INNER_EDITOR-1 — the Inner Editor overview (`Ctrl+V O`): status, tuning,
     /// active categories, today's usage, recent observations. `↑↓` scroll,
     /// `Esc` closes; `E` engages the open paragraph, `A` toggles the ambient

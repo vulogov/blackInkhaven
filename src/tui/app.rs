@@ -15382,6 +15382,7 @@ impl App {
             KeyCode::Char('f') | KeyCode::Char('F') => self.poet_check_open_paragraph(),
             KeyCode::Char('e') | KeyCode::Char('E') => self.poet_engage_open_paragraph(),
             KeyCode::Char('d') | KeyCode::Char('D') => self.open_poem_form_picker(),
+            KeyCode::Char('t') | KeyCode::Char('T') => self.open_verse_translation_view(),
             _ => {}
         }
         true
@@ -15889,7 +15890,37 @@ impl App {
     fn open_inner_poet_overview(&mut self) {
         self.modal = Modal::InnerPoetOverview;
         self.status =
-            "Inner Poet · F fast-scan ¶ · E engage (AI) · D declare a form · Esc".into();
+            "Inner Poet · F fast-scan ¶ · E engage (AI) · D declare a form · T translation · Esc".into();
+    }
+
+    /// POEM-TUI (PO-P15) — `Ctrl+B J → P → T`: open the two-column translation
+    /// view for the open `para:verse-translation` paragraph. Read-only review of
+    /// source ∥ translation with the Form/Sound trilemma beneath.
+    fn open_verse_translation_view(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "⇄ open a translation paragraph first".into();
+            return;
+        };
+        let id = doc.id;
+        let is_translation = self
+            .hierarchy
+            .get(id)
+            .map(|n| n.tags.iter().any(|t| t == "para:verse-translation"))
+            .unwrap_or(false);
+        if !is_translation {
+            self.status =
+                "⇄ the two-column view needs a para:verse-translation paragraph".into();
+            return;
+        }
+        self.modal = Modal::VerseTranslationView { verse_id: id };
+        self.status = "⇄ translation · source ∥ translation · Esc closes".into();
+    }
+
+    fn verse_translation_view_handle_key(&mut self, key: KeyEvent) -> bool {
+        if matches!(key.code, KeyCode::Esc) {
+            self.modal = Modal::None;
+        }
+        true
     }
 
     /// POEM-TUI (PO-P12) — `Ctrl+B J → P → D`: open the form picker for the open
@@ -24938,6 +24969,10 @@ impl App {
         }
         if matches!(self.modal, Modal::PoemFormPicker { .. }) {
             self.poem_form_picker_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::VerseTranslationView { .. }) {
+            self.verse_translation_view_handle_key(key);
             return Ok(false);
         }
         if matches!(self.modal, Modal::InnerEditorOverview { .. }) {
