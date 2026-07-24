@@ -27,28 +27,27 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.8.18 — Building a poem at the desk
+## Latest release · 1.8.19 — A poem's shape at a glance
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.8.18.md`](Documentation/RELEASE_NOTES/1.8.18.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.8.19.md`](Documentation/RELEASE_NOTES/1.8.19.md)
 
-Fluid stanza-building and a live syllable readout — write a poem one stanza after another and
-watch each line's syllable count as you go.
+The Outline pane now shows how far along each poem is — verse glyphs, a completion chip, and the
+declared form with its line ratio and any structural issues.
 
 ### What's new
 
-- **Next stanza — `Ctrl+B Shift+Y`** — create the next stanza (a sibling verse paragraph of the
-  same `para:verse-*` type, opened for editing), so a poem is built stanza by stanza without leaving
-  the flow. Writes structure only; never generates verse.
-- **Live verse readout** — while a verse paragraph is open, the status bar shows the current line's
-  syllable count and its position in the stanza (`♩ 8 syl · l2/4`), counted in the project language.
-- **Keybinding fix** — the WordNet thesaurus moved to its documented `Ctrl+V Shift+Y` home (it had
-  been mis-placed on `Ctrl+B Shift+Y`, whose name and docs always said Ctrl+V). A regression test pins
-  both chords.
+- **Completion chips in the Outline** — a `para:verse-*` row shows its glyph (`♩ ‖ ⁛ ⇄` …) plus a
+  chip: `8/14` while drafting, `14/14 ✓` when a bounded form is complete. Scan a book of verse and
+  see which poems are finished without opening one.
+- **Poem detail panel** — on the cursor verse paragraph, the Outline's detail panel shows the
+  declared form, `written/expected · drafting|complete`, and up to three structural issues (a
+  villanelle's missing refrain, a sonnet without its turn) — the same reckoning `poetry status` gives.
+- Verse glyphs now render in the Outline (they had fallen back to prose `¶`; the Tree already showed them).
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Reuses the shipped node-creation and status-chip machinery; one keybinding
-moved to where it was documented. Warning-free (binary and tests). Test suite → 2655.
+**No new runtime crates.** Reuses `poetry::form_check`; computed only for the on-demand Outline, so
+the per-frame Tree render is untouched. Warning-free (binary and tests). Test suite → 2656.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

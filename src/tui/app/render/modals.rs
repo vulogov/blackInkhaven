@@ -5863,7 +5863,12 @@ impl super::super::App {
                             match node.content_type.as_deref() {
                                 Some("hjson") => "❴ ",
                                 Some("jinja") => "⟡ ",
-                                _ => super::super::structural_glyph(node).unwrap_or("¶ "),
+                                // POEM-TUI (PO-P14) — verse subtypes carry their
+                                // own glyph (♩ ‖ ⁛ …), so a poem's shape shows in
+                                // the outline; falls through to prose ¶ otherwise.
+                                _ => super::super::structural_glyph(node)
+                                    .or_else(|| crate::poetry::verse_glyph(node))
+                                    .unwrap_or("¶ "),
                             }
                         }
                     }
@@ -5900,10 +5905,39 @@ impl super::super::App {
             } else {
                 String::new()
             };
+            // POEM-TUI (PO-P14) — a completion chip on verse rows: `♩8/14`, or a
+            // ✓ when a bounded form is complete. Cheap enough here (the Outline is
+            // an on-demand pane, only visible rows, redrawn on events) though not
+            // in the per-frame Tree. Reserve its width from the title budget so it
+            // never gets clipped.
+            let chip = if matches!(node.kind, NodeKind::Paragraph) {
+                self.poem_completion_chip(r.id)
+            } else {
+                None
+            };
+            let chip_str = chip
+                .as_ref()
+                .map(|(t, done)| format!("  {t}{}", if *done { " ✓" } else { "" }))
+                .unwrap_or_default();
             let prefix = format!("{indent}{marker}{status}");
-            let title_budget = width.saturating_sub(prefix.chars().count()).max(1);
+            let title_budget = width
+                .saturating_sub(prefix.chars().count())
+                .saturating_sub(chip_str.chars().count())
+                .max(1);
             let title = truncate_to(&node.title, title_budget);
-            lines.push(Line::from(Span::styled(format!("{prefix}{title}"), row_style)));
+            let mut spans = vec![Span::styled(format!("{prefix}{title}"), row_style)];
+            if let Some((t, done)) = chip {
+                let chip_style = if done {
+                    Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+                } else {
+                    row_style.add_modifier(Modifier::DIM)
+                };
+                spans.push(Span::styled(
+                    format!("  {t}{}", if done { " ✓" } else { "" }),
+                    chip_style,
+                ));
+            }
+            lines.push(Line::from(spans));
         }
         f.render_widget(Paragraph::new(lines), body_rect);
 
@@ -5995,6 +6029,44 @@ impl super::super::App {
                 None => node.word_count.to_string(),
             };
             out.push(Line::from(vec![label("words"), Span::raw(words)]));
+            // POEM-TUI (PO-P14) — for a verse paragraph with a declared form,
+            // show its completion (line ratio + state) and any structural issues,
+            // the same reckoning `poetry status` prints on the CLI.
+            if crate::poetry::is_verse_paragraph(node) {
+                if let Some(form) = self.poem_form_for(id) {
+                    let ratio = self
+                        .poem_completion(id)
+                        .map(|st| match st.expected_lines {
+                            Some(exp) => {
+                                let state = if st.complete { "complete" } else { "drafting" };
+                                format!("{}/{} · {state}", st.lines_written, exp)
+                            }
+                            None => format!("{} lines (open form)", st.lines_written),
+                        })
+                        .unwrap_or_else(|| "—".into());
+                    out.push(Line::from(vec![
+                        label("poem"),
+                        Span::raw(truncate_to(&form.form, inner_w.saturating_sub(7))),
+                    ]));
+                    out.push(Line::from(vec![label("lines"), Span::raw(ratio)]));
+                    if let Some(issues) = self.poem_completion(id).map(|st| st.issues) {
+                        for issue in issues.iter().take(3) {
+                            out.push(Line::from(Span::styled(
+                                format!("  ⚠ {}", truncate_to(issue, inner_w.saturating_sub(4))),
+                                Style::default().fg(self.theme.tree_chapter_fg).add_modifier(Modifier::DIM),
+                            )));
+                        }
+                    }
+                } else {
+                    out.push(Line::from(vec![
+                        label("poem"),
+                        Span::styled(
+                            "no form — Ctrl+B J → P → D".to_string(),
+                            Style::default().add_modifier(Modifier::DIM),
+                        ),
+                    ]));
+                }
+            }
         } else {
             let kids = self.hierarchy.children_of(Some(node.id)).len();
             out.push(Line::from(vec![

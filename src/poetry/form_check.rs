@@ -20,6 +20,18 @@ pub struct FormStatus {
     pub issues: Vec<String>,
 }
 
+/// POEM-TUI (PO-P14) — the compact outline/tree chip for a completion status:
+/// `("8/14", false)` while drafting, `("14/14", true)` when a bounded form is
+/// complete, or the bare line count for an open form. The bool drives the chip
+/// colour at the call site (green + ✓ when complete).
+pub fn completion_chip(st: &FormStatus) -> (String, bool) {
+    let text = match st.expected_lines {
+        Some(exp) => format!("{}/{}", st.lines_written, exp),
+        None => format!("{}", st.lines_written),
+    };
+    (text, st.complete)
+}
+
 /// Check a poem's full text against its declared form.
 pub fn check_form(text: &str, form: &PoemForm) -> FormStatus {
     let lines: Vec<String> =
@@ -138,6 +150,23 @@ mod tests {
         assert_eq!(st.lines_written, 7);
         assert_eq!(st.expected_lines, Some(14));
         assert!(!st.complete);
+    }
+
+    #[test]
+    fn completion_chip_formats_bounded_open_and_complete() {
+        // PO-P14: the outline/tree chip text + complete flag.
+        let partial = check_form("one\ntwo\nthree", &form("shakespearean_sonnet"));
+        assert_eq!(completion_chip(&partial), ("3/14".to_string(), false));
+
+        let full_text = (1..=14).map(|i| i.to_string()).collect::<Vec<_>>().join("\n");
+        let full = check_form(&full_text, &form("shakespearean_sonnet"));
+        assert_eq!(completion_chip(&full), ("14/14".to_string(), true));
+
+        // An open form (free verse) reports a bare count, never "complete".
+        let open = check_form("a\nb\nc\nd", &form("free_verse"));
+        let (text, done) = completion_chip(&open);
+        assert_eq!(text, "4");
+        assert!(!done);
     }
 
     #[test]
