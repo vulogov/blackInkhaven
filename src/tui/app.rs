@@ -15856,6 +15856,34 @@ impl App {
         None
     }
 
+    /// POEM-TUI (PO-P14) — completion status for a verse paragraph: its declared
+    /// form measured against what is written (line count vs the form's expected
+    /// total), reusing the same `check_form` engine the `poetry status` CLI does.
+    /// `None` when the node isn't verse or has no declared form. Involves a few
+    /// store reads (the form lookup + the stanza text), so callers use it on the
+    /// on-demand Outline pane, never in the per-frame Tree render.
+    pub(crate) fn poem_completion(
+        &self,
+        node_id: Uuid,
+    ) -> Option<crate::poetry::form_check::FormStatus> {
+        let node = self.hierarchy.get(node_id)?;
+        if !crate::poetry::is_verse_paragraph(node) {
+            return None;
+        }
+        let form = self.poem_form_for(node_id)?;
+        let bytes = self.store.get_content(node_id).ok().flatten()?;
+        let text = String::from_utf8_lossy(&bytes);
+        Some(crate::poetry::form_check::check_form(&text, &form))
+    }
+
+    /// A compact completion chip for a verse row — `8/14`, or `14/14` when a
+    /// bounded form is complete, or the bare line count for an open form. The
+    /// bool is "complete" (drives the colour at the call site).
+    pub(crate) fn poem_completion_chip(&self, node_id: Uuid) -> Option<(String, bool)> {
+        let st = self.poem_completion(node_id)?;
+        Some(crate::poetry::form_check::completion_chip(&st))
+    }
+
     /// Open the Inner Poet overview (`Ctrl+B J → P`): F fast-scans, E engages the
     /// LLM slow track, D declares a form.
     fn open_inner_poet_overview(&mut self) {
