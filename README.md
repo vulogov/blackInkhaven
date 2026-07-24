@@ -27,26 +27,28 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.8.20 — Source beside translation
+## Latest release · 1.8.21 — The Inner Poet remembers
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.8.20.md`](Documentation/RELEASE_NOTES/1.8.20.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.8.21.md`](Documentation/RELEASE_NOTES/1.8.21.md)
 
-A two-column view for translated verse: source and translation side by side, with the Form/Sound
-trilemma measured beneath them.
+A session store, an ambient mode, and two script words: the Inner Poet now scans a poem as you open
+it, remembers its findings across sessions, and lets you silence a complaint you've decided to keep.
 
 ### What's new
 
-- **Paired-translation model** — a `para:verse-translation` (⇄) paragraph holds source and translation
-  in one body, split by a delimiter line (`---`, or the thematic `⇄`); new ones are seeded with the rule.
-- **Two-column view — `Ctrl+B J → P → T`** — shows the source and translation side by side, line-aligned,
-  with the trilemma beneath: **Form** (metre + rhyme) and **Sound** (alliterative texture) measured,
-  **Meaning** left to the Inner Poet's slow track. Source language auto-detected; read-only review.
+- **Ambient mode — `Ctrl+B J → P → A`** — every verse paragraph with a declared form is fast-scanned
+  the moment you open it. Free (no model), so no cost cap — just a fingerprint guard against re-scans.
+- **`inner_poet.db` session store** — the fast track persists its findings across restarts (beside
+  `inner_editor.db`), and records **suppressed** findings so a rule you're breaking on purpose stops
+  being reported (the scan still counts it; the pane stays quiet).
+- **Two Bund words** — `poem.findings` (`store_read`) reads persisted findings; `poem.suppress`
+  (`store_write`, default-denied) silences one.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Reuses `poetry::translation` (the trilemma) and `whatlang` (already in the
-tree); the source/translation splitter is factored into the engine and unit-tested. Warning-free
-(binary and tests). Test suite → 2657.
+**No new runtime crates.** The store is built on the in-tree `StorageEngine` like the other
+Inner-family stores; ambient reuses the shipped fast track. Warning-free (binary and tests). Test
+suite → 2659.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
