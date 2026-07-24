@@ -2563,6 +2563,9 @@ impl super::super::App {
         spans.extend(self.glossary_chip_spans());
         // 1.2.21+ FF.6 — Facts chip (world-invariant count).
         spans.extend(self.facts_chip_spans());
+        // POEM-TUI (PO-P13) — live verse readout (current line's syllables +
+        // position), shown only while a verse paragraph is open.
+        spans.extend(self.verse_chip_spans());
         // 1.2.18+ R.3 — reading-time chip (book length
         // + time remaining at editor.reading_wpm).
         spans.extend(self.reading_time_chip_spans());
