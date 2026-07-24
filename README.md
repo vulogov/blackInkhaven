@@ -27,27 +27,26 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.8.19 — A poem's shape at a glance
+## Latest release · 1.8.20 — Source beside translation
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.8.19.md`](Documentation/RELEASE_NOTES/1.8.19.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.8.20.md`](Documentation/RELEASE_NOTES/1.8.20.md)
 
-The Outline pane now shows how far along each poem is — verse glyphs, a completion chip, and the
-declared form with its line ratio and any structural issues.
+A two-column view for translated verse: source and translation side by side, with the Form/Sound
+trilemma measured beneath them.
 
 ### What's new
 
-- **Completion chips in the Outline** — a `para:verse-*` row shows its glyph (`♩ ‖ ⁛ ⇄` …) plus a
-  chip: `8/14` while drafting, `14/14 ✓` when a bounded form is complete. Scan a book of verse and
-  see which poems are finished without opening one.
-- **Poem detail panel** — on the cursor verse paragraph, the Outline's detail panel shows the
-  declared form, `written/expected · drafting|complete`, and up to three structural issues (a
-  villanelle's missing refrain, a sonnet without its turn) — the same reckoning `poetry status` gives.
-- Verse glyphs now render in the Outline (they had fallen back to prose `¶`; the Tree already showed them).
+- **Paired-translation model** — a `para:verse-translation` (⇄) paragraph holds source and translation
+  in one body, split by a delimiter line (`---`, or the thematic `⇄`); new ones are seeded with the rule.
+- **Two-column view — `Ctrl+B J → P → T`** — shows the source and translation side by side, line-aligned,
+  with the trilemma beneath: **Form** (metre + rhyme) and **Sound** (alliterative texture) measured,
+  **Meaning** left to the Inner Poet's slow track. Source language auto-detected; read-only review.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Reuses `poetry::form_check`; computed only for the on-demand Outline, so
-the per-frame Tree render is untouched. Warning-free (binary and tests). Test suite → 2656.
+**No new runtime crates.** Reuses `poetry::translation` (the trilemma) and `whatlang` (already in the
+tree); the source/translation splitter is factored into the engine and unit-tested. Warning-free
+(binary and tests). Test suite → 2657.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
