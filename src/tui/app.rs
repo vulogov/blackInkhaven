@@ -12140,6 +12140,7 @@ impl App {
             A::ToggleEchoOverlay => self.toggle_echo_overlay(),
             A::OpenConcordance => self.open_concordance(),
             A::OpenThesaurus => self.open_thesaurus(),
+            A::CreateVerseSibling => self.create_verse_sibling(),
             A::TogglePovChip => self.toggle_pov_chip(),
             A::TogglePromptLanguageMode => self.toggle_prompt_language_mode(),
             A::OpenSentenceRhythm => self.open_sentence_rhythm(),
@@ -16029,6 +16030,83 @@ impl App {
         Ok(node.id)
     }
 
+    /// POEM-TUI (PO-P13) — `Ctrl+B Shift+Y`: create the next stanza. Adds a
+    /// sibling verse paragraph of the *same* `para:verse-*` type right after the
+    /// current one and opens it for editing, so a poem is built stanza by stanza
+    /// without leaving the flow. Structure only — it writes no verse.
+    fn create_verse_sibling(&mut self) {
+        // Same target rule as `cycle_leaf_type`: from the Editor prefer the open
+        // buffer, else the tree cursor; from any other pane, the tree cursor.
+        let cursor_id = self.rows.get(self.tree_cursor).map(|(id, _)| *id);
+        let target_id = match self.focus {
+            Focus::Editor => self.opened.as_ref().map(|d| d.id).or(cursor_id),
+            _ => cursor_id,
+        };
+        let Some(target_id) = target_id else {
+            self.status = "♩ next stanza: no verse paragraph selected".into();
+            return;
+        };
+        let Some(node) = self.hierarchy.get(target_id).cloned() else {
+            self.status = "♩ next stanza: node missing".into();
+            return;
+        };
+        // Which verse type? (The tag also selects the seed body.)
+        let Some(tag) = node
+            .tags
+            .iter()
+            .find(|t| t.starts_with("para:verse-"))
+            .cloned()
+        else {
+            self.status = "♩ next stanza works on a verse paragraph (para:verse-*)".into();
+            return;
+        };
+        let (glyph, seed) = crate::poetry::VERSE_TYPES
+            .iter()
+            .find(|(t, ..)| *t == tag.as_str())
+            .map(|(_, glyph, _, seed)| (*glyph, *seed))
+            .unwrap_or(("♩ ", "\n"));
+
+        let parent = node.parent_id.and_then(|id| self.hierarchy.get(id)).cloned();
+        let created = self.store.create_node(
+            &self.cfg,
+            &self.hierarchy,
+            NodeKind::Paragraph,
+            PARAGRAPH_PLACEHOLDER_TITLE,
+            parent.as_ref(),
+            None,
+            InsertPosition::After(target_id),
+        );
+        let mut new_node = match created {
+            Ok(n) => n,
+            Err(e) => {
+                self.status = format!("♩ next stanza failed: {e}");
+                return;
+            }
+        };
+        // Seed the (Typst) body; the para:verse-* tag is what marks it verse and
+        // is stamped after the reload, mirroring the structural-paragraph add.
+        if let Some(rel) = &new_node.file {
+            let abs = self.layout.root.join(rel);
+            let _ = std::fs::write(&abs, seed.as_bytes());
+        }
+        let _ = self
+            .store
+            .update_paragraph_content(&mut new_node, seed.as_bytes());
+        let new_id = new_node.id;
+        self.reload_hierarchy();
+        if self.add_tags_to_node(new_id, &[tag.clone()]) {
+            self.reload_hierarchy();
+        }
+        if let Some(i) = self.rows.iter().position(|(id, _)| *id == new_id) {
+            self.tree_cursor = i;
+        }
+        // Open the fresh stanza for editing so the poet types straight into it.
+        if let Some(fresh) = self.hierarchy.get(new_id).cloned() {
+            let _ = self.load_paragraph(&fresh);
+        }
+        self.status = format!("{glyph}next stanza ready — start typing");
+    }
+
     /// Inner Poet slow track (PO-P6) — an LLM reads the open verse stanza and
     /// observes its enjambment / sound / caesura / volta in the Thoughts pane.
     /// Non-prescriptive; never rewrites.
@@ -18728,6 +18806,64 @@ impl App {
                 format!(" ⚑{n} "),
                 Style::default()
                     .bg(Color::DarkGray)
+                    .fg(Color::White)
+                    .add_modifier(Modifier::DIM),
+            ),
+            Span::raw(" "),
+        ]
+    }
+
+    /// POEM-TUI (PO-P13) — the live verse readout. When a `para:verse-*`
+    /// paragraph is open, the status bar shows the current line's syllable count
+    /// and the cursor's line position within the stanza — so a poet sees, as they
+    /// type, whether a line has reached its ten (pentameter) or five (a haiku
+    /// line). Cheap: counts syllables of one line off the in-memory buffer, no
+    /// store reads, and only when a verse paragraph is open. Self-scoping, so it
+    /// needs no config toggle. Observes; it never alters a syllable.
+    pub(crate) fn verse_chip_spans(&self) -> Vec<ratatui::text::Span<'_>> {
+        use ratatui::style::{Color, Modifier, Style};
+        use ratatui::text::Span;
+        let Some(doc) = self.opened.as_ref() else {
+            return Vec::new();
+        };
+        let is_verse = self
+            .hierarchy
+            .get(doc.id)
+            .map(crate::poetry::is_verse_paragraph)
+            .unwrap_or(false);
+        if !is_verse {
+            return Vec::new();
+        }
+        let glyph = self
+            .hierarchy
+            .get(doc.id)
+            .and_then(crate::poetry::verse_glyph)
+            .unwrap_or("♩ ");
+        let lines = doc.textarea.lines();
+        let total = lines.iter().filter(|l| !l.trim().is_empty()).count();
+        let (row, _) = doc.textarea.cursor();
+        let iso = crate::ai::prompts::iso_from_long(&self.cfg.language);
+        let lang = crate::prose::ProseLanguage::from_label(iso);
+        let syllables: usize = lines
+            .get(row)
+            .map(|line| {
+                line.split_whitespace()
+                    .map(|w| {
+                        let clean = w.trim_matches(|c: char| !c.is_alphabetic());
+                        if clean.is_empty() {
+                            0
+                        } else {
+                            crate::poetry::syllabify::syllable_count(clean, lang.clone())
+                        }
+                    })
+                    .sum()
+            })
+            .unwrap_or(0);
+        vec![
+            Span::styled(
+                format!("{glyph}{syllables} syl · l{}/{total} ", row + 1),
+                Style::default()
+                    .bg(Color::Rgb(60, 50, 70))
                     .fg(Color::White)
                     .add_modifier(Modifier::DIM),
             ),
