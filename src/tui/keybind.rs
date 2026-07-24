@@ -800,6 +800,11 @@ pub enum Action {
     /// the cursor: pick a synonym / antonym / hypernym / hyponym to replace it.
     #[serde(rename = "view.open_thesaurus")]
     OpenThesaurus,
+    /// POEM-TUI (PO-P13) — `Ctrl+B Shift+Y`. Create the next stanza: a sibling
+    /// verse paragraph of the same `para:verse-*` type, right after the current
+    /// one, opened for editing. Fluid stanza-building without leaving the flow.
+    #[serde(rename = "meta.create_verse_sibling")]
+    CreateVerseSibling,
     /// Ctrl+V R (1.2.5+) — render the open paragraph in-process
     /// via typst-render and float a PNG preview on top of the
     /// editor. `Esc` closes, `S` opens a save-as picker for the
@@ -1090,6 +1095,7 @@ impl Action {
             Action::ToggleEchoOverlay => "echo overlay".into(),
             Action::OpenConcordance => "concordance".into(),
             Action::OpenThesaurus => "thesaurus".into(),
+            Action::CreateVerseSibling => "next stanza".into(),
             Action::TogglePovChip => "pov chip".into(),
             Action::TogglePromptLanguageMode => "prompt lang mode".into(),
             Action::OpenSentenceRhythm => "rhythm".into(),
@@ -1428,6 +1434,8 @@ impl Action {
                 "Open the project-wide concordance modal (1.2.9+, Ctrl+B Shift+L). Lists every distinct lexical stem in the project with its total count plus up to three KWIC samples. Stop-words, single-character tokens, and pure-digit runs are filtered out so the list surfaces the words actually carrying the prose's weight. System books (Prompts, Characters, Places, Lore, Help, Notes, Artefacts, etc.) are excluded from the corpus since they're metadata/scaffolding, not prose (1.2.11+). Multilingual via the same Snowball stemmer + stop-list plumbing as the repeated-phrase detector — `language` in HJSON drives the algorithm choice. Type to filter (substring match); Ctrl+S toggles sort (count ↔ alphabetical); Enter jumps to the first sample's source paragraph at the matching line (1.2.11+); Esc closes.".into(),
             Action::OpenThesaurus =>
                 "Open the WordNet thesaurus for the word under the cursor (1.8.5+, Ctrl+V Shift+Y). Looks the word up in the sense-based WordNet index for the paragraph's language (from `inkhaven wordnet fetch`/`import`) and lists candidate replacements — synonyms first, then hypernyms, hyponyms, and antonyms. For a non-English language the taxonomy relations are expanded through the English wordnet by the interlingual index. ↑↓ select, Enter replaces the word in place, Esc cancels. Needs the language's index installed; nothing is sent to any server.".into(),
+            Action::CreateVerseSibling =>
+                "Create the next stanza (POEM-TUI PO-P13, Ctrl+B Shift+Y). Adds a sibling verse paragraph of the same `para:verse-*` type immediately after the current stanza and opens it for editing, so you build a poem stanza by stanza without leaving the writing flow. Works on the open buffer or the tree cursor; no-ops with a hint if the target is not a verse paragraph. Writes structure only — it never generates a line of verse.".into(),
             Action::TogglePovChip =>
                 "Toggle the POV / character chip on the status bar (1.2.9+, Ctrl+B Shift+P). When enabled, the status bar shows the most-mentioned character in the open paragraph (the heuristic POV character) plus up to three additional named characters present. Driven by the project's existing `characters` lexicon — no separate tagging needed. Ties broken by first-mention order. Session-local override on top of `editor.pov_chip_enabled` in HJSON.".into(),
             Action::TogglePromptLanguageMode =>
@@ -1640,9 +1648,12 @@ impl KeyBindings {
                 // 1.2.20+ C.1.b — Ctrl+B Shift+K toggles the
                 // inline echo overlay (companion to Shift+F).
                 entry("Shift+k", Action::ToggleEchoOverlay, Scope::Editor),
-                // 1.8.5 — Ctrl+V Shift+Y opens the WordNet thesaurus for the
-                // word under the cursor and replaces it with a chosen relation.
-                entry("Shift+y", Action::OpenThesaurus, Scope::Editor),
+                // POEM-TUI (PO-P13) — Ctrl+B Shift+Y creates the next stanza (a
+                // verse sibling of the same type). Freed by relocating the
+                // WordNet thesaurus to its documented Ctrl+V Shift+Y home (it had
+                // been mis-placed on the meta layer; the serde name is
+                // `view.open_thesaurus`, and the 1.8.5 docs say Ctrl+V).
+                entry("Shift+y", Action::CreateVerseSibling, Scope::Any),
                 // 1.2.9+ — Ctrl+B Shift+R saves the
                 // current paragraph as an audio file
                 // via macOS `say -o`.
@@ -1742,6 +1753,11 @@ impl KeyBindings {
                 // toggles ambient. `v`/`Shift+v` were the only free view_sub slots.
                 entry("v", Action::ProseVoiceEngage, Scope::Any),
                 entry("Shift+v", Action::ProseToggleAmbient, Scope::Any),
+                // 1.8.5 — Ctrl+V Shift+Y opens the WordNet thesaurus for the word
+                // under the cursor (its documented home; see the serde name
+                // `view.open_thesaurus`). Relocated here from the meta layer in
+                // PO-P13, which had shadowed the documented chord.
+                entry("Shift+y", Action::OpenThesaurus, Scope::Editor),
                 // Editor / AI-prompt: 1 = buffer markdown, 2 =
                 // containing-subchapter subtree markdown.
                 entry("1", Action::ViewExportMarkdownBuffer, Scope::Editor),
@@ -2520,6 +2536,28 @@ mod tests {
         assert_eq!(
             k.resolve_view_sub(&kk, Focus::Editor),
             Some(Action::OpenPlanOutline)
+        );
+    }
+
+    #[test]
+    fn shift_y_verse_sibling_on_meta_thesaurus_on_view() {
+        // PO-P13: Ctrl+B Shift+Y creates the next stanza; the WordNet thesaurus
+        // moved to its documented Ctrl+V Shift+Y home (it had shadowed the meta
+        // layer). Assert both, so the two never collide again.
+        let k = KeyBindings::defaults();
+        let shift_y = KeyEvent::new(KeyCode::Char('Y'), KeyModifiers::SHIFT);
+        assert_eq!(
+            k.resolve_meta_sub(&shift_y, Focus::Editor),
+            Some(Action::CreateVerseSibling)
+        );
+        assert_eq!(
+            k.resolve_view_sub(&shift_y, Focus::Editor),
+            Some(Action::OpenThesaurus)
+        );
+        // The meta chord is not the thesaurus any more.
+        assert_ne!(
+            k.resolve_meta_sub(&shift_y, Focus::Editor),
+            Some(Action::OpenThesaurus)
         );
     }
 
