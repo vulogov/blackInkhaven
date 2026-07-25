@@ -27,28 +27,30 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.8.21 — The Inner Poet remembers
+## Latest release · 1.8.22 — The poetry capstone
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.8.21.md`](Documentation/RELEASE_NOTES/1.8.21.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.8.22.md`](Documentation/RELEASE_NOTES/1.8.22.md)
 
-A session store, an ambient mode, and two script words: the Inner Poet now scans a poem as you open
-it, remembers its findings across sessions, and lets you silence a complaint you've decided to keep.
+The documentation catches up with the tools — the last phase of the POEM arc: a new editor chapter
+in the poetry companion book, a ninth track in the author's guide, and the reference docs updated
+for verse.
 
 ### What's new
 
-- **Ambient mode — `Ctrl+B J → P → A`** — every verse paragraph with a declared form is fast-scanned
-  the moment you open it. Free (no model), so no cost cap — just a fingerprint guard against re-scans.
-- **`inner_poet.db` session store** — the fast track persists its findings across restarts (beside
-  `inner_editor.db`), and records **suppressed** findings so a rule you're breaking on purpose stops
-  being reported (the scan still counts it; the pane stays quiet).
-- **Two Bund words** — `poem.findings` (`store_read`) reads persisted findings; `poem.suppress`
-  (`store_write`, default-denied) silences one.
+- **"Writing a poem at the desk"** — a new chapter in _Poetry with Inkhaven_ (67pp) walking the whole
+  in-editor loop, with the TUI screens drawn as faithful monospace terminal frames.
+- **The poetry track** — _Developing a story with Inkhaven_ grows from eight tracks to nine, with a
+  full track guide framed on `genre: "poetry"` and the `poem:` form.
+- **Reference docs** — STRUCTURAL_PARAGRAPHS gains a verse-paragraphs section; KEYBINDING documents
+  the `Ctrl+B J → P` Inner Poet family; CONFIGURATION documents the verse genre.
+
+The **POEM arc is complete**: eighteen phases, 1.8.6 → 1.8.22, zero new runtime dependencies — a full
+prosodic workbench that observes, measures, and reports, and never generates a line of verse.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** The store is built on the in-tree `StorageEngine` like the other
-Inner-family stores; ambient reuses the shipped fast track. Warning-free (binary and tests). Test
-suite → 2659.
+**No code changes and no new crates.** Documentation + companion-book updates only; both books compile
+warning-free with a bare `typst compile`. Test suite unchanged → 2659.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
