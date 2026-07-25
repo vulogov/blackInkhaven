@@ -1,9 +1,9 @@
 #import "../design.typ": *
 
-#chapter(number: 11, title: "One desk, many books")
+#chapter(number: 12, title: "One desk, many books")
 
-You have now walked eight tracks, and if a pattern has surfaced it is this: they are
-not eight tools but one, held eight ways. The desk never changed. The tree of typed
+You have now walked nine tracks, and if a pattern has surfaced it is this: they are
+not nine tools but one, held nine ways. The desk never changed. The tree of typed
 nodes, the two chord families, the companion books, the readers, the press — every
 track drew on the same apparatus. What changed was the _proportion_, and the
 proportion was decided by a single question: what must this book stay true to?
@@ -72,7 +72,7 @@ Pick your track. Set the genre. Gather what your book must be true to. Then clos
 the panels, and write.
 
 #recap((
-  [The eight tracks are *one apparatus held eight ways* — what changes is the *proportion* of the four faculties, decided by what the book must stay true to.],
+  [The nine tracks are *one apparatus held nine ways* — what changes is the *proportion* of the four faculties, decided by what the book must stay true to.],
   [Learn to read a book as a balance of *structure, grounding, reading, and production*, and you can place any project — even ones no track here names.],
   [*Most real books mix tracks*: read the guides that apply and borrow the tools that earn their place from each; the genre picks the dominant frame, the tools are all still available.],
   [The constant across every track is the *loop* — gather before you draft, read after you revise — and the goal is always the same: a tool that gets out of the way so you can write the sentence.],
