@@ -32,7 +32,7 @@ resolve. The tools are shared. The _work_ is not.
 
 This book is about the work. It sorts the writing Inkhaven supports into a set
 of *tracks* — fiction, utopia, science fiction, nonfiction, scenarios, technical
-documentation, scientific writing, and theology or philosophy — and gives each
+documentation, scientific writing, theology or philosophy, and poetry — and gives each
 its own full guide: what is specific to it, which of Inkhaven's tools earn their
 place in it, and how those tools tie together into one working process rather
 than a drawer of gadgets.
