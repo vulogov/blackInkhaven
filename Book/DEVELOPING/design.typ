@@ -10,7 +10,7 @@
 #let book_subtitle = "An Author's Guide to Every Kind of Book — Choosing a Track and Building It"
 #let book_author   = "Vladimir Ulogov"
 #let book_year     = "2026"
-#let book_version  = "Inkhaven 1.6.16"
+#let book_version  = "Inkhaven 1.8.22"
 
 // ── Palette — warm paper, earth ink, growth-green accents ───────────
 #let ink_black   = rgb("#1e1a15")

@@ -122,3 +122,89 @@ long-term safety net.
 **See also:** [Tutorial 94 — Structural paragraphs](Tutorials/94-structural-paragraphs.md) ·
 [KEYBINDING.md → `i` (Tree)](KEYBINDING.md) ·
 [Jinja templates (STRUCT-1)](JINJA_TEMPLATES.md).
+
+---
+
+## Part C — Verse paragraphs (POEM)
+
+Poetry lives in the same structural-paragraph machinery. A poem is an ordinary
+Inkhaven book; its stanzas are paragraphs carrying a **`para:verse-*` tag**, a
+sixth family alongside the Part A subtypes. Because every verse tag begins
+`para:`, verse paragraphs inherit the structural behaviour (own glyph, excluded
+from the prose word count, skipped by the prose companions) and add a reader of
+their own — the **Inner Poet** (`Ctrl+B J → P`).
+
+| Tag | Subtype | Glyph | Holds |
+|---|---|---|---|
+| `para:verse-line` | a single line | `‖` | one line of verse |
+| `para:verse-stanza` | a stanza | `♩` | a stanza of any length — the workhorse |
+| `para:verse-couplet` | a couplet | `‗` | a two-line unit |
+| `para:verse-tercet` | a tercet | `⁚` | a three-line unit |
+| `para:verse-quatrain` | a quatrain | `⁛` | a four-line unit |
+| `para:verse-translation` | a translation | `⇄` | a translated stanza + its source |
+
+Inside a verse paragraph, **line breaks are preserved** — Inkhaven never reflows
+verse the way it reflows prose.
+
+### Create one
+
+- The **`i` picker** (Tree pane) lists the verse family under a *Verse* separator,
+  below the Part A subtypes. Pick one, `Enter`, name it.
+- Or cycle an existing paragraph's type with **`t`** / **`T`** until the verse
+  glyph appears.
+
+### Declaring a form — the `poem:` block
+
+A verse paragraph is only lines until you declare what form it is meant to be. The
+declaration is a small **HJSON sidecar** carrying a `poem:` block, attached beside
+the stanza. Every measuring tool (the Inner Poet's fast track, `poetry status`, the
+translation trilemma) reads it; without it, there is no target to measure against.
+
+Write it at the desk with **`Ctrl+B J → P → D`** — a form picker that writes the
+block (localised to the project language) as a sidecar. Or print one from the CLI
+(`inkhaven poetry forms --form sonnet`) and paste it. Shape:
+
+```
+poem: {
+  form: sonnet
+  metre: iambic
+  feet: 5
+  metre_tradition: accentual_syllabic   // accentual_syllabic | syllabic | accentual
+  rhyme_scheme: "ABAB CDCD EFEF GG"
+  language: en
+  // stanzas / lines_per_stanza when the form fixes them
+}
+```
+
+`poem_form_for` finds the block by cascading from the stanza's siblings out to the
+parent's level, so one `poem:` sidecar can describe a group of stanzas.
+
+### Paired translations — the `---` delimiter
+
+A `para:verse-translation` paragraph holds **both** halves of a translation in one
+body, separated by a delimiter line: a rule of three-or-more dashes (`---`) — or
+the thematic `⇄`. Source above, translation below:
+
+```
+Мой дядя самых честных правил
+---
+My uncle, a man of the purest honour
+```
+
+The two-column view (`Ctrl+B J → P → T`) splits on the delimiter and shows source ∥
+translation with the Form/Sound trilemma beneath.
+
+### What the Inner Poet adds
+
+- **Fast track** (`F`) — deterministic metre + rhyme findings to the Output pane,
+  graded Praise / Note / Concern; **ambient** (`A`) runs it on every stanza as you
+  open it; findings and suppressions persist in `<project>/inner_poet.db`.
+- **Slow track** (`E`) — an LLM reading (observations, never a rewrite).
+- **Live syllable readout** — the status bar shows the current line's syllable
+  count while a verse paragraph is open (`♩ 8 syl · l2/4`).
+- **Outline completion chips** — each verse row shows `8/14` (drafting) or
+  `14/14 ✓` (complete) against its declared form.
+
+**See also:** [Poetry with Inkhaven](../Book/POETRY/) (the companion book) ·
+[KEYBINDING.md → `Ctrl+B J` (Inner readers)](KEYBINDING.md) ·
+`inkhaven poetry --help`.

@@ -2083,6 +2083,7 @@ genre: literary_realism         // fiction: literary_realism | fantasy | scifi |
                                 // nonfiction (1.4.6): nonfiction | technical |
                                 //   documentation | academic | science | business
                                 // ideas (1.4.7): utopian | philosophy | theology
+                                // verse (1.8.21): poetry | verse | poem | poetic
 ```
 
 With no `genre` declared, both companions keep their original fiction framing —
@@ -2092,7 +2093,13 @@ claims needing support) and the Inner Editor (clarity/completeness as the craft)
 The **ideas genres** (1.4.7) go further: `philosophy` and `theology` frame the
 interrogator to probe argument and coherence rather than empirical evidence (a
 theology reader respects revelation/tradition as ground, never demanding proof);
-`utopian` frames the imagined society as an argument to interrogate.
+`utopian` frames the imagined society as an argument to interrogate. The **verse
+genre** (1.8.21) — `poetry` / `verse` / `poem` — tells the *prose* readers to stand
+down: line breaks, fragments, inversion, and compression read as the medium rather
+than as errors, so they attend to image and rhythm and leave metre and rhyme to the
+Inner Poet (`Ctrl+B J → P`). Poetry's deeper frame is per-paragraph, not global — the
+`poem:` sidecar block declaring a stanza's form (see
+[STRUCTURAL_PARAGRAPHS.md → Part C](STRUCTURAL_PARAGRAPHS.md)).
 
 - **`tone` / `verbosity` / `praise_frequency`** are parsed tolerantly — a bad
   value falls back to its default rather than failing the whole config. The

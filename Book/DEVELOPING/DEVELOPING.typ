@@ -6,8 +6,8 @@
 // Output: DEVELOPING.pdf. Each chapter is its own file in chapters/. The reading
 // path runs from "what kind of book are you making" through the shared desk to a
 // full working guide for each track — fiction, utopia, science fiction,
-// nonfiction, scenarios, technical, scientific, and theology/philosophy — each
-// tying structure, worldbuilding, research, and the AI readers into one process.
+// nonfiction, scenarios, technical, scientific, theology/philosophy, and poetry —
+// each tying structure, worldbuilding, research, and the AI readers into one process.
 //
 // Teaches with fletcher diagrams rather than screenshots; the first compile
 // fetches @preview/fletcher + cetz once, then caches.
@@ -32,9 +32,10 @@
   include "chapters/08-technical.typ",
   include "chapters/09-scientific.typ",
   include "chapters/10-theology-and-philosophy.typ",
+  include "chapters/11-poetry.typ",
 
   part(number: "IV", title: "Closing"),
-  include "chapters/11-conclusion.typ",
+  include "chapters/12-conclusion.typ",
 
   include "chapters/a-keybindings.typ",
   include "chapters/b-cli-reference.typ",

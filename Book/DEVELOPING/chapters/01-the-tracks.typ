@@ -5,7 +5,7 @@
 Every book Inkhaven helps you write shares the same desk. What changes from one
 kind of book to the next is not the desk but the _work_ — what you must invent,
 what you must not get wrong, and who you imagine reading over your shoulder. This
-chapter lays the eight tracks side by side so you can see, before you commit a
+chapter lays the nine tracks side by side so you can see, before you commit a
 single word, which one your book belongs to and what it will ask of you.
 
 A track has three defining marks. First, its *ground* — the thing the book must
@@ -147,6 +147,15 @@ This track uses the readers most subtly of all: an Inner Theologian tuned to mor
 and theological weight, a Socratic interrogator that — told the genre — stops
 asking for proof and starts asking whether the argument holds.
 
+The poetry track (genre `poetry`, `verse`) stands apart from the invention-to-claims
+line the others run along. Its ground is neither an invented world nor a checkable
+fact but the _line itself_ — its metre, its rhyme, its sound. Its risk is not
+contradiction or error but a form left unkept: a sonnet that never turns, a rhyme that
+does not chime. Its reader is the Inner Poet, which scans a stanza against the form you
+declared and reports what it measures — Praise, Note, Concern — but never rewrites a
+word. Alone among the tracks it also *counts as you type* (a live syllable readout) and
+carries a companion volume of its own, #emph[Poetry with Inkhaven].
+
 #section("How the tracks differ, at a glance")
 
 Read down this list to place your own book. The pattern is simple: as you move from
@@ -162,6 +171,7 @@ _claims held true_ — and the tools shift with it.
   chord_row("Technical", "Ground: a changing system · Risk: staleness · Reader: the task-driven user · Leans on structure + terminology + reuse."),
   chord_row("Scientific", "Ground: the literature + data · Risk: the unsourced claim · Reader: the hostile referee · Leans on sources + adversarial readers."),
   chord_row("Theology / philosophy", "Ground: internal coherence + a tradition · Risk: incoherence, strawmanning · Reader: the good-faith opponent · Leans on the moral + Socratic readers."),
+  chord_row("Poetry", "Ground: the line — metre, rhyme, sound · Risk: a form left unkept · Reader: the Inner Poet · Leans on scansion, rhyme, the form checker."),
 ))
 
 #question[
@@ -174,6 +184,6 @@ _claims held true_ — and the tools shift with it.
 #recap((
   [A *track* is a kind of book plus its working process, defined by three marks: its *ground* (what it must stay true to), its *risk* (how it tends to fail), and its *reader* (the skeptic Inkhaven imagines).],
   [The `genre` line in `inkhaven.hjson` is the one setting that tunes the AI readers, seeds continuity categories, and travels into exports — set it to get a reader calibrated to your track.],
-  [The eight tracks run from *invention held consistent* (fiction, utopia, science fiction, scenarios) to *claims held true* (nonfiction, technical, scientific, theology/philosophy), and the tools shift along that line.],
+  [The nine tracks run from *invention held consistent* (fiction, utopia, science fiction, scenarios) to *claims held true* (nonfiction, technical, scientific, theology/philosophy), with *poetry* off to one side — the track where the line itself is measured — and the tools shift along that line.],
   [A track is a lens, not a cage: choosing one focuses your attention on the tools that pay off, without removing any others. Most books lean on one track and borrow from a second.],
 ))

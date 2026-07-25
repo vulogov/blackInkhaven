@@ -29,6 +29,9 @@
   include "chapters/07-translating-verse.typ",
   include "chapters/08-scripting-and-scholarship.typ",
 
+  part(number: "V", title: "At the Desk"),
+  include "chapters/09-writing-a-poem-at-the-desk.typ",
+
   include "chapters/a-command-reference.typ",
 
   include "chapters/99-about-the-author.typ",
