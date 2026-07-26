@@ -146,6 +146,35 @@ impl StorageEngine {
         Ok(())
     }
 
+    /// Run several statements on a single pooled connection inside a DuckDB
+    /// transaction. The closure receives that connection; if it returns `Err`
+    /// (or panics-then-drops), the transaction is rolled back and the error
+    /// propagated, so a DELETE-then-INSERT sequence never leaves half-state and a
+    /// concurrent reader never observes the gap. On `Ok` it commits.
+    pub fn transaction<T>(
+        &self,
+        f: impl FnOnce(&duckdb::Connection) -> Result<T>,
+    ) -> Result<T> {
+        let conn = self
+            .pool
+            .get()
+            .map_err(|e| anyhow!("pool checkout failed: {e}"))?;
+        conn.execute_batch("BEGIN TRANSACTION;")
+            .map_err(|e| anyhow!("BEGIN failed: {e}"))?;
+        match f(&conn) {
+            Ok(v) => {
+                conn.execute_batch("COMMIT;")
+                    .map_err(|e| anyhow!("COMMIT failed: {e}"))?;
+                Ok(v)
+            }
+            Err(e) => {
+                // Best-effort rollback; the original error is what matters.
+                let _ = conn.execute_batch("ROLLBACK;");
+                Err(e)
+            }
+        }
+    }
+
     /// Force a DuckDB `CHECKPOINT` — drains WAL into the main `.db`
     /// file. Cheap when the WAL is empty (DuckDB short-circuits).
     /// Called from the background sync tick and the TUI shutdown
@@ -457,6 +486,44 @@ mod tests {
     use super::*;
     use serde_json::json;
     use tempfile::TempDir;
+
+    // 1.8.23 hardening — `transaction` commits on Ok and rolls back on Err, so a
+    // DELETE-then-INSERT sequence that fails partway leaves no half-state.
+    #[test]
+    fn transaction_commits_and_rolls_back() {
+        let dir = TempDir::new().unwrap();
+        let e = StorageEngine::new(
+            dir.path().join("tx.db"),
+            "CREATE TABLE IF NOT EXISTS t (id BIGINT);",
+            2,
+        )
+        .unwrap();
+        let count = |e: &StorageEngine| -> i64 {
+            let rows = e.select_all("SELECT COUNT(*) FROM t").unwrap();
+            match rows[0].first() {
+                Some(DuckValue::BigInt(i)) => *i,
+                Some(DuckValue::Int(i)) => *i as i64,
+                other => panic!("unexpected count value: {other:?}"),
+            }
+        };
+
+        // Commit path: both inserts land.
+        e.transaction(|c| {
+            c.execute("INSERT INTO t VALUES (1)", [])?;
+            c.execute("INSERT INTO t VALUES (2)", [])?;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(count(&e), 2);
+
+        // Rollback path: an error after an insert undoes it — no half-state.
+        let r: Result<()> = e.transaction(|c| {
+            c.execute("INSERT INTO t VALUES (3)", [])?;
+            anyhow::bail!("boom");
+        });
+        assert!(r.is_err());
+        assert_eq!(count(&e), 2, "the failed insert must have rolled back");
+    }
 
     /// 1.2.23 SQL hardening — the JSON store binds parameters instead of
     /// string-interpolating, so content with single quotes, double

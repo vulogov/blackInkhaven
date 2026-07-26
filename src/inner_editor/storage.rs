@@ -179,6 +179,59 @@ impl InnerEditorStore {
         )
     }
 
+    /// Replace a paragraph's findings and stamp the engagement **atomically**
+    /// (POEM-hardening 1.8.23). The clear + inserts + cooldown stamp run in one
+    /// transaction, so a failure mid-write leaves the prior finding set intact
+    /// rather than a partial or empty one, and a concurrent reader never sees the
+    /// gap. Returns the error instead of silently swallowing it (the engage
+    /// worker logs it, rather than showing findings that never reached disk).
+    pub fn replace_paragraph_findings(
+        &self,
+        paragraph_id: Uuid,
+        findings: &[EditorFinding],
+        chapter_id: Option<&str>,
+        language: Option<&str>,
+        snapshot_id: Option<Uuid>,
+        at: i64,
+    ) -> Result<()> {
+        let pid = paragraph_id.to_string();
+        self.engine.transaction(|conn| {
+            conn.execute(
+                "DELETE FROM editor_findings WHERE paragraph_id = ?",
+                duckdb::params![pid],
+            )?;
+            for f in findings {
+                conn.execute(
+                    "INSERT INTO editor_findings \
+                     (id, paragraph_id, chapter_id, severity, category, language, \
+                      observation, observation_en, conditional, suppressed_by, snapshot_id, emitted_at) \
+                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    duckdb::params![
+                        Uuid::new_v4().to_string(),
+                        pid,
+                        chapter_id.unwrap_or_default(),
+                        f.severity.id(),
+                        f.category.id(),
+                        language.unwrap_or_default(),
+                        f.observation,
+                        f.observation_en,
+                        f.conditional as i64,
+                        f.suppressed_by.clone().unwrap_or_default(),
+                        snapshot_id.map(|s| s.to_string()).unwrap_or_default(),
+                        at,
+                    ],
+                )?;
+            }
+            conn.execute(
+                "INSERT INTO editor_cooldown_state (paragraph_id, last_engagement_at, last_edit_at) \
+                 VALUES (?, ?, 0) \
+                 ON CONFLICT (paragraph_id) DO UPDATE SET last_engagement_at = excluded.last_engagement_at",
+                duckdb::params![pid, at],
+            )?;
+            Ok(())
+        })
+    }
+
     /// All persisted findings, newest first.
     pub fn list_findings(&self) -> Result<Vec<StoredEditorFinding>> {
         let rows = self.engine.select_all(

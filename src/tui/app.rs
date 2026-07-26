@@ -1780,6 +1780,11 @@ pub(crate) struct App {
     /// cap; `poet_ambient_fp` debounces re-scans of identical (paragraph, text).
     poet_ambient: bool,
     poet_ambient_fp: Option<(Uuid, u64)>,
+    /// 1.8.23 hardening — one shared `inner_poet.db` handle, opened once, instead
+    /// of `open_for_project` per ambient scan (that re-ran `Connection::open` +
+    /// eager pool build on every verse navigation). `None` if the store couldn't
+    /// be opened at startup.
+    poet_store: Option<crate::inner_poet::storage::InnerPoetStore>,
     ie_last_engaged_fp: Option<(Uuid, u64)>,
     ie_last_engage_at: Option<std::time::Instant>,
     /// The paragraph a spawned engagement targets, for the completion report.
@@ -3177,6 +3182,10 @@ impl App {
             super::tts::TtsEngine::resolve(&cfg.editor.tts, &layout.root);
         // WORLD-4 — the debounced fact-checker is on when the project has a world.
         let world_hjson_exists = layout.root.join("world.hjson").exists();
+        // 1.8.23 — open the shared inner_poet.db handle once (before `store` is
+        // moved into the struct), so ambient scans reuse it instead of reopening.
+        let poet_store =
+            crate::inner_poet::storage::InnerPoetStore::open_for_project(store.project_root()).ok();
         Ok(Self {
             layout,
             store,
@@ -3213,6 +3222,7 @@ impl App {
             prose_last_run: None,
             poet_ambient: false,
             poet_ambient_fp: None,
+            poet_store,
             slow_auto: false,
             slow_auto_para: None,
             fc_slow_last_fp: None,
@@ -15831,10 +15841,11 @@ impl App {
         }
     }
 
-    /// Open the project's Inner Poet store (`inner_poet.db`); `None` if it can't
-    /// be opened. Cheap enough to open per scan, mirroring the Bund words.
+    /// The project's Inner Poet store (`inner_poet.db`) — one shared handle held
+    /// on the App since 1.8.23 (was opened per scan). Cloning is cheap (the
+    /// underlying pool is `Arc`-shared); `None` only if it failed to open at start.
     fn inner_poet_store(&self) -> Option<crate::inner_poet::storage::InnerPoetStore> {
-        crate::inner_poet::storage::InnerPoetStore::open_for_project(self.store.project_root()).ok()
+        self.poet_store.clone()
     }
 
     /// POEM-TUI (PO-P16) — the shared fast-track body: scan a verse paragraph,
@@ -15860,10 +15871,14 @@ impl App {
 
         let findings = crate::inner_poet::fast::scan_stanza(plain, form);
 
-        // Persist (best-effort) + gather this paragraph's suppressed keys.
+        // Persist + gather this paragraph's suppressed keys. A persist failure is
+        // surfaced (not swallowed) so the author knows the findings aren't durable
+        // — they're still shown this session, but won't survive a restart.
         let store = self.inner_poet_store();
         if let Some(st) = &store {
-            let _ = st.replace_findings(id, &findings);
+            if let Err(e) = st.replace_findings(id, &findings) {
+                self.status = format!("♪ Inner Poet: findings shown but not saved — {e}");
+            }
         }
         let suppressed: std::collections::HashSet<String> = store
             .as_ref()
@@ -15937,9 +15952,48 @@ impl App {
         }
     }
 
-    /// Find a node's declared `poem:` form — an HJSON leaf carrying a `poem:`
-    /// block among the node's siblings, else at its parent's level (cascade).
+    /// The `poem:` sidecar that belongs to a specific verse paragraph — the first
+    /// HJSON leaf carrying a `poem:` block *immediately following* the stanza,
+    /// before the next verse paragraph. `create_poem_sidecar` always writes the
+    /// block right after its stanza, so this is the stanza's own declaration.
+    /// (1.8.23 — replaces the old "first sibling in the group wins", which made
+    /// stanza 2 resolve to stanza 1's form and re-declaring clobber the wrong one.)
+    fn nearest_poem_sidecar(&self, node_id: Uuid) -> Option<Uuid> {
+        let node = self.hierarchy.get(node_id)?;
+        let sibs = self.hierarchy.children_of(node.parent_id);
+        let idx = sibs.iter().position(|n| n.id == node_id)?;
+        for sib in &sibs[idx + 1..] {
+            // The next verse paragraph starts its own group — its sidecars aren't ours.
+            if crate::poetry::is_verse_paragraph(sib) {
+                break;
+            }
+            if let Ok(Some(bytes)) = self.store.get_content(sib.id) {
+                if crate::poetry::form::PoemForm::from_hjson(&String::from_utf8_lossy(&bytes))
+                    .is_some()
+                {
+                    return Some(sib.id);
+                }
+            }
+        }
+        None
+    }
+
+    /// Find a node's declared `poem:` form. First the sidecar that belongs to this
+    /// stanza ([`nearest_poem_sidecar`] — per-stanza forms); then cascade to any
+    /// `poem:` block at the node's level and the parent's level (a form declared
+    /// once for a whole group of stanzas).
     fn poem_form_for(&self, node_id: Uuid) -> Option<crate::poetry::form::PoemForm> {
+        // 1) This stanza's own sidecar.
+        if let Some(sid) = self.nearest_poem_sidecar(node_id) {
+            if let Ok(Some(bytes)) = self.store.get_content(sid) {
+                if let Some(form) =
+                    crate::poetry::form::PoemForm::from_hjson(&String::from_utf8_lossy(&bytes))
+                {
+                    return Some(form);
+                }
+            }
+        }
+        // 2) Group-level cascade: a form declared once for the group.
         let node = self.hierarchy.get(node_id)?;
         let mut levels: Vec<Option<Uuid>> = vec![node.parent_id];
         if let Some(pid) = node.parent_id {
@@ -16126,22 +16180,11 @@ impl App {
         }
     }
 
-    /// Find an existing `poem:` sidecar leaf among a verse paragraph's siblings
-    /// (same level only — the level `create_poem_sidecar` writes to).
+    /// Find the `poem:` sidecar to rewrite when re-declaring this stanza's form —
+    /// the one that belongs to *this* stanza (the block immediately following it),
+    /// so re-declaring on stanza 2 updates stanza 2's block, not stanza 1's.
     fn existing_poem_sidecar(&self, verse_id: Uuid) -> Option<Uuid> {
-        let node = self.hierarchy.get(verse_id)?;
-        for sib in self.hierarchy.children_of(node.parent_id) {
-            if sib.id == verse_id {
-                continue;
-            }
-            if let Ok(Some(bytes)) = self.store.get_content(sib.id) {
-                let body = String::from_utf8_lossy(&bytes);
-                if crate::poetry::form::PoemForm::from_hjson(&body).is_some() {
-                    return Some(sib.id);
-                }
-            }
-        }
-        None
+        self.nearest_poem_sidecar(verse_id)
     }
 
     /// Overwrite a leaf's content on disk and in the store. Returns the leaf id.
@@ -17887,7 +17930,7 @@ impl App {
         if let Some(mut node) = existing {
             if let Some(rel) = node.file.clone() {
                 let abs = self.layout.root.join(&rel);
-                std::fs::write(&abs, body.as_bytes()).map_err(|e| e.to_string())?;
+                crate::io_atomic::write(&abs, body.as_bytes()).map_err(|e| e.to_string())?;
             }
             self.store
                 .update_paragraph_content(&mut node, body.as_bytes())
