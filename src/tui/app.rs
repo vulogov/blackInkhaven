@@ -1791,6 +1791,16 @@ pub(crate) struct App {
     ie_engage_para: Option<Uuid>,
     /// SCHOLAR P4 — the paragraph a spawned confront pass targets, for the report.
     confront_para: Option<Uuid>,
+    /// 1.8.24 — context for a backgrounded AI-thesaurus lookup (word, lang, row,
+    /// start_col, end_col), stashed while the LLM call runs off the UI thread so
+    /// the modal can open with the right replacement bounds when it returns.
+    thesaurus_pending: Option<(String, String, usize, usize, usize)>,
+    /// 1.8.24 perf — glossary (C·P·A) and facts status-bar chip counts, cached and
+    /// recomputed only on a tree change (`reload_hierarchy`). Both chips are on by
+    /// default and previously ran 3× + 1× O(N) full-hierarchy scans (+ subtree
+    /// allocations) every idle repaint (~5×/sec).
+    glossary_counts_cache: (usize, usize, usize),
+    facts_count_cache: usize,
     tree_cursor: usize,
     tree_scroll: usize,
 
@@ -3186,6 +3196,25 @@ impl App {
         // moved into the struct), so ambient scans reuse it instead of reopening.
         let poet_store =
             crate::inner_poet::storage::InnerPoetStore::open_for_project(store.project_root()).ok();
+        // 1.8.24 — seed the status-bar chip caches from the loaded hierarchy so the
+        // first frame is correct (they're refreshed on every `reload_hierarchy`).
+        let glossary_counts_cache = glossary_counts(&hierarchy);
+        let facts_count_cache = hierarchy
+            .iter()
+            .find(|n| {
+                n.kind == NodeKind::Book
+                    && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_FACTS)
+            })
+            .map(|b| {
+                hierarchy
+                    .collect_subtree(b.id)
+                    .into_iter()
+                    .filter(|id| {
+                        hierarchy.get(*id).map(|n| n.kind == NodeKind::Paragraph).unwrap_or(false)
+                    })
+                    .count()
+            })
+            .unwrap_or(0);
         Ok(Self {
             layout,
             store,
@@ -3249,6 +3278,9 @@ impl App {
             ie_last_engage_at: None,
             ie_engage_para: None,
             confront_para: None,
+            thesaurus_pending: None,
+            glossary_counts_cache,
+            facts_count_cache,
             output_expanded: std::collections::HashSet::new(),
             output_filter: crate::pane::output::OutputFilter::default(),
             output_query_focused: false,
@@ -4145,6 +4177,27 @@ impl App {
                         }
                     }
                     Err(e) => self.status = format!("Confront skipped: {e}"),
+                }
+            }
+            BgJobKind::Thesaurus => {
+                let pending = self.thesaurus_pending.take();
+                match (result, pending) {
+                    (Ok(raw), Some((word, lang, row, start_col, end_col))) => {
+                        let suggestions = parse_ai_thesaurus(&raw, &word);
+                        if suggestions.is_empty() {
+                            self.status = format!("`{word}` — no thesaurus suggestions ({lang} · AI)");
+                        } else {
+                            let panel = super::wordnet_panel::WordnetPanel::new(
+                                word,
+                                format!("{lang} · AI"),
+                                suggestions,
+                            );
+                            self.modal = Modal::Thesaurus { panel, row, start_col, end_col, scroll: 0 };
+                            self.status = "thesaurus: ↑↓ select · Enter replace · Esc cancel".into();
+                        }
+                    }
+                    (Err(e), _) => self.status = e,
+                    (Ok(_), None) => {}
                 }
             }
         }
@@ -7119,6 +7172,11 @@ pub(super) enum BgJobKind {
     /// paragraph against the research corpus and emits the anchored relation
     /// findings to Output directly; the `Ok` payload is the emitted count.
     Confront,
+    /// 1.8.24 — the AI-thesaurus fallback (`Ctrl+V Shift+Y` for a language with no
+    /// local WordNet, e.g. Russian). The worker makes the LLM call off the UI
+    /// thread; the `Ok` payload is the raw JSON, parsed + shown as a picker in the
+    /// completion handler (which reads `thesaurus_pending` for the replace bounds).
+    Thesaurus,
 }
 
 /// An in-flight background job: its progress/result channel + a label + which
@@ -18970,13 +19028,20 @@ impl App {
     /// Hidden when `editor.show_glossary_chip` is
     /// false in HJSON (default true) or when all
     /// three counts are zero (fresh project).
+    /// 1.8.24 — recompute the status-bar chip counts (glossary C·P·A + facts).
+    /// Called only on a tree change (`reload_hierarchy`), not per frame.
+    pub(super) fn refresh_chip_caches(&mut self) {
+        self.glossary_counts_cache = glossary_counts(&self.hierarchy);
+        self.facts_count_cache = self.facts_paragraph_ids().len();
+    }
+
     pub(crate) fn glossary_chip_spans(&self) -> Vec<ratatui::text::Span<'_>> {
         use ratatui::style::{Color, Modifier, Style};
         use ratatui::text::Span;
         if !self.cfg.editor.show_glossary_chip {
             return Vec::new();
         }
-        let (chars, places, artefacts) = glossary_counts(&self.hierarchy);
+        let (chars, places, artefacts) = self.glossary_counts_cache;
         if chars == 0 && places == 0 && artefacts == 0 {
             return Vec::new();
         }
@@ -19002,7 +19067,7 @@ impl App {
         if !self.cfg.editor.show_facts_chip {
             return Vec::new();
         }
-        let n = self.facts_paragraph_ids().len();
+        let n = self.facts_count_cache;
         if n == 0 {
             return Vec::new();
         }
@@ -30556,9 +30621,25 @@ impl App {
             return;
         } else {
             // No wordnet and none to download (e.g. Russian) — fall back to the AI
-            // thesaurus. This blocks briefly while the model answers.
-            self.status = format!("no wordnet for {lang} — consulting AI…");
-            (self.ai_thesaurus_suggestions(&word, &lang), format!("{lang} · AI"))
+            // thesaurus. 1.8.24: run the LLM call on a background job instead of
+            // blocking the event loop (which froze the whole UI for the round-trip,
+            // exactly in the Russian case this path serves). The Thesaurus modal
+            // opens from the completion handler.
+            let Some((model, system, prompt)) = self.thesaurus_ai_prompt(&word, &lang) else {
+                self.status = "no AI model configured for the thesaurus fallback".into();
+                return;
+            };
+            let (client, w, l) = (self.ai.client.clone(), word.clone(), lang.clone());
+            self.thesaurus_pending = Some((word.clone(), lang.clone(), row, start_col, end_col));
+            let started = self.start_bg_job(BgJobKind::Thesaurus, format!("thesaurus ({l} · AI)"), move |tx, _cancel| {
+                let out = crate::ai::stream::collect_blocking(client, model, Some(system), prompt)
+                    .map_err(|e| format!("AI thesaurus for `{w}` failed: {e}"));
+                let _ = tx.send(BgMsg::Done(out));
+            });
+            if !started {
+                self.thesaurus_pending = None;
+            }
+            return;
         };
 
         if suggestions.is_empty() {
@@ -30571,15 +30652,12 @@ impl App {
         self.status = "thesaurus: ↑↓ select · Enter replace · Esc cancel".into();
     }
 
-    /// AI fallback for languages with no WordNet (and none to download): ask the
-    /// configured model for the word's relations and parse them into the same
-    /// suggestion shape. Blocking (like the Inner Editor's slow track); returns
-    /// an empty list on any error so the caller reports "no suggestions".
-    fn ai_thesaurus_suggestions(&self, word: &str, lang: &str) -> Vec<crate::wordnet::Suggestion> {
-        let model = match self.ai.resolve_provider(&self.cfg.llm, None) {
-            Ok((model, _)) => model.to_string(),
-            Err(_) => return Vec::new(),
-        };
+    /// Build the (model, system, prompt) for the AI thesaurus fallback (languages
+    /// with no WordNet). `None` if no model is configured. The call itself runs on
+    /// a background job (1.8.24) and the raw JSON is parsed by `parse_ai_thesaurus`
+    /// in the completion handler.
+    fn thesaurus_ai_prompt(&self, word: &str, lang: &str) -> Option<(String, String, String)> {
+        let model = self.ai.resolve_provider(&self.cfg.llm, None).ok()?.0.to_string();
         let system =
             "You are a precise multilingual thesaurus. Reply with compact JSON only, no prose.".to_string();
         let prompt = format!(
@@ -30589,10 +30667,7 @@ impl App {
              in {lang}; do not include \"{word}\" itself; at most 8 items per list; use empty arrays \
              when there are none."
         );
-        match crate::ai::stream::collect_blocking(self.ai.client.clone(), model, Some(system), prompt) {
-            Ok(raw) => parse_ai_thesaurus(&raw, word),
-            Err(_) => Vec::new(),
-        }
+        Some((model, system, prompt))
     }
 
     /// Ensure `self.wordnet_index` holds the index for `lang` (cached for the
