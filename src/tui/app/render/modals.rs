@@ -6192,8 +6192,17 @@ impl super::super::App {
             // the same reckoning `poetry status` prints on the CLI.
             if crate::poetry::is_verse_paragraph(node) {
                 if let Some(form) = self.poem_form_for(id) {
-                    let ratio = self
-                        .poem_completion(id)
+                    // 1.8.23 — compute the status ONCE from the already-resolved
+                    // form + one content read (was: poem_form_for 3× + get_content
+                    // 2× per frame for the cursor node).
+                    let st = self
+                        .store
+                        .get_content(id)
+                        .ok()
+                        .flatten()
+                        .map(|b| crate::poetry::form_check::check_form(&String::from_utf8_lossy(&b), &form));
+                    let ratio = st
+                        .as_ref()
                         .map(|st| match st.expected_lines {
                             Some(exp) => {
                                 let state = if st.complete { "complete" } else { "drafting" };
@@ -6207,8 +6216,8 @@ impl super::super::App {
                         Span::raw(truncate_to(&form.form, inner_w.saturating_sub(7))),
                     ]));
                     out.push(Line::from(vec![label("lines"), Span::raw(ratio)]));
-                    if let Some(issues) = self.poem_completion(id).map(|st| st.issues) {
-                        for issue in issues.iter().take(3) {
+                    if let Some(st) = &st {
+                        for issue in st.issues.iter().take(3) {
                             out.push(Line::from(Span::styled(
                                 format!("  ⚠ {}", truncate_to(issue, inner_w.saturating_sub(4))),
                                 Style::default().fg(self.theme.tree_chapter_fg).add_modifier(Modifier::DIM),

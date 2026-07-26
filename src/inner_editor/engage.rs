@@ -189,17 +189,22 @@ pub fn engage(input: EngageInput) -> Result<EngageOutcome> {
     }
 
     if let Some(pid) = input.paragraph_id {
-        let _ = ie_store.clear_findings_for_paragraph(pid);
-        for f in &kept {
-            let _ = ie_store.insert_finding(
-                f,
-                Some(pid),
-                input.chapter_id.as_deref(),
-                Some(&lang_code),
-                input.snapshot_id,
+        // Atomic clear + inserts + engagement stamp — no partial state on failure,
+        // and the error is logged rather than swallowed (1.8.23 hardening) so a
+        // persist failure isn't silent (findings shown but never saved).
+        if let Err(e) = ie_store.replace_paragraph_findings(
+            pid,
+            &kept,
+            input.chapter_id.as_deref(),
+            Some(&lang_code),
+            input.snapshot_id,
+            now_secs(),
+        ) {
+            tracing::warn!(
+                target: "inkhaven::inner_editor",
+                "persisting engage findings for {pid} failed: {e}"
             );
         }
-        let _ = ie_store.record_engagement(pid, now_secs());
     }
 
     Ok(EngageOutcome { findings: kept, suppressed: suppressed.len(), calls_used: used + 1, daily_cap: cap, note })

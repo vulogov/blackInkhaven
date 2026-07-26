@@ -27,30 +27,31 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.8.22 — The poetry capstone
+## Latest release · 1.8.23 — Storage & write-safety hardening
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.8.22.md`](Documentation/RELEASE_NOTES/1.8.22.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.8.23.md`](Documentation/RELEASE_NOTES/1.8.23.md)
 
-The documentation catches up with the tools — the last phase of the POEM arc: a new editor chapter
-in the poetry companion book, a ninth track in the author's guide, and the reference docs updated
-for verse.
+The first of two hardening cuts from the pre-1.9 audit: finding writes are now atomic and no longer
+silently swallowed, a live-file write that bypassed atomic-write is fixed, plus two poetry fixes.
 
 ### What's new
 
-- **"Writing a poem at the desk"** — a new chapter in _Poetry with Inkhaven_ (67pp) walking the whole
-  in-editor loop, with the TUI screens drawn as faithful monospace terminal frames.
-- **The poetry track** — _Developing a story with Inkhaven_ grows from eight tracks to nine, with a
-  full track guide framed on `genre: "poetry"` and the `poem:` form.
-- **Reference docs** — STRUCTURAL_PARAGRAPHS gains a verse-paragraphs section; KEYBINDING documents
-  the `Ctrl+B J → P` Inner Poet family; CONFIGURATION documents the verse genre.
+- **Atomic finding writes** — a new `StorageEngine::transaction()` wraps the DELETE + N-insert
+  sequences (Inner Poet + Inner Editor), so a crash mid-write leaves the prior set intact, never a
+  partial or empty one.
+- **No more silent data loss** — persist failures in the engage worker and the Poet fast track are
+  now logged / surfaced instead of discarded (findings shown while nothing hit disk).
+- **Atomic live-file writes** — `ink.paragraph.save` and the AI-lift draft path now use `io_atomic`.
+- **Poetry fixes** — per-stanza forms no longer collide (`poem_form_for` finds the stanza's own
+  sidecar); over-length forms no longer show "complete ✓".
 
-The **POEM arc is complete**: eighteen phases, 1.8.6 → 1.8.22, zero new runtime dependencies — a full
-prosodic workbench that observes, measures, and reports, and never generates a line of verse.
+The broader `inner_editor` / `inner_socrates` shared-handle refactor lands with the TUI-performance
+cut in 1.8.24.
 
 ### Dependencies & compatibility
 
-**No code changes and no new crates.** Documentation + companion-book updates only; both books compile
-warning-free with a bare `typst compile`. Test suite unchanged → 2659.
+**No new runtime crates.** Additive `StorageEngine::transaction`; all behaviour changes are strictly
+safer. Warning-free (binary and tests). Test suite → 2660.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

@@ -111,30 +111,36 @@ impl InnerPoetStore {
     // ── findings ────────────────────────────────────────────────────────────
 
     /// Replace a paragraph's persisted findings with a fresh scan's — the fast
-    /// track is deterministic, so an older set is never worth keeping.
+    /// track is deterministic, so an older set is never worth keeping. The
+    /// DELETE + INSERTs run in one transaction, so a failure mid-write leaves the
+    /// prior set intact rather than a partial or empty one, and a concurrent
+    /// reader never sees the gap.
     pub fn replace_findings(&self, paragraph_id: Uuid, findings: &[Finding]) -> Result<()> {
-        self.engine.execute_with(
-            "DELETE FROM poet_findings WHERE paragraph_id = ?",
-            &[&paragraph_id.to_string()],
-        )?;
+        let pid = paragraph_id.to_string();
         let now = now_secs();
-        for f in findings {
-            self.engine.execute_with(
-                "INSERT INTO poet_findings \
-                 (id, paragraph_id, severity, kind, line, message, emitted_at) \
-                 VALUES (?,?,?,?,?,?,?)",
-                &[
-                    &Uuid::new_v4().to_string(),
-                    &paragraph_id.to_string(),
-                    &severity_str(f.severity),
-                    &f.kind.to_string(),
-                    &(f.line as i64),
-                    &f.message,
-                    &now,
-                ],
+        self.engine.transaction(|conn| {
+            conn.execute(
+                "DELETE FROM poet_findings WHERE paragraph_id = ?",
+                duckdb::params![pid],
             )?;
-        }
-        Ok(())
+            for f in findings {
+                conn.execute(
+                    "INSERT INTO poet_findings \
+                     (id, paragraph_id, severity, kind, line, message, emitted_at) \
+                     VALUES (?,?,?,?,?,?,?)",
+                    duckdb::params![
+                        Uuid::new_v4().to_string(),
+                        pid,
+                        severity_str(f.severity),
+                        f.kind.to_string(),
+                        f.line as i64,
+                        f.message,
+                        now,
+                    ],
+                )?;
+            }
+            Ok(())
+        })
     }
 
     fn rows_to_findings(&self, sql: &str, args: &[&dyn duckdb::ToSql]) -> Result<Vec<StoredPoetFinding>> {

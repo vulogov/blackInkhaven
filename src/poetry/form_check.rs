@@ -38,7 +38,10 @@ pub fn check_form(text: &str, form: &PoemForm) -> FormStatus {
         text.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
     let written = lines.len();
     let expected = expected_lines(form);
-    let complete = expected.map(|e| written >= e).unwrap_or(false);
+    // A bounded form is complete when it has *exactly* its line count — an
+    // over-length poem is not "complete ✓" (the form checker flags it as too
+    // long, and the Outline chip must not show a green tick over `16/14`).
+    let complete = expected.map(|e| written == e).unwrap_or(false);
 
     let mut issues = Vec::new();
     match form.form.as_str() {
@@ -161,6 +164,11 @@ mod tests {
         let full_text = (1..=14).map(|i| i.to_string()).collect::<Vec<_>>().join("\n");
         let full = check_form(&full_text, &form("shakespearean_sonnet"));
         assert_eq!(completion_chip(&full), ("14/14".to_string(), true));
+
+        // 1.8.23: an over-length bounded form is NOT complete (no green ✓).
+        let over_text = (1..=16).map(|i| i.to_string()).collect::<Vec<_>>().join("\n");
+        let over = check_form(&over_text, &form("shakespearean_sonnet"));
+        assert_eq!(completion_chip(&over), ("16/14".to_string(), false));
 
         // An open form (free verse) reports a bare count, never "complete".
         let open = check_form("a\nb\nc\nd", &form("free_verse"));
