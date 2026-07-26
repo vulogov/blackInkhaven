@@ -27,31 +27,28 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.8.23 — Storage & write-safety hardening
+## Latest release · 1.8.24 — TUI responsiveness
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.8.23.md`](Documentation/RELEASE_NOTES/1.8.23.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.8.24.md`](Documentation/RELEASE_NOTES/1.8.24.md)
 
-The first of two hardening cuts from the pre-1.9 audit: finding writes are now atomic and no longer
-silently swallowed, a live-file write that bypassed atomic-write is fixed, plus two poetry fixes.
+The second hardening cut from the pre-1.9 audit: the one UI freeze is gone, and the always-on
+status chips stop rescanning the whole manuscript on every repaint.
 
 ### What's new
 
-- **Atomic finding writes** — a new `StorageEngine::transaction()` wraps the DELETE + N-insert
-  sequences (Inner Poet + Inner Editor), so a crash mid-write leaves the prior set intact, never a
-  partial or empty one.
-- **No more silent data loss** — persist failures in the engage worker and the Poet fast track are
-  now logged / surfaced instead of discarded (findings shown while nothing hit disk).
-- **Atomic live-file writes** — `ink.paragraph.save` and the AI-lift draft path now use `io_atomic`.
-- **Poetry fixes** — per-stanza forms no longer collide (`poem_form_for` finds the stanza's own
-  sidecar); over-length forms no longer show "complete ✓".
+- **The WordNet lookup no longer freezes the UI** — for a language with no local index (the Russian
+  case), `Ctrl+V Shift+Y`'s AI fallback ran its LLM call *on the event-loop thread*, hanging the whole
+  UI for the round-trip. It now runs on a background job.
+- **Status-bar chips stop rescanning every frame** — the default-on glossary (`3C·2P·1A`) and facts
+  (`⚑N`) chips did full-hierarchy scans on every idle repaint; their counts are now cached and
+  recomputed only on a tree change.
 
-The broader `inner_editor` / `inner_socrates` shared-handle refactor lands with the TUI-performance
-cut in 1.8.24.
+The larger perf items (per-frame editor pipeline cache; shared `inner_editor`/`inner_socrates`
+handles) land in a following cut; the structural event-driven redraw remains a 1.9 item.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Additive `StorageEngine::transaction`; all behaviour changes are strictly
-safer. Warning-free (binary and tests). Test suite → 2660.
+**No new runtime crates.** Warning-free (binary and tests). Test suite → 2660.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
