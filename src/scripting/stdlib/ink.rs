@@ -772,7 +772,10 @@ fn do_ink_paragraph_save(vm: &mut VM) -> Result<&mut VM> {
             std::fs::create_dir_all(parent)
                 .map_err(|e| anyhow!("{tag} mkdir: {e}"))?;
         }
-        std::fs::write(&abs, body.as_bytes())
+        // Atomic write (1.8.23 hardening) — this is the only writer of the live
+        // .typ file (update_paragraph_content below writes the blob store, not the
+        // file), so a crash mid-write must not truncate the paragraph.
+        crate::io_atomic::write(&abs, body.as_bytes())
             .map_err(|e| anyhow!("{tag} write: {e}"))?;
     }
     store
