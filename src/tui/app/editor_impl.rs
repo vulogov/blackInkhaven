@@ -900,6 +900,10 @@ impl super::App {
                     build_lexicon(&self.hierarchy, &self.cfg, &self.store);
                 self.lexicon = lex;
                 self.language_entries = lang_index;
+                // 1.8.24 — refresh the status-bar chip counts here (a tree change
+                // is the only thing that moves them) so the chips don't rescan the
+                // whole hierarchy on every idle repaint.
+                self.refresh_chip_caches();
             }
             Err(e) => {
                 self.status = format!("hierarchy reload failed: {e}");
