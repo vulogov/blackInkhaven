@@ -16,6 +16,7 @@
 pub mod form;
 pub mod form_check;
 pub mod metre;
+pub mod phonemes;
 pub mod rhyme;
 pub mod syllabify;
 pub mod translation;

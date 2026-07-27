@@ -45,6 +45,28 @@ pub struct Syllable {
 /// reliable measure metre needs. Consumed by the metre scanner (PO-P5).
 #[allow(dead_code)]
 pub fn syllable_count(word: &str, lang: ProseLanguage) -> usize {
+    syllable_count_with(
+        word,
+        lang.clone(),
+        if matches!(lang, ProseLanguage::En) { crate::poetry::phonemes::en() } else { None },
+    )
+}
+
+/// [`syllable_count`] with an explicit (optional) English pronouncing dictionary.
+/// When the word is in the dictionary its exact phoneme-based count is used;
+/// otherwise the spelling heuristic. `dict` is ignored for non-English languages
+/// (they are near-phonemic and already exact). Split out so it is unit-testable
+/// without touching the process-global dictionary.
+pub fn syllable_count_with(
+    word: &str,
+    lang: ProseLanguage,
+    dict: Option<&crate::poetry::phonemes::PhonemeDict>,
+) -> usize {
+    if matches!(lang, ProseLanguage::En) {
+        if let Some(p) = dict.and_then(|d| d.get(word)) {
+            return p.syllables;
+        }
+    }
     let vowels = vowels_for(&lang);
     let chars: Vec<char> = word.chars().collect();
     nucleus_starts(&chars, &vowels, &lang).len()

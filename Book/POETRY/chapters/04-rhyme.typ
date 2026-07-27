@@ -67,16 +67,21 @@ a textbook eye rhyme, and Inkhaven has confidently mis-graded it. The failure is
 sloppiness; it is the honest consequence of judging sound from spelling in a language whose
 spelling lies.
 
-#callout(label: "The English eye-rhyme problem, stated honestly")[
+#callout(label: "The English eye-rhyme problem — and the fix")[
   In a language whose spelling matched its sound, eye rhyme would not exist as a separate
   category — if it looks alike it sounds alike. English is not that language. \"Love\" and
   \"move\" share four letters and rhyme for the eye alone; \"cough,\" \"bough,\" \"through,\"
-  and \"though\" all end in `-ough` and no two of them rhyme. Read from spelling with no
-  pronouncing dictionary, Inkhaven *cannot reliably tell a perfect or near rhyme from an eye
-  rhyme in English* — as the `love / move` verdict above shows, it will sometimes stamp an
-  eye rhyme \"perfect.\" This is the single hardest limit in the rhyme engine, and it is an
-  English limit specifically. Where it matters to your argument, trust your own ear over the
-  tool's.
+  and \"though\" all end in `-ough` and no two of them rhyme. Read from spelling *alone*,
+  Inkhaven cannot reliably tell a real rhyme from an eye rhyme — as the `love / move` verdict
+  above shows, it stamps an eye rhyme \"perfect.\"
+
+  Install a *pronouncing dictionary* and this closes: `inkhaven poetry phonemes import
+  <cmudict>` gives the rhyme engine each word's actual phonemes, after which `love / move` is
+  correctly reported as an *eye masculine rhyme* (\"looks alike, sounds different\") and a
+  true pair like `day / may` stays perfect. It is English-specific — the other four languages'
+  spelling already tracks their sound — and words outside the dictionary fall back to the
+  orthographic reading, so it never breaks. Even so, where the argument is delicate, trust
+  your own ear.
 ]
 
 #section("Masculine, feminine, dactylic")
