@@ -2480,6 +2480,20 @@ research: {
   dedup_warn_score: 0.92
   // /import: max characters per embedded chunk of an imported document (R2-B).
   import_chunk_chars: 1500
+  // RESRCH-6 — the autonomous deep-research loop (`inkhaven research --agentic
+  // "<topic>"`): decompose a topic into sub-questions, gather evidence, and emit
+  // the findings as Facts INTO the Facts book (each with `model` provenance, at an
+  // untrusted tier for you to review, promote, or dispute) — never a standalone
+  // article.
+  agentic: {
+    // Master switch. ON by default; set false to disable agentic runs entirely
+    // (the command then refuses with a hint). The manual research flow is
+    // unaffected either way.
+    enabled: true
+    // Upper bound on the sub-questions a topic is decomposed into (also the number
+    // of gather passes, so it bounds the LLM cost of a run).
+    max_subquestions: 6
+  }
   // /web (R2-C) — web search & fetch. Unavailable until a provider is set.
   web: {
     enabled: false

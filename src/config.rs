@@ -4783,6 +4783,33 @@ pub struct ResearchConfig {
     /// RESRCH-SCRIPTURE — `research.scripture` block for `/bible` + `/quran` +
     /// `/bookofmormon`.
     pub scripture: ScriptureConfig,
+    /// RESRCH-6 — `research.agentic` block gating the autonomous deep-research
+    /// loop (decompose → gather → emit Facts → critique). On by default; set
+    /// `research.agentic.enabled: false` to disable it entirely.
+    pub agentic: AgenticConfig,
+}
+
+/// RESRCH-6 — `research.agentic` block. The autonomous, gap-driven research loop
+/// that decomposes a topic into sub-questions, gathers evidence, and **emits its
+/// findings as Facts paragraphs into the Facts system book** (each with
+/// provenance, at an untrusted tier for the author to review/promote) — never a
+/// standalone article. On by default; the author can turn it off.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgenticConfig {
+    /// Master switch. `true` (default) allows agentic runs; `false` disables the
+    /// loop entirely (the command refuses with a hint to re-enable).
+    pub enabled: bool,
+    /// Upper bound on the sub-questions the planner decomposes a topic into (also
+    /// the number of gather passes, so it bounds the LLM cost of a run).
+    pub max_subquestions: usize,
+}
+
+impl Default for AgenticConfig {
+    fn default() -> Self {
+        // On by default (user-decided 2026-07-26); bounded so a run is affordable.
+        Self { enabled: true, max_subquestions: 6 }
+    }
 }
 
 /// RESRCH-GUTENBERG — `research.gutenberg` block. `/gutenberg` searches the
@@ -5047,6 +5074,7 @@ impl Default for ResearchConfig {
             archive: ArchiveConfig::default(),
             wikisource: WikisourceConfig::default(),
             scripture: ScriptureConfig::default(),
+            agentic: AgenticConfig::default(),
         }
     }
 }
