@@ -42,6 +42,7 @@ mod wikidata;
 
 mod agentic;
 mod batch;
+mod snowball;
 mod geonames;
 mod gutenberg;
 mod archive;
@@ -90,6 +91,10 @@ pub(crate) struct ResearchInvocation {
     /// RESRCH-6 — `--agentic <topic>`: autonomously decompose a topic and emit
     /// the findings as Facts into the Facts book (gated by `research.agentic`).
     pub agentic: Option<String>,
+    /// RESRCH-6 (snowball) — `--snowball <seed>`: follow a seed paper's citations
+    /// (backward references + forward citers) on OpenAlex and report the
+    /// neighborhood.
+    pub snowball: Option<String>,
     /// R2-F — `--auto-confirm`: insert facts clearing the confidence threshold.
     pub auto_confirm: bool,
     /// R2-F — `--confidence <0..1>`: the auto-insert threshold (default 0.7).
@@ -213,6 +218,10 @@ pub(crate) fn run(project: &Path, inv: ResearchInvocation) -> Result<()> {
     if let Some(topic) = inv.agentic.as_deref() {
         let store = Store::open(layout.clone(), &cfg).map_err(anyhow::Error::from)?;
         return agentic::run(&layout, &cfg, &store, topic, inv.out.as_deref());
+    }
+    // RESRCH-6 (snowball) — `--snowball <seed>`: follow a paper's citations.
+    if let Some(seed) = inv.snowball.as_deref() {
+        return snowball::run(&cfg, seed, inv.out.as_deref());
     }
     if inv.list_threads {
         return app::list_threads_cli(&layout, inv.format.as_deref());
