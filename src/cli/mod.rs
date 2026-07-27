@@ -2915,6 +2915,32 @@ pub enum PoetryCommand {
         #[arg(long)]
         to_language: Option<String>,
     },
+    /// Manage the optional English pronouncing dictionary (CMUdict format) that
+    /// makes English metre + rhyme *exact* (e.g. `love`/`move` becomes an eye
+    /// rhyme, not a false "perfect"). Other languages are near-phonemic already.
+    Phonemes {
+        #[command(subcommand)]
+        cmd: PhonemesCommand,
+    },
+}
+
+/// sub-subcommands under `inkhaven poetry phonemes …`.
+#[derive(Debug, Subcommand)]
+pub enum PhonemesCommand {
+    /// Install a CMUdict-format pronouncing dictionary (get `cmudict.dict` from
+    /// the CMU Sphinx project). Copied to `<data_dir>/inkhaven/phonemes/en.dict`.
+    Import {
+        /// Path to the CMUdict-format file.
+        file: PathBuf,
+    },
+    /// Show a word's pronunciation (syllables, stress, rhyme tail) from the
+    /// installed dictionary.
+    Lookup {
+        /// The English word to look up.
+        word: String,
+    },
+    /// Report whether a dictionary is installed and how many words it holds.
+    Status,
 }
 
 /// sub-subcommands under `inkhaven wordnet …`.
@@ -6242,6 +6268,15 @@ impl Cli {
                     )
                     .map_err(Into::into)
                 }
+                PoetryCommand::Phonemes { cmd } => match cmd {
+                    PhonemesCommand::Import { file } => {
+                        poetry::phonemes_import(&file).map_err(Into::into)
+                    }
+                    PhonemesCommand::Lookup { word } => {
+                        poetry::phonemes_lookup(&word).map_err(Into::into)
+                    }
+                    PhonemesCommand::Status => poetry::phonemes_status().map_err(Into::into),
+                },
             },
             Command::Doctor { voices, tts_test, filter_words_snippet, scan, json, class, autofix, yes } => {
                 if filter_words_snippet {

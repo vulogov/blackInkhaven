@@ -260,6 +260,72 @@ pub fn metre(line: &str, form: Option<&str>, language: Option<&str>) -> Result<(
     Ok(())
 }
 
+/// `poetry phonemes import <file>` — install a CMUdict-format pronouncing
+/// dictionary so English metre + rhyme become exact.
+pub fn phonemes_import(file: &std::path::Path) -> Result<()> {
+    use crate::poetry::phonemes;
+    let text = std::fs::read_to_string(file)
+        .map_err(|e| Error::Config(format!("cannot read `{}`: {e}", file.display())))?;
+    let dict = phonemes::parse(&text);
+    if dict.is_empty() {
+        return Err(Error::Config(
+            "that file parsed to zero entries — is it CMUdict format (`WORD  P1 P2 …`)?".into(),
+        ));
+    }
+    let dest = phonemes::en_path()
+        .ok_or_else(|| Error::Config("cannot resolve the data directory".into()))?;
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| Error::Config(format!("cannot create {}: {e}", parent.display())))?;
+    }
+    crate::io_atomic::write(&dest, text.as_bytes())
+        .map_err(|e| Error::Config(format!("cannot write {}: {e}", dest.display())))?;
+    println!(
+        "✓ installed {} words → {}\n  English metre + rhyme now use it (other languages are near-phonemic already).",
+        dict.len(),
+        dest.display()
+    );
+    Ok(())
+}
+
+/// `poetry phonemes lookup <word>` — show a word's pronunciation.
+pub fn phonemes_lookup(word: &str) -> Result<()> {
+    use crate::poetry::phonemes;
+    let Some(dict) = phonemes::en() else {
+        return Err(Error::Config(
+            "no pronouncing dictionary installed — run `inkhaven poetry phonemes import <cmudict>`".into(),
+        ));
+    };
+    match dict.get(word) {
+        Some(p) => {
+            println!(
+                "  {word}: {} syllable(s) · stress on syllable {} · rhyme tail /{}/",
+                p.syllables,
+                p.stress + 1,
+                p.rhyme_key
+            );
+        }
+        None => println!("  {word}: not in the dictionary (the spelling heuristic is used for it)"),
+    }
+    Ok(())
+}
+
+/// `poetry phonemes status` — report the installed dictionary.
+pub fn phonemes_status() -> Result<()> {
+    use crate::poetry::phonemes;
+    match phonemes::en() {
+        Some(d) => println!(
+            "♪ pronouncing dictionary: {} words installed ({})",
+            d.len(),
+            phonemes::en_path().map(|p| p.display().to_string()).unwrap_or_default()
+        ),
+        None => println!(
+            "♪ no pronouncing dictionary installed — English scansion uses the spelling heuristic.\n  Install one: `inkhaven poetry phonemes import <cmudict.dict>`"
+        ),
+    }
+    Ok(())
+}
+
 /// `poetry forms [--form N] [--language L] [--new --name M]`.
 pub fn forms(form: Option<&str>, language: Option<&str>, new: bool, name: Option<&str>) -> Result<()> {
     let lib = FormsLibrary::builtin();
