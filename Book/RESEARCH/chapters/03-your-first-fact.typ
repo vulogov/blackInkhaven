@@ -77,6 +77,19 @@ write to your book. It opens a *confirmation* — the gate — showing you exact
 what is about to be kept: the fact's wording (which you can edit), where it will
 be filed, and where it says it came from.
 
+#screen(caption: "The confirmation gate — nothing is kept until you say so")[```
+┌─ Confirm fact ───────────────────────────────────┐
+│                                                  │
+│ A Roman legion marched about 20 Roman            │
+│ miles (30 km) per day under forced march.        │
+│                                                  │
+│ file →  Facts / Military                         │
+│ from →  model  (unchecked)                       │
+│                                                  │
+│ Ctrl+S keep · e edit · c check · Esc discard     │
+└──────────────────────────────────────────────────┘
+```]
+
 #term("The confirmation gate")[
   The *gate* is the mandatory pause between "the Assistant proposed a fact" and
   "the fact is in your book." Nothing reaches your Facts without passing it. You

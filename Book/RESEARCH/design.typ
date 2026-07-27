@@ -11,7 +11,7 @@
 #let book_subtitle = "Researching Fiction and Non-Fiction with Inkhaven's Research Assistant"
 #let book_author   = "Vladimir Ulogov"
 #let book_year     = "2026"
-#let book_version  = "Inkhaven 1.6.6"
+#let book_version  = "Inkhaven 1.8.30"
 
 // ── Palette — warm paper, cool ink, restrained accents ──────────────
 #let ink_black   = rgb("#1a1a1a")
@@ -180,6 +180,36 @@
       list(..items)
     },
   )
+}
+
+// ── Terminal screen — a faithful monospace rendering of a CLI / TUI screen
+//    (the app IS a terminal; a monospace frame is truer than a diagram and
+//    keeps the book self-contained). `body` is a raw block; `caption` names it.
+//    Ported from the POETRY companion. ────────────────────────────────────────
+#let screen(caption: "", body) = {
+  v(2mm)
+  block(breakable: false, width: 100%, {
+    block(
+      fill: ink_smoke,
+      inset: (left: 8pt, right: 8pt, top: 3pt, bottom: 3pt),
+      width: 100%,
+      radius: (top-left: 2pt, top-right: 2pt),
+      {
+        text(font: mono_family, size: 8pt, fill: ink_paper, "● ● ●")
+        h(6pt)
+        text(font: body_family, size: 8.5pt, style: "italic", fill: ink_paper, caption)
+      },
+    )
+    block(
+      fill: ink_code_bg,
+      stroke: 0.5pt + ink_rule,
+      inset: 8pt,
+      width: 100%,
+      radius: (bottom-left: 2pt, bottom-right: 2pt),
+      text(font: mono_family, size: 8.5pt, body),
+    )
+  })
+  v(2mm)
 }
 
 // ── Afterword helpers (borrowed from the 1.2.6 manual's design) ─────
