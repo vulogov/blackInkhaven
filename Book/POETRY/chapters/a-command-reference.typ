@@ -21,6 +21,12 @@ and defaults to `en`.
 / `poetry metre --line "…" --form <name> [--language L]`: Also check the line against the form's *declared* metre — syllable count, fit, and any feminine-ending or catalectic tag.
 / `poetry rhyme <w1> <w2> [--language L]`: Classify a rhyme — quality (perfect / near / eye / none), type (masculine / feminine / dactylic), and the shared tail; normalised by the language's own rules (German devoicing, French mute-e, Russian akanye).
 
+#section("English pronouncing dictionary — exact scansion")
+
+/ `poetry phonemes import <cmudict-file>`: Install a CMUdict-format dictionary so English syllables, stress, and rhyme are read from a word's actual phonemes (e.g. `love`/`move` → *eye* rhyme, not a false perfect). English-only; other languages are near-phonemic already. Out-of-dictionary words fall back to the spelling heuristic.
+/ `poetry phonemes lookup <word>`: Show a word's syllables, stress, and rhyme tail.
+/ `poetry phonemes status`: Whether a dictionary is installed and how many words it holds.
+
 #section("The Inner Poet — reading a stanza")
 
 / `poetry scan --text "…" --form <name> [--language L]`: The fast track — findings over every line, each with a severity (Praise / Note / Concern), kind (Metre / Rhyme), and message.

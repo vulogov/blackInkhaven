@@ -96,10 +96,10 @@ different place in each:
 #v(2mm)
 
 These are *defaults*, and defaults are guesses. The honest ones — English and Russian —
-are marked as heuristics above, because no rule reads lexical stress off spelling alone
-without a pronouncing dictionary, which Inkhaven does not ship. This is the roughest edge
-in the whole poetry layer, and the book will not pretend otherwise. Which is exactly why
-the next feature exists.
+are marked as heuristics above, because no rule reads lexical stress off spelling alone.
+This is the roughest edge in the whole poetry layer, and the book will not pretend
+otherwise. There are two recourses: the accent mark (next), and — for English — a
+*pronouncing dictionary* you can install, which makes the guess exact (see the callout below).
 
 #subsection("Overriding stress with an accent mark")
 
@@ -111,13 +111,15 @@ poets and editors already mark stress on ambiguous words for exactly this reason
 convention is native — write `стои́т` and the stress is fixed. The mark is for you and for
 the tool at once: it disambiguates the poem *and* corrects the scan.
 
-#callout(label: "The one honest limitation, stated plainly")[
+#callout(label: "The one honest limitation — and how to close it")[
   Read from spelling alone, English stress is a guess and English syllable counts are
   approximate. Russian, German, and Spanish are far more reliable; French, being
-  phrase-timed, sidesteps the problem. Where you need English metre to be exact — a tight
-  scansion argument, a syllabic form — mark your stresses with accents and count by hand
-  at the edges. A phoneme-dictionary backend that would fix this for English is a known,
-  deferred improvement; until it lands, the accent mark is your recourse.
+  phrase-timed, sidesteps the problem. Two recourses for English: mark your stresses with
+  accents (above), or install a *pronouncing dictionary* — `inkhaven poetry phonemes import
+  <cmudict>` loads the CMU Pronouncing Dictionary, after which syllable counts, stress, and
+  rhyme are read from a word's actual phonemes rather than its spelling, exactly. Words not
+  in the dictionary fall back to the heuristic, so nothing breaks. (The other four languages
+  don't need it — their spelling already tracks their sound.)
 ]
 
 #section("Scanning a whole line")
