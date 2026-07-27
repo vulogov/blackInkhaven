@@ -26,6 +26,9 @@ pub(crate) struct Outcome {
     pub fact: String,
     pub confidence: f64,
     pub action: String,
+    /// The node id of the emitted Fact (when one was inserted) — the agentic
+    /// contradiction gate scans these.
+    pub inserted_id: Option<uuid::Uuid>,
 }
 
 /// Run a batch file. `auto_confirm` + `threshold` gate insertion; `out` is the
@@ -156,6 +159,7 @@ pub(crate) fn process_one_tagged(
             fact: String::new(),
             confidence: 0.0,
             action: "skipped (no fact extracted)".to_string(),
+            inserted_id: None,
         };
     }
 
@@ -163,10 +167,10 @@ pub(crate) fn process_one_tagged(
     let confidence = score_confidence(ai, model, language, &fact.text);
 
     // 4. Insert only under the explicit flag + threshold.
-    let action = if !auto_confirm {
-        "candidate (run with --auto-confirm to insert)".to_string()
+    let (action, inserted_id) = if !auto_confirm {
+        ("candidate (run with --auto-confirm to insert)".to_string(), None)
     } else if confidence < threshold {
-        format!("skipped (confidence {confidence:.2} < {threshold:.2})")
+        (format!("skipped (confidence {confidence:.2} < {threshold:.2})"), None)
     } else if let Some(book_id) = facts_book {
         match super::insert::insert_paragraph(store, cfg, hierarchy, book_id, None, &fact.title, &fact.text) {
             Ok(new_id) => {
@@ -181,19 +185,19 @@ pub(crate) fn process_one_tagged(
                 .unwrap_or_default();
                 let path =
                     Hierarchy::load(store).ok().and_then(|h| h.get(new_id).map(|n| h.slug_path(n))).unwrap_or_default();
-                format!("inserted → {path}{prov_note}")
+                (format!("inserted → {path}{prov_note}"), Some(new_id))
             }
-            Err(e) => format!("skipped (insert failed: {e})"),
+            Err(e) => (format!("skipped (insert failed: {e})"), None),
         }
     } else {
-        "skipped (no Facts book)".to_string()
+        ("skipped (no Facts book)".to_string(), None)
     };
 
-    Outcome { question: question.to_string(), title: fact.title, fact: fact.text, confidence, action }
+    Outcome { question: question.to_string(), title: fact.title, fact: fact.text, confidence, action, inserted_id }
 }
 
 fn skipped(question: &str, reason: String) -> Outcome {
-    Outcome { question: question.to_string(), title: String::new(), fact: String::new(), confidence: 0.0, action: format!("skipped ({reason})") }
+    Outcome { question: question.to_string(), title: String::new(), fact: String::new(), confidence: 0.0, action: format!("skipped ({reason})"), inserted_id: None }
 }
 
 /// Ask the model for a 0..1 confidence that the statement is accurate.
