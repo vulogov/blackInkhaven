@@ -2490,9 +2490,15 @@ research: {
     // (the command then refuses with a hint). The manual research flow is
     // unaffected either way.
     enabled: true
-    // Upper bound on the sub-questions a topic is decomposed into (also the number
-    // of gather passes, so it bounds the LLM cost of a run).
+    // TOTAL sub-question budget for a run, across every round — a hard ceiling on
+    // how many Facts one run emits (and thus its LLM cost). The loop stops when
+    // this is spent.
     max_subquestions: 6
+    // R6-P3 — max gap-driven iterate rounds. After the initial plan+gather, a
+    // critic proposes follow-up sub-questions for the gaps; the loop runs at most
+    // this many further rounds, or until it converges / the budget is spent.
+    // Set 1 for a single pass (no iteration).
+    max_rounds: 3
   }
   // /web (R2-C) — web search & fetch. Unavailable until a provider is set.
   web: {

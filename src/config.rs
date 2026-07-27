@@ -4800,15 +4800,21 @@ pub struct AgenticConfig {
     /// Master switch. `true` (default) allows agentic runs; `false` disables the
     /// loop entirely (the command refuses with a hint to re-enable).
     pub enabled: bool,
-    /// Upper bound on the sub-questions the planner decomposes a topic into (also
-    /// the number of gather passes, so it bounds the LLM cost of a run).
+    /// The **total** sub-question budget for a run, across every round — a hard
+    /// ceiling on how many Facts one `--agentic` run can emit (and thus the LLM
+    /// cost). The loop stops when this is spent.
     pub max_subquestions: usize,
+    /// RESRCH-6 (R6-P3) — the maximum number of gap-driven iterate rounds. After
+    /// the initial plan+gather, a critic proposes follow-up sub-questions for the
+    /// gaps; the loop runs at most this many further rounds (or until it converges
+    /// / the budget is spent). `1` disables iteration (single pass).
+    pub max_rounds: usize,
 }
 
 impl Default for AgenticConfig {
     fn default() -> Self {
         // On by default (user-decided 2026-07-26); bounded so a run is affordable.
-        Self { enabled: true, max_subquestions: 6 }
+        Self { enabled: true, max_subquestions: 6, max_rounds: 3 }
     }
 }
 
