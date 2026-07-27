@@ -36,6 +36,9 @@ pub(super) enum Command {
     /// `/undisputed` — common-sense check of the authorial (undisputed) facts
     /// (RESRCH-UNDISPUTED; read-only, never rewrites).
     Undisputed,
+    /// `/review` — the R6-P5 triage queue for untrusted, agentic-emitted facts:
+    /// step through them, keep / delete / mark undisputed, contradictions flagged.
+    Review,
     /// `/synthesize <topic>` — grounded, cited synthesis over the Facts corpus
     /// (RESRCH-5 / R5-A).
     Synthesize(String),
@@ -250,6 +253,7 @@ pub(super) fn parse(input: &str) -> Option<Command> {
         "verify" => Command::Verify,
         "factcheck" => Command::FactCheck,
         "undisputed" => Command::Undisputed,
+        "review" => Command::Review,
         "synthesize" => Command::Synthesize(rest.to_string()),
         "outline" => Command::Outline(rest.to_string()),
         "gaps" => Command::Gaps(rest.to_string()),
