@@ -40,6 +40,19 @@ An audit is only useful if you can *see* its results without reading a report.
 After `/factcheck` runs, each fact in your tree wears a small verdict mark, so the
 state of your whole corpus is legible at a glance:
 
+#screen(caption: "the Facts tree after /factcheck — a corpus at a glance")[```
+Facts
+└ Military
+  ✓ Roman march rate
+  ✓ Legion strength under Augustus
+  ? Aqueduct daily capacity
+└ Chronology
+  ✓ Founding of the Republic
+  ✗ Fall of the Western Empire
+
+fact-check complete · 6 fact(s) · ✓4 ?1 ✗1
+```]
+
 #list(
   [*✓* — the fact held up. Nothing to do.],
   [*?* — the fact is *dubious*; the audit had doubts worth your attention.],

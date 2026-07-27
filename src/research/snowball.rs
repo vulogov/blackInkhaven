@@ -31,7 +31,7 @@ pub(crate) fn run(cfg: &Config, seed_query: &str, out: Option<&str>) -> Result<(
     }
     let sc = cfg.research.scholarly.clone();
 
-    eprintln!("⟳ snowball: resolving seed \"{seed_query}\"…");
+    eprintln!("» snowball: resolving seed \"{seed_query}\"…");
     let seed = block_on_async(scholarly::openalex(sc.clone(), seed_query.to_string()))
         .map_err(|e| anyhow!("could not resolve a seed paper for `{seed_query}`: {e}"))?;
     eprintln!("· seed: {} ({})", seed.title, seed.id);

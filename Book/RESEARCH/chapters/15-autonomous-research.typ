@@ -38,9 +38,10 @@ follow-ups for the gaps:
 » agentic round 2: 2 sub-question(s)
 · What explains the wide range in the death-toll estimates?
 · Why did it kill healthy young adults so often?
-✓ 7 Fact(s) over 2 round(s), converged · ! 1 contradiction
-  — resolve before trusting (untrusted, model provenance).
-  Review in the Facts book: /review, promote, /factcheck.
+✓ agentic run complete — 7 Fact(s) over 2 round(s),
+  converged · ! 1 contradiction(s) — resolve before
+  trusting (model provenance, untrusted).
+  Triage in the Facts book: /review, then /factcheck.
 ```]
 
 Three things just happened that are the whole point of the feature. It *wrote its own
