@@ -43,8 +43,37 @@ pub struct RhymeAnalysis {
     pub note: Option<String>,
 }
 
-/// Analyse the rhyme between two words.
+/// Analyse the rhyme between two words. For English, consults the pronouncing
+/// dictionary if one is installed (see [`analyse_rhyme_with`]).
 pub fn analyse_rhyme(w1: &str, w2: &str, lang: ProseLanguage) -> RhymeAnalysis {
+    analyse_rhyme_with(
+        w1,
+        w2,
+        lang.clone(),
+        if matches!(lang, ProseLanguage::En) { crate::poetry::phonemes::en() } else { None },
+    )
+}
+
+/// [`analyse_rhyme`] with an explicit (optional) English pronouncing dictionary.
+/// When English and *both* words are in the dictionary, the rhyme is judged from
+/// their phonemes — so `love`/`move` is correctly an *eye* rhyme (same spelling
+/// tail, different sound) rather than the "perfect" the orthographic heuristic
+/// reports. Otherwise it falls back to the per-language orthographic analysis.
+/// Split out so the phoneme path is unit-testable without the process-global dict.
+pub fn analyse_rhyme_with(
+    w1: &str,
+    w2: &str,
+    lang: ProseLanguage,
+    dict: Option<&crate::poetry::phonemes::PhonemeDict>,
+) -> RhymeAnalysis {
+    if matches!(lang, ProseLanguage::En) {
+        if let Some(d) = dict {
+            if let (Some(p1), Some(p2)) = (d.get(w1), d.get(w2)) {
+                return phoneme_rhyme(w1, w2, p1, p2, &lang);
+            }
+        }
+    }
+
     let (t1, rtype) = rhyme_tail(w1, &lang);
     let (t2, _) = rhyme_tail(w2, &lang);
     let n1 = normalize(&t1, &lang);
@@ -73,6 +102,64 @@ pub fn analyse_rhyme(w1: &str, w2: &str, lang: ProseLanguage) -> RhymeAnalysis {
     };
 
     RhymeAnalysis { quality, rhyme_type: rtype, shared: common_suffix(&n1, &n2), note }
+}
+
+/// Judge an English rhyme from two words' phonemes (both known to be in the
+/// dictionary). Perfect iff the rhyme tails are equal; an *eye* rhyme when the
+/// spelling tails match but the sounds don't; near when only the stressed vowels
+/// agree; else none.
+fn phoneme_rhyme(
+    w1: &str,
+    w2: &str,
+    p1: &crate::poetry::phonemes::Pron,
+    p2: &crate::poetry::phonemes::Pron,
+    lang: &ProseLanguage,
+) -> RhymeAnalysis {
+    let rtype = rhyme_type_from_pron(p1);
+    // Orthographic tails, for the eye-rhyme test + a readable `shared`.
+    let (t1, _) = rhyme_tail(w1, lang);
+    let (t2, _) = rhyme_tail(w2, lang);
+    let (n1, n2) = (normalize(&t1, lang), normalize(&t2, lang));
+
+    if !p1.rhyme_key.is_empty() && p1.rhyme_key == p2.rhyme_key {
+        return RhymeAnalysis {
+            quality: RhymeQuality::Perfect,
+            rhyme_type: rtype,
+            shared: common_suffix(&n1, &n2),
+            note: None,
+        };
+    }
+    // Spelling says rhyme, phonemes say no → eye rhyme (the love/move case).
+    if !n1.is_empty() && n1 == n2 {
+        return RhymeAnalysis {
+            quality: RhymeQuality::Eye,
+            rhyme_type: rtype,
+            shared: common_suffix(&n1, &n2),
+            note: Some("eye rhyme — looks alike, sounds different (pronouncing dictionary)".into()),
+        };
+    }
+    // Stressed vowels agree, codas differ → near.
+    let v1 = p1.rhyme_key.split_whitespace().next().unwrap_or("");
+    let v2 = p2.rhyme_key.split_whitespace().next().unwrap_or("");
+    if !v1.is_empty() && v1 == v2 {
+        return RhymeAnalysis {
+            quality: RhymeQuality::Near,
+            rhyme_type: rtype,
+            shared: String::new(),
+            note: Some("near rhyme — same vowel, different ending (pronouncing dictionary)".into()),
+        };
+    }
+    RhymeAnalysis { quality: RhymeQuality::None, rhyme_type: rtype, shared: String::new(), note: None }
+}
+
+/// Rhyme type from a pronunciation: syllables after the primary stress →
+/// masculine (0), feminine (1), dactylic (≥2).
+fn rhyme_type_from_pron(p: &crate::poetry::phonemes::Pron) -> RhymeType {
+    match p.syllables.saturating_sub(1).saturating_sub(p.stress) {
+        0 => RhymeType::Masculine,
+        1 => RhymeType::Feminine,
+        _ => RhymeType::Dactylic,
+    }
 }
 
 /// The rhyme tail (from the stressed vowel to the end of the word, lower-cased)
@@ -196,6 +283,38 @@ mod tests {
         assert_eq!(r.quality, RhymeQuality::Perfect);
         assert_eq!(r.rhyme_type, RhymeType::Masculine);
         assert_eq!(r.shared, "ом");
+    }
+
+    #[test]
+    fn english_phoneme_dictionary_catches_the_eye_rhyme() {
+        // POEM-PHON: with a pronouncing dictionary installed, `love`/`move` —
+        // which the spelling heuristic calls a perfect rhyme — is correctly an
+        // *eye* rhyme (same spelling tail `-ove`, different sound AH V vs UW V).
+        let dict = crate::poetry::phonemes::parse(
+            "LOVE  L AH1 V\n\
+             MOVE  M UW1 V\n\
+             DAY  D EY1\n\
+             MAY  M EY1\n\
+             MOTHER  M AH1 DH ER0\n\
+             BROTHER  B R AH1 DH ER0\n",
+        );
+        let d = Some(&dict);
+
+        let love_move = analyse_rhyme_with("love", "move", En, d);
+        assert_eq!(love_move.quality, RhymeQuality::Eye, "love/move must be an eye rhyme");
+
+        // A true phonetic rhyme still reads perfect, with the right type.
+        let day_may = analyse_rhyme_with("day", "may", En, d);
+        assert_eq!(day_may.quality, RhymeQuality::Perfect);
+        assert_eq!(day_may.rhyme_type, RhymeType::Masculine);
+
+        let mother_brother = analyse_rhyme_with("mother", "brother", En, d);
+        assert_eq!(mother_brother.quality, RhymeQuality::Perfect);
+        assert_eq!(mother_brother.rhyme_type, RhymeType::Feminine);
+
+        // Out-of-dictionary words fall back to the orthographic heuristic (no panic).
+        let oov = analyse_rhyme_with("zzykx", "qwbrs", En, d);
+        assert!(matches!(oov.quality, RhymeQuality::None | RhymeQuality::Near));
     }
 
     #[test]
