@@ -1,6 +1,6 @@
 #import "../design.typ": *
 
-#chapter(number: 15, title: "One Fact, End to End")
+#chapter(number: 16, title: "One Fact, End to End")
 
 You have met every tool in this book one at a time. This chapter runs them as one
 workflow. We will follow a single subject — a Roman aqueduct — from a first
