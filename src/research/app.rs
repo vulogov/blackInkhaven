@@ -277,6 +277,44 @@ pub(super) struct ContradictState {
     converge: bool,
 }
 
+/// R6-P5 — the `/review` triage queue: the untrusted, agentic-emitted facts the
+/// author steps through, keeping / deleting / marking undisputed.
+pub(super) struct ReviewState {
+    pub(super) items: Vec<ReviewItem>,
+    pub(super) cursor: usize,
+    /// How many the author has already acted on this session (for the header).
+    pub(super) done: usize,
+}
+
+pub(super) struct ReviewItem {
+    pub(super) id: Uuid,
+    pub(super) text: String,
+    /// The provenance source line (e.g. `model (unchecked)`).
+    pub(super) source: String,
+    /// True when this fact appears in a recorded `/contradict` clash.
+    pub(super) in_contradiction: bool,
+}
+
+/// R6-P5 — the three triage decisions in the `/review` queue.
+enum ReviewAction {
+    /// Trust it: tag `fact:reviewed` so it leaves the queue for good.
+    Accept,
+    /// Remove the fact entirely.
+    Delete,
+    /// Tag `fact:undisputed` (excluded from `/factcheck`, authorial truth).
+    Undisputed,
+}
+
+/// A short, single-line preview of a fact for status messages.
+fn review_snippet(text: &str) -> String {
+    let one = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if one.chars().count() > 48 {
+        format!("{}…", one.chars().take(47).collect::<String>())
+    } else {
+        one
+    }
+}
+
 /// SCHOLAR P2 — an in-flight `/relate` judge (a single graded-stance call over
 /// retrieved facts + source passages for one claim).
 pub(super) struct RelateState {
@@ -439,6 +477,8 @@ pub(crate) struct ResearchApp {
     factcheck: Option<FactCheckState>,
     contradict: Option<ContradictState>,
     relate: Option<RelateState>,
+    /// R6-P5 — the active `/review` triage queue (over untrusted agentic facts).
+    pub(super) review: Option<ReviewState>,
     socrates: Option<SocratesState>,
     undisputed_check: Option<UndisputedState>,
     /// In-flight `/web` search (R2-C).
@@ -582,6 +622,7 @@ impl ResearchApp {
             factcheck: None,
             contradict: None,
             relate: None,
+            review: None,
             socrates: None,
             undisputed_check: None,
             web: None,
@@ -725,6 +766,11 @@ impl ResearchApp {
         }
         if self.pending_delete.is_some() {
             self.delete_confirm_key(key);
+            return;
+        }
+        // R6-P5 — the `/review` triage queue captures all keys while open.
+        if self.review.is_some() {
+            self.review_key(key);
             return;
         }
         // UX-P5 — the fact quick-view modal captures keys while open.
@@ -1081,6 +1127,7 @@ impl ResearchApp {
             Command::Socrates(topic) => self.start_socrates(topic),
             Command::Report => self.show_report(),
             Command::Undisputed => self.start_undisputed(),
+            Command::Review => self.start_review(),
             Command::Synthesize(topic) => self.run_grounded(&topic, GroundedKind::Synthesize),
             Command::Outline(topic) => self.run_grounded(&topic, GroundedKind::Outline),
             Command::Gaps(topic) => self.run_grounded(&topic, GroundedKind::Gaps),
@@ -5570,6 +5617,155 @@ impl ResearchApp {
         });
     }
 
+    /// R6-P5 — open the `/review` triage queue over untrusted, agentic-emitted
+    /// facts: those whose provenance thread is `agentic` and not yet reviewed
+    /// (undisputed ones are already excluded by `gather_facts`). Facts appearing in
+    /// a recorded `/contradict` clash are flagged so the author sees the
+    /// disagreement before deciding.
+    fn start_review(&mut self) {
+        let Some(book_id) = self.facts_tree.root else {
+            self.status_message = Some("no Facts book to review".to_string());
+            return;
+        };
+        self.fact_provenance = super::provenance::Provenance::load(&self.layout);
+        let clash_texts = super::scholar_report::ScholarReport::load(&self.layout).contradiction_texts();
+        let facts = super::factcheck::gather_facts(&self.store, &self.hierarchy, book_id);
+        let mut items = Vec::new();
+        for f in facts {
+            let rec = self.fact_provenance.for_node(&f.id.to_string());
+            let is_agentic = rec.map(|r| r.thread == "agentic").unwrap_or(false);
+            if !is_agentic {
+                continue;
+            }
+            match self.hierarchy.get(f.id) {
+                Some(node) if node.tags.iter().any(|t| t == super::REVIEWED_TAG) => continue,
+                Some(_) => {}
+                None => continue,
+            }
+            let source = rec.map(|r| r.summary()).unwrap_or_else(|| "model (unchecked)".to_string());
+            let in_contradiction = clash_texts.contains(f.text.trim());
+            items.push(ReviewItem { id: f.id, text: f.text, source, in_contradiction });
+        }
+        if items.is_empty() {
+            self.status_message = Some("✓ nothing to review — no untrusted agentic facts".to_string());
+            return;
+        }
+        let n = items.len();
+        let flagged = items.iter().filter(|i| i.in_contradiction).count();
+        self.review = Some(ReviewState { items, cursor: 0, done: 0 });
+        self.status_message = Some(format!(
+            "review: {n} untrusted fact(s){} · a accept · d delete · u undisputed · Esc",
+            if flagged > 0 {
+                format!(", {flagged} in ≠ contradiction")
+            } else {
+                String::new()
+            }
+        ));
+    }
+
+    /// R6-P5 — key handling while the `/review` queue is open.
+    pub(super) fn review_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.review = None;
+                self.status_message = Some("review closed".to_string());
+            }
+            KeyCode::Down | KeyCode::Char('j') => self.review_move(1),
+            KeyCode::Up | KeyCode::Char('k') => self.review_move(-1),
+            KeyCode::Char('a') => self.review_apply(ReviewAction::Accept),
+            KeyCode::Char('d') => self.review_apply(ReviewAction::Delete),
+            KeyCode::Char('u') => self.review_apply(ReviewAction::Undisputed),
+            _ => {}
+        }
+    }
+
+    fn review_move(&mut self, delta: isize) {
+        if let Some(r) = &mut self.review {
+            let n = r.items.len() as isize;
+            if n == 0 {
+                return;
+            }
+            r.cursor = (r.cursor as isize + delta).rem_euclid(n) as usize;
+        }
+    }
+
+    /// R6-P5 — apply one triage decision to the fact under the cursor, drop it from
+    /// the queue, and advance. `Accept` tags it `fact:reviewed` (trusted, leaves the
+    /// queue for good); `Undisputed` tags it `fact:undisputed`; `Delete` removes it.
+    fn review_apply(&mut self, action: ReviewAction) {
+        let Some((id, snippet)) = self
+            .review
+            .as_ref()
+            .and_then(|r| r.items.get(r.cursor))
+            .map(|it| (it.id, review_snippet(&it.text)))
+        else {
+            return;
+        };
+        let outcome = match action {
+            ReviewAction::Accept => self.fact_add_tag(id, super::REVIEWED_TAG).map(|_| "✓ accepted"),
+            ReviewAction::Undisputed => self.fact_add_tag(id, super::UNDISPUTED_TAG).map(|_| "※ undisputed"),
+            ReviewAction::Delete => self.fact_delete_node(id).map(|_| "deleted"),
+        };
+        let verb = match outcome {
+            Ok(v) => v,
+            Err(e) => {
+                self.status_message = Some(format!("review: action failed: {e}"));
+                return;
+            }
+        };
+        let Some(r) = &mut self.review else { return };
+        if r.cursor < r.items.len() {
+            r.items.remove(r.cursor);
+        }
+        r.done += 1;
+        if r.cursor >= r.items.len() {
+            r.cursor = r.items.len().saturating_sub(1);
+        }
+        if r.items.is_empty() {
+            let done = r.done;
+            self.review = None;
+            self.status_message = Some(format!("✓ review complete — {done} fact(s) triaged"));
+        } else {
+            let left = r.items.len();
+            self.status_message = Some(format!("{verb}: {snippet} · {left} left"));
+        }
+    }
+
+    /// R6-P5 — append a tag to a fact node (idempotent) and reload the tree.
+    fn fact_add_tag(&mut self, id: Uuid, tag: &str) -> Result<()> {
+        let node = self.hierarchy.get(id).context("fact no longer exists")?;
+        if node.tags.iter().any(|t| t == tag) {
+            return Ok(());
+        }
+        let mut updated = node.clone();
+        updated.tags.push(tag.to_string());
+        self.store
+            .raw()
+            .update_metadata(id, updated.to_json())
+            .map_err(|e| anyhow::anyhow!("tag write failed: {e}"))?;
+        self.reload_hierarchy();
+        Ok(())
+    }
+
+    /// R6-P5 — delete a single fact node (mirrors `tree_delete_commit`).
+    fn fact_delete_node(&mut self, id: Uuid) -> Result<()> {
+        use crate::store::NodeKind;
+        let node = self.hierarchy.get(id).cloned().context("fact no longer exists")?;
+        let ids = self.hierarchy.collect_subtree(id);
+        let fs_rel = if node.kind == NodeKind::Paragraph {
+            node.file.as_ref().map(std::path::PathBuf::from).unwrap_or_default()
+        } else {
+            self.hierarchy.fs_path(&node, &self.layout)
+        };
+        self.pinned_nodes.retain(|p| !ids.contains(p));
+        self.persist_pins();
+        self.store
+            .delete_subtree(&fs_rel, &ids)
+            .map_err(|e| anyhow::anyhow!("delete failed: {e}"))?;
+        self.reload_hierarchy();
+        Ok(())
+    }
+
     /// Save the current pin set onto the thread.
     fn persist_pins(&mut self) {
         self.thread.pinned_nodes = self.pinned_nodes.iter().map(|u| u.to_string()).collect();
@@ -7212,5 +7408,32 @@ mod csl_tests {
         let v = parse_csl_json(text).unwrap();
         assert_eq!(v[0].key, "roe1999");
         assert!(parse_csl_json("{}").is_err()); // object, not array
+    }
+}
+
+#[cfg(test)]
+mod review_tests {
+    use super::review_snippet;
+
+    #[test]
+    fn snippet_collapses_whitespace_and_keeps_short_facts_whole() {
+        assert_eq!(review_snippet("  the   cat\nsat  "), "the cat sat");
+    }
+
+    #[test]
+    fn snippet_truncates_long_facts_with_an_ellipsis() {
+        let long = "word ".repeat(40);
+        let out = review_snippet(&long);
+        assert!(out.chars().count() <= 48);
+        assert!(out.ends_with('…'));
+    }
+
+    #[test]
+    fn reviewed_and_undisputed_tags_are_distinct() {
+        // R6-P5 relies on these being separate namespaces: `Accept` writes
+        // `fact:reviewed`; `Undisputed` writes `fact:undisputed`; the review queue
+        // filters on both without conflating them.
+        assert_ne!(super::super::REVIEWED_TAG, super::super::UNDISPUTED_TAG);
+        assert_eq!(super::super::REVIEWED_TAG, "fact:reviewed");
     }
 }

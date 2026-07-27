@@ -63,6 +63,11 @@ pub(crate) use focus::Focus;
 /// by `/undisputed`. A `Node.tags` value; see the RESRCH-UNDISPUTED track.
 pub(super) const UNDISPUTED_TAG: &str = "fact:undisputed";
 
+/// RESRCH-6 (R6-P5) — the tag marking an agentic-emitted fact as *reviewed*: the
+/// author has triaged it, so it leaves the `/review` queue and never reappears.
+/// A `Node.tags` value; the queue = agentic facts without this tag.
+pub(super) const REVIEWED_TAG: &str = "fact:reviewed";
+
 use std::path::Path;
 
 use anyhow::Result;
