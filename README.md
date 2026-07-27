@@ -27,28 +27,26 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.8.24 — TUI responsiveness
+## Latest release · 1.8.25 — Exact English scansion (the pronouncing dictionary)
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.8.24.md`](Documentation/RELEASE_NOTES/1.8.24.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.8.25.md`](Documentation/RELEASE_NOTES/1.8.25.md)
 
-The second hardening cut from the pre-1.9 audit: the one UI freeze is gone, and the always-on
-status chips stop rescanning the whole manuscript on every repaint.
+Closes the one limitation the poetry book openly documents: English metre and rhyme, read from
+spelling alone, are approximate — install a pronouncing dictionary and they become exact.
 
 ### What's new
 
-- **The WordNet lookup no longer freezes the UI** — for a language with no local index (the Russian
-  case), `Ctrl+V Shift+Y`'s AI fallback ran its LLM call *on the event-loop thread*, hanging the whole
-  UI for the round-trip. It now runs on a background job.
-- **Status-bar chips stop rescanning every frame** — the default-on glossary (`3C·2P·1A`) and facts
-  (`⚑N`) chips did full-hierarchy scans on every idle repaint; their counts are now cached and
-  recomputed only on a tree change.
-
-The larger perf items (per-frame editor pipeline cache; shared `inner_editor`/`inner_socrates`
-handles) land in a following cut; the structural event-driven redraw remains a 1.9 item.
+- **`poetry phonemes import <cmudict>`** — install a CMU-format pronouncing dictionary, after which the
+  scansion engines read each word's *actual phonemes*: syllable counts and stress become exact, and
+  `love`/`move` is correctly an **eye rhyme** (not the false "perfect" spelling gives).
+- **English-only, optional, graceful** — Russian/German/Spanish are near-phonemic already; words outside
+  the dictionary fall back to the spelling heuristic, so nothing breaks. Flows through `syllabify` /
+  `metre` / `rhyme` / `scan`, the Inner Poet, and the Bund `ink.poem.*` words.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Warning-free (binary and tests). Test suite → 2660.
+**No new runtime crates.** Ships as an imported data file (like the WordNet indexes), not bundled. The
+engine public API is unchanged. Warning-free (binary and tests). Test suite → 2663.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
