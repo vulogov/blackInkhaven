@@ -174,6 +174,10 @@ pub(super) fn render(frame: &mut Frame, app: &ResearchApp) {
     if app.peek.is_some() {
         render_peek(frame, app, area);
     }
+    // R6-P5 — the `/review` triage queue sits above the panes.
+    if app.review.is_some() {
+        render_review(frame, app, area);
+    }
     // The full quick-reference overlay (Ctrl+B h) sits over everything.
     if app.show_help {
         render_help(frame, app, area);
@@ -218,6 +222,110 @@ fn render_peek(frame: &mut Frame, app: &ResearchApp, area: Rect) {
     );
 }
 
+/// R6-P5 — the `/review` triage queue: the untrusted, agentic-emitted facts the
+/// author steps through. Top: a scrolling list (cursor `▸`, `≠` flags a fact in a
+/// recorded contradiction). Bottom: the selected fact's full body + provenance.
+/// `j/k` move · `a` accept (trust) · `d` delete · `u` mark undisputed · Esc close.
+fn render_review(frame: &mut Frame, app: &ResearchApp, area: Rect) {
+    let Some(r) = &app.review else { return };
+    let w = (area.width as f32 * 0.8) as u16;
+    let h = (area.height as f32 * 0.8) as u16;
+    let modal = Rect {
+        x: area.x + (area.width.saturating_sub(w)) / 2,
+        y: area.y + (area.height.saturating_sub(h)) / 2,
+        width: w.max(40),
+        height: h.max(10),
+    };
+    frame.render_widget(Clear, modal);
+    let flagged = r.items.iter().filter(|i| i.in_contradiction).count();
+    let title = format!(
+        " Review — {} untrusted fact(s){} · {} triaged ",
+        r.items.len(),
+        if flagged > 0 { format!(", {flagged} ≠") } else { String::new() },
+        r.done,
+    );
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .border_style(Style::new().fg(app.theme.border_focused).bold());
+    let inner = block.inner(modal);
+    frame.render_widget(block, modal);
+
+    // Split: a list on top, the selected fact's detail below, hints last.
+    let parts = Layout::vertical([
+        Constraint::Fill(1),   // the queue
+        Constraint::Length(7), // detail of the selected fact
+        Constraint::Length(1), // key hints
+    ])
+    .split(inner);
+
+    // The list, scrolled so the cursor stays visible.
+    let rows = parts[0].height as usize;
+    let top = r.cursor.saturating_sub(rows.saturating_sub(1));
+    let mut lines: Vec<Line> = Vec::new();
+    for (i, it) in r.items.iter().enumerate().skip(top).take(rows) {
+        let selected = i == r.cursor;
+        let marker = if selected { "▸ " } else { "  " };
+        let flag = if it.in_contradiction { "≠ " } else { "  " };
+        let width = parts[0].width.saturating_sub(6) as usize;
+        let snippet: String = {
+            let one = it.text.split_whitespace().collect::<Vec<_>>().join(" ");
+            if one.chars().count() > width {
+                format!("{}…", one.chars().take(width.saturating_sub(1)).collect::<String>())
+            } else {
+                one
+            }
+        };
+        let mut style = Style::new();
+        if selected {
+            style = style.fg(app.theme.border_focused).bold();
+        }
+        if it.in_contradiction {
+            style = style.fg(Color::Yellow);
+        }
+        lines.push(Line::from(vec![
+            Span::raw(marker),
+            Span::styled(flag, Style::new().fg(Color::Yellow)),
+            Span::styled(snippet, style),
+        ]));
+    }
+    frame.render_widget(Paragraph::new(Text::from(lines)), parts[0]);
+
+    // Detail of the fact under the cursor.
+    if let Some(it) = r.items.get(r.cursor) {
+        let mut detail: Vec<Line> = Vec::new();
+        detail.push(Line::from(Span::styled(
+            format!("source: {}", it.source),
+            Style::new().fg(app.theme.ai_scope_fg),
+        )));
+        if it.in_contradiction {
+            detail.push(Line::from(Span::styled(
+                "≠ in a recorded contradiction — check with /contradict before trusting",
+                Style::new().fg(Color::Yellow),
+            )));
+        }
+        detail.push(Line::from(""));
+        detail.push(Line::from(it.text.clone()));
+        let detail_block = Block::default()
+            .borders(Borders::TOP)
+            .border_style(Style::new().dim());
+        frame.render_widget(
+            Paragraph::new(Text::from(detail))
+                .wrap(Wrap { trim: false })
+                .block(detail_block),
+            parts[1],
+        );
+    }
+
+    frame.render_widget(
+        Paragraph::new(Span::styled(
+            " j/k move · a accept (trust) · d delete · u ※ undisputed · Esc close",
+            Style::new().dim(),
+        )),
+        parts[2],
+    );
+}
+
 /// Ctrl+B h — a full reference of panes' chords and the `/command` namespace.
 fn render_help(frame: &mut Frame, app: &ResearchApp, area: Rect) {
     let lines: Vec<Line> = vec![
@@ -252,6 +360,7 @@ fn render_help(frame: &mut Frame, app: &ResearchApp, area: Rect) {
         Line::from("    /verify              confidence-probe the last response"),
         Line::from("    /factcheck           audit the corpus (truth + consistency) → tree ✓?✗"),
         Line::from("    /undisputed          common-sense check of ※ authorial facts (no rewrite)"),
+        Line::from("    /review              triage untrusted agentic facts (a keep · d del · u ※)"),
         Line::from("    /whatswrong [path]   explain a fact flagged ✗/? (bare: selected fact)"),
         Line::from("    /sources             list each fact's recorded provenance"),
         Line::from("    /upgrade [path]      re-ground a model fact → raise its tier (structured)"),

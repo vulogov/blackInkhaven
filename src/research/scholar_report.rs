@@ -79,6 +79,16 @@ impl ScholarReport {
         layout.root.join(".inkhaven").join("scholar_report.json")
     }
 
+    /// R6-P5 — the set of fact *texts* involved in a recorded contradiction, so
+    /// the review queue can flag which untrusted facts are in conflict. (The
+    /// persisted pairs carry texts, not ids, so the queue matches on text.)
+    pub(super) fn contradiction_texts(&self) -> std::collections::HashSet<String> {
+        self.contradictions
+            .iter()
+            .flat_map(|p| [p.a_text.trim().to_string(), p.b_text.trim().to_string()])
+            .collect()
+    }
+
     /// Load the report, or an empty one when absent / unreadable.
     pub(super) fn load(layout: &ProjectLayout) -> ScholarReport {
         match std::fs::read_to_string(ScholarReport::path(layout)) {

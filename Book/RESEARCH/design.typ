@@ -11,7 +11,7 @@
 #let book_subtitle = "Researching Fiction and Non-Fiction with Inkhaven's Research Assistant"
 #let book_author   = "Vladimir Ulogov"
 #let book_year     = "2026"
-#let book_version  = "Inkhaven 1.8.30"
+#let book_version  = "Inkhaven 1.8.31"
 
 // ── Palette — warm paper, cool ink, restrained accents ──────────────
 #let ink_black   = rgb("#1a1a1a")
