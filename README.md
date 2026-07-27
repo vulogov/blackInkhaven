@@ -27,26 +27,25 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.8.29 — Snowball: citation-following (RESRCH-6)
+## Latest release · 1.8.30 — The research book learns RESRCH-6
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.8.29.md`](Documentation/RELEASE_NOTES/1.8.29.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.8.30.md`](Documentation/RELEASE_NOTES/1.8.30.md)
 
-Follow a paper's citations both ways — give the Research Assistant a seed and it maps its citation
-neighborhood on OpenAlex, so you can widen a literature search from one good source outward.
+The companion book *Grounding Your Book in Fact* catches up with the autonomous research tools, and
+gains faithful terminal screens throughout.
 
 ### What's new
 
-- **`inkhaven research --snowball "<seed>"`** — resolve a seed (title / DOI / topic) on OpenAlex and
-  follow the citation graph **backward** (works it references) and **forward** (works that cite it,
-  most-cited first). Reports the neighborhood, each paper with its OpenAlex id.
-- **Reports, doesn't flood** — surfaces the papers for you to bring in selectively (`/openalex` in the
-  research TUI), keeping the corpus curated; the Sources you add feed fact-check and agentic grounding.
-  Bounded to 10 per direction.
+- **New chapter — "Research That Researches Itself"** — teaches `--agentic` (autonomous, gap-driven
+  research that emits untrusted Facts into the Facts book, with its stop condition and contradiction
+  gate and on/off switch) and `--snowball` (following a paper's citations both ways).
+- **Terminal screens** — the `screen()` helper (ported from the poetry book) now renders faithful
+  monospace TUI/CLI screens wherever they help: the two-pane Assistant, the confirmation gate, and
+  the agentic + snowball runs.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Built on the existing OpenAlex client. Gated by `research.scholarly` (on by
-default). Warning-free (binary and tests). Test suite → 2665.
+**No code changes.** Companion-book documentation only; compiles warning-free. Test suite unchanged → 2665.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
