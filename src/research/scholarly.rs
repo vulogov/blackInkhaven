@@ -23,6 +23,10 @@ pub(super) struct Paper {
     pub year: String,
     pub abstract_: String,
     pub url: String,
+    /// SNOWBALL — the OpenAlex ids of the works this paper cites (backward
+    /// references). Empty for arXiv (its API doesn't expose them) and for list
+    /// results we don't request them on.
+    pub referenced_works: Vec<String>,
 }
 
 impl Paper {
@@ -93,8 +97,60 @@ pub(super) async fn openalex(cfg: ScholarlyConfig, query: String) -> Result<Pape
     parse_openalex(&json).ok_or_else(|| anyhow!("no OpenAlex result for `{query}`"))
 }
 
+/// SNOWBALL — forward citations: the works that cite `work_id`, most-cited first.
+/// Owned args so the future is `'static` (spawnable / blockable headlessly).
+pub(super) async fn cited_by(cfg: ScholarlyConfig, work_id: String, limit: usize) -> Result<Vec<Paper>> {
+    let mut q: Vec<(&str, String)> = vec![
+        ("filter", format!("cites:{work_id}")),
+        ("sort", "cited_by_count:desc".to_string()),
+        ("per_page", limit.clamp(1, 50).to_string()),
+    ];
+    if !cfg.mailto.trim().is_empty() {
+        q.push(("mailto", cfg.mailto.trim().to_string()));
+    }
+    fetch_openalex_list(&q).await
+}
+
+/// SNOWBALL — resolve a batch of OpenAlex work ids (backward references) to
+/// papers in one request (`openalex_id:W1|W2|…`). Owned args (`'static` future).
+pub(super) async fn works_by_ids(cfg: ScholarlyConfig, ids: Vec<String>, limit: usize) -> Result<Vec<Paper>> {
+    let take: Vec<&str> = ids.iter().take(limit.clamp(1, 50)).map(|s| s.as_str()).collect();
+    if take.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut q: Vec<(&str, String)> = vec![
+        ("filter", format!("openalex_id:{}", take.join("|"))),
+        ("per_page", take.len().to_string()),
+    ];
+    if !cfg.mailto.trim().is_empty() {
+        q.push(("mailto", cfg.mailto.trim().to_string()));
+    }
+    fetch_openalex_list(&q).await
+}
+
+async fn fetch_openalex_list(q: &[(&str, String)]) -> Result<Vec<Paper>> {
+    let json: Json = client()?
+        .get("https://api.openalex.org/works")
+        .query(q)
+        .send()
+        .await
+        .map_err(|e| anyhow!("openalex request: {e}"))?
+        .json()
+        .await
+        .map_err(|e| anyhow!("openalex decode: {e}"))?;
+    Ok(json
+        .get("results")
+        .and_then(|r| r.as_array())
+        .map(|arr| arr.iter().filter_map(parse_work).collect())
+        .unwrap_or_default())
+}
+
 fn parse_openalex(json: &Json) -> Option<Paper> {
-    let w = json.get("results")?.as_array()?.first()?;
+    parse_work(json.get("results")?.as_array()?.first()?)
+}
+
+/// Parse one OpenAlex work object into a [`Paper`].
+fn parse_work(w: &Json) -> Option<Paper> {
     let id = strip_prefix_url(w.get("id")?.as_str()?, "https://openalex.org/");
     let doi = w
         .get("doi")
@@ -130,7 +186,17 @@ fn parse_openalex(json: &Json) -> Option<Paper> {
         .unwrap_or_else(|| {
             if !doi.is_empty() { format!("https://doi.org/{doi}") } else { format!("https://openalex.org/{id}") }
         });
-    Some(Paper { source: "openalex", id, doi, title, authors, year, abstract_, url })
+    let referenced_works: Vec<String> = w
+        .get("referenced_works")
+        .and_then(|r| r.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str())
+                .map(|u| strip_prefix_url(u, "https://openalex.org/"))
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(Paper { source: "openalex", id, doi, title, authors, year, abstract_, url, referenced_works })
 }
 
 /// Rebuild an abstract from OpenAlex's `{word: [positions]}` inverted index.
@@ -196,7 +262,7 @@ fn parse_arxiv_atom(xml: &str) -> Option<Paper> {
     if title.is_empty() {
         return None;
     }
-    Some(Paper { source: "arxiv", id, doi, title, authors, year, abstract_, url: id_url })
+    Some(Paper { source: "arxiv", id, doi, title, authors, year, abstract_, url: id_url, referenced_works: Vec::new() })
 }
 
 fn cap(re: &regex::Regex, s: &str) -> Option<String> {
@@ -302,7 +368,7 @@ mod tests {
         let p = Paper {
             source: "arxiv", id: "1.2".into(), doi: String::new(), title: "T".into(),
             authors: vec!["A B".into()], year: "2020".into(), abstract_: "x".into(),
-            url: "http://a".into(),
+            url: "http://a".into(), referenced_works: Vec::new(),
         };
         let r = render(&p);
         assert!(r.contains("arxiv:1.2"));

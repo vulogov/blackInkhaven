@@ -1108,6 +1108,12 @@ pub enum Command {
         /// `--out` (default stdout).
         #[arg(long, value_name = "TOPIC")]
         agentic: Option<String>,
+        /// RESRCH-6 (snowball) — follow a seed paper's citations on OpenAlex
+        /// (backward references + forward citers) and report the neighborhood,
+        /// each with its OpenAlex id for selective ingest. Seed = a title, DOI,
+        /// or topic. Writes to `--out` (default stdout).
+        #[arg(long, value_name = "SEED")]
+        snowball: Option<String>,
         /// R2-F — with `--batch`, insert facts that clear `--confidence`
         /// (otherwise the report lists candidates only).
         #[arg(long)]
@@ -6399,6 +6405,7 @@ impl Cli {
                 sync,
                 batch,
                 agentic,
+                snowball,
                 auto_confirm,
                 confidence,
                 bibliography,
@@ -6424,6 +6431,7 @@ impl Cli {
                     sync,
                     batch,
                     agentic,
+                    snowball,
                     auto_confirm,
                     confidence,
                     bibliography,
