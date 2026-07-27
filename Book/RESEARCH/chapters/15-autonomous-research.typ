@@ -19,11 +19,12 @@ asks what's still missing — and keeps going until the topic is covered or its 
 spent.
 
 ```
-inkhaven research --agentic "the 1918 pandemic" --out flu.md
+inkhaven research --agentic "the 1918 pandemic"
 ```
 
 Watch a run unfold. Each *round* plans a batch of sub-questions, researches them, and
-emits a Fact for each; then a critic proposes follow-ups for the gaps:
+emits a Fact — *straight into your Facts book* — for each; then a critic proposes
+follow-ups for the gaps:
 
 #screen(caption: "inkhaven research --agentic — a run in progress")[```
 » agentic round 1: 5 sub-question(s)
@@ -39,7 +40,7 @@ emits a Fact for each; then a critic proposes follow-ups for the gaps:
 · Why did it kill healthy young adults so often?
 ✓ 7 Fact(s) over 2 round(s), converged · ! 1 contradiction
   — resolve before trusting (untrusted, model provenance).
-  Review in the Facts book: promote, dispute, /factcheck.
+  Review in the Facts book: /review, promote, /factcheck.
 ```]
 
 Three things just happened that are the whole point of the feature. It *wrote its own
@@ -48,15 +49,51 @@ had gathered and, in the next round, asked a question aimed squarely at resolvin
 And it *stopped on its own* — not after a fixed number of steps, but when the critic
 had nothing left to add.
 
-#subsection("The output is your Facts book, not an article")
+#subsection("The result is facts in your Facts book — nothing else")
 
-This is the part that makes agentic research trustworthy rather than alarming. It does
-*not* hand you an essay to reconcile against what you already believe. Every finding is
-written as a Fact — a paragraph in your Facts book — carrying its provenance and marked
-*untrusted*, exactly as if you had researched it by hand and not yet confirmed it. The
-report is a table of contents into what it wrote:
+There is no document to open at the end of a run, and that is the point. Agentic research
+is not a report generator; it is a way to *build your fact base*. Every finding is written
+straight into your Facts book as an ordinary Fact — a paragraph carrying its provenance,
+tagged `agentic`, wearing the `·` model tier, and marked *untrusted*, exactly as if you had
+researched it by hand and not yet confirmed it. When the run ends, you open the Facts tree
+and the findings are simply *there*:
 
-#screen(caption: "flu.md — the run's report")[```
+#screen(caption: "the Facts book after the run — the actual result")[```
+Facts
+└ the 1918 pandemic
+   · Cause of the 1918 pandemic
+   · Worldwide death toll                ≠
+   · Origin of the "Spanish flu" name
+   · Which age groups were hit hardest
+   · How the pandemic ended
+   · Why the death-toll estimates vary so widely
+   · Why it killed healthy young adults
+
+7 new Facts — model (·), agentic thread, untrusted.
+Nothing here is trusted until you say so (/review).
+```]
+
+So an agentic run leaves you exactly where a good afternoon in the library would: with
+a stack of sourced notes, some of which disagree, none of which you have decided to
+believe yet. The trust ladder (Chapter 8) and everything on it — fact-checking,
+refutation, the undisputed mark, and the `/review` queue (Chapter 16) — apply to these
+facts natively, because they *are* ordinary facts. Nothing about the pipeline is bypassed;
+research from a topic just got faster. You still decide, one fact at a time, what is true.
+
+#subsection("An optional receipt — not a document to write from")
+
+If you want a record of *what the run did* — which sub-questions it asked, which facts it
+emitted, which contradictions it found, where it stopped — pass `--out` (or just read the
+same summary it prints to the terminal). Understand what this is: a *run log*, an audit
+trail of the session. It is emphatically *not* a research article, and you do not write
+your book from it. The facts it lists already live in your Facts book; the log only
+narrates how they got there.
+
+```
+inkhaven research --agentic "the 1918 pandemic" --out run-log.md
+```
+
+#screen(caption: "run-log.md — an audit trail of the run, not a document")[```
 # Agentic research report
 
 **Topic:** the 1918 influenza pandemic
@@ -67,22 +104,16 @@ the Facts book (untrusted — review) · stopped: converged.
 ## ! Contradictions among the emitted facts (1)
 
 - **~50 million died worldwide** ⇄ **estimates range
-  from 17 to 100 million** — one states a settled figure,
-  the other frames it as contested
+  from 17 to 100 million** — settled figure vs. contested
 
 ## 1. What caused the 1918 influenza pandemic?
-
-**Cause of the 1918 pandemic**
-An H1N1 influenza A virus of probable avian origin…
-_confidence 0.86 · inserted → facts/cause-1918_
+**Cause of the 1918 pandemic** → facts/cause-1918
+_confidence 0.86 · the fact now lives in the Facts book_
 …
 ```]
 
-So an agentic run leaves you exactly where a good afternoon in the library would: with
-a stack of sourced notes, some of which disagree, none of which you have decided to
-believe yet. The trust ladder (Chapter 8) and everything on it — fact-checking,
-refutation, the undisputed mark — apply to these facts natively, because they *are*
-ordinary facts. Nothing about the pipeline is bypassed; the research just got faster.
+Read it as a receipt and throw it away; the corpus it describes is what you keep. If you
+never pass `--out`, you lose nothing — the facts are already home.
 
 #callout(label: "Why it flags its own contradictions")[
   The risk of any tool that writes facts automatically is that it quietly fills your
