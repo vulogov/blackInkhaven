@@ -27,26 +27,26 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.8.28 — The agentic contradiction gate (RESRCH-6)
+## Latest release · 1.8.29 — Snowball: citation-following (RESRCH-6)
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.8.28.md`](Documentation/RELEASE_NOTES/1.8.28.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.8.29.md`](Documentation/RELEASE_NOTES/1.8.29.md)
 
-Autonomous research now checks itself for contradictions as it emits Facts — with the same `⇄`
-detection `/contradict` uses — so the loop self-corrects and the run flags conflicts before you trust.
+Follow a paper's citations both ways — give the Research Assistant a seed and it maps its citation
+neighborhood on OpenAlex, so you can widen a literature search from one good source outward.
 
 ### What's new
 
-- **In-loop contradiction gate** — after each gather round, the run rigorously scans its *own* emitted
-  facts for `⇄` clashes (dedicated primitives, not the critic's eye). Detected conflicts are **fed to
-  the next round's critic** (which proposes questions to resolve them) and **flagged in the report**
-  (⚠ Contradictions section + completion count).
-- Bounded — scans only the run's own facts, so it stays affordable and focuses on what the autonomous
-  emission introduced. This is what makes autonomous fact-emission trustworthy.
+- **`inkhaven research --snowball "<seed>"`** — resolve a seed (title / DOI / topic) on OpenAlex and
+  follow the citation graph **backward** (works it references) and **forward** (works that cite it,
+  most-cited first). Reports the neighborhood, each paper with its OpenAlex id.
+- **Reports, doesn't flood** — surfaces the papers for you to bring in selectively (`/openalex` in the
+  research TUI), keeping the corpus curated; the Sources you add feed fact-check and agentic grounding.
+  Bounded to 10 per direction.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Reuses the shipped contradiction detection end to end. Warning-free (binary
-and tests). Test suite → 2665.
+**No new runtime crates.** Built on the existing OpenAlex client. Gated by `research.scholarly` (on by
+default). Warning-free (binary and tests). Test suite → 2665.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
