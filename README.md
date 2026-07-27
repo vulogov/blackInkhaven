@@ -27,27 +27,26 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.8.27 — Agentic research iterates (RESRCH-6 P3)
+## Latest release · 1.8.28 — The agentic contradiction gate (RESRCH-6)
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.8.27.md`](Documentation/RELEASE_NOTES/1.8.27.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.8.28.md`](Documentation/RELEASE_NOTES/1.8.28.md)
 
-Agentic research now closes its own gaps: after the initial plan+gather, a critic proposes follow-up
-sub-questions for what's unanswered or contradictory, and the loop iterates under a bounded stop.
+Autonomous research now checks itself for contradictions as it emits Facts — with the same `⇄`
+detection `/contradict` uses — so the loop self-corrects and the run flags conflicts before you trust.
 
 ### What's new
 
-- **Gap-driven iterate** — a critic reviews the facts established so far and lists follow-ups for gaps
-  or contradictions; the loop researches those and re-critiques until it stops.
-- **Bounded, transparent termination** — stops on the first of: **budget spent**
-  (`max_subquestions`, now a total across rounds), **round cap** (`max_rounds`, default 3), or
-  **converged** (critic finds nothing). Never loops forever; dropped sub-questions are logged, never
-  silently cut. The stop decision is a pure, unit-tested function.
-
-Still emits Facts into the Facts book (untrusted, `model` provenance), gated by `research.agentic`.
+- **In-loop contradiction gate** — after each gather round, the run rigorously scans its *own* emitted
+  facts for `⇄` clashes (dedicated primitives, not the critic's eye). Detected conflicts are **fed to
+  the next round's critic** (which proposes questions to resolve them) and **flagged in the report**
+  (⚠ Contradictions section + completion count).
+- Bounded — scans only the run's own facts, so it stays affordable and focuses on what the autonomous
+  emission introduced. This is what makes autonomous fact-emission trustworthy.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Warning-free (binary and tests). Test suite → 2665.
+**No new runtime crates.** Reuses the shipped contradiction detection end to end. Warning-free (binary
+and tests). Test suite → 2665.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
