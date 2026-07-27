@@ -27,28 +27,27 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.8.26 — Agentic research, part 1 (RESRCH-6)
+## Latest release · 1.8.27 — Agentic research iterates (RESRCH-6 P3)
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.8.26.md`](Documentation/RELEASE_NOTES/1.8.26.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.8.27.md`](Documentation/RELEASE_NOTES/1.8.27.md)
 
-The Research Assistant learns to research on its own: give it a topic and it decomposes it, gathers
-evidence, and emits its findings as Facts into the Facts book — not a standalone article.
+Agentic research now closes its own gaps: after the initial plan+gather, a critic proposes follow-up
+sub-questions for what's unanswered or contradictory, and the loop iterates under a bounded stop.
 
 ### What's new
 
-- **`inkhaven research --agentic "<topic>"`** — decompose a topic into sub-questions, research each
-  grounded on the Facts corpus, and **emit each finding as a Facts paragraph** (with `model` provenance,
-  at an *untrusted* tier for you to review/promote/dispute). Integrated with the fact system, not a
-  parallel one — fact-check, contradiction detection, and `/undisputed` all apply.
-- **Controllable, on by default** — `research.agentic.enabled` (set `false` to disable the loop
-  entirely) and `max_subquestions` bound the run in `inkhaven.hjson`.
+- **Gap-driven iterate** — a critic reviews the facts established so far and lists follow-ups for gaps
+  or contradictions; the loop researches those and re-critiques until it stops.
+- **Bounded, transparent termination** — stops on the first of: **budget spent**
+  (`max_subquestions`, now a total across rounds), **round cap** (`max_rounds`, default 3), or
+  **converged** (critic finds nothing). Never loops forever; dropped sub-questions are logged, never
+  silently cut. The stop decision is a pure, unit-tested function.
 
-Later RESRCH-6 phases add the gap-driven iterate step, the in-loop contradiction gate, and snowball.
+Still emits Facts into the Facts book (untrusted, `model` provenance), gated by `research.agentic`.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** A thin orchestration layer reusing the shipped research chain, RAG, extract,
-insert, and provenance. Warning-free (binary and tests). Test suite → 2664.
+**No new runtime crates.** Warning-free (binary and tests). Test suite → 2665.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

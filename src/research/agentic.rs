@@ -12,8 +12,15 @@
 //! Gated by `research.agentic.enabled` (on by default; the author can turn it
 //! off). Cost is bounded by `research.agentic.max_subquestions`.
 //!
-//! This is the first cut — a single planning + gather pass. The gap-driven
-//! iterate step (R6-P3) and citation-following (snowball) land in later phases.
+//! R6-P3 adds the **gap-driven iterate** step: after the initial plan+gather, a
+//! critic reviews the topic and the Facts emitted so far and proposes follow-up
+//! sub-questions for the gaps (and any contradictions it spots); the loop runs
+//! further rounds until it **converges** (the critic finds nothing more), the
+//! **round cap** (`max_rounds`) is hit, or the **budget** (`max_subquestions`,
+//! the total across all rounds) is spent — whichever comes first. Dropped
+//! questions are logged, never silently truncated.
+//!
+//! Citation-following (snowball) and the review-queue TUI land in later phases.
 
 use anyhow::{Result, anyhow};
 
@@ -28,6 +35,47 @@ use super::extract;
 
 /// A candidate fact below this model-confidence is not emitted (skipped, logged).
 const CONFIDENCE_THRESHOLD: f64 = 0.6;
+
+/// Why the iterate loop stopped — reported so the run is never a black box.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Stop {
+    /// The critic proposed no further sub-questions — the topic is covered.
+    Converged,
+    /// The total sub-question budget (`max_subquestions`) was spent.
+    BudgetSpent,
+    /// The round cap (`max_rounds`) was reached with budget still available.
+    RoundCap,
+}
+
+impl Stop {
+    fn describe(self) -> &'static str {
+        match self {
+            Stop::Converged => "converged (the critic found no further gaps)",
+            Stop::BudgetSpent => "budget spent (max_subquestions reached)",
+            Stop::RoundCap => "round cap reached (max_rounds)",
+        }
+    }
+}
+
+/// The termination decision — the heart of R6-P3, factored out so it is pure and
+/// unit-testable. Returns `Some(reason)` to stop before the next round, `None`
+/// to continue. Checked *after* a round completes.
+fn decide_stop(
+    next_is_empty: bool,
+    budget_remaining: usize,
+    rounds_done: usize,
+    max_rounds: usize,
+) -> Option<Stop> {
+    if budget_remaining == 0 {
+        Some(Stop::BudgetSpent)
+    } else if rounds_done >= max_rounds {
+        Some(Stop::RoundCap)
+    } else if next_is_empty {
+        Some(Stop::Converged)
+    } else {
+        None
+    }
+}
 
 /// Run an agentic research pass over `topic`, emitting Facts into the Facts book.
 /// `out` is the report path (stdout when `None`).
@@ -62,43 +110,101 @@ pub(crate) fn run(
         return Err(anyhow!("this project has no Facts book — agentic research emits into it"));
     }
 
-    // 1. Plan — decompose the topic into sub-questions.
-    let max = cfg.research.agentic.max_subquestions.max(1);
-    let subqs = plan_subquestions(&ai, &model, language, topic, max)?;
-    if subqs.is_empty() {
+    let mut budget = cfg.research.agentic.max_subquestions.max(1);
+    let max_rounds = cfg.research.agentic.max_rounds.max(1);
+
+    // Round 1 — plan the initial decomposition.
+    let mut pending = plan_subquestions(&ai, &model, language, topic, budget)?;
+    if pending.is_empty() {
         return Err(anyhow!("the planner returned no sub-questions for `{topic}`"));
     }
-    eprintln!("⟳ agentic: {} sub-question(s) for \"{topic}\"", subqs.len());
 
-    // 2. Gather — research each sub-question and emit a Fact (auto-insert above
-    //    the confidence threshold; the facts land untrusted for review).
     let mut outcomes: Vec<Outcome> = Vec::new();
     let mut emitted = 0usize;
-    for q in &subqs {
-        eprintln!("· {q}");
-        let o = process_one_tagged(
-            layout, cfg, store, &hierarchy, facts_book, &ai, &model, language, q,
-            /* auto_confirm */ true, CONFIDENCE_THRESHOLD, "agentic",
-        );
-        if o.action.starts_with("inserted") {
-            emitted += 1;
+    let mut dropped = 0usize;
+    let mut rounds = 0usize;
+    let stop;
+    loop {
+        // Never exceed the total budget; anything over is logged, not silently cut.
+        let take = pending.len().min(budget);
+        dropped += pending.len() - take;
+        rounds += 1;
+        eprintln!("⟳ agentic round {rounds}: {take} sub-question(s)");
+        for q in pending.iter().take(take) {
+            eprintln!("· {q}");
+            let o = process_one_tagged(
+                layout, cfg, store, &hierarchy, facts_book, &ai, &model, language, q,
+                /* auto_confirm */ true, CONFIDENCE_THRESHOLD, "agentic",
+            );
+            if o.action.starts_with("inserted") {
+                emitted += 1;
+            }
+            outcomes.push(o);
         }
-        outcomes.push(o);
+        budget -= take;
+
+        // Critique the gaps for a possible next round (only if worth asking).
+        let next = if budget == 0 || rounds >= max_rounds {
+            Vec::new()
+        } else {
+            critique_gaps(&ai, &model, language, topic, &outcomes, budget).unwrap_or_default()
+        };
+        if let Some(reason) = decide_stop(next.is_empty(), budget, rounds, max_rounds) {
+            stop = reason;
+            break;
+        }
+        pending = next;
     }
 
-    let report = render_report(topic, &subqs, &outcomes, emitted);
+    let report = render_report(topic, &outcomes, emitted, dropped, rounds, stop);
     match out {
         Some(p) => {
             std::fs::write(p, &report).map_err(|e| anyhow!("write {p}: {e}"))?;
-            eprintln!("report → {p}  ({emitted} fact(s) emitted into the Facts book)");
+            eprintln!("report → {p}  ({emitted} fact(s) emitted over {rounds} round(s))");
         }
         None => print!("{report}"),
     }
     eprintln!(
-        "✓ agentic pass complete — {emitted} Fact(s) emitted (model provenance, untrusted). \
-         Review them in the Facts book: promote, dispute, or /factcheck."
+        "✓ agentic run complete — {emitted} Fact(s) over {rounds} round(s), {} \
+         (model provenance, untrusted). Review in the Facts book: promote, dispute, or /factcheck.",
+        stop.describe()
     );
     Ok(())
+}
+
+/// The gap critic (R6-P3): given the topic and the facts emitted so far, propose
+/// follow-up sub-questions for what is still unanswered or contradictory — or
+/// nothing when the topic is adequately covered. Bounded by the remaining budget.
+fn critique_gaps(
+    ai: &crate::ai::AiClient,
+    model: &str,
+    language: &str,
+    topic: &str,
+    outcomes: &[Outcome],
+    budget_remaining: usize,
+) -> Result<Vec<String>> {
+    // Feed the critic what's been established (titles + facts) so it reasons about
+    // real coverage, not the plan.
+    let mut established = String::new();
+    for o in outcomes {
+        if !o.fact.is_empty() {
+            established.push_str(&format!("- {}: {}\n", o.title, o.fact));
+        }
+    }
+    if established.is_empty() {
+        established.push_str("(nothing established yet)\n");
+    }
+    let system = format!(
+        "You are a research critic. Given a TOPIC and the facts established so far, list up to \
+         {budget_remaining} follow-up sub-questions that are still UNANSWERED or that would \
+         resolve a CONTRADICTION or gap in what's established. If the topic is already covered \
+         adequately, reply with nothing at all. Reply with ONLY the questions, one per line, no \
+         numbering, no commentary. Write them in {language}."
+    );
+    let user = format!("TOPIC: {topic}\n\nESTABLISHED SO FAR:\n{established}");
+    let raw = collect_blocking(ai.client.clone(), model.to_string(), Some(system), user)
+        .map_err(|e| anyhow!("critic failed: {e}"))?;
+    Ok(parse_subquestions(&raw, budget_remaining))
 }
 
 /// The planner (R6-P1): ask the model to decompose a topic into specific,
@@ -137,13 +243,28 @@ fn parse_subquestions(reply: &str, max: usize) -> Vec<String> {
         .collect()
 }
 
-fn render_report(topic: &str, subqs: &[String], outcomes: &[Outcome], emitted: usize) -> String {
+fn render_report(
+    topic: &str,
+    outcomes: &[Outcome],
+    emitted: usize,
+    dropped: usize,
+    rounds: usize,
+    stop: Stop,
+) -> String {
     let mut s = String::from("# Agentic research report\n\n");
     s.push_str(&format!(
-        "**Topic:** {topic}\n\n{} sub-question(s) · {emitted} Fact(s) emitted into the Facts book \
-         (model provenance, untrusted — review to promote or dispute).\n\n",
-        subqs.len()
+        "**Topic:** {topic}\n\n{} sub-question(s) over {rounds} round(s) · {emitted} Fact(s) \
+         emitted into the Facts book (model provenance, untrusted — review to promote or dispute) \
+         · stopped: {}.\n\n",
+        outcomes.len(),
+        stop.describe()
     ));
+    if dropped > 0 {
+        s.push_str(&format!(
+            "> {dropped} proposed sub-question(s) were dropped when the budget was reached — raise \
+             `research.agentic.max_subquestions` to cover them.\n\n"
+        ));
+    }
     for (i, o) in outcomes.iter().enumerate() {
         s.push_str(&format!("## {}. {}\n\n", i + 1, o.question));
         if !o.title.is_empty() {
@@ -160,7 +281,22 @@ fn render_report(topic: &str, subqs: &[String], outcomes: &[Outcome], emitted: u
 
 #[cfg(test)]
 mod tests {
-    use super::parse_subquestions;
+    use super::{Stop, decide_stop, parse_subquestions};
+
+    #[test]
+    fn termination_is_bounded_and_prioritised() {
+        // Budget spent wins even if the critic wants more and rounds remain.
+        assert_eq!(decide_stop(false, 0, 1, 3), Some(Stop::BudgetSpent));
+        // Round cap stops when budget remains but rounds are exhausted.
+        assert_eq!(decide_stop(false, 4, 3, 3), Some(Stop::RoundCap));
+        // Convergence when the critic proposes nothing (budget + rounds left).
+        assert_eq!(decide_stop(true, 4, 1, 3), Some(Stop::Converged));
+        // Otherwise keep going.
+        assert_eq!(decide_stop(false, 4, 1, 3), None);
+        // A single-pass config (max_rounds = 1) always stops after round 1 —
+        // never loops.
+        assert!(decide_stop(false, 5, 1, 1).is_some());
+    }
 
     #[test]
     fn parses_planner_replies_in_many_shapes() {
