@@ -80,27 +80,32 @@ be filed, and where it says it came from.
 #screen(caption: "The confirmation gate — nothing is kept until you say so")[```
 ┌─ Confirm fact ───────────────────────────────────┐
 │                                                  │
-│ A Roman legion marched about 20 Roman            │
-│ miles (30 km) per day under forced march.        │
+│ title  Roman march rate                          │
+│ body   A Roman legion marched about 20 Roman     │
+│        miles (30 km) per day under forced        │
+│        march.                                    │
 │                                                  │
 │ file →  Facts / Military                         │
 │ from →  model  (unchecked)                       │
 │                                                  │
-│ Ctrl+S keep · e edit · c check · Esc discard     │
+│ Tab field · type to edit · Ctrl+S keep · Esc     │
 └──────────────────────────────────────────────────┘
 ```]
 
 #term("The confirmation gate")[
   The *gate* is the mandatory pause between "the Assistant proposed a fact" and
-  "the fact is in your book." Nothing reaches your Facts without passing it. You
-  can edit the wording, accept it with `Ctrl+S`, or discard it entirely. The
-  Assistant proposes; you dispose.
+  "the fact is in your book." Nothing reaches your Facts without passing it. It has
+  two editable fields — the *title* and the *body* — you move between with `Tab` and
+  edit simply by typing; accept the whole thing with `Ctrl+S`, or discard it with
+  `Esc`. The Assistant proposes; you dispose.
 ]
 
-For a plain model-derived claim like this one, the gate may also offer to *check*
-the fact before you commit — and for facts drawn from the web or from structured
-sources, later chapters show the gate doing real cross-checking here. For now the
-important thing is the principle: *a fact becomes yours only when you say so.* If
+For facts drawn from the web, an imported document, or the model, the gate also
+runs an *automatic* fact-check as you confirm — when a checking gate is configured
+(later chapters) — and surfaces any doubt as a `! fact-check: … · Ctrl+S to insert
+anyway` line, informing without ever blocking. For a structured source (Wikidata,
+GeoNames) there is nothing to check and the fact commits straight away. The
+principle holds throughout: *a fact becomes yours only when you say so.* If
 the wording is off, fix it in the gate. If you have changed your mind, discard it
 and nothing is written. If it is right, confirm — and it lands on the tree to your
 left.

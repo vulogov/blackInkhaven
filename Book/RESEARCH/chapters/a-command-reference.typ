@@ -3,8 +3,9 @@
 #appendix(letter: "A", title: "Command Reference")
 
 Every command this book taught, in one place, grouped by the part of the workflow
-it belongs to. In the Research Assistant, type a single `/` to open the searchable
-command palette — you never have to memorise these; this list is for browsing.
+it belongs to. In the Research Assistant, type a single `/` and a hint bar lists
+the matching commands as you narrow it; press `Tab` to complete one, or `Ctrl+B h`
+for the full reference on screen. You never have to memorise these.
 
 #section("Asking and keeping")
 
@@ -16,8 +17,9 @@ command palette — you never have to memorise these; this list is for browsing.
   [`/note <claim>` — keep a speculative claim as a *Note* instead.],
   [`/verify` — probe the model's confidence in its last answer before you keep it,
    so a shaky reply doesn't become a Fact.],
-  [`/diff <claim>` — check a claim against what you have already kept and warn if it
-   near-duplicates an existing fact (tuned by `research.dedup_warn_score`).],
+  [`/diff` — list the facts already in your corpus most similar to the Assistant's
+   last answer, so you notice a near-duplicate before keeping it (top-N tuned by
+   `research.diff_top_n`).],
   [`/promote` — promote a selected Note into the Facts book.],
   [`u` *(key, in the Facts tree)* — toggle the selected fact *undisputed* (※): an
    authorial axiom, exempt from fact-checking.],
@@ -43,8 +45,9 @@ command palette — you never have to memorise these; this list is for browsing.
 #section("Cross-checking and maintenance")
 
 #list(
-  [`/triangulate <claim>` — cross-check a claim against the structured and
-   scholarly sources at once; reports SUPPORTS / CONTRADICTS / SILENT.],
+  [`/triangulate <claim>` *(alias `/tri`)* — cross-check a claim against Wikidata
+   and the two scholarly indexes (OpenAlex, arXiv) in one pass; reports SUPPORTS /
+   CONTRADICTS / SILENT.],
   [`/factcheck` — audit the whole Facts book for per-fact truth and cross-fact
    consistency; marks each fact with a verdict glyph (✓ / ? / ✗).],
   [`/whatswrong` — explain why the selected flagged fact failed, and what the
@@ -55,6 +58,9 @@ command palette — you never have to memorise these; this list is for browsing.
    re-verification.],
   [`/undisputed` — check your undisputed (authorial) facts for *internal coherence*
    (PLAUSIBLE / ODD / INCOHERENT), in the project language.],
+  [`/review` — triage the untrusted facts an `--agentic` run emitted: step through
+   them and *accept* (a), *delete* (d), or mark *undisputed* (u); contradictions are
+   flagged with ≠.],
   [`/deadsources` — scan your kept web sources for link-rot and flag the ones that
    no longer resolve, so a citation does not quietly die under you.],
   [`/sources` — list every fact's provenance in one view — the interactive
@@ -113,8 +119,13 @@ command manages that book from the shell, for interchange with reference manager
    threshold automatically; report the rest.],
   [`inkhaven research --import <path>` — ingest a document or folder from the
    command line.],
-  [`inkhaven research --sync <folder>` — register a folder for re-import whenever
-   its contents change.],
+  [`inkhaven research --sync <folder>` — register a folder; each launch re-imports
+   the files that changed since last time.],
+  [`inkhaven research --agentic "<topic>" [--out run-log.md]` — research a topic
+   autonomously, emitting the findings as *untrusted* Facts into the Facts book
+   (triage them later with `/review`); `--out` writes an optional run log.],
+  [`inkhaven research --snowball "<seed>"` — follow a paper's citations backward and
+   forward on OpenAlex and report the neighborhood to ingest selectively.],
   [`inkhaven research --gutenberg "<query|PG#>"` — ingest a public-domain book
    headlessly (accepts a leading `--chapter N`).],
   [`inkhaven research --bibliography [--out refs.bib]` — write the bibliography to

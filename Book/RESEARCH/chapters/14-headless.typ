@@ -74,10 +74,10 @@ The other headless jobs are about *material* rather than answers.
 your corpus from the command line, the same ingestion you met interactively, now
 scriptable.
 
-`--sync <folder>` goes one step further: it *registers* a folder so that whenever
-its contents change, the material is re-imported automatically. Point it at the
-directory where your reading accumulates, and your corpus stays current with your
-reading without a manual step.
+`--sync <folder>` goes one step further: it *registers* a folder, and each time you
+launch `inkhaven research` it re-imports whatever files have changed since last
+time. Point it at the directory where your reading accumulates, and your corpus
+catches up with your reading at every launch — no per-file import command to run.
 
 ```
 inkhaven research --import ~/reading/aqueducts.pdf
@@ -109,15 +109,17 @@ of the `/gutenberg` you already know.
 
 #section("The tools are all in your hands")
 
-You now have the entire workflow, at every scale: one fact at a time in the
-interactive screen, and whole lists and folders at once from the command line.
-Acquire, cross-check, maintain, compose — by hand when you are thinking, headless
-when you are fetching. There is nothing left to introduce.
+You now have the workflow at every scale: one fact at a time in the interactive
+screen, and whole lists and folders at once from the command line. Acquire,
+cross-check, maintain, compose — by hand when you are thinking, headless when you
+are fetching.
 
-What is left is to see it all *move together*. The final chapter is a single worked
-example — one novelist and one non-fiction author, each taking a real claim from a
-first question to a grounded, cited fact and on into their book — so the pieces you
-have met one at a time run, at last, as one workflow.
+There is one more turn of the screw to meet. So far *you* have always chosen the
+questions — one at a time, or a batch you wrote. The next chapter hands that choice,
+too, to the assistant: research that plans its own questions and follows its own
+leads, emitting what it finds as untrusted facts for you to triage. After that, a
+single worked example runs the whole apparatus — by hand and autonomous alike — as
+one workflow.
 
 #recap((
   [Interactive research is for *thinking*; *headless* research (`inkhaven research

@@ -72,6 +72,16 @@ comes back `PLAUSIBLE`, `ODD`, or `INCOHERENT`, and the tree colours its ※ gly
 accordingly, so you can see at a glance which of your invented facts hang together
 and which want a second look.
 
+#screen(caption: "/undisputed — a coherence pass over authorial facts")[```
+> /undisputed
+1. PLAUSIBLE — consistent with the guild's charter
+2. ODD — the festival date shifts between chapters
+3. INCOHERENT — the heir is born after the regency
+   it supposedly justified
+
+undisputed check complete · 3 · ✓1 ?1 ✗1
+```]
+
 #term("Internal coherence")[
   *Internal coherence* is consistency *within* an invented frame, judged without
   reference to the real world. A dragon is not "wrong," but a dragon that is

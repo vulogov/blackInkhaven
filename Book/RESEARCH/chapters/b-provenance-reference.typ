@@ -26,7 +26,7 @@ fact-check gate.
 #rung("§", "openalex", "A scholarly work, cited by DOI; auto-filed to Sources.", "Gate-skipped.")
 #rung("§", "arxiv", "A preprint, cited by id; auto-filed to Sources.", "Gate-skipped.")
 #rung("▪", "document", "Drawn from a source you imported into your corpus.", "Fact-checked at the gate.")
-#rung("↑", "promoted", "A Note you promoted into the Facts book.", "As its underlying source.")
+#rung("↑", "promoted", "A Note you promoted into the Facts book.", "Gate-skipped — trusted as the note's own grounding.")
 #rung("◇", "web", "Grounded on a cited web page.", "Fact-checked at the gate.")
 #rung("·", "model", "The model's unaided answer — an educated guess.", "Fact-checked (and refuted, if enabled).")
 
@@ -37,6 +37,13 @@ fact-check gate.
   outside the ladder entirely: it is exempt from `/factcheck` and checked only for
   internal coherence by `/undisputed`. Its ※ takes on the coherence verdict's
   colour — plausible, odd, or incoherent.
+]
+
+#callout(label: "Origins without a tier mark")[
+  A few origins carry *no* tier glyph at all — a fact kept from `/archive` (the
+  Internet Archive), `/wikisource`, or entered by hand (`manual`) shows no rung
+  mark in the tree. They are still recorded with full provenance (visible in
+  `/sources`); they simply sit off the tiered ladder rather than on a named rung.
 ]
 
 #section("Reading a fact's provenance")
