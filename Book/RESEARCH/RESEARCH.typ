@@ -44,9 +44,10 @@
   part(number: "VII", title: "Working at Scale"),
   include "chapters/14-headless.typ",
   include "chapters/15-autonomous-research.typ",
+  include "chapters/16-review-queue.typ",
 
   part(number: "VIII", title: "A Complete Walkthrough"),
-  include "chapters/16-walkthrough.typ",
+  include "chapters/17-walkthrough.typ",
 
   include "chapters/a-command-reference.typ",
   include "chapters/b-provenance-reference.typ",

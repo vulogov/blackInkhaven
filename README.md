@@ -27,25 +27,29 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.8.30 — The research book learns RESRCH-6
+## Latest release · 1.8.31 — The Review Queue (RESRCH-6 R6-P5)
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.8.30.md`](Documentation/RELEASE_NOTES/1.8.30.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.8.31.md`](Documentation/RELEASE_NOTES/1.8.31.md)
 
-The companion book *Grounding Your Book in Fact* catches up with the autonomous research tools, and
-gains faithful terminal screens throughout.
+Autonomous research emits *untrusted* Facts; this release adds the human end of that loop — an
+interactive queue that gathers them and walks you through triage, one claim at a time.
 
 ### What's new
 
-- **New chapter — "Research That Researches Itself"** — teaches `--agentic` (autonomous, gap-driven
-  research that emits untrusted Facts into the Facts book, with its stop condition and contradiction
-  gate and on/off switch) and `--snowball` (following a paper's citations both ways).
-- **Terminal screens** — the `screen()` helper (ported from the poetry book) now renders faithful
-  monospace TUI/CLI screens wherever they help: the two-pane Assistant, the confirmation gate, and
-  the agentic + snowball runs.
+- **`/review` — the triage queue** — in the Research Assistant (`inkhaven research`), `/review` opens
+  a queue over the untrusted facts an `--agentic` run emitted: the exact set of "the machine said
+  this; have you checked?". Move with `j`/`k`; give each fact one of three one-key verdicts — `a`
+  accept (tagged reviewed, gone for good), `d` delete, or `u` mark ※ undisputed — and the cursor
+  advances. Only agentic-thread facts that are neither already accepted nor undisputed appear, so
+  your own work never clutters it.
+- **Contradictions first** — a `≠` flag marks any queued fact caught in a recorded contradiction (the
+  in-loop gate's findings), pulling the claims that most need scrutiny to the front.
+- **New chapter — "The Review Queue"** — Chapter 16 of *Grounding Your Book in Fact*, with a faithful
+  terminal screen of the queue.
 
 ### Dependencies & compatibility
 
-**No code changes.** Companion-book documentation only; compiles warning-free. Test suite unchanged → 2665.
+No new dependencies. Compiles warning-free; the companion book compiles warning-free. Test suite → 2668.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
