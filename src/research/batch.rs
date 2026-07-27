@@ -19,13 +19,13 @@ use crate::store::{NodeKind, SYSTEM_TAG_FACTS, Store};
 use super::extract::{self, TargetBook};
 use super::thread::RagMode;
 
-/// One question's outcome, for the report.
-struct Outcome {
-    question: String,
-    title: String,
-    fact: String,
-    confidence: f64,
-    action: String,
+/// One question's outcome, for the report. Reused by the RESRCH-6 agentic loop.
+pub(crate) struct Outcome {
+    pub question: String,
+    pub title: String,
+    pub fact: String,
+    pub confidence: f64,
+    pub action: String,
 }
 
 /// Run a batch file. `auto_confirm` + `threshold` gate insertion; `out` is the
@@ -86,8 +86,13 @@ pub(crate) fn run(
     Ok(())
 }
 
+/// Research one question, distil a candidate fact, score it, and (under
+/// `auto_confirm` + `threshold`) insert it into the Facts book with `model`
+/// provenance. The single-question chain reused by both `--batch` and the
+/// RESRCH-6 agentic loop. `provenance_thread` labels where the fact came from
+/// (`"batch"` vs `"agentic"`), so the author can tell autonomous facts apart.
 #[allow(clippy::too_many_arguments)]
-fn process_one(
+pub(crate) fn process_one(
     layout: &ProjectLayout,
     cfg: &Config,
     store: &Store,
@@ -99,6 +104,28 @@ fn process_one(
     question: &str,
     auto_confirm: bool,
     threshold: f64,
+) -> Outcome {
+    process_one_tagged(
+        layout, cfg, store, hierarchy, facts_book, ai, model, language, question, auto_confirm,
+        threshold, "batch",
+    )
+}
+
+/// [`process_one`] with an explicit provenance thread label.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn process_one_tagged(
+    layout: &ProjectLayout,
+    cfg: &Config,
+    store: &Store,
+    hierarchy: &Hierarchy,
+    facts_book: Option<uuid::Uuid>,
+    ai: &crate::ai::AiClient,
+    model: &str,
+    language: &str,
+    question: &str,
+    auto_confirm: bool,
+    threshold: f64,
+    provenance_thread: &str,
 ) -> Outcome {
     // 1. Research the answer, grounded on the Facts corpus (RAG).
     let (rag, _sources) =
@@ -147,7 +174,7 @@ fn process_one(
                 let prov_note = super::provenance::Provenance::record(
                     layout,
                     &new_id.to_string(),
-                    super::provenance::SourceRecord::new("model", "", question, "batch", now),
+                    super::provenance::SourceRecord::new("model", "", question, provenance_thread, now),
                 )
                 .err()
                 .map(|e| format!(" (provenance not recorded: {e})"))

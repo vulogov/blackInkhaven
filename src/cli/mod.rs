@@ -1101,6 +1101,13 @@ pub enum Command {
         /// (`--out`, default stdout).
         #[arg(long, value_name = "FILE")]
         batch: Option<String>,
+        /// RESRCH-6 — autonomous deep research: decompose a topic into
+        /// sub-questions, gather evidence, and emit the findings as Facts into the
+        /// Facts book (each with `model` provenance, untrusted for review). Gated
+        /// by `research.agentic.enabled` (on by default). Writes a report to
+        /// `--out` (default stdout).
+        #[arg(long, value_name = "TOPIC")]
+        agentic: Option<String>,
         /// R2-F — with `--batch`, insert facts that clear `--confidence`
         /// (otherwise the report lists candidates only).
         #[arg(long)]
@@ -6391,6 +6398,7 @@ impl Cli {
                 import,
                 sync,
                 batch,
+                agentic,
                 auto_confirm,
                 confidence,
                 bibliography,
@@ -6415,6 +6423,7 @@ impl Cli {
                     import,
                     sync,
                     batch,
+                    agentic,
                     auto_confirm,
                     confidence,
                     bibliography,
