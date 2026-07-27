@@ -27,26 +27,28 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.8.25 — Exact English scansion (the pronouncing dictionary)
+## Latest release · 1.8.26 — Agentic research, part 1 (RESRCH-6)
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.8.25.md`](Documentation/RELEASE_NOTES/1.8.25.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.8.26.md`](Documentation/RELEASE_NOTES/1.8.26.md)
 
-Closes the one limitation the poetry book openly documents: English metre and rhyme, read from
-spelling alone, are approximate — install a pronouncing dictionary and they become exact.
+The Research Assistant learns to research on its own: give it a topic and it decomposes it, gathers
+evidence, and emits its findings as Facts into the Facts book — not a standalone article.
 
 ### What's new
 
-- **`poetry phonemes import <cmudict>`** — install a CMU-format pronouncing dictionary, after which the
-  scansion engines read each word's *actual phonemes*: syllable counts and stress become exact, and
-  `love`/`move` is correctly an **eye rhyme** (not the false "perfect" spelling gives).
-- **English-only, optional, graceful** — Russian/German/Spanish are near-phonemic already; words outside
-  the dictionary fall back to the spelling heuristic, so nothing breaks. Flows through `syllabify` /
-  `metre` / `rhyme` / `scan`, the Inner Poet, and the Bund `ink.poem.*` words.
+- **`inkhaven research --agentic "<topic>"`** — decompose a topic into sub-questions, research each
+  grounded on the Facts corpus, and **emit each finding as a Facts paragraph** (with `model` provenance,
+  at an *untrusted* tier for you to review/promote/dispute). Integrated with the fact system, not a
+  parallel one — fact-check, contradiction detection, and `/undisputed` all apply.
+- **Controllable, on by default** — `research.agentic.enabled` (set `false` to disable the loop
+  entirely) and `max_subquestions` bound the run in `inkhaven.hjson`.
+
+Later RESRCH-6 phases add the gap-driven iterate step, the in-loop contradiction gate, and snowball.
 
 ### Dependencies & compatibility
 
-**No new runtime crates.** Ships as an imported data file (like the WordNet indexes), not bundled. The
-engine public API is unchanged. Warning-free (binary and tests). Test suite → 2663.
+**No new runtime crates.** A thin orchestration layer reusing the shipped research chain, RAG, extract,
+insert, and provenance. Warning-free (binary and tests). Test suite → 2664.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
