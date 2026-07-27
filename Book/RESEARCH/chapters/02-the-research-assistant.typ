@@ -13,7 +13,23 @@ commands in the next chapter feel like the natural thing to type.
 
 #section("Two panes, one conversation")
 
-Picture the screen split in two.
+Picture the screen split in two — the Facts tree on the left, the conversation on
+the right, a status line beneath:
+
+#screen(caption: "inkhaven research — the two-pane Assistant")[```
+┌─ Facts ─────────────┬─ thread: 1920s Vienna ────┐
+│ ▾ Geography         │ > Vienna's population     │
+│   ✓ Vienna on the   │   in 1925?                │
+│     Danube…         │                           │
+│ ▾ Society           │ About 1.87 million —      │
+│   ✓ The Ringstrasse…│ just past its peak.       │
+│   ? Coffeehouse…    │ ── src: Wikidata Q1741    │
+│   ※ (novel: café on │                           │
+│      Kärntnerstraße)│ /fact → keep as a Fact?   │
+├─────────────────────┴───────────────────────────┤
+│ default · 4 facts · $0.02 · ✓ ? ※ · ? help      │
+└─────────────────────────────────────────────────┘
+```]
 
 On the left is your *Facts tree* — the growing outline of everything you have
 kept for this project: your Facts, organised the way a book is, in chapters and
