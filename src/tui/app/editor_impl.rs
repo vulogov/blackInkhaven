@@ -555,6 +555,7 @@ impl super::App {
             typst_diag_last_fired: None,
             detected_language: None,
             detected_language_length: 0,
+            highlight_cache: None,
         });
         // 1.2.15+ Phase R.1 — register the open
         // paragraph with the crash-report context so
@@ -1029,6 +1030,7 @@ impl super::App {
             // detection cache empty.
             detected_language: None,
             detected_language_length: 0,
+            highlight_cache: None,
         });
         self.secondary_focused = false;
         self.status = format!(
