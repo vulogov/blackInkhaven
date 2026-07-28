@@ -159,6 +159,7 @@ fn engage(
         force,
         ie_store: None,
         socrates_store: None,
+        store: None,
     })
     .map_err(|e| Error::Store(format!("{e}")))?;
 
