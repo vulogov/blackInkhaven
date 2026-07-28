@@ -365,7 +365,10 @@ fn write_zip(out: &Path, files: &[(String, Vec<u8>)]) -> Result<()> {
             let _ = std::fs::create_dir_all(parent);
         }
     }
-    let file = std::fs::File::create(out).map_err(Error::Io)?;
+    // Stream into a sibling `.part` and rename on success so an interrupted
+    // bundle can't leave a truncated, unopenable archive in place of a good one.
+    let tmp = out.with_extension("part");
+    let file = std::fs::File::create(&tmp).map_err(Error::Io)?;
     let mut zw = zip::ZipWriter::new(file);
     let opts = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
@@ -376,6 +379,10 @@ fn write_zip(out: &Path, files: &[(String, Vec<u8>)]) -> Result<()> {
     }
     zw.finish()
         .map_err(|e| Error::Store(format!("zip finish: {e}")))?;
+    std::fs::rename(&tmp, out).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        Error::Io(e)
+    })?;
     Ok(())
 }
 
