@@ -253,12 +253,15 @@ impl Artefact {
     /// Write to `path`, using the format-appropriate byte
     /// encoding (UTF-8 text for markdown/tex, raw bytes for epub).
     pub fn write_to(&self, path: &Path) -> Result<()> {
+        // Atomically (temp + rename) so an interrupted export can't replace the
+        // author's previous good file with a truncated one — worst for the epub,
+        // where a partial binary is unopenable.
         match self {
             Artefact::Markdown(s) | Artefact::Tex(s) => {
-                std::fs::write(path, s.as_bytes())?;
+                crate::io_atomic::write(path, s.as_bytes())?;
             }
             Artefact::Epub(bytes) => {
-                std::fs::write(path, bytes)?;
+                crate::io_atomic::write(path, bytes)?;
             }
         }
         Ok(())

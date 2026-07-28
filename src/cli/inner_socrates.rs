@@ -376,7 +376,7 @@ fn run_slow(
         // grounding (declared cast, symbol library, open world tensions), so a
         // general Socratic question is asked against the author's declared world
         // rather than blind. Self-disables when nothing is declared.
-        match crate::inner_grounding::build_grounding(project) {
+        match crate::inner_grounding::build_grounding(project, None) {
             Some(g) => {
                 grounded = format!("{g}\n\n--- MANUSCRIPT ---\n{prose}");
                 &grounded

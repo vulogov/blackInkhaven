@@ -262,7 +262,14 @@ kconv!(m_trunc, |x| x.trunc());
 kconv!(m_sign, |x| if x > 0.0 { 1.0 } else if x < 0.0 { -1.0 } else { 0.0 });
 kconv!(m_factorial, |x| {
     let n = x.round().max(0.0) as u64;
-    (1..=n).fold(1.0f64, |a, i| a * i as f64)
+    // 171! already overflows f64 to +inf, so anything above that is `inf`
+    // regardless — and computing it would spin up to ~1e19 iterations on the
+    // synchronous `/calc` (UI) thread, an unkillable freeze. Short-circuit.
+    if n > 170 {
+        f64::INFINITY
+    } else {
+        (1..=n).fold(1.0f64, |a, i| a * i as f64)
+    }
 });
 
 fn gcd_i64(a: i64, b: i64) -> i64 {

@@ -71,23 +71,23 @@ fn convert_image_call(line: &str) -> Option<String> {
 /// (`\"` and `\\`). Returns None if `s` doesn't start with `"`.
 fn read_quoted(s: &str) -> Option<(String, &str)> {
     let s = s.trim_start();
-    let bytes = s.as_bytes();
-    if bytes.first().copied() != Some(b'"') {
+    // Iterate by `char`, not by byte: `bytes[i] as char` is a Latin-1 decode that
+    // mangles every multi-byte UTF-8 char (Cyrillic/accented captions → mojibake).
+    // The delimiters (`"`, `\`) are ASCII, so char-iteration handles them cleanly.
+    let mut chars = s.char_indices();
+    if !matches!(chars.next(), Some((_, '"'))) {
         return None;
     }
     let mut out = String::new();
-    let mut i = 1;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'\\' if i + 1 < bytes.len() => {
-                out.push(bytes[i + 1] as char);
-                i += 2;
+    while let Some((i, c)) = chars.next() {
+        match c {
+            '\\' => {
+                if let Some((_, next)) = chars.next() {
+                    out.push(next);
+                }
             }
-            b'"' => return Some((out, &s[i + 1..])),
-            c => {
-                out.push(c as char);
-                i += 1;
-            }
+            '"' => return Some((out, &s[i + 1..])),
+            other => out.push(other),
         }
     }
     None
@@ -281,6 +281,17 @@ pub fn typst_to_markdown(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn read_quoted_preserves_non_ascii() {
+        // Audit regression — must not Latin-1-decode multi-byte UTF-8 to mojibake.
+        let (s, rest) = read_quoted("\"café Москва\" tail").unwrap();
+        assert_eq!(s, "café Москва");
+        assert_eq!(rest, " tail");
+        // Escapes still work and keep following non-ASCII intact.
+        let (s2, _) = read_quoted("\"a\\\"b é\"").unwrap();
+        assert_eq!(s2, "a\"b é");
+    }
 
     #[test]
     fn single_line_raw_does_not_swallow_following_content() {
