@@ -742,10 +742,12 @@ impl super::App {
             self.status = format!("store update failed: {e}");
             return Ok(());
         }
-        if let Err(e) = self.store.sync() {
-            self.status = format!("store sync failed: {e}");
-            return Ok(());
-        }
+        // 1.8.32+ hardening — the paragraph content is already durable (the
+        // metadata/blob write above fsyncs per commit); flush the derived vector
+        // index off the render thread so a routine save never freezes the editor
+        // while the HNSW index serializes. The periodic tick and quit-path sync
+        // stay synchronous, so the index still converges.
+        self.store.sync_in_background();
 
         doc.dirty = false;
         // 1.2.15+ Phase R.1 — buffer is clean, drop
