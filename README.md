@@ -27,29 +27,33 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.8.31 — The Review Queue (RESRCH-6 R6-P5)
+## Latest release · 1.8.32 — Documentation Truth & TUI Hardening
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.8.31.md`](Documentation/RELEASE_NOTES/1.8.31.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.8.32.md`](Documentation/RELEASE_NOTES/1.8.32.md)
 
-Autonomous research emits *untrusted* Facts; this release adds the human end of that loop — an
-interactive queue that gathers them and walks you through triage, one claim at a time.
+A correctness pass over the research companion book — every place the prose or a screen diverged
+from what the code does — plus two pre-1.9 hardening wins in the editor.
 
 ### What's new
 
-- **`/review` — the triage queue** — in the Research Assistant (`inkhaven research`), `/review` opens
-  a queue over the untrusted facts an `--agentic` run emitted: the exact set of "the machine said
-  this; have you checked?". Move with `j`/`k`; give each fact one of three one-key verdicts — `a`
-  accept (tagged reviewed, gone for good), `d` delete, or `u` mark ※ undisputed — and the cursor
-  advances. Only agentic-thread facts that are neither already accepted nor undisputed appear, so
-  your own work never clutters it.
-- **Contradictions first** — a `≠` flag marks any queued fact caught in a recorded contradiction (the
-  in-loop gate's findings), pulling the claims that most need scrutiny to the front.
-- **New chapter — "The Review Queue"** — Chapter 16 of *Grounding Your Book in Fact*, with a faithful
-  terminal screen of the queue.
+- **The research book now matches the implementation** — a four-agent audit of *Grounding Your Book
+  in Fact* fixed every divergence from the source: the RESRCH-6 chapter (an `--agentic` run emits
+  Facts into the Facts book, not a document; `--out` is only a run log), the confirmation-gate keys,
+  the `/` hint bar (not a "palette"), `/calc`'s postfix syntax, `/triangulate`'s real sources, the
+  `/gutenberg` / `/web` flags, and the command/provenance appendices. Faithful `screen()` frames were
+  added wherever a chapter described output but showed none.
+- **`/review` registered in command completion** — the 1.8.31 command was wired into the parser and
+  dispatcher but never added to the `SPECS` table, so it did not tab-complete or show in the hint bar.
+  Fixed. The RESRCH-6 CLI glyphs are now portable (`»` / `!`) and the agentic run points at `/review`.
+- **Editor syntax-highlight cache** — the editor's unconditional per-frame redraw no longer re-runs the
+  whole-buffer tree-sitter / lexer highlight; it is memoized per buffer state, so idle frames are cheap.
+- **Vector index flushed off the render thread** — a routine save no longer freezes the editor while the
+  HNSW index serializes to disk; the flush moves to a background thread (durability-safe — the content is
+  already persisted and the index write is atomic).
 
 ### Dependencies & compatibility
 
-No new dependencies. Compiles warning-free; the companion book compiles warning-free. Test suite → 2668.
+No new dependencies. Compiles warning-free; the companion book compiles warning-free. Test suite → 2671.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
