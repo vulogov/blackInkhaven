@@ -56,9 +56,48 @@ impl Foot {
 /// monosyllable flexible unless explicitly marked. An acute mark overrides the
 /// rule-based stress.
 fn word_beats(word: &str, lang: ProseLanguage) -> Vec<Beat> {
+    // English consults the installed pronouncing dictionary; other languages
+    // (whose syllabifier stress is reliable) don't.
+    let dict = if matches!(lang, ProseLanguage::En) {
+        crate::poetry::phonemes::en()
+    } else {
+        None
+    };
+    word_beats_with(word, lang, dict)
+}
+
+/// PO-P3 fix — as `word_beats`, but with the pronouncing dictionary passed in
+/// (mirroring `analyse_rhyme_with` / `syllable_count_with`). When the word is in
+/// the dictionary its *exact* stress is used, in preference to the crude
+/// penultimate rule that mis-scans final-stressed English words (compare, begin,
+/// above, return). An explicit acute mark still overrides the dictionary (author
+/// annotation wins); a monosyllable stays flexible; an out-of-vocabulary word
+/// falls through to the heuristic below unchanged.
+fn word_beats_with(
+    word: &str,
+    lang: ProseLanguage,
+    dict: Option<&crate::poetry::phonemes::PhonemeDict>,
+) -> Vec<Beat> {
     let marked = syllabify::marked_syllable_index(word, lang.clone());
     // The syllabifier works on the mark-free word.
     let clean: String = word.chars().filter(|&c| c != '\u{301}').collect();
+
+    if marked.is_none() {
+        if let Some(pron) = dict.and_then(|d| d.get(&clean)) {
+            let n = pron.syllables;
+            if n == 0 {
+                return Vec::new();
+            }
+            if n == 1 {
+                return vec![Beat::Flexible];
+            }
+            let stressed = pron.stress.min(n - 1);
+            return (0..n)
+                .map(|i| if i == stressed { Beat::Stressed } else { Beat::Unstressed })
+                .collect();
+        }
+    }
+
     let sylls = syllabify::syllabify(&clean, lang);
     let n = sylls.len();
     if n == 0 {
@@ -220,6 +259,18 @@ pub fn observe_free_verse(lines: &[Vec<Beat>]) -> FreeVerseProfile {
 mod tests {
     use super::*;
     use crate::prose::ProseLanguage;
+
+    #[test]
+    fn phoneme_dict_gives_final_stress_over_penultimate_rule() {
+        // com-PARE is final-stressed; the crude penultimate rule mis-scans it as
+        // trochaic. With the pronouncing dictionary the beats must be iambic.
+        let d = crate::poetry::phonemes::parse("COMPARE  K AH0 M P EH1 R\n");
+        let with_dict = word_beats_with("compare", ProseLanguage::En, Some(&d));
+        assert_eq!(with_dict, vec![Beat::Unstressed, Beat::Stressed]);
+        // The heuristic (no dict) must differ — i.e. the fix actually changed it.
+        let heuristic = word_beats_with("compare", ProseLanguage::En, None);
+        assert_ne!(with_dict, heuristic);
+    }
 
     #[test]
     fn foot_parses_from_poem_metre() {
