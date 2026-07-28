@@ -57,6 +57,11 @@ pub struct EngageInput {
     pub ie_store: Option<InnerEditorStore>,
     /// Same, for the shared intent ledger in `inner_socrates.db`.
     pub socrates_store: Option<InnerSocratesStore>,
+    /// 1.8.34 (hardening) — the App-held MAIN project store, reused by
+    /// `build_grounding` instead of a fresh `Store::open` on the worker thread
+    /// (which opens a second instance of the primary DB + re-runs its script
+    /// side effects each engagement). `None` on the CLI / Bund paths.
+    pub store: Option<crate::store::Store>,
 }
 
 /// The result of an engagement.
@@ -134,7 +139,7 @@ pub fn engage(input: EngageInput) -> Result<EngageOutcome> {
     // symbol library, open world tensions) as a labelled preamble, so a craft
     // note respects the author's declared world rather than reading blind.
     // Self-disables when nothing is declared.
-    let user = match crate::inner_grounding::build_grounding(&input.project) {
+    let user = match crate::inner_grounding::build_grounding(&input.project, input.store.clone()) {
         Some(g) => format!("{g}\n\n{user}"),
         None => user,
     };

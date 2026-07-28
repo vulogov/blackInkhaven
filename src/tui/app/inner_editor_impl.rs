@@ -400,9 +400,11 @@ impl super::App {
         let snapshot_id = self.store.list_snapshots(id).ok().and_then(|s| s.first().map(|x| x.id));
 
         // 1.8.34 (1b) — hand the worker the App-held store handles so it reuses
-        // the one pool instead of opening a second instance across the LLM call.
+        // the one pool instead of opening a second instance across the LLM call
+        // (inner_editor.db / inner_socrates.db, and the MAIN store for grounding).
         let ie_store = self.inner_editor_store.clone();
         let socrates_store = self.inner_socrates_store.clone();
+        let main_store = self.store.clone();
         self.ie_engage_para = Some(id);
         self.start_bg_job(
             super::BgJobKind::InnerEditorEngage,
@@ -420,6 +422,7 @@ impl super::App {
                     snapshot_id,
                     ie_store,
                     socrates_store,
+                    main_store,
                 );
                 let _ = tx.send(super::BgMsg::Done(result));
             },
@@ -486,6 +489,7 @@ fn run_engagement(
     snapshot_id: Option<Uuid>,
     ie_store: Option<crate::inner_editor::InnerEditorStore>,
     socrates_store: Option<crate::inner_socrates::storage::InnerSocratesStore>,
+    main_store: crate::store::Store,
 ) -> std::result::Result<String, String> {
     use crate::inner_editor::output::{emit_finding, meets_threshold};
     let outcome = crate::inner_editor::engage(crate::inner_editor::EngageInput {
@@ -500,6 +504,7 @@ fn run_engagement(
         force: false,
         ie_store,
         socrates_store,
+        store: Some(main_store),
     })
     .map_err(|e| e.to_string())?;
 
