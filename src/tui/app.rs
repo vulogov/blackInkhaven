@@ -1808,6 +1808,12 @@ pub(crate) struct App {
     /// allocations) every idle repaint (~5×/sec).
     glossary_counts_cache: (usize, usize, usize),
     facts_count_cache: usize,
+    /// 1.8.34 hardening — the banned-synonym (Glossary) style detector, cached so
+    /// the editor doesn't rebuild it — a blocking `fs::read_to_string` per Glossary
+    /// paragraph — on every repaint when style warnings are on. `None` means
+    /// "rebuild on next use"; `reload_hierarchy` drops it (a Glossary edit saves →
+    /// reload_hierarchy → invalidation), the same lifecycle as glossary_counts_cache.
+    glossary_detector_cache: Option<super::style_warnings::BannedSynonymDetector>,
     tree_cursor: usize,
     tree_scroll: usize,
 
@@ -3304,6 +3310,7 @@ impl App {
             thesaurus_pending: None,
             glossary_counts_cache,
             facts_count_cache,
+            glossary_detector_cache: None,
             output_expanded: std::collections::HashSet::new(),
             output_filter: crate::pane::output::OutputFilter::default(),
             output_query_focused: false,
@@ -19056,6 +19063,9 @@ impl App {
     /// Called only on a tree change (`reload_hierarchy`), not per frame.
     pub(super) fn refresh_chip_caches(&mut self) {
         self.glossary_counts_cache = glossary_counts(&self.hierarchy);
+        // 1.8.34 — a tree change may have added/removed/edited a Glossary entry;
+        // drop the cached banned-synonym detector so it rebuilds on next use.
+        self.glossary_detector_cache = None;
         self.facts_count_cache = self.facts_paragraph_ids().len();
     }
 
