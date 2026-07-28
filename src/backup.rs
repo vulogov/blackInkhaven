@@ -154,7 +154,11 @@ pub fn create_backup(
     }
 
     let total = to_include.len();
-    let file = std::fs::File::create(&out_path).map_err(Error::Io)?;
+    // Stream into a sibling `.part` and rename on success, so an interrupted or
+    // full-disk backup never leaves a truncated but valid-looking `.zip` that
+    // `prune_backups` keeps and a restore trusts.
+    let tmp_path = out_path.with_extension("zip.part");
+    let file = std::fs::File::create(&tmp_path).map_err(Error::Io)?;
     let mut zip = ZipWriter::new(file);
     let opts = SimpleFileOptions::default()
         .compression_method(CompressionMethod::Deflated)
@@ -184,6 +188,11 @@ pub fn create_backup(
     }
     zip.finish()
         .map_err(|e| Error::Store(format!("backup: zip finalise: {e}")))?;
+    // Atomically publish the completed archive.
+    std::fs::rename(&tmp_path, &out_path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp_path);
+        Error::Store(format!("backup: finalize {}: {e}", out_path.display()))
+    })?;
 
     // Record the backup timestamp so the TUI's exit hook can decide
     // whether the next session is overdue for another snapshot.

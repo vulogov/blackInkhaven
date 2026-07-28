@@ -614,7 +614,9 @@ fn ensure_paragraph(
     node.content_type = Some("hjson".to_string());
     if let Some(rel) = &node.file {
         let abs = store.project_root().join(rel);
-        std::fs::write(&abs, body.as_bytes())
+        // The on-disk source of truth — write atomically (temp + rename) so a
+        // crash mid-write can't leave a corrupted world leaf.
+        crate::io_atomic::write(&abs, body.as_bytes())
             .map_err(|e| Error::Store(format!("writing {title}: {e}")))?;
     }
     store.update_paragraph_content(&mut node, body.as_bytes())?;
