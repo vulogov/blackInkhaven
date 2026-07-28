@@ -157,6 +157,8 @@ fn engage(
         snapshot_id: None,
         system_override: None,
         force,
+        ie_store: None,
+        socrates_store: None,
     })
     .map_err(|e| Error::Store(format!("{e}")))?;
 

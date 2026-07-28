@@ -47,6 +47,16 @@ pub struct EngageInput {
     pub system_override: Option<String>,
     /// Skip the informative cap warning (manual `--force`).
     pub force: bool,
+    /// 1.8.34 (hardening item 1b) — an App-held `inner_editor.db` handle to reuse
+    /// instead of opening the file afresh here. The engage worker runs off-thread
+    /// and holds its store across the multi-second LLM call; opening a *second*
+    /// instance there collides with the UI's own opens (transient stale/empty
+    /// badges). Passing the shared handle (an `Arc<StorageEngine>` clone) reuses
+    /// the one pool. `None` on the CLI / Bund paths (no App), where a fresh open
+    /// is correct.
+    pub ie_store: Option<InnerEditorStore>,
+    /// Same, for the shared intent ledger in `inner_socrates.db`.
+    pub socrates_store: Option<InnerSocratesStore>,
 }
 
 /// The result of an engagement.
@@ -94,11 +104,20 @@ pub fn engage(input: EngageInput) -> Result<EngageOutcome> {
         input.language.trim().to_string()
     };
 
-    let ie_store = InnerEditorStore::open_for_project(&input.project)
-        .map_err(|e| anyhow!("inner-editor store: {e}"))?;
-    // The shared intent ledger lives in inner_socrates.db; best-effort read.
-    let rows = InnerSocratesStore::open_for_project(&input.project)
-        .ok()
+    // 1.8.34 (1b) — reuse the App-held handle when present (the worker path), so
+    // we don't open a second `inner_editor.db` instance across the LLM call; open
+    // fresh only on the CLI / Bund paths that have no App.
+    let ie_store = match input.ie_store.clone() {
+        Some(s) => s,
+        None => InnerEditorStore::open_for_project(&input.project)
+            .map_err(|e| anyhow!("inner-editor store: {e}"))?,
+    };
+    // The shared intent ledger lives in inner_socrates.db; best-effort read,
+    // reusing the App-held handle when present.
+    let rows = input
+        .socrates_store
+        .clone()
+        .or_else(|| InnerSocratesStore::open_for_project(&input.project).ok())
         .and_then(|s| s.list_intent_rows_raw().ok())
         .unwrap_or_default();
 
