@@ -399,6 +399,10 @@ impl super::App {
         // draft it was made against (findings-over-time across F6 snapshots).
         let snapshot_id = self.store.list_snapshots(id).ok().and_then(|s| s.first().map(|x| x.id));
 
+        // 1.8.34 (1b) — hand the worker the App-held store handles so it reuses
+        // the one pool instead of opening a second instance across the LLM call.
+        let ie_store = self.inner_editor_store.clone();
+        let socrates_store = self.inner_socrates_store.clone();
         self.ie_engage_para = Some(id);
         self.start_bg_job(
             super::BgJobKind::InnerEditorEngage,
@@ -414,6 +418,8 @@ impl super::App {
                     system_override,
                     threshold,
                     snapshot_id,
+                    ie_store,
+                    socrates_store,
                 );
                 let _ = tx.send(super::BgMsg::Done(result));
             },
@@ -478,6 +484,8 @@ fn run_engagement(
     system_override: String,
     threshold: String,
     snapshot_id: Option<Uuid>,
+    ie_store: Option<crate::inner_editor::InnerEditorStore>,
+    socrates_store: Option<crate::inner_socrates::storage::InnerSocratesStore>,
 ) -> std::result::Result<String, String> {
     use crate::inner_editor::output::{emit_finding, meets_threshold};
     let outcome = crate::inner_editor::engage(crate::inner_editor::EngageInput {
@@ -490,6 +498,8 @@ fn run_engagement(
         snapshot_id,
         system_override: Some(system_override),
         force: false,
+        ie_store,
+        socrates_store,
     })
     .map_err(|e| e.to_string())?;
 

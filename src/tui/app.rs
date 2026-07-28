@@ -1785,6 +1785,13 @@ pub(crate) struct App {
     /// eager pool build on every verse navigation). `None` if the store couldn't
     /// be opened at startup.
     poet_store: Option<crate::inner_poet::storage::InnerPoetStore>,
+    /// 1.8.34 (hardening 1b) — shared `inner_editor.db` / `inner_socrates.db`
+    /// handles, opened once at startup and cloned into the engage worker so it
+    /// reuses the one pool instead of opening a second instance across its LLM
+    /// call (which collided with the UI's opens → transient stale badges). Same
+    /// pattern as `poet_store`; `None` if the file couldn't be opened.
+    inner_editor_store: Option<crate::inner_editor::InnerEditorStore>,
+    inner_socrates_store: Option<crate::inner_socrates::storage::InnerSocratesStore>,
     ie_last_engaged_fp: Option<(Uuid, u64)>,
     ie_last_engage_at: Option<std::time::Instant>,
     /// The paragraph a spawned engagement targets, for the completion report.
@@ -3202,6 +3209,14 @@ impl App {
         // moved into the struct), so ambient scans reuse it instead of reopening.
         let poet_store =
             crate::inner_poet::storage::InnerPoetStore::open_for_project(store.project_root()).ok();
+        // 1.8.34 (1b) — open the shared inner_editor / inner_socrates handles once
+        // too, so the engage worker reuses them instead of opening a second
+        // instance across its LLM call.
+        let inner_editor_store =
+            crate::inner_editor::InnerEditorStore::open_for_project(store.project_root()).ok();
+        let inner_socrates_store =
+            crate::inner_socrates::storage::InnerSocratesStore::open_for_project(store.project_root())
+                .ok();
         // 1.8.24 — seed the status-bar chip caches from the loaded hierarchy so the
         // first frame is correct (they're refreshed on every `reload_hierarchy`).
         let glossary_counts_cache = glossary_counts(&hierarchy);
@@ -3258,6 +3273,8 @@ impl App {
             poet_ambient: false,
             poet_ambient_fp: None,
             poet_store,
+            inner_editor_store,
+            inner_socrates_store,
             slow_auto: false,
             slow_auto_para: None,
             fc_slow_last_fp: None,

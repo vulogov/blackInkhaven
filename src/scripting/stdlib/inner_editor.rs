@@ -204,6 +204,8 @@ fn do_engage(vm: &mut VM) -> Result<&mut VM> {
         snapshot_id: None,
         system_override: None,
         force: true,
+        ie_store: None,
+        socrates_store: None,
     })
     .map_err(|e| anyhow!("{tag}: {e}"))?;
     let items: Vec<Value> = outcome
