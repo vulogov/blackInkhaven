@@ -556,6 +556,7 @@ impl super::App {
             detected_language: None,
             detected_language_length: 0,
             highlight_cache: None,
+            lex_cache: None,
         });
         // 1.2.15+ Phase R.1 — register the open
         // paragraph with the crash-report context so
@@ -902,6 +903,9 @@ impl super::App {
                 let (lex, lang_index) =
                     build_lexicon(&self.hierarchy, &self.cfg, &self.store);
                 self.lexicon = lex;
+                // 1.8.33+ hardening — a rebuilt lexicon invalidates the editor's
+                // per-row lexicon-hit cache (keyed on this generation).
+                self.lexicon_generation = self.lexicon_generation.wrapping_add(1);
                 self.language_entries = lang_index;
                 // 1.8.24 — refresh the status-bar chip counts here (a tree change
                 // is the only thing that moves them) so the chips don't rescan the
@@ -1033,6 +1037,7 @@ impl super::App {
             detected_language: None,
             detected_language_length: 0,
             highlight_cache: None,
+            lex_cache: None,
         });
         self.secondary_focused = false;
         self.status = format!(

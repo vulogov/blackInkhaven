@@ -23,7 +23,7 @@ use super::super::super::highlight::{
 use super::super::super::inference::{AiMode, InferenceStatus};
 use super::super::super::modal::PromptSource;
 use super::super::super::search_replace::{row_matches, RowMatch};
-use super::super::super::state::{HighlightCache, LinkPickDirection};
+use super::super::super::state::{HighlightCache, LexCache, LinkPickDirection};
 use super::super::super::status_helpers::status_style;
 use super::super::super::text_utils::{
     format_age_humantime, format_reading_time,
@@ -851,6 +851,7 @@ impl super::super::App {
 
         let block = self.current_block();
         let lexicon = &self.lexicon;
+        let lex_gen = self.lexicon_generation;
         let theme = &self.theme;
         let Some(opened) = self.opened.as_mut() else {
             return;
@@ -924,16 +925,33 @@ impl super::super::App {
             .collect();
 
         // Per-row Place/Character matches.
-        let lex_per_row: Vec<Vec<super::super::super::lexicon::LexHit>> = current_lines
-            .iter()
-            .map(|line| {
-                if lexicon.is_empty() {
-                    Vec::new()
-                } else {
-                    lexicon.row_hits(line)
-                }
-            })
-            .collect();
+        // 1.8.33+ hardening — reuse the memoized per-row lexicon hits when the
+        // buffer and the lexicon are both unchanged, so the whole-buffer Porter
+        // stem pass doesn't re-run on idle frames.
+        let lex_per_row: Vec<Vec<super::super::super::lexicon::LexHit>> = {
+            let lex_hit = opened
+                .lex_cache
+                .as_ref()
+                .is_some_and(|c| c.content_hash == content_hash && c.lexicon_generation == lex_gen);
+            if !lex_hit {
+                let computed: Vec<Vec<super::super::super::lexicon::LexHit>> = current_lines
+                    .iter()
+                    .map(|line| {
+                        if lexicon.is_empty() {
+                            Vec::new()
+                        } else {
+                            lexicon.row_hits(line)
+                        }
+                    })
+                    .collect();
+                opened.lex_cache = Some(LexCache {
+                    content_hash,
+                    lexicon_generation: lex_gen,
+                    rows: computed,
+                });
+            }
+            opened.lex_cache.as_ref().unwrap().rows.clone()
+        };
 
         // 1.2.9+ — style-warning overlays.  Effective
         // enable flag is the session toggle if set, else
@@ -1244,6 +1262,7 @@ impl super::super::App {
 
         let block = self.current_block();
         let lexicon = &self.lexicon;
+        let lex_gen = self.lexicon_generation;
         let theme = &self.theme;
         let Some(opened) = self.opened.as_mut() else {
             return;
@@ -1309,16 +1328,33 @@ impl super::super::App {
             })
             .collect();
 
-        let lex_per_row: Vec<Vec<super::super::super::lexicon::LexHit>> = current_lines
-            .iter()
-            .map(|line| {
-                if lexicon.is_empty() {
-                    Vec::new()
-                } else {
-                    lexicon.row_hits(line)
-                }
-            })
-            .collect();
+        // 1.8.33+ hardening — reuse the memoized per-row lexicon hits when the
+        // buffer and the lexicon are both unchanged, so the whole-buffer Porter
+        // stem pass doesn't re-run on idle frames.
+        let lex_per_row: Vec<Vec<super::super::super::lexicon::LexHit>> = {
+            let lex_hit = opened
+                .lex_cache
+                .as_ref()
+                .is_some_and(|c| c.content_hash == content_hash && c.lexicon_generation == lex_gen);
+            if !lex_hit {
+                let computed: Vec<Vec<super::super::super::lexicon::LexHit>> = current_lines
+                    .iter()
+                    .map(|line| {
+                        if lexicon.is_empty() {
+                            Vec::new()
+                        } else {
+                            lexicon.row_hits(line)
+                        }
+                    })
+                    .collect();
+                opened.lex_cache = Some(LexCache {
+                    content_hash,
+                    lexicon_generation: lex_gen,
+                    rows: computed,
+                });
+            }
+            opened.lex_cache.as_ref().unwrap().rows.clone()
+        };
 
         // 1.2.9+ — style-warning overlays.  Effective
         // enable flag is the session toggle if set, else

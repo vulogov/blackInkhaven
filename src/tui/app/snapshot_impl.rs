@@ -507,6 +507,7 @@ impl super::App {
             detected_language: None,
             detected_language_length: 0,
             highlight_cache: None,
+            lex_cache: None,
         });
         self.secondary_focused = false;
         self.modal = Modal::None;
