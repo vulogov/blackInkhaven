@@ -24,16 +24,25 @@ not just a four-function calculator — it knows the domains a book actually nee
 unit conversions, geography, astronomy, climate, economics.
 
 ```
-/calc 100 mi to km
+/calc 100 mi2km
 ```
 
-Convert Roman miles to kilometres so your distances are consistent. Compute the
-great-circle distance between two sets of coordinates — the *haversine* — so a
+#screen(caption: "/calc — a deterministic conversion, ready to keep")[```
+> /calc 100 mi2km
+= 160.9344
+
+  computed (deterministic) — /fact to record it
+```]
+
+The expression is read *postfix*: the value first, then the operation word
+(`100 mi2km`, not `100 mi to km`). Convert Roman miles to kilometres so your
+distances are consistent. Compute the great-circle distance between two sets of
+coordinates — the *haversine* (`51.5 -0.13 40.71 -74.0 calc.haversine`) — so a
 journey's length is real rather than guessed. Grow a figure by a rate over years
-with compound interest. Reduce a list of numbers to a sum or an average. In each
-case the result comes back as a value you can keep with `/fact`, and its
-provenance reads `computed` — the top rung — because the answer is not a claim
-anyone vouched for but a calculation anyone can repeat.
+with compound interest. Reduce a list of numbers to a sum or an average
+(`[ 1 2 3 ] calc.mean`). In each case the result comes back as a value you can
+keep with `/fact`, and its provenance reads `computed` — the top rung — because
+the answer is not a claim anyone vouched for but a calculation anyone can repeat.
 
 #compute_climb()
 
@@ -71,19 +80,35 @@ world and materialise the results as facts you can research like any other.
 
 #term("The World book")[
   The *World* book holds a project's own deterministic simulation, compiled from a
-  small definition: a star, a planet, its moons. From that, Inkhaven derives an
-  astronomy (the length of the year in planet-days, axial tilt, seasons, lunar
-  cycles, tides), a climate, a geography, a rough demography — and files them as
-  facts. Because they are computed from a seed, they are consistent with each
-  other and reproducible: the same world definition always yields the same world.
+  small definition: a star, a planet, its moons. From that, Inkhaven derives five
+  layers — *astronomy* (the length of the year in planet-days, axial tilt, seasons,
+  lunar cycles, tides), *geology*, *climate*, *hydrology*, and a rough *demographics*
+  — and files them as facts. Because they are computed from a seed, they are
+  consistent with each other and reproducible: the same world definition always
+  yields the same world.
 ]
 
 Once a world is compiled, `/world` lets you browse those simulated facts the way
-you browse any part of your corpus, and `/calc` can *read* them — computing new
-answers from your world's own constants. A `/fact` taken from the World book
-records `simulation` provenance: another top-of-the-ladder rung, deterministic for
-exactly the same reason `computed` is — re-run the simulation and you get the same
-world.
+you browse any part of your corpus. Bare, it lists the layers; `/world <layer>`
+shows that layer's facts:
+
+#screen(caption: "/world — the simulation's layers")[```
+> /world
+World layers — use /world <layer>:
+• Astronomy
+• Geology
+• Climate
+• Hydrology
+• Demographics
+
+A /fact from a /world result records origin=simulation
+(deterministic).
+```]
+
+And `/calc` can *read* those facts — computing new answers from your world's own
+constants. A `/fact` taken from the World book records `simulation` provenance:
+another top-of-the-ladder rung, deterministic for exactly the same reason
+`computed` is — re-run the simulation and you get the same world.
 
 #callout(label: "Invented, but not arbitrary")[
   A simulated world fact is *invented* in the sense that the world is yours — but

@@ -52,6 +52,19 @@ The Assistant looks the entity up and shows you a compact card: the thing's name
 a short description, and its key properties as clean subject–property–value lines
 — cited by the entity's id.
 
+#screen(caption: "/wikidata — a structured card, cited by Q-id")[```
+> /wikidata Roman aqueduct
+
+Roman aqueduct (Q1329188) — aqueduct built in
+ancient Rome
+• instance of: aqueduct
+• country: Roman Empire
+• use: water supply
+
+Source: Wikidata Q1329188
+  · https://www.wikidata.org/wiki/Q1329188
+```]
+
 #term("Q-id")[
   Every Wikidata entity has a *Q-id* — a stable code like `Q220` (the city of
   Rome). It never changes, so a fact cited by Q-id can be re-checked years later.
@@ -88,6 +101,18 @@ You get a card — the place's name, its region and country, its type (*capital 
 a political entity*, *populated place*, *stream*), its coordinates, its population
 — cited by a GeoNames id. Like Wikidata, it is structured, so a `/fact` from it
 skips the check and records `geonames` provenance.
+
+#screen(caption: "/geonames — a real place from the gazetteer")[```
+> /geonames Rome
+
+Rome — Latium, Italy
+Type: capital of a political entity
+Coordinates: 41.89193, 12.51133
+Population: 2318895
+
+Source: GeoNames #3169070
+  · https://www.geonames.org/3169070
+```]
 
 #term("Gazetteer")[
   A *gazetteer* is a geographical dictionary: a database of place names with their

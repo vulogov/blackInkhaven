@@ -69,7 +69,8 @@ corpus:
 It searches the catalogue, fetches the book's text, strips the boilerplate, and
 *ingests* it — breaks it into passages and files them as research material,
 credited to the book. From then on, when you ask a question, the relevant passages
-of that book can be retrieved and quoted back to you, cited as `[source: <title>]`.
+of that book can be retrieved and quoted back to you, cited by its source name as
+`[source: <name>]`.
 
 #term("Ingesting a source")[
   To *ingest* a source is to bring its full text into your corpus, split into
@@ -82,8 +83,10 @@ of that book can be retrieved and quoted back to you, cited as `[source: <title>
 Because Gutendex (the catalogue behind `/gutenberg`) searches by *title, author,
 and subject*, you find the book by its metadata; the passage-level searching
 happens afterwards, inside your own corpus. If the top hit is not the edition you
-want, the reply lists alternatives by their catalogue number, and you can ingest a
-specific one — or even a single chapter of a long book — by asking for it directly.
+want, the reply lists alternatives by their Project Gutenberg number — pass that
+number directly, `/gutenberg 1342`, to fetch that exact edition. And to ingest just
+one chapter of a long book rather than the whole of it, add the `--chapter` flag:
+`/gutenberg --chapter 3 1342`.
 
 #two_track(
   [Ingest a period text — a Victorian novel, a real memoir, a public-domain

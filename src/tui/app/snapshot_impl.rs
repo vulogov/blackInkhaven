@@ -506,6 +506,7 @@ impl super::App {
             typst_diag_last_fired: None,
             detected_language: None,
             detected_language_length: 0,
+            highlight_cache: None,
         });
         self.secondary_focused = false;
         self.modal = Modal::None;

@@ -182,6 +182,15 @@ impl DocumentStorage {
         self.vectors.sync()
     }
 
+    /// 1.8.32+ hardening — flush the vector index off the calling thread. Use
+    /// this on the render/UI thread's routine save paths so serializing the HNSW
+    /// index to disk doesn't freeze the editor; the underlying content is already
+    /// durable, and the index is a rebuildable derived artifact. See
+    /// [`crate::storage::vector::VectorEngine::sync_in_background`].
+    pub fn sync_in_background(&self) {
+        self.vectors.sync_in_background()
+    }
+
     /// Issue a DuckDB `CHECKPOINT` against both sub-stores
     /// (`metadata.db` + `blobs.db`). Drains WAL into the main `.db`
     /// files; cheap when there's nothing to drain (DuckDB short-

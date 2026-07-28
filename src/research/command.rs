@@ -135,6 +135,7 @@ pub(super) const SPECS: &[CommandSpec] = &[
     CommandSpec { name: "verify", summary: "confidence-probe the last response", usage: "/verify" },
     CommandSpec { name: "factcheck", summary: "audit the corpus (truth + consistency)", usage: "/factcheck" },
     CommandSpec { name: "undisputed", summary: "common-sense check of authorial facts", usage: "/undisputed" },
+    CommandSpec { name: "review", summary: "triage untrusted agentic-emitted facts", usage: "/review" },
     CommandSpec { name: "synthesize", summary: "grounded, cited synthesis from your facts", usage: "/synthesize <topic>" },
     CommandSpec { name: "outline", summary: "a structured, fact-citing outline", usage: "/outline <topic>" },
     CommandSpec { name: "gaps", summary: "open questions the corpus doesn't answer", usage: "/gaps <topic>" },

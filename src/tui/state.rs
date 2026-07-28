@@ -241,6 +241,28 @@ pub(super) struct OpenedDoc {
     /// cached `detected_language` is still trustworthy after an
     /// edit, or whether to recompute.
     pub detected_language_length: usize,
+    /// 1.8.32+ hardening — cached whole-buffer syntax highlight. The editor
+    /// redraws unconditionally every frame (~5×/sec even when idle); recomputing
+    /// the tree-sitter / lexer pass over the entire buffer each time is the
+    /// single largest per-frame cost. This memoizes the result keyed by the
+    /// buffer's content hash and content type, so an idle frame skips the parse
+    /// entirely. Any edit changes the hash (a miss → recompute); a fresh
+    /// `OpenedDoc` starts empty, so opening another paragraph resets it. Theme is
+    /// fixed for a session and the highlight is per *source* line (independent of
+    /// wrap width), so neither participates in the key.
+    pub highlight_cache: Option<HighlightCache>,
+}
+
+/// 1.8.32+ — memoized syntax highlight for one buffer state (see
+/// [`OpenedDoc::highlight_cache`]).
+pub(super) struct HighlightCache {
+    /// Hash of the buffer lines the highlight was computed from.
+    pub content_hash: u64,
+    /// The content type it was highlighted as (`hjson` / `bund` / typst / …);
+    /// part of the key because it selects the highlighter.
+    pub content_type: Option<String>,
+    /// One styled-run list per source line.
+    pub lines: Vec<Vec<crate::tui::highlight::StyledRun>>,
 }
 
 pub(super) struct SplitView {

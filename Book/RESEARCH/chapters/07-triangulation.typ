@@ -34,17 +34,20 @@ conversation:
 /triangulate the aqueduct carried about a million cubic metres of water per day
 ```
 
-The Assistant queries the structured and scholarly sources *concurrently*,
-gathers what each one says, and then judges the evidence — reporting, per source,
-whether it *supports*, *contradicts*, or is *silent* on the claim, and a bottom
-line of how many concur.
+The Assistant queries Wikidata and the two scholarly indexes — OpenAlex and arXiv
+— in one background pass, gathers what each one says, and then judges the evidence
+— reporting, per source, whether it *supports*, *contradicts*, or is *silent* on
+the claim, and a bottom line of how many concur.
 
-```
+#screen(caption: "/triangulate — three sources, one verdict")[```
+> /triangulate the aqueduct carried about a million
+  cubic metres of water per day
+
 Wikidata: SILENT — no capacity statement for this entity
-OpenAlex: SUPPORTS — the cited work gives a comparable daily figure
+OpenAlex: SUPPORTS — the cited work gives a daily figure
 arXiv:    SILENT — the preprint models flow, not capacity
-Agreement: 1/3 support, 0 contradict
-```
+Agreement: 1/3 support
+```]
 
 The important discipline: the model here is judging *external evidence*, not
 grading its own earlier answer. That is what makes the verdict mean something.
@@ -103,8 +106,8 @@ both.
 #recap((
   [*Triangulation* tests a claim against several *independent* sources at once and
    judges *agreement*, not mere authority.],
-  [`/triangulate` queries the structured + scholarly sources concurrently and
-   reports each as SUPPORTS / CONTRADICTS / SILENT, with a concurrence tally.],
+  [`/triangulate` queries Wikidata and the two scholarly indexes (OpenAlex, arXiv)
+   in one pass and reports each as SUPPORTS / CONTRADICTS / SILENT, with a tally.],
   [The model judges *external evidence*, not its own answer — which is what makes
    the verdict trustworthy; `SILENT` is information, not failure.],
   [`research.triangulate_gate` makes cross-source agreement the automatic gate for

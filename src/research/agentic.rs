@@ -132,7 +132,7 @@ pub(crate) fn run(
         let take = pending.len().min(budget);
         dropped += pending.len() - take;
         rounds += 1;
-        eprintln!("⟳ agentic round {rounds}: {take} sub-question(s)");
+        eprintln!("» agentic round {rounds}: {take} sub-question(s)");
         for q in pending.iter().take(take) {
             eprintln!("· {q}");
             let o = process_one_tagged(
@@ -152,7 +152,7 @@ pub(crate) fn run(
         let emitted_ids: Vec<uuid::Uuid> = outcomes.iter().filter_map(|o| o.inserted_id).collect();
         for c in detect_contradictions(layout, store, &ai, &model, language, &emitted_ids) {
             if !clashes.iter().any(|x| x.0 == c.0 && x.1 == c.1) {
-                eprintln!("⚠ contradiction: {} ⇄ {}", short(&c.0), short(&c.1));
+                eprintln!("! contradiction: {} ⇄ {}", short(&c.0), short(&c.1));
                 clashes.push(c);
             }
         }
@@ -183,11 +183,11 @@ pub(crate) fn run(
     let clash_note = if clashes.is_empty() {
         String::new()
     } else {
-        format!(" · ⚠ {} contradiction(s) among the emitted facts — resolve before trusting", clashes.len())
+        format!(" · ! {} contradiction(s) among the emitted facts — resolve before trusting", clashes.len())
     };
     eprintln!(
         "✓ agentic run complete — {emitted} Fact(s) over {rounds} round(s), {}{clash_note} \
-         (model provenance, untrusted). Review in the Facts book: promote, dispute, or /factcheck.",
+         (model provenance, untrusted). Triage in the Facts book: /review, then /factcheck.",
         stop.describe()
     );
     Ok(())
@@ -367,7 +367,7 @@ fn render_report(
     }
     if !clashes.is_empty() {
         s.push_str(&format!(
-            "## ⚠ Contradictions among the emitted facts ({})\n\n\
+            "## ! Contradictions among the emitted facts ({})\n\n\
              Resolve these before trusting the affected facts (`/contradict` re-scans them).\n\n",
             clashes.len()
         ));
