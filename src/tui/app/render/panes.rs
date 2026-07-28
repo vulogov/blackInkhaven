@@ -30,9 +30,10 @@ use super::super::super::text_utils::{
 };
 
 /// 1.8.32+ hardening — a stable hash of the editor buffer's lines, used as the
-/// key for [`HighlightCache`]. Same line-by-line hashing as `content_fingerprint`
-/// so the two agree on what "unchanged" means.
-fn buffer_content_hash(lines: &[String]) -> u64 {
+/// key for [`HighlightCache`] / [`LexCache`]. Same line-by-line hashing as
+/// `content_fingerprint` so the two agree on what "unchanged" means. Shared with
+/// the status bar's POV chip so it can validate the editor's cached hits.
+pub(in crate::tui::app) fn buffer_content_hash(lines: &[String]) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     for l in lines {
