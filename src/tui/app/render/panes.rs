@@ -1038,16 +1038,24 @@ impl super::super::App {
         // detector → short-circuited line scan. Store/hierarchy field accesses
         // keep the borrow disjoint from the `self.opened` borrow above. The live
         // overlay applies the whole Glossary; `terms check --book` scopes per book.
+        // 1.8.34 hardening — reuse the cached banned-synonym detector, rebuilding
+        // it (a blocking fs read per Glossary paragraph) only after it was
+        // invalidated in reload_hierarchy, instead of on every repaint. Writing
+        // self.glossary_detector_cache + reading self.store/self.hierarchy are
+        // disjoint from the self.opened borrow held above.
         let glossary_detector = if style_enabled
             && self.terms_overlay_toggle.unwrap_or(true)
         {
-            Some(
-                super::super::super::style_warnings::BannedSynonymDetector::from_store(
-                    &self.store,
-                    &self.hierarchy,
-                    None,
-                ),
-            )
+            if self.glossary_detector_cache.is_none() {
+                self.glossary_detector_cache = Some(
+                    super::super::super::style_warnings::BannedSynonymDetector::from_store(
+                        &self.store,
+                        &self.hierarchy,
+                        None,
+                    ),
+                );
+            }
+            self.glossary_detector_cache.as_ref()
         } else {
             None
         };
@@ -1441,16 +1449,24 @@ impl super::super::App {
         // detector → short-circuited line scan. Store/hierarchy field accesses
         // keep the borrow disjoint from the `self.opened` borrow above. The live
         // overlay applies the whole Glossary; `terms check --book` scopes per book.
+        // 1.8.34 hardening — reuse the cached banned-synonym detector, rebuilding
+        // it (a blocking fs read per Glossary paragraph) only after it was
+        // invalidated in reload_hierarchy, instead of on every repaint. Writing
+        // self.glossary_detector_cache + reading self.store/self.hierarchy are
+        // disjoint from the self.opened borrow held above.
         let glossary_detector = if style_enabled
             && self.terms_overlay_toggle.unwrap_or(true)
         {
-            Some(
-                super::super::super::style_warnings::BannedSynonymDetector::from_store(
-                    &self.store,
-                    &self.hierarchy,
-                    None,
-                ),
-            )
+            if self.glossary_detector_cache.is_none() {
+                self.glossary_detector_cache = Some(
+                    super::super::super::style_warnings::BannedSynonymDetector::from_store(
+                        &self.store,
+                        &self.hierarchy,
+                        None,
+                    ),
+                );
+            }
+            self.glossary_detector_cache.as_ref()
         } else {
             None
         };
