@@ -2026,6 +2026,12 @@ pub(crate) struct App {
     /// lexicon — render path skips work.
     lexicon: super::lexicon::Lexicon,
 
+    /// 1.8.33+ hardening — bumped each time `lexicon` is rebuilt. Part of the key
+    /// for the editor's per-row lexicon-hit cache (`OpenedDoc::lex_cache`), so a
+    /// rebuilt lexicon invalidates the memoized `row_hits` pass even though the
+    /// buffer text is unchanged.
+    lexicon_generation: u64,
+
     /// 1.2.13+ Phase B.2 — side-product of `build_lexicon`.
     /// Maps lowercased surface forms (lemma + every
     /// paradigm form parsed out of dictionary entry HJSON
@@ -3330,6 +3336,7 @@ impl App {
                 .map_err(|e| anyhow::anyhow!("typst highlighter init: {e}"))?,
             theme,
             lexicon,
+            lexicon_generation: 0,
             language_entries,
             inference: None,
             lift_target: None,
