@@ -740,6 +740,14 @@ symbol/motif proposals you can accept straight into this book.";
         self.inner.sync().map_err(|e| Error::Store(e.to_string()))
     }
 
+    /// 1.8.32+ hardening — flush the derived vector index off the calling
+    /// thread (used by the editor's routine save path so serializing the HNSW
+    /// index never freezes the render thread). See
+    /// [`crate::storage::document::DocumentStorage::sync_in_background`].
+    pub fn sync_in_background(&self) {
+        self.inner.sync_in_background()
+    }
+
     /// Drain DuckDB's WAL into the main `.db` files. Used by the
     /// background sync tick and the TUI shutdown path; per-save
     /// callers don't need this because every commit is already

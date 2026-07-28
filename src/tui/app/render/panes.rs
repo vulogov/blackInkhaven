@@ -23,11 +23,23 @@ use super::super::super::highlight::{
 use super::super::super::inference::{AiMode, InferenceStatus};
 use super::super::super::modal::PromptSource;
 use super::super::super::search_replace::{row_matches, RowMatch};
-use super::super::super::state::LinkPickDirection;
+use super::super::super::state::{HighlightCache, LinkPickDirection};
 use super::super::super::status_helpers::status_style;
 use super::super::super::text_utils::{
     format_age_humantime, format_reading_time,
 };
+
+/// 1.8.32+ hardening — a stable hash of the editor buffer's lines, used as the
+/// key for [`HighlightCache`]. Same line-by-line hashing as `content_fingerprint`
+/// so the two agree on what "unchanged" means.
+fn buffer_content_hash(lines: &[String]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for l in lines {
+        l.hash(&mut h);
+    }
+    h.finish()
+}
 
 
 impl super::super::App {
@@ -846,7 +858,24 @@ impl super::super::App {
         let highlighter = &mut self.highlighter;
         let current_lines: Vec<String> = opened.textarea.lines().to_vec();
         let source = current_lines.join("\n");
-        let highlighted = highlight_for_content(highlighter, &source, theme, opened.content_type.as_deref());
+        // 1.8.32+ hardening — reuse the memoized highlight when the buffer and
+        // content type are unchanged; the editor repaints every frame, so this
+        // skips the whole-buffer tree-sitter / lexer pass on idle frames.
+        let content_hash = buffer_content_hash(&current_lines);
+        let cache_hit = opened
+            .highlight_cache
+            .as_ref()
+            .is_some_and(|c| c.content_hash == content_hash && c.content_type == opened.content_type);
+        if !cache_hit {
+            let computed =
+                highlight_for_content(highlighter, &source, theme, opened.content_type.as_deref());
+            opened.highlight_cache = Some(HighlightCache {
+                content_hash,
+                content_type: opened.content_type.clone(),
+                lines: computed,
+            });
+        }
+        let highlighted = opened.highlight_cache.as_ref().unwrap().lines.clone();
 
         // Precompute "added since last save" bitmaps per source row.
         let saved = &opened.saved_lines;
@@ -1222,7 +1251,24 @@ impl super::super::App {
         let highlighter = &mut self.highlighter;
         let current_lines: Vec<String> = opened.textarea.lines().to_vec();
         let source = current_lines.join("\n");
-        let highlighted = highlight_for_content(highlighter, &source, theme, opened.content_type.as_deref());
+        // 1.8.32+ hardening — reuse the memoized highlight when the buffer and
+        // content type are unchanged; the editor repaints every frame, so this
+        // skips the whole-buffer tree-sitter / lexer pass on idle frames.
+        let content_hash = buffer_content_hash(&current_lines);
+        let cache_hit = opened
+            .highlight_cache
+            .as_ref()
+            .is_some_and(|c| c.content_hash == content_hash && c.content_type == opened.content_type);
+        if !cache_hit {
+            let computed =
+                highlight_for_content(highlighter, &source, theme, opened.content_type.as_deref());
+            opened.highlight_cache = Some(HighlightCache {
+                content_hash,
+                content_type: opened.content_type.clone(),
+                lines: computed,
+            });
+        }
+        let highlighted = opened.highlight_cache.as_ref().unwrap().lines.clone();
 
         let saved = &opened.saved_lines;
         let added_per_row: Vec<Vec<bool>> = current_lines
@@ -2704,4 +2750,32 @@ impl super::super::App {
         f.render_widget(body, rect);
     }
 
+}
+
+#[cfg(test)]
+mod highlight_cache_tests {
+    use super::buffer_content_hash;
+
+    #[test]
+    fn hash_is_stable_for_identical_buffers() {
+        let a = vec!["line one".to_string(), "line two".to_string()];
+        let b = vec!["line one".to_string(), "line two".to_string()];
+        assert_eq!(buffer_content_hash(&a), buffer_content_hash(&b));
+    }
+
+    #[test]
+    fn hash_changes_when_content_changes() {
+        let base = vec!["the cat".to_string(), "sat".to_string()];
+        let edited = vec!["the cat".to_string(), "sat down".to_string()];
+        assert_ne!(buffer_content_hash(&base), buffer_content_hash(&edited));
+    }
+
+    #[test]
+    fn line_boundary_shifts_change_the_hash() {
+        // Hashing per line (not the joined string) so a line split/merge that
+        // keeps the same characters still invalidates the cache.
+        let one = vec!["ab".to_string()];
+        let two = vec!["a".to_string(), "b".to_string()];
+        assert_ne!(buffer_content_hash(&one), buffer_content_hash(&two));
+    }
 }

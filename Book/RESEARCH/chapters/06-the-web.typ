@@ -56,15 +56,21 @@ its provenance records the verdict.
 
 `/web` has two modes, and knowing which you want is the whole skill.
 
-The default is what we just described: *ground a cited answer* on the fetched
-pages, and let you `/fact` from it through the checking gate. Use this when you
-want an *answer* — a specific claim, checked and kept.
+The *answer* mode is what we just described: *ground a cited answer* on the fetched
+pages, and let you `/fact` from it through the checking gate. Force it with
+`/web --chat <query>`. Use this when you want an *answer* — a specific claim,
+checked and kept.
 
-The other mode, `/web --ingest`, *embeds the pages themselves* into your corpus —
-the same ingestion you met with `/gutenberg`, but from the live web. No model
-answers; the pages simply become searchable, quotable research material. Use this
-when you want the *material*, not a single answer — when you are gathering a body
-of reading to draw on repeatedly.
+The other mode, `/web --ingest <query>`, *embeds the pages themselves* into your
+corpus — the same ingestion you met with `/gutenberg`, but from the live web. No
+model answers; the pages simply become searchable, quotable research material. Use
+this when you want the *material*, not a single answer — when you are gathering a
+body of reading to draw on repeatedly.
+
+Bare `/web <query>` — with no flag — does whichever your project prefers: the
+`research.web.pipeline` setting (default `"chat"`, the answer mode) decides. Set it
+to `"ingest"` if gathering material is your usual intent, and reach for the explicit
+flag whenever you want the other mode for one query.
 
 #two_track(
   [Chase texture and detail quickly — the smell of a trade, the layout of a

@@ -167,21 +167,52 @@ impl VectorEngine {
         if !self.dirty.load(Ordering::Acquire) {
             return Ok(());
         }
-        let mut guard = self.store.lock();
-        // Racing concurrent sync may have already drained the dirty
-        // flag while we were waiting for the lock.
+        Self::drain_dirty(&self.store, &self.dirty)
+    }
+
+    /// 1.8.32+ hardening — flush the index **off the calling thread**. The vector
+    /// index is a *derived* artifact (embeddings of content that is already
+    /// durable via the metadata/blob stores' per-commit fsync), and its
+    /// `VecStore::save` writes atomically (temp file + rename), so a crash
+    /// mid-flush keeps the last good index and the pending embedding is
+    /// recomputed on next access — no user data is at risk. Backgrounding it
+    /// keeps a routine paragraph save from freezing the editor's render thread
+    /// while the whole HNSW index is serialized to disk. Clean (`!dirty`) syncs
+    /// don't spawn; the periodic background tick and the quit-path `sync()` stay
+    /// synchronous, so the index always converges.
+    pub fn sync_in_background(&self) {
         if !self.dirty.load(Ordering::Acquire) {
+            return;
+        }
+        let store = self.store.clone();
+        let dirty = self.dirty.clone();
+        std::thread::spawn(move || {
+            if let Err(e) = Self::drain_dirty(&store, &dirty) {
+                tracing::warn!(
+                    target: "inkhaven::storage::vector",
+                    "background vector sync failed: {e}",
+                );
+            }
+        });
+    }
+
+    /// The shared flush body for [`Self::sync`] and [`Self::sync_in_background`]:
+    /// under the store lock, re-check the dirty flag (a racing sync may have
+    /// drained it while we waited), then atomically save and clear it.
+    fn drain_dirty(store: &Mutex<Option<VecStore>>, dirty: &AtomicBool) -> Result<()> {
+        let mut guard = store.lock();
+        if !dirty.load(Ordering::Acquire) {
             return Ok(());
         }
         let Some(s) = guard.as_mut() else {
             // Shouldn't happen — writes lazily open the store before
             // they can flip dirty — but stay defensive.
-            self.dirty.store(false, Ordering::Release);
+            dirty.store(false, Ordering::Release);
             return Ok(());
         };
         match s.save() {
             Ok(()) => {
-                self.dirty.store(false, Ordering::Release);
+                dirty.store(false, Ordering::Release);
                 Ok(())
             }
             Err(e) => Err(anyhow!("failed to sync vector store: {e}")),

@@ -35,7 +35,7 @@ up.
 
 #gloss("Fact")[A specific, checkable claim your writing rests on — a date, number, name, cause — the opposite of a thing you invented. Grounding the checkable kind is the craft of this book.]
 
-#gloss("Fact-check gate")[For a fact drawn from the web or the model, a single-claim accuracy check the gate runs before the fact commits. ACCURATE passes; DUBIOUS / INACCURATE shows its reasoning and asks you to confirm again. It informs; it never blocks.]
+#gloss("Fact-check gate")[For a fact drawn from the web, the model, or an imported document, a single-claim accuracy check the gate runs before the fact commits. ACCURATE passes; DUBIOUS / INACCURATE shows its reasoning and asks you to confirm again. It informs; it never blocks.]
 
 #gloss("Gazetteer")[A geographical dictionary: a database of place names with their locations, regions, feature types, and populations. `/geonames` reads one.]
 

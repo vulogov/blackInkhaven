@@ -27,7 +27,7 @@ the right, a status line beneath:
 │   ※ (novel: café on │                           │
 │      Kärntnerstraße)│ /fact → keep as a Fact?   │
 ├─────────────────────┴───────────────────────────┤
-│ default · 4 facts · $0.02 · ✓ ? ※ · ? help      │
+│ [RAG: Facts+Full] · $0.02 · ?:help q:quit       │
 └─────────────────────────────────────────────────┘
 ```]
 
@@ -69,11 +69,12 @@ a fact, look this place up in a gazetteer, cross-check this against three source
 Commands are for *acting*: turning a loose exchange into something durable.
 
 #callout(label: "You don't have to memorise the commands")[
-  Type a single `/` and a *command palette* opens — a searchable list of every
-  command with a one-line description. You can browse, filter by typing, and pick
-  one without ever having learned its name. Throughout this book, when a command
-  is introduced, that palette is where you would rediscover it later. Learn the
-  workflow; let the palette remember the spelling.
+  Type a single `/` and a *hint bar* appears beneath the prompt, listing the
+  commands that match what you have typed so far and narrowing as you add letters;
+  press `Tab` to complete the one you want. For the whole set with one-line
+  descriptions, `Ctrl+B h` opens the full reference. Throughout this book, when a
+  command is introduced, those two — the hint bar and `Ctrl+B h` — are where you
+  rediscover it later. Learn the workflow; let the hint bar remember the spelling.
 ]
 
 #section("The arc of a project")
@@ -122,7 +123,7 @@ undo.
    a *conversation* on the right, and the traffic between them is the workflow.],
   [*Threads* keep separate lines of inquiry apart and persist between sessions.],
   [You speak in *plain language* to think and explore, or in *slash commands* to
-   act; a `/` palette means you never have to memorise a command.],
+   act; a `/` hint bar and `Ctrl+B h` mean you never have to memorise a command.],
   [A project moves around a loop — *acquire → cross-check → maintain → compose* —
    and the tool is built to carry you around it.],
   [The Assistant writes only to your research books and never edits your prose, so

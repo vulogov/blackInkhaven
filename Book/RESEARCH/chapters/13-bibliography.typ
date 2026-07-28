@@ -116,11 +116,12 @@ this part you *composed* it back out — a cited synthesis, a working outline, a
 of what's missing, and a bibliography that built itself. The knowledge base that
 began as an empty tree has become something that writes back into your book.
 
-Two things remain. Everything so far has been hands-on, one command at a time — but
-some research is better done in bulk, headlessly, while you do something else; that
-is the next part. And then a single worked example, start to finish, to see the
-whole workflow move as one. The tools are all in your hands now; what's left is
-learning to run them at scale and in concert.
+A few things remain. Everything so far has been hands-on, one command at a time —
+but some research is better done in bulk, headlessly, while you do something else,
+and some can be handed to an assistant that plans its own questions; those are the
+next chapters. And then a single worked example, start to finish, to see the whole
+workflow move as one. The tools are nearly all in your hands now; what's left is
+learning to run them at scale, autonomously, and in concert.
 
 #recap((
   [Your *Sources* book filled itself the whole time: every scholarly `/fact` and
