@@ -32,6 +32,10 @@ pub struct VectorEngine {
     store: Arc<Mutex<Option<VecStore>>>,
     embedding: Option<Arc<EmbeddingEngine>>,
     dirty: Arc<AtomicBool>,
+    /// 1.8.34 hardening — true while a background sync thread is running, so a
+    /// burst of saves spawns at most ONE such thread (it coalesces later writes)
+    /// instead of piling detached threads up on the store lock.
+    sync_in_flight: Arc<AtomicBool>,
 }
 
 impl VectorEngine {
@@ -47,6 +51,7 @@ impl VectorEngine {
             store: Arc::new(Mutex::new(None)),
             embedding: Some(Arc::new(engine)),
             dirty: Arc::new(AtomicBool::new(false)),
+            sync_in_flight: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -184,14 +189,37 @@ impl VectorEngine {
         if !self.dirty.load(Ordering::Acquire) {
             return;
         }
+        // M2 — at most one background sync thread at a time. If one is already
+        // running it re-checks `dirty` after each save (the loop below), so this
+        // write is coalesced into it rather than spawning another thread that
+        // would just queue on the store lock.
+        if self.sync_in_flight.swap(true, Ordering::AcqRel) {
+            return;
+        }
         let store = self.store.clone();
         let dirty = self.dirty.clone();
+        let in_flight = self.sync_in_flight.clone();
         std::thread::spawn(move || {
-            if let Err(e) = Self::drain_dirty(&store, &dirty) {
-                tracing::warn!(
-                    target: "inkhaven::storage::vector",
-                    "background vector sync failed: {e}",
-                );
+            loop {
+                if let Err(e) = Self::drain_dirty(&store, &dirty) {
+                    tracing::warn!(
+                        target: "inkhaven::storage::vector",
+                        "background vector sync failed: {e}",
+                    );
+                }
+                // Release the flag, then re-check: a writer that set `dirty`
+                // during our save is flushed on this same thread instead of
+                // waiting for the next save / periodic tick. The release-then-
+                // recheck (with a reclaiming swap) closes the lost-wakeup window.
+                in_flight.store(false, Ordering::Release);
+                if !dirty.load(Ordering::Acquire) {
+                    break;
+                }
+                if in_flight.swap(true, Ordering::AcqRel) {
+                    // Another sync_in_background reclaimed the flag first; it will
+                    // handle the pending write.
+                    break;
+                }
             }
         });
     }
