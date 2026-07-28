@@ -19231,9 +19231,22 @@ impl App {
             .iter()
             .map(|s| s.to_string())
             .collect();
-        let chip = match crate::tui::pov_tracker::compute_pov_chip(
-            &self.lexicon, &lines,
-        ) {
+        // 1.8.33+ hardening — the editor already scanned this exact buffer for
+        // lexicon hits and cached the result (`OpenedDoc::lex_cache`, populated by
+        // `draw_editor`). When that cache is valid for the current buffer and
+        // lexicon, feed its rows straight into the POV ranking instead of
+        // re-running `row_hits` over the whole buffer on every status-bar repaint.
+        // The fallback (cache absent or stale) recomputes, so correctness never
+        // depends on the editor pane having drawn first.
+        let content_hash = self::render::buffer_content_hash(&lines);
+        let cached_hits = doc.lex_cache.as_ref().filter(|c| {
+            c.content_hash == content_hash && c.lexicon_generation == self.lexicon_generation
+        });
+        let chip = match cached_hits {
+            Some(cache) => crate::tui::pov_tracker::compute_pov_chip_from_hits(&cache.rows, &lines),
+            None => crate::tui::pov_tracker::compute_pov_chip(&self.lexicon, &lines),
+        };
+        let chip = match chip {
             Some(c) => c,
             None => return Vec::new(),
         };
