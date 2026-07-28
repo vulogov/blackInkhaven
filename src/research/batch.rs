@@ -212,17 +212,29 @@ fn score_confidence(ai: &crate::ai::AiClient, model: &str, language: &str, fact:
     }
 }
 
-/// Extract the first 0..1 float from the model's reply.
+/// Extract the confidence the model reported. The prompt asks for a single
+/// 0.0–1.0 number; scan every numeric run and return the first that is genuinely a
+/// probability — in `[0,1]` AND either a decimal (`0.85`) or exactly `0`/`1`. Bare
+/// integers > 1 (a stray `90`, a year like `1918`, a `90%` that lost its point)
+/// are NOT confidence: the previous version grabbed the first digit-run and
+/// clamped it, so `"90% confident"` and `"In 1918…"` both scored 1.0 and sailed
+/// through the auto-insert threshold. Reject those (fail closed → 0.0) instead.
 fn parse_confidence(reply: &str) -> f64 {
-    let mut num = String::new();
-    for ch in reply.chars() {
+    let mut token = String::new();
+    for ch in reply.chars().chain(std::iter::once(' ')) {
         if ch.is_ascii_digit() || ch == '.' {
-            num.push(ch);
-        } else if !num.is_empty() {
-            break;
+            token.push(ch);
+        } else if !token.is_empty() {
+            if let Ok(v) = token.parse::<f64>() {
+                let is_probability = token.contains('.') || token == "0" || token == "1";
+                if is_probability && (0.0..=1.0).contains(&v) {
+                    return v;
+                }
+            }
+            token.clear();
         }
     }
-    num.parse::<f64>().unwrap_or(0.0).clamp(0.0, 1.0)
+    0.0
 }
 
 fn render_report(outcomes: &[Outcome], auto_confirm: bool, threshold: f64, inserted: usize) -> String {
@@ -257,7 +269,18 @@ mod tests {
         assert!((parse_confidence("0.82") - 0.82).abs() < 1e-9);
         assert!((parse_confidence("Confidence: 0.5 (medium)") - 0.5).abs() < 1e-9);
         assert!((parse_confidence("1") - 1.0).abs() < 1e-9);
+        assert_eq!(parse_confidence("0"), 0.0);
         assert_eq!(parse_confidence("no number here"), 0.0);
-        assert_eq!(parse_confidence("1.7"), 1.0); // clamped
+    }
+
+    #[test]
+    fn rejects_non_probability_numbers_fail_closed() {
+        // The gate must not read a stray integer or year as max confidence.
+        assert_eq!(parse_confidence("I am 90% confident"), 0.0);
+        assert_eq!(parse_confidence("In 1918 the flu killed millions"), 0.0);
+        assert_eq!(parse_confidence("Я на 90% уверен"), 0.0);
+        assert_eq!(parse_confidence("1.7"), 0.0); // out of range → not a probability
+        // A real probability preceded by a stray integer is still found.
+        assert!((parse_confidence("re 1918: confidence 0.3") - 0.3).abs() < 1e-9);
     }
 }
