@@ -17,10 +17,21 @@ use std::path::Path;
 /// nothing this reader could ground on. Opens the project store read-only and
 /// resolves the primary manuscript book itself, so a caller need only pass the
 /// project root.
-pub(crate) fn build_grounding(project_root: &Path) -> Option<String> {
+pub(crate) fn build_grounding(
+    project_root: &Path,
+    shared_store: Option<crate::store::Store>,
+) -> Option<String> {
     let layout = crate::project::ProjectLayout::new(project_root);
     let cfg = crate::config::Config::load_layered(&layout.config_path()).ok()?;
-    let store = crate::store::Store::open(layout, &cfg).ok()?;
+    // 1.8.34 (hardening) — reuse the App-held main store when present (the engage
+    // worker path), rather than a fresh `Store::open` on the worker thread that
+    // opens a second instance of the primary DB (lock-race with the UI) and re-runs
+    // `configure`/`load_store_scripts` side effects per engagement. Open fresh only
+    // on the CLI path (no App). The store is only read here (hierarchy load).
+    let store = match shared_store {
+        Some(s) => s,
+        None => crate::store::Store::open(layout, &cfg).ok()?,
+    };
     let h = crate::store::hierarchy::Hierarchy::load(&store).ok()?;
     let book = crate::cli::resolve_user_book(&h, None, "inner grounding").ok()?;
     let book_slug = book.slug.as_str();
@@ -197,7 +208,7 @@ mod tests {
         // a reader behaves exactly as before (reads blind, no prefix).
         let dir = std::env::temp_dir().join(format!("inner-ground-none-{}", std::process::id()));
         std::fs::create_dir_all(&dir).ok();
-        assert!(build_grounding(&dir).is_none());
+        assert!(build_grounding(&dir, None).is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

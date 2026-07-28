@@ -76,7 +76,9 @@ fn write_paragraph(
         node.content_type = Some("hjson".to_string());
     }
     if let Some(rel) = &node.file {
-        std::fs::write(store.project_root().join(rel), body.as_bytes())
+        // The on-disk .typ/HJSON is the source of truth — write it atomically
+        // (temp + rename) so a crash mid-write can't corrupt a committed leaf.
+        crate::io_atomic::write(&store.project_root().join(rel), body.as_bytes())
             .map_err(|e| Error::Store(format!("writing `{title}`: {e}")))?;
     }
     store

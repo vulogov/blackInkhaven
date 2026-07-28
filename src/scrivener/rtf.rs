@@ -28,6 +28,18 @@ use anyhow::Result;
 /// Convert RTF bytes to a Typst-friendly source string.
 /// Lossy by design — see module docs for what we drop.
 pub fn rtf_to_typst(rtf_bytes: &[u8]) -> Result<String> {
+    // Non-ASCII characters reach us either as ASCII `\'xx` escapes (which the
+    // structured parser decodes) or, in many real Scrivener projects, as raw
+    // UTF-8/Latin-1 bytes. `parse_structured` maps every raw high byte to `?` so
+    // the ASCII-only upstream lexer can't panic — meaning a document whose
+    // non-English prose is stored raw parses "successfully" with all its
+    // Cyrillic/accented text destroyed, and never reaches the fallback. `\'xx`
+    // escapes are pure ASCII, so any byte >= 0x80 is raw content: when present,
+    // prefer the plain-text fallback (`from_utf8_lossy`), which keeps the
+    // characters — trading lost structure for kept content.
+    if rtf_bytes.iter().any(|&b| b >= 0x80) {
+        return Ok(strip_to_plain_text(rtf_bytes));
+    }
     // Try the structured parser first. If it returns Err — or the third-party
     // `rtf-parser-tt` lexer/parser *panics* on adversarial bytes (1.3.36
     // hardening: the upstream crate byte-slices and can panic even on ASCII
@@ -216,6 +228,19 @@ mod tests {
         let rtf = b"{\\rtf1\\ansi}";
         let out = rtf_to_typst(rtf).unwrap();
         assert!(out.trim().is_empty());
+    }
+
+    #[test]
+    fn raw_utf8_content_is_kept_not_flattened() {
+        // Audit regression — a Scrivener .rtf storing prose as raw UTF-8 bytes
+        // must keep its Cyrillic text (via the plain-text fallback), not have it
+        // destroyed to `?` by the ASCII-only structured path.
+        let mut rtf = b"{\\rtf1\\ansi\\pard ".to_vec();
+        rtf.extend_from_slice("Москва".as_bytes());
+        rtf.extend_from_slice(b"\\par}");
+        let out = rtf_to_typst(&rtf).unwrap();
+        assert!(out.contains("Москва"), "Cyrillic must survive: {out:?}");
+        assert!(!out.contains('?'), "must not flatten to '?': {out:?}");
     }
 
     #[test]

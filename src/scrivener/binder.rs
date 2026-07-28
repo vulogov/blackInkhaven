@@ -85,6 +85,9 @@ pub fn parse_project(scriv_root: &Path) -> Result<Vec<BinderItem>> {
 
 /// Pure parser over the .scrivx bytes. Exposed so tests can
 /// feed fixtures directly.
+/// Defensive nesting cap for the binder tree (see `parse_scrivx`).
+const MAX_BINDER_DEPTH: usize = 256;
+
 pub fn parse_scrivx(bytes: &[u8]) -> Result<Vec<BinderItem>> {
     // Phase 1 — build a registry mapping keyword IDs to their
     // human-readable titles. Modern Scrivener stores keywords
@@ -118,6 +121,14 @@ pub fn parse_scrivx(bytes: &[u8]) -> Result<Vec<BinderItem>> {
     // the new top (or to the result if the stack becomes empty).
     let mut stack: Vec<PartialItem> = Vec::new();
     let mut result: Vec<BinderItem> = Vec::new();
+    // Defensive nesting cap — a pathologically deep (malformed or hostile)
+    // `.scrivx` would build a tree whose recursive walk + Drop overflow the stack
+    // and abort the process. Items nested past this are dropped (no real
+    // manuscript binder nests remotely this deep). `binder_suppressed` keeps the
+    // BinderItem open/close balanced while dropping; `deep_items_dropped` surfaces
+    // it afterwards so the truncation isn't silent.
+    let mut binder_suppressed: usize = 0;
+    let mut deep_items_dropped: usize = 0;
     let mut current_text: Option<TextBuf> = None;
     // Per-item state for the inline-keywords path. Set when we
     // enter a BinderItem's MetaData/Keywords element, cleared
@@ -145,6 +156,12 @@ pub fn parse_scrivx(bytes: &[u8]) -> Result<Vec<BinderItem>> {
                     .to_string();
                 match name.as_str() {
                     "BinderItem" => {
+                        if binder_suppressed > 0 || stack.len() >= MAX_BINDER_DEPTH {
+                            // Past the depth cap — drop this nested item and record
+                            // the imbalance so its matching close is skipped too.
+                            binder_suppressed += 1;
+                            deep_items_dropped += 1;
+                        } else {
                         let mut uuid: Option<Uuid> = None;
                         let mut kind: String = "Unknown".into();
                         for attr in e.attributes().with_checks(false) {
@@ -184,6 +201,7 @@ pub fn parse_scrivx(bytes: &[u8]) -> Result<Vec<BinderItem>> {
                             keywords: Vec::new(),
                             custom_meta: Vec::new(),
                         });
+                        }
                     }
                     "Title" => {
                         current_text = Some(TextBuf::Title);
@@ -335,7 +353,10 @@ pub fn parse_scrivx(bytes: &[u8]) -> Result<Vec<BinderItem>> {
                         in_custom_meta = in_custom_meta.saturating_sub(1);
                     }
                     "BinderItem" => {
-                        if let Some(p) = stack.pop() {
+                        if binder_suppressed > 0 {
+                            // Matching close of a dropped over-deep item.
+                            binder_suppressed -= 1;
+                        } else if let Some(p) = stack.pop() {
                             let item = BinderItem {
                                 uuid: p.uuid,
                                 kind: p.kind,
@@ -358,6 +379,13 @@ pub fn parse_scrivx(bytes: &[u8]) -> Result<Vec<BinderItem>> {
             _ => {}
         }
         buf.clear();
+    }
+    if deep_items_dropped > 0 {
+        tracing::warn!(
+            target: "inkhaven::scrivener",
+            "dropped {deep_items_dropped} binder item(s) nested deeper than {MAX_BINDER_DEPTH} \
+             — the .scrivx is malformed or pathological",
+        );
     }
     Ok(result)
 }
@@ -576,6 +604,30 @@ fn deterministic_uuid(s: &str) -> Uuid {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deeply_nested_binder_is_capped_not_overflowed() {
+        // A pathological .scrivx nesting far past the cap must parse without a
+        // stack overflow (the walk/Drop of an uncapped tree would abort), and the
+        // resulting tree must be depth-bounded.
+        let depth = 8000;
+        let mut xml = String::from("<Binder>");
+        for _ in 0..depth {
+            xml.push_str("<BinderItem Type=\"Text\">");
+        }
+        for _ in 0..depth {
+            xml.push_str("</BinderItem>");
+        }
+        xml.push_str("</Binder>");
+        let items = parse_scrivx(xml.as_bytes()).unwrap();
+        // Measuring depth recurses the tree — only terminates safely because the
+        // cap bounded it. A single root chain, capped near MAX_BINDER_DEPTH.
+        fn depth_of(items: &[BinderItem]) -> usize {
+            1 + items.iter().map(|i| depth_of(&i.children)).max().unwrap_or(0)
+        }
+        assert!(!items.is_empty());
+        assert!(depth_of(&items) <= MAX_BINDER_DEPTH + 1, "binder depth must be capped");
+    }
 
     #[test]
     fn parses_minimal_binder() {

@@ -1785,6 +1785,13 @@ pub(crate) struct App {
     /// eager pool build on every verse navigation). `None` if the store couldn't
     /// be opened at startup.
     poet_store: Option<crate::inner_poet::storage::InnerPoetStore>,
+    /// 1.8.34 (hardening 1b) — shared `inner_editor.db` / `inner_socrates.db`
+    /// handles, opened once at startup and cloned into the engage worker so it
+    /// reuses the one pool instead of opening a second instance across its LLM
+    /// call (which collided with the UI's opens → transient stale badges). Same
+    /// pattern as `poet_store`; `None` if the file couldn't be opened.
+    inner_editor_store: Option<crate::inner_editor::InnerEditorStore>,
+    inner_socrates_store: Option<crate::inner_socrates::storage::InnerSocratesStore>,
     ie_last_engaged_fp: Option<(Uuid, u64)>,
     ie_last_engage_at: Option<std::time::Instant>,
     /// The paragraph a spawned engagement targets, for the completion report.
@@ -1801,6 +1808,12 @@ pub(crate) struct App {
     /// allocations) every idle repaint (~5×/sec).
     glossary_counts_cache: (usize, usize, usize),
     facts_count_cache: usize,
+    /// 1.8.34 hardening — the banned-synonym (Glossary) style detector, cached so
+    /// the editor doesn't rebuild it — a blocking `fs::read_to_string` per Glossary
+    /// paragraph — on every repaint when style warnings are on. `None` means
+    /// "rebuild on next use"; `reload_hierarchy` drops it (a Glossary edit saves →
+    /// reload_hierarchy → invalidation), the same lifecycle as glossary_counts_cache.
+    glossary_detector_cache: Option<super::style_warnings::BannedSynonymDetector>,
     tree_cursor: usize,
     tree_scroll: usize,
 
@@ -2025,6 +2038,12 @@ pub(crate) struct App {
     /// overlay. Rebuilt after every save and at startup. None means an empty
     /// lexicon — render path skips work.
     lexicon: super::lexicon::Lexicon,
+
+    /// 1.8.33+ hardening — bumped each time `lexicon` is rebuilt. Part of the key
+    /// for the editor's per-row lexicon-hit cache (`OpenedDoc::lex_cache`), so a
+    /// rebuilt lexicon invalidates the memoized `row_hits` pass even though the
+    /// buffer text is unchanged.
+    lexicon_generation: u64,
 
     /// 1.2.13+ Phase B.2 — side-product of `build_lexicon`.
     /// Maps lowercased surface forms (lemma + every
@@ -3196,6 +3215,14 @@ impl App {
         // moved into the struct), so ambient scans reuse it instead of reopening.
         let poet_store =
             crate::inner_poet::storage::InnerPoetStore::open_for_project(store.project_root()).ok();
+        // 1.8.34 (1b) — open the shared inner_editor / inner_socrates handles once
+        // too, so the engage worker reuses them instead of opening a second
+        // instance across its LLM call.
+        let inner_editor_store =
+            crate::inner_editor::InnerEditorStore::open_for_project(store.project_root()).ok();
+        let inner_socrates_store =
+            crate::inner_socrates::storage::InnerSocratesStore::open_for_project(store.project_root())
+                .ok();
         // 1.8.24 — seed the status-bar chip caches from the loaded hierarchy so the
         // first frame is correct (they're refreshed on every `reload_hierarchy`).
         let glossary_counts_cache = glossary_counts(&hierarchy);
@@ -3252,6 +3279,8 @@ impl App {
             poet_ambient: false,
             poet_ambient_fp: None,
             poet_store,
+            inner_editor_store,
+            inner_socrates_store,
             slow_auto: false,
             slow_auto_para: None,
             fc_slow_last_fp: None,
@@ -3281,6 +3310,7 @@ impl App {
             thesaurus_pending: None,
             glossary_counts_cache,
             facts_count_cache,
+            glossary_detector_cache: None,
             output_expanded: std::collections::HashSet::new(),
             output_filter: crate::pane::output::OutputFilter::default(),
             output_query_focused: false,
@@ -3330,6 +3360,7 @@ impl App {
                 .map_err(|e| anyhow::anyhow!("typst highlighter init: {e}"))?,
             theme,
             lexicon,
+            lexicon_generation: 0,
             language_entries,
             inference: None,
             lift_target: None,
@@ -19032,6 +19063,9 @@ impl App {
     /// Called only on a tree change (`reload_hierarchy`), not per frame.
     pub(super) fn refresh_chip_caches(&mut self) {
         self.glossary_counts_cache = glossary_counts(&self.hierarchy);
+        // 1.8.34 — a tree change may have added/removed/edited a Glossary entry;
+        // drop the cached banned-synonym detector so it rebuilds on next use.
+        self.glossary_detector_cache = None;
         self.facts_count_cache = self.facts_paragraph_ids().len();
     }
 
@@ -19224,9 +19258,22 @@ impl App {
             .iter()
             .map(|s| s.to_string())
             .collect();
-        let chip = match crate::tui::pov_tracker::compute_pov_chip(
-            &self.lexicon, &lines,
-        ) {
+        // 1.8.33+ hardening — the editor already scanned this exact buffer for
+        // lexicon hits and cached the result (`OpenedDoc::lex_cache`, populated by
+        // `draw_editor`). When that cache is valid for the current buffer and
+        // lexicon, feed its rows straight into the POV ranking instead of
+        // re-running `row_hits` over the whole buffer on every status-bar repaint.
+        // The fallback (cache absent or stale) recomputes, so correctness never
+        // depends on the editor pane having drawn first.
+        let content_hash = self::render::buffer_content_hash(&lines);
+        let cached_hits = doc.lex_cache.as_ref().filter(|c| {
+            c.content_hash == content_hash && c.lexicon_generation == self.lexicon_generation
+        });
+        let chip = match cached_hits {
+            Some(cache) => crate::tui::pov_tracker::compute_pov_chip_from_hits(&cache.rows, &lines),
+            None => crate::tui::pov_tracker::compute_pov_chip(&self.lexicon, &lines),
+        };
+        let chip = match chip {
             Some(c) => c,
             None => return Vec::new(),
         };

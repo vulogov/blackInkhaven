@@ -10,6 +10,9 @@
 mod modals;
 mod panes;
 
+// 1.8.33+ — shared buffer-hash helper (editor caches + POV chip use one hasher).
+pub(in crate::tui::app) use panes::buffer_content_hash;
+
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};

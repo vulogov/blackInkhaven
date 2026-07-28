@@ -251,6 +251,13 @@ pub(super) struct OpenedDoc {
     /// fixed for a session and the highlight is per *source* line (independent of
     /// wrap width), so neither participates in the key.
     pub highlight_cache: Option<HighlightCache>,
+    /// 1.8.33+ hardening — cached per-row lexicon (Place/Character) hits, the
+    /// other whole-buffer pass the editor re-ran every frame (Porter-stem over
+    /// every line). Keyed by the buffer's content hash *and* the App's
+    /// `lexicon_generation`, so an edit (hash changes) or a lexicon rebuild
+    /// (generation bumps) invalidates it. Same reset-on-doc-switch as the
+    /// highlight cache. Empty rows when the lexicon is empty.
+    pub lex_cache: Option<LexCache>,
 }
 
 /// 1.8.32+ — memoized syntax highlight for one buffer state (see
@@ -263,6 +270,17 @@ pub(super) struct HighlightCache {
     pub content_type: Option<String>,
     /// One styled-run list per source line.
     pub lines: Vec<Vec<crate::tui::highlight::StyledRun>>,
+}
+
+/// 1.8.33+ — memoized per-row lexicon hits for one buffer + lexicon state (see
+/// [`OpenedDoc::lex_cache`]).
+pub(super) struct LexCache {
+    /// Hash of the buffer lines the hits were computed from.
+    pub content_hash: u64,
+    /// The `App::lexicon_generation` the hits were computed against.
+    pub lexicon_generation: u64,
+    /// One hit list per source line.
+    pub rows: Vec<Vec<crate::tui::lexicon::LexHit>>,
 }
 
 pub(super) struct SplitView {

@@ -23,16 +23,17 @@ use super::super::super::highlight::{
 use super::super::super::inference::{AiMode, InferenceStatus};
 use super::super::super::modal::PromptSource;
 use super::super::super::search_replace::{row_matches, RowMatch};
-use super::super::super::state::{HighlightCache, LinkPickDirection};
+use super::super::super::state::{HighlightCache, LexCache, LinkPickDirection};
 use super::super::super::status_helpers::status_style;
 use super::super::super::text_utils::{
     format_age_humantime, format_reading_time,
 };
 
 /// 1.8.32+ hardening — a stable hash of the editor buffer's lines, used as the
-/// key for [`HighlightCache`]. Same line-by-line hashing as `content_fingerprint`
-/// so the two agree on what "unchanged" means.
-fn buffer_content_hash(lines: &[String]) -> u64 {
+/// key for [`HighlightCache`] / [`LexCache`]. Same line-by-line hashing as
+/// `content_fingerprint` so the two agree on what "unchanged" means. Shared with
+/// the status bar's POV chip so it can validate the editor's cached hits.
+pub(in crate::tui::app) fn buffer_content_hash(lines: &[String]) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     for l in lines {
@@ -851,6 +852,7 @@ impl super::super::App {
 
         let block = self.current_block();
         let lexicon = &self.lexicon;
+        let lex_gen = self.lexicon_generation;
         let theme = &self.theme;
         let Some(opened) = self.opened.as_mut() else {
             return;
@@ -924,16 +926,33 @@ impl super::super::App {
             .collect();
 
         // Per-row Place/Character matches.
-        let lex_per_row: Vec<Vec<super::super::super::lexicon::LexHit>> = current_lines
-            .iter()
-            .map(|line| {
-                if lexicon.is_empty() {
-                    Vec::new()
-                } else {
-                    lexicon.row_hits(line)
-                }
-            })
-            .collect();
+        // 1.8.33+ hardening — reuse the memoized per-row lexicon hits when the
+        // buffer and the lexicon are both unchanged, so the whole-buffer Porter
+        // stem pass doesn't re-run on idle frames.
+        let lex_per_row: Vec<Vec<super::super::super::lexicon::LexHit>> = {
+            let lex_hit = opened
+                .lex_cache
+                .as_ref()
+                .is_some_and(|c| c.content_hash == content_hash && c.lexicon_generation == lex_gen);
+            if !lex_hit {
+                let computed: Vec<Vec<super::super::super::lexicon::LexHit>> = current_lines
+                    .iter()
+                    .map(|line| {
+                        if lexicon.is_empty() {
+                            Vec::new()
+                        } else {
+                            lexicon.row_hits(line)
+                        }
+                    })
+                    .collect();
+                opened.lex_cache = Some(LexCache {
+                    content_hash,
+                    lexicon_generation: lex_gen,
+                    rows: computed,
+                });
+            }
+            opened.lex_cache.as_ref().unwrap().rows.clone()
+        };
 
         // 1.2.9+ — style-warning overlays.  Effective
         // enable flag is the session toggle if set, else
@@ -1019,16 +1038,24 @@ impl super::super::App {
         // detector → short-circuited line scan. Store/hierarchy field accesses
         // keep the borrow disjoint from the `self.opened` borrow above. The live
         // overlay applies the whole Glossary; `terms check --book` scopes per book.
+        // 1.8.34 hardening — reuse the cached banned-synonym detector, rebuilding
+        // it (a blocking fs read per Glossary paragraph) only after it was
+        // invalidated in reload_hierarchy, instead of on every repaint. Writing
+        // self.glossary_detector_cache + reading self.store/self.hierarchy are
+        // disjoint from the self.opened borrow held above.
         let glossary_detector = if style_enabled
             && self.terms_overlay_toggle.unwrap_or(true)
         {
-            Some(
-                super::super::super::style_warnings::BannedSynonymDetector::from_store(
-                    &self.store,
-                    &self.hierarchy,
-                    None,
-                ),
-            )
+            if self.glossary_detector_cache.is_none() {
+                self.glossary_detector_cache = Some(
+                    super::super::super::style_warnings::BannedSynonymDetector::from_store(
+                        &self.store,
+                        &self.hierarchy,
+                        None,
+                    ),
+                );
+            }
+            self.glossary_detector_cache.as_ref()
         } else {
             None
         };
@@ -1244,6 +1271,7 @@ impl super::super::App {
 
         let block = self.current_block();
         let lexicon = &self.lexicon;
+        let lex_gen = self.lexicon_generation;
         let theme = &self.theme;
         let Some(opened) = self.opened.as_mut() else {
             return;
@@ -1309,16 +1337,33 @@ impl super::super::App {
             })
             .collect();
 
-        let lex_per_row: Vec<Vec<super::super::super::lexicon::LexHit>> = current_lines
-            .iter()
-            .map(|line| {
-                if lexicon.is_empty() {
-                    Vec::new()
-                } else {
-                    lexicon.row_hits(line)
-                }
-            })
-            .collect();
+        // 1.8.33+ hardening — reuse the memoized per-row lexicon hits when the
+        // buffer and the lexicon are both unchanged, so the whole-buffer Porter
+        // stem pass doesn't re-run on idle frames.
+        let lex_per_row: Vec<Vec<super::super::super::lexicon::LexHit>> = {
+            let lex_hit = opened
+                .lex_cache
+                .as_ref()
+                .is_some_and(|c| c.content_hash == content_hash && c.lexicon_generation == lex_gen);
+            if !lex_hit {
+                let computed: Vec<Vec<super::super::super::lexicon::LexHit>> = current_lines
+                    .iter()
+                    .map(|line| {
+                        if lexicon.is_empty() {
+                            Vec::new()
+                        } else {
+                            lexicon.row_hits(line)
+                        }
+                    })
+                    .collect();
+                opened.lex_cache = Some(LexCache {
+                    content_hash,
+                    lexicon_generation: lex_gen,
+                    rows: computed,
+                });
+            }
+            opened.lex_cache.as_ref().unwrap().rows.clone()
+        };
 
         // 1.2.9+ — style-warning overlays.  Effective
         // enable flag is the session toggle if set, else
@@ -1404,16 +1449,24 @@ impl super::super::App {
         // detector → short-circuited line scan. Store/hierarchy field accesses
         // keep the borrow disjoint from the `self.opened` borrow above. The live
         // overlay applies the whole Glossary; `terms check --book` scopes per book.
+        // 1.8.34 hardening — reuse the cached banned-synonym detector, rebuilding
+        // it (a blocking fs read per Glossary paragraph) only after it was
+        // invalidated in reload_hierarchy, instead of on every repaint. Writing
+        // self.glossary_detector_cache + reading self.store/self.hierarchy are
+        // disjoint from the self.opened borrow held above.
         let glossary_detector = if style_enabled
             && self.terms_overlay_toggle.unwrap_or(true)
         {
-            Some(
-                super::super::super::style_warnings::BannedSynonymDetector::from_store(
-                    &self.store,
-                    &self.hierarchy,
-                    None,
-                ),
-            )
+            if self.glossary_detector_cache.is_none() {
+                self.glossary_detector_cache = Some(
+                    super::super::super::style_warnings::BannedSynonymDetector::from_store(
+                        &self.store,
+                        &self.hierarchy,
+                        None,
+                    ),
+                );
+            }
+            self.glossary_detector_cache.as_ref()
         } else {
             None
         };

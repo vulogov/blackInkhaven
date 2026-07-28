@@ -27,29 +27,29 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.8.32 — Documentation Truth & TUI Hardening
+## Latest release · 1.8.34 — Pre-Major Hardening
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.8.32.md`](Documentation/RELEASE_NOTES/1.8.32.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.8.34.md`](Documentation/RELEASE_NOTES/1.8.34.md)
 
-A correctness pass over the research companion book — every place the prose or a screen diverged
-from what the code does — plus two pre-1.9 hardening wins in the editor.
+A full-source, six-agent audit ahead of the next major, and the fixes for everything it turned up.
+The codebase was already sound (no reachable panics, the 1.2.15 bar holding); this is the whole
+MEDIUM-tier fix list, each with a regression test.
 
 ### What's new
 
-- **The research book now matches the implementation** — a four-agent audit of *Grounding Your Book
-  in Fact* fixed every divergence from the source: the RESRCH-6 chapter (an `--agentic` run emits
-  Facts into the Facts book, not a document; `--out` is only a run log), the confirmation-gate keys,
-  the `/` hint bar (not a "palette"), `/calc`'s postfix syntax, `/triangulate`'s real sources, the
-  `/gutenberg` / `/web` flags, and the command/provenance appendices. Faithful `screen()` frames were
-  added wherever a chapter described output but showed none.
-- **`/review` registered in command completion** — the 1.8.31 command was wired into the parser and
-  dispatcher but never added to the `SPECS` table, so it did not tab-complete or show in the hint bar.
-  Fixed. The RESRCH-6 CLI glyphs are now portable (`»` / `!`) and the agentic run points at `/review`.
-- **Editor syntax-highlight cache** — the editor's unconditional per-frame redraw no longer re-runs the
-  whole-buffer tree-sitter / lexer highlight; it is memoized per buffer state, so idle frames are cheap.
-- **Vector index flushed off the render thread** — a routine save no longer freezes the editor while the
-  HNSW index serializes to disk; the flush moves to a background thread (durability-safe — the content is
-  already persisted and the index write is atomic).
+- **Correctness & safety** — `/calc` no longer freezes on a huge factorial; the research confidence
+  gate no longer fails open on `"90% confident"`-style replies; non-ASCII is preserved on markdown
+  export and Scrivener `.rtf` import (was mojibake / `?`); a deeply-nested `.scrivx` can no longer
+  overflow the stack and crash the importer.
+- **Durability** — atomic (temp + rename) writes for the on-disk World source leaves, the backup
+  archive, and export artifacts (`.md`/`.tex`/`.epub` and the bundle zip), so an interruption can't
+  replace a good file with a truncated one.
+- **Poetry** — the metre scanner now consults the English pronouncing dictionary, so final-stressed
+  words (`compare`, `begin`, `above`) scan correctly.
+- **Editor performance** — the style-warning detector is cached instead of re-reading the Glossary
+  from disk every repaint; with the highlight, lexicon, and POV-chip caches from 1.8.32–1.8.33, an
+  idle editor frame now does no repeated work. Inner-Editor engagement reuses shared store handles,
+  and the background vector-index sync is gated to a single coalescing thread.
 
 ### Dependencies & compatibility
 
