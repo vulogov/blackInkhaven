@@ -9,12 +9,12 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 use crate::store::NodeKind;
 
 use super::app::{FACT_WORLD_TAG, WorldbuilderApp};
-use super::focus::Focus;
+use super::focus::{Focus, RightPane};
 
 /// Border style for a pane: bright/bold when focused, dim otherwise.
 fn border(app: &WorldbuilderApp, pane: Focus) -> Style {
@@ -160,12 +160,65 @@ fn render_right_pane(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
         .border_style(border(app, Focus::RightPane));
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    frame.render_widget(
-        Paragraph::new(Span::styled(
-            "(worldbuilding conversation appears here — WB-P2)",
+    match app.right_pane {
+        RightPane::Chat => render_chat(frame, app, inner),
+        RightPane::Research => frame.render_widget(
+            Paragraph::new(Span::styled(
+                "(real-world research sub-mode — WB-P7)",
+                Style::new().dim(),
+            )),
+            inner,
+        ),
+        RightPane::Map => frame.render_widget(
+            Paragraph::new(Span::styled("(map render — WB-P6)", Style::new().dim())),
+            inner,
+        ),
+        RightPane::Ledger => frame.render_widget(
+            Paragraph::new(Span::styled("(magic ledger editor — WB-P9)", Style::new().dim())),
+            inner,
+        ),
+    }
+}
+
+/// The streaming worldbuilding conversation.
+fn render_chat(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
+    let mut lines: Vec<Line> = Vec::new();
+    for turn in &app.chat {
+        lines.push(Line::from(Span::styled(
+            "[You]",
+            Style::new().fg(app.theme.ai_scope_fg).bold(),
+        )));
+        for l in turn.prompt.lines() {
+            lines.push(Line::from(l.to_string()));
+        }
+        lines.push(Line::from(""));
+        let hdr = if turn.streaming {
+            "[World Builder — …]"
+        } else {
+            "[World Builder]"
+        };
+        lines.push(Line::from(Span::styled(hdr, Style::new().bold())));
+        for l in turn.response.lines() {
+            lines.push(Line::from(l.to_string()));
+        }
+        lines.push(Line::from(""));
+    }
+    if lines.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "Ask the World Builder a question, or shape the world with / commands (WB-P4).",
             Style::new().dim(),
-        )),
-        inner,
+        )));
+    }
+    // `u16::MAX` scroll pins to the bottom (used while streaming).
+    let total = lines.len() as u16;
+    let scroll = if app.chat_scroll == u16::MAX {
+        total.saturating_sub(area.height)
+    } else {
+        app.chat_scroll
+    };
+    frame.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: false }).scroll((scroll, 0)),
+        area,
     );
 }
 

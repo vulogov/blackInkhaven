@@ -13,6 +13,9 @@ use ratatui::Terminal;
 use ratatui::backend::Backend;
 use tui_textarea::TextArea;
 
+use tokio::sync::mpsc;
+
+use crate::ai::stream::{ChatTurn as AiTurn, StreamMsg, spawn_chat_stream};
 use crate::config::Config;
 use crate::project::ProjectLayout;
 use crate::store::hierarchy::Hierarchy;
@@ -29,6 +32,16 @@ use super::session::WorldbuilderSession;
 /// The tag that marks a Facts-book paragraph as an *invented-world* fact — the
 /// `/wfact` output and the `Ctrl+T` toggle. Rendered `◎` in the Facts pane.
 pub(super) const FACT_WORLD_TAG: &str = "fact:world";
+
+/// AI cost-dashboard category for worldbuilder chat inferences.
+const WB_CATEGORY: &str = "worldbuilder";
+
+/// One chat exchange in the worldbuilder conversation.
+pub(super) struct WorldbuilderTurn {
+    pub prompt: String,
+    pub response: String,
+    pub streaming: bool,
+}
 
 /// World-book chapters owned by `realworld compile` — read-only in the
 /// worldbuilder (change them by editing `world.hjson` + recompiling, not by hand).
@@ -74,6 +87,12 @@ pub(crate) struct WorldbuilderApp {
 
     // — Query prompt (full width) ——————————————————————————————————————
     pub(super) query: TextArea<'static>,
+
+    // — Chat (RightPane::Chat) + streaming ————————————————————————————
+    pub(super) chat: Vec<WorldbuilderTurn>,
+    pub(super) chat_scroll: u16,
+    stream_rx: Option<mpsc::UnboundedReceiver<StreamMsg>>,
+    streaming_turn: Option<usize>,
 
     // — Session ————————————————————————————————————————————————————————
     pub(super) session: WorldbuilderSession,
@@ -123,6 +142,10 @@ impl WorldbuilderApp {
             zoom: None,
             facts_filter_world: false,
             query,
+            chat: Vec::new(),
+            chat_scroll: 0,
+            stream_rx: None,
+            streaming_turn: None,
             session,
             should_quit: false,
             status: "worldbuilder — WB-P0 shell (Tab cycles panes · Ctrl+Q quits)".to_string(),
@@ -191,8 +214,20 @@ impl WorldbuilderApp {
                         self.query.cut();
                     }
                 }
-                // Enter is wired to command dispatch in WB-P4; a no-op for now.
-                KeyCode::Enter => {}
+                KeyCode::Enter => {
+                    let text = self.query.lines().join("\n");
+                    self.query.select_all();
+                    self.query.cut();
+                    let trimmed = text.trim();
+                    if trimmed.is_empty() {
+                        // nothing to send
+                    } else if trimmed.starts_with('/') {
+                        // Slash-command dispatch lands in WB-P4.
+                        self.status = format!("commands (`{trimmed}`) land in WB-P4");
+                    } else {
+                        self.send_chat(text);
+                    }
+                }
                 _ => {
                     self.query.input(key);
                 }
@@ -200,7 +235,27 @@ impl WorldbuilderApp {
             Focus::FactsPane => self.left_pane_key(key, true),
             Focus::WorldPane => self.left_pane_key(key, false),
             Focus::RightPane => {
-                self.common_pane_key(key);
+                if self.common_pane_key(key) {
+                    return;
+                }
+                if self.right_pane == RightPane::Chat {
+                    match key.code {
+                        // `u16::MAX` pins to the bottom (also while streaming).
+                        KeyCode::Char('G') => self.chat_scroll = u16::MAX,
+                        KeyCode::Char('g') => self.chat_scroll = 0,
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            if self.chat_scroll != u16::MAX {
+                                self.chat_scroll = self.chat_scroll.saturating_sub(1);
+                            }
+                        }
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            if self.chat_scroll != u16::MAX {
+                                self.chat_scroll = self.chat_scroll.saturating_add(1);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
             }
             Focus::ConfirmationOverlay => {}
         }
@@ -389,6 +444,138 @@ impl WorldbuilderApp {
         self.status = "tree editing (add/edit/rename/delete) lands in a later phase".into();
     }
 
+    /// Send a plain-language question to the World Builder AI, grounding it in the
+    /// world state, pins, and retrieved world facts (WB-P2). Slash commands are
+    /// routed elsewhere (WB-P4).
+    fn send_chat(&mut self, query: String) {
+        let query = query.trim().to_string();
+        if query.is_empty() {
+            return;
+        }
+        if self.stream_rx.is_some() {
+            self.status = "a response is still streaming…".into();
+            return;
+        }
+        let ai = match crate::ai::AiClient::from_config(&self.cfg.llm) {
+            Ok(a) => a,
+            Err(e) => {
+                self.push_turn(query, format!("[no LLM provider: {e}]"));
+                return;
+            }
+        };
+        let (model, _env) = match ai.resolve_provider(&self.cfg.llm, None) {
+            Ok(m) => m,
+            Err(e) => {
+                self.push_turn(query, format!("[provider error: {e}]"));
+                return;
+            }
+        };
+
+        // Assemble the four context sections (a leading warnings section arrives
+        // in WB-P3). All immutable borrows — build the owned `system` before we
+        // mutate the chat below.
+        let world_state = super::prompt::world_declaration_summary(&self.layout.root).unwrap_or_default();
+        let pinned_world = super::prompt::pinned_nodes_text(&self.store, &self.hierarchy, &self.world_pins);
+        let world_facts = self
+            .facts_tree
+            .root
+            .map(|bid| {
+                super::prompt::retrieve_world_facts(&self.store, &self.hierarchy, &self.cfg, bid, &query)
+            })
+            .unwrap_or_default();
+        let pinned_facts = super::prompt::pinned_nodes_text(&self.store, &self.hierarchy, &self.facts_pins);
+        let system = super::prompt::build_system_prompt(
+            self.world_name(),
+            &self.cfg.language,
+            "", // warnings — WB-P3
+            &world_state,
+            &pinned_world,
+            &world_facts,
+            &pinned_facts,
+        );
+        let history = self.replay_history();
+
+        self.chat.push(WorldbuilderTurn {
+            prompt: query.clone(),
+            response: String::new(),
+            streaming: true,
+        });
+        self.streaming_turn = Some(self.chat.len() - 1);
+        self.chat_scroll = u16::MAX; // pin to bottom while streaming
+        self.right_pane = RightPane::Chat; // surface the answer
+        self.status = "asking the World Builder…".into();
+
+        let rx = spawn_chat_stream(
+            ai.client.clone(),
+            model.to_string(),
+            Some(system),
+            history,
+            query,
+            WB_CATEGORY,
+        );
+        self.stream_rx = Some(rx);
+    }
+
+    fn push_turn(&mut self, prompt: String, response: String) {
+        self.chat.push(WorldbuilderTurn { prompt, response, streaming: false });
+        self.chat_scroll = u16::MAX;
+    }
+
+    /// Prior completed turns, replayed to the model for follow-up context.
+    fn replay_history(&self) -> Vec<AiTurn> {
+        let mut h = Vec::new();
+        for t in &self.chat {
+            if t.streaming {
+                continue;
+            }
+            h.push(AiTurn::User(t.prompt.clone()));
+            if !t.response.trim().is_empty() && !t.response.starts_with('[') {
+                h.push(AiTurn::Assistant(t.response.clone()));
+            }
+        }
+        h
+    }
+
+    /// Drain the streaming channel into the in-flight turn (called each frame).
+    fn drain_stream(&mut self) {
+        let Some(rx) = self.stream_rx.as_mut() else { return };
+        let Some(idx) = self.streaming_turn else { return };
+        let mut done = false;
+        loop {
+            match rx.try_recv() {
+                Ok(StreamMsg::Token(t)) => {
+                    if let Some(turn) = self.chat.get_mut(idx) {
+                        turn.response.push_str(&t);
+                    }
+                }
+                Ok(StreamMsg::Done(_)) => {
+                    done = true;
+                    break;
+                }
+                Ok(StreamMsg::Error(e)) => {
+                    if let Some(turn) = self.chat.get_mut(idx) {
+                        turn.response.push_str(&format!("\n[error: {e}]"));
+                    }
+                    done = true;
+                    break;
+                }
+                Err(mpsc::error::TryRecvError::Empty) => break,
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    done = true;
+                    break;
+                }
+            }
+        }
+        if done {
+            self.stream_rx = None;
+            self.streaming_turn = None;
+            if let Some(turn) = self.chat.get_mut(idx) {
+                turn.streaming = false;
+            }
+            self.status = "ready".into();
+        }
+    }
+
     /// Whether a World node is owned by `realworld compile` (one of the compiled
     /// layers, or a descendant of one) — read-only in the worldbuilder.
     pub(super) fn is_world_compiler_owned(&self, id: Uuid) -> bool {
@@ -407,6 +594,10 @@ impl WorldbuilderApp {
 impl TuiHost for WorldbuilderApp {
     fn should_quit(&self) -> bool {
         self.should_quit
+    }
+
+    fn poll_async(&mut self) {
+        self.drain_stream();
     }
 
     fn render(&self, frame: &mut Frame) {
