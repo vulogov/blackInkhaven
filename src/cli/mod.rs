@@ -1182,6 +1182,24 @@ pub enum Command {
         session: Option<String>,
     },
 
+    /// WBLD-1 — launch the interactive worldbuilder (`inkhaven worldbuilder`): a
+    /// full-screen TUI companion to the `realworld` pipeline and the World system
+    /// book. Interview, AI-assisted construction, plausibility scoring, map
+    /// workflow, magic-ledger editor, world-fact research (`fact:world`), session
+    /// journal, and world export. A front-end — every change lands in
+    /// `world.hjson` and compiles through `realworld` unchanged.
+    Worldbuilder {
+        /// Open (or create) a named session. Defaults to `default`.
+        #[arg(long, value_name = "NAME")]
+        session: Option<String>,
+        /// Jump straight to interview mode (clears the session delta).
+        #[arg(long)]
+        interview: bool,
+        /// Skip the interview; open with the map-first prose-description prompt.
+        #[arg(long)]
+        from_map: bool,
+    },
+
     /// 1.2.10+ — launch the standalone TUI configuration
     /// editor for `<project>/inkhaven.hjson`.  Tree-pane
     /// hierarchy on the left, schema-aware widgets on the
@@ -6451,6 +6469,11 @@ impl Cli {
             Command::Linguistic { language, session } => crate::linguistic::run(
                 &project,
                 crate::linguistic::LinguisticInvocation { language, session },
+            )
+            .map_err(Into::into),
+            Command::Worldbuilder { session, interview, from_map } => crate::worldbuilder::run(
+                &project,
+                crate::worldbuilder::WorldbuilderInvocation { session, interview, from_map },
             )
             .map_err(Into::into),
             Command::Config => crate::config_tui::run(&project).map_err(Into::into),
