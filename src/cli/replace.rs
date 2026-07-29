@@ -110,7 +110,7 @@ pub fn run(
 /// on either side to ~30 chars.
 fn preview(h: &Hit) -> String {
     let chars: Vec<char> = h.line_text.chars().collect();
-    let start = (h.col - 1).min(chars.len());
+    let start = h.col.saturating_sub(1).min(chars.len());
     let end = (start + h.matched.chars().count()).min(chars.len());
     let lead = start.saturating_sub(30);
     let trail = (end + 30).min(chars.len());

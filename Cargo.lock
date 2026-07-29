@@ -3935,7 +3935,7 @@ checksum = "a588916bfdfd92e71cacef98a63d9b1f0d74d6599980d11894290e7ddefffcf7"
 
 [[package]]
 name = "inkhaven"
-version = "1.8.34"
+version = "1.8.35"
 dependencies = [
  "anyhow",
  "arboard",
@@ -4004,9 +4004,11 @@ dependencies = [
  "tracing-subscriber",
  "tree-sitter",
  "tree-sitter-highlight",
+ "ttf-parser 0.25.1",
  "tui-textarea",
  "tylax",
  "typst",
+ "typst-assets",
  "typst-kit",
  "typst-pdf",
  "typst-render",

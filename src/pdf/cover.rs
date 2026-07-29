@@ -174,23 +174,34 @@ pub fn build_cover(spec: &CoverSpec) -> Result<PdfDoc> {
         }
         label.push_str(a);
     }
+    // PDF-1 — embed a Unicode font (DejaVu Sans Mono) so non-ASCII cover/spine
+    // text (Cyrillic, accented Latin) renders as glyphs instead of Helvetica
+    // mojibake. `None` → keep the base-14 `/F1` path (correct for ASCII); glyphs
+    // are recorded here and the font object is `finalize`d into `/F2` below.
+    let mut ufont = super::font::EmbeddedFont::load();
+    let em = ufont.as_ref().map(|f| f.em_advance()).unwrap_or(0.5);
     if !label.is_empty() {
-        // Auto-fit: never exceed the configured size, but shrink so the
-        // label runs along the spine height (Helvetica advances ~0.5em)
-        // and the cap-height fits across the spine thickness. Skip entirely
-        // when the spine is too thin to carry legible type.
+        // Auto-fit: never exceed the configured size, but shrink so the label
+        // runs along the spine height (advance ~`em` per char) and the cap-height
+        // fits across the spine thickness. Skip when the spine is too thin.
         let configured = spec.spine_text.font_size_pt.max(6.0);
         let chars = label.chars().count().max(1) as f32;
-        let by_length = (fh * 0.9) / (chars * 0.5);
+        let by_length = (fh * 0.9) / (chars * em);
         let by_thickness = sw * 0.6;
         let size = configured.min(by_length).min(by_thickness);
         if size >= 5.0 {
-            let run = chars * size * 0.5; // approx printed length up the spine
+            let run = ufont
+                .as_ref()
+                .map(|f| f.width(&label, size))
+                .unwrap_or(chars * size * 0.5); // approx printed length up the spine
             let cx = spine_x + sw / 2.0 + size * 0.35;
             let y = region_y + (fh - run).max(0.0) / 2.0;
+            let (fname, text) = match &mut ufont {
+                Some(f) => ("F2", f.encode(&label)),
+                None => ("F1", format!("({})", esc(&label))),
+            };
             c.push_str(&format!(
-                "0 g\nBT /F1 {size:.1} Tf 0 1 -1 0 {cx:.3} {y:.3} Tm ({}) Tj ET\n",
-                esc(&label)
+                "0 g\nBT /{fname} {size:.1} Tf 0 1 -1 0 {cx:.3} {y:.3} Tm {text} Tj ET\n",
             ));
         }
     }
@@ -199,7 +210,11 @@ pub fn build_cover(spec: &CoverSpec) -> Result<PdfDoc> {
     if let Some(back) = &spec.back_text {
         let x = back_x + mm_to_pt(15.0);
         let y = region_y + fh - mm_to_pt(20.0);
-        c.push_str(&format!("0 g\nBT /F1 10 Tf {x:.3} {y:.3} Td ({}) Tj ET\n", esc(back)));
+        let (fname, text) = match &mut ufont {
+            Some(f) => ("F2", f.encode(back)),
+            None => ("F1", format!("({})", esc(back))),
+        };
+        c.push_str(&format!("0 g\nBT /{fname} 10 Tf {x:.3} {y:.3} Td {text} Tj ET\n"));
     }
 
     // Barcode (back, bottom-right).
@@ -221,6 +236,12 @@ pub fn build_cover(spec: &CoverSpec) -> Result<PdfDoc> {
     helv.set("BaseFont", "Helvetica");
     let mut font = Dictionary::new();
     font.set("F1", Object::Dictionary(helv));
+    // Build the embedded Unicode font object chain (if it loaded) and expose it as
+    // `/F2` for the glyph-encoded spine/back text above.
+    if let Some(f) = ufont {
+        let f2 = f.finalize(&mut doc);
+        font.set("F2", Object::Reference(f2));
+    }
     let mut res = Dictionary::new();
     res.set("XObject", Object::Dictionary(xobj));
     res.set("Font", Object::Dictionary(font));
@@ -409,6 +430,32 @@ mod tests {
         let expect_w = mm_to_pt(2.0 * 152.0 + 12.0 + 2.0 * 3.0);
         assert!((sz.width() - expect_w).abs() < 1.0, "got {}", sz.width());
         assert_eq!(PdfDoc::load_mem(&doc.to_bytes().unwrap()).unwrap().page_count(), 1);
+    }
+
+    #[test]
+    fn cyrillic_title_embeds_a_unicode_font_not_mojibake() {
+        let mut spec = spec();
+        spec.spine_text.title = Some("Война и мир".into());
+        spec.spine_text.author = None;
+        spec.back_text = Some("роман".into());
+        spec.barcode = None;
+        let mut doc = build_cover(&spec).unwrap();
+        let bytes = doc.to_bytes().unwrap();
+        let contains = |needle: &[u8]| bytes.windows(needle.len()).any(|w| w == needle);
+        // The cover embeds a Type0 / DejaVu Sans Mono font with Identity-H glyph
+        // encoding — the whole point, so Cyrillic renders instead of Helvetica
+        // mojibake.
+        assert!(contains(b"Type0"), "must embed a Type0 composite font");
+        assert!(contains(b"DejaVuSansMono"), "must embed the bundled Unicode font");
+        assert!(contains(b"Identity-H"), "must use Identity-H glyph encoding");
+        // The raw Cyrillic bytes must NOT appear as a PDF string literal — the text
+        // is glyph-ID-encoded, not emitted as `(Война…)`.
+        assert!(
+            !contains("Война".as_bytes()),
+            "title must be glyph-encoded, not raw text bytes"
+        );
+        // And it still round-trips through the parser.
+        assert_eq!(PdfDoc::load_mem(&bytes).unwrap().page_count(), 1);
     }
 
     #[test]

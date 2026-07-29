@@ -1,6 +1,6 @@
 [package]
 name = "inkhaven"
-version = "1.8.34"
+version = "1.8.35"
 edition = "2024"
 # Rust 1.85 stabilised edition 2024. Bump alongside any toolchain-only
 # feature usage (let-else / chained-comparisons / etc. are already stable).
@@ -328,6 +328,14 @@ typst-kit = { version = "0.14", default-features = false, features = [
   "downloads",
   "packages",
 ] }
+# typst-assets — direct access to the bundled font bytes (already embedded via
+# typst-kit's `embed-fonts`, so no size change). The native (typst-free) PDF cover
+# embeds DejaVu Sans Mono from here as a Type0 font so cover/spine text renders in
+# any project language (Cyrillic etc.) instead of Helvetica mojibake.
+typst-assets = { version = "0.14", features = ["fonts"] }
+# ttf-parser — read the embedded TTF's cmap + metrics to build the PDF font
+# descriptor and glyph-ID-encode the cover text. Already in the tree via typst.
+ttf-parser = "0.25"
 
 # 1.2.8+ — embedded nushell as a library, powering the
 # `Ctrl+Z o` floating shell pane.  We pull the minimum
