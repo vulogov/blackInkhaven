@@ -27,33 +27,29 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.8.34 — Pre-Major Hardening
+## Latest release · 1.8.35 — Unicode Covers & the Audit's Long Tail
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.8.34.md`](Documentation/RELEASE_NOTES/1.8.34.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.8.35.md`](Documentation/RELEASE_NOTES/1.8.35.md)
 
-A full-source, six-agent audit ahead of the next major, and the fixes for everything it turned up.
-The codebase was already sound (no reachable panics, the 1.2.15 bar holding); this is the whole
-MEDIUM-tier fix list, each with a regression test.
+The last non-ASCII data bug from the pre-major audit is closed, and the audit's LOW tail is swept —
+each fix with a regression test.
 
 ### What's new
 
-- **Correctness & safety** — `/calc` no longer freezes on a huge factorial; the research confidence
-  gate no longer fails open on `"90% confident"`-style replies; non-ASCII is preserved on markdown
-  export and Scrivener `.rtf` import (was mojibake / `?`); a deeply-nested `.scrivx` can no longer
-  overflow the stack and crash the importer.
-- **Durability** — atomic (temp + rename) writes for the on-disk World source leaves, the backup
-  archive, and export artifacts (`.md`/`.tex`/`.epub` and the bundle zip), so an interruption can't
-  replace a good file with a truncated one.
-- **Poetry** — the metre scanner now consults the English pronouncing dictionary, so final-stressed
-  words (`compare`, `begin`, `above`) scan correctly.
-- **Editor performance** — the style-warning detector is cached instead of re-reading the Glossary
-  from disk every repaint; with the highlight, lexicon, and POV-chip caches from 1.8.32–1.8.33, an
-  idle editor frame now does no repeated work. Inner-Editor engagement reuses shared store handles,
-  and the background vector-index sync is gated to a single coalescing thread.
+- **Unicode PDF covers** — the native cover embeds DejaVu Sans Mono (Type0 / CIDFontType2, bundled
+  by the font kit so no size cost) so a Cyrillic or accented title renders instead of Helvetica
+  mojibake. Monospace fallback cover; falls back to Helvetica for ASCII.
+- **Latent panics & overflow guards** — NaN-unsafe sorts in the world compile layers, `calc.gcd`/
+  `lcm` on `i64::MIN`, and a few index/overflow edges are all guarded.
+- **Research** — the `--agentic` loop surfaces failed critic / contradiction-gate calls instead of
+  silently reporting "converged"; `/gutenberg` recognizes ru/fr/de/es chapter headings.
+- **Smaller items** — `oracle`/`poem` output sources reachable in the `/` filter; `typst_check`
+  CRLF-correct offsets; Thoughts log capped; background checkpoint off the runtime worker.
 
 ### Dependencies & compatibility
 
-No new dependencies. Compiles warning-free; the companion book compiles warning-free. Test suite → 2671.
+Two new direct dependencies (`typst-assets`, `ttf-parser`), both already compiled in the tree — no
+new download. Compiles warning-free. Test suite → 2680.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

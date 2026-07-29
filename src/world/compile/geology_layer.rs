@@ -402,7 +402,7 @@ fn find_mountain_ranges(
             ranges.push(MountainRange { plate_a: b.a, plate_b: b.b, peak_elevation: peak, cell_count });
         }
     }
-    ranges.sort_by(|a, b| b.peak_elevation.partial_cmp(&a.peak_elevation).unwrap());
+    ranges.sort_by(|a, b| b.peak_elevation.partial_cmp(&a.peak_elevation).unwrap_or(std::cmp::Ordering::Equal));
     ranges
 }
 

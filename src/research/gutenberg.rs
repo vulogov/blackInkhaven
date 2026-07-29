@@ -182,11 +182,22 @@ pub(super) fn split_chapters(text: &str) -> Vec<String> {
 
 /// Whether a trimmed line looks like a chapter heading.
 fn is_chapter_heading(line: &str) -> bool {
-    if line.is_empty() || line.len() > 60 {
+    // Count chars, not bytes — a Cyrillic heading is ~2 bytes/char and would be
+    // rejected far too early under a byte cap.
+    if line.is_empty() || line.chars().count() > 60 {
         return false;
     }
-    let upper = line.to_ascii_uppercase();
-    if upper.starts_with("CHAPTER ") || upper.starts_with("PART ") || upper.starts_with("BOOK ") {
+    // Unicode uppercase so accented / Cyrillic headings fold correctly.
+    let upper = line.to_uppercase();
+    // Heading words across the supported project languages (en/ru/fr/de/es).
+    const HEADS: &[&str] = &[
+        "CHAPTER ", "PART ", "BOOK ", // en
+        "ГЛАВА ", "ЧАСТЬ ", "КНИГА ", // ru
+        "CHAPITRE ", "PARTIE ", "LIVRE ", // fr
+        "KAPITEL ", "TEIL ", "BUCH ", // de
+        "CAPÍTULO ", "CAPITULO ", "PARTE ", "LIBRO ", // es
+    ];
+    if HEADS.iter().any(|h| upper.starts_with(h)) {
         return true;
     }
     // A standalone roman numeral (`I`, `IV`, `X021`… ) or arabic number line.
@@ -228,6 +239,19 @@ pub(super) fn strip_pg_boilerplate(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recognizes_multilingual_chapter_headings() {
+        assert!(is_chapter_heading("CHAPTER I"));
+        assert!(is_chapter_heading("ГЛАВА ПЕРВАЯ")); // ru
+        assert!(is_chapter_heading("глава 3")); // ru, lowercase
+        assert!(is_chapter_heading("CHAPITRE II")); // fr
+        assert!(is_chapter_heading("Kapitel 4")); // de
+        assert!(is_chapter_heading("Capítulo V")); // es, accented
+        // A long Cyrillic heading (>60 bytes but ≤60 chars) is not rejected early.
+        assert!(is_chapter_heading("ЧАСТЬ первая длинное название раздела"));
+        assert!(!is_chapter_heading("just some ordinary prose line here"));
+    }
 
     #[test]
     fn strips_pg_boilerplate() {
