@@ -94,6 +94,12 @@ pub(crate) struct WorldbuilderApp {
     stream_rx: Option<mpsc::UnboundedReceiver<StreamMsg>>,
     streaming_turn: Option<usize>,
 
+    // — World shaping (WB-P4) ——————————————————————————————————————————
+    /// Accepted-but-uncommitted edits; `/write` folds them into world.hjson.
+    pub(super) pending_ops: Vec<super::commands::Op>,
+    /// A shaping delta awaiting the author's y/n confirmation.
+    pub(super) hjson_preview: Option<(String, Vec<super::commands::Op>)>,
+
     // — Plausibility (WB-P3) ——————————————————————————————————————————
     pub(super) plausibility_score: Option<u8>,
     plausibility_prev: Option<u8>,
@@ -151,6 +157,8 @@ impl WorldbuilderApp {
             chat_scroll: 0,
             stream_rx: None,
             streaming_turn: None,
+            pending_ops: Vec::new(),
+            hjson_preview: None,
             plausibility_score: None,
             plausibility_prev: None,
             plausibility_warnings: Vec::new(),
@@ -232,8 +240,7 @@ impl WorldbuilderApp {
                     if trimmed.is_empty() {
                         // nothing to send
                     } else if trimmed.starts_with('/') {
-                        // Slash-command dispatch lands in WB-P4.
-                        self.status = format!("commands (`{trimmed}`) land in WB-P4");
+                        self.dispatch_command(&text);
                     } else {
                         self.send_chat(text);
                     }
@@ -267,7 +274,100 @@ impl WorldbuilderApp {
                     }
                 }
             }
-            Focus::ConfirmationOverlay => {}
+            Focus::ConfirmationOverlay => match key.code {
+                KeyCode::Char('y') => self.accept_pending(),
+                KeyCode::Char('n') | KeyCode::Esc => {
+                    self.hjson_preview = None;
+                    self.focus = Focus::QueryPrompt;
+                    self.status = "delta discarded".into();
+                }
+                _ => {}
+            },
+        }
+    }
+
+    /// Route a `/command` from the Query prompt (WB-P4).
+    fn dispatch_command(&mut self, input: &str) {
+        use super::commands::Command;
+        match super::commands::parse(input) {
+            Command::Shape { label, ops } => {
+                // Preview before it enters the pending delta.
+                self.hjson_preview = Some((label, ops));
+                self.focus = Focus::ConfirmationOverlay;
+                self.status = "review the delta — y accept · n discard".into();
+            }
+            Command::Write => self.write_pending(),
+            Command::Undo => self.undo_pending(),
+            Command::Reset => {
+                let n = self.pending_ops.len();
+                self.pending_ops.clear();
+                self.refresh_plausibility();
+                self.status = format!("reset — discarded {n} pending delta(s)");
+            }
+            Command::Diff => {
+                self.status = if self.pending_ops.is_empty() {
+                    "no pending deltas".into()
+                } else {
+                    format!(
+                        "{} pending delta(s): {}",
+                        self.pending_ops.len(),
+                        self.pending_ops.iter().map(|o| o.preview()).collect::<Vec<_>>().join(" · ")
+                    )
+                };
+            }
+            Command::Unknown(msg) => self.status = msg,
+        }
+    }
+
+    /// `y` in the preview — fold the previewed ops into the pending delta and
+    /// rescore (the score responds before `/write` commits to disk).
+    fn accept_pending(&mut self) {
+        if let Some((label, ops)) = self.hjson_preview.take() {
+            self.pending_ops.extend(ops);
+            self.refresh_plausibility();
+            let d = self.plausibility_delta_chip();
+            self.status = if d.is_empty() {
+                format!("✓ {label} · /write to commit")
+            } else {
+                format!("✓ {label}  ★ {d} · /write to commit")
+            };
+        }
+        self.focus = Focus::QueryPrompt;
+    }
+
+    /// `/write` — fold every pending op into `world.hjson` atomically.
+    fn write_pending(&mut self) {
+        if self.pending_ops.is_empty() {
+            self.status = "nothing to write".into();
+            return;
+        }
+        let path = self.layout.root.join("world.hjson");
+        let mut value = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|r| serde_hjson::from_str::<serde_json::Value>(&r).ok())
+            .unwrap_or_else(|| serde_json::json!({}));
+        for op in &self.pending_ops {
+            op.apply(&mut value);
+        }
+        let json = serde_json::to_string_pretty(&value).unwrap_or_default();
+        match crate::io_atomic::write(&path, json.as_bytes()) {
+            Ok(()) => {
+                let n = self.pending_ops.len();
+                self.pending_ops.clear();
+                self.refresh_plausibility();
+                self.status = format!("✓ wrote {n} delta(s) to world.hjson");
+            }
+            Err(e) => self.status = format!("write failed: {e}"),
+        }
+    }
+
+    /// `/undo` — drop the last pending op and rescore.
+    fn undo_pending(&mut self) {
+        if self.pending_ops.pop().is_some() {
+            self.refresh_plausibility();
+            self.status = format!("undone — {} pending delta(s) left", self.pending_ops.len());
+        } else {
+            self.status = "nothing to undo".into();
         }
     }
 
@@ -591,9 +691,18 @@ impl WorldbuilderApp {
     /// `world.hjson`. `None` when there is no world yet. Called on load; WB-P4
     /// deltas will re-trigger it. No LLM — `run_fast` compiles + lints.
     pub(super) fn refresh_plausibility(&mut self) {
-        let def = std::fs::read_to_string(self.layout.root.join("world.hjson"))
-            .ok()
-            .and_then(|raw| crate::world::types::WorldDefinition::from_hjson(&raw).ok());
+        // Score the world.hjson on disk PLUS the pending (accepted-but-uncommitted)
+        // deltas, so the score responds the moment a delta is accepted.
+        let def = {
+            let mut value = std::fs::read_to_string(self.layout.root.join("world.hjson"))
+                .ok()
+                .and_then(|r| serde_hjson::from_str::<serde_json::Value>(&r).ok())
+                .unwrap_or_else(|| serde_json::json!({}));
+            for op in &self.pending_ops {
+                op.apply(&mut value);
+            }
+            serde_json::from_value::<crate::world::types::WorldDefinition>(value).ok()
+        };
         self.plausibility_prev = self.plausibility_score;
         match def {
             Some(def) => {

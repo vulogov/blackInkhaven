@@ -9,7 +9,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 use crate::store::NodeKind;
 
@@ -72,6 +72,46 @@ pub(super) fn render(frame: &mut Frame, app: &WorldbuilderApp) {
     }
     render_query(frame, app, outer[2]);
     render_status(frame, app, outer[3]);
+
+    // WB-P4 — the shaping-delta confirmation sits above everything.
+    if app.hjson_preview.is_some() {
+        render_delta_preview(frame, app, area);
+    }
+}
+
+/// The `/`-command delta preview: shows the pending edit(s) for y/n confirmation.
+fn render_delta_preview(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
+    let Some((label, ops)) = &app.hjson_preview else { return };
+    let w = (area.width as f32 * 0.7) as u16;
+    let h = ((ops.len() as u16) + 6).min(area.height);
+    let modal = Rect {
+        x: area.x + area.width.saturating_sub(w.max(30)) / 2,
+        y: area.y + area.height.saturating_sub(h) / 2,
+        width: w.max(30),
+        height: h.max(6),
+    };
+    frame.render_widget(Clear, modal);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(" Confirm delta → world.hjson ")
+        .border_style(Style::new().fg(app.theme.border_focused).bold());
+    let inner = block.inner(modal);
+    frame.render_widget(block, modal);
+
+    let mut lines: Vec<Line> = vec![Line::from(Span::styled(label.clone(), Style::new().bold()))];
+    lines.push(Line::from(""));
+    for op in ops {
+        lines.push(Line::from(Span::styled(
+            format!("  {}", op.preview()),
+            Style::new().fg(app.theme.ai_scope_fg),
+        )));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "y accept (into pending) · n/Esc discard · then /write to commit",
+        Style::new().dim(),
+    )));
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
 }
 
 /// A left tree pane (Facts or World). `◎` marks `fact:world` paragraphs; `·`
