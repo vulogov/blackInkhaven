@@ -249,7 +249,19 @@ fn render_hints(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
 }
 
 fn render_status(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
-    let left = format!(" worldbuilder · {} · s:{} ", app.world_name(), app.session.slug);
+    // WB-P3 — plausibility score chip (★ NN ▲/▼) when a world exists.
+    let star = match app.plausibility_score {
+        Some(s) => {
+            let d = app.plausibility_delta_chip();
+            if d.is_empty() {
+                format!(" · ★ {s}")
+            } else {
+                format!(" · ★ {s} {d}")
+            }
+        }
+        None => String::new(),
+    };
+    let left = format!(" worldbuilder · {}{star} · s:{} ", app.world_name(), app.session.slug);
     let right = format!("{} ", app.status);
     let cols = Layout::horizontal([Constraint::Length(left.len() as u16 + 1), Constraint::Fill(1)])
         .split(area);

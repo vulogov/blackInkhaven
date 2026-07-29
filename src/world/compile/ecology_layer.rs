@@ -135,7 +135,7 @@ pub fn compile_ecology(
 pub fn lint_ecology(
     declared: &[crate::world::types::EcologyRegionDef],
     climate: &ClimateOutput,
-) -> Vec<String> {
+) -> Vec<crate::world::plausibility::Warning> {
     const COLD: &[&str] = &["polar", "arctic", "ice", "snow", "tundra", "frost", "glacial"];
     const HOT: &[&str] = &["desert", "dune", "tropical", "jungle", "sand"];
     let hot_biome = |b: &str| b.contains("desert") || b == "savanna" || b.contains("tropical");
@@ -156,7 +156,7 @@ pub fn lint_ecology(
             w.push(format!("ecology `{}`: heat-loving life declared in a cold biome", d.biome));
         }
     }
-    w
+    w.into_iter().map(crate::world::plausibility::Warning::medium).collect()
 }
 
 #[cfg(test)]

@@ -94,6 +94,11 @@ pub(crate) struct WorldbuilderApp {
     stream_rx: Option<mpsc::UnboundedReceiver<StreamMsg>>,
     streaming_turn: Option<usize>,
 
+    // — Plausibility (WB-P3) ——————————————————————————————————————————
+    pub(super) plausibility_score: Option<u8>,
+    plausibility_prev: Option<u8>,
+    plausibility_warnings: Vec<crate::world::plausibility::Warning>,
+
     // — Session ————————————————————————————————————————————————————————
     pub(super) session: WorldbuilderSession,
 
@@ -125,7 +130,7 @@ impl WorldbuilderApp {
         let left_split = session.left_split.clamp(2, 8);
         let split_ratio = session.split_ratio.clamp(2, 8);
 
-        Ok(WorldbuilderApp {
+        let mut app = WorldbuilderApp {
             layout,
             cfg,
             store,
@@ -146,12 +151,17 @@ impl WorldbuilderApp {
             chat_scroll: 0,
             stream_rx: None,
             streaming_turn: None,
+            plausibility_score: None,
+            plausibility_prev: None,
+            plausibility_warnings: Vec::new(),
             session,
             should_quit: false,
-            status: "worldbuilder — WB-P0 shell (Tab cycles panes · Ctrl+Q quits)".to_string(),
+            status: "worldbuilder — Tab cycles panes · Ctrl+Q quits".to_string(),
             show_hints: true,
             theme,
-        })
+        };
+        app.refresh_plausibility();
+        Ok(app)
     }
 
     pub(crate) fn run<B: Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
@@ -484,10 +494,11 @@ impl WorldbuilderApp {
             })
             .unwrap_or_default();
         let pinned_facts = super::prompt::pinned_nodes_text(&self.store, &self.hierarchy, &self.facts_pins);
+        let warnings = self.plausibility_warnings_text();
         let system = super::prompt::build_system_prompt(
             self.world_name(),
             &self.cfg.language,
-            "", // warnings — WB-P3
+            &warnings,
             &world_state,
             &pinned_world,
             &world_facts,
@@ -574,6 +585,47 @@ impl WorldbuilderApp {
             }
             self.status = "ready".into();
         }
+    }
+
+    /// WB-P3 — recompute the deterministic plausibility score + warnings from
+    /// `world.hjson`. `None` when there is no world yet. Called on load; WB-P4
+    /// deltas will re-trigger it. No LLM — `run_fast` compiles + lints.
+    pub(super) fn refresh_plausibility(&mut self) {
+        let def = std::fs::read_to_string(self.layout.root.join("world.hjson"))
+            .ok()
+            .and_then(|raw| crate::world::types::WorldDefinition::from_hjson(&raw).ok());
+        self.plausibility_prev = self.plausibility_score;
+        match def {
+            Some(def) => {
+                let warnings = crate::world::plausibility::run_fast(&def);
+                self.plausibility_score =
+                    Some(crate::world::plausibility::compute_plausibility_score(&warnings));
+                self.plausibility_warnings = warnings;
+            }
+            None => {
+                self.plausibility_score = None;
+                self.plausibility_warnings.clear();
+            }
+        }
+    }
+
+    /// The score change since the previous recompute, as a status chip.
+    pub(super) fn plausibility_delta_chip(&self) -> String {
+        match (self.plausibility_prev, self.plausibility_score) {
+            (Some(p), Some(c)) if c > p => format!("▲{}", c - p),
+            (Some(p), Some(c)) if c < p => format!("▼{}", p - c),
+            _ => String::new(),
+        }
+    }
+
+    /// The plausibility warnings formatted for the chat system prompt's WARNINGS
+    /// section (top N; `run_fast` order already groups by layer).
+    fn plausibility_warnings_text(&self) -> String {
+        let mut s = String::new();
+        for w in self.plausibility_warnings.iter().take(8) {
+            s.push_str(&format!("! {}\n", w.text));
+        }
+        s
     }
 
     /// Whether a World node is owned by `realworld compile` (one of the compiled

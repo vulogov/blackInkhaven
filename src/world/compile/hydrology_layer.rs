@@ -229,7 +229,7 @@ fn settlement_priors(
 pub fn lint_rivers(
     hydro_def: &crate::world::types::HydrologyDef,
     geo: &GeologyOutput,
-) -> Vec<String> {
+) -> Vec<crate::world::plausibility::Warning> {
     let (w, h) = (geo.width, geo.height);
     let elev_at = |p: [usize; 2]| -> Option<f32> {
         (p[0] < w && p[1] < h).then(|| geo.heightmap[p[1] * w + p[0]])
@@ -258,7 +258,7 @@ pub fn lint_rivers(
             _ => warnings.push(format!("river `{}`: its source or mouth is off the map", r.name)),
         }
     }
-    warnings
+    warnings.into_iter().map(crate::world::plausibility::Warning::medium).collect()
 }
 
 #[cfg(test)]
