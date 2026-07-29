@@ -163,7 +163,17 @@ pub(crate) fn run(
         let next = if budget == 0 || rounds >= max_rounds {
             Vec::new()
         } else {
-            critique_gaps(&ai, &model, language, topic, &outcomes, &clashes, budget).unwrap_or_default()
+            match critique_gaps(&ai, &model, language, topic, &outcomes, &clashes, budget) {
+                Ok(qs) => qs,
+                Err(e) => {
+                    // Surface the failure instead of silently reporting "converged"
+                    // — an errored critic round is not the same as a covered topic.
+                    eprintln!(
+                        "! agentic round {rounds}: critic call failed ({e}) — no follow-ups proposed this round"
+                    );
+                    Vec::new()
+                }
+            }
         };
         if let Some(reason) = decide_stop(next.is_empty(), budget, rounds, max_rounds) {
             stop = reason;
@@ -236,11 +246,15 @@ fn detect_contradictions(
             continue;
         }
         let user = super::contradiction::consistency_user(&gf);
-        if let Ok(reply) =
-            collect_blocking(ai.client.clone(), model.to_string(), Some(system.clone()), user)
-        {
-            for c in super::contradiction::parse_clashes(&reply, &gf) {
-                out.push((c.a.text.clone(), c.b.text.clone(), c.reason.clone()));
+        match collect_blocking(ai.client.clone(), model.to_string(), Some(system.clone()), user) {
+            Ok(reply) => {
+                for c in super::contradiction::parse_clashes(&reply, &gf) {
+                    out.push((c.a.text.clone(), c.b.text.clone(), c.reason.clone()));
+                }
+            }
+            Err(e) => {
+                // Don't silently drop a group's clashes — say the gate was partial.
+                eprintln!("! agentic contradiction gate: a group check failed ({e}) — its clashes may be missing");
             }
         }
     }
