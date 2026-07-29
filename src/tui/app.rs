@@ -3162,12 +3162,18 @@ impl App {
                 ticker.tick().await;
                 loop {
                     ticker.tick().await;
-                    if let Err(e) = store_for_sync.sync() {
-                        tracing::warn!("background sync failed: {e}");
-                    }
-                    if let Err(e) = store_for_sync.checkpoint() {
-                        tracing::warn!("background checkpoint failed: {e}");
-                    }
+                    // `sync` + `checkpoint` are blocking DuckDB work; run them on a
+                    // blocking thread so they never stall a tokio runtime worker.
+                    let s = store_for_sync.clone();
+                    let _ = tokio::task::spawn_blocking(move || {
+                        if let Err(e) = s.sync() {
+                            tracing::warn!("background sync failed: {e}");
+                        }
+                        if let Err(e) = s.checkpoint() {
+                            tracing::warn!("background checkpoint failed: {e}");
+                        }
+                    })
+                    .await;
                 }
             });
         }
@@ -8501,6 +8507,13 @@ impl App {
             return;
         }
         self.thoughts.push(text);
+        // Bound the Thoughts log so a very long session can't grow it without
+        // limit (it's otherwise cleared only by `c`). Keep the most recent.
+        const MAX_THOUGHTS: usize = 500;
+        if self.thoughts.len() > MAX_THOUGHTS {
+            let drop = self.thoughts.len() - MAX_THOUGHTS;
+            self.thoughts.drain(0..drop);
+        }
         self.thoughts_scroll = 0;
         self.notify_pane(RightPane::Thoughts);
     }
