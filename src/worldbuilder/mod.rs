@@ -26,6 +26,7 @@ use crate::store::hierarchy::Hierarchy;
 mod app;
 mod commands;
 mod focus;
+mod map;
 mod prompt;
 mod render;
 mod session;

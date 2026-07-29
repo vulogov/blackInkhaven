@@ -110,6 +110,9 @@ pub(crate) struct WorldbuilderApp {
     /// layer chain. Fed to the chat system prompt instead of the declaration-only
     /// summary when present. Invalidated whenever the world changes.
     compiled_summary: Option<String>,
+    /// The compiled layer grids from the last `/compile`, rendered as an ASCII
+    /// biome minimap in the Map right-pane (WB-P6). Invalidated with the summary.
+    pub(super) compiled_layers: Option<crate::world::plausibility::CompiledLayers>,
 
     // — Session ————————————————————————————————————————————————————————
     pub(super) session: WorldbuilderSession,
@@ -167,6 +170,7 @@ impl WorldbuilderApp {
             hjson_preview: None,
             plausibility_score: None,
             compiled_summary: None,
+            compiled_layers: None,
             plausibility_prev: None,
             plausibility_warnings: Vec::new(),
             session,
@@ -337,8 +341,10 @@ impl WorldbuilderApp {
                 let layers = crate::world::plausibility::compile_layers(&def);
                 let summary = crate::world::plausibility::summarise_compiled(&def, &layers);
                 self.compiled_summary = Some(summary.clone());
+                self.compiled_layers = Some(layers);
                 self.push_turn("/compile".into(), format!("Compiled world state —\n{summary}"));
-                self.status = "compiled — the chat now reasons over the simulated world".into();
+                self.status =
+                    "compiled — chat reasons over the simulated world · Ctrl+R → Map".into();
             }
             None => {
                 self.status = "no world to compile — declare one first (interview or /set)".into();
@@ -771,8 +777,9 @@ impl WorldbuilderApp {
     pub(super) fn refresh_plausibility(&mut self) {
         // Score the world.hjson on disk PLUS the pending (accepted-but-uncommitted)
         // deltas, so the score responds the moment a delta is accepted. Any world
-        // change also invalidates the cached `/compile` summary.
+        // change also invalidates the cached `/compile` summary + map grids.
         self.compiled_summary = None;
+        self.compiled_layers = None;
         let def = self.current_world_def();
         self.plausibility_prev = self.plausibility_score;
         match def {

@@ -209,10 +209,7 @@ fn render_right_pane(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
             )),
             inner,
         ),
-        RightPane::Map => frame.render_widget(
-            Paragraph::new(Span::styled("(map render — WB-P6)", Style::new().dim())),
-            inner,
-        ),
+        RightPane::Map => super::map::render_map(frame, app, inner),
         RightPane::Ledger => frame.render_widget(
             Paragraph::new(Span::styled("(magic ledger editor — WB-P9)", Style::new().dim())),
             inner,
@@ -281,7 +278,10 @@ fn render_hints(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
             "  j/k·move  h/l·fold  Ctrl+P·pin  z·zoom  (⊙ chapters are compiler-owned)  Tab·cycle"
         }
         Focus::QueryPrompt => {
-            "  type a question or /command  ·  Esc·clear  ·  Tab·cycle  ·  Ctrl+R·right pane"
+            "  ask a question · /compile /validate · /set /star… shape · /write · Esc·clear · Tab"
+        }
+        Focus::RightPane => {
+            "  Ctrl+R·cycle pane  ·  /compile renders the Map  ·  { }·rows  [ ]·cols  Ctrl+Q·quit"
         }
         _ => "  Tab·cycle  Ctrl+R·right pane  { }·rows  [ ]·cols  ?·hints  Ctrl+Q·quit",
     };
