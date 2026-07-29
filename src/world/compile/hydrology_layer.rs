@@ -87,7 +87,7 @@ pub fn compile_hydrology(geo: &GeologyOutput, climate: &ClimateOutput) -> Hydrol
             }
         }
     }
-    major_rivers.sort_by(|a, b| b.flow.partial_cmp(&a.flow).unwrap());
+    major_rivers.sort_by(|a, b| b.flow.partial_cmp(&a.flow).unwrap_or(std::cmp::Ordering::Equal));
     let river_count = major_rivers.len();
     major_rivers.truncate(12);
 
@@ -218,7 +218,7 @@ fn settlement_priors(
             }
         }
     }
-    priors.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+    priors.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
     priors.truncate(20);
     priors
 }

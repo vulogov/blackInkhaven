@@ -168,8 +168,8 @@ fn drift(
     match mode {
         "rolling" => {
             for w in chapters.windows(2) {
-                let n = w[1].scope.chapter_ord().unwrap();
-                rows.push((format!("ch.{n} vs ch.{}", n - 1), delta(w[1], w[0])));
+                let n = w[1].scope.chapter_ord().unwrap_or(0);
+                rows.push((format!("ch.{n} vs ch.{}", n.saturating_sub(1)), delta(w[1], w[0])));
             }
         }
         _ => {

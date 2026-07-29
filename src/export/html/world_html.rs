@@ -346,7 +346,7 @@ fn thousands(n: u64) -> String {
 fn year_label(y: i64) -> String {
     match y {
         0 => "in the present day".into(),
-        y if y < 0 => format!("{} years ago", thousands((-y) as u64)),
+        y if y < 0 => format!("{} years ago", thousands(y.unsigned_abs())),
         y => format!("{} years hence", thousands(y as u64)),
     }
 }

@@ -2828,7 +2828,7 @@ fn compile(project: &Path, layer: Option<&str>, json: bool, materialize: bool) -
     println!("  tilt:     {:.1}°", out.axial_tilt_deg);
     print!("  seasons:  ");
     let mut s = out.seasons.clone();
-    s.sort_by(|a, b| a.year_fraction.partial_cmp(&b.year_fraction).unwrap());
+    s.sort_by(|a, b| a.year_fraction.partial_cmp(&b.year_fraction).unwrap_or(std::cmp::Ordering::Equal));
     println!(
         "{}",
         s.iter()

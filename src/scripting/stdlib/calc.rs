@@ -273,13 +273,15 @@ kconv!(m_factorial, |x| {
 });
 
 fn gcd_i64(a: i64, b: i64) -> i64 {
-    let (mut a, mut b) = (a.abs(), b.abs());
+    // `unsigned_abs` so `i64::MIN` (reachable when a huge float saturates the cast)
+    // doesn't overflow `abs()`.
+    let (mut a, mut b) = (a.unsigned_abs(), b.unsigned_abs());
     while b != 0 {
         let t = b;
         b = a % b;
         a = t;
     }
-    a
+    a.min(i64::MAX as u64) as i64
 }
 
 /// `gcd` — `( a b -- g )` (integer semantics; inputs rounded).
@@ -295,7 +297,12 @@ fn m_lcm(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
     let b = pop_f(vm, "lcm")?.round() as i64;
     let a = pop_f(vm, "lcm")?.round() as i64;
     let g = gcd_i64(a, b);
-    let l = if g == 0 { 0.0 } else { (a / g * b).abs() as f64 };
+    // i128 intermediate so `a / g * b` and its `abs()` can't overflow i64.
+    let l = if g == 0 {
+        0.0
+    } else {
+        (a as i128 / g as i128 * b as i128).abs() as f64
+    };
     push(vm, Value::from_float(l));
     Ok(vm)
 }
