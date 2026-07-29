@@ -119,7 +119,14 @@ pub fn check_includes(
             }
             search = path_end + 1;
         }
-        line_start += line.len() + 1; // + the '\n' that `lines()` stripped
+        // Advance past the real line terminator: `lines()` strips a trailing
+        // `\r\n` (2 bytes) as well as a lone `\n` (1). Assuming 1 drifted the byte
+        // offsets by 1 per line on CRLF files.
+        let term_len = match source.as_bytes().get(line_start + line.len()) {
+            Some(b'\r') => 2,
+            _ => 1,
+        };
+        line_start += line.len() + term_len;
     }
     out
 }
