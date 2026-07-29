@@ -7,11 +7,13 @@
 
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Style, Stylize};
+use ratatui::style::{Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
-use super::app::WorldbuilderApp;
+use crate::store::NodeKind;
+
+use super::app::{FACT_WORLD_TAG, WorldbuilderApp};
 use super::focus::Focus;
 
 /// Border style for a pane: bright/bold when focused, dim otherwise.
@@ -49,15 +51,21 @@ pub(super) fn render(frame: &mut Frame, app: &WorldbuilderApp) {
     ])
     .split(outer[0]);
 
-    let ls = app.left_split.clamp(2, 8) as u32;
-    let left = Layout::vertical([
-        Constraint::Ratio(ls, 10),
-        Constraint::Ratio(10 - ls, 10),
-    ])
-    .split(main[0]);
-
-    render_pane(frame, app, left[0], Focus::FactsPane, " Facts ");
-    render_pane(frame, app, left[1], Focus::WorldPane, " World ");
+    // `z` zooms one left pane to fill the column; otherwise Facts over World.
+    match app.zoom {
+        Some(Focus::FactsPane) => render_left_tree(frame, app, main[0], Focus::FactsPane),
+        Some(Focus::WorldPane) => render_left_tree(frame, app, main[0], Focus::WorldPane),
+        _ => {
+            let ls = app.left_split.clamp(2, 8) as u32;
+            let left = Layout::vertical([
+                Constraint::Ratio(ls, 10),
+                Constraint::Ratio(10 - ls, 10),
+            ])
+            .split(main[0]);
+            render_left_tree(frame, app, left[0], Focus::FactsPane);
+            render_left_tree(frame, app, left[1], Focus::WorldPane);
+        }
+    }
     render_right_pane(frame, app, main[1]);
     if app.show_hints {
         render_hints(frame, app, outer[1]);
@@ -66,20 +74,79 @@ pub(super) fn render(frame: &mut Frame, app: &WorldbuilderApp) {
     render_status(frame, app, outer[3]);
 }
 
-/// A left pane (Facts / World) — WB-P0 draws the bordered box; WB-P1 fills it.
-fn render_pane(frame: &mut Frame, app: &WorldbuilderApp, area: Rect, pane: Focus, title: &str) {
+/// A left tree pane (Facts or World). `◎` marks `fact:world` paragraphs; `·`
+/// plain ones; `⊙` (dim) marks `realworld`-compiler-owned World chapters; `⬡`
+/// prefixes pinned rows. The cursor row is reversed.
+fn render_left_tree(frame: &mut Frame, app: &WorldbuilderApp, area: Rect, pane: Focus) {
+    let is_facts = pane == Focus::FactsPane;
+    let (tree, pins, title) = if is_facts {
+        (&app.facts_tree, &app.facts_pins, " Facts ")
+    } else {
+        (&app.world_tree, &app.world_pins, " World ")
+    };
+    let title = if is_facts && app.facts_filter_world {
+        " Facts · ◎ only "
+    } else {
+        title
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .title(title)
         .border_style(border(app, pane));
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    let hint = match pane {
-        Focus::FactsPane => "Facts book — world facts (◎) land here",
-        _ => "World book — realworld-compiled layers",
-    };
+
+    let mut lines: Vec<Line> = Vec::new();
+    for (i, row) in tree.rows().iter().enumerate() {
+        let node = app.hierarchy.get(row.id);
+        let name = node.map(|n| n.title.clone()).unwrap_or_else(|| "?".to_string());
+        let fold = if row.has_children {
+            if row.expanded { "▾" } else { "▸" }
+        } else {
+            " "
+        };
+        let mut style = Style::new();
+
+        // Kind glyph + dimming.
+        let kglyph = if is_facts {
+            match node {
+                Some(n) if n.kind == NodeKind::Paragraph => {
+                    if n.tags.iter().any(|t| t == FACT_WORLD_TAG) {
+                        "◎"
+                    } else {
+                        if app.facts_filter_world {
+                            style = style.dim();
+                        }
+                        "·"
+                    }
+                }
+                _ => " ",
+            }
+        } else if app.is_world_compiler_owned(row.id) {
+            style = style.dim();
+            "⊙"
+        } else {
+            " "
+        };
+
+        let pin = if pins.contains(&row.id) { "⬡" } else { " " };
+        let indent = "  ".repeat(row.depth);
+        let text = format!("{pin}{indent}{fold} {kglyph} {name}");
+        if i == tree.cursor {
+            style = style.add_modifier(Modifier::REVERSED);
+        }
+        lines.push(Line::from(Span::styled(text, style)));
+    }
+    if lines.is_empty() {
+        let empty = if is_facts {
+            "(no Facts book yet)"
+        } else {
+            "(no World book — run the interview or /compile)"
+        };
+        lines.push(Line::from(Span::styled(empty, Style::new().dim())));
+    }
     frame.render_widget(
-        Paragraph::new(Span::styled(hint, Style::new().dim())),
+        Paragraph::new(lines).scroll((tree.scroll as u16, 0)),
         inner,
     );
 }
@@ -112,9 +179,19 @@ fn render_query(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
     frame.render_widget(&app.query, inner);
 }
 
-fn render_hints(frame: &mut Frame, _app: &WorldbuilderApp, area: Rect) {
-    let hint =
-        "  Tab·cycle  { }·resize rows  [ ]·resize cols  Ctrl+R·right pane  ?·hints  Ctrl+Q·quit";
+fn render_hints(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
+    let hint = match app.focus {
+        Focus::FactsPane => {
+            "  j/k·move  h/l·fold  Ctrl+P·pin  Ctrl+T·◎tag  Shift+F·filter  z·zoom  Tab·cycle"
+        }
+        Focus::WorldPane => {
+            "  j/k·move  h/l·fold  Ctrl+P·pin  z·zoom  (⊙ chapters are compiler-owned)  Tab·cycle"
+        }
+        Focus::QueryPrompt => {
+            "  type a question or /command  ·  Esc·clear  ·  Tab·cycle  ·  Ctrl+R·right pane"
+        }
+        _ => "  Tab·cycle  Ctrl+R·right pane  { }·rows  [ ]·cols  ?·hints  Ctrl+Q·quit",
+    };
     frame.render_widget(Paragraph::new(Span::styled(hint, Style::new().dim())), area);
 }
 
