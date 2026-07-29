@@ -36,6 +36,8 @@ pub const SOURCES: &[&str] = &[
     "confront",
     "locus",
     "rigor",
+    "oracle",
+    "poem",
     "other",
 ];
 
