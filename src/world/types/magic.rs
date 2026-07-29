@@ -75,8 +75,8 @@ impl MagicLedger {
     /// strings; the ledger is never rejected (inform, never block). Catches the
     /// dead / malformed / redundant cases so a one-time setup doesn't silently
     /// fail to suppress.
-    pub fn lint(&self) -> Vec<String> {
-        let mut out = Vec::new();
+    pub fn lint(&self) -> Vec<crate::world::plausibility::Warning> {
+        let mut out: Vec<String> = Vec::new();
         if self.enabled && self.rules.is_empty() {
             out.push("ledger is enabled but has no rules".to_string());
         }
@@ -113,7 +113,8 @@ impl MagicLedger {
                 out.push(format!("{label}: duplicate of an earlier rule (same kind + covers)"));
             }
         }
-        out
+        // Ledger hygiene is advisory — Low severity.
+        out.into_iter().map(crate::world::plausibility::Warning::low).collect()
     }
 
     /// Find a rule that suppresses a candidate finding in the given context — the

@@ -177,7 +177,7 @@ pub fn compile_polities(
 pub fn lint_polities(
     declared: &[crate::world::types::NationDef],
     demo: &DemographicsOutput,
-) -> Vec<String> {
+) -> Vec<crate::world::plausibility::Warning> {
     let mut w = Vec::new();
     // BUG-14 — two declared nations sharing a name make relations ambiguous: a
     // `with: <name>` reference binds to the first match only. We cannot guess
@@ -212,7 +212,7 @@ pub fn lint_polities(
             }
         }
     }
-    w
+    w.into_iter().map(crate::world::plausibility::Warning::medium).collect()
 }
 
 #[cfg(test)]
