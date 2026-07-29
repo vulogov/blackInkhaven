@@ -24,6 +24,7 @@ use crate::store::Store;
 use crate::store::hierarchy::Hierarchy;
 
 mod app;
+mod commands;
 mod focus;
 mod prompt;
 mod render;
