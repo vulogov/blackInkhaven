@@ -48,6 +48,10 @@ pub(super) enum Command {
     Undo,
     Reset,
     Diff,
+    /// Compile the pure layer chain and report the compiled world state to Chat.
+    Compile,
+    /// Run the deterministic plausibility lints and report warnings to Chat.
+    Validate,
     /// Unrecognised / malformed — carries a message for the status bar.
     Unknown(String),
 }
@@ -64,6 +68,8 @@ pub(super) fn parse(input: &str) -> Command {
         "undo" => Command::Undo,
         "reset" => Command::Reset,
         "diff" => Command::Diff,
+        "compile" => Command::Compile,
+        "validate" | "check" => Command::Validate,
 
         "set" => {
             let (path_s, val_s) = rest
@@ -149,7 +155,7 @@ pub(super) fn parse(input: &str) -> Command {
         }
 
         other => Command::Unknown(format!(
-            "unknown command `/{other}` — WB-P4 supports /set /star /tilt /moon /nation /write /undo /reset /diff"
+            "unknown command `/{other}` — supports /set /star /tilt /moon /nation /compile /validate /write /undo /reset /diff"
         )),
     }
 }
@@ -280,5 +286,12 @@ mod tests {
         assert_eq!(parse("/undo"), Command::Undo);
         assert!(matches!(parse("/frobnicate"), Command::Unknown(_)));
         assert!(matches!(parse("/set"), Command::Unknown(_)));
+    }
+
+    #[test]
+    fn compile_and_validate_parse() {
+        assert_eq!(parse("/compile"), Command::Compile);
+        assert_eq!(parse("/validate"), Command::Validate);
+        assert_eq!(parse("/check"), Command::Validate); // alias
     }
 }

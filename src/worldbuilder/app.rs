@@ -105,6 +105,12 @@ pub(crate) struct WorldbuilderApp {
     plausibility_prev: Option<u8>,
     plausibility_warnings: Vec<crate::world::plausibility::Warning>,
 
+    // — Compiled world state (WB-P5) ——————————————————————————————————
+    /// The last `/compile` result: a deterministic prose summary of the compiled
+    /// layer chain. Fed to the chat system prompt instead of the declaration-only
+    /// summary when present. Invalidated whenever the world changes.
+    compiled_summary: Option<String>,
+
     // — Session ————————————————————————————————————————————————————————
     pub(super) session: WorldbuilderSession,
 
@@ -160,6 +166,7 @@ impl WorldbuilderApp {
             pending_ops: Vec::new(),
             hjson_preview: None,
             plausibility_score: None,
+            compiled_summary: None,
             plausibility_prev: None,
             plausibility_warnings: Vec::new(),
             session,
@@ -315,7 +322,56 @@ impl WorldbuilderApp {
                     )
                 };
             }
+            Command::Compile => self.run_compile(),
+            Command::Validate => self.run_validate(),
             Command::Unknown(msg) => self.status = msg,
+        }
+    }
+
+    /// `/compile` — run the pure layer chain over the current world (disk +
+    /// pending), cache a compiled-state summary for the chat prompt, and echo it
+    /// into the conversation as a Simulation turn. No LLM, no disk writes.
+    fn run_compile(&mut self) {
+        match self.current_world_def() {
+            Some(def) => {
+                let layers = crate::world::plausibility::compile_layers(&def);
+                let summary = crate::world::plausibility::summarise_compiled(&def, &layers);
+                self.compiled_summary = Some(summary.clone());
+                self.push_turn("/compile".into(), format!("Compiled world state —\n{summary}"));
+                self.status = "compiled — the chat now reasons over the simulated world".into();
+            }
+            None => {
+                self.status = "no world to compile — declare one first (interview or /set)".into();
+            }
+        }
+    }
+
+    /// `/validate` — run the deterministic plausibility lints over the current
+    /// world and report the score + warnings into the conversation. Reuses the
+    /// already-computed `plausibility_warnings` (kept fresh by every delta).
+    fn run_validate(&mut self) {
+        match self.plausibility_score {
+            Some(score) => {
+                let mut body = format!("Plausibility {score}/100");
+                if self.plausibility_warnings.is_empty() {
+                    body.push_str(" — no warnings.");
+                } else {
+                    body.push_str(&format!(" — {} warning(s):\n", self.plausibility_warnings.len()));
+                    for w in &self.plausibility_warnings {
+                        let sev = match w.severity {
+                            crate::world::plausibility::Severity::High => "HIGH",
+                            crate::world::plausibility::Severity::Medium => "MED ",
+                            crate::world::plausibility::Severity::Low => "LOW ",
+                        };
+                        body.push_str(&format!("  [{sev}] {}\n", w.text));
+                    }
+                }
+                self.push_turn("/validate".into(), body);
+                self.status = format!("validated — plausibility {score}/100");
+            }
+            None => {
+                self.status = "no world to validate — declare one first (interview or /set)".into();
+            }
         }
     }
 
@@ -584,7 +640,14 @@ impl WorldbuilderApp {
         // Assemble the four context sections (a leading warnings section arrives
         // in WB-P3). All immutable borrows — build the owned `system` before we
         // mutate the chat below.
-        let world_state = super::prompt::world_declaration_summary(&self.layout.root).unwrap_or_default();
+        // Prefer the compiled world state (from `/compile`) — it reports what the
+        // physics produced, not just what was declared — falling back to the
+        // declaration summary until the author runs `/compile`.
+        let world_state = self
+            .compiled_summary
+            .clone()
+            .or_else(|| super::prompt::world_declaration_summary(&self.layout.root))
+            .unwrap_or_default();
         let pinned_world = super::prompt::pinned_nodes_text(&self.store, &self.hierarchy, &self.world_pins);
         let world_facts = self
             .facts_tree
@@ -690,19 +753,27 @@ impl WorldbuilderApp {
     /// WB-P3 — recompute the deterministic plausibility score + warnings from
     /// `world.hjson`. `None` when there is no world yet. Called on load; WB-P4
     /// deltas will re-trigger it. No LLM — `run_fast` compiles + lints.
+    /// The world as it currently stands: `world.hjson` on disk PLUS the pending
+    /// (accepted-but-uncommitted) deltas. `None` when there is no parseable world
+    /// yet. Shared by the plausibility score, `/compile`, and `/validate` so they
+    /// all reason over the same in-progress world.
+    pub(super) fn current_world_def(&self) -> Option<crate::world::types::WorldDefinition> {
+        let mut value = std::fs::read_to_string(self.layout.root.join("world.hjson"))
+            .ok()
+            .and_then(|r| serde_hjson::from_str::<serde_json::Value>(&r).ok())
+            .unwrap_or_else(|| serde_json::json!({}));
+        for op in &self.pending_ops {
+            op.apply(&mut value);
+        }
+        serde_json::from_value::<crate::world::types::WorldDefinition>(value).ok()
+    }
+
     pub(super) fn refresh_plausibility(&mut self) {
         // Score the world.hjson on disk PLUS the pending (accepted-but-uncommitted)
-        // deltas, so the score responds the moment a delta is accepted.
-        let def = {
-            let mut value = std::fs::read_to_string(self.layout.root.join("world.hjson"))
-                .ok()
-                .and_then(|r| serde_hjson::from_str::<serde_json::Value>(&r).ok())
-                .unwrap_or_else(|| serde_json::json!({}));
-            for op in &self.pending_ops {
-                op.apply(&mut value);
-            }
-            serde_json::from_value::<crate::world::types::WorldDefinition>(value).ok()
-        };
+        // deltas, so the score responds the moment a delta is accepted. Any world
+        // change also invalidates the cached `/compile` summary.
+        self.compiled_summary = None;
+        let def = self.current_world_def();
         self.plausibility_prev = self.plausibility_score;
         match def {
             Some(def) => {
