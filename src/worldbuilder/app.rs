@@ -114,6 +114,12 @@ pub(crate) struct WorldbuilderApp {
     /// biome minimap in the Map right-pane (WB-P6). Invalidated with the summary.
     pub(super) compiled_layers: Option<crate::world::plausibility::CompiledLayers>,
 
+    // — World-fact research (WB-P7) ————————————————————————————————————
+    /// The last `/research` query + its retrieved Facts passages, shown in the
+    /// Research right-pane. `◎` marks passages already tagged `fact:world`.
+    pub(super) research_query: Option<String>,
+    pub(super) research_hits: Vec<crate::book_rag::RetrievedPassage>,
+
     // — Session ————————————————————————————————————————————————————————
     pub(super) session: WorldbuilderSession,
 
@@ -171,6 +177,8 @@ impl WorldbuilderApp {
             plausibility_score: None,
             compiled_summary: None,
             compiled_layers: None,
+            research_query: None,
+            research_hits: Vec::new(),
             plausibility_prev: None,
             plausibility_warnings: Vec::new(),
             session,
@@ -328,7 +336,89 @@ impl WorldbuilderApp {
             }
             Command::Compile => self.run_compile(),
             Command::Validate => self.run_validate(),
+            Command::Wfact(text) => self.run_wfact(&text),
+            Command::Research(query) => self.run_research(&query),
             Command::Unknown(msg) => self.status = msg,
+        }
+    }
+
+    /// `/wfact <statement>` — record an author-decided world fact into the Facts
+    /// book, tagged `fact:world`, using the shared research insertion primitive
+    /// (auto-reembeds → immediately retrievable). No AI: the author decides, the
+    /// worldbuilder records. Inserts near the tree cursor when it is inside Facts,
+    /// else at the end of the book; then reveals the new fact.
+    fn run_wfact(&mut self, text: &str) {
+        let text = text.trim();
+        if text.is_empty() {
+            return;
+        }
+        let Some(book_id) = self.facts_tree.root else {
+            self.status = "no Facts book — create one in the editor first".into();
+            return;
+        };
+        // A short title from the first clause/line; the full statement is the body.
+        let title: String = text.split(['.', '\n']).next().unwrap_or(text).trim().chars().take(60).collect();
+        let target = self.facts_tree.selected();
+        let new_id = match crate::research::insert::insert_paragraph(
+            &self.store,
+            &self.cfg,
+            &self.hierarchy,
+            book_id,
+            target,
+            &title,
+            text,
+        ) {
+            Ok(id) => id,
+            Err(e) => {
+                self.status = format!("fact write failed: {e}");
+                return;
+            }
+        };
+        // Tag it fact:world (the whole point — it must show as ◎ and feed the
+        // world-fact RAG). Reload first so the node is in the hierarchy.
+        self.reload_hierarchy();
+        if let Some(node) = self.hierarchy.get(new_id) {
+            let mut updated = node.clone();
+            if !updated.tags.iter().any(|t| t == FACT_WORLD_TAG) {
+                updated.tags.push(FACT_WORLD_TAG.to_string());
+                if let Err(e) = self.store.raw().update_metadata(new_id, updated.to_json()) {
+                    self.status = format!("recorded, but tag write failed: {e}");
+                    return;
+                }
+            }
+        }
+        self.reload_hierarchy();
+        self.facts_tree.reveal(&self.hierarchy, new_id);
+        self.status = "◎ recorded fact:world".into();
+    }
+
+    /// `/research <query>` — semantically retrieve related Facts (the whole Facts
+    /// book, not only `fact:world`, so the author can discover material to promote)
+    /// and surface them in the Research right-pane. Pure retrieval, no generation.
+    fn run_research(&mut self, query: &str) {
+        let query = query.trim();
+        if query.is_empty() {
+            return;
+        }
+        let Some(book_id) = self.facts_tree.root else {
+            self.status = "no Facts book to research".into();
+            return;
+        };
+        match crate::book_rag::retrieval::retrieve(
+            &self.store,
+            &self.hierarchy,
+            &self.cfg.book_rag,
+            book_id,
+            query,
+        ) {
+            Ok(hits) => {
+                let n = hits.len();
+                self.research_hits = hits;
+                self.research_query = Some(query.to_string());
+                self.right_pane = RightPane::Research;
+                self.status = format!("research · {n} passage(s) for “{query}” · Ctrl+R → Research");
+            }
+            Err(e) => self.status = format!("research failed: {e}"),
         }
     }
 

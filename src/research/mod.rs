@@ -26,7 +26,7 @@ mod factcheck;
 mod facts_tree;
 mod focus;
 mod imports;
-mod insert;
+pub(crate) mod insert;
 mod llm;
 mod picker;
 mod provenance;

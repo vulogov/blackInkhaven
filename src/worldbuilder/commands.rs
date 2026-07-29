@@ -52,6 +52,10 @@ pub(super) enum Command {
     Compile,
     /// Run the deterministic plausibility lints and report warnings to Chat.
     Validate,
+    /// Record an author-decided world fact into the Facts book (tagged fact:world).
+    Wfact(String),
+    /// Retrieve related Facts for a query into the Research pane.
+    Research(String),
     /// Unrecognised / malformed — carries a message for the status bar.
     Unknown(String),
 }
@@ -70,6 +74,20 @@ pub(super) fn parse(input: &str) -> Command {
         "diff" => Command::Diff,
         "compile" => Command::Compile,
         "validate" | "check" => Command::Validate,
+        "wfact" | "fact" => {
+            if rest.is_empty() {
+                Command::Unknown("usage: /wfact <statement> — records an author fact:world".into())
+            } else {
+                Command::Wfact(rest.to_string())
+            }
+        }
+        "research" | "wresearch" => {
+            if rest.is_empty() {
+                Command::Unknown("usage: /research <query> — retrieve related Facts".into())
+            } else {
+                Command::Research(rest.to_string())
+            }
+        }
 
         "set" => {
             let (path_s, val_s) = rest
@@ -155,7 +173,7 @@ pub(super) fn parse(input: &str) -> Command {
         }
 
         other => Command::Unknown(format!(
-            "unknown command `/{other}` — supports /set /star /tilt /moon /nation /compile /validate /write /undo /reset /diff"
+            "unknown command `/{other}` — supports /set /star /tilt /moon /nation /wfact /research /compile /validate /write /undo /reset /diff"
         )),
     }
 }
@@ -293,5 +311,17 @@ mod tests {
         assert_eq!(parse("/compile"), Command::Compile);
         assert_eq!(parse("/validate"), Command::Validate);
         assert_eq!(parse("/check"), Command::Validate); // alias
+    }
+
+    #[test]
+    fn wfact_and_research_carry_their_argument() {
+        assert_eq!(
+            parse("/wfact The tides run backwards at the equinox"),
+            Command::Wfact("The tides run backwards at the equinox".into())
+        );
+        assert_eq!(parse("/research tidal harbours"), Command::Research("tidal harbours".into()));
+        // Argument required.
+        assert!(matches!(parse("/wfact"), Command::Unknown(_)));
+        assert!(matches!(parse("/research"), Command::Unknown(_)));
     }
 }
