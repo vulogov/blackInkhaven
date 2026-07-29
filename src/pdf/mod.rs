@@ -25,6 +25,7 @@
 pub mod barcode;
 pub mod cover;
 pub mod doc;
+pub mod font;
 pub mod geometry;
 pub mod impose;
 pub mod meta;
