@@ -202,13 +202,7 @@ fn render_right_pane(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
     frame.render_widget(block, area);
     match app.right_pane {
         RightPane::Chat => render_chat(frame, app, inner),
-        RightPane::Research => frame.render_widget(
-            Paragraph::new(Span::styled(
-                "(real-world research sub-mode — WB-P7)",
-                Style::new().dim(),
-            )),
-            inner,
-        ),
+        RightPane::Research => render_research(frame, app, inner),
         RightPane::Map => super::map::render_map(frame, app, inner),
         RightPane::Ledger => frame.render_widget(
             Paragraph::new(Span::styled("(magic ledger editor — WB-P9)", Style::new().dim())),
@@ -259,6 +253,53 @@ fn render_chat(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
     );
 }
 
+/// The world-fact research pane (WB-P7): the last `/research` query and its
+/// retrieved Facts passages. `◎` marks passages already tagged `fact:world`.
+fn render_research(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
+    let mut lines: Vec<Line> = Vec::new();
+    match &app.research_query {
+        None => {
+            lines.push(Line::from(Span::styled(
+                "/research <query> retrieves related Facts here.",
+                Style::new().dim(),
+            )));
+            lines.push(Line::from(Span::styled(
+                "/wfact <statement> records an author-decided fact:world.",
+                Style::new().dim(),
+            )));
+        }
+        Some(q) => {
+            lines.push(Line::from(vec![
+                Span::styled("query: ", Style::new().dim()),
+                Span::styled(q.clone(), Style::new().bold()),
+            ]));
+            lines.push(Line::from(""));
+            if app.research_hits.is_empty() {
+                lines.push(Line::from(Span::styled("(no matching Facts)", Style::new().dim())));
+            }
+            for p in &app.research_hits {
+                let is_world = app
+                    .hierarchy
+                    .get(p.id)
+                    .map(|n| n.tags.iter().any(|t| t == FACT_WORLD_TAG))
+                    .unwrap_or(false);
+                let glyph = if is_world { "◎" } else { "·" };
+                lines.push(Line::from(vec![
+                    Span::styled(format!("{glyph} "), Style::new().fg(app.theme.ai_scope_fg)),
+                    Span::styled(p.breadcrumb.clone(), Style::new().bold()),
+                    Span::styled(format!("  {:.2}", p.score), Style::new().dim()),
+                ]));
+                let body: String = p.body.trim().chars().take(200).collect();
+                for l in body.lines() {
+                    lines.push(Line::from(Span::raw(format!("  {l}"))));
+                }
+                lines.push(Line::from(""));
+            }
+        }
+    }
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
+}
+
 fn render_query(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)
@@ -278,7 +319,7 @@ fn render_hints(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
             "  j/k·move  h/l·fold  Ctrl+P·pin  z·zoom  (⊙ chapters are compiler-owned)  Tab·cycle"
         }
         Focus::QueryPrompt => {
-            "  ask a question · /compile /validate · /set /star… shape · /write · Esc·clear · Tab"
+            "  ask · /wfact record · /research find · /compile /validate · /set… shape · /write · Tab"
         }
         Focus::RightPane => {
             "  Ctrl+R·cycle pane  ·  /compile renders the Map  ·  { }·rows  [ ]·cols  Ctrl+Q·quit"
