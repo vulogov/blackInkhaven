@@ -3,9 +3,14 @@
 //! The Map right-pane renders the *compiled* world (from `/compile`) directly in
 //! the terminal: the climate biome grid downsampled to the pane, with rivers and
 //! settlements stamped over it. Deterministic and LLM-free — it reads the cached
-//! [`CompiledLayers`] and needs no external binary. (The full raster export via
-//! `plakat` is the separate map-first workflow; this preview stands alone, so the
-//! pane is useful even when `plakat` is not installed.)
+//! [`CompiledLayers`] and needs no external binary, so it works on any terminal.
+//!
+//! This ASCII map is the always-available baseline. A later refinement (folded
+//! into the WB-P8 map-first workflow) can show the full `plakat` raster in the
+//! same pane on image-capable terminals, using the shared `ratatui-image`
+//! `Picker` (`Picker::from_query_stdio` → `new_resize_protocol` → `StatefulImage`,
+//! as the editor image-preview and story view already do), falling back to this
+//! grid when the terminal can't display images or `plakat` is absent.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
