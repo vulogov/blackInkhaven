@@ -107,6 +107,68 @@ pub(super) fn source_to_display(
     (dx, dy)
 }
 
+/// One map-layer check finding (MAPED-P5), optionally anchored to a source cell
+/// so the editor can jump the cursor to it.
+pub(super) struct MapFinding {
+    pub text: String,
+    pub at: Option<(usize, usize)>,
+}
+
+/// Check the declared map layer against the compiled world (MAPED-P5): a town or
+/// landmark standing in open ocean, an off-map coordinate, a region in the sea.
+/// Complements the physics lints (`run_fast`) with spatial, locatable findings.
+pub(super) fn lint_map(
+    def: &crate::world::types::WorldDefinition,
+    layers: &crate::world::plausibility::CompiledLayers,
+) -> Vec<MapFinding> {
+    let c = &layers.climate;
+    let (w, h) = (c.width, c.height);
+    let is_ocean = |x: usize, y: usize| -> bool {
+        x < w && y < h && c.biome.get(y * w + x).copied() == Some(Biome::Ocean)
+    };
+    let mut out = Vec::new();
+    let Some(g) = def.geography.as_ref() else { return out };
+
+    for lm in &g.landmarks {
+        // A raw coordinate beyond the grid is off the map.
+        if let (Some(rx), Some(ry)) = (lm.x, lm.y) {
+            if rx >= w || ry >= h {
+                out.push(MapFinding {
+                    text: format!("landmark '{}' is off the map ({rx},{ry})", lm.name),
+                    at: lm.grid(w, h),
+                });
+                continue;
+            }
+        }
+        match lm.grid(w, h) {
+            Some((x, y)) if is_ocean(x, y) => {
+                let noun = if matches!(lm.kind.as_str(), "city" | "port" | "town") {
+                    "settlement"
+                } else {
+                    "landmark"
+                };
+                out.push(MapFinding {
+                    text: format!("{noun} '{}' sits in open ocean at ({x},{y})", lm.name),
+                    at: Some((x, y)),
+                });
+            }
+            _ => {}
+        }
+    }
+    for r in &g.regions {
+        if let (Some(x), Some(y)) = (r.x, r.y) {
+            let (x, y) = (x.min(w.saturating_sub(1)), y.min(h.saturating_sub(1)));
+            if is_ocean(x, y) {
+                out.push(MapFinding {
+                    text: format!("region '{}' is in the sea at ({x},{y})", r.name),
+                    at: Some((x, y)),
+                });
+            }
+        }
+    }
+    out
+}
+
 /// The display cells a straight line from `a` to `b` passes through (sampled at
 /// the longer axis' resolution). Used for the provisional river course (P3).
 pub(super) fn line_cells(a: (usize, usize), b: (usize, usize)) -> Vec<(usize, usize)> {
@@ -177,6 +239,16 @@ pub(super) fn render_map(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
         }
     }
 
+    // MAPED-P5 — map-check findings flag their cells with `!`.
+    let mut finding_cells: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+    for f in &app.map_findings {
+        if let Some((x, y)) = f.at {
+            if x < sw && y < sh {
+                finding_cells.insert(source_to_display((x, y), (sw, sh), (map_w, map_h)));
+            }
+        }
+    }
+
     // MAPED-P3 — a river being drawn: the fixed source `S` + a provisional line
     // to the cursor.
     let mut river_src: Option<(usize, usize)> = None;
@@ -215,6 +287,10 @@ pub(super) fn render_map(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
                 if river_src == Some((x, y)) {
                     ch = 'S';
                     color = Color::Cyan;
+                }
+                if finding_cells.contains(&(x, y)) {
+                    ch = '!';
+                    color = Color::Red;
                 }
                 let mut st = Style::new().fg(color);
                 if cursor_disp == Some((x, y)) {
@@ -257,7 +333,7 @@ pub(super) fn render_map(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
             Some(super::app::MapTool::River { source: Some(_) }) => {
                 "river: move to the MOUTH, Enter to set · Esc cancel"
             }
-            None => "hjkl · t town · n name · r river · g region · d delete · Esc leave",
+            None => "hjkl · t town · n name · r river · g region · d delete · f issue · Esc",
         };
         lines.push(Line::from(Span::styled(hint, Style::new().dim())));
     } else {
@@ -340,6 +416,53 @@ mod tests {
         // A Terra-like world has ocean, so at least one sea glyph must appear.
         let sea = grid.iter().flatten().filter(|&&(c, _)| c == '~').count();
         assert!(sea > 0, "expected some ocean cells in the downsampled map");
+    }
+
+    #[test]
+    fn lint_map_flags_a_town_in_the_ocean_but_not_on_land() {
+        let base = terra();
+        let layers = compile_layers(&base);
+        let (w, h) = (layers.climate.width, layers.climate.height);
+        let cell = |i: usize| (i % w, i / w);
+        let ocean = (0..w * h)
+            .find(|&i| layers.climate.biome[i] == Biome::Ocean)
+            .map(cell)
+            .expect("terra has ocean");
+        let land = (0..w * h)
+            .find(|&i| layers.climate.biome[i] != Biome::Ocean)
+            .map(cell)
+            .expect("terra has land");
+        let body = format!(
+            r#"{{
+                name: "Terra"
+                seed: 0x5151
+                astronomy: {{
+                    star: {{ luminosity_solar: 1.0 }}
+                    planet: {{ mass_earth: 1.0, radius_earth: 1.0, axial_tilt_deg: 23.4, day_length_hours: 24.0 }}
+                    orbit: {{ semi_major_axis_au: 1.0 }}
+                    calendar: {{ months: 12, month_length_days: 30 }}
+                }}
+                geography: {{ landmarks: [
+                    {{ name: "Sunkport", kind: "city", x: {}, y: {} }}
+                    {{ name: "Dryhold", kind: "city", x: {}, y: {} }}
+                ] }}
+            }}"#,
+            ocean.0, ocean.1, land.0, land.1
+        );
+        let def = WorldDefinition::from_hjson(&body).unwrap();
+        let findings = lint_map(&def, &layers);
+        assert!(
+            findings.iter().any(|f| f.text.contains("Sunkport") && f.text.contains("ocean")),
+            "the ocean town should be flagged: {:?}",
+            findings.iter().map(|f| &f.text).collect::<Vec<_>>()
+        );
+        assert!(
+            !findings.iter().any(|f| f.text.contains("Dryhold")),
+            "the land town should not be flagged"
+        );
+        // The finding carries the offending cell for cursor-jump.
+        let sunk = findings.iter().find(|f| f.text.contains("Sunkport")).unwrap();
+        assert_eq!(sunk.at, Some(ocean));
     }
 
     #[test]
