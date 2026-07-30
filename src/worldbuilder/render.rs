@@ -282,23 +282,35 @@ fn render_research(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
             if app.research_hits.is_empty() {
                 lines.push(Line::from(Span::styled("(no matching Facts)", Style::new().dim())));
             }
-            for p in &app.research_hits {
+            for (i, p) in app.research_hits.iter().enumerate() {
                 let is_world = app
                     .hierarchy
                     .get(p.id)
                     .map(|n| n.tags.iter().any(|t| t == FACT_WORLD_TAG))
                     .unwrap_or(false);
                 let glyph = if is_world { "◎" } else { "·" };
+                let on_cursor = i == app.research_cursor;
+                let cursor = if on_cursor { "▸ " } else { "  " };
+                let mut breadcrumb = Style::new().bold();
+                if on_cursor {
+                    breadcrumb = breadcrumb.add_modifier(Modifier::REVERSED);
+                }
                 lines.push(Line::from(vec![
-                    Span::styled(format!("{glyph} "), Style::new().fg(app.theme.ai_scope_fg)),
-                    Span::styled(p.breadcrumb.clone(), Style::new().bold()),
+                    Span::styled(format!("{cursor}{glyph} "), Style::new().fg(app.theme.ai_scope_fg)),
+                    Span::styled(p.breadcrumb.clone(), breadcrumb),
                     Span::styled(format!("  {:.2}", p.score), Style::new().dim()),
                 ]));
                 let body: String = p.body.trim().chars().take(200).collect();
                 for l in body.lines() {
-                    lines.push(Line::from(Span::raw(format!("  {l}"))));
+                    lines.push(Line::from(Span::raw(format!("    {l}"))));
                 }
                 lines.push(Line::from(""));
+            }
+            if !app.research_hits.is_empty() {
+                lines.push(Line::from(Span::styled(
+                    "j/k move · a promote to ◎ world fact",
+                    Style::new().dim(),
+                )));
             }
         }
     }

@@ -125,6 +125,122 @@ pub(super) fn build_dossier(input: &DossierInput) -> String {
     s
 }
 
+/// A Typst string literal (`"…"`, quotes included) with the only two characters
+/// that can break a string escaped, and control characters flattened to spaces.
+/// Rendering user prose as a *string* (not markup) makes injection impossible —
+/// no `#`, `*`, `$`, `@`, `<` in a fact body is ever interpreted.
+fn ts(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' | '\r' | '\t' => out.push(' '),
+            _ => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// Render the dossier as a self-contained, compilable Typst document (WS-P3).
+/// Structure is native Typst; every piece of author/measured text is emitted as
+/// a string literal via [`ts`], so any project language and any punctuation is
+/// safe. Compiled to PDF in-process by `/export --pdf`.
+pub(super) fn build_dossier_typst(input: &DossierInput) -> String {
+    let name = if input.world_name.trim().is_empty() { "Untitled world" } else { input.world_name.trim() };
+    let mut s = String::new();
+    s.push_str("#set document(title: ");
+    s.push_str(&ts(&format!("World Dossier — {name}")));
+    s.push_str(")\n");
+    s.push_str("#set page(paper: \"a4\", margin: 2cm, numbering: \"1\")\n");
+    s.push_str("#set text(font: (\"Libertinus Serif\", \"New Computer Modern\"), size: 11pt)\n");
+    s.push_str("#set heading(numbering: \"1.\")\n\n");
+    s.push_str(&format!("#text(size: 20pt, weight: \"bold\")[World Dossier — #({})]\n\n", ts(name)));
+    s.push_str(&format!("#emph[Generated #({}) by the Inkhaven worldbuilder.]\n\n", ts(input.generated_at)));
+
+    if let Some(score) = input.score {
+        s.push_str(&format!("*Plausibility:* {score}/100\n\n"));
+    }
+
+    s.push_str("= Compiled world state\n\n");
+    match input.compiled {
+        Some(c) if !c.trim().is_empty() => {
+            s.push_str(&format!("#raw(block: true, {})\n\n", ts(c.trim())));
+        }
+        _ => s.push_str("#emph[No world compiled yet.]\n\n"),
+    }
+
+    if !input.warnings.is_empty() {
+        s.push_str("= Plausibility warnings\n\n");
+        for w in input.warnings {
+            let sev = match w.severity {
+                crate::world::plausibility::Severity::High => "HIGH",
+                crate::world::plausibility::Severity::Medium => "MEDIUM",
+                crate::world::plausibility::Severity::Low => "LOW",
+            };
+            s.push_str(&format!("- *[{sev}]* #({})\n", ts(w.text.trim())));
+        }
+        s.push('\n');
+    }
+
+    if let Some(l) = input.ledger {
+        s.push_str("= Magic ledger\n\n");
+        s.push_str(&format!(
+            "Ledger is *{}* with {} rule(s).\n\n",
+            if l.enabled { "enabled" } else { "disabled" },
+            l.rules.len()
+        ));
+        for r in &l.rules {
+            let kind = if r.kind.trim().is_empty() { "(no kind)".to_string() } else { r.kind.trim().to_string() };
+            let covers = if r.covers.is_empty() { "—".to_string() } else { r.covers.join(", ") };
+            s.push_str(&format!("- *#({})* — covers #({})", ts(&kind), ts(&covers)));
+            if !r.description.trim().is_empty() {
+                s.push_str(&format!(": #({})", ts(r.description.trim())));
+            }
+            s.push('\n');
+        }
+        s.push('\n');
+    }
+
+    s.push_str("= World facts\n\n");
+    if input.facts.is_empty() {
+        s.push_str("#emph[None recorded yet.]\n\n");
+    } else {
+        for (title, body) in input.facts {
+            s.push_str(&format!("== #({})\n\n", ts(title.trim())));
+            let body = body.trim();
+            if !body.is_empty() {
+                s.push_str(&format!("#({})\n\n", ts(body)));
+            }
+        }
+    }
+
+    s.push_str("= Worldbuilding Journey\n\n");
+    if input.journey.is_empty() {
+        s.push_str("#emph[No steps recorded yet.]\n\n");
+    } else {
+        for t in input.journey {
+            let when = t.at.get(..16).unwrap_or(&t.at);
+            let arc = match (t.plausibility_before, t.plausibility_after) {
+                (Some(b), Some(a)) if a != b => format!(" · {b}→{a}"),
+                (_, Some(a)) => format!(" · {a}"),
+                _ => String::new(),
+            };
+            s.push_str(&format!(
+                "+ #({}) — #({}){}\n",
+                ts(&format!("{} {}", when, t.user.trim())),
+                ts(t.assistant_summary.trim()),
+                arc,
+            ));
+        }
+        s.push('\n');
+    }
+
+    s
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -151,6 +267,29 @@ mod tests {
         assert!(md.contains("capture them with `/wfact`"));
         assert!(md.contains("## Worldbuilding Journey"));
         assert!(md.contains("_No steps recorded yet._"));
+    }
+
+    #[test]
+    fn typst_dossier_escapes_prose_as_string_literals() {
+        // A fact body full of Typst-hostile characters must be neutralised.
+        let input = DossierInput {
+            world_name: "Aldoria",
+            generated_at: "t",
+            compiled: None,
+            score: Some(90),
+            warnings: &[],
+            ledger: None,
+            facts: &[("Injection".into(), "danger: #set page(width: 1pt) \"quote\" \\ end".into())],
+            journey: &[],
+        };
+        let typ = build_dossier_typst(&input);
+        // Structure is present.
+        assert!(typ.contains("#set document(title:"));
+        assert!(typ.contains("= World facts"));
+        // The whole hostile body is wrapped in ONE `#("…")` string literal with
+        // its quotes and backslashes escaped — so the `#set` inside it is inert
+        // text, not a live directive.
+        assert!(typ.contains(r#"#("danger: #set page(width: 1pt) \"quote\" \\ end")"#));
     }
 
     #[test]

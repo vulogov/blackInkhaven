@@ -146,6 +146,21 @@ pub fn spawn_thread(
     })
 }
 
+/// WS-P3 — compile a Typst source string to PDF bytes in-process, synchronously,
+/// rooted at `project_root` (so fonts/assets resolve). Used by the worldbuilder's
+/// `/export --pdf`. Returns a formatted diagnostic string on failure.
+pub fn compile_source_to_pdf(
+    project_root: &Path,
+    body: String,
+    settings: WorldSettings,
+) -> std::result::Result<Vec<u8>, String> {
+    let world = InkhavenWorld::in_memory(project_root.to_path_buf(), body, settings);
+    let Warned { output, warnings: _ } = typst::compile::<PagedDocument>(&world);
+    let document = output.map_err(|errors| format_diagnostics(&world, &errors))?;
+    typst_pdf::pdf(&document, &PdfOptions::default())
+        .map_err(|errors| format_diagnostics(&world, &errors))
+}
+
 /// The synchronous compile core — runs on the worker thread.
 fn compile_to_pdf(
     project_root: &Path,
