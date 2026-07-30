@@ -91,6 +91,36 @@ fn compose(
     grid
 }
 
+/// Map a terminal click at `(col, row)` inside the Map pane's `inner` rect to a
+/// source-grid cell (MAPED-P8). Returns `None` for a click outside the map grid
+/// (out of the rect, or on the reserved readout/legend rows). Pure + tested.
+pub(super) fn click_to_source(
+    inner: ratatui::layout::Rect,
+    col: u16,
+    row: u16,
+    sw: usize,
+    sh: usize,
+) -> Option<(usize, usize)> {
+    if col < inner.x
+        || row < inner.y
+        || col >= inner.x + inner.width
+        || row >= inner.y + inner.height
+    {
+        return None;
+    }
+    let map_w = inner.width as usize;
+    let map_h = (inner.height as usize).saturating_sub(2);
+    if map_w == 0 || map_h == 0 || sw == 0 || sh == 0 {
+        return None;
+    }
+    let dy = (row - inner.y) as usize;
+    if dy >= map_h {
+        return None;
+    }
+    let dx = (col - inner.x) as usize;
+    Some(((dx * sw / map_w).min(sw - 1), (dy * sh / map_h).min(sh - 1)))
+}
+
 /// Map a source-grid cell `(sx, sy)` to the display cell it falls in, given the
 /// source dimensions and the display dimensions. Pure; shared by the cursor
 /// render and tests. Clamps into range.
@@ -608,6 +638,24 @@ mod tests {
         assert_eq!(d.last(), Some(&(3, 3)));
         // Degenerate (same point) is a single cell, no panic.
         assert_eq!(line_cells((2, 2), (2, 2)), vec![(2, 2), (2, 2)]);
+    }
+
+    #[test]
+    fn click_to_source_maps_inside_the_grid_and_rejects_outside() {
+        use ratatui::layout::Rect;
+        // A 40-wide × 18-tall pane at (2,1): the map grid is 40 × 16 (2 rows
+        // reserved). Source is 96 × 64.
+        let inner = Rect { x: 2, y: 1, width: 40, height: 18 };
+        // Top-left of the grid → source (0,0).
+        assert_eq!(click_to_source(inner, 2, 1, 96, 64), Some((0, 0)));
+        // A click outside the rect is rejected.
+        assert_eq!(click_to_source(inner, 0, 0, 96, 64), None);
+        assert_eq!(click_to_source(inner, 50, 1, 96, 64), None);
+        // A click on the reserved readout/legend rows (last 2) is rejected.
+        assert_eq!(click_to_source(inner, 5, 17, 96, 64), None); // row 17 = dy 16 = map_h
+        // A mid click scales into range.
+        let (sx, sy) = click_to_source(inner, 22, 9, 96, 64).unwrap();
+        assert!(sx < 96 && sy < 64);
     }
 
     #[test]

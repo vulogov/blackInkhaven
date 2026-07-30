@@ -16,7 +16,7 @@ use std::io;
 use std::time::Duration;
 
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyEvent, KeyEventKind};
+use crossterm::event::{self, Event, KeyEvent, KeyEventKind, MouseEvent};
 use crossterm::execute;
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
@@ -47,6 +47,11 @@ pub trait TuiHost {
     /// called, so implementors see presses and repeats only.
     fn on_key(&mut self, key: KeyEvent);
 
+    /// Handle a mouse event. Default no-op — a host only receives these if it
+    /// enables mouse capture on its terminal (most companions don't, so their
+    /// native selection/scroll is preserved).
+    fn on_mouse(&mut self, _mouse: MouseEvent) {}
+
     /// How long each frame blocks waiting for input. Default 100 ms (≈10 fps
     /// when idle); lower it for snappier animation, raise it to idle cheaper.
     fn poll_interval(&self) -> Duration {
@@ -62,6 +67,19 @@ pub trait InputSource {
     /// repeated key, `Ok(None)` if the wait elapsed with nothing dispatchable
     /// (no event, or a filtered `Release`).
     fn next_key(&mut self, timeout: Duration) -> Result<Option<KeyEvent>>;
+
+    /// Wait up to `timeout` for any host input (key or mouse). The default only
+    /// yields keys (via [`next_key`](InputSource::next_key)); the production
+    /// [`CrosstermInput`] overrides it to also surface mouse events.
+    fn next_input(&mut self, timeout: Duration) -> Result<Option<HostInput>> {
+        Ok(self.next_key(timeout)?.map(HostInput::Key))
+    }
+}
+
+/// A dispatchable input event from an [`InputSource`].
+pub enum HostInput {
+    Key(KeyEvent),
+    Mouse(MouseEvent),
 }
 
 /// The production input source: crossterm's global terminal event reader.
@@ -69,11 +87,20 @@ pub struct CrosstermInput;
 
 impl InputSource for CrosstermInput {
     fn next_key(&mut self, timeout: Duration) -> Result<Option<KeyEvent>> {
+        match self.next_input(timeout)? {
+            Some(HostInput::Key(key)) => Ok(Some(key)),
+            _ => Ok(None),
+        }
+    }
+
+    fn next_input(&mut self, timeout: Duration) -> Result<Option<HostInput>> {
         if event::poll(timeout)? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind != KeyEventKind::Release {
-                    return Ok(Some(key));
+            match event::read()? {
+                Event::Key(key) if key.kind != KeyEventKind::Release => {
+                    return Ok(Some(HostInput::Key(key)));
                 }
+                Event::Mouse(m) => return Ok(Some(HostInput::Mouse(m))),
+                _ => {}
             }
         }
         Ok(None)
@@ -108,8 +135,10 @@ where
         host.poll_async();
         host.tick();
         terminal.draw(|f| host.render(f))?;
-        if let Some(key) = input.next_key(host.poll_interval())? {
-            host.on_key(key);
+        match input.next_input(host.poll_interval())? {
+            Some(HostInput::Key(key)) => host.on_key(key),
+            Some(HostInput::Mouse(m)) => host.on_mouse(m),
+            None => {}
         }
     }
     Ok(())
