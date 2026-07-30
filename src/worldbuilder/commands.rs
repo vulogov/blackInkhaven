@@ -76,6 +76,8 @@ pub(super) enum Command {
     Roll(usize),
     /// Render the world map with plakat and show it in the Map pane (WS-P2).
     Map,
+    /// Check the declared map layer against the compiled world (MAPED-P5).
+    MapCheck,
     /// Unrecognised / malformed — carries a message for the status bar.
     Unknown(String),
 }
@@ -110,6 +112,7 @@ pub(super) fn parse(input: &str) -> Command {
         }
 
         "map" => Command::Map,
+        "mapcheck" => Command::MapCheck,
 
         "roll" => {
             // `/roll [n]` — n candidate seeds (default 4, clamped 1..=8).
@@ -284,7 +287,7 @@ pub(super) fn parse(input: &str) -> Command {
         }
 
         other => Command::Unknown(format!(
-            "unknown command `/{other}` — supports /interview /roll /adopt /map /journey /sessions /switch /export[ --pdf] /set /star /tilt /moon /nation /magic /rule /wfact /research /compile /validate /write /undo /reset /diff"
+            "unknown command `/{other}` — supports /interview /roll /adopt /map /mapcheck /journey /sessions /switch /export[ --pdf] /set /star /tilt /moon /nation /magic /rule /wfact /research /compile /validate /write /undo /reset /diff"
         )),
     }
 }
@@ -509,6 +512,7 @@ mod tests {
         assert_eq!(parse("/adopt 0x5152"), parse("/adopt 20818"));
         assert!(matches!(parse("/adopt nope"), Command::Unknown(_)));
         assert_eq!(parse("/map"), Command::Map);
+        assert_eq!(parse("/mapcheck"), Command::MapCheck);
     }
 
     #[test]

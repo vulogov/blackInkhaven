@@ -170,6 +170,11 @@ pub(crate) struct WorldbuilderApp {
     pub(super) map_input: Option<MapInput>,
     /// A multi-step map tool in progress (P3 rivers).
     pub(super) map_tool: Option<MapTool>,
+    /// The last `/mapcheck` findings — flagged on the map (`!`) and jumpable with
+    /// `f` (P5). Cleared when the world changes.
+    pub(super) map_findings: Vec<super::map::MapFinding>,
+    /// Cursor into the spatial findings for `f` (P5).
+    map_finding_idx: usize,
 
     // — World-fact research (WB-P7) ————————————————————————————————————
     /// The last `/research` query + its retrieved Facts passages, shown in the
@@ -261,6 +266,8 @@ impl WorldbuilderApp {
             map_regions: Vec::new(),
             map_input: None,
             map_tool: None,
+            map_findings: Vec::new(),
+            map_finding_idx: 0,
             research_query: None,
             research_hits: Vec::new(),
             research_cursor: 0,
@@ -499,6 +506,7 @@ impl WorldbuilderApp {
                                 KeyCode::Char('t') => self.open_map_input("Town name", "city"),
                                 KeyCode::Char('n') => self.open_map_input("Landmark name", "landmark"),
                                 KeyCode::Char('g') => self.open_region_input(),
+                                KeyCode::Char('f') => self.jump_next_finding(),
                                 KeyCode::Char('d') | KeyCode::Char('x') => {
                                     self.delete_feature_at_cursor()
                                 }
@@ -583,6 +591,7 @@ impl WorldbuilderApp {
             Command::Switch(name) => self.run_switch(&name),
             Command::Roll(n) => self.run_roll(n),
             Command::Map => self.run_map(),
+            Command::MapCheck => self.run_mapcheck(),
             Command::Unknown(msg) => self.status = msg,
         }
     }
@@ -710,6 +719,72 @@ impl WorldbuilderApp {
     /// The source-grid dimensions of the compiled map, if any (MAPED-P1).
     fn map_source_dims(&self) -> Option<(usize, usize)> {
         self.compiled_layers.as_ref().map(|l| (l.geology.width, l.geology.height))
+    }
+
+    /// `/mapcheck` (MAPED-P5) — check the map layer against the compiled world.
+    /// Reports the plausibility score, the deterministic physics warnings, and the
+    /// spatial map findings (a town in the sea, an off-map coord) into Chat, flags
+    /// the offending cells on the map (`!`), and jumps the cursor to the first.
+    fn run_mapcheck(&mut self) {
+        self.refresh_plausibility();
+        let Some(def) = self.current_world_def() else {
+            self.status = "no world to check — declare one first (interview or /set)".into();
+            return;
+        };
+        self.populate_map_caches(&def);
+        let Some(layers) = self.compiled_layers.as_ref() else {
+            self.status = "no world to check".into();
+            return;
+        };
+        let findings = super::map::lint_map(&def, layers);
+
+        let mut body = format!(
+            "Map check — plausibility {}/100\n",
+            self.plausibility_score.unwrap_or(100)
+        );
+        if findings.is_empty() {
+            body.push_str("Map layer: no problems found.\n");
+        } else {
+            body.push_str(&format!("Map layer — {} issue(s):\n", findings.len()));
+            for f in &findings {
+                body.push_str(&format!("  ! {}\n", f.text));
+            }
+        }
+        if !self.plausibility_warnings.is_empty() {
+            body.push_str("World checks:\n");
+            for w in self.plausibility_warnings.iter().take(8) {
+                body.push_str(&format!("  · {}\n", w.text));
+            }
+        }
+
+        let spatial = findings.iter().filter(|f| f.at.is_some()).count();
+        self.map_findings = findings;
+        self.map_finding_idx = 0;
+        self.right_pane = RightPane::Map;
+        if let Some(at) = self.map_findings.iter().find_map(|f| f.at) {
+            self.map_cursor = at;
+            self.enter_map_edit();
+        }
+        self.push_turn("/mapcheck".into(), body);
+        self.status = format!("map check — {spatial} spatial issue(s) · f: jump to next");
+    }
+
+    /// `f` in the Map pane — jump the cursor to the next spatial `/mapcheck`
+    /// finding and echo its message (P5).
+    fn jump_next_finding(&mut self) {
+        let spatial: Vec<(usize, usize, String)> = self
+            .map_findings
+            .iter()
+            .filter_map(|f| f.at.map(|at| (at.0, at.1, f.text.clone())))
+            .collect();
+        if spatial.is_empty() {
+            self.status = "no map-check findings — run /mapcheck".into();
+            return;
+        }
+        self.map_finding_idx = (self.map_finding_idx + 1) % spatial.len();
+        let (x, y, text) = &spatial[self.map_finding_idx];
+        self.map_cursor = (*x, *y);
+        self.status = format!("[{}/{}] {text}", self.map_finding_idx + 1, spatial.len());
     }
 
     /// Enter Map edit mode. Auto-compiles the map if needed. Clamps the cursor
@@ -1817,6 +1892,7 @@ impl WorldbuilderApp {
         self.map_raster = None;
         self.map_landmarks.clear();
         self.map_regions.clear();
+        self.map_findings.clear();
         let def = self.current_world_def();
         self.ledger_snapshot = def.as_ref().and_then(|d| d.magic.clone());
         self.plausibility_prev = self.plausibility_score;
