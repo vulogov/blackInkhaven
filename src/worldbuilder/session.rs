@@ -87,6 +87,10 @@ pub(crate) struct WorldbuilderSession {
     pub world_name: String,
     #[serde(default)]
     pub turns: Vec<SessionTurn>,
+    /// The accepted-but-uncommitted shaping delta (WB-P10). Restored on reopen so
+    /// pending edits survive a quit; cleared by `/write` or `/reset`.
+    #[serde(default)]
+    pub pending_ops: Vec<super::commands::Op>,
     /// Persisted pane sizing (WB-P1 resize gestures). `left_split` = Facts/World
     /// vertical ratio; `split_ratio` = left-column/right-pane width ratio. Both
     /// clamped 2–8 on load.
@@ -131,6 +135,7 @@ impl WorldbuilderSession {
             created: now,
             world_name: String::new(),
             turns: Vec::new(),
+            pending_ops: Vec::new(),
             left_split: default_left_split(),
             split_ratio: default_split_ratio(),
         };
@@ -140,7 +145,6 @@ impl WorldbuilderSession {
 
     /// List all session display names for a project (slugs, sorted). Used by
     /// `/sessions` (WB-P10).
-    #[allow(dead_code)]
     pub(crate) fn list(layout: &ProjectLayout) -> Vec<String> {
         let mut out = Vec::new();
         if let Ok(entries) = std::fs::read_dir(sessions_dir(layout)) {
@@ -207,6 +211,27 @@ mod tests {
         assert_eq!(reopened.turns[0].user, "/star K");
         assert_eq!(reopened.created, "now"); // not overwritten on reopen
         assert!(WorldbuilderSession::list(&layout).contains(&"session-01".to_string()));
+    }
+
+    #[test]
+    fn pending_ops_survive_a_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let layout = ProjectLayout::new(dir.path());
+        let mut s = WorldbuilderSession::open_or_create(&layout, "s", "now".into()).unwrap();
+        s.pending_ops = vec![
+            super::super::commands::Op::Set {
+                path: vec!["astronomy".into(), "star_class".into()],
+                value: serde_json::json!("K"),
+            },
+            super::super::commands::Op::Push {
+                path: vec!["nations".into()],
+                value: serde_json::json!({ "name": "Velmari" }),
+            },
+        ];
+        s.save(&layout).unwrap();
+        let reopened = WorldbuilderSession::open_or_create(&layout, "s", "x".into()).unwrap();
+        assert_eq!(reopened.pending_ops.len(), 2);
+        assert_eq!(reopened.pending_ops, s.pending_ops);
     }
 
     #[test]

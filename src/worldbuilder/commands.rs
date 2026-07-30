@@ -10,11 +10,13 @@
 //! the rest of the RFC's shaping vocabulary is mechanical follow-up over the same
 //! `Op` engine.
 
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-/// A single structured edit to the world's `serde_json::Value`.
-#[derive(Debug, Clone, PartialEq)]
-pub(super) enum Op {
+/// A single structured edit to the world's `serde_json::Value`. Serialisable so
+/// the pending delta survives a quit in the session sidecar (WB-P10).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) enum Op {
     /// Set a dot-path leaf (creating intermediate objects).
     Set { path: Vec<String>, value: Value },
     /// Append to the array at a dot-path (creating it if absent).
@@ -58,6 +60,10 @@ pub(super) enum Command {
     Research(String),
     /// Start the guided world interview.
     Interview,
+    /// Show the session timeline (the Worldbuilding Journey) in the Chat pane.
+    Journey,
+    /// List the project's worldbuilder sessions.
+    Sessions,
     /// Unrecognised / malformed — carries a message for the status bar.
     Unknown(String),
 }
@@ -77,6 +83,8 @@ pub(super) fn parse(input: &str) -> Command {
         "compile" => Command::Compile,
         "validate" | "check" => Command::Validate,
         "interview" => Command::Interview,
+        "journey" => Command::Journey,
+        "sessions" => Command::Sessions,
         "wfact" | "fact" => {
             if rest.is_empty() {
                 Command::Unknown("usage: /wfact <statement> — records an author fact:world".into())
@@ -224,7 +232,7 @@ pub(super) fn parse(input: &str) -> Command {
         }
 
         other => Command::Unknown(format!(
-            "unknown command `/{other}` — supports /interview /set /star /tilt /moon /nation /magic /rule /wfact /research /compile /validate /write /undo /reset /diff"
+            "unknown command `/{other}` — supports /interview /journey /sessions /set /star /tilt /moon /nation /magic /rule /wfact /research /compile /validate /write /undo /reset /diff"
         )),
     }
 }
