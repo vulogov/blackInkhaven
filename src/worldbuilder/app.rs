@@ -411,7 +411,85 @@ impl WorldbuilderApp {
             Command::Interview => self.start_interview(),
             Command::Journey => self.run_journey(),
             Command::Sessions => self.run_sessions(),
+            Command::Export => self.run_export(),
             Command::Unknown(msg) => self.status = msg,
+        }
+    }
+
+    /// Collect every `fact:world` paragraph as `(title, body)`, in tree order.
+    fn collect_world_facts(&self) -> Vec<(String, String)> {
+        let Some(book_id) = self.facts_tree.root else { return Vec::new() };
+        let mut out = Vec::new();
+        // Walk the Facts tree depth-first so facts export in reading order.
+        let mut stack: Vec<Uuid> = self
+            .hierarchy
+            .children_of(Some(book_id))
+            .into_iter()
+            .rev()
+            .map(|n| n.id)
+            .collect();
+        while let Some(id) = stack.pop() {
+            if let Some(node) = self.hierarchy.get(id) {
+                if node.kind == NodeKind::Paragraph
+                    && node.tags.iter().any(|t| t == FACT_WORLD_TAG)
+                {
+                    let body = self
+                        .store
+                        .get_content(id)
+                        .ok()
+                        .flatten()
+                        .map(|b| String::from_utf8_lossy(&b).into_owned())
+                        .unwrap_or_default();
+                    out.push((node.title.clone(), body));
+                }
+                for child in self.hierarchy.children_of(Some(id)).into_iter().rev() {
+                    stack.push(child.id);
+                }
+            }
+        }
+        out
+    }
+
+    /// `/export` — assemble a readable Markdown dossier (compiled state,
+    /// plausibility, ledger, `fact:world` facts, and the Journey) and write it
+    /// atomically under `exports/`. Compiles the world fresh so it works even
+    /// before `/compile`.
+    fn run_export(&mut self) {
+        let compiled = self
+            .current_world_def()
+            .map(|def| {
+                let layers = crate::world::plausibility::compile_layers(&def);
+                crate::world::plausibility::summarise_compiled(&def, &layers)
+            });
+        let facts = self.collect_world_facts();
+        let at = chrono::Utc::now().to_rfc3339();
+        let world_name = self.world_name().to_string();
+        let md = {
+            let input = super::export::DossierInput {
+                world_name: &world_name,
+                generated_at: &at,
+                compiled: compiled.as_deref(),
+                score: self.plausibility_score,
+                warnings: &self.plausibility_warnings,
+                ledger: self.ledger_snapshot.as_ref(),
+                facts: &facts,
+                journey: &self.session.turns,
+            };
+            super::export::build_dossier(&input)
+        };
+        let dir = self.layout.root.join("exports");
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            self.status = format!("export failed: {e}");
+            return;
+        }
+        let path = dir.join(format!("dossier-{}.md", self.session.slug));
+        match crate::io_atomic::write(&path, md.as_bytes()) {
+            Ok(()) => {
+                let rel = path.strip_prefix(&self.layout.root).unwrap_or(&path).display();
+                self.push_turn("/export".into(), format!("Wrote world dossier → {rel}"));
+                self.status = format!("exported → {rel}");
+            }
+            Err(e) => self.status = format!("export failed: {e}"),
         }
     }
 
