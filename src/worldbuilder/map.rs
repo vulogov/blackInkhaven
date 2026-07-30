@@ -107,6 +107,75 @@ pub(super) fn source_to_display(
     (dx, dy)
 }
 
+/// Raise (`delta > 0`) or lower heightmap cells within `radius` of `(cx, cy)`,
+/// with linear falloff to the brush edge, clamped to `[0, 1]`. Pure (MAPED-P7).
+pub(super) fn apply_brush(
+    hm: &mut [f32],
+    w: usize,
+    h: usize,
+    cx: usize,
+    cy: usize,
+    radius: usize,
+    delta: f32,
+) {
+    let r = radius as i32;
+    let rr = (radius as f32).max(1.0);
+    for dy in -r..=r {
+        for dx in -r..=r {
+            let d = ((dx * dx + dy * dy) as f32).sqrt();
+            if d > rr {
+                continue;
+            }
+            let (x, y) = (cx as i32 + dx, cy as i32 + dy);
+            if x < 0 || y < 0 || x >= w as i32 || y >= h as i32 {
+                continue;
+            }
+            let falloff = 1.0 - d / rr;
+            let idx = y as usize * w + x as usize;
+            hm[idx] = (hm[idx] + delta * falloff).clamp(0.0, 1.0);
+        }
+    }
+}
+
+/// A `(glyph, colour)` for a terrain elevation relative to sea level (P7).
+fn terrain_cell(e: f32, sea: f32) -> (char, Color) {
+    if e <= sea {
+        return ('~', Color::Blue);
+    }
+    let relief = ((e - sea) / (1.0 - sea).max(1e-3)).clamp(0.0, 1.0);
+    if relief < 0.33 {
+        ('.', Color::Green)
+    } else if relief < 0.66 {
+        ('^', Color::Yellow)
+    } else {
+        ('A', Color::White)
+    }
+}
+
+/// Downsample an edited heightmap to a `(glyph, colour)` display grid, shading by
+/// elevation vs sea level. The terrain-sculpt preview (P7).
+fn compose_terrain(
+    terrain: &[f32],
+    sea: f32,
+    sw: usize,
+    sh: usize,
+    map_w: usize,
+    map_h: usize,
+) -> Vec<Vec<(char, Color)>> {
+    let mut grid = Vec::with_capacity(map_h);
+    for oy in 0..map_h {
+        let sy = oy * sh / map_h;
+        let mut row = Vec::with_capacity(map_w);
+        for ox in 0..map_w {
+            let sx = ox * sw / map_w;
+            let e = terrain.get(sy * sw + sx).copied().unwrap_or(0.0);
+            row.push(terrain_cell(e, sea));
+        }
+        grid.push(row);
+    }
+    grid
+}
+
 /// One map-layer check finding (MAPED-P5), optionally anchored to a source cell
 /// so the editor can jump the cursor to it.
 pub(super) struct MapFinding {
@@ -215,7 +284,12 @@ pub(super) fn render_map(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
     }
 
     let hydro = &layers.hydrology;
-    let grid = compose(layers, map_w, map_h);
+    // P7 — an edited heightmap previews as shaded terrain; else the biome grid.
+    let terrain_preview = app.map_terrain.as_ref().filter(|t| t.len() == sw * sh);
+    let grid = match terrain_preview {
+        Some(t) => compose_terrain(t, app.map_terrain_sea, sw, sh, map_w, map_h),
+        None => compose(layers, map_w, map_h),
+    };
 
     // MAPED-P1 — in edit mode, the source-space cursor maps to one display cell.
     let cursor_disp = if app.map_edit {
@@ -352,8 +426,13 @@ pub(super) fn render_map(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
                     .map(|m| format!(" · § {} ({})", m.name, m.kind))
             })
             .unwrap_or_default();
+        let terrain_tag = if terrain_preview.is_some() {
+            format!(" · ⛰ terrain r{}", app.map_brush)
+        } else {
+            String::new()
+        };
         lines.push(Line::from(Span::styled(
-            format!("✎ ({cx},{cy}) · {biome} · elev {elev:.2}{sea}{here}"),
+            format!("✎ ({cx},{cy}) · {biome} · elev {elev:.2}{sea}{here}{terrain_tag}"),
             Style::new().fg(Color::Yellow),
         )));
         let hint = match &app.map_tool {
@@ -369,7 +448,7 @@ pub(super) fn render_map(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
             Some(super::app::MapTool::Road { from: Some(_) }) => {
                 "road: move to the other landmark, Enter · Esc cancel"
             }
-            None => "hjkl · t town · n · r river · g region · o road · d del · f issue · Esc",
+            None => "hjkl · t/n/g/r/o place · +/− terrain (/terrain saves) · d del · f issue · Esc",
         };
         lines.push(Line::from(Span::styled(hint, Style::new().dim())));
     } else {
@@ -499,6 +578,22 @@ mod tests {
         // The finding carries the offending cell for cursor-jump.
         let sunk = findings.iter().find(|f| f.text.contains("Sunkport")).unwrap();
         assert_eq!(sunk.at, Some(ocean));
+    }
+
+    #[test]
+    fn apply_brush_raises_the_centre_most_and_clamps() {
+        let (w, h) = (9, 9);
+        let mut hm = vec![0.5f32; w * h];
+        apply_brush(&mut hm, w, h, 4, 4, 2, 0.4);
+        // Centre rises the full delta; a cell just inside the radius rises less.
+        assert!((hm[4 * w + 4] - 0.9).abs() < 1e-4, "centre = {}", hm[4 * w + 4]);
+        assert!(hm[4 * w + 5] > 0.5 && hm[4 * w + 5] < 0.9);
+        // Outside the radius is untouched; values clamp to [0,1].
+        assert_eq!(hm[0], 0.5);
+        apply_brush(&mut hm, w, h, 4, 4, 2, 5.0);
+        assert_eq!(hm[4 * w + 4], 1.0);
+        apply_brush(&mut hm, w, h, 4, 4, 2, -5.0);
+        assert_eq!(hm[4 * w + 4], 0.0);
     }
 
     #[test]

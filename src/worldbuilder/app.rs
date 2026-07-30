@@ -170,6 +170,16 @@ pub(crate) struct WorldbuilderApp {
     pub(super) map_regions: Vec<MapMarker>,
     /// Declared roads as source-cell endpoint pairs, for the overlay (P6).
     pub(super) map_roads: Vec<((usize, usize), (usize, usize))>,
+
+    // — Terrain sculpt (MAPED-P7) ——————————————————————————————————————
+    /// An in-progress edited heightmap (`geology.width × height`, 0..1), seeded
+    /// from the compiled terrain on the first `+`/`-`. When present the map draws
+    /// this instead of the biome grid, so the sculpt previews live.
+    pub(super) map_terrain: Option<Vec<f32>>,
+    /// The sea-level threshold (0..1) for the terrain preview + DEM export.
+    pub(super) map_terrain_sea: f32,
+    /// The sculpt brush radius in source cells (P7).
+    pub(super) map_brush: usize,
     /// An open name-entry prompt for a feature being placed (P2/P3).
     pub(super) map_input: Option<MapInput>,
     /// A multi-step map tool in progress (P3 rivers).
@@ -269,6 +279,9 @@ impl WorldbuilderApp {
             map_landmarks: Vec::new(),
             map_regions: Vec::new(),
             map_roads: Vec::new(),
+            map_terrain: None,
+            map_terrain_sea: 0.5,
+            map_brush: 2,
             map_input: None,
             map_tool: None,
             map_findings: Vec::new(),
@@ -517,6 +530,17 @@ impl WorldbuilderApp {
                                         "road — move to the first landmark, Enter · Esc cancel".into();
                                 }
                                 KeyCode::Char('f') => self.jump_next_finding(),
+                                // P7 terrain sculpt.
+                                KeyCode::Char('+') => self.sculpt_terrain(0.05),
+                                KeyCode::Char('-') => self.sculpt_terrain(-0.05),
+                                KeyCode::Char('.') => {
+                                    self.map_brush = (self.map_brush + 1).min(12);
+                                    self.status = format!("brush r{}", self.map_brush);
+                                }
+                                KeyCode::Char(',') => {
+                                    self.map_brush = self.map_brush.saturating_sub(1);
+                                    self.status = format!("brush r{}", self.map_brush);
+                                }
                                 KeyCode::Char('d') | KeyCode::Char('x') => {
                                     self.delete_feature_at_cursor()
                                 }
@@ -602,6 +626,7 @@ impl WorldbuilderApp {
             Command::Roll(n) => self.run_roll(n),
             Command::Map => self.run_map(),
             Command::MapCheck => self.run_mapcheck(),
+            Command::Terrain => self.write_terrain_dem(),
             Command::Unknown(msg) => self.status = msg,
         }
     }
@@ -729,6 +754,84 @@ impl WorldbuilderApp {
     /// The source-grid dimensions of the compiled map, if any (MAPED-P1).
     fn map_source_dims(&self) -> Option<(usize, usize)> {
         self.compiled_layers.as_ref().map(|l| (l.geology.width, l.geology.height))
+    }
+
+    /// Raise (`delta > 0`) or lower terrain under the brush (MAPED-P7). Seeds the
+    /// edit buffer from the compiled heightmap on first use; the map then previews
+    /// the sculpt live. No world write until `/terrain`.
+    fn sculpt_terrain(&mut self, delta: f32) {
+        let Some((w, h)) = self.map_source_dims() else {
+            self.status = "no terrain — run /compile first".into();
+            return;
+        };
+        if self.map_terrain.as_ref().map(|t| t.len()) != Some(w * h) {
+            let Some(layers) = self.compiled_layers.as_ref() else { return };
+            if layers.geology.heightmap.len() != w * h {
+                self.status = "terrain grid unavailable".into();
+                return;
+            }
+            self.map_terrain = Some(layers.geology.heightmap.clone());
+            self.map_terrain_sea = layers.geology.sea_level;
+        }
+        let (cx, cy) = self.map_cursor;
+        let radius = self.map_brush;
+        if let Some(hm) = self.map_terrain.as_mut() {
+            super::map::apply_brush(hm, w, h, cx, cy, radius, delta);
+        }
+        let verb = if delta > 0.0 { "raised" } else { "lowered" };
+        self.status = format!("terrain {verb} at ({cx},{cy}) · brush r{radius} · /terrain to save");
+    }
+
+    /// `/terrain` (MAPED-P7) — write the edited heightmap as a 16-bit DEM PNG under
+    /// `assets/maps/` and set `geology.dem` (a pending edit). The `realworld`
+    /// compiler is DEM-aware, so a subsequent compile builds the world from the
+    /// sculpted terrain. (The worldbuilder's own `/compile` stays procedural.)
+    fn write_terrain_dem(&mut self) {
+        let Some((w, h)) = self.map_source_dims() else {
+            self.status = "no terrain to save".into();
+            return;
+        };
+        let Some(hm) = self.map_terrain.clone() else {
+            self.status = "no terrain edits yet — raise/lower with + / − first".into();
+            return;
+        };
+        if hm.len() != w * h {
+            self.status = "terrain grid size mismatch".into();
+            return;
+        }
+        let dir = self.layout.root.join("assets").join("maps");
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            self.status = format!("terrain save failed: {e}");
+            return;
+        }
+        let rel = "assets/maps/terrain.png";
+        let raw: Vec<u16> = hm.iter().map(|&e| (e.clamp(0.0, 1.0) * 65535.0) as u16).collect();
+        let Some(img) =
+            image::ImageBuffer::<image::Luma<u16>, Vec<u16>>::from_raw(w as u32, h as u32, raw)
+        else {
+            self.status = "terrain buffer invalid".into();
+            return;
+        };
+        if let Err(e) = img.save(self.layout.root.join(rel)) {
+            self.status = format!("terrain PNG write failed: {e}");
+            return;
+        }
+        let sea_px = (self.map_terrain_sea.clamp(0.0, 1.0) * 65535.0) as u16;
+        let value = serde_json::json!({ "path": rel, "sea_level_pixel_value": sea_px });
+        self.pending_ops.push(super::commands::Op::Set {
+            path: vec!["geology".into(), "dem".into()],
+            value,
+        });
+        // Rebuild caches (procedural — the worldbuilder compile isn't DEM-aware),
+        // but keep the terrain preview.
+        let preview = self.map_terrain.take();
+        self.refresh_plausibility();
+        if let Some(def) = self.current_world_def() {
+            self.populate_map_caches(&def);
+        }
+        self.map_terrain = preview;
+        self.record_turn("map: terrain DEM".into(), format!("wrote {rel}"), Vec::new());
+        self.status = format!("wrote {rel} + geology.dem · /write to commit (realworld compile uses it)");
     }
 
     /// `/mapcheck` (MAPED-P5) — check the map layer against the compiled world.
