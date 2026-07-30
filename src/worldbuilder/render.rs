@@ -243,6 +243,8 @@ fn render_right_pane(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
         RightPane::Chat => render_chat(frame, app, inner),
         RightPane::Research => render_research(frame, app, inner),
         RightPane::Map => {
+            // MAPED-P8 — remember the pane rect so a mouse click maps to a cell.
+            app.map_pane_rect.set(Some(inner));
             // WS-P2 — the plakat raster on image-capable terminals; else ASCII.
             // MAPED-P1 — edit mode always uses the ASCII grid (the cursor needs it).
             if let (false, Some(cell)) = (app.map_edit, app.map_raster.as_ref()) {

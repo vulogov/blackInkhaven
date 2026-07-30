@@ -52,6 +52,7 @@
 
   part(number: "VIII", title: "The World at Hand"),
   include "chapters/20-the-interactive-worldbuilder.typ",
+  include "chapters/21-the-map-editor.typ",
 
   include "chapters/a-command-reference.typ",
   include "chapters/b-glossary.typ",

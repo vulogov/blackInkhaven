@@ -1719,13 +1719,31 @@ pub(crate) fn render_world_map(
     let demo = compile_demographics(&climate, &hydro);
     let links = store.and_then(|s| s.list_place_links().ok()).unwrap_or_default();
     let declared = declared_map_landmarks(def, geo.width, geo.height);
+    let declared_roads = declared_map_roads(def);
     let pol = compile_polities(&demo, &def.nations, def.seed_u64());
     let trade = compile_trade(&pol, &geo, def.astronomy.planet.radius_earth);
     let spec = plakat::build_map_spec(
-        &def.name, &geo, &climate, &hydro, &demo, &links, &declared, &pol, &trade,
+        &def.name, &geo, &climate, &hydro, &demo, &links, &declared, &declared_roads, &pol, &trade,
     );
     plakat::render(project, &spec, def.seed_u64(), geo.width, geo.height)
         .map_err(|e| Error::Config(format!("rendering map: {e}")))
+}
+
+/// MAPED-P6 — the author-declared roads (`geography.roads[]`) as plakat inputs.
+fn declared_map_roads(def: &WorldDefinition) -> Vec<crate::world::plakat::DeclaredRoad> {
+    def.geography
+        .as_ref()
+        .map(|g| {
+            g.roads
+                .iter()
+                .map(|r| crate::world::plakat::DeclaredRoad {
+                    from: r.from.clone(),
+                    to: r.to.clone(),
+                    kind: r.kind.clone(),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Render the world map with plakat. Compiles every layer, emits a MapSpec from
@@ -1750,9 +1768,10 @@ fn map(project: &Path, spec_only: bool, no_ingest: bool) -> Result<()> {
         let demo = compile_demographics(&climate, &hydro);
         let links = store.as_ref().and_then(|s| s.list_place_links().ok()).unwrap_or_default();
         let declared = declared_map_landmarks(&def, geo.width, geo.height);
+        let declared_roads = declared_map_roads(&def);
         let pol = compile_polities(&demo, &def.nations, def.seed_u64());
         let trade = compile_trade(&pol, &geo, def.astronomy.planet.radius_earth);
-        let spec = plakat::build_map_spec(&def.name, &geo, &climate, &hydro, &demo, &links, &declared, &pol, &trade);
+        let spec = plakat::build_map_spec(&def.name, &geo, &climate, &hydro, &demo, &links, &declared, &declared_roads, &pol, &trade);
         let (gw, gh) = (geo.width, geo.height);
 
         let dir = plakat::maps_dir(project);

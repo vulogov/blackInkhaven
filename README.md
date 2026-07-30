@@ -27,31 +27,32 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.10.0 — The Cartographer
+## Latest release · 1.10.1 — The Cartographer Draws More
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.10.0.md`](Documentation/RELEASE_NOTES/1.10.0.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.10.1.md`](Documentation/RELEASE_NOTES/1.10.1.md)
 
-The worldbuilder learns to draw: an interactive **map editor**, plus seed exploration and a real
-painted map on capable terminals. Every edit is still an ordinary `world.hjson` change.
+Finishes the interactive **map editor**: roads, terrain sculpting, mouse support, and a companion-
+book chapter. Every mark is still an ordinary `world.hjson` edit.
 
 ### What's new
 
-- **Interactive map editor** — cycle to the Map pane, press `e`, and place towns (`t`) and
-  landmarks (`n`), draw rivers (`r`, validated as you draw), mark regions (`g`), and delete (`d`).
-  `/mapcheck` checks the map layer against the physics (a town in the ocean, an off-map coord) and
-  `f` jumps to each issue. Every placement is a pending `world.hjson` edit — `/diff`, then `/write`.
-- **`/roll [n]` + `/adopt`** — compile *n* candidate worlds on derived seeds, compare them
-  (continents · sea % · population · ★), and adopt one.
-- **Raster map** — `/map` paints the real plakat map in the Map pane on kitty / iTerm2 / sixel
-  terminals; ASCII biome map otherwise.
-- **`/switch` sessions**, **promote a research hit to `fact:world`** (`a`), and **`/export --pdf`**
-  (Typst, in-process).
+- **Roads** — `o` connects two named landmarks → `geography.roads[]` (`=`), rendered on the plakat
+  raster too.
+- **Terrain sculpting** — `+`/`-` raise/lower the land under a brush (live elevation shading); the
+  map re-shades as you sculpt. `/terrain` writes a grayscale DEM + sets `geology.dem`, so a
+  `realworld compile` rebuilds the world from your land.
+- **Mouse** — left-click in the Map pane to position the cursor (scoped to the worldbuilder).
+- **Docs** — *Building the World* ch. 21 "The Map Editor" with five terminal screens; full
+  `WORLDBUILDING.md` + `KEYBINDING.md` map-editor reference.
+
+(These build on 1.10.0's map editor — towns, landmarks, rivers, regions, `/mapcheck` — plus
+`/roll` seed exploration and the plakat raster map.)
 
 ### Dependencies & compatibility
 
-No new dependencies; all changes additive and backward-compatible (`geography.regions[]` gains an
-optional anchor; the delta engine gains `RemoveAt`). Nothing changes the existing compiler or any
-project. Compiles warning-free. Test suite → 2720.
+No new dependencies; all changes additive and backward-compatible (`geography.roads[]` is new,
+`geology.dem` was already compiler-supported, mouse capture is worldbuilder-only). Compiles
+warning-free. Test suite → 2723.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
