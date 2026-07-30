@@ -91,6 +91,36 @@ fn compose(
     grid
 }
 
+/// Map a terminal click at `(col, row)` inside the Map pane's `inner` rect to a
+/// source-grid cell (MAPED-P8). Returns `None` for a click outside the map grid
+/// (out of the rect, or on the reserved readout/legend rows). Pure + tested.
+pub(super) fn click_to_source(
+    inner: ratatui::layout::Rect,
+    col: u16,
+    row: u16,
+    sw: usize,
+    sh: usize,
+) -> Option<(usize, usize)> {
+    if col < inner.x
+        || row < inner.y
+        || col >= inner.x + inner.width
+        || row >= inner.y + inner.height
+    {
+        return None;
+    }
+    let map_w = inner.width as usize;
+    let map_h = (inner.height as usize).saturating_sub(2);
+    if map_w == 0 || map_h == 0 || sw == 0 || sh == 0 {
+        return None;
+    }
+    let dy = (row - inner.y) as usize;
+    if dy >= map_h {
+        return None;
+    }
+    let dx = (col - inner.x) as usize;
+    Some(((dx * sw / map_w).min(sw - 1), (dy * sh / map_h).min(sh - 1)))
+}
+
 /// Map a source-grid cell `(sx, sy)` to the display cell it falls in, given the
 /// source dimensions and the display dimensions. Pure; shared by the cursor
 /// render and tests. Clamps into range.
@@ -105,6 +135,75 @@ pub(super) fn source_to_display(
     let dx = (sx * dw / sw).min(dw - 1);
     let dy = (sy * dh / sh).min(dh - 1);
     (dx, dy)
+}
+
+/// Raise (`delta > 0`) or lower heightmap cells within `radius` of `(cx, cy)`,
+/// with linear falloff to the brush edge, clamped to `[0, 1]`. Pure (MAPED-P7).
+pub(super) fn apply_brush(
+    hm: &mut [f32],
+    w: usize,
+    h: usize,
+    cx: usize,
+    cy: usize,
+    radius: usize,
+    delta: f32,
+) {
+    let r = radius as i32;
+    let rr = (radius as f32).max(1.0);
+    for dy in -r..=r {
+        for dx in -r..=r {
+            let d = ((dx * dx + dy * dy) as f32).sqrt();
+            if d > rr {
+                continue;
+            }
+            let (x, y) = (cx as i32 + dx, cy as i32 + dy);
+            if x < 0 || y < 0 || x >= w as i32 || y >= h as i32 {
+                continue;
+            }
+            let falloff = 1.0 - d / rr;
+            let idx = y as usize * w + x as usize;
+            hm[idx] = (hm[idx] + delta * falloff).clamp(0.0, 1.0);
+        }
+    }
+}
+
+/// A `(glyph, colour)` for a terrain elevation relative to sea level (P7).
+fn terrain_cell(e: f32, sea: f32) -> (char, Color) {
+    if e <= sea {
+        return ('~', Color::Blue);
+    }
+    let relief = ((e - sea) / (1.0 - sea).max(1e-3)).clamp(0.0, 1.0);
+    if relief < 0.33 {
+        ('.', Color::Green)
+    } else if relief < 0.66 {
+        ('^', Color::Yellow)
+    } else {
+        ('A', Color::White)
+    }
+}
+
+/// Downsample an edited heightmap to a `(glyph, colour)` display grid, shading by
+/// elevation vs sea level. The terrain-sculpt preview (P7).
+fn compose_terrain(
+    terrain: &[f32],
+    sea: f32,
+    sw: usize,
+    sh: usize,
+    map_w: usize,
+    map_h: usize,
+) -> Vec<Vec<(char, Color)>> {
+    let mut grid = Vec::with_capacity(map_h);
+    for oy in 0..map_h {
+        let sy = oy * sh / map_h;
+        let mut row = Vec::with_capacity(map_w);
+        for ox in 0..map_w {
+            let sx = ox * sw / map_w;
+            let e = terrain.get(sy * sw + sx).copied().unwrap_or(0.0);
+            row.push(terrain_cell(e, sea));
+        }
+        grid.push(row);
+    }
+    grid
 }
 
 /// One map-layer check finding (MAPED-P5), optionally anchored to a source cell
@@ -215,7 +314,12 @@ pub(super) fn render_map(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
     }
 
     let hydro = &layers.hydrology;
-    let grid = compose(layers, map_w, map_h);
+    // P7 — an edited heightmap previews as shaded terrain; else the biome grid.
+    let terrain_preview = app.map_terrain.as_ref().filter(|t| t.len() == sw * sh);
+    let grid = match terrain_preview {
+        Some(t) => compose_terrain(t, app.map_terrain_sea, sw, sh, map_w, map_h),
+        None => compose(layers, map_w, map_h),
+    };
 
     // MAPED-P1 — in edit mode, the source-space cursor maps to one display cell.
     let cursor_disp = if app.map_edit {
@@ -236,6 +340,18 @@ pub(super) fn render_map(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
     for m in &app.map_regions {
         if m.x < sw && m.y < sh {
             region_cells.insert(source_to_display((m.x, m.y), (sw, sh), (map_w, map_h)));
+        }
+    }
+
+    // MAPED-P6 — declared roads: a `=` line between landmark endpoints.
+    let mut road_cells: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+    for (a, b) in &app.map_roads {
+        if a.0 < sw && a.1 < sh && b.0 < sw && b.1 < sh {
+            let ad = source_to_display(*a, (sw, sh), (map_w, map_h));
+            let bd = source_to_display(*b, (sw, sh), (map_w, map_h));
+            for c in line_cells(ad, bd) {
+                road_cells.insert(c);
+            }
         }
     }
 
@@ -264,6 +380,20 @@ pub(super) fn render_map(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
             }
         }
     }
+    // A road being drawn: provisional line from the first landmark to the cursor.
+    if let Some(super::app::MapTool::Road { from: Some(name) }) = &app.map_tool {
+        if let Some(m) = app.map_landmarks.iter().find(|m| &m.name == name) {
+            if m.x < sw && m.y < sh {
+                let sd = source_to_display((m.x, m.y), (sw, sh), (map_w, map_h));
+                river_src = Some(sd);
+                if let Some(cd) = cursor_disp {
+                    for cell in line_cells(sd, cd) {
+                        river_line.insert(cell);
+                    }
+                }
+            }
+        }
+    }
 
     let mut lines: Vec<Line> = Vec::with_capacity(map_h + 2);
     for (y, row) in grid.iter().enumerate() {
@@ -272,6 +402,10 @@ pub(super) fn render_map(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
             .enumerate()
             .map(|(x, &(ch, color))| {
                 let (mut ch, mut color) = (ch, color);
+                if road_cells.contains(&(x, y)) {
+                    ch = '=';
+                    color = Color::Yellow;
+                }
                 if river_line.contains(&(x, y)) {
                     ch = '·';
                     color = Color::Cyan;
@@ -322,8 +456,13 @@ pub(super) fn render_map(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
                     .map(|m| format!(" · § {} ({})", m.name, m.kind))
             })
             .unwrap_or_default();
+        let terrain_tag = if terrain_preview.is_some() {
+            format!(" · ⛰ terrain r{}", app.map_brush)
+        } else {
+            String::new()
+        };
         lines.push(Line::from(Span::styled(
-            format!("✎ ({cx},{cy}) · {biome} · elev {elev:.2}{sea}{here}"),
+            format!("✎ ({cx},{cy}) · {biome} · elev {elev:.2}{sea}{here}{terrain_tag}"),
             Style::new().fg(Color::Yellow),
         )));
         let hint = match &app.map_tool {
@@ -333,7 +472,13 @@ pub(super) fn render_map(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
             Some(super::app::MapTool::River { source: Some(_) }) => {
                 "river: move to the MOUTH, Enter to set · Esc cancel"
             }
-            None => "hjkl · t town · n name · r river · g region · d delete · f issue · Esc",
+            Some(super::app::MapTool::Road { from: None }) => {
+                "road: move to the first landmark, Enter · Esc cancel"
+            }
+            Some(super::app::MapTool::Road { from: Some(_) }) => {
+                "road: move to the other landmark, Enter · Esc cancel"
+            }
+            None => "hjkl · t/n/g/r/o place · +/− terrain (/terrain saves) · d del · f issue · Esc",
         };
         lines.push(Line::from(Span::styled(hint, Style::new().dim())));
     } else {
@@ -466,6 +611,22 @@ mod tests {
     }
 
     #[test]
+    fn apply_brush_raises_the_centre_most_and_clamps() {
+        let (w, h) = (9, 9);
+        let mut hm = vec![0.5f32; w * h];
+        apply_brush(&mut hm, w, h, 4, 4, 2, 0.4);
+        // Centre rises the full delta; a cell just inside the radius rises less.
+        assert!((hm[4 * w + 4] - 0.9).abs() < 1e-4, "centre = {}", hm[4 * w + 4]);
+        assert!(hm[4 * w + 5] > 0.5 && hm[4 * w + 5] < 0.9);
+        // Outside the radius is untouched; values clamp to [0,1].
+        assert_eq!(hm[0], 0.5);
+        apply_brush(&mut hm, w, h, 4, 4, 2, 5.0);
+        assert_eq!(hm[4 * w + 4], 1.0);
+        apply_brush(&mut hm, w, h, 4, 4, 2, -5.0);
+        assert_eq!(hm[4 * w + 4], 0.0);
+    }
+
+    #[test]
     fn line_cells_connects_endpoints() {
         let l = line_cells((0, 0), (4, 0));
         assert_eq!(l.first(), Some(&(0, 0)));
@@ -477,6 +638,24 @@ mod tests {
         assert_eq!(d.last(), Some(&(3, 3)));
         // Degenerate (same point) is a single cell, no panic.
         assert_eq!(line_cells((2, 2), (2, 2)), vec![(2, 2), (2, 2)]);
+    }
+
+    #[test]
+    fn click_to_source_maps_inside_the_grid_and_rejects_outside() {
+        use ratatui::layout::Rect;
+        // A 40-wide × 18-tall pane at (2,1): the map grid is 40 × 16 (2 rows
+        // reserved). Source is 96 × 64.
+        let inner = Rect { x: 2, y: 1, width: 40, height: 18 };
+        // Top-left of the grid → source (0,0).
+        assert_eq!(click_to_source(inner, 2, 1, 96, 64), Some((0, 0)));
+        // A click outside the rect is rejected.
+        assert_eq!(click_to_source(inner, 0, 0, 96, 64), None);
+        assert_eq!(click_to_source(inner, 50, 1, 96, 64), None);
+        // A click on the reserved readout/legend rows (last 2) is rejected.
+        assert_eq!(click_to_source(inner, 5, 17, 96, 64), None); // row 17 = dy 16 = map_h
+        // A mid click scales into range.
+        let (sx, sy) = click_to_source(inner, 22, 9, 96, 64).unwrap();
+        assert!(sx < 96 && sy < 64);
     }
 
     #[test]

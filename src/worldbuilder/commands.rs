@@ -78,6 +78,8 @@ pub(super) enum Command {
     Map,
     /// Check the declared map layer against the compiled world (MAPED-P5).
     MapCheck,
+    /// Write the sculpted terrain as a DEM heightmap + set geology.dem (MAPED-P7).
+    Terrain,
     /// Unrecognised / malformed — carries a message for the status bar.
     Unknown(String),
 }
@@ -113,6 +115,7 @@ pub(super) fn parse(input: &str) -> Command {
 
         "map" => Command::Map,
         "mapcheck" => Command::MapCheck,
+        "terrain" => Command::Terrain,
 
         "roll" => {
             // `/roll [n]` — n candidate seeds (default 4, clamped 1..=8).
@@ -287,7 +290,7 @@ pub(super) fn parse(input: &str) -> Command {
         }
 
         other => Command::Unknown(format!(
-            "unknown command `/{other}` — supports /interview /roll /adopt /map /mapcheck /journey /sessions /switch /export[ --pdf] /set /star /tilt /moon /nation /magic /rule /wfact /research /compile /validate /write /undo /reset /diff"
+            "unknown command `/{other}` — supports /interview /roll /adopt /map /mapcheck /terrain /journey /sessions /switch /export[ --pdf] /set /star /tilt /moon /nation /magic /rule /wfact /research /compile /validate /write /undo /reset /diff"
         )),
     }
 }

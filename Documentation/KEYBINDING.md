@@ -1546,13 +1546,19 @@ change lands in `world.hjson`; it never generates prose. Launched outside the ed
 | **Query prompt** | `Enter` send/answer, `Esc` clear-then-defocus (or leave interview) |
 | **Chat** | `j`/`k`/`g`/`G` scroll |
 | **Confirm overlay** | `y` accept the delta into pending, `n`/`Esc` discard |
+| **Map editor** (1.10.0+) | `e` edit; `hjkl`/arrows move (`Shift` fine); left-click positions the cursor |
+| `t` · `n` · `g` (Map edit) | place a town · landmark · region at the cursor |
+| `r` · `o` (Map edit) | draw a river (source→mouth) · a road (landmark→landmark) |
+| `+` `-` · `,` `.` (Map edit) | raise / lower terrain · brush size (`/terrain` writes the DEM) |
+| `d` · `f` (Map edit) | delete the feature under the cursor · jump to the next `/mapcheck` issue |
 
 Commands (type in the prompt): `/interview`, `/set <path> <value>`, `/star`, `/tilt`,
 `/moon`, `/nation`, `/magic on|off`, `/rule <kind> <cat,cat> [desc]`, `/wfact <text>`,
-`/research <query>`, `/compile`, `/validate`, `/diff`, `/write`, `/undo`, `/reset`,
-`/journey`, `/sessions`, `/export`. See
+`/research <query>`, `/compile`, `/validate`, `/roll [n]`, `/adopt <seed>`, `/map`,
+`/mapcheck`, `/terrain`, `/diff`, `/write`, `/undo`, `/reset`, `/journey`, `/sessions`,
+`/switch <name>`, `/export [--pdf]`. See
 [Worldbuilding reference](WORLDBUILDING.md#the-interactive-worldbuilder-inkhaven-worldbuilder)
-and *Building the World with Inkhaven*, ch. 20.
+and *Building the World with Inkhaven*, chs. 20–21.
 
 ## `inkhaven prompts-editor` (1.2.10+)
 

@@ -73,6 +73,8 @@ pub(super) struct MapInput {
 /// sets its source, the second its mouth (then a name is requested).
 pub(super) enum MapTool {
     River { source: Option<(usize, usize)> },
+    /// A road connecting two landmarks; `from` is the first once picked (P6).
+    Road { from: Option<String> },
 }
 
 /// World-book chapters owned by `realworld compile` — read-only in the
@@ -166,6 +168,21 @@ pub(crate) struct WorldbuilderApp {
     pub(super) map_landmarks: Vec<MapMarker>,
     /// Declared regions with an anchor cell, for the map overlay (P4).
     pub(super) map_regions: Vec<MapMarker>,
+    /// Declared roads as source-cell endpoint pairs, for the overlay (P6).
+    pub(super) map_roads: Vec<((usize, usize), (usize, usize))>,
+
+    // — Terrain sculpt (MAPED-P7) ——————————————————————————————————————
+    /// An in-progress edited heightmap (`geology.width × height`, 0..1), seeded
+    /// from the compiled terrain on the first `+`/`-`. When present the map draws
+    /// this instead of the biome grid, so the sculpt previews live.
+    pub(super) map_terrain: Option<Vec<f32>>,
+    /// The sea-level threshold (0..1) for the terrain preview + DEM export.
+    pub(super) map_terrain_sea: f32,
+    /// The sculpt brush radius in source cells (P7).
+    pub(super) map_brush: usize,
+    /// The Map pane's inner rect from the last render, so a mouse click can be
+    /// mapped back to a source cell (P8). `Cell` because `render` is `&self`.
+    pub(super) map_pane_rect: std::cell::Cell<Option<ratatui::layout::Rect>>,
     /// An open name-entry prompt for a feature being placed (P2/P3).
     pub(super) map_input: Option<MapInput>,
     /// A multi-step map tool in progress (P3 rivers).
@@ -264,6 +281,11 @@ impl WorldbuilderApp {
             map_cursor: (0, 0),
             map_landmarks: Vec::new(),
             map_regions: Vec::new(),
+            map_roads: Vec::new(),
+            map_terrain: None,
+            map_terrain_sea: 0.5,
+            map_brush: 2,
+            map_pane_rect: std::cell::Cell::new(None),
             map_input: None,
             map_tool: None,
             map_findings: Vec::new(),
@@ -494,7 +516,7 @@ impl WorldbuilderApp {
                                     self.map_tool = None;
                                     self.status = "tool cancelled".into();
                                 }
-                                KeyCode::Enter => self.river_pick(),
+                                KeyCode::Enter => self.advance_map_tool(),
                                 _ => {}
                             }
                         } else {
@@ -506,7 +528,23 @@ impl WorldbuilderApp {
                                 KeyCode::Char('t') => self.open_map_input("Town name", "city"),
                                 KeyCode::Char('n') => self.open_map_input("Landmark name", "landmark"),
                                 KeyCode::Char('g') => self.open_region_input(),
+                                KeyCode::Char('o') => {
+                                    self.map_tool = Some(MapTool::Road { from: None });
+                                    self.status =
+                                        "road — move to the first landmark, Enter · Esc cancel".into();
+                                }
                                 KeyCode::Char('f') => self.jump_next_finding(),
+                                // P7 terrain sculpt.
+                                KeyCode::Char('+') => self.sculpt_terrain(0.05),
+                                KeyCode::Char('-') => self.sculpt_terrain(-0.05),
+                                KeyCode::Char('.') => {
+                                    self.map_brush = (self.map_brush + 1).min(12);
+                                    self.status = format!("brush r{}", self.map_brush);
+                                }
+                                KeyCode::Char(',') => {
+                                    self.map_brush = self.map_brush.saturating_sub(1);
+                                    self.status = format!("brush r{}", self.map_brush);
+                                }
                                 KeyCode::Char('d') | KeyCode::Char('x') => {
                                     self.delete_feature_at_cursor()
                                 }
@@ -592,6 +630,7 @@ impl WorldbuilderApp {
             Command::Roll(n) => self.run_roll(n),
             Command::Map => self.run_map(),
             Command::MapCheck => self.run_mapcheck(),
+            Command::Terrain => self.write_terrain_dem(),
             Command::Unknown(msg) => self.status = msg,
         }
     }
@@ -719,6 +758,107 @@ impl WorldbuilderApp {
     /// The source-grid dimensions of the compiled map, if any (MAPED-P1).
     fn map_source_dims(&self) -> Option<(usize, usize)> {
         self.compiled_layers.as_ref().map(|l| (l.geology.width, l.geology.height))
+    }
+
+    /// MAPED-P8 — a left-click in the Map pane focuses it, enters edit mode, and
+    /// positions the cursor on the clicked source cell. Other mouse events are
+    /// ignored (placement stays on the single-key tools).
+    fn handle_mouse(&mut self, mouse: crossterm::event::MouseEvent) {
+        use crossterm::event::{MouseButton, MouseEventKind};
+        if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+            return;
+        }
+        let Some(inner) = self.map_pane_rect.get() else { return };
+        let Some((sw, sh)) = self.map_source_dims() else { return };
+        let Some((sx, sy)) = super::map::click_to_source(inner, mouse.column, mouse.row, sw, sh)
+        else {
+            return;
+        };
+        self.right_pane = RightPane::Map;
+        self.focus = Focus::RightPane;
+        if !self.map_edit {
+            self.enter_map_edit();
+        }
+        self.map_cursor = (sx, sy);
+        self.status = format!("cursor ({sx},{sy}) — t/n/g place · r river · o road · +/− terrain");
+    }
+
+    /// Raise (`delta > 0`) or lower terrain under the brush (MAPED-P7). Seeds the
+    /// edit buffer from the compiled heightmap on first use; the map then previews
+    /// the sculpt live. No world write until `/terrain`.
+    fn sculpt_terrain(&mut self, delta: f32) {
+        let Some((w, h)) = self.map_source_dims() else {
+            self.status = "no terrain — run /compile first".into();
+            return;
+        };
+        if self.map_terrain.as_ref().map(|t| t.len()) != Some(w * h) {
+            let Some(layers) = self.compiled_layers.as_ref() else { return };
+            if layers.geology.heightmap.len() != w * h {
+                self.status = "terrain grid unavailable".into();
+                return;
+            }
+            self.map_terrain = Some(layers.geology.heightmap.clone());
+            self.map_terrain_sea = layers.geology.sea_level;
+        }
+        let (cx, cy) = self.map_cursor;
+        let radius = self.map_brush;
+        if let Some(hm) = self.map_terrain.as_mut() {
+            super::map::apply_brush(hm, w, h, cx, cy, radius, delta);
+        }
+        let verb = if delta > 0.0 { "raised" } else { "lowered" };
+        self.status = format!("terrain {verb} at ({cx},{cy}) · brush r{radius} · /terrain to save");
+    }
+
+    /// `/terrain` (MAPED-P7) — write the edited heightmap as a 16-bit DEM PNG under
+    /// `assets/maps/` and set `geology.dem` (a pending edit). The `realworld`
+    /// compiler is DEM-aware, so a subsequent compile builds the world from the
+    /// sculpted terrain. (The worldbuilder's own `/compile` stays procedural.)
+    fn write_terrain_dem(&mut self) {
+        let Some((w, h)) = self.map_source_dims() else {
+            self.status = "no terrain to save".into();
+            return;
+        };
+        let Some(hm) = self.map_terrain.clone() else {
+            self.status = "no terrain edits yet — raise/lower with + / − first".into();
+            return;
+        };
+        if hm.len() != w * h {
+            self.status = "terrain grid size mismatch".into();
+            return;
+        }
+        let dir = self.layout.root.join("assets").join("maps");
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            self.status = format!("terrain save failed: {e}");
+            return;
+        }
+        let rel = "assets/maps/terrain.png";
+        let raw: Vec<u16> = hm.iter().map(|&e| (e.clamp(0.0, 1.0) * 65535.0) as u16).collect();
+        let Some(img) =
+            image::ImageBuffer::<image::Luma<u16>, Vec<u16>>::from_raw(w as u32, h as u32, raw)
+        else {
+            self.status = "terrain buffer invalid".into();
+            return;
+        };
+        if let Err(e) = img.save(self.layout.root.join(rel)) {
+            self.status = format!("terrain PNG write failed: {e}");
+            return;
+        }
+        let sea_px = (self.map_terrain_sea.clamp(0.0, 1.0) * 65535.0) as u16;
+        let value = serde_json::json!({ "path": rel, "sea_level_pixel_value": sea_px });
+        self.pending_ops.push(super::commands::Op::Set {
+            path: vec!["geology".into(), "dem".into()],
+            value,
+        });
+        // Rebuild caches (procedural — the worldbuilder compile isn't DEM-aware),
+        // but keep the terrain preview.
+        let preview = self.map_terrain.take();
+        self.refresh_plausibility();
+        if let Some(def) = self.current_world_def() {
+            self.populate_map_caches(&def);
+        }
+        self.map_terrain = preview;
+        self.record_turn("map: terrain DEM".into(), format!("wrote {rel}"), Vec::new());
+        self.status = format!("wrote {rel} + geology.dem · /write to commit (realworld compile uses it)");
     }
 
     /// `/mapcheck` (MAPED-P5) — check the map layer against the compiled world.
@@ -853,6 +993,62 @@ impl WorldbuilderApp {
         self.status = format!("placed region '{name}' ({biome}) at ({x},{y}) · /write to commit");
     }
 
+    /// The declared-landmark name exactly under the cursor, if any (P6).
+    fn landmark_name_at_cursor(&self) -> Option<String> {
+        let c = self.map_cursor;
+        self.map_landmarks.iter().find(|m| (m.x, m.y) == c).map(|m| m.name.clone())
+    }
+
+    /// Place a road into `geography.roads[]` connecting two named landmarks (P6).
+    fn place_road(&mut self, from: String, to: String) {
+        let value = serde_json::json!({ "from": from, "to": to, "kind": "road" });
+        self.pending_ops.push(super::commands::Op::Push {
+            path: vec!["geography".into(), "roads".into()],
+            value,
+        });
+        self.refresh_plausibility();
+        if let Some(def) = self.current_world_def() {
+            self.populate_map_caches(&def);
+        }
+        self.record_turn(format!("map: road {from}–{to}"), String::new(), Vec::new());
+        self.status = format!("road '{from}' – '{to}' · /write to commit");
+    }
+
+    /// Advance the active multi-step map tool on `Enter` (P3 river / P6 road).
+    fn advance_map_tool(&mut self) {
+        match self.map_tool.take() {
+            Some(MapTool::River { source }) => {
+                self.map_tool = Some(MapTool::River { source });
+                self.river_pick();
+            }
+            Some(MapTool::Road { from }) => match from {
+                None => match self.landmark_name_at_cursor() {
+                    Some(name) => {
+                        self.map_tool = Some(MapTool::Road { from: Some(name.clone()) });
+                        self.status =
+                            format!("road from '{name}' — move to the other landmark, Enter");
+                    }
+                    None => {
+                        self.map_tool = Some(MapTool::Road { from: None });
+                        self.status = "put the cursor on a landmark first".into();
+                    }
+                },
+                Some(first) => match self.landmark_name_at_cursor() {
+                    Some(second) if second != first => self.place_road(first, second),
+                    Some(_) => {
+                        self.map_tool = Some(MapTool::Road { from: Some(first) });
+                        self.status = "pick a different landmark".into();
+                    }
+                    None => {
+                        self.map_tool = Some(MapTool::Road { from: Some(first) });
+                        self.status = "put the cursor on the other landmark".into();
+                    }
+                },
+            },
+            None => {}
+        }
+    }
+
     /// Advance the river tool (P3): the first Enter fixes the source, the second
     /// fixes the mouth and asks for a name.
     fn river_pick(&mut self) {
@@ -874,7 +1070,7 @@ impl WorldbuilderApp {
                 });
                 self.status = "name the river — Enter to place, Esc to cancel".into();
             }
-            None => {}
+            _ => {}
         }
     }
 
@@ -1428,6 +1624,25 @@ impl WorldbuilderApp {
                     .collect()
             })
             .unwrap_or_default();
+        // P6 — resolve declared roads to endpoint cells by landmark name.
+        let by_name: std::collections::HashMap<&str, (usize, usize)> =
+            self.map_landmarks.iter().map(|m| (m.name.as_str(), (m.x, m.y))).collect();
+        let roads = def
+            .geography
+            .as_ref()
+            .map(|g| {
+                g.roads
+                    .iter()
+                    .filter_map(|r| {
+                        let a = *by_name.get(r.from.as_str())?;
+                        let b = *by_name.get(r.to.as_str())?;
+                        Some((a, b))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        drop(by_name);
+        self.map_roads = roads;
         self.compiled_layers = Some(layers);
     }
 
@@ -1892,6 +2107,7 @@ impl WorldbuilderApp {
         self.map_raster = None;
         self.map_landmarks.clear();
         self.map_regions.clear();
+        self.map_roads.clear();
         self.map_findings.clear();
         let def = self.current_world_def();
         self.ledger_snapshot = def.as_ref().and_then(|d| d.magic.clone());
@@ -1963,6 +2179,10 @@ impl TuiHost for WorldbuilderApp {
             self.prev_focus = self.focus;
         }
         self.handle_key(key);
+    }
+
+    fn on_mouse(&mut self, mouse: crossterm::event::MouseEvent) {
+        self.handle_mouse(mouse);
     }
 }
 

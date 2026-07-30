@@ -475,9 +475,11 @@ line starting with `/` is a command.
 | `/research <query>` | retrieve related Facts into the Research pane |
 | `/compile` | run the layer chain; report + drive the AI on the *simulated* world |
 | `/validate` (`/check`) | report the plausibility score + graded warnings |
+| `/roll [n]` · `/adopt <seed>` | compare *n* candidate worlds on derived seeds · adopt one |
+| `/map` · `/mapcheck` · `/terrain` | plakat raster · check the map layer · write the terrain DEM |
 | `/diff` · `/write` · `/undo` · `/reset` | manage the pending delta |
-| `/journey` · `/sessions` | the session timeline · list sessions |
-| `/export` | write a readable Markdown dossier under `exports/` |
+| `/journey` · `/sessions` · `/switch <name>` | timeline · list · switch session |
+| `/export [--pdf]` | write a Markdown dossier (`--pdf` also renders one) under `exports/` |
 
 Shaping commands (`/set`, `/star`, `/rule`, interview answers, …) accumulate into a
 **pending delta** — accepted-but-uncommitted edits, previewed before they join and
@@ -485,10 +487,27 @@ saved with the session so they survive a quit. `/write` folds them into
 `world.hjson` atomically; the plausibility score moves the moment an edit is
 accepted, before it is committed.
 
-> The Map pane draws an ASCII biome minimap directly from the compiled layers after
-> `/compile` — no external tool, works on any terminal. (Inkhaven *can* display real
-> images on kitty / iTerm2 / sixel terminals for image nodes; a raster map preview
-> is a planned refinement.)
+> The Map pane draws an ASCII biome minimap from the compiled layers after `/compile`;
+> `/map` shows the real plakat raster on kitty / iTerm2 / sixel terminals.
+
+### The map editor (1.10.0+, MAPED)
+
+Cycle to the Map pane, press `e` to edit, and draw the world — every mark is a pending
+`world.hjson` edit (`/diff`, then `/write`). The cursor moves with `hjkl` / arrows
+(`Shift` = fine); a left-click positions it. Tools:
+
+| Key | Places / does |
+|---|---|
+| `t` · `n` | town / named landmark → `geography.landmarks[]` (`⌂`) |
+| `r` | river source → mouth → `hydrology.rivers[]` (`≈`), checked live by `lint_rivers` |
+| `g` | region (biome from the cell) → `geography.regions[]` (`§`) |
+| `o` | road between two landmarks → `geography.roads[]` (`=`); renders on the plakat map |
+| `+` `-` · `,` `.` | raise / lower terrain under a brush · brush size; `/terrain` writes the DEM |
+| `d` | delete the feature under the cursor |
+| `/mapcheck` · `f` | flag map-layer mistakes (town in the sea, off-map) · jump to each |
+
+`/terrain` writes the sculpted heightmap as a grayscale DEM under `assets/maps/` and
+sets `geology.dem`; `realworld compile` (DEM-aware) then rebuilds the world from it.
 
 ---
 

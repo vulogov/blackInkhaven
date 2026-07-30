@@ -309,6 +309,21 @@ pub struct GeographyDef {
     pub regions: Vec<GeoRegion>,
     #[serde(default)]
     pub landmarks: Vec<GeoLandmark>,
+    /// MAPED-P6 — author-declared roads connecting two named landmarks. Rendered
+    /// on the plakat map as `RoadSpec`s (and in the worldbuilder's own map).
+    #[serde(default)]
+    pub roads: Vec<GeoRoad>,
+}
+
+/// A road (or sea-lane) between two named landmarks (MAPED-P6).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct GeoRoad {
+    /// The two endpoint landmark names (matched against `geography.landmarks`).
+    pub from: String,
+    pub to: String,
+    /// `road` (default) or `sea-lane`.
+    #[serde(default)]
+    pub kind: String,
 }
 
 /// A named region the author asserts (climate/biome hints for the World book).

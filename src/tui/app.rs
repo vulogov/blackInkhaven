@@ -14515,9 +14515,23 @@ impl App {
                     .collect()
             })
             .unwrap_or_default();
+        let declared_roads: Vec<plakat::DeclaredRoad> = def
+            .geography
+            .as_ref()
+            .map(|g| {
+                g.roads
+                    .iter()
+                    .map(|r| plakat::DeclaredRoad {
+                        from: r.from.clone(),
+                        to: r.to.clone(),
+                        kind: r.kind.clone(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         let pol = compile_polities(&demo, &def.nations, def.seed_u64());
         let trade = compile_trade(&pol, &geo, def.astronomy.planet.radius_earth);
-        let spec = plakat::build_map_spec(&def.name, &geo, &climate, &hydro, &demo, &links, &declared, &pol, &trade);
+        let spec = plakat::build_map_spec(&def.name, &geo, &climate, &hydro, &demo, &links, &declared, &declared_roads, &pol, &trade);
 
         self.status = "map: rendering with plakat…".into();
         match plakat::render(&root, &spec, def.seed_u64(), geo.width, geo.height) {
