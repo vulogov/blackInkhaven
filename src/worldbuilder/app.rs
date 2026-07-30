@@ -51,13 +51,25 @@ pub(super) struct MapMarker {
     pub kind: String,
 }
 
-/// An in-progress name entry for a landmark being placed at `(x, y)` (P2).
+/// What a map name-entry will place once a name is given (P2/P3).
+pub(super) enum MapPlacement {
+    /// A `geography.landmarks[]` entry of `geo_kind` at `(x, y)`.
+    Landmark { geo_kind: &'static str, x: usize, y: usize },
+    /// A `hydrology.rivers[]` entry from `from` to `to` (P3).
+    River { from: (usize, usize), to: (usize, usize) },
+}
+
+/// An in-progress name entry for a feature being placed (P2/P3).
 pub(super) struct MapInput {
     pub label: &'static str,
-    pub geo_kind: &'static str,
-    pub x: usize,
-    pub y: usize,
+    pub placement: MapPlacement,
     pub buffer: String,
+}
+
+/// A multi-step map tool in progress (P3). `r` starts a river; the first Enter
+/// sets its source, the second its mouth (then a name is requested).
+pub(super) enum MapTool {
+    River { source: Option<(usize, usize)> },
 }
 
 /// World-book chapters owned by `realworld compile` — read-only in the
@@ -149,8 +161,10 @@ pub(crate) struct WorldbuilderApp {
     /// Declared landmarks resolved to source cells, for the map overlay (P2).
     /// Refreshed with `compiled_layers`; cleared when the world changes.
     pub(super) map_landmarks: Vec<MapMarker>,
-    /// An open name-entry prompt for a landmark being placed (P2).
+    /// An open name-entry prompt for a feature being placed (P2/P3).
     pub(super) map_input: Option<MapInput>,
+    /// A multi-step map tool in progress (P3 rivers).
+    pub(super) map_tool: Option<MapTool>,
 
     // — World-fact research (WB-P7) ————————————————————————————————————
     /// The last `/research` query + its retrieved Facts passages, shown in the
@@ -240,6 +254,7 @@ impl WorldbuilderApp {
             map_cursor: (0, 0),
             map_landmarks: Vec::new(),
             map_input: None,
+            map_tool: None,
             research_query: None,
             research_hits: Vec::new(),
             research_cursor: 0,
@@ -345,7 +360,14 @@ impl WorldbuilderApp {
                         if name.is_empty() {
                             self.status = "name required — placement cancelled".into();
                         } else {
-                            self.place_landmark(mi.x, mi.y, name, mi.geo_kind);
+                            match mi.placement {
+                                MapPlacement::Landmark { geo_kind, x, y } => {
+                                    self.place_landmark(x, y, name, geo_kind)
+                                }
+                                MapPlacement::River { from, to } => {
+                                    self.place_river(from, to, name)
+                                }
+                            }
                         }
                     }
                 }
@@ -445,35 +467,38 @@ impl WorldbuilderApp {
                         _ => {}
                     }
                 } else if self.right_pane == RightPane::Map {
-                    // MAPED-P1 — grid cursor + edit mode.
-                    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+                    // MAPED-P1/P2/P3 — grid cursor, placement tools, river tool.
                     if self.map_edit {
-                        match key.code {
-                            KeyCode::Esc | KeyCode::Char('e') => {
-                                self.map_edit = false;
-                                self.status = "left map edit".into();
-                            }
-                            KeyCode::Left | KeyCode::Char('h') => self.move_map_cursor(-1, 0, false),
-                            KeyCode::Right | KeyCode::Char('l') => self.move_map_cursor(1, 0, false),
-                            KeyCode::Up | KeyCode::Char('k') => self.move_map_cursor(0, -1, false),
-                            KeyCode::Down | KeyCode::Char('j') => self.move_map_cursor(0, 1, false),
-                            // P2 placement tools.
-                            KeyCode::Char('t') => self.open_map_input("Town name", "city"),
-                            KeyCode::Char('n') => self.open_map_input("Landmark name", "landmark"),
-                            KeyCode::Char('d') | KeyCode::Char('x') => self.delete_landmark_at_cursor(),
-                            // Shift+HJKL / Shift+arrows — fine (single-cell) nudge.
-                            KeyCode::Char('H') => self.move_map_cursor(-1, 0, true),
-                            KeyCode::Char('L') => self.move_map_cursor(1, 0, true),
-                            KeyCode::Char('K') => self.move_map_cursor(0, -1, true),
-                            KeyCode::Char('J') => self.move_map_cursor(0, 1, true),
-                            _ if shift => match key.code {
-                                KeyCode::Left => self.move_map_cursor(-1, 0, true),
-                                KeyCode::Right => self.move_map_cursor(1, 0, true),
-                                KeyCode::Up => self.move_map_cursor(0, -1, true),
-                                KeyCode::Down => self.move_map_cursor(0, 1, true),
+                        if self.try_map_move(key) {
+                            // cursor moved
+                        } else if self.map_tool.is_some() {
+                            // A multi-step tool is active: Enter advances it.
+                            match key.code {
+                                KeyCode::Esc => {
+                                    self.map_tool = None;
+                                    self.status = "tool cancelled".into();
+                                }
+                                KeyCode::Enter => self.river_pick(),
                                 _ => {}
-                            },
-                            _ => {}
+                            }
+                        } else {
+                            match key.code {
+                                KeyCode::Esc | KeyCode::Char('e') => {
+                                    self.map_edit = false;
+                                    self.status = "left map edit".into();
+                                }
+                                KeyCode::Char('t') => self.open_map_input("Town name", "city"),
+                                KeyCode::Char('n') => self.open_map_input("Landmark name", "landmark"),
+                                KeyCode::Char('d') | KeyCode::Char('x') => {
+                                    self.delete_landmark_at_cursor()
+                                }
+                                KeyCode::Char('r') => {
+                                    self.map_tool = Some(MapTool::River { source: None });
+                                    self.status =
+                                        "river — move to the source, Enter to set · Esc cancel".into();
+                                }
+                                _ => {}
+                            }
                         }
                     } else if key.code == KeyCode::Char('e') {
                         self.enter_map_edit();
@@ -699,8 +724,80 @@ impl WorldbuilderApp {
     /// cursor (P2).
     fn open_map_input(&mut self, label: &'static str, geo_kind: &'static str) {
         let (x, y) = self.map_cursor;
-        self.map_input = Some(MapInput { label, geo_kind, x, y, buffer: String::new() });
+        self.map_input = Some(MapInput {
+            label,
+            placement: MapPlacement::Landmark { geo_kind, x, y },
+            buffer: String::new(),
+        });
         self.status = format!("{label} at ({x},{y}) — type a name, Enter to place, Esc to cancel");
+    }
+
+    /// Advance the river tool (P3): the first Enter fixes the source, the second
+    /// fixes the mouth and asks for a name.
+    fn river_pick(&mut self) {
+        let cursor = self.map_cursor;
+        match self.map_tool {
+            Some(MapTool::River { source: None }) => {
+                self.map_tool = Some(MapTool::River { source: Some(cursor) });
+                self.status = format!(
+                    "river source ({},{}) — move to the mouth, Enter to set · Esc cancel",
+                    cursor.0, cursor.1
+                );
+            }
+            Some(MapTool::River { source: Some(src) }) => {
+                self.map_tool = None;
+                self.map_input = Some(MapInput {
+                    label: "River name",
+                    placement: MapPlacement::River { from: src, to: cursor },
+                    buffer: String::new(),
+                });
+                self.status = "name the river — Enter to place, Esc to cancel".into();
+            }
+            None => {}
+        }
+    }
+
+    /// Place a river into `hydrology.rivers[]` as a pending edit, re-populate the
+    /// map (the compiled hydrology honours the declared course, so it renders),
+    /// and surface `lint_rivers` immediately (P3).
+    fn place_river(&mut self, from: (usize, usize), to: (usize, usize), name: String) {
+        let value = serde_json::json!({
+            "name": name,
+            "from": [from.0, from.1],
+            "to": [to.0, to.1],
+        });
+        self.pending_ops.push(super::commands::Op::Push {
+            path: vec!["hydrology".into(), "rivers".into()],
+            value,
+        });
+        self.refresh_plausibility();
+        if let Some(def) = self.current_world_def() {
+            self.populate_map_caches(&def);
+        }
+        self.record_turn(
+            format!("map: river {name}"),
+            format!("({},{}) → ({},{})", from.0, from.1, to.0, to.1),
+            Vec::new(),
+        );
+        let lint = self.river_lint_summary();
+        if lint.is_empty() {
+            self.status = format!("placed river '{name}' · /write to commit");
+        } else {
+            self.push_turn(format!("river {name}"), format!("⚠ {lint}"));
+            self.status = format!("river '{name}' placed — check: {lint}");
+        }
+    }
+
+    /// The current declared-river lint findings, joined for a status/chat line.
+    fn river_lint_summary(&self) -> String {
+        let Some(def) = self.current_world_def() else { return String::new() };
+        let Some(layers) = self.compiled_layers.as_ref() else { return String::new() };
+        let Some(hydro_def) = def.hydrology.as_ref() else { return String::new() };
+        crate::world::compile::hydrology_layer::lint_rivers(hydro_def, &layers.geology)
+            .iter()
+            .map(|w| w.text.clone())
+            .collect::<Vec<_>>()
+            .join(" · ")
     }
 
     /// Place a named landmark into `geography.landmarks[]` as a pending edit, then
@@ -744,6 +841,29 @@ impl WorldbuilderApp {
             }
             None => self.status = "no landmark at the cursor".into(),
         }
+    }
+
+    /// Route a movement key to the cursor, returning whether it was one. Handles
+    /// coarse (hjkl / arrows) and fine (HJKL / Shift+arrows) steps. Shared by all
+    /// map tools so navigation always works.
+    fn try_map_move(&mut self, key: KeyEvent) -> bool {
+        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+        match key.code {
+            KeyCode::Left => self.move_map_cursor(-1, 0, shift),
+            KeyCode::Right => self.move_map_cursor(1, 0, shift),
+            KeyCode::Up => self.move_map_cursor(0, -1, shift),
+            KeyCode::Down => self.move_map_cursor(0, 1, shift),
+            KeyCode::Char('h') => self.move_map_cursor(-1, 0, false),
+            KeyCode::Char('l') => self.move_map_cursor(1, 0, false),
+            KeyCode::Char('k') => self.move_map_cursor(0, -1, false),
+            KeyCode::Char('j') => self.move_map_cursor(0, 1, false),
+            KeyCode::Char('H') => self.move_map_cursor(-1, 0, true),
+            KeyCode::Char('L') => self.move_map_cursor(1, 0, true),
+            KeyCode::Char('K') => self.move_map_cursor(0, -1, true),
+            KeyCode::Char('J') => self.move_map_cursor(0, 1, true),
+            _ => return false,
+        }
+        true
     }
 
     /// Move the edit cursor in source-grid cells. `fine` steps a single cell;

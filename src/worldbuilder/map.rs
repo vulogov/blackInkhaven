@@ -107,6 +107,22 @@ pub(super) fn source_to_display(
     (dx, dy)
 }
 
+/// The display cells a straight line from `a` to `b` passes through (sampled at
+/// the longer axis' resolution). Used for the provisional river course (P3).
+pub(super) fn line_cells(a: (usize, usize), b: (usize, usize)) -> Vec<(usize, usize)> {
+    let (x0, y0) = (a.0 as i32, a.1 as i32);
+    let (x1, y1) = (b.0 as i32, b.1 as i32);
+    let n = (x1 - x0).abs().max((y1 - y0).abs()).max(1);
+    (0..=n)
+        .map(|i| {
+            let t = i as f32 / n as f32;
+            let x = (x0 as f32 + (x1 - x0) as f32 * t).round().max(0.0) as usize;
+            let y = (y0 as f32 + (y1 - y0) as f32 * t).round().max(0.0) as usize;
+            (x, y)
+        })
+        .collect()
+}
+
 /// Render the Map pane. Falls back to a hint when there is no compiled world yet.
 pub(super) fn render_map(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
     let Some(layers) = app.compiled_layers.as_ref() else {
@@ -154,17 +170,41 @@ pub(super) fn render_map(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
         }
     }
 
+    // MAPED-P3 — a river being drawn: the fixed source `S` + a provisional line
+    // to the cursor.
+    let mut river_src: Option<(usize, usize)> = None;
+    let mut river_line: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+    if let Some(super::app::MapTool::River { source: Some(src) }) = &app.map_tool {
+        if src.0 < sw && src.1 < sh {
+            let sd = source_to_display(*src, (sw, sh), (map_w, map_h));
+            river_src = Some(sd);
+            if let Some(cd) = cursor_disp {
+                for cell in line_cells(sd, cd) {
+                    river_line.insert(cell);
+                }
+            }
+        }
+    }
+
     let mut lines: Vec<Line> = Vec::with_capacity(map_h + 2);
     for (y, row) in grid.iter().enumerate() {
         let spans: Vec<Span> = row
             .iter()
             .enumerate()
             .map(|(x, &(ch, color))| {
-                let (ch, color) = if landmark_cells.contains(&(x, y)) {
-                    ('⌂', Color::Magenta)
-                } else {
-                    (ch, color)
-                };
+                let (mut ch, mut color) = (ch, color);
+                if river_line.contains(&(x, y)) {
+                    ch = '·';
+                    color = Color::Cyan;
+                }
+                if landmark_cells.contains(&(x, y)) {
+                    ch = '⌂';
+                    color = Color::Magenta;
+                }
+                if river_src == Some((x, y)) {
+                    ch = 'S';
+                    color = Color::Cyan;
+                }
                 let mut st = Style::new().fg(color);
                 if cursor_disp == Some((x, y)) {
                     st = st.add_modifier(Modifier::REVERSED);
@@ -193,10 +233,16 @@ pub(super) fn render_map(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
             format!("✎ ({cx},{cy}) · {biome} · elev {elev:.2}{sea}{here}"),
             Style::new().fg(Color::Yellow),
         )));
-        lines.push(Line::from(Span::styled(
-            "hjkl move · Shift fine · t town · n name · d delete · Esc leave",
-            Style::new().dim(),
-        )));
+        let hint = match &app.map_tool {
+            Some(super::app::MapTool::River { source: None }) => {
+                "river: move to the SOURCE, Enter to set · Esc cancel"
+            }
+            Some(super::app::MapTool::River { source: Some(_) }) => {
+                "river: move to the MOUTH, Enter to set · Esc cancel"
+            }
+            None => "hjkl move · Shift fine · t town · n name · r river · d delete · Esc leave",
+        };
+        lines.push(Line::from(Span::styled(hint, Style::new().dim())));
     } else {
         // Non-edit: grid stats + the biome legend (edit mode uses the two rows for
         // the readout + tool hint instead).
@@ -277,6 +323,20 @@ mod tests {
         // A Terra-like world has ocean, so at least one sea glyph must appear.
         let sea = grid.iter().flatten().filter(|&&(c, _)| c == '~').count();
         assert!(sea > 0, "expected some ocean cells in the downsampled map");
+    }
+
+    #[test]
+    fn line_cells_connects_endpoints() {
+        let l = line_cells((0, 0), (4, 0));
+        assert_eq!(l.first(), Some(&(0, 0)));
+        assert_eq!(l.last(), Some(&(4, 0)));
+        assert_eq!(l.len(), 5); // horizontal: one cell per column
+        // A diagonal touches both ends and steps through.
+        let d = line_cells((0, 0), (3, 3));
+        assert_eq!(d.first(), Some(&(0, 0)));
+        assert_eq!(d.last(), Some(&(3, 3)));
+        // Degenerate (same point) is a single cell, no panic.
+        assert_eq!(line_cells((2, 2), (2, 2)), vec![(2, 2), (2, 2)]);
     }
 
     #[test]
