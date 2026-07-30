@@ -50,6 +50,9 @@
   part(number: "VII", title: "A Complete Walkthrough"),
   include "chapters/19-walkthrough.typ",
 
+  part(number: "VIII", title: "The World at Hand"),
+  include "chapters/20-the-interactive-worldbuilder.typ",
+
   include "chapters/a-command-reference.typ",
   include "chapters/b-glossary.typ",
   include "chapters/c-world-hjson-keys.typ",
