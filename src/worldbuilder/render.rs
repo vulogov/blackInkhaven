@@ -77,6 +77,38 @@ pub(super) fn render(frame: &mut Frame, app: &WorldbuilderApp) {
     if app.hjson_preview.is_some() {
         render_delta_preview(frame, app, area);
     }
+    // MAPED-P2 — the landmark name-entry prompt sits above the map.
+    if app.map_input.is_some() {
+        render_map_input(frame, app, area);
+    }
+}
+
+/// The landmark name-entry overlay (MAPED-P2): a small centered input box.
+fn render_map_input(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
+    let Some(mi) = app.map_input.as_ref() else { return };
+    let w = (area.width * 6 / 10).clamp(30, 70);
+    let modal = Rect {
+        x: area.x + area.width.saturating_sub(w) / 2,
+        y: area.y + area.height / 3,
+        width: w,
+        height: 4,
+    };
+    frame.render_widget(Clear, modal);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" {} at ({},{}) ", mi.label, mi.x, mi.y))
+        .border_style(Style::new().fg(app.theme.border_focused).bold());
+    let inner = block.inner(modal);
+    frame.render_widget(block, modal);
+    let lines = vec![
+        Line::from(vec![
+            Span::raw("› "),
+            Span::styled(mi.buffer.clone(), Style::new().bold()),
+            Span::styled("▌", Style::new().fg(app.theme.border_focused)),
+        ]),
+        Line::from(Span::styled("Enter place · Esc cancel", Style::new().dim())),
+    ];
+    frame.render_widget(Paragraph::new(lines), inner);
 }
 
 /// The `/`-command delta preview: shows the pending edit(s) for y/n confirmation.

@@ -43,6 +43,23 @@ pub(super) struct WorldbuilderTurn {
     pub streaming: bool,
 }
 
+/// A declared landmark resolved to a source-grid cell, for the map overlay (P2).
+pub(super) struct MapMarker {
+    pub x: usize,
+    pub y: usize,
+    pub name: String,
+    pub kind: String,
+}
+
+/// An in-progress name entry for a landmark being placed at `(x, y)` (P2).
+pub(super) struct MapInput {
+    pub label: &'static str,
+    pub geo_kind: &'static str,
+    pub x: usize,
+    pub y: usize,
+    pub buffer: String,
+}
+
 /// World-book chapters owned by `realworld compile` — read-only in the
 /// worldbuilder (change them by editing `world.hjson` + recompiling, not by hand).
 /// Matched case-insensitively against a node's title or an ancestor's.
@@ -123,12 +140,17 @@ pub(crate) struct WorldbuilderApp {
     /// is `&self`. Invalidated whenever the world changes.
     pub(super) map_raster: Option<std::cell::RefCell<ratatui_image::protocol::StatefulProtocol>>,
 
-    // — Map editor (MAPED-P1) ——————————————————————————————————————————
+    // — Map editor (MAPED-P1/P2) ———————————————————————————————————————
     /// Whether the Map pane is in edit mode (a movable grid cursor). Requires a
     /// compiled map (the ASCII grid); the raster is suppressed while editing.
     pub(super) map_edit: bool,
     /// The edit cursor in *source-grid* coordinates (`geology.width × height`).
     pub(super) map_cursor: (usize, usize),
+    /// Declared landmarks resolved to source cells, for the map overlay (P2).
+    /// Refreshed with `compiled_layers`; cleared when the world changes.
+    pub(super) map_landmarks: Vec<MapMarker>,
+    /// An open name-entry prompt for a landmark being placed (P2).
+    pub(super) map_input: Option<MapInput>,
 
     // — World-fact research (WB-P7) ————————————————————————————————————
     /// The last `/research` query + its retrieved Facts passages, shown in the
@@ -216,6 +238,8 @@ impl WorldbuilderApp {
             map_raster: None,
             map_edit: false,
             map_cursor: (0, 0),
+            map_landmarks: Vec::new(),
+            map_input: None,
             research_query: None,
             research_hits: Vec::new(),
             research_cursor: 0,
@@ -306,6 +330,37 @@ impl WorldbuilderApp {
         // Universal quit.
         if ctrl && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('q')) {
             self.should_quit = true;
+            return;
+        }
+        // MAPED-P2 — a landmark name-entry prompt swallows all input.
+        if self.map_input.is_some() {
+            match key.code {
+                KeyCode::Esc => {
+                    self.map_input = None;
+                    self.status = "placement cancelled".into();
+                }
+                KeyCode::Enter => {
+                    if let Some(mi) = self.map_input.take() {
+                        let name = mi.buffer.trim().to_string();
+                        if name.is_empty() {
+                            self.status = "name required — placement cancelled".into();
+                        } else {
+                            self.place_landmark(mi.x, mi.y, name, mi.geo_kind);
+                        }
+                    }
+                }
+                KeyCode::Backspace => {
+                    if let Some(mi) = self.map_input.as_mut() {
+                        mi.buffer.pop();
+                    }
+                }
+                KeyCode::Char(c) => {
+                    if let Some(mi) = self.map_input.as_mut() {
+                        mi.buffer.push(c);
+                    }
+                }
+                _ => {}
+            }
             return;
         }
         // Ctrl+R cycles the right-pane view from anywhere.
@@ -402,6 +457,10 @@ impl WorldbuilderApp {
                             KeyCode::Right | KeyCode::Char('l') => self.move_map_cursor(1, 0, false),
                             KeyCode::Up | KeyCode::Char('k') => self.move_map_cursor(0, -1, false),
                             KeyCode::Down | KeyCode::Char('j') => self.move_map_cursor(0, 1, false),
+                            // P2 placement tools.
+                            KeyCode::Char('t') => self.open_map_input("Town name", "city"),
+                            KeyCode::Char('n') => self.open_map_input("Landmark name", "landmark"),
+                            KeyCode::Char('d') | KeyCode::Char('x') => self.delete_landmark_at_cursor(),
                             // Shift+HJKL / Shift+arrows — fine (single-cell) nudge.
                             KeyCode::Char('H') => self.move_map_cursor(-1, 0, true),
                             KeyCode::Char('L') => self.move_map_cursor(1, 0, true),
@@ -575,10 +634,7 @@ impl WorldbuilderApp {
         // Keep the ASCII fallback populated so the pane always shows something.
         if self.compiled_layers.is_none() {
             if let Some(def) = self.current_world_def() {
-                let layers = crate::world::plausibility::compile_layers(&def);
-                self.compiled_summary =
-                    Some(crate::world::plausibility::summarise_compiled(&def, &layers));
-                self.compiled_layers = Some(layers);
+                self.populate_map_caches(&def);
             }
         }
         if self.image_picker.is_none() {
@@ -621,17 +677,73 @@ impl WorldbuilderApp {
         self.compiled_layers.as_ref().map(|l| (l.geology.width, l.geology.height))
     }
 
-    /// Enter Map edit mode — needs a compiled map (the ASCII grid). Clamps the
-    /// cursor into the current grid.
+    /// Enter Map edit mode. Auto-compiles the map if needed. Clamps the cursor
+    /// into the current grid.
     fn enter_map_edit(&mut self) {
+        if self.compiled_layers.is_none() {
+            if let Some(def) = self.current_world_def() {
+                self.populate_map_caches(&def);
+            }
+        }
         let Some((w, h)) = self.map_source_dims() else {
-            self.status = "no map yet — run /compile (ASCII) or /map (raster) first".into();
+            self.status = "no world to map — declare one first (interview or /set)".into();
             return;
         };
         self.map_edit = true;
         let (cx, cy) = self.map_cursor;
         self.map_cursor = (cx.min(w.saturating_sub(1)), cy.min(h.saturating_sub(1)));
-        self.status = "map edit — hjkl move · Shift fine · Esc leave".into();
+        self.status = "map edit — hjkl move · t town · n name · d delete · Esc leave".into();
+    }
+
+    /// Open the name-entry prompt for placing a landmark of `geo_kind` at the
+    /// cursor (P2).
+    fn open_map_input(&mut self, label: &'static str, geo_kind: &'static str) {
+        let (x, y) = self.map_cursor;
+        self.map_input = Some(MapInput { label, geo_kind, x, y, buffer: String::new() });
+        self.status = format!("{label} at ({x},{y}) — type a name, Enter to place, Esc to cancel");
+    }
+
+    /// Place a named landmark into `geography.landmarks[]` as a pending edit, then
+    /// re-populate the map caches so it appears immediately (P2).
+    fn place_landmark(&mut self, x: usize, y: usize, name: String, geo_kind: &str) {
+        let value = serde_json::json!({ "name": name, "kind": geo_kind, "x": x, "y": y });
+        self.pending_ops.push(super::commands::Op::Push {
+            path: vec!["geography".into(), "landmarks".into()],
+            value,
+        });
+        self.refresh_plausibility();
+        if let Some(def) = self.current_world_def() {
+            self.populate_map_caches(&def);
+        }
+        self.record_turn(format!("map: {geo_kind} {name}"), format!("placed at ({x},{y})"), Vec::new());
+        self.status = format!("placed {geo_kind} '{name}' at ({x},{y}) · /write to commit");
+    }
+
+    /// Delete the declared landmark under the cursor (the first one on that cell)
+    /// via `Op::RemoveAt` — index computed against the current (disk + pending)
+    /// landmark array, which is exactly the array state at write time (P2).
+    fn delete_landmark_at_cursor(&mut self) {
+        let Some((w, h)) = self.map_source_dims() else { return };
+        let cursor = self.map_cursor;
+        let idx = self.current_world_def().and_then(|def| {
+            def.geography
+                .as_ref()
+                .and_then(|g| g.landmarks.iter().position(|lm| lm.grid(w, h) == Some(cursor)))
+        });
+        match idx {
+            Some(i) => {
+                self.pending_ops.push(super::commands::Op::RemoveAt {
+                    path: vec!["geography".into(), "landmarks".into()],
+                    index: i,
+                });
+                self.refresh_plausibility();
+                if let Some(def) = self.current_world_def() {
+                    self.populate_map_caches(&def);
+                }
+                self.status = format!("removed landmark at ({},{}) · /write to commit", cursor.0, cursor.1);
+            }
+            None => self.status = "no landmark at the cursor".into(),
+        }
     }
 
     /// Move the edit cursor in source-grid cells. `fine` steps a single cell;
@@ -1004,10 +1116,8 @@ impl WorldbuilderApp {
     fn run_compile(&mut self) {
         match self.current_world_def() {
             Some(def) => {
-                let layers = crate::world::plausibility::compile_layers(&def);
-                let summary = crate::world::plausibility::summarise_compiled(&def, &layers);
-                self.compiled_summary = Some(summary.clone());
-                self.compiled_layers = Some(layers);
+                self.populate_map_caches(&def);
+                let summary = self.compiled_summary.clone().unwrap_or_default();
                 self.push_turn("/compile".into(), format!("Compiled world state —\n{summary}"));
                 self.status =
                     "compiled — chat reasons over the simulated world · Ctrl+R → Map".into();
@@ -1016,6 +1126,36 @@ impl WorldbuilderApp {
                 self.status = "no world to compile — declare one first (interview or /set)".into();
             }
         }
+    }
+
+    /// Compile the world and refresh the Map caches together — `compiled_layers`
+    /// (the biome/height grid), `compiled_summary`, and `map_landmarks` (declared
+    /// landmarks resolved to source cells for the overlay). Landmark/river/region
+    /// edits don't change the grid, so the editor re-runs this after a placement
+    /// to keep the map live (refresh_plausibility having cleared the caches).
+    fn populate_map_caches(&mut self, def: &crate::world::types::WorldDefinition) {
+        let layers = crate::world::plausibility::compile_layers(def);
+        self.compiled_summary =
+            Some(crate::world::plausibility::summarise_compiled(def, &layers));
+        let (w, h) = (layers.geology.width, layers.geology.height);
+        self.map_landmarks = def
+            .geography
+            .as_ref()
+            .map(|g| {
+                g.landmarks
+                    .iter()
+                    .filter_map(|lm| {
+                        lm.grid(w, h).map(|(x, y)| MapMarker {
+                            x,
+                            y,
+                            name: lm.name.clone(),
+                            kind: lm.kind.clone(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.compiled_layers = Some(layers);
     }
 
     /// `/validate` — run the deterministic plausibility lints over the current
@@ -1477,6 +1617,7 @@ impl WorldbuilderApp {
         self.compiled_summary = None;
         self.compiled_layers = None;
         self.map_raster = None;
+        self.map_landmarks.clear();
         let def = self.current_world_def();
         self.ledger_snapshot = def.as_ref().and_then(|d| d.magic.clone());
         self.plausibility_prev = self.plausibility_score;
