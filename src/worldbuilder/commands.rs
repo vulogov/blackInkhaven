@@ -56,6 +56,8 @@ pub(super) enum Command {
     Wfact(String),
     /// Retrieve related Facts for a query into the Research pane.
     Research(String),
+    /// Start the guided world interview.
+    Interview,
     /// Unrecognised / malformed — carries a message for the status bar.
     Unknown(String),
 }
@@ -74,6 +76,7 @@ pub(super) fn parse(input: &str) -> Command {
         "diff" => Command::Diff,
         "compile" => Command::Compile,
         "validate" | "check" => Command::Validate,
+        "interview" => Command::Interview,
         "wfact" | "fact" => {
             if rest.is_empty() {
                 Command::Unknown("usage: /wfact <statement> — records an author fact:world".into())
@@ -173,7 +176,7 @@ pub(super) fn parse(input: &str) -> Command {
         }
 
         other => Command::Unknown(format!(
-            "unknown command `/{other}` — supports /set /star /tilt /moon /nation /wfact /research /compile /validate /write /undo /reset /diff"
+            "unknown command `/{other}` — supports /interview /set /star /tilt /moon /nation /wfact /research /compile /validate /write /undo /reset /diff"
         )),
     }
 }

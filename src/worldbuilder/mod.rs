@@ -26,6 +26,7 @@ use crate::store::hierarchy::Hierarchy;
 mod app;
 mod commands;
 mod focus;
+mod interview;
 mod map;
 mod prompt;
 mod render;
@@ -36,10 +37,9 @@ pub struct WorldbuilderInvocation {
     /// Open with this named session; `None` → `default`.
     pub session: Option<String>,
     /// Jump straight to interview mode (WB-P8).
-    #[allow(dead_code)]
     pub interview: bool,
-    /// Skip the interview; open with the map-first prompt (WB-P6/P8).
-    #[allow(dead_code)]
+    /// Open map-first; until the plakat inverse flow lands, also opens the
+    /// interview (WB-P8).
     pub from_map: bool,
 }
 
