@@ -120,6 +120,11 @@ pub(crate) struct WorldbuilderApp {
     pub(super) research_query: Option<String>,
     pub(super) research_hits: Vec<crate::book_rag::RetrievedPassage>,
 
+    // — Interview (WB-P8) ——————————————————————————————————————————————
+    /// The active guided interview, if the author started one (`/interview` or
+    /// `--interview`). While `Some`, plain Query input answers the current step.
+    pub(super) interview: Option<super::interview::Interview>,
+
     // — Session ————————————————————————————————————————————————————————
     pub(super) session: WorldbuilderSession,
 
@@ -179,6 +184,7 @@ impl WorldbuilderApp {
             compiled_layers: None,
             research_query: None,
             research_hits: Vec::new(),
+            interview: None,
             plausibility_prev: None,
             plausibility_warnings: Vec::new(),
             session,
@@ -188,6 +194,11 @@ impl WorldbuilderApp {
             theme,
         };
         app.refresh_plausibility();
+        // `--interview` (and, until the plakat map-first flow lands, `--from-map`)
+        // opens straight into the guided interview.
+        if inv.interview || inv.from_map {
+            app.start_interview();
+        }
         Ok(app)
     }
 
@@ -243,8 +254,14 @@ impl WorldbuilderApp {
         match self.focus {
             Focus::QueryPrompt => match key.code {
                 KeyCode::Esc => {
-                    // Clear the line, then step focus back to where we came from.
-                    if self.query.is_empty() {
+                    // Esc leaves an active interview first; then clears the line;
+                    // then steps focus back to where we came from.
+                    if self.interview.is_some() {
+                        self.interview = None;
+                        self.query.select_all();
+                        self.query.cut();
+                        self.status = "interview left — pending edits kept (/diff to review)".into();
+                    } else if self.query.is_empty() {
                         self.focus = self.prev_focus;
                     } else {
                         self.query.select_all();
@@ -256,7 +273,11 @@ impl WorldbuilderApp {
                     self.query.select_all();
                     self.query.cut();
                     let trimmed = text.trim();
-                    if trimmed.is_empty() {
+                    // While interviewing, plain text answers the current step; a
+                    // `/command` still runs (so /diff, /write work mid-interview).
+                    if self.interview.is_some() && !trimmed.starts_with('/') {
+                        self.submit_interview_answer(trimmed);
+                    } else if trimmed.is_empty() {
                         // nothing to send
                     } else if trimmed.starts_with('/') {
                         self.dispatch_command(&text);
@@ -338,7 +359,112 @@ impl WorldbuilderApp {
             Command::Validate => self.run_validate(),
             Command::Wfact(text) => self.run_wfact(&text),
             Command::Research(query) => self.run_research(&query),
+            Command::Interview => self.start_interview(),
             Command::Unknown(msg) => self.status = msg,
+        }
+    }
+
+    /// Start (or restart) the guided interview: focus the Query prompt, surface
+    /// the Chat pane, and post the first question. Answers accumulate into the
+    /// pending delta (reviewable with `/diff`, committed with `/write`).
+    fn start_interview(&mut self) {
+        let iv = super::interview::Interview::new();
+        self.interview = Some(iv);
+        self.right_pane = RightPane::Chat;
+        self.focus = Focus::QueryPrompt;
+        self.push_turn(
+            String::new(),
+            "Interview — I'll ask about the sky, land, people, and rules. Answer in your own \
+             words (blank to skip a question, Esc to leave). Your answers become pending edits; \
+             review them with /diff and commit with /write, then /compile."
+                .to_string(),
+        );
+        self.post_interview_question();
+        self.status = "interview started — answer in the Query prompt · Esc to leave".into();
+    }
+
+    /// Post the current interview step as a chat turn (pinned to the bottom, so it
+    /// stays visible as the conversation grows).
+    fn post_interview_question(&mut self) {
+        let q = self.interview.as_ref().and_then(|iv| {
+            iv.current().map(|s| {
+                let (n, total) = iv.progress();
+                format!("[{} · {n}/{total}] {}", s.stage.label(), s.prompt)
+            })
+        });
+        if let Some(q) = q {
+            self.push_turn(String::new(), q);
+        }
+    }
+
+    /// Feed one answer to the active interview: fill the current step's command
+    /// template, record its ops into the pending delta, and advance. A blank
+    /// answer skips; a malformed one is reported and the step is retried.
+    fn submit_interview_answer(&mut self, answer: &str) {
+        let answer = answer.trim();
+        let Some(step) = self.interview.as_ref().and_then(|iv| iv.current()) else {
+            self.interview = None;
+            return;
+        };
+        // Blank → skip this question.
+        if answer.is_empty() {
+            if let Some(iv) = self.interview.as_mut() {
+                iv.advance();
+            }
+            self.push_turn(String::new(), "(skipped)".into());
+            self.after_interview_step();
+            return;
+        }
+
+        let cmd = step.template.replace("{}", answer);
+        match super::commands::parse(&cmd) {
+            super::commands::Command::Shape { label, ops } => {
+                self.pending_ops.extend(ops);
+                self.refresh_plausibility();
+                let d = self.plausibility_delta_chip();
+                let note = if d.is_empty() {
+                    format!("recorded · {label}")
+                } else {
+                    format!("recorded · {label}  (★ {d})")
+                };
+                self.push_turn(answer.to_string(), note);
+                if let Some(iv) = self.interview.as_mut() {
+                    iv.advance();
+                }
+                self.after_interview_step();
+            }
+            super::commands::Command::Unknown(msg) => {
+                // Keep the step; let the author retry.
+                self.push_turn(answer.to_string(), format!("didn't take that — {msg}"));
+            }
+            _ => {
+                // A template that parses to a session command shouldn't happen;
+                // skip defensively rather than loop.
+                if let Some(iv) = self.interview.as_mut() {
+                    iv.advance();
+                }
+                self.after_interview_step();
+            }
+        }
+    }
+
+    /// Post the next question, or close the interview when the script is done.
+    fn after_interview_step(&mut self) {
+        let done = self.interview.as_ref().map(|iv| iv.done()).unwrap_or(true);
+        if done {
+            self.interview = None;
+            let n = self.pending_ops.len();
+            self.push_turn(
+                String::new(),
+                format!(
+                    "That's the frame — {n} pending edit(s). Review with /diff, commit with \
+                     /write, then /compile to see the world your choices imply."
+                ),
+            );
+            self.status = format!("interview complete — {n} pending edit(s) · /diff · /write");
+        } else {
+            self.post_interview_question();
+            self.status = "interview — answer in the Query prompt · Esc to leave".into();
         }
     }
 
