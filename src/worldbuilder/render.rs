@@ -205,7 +205,8 @@ fn render_right_pane(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
         RightPane::Research => render_research(frame, app, inner),
         RightPane::Map => {
             // WS-P2 — the plakat raster on image-capable terminals; else ASCII.
-            if let Some(cell) = app.map_raster.as_ref() {
+            // MAPED-P1 — edit mode always uses the ASCII grid (the cursor needs it).
+            if let (false, Some(cell)) = (app.map_edit, app.map_raster.as_ref()) {
                 let widget = ratatui_image::StatefulImage::new();
                 frame.render_stateful_widget(widget, inner, &mut cell.borrow_mut());
             } else {
@@ -426,7 +427,7 @@ fn render_hints(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
             "  /interview · /roll · ask · /wfact · /compile /validate · /set… · /write · Tab"
         }
         Focus::RightPane => {
-            "  Ctrl+R·cycle pane  ·  /map raster · /compile ASCII map  ·  { }·rows  Ctrl+Q·quit"
+            "  Ctrl+R·cycle pane  ·  Map: e·edit (hjkl move)  ·  /map raster · /compile ASCII  ·  Ctrl+Q"
         }
         _ => "  Tab·cycle  Ctrl+R·right pane  { }·rows  [ ]·cols  ?·hints  Ctrl+Q·quit",
     };

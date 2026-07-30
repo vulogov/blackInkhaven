@@ -14,7 +14,7 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style, Stylize};
+use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
@@ -91,6 +91,22 @@ fn compose(
     grid
 }
 
+/// Map a source-grid cell `(sx, sy)` to the display cell it falls in, given the
+/// source dimensions and the display dimensions. Pure; shared by the cursor
+/// render and tests. Clamps into range.
+pub(super) fn source_to_display(
+    (sx, sy): (usize, usize),
+    (sw, sh): (usize, usize),
+    (dw, dh): (usize, usize),
+) -> (usize, usize) {
+    if sw == 0 || sh == 0 || dw == 0 || dh == 0 {
+        return (0, 0);
+    }
+    let dx = (sx * dw / sw).min(dw - 1);
+    let dy = (sy * dh / sh).min(dh - 1);
+    (dx, dy)
+}
+
 /// Render the Map pane. Falls back to a hint when there is no compiled world yet.
 pub(super) fn render_map(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
     let Some(layers) = app.compiled_layers.as_ref() else {
@@ -122,24 +138,51 @@ pub(super) fn render_map(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
 
     let hydro = &layers.hydrology;
     let grid = compose(layers, map_w, map_h);
+
+    // MAPED-P1 — in edit mode, the source-space cursor maps to one display cell.
+    let cursor_disp = if app.map_edit {
+        Some(source_to_display(app.map_cursor, (sw, sh), (map_w, map_h)))
+    } else {
+        None
+    };
+
     let mut lines: Vec<Line> = Vec::with_capacity(map_h + 2);
-    for row in &grid {
+    for (y, row) in grid.iter().enumerate() {
         let spans: Vec<Span> = row
             .iter()
-            .map(|&(ch, color)| Span::styled(ch.to_string(), Style::new().fg(color)))
+            .enumerate()
+            .map(|(x, &(ch, color))| {
+                let mut st = Style::new().fg(color);
+                if cursor_disp == Some((x, y)) {
+                    st = st.add_modifier(Modifier::REVERSED);
+                }
+                Span::styled(ch.to_string(), st)
+            })
             .collect();
         lines.push(Line::from(spans));
     }
 
-    // Scale + legend.
-    lines.push(Line::from(Span::styled(
-        format!(
-            "grid {sw}×{sh} → {map_w}×{map_h} · {} river cell(s) · {} settlement(s)",
-            hydro.river_count,
-            layers.demographics.settlements.len(),
-        ),
-        Style::new().dim(),
-    )));
+    // Scale / readout line.
+    if app.map_edit {
+        let (cx, cy) = app.map_cursor;
+        let idx = cy.min(sh - 1) * sw + cx.min(sw - 1);
+        let biome = climate.biome.get(idx).map(|b| b.as_str()).unwrap_or("?");
+        let elev = layers.geology.heightmap.get(idx).copied().unwrap_or(0.0);
+        let sea = if elev <= layers.geology.sea_level { " · sea" } else { "" };
+        lines.push(Line::from(Span::styled(
+            format!("✎ ({cx},{cy}) · {biome} · elev {elev:.2}{sea}  ·  hjkl move · Shift fine · Esc leave"),
+            Style::new().fg(Color::Yellow),
+        )));
+    } else {
+        lines.push(Line::from(Span::styled(
+            format!(
+                "grid {sw}×{sh} → {map_w}×{map_h} · {} river cell(s) · {} settlement(s) · e: edit",
+                hydro.river_count,
+                layers.demographics.settlements.len(),
+            ),
+            Style::new().dim(),
+        )));
+    }
     lines.push(Line::from(vec![
         Span::styled("~", Style::new().fg(Color::Blue)),
         Span::raw(" sea  "),
@@ -209,6 +252,17 @@ mod tests {
         // A Terra-like world has ocean, so at least one sea glyph must appear.
         let sea = grid.iter().flatten().filter(|&&(c, _)| c == '~').count();
         assert!(sea > 0, "expected some ocean cells in the downsampled map");
+    }
+
+    #[test]
+    fn source_to_display_maps_and_clamps() {
+        // A 96×64 source onto a 48×16 display: top-left → (0,0), bottom-right
+        // stays in range, and a mid cell scales proportionally.
+        assert_eq!(source_to_display((0, 0), (96, 64), (48, 16)), (0, 0));
+        assert_eq!(source_to_display((95, 63), (96, 64), (48, 16)), (47, 15));
+        assert_eq!(source_to_display((48, 32), (96, 64), (48, 16)), (24, 8));
+        // Degenerate dims never panic.
+        assert_eq!(source_to_display((5, 5), (0, 10), (10, 10)), (0, 0));
     }
 
     #[test]
