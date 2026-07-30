@@ -183,6 +183,39 @@
 // A short hands-on exercise at the keyboard.
 #let tryit(body) = _callout("Try It", ink_accent, ink_term_bg, body)
 
+// ── Terminal screen — a faithful monospace rendering of an Inkhaven TUI
+//    screen. The worldbuilder IS a terminal app, so a monospace frame is
+//    truer than a flowchart and keeps the book self-contained + warning-free.
+//    `body` is a raw block; `caption` names the screen. Keep frames ≤ ~60
+//    characters wide so the box borders don't wrap on B5. NB: use only glyphs
+//    DejaVu Sans Mono renders — ◎ ⊙ ▾ ▸ ★ ≈ ◉ • · and box-drawing are safe;
+//    the pinned-row marker is drawn ◆ here (the app uses a hexagon). ──────────
+#let screen(caption: "", body) = {
+  v(2mm)
+  block(breakable: false, width: 100%, {
+    block(
+      fill: ink_smoke,
+      inset: (left: 8pt, right: 8pt, top: 3pt, bottom: 3pt),
+      width: 100%,
+      radius: (top-left: 2pt, top-right: 2pt),
+      {
+        text(font: mono_family, size: 8pt, fill: ink_paper, "● ● ●")
+        h(6pt)
+        text(font: body_family, size: 8.5pt, style: "italic", fill: ink_paper, caption)
+      },
+    )
+    block(
+      fill: ink_code_bg,
+      stroke: 0.5pt + ink_rule,
+      inset: 8pt,
+      width: 100%,
+      radius: (bottom-left: 2pt, bottom-right: 2pt),
+      text(font: mono_family, size: 8.5pt, body),
+    )
+  })
+  v(2mm)
+}
+
 // ── Chapter-end recap ───────────────────────────────────────────────
 #let recap(items) = {
   v(7mm)
