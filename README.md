@@ -27,29 +27,34 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.8.35 — Unicode Covers & the Audit's Long Tail
+## Latest release · 1.9.0 — The Interactive Worldbuilder
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.8.35.md`](Documentation/RELEASE_NOTES/1.8.35.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.9.0.md`](Documentation/RELEASE_NOTES/1.9.0.md)
 
-The last non-ASCII data bug from the pre-major audit is closed, and the audit's LOW tail is swept —
-each fix with a regression test.
+The 1.9 major (RFC WBLD-1): `inkhaven worldbuilder`, a full-screen companion for building a world
+by *asking* rather than hand-editing HJSON — with the world, its plausibility score, its facts,
+its map, and its magic ledger all in front of you. Every change lands in the same `world.hjson`
+the `realworld` compiler reads; it never generates prose.
 
 ### What's new
 
-- **Unicode PDF covers** — the native cover embeds DejaVu Sans Mono (Type0 / CIDFontType2, bundled
-  by the font kit so no size cost) so a Cyrillic or accented title renders instead of Helvetica
-  mojibake. Monospace fallback cover; falls back to Helvetica for ASCII.
-- **Latent panics & overflow guards** — NaN-unsafe sorts in the world compile layers, `calc.gcd`/
-  `lcm` on `i64::MIN`, and a few index/overflow edges are all guarded.
-- **Research** — the `--agentic` loop surfaces failed critic / contradiction-gate calls instead of
-  silently reporting "converged"; `/gutenberg` recognizes ru/fr/de/es chapter headings.
-- **Smaller items** — `oracle`/`poem` output sources reachable in the `/` filter; `typst_check`
-  CRLF-correct offsets; Thoughts log capped; background checkpoint off the runtime worker.
+- **`inkhaven worldbuilder`** — four panes (Facts / World trees, cycling Chat·Research·Map·Ledger,
+  a query prompt) with a live plausibility score in the status bar.
+- **The interview** — `/interview` walks you through Sky · Land · People · Rules · Review, one
+  question at a time; answers become a reviewable **pending delta** and the score moves as you go.
+- **Shape by command** — `/set`, `/star`, `/tilt`, `/moon`, `/nation`, `/magic`, `/rule` propose
+  schema-valid edits, previewed before `/write` commits them atomically; `/diff` `/undo` `/reset`.
+- **See the consequences** — `/compile` reasons over the *simulated* world; `/validate` grades the
+  plausibility warnings; the Map pane draws an ASCII biome minimap on any terminal.
+- **Record & keep** — `/wfact` and `/research` (world facts), the Ledger pane, `/journey` and
+  `/sessions` (the timeline), and `/export` (a Markdown dossier under `exports/`).
+- **Docs** — *Building the World with Inkhaven* ch. 20; full `WORLDBUILDING.md` + `KEYBINDING.md`
+  reference tables.
 
 ### Dependencies & compatibility
 
-Two new direct dependencies (`typst-assets`, `ttf-parser`), both already compiled in the tree — no
-new download. Compiles warning-free. Test suite → 2680.
+No new dependencies; nothing changes the existing compiler, fact-checker, or any project. Compiles
+warning-free. Test suite → 2712.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
