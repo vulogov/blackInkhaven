@@ -21,6 +21,8 @@ pub(crate) enum Op {
     Set { path: Vec<String>, value: Value },
     /// Append to the array at a dot-path (creating it if absent).
     Push { path: Vec<String>, value: Value },
+    /// Remove the element at `index` from the array at a dot-path (MAPED-P2).
+    RemoveAt { path: Vec<String>, index: usize },
 }
 
 impl Op {
@@ -29,6 +31,7 @@ impl Op {
         match self {
             Op::Set { path, value } => format!("{} = {}", path.join("."), compact(value)),
             Op::Push { path, value } => format!("{}[] += {}", path.join("."), compact(value)),
+            Op::RemoveAt { path, index } => format!("{}[{index}] removed", path.join(".")),
         }
     }
 
@@ -37,6 +40,7 @@ impl Op {
         match self {
             Op::Set { path, value } => set_path(root, path, value.clone()),
             Op::Push { path, value } => push_path(root, path, value.clone()),
+            Op::RemoveAt { path, index } => remove_at_path(root, path, *index),
         }
     }
 }
@@ -64,8 +68,16 @@ pub(super) enum Command {
     Journey,
     /// List the project's worldbuilder sessions.
     Sessions,
-    /// Export a readable world dossier (compiled state + facts + journey).
-    Export,
+    /// Export a readable world dossier. `pdf` also renders a PDF via Typst.
+    Export { pdf: bool },
+    /// Switch to another worldbuilder session by name (WS-P3).
+    Switch(String),
+    /// Compile `n` candidate worlds on derived seeds and compare them (WS-P1).
+    Roll(usize),
+    /// Render the world map with plakat and show it in the Map pane (WS-P2).
+    Map,
+    /// Check the declared map layer against the compiled world (MAPED-P5).
+    MapCheck,
     /// Unrecognised / malformed — carries a message for the status bar.
     Unknown(String),
 }
@@ -87,7 +99,47 @@ pub(super) fn parse(input: &str) -> Command {
         "interview" => Command::Interview,
         "journey" => Command::Journey,
         "sessions" => Command::Sessions,
-        "export" => Command::Export,
+        "export" => {
+            let pdf = rest.split_whitespace().any(|w| w.eq_ignore_ascii_case("--pdf") || w.eq_ignore_ascii_case("pdf"));
+            Command::Export { pdf }
+        }
+        "switch" => {
+            if rest.trim().is_empty() {
+                Command::Unknown("usage: /switch <session-name>".into())
+            } else {
+                Command::Switch(rest.trim().to_string())
+            }
+        }
+
+        "map" => Command::Map,
+        "mapcheck" => Command::MapCheck,
+
+        "roll" => {
+            // `/roll [n]` — n candidate seeds (default 4, clamped 1..=8).
+            let n = rest.split_whitespace().next().and_then(|s| s.parse::<usize>().ok()).unwrap_or(4);
+            Command::Roll(n.clamp(1, 8))
+        }
+
+        "adopt" => {
+            // `/adopt <seed>` — decimal or 0x-hex. Written as a hex STRING so any
+            // u64 round-trips through SeedValue (untagged Int(i64)|Str).
+            let t = rest.trim();
+            let parsed = t
+                .strip_prefix("0x")
+                .or_else(|| t.strip_prefix("0X"))
+                .and_then(|h| u64::from_str_radix(h, 16).ok())
+                .or_else(|| t.parse::<u64>().ok());
+            match parsed {
+                Some(seed) => Command::Shape {
+                    label: format!("seed → 0x{seed:x}"),
+                    ops: vec![Op::Set {
+                        path: vec!["seed".into()],
+                        value: json!(format!("0x{seed:x}")),
+                    }],
+                },
+                None => Command::Unknown("usage: /adopt <seed> (decimal or 0x-hex)".into()),
+            }
+        }
         "wfact" | "fact" => {
             if rest.is_empty() {
                 Command::Unknown("usage: /wfact <statement> — records an author fact:world".into())
@@ -235,7 +287,7 @@ pub(super) fn parse(input: &str) -> Command {
         }
 
         other => Command::Unknown(format!(
-            "unknown command `/{other}` — supports /interview /journey /sessions /export /set /star /tilt /moon /nation /magic /rule /wfact /research /compile /validate /write /undo /reset /diff"
+            "unknown command `/{other}` — supports /interview /roll /adopt /map /mapcheck /journey /sessions /switch /export[ --pdf] /set /star /tilt /moon /nation /magic /rule /wfact /research /compile /validate /write /undo /reset /diff"
         )),
     }
 }
@@ -305,6 +357,23 @@ fn push_path(root: &mut Value, path: &[String], value: Value) {
     }
 }
 
+/// Remove the element at `index` from the array at `path`. A missing path,
+/// non-array, or out-of-range index is a silent no-op (the delta simply does
+/// nothing rather than corrupting the world).
+fn remove_at_path(root: &mut Value, path: &[String], index: usize) {
+    let Some(obj) = root.as_object_mut() else { return };
+    let Some(first) = path.first() else { return };
+    if path.len() == 1 {
+        if let Some(Value::Array(arr)) = obj.get_mut(first) {
+            if index < arr.len() {
+                arr.remove(index);
+            }
+        }
+    } else if let Some(child) = obj.get_mut(first) {
+        remove_at_path(child, &path[1..], index);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -350,6 +419,22 @@ mod tests {
         assert_eq!(root["astronomy"]["star_class"], json!("K"));
         assert_eq!(root["nations"].as_array().unwrap().len(), 2);
         assert_eq!(root["nations"][1]["name"], json!("Eastreach"));
+    }
+
+    #[test]
+    fn remove_at_deletes_the_indexed_element_and_is_bounds_safe() {
+        let mut root = json!({ "geography": { "landmarks": [
+            { "name": "A" }, { "name": "B" }, { "name": "C" }
+        ]}});
+        Op::RemoveAt { path: vec!["geography".into(), "landmarks".into()], index: 1 }.apply(&mut root);
+        let arr = root["geography"]["landmarks"].as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["name"], json!("A"));
+        assert_eq!(arr[1]["name"], json!("C"));
+        // Out-of-range and missing paths are no-ops, not panics.
+        Op::RemoveAt { path: vec!["geography".into(), "landmarks".into()], index: 9 }.apply(&mut root);
+        assert_eq!(root["geography"]["landmarks"].as_array().unwrap().len(), 2);
+        Op::RemoveAt { path: vec!["nope".into()], index: 0 }.apply(&mut root);
     }
 
     #[test]
@@ -406,6 +491,37 @@ mod tests {
         assert!(matches!(parse("/rule"), Command::Unknown(_)));
         assert!(matches!(parse("/magic on"), Command::Shape { .. }));
         assert!(matches!(parse("/magic sideways"), Command::Unknown(_)));
+    }
+
+    #[test]
+    fn roll_defaults_and_clamps_and_adopt_writes_hex_seed() {
+        assert_eq!(parse("/roll"), Command::Roll(4));
+        assert_eq!(parse("/roll 3"), Command::Roll(3));
+        assert_eq!(parse("/roll 99"), Command::Roll(8)); // clamped
+        assert_eq!(parse("/roll 0"), Command::Roll(1)); // clamped
+        // /adopt writes the seed as a 0x hex string leaf.
+        match parse("/adopt 20818") {
+            Command::Shape { ops, .. } => {
+                assert_eq!(
+                    ops,
+                    vec![Op::Set { path: vec!["seed".into()], value: json!("0x5152") }]
+                );
+            }
+            other => panic!("expected Shape, got {other:?}"),
+        }
+        assert_eq!(parse("/adopt 0x5152"), parse("/adopt 20818"));
+        assert!(matches!(parse("/adopt nope"), Command::Unknown(_)));
+        assert_eq!(parse("/map"), Command::Map);
+        assert_eq!(parse("/mapcheck"), Command::MapCheck);
+    }
+
+    #[test]
+    fn export_pdf_flag_and_switch_parse() {
+        assert_eq!(parse("/export"), Command::Export { pdf: false });
+        assert_eq!(parse("/export --pdf"), Command::Export { pdf: true });
+        assert_eq!(parse("/export pdf"), Command::Export { pdf: true });
+        assert_eq!(parse("/switch aldoria-v2"), Command::Switch("aldoria-v2".into()));
+        assert!(matches!(parse("/switch"), Command::Unknown(_)));
     }
 
     #[test]

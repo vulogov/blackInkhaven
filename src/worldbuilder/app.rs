@@ -43,6 +43,38 @@ pub(super) struct WorldbuilderTurn {
     pub streaming: bool,
 }
 
+/// A declared landmark resolved to a source-grid cell, for the map overlay (P2).
+pub(super) struct MapMarker {
+    pub x: usize,
+    pub y: usize,
+    pub name: String,
+    pub kind: String,
+}
+
+/// What a map name-entry will place once a name is given (P2/P3).
+pub(super) enum MapPlacement {
+    /// A `geography.landmarks[]` entry of `geo_kind` at `(x, y)`.
+    Landmark { geo_kind: &'static str, x: usize, y: usize },
+    /// A `hydrology.rivers[]` entry from `from` to `to` (P3).
+    River { from: (usize, usize), to: (usize, usize) },
+    /// A `geography.regions[]` entry anchored at `(x, y)`, biome taken from the
+    /// compiled cell under the cursor (P4).
+    Region { x: usize, y: usize, biome: String },
+}
+
+/// An in-progress name entry for a feature being placed (P2/P3).
+pub(super) struct MapInput {
+    pub label: &'static str,
+    pub placement: MapPlacement,
+    pub buffer: String,
+}
+
+/// A multi-step map tool in progress (P3). `r` starts a river; the first Enter
+/// sets its source, the second its mouth (then a name is requested).
+pub(super) enum MapTool {
+    River { source: Option<(usize, usize)> },
+}
+
 /// World-book chapters owned by `realworld compile` — read-only in the
 /// worldbuilder (change them by editing `world.hjson` + recompiling, not by hand).
 /// Matched case-insensitively against a node's title or an ancestor's.
@@ -114,11 +146,43 @@ pub(crate) struct WorldbuilderApp {
     /// biome minimap in the Map right-pane (WB-P6). Invalidated with the summary.
     pub(super) compiled_layers: Option<crate::world::plausibility::CompiledLayers>,
 
+    // — Raster map (WS-P2) —————————————————————————————————————————————
+    /// The terminal's image protocol, if it can display images and
+    /// `images.preview_enabled` is on. `None` → the Map pane is always ASCII.
+    image_picker: Option<ratatui_image::picker::Picker>,
+    /// The last `/map` plakat raster, ready to paint in the Map pane. `RefCell`
+    /// because the stateful image protocol mutates on render but `TuiHost::render`
+    /// is `&self`. Invalidated whenever the world changes.
+    pub(super) map_raster: Option<std::cell::RefCell<ratatui_image::protocol::StatefulProtocol>>,
+
+    // — Map editor (MAPED-P1/P2) ———————————————————————————————————————
+    /// Whether the Map pane is in edit mode (a movable grid cursor). Requires a
+    /// compiled map (the ASCII grid); the raster is suppressed while editing.
+    pub(super) map_edit: bool,
+    /// The edit cursor in *source-grid* coordinates (`geology.width × height`).
+    pub(super) map_cursor: (usize, usize),
+    /// Declared landmarks resolved to source cells, for the map overlay (P2).
+    /// Refreshed with `compiled_layers`; cleared when the world changes.
+    pub(super) map_landmarks: Vec<MapMarker>,
+    /// Declared regions with an anchor cell, for the map overlay (P4).
+    pub(super) map_regions: Vec<MapMarker>,
+    /// An open name-entry prompt for a feature being placed (P2/P3).
+    pub(super) map_input: Option<MapInput>,
+    /// A multi-step map tool in progress (P3 rivers).
+    pub(super) map_tool: Option<MapTool>,
+    /// The last `/mapcheck` findings — flagged on the map (`!`) and jumpable with
+    /// `f` (P5). Cleared when the world changes.
+    pub(super) map_findings: Vec<super::map::MapFinding>,
+    /// Cursor into the spatial findings for `f` (P5).
+    map_finding_idx: usize,
+
     // — World-fact research (WB-P7) ————————————————————————————————————
     /// The last `/research` query + its retrieved Facts passages, shown in the
     /// Research right-pane. `◎` marks passages already tagged `fact:world`.
     pub(super) research_query: Option<String>,
     pub(super) research_hits: Vec<crate::book_rag::RetrievedPassage>,
+    /// Cursor into `research_hits` for the accept-as-fact keystroke (WS-P3).
+    pub(super) research_cursor: usize,
 
     // — Interview (WB-P8) ——————————————————————————————————————————————
     /// The active guided interview, if the author started one (`/interview` or
@@ -155,6 +219,7 @@ impl WorldbuilderApp {
         let session = WorldbuilderSession::open_or_create(&layout, session_name, now)?;
 
         let theme = Theme::from_config(&cfg.theme);
+        let cfg_images_preview = cfg.images.preview_enabled;
         let mut query = TextArea::default();
         query.set_cursor_line_style(ratatui::style::Style::default());
 
@@ -188,8 +253,24 @@ impl WorldbuilderApp {
             plausibility_score: None,
             compiled_summary: None,
             compiled_layers: None,
+            // WS-P2 — query the terminal once for image support (gated by config).
+            image_picker: if cfg_images_preview {
+                ratatui_image::picker::Picker::from_query_stdio().ok()
+            } else {
+                None
+            },
+            map_raster: None,
+            map_edit: false,
+            map_cursor: (0, 0),
+            map_landmarks: Vec::new(),
+            map_regions: Vec::new(),
+            map_input: None,
+            map_tool: None,
+            map_findings: Vec::new(),
+            map_finding_idx: 0,
             research_query: None,
             research_hits: Vec::new(),
+            research_cursor: 0,
             interview: None,
             ledger_snapshot: None,
             plausibility_prev: None,
@@ -279,6 +360,47 @@ impl WorldbuilderApp {
             self.should_quit = true;
             return;
         }
+        // MAPED-P2 — a landmark name-entry prompt swallows all input.
+        if self.map_input.is_some() {
+            match key.code {
+                KeyCode::Esc => {
+                    self.map_input = None;
+                    self.status = "placement cancelled".into();
+                }
+                KeyCode::Enter => {
+                    if let Some(mi) = self.map_input.take() {
+                        let name = mi.buffer.trim().to_string();
+                        if name.is_empty() {
+                            self.status = "name required — placement cancelled".into();
+                        } else {
+                            match mi.placement {
+                                MapPlacement::Landmark { geo_kind, x, y } => {
+                                    self.place_landmark(x, y, name, geo_kind)
+                                }
+                                MapPlacement::River { from, to } => {
+                                    self.place_river(from, to, name)
+                                }
+                                MapPlacement::Region { x, y, biome } => {
+                                    self.place_region(x, y, name, biome)
+                                }
+                            }
+                        }
+                    }
+                }
+                KeyCode::Backspace => {
+                    if let Some(mi) = self.map_input.as_mut() {
+                        mi.buffer.pop();
+                    }
+                }
+                KeyCode::Char(c) => {
+                    if let Some(mi) = self.map_input.as_mut() {
+                        mi.buffer.push(c);
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
         // Ctrl+R cycles the right-pane view from anywhere.
         if ctrl && key.code == KeyCode::Char('r') {
             self.right_pane = self.right_pane.next();
@@ -360,6 +482,60 @@ impl WorldbuilderApp {
                         }
                         _ => {}
                     }
+                } else if self.right_pane == RightPane::Map {
+                    // MAPED-P1/P2/P3 — grid cursor, placement tools, river tool.
+                    if self.map_edit {
+                        if self.try_map_move(key) {
+                            // cursor moved
+                        } else if self.map_tool.is_some() {
+                            // A multi-step tool is active: Enter advances it.
+                            match key.code {
+                                KeyCode::Esc => {
+                                    self.map_tool = None;
+                                    self.status = "tool cancelled".into();
+                                }
+                                KeyCode::Enter => self.river_pick(),
+                                _ => {}
+                            }
+                        } else {
+                            match key.code {
+                                KeyCode::Esc | KeyCode::Char('e') => {
+                                    self.map_edit = false;
+                                    self.status = "left map edit".into();
+                                }
+                                KeyCode::Char('t') => self.open_map_input("Town name", "city"),
+                                KeyCode::Char('n') => self.open_map_input("Landmark name", "landmark"),
+                                KeyCode::Char('g') => self.open_region_input(),
+                                KeyCode::Char('f') => self.jump_next_finding(),
+                                KeyCode::Char('d') | KeyCode::Char('x') => {
+                                    self.delete_feature_at_cursor()
+                                }
+                                KeyCode::Char('r') => {
+                                    self.map_tool = Some(MapTool::River { source: None });
+                                    self.status =
+                                        "river — move to the source, Enter to set · Esc cancel".into();
+                                }
+                                _ => {}
+                            }
+                        }
+                    } else if key.code == KeyCode::Char('e') {
+                        self.enter_map_edit();
+                    }
+                } else if self.right_pane == RightPane::Research {
+                    // WS-P3 — move over hits; `a` promotes one to a world fact.
+                    match key.code {
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            let n = self.research_hits.len();
+                            if n > 0 {
+                                self.research_cursor = (self.research_cursor + 1).min(n - 1);
+                            }
+                        }
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            self.research_cursor = self.research_cursor.saturating_sub(1);
+                        }
+                        KeyCode::Char('a') => self.accept_research_hit(),
+                        _ => {}
+                    }
                 }
             }
             Focus::ConfirmationOverlay => match key.code {
@@ -411,7 +587,11 @@ impl WorldbuilderApp {
             Command::Interview => self.start_interview(),
             Command::Journey => self.run_journey(),
             Command::Sessions => self.run_sessions(),
-            Command::Export => self.run_export(),
+            Command::Export { pdf } => self.run_export(pdf),
+            Command::Switch(name) => self.run_switch(&name),
+            Command::Roll(n) => self.run_roll(n),
+            Command::Map => self.run_map(),
+            Command::MapCheck => self.run_mapcheck(),
             Command::Unknown(msg) => self.status = msg,
         }
     }
@@ -453,8 +633,399 @@ impl WorldbuilderApp {
     /// `/export` — assemble a readable Markdown dossier (compiled state,
     /// plausibility, ledger, `fact:world` facts, and the Journey) and write it
     /// atomically under `exports/`. Compiles the world fresh so it works even
+    /// `/roll [n]` (WS-P1) — compile `n` candidate worlds from the current
+    /// declaration on derived seeds (`base + i`) and report a comparison into
+    /// Chat. Pure and deterministic — the same declaration under different seeds
+    /// yields decorrelated worlds (the compiler keys its SplitMix64 on the seed),
+    /// so this explores the space of worlds the physics implies. `/adopt <seed>`
+    /// then sets one as a pending edit.
+    fn run_roll(&mut self, n: usize) {
+        let Some(base) = self.current_world_def() else {
+            self.status = "no world to roll — declare one first (interview or /set)".into();
+            return;
+        };
+        let base_seed = base.seed_u64();
+        let mut body = format!("Seed roll — {n} candidate(s), base 0x{base_seed:x}\n");
+        body.push_str("  seed              ★   cont  sea%    pop     °C\n");
+        for i in 0..n {
+            let seed = base_seed.wrapping_add(i as u64);
+            let mut def = base.clone();
+            def.seed = crate::world::types::SeedValue::Str(format!("0x{seed:x}"));
+            let layers = crate::world::plausibility::compile_layers(&def);
+            let warns = crate::world::plausibility::run_fast(&def);
+            let score = crate::world::plausibility::compute_plausibility_score(&warns);
+            let (g, c, d) = (&layers.geology, &layers.climate, &layers.demographics);
+            let marker = if i == 0 { "*" } else { " " };
+            body.push_str(&format!(
+                "{marker} 0x{seed:<13x} {score:>3}  {:>4}  {:>4.0}  {:>7}  {:>5.1}\n",
+                g.continents,
+                g.sea_coverage_pct,
+                Self::compact_pop(d.total_population),
+                c.mean_land_temp_c,
+            ));
+        }
+        body.push_str("(* = current) · /adopt <seed> to set one (a pending edit → /write)");
+        self.push_turn(format!("/roll {n}"), body);
+        self.status = format!("rolled {n} candidate world(s) · /adopt <seed>");
+    }
+
+    /// `/map` (WS-P2) — render the world map with plakat and show the raster in
+    /// the Map pane on image-capable terminals; otherwise the ASCII biome map
+    /// stands in. Graceful at every step: no image support, no plakat, or a render
+    /// failure each fall back to ASCII with a status note.
+    fn run_map(&mut self) {
+        self.right_pane = RightPane::Map;
+        // Keep the ASCII fallback populated so the pane always shows something.
+        if self.compiled_layers.is_none() {
+            if let Some(def) = self.current_world_def() {
+                self.populate_map_caches(&def);
+            }
+        }
+        if self.image_picker.is_none() {
+            self.status = "Map: this terminal can't display images — showing the ASCII map \
+                           (needs kitty/iTerm2/sixel + images.preview_enabled)"
+                .into();
+            return;
+        }
+        let Some(def) = self.current_world_def() else {
+            self.status = "no world to map — declare one first (interview or /set)".into();
+            return;
+        };
+        let art = match crate::cli::realworld::render_world_map(&self.layout.root, &def, None) {
+            Ok(a) => a,
+            Err(e) => {
+                self.map_raster = None;
+                self.status = format!("map: {e} — showing the ASCII map");
+                return;
+            }
+        };
+        let img = std::fs::read(&art.png_path)
+            .ok()
+            .and_then(|bytes| image::load_from_memory(&bytes).ok());
+        match img {
+            Some(img) => {
+                // Borrow the picker only for the protocol build, then store.
+                let proto = self.image_picker.as_ref().unwrap().new_resize_protocol(img);
+                self.map_raster = Some(std::cell::RefCell::new(proto));
+                self.status = "rendered the world map (plakat raster)".into();
+            }
+            None => {
+                self.map_raster = None;
+                self.status = "map rendered but its PNG could not be read — ASCII map".into();
+            }
+        }
+    }
+
+    /// The source-grid dimensions of the compiled map, if any (MAPED-P1).
+    fn map_source_dims(&self) -> Option<(usize, usize)> {
+        self.compiled_layers.as_ref().map(|l| (l.geology.width, l.geology.height))
+    }
+
+    /// `/mapcheck` (MAPED-P5) — check the map layer against the compiled world.
+    /// Reports the plausibility score, the deterministic physics warnings, and the
+    /// spatial map findings (a town in the sea, an off-map coord) into Chat, flags
+    /// the offending cells on the map (`!`), and jumps the cursor to the first.
+    fn run_mapcheck(&mut self) {
+        self.refresh_plausibility();
+        let Some(def) = self.current_world_def() else {
+            self.status = "no world to check — declare one first (interview or /set)".into();
+            return;
+        };
+        self.populate_map_caches(&def);
+        let Some(layers) = self.compiled_layers.as_ref() else {
+            self.status = "no world to check".into();
+            return;
+        };
+        let findings = super::map::lint_map(&def, layers);
+
+        let mut body = format!(
+            "Map check — plausibility {}/100\n",
+            self.plausibility_score.unwrap_or(100)
+        );
+        if findings.is_empty() {
+            body.push_str("Map layer: no problems found.\n");
+        } else {
+            body.push_str(&format!("Map layer — {} issue(s):\n", findings.len()));
+            for f in &findings {
+                body.push_str(&format!("  ! {}\n", f.text));
+            }
+        }
+        if !self.plausibility_warnings.is_empty() {
+            body.push_str("World checks:\n");
+            for w in self.plausibility_warnings.iter().take(8) {
+                body.push_str(&format!("  · {}\n", w.text));
+            }
+        }
+
+        let spatial = findings.iter().filter(|f| f.at.is_some()).count();
+        self.map_findings = findings;
+        self.map_finding_idx = 0;
+        self.right_pane = RightPane::Map;
+        if let Some(at) = self.map_findings.iter().find_map(|f| f.at) {
+            self.map_cursor = at;
+            self.enter_map_edit();
+        }
+        self.push_turn("/mapcheck".into(), body);
+        self.status = format!("map check — {spatial} spatial issue(s) · f: jump to next");
+    }
+
+    /// `f` in the Map pane — jump the cursor to the next spatial `/mapcheck`
+    /// finding and echo its message (P5).
+    fn jump_next_finding(&mut self) {
+        let spatial: Vec<(usize, usize, String)> = self
+            .map_findings
+            .iter()
+            .filter_map(|f| f.at.map(|at| (at.0, at.1, f.text.clone())))
+            .collect();
+        if spatial.is_empty() {
+            self.status = "no map-check findings — run /mapcheck".into();
+            return;
+        }
+        self.map_finding_idx = (self.map_finding_idx + 1) % spatial.len();
+        let (x, y, text) = &spatial[self.map_finding_idx];
+        self.map_cursor = (*x, *y);
+        self.status = format!("[{}/{}] {text}", self.map_finding_idx + 1, spatial.len());
+    }
+
+    /// Enter Map edit mode. Auto-compiles the map if needed. Clamps the cursor
+    /// into the current grid.
+    fn enter_map_edit(&mut self) {
+        if self.compiled_layers.is_none() {
+            if let Some(def) = self.current_world_def() {
+                self.populate_map_caches(&def);
+            }
+        }
+        let Some((w, h)) = self.map_source_dims() else {
+            self.status = "no world to map — declare one first (interview or /set)".into();
+            return;
+        };
+        self.map_edit = true;
+        let (cx, cy) = self.map_cursor;
+        self.map_cursor = (cx.min(w.saturating_sub(1)), cy.min(h.saturating_sub(1)));
+        self.status = "map edit — hjkl move · t town · n name · d delete · Esc leave".into();
+    }
+
+    /// Open the name-entry prompt for placing a landmark of `geo_kind` at the
+    /// cursor (P2).
+    fn open_map_input(&mut self, label: &'static str, geo_kind: &'static str) {
+        let (x, y) = self.map_cursor;
+        self.map_input = Some(MapInput {
+            label,
+            placement: MapPlacement::Landmark { geo_kind, x, y },
+            buffer: String::new(),
+        });
+        self.status = format!("{label} at ({x},{y}) — type a name, Enter to place, Esc to cancel");
+    }
+
+    /// Open the region name-entry, auto-filling the biome from the compiled cell
+    /// under the cursor (P4).
+    fn open_region_input(&mut self) {
+        let (x, y) = self.map_cursor;
+        let biome = self
+            .compiled_layers
+            .as_ref()
+            .and_then(|l| {
+                let idx = y.min(l.climate.height.saturating_sub(1)) * l.climate.width
+                    + x.min(l.climate.width.saturating_sub(1));
+                l.climate.biome.get(idx).map(|b| b.as_str().to_string())
+            })
+            .unwrap_or_default();
+        self.map_input = Some(MapInput {
+            label: "Region name",
+            placement: MapPlacement::Region { x, y, biome: biome.clone() },
+            buffer: String::new(),
+        });
+        self.status = format!("Region at ({x},{y}) · biome {biome} — type a name, Enter to place");
+    }
+
+    /// Place a region anchor into `geography.regions[]` as a pending edit (P4).
+    fn place_region(&mut self, x: usize, y: usize, name: String, biome: String) {
+        let value = serde_json::json!({ "name": name, "biome": biome, "x": x, "y": y });
+        self.pending_ops.push(super::commands::Op::Push {
+            path: vec!["geography".into(), "regions".into()],
+            value,
+        });
+        self.refresh_plausibility();
+        if let Some(def) = self.current_world_def() {
+            self.populate_map_caches(&def);
+        }
+        self.record_turn(format!("map: region {name}"), format!("{biome} at ({x},{y})"), Vec::new());
+        self.status = format!("placed region '{name}' ({biome}) at ({x},{y}) · /write to commit");
+    }
+
+    /// Advance the river tool (P3): the first Enter fixes the source, the second
+    /// fixes the mouth and asks for a name.
+    fn river_pick(&mut self) {
+        let cursor = self.map_cursor;
+        match self.map_tool {
+            Some(MapTool::River { source: None }) => {
+                self.map_tool = Some(MapTool::River { source: Some(cursor) });
+                self.status = format!(
+                    "river source ({},{}) — move to the mouth, Enter to set · Esc cancel",
+                    cursor.0, cursor.1
+                );
+            }
+            Some(MapTool::River { source: Some(src) }) => {
+                self.map_tool = None;
+                self.map_input = Some(MapInput {
+                    label: "River name",
+                    placement: MapPlacement::River { from: src, to: cursor },
+                    buffer: String::new(),
+                });
+                self.status = "name the river — Enter to place, Esc to cancel".into();
+            }
+            None => {}
+        }
+    }
+
+    /// Place a river into `hydrology.rivers[]` as a pending edit, re-populate the
+    /// map (the compiled hydrology honours the declared course, so it renders),
+    /// and surface `lint_rivers` immediately (P3).
+    fn place_river(&mut self, from: (usize, usize), to: (usize, usize), name: String) {
+        let value = serde_json::json!({
+            "name": name,
+            "from": [from.0, from.1],
+            "to": [to.0, to.1],
+        });
+        self.pending_ops.push(super::commands::Op::Push {
+            path: vec!["hydrology".into(), "rivers".into()],
+            value,
+        });
+        self.refresh_plausibility();
+        if let Some(def) = self.current_world_def() {
+            self.populate_map_caches(&def);
+        }
+        self.record_turn(
+            format!("map: river {name}"),
+            format!("({},{}) → ({},{})", from.0, from.1, to.0, to.1),
+            Vec::new(),
+        );
+        let lint = self.river_lint_summary();
+        if lint.is_empty() {
+            self.status = format!("placed river '{name}' · /write to commit");
+        } else {
+            self.push_turn(format!("river {name}"), format!("⚠ {lint}"));
+            self.status = format!("river '{name}' placed — check: {lint}");
+        }
+    }
+
+    /// The current declared-river lint findings, joined for a status/chat line.
+    fn river_lint_summary(&self) -> String {
+        let Some(def) = self.current_world_def() else { return String::new() };
+        let Some(layers) = self.compiled_layers.as_ref() else { return String::new() };
+        let Some(hydro_def) = def.hydrology.as_ref() else { return String::new() };
+        crate::world::compile::hydrology_layer::lint_rivers(hydro_def, &layers.geology)
+            .iter()
+            .map(|w| w.text.clone())
+            .collect::<Vec<_>>()
+            .join(" · ")
+    }
+
+    /// Place a named landmark into `geography.landmarks[]` as a pending edit, then
+    /// re-populate the map caches so it appears immediately (P2).
+    fn place_landmark(&mut self, x: usize, y: usize, name: String, geo_kind: &str) {
+        let value = serde_json::json!({ "name": name, "kind": geo_kind, "x": x, "y": y });
+        self.pending_ops.push(super::commands::Op::Push {
+            path: vec!["geography".into(), "landmarks".into()],
+            value,
+        });
+        self.refresh_plausibility();
+        if let Some(def) = self.current_world_def() {
+            self.populate_map_caches(&def);
+        }
+        self.record_turn(format!("map: {geo_kind} {name}"), format!("placed at ({x},{y})"), Vec::new());
+        self.status = format!("placed {geo_kind} '{name}' at ({x},{y}) · /write to commit");
+    }
+
+    /// Delete the declared feature under the cursor — a landmark first, else a
+    /// region — via `Op::RemoveAt` (index computed against the current disk +
+    /// pending array, which is the array state at write time) (P2/P4).
+    fn delete_feature_at_cursor(&mut self) {
+        let Some((w, h)) = self.map_source_dims() else { return };
+        let cursor = self.map_cursor;
+        let Some(def) = self.current_world_def() else { return };
+        let geo = def.geography.as_ref();
+        // Landmark under the cursor?
+        if let Some(i) =
+            geo.and_then(|g| g.landmarks.iter().position(|lm| lm.grid(w, h) == Some(cursor)))
+        {
+            self.remove_feature("landmarks", i, "landmark", cursor);
+            return;
+        }
+        // Else a region anchored on this cell?
+        if let Some(i) = geo.and_then(|g| {
+            g.regions.iter().position(|r| match (r.x, r.y) {
+                (Some(x), Some(y)) => (x.min(w - 1), y.min(h - 1)) == cursor,
+                _ => false,
+            })
+        }) {
+            self.remove_feature("regions", i, "region", cursor);
+            return;
+        }
+        self.status = "no landmark or region at the cursor".into();
+    }
+
+    /// Push a `RemoveAt` for `geography.<array>[index]`, re-populate, and report.
+    fn remove_feature(&mut self, array: &str, index: usize, label: &str, at: (usize, usize)) {
+        self.pending_ops.push(super::commands::Op::RemoveAt {
+            path: vec!["geography".into(), array.into()],
+            index,
+        });
+        self.refresh_plausibility();
+        if let Some(def) = self.current_world_def() {
+            self.populate_map_caches(&def);
+        }
+        self.status = format!("removed {label} at ({},{}) · /write to commit", at.0, at.1);
+    }
+
+    /// Route a movement key to the cursor, returning whether it was one. Handles
+    /// coarse (hjkl / arrows) and fine (HJKL / Shift+arrows) steps. Shared by all
+    /// map tools so navigation always works.
+    fn try_map_move(&mut self, key: KeyEvent) -> bool {
+        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+        match key.code {
+            KeyCode::Left => self.move_map_cursor(-1, 0, shift),
+            KeyCode::Right => self.move_map_cursor(1, 0, shift),
+            KeyCode::Up => self.move_map_cursor(0, -1, shift),
+            KeyCode::Down => self.move_map_cursor(0, 1, shift),
+            KeyCode::Char('h') => self.move_map_cursor(-1, 0, false),
+            KeyCode::Char('l') => self.move_map_cursor(1, 0, false),
+            KeyCode::Char('k') => self.move_map_cursor(0, -1, false),
+            KeyCode::Char('j') => self.move_map_cursor(0, 1, false),
+            KeyCode::Char('H') => self.move_map_cursor(-1, 0, true),
+            KeyCode::Char('L') => self.move_map_cursor(1, 0, true),
+            KeyCode::Char('K') => self.move_map_cursor(0, -1, true),
+            KeyCode::Char('J') => self.move_map_cursor(0, 1, true),
+            _ => return false,
+        }
+        true
+    }
+
+    /// Move the edit cursor in source-grid cells. `fine` steps a single cell;
+    /// otherwise a coarse step (~1/40 of the grid) for quick travel. Clamped.
+    fn move_map_cursor(&mut self, dx: i32, dy: i32, fine: bool) {
+        let Some((w, h)) = self.map_source_dims() else { return };
+        let step_x = if fine { 1 } else { (w / 40).max(1) } as i32;
+        let step_y = if fine { 1 } else { (h / 40).max(1) } as i32;
+        let (cx, cy) = self.map_cursor;
+        let nx = (cx as i32 + dx * step_x).clamp(0, w as i32 - 1) as usize;
+        let ny = (cy as i32 + dy * step_y).clamp(0, h as i32 - 1) as usize;
+        self.map_cursor = (nx, ny);
+    }
+
+    /// A compact population string (`4.1M`, `820k`, `512`) for the roll table.
+    fn compact_pop(p: u64) -> String {
+        if p >= 1_000_000 {
+            format!("{:.1}M", p as f64 / 1_000_000.0)
+        } else if p >= 1_000 {
+            format!("{:.0}k", p as f64 / 1_000.0)
+        } else {
+            p.to_string()
+        }
+    }
+
     /// before `/compile`.
-    fn run_export(&mut self) {
+    fn run_export(&mut self, pdf: bool) {
         let compiled = self
             .current_world_def()
             .map(|def| {
@@ -464,32 +1035,55 @@ impl WorldbuilderApp {
         let facts = self.collect_world_facts();
         let at = chrono::Utc::now().to_rfc3339();
         let world_name = self.world_name().to_string();
-        let md = {
-            let input = super::export::DossierInput {
-                world_name: &world_name,
-                generated_at: &at,
-                compiled: compiled.as_deref(),
-                score: self.plausibility_score,
-                warnings: &self.plausibility_warnings,
-                ledger: self.ledger_snapshot.as_ref(),
-                facts: &facts,
-                journey: &self.session.turns,
-            };
-            super::export::build_dossier(&input)
+        let input = super::export::DossierInput {
+            world_name: &world_name,
+            generated_at: &at,
+            compiled: compiled.as_deref(),
+            score: self.plausibility_score,
+            warnings: &self.plausibility_warnings,
+            ledger: self.ledger_snapshot.as_ref(),
+            facts: &facts,
+            journey: &self.session.turns,
         };
+        let md = super::export::build_dossier(&input);
         let dir = self.layout.root.join("exports");
         if let Err(e) = std::fs::create_dir_all(&dir) {
             self.status = format!("export failed: {e}");
             return;
         }
-        let path = dir.join(format!("dossier-{}.md", self.session.slug));
-        match crate::io_atomic::write(&path, md.as_bytes()) {
-            Ok(()) => {
-                let rel = path.strip_prefix(&self.layout.root).unwrap_or(&path).display();
-                self.push_turn("/export".into(), format!("Wrote world dossier → {rel}"));
-                self.status = format!("exported → {rel}");
+        let md_path = dir.join(format!("dossier-{}.md", self.session.slug));
+        if let Err(e) = crate::io_atomic::write(&md_path, md.as_bytes()) {
+            self.status = format!("export failed: {e}");
+            return;
+        }
+        let md_rel = md_path.strip_prefix(&self.layout.root).unwrap_or(&md_path).display().to_string();
+
+        if !pdf {
+            self.push_turn("/export".into(), format!("Wrote world dossier → {md_rel}"));
+            self.status = format!("exported → {md_rel}");
+            return;
+        }
+
+        // `--pdf`: render the same dossier through Typst, in-process.
+        let typ = super::export::build_dossier_typst(&input);
+        let settings = crate::typst_world::WorldSettings::from_cfg(&self.cfg.typst_compile);
+        match crate::typst_inprocess::compile_source_to_pdf(&self.layout.root, typ, settings) {
+            Ok(bytes) => {
+                let pdf_path = dir.join(format!("dossier-{}.pdf", self.session.slug));
+                match crate::io_atomic::write(&pdf_path, &bytes) {
+                    Ok(()) => {
+                        let pdf_rel = pdf_path.strip_prefix(&self.layout.root).unwrap_or(&pdf_path).display();
+                        self.push_turn("/export --pdf".into(), format!("Wrote {md_rel} and {pdf_rel}"));
+                        self.status = format!("exported → {pdf_rel}");
+                    }
+                    Err(e) => self.status = format!("wrote {md_rel}; PDF write failed: {e}"),
+                }
             }
-            Err(e) => self.status = format!("export failed: {e}"),
+            Err(e) => {
+                let first = e.lines().next().unwrap_or("compile error");
+                self.push_turn("/export --pdf".into(), format!("Wrote {md_rel}; PDF compile failed: {first}"));
+                self.status = format!("wrote {md_rel}; PDF failed (see Chat)");
+            }
         }
     }
 
@@ -544,7 +1138,44 @@ impl WorldbuilderApp {
             .collect::<Vec<_>>()
             .join("\n");
         self.push_turn("/sessions".into(), format!("Sessions:\n{list}"));
-        self.status = format!("{} session(s) — re-open with `--session <name>`", slugs.len());
+        self.status = format!("{} session(s) — /switch <name> or --session <name>", slugs.len());
+    }
+
+    /// `/switch <name>` (WS-P3) — persist the current session, then open (or
+    /// create) the named one and swap in its pending delta. `world.hjson` is
+    /// shared across a project's sessions, so switching changes only the pending
+    /// edits, timeline, and pane sizing — and starts a fresh conversation.
+    fn run_switch(&mut self, name: &str) {
+        // Flush the current session (pending + turns are mirrored on change;
+        // capture the latest sizing too).
+        self.session.left_split = self.left_split;
+        self.session.split_ratio = self.split_ratio;
+        self.session.pending_ops = self.pending_ops.clone();
+        let _ = self.session.save(&self.layout);
+
+        let now = chrono::Utc::now().to_rfc3339();
+        let target = match super::session::WorldbuilderSession::open_or_create(&self.layout, name, now) {
+            Ok(s) => s,
+            Err(e) => {
+                self.status = format!("switch failed: {e}");
+                return;
+            }
+        };
+        let slug = target.slug.clone();
+        self.left_split = target.left_split.clamp(2, 8);
+        self.split_ratio = target.split_ratio.clamp(2, 8);
+        self.pending_ops = target.pending_ops.clone();
+        self.session = target;
+        // Fresh conversation + research state for the new session.
+        self.chat.clear();
+        self.chat_scroll = 0;
+        self.research_query = None;
+        self.research_hits.clear();
+        self.research_cursor = 0;
+        self.interview = None;
+        self.hjson_preview = None;
+        self.refresh_plausibility(); // rescores pending; clears compiled/map caches
+        self.status = format!("switched to session '{slug}' · {} pending delta(s)", self.pending_ops.len());
     }
 
     /// Start (or restart) the guided interview: focus the Query prompt, surface
@@ -725,6 +1356,7 @@ impl WorldbuilderApp {
             Ok(hits) => {
                 let n = hits.len();
                 self.research_hits = hits;
+                self.research_cursor = 0;
                 self.research_query = Some(query.to_string());
                 self.right_pane = RightPane::Research;
                 self.status = format!("research · {n} passage(s) for “{query}” · Ctrl+R → Research");
@@ -739,10 +1371,8 @@ impl WorldbuilderApp {
     fn run_compile(&mut self) {
         match self.current_world_def() {
             Some(def) => {
-                let layers = crate::world::plausibility::compile_layers(&def);
-                let summary = crate::world::plausibility::summarise_compiled(&def, &layers);
-                self.compiled_summary = Some(summary.clone());
-                self.compiled_layers = Some(layers);
+                self.populate_map_caches(&def);
+                let summary = self.compiled_summary.clone().unwrap_or_default();
                 self.push_turn("/compile".into(), format!("Compiled world state —\n{summary}"));
                 self.status =
                     "compiled — chat reasons over the simulated world · Ctrl+R → Map".into();
@@ -751,6 +1381,54 @@ impl WorldbuilderApp {
                 self.status = "no world to compile — declare one first (interview or /set)".into();
             }
         }
+    }
+
+    /// Compile the world and refresh the Map caches together — `compiled_layers`
+    /// (the biome/height grid), `compiled_summary`, and `map_landmarks` (declared
+    /// landmarks resolved to source cells for the overlay). Landmark/river/region
+    /// edits don't change the grid, so the editor re-runs this after a placement
+    /// to keep the map live (refresh_plausibility having cleared the caches).
+    fn populate_map_caches(&mut self, def: &crate::world::types::WorldDefinition) {
+        let layers = crate::world::plausibility::compile_layers(def);
+        self.compiled_summary =
+            Some(crate::world::plausibility::summarise_compiled(def, &layers));
+        let (w, h) = (layers.geology.width, layers.geology.height);
+        self.map_landmarks = def
+            .geography
+            .as_ref()
+            .map(|g| {
+                g.landmarks
+                    .iter()
+                    .filter_map(|lm| {
+                        lm.grid(w, h).map(|(x, y)| MapMarker {
+                            x,
+                            y,
+                            name: lm.name.clone(),
+                            kind: lm.kind.clone(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.map_regions = def
+            .geography
+            .as_ref()
+            .map(|g| {
+                g.regions
+                    .iter()
+                    .filter_map(|r| match (r.x, r.y) {
+                        (Some(x), Some(y)) => Some(MapMarker {
+                            x: x.min(w.saturating_sub(1)),
+                            y: y.min(h.saturating_sub(1)),
+                            name: r.name.clone(),
+                            kind: if r.biome.is_empty() { "region".into() } else { r.biome.clone() },
+                        }),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.compiled_layers = Some(layers);
     }
 
     /// `/validate` — run the deterministic plausibility lints over the current
@@ -1007,6 +1685,32 @@ impl WorldbuilderApp {
         };
     }
 
+    /// WS-P3 — promote the research hit under the cursor to a world fact: tag its
+    /// (existing) Facts paragraph `fact:world`, so it joins the `◎` set and the
+    /// world-fact RAG.
+    fn accept_research_hit(&mut self) {
+        let Some(hit) = self.research_hits.get(self.research_cursor) else {
+            return;
+        };
+        let id = hit.id;
+        let Some(node) = self.hierarchy.get(id) else {
+            self.status = "that passage is no longer available".into();
+            return;
+        };
+        if node.tags.iter().any(|t| t == FACT_WORLD_TAG) {
+            self.status = "already a ◎ world fact".into();
+            return;
+        }
+        let mut updated = node.clone();
+        updated.tags.push(FACT_WORLD_TAG.to_string());
+        if let Err(e) = self.store.raw().update_metadata(id, updated.to_json()) {
+            self.status = format!("tag write failed: {e}");
+            return;
+        }
+        self.reload_hierarchy();
+        self.status = "◎ promoted to world fact".into();
+    }
+
     fn reject_or_stub_edit(&mut self, is_facts: bool) {
         if !is_facts {
             if let Some(id) = self.world_tree.selected() {
@@ -1181,9 +1885,14 @@ impl WorldbuilderApp {
     pub(super) fn refresh_plausibility(&mut self) {
         // Score the world.hjson on disk PLUS the pending (accepted-but-uncommitted)
         // deltas, so the score responds the moment a delta is accepted. Any world
-        // change also invalidates the cached `/compile` summary + map grids.
+        // change also invalidates the cached `/compile` summary + map grids +
+        // the plakat raster (all stale once the world moves).
         self.compiled_summary = None;
         self.compiled_layers = None;
+        self.map_raster = None;
+        self.map_landmarks.clear();
+        self.map_regions.clear();
+        self.map_findings.clear();
         let def = self.current_world_def();
         self.ledger_snapshot = def.as_ref().and_then(|d| d.magic.clone());
         self.plausibility_prev = self.plausibility_score;
