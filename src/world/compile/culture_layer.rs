@@ -178,7 +178,7 @@ pub fn lint_culture(
     declared: &[crate::world::types::CultureDef],
     pol: &PolitiesOutput,
     capital_biomes: &[String],
-) -> Vec<String> {
+) -> Vec<crate::world::plausibility::Warning> {
     let mut w = Vec::new();
     for d in declared {
         match pol.polities.iter().position(|p| p.name.eq_ignore_ascii_case(&d.nation)) {
@@ -199,7 +199,7 @@ pub fn lint_culture(
             }
         }
     }
-    w
+    w.into_iter().map(crate::world::plausibility::Warning::medium).collect()
 }
 
 #[cfg(test)]
