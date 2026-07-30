@@ -1697,6 +1697,37 @@ fn declared_map_landmarks(
         .unwrap_or_default()
 }
 
+/// WS-P2 — compile every layer, build the plakat MapSpec, hand it to plakat, and
+/// return the artifacts. No stdout, no ingest — the reusable core shared by the
+/// CLI `map` command and the worldbuilder's raster Map pane. `store` supplies
+/// accepted-Place landmark ids (absent is fine).
+pub(crate) fn render_world_map(
+    project: &Path,
+    def: &WorldDefinition,
+    store: Option<&crate::world::storage::WorldStore>,
+) -> Result<crate::world::plakat::MapArtifacts> {
+    use crate::world::compile::{
+        compile_astronomy, compile_climate, compile_demographics, compile_hydrology,
+        compile_polities, compile_trade,
+    };
+    use crate::world::plakat;
+
+    let astro = compile_astronomy(&def.astronomy);
+    let geo = geology_for(project, def)?;
+    let climate = compile_climate(def, &astro, &geo);
+    let hydro = compile_hydrology(&geo, &climate);
+    let demo = compile_demographics(&climate, &hydro);
+    let links = store.and_then(|s| s.list_place_links().ok()).unwrap_or_default();
+    let declared = declared_map_landmarks(def, geo.width, geo.height);
+    let pol = compile_polities(&demo, &def.nations, def.seed_u64());
+    let trade = compile_trade(&pol, &geo, def.astronomy.planet.radius_earth);
+    let spec = plakat::build_map_spec(
+        &def.name, &geo, &climate, &hydro, &demo, &links, &declared, &pol, &trade,
+    );
+    plakat::render(project, &spec, def.seed_u64(), geo.width, geo.height)
+        .map_err(|e| Error::Config(format!("rendering map: {e}")))
+}
+
 /// Render the world map with plakat. Compiles every layer, emits a MapSpec from
 /// the geology/climate/hydrology/demographics outputs, hands it to `plakat map`,
 /// and reads the resolved landmark positions back to refine Place coordinates.
@@ -1709,24 +1740,21 @@ fn map(project: &Path, spec_only: bool, no_ingest: bool) -> Result<()> {
     use crate::world::storage::WorldStore;
 
     let def = load(project)?;
-    let astro = compile_astronomy(&def.astronomy);
-    let geo = geology_for(project, &def)?;
-    let climate = compile_climate(&def, &astro, &geo);
-    let hydro = compile_hydrology(&geo, &climate);
-    let demo = compile_demographics(&climate, &hydro);
-
-    // Accepted Places give landmarks stable ids so we can ingest resolved
-    // positions back onto the right cross-reference. An absent store is fine.
     let store = WorldStore::open_for_project(project).ok();
-    let links = store.as_ref().and_then(|s| s.list_place_links().ok()).unwrap_or_default();
-    let declared = declared_map_landmarks(&def, geo.width, geo.height);
-    let pol = compile_polities(&demo, &def.nations, def.seed_u64());
-    let trade = compile_trade(&pol, &geo, def.astronomy.planet.radius_earth);
-
-    let spec = plakat::build_map_spec(&def.name, &geo, &climate, &hydro, &demo, &links, &declared, &pol, &trade);
-    let (gw, gh) = (geo.width, geo.height);
 
     if spec_only {
+        let astro = compile_astronomy(&def.astronomy);
+        let geo = geology_for(project, &def)?;
+        let climate = compile_climate(&def, &astro, &geo);
+        let hydro = compile_hydrology(&geo, &climate);
+        let demo = compile_demographics(&climate, &hydro);
+        let links = store.as_ref().and_then(|s| s.list_place_links().ok()).unwrap_or_default();
+        let declared = declared_map_landmarks(&def, geo.width, geo.height);
+        let pol = compile_polities(&demo, &def.nations, def.seed_u64());
+        let trade = compile_trade(&pol, &geo, def.astronomy.planet.radius_earth);
+        let spec = plakat::build_map_spec(&def.name, &geo, &climate, &hydro, &demo, &links, &declared, &pol, &trade);
+        let (gw, gh) = (geo.width, geo.height);
+
         let dir = plakat::maps_dir(project);
         std::fs::create_dir_all(&dir).map_err(|e| Error::Store(format!("creating {}: {e}", dir.display())))?;
         let path = dir.join("world.mapspec.json");
@@ -1747,10 +1775,9 @@ fn map(project: &Path, spec_only: bool, no_ingest: bool) -> Result<()> {
     }
 
     if let Some(v) = plakat::detect() {
-        println!("map · {} ({}×{} grid) · {v}", def.name, gw, gh);
+        println!("map · {} · {v}", def.name);
     }
-    let art = plakat::render(project, &spec, def.seed_u64(), gw, gh)
-        .map_err(|e| Error::Config(format!("rendering map: {e}")))?;
+    let art = render_world_map(project, &def, store.as_ref())?;
 
     println!("  spec:     {}", art.spec_path.display());
     println!("  features: {}", art.png_path.display());

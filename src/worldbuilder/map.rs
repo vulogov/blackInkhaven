@@ -96,7 +96,7 @@ pub(super) fn render_map(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
     let Some(layers) = app.compiled_layers.as_ref() else {
         frame.render_widget(
             Paragraph::new(Span::styled(
-                "Run /compile to render the world map here.",
+                "Run /compile for the ASCII map, or /map for the plakat raster.",
                 Style::new().dim(),
             )),
             area,

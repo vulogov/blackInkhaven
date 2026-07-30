@@ -203,7 +203,15 @@ fn render_right_pane(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
     match app.right_pane {
         RightPane::Chat => render_chat(frame, app, inner),
         RightPane::Research => render_research(frame, app, inner),
-        RightPane::Map => super::map::render_map(frame, app, inner),
+        RightPane::Map => {
+            // WS-P2 — the plakat raster on image-capable terminals; else ASCII.
+            if let Some(cell) = app.map_raster.as_ref() {
+                let widget = ratatui_image::StatefulImage::new();
+                frame.render_stateful_widget(widget, inner, &mut cell.borrow_mut());
+            } else {
+                super::map::render_map(frame, app, inner);
+            }
+        }
         RightPane::Ledger => render_ledger(frame, app, inner),
     }
 }
@@ -406,7 +414,7 @@ fn render_hints(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
             "  /interview · /roll · ask · /wfact · /compile /validate · /set… · /write · Tab"
         }
         Focus::RightPane => {
-            "  Ctrl+R·cycle pane  ·  /compile renders the Map  ·  { }·rows  [ ]·cols  Ctrl+Q·quit"
+            "  Ctrl+R·cycle pane  ·  /map raster · /compile ASCII map  ·  { }·rows  Ctrl+Q·quit"
         }
         _ => "  Tab·cycle  Ctrl+R·right pane  { }·rows  [ ]·cols  ?·hints  Ctrl+Q·quit",
     };

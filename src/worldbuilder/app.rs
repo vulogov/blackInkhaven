@@ -114,6 +114,15 @@ pub(crate) struct WorldbuilderApp {
     /// biome minimap in the Map right-pane (WB-P6). Invalidated with the summary.
     pub(super) compiled_layers: Option<crate::world::plausibility::CompiledLayers>,
 
+    // — Raster map (WS-P2) —————————————————————————————————————————————
+    /// The terminal's image protocol, if it can display images and
+    /// `images.preview_enabled` is on. `None` → the Map pane is always ASCII.
+    image_picker: Option<ratatui_image::picker::Picker>,
+    /// The last `/map` plakat raster, ready to paint in the Map pane. `RefCell`
+    /// because the stateful image protocol mutates on render but `TuiHost::render`
+    /// is `&self`. Invalidated whenever the world changes.
+    pub(super) map_raster: Option<std::cell::RefCell<ratatui_image::protocol::StatefulProtocol>>,
+
     // — World-fact research (WB-P7) ————————————————————————————————————
     /// The last `/research` query + its retrieved Facts passages, shown in the
     /// Research right-pane. `◎` marks passages already tagged `fact:world`.
@@ -155,6 +164,7 @@ impl WorldbuilderApp {
         let session = WorldbuilderSession::open_or_create(&layout, session_name, now)?;
 
         let theme = Theme::from_config(&cfg.theme);
+        let cfg_images_preview = cfg.images.preview_enabled;
         let mut query = TextArea::default();
         query.set_cursor_line_style(ratatui::style::Style::default());
 
@@ -188,6 +198,13 @@ impl WorldbuilderApp {
             plausibility_score: None,
             compiled_summary: None,
             compiled_layers: None,
+            // WS-P2 — query the terminal once for image support (gated by config).
+            image_picker: if cfg_images_preview {
+                ratatui_image::picker::Picker::from_query_stdio().ok()
+            } else {
+                None
+            },
+            map_raster: None,
             research_query: None,
             research_hits: Vec::new(),
             interview: None,
@@ -413,6 +430,7 @@ impl WorldbuilderApp {
             Command::Sessions => self.run_sessions(),
             Command::Export => self.run_export(),
             Command::Roll(n) => self.run_roll(n),
+            Command::Map => self.run_map(),
             Command::Unknown(msg) => self.status = msg,
         }
     }
@@ -488,6 +506,56 @@ impl WorldbuilderApp {
         body.push_str("(* = current) · /adopt <seed> to set one (a pending edit → /write)");
         self.push_turn(format!("/roll {n}"), body);
         self.status = format!("rolled {n} candidate world(s) · /adopt <seed>");
+    }
+
+    /// `/map` (WS-P2) — render the world map with plakat and show the raster in
+    /// the Map pane on image-capable terminals; otherwise the ASCII biome map
+    /// stands in. Graceful at every step: no image support, no plakat, or a render
+    /// failure each fall back to ASCII with a status note.
+    fn run_map(&mut self) {
+        self.right_pane = RightPane::Map;
+        // Keep the ASCII fallback populated so the pane always shows something.
+        if self.compiled_layers.is_none() {
+            if let Some(def) = self.current_world_def() {
+                let layers = crate::world::plausibility::compile_layers(&def);
+                self.compiled_summary =
+                    Some(crate::world::plausibility::summarise_compiled(&def, &layers));
+                self.compiled_layers = Some(layers);
+            }
+        }
+        if self.image_picker.is_none() {
+            self.status = "Map: this terminal can't display images — showing the ASCII map \
+                           (needs kitty/iTerm2/sixel + images.preview_enabled)"
+                .into();
+            return;
+        }
+        let Some(def) = self.current_world_def() else {
+            self.status = "no world to map — declare one first (interview or /set)".into();
+            return;
+        };
+        let art = match crate::cli::realworld::render_world_map(&self.layout.root, &def, None) {
+            Ok(a) => a,
+            Err(e) => {
+                self.map_raster = None;
+                self.status = format!("map: {e} — showing the ASCII map");
+                return;
+            }
+        };
+        let img = std::fs::read(&art.png_path)
+            .ok()
+            .and_then(|bytes| image::load_from_memory(&bytes).ok());
+        match img {
+            Some(img) => {
+                // Borrow the picker only for the protocol build, then store.
+                let proto = self.image_picker.as_ref().unwrap().new_resize_protocol(img);
+                self.map_raster = Some(std::cell::RefCell::new(proto));
+                self.status = "rendered the world map (plakat raster)".into();
+            }
+            None => {
+                self.map_raster = None;
+                self.status = "map rendered but its PNG could not be read — ASCII map".into();
+            }
+        }
     }
 
     /// A compact population string (`4.1M`, `820k`, `512`) for the roll table.
@@ -1229,9 +1297,11 @@ impl WorldbuilderApp {
     pub(super) fn refresh_plausibility(&mut self) {
         // Score the world.hjson on disk PLUS the pending (accepted-but-uncommitted)
         // deltas, so the score responds the moment a delta is accepted. Any world
-        // change also invalidates the cached `/compile` summary + map grids.
+        // change also invalidates the cached `/compile` summary + map grids +
+        // the plakat raster (all stale once the world moves).
         self.compiled_summary = None;
         self.compiled_layers = None;
+        self.map_raster = None;
         let def = self.current_world_def();
         self.ledger_snapshot = def.as_ref().and_then(|d| d.magic.clone());
         self.plausibility_prev = self.plausibility_score;
