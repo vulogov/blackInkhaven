@@ -68,6 +68,8 @@ pub(super) enum Command {
     Export,
     /// Compile `n` candidate worlds on derived seeds and compare them (WS-P1).
     Roll(usize),
+    /// Render the world map with plakat and show it in the Map pane (WS-P2).
+    Map,
     /// Unrecognised / malformed — carries a message for the status bar.
     Unknown(String),
 }
@@ -90,6 +92,8 @@ pub(super) fn parse(input: &str) -> Command {
         "journey" => Command::Journey,
         "sessions" => Command::Sessions,
         "export" => Command::Export,
+
+        "map" => Command::Map,
 
         "roll" => {
             // `/roll [n]` — n candidate seeds (default 4, clamped 1..=8).
@@ -264,7 +268,7 @@ pub(super) fn parse(input: &str) -> Command {
         }
 
         other => Command::Unknown(format!(
-            "unknown command `/{other}` — supports /interview /roll /adopt /journey /sessions /export /set /star /tilt /moon /nation /magic /rule /wfact /research /compile /validate /write /undo /reset /diff"
+            "unknown command `/{other}` — supports /interview /roll /adopt /map /journey /sessions /export /set /star /tilt /moon /nation /magic /rule /wfact /research /compile /validate /write /undo /reset /diff"
         )),
     }
 }
@@ -455,6 +459,7 @@ mod tests {
         }
         assert_eq!(parse("/adopt 0x5152"), parse("/adopt 20818"));
         assert!(matches!(parse("/adopt nope"), Command::Unknown(_)));
+        assert_eq!(parse("/map"), Command::Map);
     }
 
     #[test]
