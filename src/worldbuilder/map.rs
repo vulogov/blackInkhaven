@@ -146,12 +146,25 @@ pub(super) fn render_map(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
         None
     };
 
+    // MAPED-P2 — declared landmarks overlay: which display cells carry a `⌂`.
+    let mut landmark_cells: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+    for m in &app.map_landmarks {
+        if m.x < sw && m.y < sh {
+            landmark_cells.insert(source_to_display((m.x, m.y), (sw, sh), (map_w, map_h)));
+        }
+    }
+
     let mut lines: Vec<Line> = Vec::with_capacity(map_h + 2);
     for (y, row) in grid.iter().enumerate() {
         let spans: Vec<Span> = row
             .iter()
             .enumerate()
             .map(|(x, &(ch, color))| {
+                let (ch, color) = if landmark_cells.contains(&(x, y)) {
+                    ('⌂', Color::Magenta)
+                } else {
+                    (ch, color)
+                };
                 let mut st = Style::new().fg(color);
                 if cursor_disp == Some((x, y)) {
                     st = st.add_modifier(Modifier::REVERSED);
@@ -169,11 +182,24 @@ pub(super) fn render_map(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
         let biome = climate.biome.get(idx).map(|b| b.as_str()).unwrap_or("?");
         let elev = layers.geology.heightmap.get(idx).copied().unwrap_or(0.0);
         let sea = if elev <= layers.geology.sea_level { " · sea" } else { "" };
+        // A landmark exactly under the cursor names itself.
+        let here = app
+            .map_landmarks
+            .iter()
+            .find(|m| (m.x, m.y) == (cx, cy))
+            .map(|m| format!(" · ⌂ {} ({})", m.name, m.kind))
+            .unwrap_or_default();
         lines.push(Line::from(Span::styled(
-            format!("✎ ({cx},{cy}) · {biome} · elev {elev:.2}{sea}  ·  hjkl move · Shift fine · Esc leave"),
+            format!("✎ ({cx},{cy}) · {biome} · elev {elev:.2}{sea}{here}"),
             Style::new().fg(Color::Yellow),
         )));
+        lines.push(Line::from(Span::styled(
+            "hjkl move · Shift fine · t town · n name · d delete · Esc leave",
+            Style::new().dim(),
+        )));
     } else {
+        // Non-edit: grid stats + the biome legend (edit mode uses the two rows for
+        // the readout + tool hint instead).
         lines.push(Line::from(Span::styled(
             format!(
                 "grid {sw}×{sh} → {map_w}×{map_h} · {} river cell(s) · {} settlement(s) · e: edit",
@@ -182,20 +208,19 @@ pub(super) fn render_map(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
             ),
             Style::new().dim(),
         )));
+        lines.push(Line::from(vec![
+            Span::styled("~", Style::new().fg(Color::Blue)),
+            Span::raw(" sea  "),
+            Span::styled("≈", Style::new().fg(Color::Cyan)),
+            Span::raw(" river  "),
+            Span::styled("#T", Style::new().fg(Color::Green)),
+            Span::raw(" forest  "),
+            Span::styled(":", Style::new().fg(Color::Yellow)),
+            Span::raw(" desert  "),
+            Span::styled("⌂", Style::new().fg(Color::Magenta)),
+            Span::raw(" landmark"),
+        ]));
     }
-    lines.push(Line::from(vec![
-        Span::styled("~", Style::new().fg(Color::Blue)),
-        Span::raw(" sea  "),
-        Span::styled("≈", Style::new().fg(Color::Cyan)),
-        Span::raw(" river  "),
-        Span::styled("#T", Style::new().fg(Color::Green)),
-        Span::raw(" forest  "),
-        Span::styled(":", Style::new().fg(Color::Yellow)),
-        Span::raw(" desert  "),
-        Span::styled("•", Style::new().fg(Color::Red)),
-        Span::styled("◉", Style::new().fg(Color::LightRed)),
-        Span::raw(" town/city"),
-    ]));
 
     frame.render_widget(Paragraph::new(lines), area);
 }

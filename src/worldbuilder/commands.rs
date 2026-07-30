@@ -21,6 +21,8 @@ pub(crate) enum Op {
     Set { path: Vec<String>, value: Value },
     /// Append to the array at a dot-path (creating it if absent).
     Push { path: Vec<String>, value: Value },
+    /// Remove the element at `index` from the array at a dot-path (MAPED-P2).
+    RemoveAt { path: Vec<String>, index: usize },
 }
 
 impl Op {
@@ -29,6 +31,7 @@ impl Op {
         match self {
             Op::Set { path, value } => format!("{} = {}", path.join("."), compact(value)),
             Op::Push { path, value } => format!("{}[] += {}", path.join("."), compact(value)),
+            Op::RemoveAt { path, index } => format!("{}[{index}] removed", path.join(".")),
         }
     }
 
@@ -37,6 +40,7 @@ impl Op {
         match self {
             Op::Set { path, value } => set_path(root, path, value.clone()),
             Op::Push { path, value } => push_path(root, path, value.clone()),
+            Op::RemoveAt { path, index } => remove_at_path(root, path, *index),
         }
     }
 }
@@ -350,6 +354,23 @@ fn push_path(root: &mut Value, path: &[String], value: Value) {
     }
 }
 
+/// Remove the element at `index` from the array at `path`. A missing path,
+/// non-array, or out-of-range index is a silent no-op (the delta simply does
+/// nothing rather than corrupting the world).
+fn remove_at_path(root: &mut Value, path: &[String], index: usize) {
+    let Some(obj) = root.as_object_mut() else { return };
+    let Some(first) = path.first() else { return };
+    if path.len() == 1 {
+        if let Some(Value::Array(arr)) = obj.get_mut(first) {
+            if index < arr.len() {
+                arr.remove(index);
+            }
+        }
+    } else if let Some(child) = obj.get_mut(first) {
+        remove_at_path(child, &path[1..], index);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -395,6 +416,22 @@ mod tests {
         assert_eq!(root["astronomy"]["star_class"], json!("K"));
         assert_eq!(root["nations"].as_array().unwrap().len(), 2);
         assert_eq!(root["nations"][1]["name"], json!("Eastreach"));
+    }
+
+    #[test]
+    fn remove_at_deletes_the_indexed_element_and_is_bounds_safe() {
+        let mut root = json!({ "geography": { "landmarks": [
+            { "name": "A" }, { "name": "B" }, { "name": "C" }
+        ]}});
+        Op::RemoveAt { path: vec!["geography".into(), "landmarks".into()], index: 1 }.apply(&mut root);
+        let arr = root["geography"]["landmarks"].as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["name"], json!("A"));
+        assert_eq!(arr[1]["name"], json!("C"));
+        // Out-of-range and missing paths are no-ops, not panics.
+        Op::RemoveAt { path: vec!["geography".into(), "landmarks".into()], index: 9 }.apply(&mut root);
+        assert_eq!(root["geography"]["landmarks"].as_array().unwrap().len(), 2);
+        Op::RemoveAt { path: vec!["nope".into()], index: 0 }.apply(&mut root);
     }
 
     #[test]
