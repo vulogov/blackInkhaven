@@ -412,6 +412,7 @@ impl WorldbuilderApp {
             Command::Journey => self.run_journey(),
             Command::Sessions => self.run_sessions(),
             Command::Export => self.run_export(),
+            Command::Roll(n) => self.run_roll(n),
             Command::Unknown(msg) => self.status = msg,
         }
     }
@@ -453,6 +454,53 @@ impl WorldbuilderApp {
     /// `/export` — assemble a readable Markdown dossier (compiled state,
     /// plausibility, ledger, `fact:world` facts, and the Journey) and write it
     /// atomically under `exports/`. Compiles the world fresh so it works even
+    /// `/roll [n]` (WS-P1) — compile `n` candidate worlds from the current
+    /// declaration on derived seeds (`base + i`) and report a comparison into
+    /// Chat. Pure and deterministic — the same declaration under different seeds
+    /// yields decorrelated worlds (the compiler keys its SplitMix64 on the seed),
+    /// so this explores the space of worlds the physics implies. `/adopt <seed>`
+    /// then sets one as a pending edit.
+    fn run_roll(&mut self, n: usize) {
+        let Some(base) = self.current_world_def() else {
+            self.status = "no world to roll — declare one first (interview or /set)".into();
+            return;
+        };
+        let base_seed = base.seed_u64();
+        let mut body = format!("Seed roll — {n} candidate(s), base 0x{base_seed:x}\n");
+        body.push_str("  seed              ★   cont  sea%    pop     °C\n");
+        for i in 0..n {
+            let seed = base_seed.wrapping_add(i as u64);
+            let mut def = base.clone();
+            def.seed = crate::world::types::SeedValue::Str(format!("0x{seed:x}"));
+            let layers = crate::world::plausibility::compile_layers(&def);
+            let warns = crate::world::plausibility::run_fast(&def);
+            let score = crate::world::plausibility::compute_plausibility_score(&warns);
+            let (g, c, d) = (&layers.geology, &layers.climate, &layers.demographics);
+            let marker = if i == 0 { "*" } else { " " };
+            body.push_str(&format!(
+                "{marker} 0x{seed:<13x} {score:>3}  {:>4}  {:>4.0}  {:>7}  {:>5.1}\n",
+                g.continents,
+                g.sea_coverage_pct,
+                Self::compact_pop(d.total_population),
+                c.mean_land_temp_c,
+            ));
+        }
+        body.push_str("(* = current) · /adopt <seed> to set one (a pending edit → /write)");
+        self.push_turn(format!("/roll {n}"), body);
+        self.status = format!("rolled {n} candidate world(s) · /adopt <seed>");
+    }
+
+    /// A compact population string (`4.1M`, `820k`, `512`) for the roll table.
+    fn compact_pop(p: u64) -> String {
+        if p >= 1_000_000 {
+            format!("{:.1}M", p as f64 / 1_000_000.0)
+        } else if p >= 1_000 {
+            format!("{:.0}k", p as f64 / 1_000.0)
+        } else {
+            p.to_string()
+        }
+    }
+
     /// before `/compile`.
     fn run_export(&mut self) {
         let compiled = self

@@ -403,7 +403,7 @@ fn render_hints(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
             "  j/k·move  h/l·fold  Ctrl+P·pin  z·zoom  (⊙ chapters are compiler-owned)  Tab·cycle"
         }
         Focus::QueryPrompt => {
-            "  /interview · ask · /wfact · /research · /compile /validate · /set… · /write · Tab"
+            "  /interview · /roll · ask · /wfact · /compile /validate · /set… · /write · Tab"
         }
         Focus::RightPane => {
             "  Ctrl+R·cycle pane  ·  /compile renders the Map  ·  { }·rows  [ ]·cols  Ctrl+Q·quit"

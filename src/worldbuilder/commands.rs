@@ -66,6 +66,8 @@ pub(super) enum Command {
     Sessions,
     /// Export a readable world dossier (compiled state + facts + journey).
     Export,
+    /// Compile `n` candidate worlds on derived seeds and compare them (WS-P1).
+    Roll(usize),
     /// Unrecognised / malformed — carries a message for the status bar.
     Unknown(String),
 }
@@ -88,6 +90,33 @@ pub(super) fn parse(input: &str) -> Command {
         "journey" => Command::Journey,
         "sessions" => Command::Sessions,
         "export" => Command::Export,
+
+        "roll" => {
+            // `/roll [n]` — n candidate seeds (default 4, clamped 1..=8).
+            let n = rest.split_whitespace().next().and_then(|s| s.parse::<usize>().ok()).unwrap_or(4);
+            Command::Roll(n.clamp(1, 8))
+        }
+
+        "adopt" => {
+            // `/adopt <seed>` — decimal or 0x-hex. Written as a hex STRING so any
+            // u64 round-trips through SeedValue (untagged Int(i64)|Str).
+            let t = rest.trim();
+            let parsed = t
+                .strip_prefix("0x")
+                .or_else(|| t.strip_prefix("0X"))
+                .and_then(|h| u64::from_str_radix(h, 16).ok())
+                .or_else(|| t.parse::<u64>().ok());
+            match parsed {
+                Some(seed) => Command::Shape {
+                    label: format!("seed → 0x{seed:x}"),
+                    ops: vec![Op::Set {
+                        path: vec!["seed".into()],
+                        value: json!(format!("0x{seed:x}")),
+                    }],
+                },
+                None => Command::Unknown("usage: /adopt <seed> (decimal or 0x-hex)".into()),
+            }
+        }
         "wfact" | "fact" => {
             if rest.is_empty() {
                 Command::Unknown("usage: /wfact <statement> — records an author fact:world".into())
@@ -235,7 +264,7 @@ pub(super) fn parse(input: &str) -> Command {
         }
 
         other => Command::Unknown(format!(
-            "unknown command `/{other}` — supports /interview /journey /sessions /export /set /star /tilt /moon /nation /magic /rule /wfact /research /compile /validate /write /undo /reset /diff"
+            "unknown command `/{other}` — supports /interview /roll /adopt /journey /sessions /export /set /star /tilt /moon /nation /magic /rule /wfact /research /compile /validate /write /undo /reset /diff"
         )),
     }
 }
@@ -406,6 +435,26 @@ mod tests {
         assert!(matches!(parse("/rule"), Command::Unknown(_)));
         assert!(matches!(parse("/magic on"), Command::Shape { .. }));
         assert!(matches!(parse("/magic sideways"), Command::Unknown(_)));
+    }
+
+    #[test]
+    fn roll_defaults_and_clamps_and_adopt_writes_hex_seed() {
+        assert_eq!(parse("/roll"), Command::Roll(4));
+        assert_eq!(parse("/roll 3"), Command::Roll(3));
+        assert_eq!(parse("/roll 99"), Command::Roll(8)); // clamped
+        assert_eq!(parse("/roll 0"), Command::Roll(1)); // clamped
+        // /adopt writes the seed as a 0x hex string leaf.
+        match parse("/adopt 20818") {
+            Command::Shape { ops, .. } => {
+                assert_eq!(
+                    ops,
+                    vec![Op::Set { path: vec!["seed".into()], value: json!("0x5152") }]
+                );
+            }
+            other => panic!("expected Shape, got {other:?}"),
+        }
+        assert_eq!(parse("/adopt 0x5152"), parse("/adopt 20818"));
+        assert!(matches!(parse("/adopt nope"), Command::Unknown(_)));
     }
 
     #[test]
