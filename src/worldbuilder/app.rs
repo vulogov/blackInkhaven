@@ -182,7 +182,8 @@ impl WorldbuilderApp {
             chat_scroll: 0,
             stream_rx: None,
             streaming_turn: None,
-            pending_ops: Vec::new(),
+            // WB-P10 — restore the accepted-but-uncommitted delta from the session.
+            pending_ops: session.pending_ops.clone(),
             hjson_preview: None,
             plausibility_score: None,
             compiled_summary: None,
@@ -200,6 +201,12 @@ impl WorldbuilderApp {
             theme,
         };
         app.refresh_plausibility();
+        if !app.pending_ops.is_empty() {
+            app.status = format!(
+                "restored {} pending delta(s) from session · /diff to review · /write to commit",
+                app.pending_ops.len()
+            );
+        }
         // `--interview` (and, until the plakat map-first flow lands, `--from-map`)
         // opens straight into the guided interview.
         if inv.interview || inv.from_map {
@@ -225,6 +232,41 @@ impl WorldbuilderApp {
     fn persist_sizing(&mut self) {
         self.session.left_split = self.left_split;
         self.session.split_ratio = self.split_ratio;
+        if let Err(e) = self.session.save(&self.layout) {
+            self.status = format!("session save failed: {e}");
+        }
+    }
+
+    /// WB-P10 — mirror the live pending delta + world name into the session and
+    /// persist. Called after every change to `pending_ops`, so an accepted-but-
+    /// uncommitted delta survives a quit.
+    fn persist_pending(&mut self) {
+        self.session.pending_ops = self.pending_ops.clone();
+        if self.session.world_name.is_empty() {
+            self.session.world_name = self.world_name().to_string();
+        }
+        if let Err(e) = self.session.save(&self.layout) {
+            self.status = format!("session save failed: {e}");
+        }
+    }
+
+    /// WB-P10 — append a turn to the session timeline (the "Worldbuilding
+    /// Journey") and persist. `facts` are Facts-book node ids created this turn.
+    fn record_turn(&mut self, user: String, summary: String, facts: Vec<String>) {
+        let seq = self.session.turns.len() as u64 + 1;
+        let at = chrono::Utc::now().to_rfc3339();
+        self.session.turns.push(super::session::SessionTurn {
+            seq,
+            at,
+            user,
+            assistant_summary: summary,
+            plausibility_before: self.plausibility_prev,
+            plausibility_after: self.plausibility_score,
+            facts_inserted: facts,
+            ..Default::default()
+        });
+        // Keep the pending delta persisted in the same write.
+        self.session.pending_ops = self.pending_ops.clone();
         if let Err(e) = self.session.save(&self.layout) {
             self.status = format!("session save failed: {e}");
         }
@@ -348,6 +390,7 @@ impl WorldbuilderApp {
                 let n = self.pending_ops.len();
                 self.pending_ops.clear();
                 self.refresh_plausibility();
+                self.persist_pending();
                 self.status = format!("reset — discarded {n} pending delta(s)");
             }
             Command::Diff => {
@@ -366,8 +409,64 @@ impl WorldbuilderApp {
             Command::Wfact(text) => self.run_wfact(&text),
             Command::Research(query) => self.run_research(&query),
             Command::Interview => self.start_interview(),
+            Command::Journey => self.run_journey(),
+            Command::Sessions => self.run_sessions(),
             Command::Unknown(msg) => self.status = msg,
         }
+    }
+
+    /// `/journey` — render the session timeline (the Worldbuilding Journey) into
+    /// the Chat pane: each recorded turn with its plausibility arc.
+    fn run_journey(&mut self) {
+        let count = self.session.turns.len();
+        if count == 0 {
+            self.push_turn("/journey".into(), "No journey yet — shape the world and it fills in.".into());
+            self.status = "journey — empty".into();
+            return;
+        }
+        let mut body = format!(
+            "Worldbuilding Journey · {} · {count} step(s)\n",
+            self.session.name,
+        );
+        for t in &self.session.turns {
+            // Trim the timestamp to the date+minute for a compact line.
+            let when = t.at.get(..16).unwrap_or(&t.at);
+            let arc = match (t.plausibility_before, t.plausibility_after) {
+                (Some(b), Some(a)) if a != b => format!("  ★{b}→{a}"),
+                (_, Some(a)) => format!("  ★{a}"),
+                _ => String::new(),
+            };
+            let facts = if t.facts_inserted.is_empty() {
+                String::new()
+            } else {
+                format!("  ◎{}", t.facts_inserted.len())
+            };
+            body.push_str(&format!(
+                "{:>3}. {when}  {} → {}{arc}{facts}\n",
+                t.seq,
+                t.user.trim(),
+                t.assistant_summary.trim(),
+            ));
+        }
+        self.push_turn("/journey".into(), body);
+        self.status = format!("journey — {count} step(s)");
+    }
+
+    /// `/sessions` — list the project's worldbuilder sessions (the current one
+    /// marked). Session switching is a later refinement; this surfaces what exists.
+    fn run_sessions(&mut self) {
+        let slugs = super::session::WorldbuilderSession::list(&self.layout);
+        if slugs.is_empty() {
+            self.status = "no sessions".into();
+            return;
+        }
+        let list = slugs
+            .iter()
+            .map(|s| if *s == self.session.slug { format!("• {s} (current)") } else { format!("  {s}") })
+            .collect::<Vec<_>>()
+            .join("\n");
+        self.push_turn("/sessions".into(), format!("Sessions:\n{list}"));
+        self.status = format!("{} session(s) — re-open with `--session <name>`", slugs.len());
     }
 
     /// Start (or restart) the guided interview: focus the Query prompt, surface
@@ -434,6 +533,7 @@ impl WorldbuilderApp {
                     format!("recorded · {label}  (★ {d})")
                 };
                 self.push_turn(answer.to_string(), note);
+                self.record_turn(format!("interview: {answer}"), label, Vec::new());
                 if let Some(iv) = self.interview.as_mut() {
                     iv.advance();
                 }
@@ -521,6 +621,7 @@ impl WorldbuilderApp {
         }
         self.reload_hierarchy();
         self.facts_tree.reveal(&self.hierarchy, new_id);
+        self.record_turn(format!("/wfact {title}"), "◎ recorded fact:world".into(), vec![new_id.to_string()]);
         self.status = "◎ recorded fact:world".into();
     }
 
@@ -615,6 +716,7 @@ impl WorldbuilderApp {
             } else {
                 format!("✓ {label}  ★ {d} · /write to commit")
             };
+            self.record_turn(label, "shaping delta accepted".into(), Vec::new());
         }
         self.focus = Focus::QueryPrompt;
     }
@@ -640,6 +742,7 @@ impl WorldbuilderApp {
                 self.pending_ops.clear();
                 self.refresh_plausibility();
                 self.status = format!("✓ wrote {n} delta(s) to world.hjson");
+                self.record_turn("/write".into(), format!("committed {n} delta(s)"), Vec::new());
             }
             Err(e) => self.status = format!("write failed: {e}"),
         }
@@ -649,6 +752,7 @@ impl WorldbuilderApp {
     fn undo_pending(&mut self) {
         if self.pending_ops.pop().is_some() {
             self.refresh_plausibility();
+            self.persist_pending();
             self.status = format!("undone — {} pending delta(s) left", self.pending_ops.len());
         } else {
             self.status = "nothing to undo".into();
