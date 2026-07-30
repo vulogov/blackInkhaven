@@ -239,6 +239,18 @@ pub(super) fn render_map(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
         }
     }
 
+    // MAPED-P6 — declared roads: a `=` line between landmark endpoints.
+    let mut road_cells: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+    for (a, b) in &app.map_roads {
+        if a.0 < sw && a.1 < sh && b.0 < sw && b.1 < sh {
+            let ad = source_to_display(*a, (sw, sh), (map_w, map_h));
+            let bd = source_to_display(*b, (sw, sh), (map_w, map_h));
+            for c in line_cells(ad, bd) {
+                road_cells.insert(c);
+            }
+        }
+    }
+
     // MAPED-P5 — map-check findings flag their cells with `!`.
     let mut finding_cells: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
     for f in &app.map_findings {
@@ -264,6 +276,20 @@ pub(super) fn render_map(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
             }
         }
     }
+    // A road being drawn: provisional line from the first landmark to the cursor.
+    if let Some(super::app::MapTool::Road { from: Some(name) }) = &app.map_tool {
+        if let Some(m) = app.map_landmarks.iter().find(|m| &m.name == name) {
+            if m.x < sw && m.y < sh {
+                let sd = source_to_display((m.x, m.y), (sw, sh), (map_w, map_h));
+                river_src = Some(sd);
+                if let Some(cd) = cursor_disp {
+                    for cell in line_cells(sd, cd) {
+                        river_line.insert(cell);
+                    }
+                }
+            }
+        }
+    }
 
     let mut lines: Vec<Line> = Vec::with_capacity(map_h + 2);
     for (y, row) in grid.iter().enumerate() {
@@ -272,6 +298,10 @@ pub(super) fn render_map(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
             .enumerate()
             .map(|(x, &(ch, color))| {
                 let (mut ch, mut color) = (ch, color);
+                if road_cells.contains(&(x, y)) {
+                    ch = '=';
+                    color = Color::Yellow;
+                }
                 if river_line.contains(&(x, y)) {
                     ch = '·';
                     color = Color::Cyan;
@@ -333,7 +363,13 @@ pub(super) fn render_map(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
             Some(super::app::MapTool::River { source: Some(_) }) => {
                 "river: move to the MOUTH, Enter to set · Esc cancel"
             }
-            None => "hjkl · t town · n name · r river · g region · d delete · f issue · Esc",
+            Some(super::app::MapTool::Road { from: None }) => {
+                "road: move to the first landmark, Enter · Esc cancel"
+            }
+            Some(super::app::MapTool::Road { from: Some(_) }) => {
+                "road: move to the other landmark, Enter · Esc cancel"
+            }
+            None => "hjkl · t town · n · r river · g region · o road · d del · f issue · Esc",
         };
         lines.push(Line::from(Span::styled(hint, Style::new().dim())));
     } else {

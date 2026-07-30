@@ -73,6 +73,8 @@ pub(super) struct MapInput {
 /// sets its source, the second its mouth (then a name is requested).
 pub(super) enum MapTool {
     River { source: Option<(usize, usize)> },
+    /// A road connecting two landmarks; `from` is the first once picked (P6).
+    Road { from: Option<String> },
 }
 
 /// World-book chapters owned by `realworld compile` — read-only in the
@@ -166,6 +168,8 @@ pub(crate) struct WorldbuilderApp {
     pub(super) map_landmarks: Vec<MapMarker>,
     /// Declared regions with an anchor cell, for the map overlay (P4).
     pub(super) map_regions: Vec<MapMarker>,
+    /// Declared roads as source-cell endpoint pairs, for the overlay (P6).
+    pub(super) map_roads: Vec<((usize, usize), (usize, usize))>,
     /// An open name-entry prompt for a feature being placed (P2/P3).
     pub(super) map_input: Option<MapInput>,
     /// A multi-step map tool in progress (P3 rivers).
@@ -264,6 +268,7 @@ impl WorldbuilderApp {
             map_cursor: (0, 0),
             map_landmarks: Vec::new(),
             map_regions: Vec::new(),
+            map_roads: Vec::new(),
             map_input: None,
             map_tool: None,
             map_findings: Vec::new(),
@@ -494,7 +499,7 @@ impl WorldbuilderApp {
                                     self.map_tool = None;
                                     self.status = "tool cancelled".into();
                                 }
-                                KeyCode::Enter => self.river_pick(),
+                                KeyCode::Enter => self.advance_map_tool(),
                                 _ => {}
                             }
                         } else {
@@ -506,6 +511,11 @@ impl WorldbuilderApp {
                                 KeyCode::Char('t') => self.open_map_input("Town name", "city"),
                                 KeyCode::Char('n') => self.open_map_input("Landmark name", "landmark"),
                                 KeyCode::Char('g') => self.open_region_input(),
+                                KeyCode::Char('o') => {
+                                    self.map_tool = Some(MapTool::Road { from: None });
+                                    self.status =
+                                        "road — move to the first landmark, Enter · Esc cancel".into();
+                                }
                                 KeyCode::Char('f') => self.jump_next_finding(),
                                 KeyCode::Char('d') | KeyCode::Char('x') => {
                                     self.delete_feature_at_cursor()
@@ -853,6 +863,62 @@ impl WorldbuilderApp {
         self.status = format!("placed region '{name}' ({biome}) at ({x},{y}) · /write to commit");
     }
 
+    /// The declared-landmark name exactly under the cursor, if any (P6).
+    fn landmark_name_at_cursor(&self) -> Option<String> {
+        let c = self.map_cursor;
+        self.map_landmarks.iter().find(|m| (m.x, m.y) == c).map(|m| m.name.clone())
+    }
+
+    /// Place a road into `geography.roads[]` connecting two named landmarks (P6).
+    fn place_road(&mut self, from: String, to: String) {
+        let value = serde_json::json!({ "from": from, "to": to, "kind": "road" });
+        self.pending_ops.push(super::commands::Op::Push {
+            path: vec!["geography".into(), "roads".into()],
+            value,
+        });
+        self.refresh_plausibility();
+        if let Some(def) = self.current_world_def() {
+            self.populate_map_caches(&def);
+        }
+        self.record_turn(format!("map: road {from}–{to}"), String::new(), Vec::new());
+        self.status = format!("road '{from}' – '{to}' · /write to commit");
+    }
+
+    /// Advance the active multi-step map tool on `Enter` (P3 river / P6 road).
+    fn advance_map_tool(&mut self) {
+        match self.map_tool.take() {
+            Some(MapTool::River { source }) => {
+                self.map_tool = Some(MapTool::River { source });
+                self.river_pick();
+            }
+            Some(MapTool::Road { from }) => match from {
+                None => match self.landmark_name_at_cursor() {
+                    Some(name) => {
+                        self.map_tool = Some(MapTool::Road { from: Some(name.clone()) });
+                        self.status =
+                            format!("road from '{name}' — move to the other landmark, Enter");
+                    }
+                    None => {
+                        self.map_tool = Some(MapTool::Road { from: None });
+                        self.status = "put the cursor on a landmark first".into();
+                    }
+                },
+                Some(first) => match self.landmark_name_at_cursor() {
+                    Some(second) if second != first => self.place_road(first, second),
+                    Some(_) => {
+                        self.map_tool = Some(MapTool::Road { from: Some(first) });
+                        self.status = "pick a different landmark".into();
+                    }
+                    None => {
+                        self.map_tool = Some(MapTool::Road { from: Some(first) });
+                        self.status = "put the cursor on the other landmark".into();
+                    }
+                },
+            },
+            None => {}
+        }
+    }
+
     /// Advance the river tool (P3): the first Enter fixes the source, the second
     /// fixes the mouth and asks for a name.
     fn river_pick(&mut self) {
@@ -874,7 +940,7 @@ impl WorldbuilderApp {
                 });
                 self.status = "name the river — Enter to place, Esc to cancel".into();
             }
-            None => {}
+            _ => {}
         }
     }
 
@@ -1428,6 +1494,25 @@ impl WorldbuilderApp {
                     .collect()
             })
             .unwrap_or_default();
+        // P6 — resolve declared roads to endpoint cells by landmark name.
+        let by_name: std::collections::HashMap<&str, (usize, usize)> =
+            self.map_landmarks.iter().map(|m| (m.name.as_str(), (m.x, m.y))).collect();
+        let roads = def
+            .geography
+            .as_ref()
+            .map(|g| {
+                g.roads
+                    .iter()
+                    .filter_map(|r| {
+                        let a = *by_name.get(r.from.as_str())?;
+                        let b = *by_name.get(r.to.as_str())?;
+                        Some((a, b))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        drop(by_name);
+        self.map_roads = roads;
         self.compiled_layers = Some(layers);
     }
 
@@ -1892,6 +1977,7 @@ impl WorldbuilderApp {
         self.map_raster = None;
         self.map_landmarks.clear();
         self.map_regions.clear();
+        self.map_roads.clear();
         self.map_findings.clear();
         let def = self.current_world_def();
         self.ledger_snapshot = def.as_ref().and_then(|d| d.magic.clone());
