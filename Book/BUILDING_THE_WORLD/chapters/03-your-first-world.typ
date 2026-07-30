@@ -200,6 +200,15 @@ Part II you will go into that world one layer at a time, starting with the sky, 
 learn to shape each layer on purpose. The machine has turned over once; now you
 learn to drive it.
 
+#note[
+  Prefer to build by *asking* rather than by hand-editing `world.hjson`? There is a
+  full-screen interactive companion — `inkhaven worldbuilder` — that walks you
+  through the same choices in an interview, scores the world live, and draws its map
+  in the terminal. It is a front-end to everything in this book; every edit it makes
+  lands in the same `world.hjson`. Chapter 20 is its complete guide. You can keep
+  reading here and meet it at the end, or open it now and follow along.
+]
+
 #recap((
   [`realworld new <name>` scaffolds a starter `world.hjson` in your project root —
    an Earth-like world with a `name`, `seed`, `primary_language`, and a required

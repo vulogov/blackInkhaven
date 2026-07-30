@@ -27,34 +27,27 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.9.0 — The Interactive Worldbuilder
+## Latest release · 1.9.1 — Worldbuilder, Documented
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.9.0.md`](Documentation/RELEASE_NOTES/1.9.0.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.9.1.md`](Documentation/RELEASE_NOTES/1.9.1.md)
 
-The 1.9 major (RFC WBLD-1): `inkhaven worldbuilder`, a full-screen companion for building a world
-by *asking* rather than hand-editing HJSON — with the world, its plausibility score, its facts,
-its map, and its magic ledger all in front of you. Every change lands in the same `world.hjson`
-the `realworld` compiler reads; it never generates prose.
+A documentation release. 1.9.0 shipped the interactive worldbuilder; 1.9.1 teaches it properly —
+no code changes.
 
 ### What's new
 
-- **`inkhaven worldbuilder`** — four panes (Facts / World trees, cycling Chat·Research·Map·Ledger,
-  a query prompt) with a live plausibility score in the status bar.
-- **The interview** — `/interview` walks you through Sky · Land · People · Rules · Review, one
-  question at a time; answers become a reviewable **pending delta** and the score moves as you go.
-- **Shape by command** — `/set`, `/star`, `/tilt`, `/moon`, `/nation`, `/magic`, `/rule` propose
-  schema-valid edits, previewed before `/write` commits them atomically; `/diff` `/undo` `/reset`.
-- **See the consequences** — `/compile` reasons over the *simulated* world; `/validate` grades the
-  plausibility warnings; the Map pane draws an ASCII biome minimap on any terminal.
-- **Record & keep** — `/wfact` and `/research` (world facts), the Ledger pane, `/journey` and
-  `/sessions` (the timeline), and `/export` (a Markdown dossier under `exports/`).
-- **Docs** — *Building the World with Inkhaven* ch. 20; full `WORLDBUILDING.md` + `KEYBINDING.md`
-  reference tables.
+- **Full TUI guidance** — *Building the World with Inkhaven* gains a rebuilt **Chapter 20**, "The
+  Interactive Worldbuilder," with eight faithful monospace **terminal screens** (the four-pane
+  layout, the interview, the shaping-delta modal, `/compile`/`/validate`, the Map pane, Research,
+  Ledger, and the `/journey` timeline), plus a complete key + command reference.
+- **Discoverable early** — a note in Chapter 3 points readers to `inkhaven worldbuilder` from the
+  first world they build.
+- A `screen()` helper joins the book's design system for the terminal frames.
 
 ### Dependencies & compatibility
 
-No new dependencies; nothing changes the existing compiler, fact-checker, or any project. Compiles
-warning-free. Test suite → 2712.
+Documentation only — no dependency, behaviour, or API changes from 1.9.0. Compiles warning-free.
+Test suite unchanged at 2712.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
