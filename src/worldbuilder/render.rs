@@ -204,10 +204,7 @@ fn render_right_pane(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
         RightPane::Chat => render_chat(frame, app, inner),
         RightPane::Research => render_research(frame, app, inner),
         RightPane::Map => super::map::render_map(frame, app, inner),
-        RightPane::Ledger => frame.render_widget(
-            Paragraph::new(Span::styled("(magic ledger editor — WB-P9)", Style::new().dim())),
-            inner,
-        ),
+        RightPane::Ledger => render_ledger(frame, app, inner),
     }
 }
 
@@ -294,6 +291,93 @@ fn render_research(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
                     lines.push(Line::from(Span::raw(format!("  {l}"))));
                 }
                 lines.push(Line::from(""));
+            }
+        }
+    }
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
+}
+
+/// The magic-ledger pane (WB-P9): the world's declared physics exceptions and
+/// their live lint. Reuses the WORLD-12 `MagicLedger`/`MagicRule`/`lint`; rules
+/// are authored with `/rule` and `/magic on|off` over the same delta engine.
+fn render_ledger(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
+    let mut lines: Vec<Line> = Vec::new();
+    match &app.ledger_snapshot {
+        None => {
+            lines.push(Line::from(Span::styled(
+                "No magic ledger. This world runs on physics alone.",
+                Style::new().dim(),
+            )));
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "/rule <kind> <category,category> [description]  declares an exception",
+                Style::new().dim(),
+            )));
+            lines.push(Line::from(Span::styled(
+                "/magic on|off  toggles the ledger",
+                Style::new().dim(),
+            )));
+        }
+        Some(ledger) => {
+            let state = if ledger.enabled { "enabled" } else { "disabled" };
+            lines.push(Line::from(vec![
+                Span::styled("Magic ledger · ", Style::new().bold()),
+                Span::styled(
+                    state,
+                    Style::new().fg(if ledger.enabled {
+                        app.theme.ai_scope_fg
+                    } else {
+                        app.theme.border_unfocused
+                    }),
+                ),
+                Span::styled(format!("  ·  {} rule(s)", ledger.rules.len()), Style::new().dim()),
+            ]));
+            lines.push(Line::from(""));
+
+            for (i, r) in ledger.rules.iter().enumerate() {
+                let kind = if r.kind.trim().is_empty() { "(no kind)" } else { r.kind.trim() };
+                lines.push(Line::from(vec![
+                    Span::styled(format!("{}. ", i + 1), Style::new().dim()),
+                    Span::styled(kind.to_string(), Style::new().bold()),
+                    Span::styled(
+                        format!("  covers: {}", if r.covers.is_empty() { "—".into() } else { r.covers.join(", ") }),
+                        Style::new().fg(app.theme.ai_scope_fg),
+                    ),
+                ]));
+                if !r.description.trim().is_empty() {
+                    lines.push(Line::from(Span::raw(format!("   {}", r.description.trim()))));
+                }
+                let ap = &r.applicable_to;
+                let facet = |label: &str, v: &Option<Vec<String>>| {
+                    v.as_ref().filter(|l| !l.is_empty()).map(|l| format!("{label} {}", l.join("/")))
+                };
+                let facets: Vec<String> = [
+                    facet("roles", &ap.roles),
+                    facet("regions", &ap.regions),
+                    facet("seasons", &ap.seasons),
+                ]
+                .into_iter()
+                .flatten()
+                .collect();
+                if !facets.is_empty() {
+                    lines.push(Line::from(Span::styled(
+                        format!("   applies: {}", facets.join(" · ")),
+                        Style::new().dim(),
+                    )));
+                }
+            }
+
+            // Live lint (advisory, Low severity).
+            let lint = ledger.lint();
+            if !lint.is_empty() {
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled("lint:", Style::new().bold())));
+                for w in &lint {
+                    lines.push(Line::from(Span::styled(
+                        format!("  ! {}", w.text),
+                        Style::new().fg(ratatui::style::Color::Yellow),
+                    )));
+                }
             }
         }
     }
