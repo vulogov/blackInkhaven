@@ -86,6 +86,12 @@ pub(super) fn render(frame: &mut Frame, app: &WorldbuilderApp) {
 /// The landmark name-entry overlay (MAPED-P2): a small centered input box.
 fn render_map_input(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
     let Some(mi) = app.map_input.as_ref() else { return };
+    let where_ = match &mi.placement {
+        super::app::MapPlacement::Landmark { x, y, .. } => format!("({x},{y})"),
+        super::app::MapPlacement::River { from, to } => {
+            format!("({},{}) → ({},{})", from.0, from.1, to.0, to.1)
+        }
+    };
     let w = (area.width * 6 / 10).clamp(30, 70);
     let modal = Rect {
         x: area.x + area.width.saturating_sub(w) / 2,
@@ -96,7 +102,7 @@ fn render_map_input(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
     frame.render_widget(Clear, modal);
     let block = Block::default()
         .borders(Borders::ALL)
-        .title(format!(" {} at ({},{}) ", mi.label, mi.x, mi.y))
+        .title(format!(" {} {} ", mi.label, where_))
         .border_style(Style::new().fg(app.theme.border_focused).bold());
     let inner = block.inner(modal);
     frame.render_widget(block, modal);
