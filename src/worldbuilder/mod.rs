@@ -65,7 +65,14 @@ fn launch_tui(
     // Shared lifecycle: raw mode + alternate screen + crash-restore, restored
     // however the body returns.
     crate::tui_host::with_terminal(|terminal| {
+        // MAPED-P8 — the worldbuilder handles mouse (click to place the map
+        // cursor); enable capture here so the other companions keep native
+        // selection. Restored however `run` returns.
+        use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+        let _ = crossterm::execute!(terminal.backend_mut(), EnableMouseCapture);
         let mut app = app::WorldbuilderApp::new(layout, cfg, store, hierarchy, inv)?;
-        app.run(terminal)
+        let result = app.run(terminal);
+        let _ = crossterm::execute!(terminal.backend_mut(), DisableMouseCapture);
+        result
     })
 }

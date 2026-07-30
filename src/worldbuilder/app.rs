@@ -180,6 +180,9 @@ pub(crate) struct WorldbuilderApp {
     pub(super) map_terrain_sea: f32,
     /// The sculpt brush radius in source cells (P7).
     pub(super) map_brush: usize,
+    /// The Map pane's inner rect from the last render, so a mouse click can be
+    /// mapped back to a source cell (P8). `Cell` because `render` is `&self`.
+    pub(super) map_pane_rect: std::cell::Cell<Option<ratatui::layout::Rect>>,
     /// An open name-entry prompt for a feature being placed (P2/P3).
     pub(super) map_input: Option<MapInput>,
     /// A multi-step map tool in progress (P3 rivers).
@@ -282,6 +285,7 @@ impl WorldbuilderApp {
             map_terrain: None,
             map_terrain_sea: 0.5,
             map_brush: 2,
+            map_pane_rect: std::cell::Cell::new(None),
             map_input: None,
             map_tool: None,
             map_findings: Vec::new(),
@@ -754,6 +758,29 @@ impl WorldbuilderApp {
     /// The source-grid dimensions of the compiled map, if any (MAPED-P1).
     fn map_source_dims(&self) -> Option<(usize, usize)> {
         self.compiled_layers.as_ref().map(|l| (l.geology.width, l.geology.height))
+    }
+
+    /// MAPED-P8 — a left-click in the Map pane focuses it, enters edit mode, and
+    /// positions the cursor on the clicked source cell. Other mouse events are
+    /// ignored (placement stays on the single-key tools).
+    fn handle_mouse(&mut self, mouse: crossterm::event::MouseEvent) {
+        use crossterm::event::{MouseButton, MouseEventKind};
+        if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+            return;
+        }
+        let Some(inner) = self.map_pane_rect.get() else { return };
+        let Some((sw, sh)) = self.map_source_dims() else { return };
+        let Some((sx, sy)) = super::map::click_to_source(inner, mouse.column, mouse.row, sw, sh)
+        else {
+            return;
+        };
+        self.right_pane = RightPane::Map;
+        self.focus = Focus::RightPane;
+        if !self.map_edit {
+            self.enter_map_edit();
+        }
+        self.map_cursor = (sx, sy);
+        self.status = format!("cursor ({sx},{sy}) — t/n/g place · r river · o road · +/− terrain");
     }
 
     /// Raise (`delta > 0`) or lower terrain under the brush (MAPED-P7). Seeds the
@@ -2152,6 +2179,10 @@ impl TuiHost for WorldbuilderApp {
             self.prev_focus = self.focus;
         }
         self.handle_key(key);
+    }
+
+    fn on_mouse(&mut self, mouse: crossterm::event::MouseEvent) {
+        self.handle_mouse(mouse);
     }
 }
 
