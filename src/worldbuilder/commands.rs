@@ -152,6 +152,54 @@ pub(super) fn parse(input: &str) -> Command {
             }
         }
 
+        "magic" => match rest.to_ascii_lowercase().as_str() {
+            "on" | "true" | "enabled" => Command::Shape {
+                label: "magic → enabled".into(),
+                ops: vec![Op::Set {
+                    path: vec!["magic".into(), "enabled".into()],
+                    value: json!(true),
+                }],
+            },
+            "off" | "false" | "disabled" => Command::Shape {
+                label: "magic → disabled".into(),
+                ops: vec![Op::Set {
+                    path: vec!["magic".into(), "enabled".into()],
+                    value: json!(false),
+                }],
+            },
+            _ => Command::Unknown("usage: /magic on|off".into()),
+        },
+
+        "rule" => {
+            // /rule <kind> <cover1,cover2,…> [description…]
+            let mut it = rest.splitn(3, char::is_whitespace);
+            let kind = it.next().unwrap_or("").trim();
+            let covers_s = it.next().unwrap_or("").trim();
+            let desc = it.next().unwrap_or("").trim();
+            if kind.is_empty() || covers_s.is_empty() {
+                return Command::Unknown(
+                    "usage: /rule <kind> <category,category> [description] (enables magic)".into(),
+                );
+            }
+            let covers: Vec<String> = covers_s
+                .split(',')
+                .map(|c| c.trim().to_string())
+                .filter(|c| !c.is_empty())
+                .collect();
+            let mut rule = json!({ "kind": kind, "covers": covers });
+            if !desc.is_empty() {
+                rule["description"] = json!(desc);
+            }
+            Command::Shape {
+                label: format!("magic rule {kind} (covers {covers_s})"),
+                ops: vec![
+                    // A rule with the ledger disabled suppresses nothing — enable it.
+                    Op::Set { path: vec!["magic".into(), "enabled".into()], value: json!(true) },
+                    Op::Push { path: vec!["magic".into(), "rules".into()], value: rule },
+                ],
+            }
+        }
+
         "nation" => {
             let mut it = rest.split_whitespace();
             let name = it.next().unwrap_or("").to_string();
@@ -176,7 +224,7 @@ pub(super) fn parse(input: &str) -> Command {
         }
 
         other => Command::Unknown(format!(
-            "unknown command `/{other}` — supports /interview /set /star /tilt /moon /nation /wfact /research /compile /validate /write /undo /reset /diff"
+            "unknown command `/{other}` — supports /interview /set /star /tilt /moon /nation /magic /rule /wfact /research /compile /validate /write /undo /reset /diff"
         )),
     }
 }
@@ -314,6 +362,39 @@ mod tests {
         assert_eq!(parse("/compile"), Command::Compile);
         assert_eq!(parse("/validate"), Command::Validate);
         assert_eq!(parse("/check"), Command::Validate); // alias
+    }
+
+    #[test]
+    fn rule_enables_magic_and_pushes_a_rule() {
+        match parse("/rule messenger_birds travel_time Royal pelicans fly day and night") {
+            Command::Shape { ops, .. } => {
+                assert_eq!(ops.len(), 2);
+                assert_eq!(
+                    ops[0],
+                    Op::Set {
+                        path: vec!["magic".into(), "enabled".into()],
+                        value: json!(true),
+                    }
+                );
+                let Op::Push { path, value } = &ops[1] else { panic!("expected Push") };
+                assert_eq!(path, &vec!["magic".to_string(), "rules".to_string()]);
+                assert_eq!(value["kind"], json!("messenger_birds"));
+                assert_eq!(value["covers"], json!(["travel_time"]));
+                assert_eq!(value["description"], json!("Royal pelicans fly day and night"));
+            }
+            other => panic!("expected Shape, got {other:?}"),
+        }
+        // Multiple covers split on comma.
+        match parse("/rule seer astronomy,climate") {
+            Command::Shape { ops, .. } => {
+                let Op::Push { value, .. } = &ops[1] else { panic!("expected Push") };
+                assert_eq!(value["covers"], json!(["astronomy", "climate"]));
+            }
+            other => panic!("expected Shape, got {other:?}"),
+        }
+        assert!(matches!(parse("/rule"), Command::Unknown(_)));
+        assert!(matches!(parse("/magic on"), Command::Shape { .. }));
+        assert!(matches!(parse("/magic sideways"), Command::Unknown(_)));
     }
 
     #[test]

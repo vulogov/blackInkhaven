@@ -125,6 +125,11 @@ pub(crate) struct WorldbuilderApp {
     /// `--interview`). While `Some`, plain Query input answers the current step.
     pub(super) interview: Option<super::interview::Interview>,
 
+    // — Magic ledger (WB-P9) ———————————————————————————————————————————
+    /// The magic ledger of the current world (disk + pending), refreshed on every
+    /// world change. Rendered + linted in the Ledger right-pane. `None` = no magic.
+    pub(super) ledger_snapshot: Option<crate::world::types::MagicLedger>,
+
     // — Session ————————————————————————————————————————————————————————
     pub(super) session: WorldbuilderSession,
 
@@ -185,6 +190,7 @@ impl WorldbuilderApp {
             research_query: None,
             research_hits: Vec::new(),
             interview: None,
+            ledger_snapshot: None,
             plausibility_prev: None,
             plausibility_warnings: Vec::new(),
             session,
@@ -997,6 +1003,7 @@ impl WorldbuilderApp {
         self.compiled_summary = None;
         self.compiled_layers = None;
         let def = self.current_world_def();
+        self.ledger_snapshot = def.as_ref().and_then(|d| d.magic.clone());
         self.plausibility_prev = self.plausibility_score;
         match def {
             Some(def) => {

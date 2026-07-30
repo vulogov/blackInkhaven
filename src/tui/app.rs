@@ -14386,6 +14386,10 @@ impl App {
             if slow_auto { "on" } else { "off" }
         ));
         rows.push("CLI: inkhaven realworld new / validate / compile [--materialize]".into());
+        rows.push(
+            "Interactive builder: run `inkhaven worldbuilder` (WBLD-1 — interview, score, map, ledger)"
+                .into(),
+        );
         rows
     }
 
