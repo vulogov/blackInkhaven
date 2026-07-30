@@ -43,7 +43,7 @@ jobs:
     # drift). When it does, we still want the Linux + Mac assets
     # to publish — Windows users can fall back to `cargo install
     # --git` until we patch the workflow.
-    continue-on-error: ${{ matrix.target == 'x86_64-pc-windows-msvc' }}
+    continue-on-error: ${{ matrix.target == 'x86_64-pc-windows-gnu' }}
     strategy:
       fail-fast: false
       matrix:
@@ -54,8 +54,14 @@ jobs:
           - os: macos-latest
             target: aarch64-apple-darwin
             archive: tar.gz
+          # Windows: native MSVC isn't ready (inkhaven's `sources` layer +
+          # some native deps don't build clean under MSVC yet). The viable
+          # path is the GNU/Cygwin family — build the `x86_64-pc-windows-gnu`
+          # target under MSYS2 (mingw-w64 gcc/g++ + pkg-config + fontconfig).
+          # Kept soft-fail (`continue-on-error` below) until a CI run proves it
+          # green, so a work-in-progress config can't redden the release.
           - os: windows-latest
-            target: x86_64-pc-windows-msvc
+            target: x86_64-pc-windows-gnu
             archive: zip
           # macOS x86_64 (Intel) stays disabled. The macos-13
           # runner pool is heavily capacity-constrained — v1.0.2's job
@@ -69,17 +75,14 @@ jobs:
           #   target: x86_64-apple-darwin
           #   archive: tar.gz
           #
-          # Windows note (1.2.4+): re-enabled, gated by
-          # `continue-on-error`. The `yeslogic-fontconfig-sys`
-          # transitive dep — pulled in via
-          # `bundcore → rust_dynamic → neurons → plotters → font-kit`
-          # (NOT bdslib, which was absorbed in 1.2.1) — needs a
-          # native fontconfig install on Windows. We do that with
-          # `vcpkg install fontconfig:x64-windows-static-md` in
-          # the "Install Windows build dependencies" step below;
-          # pkg-config picks it up via PKG_CONFIG_PATH. If the
-          # vcpkg install regresses, the matrix entry still runs
-          # but its failure won't block the release.
+          # Windows note (1.8.36+): native MSVC is not ready, so we build the
+          # GNU target under MSYS2/mingw-w64 instead (see the matrix entry and
+          # the "Set up MSYS2" + "Build (release, windows-gnu)" steps below).
+          # `yeslogic-fontconfig-sys` (via `…plotters → font-kit`) finds
+          # fontconfig through mingw's pkg-config; duckdb's bundled C++ builds
+          # with mingw g++. This is a WORK IN PROGRESS kept `continue-on-error`
+          # until a CI run proves it green — a failing config can't block the
+          # release. (binstall for Windows stays disabled in Cargo.toml until then.)
     steps:
       - name: Resolve tag
         id: tag
@@ -118,30 +121,24 @@ jobs:
             libxcb-xfixes0-dev \
             libasound2-dev
 
-      # Windows: vcpkg the same fontconfig native lib that
-      # `yeslogic-fontconfig-sys` shells out to find on Linux. The
-      # `x64-windows-static-md` triplet is the standard for Rust
-      # MSVC builds (static native lib, dynamic CRT). The
-      # GitHub-hosted windows-latest runner ships vcpkg pre-
-      # installed at `$env:VCPKG_INSTALLATION_ROOT`; we just need
-      # to drive it. PKG_CONFIG_PATH points the build script at
-      # the resulting `.pc` files.
-      #
-      # Other native Windows deps:
-      # - audio (rodio/cpal) uses WASAPI from the Windows SDK,
-      #   already on the runner — no install needed.
-      # - clipboard (arboard) uses the Windows clipboard API,
-      #   same story.
-      # - duckdb's bundled SQLite/ICU build on Windows out of
-      #   the box with MSVC.
-      - name: Install Windows build dependencies
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install fontconfig:x64-windows-static-md
-          $pkgcfg = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static-md\lib\pkgconfig"
-          echo "PKG_CONFIG_PATH=$pkgcfg" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          echo "VCPKGRS_TRIPLET=x64-windows-static-md" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      # Windows (GNU/Cygwin path): set up MSYS2's mingw-w64 toolchain so the
+      # `x86_64-pc-windows-gnu` target has a GCC/G++ (for duckdb's bundled C++),
+      # pkg-config, and fontconfig (which `yeslogic-fontconfig-sys` discovers via
+      # pkg-config). The MINGW64 environment puts `/mingw64/lib/pkgconfig` on the
+      # default PKG_CONFIG_PATH, so no manual pointer is needed. The build step
+      # below runs *inside* this shell (`shell: 'msys2 {0}'`) so gcc + pkg-config
+      # are on PATH; cargo/rustup come in via the inherited Windows PATH.
+      - name: Set up MSYS2 (mingw-w64) for windows-gnu
+        if: matrix.target == 'x86_64-pc-windows-gnu'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          path-type: inherit
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-pkg-config
+            mingw-w64-x86_64-fontconfig
 
       # See ci.yml: the duckdb-heavy rust-cache (~3.7 GB) can overflow the
       # Linux runner disk on extract. Reclaim ~20 GB of unused tooling
@@ -163,10 +160,19 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
-      # Linux glibc target — Ubuntu's default toolchain is fine.
-      # Windows / macOS pick the platform compilers automatically.
+      # Linux glibc + macOS targets — the platform compilers are picked up
+      # automatically.
       - name: Build (release)
+        if: matrix.target != 'x86_64-pc-windows-gnu'
         run: cargo build --release --locked --target ${{ matrix.target }}
+
+      # windows-gnu: build inside the MSYS2 MINGW64 shell so gcc/g++ and
+      # pkg-config are on PATH (duckdb's bundled C++ + fontconfig discovery);
+      # cargo/rustup resolve via the inherited Windows PATH.
+      - name: Build (release, windows-gnu)
+        if: matrix.target == 'x86_64-pc-windows-gnu'
+        shell: 'msys2 {0}'
+        run: cargo build --release --locked --target x86_64-pc-windows-gnu
 
       # Strip & package. The on-disk layout inside the archive is
       # `inkhaven-<target>/inkhaven[.exe]` so the cargo-binstall

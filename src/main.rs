@@ -29,6 +29,7 @@ mod git;
 mod grammar;
 mod language_entry;
 mod linguistic;
+mod worldbuilder;
 mod book_digest;
 mod manuscript;
 mod pane;
@@ -123,6 +124,8 @@ fn main() {
             | Some(cli::Command::Research { .. })
             // 1.7 LING-1 — `inkhaven linguistic` is a full-screen TUI too.
             | Some(cli::Command::Linguistic { .. })
+            // WBLD-1 — `inkhaven worldbuilder` is a full-screen TUI too.
+            | Some(cli::Command::Worldbuilder { .. })
     );
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("inkhaven=info,warn"));

@@ -237,7 +237,10 @@ pub fn state_at(hist: &HistoryOutput, year: i64) -> HistoryState {
 }
 
 /// WORLD-11 — verify declared history events for plausibility. Advisory only.
-pub fn lint_history(declared: &[crate::world::types::HistEventDef], out: &HistoryOutput) -> Vec<String> {
+pub fn lint_history(
+    declared: &[crate::world::types::HistEventDef],
+    out: &HistoryOutput,
+) -> Vec<crate::world::plausibility::Warning> {
     let mut warnings = Vec::new();
     for d in declared {
         let label = if d.title.trim().is_empty() {
@@ -263,7 +266,8 @@ pub fn lint_history(declared: &[crate::world::types::HistEventDef], out: &Histor
             }
         }
     }
-    warnings
+    // Declared-history checks are advisory — Low severity.
+    warnings.into_iter().map(crate::world::plausibility::Warning::low).collect()
 }
 
 #[cfg(test)]

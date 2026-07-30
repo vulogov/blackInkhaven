@@ -37,7 +37,7 @@ fn resolve_target<'a>(h: &'a Hierarchy, target: Option<Uuid>) -> Option<(Node, I
 /// Insert a paragraph titled `title` with body `body` near `target` (or at the
 /// end of `book_id` when `target` is `None` / unresolvable). Returns the new
 /// node's id. The caller is responsible for reloading the hierarchy.
-pub(super) fn insert_paragraph(
+pub(crate) fn insert_paragraph(
     store: &Store,
     cfg: &Config,
     h: &Hierarchy,

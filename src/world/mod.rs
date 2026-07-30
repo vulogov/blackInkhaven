@@ -38,6 +38,7 @@ pub mod language_proposals;
 pub mod fact_check_slow;
 pub mod materialize;
 pub mod plakat;
+pub mod plausibility;
 pub mod myth_proposals;
 pub mod proposals;
 pub mod ruler_proposals;
