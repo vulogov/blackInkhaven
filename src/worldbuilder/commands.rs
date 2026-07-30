@@ -64,8 +64,10 @@ pub(super) enum Command {
     Journey,
     /// List the project's worldbuilder sessions.
     Sessions,
-    /// Export a readable world dossier (compiled state + facts + journey).
-    Export,
+    /// Export a readable world dossier. `pdf` also renders a PDF via Typst.
+    Export { pdf: bool },
+    /// Switch to another worldbuilder session by name (WS-P3).
+    Switch(String),
     /// Compile `n` candidate worlds on derived seeds and compare them (WS-P1).
     Roll(usize),
     /// Render the world map with plakat and show it in the Map pane (WS-P2).
@@ -91,7 +93,17 @@ pub(super) fn parse(input: &str) -> Command {
         "interview" => Command::Interview,
         "journey" => Command::Journey,
         "sessions" => Command::Sessions,
-        "export" => Command::Export,
+        "export" => {
+            let pdf = rest.split_whitespace().any(|w| w.eq_ignore_ascii_case("--pdf") || w.eq_ignore_ascii_case("pdf"));
+            Command::Export { pdf }
+        }
+        "switch" => {
+            if rest.trim().is_empty() {
+                Command::Unknown("usage: /switch <session-name>".into())
+            } else {
+                Command::Switch(rest.trim().to_string())
+            }
+        }
 
         "map" => Command::Map,
 
@@ -268,7 +280,7 @@ pub(super) fn parse(input: &str) -> Command {
         }
 
         other => Command::Unknown(format!(
-            "unknown command `/{other}` — supports /interview /roll /adopt /map /journey /sessions /export /set /star /tilt /moon /nation /magic /rule /wfact /research /compile /validate /write /undo /reset /diff"
+            "unknown command `/{other}` — supports /interview /roll /adopt /map /journey /sessions /switch /export[ --pdf] /set /star /tilt /moon /nation /magic /rule /wfact /research /compile /validate /write /undo /reset /diff"
         )),
     }
 }
@@ -460,6 +472,15 @@ mod tests {
         assert_eq!(parse("/adopt 0x5152"), parse("/adopt 20818"));
         assert!(matches!(parse("/adopt nope"), Command::Unknown(_)));
         assert_eq!(parse("/map"), Command::Map);
+    }
+
+    #[test]
+    fn export_pdf_flag_and_switch_parse() {
+        assert_eq!(parse("/export"), Command::Export { pdf: false });
+        assert_eq!(parse("/export --pdf"), Command::Export { pdf: true });
+        assert_eq!(parse("/export pdf"), Command::Export { pdf: true });
+        assert_eq!(parse("/switch aldoria-v2"), Command::Switch("aldoria-v2".into()));
+        assert!(matches!(parse("/switch"), Command::Unknown(_)));
     }
 
     #[test]

@@ -128,6 +128,8 @@ pub(crate) struct WorldbuilderApp {
     /// Research right-pane. `◎` marks passages already tagged `fact:world`.
     pub(super) research_query: Option<String>,
     pub(super) research_hits: Vec<crate::book_rag::RetrievedPassage>,
+    /// Cursor into `research_hits` for the accept-as-fact keystroke (WS-P3).
+    pub(super) research_cursor: usize,
 
     // — Interview (WB-P8) ——————————————————————————————————————————————
     /// The active guided interview, if the author started one (`/interview` or
@@ -207,6 +209,7 @@ impl WorldbuilderApp {
             map_raster: None,
             research_query: None,
             research_hits: Vec::new(),
+            research_cursor: 0,
             interview: None,
             ledger_snapshot: None,
             plausibility_prev: None,
@@ -377,6 +380,21 @@ impl WorldbuilderApp {
                         }
                         _ => {}
                     }
+                } else if self.right_pane == RightPane::Research {
+                    // WS-P3 — move over hits; `a` promotes one to a world fact.
+                    match key.code {
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            let n = self.research_hits.len();
+                            if n > 0 {
+                                self.research_cursor = (self.research_cursor + 1).min(n - 1);
+                            }
+                        }
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            self.research_cursor = self.research_cursor.saturating_sub(1);
+                        }
+                        KeyCode::Char('a') => self.accept_research_hit(),
+                        _ => {}
+                    }
                 }
             }
             Focus::ConfirmationOverlay => match key.code {
@@ -428,7 +446,8 @@ impl WorldbuilderApp {
             Command::Interview => self.start_interview(),
             Command::Journey => self.run_journey(),
             Command::Sessions => self.run_sessions(),
-            Command::Export => self.run_export(),
+            Command::Export { pdf } => self.run_export(pdf),
+            Command::Switch(name) => self.run_switch(&name),
             Command::Roll(n) => self.run_roll(n),
             Command::Map => self.run_map(),
             Command::Unknown(msg) => self.status = msg,
@@ -570,7 +589,7 @@ impl WorldbuilderApp {
     }
 
     /// before `/compile`.
-    fn run_export(&mut self) {
+    fn run_export(&mut self, pdf: bool) {
         let compiled = self
             .current_world_def()
             .map(|def| {
@@ -580,32 +599,55 @@ impl WorldbuilderApp {
         let facts = self.collect_world_facts();
         let at = chrono::Utc::now().to_rfc3339();
         let world_name = self.world_name().to_string();
-        let md = {
-            let input = super::export::DossierInput {
-                world_name: &world_name,
-                generated_at: &at,
-                compiled: compiled.as_deref(),
-                score: self.plausibility_score,
-                warnings: &self.plausibility_warnings,
-                ledger: self.ledger_snapshot.as_ref(),
-                facts: &facts,
-                journey: &self.session.turns,
-            };
-            super::export::build_dossier(&input)
+        let input = super::export::DossierInput {
+            world_name: &world_name,
+            generated_at: &at,
+            compiled: compiled.as_deref(),
+            score: self.plausibility_score,
+            warnings: &self.plausibility_warnings,
+            ledger: self.ledger_snapshot.as_ref(),
+            facts: &facts,
+            journey: &self.session.turns,
         };
+        let md = super::export::build_dossier(&input);
         let dir = self.layout.root.join("exports");
         if let Err(e) = std::fs::create_dir_all(&dir) {
             self.status = format!("export failed: {e}");
             return;
         }
-        let path = dir.join(format!("dossier-{}.md", self.session.slug));
-        match crate::io_atomic::write(&path, md.as_bytes()) {
-            Ok(()) => {
-                let rel = path.strip_prefix(&self.layout.root).unwrap_or(&path).display();
-                self.push_turn("/export".into(), format!("Wrote world dossier → {rel}"));
-                self.status = format!("exported → {rel}");
+        let md_path = dir.join(format!("dossier-{}.md", self.session.slug));
+        if let Err(e) = crate::io_atomic::write(&md_path, md.as_bytes()) {
+            self.status = format!("export failed: {e}");
+            return;
+        }
+        let md_rel = md_path.strip_prefix(&self.layout.root).unwrap_or(&md_path).display().to_string();
+
+        if !pdf {
+            self.push_turn("/export".into(), format!("Wrote world dossier → {md_rel}"));
+            self.status = format!("exported → {md_rel}");
+            return;
+        }
+
+        // `--pdf`: render the same dossier through Typst, in-process.
+        let typ = super::export::build_dossier_typst(&input);
+        let settings = crate::typst_world::WorldSettings::from_cfg(&self.cfg.typst_compile);
+        match crate::typst_inprocess::compile_source_to_pdf(&self.layout.root, typ, settings) {
+            Ok(bytes) => {
+                let pdf_path = dir.join(format!("dossier-{}.pdf", self.session.slug));
+                match crate::io_atomic::write(&pdf_path, &bytes) {
+                    Ok(()) => {
+                        let pdf_rel = pdf_path.strip_prefix(&self.layout.root).unwrap_or(&pdf_path).display();
+                        self.push_turn("/export --pdf".into(), format!("Wrote {md_rel} and {pdf_rel}"));
+                        self.status = format!("exported → {pdf_rel}");
+                    }
+                    Err(e) => self.status = format!("wrote {md_rel}; PDF write failed: {e}"),
+                }
             }
-            Err(e) => self.status = format!("export failed: {e}"),
+            Err(e) => {
+                let first = e.lines().next().unwrap_or("compile error");
+                self.push_turn("/export --pdf".into(), format!("Wrote {md_rel}; PDF compile failed: {first}"));
+                self.status = format!("wrote {md_rel}; PDF failed (see Chat)");
+            }
         }
     }
 
@@ -660,7 +702,44 @@ impl WorldbuilderApp {
             .collect::<Vec<_>>()
             .join("\n");
         self.push_turn("/sessions".into(), format!("Sessions:\n{list}"));
-        self.status = format!("{} session(s) — re-open with `--session <name>`", slugs.len());
+        self.status = format!("{} session(s) — /switch <name> or --session <name>", slugs.len());
+    }
+
+    /// `/switch <name>` (WS-P3) — persist the current session, then open (or
+    /// create) the named one and swap in its pending delta. `world.hjson` is
+    /// shared across a project's sessions, so switching changes only the pending
+    /// edits, timeline, and pane sizing — and starts a fresh conversation.
+    fn run_switch(&mut self, name: &str) {
+        // Flush the current session (pending + turns are mirrored on change;
+        // capture the latest sizing too).
+        self.session.left_split = self.left_split;
+        self.session.split_ratio = self.split_ratio;
+        self.session.pending_ops = self.pending_ops.clone();
+        let _ = self.session.save(&self.layout);
+
+        let now = chrono::Utc::now().to_rfc3339();
+        let target = match super::session::WorldbuilderSession::open_or_create(&self.layout, name, now) {
+            Ok(s) => s,
+            Err(e) => {
+                self.status = format!("switch failed: {e}");
+                return;
+            }
+        };
+        let slug = target.slug.clone();
+        self.left_split = target.left_split.clamp(2, 8);
+        self.split_ratio = target.split_ratio.clamp(2, 8);
+        self.pending_ops = target.pending_ops.clone();
+        self.session = target;
+        // Fresh conversation + research state for the new session.
+        self.chat.clear();
+        self.chat_scroll = 0;
+        self.research_query = None;
+        self.research_hits.clear();
+        self.research_cursor = 0;
+        self.interview = None;
+        self.hjson_preview = None;
+        self.refresh_plausibility(); // rescores pending; clears compiled/map caches
+        self.status = format!("switched to session '{slug}' · {} pending delta(s)", self.pending_ops.len());
     }
 
     /// Start (or restart) the guided interview: focus the Query prompt, surface
@@ -841,6 +920,7 @@ impl WorldbuilderApp {
             Ok(hits) => {
                 let n = hits.len();
                 self.research_hits = hits;
+                self.research_cursor = 0;
                 self.research_query = Some(query.to_string());
                 self.right_pane = RightPane::Research;
                 self.status = format!("research · {n} passage(s) for “{query}” · Ctrl+R → Research");
@@ -1121,6 +1201,32 @@ impl WorldbuilderApp {
         } else {
             "untagged fact:world".into()
         };
+    }
+
+    /// WS-P3 — promote the research hit under the cursor to a world fact: tag its
+    /// (existing) Facts paragraph `fact:world`, so it joins the `◎` set and the
+    /// world-fact RAG.
+    fn accept_research_hit(&mut self) {
+        let Some(hit) = self.research_hits.get(self.research_cursor) else {
+            return;
+        };
+        let id = hit.id;
+        let Some(node) = self.hierarchy.get(id) else {
+            self.status = "that passage is no longer available".into();
+            return;
+        };
+        if node.tags.iter().any(|t| t == FACT_WORLD_TAG) {
+            self.status = "already a ◎ world fact".into();
+            return;
+        }
+        let mut updated = node.clone();
+        updated.tags.push(FACT_WORLD_TAG.to_string());
+        if let Err(e) = self.store.raw().update_metadata(id, updated.to_json()) {
+            self.status = format!("tag write failed: {e}");
+            return;
+        }
+        self.reload_hierarchy();
+        self.status = "◎ promoted to world fact".into();
     }
 
     fn reject_or_stub_edit(&mut self, is_facts: bool) {
