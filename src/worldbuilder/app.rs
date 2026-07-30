@@ -57,6 +57,9 @@ pub(super) enum MapPlacement {
     Landmark { geo_kind: &'static str, x: usize, y: usize },
     /// A `hydrology.rivers[]` entry from `from` to `to` (P3).
     River { from: (usize, usize), to: (usize, usize) },
+    /// A `geography.regions[]` entry anchored at `(x, y)`, biome taken from the
+    /// compiled cell under the cursor (P4).
+    Region { x: usize, y: usize, biome: String },
 }
 
 /// An in-progress name entry for a feature being placed (P2/P3).
@@ -161,6 +164,8 @@ pub(crate) struct WorldbuilderApp {
     /// Declared landmarks resolved to source cells, for the map overlay (P2).
     /// Refreshed with `compiled_layers`; cleared when the world changes.
     pub(super) map_landmarks: Vec<MapMarker>,
+    /// Declared regions with an anchor cell, for the map overlay (P4).
+    pub(super) map_regions: Vec<MapMarker>,
     /// An open name-entry prompt for a feature being placed (P2/P3).
     pub(super) map_input: Option<MapInput>,
     /// A multi-step map tool in progress (P3 rivers).
@@ -253,6 +258,7 @@ impl WorldbuilderApp {
             map_edit: false,
             map_cursor: (0, 0),
             map_landmarks: Vec::new(),
+            map_regions: Vec::new(),
             map_input: None,
             map_tool: None,
             research_query: None,
@@ -366,6 +372,9 @@ impl WorldbuilderApp {
                                 }
                                 MapPlacement::River { from, to } => {
                                     self.place_river(from, to, name)
+                                }
+                                MapPlacement::Region { x, y, biome } => {
+                                    self.place_region(x, y, name, biome)
                                 }
                             }
                         }
@@ -489,8 +498,9 @@ impl WorldbuilderApp {
                                 }
                                 KeyCode::Char('t') => self.open_map_input("Town name", "city"),
                                 KeyCode::Char('n') => self.open_map_input("Landmark name", "landmark"),
+                                KeyCode::Char('g') => self.open_region_input(),
                                 KeyCode::Char('d') | KeyCode::Char('x') => {
-                                    self.delete_landmark_at_cursor()
+                                    self.delete_feature_at_cursor()
                                 }
                                 KeyCode::Char('r') => {
                                     self.map_tool = Some(MapTool::River { source: None });
@@ -732,6 +742,42 @@ impl WorldbuilderApp {
         self.status = format!("{label} at ({x},{y}) — type a name, Enter to place, Esc to cancel");
     }
 
+    /// Open the region name-entry, auto-filling the biome from the compiled cell
+    /// under the cursor (P4).
+    fn open_region_input(&mut self) {
+        let (x, y) = self.map_cursor;
+        let biome = self
+            .compiled_layers
+            .as_ref()
+            .and_then(|l| {
+                let idx = y.min(l.climate.height.saturating_sub(1)) * l.climate.width
+                    + x.min(l.climate.width.saturating_sub(1));
+                l.climate.biome.get(idx).map(|b| b.as_str().to_string())
+            })
+            .unwrap_or_default();
+        self.map_input = Some(MapInput {
+            label: "Region name",
+            placement: MapPlacement::Region { x, y, biome: biome.clone() },
+            buffer: String::new(),
+        });
+        self.status = format!("Region at ({x},{y}) · biome {biome} — type a name, Enter to place");
+    }
+
+    /// Place a region anchor into `geography.regions[]` as a pending edit (P4).
+    fn place_region(&mut self, x: usize, y: usize, name: String, biome: String) {
+        let value = serde_json::json!({ "name": name, "biome": biome, "x": x, "y": y });
+        self.pending_ops.push(super::commands::Op::Push {
+            path: vec!["geography".into(), "regions".into()],
+            value,
+        });
+        self.refresh_plausibility();
+        if let Some(def) = self.current_world_def() {
+            self.populate_map_caches(&def);
+        }
+        self.record_turn(format!("map: region {name}"), format!("{biome} at ({x},{y})"), Vec::new());
+        self.status = format!("placed region '{name}' ({biome}) at ({x},{y}) · /write to commit");
+    }
+
     /// Advance the river tool (P3): the first Enter fixes the source, the second
     /// fixes the mouth and asks for a name.
     fn river_pick(&mut self) {
@@ -816,31 +862,45 @@ impl WorldbuilderApp {
         self.status = format!("placed {geo_kind} '{name}' at ({x},{y}) · /write to commit");
     }
 
-    /// Delete the declared landmark under the cursor (the first one on that cell)
-    /// via `Op::RemoveAt` — index computed against the current (disk + pending)
-    /// landmark array, which is exactly the array state at write time (P2).
-    fn delete_landmark_at_cursor(&mut self) {
+    /// Delete the declared feature under the cursor — a landmark first, else a
+    /// region — via `Op::RemoveAt` (index computed against the current disk +
+    /// pending array, which is the array state at write time) (P2/P4).
+    fn delete_feature_at_cursor(&mut self) {
         let Some((w, h)) = self.map_source_dims() else { return };
         let cursor = self.map_cursor;
-        let idx = self.current_world_def().and_then(|def| {
-            def.geography
-                .as_ref()
-                .and_then(|g| g.landmarks.iter().position(|lm| lm.grid(w, h) == Some(cursor)))
-        });
-        match idx {
-            Some(i) => {
-                self.pending_ops.push(super::commands::Op::RemoveAt {
-                    path: vec!["geography".into(), "landmarks".into()],
-                    index: i,
-                });
-                self.refresh_plausibility();
-                if let Some(def) = self.current_world_def() {
-                    self.populate_map_caches(&def);
-                }
-                self.status = format!("removed landmark at ({},{}) · /write to commit", cursor.0, cursor.1);
-            }
-            None => self.status = "no landmark at the cursor".into(),
+        let Some(def) = self.current_world_def() else { return };
+        let geo = def.geography.as_ref();
+        // Landmark under the cursor?
+        if let Some(i) =
+            geo.and_then(|g| g.landmarks.iter().position(|lm| lm.grid(w, h) == Some(cursor)))
+        {
+            self.remove_feature("landmarks", i, "landmark", cursor);
+            return;
         }
+        // Else a region anchored on this cell?
+        if let Some(i) = geo.and_then(|g| {
+            g.regions.iter().position(|r| match (r.x, r.y) {
+                (Some(x), Some(y)) => (x.min(w - 1), y.min(h - 1)) == cursor,
+                _ => false,
+            })
+        }) {
+            self.remove_feature("regions", i, "region", cursor);
+            return;
+        }
+        self.status = "no landmark or region at the cursor".into();
+    }
+
+    /// Push a `RemoveAt` for `geography.<array>[index]`, re-populate, and report.
+    fn remove_feature(&mut self, array: &str, index: usize, label: &str, at: (usize, usize)) {
+        self.pending_ops.push(super::commands::Op::RemoveAt {
+            path: vec!["geography".into(), array.into()],
+            index,
+        });
+        self.refresh_plausibility();
+        if let Some(def) = self.current_world_def() {
+            self.populate_map_caches(&def);
+        }
+        self.status = format!("removed {label} at ({},{}) · /write to commit", at.0, at.1);
     }
 
     /// Route a movement key to the cursor, returning whether it was one. Handles
@@ -1271,6 +1331,24 @@ impl WorldbuilderApp {
                             name: lm.name.clone(),
                             kind: lm.kind.clone(),
                         })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        self.map_regions = def
+            .geography
+            .as_ref()
+            .map(|g| {
+                g.regions
+                    .iter()
+                    .filter_map(|r| match (r.x, r.y) {
+                        (Some(x), Some(y)) => Some(MapMarker {
+                            x: x.min(w.saturating_sub(1)),
+                            y: y.min(h.saturating_sub(1)),
+                            name: r.name.clone(),
+                            kind: if r.biome.is_empty() { "region".into() } else { r.biome.clone() },
+                        }),
+                        _ => None,
                     })
                     .collect()
             })
@@ -1738,6 +1816,7 @@ impl WorldbuilderApp {
         self.compiled_layers = None;
         self.map_raster = None;
         self.map_landmarks.clear();
+        self.map_regions.clear();
         let def = self.current_world_def();
         self.ledger_snapshot = def.as_ref().and_then(|d| d.magic.clone());
         self.plausibility_prev = self.plausibility_score;

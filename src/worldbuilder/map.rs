@@ -169,6 +169,13 @@ pub(super) fn render_map(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
             landmark_cells.insert(source_to_display((m.x, m.y), (sw, sh), (map_w, map_h)));
         }
     }
+    // MAPED-P4 — declared regions overlay: `§`.
+    let mut region_cells: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+    for m in &app.map_regions {
+        if m.x < sw && m.y < sh {
+            region_cells.insert(source_to_display((m.x, m.y), (sw, sh), (map_w, map_h)));
+        }
+    }
 
     // MAPED-P3 — a river being drawn: the fixed source `S` + a provisional line
     // to the cursor.
@@ -197,6 +204,10 @@ pub(super) fn render_map(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
                     ch = '·';
                     color = Color::Cyan;
                 }
+                if region_cells.contains(&(x, y)) {
+                    ch = '§';
+                    color = Color::LightMagenta;
+                }
                 if landmark_cells.contains(&(x, y)) {
                     ch = '⌂';
                     color = Color::Magenta;
@@ -222,12 +233,18 @@ pub(super) fn render_map(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
         let biome = climate.biome.get(idx).map(|b| b.as_str()).unwrap_or("?");
         let elev = layers.geology.heightmap.get(idx).copied().unwrap_or(0.0);
         let sea = if elev <= layers.geology.sea_level { " · sea" } else { "" };
-        // A landmark exactly under the cursor names itself.
+        // A landmark or region exactly under the cursor names itself.
         let here = app
             .map_landmarks
             .iter()
             .find(|m| (m.x, m.y) == (cx, cy))
             .map(|m| format!(" · ⌂ {} ({})", m.name, m.kind))
+            .or_else(|| {
+                app.map_regions
+                    .iter()
+                    .find(|m| (m.x, m.y) == (cx, cy))
+                    .map(|m| format!(" · § {} ({})", m.name, m.kind))
+            })
             .unwrap_or_default();
         lines.push(Line::from(Span::styled(
             format!("✎ ({cx},{cy}) · {biome} · elev {elev:.2}{sea}{here}"),
@@ -240,7 +257,7 @@ pub(super) fn render_map(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
             Some(super::app::MapTool::River { source: Some(_) }) => {
                 "river: move to the MOUTH, Enter to set · Esc cancel"
             }
-            None => "hjkl move · Shift fine · t town · n name · r river · d delete · Esc leave",
+            None => "hjkl · t town · n name · r river · g region · d delete · Esc leave",
         };
         lines.push(Line::from(Span::styled(hint, Style::new().dim())));
     } else {
