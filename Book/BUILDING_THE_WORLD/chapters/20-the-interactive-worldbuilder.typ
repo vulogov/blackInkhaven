@@ -75,6 +75,7 @@ bar shown above the Query prompt; press `Ctrl+Q` to leave.
 #table(
   columns: (auto, 1fr),
   stroke: none,
+  column-gutter: 12pt,
   inset: (x: 0pt, y: 3pt),
   [`Tab` / `Shift+Tab`], [cycle panes (Facts → World → Query → Right)],
   [`Ctrl+R`], [cycle the right pane (Chat / Research / Map / Ledger)],
@@ -137,6 +138,7 @@ the pending delta.
 #table(
   columns: (auto, 1fr),
   stroke: none,
+  column-gutter: 12pt,
   inset: (x: 0pt, y: 3.5pt),
   [`/set <path> <value>`], [set any dotted key, e.g. `/set geology.generated.sea_level 0.6`],
   [`/star <class>`], [the star's spectral class — `G`, `K`, `M`],
