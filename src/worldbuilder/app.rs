@@ -123,6 +123,13 @@ pub(crate) struct WorldbuilderApp {
     /// is `&self`. Invalidated whenever the world changes.
     pub(super) map_raster: Option<std::cell::RefCell<ratatui_image::protocol::StatefulProtocol>>,
 
+    // — Map editor (MAPED-P1) ——————————————————————————————————————————
+    /// Whether the Map pane is in edit mode (a movable grid cursor). Requires a
+    /// compiled map (the ASCII grid); the raster is suppressed while editing.
+    pub(super) map_edit: bool,
+    /// The edit cursor in *source-grid* coordinates (`geology.width × height`).
+    pub(super) map_cursor: (usize, usize),
+
     // — World-fact research (WB-P7) ————————————————————————————————————
     /// The last `/research` query + its retrieved Facts passages, shown in the
     /// Research right-pane. `◎` marks passages already tagged `fact:world`.
@@ -207,6 +214,8 @@ impl WorldbuilderApp {
                 None
             },
             map_raster: None,
+            map_edit: false,
+            map_cursor: (0, 0),
             research_query: None,
             research_hits: Vec::new(),
             research_cursor: 0,
@@ -379,6 +388,36 @@ impl WorldbuilderApp {
                             }
                         }
                         _ => {}
+                    }
+                } else if self.right_pane == RightPane::Map {
+                    // MAPED-P1 — grid cursor + edit mode.
+                    let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+                    if self.map_edit {
+                        match key.code {
+                            KeyCode::Esc | KeyCode::Char('e') => {
+                                self.map_edit = false;
+                                self.status = "left map edit".into();
+                            }
+                            KeyCode::Left | KeyCode::Char('h') => self.move_map_cursor(-1, 0, false),
+                            KeyCode::Right | KeyCode::Char('l') => self.move_map_cursor(1, 0, false),
+                            KeyCode::Up | KeyCode::Char('k') => self.move_map_cursor(0, -1, false),
+                            KeyCode::Down | KeyCode::Char('j') => self.move_map_cursor(0, 1, false),
+                            // Shift+HJKL / Shift+arrows — fine (single-cell) nudge.
+                            KeyCode::Char('H') => self.move_map_cursor(-1, 0, true),
+                            KeyCode::Char('L') => self.move_map_cursor(1, 0, true),
+                            KeyCode::Char('K') => self.move_map_cursor(0, -1, true),
+                            KeyCode::Char('J') => self.move_map_cursor(0, 1, true),
+                            _ if shift => match key.code {
+                                KeyCode::Left => self.move_map_cursor(-1, 0, true),
+                                KeyCode::Right => self.move_map_cursor(1, 0, true),
+                                KeyCode::Up => self.move_map_cursor(0, -1, true),
+                                KeyCode::Down => self.move_map_cursor(0, 1, true),
+                                _ => {}
+                            },
+                            _ => {}
+                        }
+                    } else if key.code == KeyCode::Char('e') {
+                        self.enter_map_edit();
                     }
                 } else if self.right_pane == RightPane::Research {
                     // WS-P3 — move over hits; `a` promotes one to a world fact.
@@ -575,6 +614,36 @@ impl WorldbuilderApp {
                 self.status = "map rendered but its PNG could not be read — ASCII map".into();
             }
         }
+    }
+
+    /// The source-grid dimensions of the compiled map, if any (MAPED-P1).
+    fn map_source_dims(&self) -> Option<(usize, usize)> {
+        self.compiled_layers.as_ref().map(|l| (l.geology.width, l.geology.height))
+    }
+
+    /// Enter Map edit mode — needs a compiled map (the ASCII grid). Clamps the
+    /// cursor into the current grid.
+    fn enter_map_edit(&mut self) {
+        let Some((w, h)) = self.map_source_dims() else {
+            self.status = "no map yet — run /compile (ASCII) or /map (raster) first".into();
+            return;
+        };
+        self.map_edit = true;
+        let (cx, cy) = self.map_cursor;
+        self.map_cursor = (cx.min(w.saturating_sub(1)), cy.min(h.saturating_sub(1)));
+        self.status = "map edit — hjkl move · Shift fine · Esc leave".into();
+    }
+
+    /// Move the edit cursor in source-grid cells. `fine` steps a single cell;
+    /// otherwise a coarse step (~1/40 of the grid) for quick travel. Clamped.
+    fn move_map_cursor(&mut self, dx: i32, dy: i32, fine: bool) {
+        let Some((w, h)) = self.map_source_dims() else { return };
+        let step_x = if fine { 1 } else { (w / 40).max(1) } as i32;
+        let step_y = if fine { 1 } else { (h / 40).max(1) } as i32;
+        let (cx, cy) = self.map_cursor;
+        let nx = (cx as i32 + dx * step_x).clamp(0, w as i32 - 1) as usize;
+        let ny = (cy as i32 + dy * step_y).clamp(0, h as i32 - 1) as usize;
+        self.map_cursor = (nx, ny);
     }
 
     /// A compact population string (`4.1M`, `820k`, `512`) for the roll table.
