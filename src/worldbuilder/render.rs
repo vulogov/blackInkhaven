@@ -91,6 +91,7 @@ fn render_map_input(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
         super::app::MapPlacement::River { from, to } => {
             format!("({},{}) → ({},{})", from.0, from.1, to.0, to.1)
         }
+        super::app::MapPlacement::Region { x, y, biome } => format!("({x},{y}) · {biome}"),
     };
     let w = (area.width * 6 / 10).clamp(30, 70);
     let modal = Rect {
