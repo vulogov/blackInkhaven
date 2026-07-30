@@ -1523,6 +1523,37 @@ Commands (type in the prompt): `/fact "..." [→ path]`, `/note "..." [→ path]
 `/save [name]`. `inkhaven research --import <path>` imports non-interactively. See
 [Tutorial 103](Tutorials/103-research-assistant.md).
 
+## `inkhaven worldbuilder` (1.9.0+, WBLD-1)
+
+Standalone full-screen TUI companion to the `realworld` pipeline: a **Facts** tree
+over a **World** tree (left), a cycling right pane (`Chat | Research | Map | Ledger`),
+a full-width query prompt, and a status bar with the live plausibility score. Every
+change lands in `world.hjson`; it never generates prose. Launched outside the editor:
+`inkhaven worldbuilder [--session <name>] [--interview] [--from-map]`. Needs ≥ 40×10.
+
+| Key | Action |
+|:---|:---|
+| `Tab` / `Shift+Tab` | Cycle panes: Facts → World → Query → Right |
+| `Ctrl+R` | Cycle the right pane (Chat / Research / Map / Ledger) |
+| `?` | Toggle the keybind hints bar |
+| `Ctrl+Q` / `Ctrl+C` | Quit (restores the terminal) |
+| **Left trees** | `j`/`k` nav, `Enter`/`l`/`h` expand/collapse, `g`/`G` top/bottom |
+| `Ctrl+P` (tree) | Pin / unpin the cursor node for AI context (`⬡`) |
+| `Ctrl+T` (Facts) | Toggle the `fact:world` tag on the selected paragraph (`◎`) |
+| `Shift+F` (Facts) | Filter the Facts tree to `fact:world` only |
+| `z` (tree) | Zoom the focused left tree to fill the column |
+| `{` / `}` · `[` / `]` | Resize the left split · the left/right column ratio |
+| **Query prompt** | `Enter` send/answer, `Esc` clear-then-defocus (or leave interview) |
+| **Chat** | `j`/`k`/`g`/`G` scroll |
+| **Confirm overlay** | `y` accept the delta into pending, `n`/`Esc` discard |
+
+Commands (type in the prompt): `/interview`, `/set <path> <value>`, `/star`, `/tilt`,
+`/moon`, `/nation`, `/magic on|off`, `/rule <kind> <cat,cat> [desc]`, `/wfact <text>`,
+`/research <query>`, `/compile`, `/validate`, `/diff`, `/write`, `/undo`, `/reset`,
+`/journey`, `/sessions`, `/export`. See
+[Worldbuilding reference](WORLDBUILDING.md#the-interactive-worldbuilder-inkhaven-worldbuilder)
+and *Building the World with Inkhaven*, ch. 20.
+
 ## `inkhaven prompts-editor` (1.2.10+)
 
 Standalone four-pane TUI for editing

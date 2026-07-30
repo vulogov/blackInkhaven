@@ -427,6 +427,71 @@ inkhaven fact-check (--text "…" | --paragraph <id>) [--slow] [--max-cost <n>] 
 
 ---
 
+## The interactive worldbuilder (`inkhaven worldbuilder`)
+
+Introduced in **1.9.0** (RFC WBLD-1). A full-screen companion TUI — a third
+`TuiHost` sibling beside `inkhaven research` and the linguistic workbench — that is
+a *front-end* to everything above: every change it makes lands in the same
+`world.hjson`, compiled by the same chain. It never generates prose; the author
+decides, and the worldbuilder measures, validates, and records.
+
+```
+inkhaven worldbuilder [--session <name>] [--interview] [--from-map]
+```
+
+### Layout
+
+Four regions: a **Facts** tree over a **World** tree down the left; a wide **right
+pane** that cycles `Chat | Research | Map | Ledger`; a full-width **Query** prompt;
+and a status bar carrying the world name and its live **plausibility score** (`★
+NN`, with `▲`/`▼` deltas). Plain text in the Query prompt is a question to the AI; a
+line starting with `/` is a command.
+
+### Keys
+
+| Key | Action |
+|---|---|
+| `Tab` / `Shift+Tab` | cycle panes (Facts → World → Query → Right) |
+| `Ctrl+R` | cycle the right pane (Chat / Research / Map / Ledger) |
+| `j` `k` `g` `G` · `h` `l` · `Enter` | tree navigation (move / fold / step) |
+| `Ctrl+P` | pin the selected node into the AI context |
+| `Ctrl+T` | toggle the `fact:world` tag on a Facts paragraph (`◎`) |
+| `Shift+F` | filter the Facts tree to `fact:world` only |
+| `z` | zoom the focused left tree to fill the column |
+| `{` `}` · `[` `]` | resize left-tree split · left/right column ratio |
+| `Esc` | clear the Query line / leave an active interview |
+| `?` · `Ctrl+Q` | toggle hints · quit |
+
+### Commands (typed in the Query prompt)
+
+| Command | Effect |
+|---|---|
+| `/interview` | start the guided five-stage world interview |
+| `/set <dot.path> <value>` | set any `world.hjson` key |
+| `/star <class>` · `/tilt <deg>` · `/moon <name> [days]` | shape the sky |
+| `/nation <name> [era] [kind] [traits…]` | add a nation |
+| `/magic on\|off` · `/rule <kind> <cat,cat> [desc]` | the magic ledger |
+| `/wfact <statement>` | record an author fact into the Facts book (`fact:world`) |
+| `/research <query>` | retrieve related Facts into the Research pane |
+| `/compile` | run the layer chain; report + drive the AI on the *simulated* world |
+| `/validate` (`/check`) | report the plausibility score + graded warnings |
+| `/diff` · `/write` · `/undo` · `/reset` | manage the pending delta |
+| `/journey` · `/sessions` | the session timeline · list sessions |
+| `/export` | write a readable Markdown dossier under `exports/` |
+
+Shaping commands (`/set`, `/star`, `/rule`, interview answers, …) accumulate into a
+**pending delta** — accepted-but-uncommitted edits, previewed before they join and
+saved with the session so they survive a quit. `/write` folds them into
+`world.hjson` atomically; the plausibility score moves the moment an edit is
+accepted, before it is committed.
+
+> The Map pane draws an ASCII biome minimap directly from the compiled layers after
+> `/compile` — no external tool, works on any terminal. (Inkhaven *can* display real
+> images on kitty / iTerm2 / sixel terminals for image nodes; a raster map preview
+> is a planned refinement.)
+
+---
+
 ## Determinism & reproducibility
 
 Every procedural layer is a pure function of the definition and the seed, via an
