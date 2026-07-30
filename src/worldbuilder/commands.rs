@@ -64,6 +64,8 @@ pub(super) enum Command {
     Journey,
     /// List the project's worldbuilder sessions.
     Sessions,
+    /// Export a readable world dossier (compiled state + facts + journey).
+    Export,
     /// Unrecognised / malformed — carries a message for the status bar.
     Unknown(String),
 }
@@ -85,6 +87,7 @@ pub(super) fn parse(input: &str) -> Command {
         "interview" => Command::Interview,
         "journey" => Command::Journey,
         "sessions" => Command::Sessions,
+        "export" => Command::Export,
         "wfact" | "fact" => {
             if rest.is_empty() {
                 Command::Unknown("usage: /wfact <statement> — records an author fact:world".into())
@@ -232,7 +235,7 @@ pub(super) fn parse(input: &str) -> Command {
         }
 
         other => Command::Unknown(format!(
-            "unknown command `/{other}` — supports /interview /journey /sessions /set /star /tilt /moon /nation /magic /rule /wfact /research /compile /validate /write /undo /reset /diff"
+            "unknown command `/{other}` — supports /interview /journey /sessions /export /set /star /tilt /moon /nation /magic /rule /wfact /research /compile /validate /write /undo /reset /diff"
         )),
     }
 }
