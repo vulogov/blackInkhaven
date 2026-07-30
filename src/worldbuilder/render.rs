@@ -77,6 +77,45 @@ pub(super) fn render(frame: &mut Frame, app: &WorldbuilderApp) {
     if app.hjson_preview.is_some() {
         render_delta_preview(frame, app, area);
     }
+    // MAPED-P2 — the landmark name-entry prompt sits above the map.
+    if app.map_input.is_some() {
+        render_map_input(frame, app, area);
+    }
+}
+
+/// The landmark name-entry overlay (MAPED-P2): a small centered input box.
+fn render_map_input(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
+    let Some(mi) = app.map_input.as_ref() else { return };
+    let where_ = match &mi.placement {
+        super::app::MapPlacement::Landmark { x, y, .. } => format!("({x},{y})"),
+        super::app::MapPlacement::River { from, to } => {
+            format!("({},{}) → ({},{})", from.0, from.1, to.0, to.1)
+        }
+        super::app::MapPlacement::Region { x, y, biome } => format!("({x},{y}) · {biome}"),
+    };
+    let w = (area.width * 6 / 10).clamp(30, 70);
+    let modal = Rect {
+        x: area.x + area.width.saturating_sub(w) / 2,
+        y: area.y + area.height / 3,
+        width: w,
+        height: 4,
+    };
+    frame.render_widget(Clear, modal);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(format!(" {} {} ", mi.label, where_))
+        .border_style(Style::new().fg(app.theme.border_focused).bold());
+    let inner = block.inner(modal);
+    frame.render_widget(block, modal);
+    let lines = vec![
+        Line::from(vec![
+            Span::raw("› "),
+            Span::styled(mi.buffer.clone(), Style::new().bold()),
+            Span::styled("▌", Style::new().fg(app.theme.border_focused)),
+        ]),
+        Line::from(Span::styled("Enter place · Esc cancel", Style::new().dim())),
+    ];
+    frame.render_widget(Paragraph::new(lines), inner);
 }
 
 /// The `/`-command delta preview: shows the pending edit(s) for y/n confirmation.
@@ -203,7 +242,16 @@ fn render_right_pane(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
     match app.right_pane {
         RightPane::Chat => render_chat(frame, app, inner),
         RightPane::Research => render_research(frame, app, inner),
-        RightPane::Map => super::map::render_map(frame, app, inner),
+        RightPane::Map => {
+            // WS-P2 — the plakat raster on image-capable terminals; else ASCII.
+            // MAPED-P1 — edit mode always uses the ASCII grid (the cursor needs it).
+            if let (false, Some(cell)) = (app.map_edit, app.map_raster.as_ref()) {
+                let widget = ratatui_image::StatefulImage::new();
+                frame.render_stateful_widget(widget, inner, &mut cell.borrow_mut());
+            } else {
+                super::map::render_map(frame, app, inner);
+            }
+        }
         RightPane::Ledger => render_ledger(frame, app, inner),
     }
 }
@@ -274,23 +322,35 @@ fn render_research(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
             if app.research_hits.is_empty() {
                 lines.push(Line::from(Span::styled("(no matching Facts)", Style::new().dim())));
             }
-            for p in &app.research_hits {
+            for (i, p) in app.research_hits.iter().enumerate() {
                 let is_world = app
                     .hierarchy
                     .get(p.id)
                     .map(|n| n.tags.iter().any(|t| t == FACT_WORLD_TAG))
                     .unwrap_or(false);
                 let glyph = if is_world { "◎" } else { "·" };
+                let on_cursor = i == app.research_cursor;
+                let cursor = if on_cursor { "▸ " } else { "  " };
+                let mut breadcrumb = Style::new().bold();
+                if on_cursor {
+                    breadcrumb = breadcrumb.add_modifier(Modifier::REVERSED);
+                }
                 lines.push(Line::from(vec![
-                    Span::styled(format!("{glyph} "), Style::new().fg(app.theme.ai_scope_fg)),
-                    Span::styled(p.breadcrumb.clone(), Style::new().bold()),
+                    Span::styled(format!("{cursor}{glyph} "), Style::new().fg(app.theme.ai_scope_fg)),
+                    Span::styled(p.breadcrumb.clone(), breadcrumb),
                     Span::styled(format!("  {:.2}", p.score), Style::new().dim()),
                 ]));
                 let body: String = p.body.trim().chars().take(200).collect();
                 for l in body.lines() {
-                    lines.push(Line::from(Span::raw(format!("  {l}"))));
+                    lines.push(Line::from(Span::raw(format!("    {l}"))));
                 }
                 lines.push(Line::from(""));
+            }
+            if !app.research_hits.is_empty() {
+                lines.push(Line::from(Span::styled(
+                    "j/k move · a promote to ◎ world fact",
+                    Style::new().dim(),
+                )));
             }
         }
     }
@@ -403,10 +463,10 @@ fn render_hints(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
             "  j/k·move  h/l·fold  Ctrl+P·pin  z·zoom  (⊙ chapters are compiler-owned)  Tab·cycle"
         }
         Focus::QueryPrompt => {
-            "  /interview · ask · /wfact · /research · /compile /validate · /set… · /write · Tab"
+            "  /interview · /roll · ask · /wfact · /compile /validate · /set… · /write · Tab"
         }
         Focus::RightPane => {
-            "  Ctrl+R·cycle pane  ·  /compile renders the Map  ·  { }·rows  [ ]·cols  Ctrl+Q·quit"
+            "  Ctrl+R·cycle pane  ·  Map: e·edit (hjkl move)  ·  /map raster · /compile ASCII  ·  Ctrl+Q"
         }
         _ => "  Tab·cycle  Ctrl+R·right pane  { }·rows  [ ]·cols  ?·hints  Ctrl+Q·quit",
     };

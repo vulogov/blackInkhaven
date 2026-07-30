@@ -321,6 +321,13 @@ pub struct GeoRegion {
     pub climate: String,
     #[serde(default)]
     pub description: String,
+    /// Optional anchor cell (0-based grid `x`/`y`, row 0 = north). MAPED-P4 —
+    /// the worldbuilder's map editor places a region at a point and shows it
+    /// there; absent for the descriptive-only regions of earlier definitions.
+    #[serde(default)]
+    pub x: Option<usize>,
+    #[serde(default)]
+    pub y: Option<usize>,
 }
 
 /// A named landmark (city, port, mountain, …). Cities/ports with a `climate_zone`
@@ -456,4 +463,26 @@ pub struct Calendar {
     pub day_names: Vec<String>,
     #[serde(default)]
     pub new_year_aligns_to: Option<String>,
+}
+
+#[cfg(test)]
+mod region_anchor_tests {
+    use super::*;
+
+    #[test]
+    fn georegion_anchor_is_optional_and_round_trips() {
+        // MAPED-P4 — a legacy descriptive region (no anchor) still parses …
+        let legacy: GeoRegion =
+            serde_hjson::from_str(r#"{ name: "The Reach", biome: "steppe" }"#).unwrap();
+        assert_eq!(legacy.x, None);
+        assert_eq!(legacy.y, None);
+        // … and an anchored one round-trips its cell.
+        let anchored: GeoRegion =
+            serde_hjson::from_str(r#"{ name: "Harbor Coast", biome: "temperate_forest", x: 40, y: 22 }"#)
+                .unwrap();
+        assert_eq!((anchored.x, anchored.y), (Some(40), Some(22)));
+        let json = serde_json::to_value(&anchored).unwrap();
+        assert_eq!(json["x"], 40);
+        assert_eq!(json["y"], 22);
+    }
 }

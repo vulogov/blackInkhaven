@@ -14,7 +14,7 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style, Stylize};
+use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
@@ -91,12 +91,106 @@ fn compose(
     grid
 }
 
+/// Map a source-grid cell `(sx, sy)` to the display cell it falls in, given the
+/// source dimensions and the display dimensions. Pure; shared by the cursor
+/// render and tests. Clamps into range.
+pub(super) fn source_to_display(
+    (sx, sy): (usize, usize),
+    (sw, sh): (usize, usize),
+    (dw, dh): (usize, usize),
+) -> (usize, usize) {
+    if sw == 0 || sh == 0 || dw == 0 || dh == 0 {
+        return (0, 0);
+    }
+    let dx = (sx * dw / sw).min(dw - 1);
+    let dy = (sy * dh / sh).min(dh - 1);
+    (dx, dy)
+}
+
+/// One map-layer check finding (MAPED-P5), optionally anchored to a source cell
+/// so the editor can jump the cursor to it.
+pub(super) struct MapFinding {
+    pub text: String,
+    pub at: Option<(usize, usize)>,
+}
+
+/// Check the declared map layer against the compiled world (MAPED-P5): a town or
+/// landmark standing in open ocean, an off-map coordinate, a region in the sea.
+/// Complements the physics lints (`run_fast`) with spatial, locatable findings.
+pub(super) fn lint_map(
+    def: &crate::world::types::WorldDefinition,
+    layers: &crate::world::plausibility::CompiledLayers,
+) -> Vec<MapFinding> {
+    let c = &layers.climate;
+    let (w, h) = (c.width, c.height);
+    let is_ocean = |x: usize, y: usize| -> bool {
+        x < w && y < h && c.biome.get(y * w + x).copied() == Some(Biome::Ocean)
+    };
+    let mut out = Vec::new();
+    let Some(g) = def.geography.as_ref() else { return out };
+
+    for lm in &g.landmarks {
+        // A raw coordinate beyond the grid is off the map.
+        if let (Some(rx), Some(ry)) = (lm.x, lm.y) {
+            if rx >= w || ry >= h {
+                out.push(MapFinding {
+                    text: format!("landmark '{}' is off the map ({rx},{ry})", lm.name),
+                    at: lm.grid(w, h),
+                });
+                continue;
+            }
+        }
+        match lm.grid(w, h) {
+            Some((x, y)) if is_ocean(x, y) => {
+                let noun = if matches!(lm.kind.as_str(), "city" | "port" | "town") {
+                    "settlement"
+                } else {
+                    "landmark"
+                };
+                out.push(MapFinding {
+                    text: format!("{noun} '{}' sits in open ocean at ({x},{y})", lm.name),
+                    at: Some((x, y)),
+                });
+            }
+            _ => {}
+        }
+    }
+    for r in &g.regions {
+        if let (Some(x), Some(y)) = (r.x, r.y) {
+            let (x, y) = (x.min(w.saturating_sub(1)), y.min(h.saturating_sub(1)));
+            if is_ocean(x, y) {
+                out.push(MapFinding {
+                    text: format!("region '{}' is in the sea at ({x},{y})", r.name),
+                    at: Some((x, y)),
+                });
+            }
+        }
+    }
+    out
+}
+
+/// The display cells a straight line from `a` to `b` passes through (sampled at
+/// the longer axis' resolution). Used for the provisional river course (P3).
+pub(super) fn line_cells(a: (usize, usize), b: (usize, usize)) -> Vec<(usize, usize)> {
+    let (x0, y0) = (a.0 as i32, a.1 as i32);
+    let (x1, y1) = (b.0 as i32, b.1 as i32);
+    let n = (x1 - x0).abs().max((y1 - y0).abs()).max(1);
+    (0..=n)
+        .map(|i| {
+            let t = i as f32 / n as f32;
+            let x = (x0 as f32 + (x1 - x0) as f32 * t).round().max(0.0) as usize;
+            let y = (y0 as f32 + (y1 - y0) as f32 * t).round().max(0.0) as usize;
+            (x, y)
+        })
+        .collect()
+}
+
 /// Render the Map pane. Falls back to a hint when there is no compiled world yet.
 pub(super) fn render_map(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
     let Some(layers) = app.compiled_layers.as_ref() else {
         frame.render_widget(
             Paragraph::new(Span::styled(
-                "Run /compile to render the world map here.",
+                "Run /compile for the ASCII map, or /map for the plakat raster.",
                 Style::new().dim(),
             )),
             area,
@@ -122,37 +216,150 @@ pub(super) fn render_map(frame: &mut Frame, app: &WorldbuilderApp, area: Rect) {
 
     let hydro = &layers.hydrology;
     let grid = compose(layers, map_w, map_h);
+
+    // MAPED-P1 — in edit mode, the source-space cursor maps to one display cell.
+    let cursor_disp = if app.map_edit {
+        Some(source_to_display(app.map_cursor, (sw, sh), (map_w, map_h)))
+    } else {
+        None
+    };
+
+    // MAPED-P2 — declared landmarks overlay: which display cells carry a `⌂`.
+    let mut landmark_cells: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+    for m in &app.map_landmarks {
+        if m.x < sw && m.y < sh {
+            landmark_cells.insert(source_to_display((m.x, m.y), (sw, sh), (map_w, map_h)));
+        }
+    }
+    // MAPED-P4 — declared regions overlay: `§`.
+    let mut region_cells: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+    for m in &app.map_regions {
+        if m.x < sw && m.y < sh {
+            region_cells.insert(source_to_display((m.x, m.y), (sw, sh), (map_w, map_h)));
+        }
+    }
+
+    // MAPED-P5 — map-check findings flag their cells with `!`.
+    let mut finding_cells: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+    for f in &app.map_findings {
+        if let Some((x, y)) = f.at {
+            if x < sw && y < sh {
+                finding_cells.insert(source_to_display((x, y), (sw, sh), (map_w, map_h)));
+            }
+        }
+    }
+
+    // MAPED-P3 — a river being drawn: the fixed source `S` + a provisional line
+    // to the cursor.
+    let mut river_src: Option<(usize, usize)> = None;
+    let mut river_line: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+    if let Some(super::app::MapTool::River { source: Some(src) }) = &app.map_tool {
+        if src.0 < sw && src.1 < sh {
+            let sd = source_to_display(*src, (sw, sh), (map_w, map_h));
+            river_src = Some(sd);
+            if let Some(cd) = cursor_disp {
+                for cell in line_cells(sd, cd) {
+                    river_line.insert(cell);
+                }
+            }
+        }
+    }
+
     let mut lines: Vec<Line> = Vec::with_capacity(map_h + 2);
-    for row in &grid {
+    for (y, row) in grid.iter().enumerate() {
         let spans: Vec<Span> = row
             .iter()
-            .map(|&(ch, color)| Span::styled(ch.to_string(), Style::new().fg(color)))
+            .enumerate()
+            .map(|(x, &(ch, color))| {
+                let (mut ch, mut color) = (ch, color);
+                if river_line.contains(&(x, y)) {
+                    ch = '·';
+                    color = Color::Cyan;
+                }
+                if region_cells.contains(&(x, y)) {
+                    ch = '§';
+                    color = Color::LightMagenta;
+                }
+                if landmark_cells.contains(&(x, y)) {
+                    ch = '⌂';
+                    color = Color::Magenta;
+                }
+                if river_src == Some((x, y)) {
+                    ch = 'S';
+                    color = Color::Cyan;
+                }
+                if finding_cells.contains(&(x, y)) {
+                    ch = '!';
+                    color = Color::Red;
+                }
+                let mut st = Style::new().fg(color);
+                if cursor_disp == Some((x, y)) {
+                    st = st.add_modifier(Modifier::REVERSED);
+                }
+                Span::styled(ch.to_string(), st)
+            })
             .collect();
         lines.push(Line::from(spans));
     }
 
-    // Scale + legend.
-    lines.push(Line::from(Span::styled(
-        format!(
-            "grid {sw}×{sh} → {map_w}×{map_h} · {} river cell(s) · {} settlement(s)",
-            hydro.river_count,
-            layers.demographics.settlements.len(),
-        ),
-        Style::new().dim(),
-    )));
-    lines.push(Line::from(vec![
-        Span::styled("~", Style::new().fg(Color::Blue)),
-        Span::raw(" sea  "),
-        Span::styled("≈", Style::new().fg(Color::Cyan)),
-        Span::raw(" river  "),
-        Span::styled("#T", Style::new().fg(Color::Green)),
-        Span::raw(" forest  "),
-        Span::styled(":", Style::new().fg(Color::Yellow)),
-        Span::raw(" desert  "),
-        Span::styled("•", Style::new().fg(Color::Red)),
-        Span::styled("◉", Style::new().fg(Color::LightRed)),
-        Span::raw(" town/city"),
-    ]));
+    // Scale / readout line.
+    if app.map_edit {
+        let (cx, cy) = app.map_cursor;
+        let idx = cy.min(sh - 1) * sw + cx.min(sw - 1);
+        let biome = climate.biome.get(idx).map(|b| b.as_str()).unwrap_or("?");
+        let elev = layers.geology.heightmap.get(idx).copied().unwrap_or(0.0);
+        let sea = if elev <= layers.geology.sea_level { " · sea" } else { "" };
+        // A landmark or region exactly under the cursor names itself.
+        let here = app
+            .map_landmarks
+            .iter()
+            .find(|m| (m.x, m.y) == (cx, cy))
+            .map(|m| format!(" · ⌂ {} ({})", m.name, m.kind))
+            .or_else(|| {
+                app.map_regions
+                    .iter()
+                    .find(|m| (m.x, m.y) == (cx, cy))
+                    .map(|m| format!(" · § {} ({})", m.name, m.kind))
+            })
+            .unwrap_or_default();
+        lines.push(Line::from(Span::styled(
+            format!("✎ ({cx},{cy}) · {biome} · elev {elev:.2}{sea}{here}"),
+            Style::new().fg(Color::Yellow),
+        )));
+        let hint = match &app.map_tool {
+            Some(super::app::MapTool::River { source: None }) => {
+                "river: move to the SOURCE, Enter to set · Esc cancel"
+            }
+            Some(super::app::MapTool::River { source: Some(_) }) => {
+                "river: move to the MOUTH, Enter to set · Esc cancel"
+            }
+            None => "hjkl · t town · n name · r river · g region · d delete · f issue · Esc",
+        };
+        lines.push(Line::from(Span::styled(hint, Style::new().dim())));
+    } else {
+        // Non-edit: grid stats + the biome legend (edit mode uses the two rows for
+        // the readout + tool hint instead).
+        lines.push(Line::from(Span::styled(
+            format!(
+                "grid {sw}×{sh} → {map_w}×{map_h} · {} river cell(s) · {} settlement(s) · e: edit",
+                hydro.river_count,
+                layers.demographics.settlements.len(),
+            ),
+            Style::new().dim(),
+        )));
+        lines.push(Line::from(vec![
+            Span::styled("~", Style::new().fg(Color::Blue)),
+            Span::raw(" sea  "),
+            Span::styled("≈", Style::new().fg(Color::Cyan)),
+            Span::raw(" river  "),
+            Span::styled("#T", Style::new().fg(Color::Green)),
+            Span::raw(" forest  "),
+            Span::styled(":", Style::new().fg(Color::Yellow)),
+            Span::raw(" desert  "),
+            Span::styled("⌂", Style::new().fg(Color::Magenta)),
+            Span::raw(" landmark"),
+        ]));
+    }
 
     frame.render_widget(Paragraph::new(lines), area);
 }
@@ -209,6 +416,78 @@ mod tests {
         // A Terra-like world has ocean, so at least one sea glyph must appear.
         let sea = grid.iter().flatten().filter(|&&(c, _)| c == '~').count();
         assert!(sea > 0, "expected some ocean cells in the downsampled map");
+    }
+
+    #[test]
+    fn lint_map_flags_a_town_in_the_ocean_but_not_on_land() {
+        let base = terra();
+        let layers = compile_layers(&base);
+        let (w, h) = (layers.climate.width, layers.climate.height);
+        let cell = |i: usize| (i % w, i / w);
+        let ocean = (0..w * h)
+            .find(|&i| layers.climate.biome[i] == Biome::Ocean)
+            .map(cell)
+            .expect("terra has ocean");
+        let land = (0..w * h)
+            .find(|&i| layers.climate.biome[i] != Biome::Ocean)
+            .map(cell)
+            .expect("terra has land");
+        let body = format!(
+            r#"{{
+                name: "Terra"
+                seed: 0x5151
+                astronomy: {{
+                    star: {{ luminosity_solar: 1.0 }}
+                    planet: {{ mass_earth: 1.0, radius_earth: 1.0, axial_tilt_deg: 23.4, day_length_hours: 24.0 }}
+                    orbit: {{ semi_major_axis_au: 1.0 }}
+                    calendar: {{ months: 12, month_length_days: 30 }}
+                }}
+                geography: {{ landmarks: [
+                    {{ name: "Sunkport", kind: "city", x: {}, y: {} }}
+                    {{ name: "Dryhold", kind: "city", x: {}, y: {} }}
+                ] }}
+            }}"#,
+            ocean.0, ocean.1, land.0, land.1
+        );
+        let def = WorldDefinition::from_hjson(&body).unwrap();
+        let findings = lint_map(&def, &layers);
+        assert!(
+            findings.iter().any(|f| f.text.contains("Sunkport") && f.text.contains("ocean")),
+            "the ocean town should be flagged: {:?}",
+            findings.iter().map(|f| &f.text).collect::<Vec<_>>()
+        );
+        assert!(
+            !findings.iter().any(|f| f.text.contains("Dryhold")),
+            "the land town should not be flagged"
+        );
+        // The finding carries the offending cell for cursor-jump.
+        let sunk = findings.iter().find(|f| f.text.contains("Sunkport")).unwrap();
+        assert_eq!(sunk.at, Some(ocean));
+    }
+
+    #[test]
+    fn line_cells_connects_endpoints() {
+        let l = line_cells((0, 0), (4, 0));
+        assert_eq!(l.first(), Some(&(0, 0)));
+        assert_eq!(l.last(), Some(&(4, 0)));
+        assert_eq!(l.len(), 5); // horizontal: one cell per column
+        // A diagonal touches both ends and steps through.
+        let d = line_cells((0, 0), (3, 3));
+        assert_eq!(d.first(), Some(&(0, 0)));
+        assert_eq!(d.last(), Some(&(3, 3)));
+        // Degenerate (same point) is a single cell, no panic.
+        assert_eq!(line_cells((2, 2), (2, 2)), vec![(2, 2), (2, 2)]);
+    }
+
+    #[test]
+    fn source_to_display_maps_and_clamps() {
+        // A 96×64 source onto a 48×16 display: top-left → (0,0), bottom-right
+        // stays in range, and a mid cell scales proportionally.
+        assert_eq!(source_to_display((0, 0), (96, 64), (48, 16)), (0, 0));
+        assert_eq!(source_to_display((95, 63), (96, 64), (48, 16)), (47, 15));
+        assert_eq!(source_to_display((48, 32), (96, 64), (48, 16)), (24, 8));
+        // Degenerate dims never panic.
+        assert_eq!(source_to_display((5, 5), (0, 10), (10, 10)), (0, 0));
     }
 
     #[test]

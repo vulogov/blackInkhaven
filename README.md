@@ -27,27 +27,31 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.9.1 — Worldbuilder, Documented
+## Latest release · 1.10.0 — The Cartographer
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.9.1.md`](Documentation/RELEASE_NOTES/1.9.1.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/1.10.0.md`](Documentation/RELEASE_NOTES/1.10.0.md)
 
-A documentation release. 1.9.0 shipped the interactive worldbuilder; 1.9.1 teaches it properly —
-no code changes.
+The worldbuilder learns to draw: an interactive **map editor**, plus seed exploration and a real
+painted map on capable terminals. Every edit is still an ordinary `world.hjson` change.
 
 ### What's new
 
-- **Full TUI guidance** — *Building the World with Inkhaven* gains a rebuilt **Chapter 20**, "The
-  Interactive Worldbuilder," with eight faithful monospace **terminal screens** (the four-pane
-  layout, the interview, the shaping-delta modal, `/compile`/`/validate`, the Map pane, Research,
-  Ledger, and the `/journey` timeline), plus a complete key + command reference.
-- **Discoverable early** — a note in Chapter 3 points readers to `inkhaven worldbuilder` from the
-  first world they build.
-- A `screen()` helper joins the book's design system for the terminal frames.
+- **Interactive map editor** — cycle to the Map pane, press `e`, and place towns (`t`) and
+  landmarks (`n`), draw rivers (`r`, validated as you draw), mark regions (`g`), and delete (`d`).
+  `/mapcheck` checks the map layer against the physics (a town in the ocean, an off-map coord) and
+  `f` jumps to each issue. Every placement is a pending `world.hjson` edit — `/diff`, then `/write`.
+- **`/roll [n]` + `/adopt`** — compile *n* candidate worlds on derived seeds, compare them
+  (continents · sea % · population · ★), and adopt one.
+- **Raster map** — `/map` paints the real plakat map in the Map pane on kitty / iTerm2 / sixel
+  terminals; ASCII biome map otherwise.
+- **`/switch` sessions**, **promote a research hit to `fact:world`** (`a`), and **`/export --pdf`**
+  (Typst, in-process).
 
 ### Dependencies & compatibility
 
-Documentation only — no dependency, behaviour, or API changes from 1.9.0. Compiles warning-free.
-Test suite unchanged at 2712.
+No new dependencies; all changes additive and backward-compatible (`geography.regions[]` gains an
+optional anchor; the delta engine gains `RemoveAt`). Nothing changes the existing compiler or any
+project. Compiles warning-free. Test suite → 2720.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
