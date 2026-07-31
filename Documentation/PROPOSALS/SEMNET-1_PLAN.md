@@ -2,7 +2,8 @@
 
 > Status: **draft RFC**, 2026-07-31. Target: **2.0.0**.
 > Gate: `Documentation/2.0_READINESS.md` (perf + stability) must pass alongside.
-> This document is the design; the phase map (§11) is the plan.
+> This document is the design; the phase map (§11) is the plan. The grounded,
+> file-by-file engineering plan is the companion `SEMNET-1_IMPL.md`.
 
 ## 1. Thesis
 
