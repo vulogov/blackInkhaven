@@ -19,8 +19,10 @@
 //! keeps the warning-free bar until the surfacing phase wires the verbs.
 #![allow(dead_code)]
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
+use std::path::Path;
 
+use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::error::{Error, Result};
@@ -28,10 +30,9 @@ use crate::store::hierarchy::Hierarchy;
 use crate::store::node::Node;
 use crate::store::Store;
 
-// Re-export the domain types so callers use `store::graph::Edge` etc. (P2+
-// migrations reach for `ExternRef`/`Registry` via `crate::storage::edge_store`
-// directly until they surface here.)
+// Re-export the domain types so callers use `store::graph::Edge` etc.
 pub use crate::storage::edge_store::{Edge, EdgeKind, EdgeOrigin, EndpointRef};
+use crate::storage::edge_store::{ExternRef, Registry};
 
 /// The outcome of a [`Store::graph_rebuild`] — how many rebuildable edges were
 /// cleared and how many re-derived.
@@ -118,13 +119,18 @@ impl Store {
                 .map_err(map_edge_err)?;
         }
 
-        // P1 — structural lift from node fields.
         let hierarchy = Hierarchy::load(self)?;
         let nodes: Vec<Node> = hierarchy.flatten().into_iter().map(|(n, _)| n.clone()).collect();
-        let structural = derive_structural_edges(&nodes);
-        let added = structural.len();
-        if !structural.is_empty() {
-            self.raw().add_edges(&structural).map_err(map_edge_err)?;
+        let ids: HashSet<Uuid> = nodes.iter().map(|n| n.id).collect();
+
+        // P1 — structural lift from node fields.
+        let mut derived = derive_structural_edges(&nodes);
+        // P2 — provenance + verdict sidecars → SourcedFrom / GradedAs.
+        derived.extend(derive_sidecar_edges(self.project_root(), &ids));
+
+        let added = derived.len();
+        if !derived.is_empty() {
+            self.raw().add_edges(&derived).map_err(map_edge_err)?;
         }
 
         Ok(GraphRebuild { cleared, added })
@@ -189,6 +195,141 @@ pub(crate) fn derive_structural_edges(nodes: &[Node]) -> Vec<Edge> {
                 }
             }
         }
+    }
+    edges
+}
+
+// ── SEMNET-P2: provenance + verdict sidecars ─────────────────────────
+//
+// The research module owns the `.inkhaven/fact-sources.json` +
+// `fact-verdicts.json` sidecars (its types are `pub(super)`), so we read the
+// stable on-disk JSON contract directly rather than couple to those types.
+// This phase derives the edges from the sidecars (a projection, like the P1
+// structural lift) — the sidecar stays the write path; a later cutover makes it
+// a read-through cache of the graph.
+
+/// One `fact-sources.json` source row (mirror of `research::provenance::SourceRecord`).
+#[derive(Debug, Clone, Deserialize)]
+struct SidecarSource {
+    #[serde(default)]
+    origin: String,
+    #[serde(default)]
+    detail: String,
+    #[serde(default)]
+    query: String,
+    #[serde(default)]
+    thread: String,
+    #[serde(default)]
+    created_at: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct SidecarSourceFile {
+    #[serde(default)]
+    facts: BTreeMap<String, SidecarSource>,
+}
+
+/// One `fact-verdicts.json` verdict row (mirror of `research::verdicts::Verdict`;
+/// `level` serialises as the variant name, e.g. `"Inaccurate"`).
+#[derive(Debug, Clone, Deserialize)]
+struct SidecarVerdict {
+    level: String,
+    #[serde(default)]
+    reason: String,
+    #[serde(default)]
+    checked_at: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct SidecarVerdictFile {
+    #[serde(default)]
+    facts: BTreeMap<String, SidecarVerdict>,
+}
+
+fn read_json_map<T: Default + serde::de::DeserializeOwned>(root: &Path, file: &str) -> T {
+    let p = root.join(".inkhaven").join(file);
+    std::fs::read_to_string(p)
+        .ok()
+        .and_then(|s| serde_json::from_str::<T>(&s).ok())
+        .unwrap_or_default()
+}
+
+/// Read both sidecars and derive their edges (empty when the files are absent).
+fn derive_sidecar_edges(root: &Path, node_ids: &HashSet<Uuid>) -> Vec<Edge> {
+    let sources: SidecarSourceFile = read_json_map(root, "fact-sources.json");
+    let verdicts: SidecarVerdictFile = read_json_map(root, "fact-verdicts.json");
+    let mut edges = derive_provenance_edges(node_ids, &sources.facts);
+    edges.extend(derive_verdict_edges(node_ids, &verdicts.facts));
+    edges
+}
+
+/// Map a provenance `origin` string to a citation registry (unknown → `Other`).
+fn registry_for_origin(origin: &str) -> Registry {
+    match origin {
+        "openalex" => Registry::OpenAlex,
+        "arxiv" => Registry::Arxiv,
+        "wikidata" => Registry::Wikidata,
+        "geonames" => Registry::Geonames,
+        _ => Registry::Other,
+    }
+}
+
+/// SEMNET-P2 — `SourcedFrom` edges: fact-node → its source. The source endpoint
+/// is `Extern::Work { registry(from origin), id }` (id = detail, or the origin
+/// name when detail is empty, so distinct origins don't collapse). The full
+/// record rides `attrs` for a lossless round-trip. Sidecar rows whose fact is
+/// no longer a node are skipped. Pure (no I/O).
+fn derive_provenance_edges(
+    node_ids: &HashSet<Uuid>,
+    sources: &BTreeMap<String, SidecarSource>,
+) -> Vec<Edge> {
+    let mut edges = Vec::new();
+    for (fact_id, rec) in sources {
+        let Ok(fact) = Uuid::parse_str(fact_id) else { continue };
+        if !node_ids.contains(&fact) {
+            continue;
+        }
+        let id = if rec.detail.is_empty() { rec.origin.clone() } else { rec.detail.clone() };
+        let dst = EndpointRef::Extern(ExternRef::Work {
+            registry: registry_for_origin(&rec.origin),
+            id,
+        });
+        edges.push(
+            Edge::new(EndpointRef::Node(fact), EdgeKind::SourcedFrom, dst, EdgeOrigin::Structural)
+                .with_attrs(serde_json::json!({
+                    "origin": rec.origin,
+                    "detail": rec.detail,
+                    "query": rec.query,
+                    "thread": rec.thread,
+                    "created_at": rec.created_at,
+                })),
+        );
+    }
+    edges
+}
+
+/// SEMNET-P2 — `GradedAs` edges: fact-node → a verdict-grade bucket
+/// (`Extern::Grade { level }`, lowercased), with `reason`/`checked_at` in
+/// `attrs`. Lets facts be grouped by grade via the reverse index. Pure.
+fn derive_verdict_edges(
+    node_ids: &HashSet<Uuid>,
+    verdicts: &BTreeMap<String, SidecarVerdict>,
+) -> Vec<Edge> {
+    let mut edges = Vec::new();
+    for (fact_id, v) in verdicts {
+        let Ok(fact) = Uuid::parse_str(fact_id) else { continue };
+        if !node_ids.contains(&fact) {
+            continue;
+        }
+        let dst = EndpointRef::Extern(ExternRef::Grade { level: v.level.to_lowercase() });
+        edges.push(
+            Edge::new(EndpointRef::Node(fact), EdgeKind::GradedAs, dst, EdgeOrigin::Structural)
+                .with_attrs(serde_json::json!({
+                    "level": v.level,
+                    "reason": v.reason,
+                    "checked_at": v.checked_at,
+                })),
+        );
     }
     edges
 }
@@ -290,5 +431,143 @@ mod tests {
         assert_eq!(into_b.len(), 1);
         assert_eq!(into_b[0].src, EndpointRef::Node(a));
         assert!(store.incoming(&EndpointRef::Node(a), &[EdgeKind::LinksTo]).unwrap().is_empty());
+    }
+
+    // ── P2: provenance + verdicts ──────────────────────────────────
+
+    fn src_rec(origin: &str, detail: &str) -> SidecarSource {
+        SidecarSource {
+            origin: origin.into(),
+            detail: detail.into(),
+            query: "q".into(),
+            thread: "t".into(),
+            created_at: "2026-07-01T10:00:00Z".into(),
+        }
+    }
+
+    #[test]
+    fn provenance_becomes_sourced_from_with_registry() {
+        let fact = Uuid::now_v7();
+        let ids = HashSet::from([fact]);
+        let mut sources = BTreeMap::new();
+        sources.insert(fact.to_string(), src_rec("arxiv", "2401.00001"));
+        let edges = derive_provenance_edges(&ids, &sources);
+        assert_eq!(edges.len(), 1);
+        let e = &edges[0];
+        assert_eq!(e.kind, EdgeKind::SourcedFrom);
+        assert_eq!(e.src, EndpointRef::Node(fact));
+        assert_eq!(
+            e.dst,
+            EndpointRef::Extern(ExternRef::Work { registry: Registry::Arxiv, id: "2401.00001".into() })
+        );
+        assert_eq!(e.attrs["origin"], "arxiv");
+        assert_eq!(e.attrs["query"], "q");
+        assert_eq!(e.origin, EdgeOrigin::Structural);
+    }
+
+    #[test]
+    fn provenance_roundtrips_losslessly_across_the_origin_vocab() {
+        // Every origin the sidecar can carry, plus a Cyrillic detail (multilingual).
+        let origins = [
+            ("model", ""),
+            ("manual", ""),
+            ("promoted", "notes/idea"),
+            ("web", "https://example.org"),
+            ("document", "sources/paper.pdf"),
+            ("archive", "ia:xyz"),
+            ("wikisource", "Page"),
+            ("wikidata", "Q42"),
+            ("geonames", "524901"),
+            ("openalex", "W123"),
+            ("arxiv", "2401.00001"),
+            ("computed", "sum"),
+            ("simulation", "Мир·тик-7"), // Cyrillic detail
+        ];
+        let mut ids = HashSet::new();
+        let mut sources = BTreeMap::new();
+        let mut want: BTreeMap<String, SidecarSource> = BTreeMap::new();
+        for (origin, detail) in origins {
+            let fact = Uuid::now_v7();
+            ids.insert(fact);
+            let rec = src_rec(origin, detail);
+            sources.insert(fact.to_string(), rec.clone());
+            want.insert(fact.to_string(), rec);
+        }
+        let edges = derive_provenance_edges(&ids, &sources);
+        assert_eq!(edges.len(), origins.len());
+        // Reconstruct the sidecar from the edges (src fact-id + attrs) and compare.
+        let mut got: BTreeMap<String, serde_json::Value> = BTreeMap::new();
+        for e in &edges {
+            let EndpointRef::Node(fact) = &e.src else { panic!("src must be a node") };
+            got.insert(fact.to_string(), e.attrs.clone());
+        }
+        for (fid, rec) in &want {
+            let a = &got[fid];
+            assert_eq!(a["origin"], rec.origin);
+            assert_eq!(a["detail"], rec.detail, "detail (incl. Cyrillic) must survive");
+            assert_eq!(a["query"], rec.query);
+            assert_eq!(a["thread"], rec.thread);
+            assert_eq!(a["created_at"], rec.created_at);
+        }
+    }
+
+    #[test]
+    fn verdict_becomes_graded_as_with_level_and_reason() {
+        let fact = Uuid::now_v7();
+        let ids = HashSet::from([fact]);
+        let mut verdicts = BTreeMap::new();
+        verdicts.insert(
+            fact.to_string(),
+            SidecarVerdict { level: "Inaccurate".into(), reason: "противоречит §3".into(), checked_at: "2026-07-02T09:00:00Z".into() },
+        );
+        let edges = derive_verdict_edges(&ids, &verdicts);
+        assert_eq!(edges.len(), 1);
+        let e = &edges[0];
+        assert_eq!(e.kind, EdgeKind::GradedAs);
+        assert_eq!(e.src, EndpointRef::Node(fact));
+        assert_eq!(e.dst, EndpointRef::Extern(ExternRef::Grade { level: "inaccurate".into() }));
+        assert_eq!(e.attrs["level"], "Inaccurate");
+        assert_eq!(e.attrs["reason"], "противоречит §3");
+    }
+
+    #[test]
+    fn sidecar_rows_for_missing_nodes_are_skipped() {
+        // A source/verdict whose fact node no longer exists produces no edge.
+        let live = Uuid::now_v7();
+        let ghost = Uuid::now_v7();
+        let ids = HashSet::from([live]);
+        let mut sources = BTreeMap::new();
+        sources.insert(ghost.to_string(), src_rec("model", ""));
+        sources.insert("not-a-uuid".to_string(), src_rec("model", ""));
+        assert!(derive_provenance_edges(&ids, &sources).is_empty());
+
+        let mut verdicts = BTreeMap::new();
+        verdicts.insert(
+            ghost.to_string(),
+            SidecarVerdict { level: "Dubious".into(), reason: String::new(), checked_at: String::new() },
+        );
+        assert!(derive_verdict_edges(&ids, &verdicts).is_empty());
+    }
+
+    #[test]
+    fn graded_facts_group_by_grade_via_reverse_index() {
+        // "All inaccurate facts" = incoming edges on the Grade endpoint.
+        let (f1, f2, f3) = (Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7());
+        let ids = HashSet::from([f1, f2, f3]);
+        let mut verdicts = BTreeMap::new();
+        let mk = |lvl: &str| SidecarVerdict { level: lvl.into(), reason: String::new(), checked_at: String::new() };
+        verdicts.insert(f1.to_string(), mk("Inaccurate"));
+        verdicts.insert(f2.to_string(), mk("Inaccurate"));
+        verdicts.insert(f3.to_string(), mk("Accurate"));
+        let edges = derive_verdict_edges(&ids, &verdicts);
+
+        let dir = TempDir::new().unwrap();
+        let store = EdgeStore::new(dir.path().join("edges.db"), 2).unwrap();
+        store.insert_batch(&edges).unwrap();
+
+        let inaccurate = store
+            .incoming(&EndpointRef::Extern(ExternRef::Grade { level: "inaccurate".into() }), &[EdgeKind::GradedAs])
+            .unwrap();
+        assert_eq!(inaccurate.len(), 2, "two facts graded inaccurate group under the bucket");
     }
 }

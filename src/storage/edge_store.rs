@@ -289,6 +289,9 @@ pub enum ExternRef {
     Sense { lang: String, synset: String },
     /// An interlingual index id (cross-lingual pivot).
     Ili { id: String },
+    /// A verdict/assessment bucket (e.g. a fact-check grade) — lets facts be
+    /// grouped by grade via the reverse index ("all inaccurate facts").
+    Grade { level: String },
 }
 
 /// Where an edge starts or ends.
@@ -311,6 +314,7 @@ impl EndpointRef {
                 ExternRef::Locus { scheme, canonical } => ("locus", format!("{scheme}{US}{canonical}")),
                 ExternRef::Sense { lang, synset } => ("sense", format!("{lang}{US}{synset}")),
                 ExternRef::Ili { id } => ("ili", id.clone()),
+                ExternRef::Grade { level } => ("grade", level.clone()),
             },
         }
     }
@@ -350,6 +354,7 @@ impl EndpointRef {
                 EndpointRef::Extern(ExternRef::Sense { lang: a, synset: b })
             }
             "ili" => EndpointRef::Extern(ExternRef::Ili { id: r.to_string() }),
+            "grade" => EndpointRef::Extern(ExternRef::Grade { level: r.to_string() }),
             other => return Err(anyhow!("unknown endpoint kind: {other:?}")),
         })
     }
@@ -885,6 +890,7 @@ mod tests {
             EndpointRef::Extern(ExternRef::Locus { scheme: "bible".into(), canonical: "John 3:16".into() }),
             EndpointRef::Extern(ExternRef::Sense { lang: "ru".into(), synset: "12345-n".into() }),
             EndpointRef::Extern(ExternRef::Ili { id: "i98765".into() }),
+            EndpointRef::Extern(ExternRef::Grade { level: "inaccurate".into() }),
         ];
         for ep in cases {
             let (k, r) = ep.as_columns();
