@@ -1,3 +1,4 @@
+pub mod graph;
 pub mod hierarchy;
 pub mod node;
 
@@ -1808,6 +1809,20 @@ symbol/motif proposals you can accept straight into this book.";
                 target: "inkhaven::delete",
                 "delete_subtree: scrubbed paragraph links from {scrubbed} other paragraph(s)",
             );
+        }
+        // SEMNET-P0 — cascade-GC any graph edges touching the deleted nodes, so
+        // no edge is left pointing at a vanished node (sibling of the link
+        // scrub above). Best-effort: logged, never aborts the delete.
+        match self.inner.gc_edges_for_nodes(&deleted) {
+            Ok(n) if n > 0 => tracing::info!(
+                target: "inkhaven::delete",
+                "delete_subtree: removed {n} graph edge(s) touching the deleted node(s)",
+            ),
+            Ok(_) => {}
+            Err(e) => tracing::warn!(
+                target: "inkhaven::delete",
+                "delete_subtree: edge GC failed: {e}",
+            ),
         }
         // Fire hook.on_delete ( uuid -- ) once per deleted id, in
         // the same order the store walks them. Best-effort: hook
