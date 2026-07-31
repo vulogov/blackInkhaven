@@ -432,6 +432,17 @@ harness = false
 name = "scale"
 harness = false
 
+# 2.0 harness — export cost (markdown/typst/epub on a dedicated single-book
+# fixture generated at setup).
+[[bench]]
+name = "export"
+harness = false
+
+# 2.0 harness — embedding throughput (the index-build cost), via `_bench-embed`.
+[[bench]]
+name = "index"
+harness = false
+
 [profile.release]
 lto = "thin"
 codegen-units = 1
