@@ -37,12 +37,12 @@ jobs:
   build:
     name: build (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
-    # 1.2.4+: Windows is soft-failure. The vcpkg fontconfig install
-    # below is what makes the Rust link step succeed, but it can
-    # break in subtle ways (runner image updates, vcpkg version
-    # drift). When it does, we still want the Linux + Mac assets
-    # to publish — Windows users can fall back to `cargo install
-    # --git` until we patch the workflow.
+    # Windows is soft-failure (DEFERRED — see the matrix note below). The
+    # windows-gnu build currently cannot succeed: `ort-sys` (ONNX Runtime via
+    # `fastembed`) has no windows-gnu prebuilt. Kept soft-fail so the Linux +
+    # macOS assets still publish; Windows users fall back to `cargo install
+    # --git` on an msvc toolchain. Revisit when ort ships a gnu binary or we
+    # move to the windows-msvc target.
     continue-on-error: ${{ matrix.target == 'x86_64-pc-windows-gnu' }}
     strategy:
       fail-fast: false
@@ -54,12 +54,24 @@ jobs:
           - os: macos-latest
             target: aarch64-apple-darwin
             archive: tar.gz
-          # Windows: native MSVC isn't ready (inkhaven's `sources` layer +
-          # some native deps don't build clean under MSVC yet). The viable
-          # path is the GNU/Cygwin family — build the `x86_64-pc-windows-gnu`
-          # target under MSYS2 (mingw-w64 gcc/g++ + pkg-config + fontconfig).
-          # Kept soft-fail (`continue-on-error` below) until a CI run proves it
-          # green, so a work-in-progress config can't redden the release.
+          # Windows: DEFERRED — soft-fail, no release asset for now.
+          # Root cause (confirmed 2026-07-31): the `x86_64-pc-windows-gnu`
+          # build fails at `ort-sys` — the ONNX Runtime bindings pulled in by
+          # `fastembed` for embeddings ship prebuilt binaries for windows-MSVC
+          # but NOT windows-gnu ("ort does not provide prebuilt binaries for
+          # x86_64-pc-windows-gnu"). This is upstream (pyke/ort), not our code;
+          # the MSYS2 toolchain (duckdb C++, fontconfig) itself is fine.
+          # DECISION: leave Windows soft-failing and push a Windows release to
+          # the future, WHEN one of these unblocks it —
+          #   (1) ort ships a windows-gnu prebuilt (then this just goes green), OR
+          #   (2) we adopt the windows-MSVC target (ort HAS msvc prebuilts;
+          #       build-time provenance, same security model as Linux/macOS —
+          #       the RECOMMENDED path; needs the codebase made msvc-clean), OR
+          #   (3) we bundle a build-time-verified onnxruntime.dll in the zip.
+          # REJECTED: downloading + loading onnxruntime.dll at runtime/startup —
+          # it executes third-party native code in-process (DLL-hijack + supply-
+          # chain + tamper surface); strictly more attack surface than (1)-(3).
+          # See Documentation/2.0_READINESS.md § "Known platform note".
           - os: windows-latest
             target: x86_64-pc-windows-gnu
             archive: zip
@@ -75,14 +87,13 @@ jobs:
           #   target: x86_64-apple-darwin
           #   archive: tar.gz
           #
-          # Windows note (1.8.36+): native MSVC is not ready, so we build the
-          # GNU target under MSYS2/mingw-w64 instead (see the matrix entry and
-          # the "Set up MSYS2" + "Build (release, windows-gnu)" steps below).
-          # `yeslogic-fontconfig-sys` (via `…plotters → font-kit`) finds
-          # fontconfig through mingw's pkg-config; duckdb's bundled C++ builds
-          # with mingw g++. This is a WORK IN PROGRESS kept `continue-on-error`
-          # until a CI run proves it green — a failing config can't block the
-          # release. (binstall for Windows stays disabled in Cargo.toml until then.)
+          # Windows build steps (MSYS2/mingw-w64: fontconfig via pkg-config,
+          # duckdb's C++ via mingw g++) remain below so the config is ready the
+          # moment the ort-sys blocker lifts — but the build stops at ort-sys
+          # today, so it's kept `continue-on-error` and ships no asset. See the
+          # windows-gnu matrix entry above for the root cause + the decision to
+          # defer, and Documentation/2.0_READINESS.md. (binstall for Windows
+          # stays disabled in Cargo.toml until a Windows asset ships.)
     steps:
       - name: Resolve tag
         id: tag
