@@ -35,14 +35,20 @@ pub fn stats(project: &Path) -> Result<()> {
     Ok(())
 }
 
-/// `inkhaven graph rebuild` — drop and re-derive the rebuildable-cache edges
-/// (`Derived`/`Imported`); durable edges are untouched.
+/// `inkhaven graph rebuild` — drop and re-derive the derivable edges
+/// (`Structural`/`Derived`/`Imported`); the user's `Authorial`/`Promoted` edges
+/// are untouched. P1 re-derives the structural edges (`LinksTo`,
+/// `EventInvolves`) from the current node fields.
 pub fn rebuild(project: &Path) -> Result<()> {
     let store = open(project)?;
-    let dropped = store.graph_rebuild()?;
-    println!("graph rebuild: cleared {dropped} rebuildable edge(s)");
-    // In P0 nothing is re-derived yet; later phases re-materialise here.
+    let r = store.graph_rebuild()?;
+    println!("graph rebuild: cleared {} derivable edge(s), re-derived {}", r.cleared, r.added);
     let s = store.graph_stats()?;
     println!("graph now holds {} edge(s) across {} node(s)", s.edges, s.nodes);
+    if !s.by_kind.is_empty() {
+        for (kind, n) in &s.by_kind {
+            println!("  {kind:<16} {n}");
+        }
+    }
     Ok(())
 }
