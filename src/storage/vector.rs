@@ -16,6 +16,29 @@ pub use vecstore::Neighbor as SearchResult;
 use crate::storage::embedding::EmbeddingEngine;
 use crate::storage::fingerprint::json_fingerprint;
 
+/// After this many consecutive background-sync failures, give up the current
+/// pass (leaving `dirty` set for the next trigger) rather than spinning.
+const MAX_SYNC_RETRIES: u32 = 5;
+
+/// The background-sync retry policy after one `drain_dirty` attempt. Pure so the
+/// no-spin guarantee is unit-testable without a failing store. Returns the new
+/// consecutive-failure count, an optional backoff sleep, and whether to give up
+/// this background pass. On success the counter resets; on failure it backs off
+/// (linearly) until [`MAX_SYNC_RETRIES`], then gives up so a persistent I/O
+/// fault (disk full / read-only volume) can't pin a CPU core re-attempting the
+/// failing write.
+fn sync_retry_step(succeeded: bool, failures: u32) -> (u32, Option<std::time::Duration>, bool) {
+    if succeeded {
+        return (0, None, false);
+    }
+    let f = failures + 1;
+    if f >= MAX_SYNC_RETRIES {
+        (f, None, true)
+    } else {
+        (f, Some(std::time::Duration::from_millis(100 * f as u64)), false)
+    }
+}
+
 /// Thread-safe HNSW index wrapper. The underlying `VecStore` is opened
 /// lazily on the first vector operation — important when a project is
 /// opened purely to read DuckDB metadata (e.g. CLI `list`) and the
@@ -200,18 +223,38 @@ impl VectorEngine {
         let dirty = self.dirty.clone();
         let in_flight = self.sync_in_flight.clone();
         std::thread::spawn(move || {
+            let mut failures: u32 = 0;
             loop {
-                if let Err(e) = Self::drain_dirty(&store, &dirty) {
-                    tracing::warn!(
-                        target: "inkhaven::storage::vector",
-                        "background vector sync failed: {e}",
-                    );
+                let (next_failures, backoff, give_up) =
+                    match Self::drain_dirty(&store, &dirty) {
+                        Ok(()) => sync_retry_step(true, failures),
+                        Err(e) => {
+                            tracing::warn!(
+                                target: "inkhaven::storage::vector",
+                                "background vector sync failed (attempt {}): {e}",
+                                failures + 1,
+                            );
+                            sync_retry_step(false, failures)
+                        }
+                    };
+                failures = next_failures;
+                if let Some(delay) = backoff {
+                    std::thread::sleep(delay);
                 }
                 // Release the flag, then re-check: a writer that set `dirty`
                 // during our save is flushed on this same thread instead of
                 // waiting for the next save / periodic tick. The release-then-
                 // recheck (with a reclaiming swap) closes the lost-wakeup window.
+                // Release BEFORE any give-up break so the next write can spawn a
+                // fresh sync once a persistent I/O fault clears.
                 in_flight.store(false, Ordering::Release);
+                if give_up {
+                    // A persistent save error (disk full / read-only / unplugged
+                    // volume): `dirty` stays set, so the next write or periodic
+                    // tick retries — but this thread exits instead of spinning a
+                    // core re-attempting the failing write.
+                    break;
+                }
                 if !dirty.load(Ordering::Acquire) {
                     break;
                 }
@@ -286,4 +329,40 @@ fn json_to_metadata(json: JsonValue) -> Metadata {
         }
     };
     Metadata { fields }
+}
+
+#[cfg(test)]
+mod tests_sync_retry {
+    use super::{sync_retry_step, MAX_SYNC_RETRIES};
+
+    #[test]
+    fn success_resets_and_never_backs_off() {
+        let (failures, backoff, give_up) = sync_retry_step(true, 4);
+        assert_eq!(failures, 0);
+        assert!(backoff.is_none());
+        assert!(!give_up);
+    }
+
+    #[test]
+    fn failures_back_off_linearly_then_give_up() {
+        // Walk a run of consecutive failures; the background sync must stop
+        // spinning once it has retried MAX_SYNC_RETRIES times.
+        let mut failures = 0u32;
+        let mut gave_up = false;
+        for step in 1..=MAX_SYNC_RETRIES {
+            let (f, backoff, give_up) = sync_retry_step(false, failures);
+            failures = f;
+            assert_eq!(f, step);
+            if step < MAX_SYNC_RETRIES {
+                // A bounded, increasing pause — not a busy spin.
+                assert_eq!(backoff.unwrap().as_millis() as u64, 100 * step as u64);
+                assert!(!give_up);
+            } else {
+                assert!(backoff.is_none());
+                assert!(give_up);
+                gave_up = true;
+            }
+        }
+        assert!(gave_up, "must give up at the retry ceiling");
+    }
 }

@@ -30378,6 +30378,29 @@ fn byte_offset_for_cursor(source: &str, row: usize, col: usize) -> usize {
 /// pink background (re-using `search_match_bg` / `search_current_bg`
 /// from the theme); surrounding text keeps its original styling.
 ///
+/// The `[start, end)` char range in `full` of the first case-insensitive match
+/// of `needle_lower` (already lowercased), or `None` when absent/empty.
+///
+/// The byte offsets from `full.to_lowercase().find(..)` index the *lowercased*
+/// string, whose byte (and char) length can differ from `full` (`İ`→`i̇`,
+/// `ß`→`ss`). Slicing `full` with a lower-derived byte offset panicked off a
+/// char boundary; here the char counts are taken from `lower` and clamped to
+/// `full`'s char count, so a length-changing case-fold can neither panic nor
+/// overshoot. (For the common case where lowercasing preserves char boundaries —
+/// all ASCII, Cyrillic, most accented Latin — the range is exact.)
+pub(super) fn case_insensitive_match_range(full: &str, needle_lower: &str) -> Option<(usize, usize)> {
+    if needle_lower.is_empty() {
+        return None;
+    }
+    let lower = full.to_lowercase();
+    let byte_pos = lower.find(needle_lower)?;
+    let byte_end = byte_pos + needle_lower.len();
+    let full_chars = full.chars().count();
+    let char_start = lower[..byte_pos].chars().count().min(full_chars);
+    let char_end = lower[..byte_end].chars().count().min(full_chars);
+    Some((char_start, char_end))
+}
+
 /// Only the FIRST occurrence per line is highlighted — multiple
 /// matches on the same line is a UX corner case; the user can hit
 /// Ctrl+X to walk to the next line's match either way.
@@ -30391,14 +30414,9 @@ pub(super) fn highlight_substring_in_line(
         return;
     }
     let full: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-    let lower = full.to_lowercase();
-    let Some(byte_pos) = lower.find(needle_lower) else { return };
-    let byte_end = byte_pos + needle_lower.len();
-    let char_start = full[..byte_pos].chars().count();
-    // Use `chars().count()` rather than slicing by needle.len() so
-    // we get the count in original-cased chars (UTF-8 case-fold can
-    // shift byte lengths).
-    let char_end = full[..byte_end].chars().count();
+    let Some((char_start, char_end)) = case_insensitive_match_range(&full, needle_lower) else {
+        return;
+    };
 
     let highlight_bg = if is_current {
         theme.search_current_bg
@@ -32400,5 +32418,36 @@ mod tests_confront {
         assert_eq!(emit_confront_findings(id, &relations), 4);
         assert_eq!(emit_confront_findings(id, &[]), 0);
         assert_eq!(emit_confront_findings(id, &[rel(Stance::Silent)]), 0);
+    }
+}
+
+#[cfg(test)]
+mod tests_case_range {
+    use super::case_insensitive_match_range;
+
+    #[test]
+    fn ascii_match_is_char_indexed() {
+        assert_eq!(case_insensitive_match_range("Hello World", "world"), Some((6, 11)));
+        assert_eq!(case_insensitive_match_range("abc", "xyz"), None);
+        assert_eq!(case_insensitive_match_range("abc", ""), None);
+    }
+
+    #[test]
+    fn multibyte_prefix_offsets_are_char_not_byte() {
+        // "café" — the é is 2 bytes; matching "fé" must return char indices (2,4).
+        assert_eq!(case_insensitive_match_range("café", "fé"), Some((2, 4)));
+    }
+
+    #[test]
+    fn to_lowercase_expanding_char_does_not_panic() {
+        // 'İ' (U+0130) lowercases to two chars/three bytes — the classic case where
+        // lowered-byte offsets fall on a non-boundary of the original. Must not panic,
+        // and the returned char indices must stay within the original char count.
+        let hay = "AİB";
+        let n = hay.chars().count();
+        let r = case_insensitive_match_range(hay, "b");
+        if let Some((s, e)) = r {
+            assert!(s <= n && e <= n, "indices {s},{e} exceed char count {n}");
+        }
     }
 }
