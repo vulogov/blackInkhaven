@@ -3053,14 +3053,29 @@ pub enum WordnetCommand {
     List,
 }
 
-/// 2.0 (SEMNET-P0) — `inkhaven graph` verbs.
+/// 2.0 (SEMNET-P0/P3) — `inkhaven graph` verbs.
 #[derive(Debug, clap::Subcommand)]
 pub enum GraphCommand {
     /// Node + edge counts and a per-kind breakdown.
     Stats,
-    /// Drop and re-derive the rebuildable-cache edges (`Derived`/`Imported`);
-    /// durable edges are untouched.
+    /// Drop and re-derive the derivable edges (`Structural`/`Derived`/`Imported`);
+    /// user `Authorial`/`Promoted` edges are untouched.
     Rebuild,
+    /// The recorded stance clashes touching a node (Contradicts / InTension).
+    Contradicting {
+        /// The node UUID.
+        node: String,
+    },
+    /// Accept a Judged stance edge (→ Promoted, kept across rebuilds).
+    Promote {
+        /// The edge UUID.
+        edge: String,
+    },
+    /// Delete a stance edge.
+    Dismiss {
+        /// The edge UUID.
+        edge: String,
+    },
 }
 
 /// sub-subcommands under
@@ -6326,6 +6341,11 @@ impl Cli {
             Command::Graph { cmd } => match cmd {
                 GraphCommand::Stats => graph::stats(&project).map_err(Into::into),
                 GraphCommand::Rebuild => graph::rebuild(&project).map_err(Into::into),
+                GraphCommand::Contradicting { node } => {
+                    graph::contradicting(&project, &node).map_err(Into::into)
+                }
+                GraphCommand::Promote { edge } => graph::promote(&project, &edge).map_err(Into::into),
+                GraphCommand::Dismiss { edge } => graph::dismiss(&project, &edge).map_err(Into::into),
             },
             // Poetry is library/analysis; `forms` needs no project.
             Command::Poetry { cmd } => match cmd {

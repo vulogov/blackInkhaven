@@ -292,6 +292,10 @@ pub enum ExternRef {
     /// A verdict/assessment bucket (e.g. a fact-check grade) — lets facts be
     /// grouped by grade via the reverse index ("all inaccurate facts").
     Grade { level: String },
+    /// A labelled piece of evidence in a confront/relate judgement (a fact
+    /// breadcrumb or source name) that isn't a resolved node — the far side of
+    /// a Judged stance edge until it's reconciled to a node.
+    Evidence { label: String },
 }
 
 /// Where an edge starts or ends.
@@ -315,6 +319,7 @@ impl EndpointRef {
                 ExternRef::Sense { lang, synset } => ("sense", format!("{lang}{US}{synset}")),
                 ExternRef::Ili { id } => ("ili", id.clone()),
                 ExternRef::Grade { level } => ("grade", level.clone()),
+                ExternRef::Evidence { label } => ("evidence", label.clone()),
             },
         }
     }
@@ -355,6 +360,7 @@ impl EndpointRef {
             }
             "ili" => EndpointRef::Extern(ExternRef::Ili { id: r.to_string() }),
             "grade" => EndpointRef::Extern(ExternRef::Grade { level: r.to_string() }),
+            "evidence" => EndpointRef::Extern(ExternRef::Evidence { label: r.to_string() }),
             other => return Err(anyhow!("unknown endpoint kind: {other:?}")),
         })
     }
@@ -598,6 +604,21 @@ impl EdgeStore {
             let n = conn
                 .execute("DELETE FROM edges WHERE origin = ?", duckdb::params_from_iter(params))
                 .map_err(|e| anyhow!("edge origin-GC failed: {e}"))?;
+            Ok(n)
+        })
+    }
+
+    /// Change an edge's origin — the promote/demote primitive (e.g. a `Judged`
+    /// stance edge the user accepts becomes `Promoted`). Returns the number of
+    /// rows changed (0 if the id doesn't exist).
+    pub fn set_origin(&self, id: Uuid, origin: EdgeOrigin) -> Result<usize> {
+        let o = origin.as_str();
+        let id_s = id.to_string();
+        self.engine.transaction(|conn| {
+            let params: Vec<&dyn duckdb::ToSql> = vec![&o, &id_s];
+            let n = conn
+                .execute("UPDATE edges SET origin = ? WHERE id = ?", duckdb::params_from_iter(params))
+                .map_err(|e| anyhow!("edge set_origin failed: {e}"))?;
             Ok(n)
         })
     }
@@ -866,6 +887,27 @@ mod tests {
     }
 
     #[test]
+    fn set_origin_promotes_judged_to_promoted() {
+        let (_d, s) = store();
+        let e = Edge::new(
+            EndpointRef::Node(Uuid::now_v7()),
+            EdgeKind::Contradicts,
+            EndpointRef::Node(Uuid::now_v7()),
+            EdgeOrigin::Judged,
+        );
+        s.insert(&e).unwrap();
+        assert_eq!(s.set_origin(e.id, EdgeOrigin::Promoted).unwrap(), 1);
+        assert_eq!(s.by_id(e.id).unwrap().unwrap().origin, EdgeOrigin::Promoted);
+        // A promoted stance edge survives the rebuild sweep (only Structural/
+        // Derived/Imported are cleared).
+        for o in [EdgeOrigin::Structural, EdgeOrigin::Derived, EdgeOrigin::Imported] {
+            s.delete_by_origin(o).unwrap();
+        }
+        assert!(s.by_id(e.id).unwrap().is_some(), "promoted edge must survive rebuild");
+        assert_eq!(s.set_origin(Uuid::now_v7(), EdgeOrigin::Promoted).unwrap(), 0);
+    }
+
+    #[test]
     fn delete_by_origin_spares_durable_edges() {
         let (_d, s) = store();
         let durable = link(Uuid::now_v7(), Uuid::now_v7()); // Structural
@@ -883,6 +925,47 @@ mod tests {
     }
 
     #[test]
+    fn replacing_judged_outgoing_keeps_promoted() {
+        // Models Store::replace_confront_edges: a re-confront drops the node's
+        // prior Judged stance edges but keeps ones the user promoted.
+        let (_d, s) = store();
+        let node = Uuid::now_v7();
+        let judged = Edge::new(
+            EndpointRef::Node(node),
+            EdgeKind::Contradicts,
+            EndpointRef::Extern(ExternRef::Evidence { label: "fact: old".into() }),
+            EdgeOrigin::Judged,
+        );
+        let promoted = Edge::new(
+            EndpointRef::Node(node),
+            EdgeKind::InTension,
+            EndpointRef::Extern(ExternRef::Evidence { label: "fact: kept".into() }),
+            EdgeOrigin::Promoted,
+        );
+        s.insert(&judged).unwrap();
+        s.insert(&promoted).unwrap();
+
+        // Replace: delete Judged outgoing stance edges, add a fresh one.
+        let stance = [EdgeKind::Contradicts, EdgeKind::InTension, EdgeKind::Qualifies, EdgeKind::Agrees];
+        for e in s.outgoing(&EndpointRef::Node(node), &stance).unwrap() {
+            if e.origin == EdgeOrigin::Judged {
+                s.delete(e.id).unwrap();
+            }
+        }
+        let fresh = Edge::new(
+            EndpointRef::Node(node),
+            EdgeKind::Agrees,
+            EndpointRef::Extern(ExternRef::Evidence { label: "fact: new".into() }),
+            EdgeOrigin::Judged,
+        );
+        s.insert(&fresh).unwrap();
+
+        assert!(s.by_id(judged.id).unwrap().is_none(), "old judged dropped");
+        assert!(s.by_id(promoted.id).unwrap().is_some(), "promoted kept");
+        assert!(s.by_id(fresh.id).unwrap().is_some(), "fresh judged added");
+    }
+
+    #[test]
     fn extern_endpoints_roundtrip_through_columns() {
         let cases = vec![
             EndpointRef::Extern(ExternRef::Source { book_node: Uuid::now_v7(), key: "smith2020".into() }),
@@ -891,6 +974,7 @@ mod tests {
             EndpointRef::Extern(ExternRef::Sense { lang: "ru".into(), synset: "12345-n".into() }),
             EndpointRef::Extern(ExternRef::Ili { id: "i98765".into() }),
             EndpointRef::Extern(ExternRef::Grade { level: "inaccurate".into() }),
+            EndpointRef::Extern(ExternRef::Evidence { label: "fact: Chapter 3 › para 5".into() }),
         ];
         for ep in cases {
             let (k, r) = ep.as_columns();

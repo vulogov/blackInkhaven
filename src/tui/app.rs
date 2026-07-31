@@ -15721,11 +15721,18 @@ impl App {
         let system = contradiction::relate_system(&language);
         let user = contradiction::relate_user(&prose, &evidence);
         let client = self.ai.client.clone();
+        let store = self.store.clone();
         self.confront_para = Some(id);
         self.start_bg_job(BgJobKind::Confront, "confront", move |tx, _cancel| {
             let result = crate::ai::stream::collect_blocking(client, model, Some(system), user)
                 .map(|raw| {
                     let relations = contradiction::parse_relations(&raw, &evidence);
+                    // SEMNET-P3 — persist the judged stance as durable Judged
+                    // edges (advisory until the user promotes them); a
+                    // re-confront supersedes the paragraph's prior Judged pass.
+                    // Best-effort — a graph write never fails the confront.
+                    let edges = contradiction::confront_stance_edges(id, &relations);
+                    let _ = store.replace_confront_edges(id, &edges);
                     emit_confront_findings(id, &relations).to_string()
                 });
             let _ = tx.send(BgMsg::Done(result));
