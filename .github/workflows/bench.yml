@@ -18,6 +18,22 @@ name: bench
 # protect — the I.1.4 lazy-engine + I.1.5 O(n)-flatten
 # wins both show up as multiples, not 20% drifts, so the
 # smaller fixture catches a regression just as reliably.
+# The fixture is MULTILINGUAL (en,ru,fr,de,es, round-robin
+# per book) so the baseline exercises the Unicode
+# tokenise→embed→search→export paths, not just ASCII.
+#
+# The full 10K baseline is available on demand via the
+# workflow_dispatch inputs below (books/chapters/paragraphs)
+# — it is deliberately NOT run on every push/PR (the ~250-¶
+# gate already catches structural regressions; a 20-min run
+# per PR is not worth it).
+#
+# Benches run: startup, search, render, scale, export — all
+# deterministic + offline. The `index` (embedding-throughput)
+# bench is EXCLUDED from the gate: it builds the fastembed
+# engine, which downloads the ONNX model on first use — a
+# network dependency that would make the gate slow + flaky.
+# Run it locally: `cargo bench --bench index`.
 #
 # A note on shared-runner noise: absolute wall-clock
 # drifts between GitHub runners, so the 20% threshold is
@@ -31,6 +47,17 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      books:
+        description: "Fixture books (25 ≈ 6.25k ¶; 40 ≈ 10k ¶)"
+        default: "1"
+      chapters:
+        description: "Chapters per book"
+        default: "5"
+      paragraphs:
+        description: "Paragraphs per chapter"
+        default: "50"
 
 env:
   CARGO_TERM_COLOR: always
@@ -82,14 +109,25 @@ jobs:
 
       - name: Generate bench fixture
         run: |
+          # Defaults give the ~250-¶ gate fixture; workflow_dispatch inputs
+          # override for an on-demand 10k baseline. `|| 'N'` supplies the
+          # default on push/PR events (where inputs.* is empty).
+          BOOKS="${{ inputs.books || '1' }}"
+          CHAPTERS="${{ inputs.chapters || '5' }}"
+          PARAGRAPHS="${{ inputs.paragraphs || '50' }}"
+          echo "Fixture: ${BOOKS}×${CHAPTERS}×${PARAGRAPHS} ¶, multilingual"
           ./target/release/inkhaven gen-fixture "$BENCH_FIXTURE" \
-            --books 1 --chapters 5 --paragraphs 50 --force
+            --books "$BOOKS" --chapters "$CHAPTERS" --paragraphs "$PARAGRAPHS" \
+            --languages en,ru,fr,de,es --force
 
       - name: Run benches
         env:
           INKHAVEN_BENCH_FIXTURE: ${{ env.BENCH_FIXTURE }}
         run: |
-          cargo bench --bench startup --bench search
+          # index (embedding-throughput) is excluded — it downloads the ONNX
+          # model at runtime. All benches below are deterministic + offline.
+          cargo bench --bench startup --bench search \
+            --bench render --bench scale --bench export
 
       # ── main branch: publish the baseline ────────────
       - name: Upload baseline (main only)
