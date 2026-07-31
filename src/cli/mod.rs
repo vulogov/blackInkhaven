@@ -50,6 +50,7 @@ pub mod myth;
 pub mod tts;
 pub mod gen_fixture;
 pub mod bench_load;
+pub mod bench_render;
 pub mod bench_report;
 pub mod epub;
 pub mod audiobook;
@@ -1456,6 +1457,16 @@ pub enum Command {
         /// Iterations to average flatten + search over.
         #[arg(long, default_value_t = 20)]
         iterations: usize,
+    },
+
+    /// 2.0 harness — `inkhaven _bench-render` (hidden). Draws N editor frames
+    /// headlessly and reports the internal render time (startup excluded). Drives
+    /// the criterion `render` bench.
+    #[command(hide = true, name = "_bench-render")]
+    BenchRender {
+        /// Number of frames to draw and time.
+        #[arg(long, default_value_t = 200)]
+        frames: usize,
     },
 
     /// 1.2.18+ I.1.7 — `inkhaven _bench-report`
@@ -6644,6 +6655,9 @@ impl Cli {
             Command::BenchLoad { query, iterations } => {
                 bench_load::run(&project, &query, iterations)
                     .map_err(Into::into)
+            }
+            Command::BenchRender { frames } => {
+                bench_render::run(&project, frames).map_err(Into::into)
             }
             Command::BenchReport {
                 baseline,

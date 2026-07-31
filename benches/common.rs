@@ -115,6 +115,37 @@ pub fn run_inkhaven_against(
     elapsed
 }
 
+/// Run inkhaven against a project and return its stdout, for benches that read
+/// a metric the child measures internally (e.g. `_bench-render` prints
+/// `render_total_us:` after timing N frames — so the reported figure excludes
+/// process-startup overhead). Panics on non-zero exit.
+pub fn run_inkhaven_capture(project: &Path, args: &[&str]) -> String {
+    let bin = inkhaven_binary();
+    let output = std::process::Command::new(&bin)
+        .arg("--project")
+        .arg(project)
+        .args(args)
+        .output()
+        .unwrap_or_else(|e| panic!("spawn {} {args:?}: {e}", bin.display()));
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        panic!("inkhaven {args:?} exited {:?}: {}", output.status.code(), stderr.trim());
+    }
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+/// Parse a `key: <micros>` line from captured stdout into a `Duration`.
+pub fn parse_micros(out: &str, key: &str) -> Duration {
+    for line in out.lines() {
+        if let Some(v) = line.trim().strip_prefix(key) {
+            if let Ok(us) = v.trim().parse::<u64>() {
+                return Duration::from_micros(us);
+            }
+        }
+    }
+    panic!("no `{key}` line in output:\n{out}");
+}
+
 /// Same as `run_inkhaven_against` but takes no project
 /// arg — for subcommands that don't need one (or that
 /// take their own path positional, like `gen-fixture`).

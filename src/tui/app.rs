@@ -162,6 +162,32 @@ fn run_startup_pulse_splash<B: ratatui::backend::Backend>(
     }
 }
 
+/// 2.0 perf harness — draw `frames` editor frames against a headless
+/// `TestBackend` (no tty), returning the total *internal* render time. Built
+/// for `inkhaven _bench-render`, which the criterion `render` bench drives so
+/// the reported per-frame cost excludes process startup. A warm-up frame runs
+/// first so lazy caches are filled before the timed loop.
+pub fn bench_render_frames(
+    layout: ProjectLayout,
+    cfg: Config,
+    store: Store,
+    frames: usize,
+) -> Result<std::time::Duration> {
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    let mut app = App::new(layout, cfg, store)?;
+    // A generous, fixed viewport so the frame renders every pane against a large
+    // book (the real render workload).
+    let mut terminal = Terminal::new(TestBackend::new(200, 50))?;
+    terminal.draw(|f| app.draw(f))?; // warm-up
+    let t = std::time::Instant::now();
+    for _ in 0..frames.max(1) {
+        terminal.draw(|f| app.draw(f))?;
+    }
+    Ok(t.elapsed())
+}
+
 pub fn run(project: &Path) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized().map_err(anyhow::Error::from)?;
