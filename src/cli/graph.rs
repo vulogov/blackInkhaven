@@ -6,10 +6,17 @@
 
 use std::path::Path;
 
+use uuid::Uuid;
+
 use crate::config::Config;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::project::ProjectLayout;
+use crate::store::graph::EndpointRef;
 use crate::store::Store;
+
+fn parse_uuid(s: &str, what: &str) -> Result<Uuid> {
+    Uuid::parse_str(s).map_err(|e| Error::Config(format!("invalid {what} uuid `{s}`: {e}")))
+}
 
 fn open(project: &Path) -> Result<Store> {
     let layout = ProjectLayout::new(project);
@@ -50,5 +57,46 @@ pub fn rebuild(project: &Path) -> Result<()> {
             println!("  {kind:<16} {n}");
         }
     }
+    Ok(())
+}
+
+/// `inkhaven graph contradicting <node>` — the recorded stance clashes touching
+/// a node (Contradicts / InTension, either direction).
+pub fn contradicting(project: &Path, node: &str) -> Result<()> {
+    let store = open(project)?;
+    let id = parse_uuid(node, "node")?;
+    let edges = store.contradicting(id)?;
+    if edges.is_empty() {
+        println!("no contradictions recorded for {id}");
+        return Ok(());
+    }
+    let here = EndpointRef::Node(id);
+    for e in &edges {
+        let (k, r) = e.other_endpoint(&here).as_columns();
+        let reason = e.reason.as_deref().unwrap_or("");
+        let sep = if reason.is_empty() { "" } else { " — " };
+        println!("{}  [{}·{}]  {k}:{r}{sep}{reason}", e.id, e.kind.as_str(), e.origin.as_str());
+    }
+    Ok(())
+}
+
+/// `inkhaven graph promote <edge>` — accept a Judged stance edge (→ Promoted).
+pub fn promote(project: &Path, edge: &str) -> Result<()> {
+    let store = open(project)?;
+    let id = parse_uuid(edge, "edge")?;
+    if store.promote_edge(id)? {
+        println!("promoted edge {id} (kept across rebuilds)");
+    } else {
+        println!("no edge with id {id}");
+    }
+    Ok(())
+}
+
+/// `inkhaven graph dismiss <edge>` — delete a stance edge.
+pub fn dismiss(project: &Path, edge: &str) -> Result<()> {
+    let store = open(project)?;
+    let id = parse_uuid(edge, "edge")?;
+    store.dismiss_edge(id)?;
+    println!("dismissed edge {id}");
     Ok(())
 }

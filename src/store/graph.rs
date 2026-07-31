@@ -140,7 +140,53 @@ impl Store {
     pub fn graph_integrity_check(&self) -> Result<String> {
         self.raw().edges_integrity_check().map_err(map_edge_err)
     }
+
+    // ── SEMNET-P3: stance persistence ──────────────────────────────
+
+    /// Replace a paragraph's `Judged` confront edges: drop the existing Judged
+    /// stance edges leaving `node` (a re-confront supersedes the prior pass),
+    /// then add the fresh ones. `Promoted` edges the user accepted are kept.
+    pub fn replace_confront_edges(&self, node: Uuid, edges: &[Edge]) -> Result<()> {
+        let existing = self.raw().edges_out(node, STANCE_KINDS).map_err(map_edge_err)?;
+        for e in existing {
+            if e.origin == EdgeOrigin::Judged {
+                self.raw().delete_edge(e.id).map_err(map_edge_err)?;
+            }
+        }
+        if !edges.is_empty() {
+            self.raw().add_edges(edges).map_err(map_edge_err)?;
+        }
+        Ok(())
+    }
+
+    /// Promote a `Judged` stance edge to `Promoted` — a user-accepted judgement,
+    /// kept across rebuilds. Returns whether an edge changed.
+    pub fn promote_edge(&self, id: Uuid) -> Result<bool> {
+        Ok(self.raw().set_edge_origin(id, EdgeOrigin::Promoted).map_err(map_edge_err)? > 0)
+    }
+
+    /// Dismiss (delete) a stance edge by id.
+    pub fn dismiss_edge(&self, id: Uuid) -> Result<()> {
+        self.raw().delete_edge(id).map_err(map_edge_err)
+    }
+
+    /// The stance edges against a node — everything `Contradicts` / `InTension`
+    /// touching it, in either direction.
+    pub fn contradicting(&self, node: Uuid) -> Result<Vec<Edge>> {
+        self.raw()
+            .edges_around(node, &[EdgeKind::Contradicts, EdgeKind::InTension])
+            .map_err(map_edge_err)
+    }
 }
+
+/// The confront/relate stance edge kinds (a re-confront replaces the Judged
+/// ones of these kinds leaving a paragraph).
+const STANCE_KINDS: &[EdgeKind] = &[
+    EdgeKind::Contradicts,
+    EdgeKind::InTension,
+    EdgeKind::Qualifies,
+    EdgeKind::Agrees,
+];
 
 fn map_edge_err(e: anyhow::Error) -> Error {
     Error::Store(e.to_string())

@@ -119,6 +119,11 @@ impl DocumentStorage {
         self.edges.delete_by_origin(origin)
     }
 
+    /// Change an edge's origin (the promote/demote primitive). Rows changed.
+    pub fn set_edge_origin(&self, id: Uuid, origin: EdgeOrigin) -> Result<usize> {
+        self.edges.set_origin(id, origin)
+    }
+
     pub fn edge_count(&self) -> Result<usize> {
         self.edges.count()
     }
