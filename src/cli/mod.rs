@@ -1430,6 +1430,11 @@ pub enum Command {
         target_words: u32,
         #[arg(long, default_value_t = 0xC0FFEE_DEAD_BEEFu64)]
         seed: u64,
+        /// Comma-separated language codes spread across the books (round-robin),
+        /// e.g. `en,ru,fr,de,es`. Exercises the Unicode path for the 2.0
+        /// verification harness. Default: English only.
+        #[arg(long, default_value = "en", value_delimiter = ',')]
+        languages: Vec<String>,
         #[arg(long)]
         force: bool,
     },
@@ -6662,6 +6667,7 @@ impl Cli {
                 paragraphs,
                 target_words,
                 seed,
+                languages,
                 force,
             } => {
                 let spec = gen_fixture::FixtureSpec {
@@ -6670,6 +6676,7 @@ impl Cli {
                     paragraphs_per_chapter: paragraphs,
                     target_words_per_paragraph: target_words,
                     seed,
+                    languages,
                     force,
                     ..gen_fixture::FixtureSpec::default()
                 };
