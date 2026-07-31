@@ -49,6 +49,8 @@ pub mod dialogue;
 pub mod myth;
 pub mod tts;
 pub mod gen_fixture;
+pub mod graph;
+pub mod bench_graph;
 pub mod bench_embed;
 pub mod bench_load;
 pub mod bench_render;
@@ -581,6 +583,14 @@ pub enum Command {
     Wordnet {
         #[command(subcommand)]
         cmd: WordnetCommand,
+    },
+
+    /// 2.0 (SEMNET-P0) — the knowledge-graph edge layer. A typed-edge overlay on
+    /// the project's nodes. This slice: inspect (`stats`) and rebuild the derived
+    /// cache (`rebuild`); the graph is populated by the SEMNET migrations (P1+).
+    Graph {
+        #[command(subcommand)]
+        cmd: GraphCommand,
     },
 
     /// 1.8.7 (POEM-1) — the poetry toolset. Poetry is observed and measured,
@@ -1478,6 +1488,16 @@ pub enum Command {
         /// Number of texts to embed and time.
         #[arg(long, default_value_t = 200)]
         count: usize,
+    },
+
+    /// 2.0 harness — `inkhaven _bench-graph` (hidden). Inserts N edges into an
+    /// isolated temp edge store and times reverse-index neighbour queries.
+    /// Self-contained (no project/network). Drives the criterion `graph` bench.
+    #[command(hide = true, name = "_bench-graph")]
+    BenchGraph {
+        /// Number of edges to insert and query against.
+        #[arg(long, default_value_t = 5000)]
+        edges: usize,
     },
 
     /// 1.2.18+ I.1.7 — `inkhaven _bench-report`
@@ -3031,6 +3051,16 @@ pub enum WordnetCommand {
     },
     /// List the available sources and which are installed.
     List,
+}
+
+/// 2.0 (SEMNET-P0) — `inkhaven graph` verbs.
+#[derive(Debug, clap::Subcommand)]
+pub enum GraphCommand {
+    /// Node + edge counts and a per-kind breakdown.
+    Stats,
+    /// Drop and re-derive the rebuildable-cache edges (`Derived`/`Imported`);
+    /// durable edges are untouched.
+    Rebuild,
 }
 
 /// sub-subcommands under
@@ -6293,6 +6323,10 @@ impl Cli {
                 }
                 WordnetCommand::List => wordnet::list().map_err(Into::into),
             },
+            Command::Graph { cmd } => match cmd {
+                GraphCommand::Stats => graph::stats(&project).map_err(Into::into),
+                GraphCommand::Rebuild => graph::rebuild(&project).map_err(Into::into),
+            },
             // Poetry is library/analysis; `forms` needs no project.
             Command::Poetry { cmd } => match cmd {
                 PoetryCommand::Forms { form, language, new, name } => {
@@ -6672,6 +6706,9 @@ impl Cli {
             }
             Command::BenchEmbed { count } => {
                 bench_embed::run(count).map_err(Into::into)
+            }
+            Command::BenchGraph { edges } => {
+                bench_graph::run(edges).map_err(Into::into)
             }
             Command::BenchReport {
                 baseline,
