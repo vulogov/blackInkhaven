@@ -2084,7 +2084,7 @@ pub(crate) fn perf_mark(on: bool, label: &str, elapsed: std::time::Duration) {
     }
 }
 
-fn build_embedding_engine(model_name: &str) -> Result<EmbeddingEngine> {
+pub(crate) fn build_embedding_engine(model_name: &str) -> Result<EmbeddingEngine> {
     let model = match model_name {
         "MultilingualE5Small" => Model::MultilingualE5Small,
         "MultilingualE5Base" => Model::MultilingualE5Base,

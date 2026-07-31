@@ -146,6 +146,35 @@ pub fn parse_micros(out: &str, key: &str) -> Duration {
     panic!("no `{key}` line in output:\n{out}");
 }
 
+/// Like `run_inkhaven_capture` but with no `--project` arg — for subcommands
+/// that don't take one (e.g. `_bench-embed`). Returns stdout; panics on failure.
+pub fn run_inkhaven_bare_capture(args: &[&str]) -> String {
+    let bin = inkhaven_binary();
+    let output = std::process::Command::new(&bin)
+        .args(args)
+        .output()
+        .unwrap_or_else(|e| panic!("spawn {} {args:?}: {e}", bin.display()));
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        panic!("inkhaven {args:?} exited {:?}: {}", output.status.code(), stderr.trim());
+    }
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+/// Generate (idempotently, via `--force`) a small **single-book** fixture in a
+/// temp dir and return its path — so `export` needs no `--book-name` (a
+/// multi-book project requires one, and the generated titles are seed-random).
+/// Used by the export bench.
+pub fn ensure_export_fixture() -> PathBuf {
+    let dir = std::env::temp_dir().join("inkhaven-bench-export-fixture");
+    let dir_s = dir.to_str().expect("temp path is utf-8").to_string();
+    let _ = run_inkhaven_bare(&[
+        "gen-fixture", &dir_s, "--books", "1", "--chapters", "5", "--paragraphs", "20",
+        "--target-words", "300", "--force",
+    ]);
+    dir
+}
+
 /// Same as `run_inkhaven_against` but takes no project
 /// arg — for subcommands that don't need one (or that
 /// take their own path positional, like `gen-fixture`).

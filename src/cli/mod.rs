@@ -49,6 +49,7 @@ pub mod dialogue;
 pub mod myth;
 pub mod tts;
 pub mod gen_fixture;
+pub mod bench_embed;
 pub mod bench_load;
 pub mod bench_render;
 pub mod bench_report;
@@ -1467,6 +1468,16 @@ pub enum Command {
         /// Number of frames to draw and time.
         #[arg(long, default_value_t = 200)]
         frames: usize,
+    },
+
+    /// 2.0 harness — `inkhaven _bench-embed` (hidden). Embeds N sample texts and
+    /// reports throughput (the index-build cost, isolated from store I/O). Drives
+    /// the criterion `index` bench.
+    #[command(hide = true, name = "_bench-embed")]
+    BenchEmbed {
+        /// Number of texts to embed and time.
+        #[arg(long, default_value_t = 200)]
+        count: usize,
     },
 
     /// 1.2.18+ I.1.7 — `inkhaven _bench-report`
@@ -6658,6 +6669,9 @@ impl Cli {
             }
             Command::BenchRender { frames } => {
                 bench_render::run(&project, frames).map_err(Into::into)
+            }
+            Command::BenchEmbed { count } => {
+                bench_embed::run(count).map_err(Into::into)
             }
             Command::BenchReport {
                 baseline,
