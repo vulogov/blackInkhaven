@@ -164,6 +164,9 @@ impl Store {
         derived.extend(derive_sidecar_edges(self.project_root(), &ids));
         // P4 — @key[locus] citations → CitesLocus.
         derived.extend(self.gather_locus_edges(&hierarchy, cfg));
+        // Follow-up — declared world (characters / symbols / motifs / tensions)
+        // → Declares, so the graph holds what CharStore/MythStore/UtopiaStore know.
+        derived.extend(self.gather_declares_edges(&hierarchy));
 
         let added = derived.len();
         if !derived.is_empty() {
@@ -210,6 +213,61 @@ impl Store {
         let (schemes, _errs) =
             index_locorum::resolve_schemes(&cfg.sources.ref_schemes, &declared, &keys);
         derive_locus_edges(&cites, &schemes)
+    }
+
+    /// Import each user book's declared world — its cast (from `CharStore`, with
+    /// arc), symbol/motif library (from `MythStore`), and open coherence tensions
+    /// (from `UtopiaStore`) — as `Declares` edges (book → `Extern::Declared`).
+    /// Each store degrades cleanly (absent / empty → nothing). I/O; the pure
+    /// mapping is [`declares_edges`].
+    fn gather_declares_edges(&self, h: &Hierarchy) -> Vec<Edge> {
+        let root = self.project_root();
+        let mut edges = Vec::new();
+        for book in h
+            .children_of(None)
+            .into_iter()
+            .filter(|n| n.kind == NodeKind::Book && n.system_tag.is_none())
+        {
+            let slug = book.slug.as_str();
+            // (kind, label, optional arc — characters carry their arc code).
+            let mut declared: Vec<(String, String, Option<String>)> = Vec::new();
+
+            if let Ok(cs) = crate::character::CharStore::open(root) {
+                if let Ok(decls) = cs.all_declarations(slug) {
+                    for d in &decls {
+                        declared.push((
+                            "character".into(),
+                            d.character_name.trim().to_string(),
+                            Some(d.arc_type.as_code().to_string()),
+                        ));
+                    }
+                }
+            }
+            if let Ok(ms) = crate::myth::MythStore::open(root) {
+                if let Ok(symbols) = ms.symbols(slug) {
+                    for s in &symbols {
+                        for v in &s.vocabulary {
+                            declared.push(("symbol".into(), v.trim().to_string(), None));
+                        }
+                    }
+                }
+                if let Ok(motifs) = ms.motifs(slug) {
+                    for m in &motifs {
+                        declared.push(("motif".into(), m.name.trim().to_string(), None));
+                    }
+                }
+            }
+            if let Ok(us) = crate::world::utopia::UtopiaStore::open(root) {
+                if let Ok(findings) = us.findings(slug, true) {
+                    for i in 0..findings.len() {
+                        declared.push(("tension".into(), format!("#{}", i + 1), None));
+                    }
+                }
+            }
+
+            edges.extend(declares_edges(book.id, &declared));
+        }
+        edges
     }
 
     /// SEMNET-P4 — a bounded path search between two nodes over the given edge
@@ -698,6 +756,35 @@ fn derive_locus_edges(
     edges
 }
 
+/// Follow-up — the declared-world edges: `book → Extern::Declared{kind, label}`
+/// for each declared character / symbol / motif / tension. Characters carry
+/// their arc in `attrs`. Deduped by `(kind, label)`, empty labels skipped. All
+/// `origin = Structural` (a projection of the declared-data stores). Pure.
+fn declares_edges(book: Uuid, declared: &[(String, String, Option<String>)]) -> Vec<Edge> {
+    let mut edges = Vec::new();
+    let mut seen: HashSet<(String, String)> = HashSet::new();
+    for (kind, label, arc) in declared {
+        let label = label.trim();
+        if label.is_empty() {
+            continue;
+        }
+        if !seen.insert((kind.clone(), label.to_string())) {
+            continue;
+        }
+        let mut e = Edge::new(
+            EndpointRef::Node(book),
+            EdgeKind::Declares,
+            EndpointRef::Extern(ExternRef::Declared { kind: kind.clone(), label: label.to_string() }),
+            EdgeOrigin::Structural,
+        );
+        if let Some(arc) = arc.as_ref().filter(|a| !a.trim().is_empty()) {
+            e = e.with_attrs(serde_json::json!({ "arc": arc }));
+        }
+        edges.push(e);
+    }
+    edges
+}
+
 // ── SEMNET-P5: lexical bridge (WordNet) ──────────────────────────────
 
 /// Distinct content-word candidates from paragraph prose: alphabetic tokens of
@@ -1151,6 +1238,30 @@ mod tests {
         assert_eq!(edges[0].kind, EdgeKind::CitesLocus);
         assert_eq!(edges[0].origin, EdgeOrigin::Structural);
         assert_eq!(edges[0].attrs["key"], "bible");
+    }
+
+    #[test]
+    fn declared_world_becomes_declares_edges() {
+        let book = Uuid::now_v7();
+        let declared = vec![
+            ("character".to_string(), "Mara".to_string(), Some("corruption".to_string())),
+            ("symbol".to_string(), "the tide".to_string(), None),
+            ("character".to_string(), "Mara".to_string(), Some("corruption".to_string())), // dup
+            ("tension".to_string(), "#1".to_string(), None),
+            ("symbol".to_string(), "   ".to_string(), None), // empty → skipped
+        ];
+        let edges = declares_edges(book, &declared);
+        assert_eq!(edges.len(), 3, "the duplicate character and the empty symbol are dropped");
+
+        let ch = edges
+            .iter()
+            .find(|e| e.dst == EndpointRef::Extern(ExternRef::Declared { kind: "character".into(), label: "Mara".into() }))
+            .unwrap();
+        assert_eq!(ch.kind, EdgeKind::Declares);
+        assert_eq!(ch.src, EndpointRef::Node(book));
+        assert_eq!(ch.origin, EdgeOrigin::Structural);
+        assert_eq!(ch.attrs["arc"], "corruption");
+        assert!(edges.iter().any(|e| e.dst == EndpointRef::Extern(ExternRef::Declared { kind: "tension".into(), label: "#1".into() })));
     }
 
     #[test]

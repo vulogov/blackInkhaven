@@ -115,6 +115,8 @@ pub enum EdgeKind {
     Translates,
     /// A node uses a word whose sense is this — the manuscript↔lexicon bridge.
     Mentions,
+    /// A book declares a world entity (character / symbol / motif / tension).
+    Declares,
     /// Symmetric embedding-similarity (derived cache).
     SimilarTo,
 }
@@ -138,6 +140,7 @@ impl EdgeKind {
             EdgeKind::Synonym => "synonym",
             EdgeKind::Translates => "translates",
             EdgeKind::Mentions => "mentions",
+            EdgeKind::Declares => "declares",
             EdgeKind::SimilarTo => "similar_to",
         }
     }
@@ -160,6 +163,7 @@ impl EdgeKind {
             "synonym" => EdgeKind::Synonym,
             "translates" => EdgeKind::Translates,
             "mentions" => EdgeKind::Mentions,
+            "declares" => EdgeKind::Declares,
             "similar_to" => EdgeKind::SimilarTo,
             _ => return None,
         })
@@ -300,6 +304,11 @@ pub enum ExternRef {
     /// breadcrumb or source name) that isn't a resolved node — the far side of
     /// a Judged stance edge until it's reconciled to a node.
     Evidence { label: String },
+    /// A declared world entity a book establishes — a character, a symbol, a
+    /// motif, a world tension (`kind` = which; `label` = its name). Lets the
+    /// book's declared cast / symbol library / open tensions be queried from the
+    /// graph.
+    Declared { kind: String, label: String },
 }
 
 /// Where an edge starts or ends.
@@ -324,6 +333,7 @@ impl EndpointRef {
                 ExternRef::Ili { id } => ("ili", id.clone()),
                 ExternRef::Grade { level } => ("grade", level.clone()),
                 ExternRef::Evidence { label } => ("evidence", label.clone()),
+                ExternRef::Declared { kind, label } => ("declared", format!("{kind}{US}{label}")),
             },
         }
     }
@@ -365,6 +375,10 @@ impl EndpointRef {
             "ili" => EndpointRef::Extern(ExternRef::Ili { id: r.to_string() }),
             "grade" => EndpointRef::Extern(ExternRef::Grade { level: r.to_string() }),
             "evidence" => EndpointRef::Extern(ExternRef::Evidence { label: r.to_string() }),
+            "declared" => {
+                let (a, b) = split(r)?;
+                EndpointRef::Extern(ExternRef::Declared { kind: a, label: b })
+            }
             other => return Err(anyhow!("unknown endpoint kind: {other:?}")),
         })
     }
@@ -1005,6 +1019,7 @@ mod tests {
             EndpointRef::Extern(ExternRef::Ili { id: "i98765".into() }),
             EndpointRef::Extern(ExternRef::Grade { level: "inaccurate".into() }),
             EndpointRef::Extern(ExternRef::Evidence { label: "fact: Chapter 3 › para 5".into() }),
+            EndpointRef::Extern(ExternRef::Declared { kind: "character".into(), label: "Mara".into() }),
         ];
         for ep in cases {
             let (k, r) = ep.as_columns();

@@ -51,6 +51,7 @@ forcing 10 000 citations to become 10 000 nodes:
 | **Ili** | an interlingual index id (the cross-lingual pivot) |
 | **Grade** | a fact-check verdict bucket (`inaccurate`) |
 | **Evidence** | a labelled confront/relate evidence item |
+| **Declared** | a declared world entity — a character / symbol / motif / tension |
 
 ### Edge kinds
 
@@ -66,6 +67,7 @@ forcing 10 000 citations to become 10 000 nodes:
 | `hypernym`, `hyponym`, `antonym` | sense → sense | WordNet taxonomy |
 | `translates` | sense → ili | cross-lingual pivot |
 | `mentions` | ¶ → sense | the manuscript↔lexicon bridge |
+| `declares` | book → declared entity | the book's cast / symbols / motifs / tensions |
 | `similar_to` | ¶ ↔ ¶ | embedding similarity (a live HNSW query; not materialised) |
 
 ### Origin & durability
