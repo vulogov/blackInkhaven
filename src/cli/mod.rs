@@ -3088,6 +3088,8 @@ pub enum GraphCommand {
         /// The end node UUID.
         to: String,
     },
+    /// (Re)build the WordNet lexical bridge for the project language.
+    Lexical,
 }
 
 /// sub-subcommands under
@@ -6362,6 +6364,7 @@ impl Cli {
                 GraphCommand::Paths { from, to } => {
                     graph::paths(&project, &from, &to).map_err(Into::into)
                 }
+                GraphCommand::Lexical => graph::lexical(&project).map_err(Into::into),
             },
             // Poetry is library/analysis; `forms` needs no project.
             Command::Poetry { cmd } => match cmd {

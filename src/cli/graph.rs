@@ -124,6 +124,25 @@ pub fn loci(project: &Path, node: &str) -> Result<()> {
     Ok(())
 }
 
+/// `inkhaven graph lexical` — (re)build the WordNet lexical bridge for the
+/// project language: link the manuscript's words to their senses + the local
+/// semantic net (hypernym/hyponym/antonym) + cross-lingual ILI.
+pub fn lexical(project: &Path) -> Result<()> {
+    let (store, cfg) = open_with_cfg(project)?;
+    let r = store.rebuild_lexical(&cfg)?;
+    if !r.installed {
+        let code = crate::ai::prompts::iso_from_long(&cfg.language);
+        println!("no `{code}` wordnet installed — run `inkhaven wordnet fetch {code}` first");
+        return Ok(());
+    }
+    println!("lexical bridge: cleared {} prior edge(s), imported {}", r.cleared, r.added);
+    let s = store.graph_stats()?;
+    for (kind, n) in &s.by_kind {
+        println!("  {kind:<16} {n}");
+    }
+    Ok(())
+}
+
 /// `inkhaven graph paths <from> <to>` — a bounded citation/link path between two
 /// nodes (over Cites + LinksTo, ≤ 8 hops).
 pub fn paths(project: &Path, from: &str, to: &str) -> Result<()> {

@@ -32,6 +32,7 @@ use crate::sources::BibEntry;
 use crate::store::hierarchy::Hierarchy;
 use crate::store::node::{Node, NodeKind};
 use crate::store::Store;
+use crate::wordnet::{self, SenseNode, WordNet};
 
 // Re-export the domain types so callers use `store::graph::Edge` etc.
 pub use crate::storage::edge_store::{Edge, EdgeKind, EdgeOrigin, EndpointRef};
@@ -46,6 +47,27 @@ pub struct GraphRebuild {
     /// Edges re-derived from the current node state.
     pub added: usize,
 }
+
+/// The outcome of a [`Store::rebuild_lexical`].
+#[derive(Debug, Clone, Copy)]
+pub struct LexicalRebuild {
+    /// Whether a WordNet was installed for the project language.
+    pub installed: bool,
+    /// Prior lexical edges cleared.
+    pub cleared: usize,
+    /// Lexical edges imported.
+    pub added: usize,
+}
+
+/// The lexical-bridge edge kinds (cleared + rebuilt together by the WordNet
+/// import; `origin = Imported`, so `graph_rebuild` leaves them alone).
+const LEXICAL_KINDS: &[EdgeKind] = &[
+    EdgeKind::Mentions,
+    EdgeKind::Hypernym,
+    EdgeKind::Hyponym,
+    EdgeKind::Antonym,
+    EdgeKind::Translates,
+];
 
 /// A summary of the graph — for `inkhaven graph stats`.
 #[derive(Debug, Clone)]
@@ -241,6 +263,59 @@ impl Store {
         self.raw()
             .edges_around(node, &[EdgeKind::Contradicts, EdgeKind::InTension])
             .map_err(map_edge_err)
+    }
+
+    // ── SEMNET-P5: lexical bridge ──────────────────────────────────
+
+    /// (Re)build the lexical bridge from the installed WordNet for the project
+    /// language: clear the prior lexical edges, extract the manuscript's content
+    /// lemmas, and import the senses they touch (plus one-hop taxonomy + ILI).
+    /// A no-op (returns `installed: false`) when no WordNet is installed. The
+    /// import is `Imported`, so a plain `graph_rebuild` leaves it intact.
+    pub fn rebuild_lexical(&self, cfg: &Config) -> Result<LexicalRebuild> {
+        // Resolve the project language to a wordnet code ("english" → "en"),
+        // matching the editor's thesaurus chord.
+        let lang = crate::ai::prompts::iso_from_long(&cfg.language).to_string();
+        let Some(path) = wordnet::index_path(&lang).filter(|p| p.exists()) else {
+            return Ok(LexicalRebuild { installed: false, cleared: 0, added: 0 });
+        };
+        let wn = WordNet::load(&path).map_err(Error::Store)?;
+
+        let hierarchy = Hierarchy::load(self)?;
+        let root = self.project_root();
+        let mut occ: Vec<(Uuid, String, Vec<SenseNode>)> = Vec::new();
+        for book in hierarchy
+            .children_of(None)
+            .into_iter()
+            .filter(|n| n.kind == NodeKind::Book && n.system_tag.is_none())
+        {
+            for id in hierarchy.collect_subtree(book.id) {
+                let Some(n) = hierarchy.get(id) else { continue };
+                if n.kind != NodeKind::Paragraph {
+                    continue;
+                }
+                let Some(rel) = n.file.as_ref() else { continue };
+                let Ok(raw) = std::fs::read_to_string(root.join(rel)) else { continue };
+                let mut seen: HashSet<String> = HashSet::new();
+                for lemma in salient_lemmas(&raw) {
+                    if !seen.insert(lemma.clone()) {
+                        continue;
+                    }
+                    let senses = wn.sense_nodes(&lemma);
+                    if !senses.is_empty() {
+                        occ.push((n.id, lemma, senses));
+                    }
+                }
+            }
+        }
+
+        let edges = derive_lexical_edges(&occ, &lang);
+        let cleared = self.raw().delete_edges_by_kinds(LEXICAL_KINDS).map_err(map_edge_err)?;
+        let added = edges.len();
+        if !edges.is_empty() {
+            self.raw().add_edges(&edges).map_err(map_edge_err)?;
+        }
+        Ok(LexicalRebuild { installed: true, cleared, added })
     }
 }
 
@@ -550,6 +625,73 @@ fn derive_locus_edges(
     edges
 }
 
+// ── SEMNET-P5: lexical bridge (WordNet) ──────────────────────────────
+
+/// Distinct content-word candidates from paragraph prose: alphabetic tokens of
+/// ≥3 characters, lower-cased (Unicode-aware). A crude "salient lemma" harvest —
+/// Typst-markup tokens that aren't real words simply miss in the WordNet lookup
+/// and produce no edges (the lazy bound).
+fn salient_lemmas(prose: &str) -> Vec<String> {
+    prose
+        .split(|c: char| !c.is_alphabetic())
+        .filter(|w| w.chars().count() >= 3)
+        .map(|w| w.to_lowercase())
+        .collect()
+}
+
+/// SEMNET-P5 — the lexical bridge. Per manuscript lemma occurrence (node + lemma
+/// + its sense nodes), emit `Mentions` (node → `Sense`, lemma in attrs),
+/// `Hypernym`/`Hyponym`/`Antonym` (`Sense` → target `Sense`, one hop), and
+/// `Translates` (`Sense` → `Ili`). All `origin = Imported`. Lazy: only the given
+/// lemmas' senses + their direct targets appear as endpoints. The sense→sense /
+/// sense→ili edges dedup (a synset's relations are the same whichever occurrence
+/// surfaced them). Pure — testable with synthetic [`SenseNode`]s.
+fn derive_lexical_edges(occurrences: &[(Uuid, String, Vec<SenseNode>)], lang: &str) -> Vec<Edge> {
+    let sense = |synset: &str| {
+        EndpointRef::Extern(ExternRef::Sense { lang: lang.to_string(), synset: synset.to_string() })
+    };
+    let mut edges = Vec::new();
+    let mut structural: HashSet<(String, EdgeKind, String)> = HashSet::new();
+    let mut mentioned: HashSet<(Uuid, String)> = HashSet::new();
+    for (node, lemma, senses) in occurrences {
+        for sn in senses {
+            if mentioned.insert((*node, sn.synset.clone())) {
+                edges.push(
+                    Edge::new(
+                        EndpointRef::Node(*node),
+                        EdgeKind::Mentions,
+                        sense(&sn.synset),
+                        EdgeOrigin::Imported,
+                    )
+                    .with_attrs(serde_json::json!({ "lemma": lemma })),
+                );
+            }
+            for (kind, targets) in [
+                (EdgeKind::Hypernym, &sn.hypernyms),
+                (EdgeKind::Hyponym, &sn.hyponyms),
+                (EdgeKind::Antonym, &sn.antonyms),
+            ] {
+                for t in targets {
+                    if structural.insert((sn.synset.clone(), kind, t.clone())) {
+                        edges.push(Edge::new(sense(&sn.synset), kind, sense(t), EdgeOrigin::Imported));
+                    }
+                }
+            }
+            if let Some(ili) = &sn.ili {
+                if structural.insert((sn.synset.clone(), EdgeKind::Translates, ili.clone())) {
+                    edges.push(Edge::new(
+                        sense(&sn.synset),
+                        EdgeKind::Translates,
+                        EndpointRef::Extern(ExternRef::Ili { id: ili.clone() }),
+                        EdgeOrigin::Imported,
+                    ));
+                }
+            }
+        }
+    }
+    edges
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -833,6 +975,88 @@ mod tests {
             edges[0].dst,
             EndpointRef::Extern(ExternRef::Locus { scheme: String::new(), canonical: "§4.2".into() })
         );
+    }
+
+    // ── P5: lexical bridge ─────────────────────────────────────────
+
+    fn sn(synset: &str, ili: Option<&str>, hyper: &[&str], hypo: &[&str], anto: &[&str]) -> SenseNode {
+        SenseNode {
+            synset: synset.into(),
+            ili: ili.map(|s| s.into()),
+            hypernyms: hyper.iter().map(|s| s.to_string()).collect(),
+            hyponyms: hypo.iter().map(|s| s.to_string()).collect(),
+            antonyms: anto.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn wordnet_rel_becomes_edge_and_bridge() {
+        let node = Uuid::now_v7();
+        let occ = vec![(node, "dog".to_string(), vec![sn("s-dog", Some("i-dog"), &["s-animal"], &["s-puppy"], &[])])];
+        let edges = derive_lexical_edges(&occ, "en");
+
+        let sense = |s: &str| EndpointRef::Extern(ExternRef::Sense { lang: "en".into(), synset: s.into() });
+        // Mentions bridge, with the lemma.
+        let mentions = edges.iter().find(|e| e.kind == EdgeKind::Mentions).unwrap();
+        assert_eq!(mentions.src, EndpointRef::Node(node));
+        assert_eq!(mentions.dst, sense("s-dog"));
+        assert_eq!(mentions.attrs["lemma"], "dog");
+        assert_eq!(mentions.origin, EdgeOrigin::Imported);
+        // Taxonomy: sense → target sense.
+        assert!(edges.iter().any(|e| e.kind == EdgeKind::Hypernym && e.src == sense("s-dog") && e.dst == sense("s-animal")));
+        assert!(edges.iter().any(|e| e.kind == EdgeKind::Hyponym && e.dst == sense("s-puppy")));
+        // Translates: sense → ILI.
+        assert!(edges.iter().any(|e| e.kind == EdgeKind::Translates
+            && e.dst == EndpointRef::Extern(ExternRef::Ili { id: "i-dog".into() })));
+    }
+
+    #[test]
+    fn lexical_import_is_bounded_to_touched_senses() {
+        // Only the given lemma's sense + its direct targets appear — no
+        // unreferenced synset leaks in.
+        let node = Uuid::now_v7();
+        let occ = vec![(node, "cat".to_string(), vec![sn("s-cat", None, &["s-feline"], &[], &[])])];
+        let edges = derive_lexical_edges(&occ, "en");
+        let mut synsets: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for e in &edges {
+            for ep in [&e.src, &e.dst] {
+                if let EndpointRef::Extern(ExternRef::Sense { synset, .. }) = ep {
+                    synsets.insert(synset.clone());
+                }
+            }
+        }
+        assert_eq!(synsets, std::collections::HashSet::from(["s-cat".to_string(), "s-feline".to_string()]));
+        // No Translates edge when the sense carries no ILI.
+        assert!(!edges.iter().any(|e| e.kind == EdgeKind::Translates));
+    }
+
+    #[test]
+    fn cross_lingual_senses_share_an_ili_bucket() {
+        // A Russian and a German sense of the same concept both Translate to the
+        // same ILI; the reverse index groups them → the cross-lingual pivot.
+        let (n_ru, n_de) = (Uuid::now_v7(), Uuid::now_v7());
+        let mut edges = derive_lexical_edges(&[(n_ru, "кошка".into(), vec![sn("ru-1", Some("i-cat"), &[], &[], &[])])], "ru");
+        edges.extend(derive_lexical_edges(&[(n_de, "Katze".into(), vec![sn("de-1", Some("i-cat"), &[], &[], &[])])], "de"));
+
+        let dir = TempDir::new().unwrap();
+        let store = EdgeStore::new(dir.path().join("edges.db"), 2).unwrap();
+        store.insert_batch(&edges).unwrap();
+
+        let ili = EndpointRef::Extern(ExternRef::Ili { id: "i-cat".into() });
+        let into_ili = store.incoming(&ili, &[EdgeKind::Translates]).unwrap();
+        assert_eq!(into_ili.len(), 2, "ru + de senses both translate to the shared ILI");
+        let srcs: std::collections::HashSet<_> = into_ili.iter().map(|e| e.src.clone()).collect();
+        assert!(srcs.contains(&EndpointRef::Extern(ExternRef::Sense { lang: "ru".into(), synset: "ru-1".into() })));
+        assert!(srcs.contains(&EndpointRef::Extern(ExternRef::Sense { lang: "de".into(), synset: "de-1".into() })));
+    }
+
+    #[test]
+    fn salient_lemmas_are_lowercased_content_words() {
+        let got = salient_lemmas("The Quick brown fox, a #emph[test]! И кошка.");
+        assert!(got.contains(&"quick".to_string()));
+        assert!(got.contains(&"brown".to_string()));
+        assert!(got.contains(&"кошка".to_string()), "Unicode content words kept");
+        assert!(!got.iter().any(|w| w == "a"), "short tokens dropped");
     }
 
     #[test]

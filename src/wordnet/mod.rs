@@ -92,6 +92,17 @@ pub struct Lookup {
     pub senses: Vec<SenseView>,
 }
 
+/// SEMNET-P5 — one sense of a word as a graph node: its synset id, interlingual
+/// index, and the target synset ids of its one-hop taxonomy relations.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SenseNode {
+    pub synset: String,
+    pub ili: Option<String>,
+    pub hypernyms: Vec<String>,
+    pub hyponyms: Vec<String>,
+    pub antonyms: Vec<String>,
+}
+
 impl Lookup {
     pub fn is_empty(&self) -> bool {
         self.senses.is_empty()
@@ -229,6 +240,50 @@ impl WordNet {
 
     fn lemma_of_sense(&self, sense_id: &str) -> Option<String> {
         self.sense_owner.get(sense_id).map(|&ei| self.entries[ei as usize].lemma.clone())
+    }
+
+    /// The synset a sense id belongs to (for resolving sense-level relation
+    /// targets — e.g. antonym — to a synset endpoint).
+    fn synset_of_sense(&self, sense_id: &str) -> Option<String> {
+        let &ei = self.sense_owner.get(sense_id)?;
+        self.entries[ei as usize]
+            .senses
+            .iter()
+            .find(|s| s.id == sense_id)
+            .map(|s| s.synset.clone())
+    }
+
+    /// SEMNET-P5 (lexical bridge) — a word's senses as graph nodes: each sense's
+    /// synset id, its interlingual index (for cross-lingual `Translates`), and
+    /// the target synset ids of its one-hop hypernym / hyponym / antonym
+    /// relations (native links only; the ILI/`Translates` edge carries the
+    /// cross-lingual pivot). Synonymy is left implicit — co-members share a
+    /// synset, so two lemmas resolve to the same `Sense` endpoint.
+    pub fn sense_nodes(&self, word: &str) -> Vec<SenseNode> {
+        let key = word.to_lowercase();
+        let mut out = Vec::new();
+        for &ei in self.lemma_index.get(&key).map(Vec::as_slice).unwrap_or(&[]) {
+            for sense in &self.entries[ei as usize].senses {
+                let Some(synset) = self.synsets.get(&sense.synset) else { continue };
+                let targets = |rt: &str| -> Vec<String> {
+                    synset.relations.iter().filter(|r| r.rel_type == rt).map(|r| r.target.clone()).collect()
+                };
+                let antonyms = sense
+                    .relations
+                    .iter()
+                    .filter(|r| r.rel_type == "antonym")
+                    .filter_map(|r| self.synset_of_sense(&r.target))
+                    .collect();
+                out.push(SenseNode {
+                    synset: sense.synset.clone(),
+                    ili: synset.ili.clone(),
+                    hypernyms: targets("hypernym"),
+                    hyponyms: targets("hyponym"),
+                    antonyms,
+                });
+            }
+        }
+        out
     }
 
     fn related_members(&self, synset: &Synset, rel_type: &str) -> Vec<String> {
