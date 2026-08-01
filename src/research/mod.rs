@@ -226,7 +226,8 @@ pub(crate) fn run(project: &Path, inv: ResearchInvocation) -> Result<()> {
     }
     // RESRCH-6 (snowball) — `--snowball <seed>`: follow a paper's citations.
     if let Some(seed) = inv.snowball.as_deref() {
-        return snowball::run(&cfg, seed, inv.out.as_deref());
+        let store = Store::open(layout.clone(), &cfg).map_err(anyhow::Error::from)?;
+        return snowball::run(&cfg, &store, seed, inv.out.as_deref());
     }
     if inv.list_threads {
         return app::list_threads_cli(&layout, inv.format.as_deref());

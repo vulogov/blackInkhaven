@@ -49,7 +49,11 @@ pub mod dialogue;
 pub mod myth;
 pub mod tts;
 pub mod gen_fixture;
+pub mod graph;
+pub mod bench_graph;
+pub mod bench_embed;
 pub mod bench_load;
+pub mod bench_render;
 pub mod bench_report;
 pub mod epub;
 pub mod audiobook;
@@ -579,6 +583,14 @@ pub enum Command {
     Wordnet {
         #[command(subcommand)]
         cmd: WordnetCommand,
+    },
+
+    /// 2.0 (SEMNET-P0) — the knowledge-graph edge layer. A typed-edge overlay on
+    /// the project's nodes. This slice: inspect (`stats`) and rebuild the derived
+    /// cache (`rebuild`); the graph is populated by the SEMNET migrations (P1+).
+    Graph {
+        #[command(subcommand)]
+        cmd: GraphCommand,
     },
 
     /// 1.8.7 (POEM-1) — the poetry toolset. Poetry is observed and measured,
@@ -1430,6 +1442,11 @@ pub enum Command {
         target_words: u32,
         #[arg(long, default_value_t = 0xC0FFEE_DEAD_BEEFu64)]
         seed: u64,
+        /// Comma-separated language codes spread across the books (round-robin),
+        /// e.g. `en,ru,fr,de,es`. Exercises the Unicode path for the 2.0
+        /// verification harness. Default: English only.
+        #[arg(long, default_value = "en", value_delimiter = ',')]
+        languages: Vec<String>,
         #[arg(long)]
         force: bool,
     },
@@ -1451,6 +1468,39 @@ pub enum Command {
         /// Iterations to average flatten + search over.
         #[arg(long, default_value_t = 20)]
         iterations: usize,
+    },
+
+    /// 2.0 harness — `inkhaven _bench-render` (hidden). Draws N editor frames
+    /// headlessly and reports the internal render time (startup excluded). Drives
+    /// the criterion `render` bench.
+    #[command(hide = true, name = "_bench-render")]
+    BenchRender {
+        /// Number of frames to draw and time.
+        #[arg(long, default_value_t = 200)]
+        frames: usize,
+    },
+
+    /// 2.0 harness — `inkhaven _bench-embed` (hidden). Embeds N sample texts and
+    /// reports throughput (the index-build cost, isolated from store I/O). Drives
+    /// the criterion `index` bench.
+    #[command(hide = true, name = "_bench-embed")]
+    BenchEmbed {
+        /// Number of texts to embed and time.
+        #[arg(long, default_value_t = 200)]
+        count: usize,
+    },
+
+    /// 2.0 harness — `inkhaven _bench-graph` (hidden). Inserts N edges into an
+    /// isolated temp edge store and times reverse-index neighbour queries.
+    /// Self-contained (no project/network). Drives the criterion `graph` bench.
+    #[command(hide = true, name = "_bench-graph")]
+    BenchGraph {
+        /// Number of edges to insert and query against.
+        #[arg(long, default_value_t = 5000)]
+        edges: usize,
+        /// Number of reverse-index neighbour queries to time (0 = skip).
+        #[arg(long, default_value_t = 1000)]
+        queries: usize,
     },
 
     /// 1.2.18+ I.1.7 — `inkhaven _bench-report`
@@ -3004,6 +3054,51 @@ pub enum WordnetCommand {
     },
     /// List the available sources and which are installed.
     List,
+}
+
+/// 2.0 (SEMNET-P0/P3) — `inkhaven graph` verbs.
+#[derive(Debug, clap::Subcommand)]
+pub enum GraphCommand {
+    /// Node + edge counts and a per-kind breakdown.
+    Stats,
+    /// Drop and re-derive the derivable edges (`Structural`/`Derived`/`Imported`);
+    /// user `Authorial`/`Promoted` edges are untouched.
+    Rebuild,
+    /// The recorded stance clashes touching a node (Contradicts / InTension).
+    Contradicting {
+        /// The node UUID.
+        node: String,
+    },
+    /// Accept a Judged stance edge (→ Promoted, kept across rebuilds).
+    Promote {
+        /// The edge UUID.
+        edge: String,
+    },
+    /// Delete a stance edge.
+    Dismiss {
+        /// The edge UUID.
+        edge: String,
+    },
+    /// The primary-source loci a node cites (`@key[locus]` → CitesLocus).
+    Loci {
+        /// The node UUID.
+        node: String,
+    },
+    /// A bounded citation/link path between two nodes (Cites + LinksTo, ≤ 8 hops).
+    Paths {
+        /// The start node UUID.
+        from: String,
+        /// The end node UUID.
+        to: String,
+    },
+    /// (Re)build the WordNet lexical bridge for the project language.
+    Lexical,
+    /// A node's one-hop neighbourhood rendered as a tree (links, contradictions,
+    /// sources, citations, senses).
+    Neighbors {
+        /// The node UUID.
+        node: String,
+    },
 }
 
 /// sub-subcommands under
@@ -6266,6 +6361,23 @@ impl Cli {
                 }
                 WordnetCommand::List => wordnet::list().map_err(Into::into),
             },
+            Command::Graph { cmd } => match cmd {
+                GraphCommand::Stats => graph::stats(&project).map_err(Into::into),
+                GraphCommand::Rebuild => graph::rebuild(&project).map_err(Into::into),
+                GraphCommand::Contradicting { node } => {
+                    graph::contradicting(&project, &node).map_err(Into::into)
+                }
+                GraphCommand::Promote { edge } => graph::promote(&project, &edge).map_err(Into::into),
+                GraphCommand::Dismiss { edge } => graph::dismiss(&project, &edge).map_err(Into::into),
+                GraphCommand::Loci { node } => graph::loci(&project, &node).map_err(Into::into),
+                GraphCommand::Paths { from, to } => {
+                    graph::paths(&project, &from, &to).map_err(Into::into)
+                }
+                GraphCommand::Lexical => graph::lexical(&project).map_err(Into::into),
+                GraphCommand::Neighbors { node } => {
+                    graph::neighbors(&project, &node).map_err(Into::into)
+                }
+            },
             // Poetry is library/analysis; `forms` needs no project.
             Command::Poetry { cmd } => match cmd {
                 PoetryCommand::Forms { form, language, new, name } => {
@@ -6640,6 +6752,15 @@ impl Cli {
                 bench_load::run(&project, &query, iterations)
                     .map_err(Into::into)
             }
+            Command::BenchRender { frames } => {
+                bench_render::run(&project, frames).map_err(Into::into)
+            }
+            Command::BenchEmbed { count } => {
+                bench_embed::run(count).map_err(Into::into)
+            }
+            Command::BenchGraph { edges, queries } => {
+                bench_graph::run(edges, queries).map_err(Into::into)
+            }
             Command::BenchReport {
                 baseline,
                 current,
@@ -6662,6 +6783,7 @@ impl Cli {
                 paragraphs,
                 target_words,
                 seed,
+                languages,
                 force,
             } => {
                 let spec = gen_fixture::FixtureSpec {
@@ -6670,6 +6792,7 @@ impl Cli {
                     paragraphs_per_chapter: paragraphs,
                     target_words_per_paragraph: target_words,
                     seed,
+                    languages,
                     force,
                     ..gen_fixture::FixtureSpec::default()
                 };

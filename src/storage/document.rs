@@ -16,6 +16,9 @@ use std::collections::HashMap;
 use std::path::Path;
 use uuid::Uuid;
 
+use std::collections::HashSet;
+
+use crate::storage::edge_store::{Edge, EdgeKind, EdgeOrigin, EdgeStore, EndpointRef};
 use crate::storage::engine::{BlobStorage, JsonStorage};
 use crate::storage::embedding::EmbeddingEngine;
 use crate::storage::vector::{SearchResult, VectorEngine};
@@ -33,6 +36,11 @@ pub struct DocumentStorage {
     meta:    JsonStorage,
     blobs:   BlobStorage,
     vectors: VectorEngine,
+    /// SEMNET-P0 — the typed-edge layer (`edges.db`). A separate DuckDB store
+    /// beside metadata/blobs/vectors; no cross-store transaction (same doctrine
+    /// as the vector index — durable edges are source-of-truth, derived ones a
+    /// rebuildable cache).
+    edges:   EdgeStore,
 }
 
 impl DocumentStorage {
@@ -54,9 +62,97 @@ impl DocumentStorage {
             meta,
             blobs:   BlobStorage::new(&paths.blobs_db, pool)?,
             vectors: VectorEngine::with_embedding(&paths.vec, engine)?,
+            edges:   EdgeStore::new(&paths.edges_db, pool)?,
         })
     }
+}
 
+/// SEMNET-P0 graph pass-throughs. Several are consumed by the Store graph API /
+/// P1+ migrations ahead of a P0 caller; the block-level allow holds the
+/// warning-free bar without peppering per-method attributes. Remove once P1
+/// wires the traversal surface.
+#[allow(dead_code)]
+impl DocumentStorage {
+    // ── graph / edges (SEMNET-P0) ──────────────────────────────────
+
+    /// Insert one edge. Durable immediately (DuckDB autocommit).
+    pub fn add_edge(&self, edge: &Edge) -> Result<()> {
+        self.edges.insert(edge)
+    }
+
+    /// Insert many edges atomically (all or none).
+    pub fn add_edges(&self, edges: &[Edge]) -> Result<()> {
+        self.edges.insert_batch(edges)
+    }
+
+    pub fn edge(&self, id: Uuid) -> Result<Option<Edge>> {
+        self.edges.by_id(id)
+    }
+
+    /// Edges leaving a node, filtered to `kinds` (empty = any).
+    pub fn edges_out(&self, node: Uuid, kinds: &[EdgeKind]) -> Result<Vec<Edge>> {
+        self.edges.outgoing(&EndpointRef::Node(node), kinds)
+    }
+
+    /// Edges arriving at a node — the reverse-index query.
+    pub fn edges_in(&self, node: Uuid, kinds: &[EdgeKind]) -> Result<Vec<Edge>> {
+        self.edges.incoming(&EndpointRef::Node(node), kinds)
+    }
+
+    /// Every edge touching a node on either side (deduped).
+    pub fn edges_around(&self, node: Uuid, kinds: &[EdgeKind]) -> Result<Vec<Edge>> {
+        self.edges.neighbors(&EndpointRef::Node(node), kinds)
+    }
+
+    pub fn delete_edge(&self, id: Uuid) -> Result<()> {
+        self.edges.delete(id)
+    }
+
+    /// Cascade-GC every edge touching any of `nodes` (either endpoint). Returns
+    /// the count removed. Called from `Store::delete_subtree`.
+    pub fn gc_edges_for_nodes(&self, nodes: &HashSet<Uuid>) -> Result<usize> {
+        self.edges.delete_nodes(nodes)
+    }
+
+    /// Drop the rebuildable-cache edges of one origin (`graph rebuild`).
+    pub fn delete_edges_by_origin(&self, origin: EdgeOrigin) -> Result<usize> {
+        self.edges.delete_by_origin(origin)
+    }
+
+    /// Change an edge's origin (the promote/demote primitive). Rows changed.
+    pub fn set_edge_origin(&self, id: Uuid, origin: EdgeOrigin) -> Result<usize> {
+        self.edges.set_origin(id, origin)
+    }
+
+    /// Delete every edge of the given kinds (e.g. clearing the lexical bridge).
+    pub fn delete_edges_by_kinds(&self, kinds: &[EdgeKind]) -> Result<usize> {
+        self.edges.delete_by_kinds(kinds)
+    }
+
+    pub fn edge_count(&self) -> Result<usize> {
+        self.edges.count()
+    }
+
+    pub fn edges_by_kind(&self) -> Result<Vec<(String, usize)>> {
+        self.edges.count_by_kind()
+    }
+
+    pub fn all_edges(&self) -> Result<Vec<Edge>> {
+        self.edges.all()
+    }
+
+    pub fn edges_of_kind(&self, kind: EdgeKind) -> Result<Vec<Edge>> {
+        self.edges.by_kind(kind)
+    }
+
+    /// Edge-store integrity (kept separate from the meta/blob tuple so existing
+    /// callers of `integrity_check` don't change shape).
+    pub fn edges_integrity_check(&self) -> Result<String> {
+        self.edges.integrity_check()
+    }
+}
+
+impl DocumentStorage {
     // ── writes ─────────────────────────────────────────────────────
 
     /// Generate a fresh UUIDv7, persist metadata + content + two
@@ -200,6 +296,7 @@ impl DocumentStorage {
     pub fn checkpoint(&self) -> Result<()> {
         self.meta.checkpoint()?;
         self.blobs.checkpoint()?;
+        self.edges.checkpoint()?;
         Ok(())
     }
 
@@ -282,6 +379,7 @@ struct Paths {
     metadata_db: String,
     blobs_db:    String,
     vec:         String,
+    edges_db:    String,
 }
 
 impl Paths {
@@ -295,6 +393,7 @@ impl Paths {
             metadata_db: root.join("metadata.db").to_string_lossy().into_owned(),
             blobs_db:    root.join("blobs.db").to_string_lossy().into_owned(),
             vec:         root.join("vectors").to_string_lossy().into_owned(),
+            edges_db:    root.join("edges.db").to_string_lossy().into_owned(),
         })
     }
 }

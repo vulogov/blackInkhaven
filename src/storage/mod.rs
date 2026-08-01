@@ -10,6 +10,7 @@
 //! migration write-up.
 
 pub mod document;
+pub mod edge_store;
 pub mod embedding;
 pub mod engine;
 pub mod fingerprint;
