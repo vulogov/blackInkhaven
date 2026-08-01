@@ -113,6 +113,8 @@ pub enum EdgeKind {
     Synonym,
     /// Cross-lingual sense equivalence (via ILI).
     Translates,
+    /// A node uses a word whose sense is this — the manuscript↔lexicon bridge.
+    Mentions,
     /// Symmetric embedding-similarity (derived cache).
     SimilarTo,
 }
@@ -135,6 +137,7 @@ impl EdgeKind {
             EdgeKind::Antonym => "antonym",
             EdgeKind::Synonym => "synonym",
             EdgeKind::Translates => "translates",
+            EdgeKind::Mentions => "mentions",
             EdgeKind::SimilarTo => "similar_to",
         }
     }
@@ -156,6 +159,7 @@ impl EdgeKind {
             "antonym" => EdgeKind::Antonym,
             "synonym" => EdgeKind::Synonym,
             "translates" => EdgeKind::Translates,
+            "mentions" => EdgeKind::Mentions,
             "similar_to" => EdgeKind::SimilarTo,
             _ => return None,
         })
@@ -604,6 +608,24 @@ impl EdgeStore {
             let n = conn
                 .execute("DELETE FROM edges WHERE origin = ?", duckdb::params_from_iter(params))
                 .map_err(|e| anyhow!("edge origin-GC failed: {e}"))?;
+            Ok(n)
+        })
+    }
+
+    /// Delete every edge of the given kinds (e.g. clearing the lexical bridge
+    /// before re-importing it). Returns the count removed.
+    pub fn delete_by_kinds(&self, kinds: &[EdgeKind]) -> Result<usize> {
+        if kinds.is_empty() {
+            return Ok(0);
+        }
+        let names: Vec<&'static str> = kinds.iter().map(|k| k.as_str()).collect();
+        let placeholders = vec!["?"; names.len()].join(",");
+        let sql = format!("DELETE FROM edges WHERE kind IN ({placeholders})");
+        self.engine.transaction(|conn| {
+            let params: Vec<&dyn duckdb::ToSql> = names.iter().map(|n| n as &dyn duckdb::ToSql).collect();
+            let n = conn
+                .execute(&sql, duckdb::params_from_iter(params))
+                .map_err(|e| anyhow!("edge kind-delete failed: {e}"))?;
             Ok(n)
         })
     }

@@ -124,6 +124,11 @@ impl DocumentStorage {
         self.edges.set_origin(id, origin)
     }
 
+    /// Delete every edge of the given kinds (e.g. clearing the lexical bridge).
+    pub fn delete_edges_by_kinds(&self, kinds: &[EdgeKind]) -> Result<usize> {
+        self.edges.delete_by_kinds(kinds)
+    }
+
     pub fn edge_count(&self) -> Result<usize> {
         self.edges.count()
     }
