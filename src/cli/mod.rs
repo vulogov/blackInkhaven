@@ -50,6 +50,7 @@ pub mod myth;
 pub mod tts;
 pub mod gen_fixture;
 pub mod graph;
+pub mod soak;
 pub mod bench_graph;
 pub mod bench_embed;
 pub mod bench_load;
@@ -1501,6 +1502,17 @@ pub enum Command {
         /// Number of reverse-index neighbour queries to time (0 = skip).
         #[arg(long, default_value_t = 1000)]
         queries: usize,
+    },
+
+    /// 2.0 hardening — `inkhaven _soak` (hidden). A sustained-load endurance test
+    /// for the store + graph layer (node CRUD + edge insert/query/cascade +
+    /// periodic embedding + checkpoints), running an integrity check each
+    /// heartbeat. For leak (external RSS sample) + corruption detection.
+    #[command(hide = true, name = "_soak")]
+    Soak {
+        /// How long to run, in seconds.
+        #[arg(long, default_value_t = 600)]
+        seconds: u64,
     },
 
     /// 1.2.18+ I.1.7 — `inkhaven _bench-report`
@@ -6761,6 +6773,7 @@ impl Cli {
             Command::BenchGraph { edges, queries } => {
                 bench_graph::run(edges, queries).map_err(Into::into)
             }
+            Command::Soak { seconds } => soak::run(seconds).map_err(Into::into),
             Command::BenchReport {
                 baseline,
                 current,
