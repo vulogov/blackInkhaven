@@ -3076,6 +3076,18 @@ pub enum GraphCommand {
         /// The edge UUID.
         edge: String,
     },
+    /// The primary-source loci a node cites (`@key[locus]` → CitesLocus).
+    Loci {
+        /// The node UUID.
+        node: String,
+    },
+    /// A bounded citation/link path between two nodes (Cites + LinksTo, ≤ 8 hops).
+    Paths {
+        /// The start node UUID.
+        from: String,
+        /// The end node UUID.
+        to: String,
+    },
 }
 
 /// sub-subcommands under
@@ -6346,6 +6358,10 @@ impl Cli {
                 }
                 GraphCommand::Promote { edge } => graph::promote(&project, &edge).map_err(Into::into),
                 GraphCommand::Dismiss { edge } => graph::dismiss(&project, &edge).map_err(Into::into),
+                GraphCommand::Loci { node } => graph::loci(&project, &node).map_err(Into::into),
+                GraphCommand::Paths { from, to } => {
+                    graph::paths(&project, &from, &to).map_err(Into::into)
+                }
             },
             // Poetry is library/analysis; `forms` needs no project.
             Command::Poetry { cmd } => match cmd {
