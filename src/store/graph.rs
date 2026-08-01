@@ -269,6 +269,28 @@ impl Store {
         self.raw().delete_edge(id).map_err(map_edge_err)
     }
 
+    /// Persist snowball/OpenAlex citation edges (`Cites`, `Imported`), skipping
+    /// any `(src, dst)` `Cites` edge that already exists — so re-running snowball
+    /// on a seed doesn't duplicate. Returns the number newly added.
+    pub fn persist_cites(&self, edges: &[Edge]) -> Result<usize> {
+        if edges.is_empty() {
+            return Ok(0);
+        }
+        let key = |e: &Edge| -> (String, String, String, String) {
+            let (sk, sr) = e.src.as_columns();
+            let (dk, dr) = e.dst.as_columns();
+            (sk.to_string(), sr, dk.to_string(), dr)
+        };
+        let existing = self.raw().edges_of_kind(EdgeKind::Cites).map_err(map_edge_err)?;
+        let seen: HashSet<(String, String, String, String)> = existing.iter().map(key).collect();
+        let fresh: Vec<Edge> = edges.iter().filter(|e| !seen.contains(&key(e))).cloned().collect();
+        let n = fresh.len();
+        if n > 0 {
+            self.raw().add_edges(&fresh).map_err(map_edge_err)?;
+        }
+        Ok(n)
+    }
+
     /// The stance edges against a node — everything `Contradicts` / `InTension`
     /// touching it, in either direction.
     pub fn contradicting(&self, node: Uuid) -> Result<Vec<Edge>> {
