@@ -443,6 +443,10 @@ harness = false
 name = "index"
 harness = false
 
+[[bench]]
+name = "graph"
+harness = false
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

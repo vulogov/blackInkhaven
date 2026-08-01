@@ -28,8 +28,8 @@ name: bench
 # gate already catches structural regressions; a 20-min run
 # per PR is not worth it).
 #
-# Benches run: startup, search, render, scale, export — all
-# deterministic + offline. The `index` (embedding-throughput)
+# Benches run: startup, search, render, scale, export, graph —
+# all deterministic + offline. The `index` (embedding-throughput)
 # bench is EXCLUDED from the gate: it builds the fastembed
 # engine, which downloads the ONNX model on first use — a
 # network dependency that would make the gate slow + flaky.
@@ -126,8 +126,10 @@ jobs:
         run: |
           # index (embedding-throughput) is excluded — it downloads the ONNX
           # model at runtime. All benches below are deterministic + offline.
+          # graph is the SEMNET knowledge-graph edge-store throughput (self-
+          # contained temp store; no fixture / network).
           cargo bench --bench startup --bench search \
-            --bench render --bench scale --bench export
+            --bench render --bench scale --bench export --bench graph
 
       # ── main branch: publish the baseline ────────────
       - name: Upload baseline (main only)
