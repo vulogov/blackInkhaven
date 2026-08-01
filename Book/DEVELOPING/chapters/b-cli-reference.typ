@@ -83,6 +83,25 @@ any command for its exact flags.
   [`inkhaven sources check` — validate entries; exits non-zero on a problem (fits CI).],
 )
 
+#section("The semantic net")
+
+The knowledge graph (2.0, RFC SEMNET-1) — a typed-edge layer over every node,
+connecting what you already have into one interrogable whole. It starts empty:
+`graph rebuild` derives its structural edges from your project, `graph lexical`
+imports the WordNet bridge, and the editor's `Ctrl+V ?` confront persists judged
+stance edges as you work. Its own book, this manual's sibling reference
+`Documentation/GRAPH.md`, covers the edge model in full.
+
+#list(
+  [`inkhaven graph rebuild` — (re)derive the structural edges: paragraph links, timeline event involvements, fact provenance, `/factcheck` verdicts, and `@key[locus]` citations. Idempotent.],
+  [`inkhaven graph lexical` — import the WordNet lexical bridge for the project language (run `inkhaven wordnet fetch <lang>` first).],
+  [`inkhaven graph stats` — node + edge counts and a per-kind breakdown.],
+  [`inkhaven graph neighbors <node>` — the node's one-hop neighbourhood as a tree (links, contradictions, sources, citations, senses).],
+  [`inkhaven graph contradicting <node>` — the recorded stance clashes touching a node.],
+  [`inkhaven graph loci <node>` — the primary-source loci a node cites; `inkhaven graph paths <from> <to>` — a bounded citation / link path.],
+  [`inkhaven graph promote <edge> | dismiss <edge>` — accept a judged stance edge (kept across rebuilds), or delete one.],
+)
+
 #section("Constructed languages")
 
 The ConLang suite is large (its own book, _Constructed Language Development_,
