@@ -7264,6 +7264,7 @@ fn content_fingerprint(doc: &OpenedDoc) -> (Uuid, u64) {
 fn emit_confront_findings(
     paragraph_id: Uuid,
     relations: &[crate::research::contradiction::Relation],
+    edges: &[crate::storage::edge_store::Edge],
 ) -> usize {
     use crate::pane::output::{active, emit, kinds, Lifetime, Message, Severity};
     // Replace this paragraph's prior confront findings.
@@ -7274,6 +7275,11 @@ fn emit_confront_findings(
             }
         }
     }
+    // `edges` are the persisted stance edges — one per non-Silent relation, in
+    // the same order (both skip exactly the Silent relations), so an iterator
+    // advanced only on surfaced relations pairs each message with its edge id
+    // (for the Output pane's promote/dismiss).
+    let mut edge_iter = edges.iter();
     let mut emitted = 0usize;
     for r in relations {
         let severity = if r.stance.is_against() {
@@ -7283,22 +7289,36 @@ fn emit_confront_findings(
         } else {
             continue; // Silent — nothing to surface.
         };
+        let edge_id = edge_iter.next().map(|e| e.id.to_string());
         let text = if r.reason.is_empty() {
             format!("[{}] {}", r.stance.label(), r.label)
         } else {
             format!("[{}] {} — {}", r.stance.label(), r.label, r.reason)
         };
-        let msg = Message::new(
-            kinds::CONFRONT,
-            severity,
-            Lifetime::UntilActedOn,
-            serde_json::json!({ "text": text, "label": r.label, "stance": r.stance.label() }),
-        )
-        .with_source_paragraph(paragraph_id);
+        let mut meta =
+            serde_json::json!({ "text": text, "label": r.label, "stance": r.stance.label() });
+        if let Some(eid) = edge_id {
+            meta["edge_id"] = serde_json::Value::String(eid);
+        }
+        let msg = Message::new(kinds::CONFRONT, severity, Lifetime::UntilActedOn, meta)
+            .with_source_paragraph(paragraph_id);
         let _ = emit(&msg);
         emitted += 1;
     }
     emitted
+}
+
+/// SEMNET — the stance-edge UUID a confront Output message carries (for the
+/// Output pane's promote / dismiss actions). `None` for non-confront messages or
+/// pre-edge findings.
+fn confront_edge_id(m: &crate::pane::output::Message) -> Option<Uuid> {
+    if m.kind != crate::pane::output::kinds::CONFRONT {
+        return None;
+    }
+    m.metadata
+        .get("edge_id")
+        .and_then(|v| v.as_str())
+        .and_then(|s| Uuid::parse_str(s).ok())
 }
 
 pub(super) struct BgJob {
@@ -8731,12 +8751,40 @@ impl App {
                     // a promotion nudge we don't want to clobber.
                     let nudged_s = self.record_socratic_dismissal(m);
                     let nudged_e = self.record_editor_dismissal(m);
+                    // SEMNET — dismissing a confront finding rejects its judged
+                    // stance edge (delete it from the graph).
+                    let edge = confront_edge_id(m);
                     if let Some(s) = crate::pane::output::active() {
                         let _ = s.dismiss(m.id);
                     }
+                    if let Some(eid) = edge {
+                        let _ = self.store.dismiss_edge(eid);
+                    }
                     self.refresh_tree_badges();
                     if !nudged_s && !nudged_e {
-                        self.status = "dismissed".into();
+                        self.status = if edge.is_some() { "finding rejected".into() } else { "dismissed".into() };
+                    }
+                }
+            }
+            // SEMNET — `P` promotes a confront finding's judged stance edge to a
+            // kept decision (survives `graph rebuild`), then clears the message.
+            KeyCode::Char('P') => {
+                if let Some(m) = msgs.get(self.output_selected).cloned() {
+                    match confront_edge_id(&m) {
+                        Some(eid) => match self.store.promote_edge(eid) {
+                            Ok(true) => {
+                                if let Some(s) = crate::pane::output::active() {
+                                    let _ = s.dismiss(m.id);
+                                }
+                                self.refresh_tree_badges();
+                                self.status = "stance promoted — kept across rebuilds".into();
+                            }
+                            Ok(false) => self.status = "that stance edge is already gone".into(),
+                            Err(e) => self.status = format!("promote failed: {e}"),
+                        },
+                        None => {
+                            self.status = "promote (P) applies to a confront finding".into()
+                        }
                     }
                 }
             }
@@ -12199,6 +12247,7 @@ impl App {
             A::OpenDialogueView => self.open_dialogue_view(),
             A::OpenCharacterArc => self.open_character_arc_view(),
             A::OpenMythHeatmap => self.open_myth_heatmap(),
+            A::OpenGraphNeighbourhood => self.open_graph_neighbourhood_view(),
             A::OpenWorldOverview => self.open_world_overview(),
             A::OpenInnerSocratesOverview => self.open_inner_socrates_overview(),
             A::OpenInnerEditorOverview => self.open_inner_editor_overview(),
@@ -14147,6 +14196,71 @@ impl App {
         true
     }
 
+    /// SEMNET — `Ctrl+V g`. Open the knowledge-graph neighbourhood view for the
+    /// open paragraph: its one-hop edges (links / contradictions / sources /
+    /// citations / mentioned senses) as a read-only scrollable tree. Empty when
+    /// the graph is bare — populate with `graph rebuild` / `graph lexical`.
+    fn open_graph_neighbourhood_view(&mut self) {
+        use crate::store::graph::{render_neighbourhood, EndpointRef};
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "graph: no paragraph open".into();
+            return;
+        };
+        let id = doc.id;
+        let edges = match self.store.subgraph(id, 1, &[]) {
+            Ok(e) => e,
+            Err(e) => {
+                self.status = format!("graph: {e}");
+                return;
+            }
+        };
+        let h = &self.hierarchy;
+        let label = |ep: &EndpointRef| -> String {
+            match ep {
+                EndpointRef::Node(u) => h
+                    .get(*u)
+                    .map(|n| n.title.clone())
+                    .filter(|t| !t.trim().is_empty())
+                    .unwrap_or_else(|| format!("node {}", &u.to_string()[..8])),
+                EndpointRef::Extern(_) => {
+                    let (k, r) = ep.as_columns();
+                    format!("{k} {r}")
+                }
+            }
+        };
+        let rows: Vec<String> =
+            render_neighbourhood(id, &edges, label).lines().map(|l| l.to_string()).collect();
+        self.status = "graph neighbourhood · ↑↓ scroll · Esc".into();
+        self.modal = Modal::GraphNeighbourhood { rows, cursor: 0 };
+    }
+
+    fn graph_neighbourhood_handle_key(&mut self, key: KeyEvent) -> bool {
+        let n = match &self.modal {
+            Modal::GraphNeighbourhood { rows, .. } => rows.len(),
+            _ => return false,
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "graph neighbourhood: closed".into();
+            }
+            KeyCode::Up => {
+                if let Modal::GraphNeighbourhood { cursor, .. } = &mut self.modal {
+                    *cursor = cursor.saturating_sub(1);
+                }
+            }
+            KeyCode::Down => {
+                if let Modal::GraphNeighbourhood { cursor, .. } = &mut self.modal {
+                    if n > 0 {
+                        *cursor = (*cursor + 1).min(n - 1);
+                    }
+                }
+            }
+            _ => {}
+        }
+        true
+    }
+
     /// WORLD-4 — `Ctrl+B W`. Build the read-only World overview: the world
     /// definition + compiled astronomy + materialization status.
     /// The chapter titles materialized under the World book — captured on the
@@ -15733,7 +15847,7 @@ impl App {
                     // Best-effort — a graph write never fails the confront.
                     let edges = contradiction::confront_stance_edges(id, &relations);
                     let _ = store.replace_confront_edges(id, &edges);
-                    emit_confront_findings(id, &relations).to_string()
+                    emit_confront_findings(id, &relations, &edges).to_string()
                 });
             let _ = tx.send(BgMsg::Done(result));
         });
@@ -25880,6 +25994,11 @@ impl App {
             return Ok(false);
         }
 
+        if matches!(self.modal, Modal::GraphNeighbourhood { .. }) {
+            self.graph_neighbourhood_handle_key(key);
+            return Ok(false);
+        }
+
         if is_facts_search {
             self.facts_search_handle_key(key);
             return Ok(false);
@@ -32422,9 +32541,9 @@ mod tests_confront {
             rel(Stance::Silent),
         ];
         // 2 against + 2 supporting = 4; the 2 silent are dropped.
-        assert_eq!(emit_confront_findings(id, &relations), 4);
-        assert_eq!(emit_confront_findings(id, &[]), 0);
-        assert_eq!(emit_confront_findings(id, &[rel(Stance::Silent)]), 0);
+        assert_eq!(emit_confront_findings(id, &relations, &[]), 4);
+        assert_eq!(emit_confront_findings(id, &[], &[]), 0);
+        assert_eq!(emit_confront_findings(id, &[rel(Stance::Silent)], &[]), 0);
     }
 }
 
