@@ -12,6 +12,7 @@ use crate::config::Config;
 use crate::error::{Error, Result};
 use crate::project::ProjectLayout;
 use crate::store::graph::EndpointRef;
+use crate::store::hierarchy::Hierarchy;
 use crate::store::Store;
 
 fn parse_uuid(s: &str, what: &str) -> Result<Uuid> {
@@ -103,6 +104,31 @@ pub fn dismiss(project: &Path, edge: &str) -> Result<()> {
     let id = parse_uuid(edge, "edge")?;
     store.dismiss_edge(id)?;
     println!("dismissed edge {id}");
+    Ok(())
+}
+
+/// `inkhaven graph neighbors <node>` — the node's one-hop neighbourhood rendered
+/// as a terminal-native tree: what it links to, contradicts, is sourced from,
+/// cites, and the senses it mentions.
+pub fn neighbors(project: &Path, node: &str) -> Result<()> {
+    let store = open(project)?;
+    let id = parse_uuid(node, "node")?;
+    let edges = store.subgraph(id, 1, &[])?;
+    let h = Hierarchy::load(&store)?;
+    let label = |ep: &EndpointRef| -> String {
+        match ep {
+            EndpointRef::Node(u) => h
+                .get(*u)
+                .map(|n| n.title.clone())
+                .filter(|t| !t.trim().is_empty())
+                .unwrap_or_else(|| format!("node {}", &u.to_string()[..8])),
+            EndpointRef::Extern(_) => {
+                let (k, r) = ep.as_columns();
+                format!("{k} {r}")
+            }
+        }
+    };
+    print!("{}", crate::store::graph::render_neighbourhood(id, &edges, label));
     Ok(())
 }
 

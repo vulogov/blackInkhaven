@@ -265,6 +265,17 @@ impl Store {
             .map_err(map_edge_err)
     }
 
+    // ── SEMNET-P6: surfacing ───────────────────────────────────────
+
+    /// The edges in the neighbourhood of `seed`: its direct edges, expanded
+    /// `radius` rings through node endpoints (extern endpoints are leaves).
+    /// Deduped by edge id and hard-capped so a hub node can't blow up the view.
+    pub fn subgraph(&self, seed: Uuid, radius: usize, kinds: &[EdgeKind]) -> Result<Vec<Edge>> {
+        collect_subgraph(seed, radius, |node| {
+            self.raw().edges_around(node, kinds).map_err(map_edge_err)
+        })
+    }
+
     // ── SEMNET-P5: lexical bridge ──────────────────────────────────
 
     /// (Re)build the lexical bridge from the installed WordNet for the project
@@ -692,6 +703,98 @@ fn derive_lexical_edges(occurrences: &[(Uuid, String, Vec<SenseNode>)], lang: &s
     edges
 }
 
+// ── SEMNET-P6: surfacing (subgraph + neighbourhood view) ─────────────
+
+/// Bounded neighbourhood collection: the edges within `radius` rings of `seed`,
+/// expanding only through node endpoints (externs are leaves). Deduped by edge
+/// id, hard-capped at 500 edges. Pure over the `neighbors` closure.
+fn collect_subgraph(
+    seed: Uuid,
+    radius: usize,
+    mut neighbors: impl FnMut(Uuid) -> Result<Vec<Edge>>,
+) -> Result<Vec<Edge>> {
+    const MAX_EDGES: usize = 500;
+    let mut collected: Vec<Edge> = Vec::new();
+    let mut seen_edges: HashSet<Uuid> = HashSet::new();
+    let mut visited: HashSet<Uuid> = HashSet::from([seed]);
+    let mut frontier: Vec<Uuid> = vec![seed];
+    for _ in 0..radius.max(1) {
+        let mut next: Vec<Uuid> = Vec::new();
+        for &node in &frontier {
+            for e in neighbors(node)? {
+                if seen_edges.insert(e.id) {
+                    collected.push(e.clone());
+                    if collected.len() >= MAX_EDGES {
+                        return Ok(collected);
+                    }
+                }
+                if let EndpointRef::Node(other) = e.other_endpoint(&EndpointRef::Node(node)) {
+                    if visited.insert(*other) {
+                        next.push(*other);
+                    }
+                }
+            }
+        }
+        if next.is_empty() {
+            break;
+        }
+        frontier = next;
+    }
+    Ok(collected)
+}
+
+/// Render a node's neighbourhood as a terminal-native monospace tree, grouped by
+/// edge kind with per-group direction arrows (`→` out, `←` in, `⇄` symmetric),
+/// the far endpoint, and any reason. Large groups are truncated with a `… +N
+/// more`. `label` resolves an endpoint to a human string (node title / extern
+/// description). Pure.
+pub fn render_neighbourhood(
+    focus: Uuid,
+    edges: &[Edge],
+    label: impl Fn(&EndpointRef) -> String,
+) -> String {
+    const PER_GROUP: usize = 8;
+    let here = EndpointRef::Node(focus);
+    let mut out = format!("◆ {}\n", label(&here));
+    if edges.is_empty() {
+        out.push_str("  (no edges — run `graph rebuild` / `graph lexical` to populate)\n");
+        return out;
+    }
+    let mut order: Vec<EdgeKind> = Vec::new();
+    let mut groups: HashMap<EdgeKind, Vec<&Edge>> = HashMap::new();
+    for e in edges {
+        if !groups.contains_key(&e.kind) {
+            order.push(e.kind);
+        }
+        groups.entry(e.kind).or_default().push(e);
+    }
+    for kind in &order {
+        let g = &groups[kind];
+        out.push_str(&format!("├─ {} ({})\n", kind.as_str(), g.len()));
+        for e in g.iter().take(PER_GROUP) {
+            let arrow = if !e.directed {
+                "⇄"
+            } else if e.src == here {
+                "→"
+            } else {
+                "←"
+            };
+            let other = label(e.other_endpoint(&here));
+            let reason = e
+                .reason
+                .as_deref()
+                .filter(|r| !r.is_empty())
+                .map(|r| format!(" — {r}"))
+                .unwrap_or_default();
+            out.push_str(&format!("│    {arrow} {other}{reason}\n"));
+        }
+        if g.len() > PER_GROUP {
+            out.push_str(&format!("│    … +{} more\n", g.len() - PER_GROUP));
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -987,6 +1090,62 @@ mod tests {
             hyponyms: hypo.iter().map(|s| s.to_string()).collect(),
             antonyms: anto.iter().map(|s| s.to_string()).collect(),
         }
+    }
+
+    // ── P6: surfacing ──────────────────────────────────────────────
+
+    #[test]
+    fn subgraph_is_radius_bounded() {
+        // Chain a → b → c → d (LinksTo).
+        let ids: Vec<Uuid> = (0..4).map(|_| Uuid::now_v7()).collect();
+        let mk = |a: Uuid, b: Uuid| {
+            Edge::new(EndpointRef::Node(a), EdgeKind::LinksTo, EndpointRef::Node(b), EdgeOrigin::Structural)
+        };
+        let edges = vec![mk(ids[0], ids[1]), mk(ids[1], ids[2]), mk(ids[2], ids[3])];
+        let nb = |n: Uuid| {
+            Ok(edges
+                .iter()
+                .filter(|e| e.src == EndpointRef::Node(n) || e.dst == EndpointRef::Node(n))
+                .cloned()
+                .collect::<Vec<_>>())
+        };
+        // radius 1: only a's own edges (a→b).
+        assert_eq!(collect_subgraph(ids[0], 1, nb).unwrap().len(), 1);
+        // radius 2: a→b + b→c.
+        assert_eq!(collect_subgraph(ids[0], 2, nb).unwrap().len(), 2);
+        // radius 3: the whole chain.
+        assert_eq!(collect_subgraph(ids[0], 3, nb).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn neighbourhood_render_groups_caps_and_shows_direction() {
+        let focus = Uuid::now_v7();
+        let here = EndpointRef::Node(focus);
+        let mut edges = vec![
+            // an incoming link, a symmetric contradiction with a reason
+            Edge::new(EndpointRef::Node(Uuid::now_v7()), EdgeKind::LinksTo, here.clone(), EdgeOrigin::Structural),
+            Edge::new(here.clone(), EdgeKind::Contradicts, EndpointRef::Extern(ExternRef::Evidence { label: "fact: X".into() }), EdgeOrigin::Judged)
+                .with_reason("opposes §3"),
+        ];
+        // 10 mentions → the group truncates at 8.
+        for i in 0..10 {
+            edges.push(Edge::new(here.clone(), EdgeKind::Mentions, EndpointRef::Extern(ExternRef::Sense { lang: "en".into(), synset: format!("s{i}") }), EdgeOrigin::Imported));
+        }
+        let label = |ep: &EndpointRef| match ep {
+            EndpointRef::Node(u) if *u == focus => "THIS".to_string(),
+            EndpointRef::Node(_) => "other-para".to_string(),
+            EndpointRef::Extern(_) => {
+                let (k, r) = ep.as_columns();
+                format!("{k} {r}")
+            }
+        };
+        let s = render_neighbourhood(focus, &edges, label);
+        assert!(s.starts_with("◆ THIS\n"));
+        assert!(s.contains("├─ contradicts (1)"));
+        assert!(s.contains("⇄ evidence fact: X — opposes §3"), "symmetric arrow + reason: {s}");
+        assert!(s.contains("← other-para"), "incoming link arrow");
+        assert!(s.contains("├─ mentions (10)"));
+        assert!(s.contains("… +2 more"), "mentions group capped at 8: {s}");
     }
 
     #[test]
