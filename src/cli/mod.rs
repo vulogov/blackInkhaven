@@ -3090,6 +3090,12 @@ pub enum GraphCommand {
     },
     /// (Re)build the WordNet lexical bridge for the project language.
     Lexical,
+    /// A node's one-hop neighbourhood rendered as a tree (links, contradictions,
+    /// sources, citations, senses).
+    Neighbors {
+        /// The node UUID.
+        node: String,
+    },
 }
 
 /// sub-subcommands under
@@ -6365,6 +6371,9 @@ impl Cli {
                     graph::paths(&project, &from, &to).map_err(Into::into)
                 }
                 GraphCommand::Lexical => graph::lexical(&project).map_err(Into::into),
+                GraphCommand::Neighbors { node } => {
+                    graph::neighbors(&project, &node).map_err(Into::into)
+                }
             },
             // Poetry is library/analysis; `forms` needs no project.
             Command::Poetry { cmd } => match cmd {
