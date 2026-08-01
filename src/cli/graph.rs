@@ -19,10 +19,15 @@ fn parse_uuid(s: &str, what: &str) -> Result<Uuid> {
 }
 
 fn open(project: &Path) -> Result<Store> {
+    Ok(open_with_cfg(project)?.0)
+}
+
+fn open_with_cfg(project: &Path) -> Result<(Store, Config)> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
     let cfg = Config::load_layered(&layout.config_path())?;
-    Store::open(layout, &cfg)
+    let store = Store::open(layout, &cfg)?;
+    Ok((store, cfg))
 }
 
 /// `inkhaven graph stats` — node + edge counts and a per-kind breakdown.
@@ -47,8 +52,8 @@ pub fn stats(project: &Path) -> Result<()> {
 /// are untouched. P1 re-derives the structural edges (`LinksTo`,
 /// `EventInvolves`) from the current node fields.
 pub fn rebuild(project: &Path) -> Result<()> {
-    let store = open(project)?;
-    let r = store.graph_rebuild()?;
+    let (store, cfg) = open_with_cfg(project)?;
+    let r = store.graph_rebuild(&cfg)?;
     println!("graph rebuild: cleared {} derivable edge(s), re-derived {}", r.cleared, r.added);
     let s = store.graph_stats()?;
     println!("graph now holds {} edge(s) across {} node(s)", s.edges, s.nodes);
@@ -98,5 +103,43 @@ pub fn dismiss(project: &Path, edge: &str) -> Result<()> {
     let id = parse_uuid(edge, "edge")?;
     store.dismiss_edge(id)?;
     println!("dismissed edge {id}");
+    Ok(())
+}
+
+/// `inkhaven graph loci <node>` — the primary-source loci a node cites.
+pub fn loci(project: &Path, node: &str) -> Result<()> {
+    use crate::store::graph::EdgeKind;
+    let store = open(project)?;
+    let id = parse_uuid(node, "node")?;
+    let edges = store.edges_out(id, &[EdgeKind::CitesLocus])?;
+    if edges.is_empty() {
+        println!("{id} cites no primary-source loci");
+        return Ok(());
+    }
+    for e in &edges {
+        let (_k, r) = e.dst.as_columns();
+        let key = e.attrs.get("key").and_then(|v| v.as_str()).unwrap_or("");
+        println!("@{key}  {r}");
+    }
+    Ok(())
+}
+
+/// `inkhaven graph paths <from> <to>` — a bounded citation/link path between two
+/// nodes (over Cites + LinksTo, ≤ 8 hops).
+pub fn paths(project: &Path, from: &str, to: &str) -> Result<()> {
+    use crate::store::graph::EdgeKind;
+    let store = open(project)?;
+    let a = parse_uuid(from, "from")?;
+    let b = parse_uuid(to, "to")?;
+    match store.paths(a, b, &[EdgeKind::Cites, EdgeKind::LinksTo], 8)? {
+        Some(path) => {
+            let hops = path.len().saturating_sub(1);
+            println!("path found ({hops} hop(s)):");
+            for id in &path {
+                println!("  {id}");
+            }
+        }
+        None => println!("no path from {a} to {b} within 8 hops"),
+    }
     Ok(())
 }

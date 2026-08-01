@@ -276,7 +276,7 @@ impl Registry {
 /// A non-node entity an edge can point at without forcing a full `Node` into
 /// existence (a bibliography of 10 000 works must not become 10 000 nodes).
 /// Value-addressed; two externs are equal iff their `(kind, ref)` columns are.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ExternRef {
     /// A Sources-book entry / `@cite` key (carries the book node for later
     /// reconciliation into a real node).
@@ -299,7 +299,7 @@ pub enum ExternRef {
 }
 
 /// Where an edge starts or ends.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EndpointRef {
     /// Any manuscript node (the common case).
     Node(Uuid),

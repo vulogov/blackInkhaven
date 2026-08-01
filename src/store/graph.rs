@@ -19,15 +19,18 @@
 //! keeps the warning-free bar until the surfacing phase wires the verbs.
 #![allow(dead_code)]
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::Path;
 
 use serde::Deserialize;
 use uuid::Uuid;
 
+use crate::config::Config;
 use crate::error::{Error, Result};
+use crate::index_locorum::{self, LocusScheme};
+use crate::sources::BibEntry;
 use crate::store::hierarchy::Hierarchy;
-use crate::store::node::Node;
+use crate::store::node::{Node, NodeKind};
 use crate::store::Store;
 
 // Re-export the domain types so callers use `store::graph::Edge` etc.
@@ -100,24 +103,22 @@ impl Store {
         Ok(GraphStats { edges, nodes, by_kind })
     }
 
-    /// Rebuild the derivable edges: drop every edge that a derivation below can
-    /// recompute (`Structural`/`Derived`/`Imported`) and re-derive them from the
-    /// current node state. User decisions (`Authorial`/`Promoted`) are preserved.
+    /// Rebuild the derivable edges: drop the `Structural` projection and
+    /// recompute it from the current node state + sidecars + manuscript
+    /// citations.
     ///
-    /// Idempotent: running it twice on unchanged nodes yields the same edge set
+    /// Only `Structural` is cleared — it is the set fully re-derived here.
+    /// `Derived` isn't produced yet; `Imported` (WordNet / citation registries)
+    /// is external reference data that isn't re-derivable offline, so it is
+    /// preserved. User `Authorial` / `Promoted` / `Judged` edges are always kept.
+    ///
+    /// Idempotent: running it twice on unchanged inputs yields the same edge set
     /// (edge ids differ — freshly minted — but the endpoints/kinds match).
-    ///
-    /// P1 re-derives the structural edges (`LinksTo`, `EventInvolves`). Later
-    /// phases add their re-derivations here (Derived similarity, Imported
-    /// bridges, provenance/verdict projections, …).
-    pub fn graph_rebuild(&self) -> Result<GraphRebuild> {
-        let mut cleared = 0;
-        for origin in [EdgeOrigin::Structural, EdgeOrigin::Derived, EdgeOrigin::Imported] {
-            cleared += self
-                .raw()
-                .delete_edges_by_origin(origin)
-                .map_err(map_edge_err)?;
-        }
+    pub fn graph_rebuild(&self, cfg: &Config) -> Result<GraphRebuild> {
+        let cleared = self
+            .raw()
+            .delete_edges_by_origin(EdgeOrigin::Structural)
+            .map_err(map_edge_err)?;
 
         let hierarchy = Hierarchy::load(self)?;
         let nodes: Vec<Node> = hierarchy.flatten().into_iter().map(|(n, _)| n.clone()).collect();
@@ -127,6 +128,8 @@ impl Store {
         let mut derived = derive_structural_edges(&nodes);
         // P2 — provenance + verdict sidecars → SourcedFrom / GradedAs.
         derived.extend(derive_sidecar_edges(self.project_root(), &ids));
+        // P4 — @key[locus] citations → CitesLocus.
+        derived.extend(self.gather_locus_edges(&hierarchy, cfg));
 
         let added = derived.len();
         if !derived.is_empty() {
@@ -134,6 +137,68 @@ impl Store {
         }
 
         Ok(GraphRebuild { cleared, added })
+    }
+
+    /// Harvest `@key[locus]` citations from the manuscript's user-book paragraphs
+    /// and turn them into `CitesLocus` edges, canonicalizing each locus under its
+    /// source's reference scheme exactly as the Index Locorum does. I/O (reads
+    /// paragraph files + the Sources book); the pure mapping is
+    /// [`derive_locus_edges`].
+    fn gather_locus_edges(&self, h: &Hierarchy, cfg: &Config) -> Vec<Edge> {
+        let root = self.project_root();
+        let mut cites: Vec<(Uuid, String, String)> = Vec::new();
+        for book in h
+            .children_of(None)
+            .into_iter()
+            .filter(|n| n.kind == NodeKind::Book && n.system_tag.is_none())
+        {
+            for id in h.collect_subtree(book.id) {
+                let Some(n) = h.get(id) else { continue };
+                if n.kind != NodeKind::Paragraph {
+                    continue;
+                }
+                let Some(rel) = n.file.as_ref() else { continue };
+                let Ok(raw) = std::fs::read_to_string(root.join(rel)) else { continue };
+                for (key, locus) in crate::sources::extract_cite_loci(&raw) {
+                    if let Some(l) = locus.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+                        cites.push((n.id, key, l));
+                    }
+                }
+            }
+        }
+        if cites.is_empty() {
+            return Vec::new();
+        }
+        let declared = collect_declared_schemes(root, h);
+        let mut keys: Vec<String> = cites.iter().map(|c| c.1.clone()).collect();
+        keys.sort();
+        keys.dedup();
+        let (schemes, _errs) =
+            index_locorum::resolve_schemes(&cfg.sources.ref_schemes, &declared, &keys);
+        derive_locus_edges(&cites, &schemes)
+    }
+
+    /// SEMNET-P4 — a bounded path search between two nodes over the given edge
+    /// kinds (e.g. citation chains over `Cites`). Returns the node sequence of
+    /// the first path found within `max_hops` edges, or `None`. Hop- and
+    /// visit-bounded so a pathological graph can't hang the caller.
+    pub fn paths(
+        &self,
+        from: Uuid,
+        to: Uuid,
+        kinds: &[EdgeKind],
+        max_hops: usize,
+    ) -> Result<Option<Vec<Uuid>>> {
+        bfs_path(from, to, max_hops, |node| {
+            let here = EndpointRef::Node(node);
+            let mut out = Vec::new();
+            for e in self.raw().edges_around(node, kinds).map_err(map_edge_err)? {
+                if let EndpointRef::Node(other) = e.other_endpoint(&here) {
+                    out.push(*other);
+                }
+            }
+            Ok(out)
+        })
     }
 
     /// Edge-store integrity check (`"ok"` when healthy).
@@ -380,6 +445,111 @@ fn derive_verdict_edges(
     edges
 }
 
+/// Bounded breadth-first path search over a node-neighbour lookup. Returns the
+/// node sequence of the first path from `from` to `to` within `max_hops` edges,
+/// or `None`. Hop- and visit-bounded (a hard visit cap) so a pathological or
+/// cyclic graph can't hang. Pure over the `neighbors` closure — unit-testable.
+fn bfs_path(
+    from: Uuid,
+    to: Uuid,
+    max_hops: usize,
+    mut neighbors: impl FnMut(Uuid) -> Result<Vec<Uuid>>,
+) -> Result<Option<Vec<Uuid>>> {
+    if from == to {
+        return Ok(Some(vec![from]));
+    }
+    const MAX_VISITS: usize = 20_000;
+    let mut visited: HashSet<Uuid> = HashSet::from([from]);
+    let mut queue: VecDeque<Vec<Uuid>> = VecDeque::from([vec![from]]);
+    let mut budget = MAX_VISITS;
+    while let Some(path) = queue.pop_front() {
+        // A path of `n` nodes carries `n - 1` edges; extend only while adding one
+        // more edge stays within `max_hops`.
+        if path.len() > max_hops {
+            continue;
+        }
+        let tail = *path.last().expect("path is non-empty");
+        for other in neighbors(tail)? {
+            if budget == 0 {
+                return Ok(None);
+            }
+            budget -= 1;
+            if other == to {
+                let mut p = path.clone();
+                p.push(other);
+                return Ok(Some(p));
+            }
+            if visited.insert(other) {
+                let mut p = path.clone();
+                p.push(other);
+                queue.push_back(p);
+            }
+        }
+    }
+    Ok(None)
+}
+
+// ── SEMNET-P4: bibliographic (CitesLocus) ────────────────────────────
+
+/// Sources-book cite-key → declared reference-scheme name (the scheme mapping
+/// the locus canonicalizer needs; a minimal mirror of the Index Locorum CLI's
+/// collector).
+fn collect_declared_schemes(root: &Path, h: &Hierarchy) -> HashMap<String, String> {
+    let mut declared = HashMap::new();
+    let Some(sources) = h.iter().find(|n| {
+        n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_SOURCES)
+    }) else {
+        return declared;
+    };
+    for id in h.collect_subtree(sources.id) {
+        let Some(n) = h.get(id) else { continue };
+        if n.kind != NodeKind::Paragraph {
+            continue;
+        }
+        let Some(rel) = &n.file else { continue };
+        let Ok(raw) = std::fs::read_to_string(root.join(rel)) else { continue };
+        let body = crate::typst_prose::strip_leading_heading(&raw);
+        if let Some(e) = BibEntry::from_hjson(&body) {
+            if let Some(scheme) = e.scheme.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+                declared.insert(e.key.clone(), scheme.to_string());
+            }
+        }
+    }
+    declared
+}
+
+/// SEMNET-P4 — `CitesLocus` edges: each `@key[locus]` citation → an edge from
+/// the citing node to `Extern::Locus { scheme, canonical }`. The locus is
+/// canonicalized under its source's reference scheme (so `Jn 3.16`,
+/// `иоанна 3:16`, `John 3:16` collapse to one endpoint), matching the Index
+/// Locorum; the cite key rides `attrs`. Pure.
+fn derive_locus_edges(
+    cites: &[(Uuid, String, String)],
+    schemes: &HashMap<String, LocusScheme>,
+) -> Vec<Edge> {
+    let mut edges = Vec::new();
+    for (node, key, raw) in cites {
+        let raw = raw.trim();
+        if raw.is_empty() {
+            continue;
+        }
+        let (scheme, canonical) = match schemes.get(key) {
+            Some(s) => (s.name().to_string(), s.canonicalize(raw)),
+            None => (String::new(), raw.to_string()),
+        };
+        edges.push(
+            Edge::new(
+                EndpointRef::Node(*node),
+                EdgeKind::CitesLocus,
+                EndpointRef::Extern(ExternRef::Locus { scheme, canonical }),
+                EdgeOrigin::Structural,
+            )
+            .with_attrs(serde_json::json!({ "key": key })),
+        );
+    }
+    edges
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -615,5 +785,72 @@ mod tests {
             .incoming(&EndpointRef::Extern(ExternRef::Grade { level: "inaccurate".into() }), &[EdgeKind::GradedAs])
             .unwrap();
         assert_eq!(inaccurate.len(), 2, "two facts graded inaccurate group under the bucket");
+    }
+
+    // ── P4: bibliographic ──────────────────────────────────────────
+
+    fn bible_scheme() -> std::collections::HashMap<String, LocusScheme> {
+        // Resolve the built-in `bible` scheme under the key "bible" (a cite of
+        // `@bible[...]` with no declared scheme resolves the key as the name).
+        let (schemes, _) = index_locorum::resolve_schemes(
+            &crate::config::Config::default().sources.ref_schemes,
+            &std::collections::HashMap::new(),
+            &["bible".to_string()],
+        );
+        schemes
+    }
+
+    #[test]
+    fn locus_edges_regroup_variant_scripture_spellings() {
+        // The multilingual faithfulness test: `Jn 3.16`, `иоанна 3:16`, and
+        // `John 3:16` all canonicalize to one endpoint, so three citing nodes
+        // point at the SAME locus (as the Index Locorum groups them).
+        let schemes = bible_scheme();
+        let (n1, n2, n3) = (Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7());
+        let cites = vec![
+            (n1, "bible".to_string(), "Joh 3.16".to_string()), // prefix + dot separator
+            (n2, "bible".to_string(), "Иоанна 3:16".to_string()), // Russian Synodal
+            (n3, "bible".to_string(), "John 3:16".to_string()), // English
+        ];
+        let edges = derive_locus_edges(&cites, &schemes);
+        assert_eq!(edges.len(), 3);
+        let dsts: std::collections::HashSet<_> = edges.iter().map(|e| e.dst.clone()).collect();
+        assert_eq!(dsts.len(), 1, "all three variants collapse to one locus endpoint");
+        let want = EndpointRef::Extern(ExternRef::Locus { scheme: "bible".into(), canonical: "John 3:16".into() });
+        assert!(dsts.contains(&want), "canonical endpoint is {want:?}, got {dsts:?}");
+        assert_eq!(edges[0].kind, EdgeKind::CitesLocus);
+        assert_eq!(edges[0].origin, EdgeOrigin::Structural);
+        assert_eq!(edges[0].attrs["key"], "bible");
+    }
+
+    #[test]
+    fn locus_without_scheme_passes_through_verbatim() {
+        let node = Uuid::now_v7();
+        let cites = vec![(node, "smith".to_string(), "§4.2".to_string())];
+        let edges = derive_locus_edges(&cites, &std::collections::HashMap::new());
+        assert_eq!(edges.len(), 1);
+        assert_eq!(
+            edges[0].dst,
+            EndpointRef::Extern(ExternRef::Locus { scheme: String::new(), canonical: "§4.2".into() })
+        );
+    }
+
+    #[test]
+    fn citation_path_is_hop_bounded() {
+        // A chain a → b → c → d → e via an in-memory adjacency.
+        let ids: Vec<Uuid> = (0..5).map(|_| Uuid::now_v7()).collect();
+        let mut adj: BTreeMap<Uuid, Vec<Uuid>> = BTreeMap::new();
+        for w in ids.windows(2) {
+            adj.entry(w[0]).or_default().push(w[1]);
+            adj.entry(w[1]).or_default().push(w[0]); // symmetric (Cites is directed, but test both)
+        }
+        let nb = |n: Uuid| Ok(adj.get(&n).cloned().unwrap_or_default());
+
+        // 4 hops reaches e; 3 hops does not.
+        let p = bfs_path(ids[0], ids[4], 4, nb).unwrap().unwrap();
+        assert_eq!(p, ids, "full chain within 4 hops");
+        assert_eq!(p.len() - 1, 4, "exactly 4 hops");
+        assert!(bfs_path(ids[0], ids[4], 3, nb).unwrap().is_none(), "5 nodes need 4 hops; 3 is too few");
+        assert_eq!(bfs_path(ids[0], ids[0], 0, nb).unwrap(), Some(vec![ids[0]]), "self is zero hops");
     }
 }
