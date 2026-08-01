@@ -550,6 +550,14 @@ impl EdgeStore {
         rows.into_iter().map(row_to_edge).collect()
     }
 
+    /// Every edge of one kind (e.g. all `Cites` edges, for a dedup pass).
+    pub fn by_kind(&self, kind: EdgeKind) -> Result<Vec<Edge>> {
+        let k = kind.as_str();
+        let sql = format!("{EDGE_SELECT} WHERE kind = ?");
+        let rows = self.engine.select_all_with(&sql, &[&k])?;
+        rows.into_iter().map(row_to_edge).collect()
+    }
+
     pub fn count(&self) -> Result<usize> {
         scalar_count(&self.engine, "SELECT COUNT(*) FROM edges")
     }

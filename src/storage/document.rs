@@ -141,6 +141,10 @@ impl DocumentStorage {
         self.edges.all()
     }
 
+    pub fn edges_of_kind(&self, kind: EdgeKind) -> Result<Vec<Edge>> {
+        self.edges.by_kind(kind)
+    }
+
     /// Edge-store integrity (kept separate from the meta/blob tuple so existing
     /// callers of `integrity_check` don't change shape).
     pub fn edges_integrity_check(&self) -> Result<String> {
