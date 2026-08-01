@@ -91,6 +91,27 @@ pub fn apply_watermark(doc: &mut PdfDoc, spec: &WatermarkSpec) -> Result<usize> 
         .map(|s| s.resolve(count))
         .unwrap_or_else(|| (1..=count as u32).collect());
 
+    // Unicode text path: if the watermark text is non-ASCII, embed DejaVu Sans Mono
+    // (Type0) and glyph-encode the run — base-14 Helvetica can only show ASCII, so
+    // Cyrillic / accented text would otherwise render as mojibake (same defect fixed
+    // for covers in 1.8.35). ASCII stays on Helvetica (`/WmF`).
+    let size = spec.font_size_pt.max(4.0);
+    let mut ufont = super::font::EmbeddedFont::load();
+    let want_unicode = spec
+        .text
+        .as_ref()
+        .map(|t| !t.is_ascii())
+        .unwrap_or(false)
+        && ufont.is_some();
+    // Encode + measure BEFORE finalize (encode records glyphs, finalize consumes self).
+    let uni: Option<(String, f32)> = if want_unicode {
+        let text = spec.text.as_ref().unwrap();
+        let f = ufont.as_mut().unwrap();
+        Some((f.encode(text), f.width(text, size)))
+    } else {
+        None
+    };
+
     // Image pixel size (to preserve aspect) + the shared XObject, added once.
     let image_obj = match &spec.image {
         Some(path) => {
@@ -110,6 +131,12 @@ pub fn apply_watermark(doc: &mut PdfDoc, spec: &WatermarkSpec) -> Result<usize> 
     let gs_id = doc.document_mut().add_object(Object::Dictionary(gs));
 
     let inner = doc.document_mut();
+    // Embed the Unicode font once; each stamped page references the same object.
+    let uni_font_id = if want_unicode {
+        Some(ufont.take().unwrap().finalize(inner))
+    } else {
+        None
+    };
     let mut stamped = 0usize;
     for &page_no in &selected {
         let idx = (page_no - 1) as usize;
@@ -117,11 +144,11 @@ pub fn apply_watermark(doc: &mut PdfDoc, spec: &WatermarkSpec) -> Result<usize> 
         // Page geometry from MediaBox.
         let (pw, ph) = page_box(inner, pid).unwrap_or((mm_to_pt(210.0), mm_to_pt(297.0)));
         let aspect = image_obj.map(|(_, w, h)| h / w);
-        let ops = build_stamp_ops(spec, pw, ph, aspect);
+        let ops = build_stamp_ops(spec, pw, ph, aspect, uni.as_ref().map(|(h, w)| (h.as_str(), *w)));
 
-        // Wire resources: ExtGState/WmGS, Font/WmF, XObject/WmImg.
+        // Wire resources: ExtGState/WmGS, Font/WmF (+ /WmU), XObject/WmImg.
         inner.add_graphics_state(pid, "WmGS", gs_id).map_err(Error::Lopdf)?;
-        ensure_font(inner, pid)?;
+        ensure_font(inner, pid, uni_font_id)?;
         if let Some((img_id, _, _)) = image_obj {
             inner.add_xobject(pid, "WmImg", img_id).map_err(Error::Lopdf)?;
         }
@@ -140,7 +167,13 @@ pub fn apply_watermark(doc: &mut PdfDoc, spec: &WatermarkSpec) -> Result<usize> 
 
 /// Build the `q … Q` stamp content for one page of size `pw × ph`.
 /// `image_aspect` is the stamp image's height/width (None when no image).
-fn build_stamp_ops(spec: &WatermarkSpec, pw: f32, ph: f32, image_aspect: Option<f32>) -> String {
+fn build_stamp_ops(
+    spec: &WatermarkSpec,
+    pw: f32,
+    ph: f32,
+    image_aspect: Option<f32>,
+    uni: Option<(&str, f32)>,
+) -> String {
     let (ax, ay) = anchor(spec.position, pw, ph);
     let mut s = String::from("q\n/WmGS gs\n");
 
@@ -158,15 +191,19 @@ fn build_stamp_ops(spec: &WatermarkSpec, pw: f32, ph: f32, image_aspect: Option<
         let (r, g, b) = spec.color;
         let rad = spec.rotation_deg.to_radians();
         let (cos, sin) = (rad.cos(), rad.sin());
-        // Rough Helvetica advance for centring.
-        let tw = size * 0.5 * text.chars().count() as f32;
+        // Pick font + show-operand: embedded Unicode (hex, measured advance) or
+        // base-14 Helvetica (parenthesised, rough advance) for ASCII.
+        let (font_name, show, tw) = match uni {
+            Some((hex, w)) => ("WmU", hex.to_string(), w),
+            None => ("WmF", format!("({})", esc(text)), size * 0.5 * text.chars().count() as f32),
+        };
         s.push_str(&format!("{r:.3} {g:.3} {b:.3} rg\n"));
         s.push_str(&format!(
-            "BT /WmF {size:.1} Tf {cos:.5} {sin:.5} {nsin:.5} {cos:.5} {ax:.3} {ay:.3} Tm\n",
+            "BT /{font_name} {size:.1} Tf {cos:.5} {sin:.5} {nsin:.5} {cos:.5} {ax:.3} {ay:.3} Tm\n",
             nsin = -sin
         ));
         // Shift along the rotated baseline to centre the run on the anchor.
-        s.push_str(&format!("{:.3} {:.3} Td ({}) Tj ET\n", -tw / 2.0, -size * 0.35, esc(text)));
+        s.push_str(&format!("{:.3} {:.3} Td {} Tj ET\n", -tw / 2.0, -size * 0.35, show));
     }
 
     s.push_str("Q\n");
@@ -193,8 +230,13 @@ fn page_box(doc: &lopdf::Document, page_id: lopdf::ObjectId) -> Option<(f32, f32
     Some(((v[2] - v[0]).abs(), (v[3] - v[1]).abs()))
 }
 
-/// Ensure the page's Resources carry an inline Helvetica as `/WmF`.
-fn ensure_font(doc: &mut lopdf::Document, page_id: lopdf::ObjectId) -> Result<()> {
+/// Ensure the page's Resources carry an inline Helvetica as `/WmF`, and — when the
+/// watermark text is non-ASCII — the embedded Unicode font (`uni_font_id`) as `/WmU`.
+fn ensure_font(
+    doc: &mut lopdf::Document,
+    page_id: lopdf::ObjectId,
+    uni_font_id: Option<lopdf::ObjectId>,
+) -> Result<()> {
     let res = doc
         .get_or_create_resources(page_id)
         .map_err(Error::Lopdf)?
@@ -210,6 +252,11 @@ fn ensure_font(doc: &mut lopdf::Document, page_id: lopdf::ObjectId) -> Result<()
         helv.set("Subtype", "Type1");
         helv.set("BaseFont", "Helvetica");
         fonts.set("WmF", Object::Dictionary(helv));
+    }
+    if let Some(fid) = uni_font_id {
+        if !fonts.has(b"WmU") {
+            fonts.set("WmU", Object::Reference(fid));
+        }
     }
     Ok(())
 }
@@ -314,5 +361,52 @@ mod tests {
         assert_eq!(count_gs(&pdf, 0), 0, "page 1 untouched");
         assert_eq!(count_gs(&pdf, 1), 1, "page 2 stamped");
         assert_eq!(count_gs(&pdf, 3), 0, "page 4 untouched");
+    }
+
+    #[test]
+    fn ascii_uses_helvetica_unicode_uses_embedded_font() {
+        let spec = WatermarkSpec {
+            text: Some("DRAFT".into()),
+            ..Default::default()
+        };
+        // ASCII → base-14 Helvetica, literal parenthesised string.
+        let ascii = build_stamp_ops(&spec, 300.0, 400.0, None, None);
+        assert!(ascii.contains("/WmF "), "ASCII stamp uses /WmF: {ascii}");
+        assert!(ascii.contains("(DRAFT)"), "ASCII stamp shows literal text");
+        assert!(!ascii.contains("/WmU"));
+
+        // Non-ASCII → embedded Unicode font, glyph-hex show string.
+        let uni = build_stamp_ops(&spec, 300.0, 400.0, None, Some(("<04220430>", 12.0)));
+        assert!(uni.contains("/WmU "), "unicode stamp uses /WmU: {uni}");
+        assert!(uni.contains("<04220430> Tj"), "unicode stamp shows glyph hex");
+        assert!(!uni.contains("/WmF"));
+    }
+
+    #[test]
+    fn cyrillic_watermark_registers_unicode_font_resource() {
+        // Only meaningful when the bundled DejaVu font is available; otherwise the
+        // watermark silently falls back to Helvetica and this assertion is skipped.
+        if super::super::font::EmbeddedFont::load().is_none() {
+            return;
+        }
+        let mut pdf = doc_with_content(1);
+        let spec = WatermarkSpec {
+            text: Some("ЧЕРНОВИК".into()), // "DRAFT" in Russian
+            ..Default::default()
+        };
+        assert_eq!(apply_watermark(&mut pdf, &spec).unwrap(), 1);
+        let reloaded = PdfDoc::load_mem(&pdf.to_bytes().unwrap()).unwrap();
+        let pid = reloaded.page_ids()[0];
+        let content = reloaded.document().get_and_decode_page_content(pid).unwrap();
+        // The Unicode path shows a glyph-hex string; the Helvetica fallback would
+        // show a literal string. Assert a Tj carries a Hexadecimal operand.
+        let hex_tj = content.operations.iter().any(|op| {
+            op.operator == "Tj"
+                && matches!(
+                    op.operands.first(),
+                    Some(Object::String(_, lopdf::StringFormat::Hexadecimal))
+                )
+        });
+        assert!(hex_tj, "Cyrillic watermark is drawn with the embedded Unicode font (hex Tj)");
     }
 }

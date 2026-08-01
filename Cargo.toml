@@ -1,6 +1,6 @@
 [package]
 name = "inkhaven"
-version = "1.10.1"
+version = "2.0.0"
 edition = "2024"
 # Rust 1.85 stabilised edition 2024. Bump alongside any toolchain-only
 # feature usage (let-else / chained-comparisons / etc. are already stable).
@@ -417,6 +417,34 @@ harness = false
 
 [[bench]]
 name = "search"
+harness = false
+
+# 2.0 harness — editor frame-render cost (via `_bench-render`, internal timing
+# so process startup is excluded). Moves with the event-driven-redraw work.
+[[bench]]
+name = "render"
+harness = false
+
+# 2.0 harness — scale sweep. Set INKHAVEN_BENCH_FIXTURES="1k=/p1:10k=/p2:50k=/p3"
+# (label=path, colon-separated) to see list/search scale with corpus size; falls
+# back to the single INKHAVEN_BENCH_FIXTURE labelled "default".
+[[bench]]
+name = "scale"
+harness = false
+
+# 2.0 harness — export cost (markdown/typst/epub on a dedicated single-book
+# fixture generated at setup).
+[[bench]]
+name = "export"
+harness = false
+
+# 2.0 harness — embedding throughput (the index-build cost), via `_bench-embed`.
+[[bench]]
+name = "index"
+harness = false
+
+[[bench]]
+name = "graph"
 harness = false
 
 [profile.release]

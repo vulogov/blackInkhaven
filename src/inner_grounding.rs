@@ -106,6 +106,38 @@ pub(crate) fn build_grounding(
         parts.push(format!("• {}: {}", lx.timeline, shown.join(" → ")));
     }
 
+    // SEMNET-P7 — relational signals the graph knows that no single declared-data
+    // store computes: recurring character pairings (co-appearance across the
+    // book's events) and unresolved factual contradictions. The reader now also
+    // reads what the *graph* has established. Degrades cleanly when the graph is
+    // bare (nothing rebuilt/confronted yet).
+    let book_event_ids: Vec<uuid::Uuid> = h
+        .flatten()
+        .into_iter()
+        .filter(|(n, _)| n.event.is_some() && descends_from(&h, n, book.id))
+        .map(|(n, _)| n.id)
+        .collect();
+    if let Ok(sig) = store.grounding_signals(&book_event_ids) {
+        if !sig.recurring_pairs.is_empty() {
+            let names: Vec<String> = sig
+                .recurring_pairs
+                .iter()
+                .take(4)
+                .filter_map(|(a, b)| {
+                    let na = h.get(*a).map(|n| n.title.trim().to_string()).filter(|t| !t.is_empty())?;
+                    let nb = h.get(*b).map(|n| n.title.trim().to_string()).filter(|t| !t.is_empty())?;
+                    Some(format!("{na} ↔ {nb}"))
+                })
+                .collect();
+            if !names.is_empty() {
+                parts.push(format!("• {}: {}", lx.pairings, names.join("; ")));
+            }
+        }
+        if sig.open_contradictions > 0 {
+            parts.push(format!("• {}: {}", lx.contradictions, sig.open_contradictions));
+        }
+    }
+
     if parts.is_empty() {
         None
     } else {
@@ -122,6 +154,8 @@ struct Labels {
     symbols: &'static str,
     tensions: &'static str,
     timeline: &'static str,
+    pairings: &'static str,
+    contradictions: &'static str,
 }
 
 impl Labels {
@@ -133,6 +167,8 @@ impl Labels {
                 symbols: "Символы и мотивы",
                 tensions: "Открытых противоречий мира",
                 timeline: "Хронология истории (от ранних событий)",
+                pairings: "Повторяющиеся пары персонажей",
+                contradictions: "Неразрешённых противоречий фактов",
             },
             "fr" | "french" | "français" | "francais" => Labels {
                 header: "ANCRAGE — l'auteur a déjà établi ceci au sujet de cette œuvre ; gardez le texte cohérent avec cela :",
@@ -140,6 +176,8 @@ impl Labels {
                 symbols: "Symboles et motifs",
                 tensions: "Tensions de cohérence du monde en cours",
                 timeline: "Chronologie du récit (du plus ancien)",
+                pairings: "Paires de personnages récurrentes",
+                contradictions: "Contradictions de faits non résolues",
             },
             "de" | "german" | "deutsch" => Labels {
                 header: "GRUNDLAGE — der Autor hat über dieses Werk bereits Folgendes festgelegt; halte den Text damit konsistent:",
@@ -147,6 +185,8 @@ impl Labels {
                 symbols: "Symbole und Motive",
                 tensions: "Offene Welt-Kohärenz-Spannungen",
                 timeline: "Zeitleiste der Geschichte (früheste zuerst)",
+                pairings: "Wiederkehrende Figurenpaare",
+                contradictions: "Ungelöste Faktenwidersprüche",
             },
             "es" | "spanish" | "español" | "espanol" => Labels {
                 header: "BASE — el autor ya ha establecido lo siguiente sobre esta obra; mantén el texto coherente con ello:",
@@ -154,6 +194,8 @@ impl Labels {
                 symbols: "Símbolos y motivos",
                 tensions: "Tensiones de coherencia del mundo abiertas",
                 timeline: "Cronología del relato (de los más antiguos)",
+                pairings: "Parejas de personajes recurrentes",
+                contradictions: "Contradicciones de hechos sin resolver",
             },
             _ => Labels {
                 header: "GROUNDING — the author has already declared the following about this work; keep the prose consistent with it:",
@@ -161,6 +203,8 @@ impl Labels {
                 symbols: "Symbols and motifs",
                 tensions: "Open world-coherence tensions",
                 timeline: "Story timeline (earliest first)",
+                pairings: "Recurring character pairings",
+                contradictions: "Unresolved fact contradictions",
             },
         }
     }

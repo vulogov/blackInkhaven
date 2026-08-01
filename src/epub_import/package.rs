@@ -16,6 +16,24 @@ use anyhow::{anyhow, Result};
 use quick_xml::events::Event;
 use quick_xml::Reader;
 
+/// Per-entry decompression cap (64 MiB). No legitimate EPUB resource — an XHTML
+/// document, a cover image — is larger; a hostile entry that inflates past this
+/// is a zip bomb and is refused rather than OOMing the import.
+const MAX_ENTRY_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Read up to `max` bytes from `r`, refusing an entry whose declared
+/// uncompressed size already exceeds `max`. The `take(max)` also bounds the
+/// *actual* read, so a lying header (small declared, huge stream) truncates
+/// instead of exhausting memory. Pure + tested.
+fn read_capped<R: Read>(r: &mut R, declared: u64, max: u64) -> Option<Vec<u8>> {
+    if declared > max {
+        return None;
+    }
+    let mut buf = Vec::new();
+    r.take(max).read_to_end(&mut buf).ok()?;
+    Some(buf)
+}
+
 /// One manifest entry. `href` is resolved relative to the zip root.
 #[derive(Debug, Clone)]
 pub struct ManifestItem {
@@ -47,12 +65,14 @@ impl EpubArchive {
         Ok(Self { zip })
     }
 
-    /// Read one entry by exact name; `None` if absent or unreadable.
+    /// Read one entry by exact name; `None` if absent, unreadable, or larger
+    /// than [`MAX_ENTRY_BYTES`] (a zip-bomb guard — a hostile EPUB entry can
+    /// declare a tiny compressed size that inflates to gigabytes, OOMing the
+    /// import; the sibling DEM decoder is capped for the same reason).
     pub fn read(&mut self, name: &str) -> Option<Vec<u8>> {
         let mut f = self.zip.by_name(name).ok()?;
-        let mut buf = Vec::new();
-        f.read_to_end(&mut buf).ok()?;
-        Some(buf)
+        let declared = f.size();
+        read_capped(&mut f, declared, MAX_ENTRY_BYTES)
     }
 
     /// Parse the container + OPF into an [`EpubPackage`].
@@ -298,6 +318,28 @@ mod tests {
         }
         let mut a = EpubArchive::open(buf).unwrap();
         assert!(a.package().is_err());
+    }
+
+    #[test]
+    fn read_capped_rejects_oversized_declared_size() {
+        // A zip-bomb entry declaring more than the cap is refused up front —
+        // no allocation attempt.
+        let data = vec![0u8; 8];
+        let mut cur = Cursor::new(data);
+        assert!(read_capped(&mut cur, MAX_ENTRY_BYTES + 1, MAX_ENTRY_BYTES).is_none());
+    }
+
+    #[test]
+    fn read_capped_reads_within_cap_and_truncates_liars() {
+        // Honest small entry reads fully.
+        let mut cur = Cursor::new(b"hello".to_vec());
+        assert_eq!(read_capped(&mut cur, 5, MAX_ENTRY_BYTES).as_deref(), Some(&b"hello"[..]));
+        // Declares a small size but the reader would yield more than `max`: the
+        // `take(max)` guard bounds the actual read regardless of the lie.
+        let big = vec![7u8; 100];
+        let mut cur = Cursor::new(big);
+        let out = read_capped(&mut cur, 4, 16).unwrap();
+        assert!(out.len() <= 16, "read {} bytes exceeds cap", out.len());
     }
 
     use proptest::prelude::*;

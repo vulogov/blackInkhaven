@@ -115,6 +115,66 @@ pub fn run_inkhaven_against(
     elapsed
 }
 
+/// Run inkhaven against a project and return its stdout, for benches that read
+/// a metric the child measures internally (e.g. `_bench-render` prints
+/// `render_total_us:` after timing N frames — so the reported figure excludes
+/// process-startup overhead). Panics on non-zero exit.
+pub fn run_inkhaven_capture(project: &Path, args: &[&str]) -> String {
+    let bin = inkhaven_binary();
+    let output = std::process::Command::new(&bin)
+        .arg("--project")
+        .arg(project)
+        .args(args)
+        .output()
+        .unwrap_or_else(|e| panic!("spawn {} {args:?}: {e}", bin.display()));
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        panic!("inkhaven {args:?} exited {:?}: {}", output.status.code(), stderr.trim());
+    }
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+/// Parse a `key: <micros>` line from captured stdout into a `Duration`.
+pub fn parse_micros(out: &str, key: &str) -> Duration {
+    for line in out.lines() {
+        if let Some(v) = line.trim().strip_prefix(key) {
+            if let Ok(us) = v.trim().parse::<u64>() {
+                return Duration::from_micros(us);
+            }
+        }
+    }
+    panic!("no `{key}` line in output:\n{out}");
+}
+
+/// Like `run_inkhaven_capture` but with no `--project` arg — for subcommands
+/// that don't take one (e.g. `_bench-embed`). Returns stdout; panics on failure.
+pub fn run_inkhaven_bare_capture(args: &[&str]) -> String {
+    let bin = inkhaven_binary();
+    let output = std::process::Command::new(&bin)
+        .args(args)
+        .output()
+        .unwrap_or_else(|e| panic!("spawn {} {args:?}: {e}", bin.display()));
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        panic!("inkhaven {args:?} exited {:?}: {}", output.status.code(), stderr.trim());
+    }
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+/// Generate (idempotently, via `--force`) a small **single-book** fixture in a
+/// temp dir and return its path — so `export` needs no `--book-name` (a
+/// multi-book project requires one, and the generated titles are seed-random).
+/// Used by the export bench.
+pub fn ensure_export_fixture() -> PathBuf {
+    let dir = std::env::temp_dir().join("inkhaven-bench-export-fixture");
+    let dir_s = dir.to_str().expect("temp path is utf-8").to_string();
+    let _ = run_inkhaven_bare(&[
+        "gen-fixture", &dir_s, "--books", "1", "--chapters", "5", "--paragraphs", "20",
+        "--target-words", "300", "--force",
+    ]);
+    dir
+}
+
 /// Same as `run_inkhaven_against` but takes no project
 /// arg — for subcommands that don't need one (or that
 /// take their own path positional, like `gen-fixture`).

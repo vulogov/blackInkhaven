@@ -14,6 +14,7 @@ use uuid::Uuid;
 
 use super::factcheck::FactEntry;
 use super::provenance::Provenance;
+use crate::storage::edge_store::{Edge, EdgeKind, EdgeOrigin, EndpointRef, ExternRef};
 
 /// A gathered fact joined with its recorded provenance.
 #[derive(Debug, Clone)]
@@ -396,6 +397,64 @@ pub(super) fn render_relations(claim: &str, relations: &[Relation]) -> String {
     s
 }
 
+// ── SEMNET-P3: stance → graph edges ──────────────────────────────────
+//
+// The headline of the graph flagship: the judged relations `/relate`, `Ctrl+V ?`
+// confront, and `/contradict` produce — which today are rendered and discarded —
+// become durable `Judged` edges that accumulate. The user promotes the ones that
+// stick (`Judged` → `Promoted`, kept across rebuilds) or dismisses the rest.
+
+/// Map a confront/relate stance to its graph edge kind. `Silent` has no edge.
+pub(crate) fn stance_to_edge_kind(stance: Stance) -> Option<EdgeKind> {
+    Some(match stance {
+        Stance::Contradicts => EdgeKind::Contradicts,
+        Stance::Tension => EdgeKind::InTension,
+        Stance::Qualifies => EdgeKind::Qualifies,
+        Stance::Agrees => EdgeKind::Agrees,
+        Stance::Silent => return None,
+    })
+}
+
+/// Persist a confront/`/relate` judgement as durable `Judged` stance edges:
+/// claim-paragraph → each non-`Silent` evidence, keyed by the evidence label (an
+/// `Extern::Evidence` endpoint until it's reconciled to a node). The reason
+/// rides the edge. Pure — the caller writes the returned edges.
+pub(crate) fn confront_stance_edges(claim: Uuid, relations: &[Relation]) -> Vec<Edge> {
+    let mut edges = Vec::new();
+    for r in relations {
+        let Some(kind) = stance_to_edge_kind(r.stance) else {
+            continue;
+        };
+        let dst = EndpointRef::Extern(ExternRef::Evidence { label: r.label.clone() });
+        let mut e = Edge::new(EndpointRef::Node(claim), kind, dst, EdgeOrigin::Judged);
+        if !r.reason.is_empty() {
+            e = e.with_reason(r.reason.clone());
+        }
+        edges.push(e);
+    }
+    edges
+}
+
+/// A fact↔fact contradiction (`/contradict`) as a symmetric `Judged`
+/// `Contradicts` edge between the two fact nodes, the cross-source flag in
+/// `attrs`. The mapping is ready + tested; its persist seam is wired when the
+/// `/contradict` flow gains a Store-access point (P3 follow-up — the live P3
+/// seam is confront via [`confront_stance_edges`]).
+#[allow(dead_code)]
+pub(super) fn clash_edge(clash: &Clash) -> Edge {
+    let mut e = Edge::new(
+        EndpointRef::Node(clash.a.id),
+        EdgeKind::Contradicts,
+        EndpointRef::Node(clash.b.id),
+        EdgeOrigin::Judged,
+    )
+    .with_attrs(serde_json::json!({ "cross_source": clash.is_cross_source() }));
+    if !clash.reason.is_empty() {
+        e = e.with_reason(clash.reason.clone());
+    }
+    e
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -550,5 +609,71 @@ mod tests {
         assert!(out.contains("Supporting your claim"));
         assert!(out.contains("[agrees] fact: a"));
         assert!(out.contains("[tension] source: b"));
+    }
+
+    // ── SEMNET-P3: stance → edges ──────────────────────────────────
+
+    fn rel(stance: Stance, label: &str, reason: &str) -> Relation {
+        Relation { label: label.into(), stance, reason: reason.into() }
+    }
+
+    fn sfact(id: Uuid, origin: &str) -> SourcedFact {
+        SourcedFact {
+            id,
+            location: String::new(),
+            text: "t".into(),
+            origin: origin.into(),
+            source: String::new(),
+        }
+    }
+
+    #[test]
+    fn stance_maps_to_edge_kind() {
+        assert_eq!(stance_to_edge_kind(Stance::Contradicts), Some(EdgeKind::Contradicts));
+        assert_eq!(stance_to_edge_kind(Stance::Tension), Some(EdgeKind::InTension));
+        assert_eq!(stance_to_edge_kind(Stance::Qualifies), Some(EdgeKind::Qualifies));
+        assert_eq!(stance_to_edge_kind(Stance::Agrees), Some(EdgeKind::Agrees));
+        assert_eq!(stance_to_edge_kind(Stance::Silent), None);
+    }
+
+    #[test]
+    fn confront_edges_skip_silent_and_carry_reason() {
+        let claim = Uuid::now_v7();
+        let rels = vec![
+            rel(Stance::Contradicts, "fact: a", "opposes §3"),
+            rel(Stance::Silent, "source: b", "nothing relevant"),
+            rel(Stance::Agrees, "source: c", ""),
+        ];
+        let edges = confront_stance_edges(claim, &rels);
+        assert_eq!(edges.len(), 2, "the Silent relation produces no edge");
+
+        let contra = &edges[0];
+        assert_eq!(contra.kind, EdgeKind::Contradicts);
+        assert_eq!(contra.src, EndpointRef::Node(claim));
+        assert_eq!(contra.dst, EndpointRef::Extern(ExternRef::Evidence { label: "fact: a".into() }));
+        assert!(!contra.directed, "Contradicts is symmetric");
+        assert_eq!(contra.origin, EdgeOrigin::Judged);
+        assert_eq!(contra.reason.as_deref(), Some("opposes §3"));
+
+        let agrees = &edges[1];
+        assert_eq!(agrees.kind, EdgeKind::Agrees);
+        assert_eq!(agrees.reason, None, "empty reason stays None");
+    }
+
+    #[test]
+    fn clash_edge_is_symmetric_node_pair_with_cross_source() {
+        let (a, b) = (Uuid::now_v7(), Uuid::now_v7());
+        let cross = Clash { a: sfact(a, "arxiv"), b: sfact(b, "web"), reason: "disagree".into() };
+        let e = clash_edge(&cross);
+        assert_eq!(e.kind, EdgeKind::Contradicts);
+        assert_eq!(e.src, EndpointRef::Node(a));
+        assert_eq!(e.dst, EndpointRef::Node(b));
+        assert!(!e.directed);
+        assert_eq!(e.origin, EdgeOrigin::Judged);
+        assert_eq!(e.attrs["cross_source"], true);
+        assert_eq!(e.reason.as_deref(), Some("disagree"));
+
+        let within = Clash { a: sfact(a, "model"), b: sfact(b, "model"), reason: String::new() };
+        assert_eq!(clash_edge(&within).attrs["cross_source"], false);
     }
 }

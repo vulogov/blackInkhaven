@@ -271,6 +271,10 @@ impl super::App {
             self.draw_character_arc_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::GraphNeighbourhood { .. }) {
+            self.draw_graph_neighbourhood_modal(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::EditorialPass { .. }) {
             self.draw_editorial_pass_modal(f, area);
             return;

@@ -28,8 +28,13 @@ impl LocusScheme {
     }
     /// Canonicalize a locus under this scheme (built-in scripture schemes only;
     /// others return the locus unchanged).
-    fn canonicalize(&self, locus: &str) -> String {
+    pub(crate) fn canonicalize(&self, locus: &str) -> String {
         canonicalize_locus(&self.name, locus)
+    }
+    /// The scheme's name (drives canonicalization + used as the graph
+    /// `Extern::Locus` scheme tag).
+    pub(crate) fn name(&self) -> &str {
+        &self.name
     }
 }
 

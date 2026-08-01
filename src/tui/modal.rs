@@ -1455,6 +1455,13 @@ pub(super) enum Modal {
         rows: Vec<String>,
         cursor: usize,
     },
+    /// SEMNET — the knowledge-graph neighbourhood view (`Ctrl+V g`) for the open
+    /// paragraph. `rows` are the pre-rendered `render_neighbourhood` tree;
+    /// scrollable, read-only.
+    GraphNeighbourhood {
+        rows: Vec<String>,
+        cursor: usize,
+    },
 }
 
 /// 1.2.14+ Phase C.2 — one row of the project-

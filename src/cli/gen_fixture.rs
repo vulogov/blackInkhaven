@@ -73,6 +73,13 @@ pub struct FixtureSpec {
     /// a triangle distribution centred here.
     pub target_words_per_paragraph: u32,
     pub seed: u64,
+    /// Language codes to spread across the books (round-robin), e.g.
+    /// `["en","ru","fr","de","es"]`. Each book's prose is drawn from that
+    /// language's pool, so a multilingual fixture exercises the Unicode path
+    /// (tokenisation, embedding, search, export round-trips) — the 2.0
+    /// verification harness's multilingual surface. Unknown codes fall back to
+    /// English.
+    pub languages: Vec<String>,
     /// `--force` semantics from `inkhaven init`: wipe
     /// the target directory without prompting.
     pub force: bool,
@@ -91,6 +98,7 @@ impl Default for FixtureSpec {
             tag_coverage: 0.15,
             target_words_per_paragraph: 450,
             seed: 0xC0FFEE_DEAD_BEEF,
+            languages: vec!["en".to_string()],
             force: false,
         }
     }
@@ -146,8 +154,19 @@ fn build_hierarchy(
     let mut stats = FixtureStats::default();
 
     // ── User books ────────────────────────────────────
+    let langs: Vec<&str> = if spec.languages.is_empty() {
+        vec!["en"]
+    } else {
+        spec.languages.iter().map(String::as_str).collect()
+    };
     for book_idx in 0..spec.books {
-        let book_title = format!("Book {}: {}", book_idx + 1, pick(BOOK_TITLES, rng));
+        // Each book takes one language (round-robin); its prose comes from that
+        // language's pool so a multilingual fixture spreads Unicode across the
+        // whole corpus.
+        let lang = langs[book_idx % langs.len()];
+        let pool = sentence_pool(lang);
+        let lang_tag = if langs.len() > 1 { format!(" [{lang}]") } else { String::new() };
+        let book_title = format!("Book {}: {}{lang_tag}", book_idx + 1, pick(BOOK_TITLES, rng));
         let hierarchy = Hierarchy::load(store)?;
         let book = store.create_node(
             cfg,
@@ -210,7 +229,7 @@ fn build_hierarchy(
                 // overwrites with what the editor holds,
                 // so we mirror that contract).
                 let heading = format!("= {}\n\n", paragraph_title);
-                let body = heading + &generate_prose(rng, target);
+                let body = heading + &generate_prose(rng, target, pool);
                 // Mirror the TUI save path: io_atomic
                 // write to disk FIRST, then update the
                 // store's bdslib copy + re-embed.  The
@@ -257,11 +276,11 @@ fn triangle_word_count(rng: &mut Xorshift64, target: u32) -> usize {
 /// running word count crosses the target.  Returns
 /// typst-flavoured prose (no leading heading — that's
 /// `Store::create_node`'s responsibility).
-fn generate_prose(rng: &mut Xorshift64, target_words: usize) -> String {
+fn generate_prose(rng: &mut Xorshift64, target_words: usize, pool: &[&str]) -> String {
     let mut out = String::new();
     let mut words = 0usize;
     while words < target_words {
-        let sentence = pick(SENTENCE_POOL, rng);
+        let sentence = pick(pool, rng);
         out.push_str(sentence);
         out.push(' ');
         words += sentence.split_whitespace().count();
@@ -378,6 +397,75 @@ const THREAD_NAMES: &[&str] = &[
     "The slow-burn rivalry",
 ];
 
+/// The prose pool for a language code (defaults to English). Used to spread a
+/// multilingual fixture across the store→embed→search→export pipeline, so the
+/// Unicode / non-ASCII path is exercised end to end (the 2.0 harness).
+fn sentence_pool(lang: &str) -> &'static [&'static str] {
+    match lang {
+        "ru" => SENTENCE_POOL_RU,
+        "fr" => SENTENCE_POOL_FR,
+        "de" => SENTENCE_POOL_DE,
+        "es" => SENTENCE_POOL_ES,
+        _ => SENTENCE_POOL,
+    }
+}
+
+/// Russian (Cyrillic) — recurring entities Елена / Маркус / Гавань.
+const SENTENCE_POOL_RU: &[&str] = &[
+    "Елена остановилась на пороге, прислушиваясь к шагам внизу.",
+    "Маркус долго молчал, потом кивнул один раз и ушёл прочь.",
+    "Утренний свет упал на окно и окрасил комнату янтарём.",
+    "Дождь снаружи превратился в ровный ритм по шиферной крыше.",
+    "Письмо на столе осталось нераспечатанным, печать блестела в свете лампы.",
+    "Бреннан медленно перевернул страницу, будто слова могли ускользнуть.",
+    "Сад одичал за годы, что за ним никто толком не следил.",
+    "Селена поставила чашку и ждала ответ, который уже знала.",
+    "Гавань была тиха после последнего шторма, лодки жались в своих слипах.",
+    "Ирис держала руки на коленях, но глаз не сводила с двери.",
+];
+
+/// French (accents/ligatures) — Hélène / Marcus / le Port.
+const SENTENCE_POOL_FR: &[&str] = &[
+    "Hélène s'arrêta sur le seuil, guettant le bruit des pas en contrebas.",
+    "Marcus ne dit rien un long moment, puis hocha la tête et s'éloigna.",
+    "La lumière du matin tomba sur la fenêtre et peignit la pièce d'ambre.",
+    "Dehors, la pluie était devenue un rythme régulier sur le toit d'ardoise.",
+    "La lettre sur le bureau restait cachetée, son sceau brillant sous la lampe.",
+    "Brennan tourna lentement la page, comme si les mots pouvaient lui échapper.",
+    "Le jardin s'était ensauvagé depuis que plus personne ne l'entretenait.",
+    "Séléné posa la tasse et attendit la réponse qu'elle connaissait déjà.",
+    "Le port était calme depuis la dernière tempête, les barques serrées à quai.",
+    "Iris gardait les mains jointes sur ses genoux, les yeux rivés à la porte.",
+];
+
+/// German (umlauts/ß) — Helena / Markus / der Hafen.
+const SENTENCE_POOL_DE: &[&str] = &[
+    "Helena hielt an der Schwelle inne und lauschte den Schritten darunter.",
+    "Markus schwieg lange, dann nickte er einmal und ging fort.",
+    "Das Morgenlicht fiel aufs Fenster und färbte den Raum bernsteinfarben.",
+    "Draußen war der Regen zu einem stetigen Takt auf dem Schieferdach geworden.",
+    "Der Brief auf dem Tisch blieb ungeöffnet, sein Siegel glänzte im Lampenlicht.",
+    "Brennan wandte langsam die Seite um, als könnten ihm die Wörter entgleiten.",
+    "Der Garten war verwildert, seit sich niemand mehr richtig um ihn kümmerte.",
+    "Selene stellte die Tasse ab und wartete auf die Antwort, die sie schon kannte.",
+    "Der Hafen lag still seit dem letzten Sturm, die Boote fest in ihren Buchten.",
+    "Iris hielt die Hände im Schoß gefaltet, doch ihr Blick blieb an der Tür.",
+];
+
+/// Spanish (ñ/accents/¿¡) — Helena / Marcos / el Puerto.
+const SENTENCE_POOL_ES: &[&str] = &[
+    "Helena se detuvo en el umbral, atenta al ruido de pasos abajo.",
+    "Marcos no dijo nada un largo rato; luego asintió una vez y se marchó.",
+    "La luz de la mañana cayó sobre la ventana y pintó la habitación de ámbar.",
+    "Afuera, la lluvia se había vuelto un ritmo constante sobre el tejado de pizarra.",
+    "La carta sobre el escritorio seguía cerrada, su sello brillante a la lámpara.",
+    "Brennan pasó la página despacio, como si las palabras pudieran escapársele.",
+    "El jardín se había vuelto salvaje desde que nadie lo cuidaba como es debido.",
+    "Selene dejó la taza y esperó la respuesta que ya conocía.",
+    "El puerto estaba tranquilo tras la última tormenta, las barcas bien amarradas.",
+    "Iris mantenía las manos en el regazo, pero no apartaba los ojos de la puerta.",
+];
+
 const SENTENCE_POOL: &[&str] = &[
     "Helena paused at the threshold, listening for the sound of footsteps below.",
     "Marcus said nothing for a long moment, then nodded once and walked away.",
@@ -490,8 +578,32 @@ mod tests {
             tag_coverage: 0.1,
             target_words_per_paragraph: 50,
             seed: 0x1234_5678_9ABC_DEF0,
+            languages: vec!["en".to_string()],
             force: true,
         }
+    }
+
+    #[test]
+    fn sentence_pools_carry_non_ascii_prose_and_fall_back_to_english() {
+        // Every language pool is non-empty.
+        for lang in ["en", "ru", "fr", "de", "es"] {
+            assert!(!sentence_pool(lang).is_empty(), "{lang} pool is empty");
+        }
+        // The non-English pools actually contain non-ASCII characters (the whole
+        // point — the multilingual fixture must exercise the Unicode path).
+        let has_non_ascii = |lang: &str| sentence_pool(lang).iter().any(|s| !s.is_ascii());
+        assert!(has_non_ascii("ru"), "ru pool should be Cyrillic");
+        assert!(has_non_ascii("fr"), "fr pool should carry accents");
+        assert!(has_non_ascii("de"), "de pool should carry umlauts/ß");
+        assert!(has_non_ascii("es"), "es pool should carry accents/ñ");
+        // Cyrillic specifically for ru.
+        assert!(
+            sentence_pool("ru").iter().any(|s| s.chars().any(|c| ('\u{0400}'..='\u{04FF}').contains(&c))),
+            "ru pool should contain Cyrillic code points"
+        );
+        // English is ASCII; an unknown code falls back to it (content-equal).
+        assert!(sentence_pool("en").iter().all(|s| s.is_ascii()));
+        assert_eq!(sentence_pool("zz"), sentence_pool("en"));
     }
 
     #[test]
@@ -542,7 +654,7 @@ mod tests {
     #[test]
     fn generate_prose_hits_target_word_count() {
         let mut rng = Xorshift64::new(0xC0FFEE);
-        let body = generate_prose(&mut rng, 100);
+        let body = generate_prose(&mut rng, 100, SENTENCE_POOL);
         let words = body.split_whitespace().count();
         // The generator stops at first overshoot, so
         // we land in [target, target + longest_sentence].
@@ -555,8 +667,8 @@ mod tests {
         let mut a = Xorshift64::new(0x1);
         let mut b = Xorshift64::new(0x1);
         assert_eq!(
-            generate_prose(&mut a, 100),
-            generate_prose(&mut b, 100),
+            generate_prose(&mut a, 100, SENTENCE_POOL),
+            generate_prose(&mut b, 100, SENTENCE_POOL),
         );
     }
 
