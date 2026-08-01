@@ -1498,6 +1498,9 @@ pub enum Command {
         /// Number of edges to insert and query against.
         #[arg(long, default_value_t = 5000)]
         edges: usize,
+        /// Number of reverse-index neighbour queries to time (0 = skip).
+        #[arg(long, default_value_t = 1000)]
+        queries: usize,
     },
 
     /// 1.2.18+ I.1.7 — `inkhaven _bench-report`
@@ -6755,8 +6758,8 @@ impl Cli {
             Command::BenchEmbed { count } => {
                 bench_embed::run(count).map_err(Into::into)
             }
-            Command::BenchGraph { edges } => {
-                bench_graph::run(edges).map_err(Into::into)
+            Command::BenchGraph { edges, queries } => {
+                bench_graph::run(edges, queries).map_err(Into::into)
             }
             Command::BenchReport {
                 baseline,

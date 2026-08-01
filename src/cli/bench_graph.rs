@@ -13,9 +13,13 @@ use crate::storage::edge_store::EdgeStore;
 use crate::store::graph::{Edge, EdgeKind, EdgeOrigin, EndpointRef};
 
 const HUBS: usize = 16;
-const QUERY_ITERS: usize = 1000;
 
-pub fn run(edges: usize) -> Result<()> {
+/// Insert `edges` edges (timed) into an isolated temp store, then run `queries`
+/// reverse-index neighbour lookups (timed, skipped when 0). Both figures are the
+/// internal times, so the criterion `graph` bench can drive either metric
+/// proportionally (`--edges <iters> --queries 0` for insert throughput; a fixed
+/// `--edges` + `--queries <iters>` for query latency).
+pub fn run(edges: usize, queries: usize) -> Result<()> {
     let dir = std::env::temp_dir().join(format!("inkhaven-bench-graph-{}", std::process::id()));
     std::fs::create_dir_all(&dir)
         .map_err(|e| Error::Config(format!("bench-graph tmp dir: {e}")))?;
@@ -39,7 +43,7 @@ pub fn run(edges: usize) -> Result<()> {
     // Neighbour queries against the hubs — exercises the reverse index.
     let t_q = Instant::now();
     let mut acc = 0usize;
-    for i in 0..QUERY_ITERS {
+    for i in 0..queries {
         let ep = EndpointRef::Node(hubs[i % hubs.len()]);
         acc += store
             .outgoing(&ep, &[])
@@ -54,11 +58,10 @@ pub fn run(edges: usize) -> Result<()> {
 
     println!("edge_count: {edges}");
     println!("edge_insert_total_us: {}", insert.as_micros());
-    println!("edge_query_iters: {QUERY_ITERS}");
-    println!("edge_query_total_us: {}", query.as_micros());
-    println!(
-        "edge_query_avg_us: {}",
-        query.as_micros() / (QUERY_ITERS.max(1) as u128)
-    );
+    if queries > 0 {
+        println!("edge_query_iters: {queries}");
+        println!("edge_query_total_us: {}", query.as_micros());
+        println!("edge_query_avg_us: {}", query.as_micros() / (queries as u128));
+    }
     Ok(())
 }
