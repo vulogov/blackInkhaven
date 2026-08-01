@@ -27,32 +27,39 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 1.10.1 — The Cartographer Draws More
+## Latest release · 2.0.0 — The Semantic Net
 
-Read the full notes: [`Documentation/RELEASE_NOTES/1.10.1.md`](Documentation/RELEASE_NOTES/1.10.1.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/2.0.0.md`](Documentation/RELEASE_NOTES/2.0.0.md)
 
-Finishes the interactive **map editor**: roads, terrain sculpting, mouse support, and a companion-
-book chapter. Every mark is still an ordinary `world.hjson` edit.
+Inkhaven has always *been* a knowledge graph — every book, chapter, paragraph, fact,
+character, and source is one uniform node. 2.0's flagship, **SEMNET**, adds the **edges**: a
+first-class, persisted, typed knowledge-graph layer that connects the nodes you already have
+into one interrogable whole — without replacing the tree or the vector index, and without ever
+losing data to it (edges annotate nodes; most are derived and rebuildable).
+See [`Documentation/GRAPH.md`](Documentation/GRAPH.md).
 
 ### What's new
 
-- **Roads** — `o` connects two named landmarks → `geography.roads[]` (`=`), rendered on the plakat
-  raster too.
-- **Terrain sculpting** — `+`/`-` raise/lower the land under a brush (live elevation shading); the
-  map re-shades as you sculpt. `/terrain` writes a grayscale DEM + sets `geology.dem`, so a
-  `realworld compile` rebuilds the world from your land.
-- **Mouse** — left-click in the Map pane to position the cursor (scoped to the worldbuilder).
-- **Docs** — *Building the World* ch. 21 "The Map Editor" with five terminal screens; full
-  `WORLDBUILDING.md` + `KEYBINDING.md` map-editor reference.
-
-(These build on 1.10.0's map editor — towns, landmarks, rivers, regions, `/mapcheck` — plus
-`/roll` seed exploration and the plakat raster map.)
+- **A typed-edge graph over your nodes** — paragraph links, timeline involvements, fact
+  provenance + verdicts, primary-source loci, citation chains, the WordNet lexical bridge
+  (cross-lingual via the interlingual index), and each book's declared cast/symbols/tensions.
+- **Stance persistence** — the judged relations `Ctrl+V ?` confront and `/relate` produce,
+  once rendered and discarded, now **persist** as `contradicts` / `in_tension` / `qualifies` /
+  `agrees` edges that accumulate; promote the ones that stick, dismiss the rest.
+- **The `inkhaven graph` command** — `rebuild`, `lexical`, `stats`, `neighbors`, `contradicting`,
+  `loci`, `paths`, `promote`, `dismiss`.
+- **In the editor** — `Ctrl+V g` opens a paragraph's neighbourhood as a scrollable tree; `P`/`d`
+  on a confront finding promote/reject its stance edge.
+- **The Inner family reads the graph** — grounding now also reports recurring character pairings
+  and unresolved contradictions, relational context no single store computes.
+- **Crash-safe + benched** — `edges.db` is atomic and survives `kill -9`; a `graph` bench guards
+  edge-insert and reverse-index latency in CI. Multilingual by construction.
 
 ### Dependencies & compatibility
 
-No new dependencies; all changes additive and backward-compatible (`geography.roads[]` is new,
-`geology.dem` was already compiler-supported, mouse capture is worldbuilder-only). Compiles
-warning-free. Test suite → 2723.
+No new dependencies — SEMNET is a DuckDB table beside your existing stores, built on the crate
+graph you already have; the edge store is created lazily and additively (existing projects gain
+an empty `edges.db` on first open). Compiles warning-free. Test suite → 2769.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
