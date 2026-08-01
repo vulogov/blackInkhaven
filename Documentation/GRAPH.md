@@ -145,6 +145,15 @@ inkhaven graph <verb>
 Direction arrows: `→` outgoing, `←` incoming, `⇄` symmetric. Large groups
 truncate; the neighbourhood is hard-capped so a hub node can't flood the view.
 
+### In the editor
+
+- **`Ctrl+V g`** opens the neighbourhood view for the paragraph you're editing —
+  the same tree, scrollable (`↑↓`), `Esc` to close. Populate the graph first with
+  `graph rebuild` / `graph lexical`.
+- On a **confront finding** in the Output pane (from `Ctrl+V ?`), **`P`** promotes
+  its stance edge to a kept decision (survives `graph rebuild`), and **`d`**
+  (dismiss) rejects the finding and deletes its edge.
+
 ---
 
 ## Multilingual
@@ -183,12 +192,8 @@ edges are provably rebuildable, so a corrupted graph is never lost data — just
 
 ## Not yet wired
 
-The graph is complete as a data layer and a CLI surface. Still to come (net-new,
-not regressions):
-
-- an **in-editor neighbourhood chord** + promote/dismiss buttons on the confront
-  Output messages (the graph is fully usable from the CLI today);
-- the live **snowball → `cites`** persistence seam (the citation-chain `paths`
-  query is ready for it);
-- importing **character arcs / myth symbols / world tensions** as edges (which
-  would let the Inner-family grounding derive *those* from the graph too).
+The graph is a first-class data layer, a CLI surface, and — via `Ctrl+V g` and
+the confront-finding `P`/`d` keys — an in-editor surface. A `similar_to`
+materialisation is deliberately *not* done (embedding similarity stays a live
+HNSW query). The declared world is imported (`declares` edges); the Inner-family
+grounding still reads those live for freshness rather than off the graph.
