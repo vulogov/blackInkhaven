@@ -59,6 +59,18 @@ pub struct LexicalRebuild {
     pub added: usize,
 }
 
+/// SEMNET-P7 — grounding signals the graph uniquely knows (fed to the
+/// Inner-family reader grounding). These are *relational* facts no single
+/// declared-data store computes — they emerge from the edges.
+#[derive(Debug, Clone)]
+pub struct GraphGroundingSignals {
+    /// Character node pairs that recur together across the book's events
+    /// (co-appear in ≥2 events, via `EventInvolves`). Ordered, deduped.
+    pub recurring_pairs: Vec<(Uuid, Uuid)>,
+    /// Project-wide count of unresolved factual contradictions (stance edges).
+    pub open_contradictions: usize,
+}
+
 /// The lexical-bridge edge kinds (cleared + rebuilt together by the WordNet
 /// import; `origin = Imported`, so `graph_rebuild` leaves them alone).
 const LEXICAL_KINDS: &[EdgeKind] = &[
@@ -274,6 +286,34 @@ impl Store {
         collect_subgraph(seed, radius, |node| {
             self.raw().edges_around(node, kinds).map_err(map_edge_err)
         })
+    }
+
+    // ── SEMNET-P7: inner-family grounding from the graph ───────────
+
+    /// Relational grounding signals for a book's event nodes — recurring
+    /// character pairings (`EventInvolves` co-appearance) and the project-wide
+    /// unresolved-contradiction count (stance edges). Consumed by
+    /// [`crate::inner_grounding`]; degrades to empties when the graph is bare.
+    pub fn grounding_signals(&self, book_event_nodes: &[Uuid]) -> Result<GraphGroundingSignals> {
+        let mut event_chars: Vec<(Uuid, Uuid)> = Vec::new();
+        for &ev in book_event_nodes {
+            for e in self.raw().edges_out(ev, &[EdgeKind::EventInvolves]).map_err(map_edge_err)? {
+                // Character involvements only — places don't "pair".
+                if e.attrs.get("role").and_then(|v| v.as_str()) == Some("character") {
+                    if let EndpointRef::Node(ch) = &e.dst {
+                        event_chars.push((ev, *ch));
+                    }
+                }
+            }
+        }
+        let recurring_pairs = recurring_character_pairs(&event_chars, 2);
+        let by_kind = self.raw().edges_by_kind().map_err(map_edge_err)?;
+        let open_contradictions = by_kind
+            .iter()
+            .filter(|(k, _)| k == "contradicts" || k == "in_tension")
+            .map(|(_, n)| *n)
+            .sum();
+        Ok(GraphGroundingSignals { recurring_pairs, open_contradictions })
     }
 
     // ── SEMNET-P5: lexical bridge ──────────────────────────────────
@@ -703,6 +743,29 @@ fn derive_lexical_edges(occurrences: &[(Uuid, String, Vec<SenseNode>)], lang: &s
     edges
 }
 
+/// SEMNET-P7 — character pairs that co-appear in at least `min_shared` of the
+/// given (event, character) involvements. Pairs are ordered (`a < b` by uuid)
+/// and deduped. A recurring-pairing signal the per-store grounding can't
+/// compute — it lives in the `EventInvolves` edges. Pure.
+fn recurring_character_pairs(event_chars: &[(Uuid, Uuid)], min_shared: usize) -> Vec<(Uuid, Uuid)> {
+    let mut by_char: HashMap<Uuid, HashSet<Uuid>> = HashMap::new();
+    for (event, ch) in event_chars {
+        by_char.entry(*ch).or_default().insert(*event);
+    }
+    let mut chars: Vec<Uuid> = by_char.keys().copied().collect();
+    chars.sort();
+    let mut pairs = Vec::new();
+    for i in 0..chars.len() {
+        for j in (i + 1)..chars.len() {
+            let shared = by_char[&chars[i]].intersection(&by_char[&chars[j]]).count();
+            if shared >= min_shared {
+                pairs.push((chars[i], chars[j]));
+            }
+        }
+    }
+    pairs
+}
+
 // ── SEMNET-P6: surfacing (subgraph + neighbourhood view) ─────────────
 
 /// Bounded neighbourhood collection: the edges within `radius` rings of `seed`,
@@ -1090,6 +1153,22 @@ mod tests {
             hyponyms: hypo.iter().map(|s| s.to_string()).collect(),
             antonyms: anto.iter().map(|s| s.to_string()).collect(),
         }
+    }
+
+    // ── P7: inner-family grounding from the graph ──────────────────
+
+    #[test]
+    fn recurring_pairs_need_two_shared_events() {
+        let (a, b, c) = (Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7());
+        let (e1, e2, e3) = (Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7());
+        // A & B appear together in e1 + e2 (recurring); A & C only in e3.
+        let ev = vec![(e1, a), (e1, b), (e2, a), (e2, b), (e3, a), (e3, c)];
+        let pairs = recurring_character_pairs(&ev, 2);
+        assert_eq!(pairs.len(), 1, "only A↔B recur (≥2 shared events)");
+        let (lo, hi) = if a < b { (a, b) } else { (b, a) };
+        assert_eq!(pairs[0], (lo, hi));
+        // A single co-appearance never pairs.
+        assert!(recurring_character_pairs(&[(e1, a), (e1, c)], 2).is_empty());
     }
 
     // ── P6: surfacing ──────────────────────────────────────────────
