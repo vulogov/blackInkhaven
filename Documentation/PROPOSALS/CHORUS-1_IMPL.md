@@ -124,9 +124,10 @@ Profile each character's dialogue with the narrator's engine.
 - Persist through `ProseStore::upsert` under `VoiceScope::Character`. Keep the
   cheap `CharacterDialogueFingerprint` as the fast summary; the full profile is
   the new authority.
-- Surface: extend `inkhaven dialogue profile` (or new `inkhaven style voices`) to
-  print a **signature card** per character (rhythm/diversity/hedging + tics +
-  Δ-from-cast-mean) with the confidence badge.
+- Surface: **`inkhaven chorus voices`** (the `style` command is taken by the
+  editor style-warning report, so CHORUS's CLI namespace is `chorus`) — a
+  **signature card** per character (rhythm/diversity/hedging + Δ-from-cast-mean)
+  with the confidence badge. `--character` / `--json`.
 - Tests: pure `character_corpora` grouping; a synthetic two-character corpus
   profiles distinctly.
 
@@ -216,8 +217,8 @@ The seventh inner-family member, cloning `src/inner_poet/`.
   round-trips.
 
 ### CH-P8 — Book-scale Style Report
-- `src/cli/style.rs` + `StyleCommand{Voices, Distinct, Report, Scan, Suppress}`
-  (`src/cli/mod.rs`): `inkhaven style report` prints the unified dashboard
+- `src/cli/chorus.rs` + `ChorusCommand{Voices, Distinct, Report, Scan, Suppress}`
+  (`src/cli/mod.rs`): `inkhaven chorus report` prints the unified dashboard
   (narrator `VoiceProfile` + distinctiveness matrix + POV/tense/register
   findings). `--json` for tooling.
 - TUI: a `Modal::StyleReport` dashboard (reachable from the Stylist overview),
