@@ -2011,6 +2011,40 @@ the config for that run only; `--context` prints the composed grounding block
 the model would receive instead of the human-readable passage listing. See
 [Tutorial 87 — Chat with Your Book](Tutorials/87-chat-with-your-book.md).
 
+## 2.x — GRAPHMIND: chat with your graph (GRAPHMIND-1)
+
+### `graph` (2.x+) — the knowledge-graph AI surfaces
+
+GRAPHMIND grounds a language model in the [semantic net](GRAPH.md), not just the
+prose: the **Graph** AI scope (F9) retrieves the relevant passages and folds in
+the graph edges touching them, and **`graph ask`** / the in-editor **graph walk**
+(`Ctrl+B z → w`) let the model *walk* the graph — search → neighbours →
+contradictions → paths — to answer a question. Retrieval width for the Graph
+scope is shared with Book scope (the `book_rag` block above); this block bounds
+the **cost** of a walk. Per Inkhaven's permissive principle these knobs inform
+and cap — they never block a request.
+
+| Key | Type | Default | Meaning |
+| --- | ---- | ------- | ------- |
+| `graph.ask_max_steps` | int | `8` | Maximum LLM turns a `graph ask` / graph-walk traversal may take before it must answer from what it has observed (a forced synthesis fires at the cap). A higher cap explores deeper at higher cost. |
+| `graph.ask_search_width` | int | `6` | How many seed nodes each `search` step returns — how many handles the model can branch from per search. |
+
+```hjson
+graph: {
+  ask_max_steps: 8
+  ask_search_width: 6
+}
+```
+
+The **Graph** scope and the in-editor **walk** are described in
+[`GRAPH.md` → "Chat with your graph"](GRAPH.md); every graph-AI call is tagged in
+the cost dashboard under the `graph_rag` category. `graph ask` on the CLI streams
+its exploration transcript to stderr and the grounded answer to stdout:
+
+```sh
+inkhaven graph ask "which of my claims about the harbour contradict each other?"
+```
+
 ## 1.4.2–1.4.3 — Inner Editor (INNER_EDITOR-1)
 
 ### `inner_editor` (1.4.2+) — the literary/stylistic companion

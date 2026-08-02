@@ -89,8 +89,10 @@ The knowledge graph (2.0, RFC SEMNET-1) — a typed-edge layer over every node,
 connecting what you already have into one interrogable whole. It starts empty:
 `graph rebuild` derives its structural edges from your project, `graph lexical`
 imports the WordNet bridge, and the editor's `Ctrl+V ?` confront persists judged
-stance edges as you work. Its own book, this manual's sibling reference
-`Documentation/GRAPH.md`, covers the edge model in full.
+stance edges as you work. With an LLM provider you can also *chat with* the
+graph (GRAPHMIND, 2.x): `graph ask` walks it to answer a question. Its own book,
+this manual's sibling reference `Documentation/GRAPH.md`, covers the edge model
+and the AI surfaces in full.
 
 #list(
   [`inkhaven graph rebuild` — (re)derive the structural edges: paragraph links, timeline event involvements, fact provenance, `/factcheck` verdicts, and `@key[locus]` citations. Idempotent.],
@@ -100,6 +102,9 @@ stance edges as you work. Its own book, this manual's sibling reference
   [`inkhaven graph contradicting <node>` — the recorded stance clashes touching a node.],
   [`inkhaven graph loci <node>` — the primary-source loci a node cites; `inkhaven graph paths <from> <to>` — a bounded citation / link path.],
   [`inkhaven graph promote <edge> | dismiss <edge>` — accept a judged stance edge (kept across rebuilds), or delete one.],
+  [`inkhaven graph pending` — the advisory (judged) stance edges awaiting triage — the edge inbox.],
+  [`inkhaven graph link <node>` — propose stance edges from a fact to its nearest related facts (needs an LLM); triage them with `graph pending`.],
+  [`inkhaven graph ask <question>` — GRAPHMIND: answer a question by *walking* the graph (search → neighbours → contradictions → paths → grounded answer; needs an LLM). The exploration transcript prints to stderr, the answer to stdout.],
 )
 
 #section("Constructed languages")
