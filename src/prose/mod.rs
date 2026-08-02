@@ -22,6 +22,14 @@ pub(crate) use pipeline::refresh_book;
 pub(crate) use profile::{VoiceProfile, VoiceScope};
 pub(crate) use store::ProseStore;
 
+// CHORUS-1 (CH-P0) reuse seam: the metric core takes arbitrary text, so the
+// `chorus` module profiles one character's aggregated dialogue with the SAME
+// engine the narrator uses. The pipeline builds the `CompiledLexicon` once;
+// CHORUS builds its own per call via `CompiledLexicon::for_language_with`.
+// `allow` until CH-P1's `chorus::voices` consumes it (drop the allow then).
+#[allow(unused_imports)]
+pub(crate) use profile::compute_profile_with;
+
 // DIALOG-1 reuse seam (NARR-1 §15): the moving-average TTR metric and the
 // per-language modal (hedging) unigram list, for the dialogue fingerprint.
 pub(crate) use metrics::mattr;
