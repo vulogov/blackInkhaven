@@ -3119,6 +3119,13 @@ pub enum GraphCommand {
         /// The fact node UUID.
         node: String,
     },
+    /// Answer a question by walking the graph — the model searches for seed
+    /// nodes then queries neighbours / contradictions / loci / paths turn by
+    /// turn, grounding its answer in what it observes (needs an LLM provider).
+    Ask {
+        /// The question to answer from the graph.
+        question: String,
+    },
 }
 
 /// sub-subcommands under
@@ -6399,6 +6406,9 @@ impl Cli {
                 }
                 GraphCommand::Pending => graph::pending(&project).map_err(Into::into),
                 GraphCommand::Link { node } => graph::link(&project, &node).map_err(Into::into),
+                GraphCommand::Ask { question } => {
+                    graph::ask(&project, &question).map_err(Into::into)
+                }
             },
             // Poetry is library/analysis; `forms` needs no project.
             Command::Poetry { cmd } => match cmd {
