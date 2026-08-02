@@ -27,33 +27,36 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 2.0.0 — The Semantic Net
+## Latest release · 2.0.1 — GRAPHMIND: Chat with Your Graph
 
-Read the full notes: [`Documentation/RELEASE_NOTES/2.0.0.md`](Documentation/RELEASE_NOTES/2.0.0.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/2.0.1.md`](Documentation/RELEASE_NOTES/2.0.1.md)
 
-Inkhaven has always *been* a knowledge graph — every book, chapter, paragraph, fact,
-character, and source is one uniform node. 2.0's flagship, **SEMNET**, adds the **edges**: a
-first-class, persisted, typed knowledge-graph layer that connects the nodes you already have
-into one interrogable whole — without replacing the tree or the vector index, and without ever
-losing data to it (edges annotate nodes; most are derived and rebuildable).
-See [`Documentation/GRAPH.md`](Documentation/GRAPH.md).
+2.0 gave your project a knowledge graph (**SEMNET** — a typed-edge layer connecting every
+node into one interrogable whole). 2.0.1's flagship, **GRAPHMIND**, gives that graph a *mind*:
+it fills itself as you research, and you can **talk to it**. Ask how your book connects — what
+contradicts what, what grounds a claim, how a scene is sourced — and the model answers from the
+graph's *relations*, not just the prose. See [`Documentation/GRAPH.md`](Documentation/GRAPH.md).
 
 ### What's new
 
-- **A typed-edge graph over your nodes** — paragraph links, timeline involvements, fact
-  provenance + verdicts, primary-source loci, citation chains, the WordNet lexical bridge
-  (cross-lingual via the interlingual index), and each book's declared cast/symbols/tensions.
-- **Stance persistence** — the judged relations `Ctrl+V ?` confront and `/relate` produce,
-  once rendered and discarded, now **persist** as `contradicts` / `in_tension` / `qualifies` /
-  `agrees` edges that accumulate; promote the ones that stick, dismiss the rest.
-- **The `inkhaven graph` command** — `rebuild`, `lexical`, `stats`, `neighbors`, `contradicting`,
-  `loci`, `paths`, `promote`, `dismiss`.
-- **In the editor** — `Ctrl+V g` opens a paragraph's neighbourhood as a scrollable tree; `P`/`d`
-  on a confront finding promote/reject its stance edge.
-- **The Inner family reads the graph** — grounding now also reports recurring character pairings
-  and unresolved contradictions, relational context no single store computes.
-- **Crash-safe + benched** — `edges.db` is atomic and survives `kill -9`; a `graph` bench guards
-  edge-insert and reverse-index latency in CI. Multilingual by construction.
+- **The graph builds itself** — deep research (`research --agentic`) persists the clashes it
+  finds as `contradicts` edges; **`graph link <node>`** proposes stance edges from a fact to its
+  nearest related facts. Advisory edges collect in an **edge inbox** to triage —
+  **`graph pending`** on the CLI, or the editor **graph hub `Ctrl+B z`** (`i` inbox, `P` keep /
+  `d` reject).
+- **The Graph AI scope (F9 → Graph)** — the relational sibling of Book scope: retrieves the
+  relevant passages *and* folds in the graph edges touching them, so answers are grounded in how
+  your book connects; reuses the Book-RAG citation contract (invented citations flagged), `p` to
+  see the evidence.
+- **`inkhaven graph ask "<question>"`** — answers by *walking* the graph (search → neighbours →
+  contradictions → paths → grounded answer), honest about what the graph doesn't record.
+- **The in-editor graph walk (`Ctrl+B z → w`)** — the same traversal, streamed live in the AI
+  pane and non-blocking, then the grounded prose answer as a chat turn; `Esc` stops it.
+- **Bounded, multilingual, opt-in** — a `graph` config block (`ask_max_steps`,
+  `ask_search_width`) caps cost (informs, never blocks); EN/RU/ES/FR/DE throughout; tagged
+  `graph_rag` in the cost dashboard.
+- **2.0 gate closed** — a 171k-iteration soak (no leak, consistent store) + a full-codebase panic
+  audit (zero reachable panics); the soak surfaced and fixed a broken edge-store integrity check.
 
 ### Dependencies & compatibility
 
