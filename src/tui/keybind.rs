@@ -170,11 +170,15 @@ pub enum Action {
     /// declared symbol.
     #[serde(rename = "myth.open_heatmap")]
     OpenMythHeatmap,
-    /// SEMNET — `Ctrl+V g`. Open the knowledge-graph neighbourhood view for the
-    /// open paragraph: what it links to, contradicts, is sourced from, cites,
-    /// and the senses it mentions.
+    /// SEMNET — the knowledge-graph neighbourhood view for the open paragraph:
+    /// what it links to, contradicts, is sourced from, cites, and the senses it
+    /// mentions. Reached from the graph hub (`Ctrl+B z` → `n`).
     #[serde(rename = "graph.open_neighbourhood")]
     OpenGraphNeighbourhood,
+    /// GRAPHMIND — `Ctrl+B z`. Open the knowledge-graph hub: pick the
+    /// neighbourhood view (`n`) or the edge inbox (`i`).
+    #[serde(rename = "graph.open_hub")]
+    OpenGraphHub,
     /// HAIKU-1 — `Ctrl+Z p`. Emit a fresh haiku to the Output pane on demand.
     #[serde(rename = "haiku.show")]
     ShowHaiku,
@@ -996,7 +1000,8 @@ impl Action {
             Action::OpenDialogueView => "dialogue".into(),
             Action::OpenCharacterArc => "char arc".into(),
             Action::OpenMythHeatmap => "myth heatmap".into(),
-            Action::OpenGraphNeighbourhood => "graph".into(),
+            Action::OpenGraphNeighbourhood => "graph nbhd".into(),
+            Action::OpenGraphHub => "graph".into(),
             Action::ShowHaiku => "haiku".into(),
             Action::ToggleRightPaneFullscreen => "pane fullscreen".into(),
             Action::OpenConlangHub => "conlang".into(),
@@ -1238,7 +1243,9 @@ impl Action {
             Action::OpenMythHeatmap =>
                 "Open the mythology heatmap (MYTH-1, Ctrl+V Shift+M) — refreshes the declared symbol / motif / archetype inventory from the Mythology system book, recomputes the per-chapter symbol-density scan, explicit motif occurrences, and the deterministic findings (archetype vacant / absent, motif absent from the final act), then renders the heatmap (symbol-density bars, motif-presence dots, archetype-presence bars across chapter buckets) into the Thoughts pane and jumps the editor to the nearest declared symbol (one named in the open paragraph, else the first). Zero-AI; the LLM consistency / completeness / role checks stay explicit on `inkhaven myth check`. Reads declarations only — never interprets, never edits prose. Mnemonic: M for Myth.".into(),
             Action::OpenGraphNeighbourhood =>
-                "Open the knowledge-graph neighbourhood view (SEMNET, Ctrl+V g) for the open paragraph — a read-only tree of its one-hop edges grouped by kind: what it links to, contradicts, is sourced from, cites, the primary-source loci it cites, and the word-senses it mentions, each with a direction arrow (→ out, ← in, ⇄ symmetric). `↑↓` scroll, `Esc` closes. Populate the graph with `inkhaven graph rebuild` (structural edges) + `inkhaven graph lexical` (the WordNet bridge); stance edges accrue as you confront (`Ctrl+V ?`). Mnemonic: g for graph.".into(),
+                "The knowledge-graph neighbourhood view for the open paragraph — a read-only tree of its one-hop edges grouped by kind: what it links to, contradicts, is sourced from, cites, the primary-source loci it cites, and the word-senses it mentions, each with a direction arrow (→ out, ← in, ⇄ symmetric). `↑↓` scroll, `Esc` closes. Reached from the graph hub (`Ctrl+B z` → `n`). Populate the graph with `inkhaven graph rebuild` + `inkhaven graph lexical`.".into(),
+            Action::OpenGraphHub =>
+                "Open the knowledge-graph hub (GRAPHMIND, Ctrl+B z) — a small menu onto the graph: `n` opens the neighbourhood view for the open paragraph (its one-hop edges), `i` opens the edge inbox (the advisory `Judged` stance edges awaiting triage — `P` promote / `d` dismiss). Populate the graph with `inkhaven graph rebuild` / `graph lexical` / `graph link`; deep research + confront also add edges. The graph's meta hub, alongside `Ctrl+B W`/`J`/`X`.".into(),
             Action::OpenConlangHub =>
                 "Open the ConLang hub (LANG-1, Ctrl+B X) — a read-only overview of every constructed language under the Language system book: phoneme inventory (consonants / vowels), template + constraint + allophony counts, prosody (stress rule, tone), romanization schemes, lexicon size, and linked speakers (Places / Characters). `↑↓` scroll, `Esc` closes. The deep operations live on the CLI — `inkhaven language audit / generate-lexicon / query / scan-manuscript` — plus `Ctrl+B Q` to translate a paragraph into an invented language. Mnemonic: X for conlang.".into(),
             Action::OpenOutline =>
@@ -1624,6 +1631,8 @@ impl KeyBindings {
                 entry("k", Action::ToggleAiFullscreen, Scope::Any),
                 // LANG-1 P2.7b — Ctrl+B X opens the ConLang hub overview.
                 entry("x", Action::OpenConlangHub, Scope::Any),
+                // GRAPHMIND — Ctrl+B z opens the knowledge-graph hub (neighbourhood / inbox).
+                entry("z", Action::OpenGraphHub, Scope::Any),
                 // OUTLINE-1 — Ctrl+B Shift+O opens the full-screen Outline pane
                 // (reliable backup for the terminal-flaky Ctrl+2).
                 entry("Shift+o", Action::OpenOutline, Scope::Any),
@@ -1827,7 +1836,6 @@ impl KeyBindings {
                 // heatmap → Thoughts pane and jumps to the nearest declared
                 // symbol (M = Myth; plain `m` is ViewListBookmarks).
                 entry("Shift+m", Action::OpenMythHeatmap, Scope::Any),
-                entry("g", Action::OpenGraphNeighbourhood, Scope::Any),
                 // 1.4.8+ TERMS-1 — Ctrl+V z toggle the banned-synonym overlay;
                 // Ctrl+V Shift+Z declares the term under the cursor deliberate.
                 entry("z", Action::ViewToggleTermsOverlay, Scope::Any),
@@ -2735,7 +2743,16 @@ mod tests {
     #[test]
     fn unknown_chord_is_none() {
         let k = KeyBindings::defaults();
-        assert_eq!(k.resolve_meta_sub(&ev('z'), Focus::Editor), None);
+        // `9` is unbound in the meta sub-map (`z` is now the graph hub).
+        assert_eq!(k.resolve_meta_sub(&ev('9'), Focus::Editor), None);
+    }
+
+    #[test]
+    fn graph_hub_chord_resolves_and_is_not_shadowed() {
+        // Ctrl+B z → the graph hub (regression: SEMNET-P6 mis-bound the
+        // neighbourhood to Ctrl+V g, where ViewOpenProgress shadowed it).
+        let k = KeyBindings::defaults();
+        assert_eq!(k.resolve_meta_sub(&ev('z'), Focus::Editor), Some(Action::OpenGraphHub));
     }
 
     #[test]

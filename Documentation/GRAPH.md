@@ -149,8 +149,11 @@ truncate; the neighbourhood is hard-capped so a hub node can't flood the view.
 
 ### In the editor
 
-- **`Ctrl+V g`** opens the neighbourhood view for the paragraph you're editing —
-  the same tree, scrollable (`↑↓`), `Esc` to close. Populate the graph first with
+- **`Ctrl+B z`** opens the **graph hub** — press **`n`** for the neighbourhood view
+  of the paragraph you're editing (the same tree, scrollable `↑↓`, `Esc` to close),
+  or **`i`** for the **edge inbox**: the advisory (`judged`) stance edges awaiting
+  triage (from confront, `graph link`, and deep research), where **`P`** promotes
+  the selected edge and **`d`** rejects it. Populate the graph first with
   `graph rebuild` / `graph lexical`.
 - On a **confront finding** in the Output pane (from `Ctrl+V ?`), **`P`** promotes
   its stance edge to a kept decision (survives `graph rebuild`), and **`d`**
