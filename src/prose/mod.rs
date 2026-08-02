@@ -26,8 +26,6 @@ pub(crate) use store::ProseStore;
 // `chorus` module profiles one character's aggregated dialogue with the SAME
 // engine the narrator uses. The pipeline builds the `CompiledLexicon` once;
 // CHORUS builds its own per call via `CompiledLexicon::for_language_with`.
-// `allow` until CH-P1's `chorus::voices` consumes it (drop the allow then).
-#[allow(unused_imports)]
 pub(crate) use profile::compute_profile_with;
 
 // DIALOG-1 reuse seam (NARR-1 §15): the moving-average TTR metric and the

@@ -239,8 +239,6 @@ impl DialogueStore {
     /// lines so a character's aggregated dialogue is as complete as attribution
     /// allows; each span carries its own `attribution_conf` so a caller can weigh
     /// by confidence.
-    // `allow` until CH-P1's `chorus::voices` consumes it (drop the allow then).
-    #[allow(dead_code)]
     pub(crate) fn attributed_spans(&self, book_slug: &str) -> Result<Vec<(u32, DialogueSpan)>> {
         let bs = book_slug.to_string();
         let sql = format!(
