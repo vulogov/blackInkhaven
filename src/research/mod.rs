@@ -41,6 +41,7 @@ mod web;
 mod wikidata;
 
 mod agentic;
+pub(crate) mod graph_link;
 mod batch;
 mod snowball;
 mod geonames;

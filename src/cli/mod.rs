@@ -3113,6 +3113,12 @@ pub enum GraphCommand {
     },
     /// The pending advisory (Judged) edges awaiting triage — the edge inbox.
     Pending,
+    /// Propose stance edges from a fact to its nearest related facts (needs an
+    /// LLM provider); triage them with `graph pending`.
+    Link {
+        /// The fact node UUID.
+        node: String,
+    },
 }
 
 /// sub-subcommands under
@@ -6392,6 +6398,7 @@ impl Cli {
                     graph::neighbors(&project, &node).map_err(Into::into)
                 }
                 GraphCommand::Pending => graph::pending(&project).map_err(Into::into),
+                GraphCommand::Link { node } => graph::link(&project, &node).map_err(Into::into),
             },
             // Poetry is library/analysis; `forms` needs no project.
             Command::Poetry { cmd } => match cmd {
