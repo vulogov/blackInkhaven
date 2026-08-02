@@ -132,6 +132,51 @@ pub fn neighbors(project: &Path, node: &str) -> Result<()> {
     Ok(())
 }
 
+/// A human label for an endpoint: a node's title (via the hierarchy), or an
+/// extern's `kind ref`.
+fn endpoint_label(ep: &EndpointRef, h: &Hierarchy) -> String {
+    match ep {
+        EndpointRef::Node(u) => h
+            .get(*u)
+            .map(|n| n.title.clone())
+            .filter(|t| !t.trim().is_empty())
+            .unwrap_or_else(|| format!("node {}", &u.to_string()[..8])),
+        EndpointRef::Extern(_) => {
+            let (k, r) = ep.as_columns();
+            format!("{k} {r}")
+        }
+    }
+}
+
+/// `inkhaven graph pending` — the advisory (Judged) stance edges awaiting triage:
+/// the edge inbox. Promote the ones that stick with `graph promote <id>`, reject
+/// the rest with `graph dismiss <id>`.
+pub fn pending(project: &Path) -> Result<()> {
+    let store = open(project)?;
+    let edges = store.pending_edges()?;
+    if edges.is_empty() {
+        println!("no pending edges — the graph's advisory layer is clear");
+        return Ok(());
+    }
+    let h = Hierarchy::load(&store)?;
+    println!(
+        "{} pending edge(s) — `graph promote <id>` to keep (across rebuilds), `graph dismiss <id>` to reject:",
+        edges.len()
+    );
+    for e in &edges {
+        let src = endpoint_label(&e.src, &h);
+        let dst = endpoint_label(&e.dst, &h);
+        let reason = e
+            .reason
+            .as_deref()
+            .filter(|r| !r.is_empty())
+            .map(|r| format!(" — {r}"))
+            .unwrap_or_default();
+        println!("  {}  [{}]  {src} ⇢ {dst}{reason}", e.id, e.kind.as_str());
+    }
+    Ok(())
+}
+
 /// `inkhaven graph loci <node>` — the primary-source loci a node cites.
 pub fn loci(project: &Path, node: &str) -> Result<()> {
     use crate::store::graph::EdgeKind;
