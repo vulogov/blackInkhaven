@@ -7,11 +7,16 @@ use std::hash::{Hash, Hasher};
 
 use super::{CompiledLexicon, ProseLanguage, lang_metrics, metrics, passive, segment, tokenize};
 
-/// What a profile describes: the whole book, or chapter `n` (1-based).
+/// What a profile describes: the whole book, chapter `n` (1-based), or —
+/// CHORUS-1 (CH-P0) — one character's aggregated dialogue, keyed by name.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum VoiceScope {
     Book,
     Chapter(u32),
+    /// A character's voice (CHORUS-1). The name is the storage key discriminator;
+    /// it may itself contain a colon (`parse` takes everything after the first
+    /// `character:` prefix), so the round-trip is lossless.
+    Character(String),
 }
 
 impl VoiceScope {
@@ -19,21 +24,26 @@ impl VoiceScope {
         match self {
             VoiceScope::Book => "book".into(),
             VoiceScope::Chapter(n) => format!("chapter:{n}"),
+            VoiceScope::Character(name) => format!("character:{name}"),
         }
     }
     pub(crate) fn chapter_ord(&self) -> Option<u32> {
         match self {
-            VoiceScope::Book => None,
             VoiceScope::Chapter(n) => Some(*n),
+            VoiceScope::Book | VoiceScope::Character(_) => None,
         }
     }
     pub(crate) fn parse(s: &str) -> Option<VoiceScope> {
         if s == "book" {
             Some(VoiceScope::Book)
+        } else if let Some(n) = s.strip_prefix("chapter:") {
+            n.parse().ok().map(VoiceScope::Chapter)
         } else {
-            s.strip_prefix("chapter:")
-                .and_then(|n| n.parse().ok())
-                .map(VoiceScope::Chapter)
+            // Everything after the first `character:` is the name (colons in the
+            // name are preserved); an empty name is not a valid scope.
+            s.strip_prefix("character:")
+                .filter(|name| !name.is_empty())
+                .map(|name| VoiceScope::Character(name.to_string()))
         }
     }
 }
@@ -167,6 +177,21 @@ mod tests {
         assert_eq!(VoiceScope::Chapter(3).chapter_ord(), Some(3));
         assert_eq!(VoiceScope::Book.chapter_ord(), None);
         assert_eq!(VoiceScope::parse("junk"), None);
+    }
+
+    #[test]
+    fn character_scope_round_trips() {
+        // CHORUS-1 (CH-P0): the character voice scope round-trips losslessly…
+        let mara = VoiceScope::Character("Mara".into());
+        assert_eq!(mara.as_str(), "character:Mara");
+        assert_eq!(VoiceScope::parse("character:Mara"), Some(mara.clone()));
+        assert_eq!(mara.chapter_ord(), None);
+        // …including a name that itself contains a colon (everything after the
+        // first `character:` is the name)…
+        let titled = VoiceScope::Character("Dr. X: The Return".into());
+        assert_eq!(VoiceScope::parse(&titled.as_str()), Some(titled));
+        // …and an empty character name is not a valid scope.
+        assert_eq!(VoiceScope::parse("character:"), None);
     }
 
     #[test]
