@@ -495,6 +495,23 @@ impl super::App {
                     return;
                 }
             }
+        } else if self.ai_mode == AiMode::Graph {
+            // GRAPHMIND GM-P4 — retrieve passages + fold in their graph edges;
+            // the citation contract (valid tokens = passage location paths) is
+            // reused from Book scope through `pending_book_rag_cited`.
+            match self.graph_rag_context(&user_query) {
+                Ok(prefix) => {
+                    self.pending_book_rag_cited = self
+                        .graph_rag_last_retrieval
+                        .as_ref()
+                        .map(|p| crate::graph_rag::cited_ids(p));
+                    format!("{prefix}\n\n{user_query}")
+                }
+                Err(reason) => {
+                    self.status = reason;
+                    return;
+                }
+            }
         } else {
             match self.build_ai_mode_context() {
                 Ok(Some(prefix)) => format!("{prefix}\n\n{user_query}"),
@@ -586,6 +603,16 @@ impl super::App {
                     })
                     .template,
                 )
+            } else if mode_used == AiMode::Graph {
+                // GRAPHMIND GM-P4 — the graph-grounding contract, resolved
+                // through the standard prompt chain so it's customisable.
+                let want_lang = self.active_prompt_language();
+                Some(
+                    self.resolve_prompt("graph-rag-system", &want_lang, || {
+                        crate::graph_rag::system_prompt(&want_lang).to_string()
+                    })
+                    .template,
+                )
             } else {
                 match self.inference_mode {
                     InferenceMode::Local => Some(LOCAL_SYSTEM_PROMPT.to_string()),
@@ -598,6 +625,7 @@ impl super::App {
         // from plain chat.
         let usage_category = match mode_used {
             AiMode::Book => "book_rag",
+            AiMode::Graph => "graph_rag",
             AiMode::EditorConversation => "inner_editor",
             _ => "chat",
         };
@@ -622,7 +650,9 @@ impl super::App {
         // turn once the stream finishes. Book scope records the clean question
         // (the prefix is sent to the model but not shown in the transcript);
         // every other scope records what it sent, unchanged.
-        self.pending_chat_user_msg = Some(if mode_used == AiMode::Book {
+        self.pending_chat_user_msg = Some(if matches!(mode_used, AiMode::Book | AiMode::Graph) {
+            // Book/Graph scope record the clean question; the multi-thousand-token
+            // grounding prefix is sent to the model but kept out of the transcript.
             recorded_user_msg
         } else {
             prompt_text
@@ -648,7 +678,10 @@ impl super::App {
         // 1.2.21+ — except Facts: it's a sticky *session* scope, so the
         // fact-analysis framing + seeded facts persist across follow-up
         // questions until the author cycles F9 away.
-        if mode_used != AiMode::Facts {
+        // GM-P4 — Graph is sticky like Facts: a "chat with your graph" session
+        // stays in graph scope (and reuses its cached retrieval) across
+        // follow-ups until the author cycles F9 away.
+        if !matches!(mode_used, AiMode::Facts | AiMode::Graph) {
             self.ai_mode = AiMode::None;
         }
         // Clear the prompt so the next inference starts fresh.
