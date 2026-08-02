@@ -5909,6 +5909,80 @@ impl super::super::App {
         );
     }
 
+    /// GRAPHMIND — the graph hub (`Ctrl+B z`): a tiny menu onto the graph.
+    pub(in crate::tui::app) fn draw_graph_hub_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
+        use ratatui::style::Color;
+        if !matches!(self.modal, Modal::GraphHub) {
+            return;
+        }
+        let width = area.width.saturating_sub(6).clamp(40, 60);
+        let height = 6u16.min(area.height);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Graph hub ")
+            .border_style(Style::default().fg(self.theme.modal_border).add_modifier(Modifier::BOLD))
+            .style(Style::default().bg(self.theme.modal_bg).fg(self.theme.modal_fg));
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+        let key = |k: &str| Span::styled(k.to_string(), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD));
+        let lines = vec![
+            Line::from(vec![key(" n "), Span::raw(" neighbourhood — the open paragraph's edges")]),
+            Line::from(vec![key(" i "), Span::raw(" inbox — advisory edges awaiting triage")]),
+            Line::from(Span::styled("  Esc to close", Style::default().add_modifier(Modifier::DIM))),
+        ];
+        f.render_widget(Paragraph::new(lines), inner);
+    }
+
+    /// GRAPHMIND — the edge inbox (graph hub → `i`): the advisory `Judged` edges,
+    /// the cursor row highlighted, `P` promote / `d` reject.
+    pub(in crate::tui::app) fn draw_graph_inbox_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
+        let Modal::GraphEdgeInbox { rows, cursor } = &self.modal else {
+            return;
+        };
+        let width = area.width.saturating_sub(6).clamp(52, 100);
+        let height = area.height.saturating_sub(4).max(10);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(format!(" Edge inbox ({}) ", rows.len()))
+            .border_style(Style::default().fg(self.theme.modal_border).add_modifier(Modifier::BOLD))
+            .style(Style::default().bg(self.theme.modal_bg).fg(self.theme.modal_fg));
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let list_h = inner.height.saturating_sub(1).max(1) as usize;
+        let body_rect = Rect { x: inner.x, y: inner.y, width: inner.width, height: list_h as u16 };
+        let footer_rect =
+            Rect { x: inner.x, y: inner.y + inner.height - 1, width: inner.width, height: 1 };
+
+        let cur = (*cursor).min(rows.len().saturating_sub(1));
+        let start = if cur >= list_h { cur + 1 - list_h } else { 0 };
+        let mut lines: Vec<Line> = Vec::new();
+        for (i, (_, text)) in rows.iter().enumerate().skip(start).take(list_h) {
+            let style = if i == cur {
+                Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            lines.push(Line::from(Span::styled(truncate_to(text, 98), style)));
+        }
+        f.render_widget(Paragraph::new(lines), body_rect);
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                " ↑↓ · P keep · d reject · Esc ",
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
     /// WORLD-4 — the World overview (`Ctrl+B W`): a read-only scrollable
     /// summary of the world definition, compiled astronomy, and materialization
     /// status. Lines that begin at column 0 (and aren't blank) are section
