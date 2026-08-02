@@ -148,6 +148,48 @@ fn endpoint_label(ep: &EndpointRef, h: &Hierarchy) -> String {
     }
 }
 
+/// `inkhaven graph link <node>` — propose stance edges from a fact to its
+/// nearest related facts (the confront judge over your own corpus): retrieve the
+/// neighbours, grade each relation, and persist the non-Silent ones as advisory
+/// `Judged` edges. Triage them with `graph pending`. Needs an LLM provider.
+pub fn link(project: &Path, node: &str) -> Result<()> {
+    let (store, cfg) = open_with_cfg(project)?;
+    let id = parse_uuid(node, "node")?;
+    let ai = crate::ai::AiClient::from_config(&cfg.llm)
+        .map_err(|e| Error::Config(format!("LLM provider: {e:#}")))?;
+    let (model, _env) = ai
+        .resolve_provider(&cfg.llm, None)
+        .map_err(|e| Error::Config(format!("LLM provider: {e:#}")))?;
+    let h = Hierarchy::load(&store)?;
+    let Some(facts_book) = h
+        .iter()
+        .find(|n| n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_FACTS))
+        .map(|n| n.id)
+    else {
+        return Err(Error::Config("this project has no Facts book to link against".into()));
+    };
+    let body = store
+        .raw()
+        .get_content(id)
+        .map_err(|e| Error::Store(e.to_string()))?
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
+        .ok_or_else(|| Error::Config(format!("no content for node {id}")))?;
+    // The /relate judge writes its reasons in the project language (a name, e.g.
+    // "English"), matching the confront path.
+    let iso = crate::ai::prompts::iso_from_long(&cfg.language);
+    let language = crate::inner_editor::prompt::language_name(iso).to_string();
+
+    let n = crate::research::graph_link::link_fact(
+        &store, &h, &cfg, &ai, &model, facts_book, id, &body, &language,
+    );
+    if n == 0 {
+        println!("no stance edges proposed (no related facts, or all silent)");
+    } else {
+        println!("proposed {n} advisory edge(s) — triage with `graph pending` (`graph promote`/`dismiss`)");
+    }
+    Ok(())
+}
+
 /// `inkhaven graph pending` — the advisory (Judged) stance edges awaiting triage:
 /// the edge inbox. Promote the ones that stick with `graph promote <id>`, reject
 /// the rest with `graph dismiss <id>`.

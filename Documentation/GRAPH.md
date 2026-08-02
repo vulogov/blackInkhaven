@@ -126,6 +126,8 @@ inkhaven graph <verb>
 | `paths <from> <to>` | a bounded citation / link path between two nodes (≤ 8 hops) |
 | `promote <edge>` | accept a `judged` stance edge → `promoted` (kept across rebuilds) |
 | `dismiss <edge>` | delete a stance edge |
+| `pending` | the advisory (`judged`) edges awaiting triage — the edge inbox |
+| `link <node>` | propose stance edges from a fact to its related facts (needs an LLM); triage with `pending` |
 
 ### `graph neighbors` — the neighbourhood view
 
