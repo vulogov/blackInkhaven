@@ -357,6 +357,13 @@ impl Store {
             .map_err(map_edge_err)
     }
 
+    /// GRAPHMIND — the pending advisory (`Judged`) edges awaiting triage: the
+    /// edge inbox. Promote the ones that stick (`promote_edge`), dismiss the rest
+    /// (`dismiss_edge`).
+    pub fn pending_edges(&self) -> Result<Vec<Edge>> {
+        self.raw().edges_of_origin(EdgeOrigin::Judged).map_err(map_edge_err)
+    }
+
     // ── SEMNET-P6: surfacing ───────────────────────────────────────
 
     /// The edges in the neighbourhood of `seed`: its direct edges, expanded

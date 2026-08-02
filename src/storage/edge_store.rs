@@ -572,6 +572,15 @@ impl EdgeStore {
         rows.into_iter().map(row_to_edge).collect()
     }
 
+    /// Every edge of one origin (e.g. all `Judged` edges — the advisory layer
+    /// awaiting promote/dismiss triage: the edge inbox).
+    pub fn by_origin(&self, origin: EdgeOrigin) -> Result<Vec<Edge>> {
+        let o = origin.as_str();
+        let sql = format!("{EDGE_SELECT} WHERE origin = ?");
+        let rows = self.engine.select_all_with(&sql, &[&o])?;
+        rows.into_iter().map(row_to_edge).collect()
+    }
+
     pub fn count(&self) -> Result<usize> {
         scalar_count(&self.engine, "SELECT COUNT(*) FROM edges")
     }
@@ -949,6 +958,23 @@ mod tests {
         }
         assert!(s.by_id(e.id).unwrap().is_some(), "promoted edge must survive rebuild");
         assert_eq!(s.set_origin(Uuid::now_v7(), EdgeOrigin::Promoted).unwrap(), 0);
+    }
+
+    #[test]
+    fn by_origin_lists_the_judged_inbox() {
+        let (_d, s) = store();
+        let judged = Edge::new(
+            EndpointRef::Node(Uuid::now_v7()),
+            EdgeKind::Contradicts,
+            EndpointRef::Node(Uuid::now_v7()),
+            EdgeOrigin::Judged,
+        );
+        s.insert(&judged).unwrap();
+        s.insert(&link(Uuid::now_v7(), Uuid::now_v7())).unwrap(); // Structural
+        let pending = s.by_origin(EdgeOrigin::Judged).unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].id, judged.id);
+        assert!(s.by_origin(EdgeOrigin::Authorial).unwrap().is_empty());
     }
 
     #[test]

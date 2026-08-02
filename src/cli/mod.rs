@@ -3111,6 +3111,8 @@ pub enum GraphCommand {
         /// The node UUID.
         node: String,
     },
+    /// The pending advisory (Judged) edges awaiting triage — the edge inbox.
+    Pending,
 }
 
 /// sub-subcommands under
@@ -6389,6 +6391,7 @@ impl Cli {
                 GraphCommand::Neighbors { node } => {
                     graph::neighbors(&project, &node).map_err(Into::into)
                 }
+                GraphCommand::Pending => graph::pending(&project).map_err(Into::into),
             },
             // Poetry is library/analysis; `forms` needs no project.
             Command::Poetry { cmd } => match cmd {
