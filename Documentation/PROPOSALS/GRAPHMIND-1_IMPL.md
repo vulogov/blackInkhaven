@@ -61,18 +61,30 @@ An anchor audit (2026-08-01) confirms the RFC is buildable almost entirely by wi
   `/relate` grader (`relate_system`/`relate_user`/`parse_relations`). Hook after
   `Provenance::record` (`research/app.rs:~5087`), gated by a `research.link_facts` frequency knob.
   Post proposals to the Output pane (`confront` kind + `edge_id`). Tests: pure proposal derivation.
-- **GM-P3 — the edge inbox (editor).** `Modal::GraphEdgeInbox` cloning `Modal::GraphNeighbourhood`
-  (SEMNET-P6): render `store.pending_edges()` grouped; a `Ctrl+V` chord to open; `P`/`d` triage
-  (reuse the confront handlers via `edge_id`, or a dedicated inbox key handler). Tests: render.
-- **GM-P4 — the Graph scope (templated).** `AiMode::Graph` (`inference.rs`); `graph_context(query)`
-  = resolve entity (`search_text`) → intent-classify → bounded traversal → `compose_context_prefix`
-  -style evidence + `cited_ids`; `graph-system` prompt (citation contract, ×5 langs); reuse
-  `validate_citations` at finalize; a `graph_transparency_lines` clone. Category `"graph_chat"`.
-- **GM-P5 — the graph-tool loop.** Replace/augment P4's intent-classifier with an LLM tool-plan
-  over the bounded read-only graph tools (§RFC 5.2); ≤K calls; same envelope + validator.
-- **GM-P6 — cost + config + multilingual + CLI/Bund.** `graph_chat`/`graph_link` usage +
-  `cost.graph_link_daily_call_cap`; per-language prompts; `research --link` CLI.
-- **GM-P7 — capstone.** `GRAPHMIND.md` + companion chapter + GRAPH.md/KEYBINDING updates.
+- **GM-P3 — the edge inbox (editor).** ✅ SHIPPED (`36a2564d`). `Modal::GraphEdgeInbox` +
+  `Modal::GraphHub`; a `Ctrl+B z` graph hub (`n` neighbourhood / `i` inbox) — fixing a shipped
+  P6 chord bug (the `Ctrl+V g` neighbourhood chord was shadowed by `ViewOpenProgress`). Inbox
+  renders `store.pending_edges()` with `P`/`d` triage (reuse `promote_edge`/`dismiss_edge`).
+  +1 regression test.
+- **GM-P4 — the Graph scope (templated).** ✅ SHIPPED (`499f8e72`). `AiMode::Graph`
+  (`inference.rs`), sticky like Facts. `graph_rag` module + `graph_rag_impl`: retrieve seed
+  passages (reuse Book-RAG retrieval verbatim) → fold in each seed's one-hop graph relations →
+  `compose_graph_context`; `graph-rag-system` prompt (×5 langs). Reuses `cited_ids` +
+  `validate_citations` via `pending_book_rag_cited`; transparency pane extended to show
+  passages + relations. Category `"graph_rag"`. +4 tests.
+- **GM-P5 — the graph-tool loop.** ✅ SHIPPED (`804f9f66`). `graph_rag::ask` (pure, tested):
+  `Action` + `parse_action` (balanced-brace JSON extraction) + `GraphOracle` trait + n#↔UUID
+  handle registry + the bounded `ask` loop (malformed/unknown-handle fed back, forced final
+  synthesis at the step cap). `inkhaven graph ask <question>` wires a `StoreOracle` over the
+  real store + `collect_blocking`; ×5-lang system prompt. +6 tests.
+- **GM-P6 — cost + config + multilingual.** ✅ SHIPPED. Multilingual prompts land in P4/P5;
+  TUI Graph scope records under `"graph_rag"` (CLI `graph ask` matches the untracked
+  `research --agentic` slow-track precedent — `usage::install` is TUI-only). Config: a `graph`
+  section (`ask_max_steps`, `ask_search_width`) bounds the traversal cost — informs/caps, never
+  blocks (permissive principle). +1 test.
+- **GM-P7 — capstone.** ✅ SHIPPED. `GRAPH.md` "Chat with your graph" section (Graph scope +
+  `graph ask` + config), the `ask` verb in the command table, corrected "Not yet wired";
+  `KEYBINDING.md` F9 scope cycle refreshed (full cycle incl. Graph + sticky-scope note).
 
 ## Cross-cutting
 
@@ -80,3 +92,9 @@ AI-advisory (proposals Judged, chat streams to the pane, no prose edits); graph-
 (validator rejects fabricated citations); permissive cost sub-budgets; multilingual prompts;
 warning-free / 1.2.15. Part A (P1–P3) fills the graph; Part B (P4–P5) interrogates it —
 sequence A first.
+
+**Status: the full arc GM-P0→P7 is SHIPPED on 2.0.1-dev (2026-08-01).** Part A fills the
+graph (agentic contradictions · fact-link proposals · the editor edge inbox); Part B
+interrogates it (the Graph AI scope · the `graph ask` traversal loop). Full suite green,
+warning-free. A streaming *in-editor* version of the P5 tool-loop (walking the graph under the
+Graph scope, not just P4's one-hop retrieval) is the natural next step beyond this RFC.

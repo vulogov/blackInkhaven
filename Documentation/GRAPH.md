@@ -128,6 +128,7 @@ inkhaven graph <verb>
 | `dismiss <edge>` | delete a stance edge |
 | `pending` | the advisory (`judged`) edges awaiting triage — the edge inbox |
 | `link <node>` | propose stance edges from a fact to its related facts (needs an LLM); triage with `pending` |
+| `ask <question>` | answer a question by **walking** the graph — search → query neighbours / contradictions / loci / paths → grounded answer (needs an LLM) |
 
 ### `graph neighbors` — the neighbourhood view
 
@@ -160,6 +161,53 @@ truncate; the neighbourhood is hard-capped so a hub node can't flood the view.
   (dismiss) rejects the finding and deletes its edge.
 
 ---
+
+## Chat with your graph
+
+*(GRAPHMIND, 2.x — see [`PROPOSALS/GRAPHMIND-1_PLAN.md`](PROPOSALS/GRAPHMIND-1_PLAN.md))*
+
+The graph is not only queried by verb — you can **converse** with it. Two AI
+surfaces ground a language model in the graph's *relations*, not just the prose,
+so you can ask how your book connects — what contradicts what, what grounds a
+claim, how a scene is sourced — questions the flat manuscript can't answer.
+
+### The **Graph** AI scope (in the editor)
+
+Cycle the AI-pane scope with **F9** to **Graph** (it sits last, after Editor). A
+prompt in Graph scope retrieves the passages relevant to your question — the same
+semantic retrieval Book scope uses — and, beneath each, folds in the graph edges
+touching it (`contradicts` / `sourced_from` / `links_to` / `cites` / …). The
+answer is grounded in both the prose *and* those relations, with the same
+citation contract as Book scope (each claim cites a passage's `[location/path]`;
+invented labels are flagged). It's a **sticky** conversation scope, like Facts:
+it retrieves once per chat and re-grounds when you clear history. Press **`p`** in
+the AI pane to expand the "Retrieved passages + graph relations" transparency
+section and see the subgraph the answer stands on.
+
+### `graph ask` (the traversal loop, on the CLI)
+
+```
+inkhaven graph ask "which of my claims about the harbour contradict each other?"
+```
+
+Where the Graph scope reads one hop, `graph ask` lets the model **walk** the
+graph: it searches for seed nodes, then issues read-only graph queries
+(neighbours, contradictions, loci, paths) turn by turn until it can answer,
+grounding the answer in what it observed. The exploration transcript prints to
+stderr (so you can see the path it took); the answer to stdout (so you can pipe
+it). Honest by construction: when the relations don't record what you asked, it
+says so rather than inventing a connection — the graph is only as complete as
+`graph rebuild` / confront / `graph link` have made it.
+
+The cost of a question is bounded and tunable (the permissive principle — these
+inform and cap, they never block):
+
+```hjson
+graph: {
+  ask_max_steps: 8      // max LLM turns before a forced answer
+  ask_search_width: 6   // seed nodes per search
+}
+```
 
 ## Multilingual
 
@@ -197,8 +245,12 @@ edges are provably rebuildable, so a corrupted graph is never lost data — just
 
 ## Not yet wired
 
-The graph is a first-class data layer, a CLI surface, and — via `Ctrl+V g` and
-the confront-finding `P`/`d` keys — an in-editor surface. A `similar_to`
-materialisation is deliberately *not* done (embedding similarity stays a live
-HNSW query). The declared world is imported (`declares` edges); the Inner-family
-grounding still reads those live for freshness rather than off the graph.
+The graph is a first-class data layer, a CLI surface (`graph` verbs + `graph
+ask`), an in-editor surface (the `Ctrl+B z` hub — neighbourhood + edge inbox —
+and the confront-finding `P`/`d` keys), and an AI surface (the **Graph** scope +
+`graph ask`). A `similar_to` materialisation is deliberately *not* done
+(embedding similarity stays a live HNSW query). The declared world is imported
+(`declares` edges); the Inner-family grounding still reads those live for
+freshness rather than off the graph. `graph ask`'s traversal is a CLI loop; a
+streaming in-editor version of it (the tool-loop under the Graph scope, not just
+the one-hop retrieval) is a natural future step.
