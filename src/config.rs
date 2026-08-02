@@ -55,6 +55,9 @@ pub struct Config {
     pub cost: CostConfig,
     #[serde(default)]
     pub book_rag: BookRagConfig,
+    /// GRAPHMIND (2.x) — the knowledge-graph AI surfaces (Graph scope, `graph ask`).
+    #[serde(default)]
+    pub graph: GraphConfig,
     /// INNER_EDITOR-1 (1.4.2+) — the Inner Editor companion.
     #[serde(default)]
     pub inner_editor: InnerEditorConfig,
@@ -254,6 +257,7 @@ impl Default for Config {
             goals: GoalsConfig::default(),
             cost: CostConfig::default(),
             book_rag: BookRagConfig::default(),
+            graph: GraphConfig::default(),
             inner_editor: InnerEditorConfig::default(),
             sources: SourcesConfig::default(),
             jinja: JinjaConfig::default(),
@@ -3534,6 +3538,29 @@ impl Default for BookRagConfig {
     }
 }
 
+/// GRAPHMIND (2.x) — the knowledge-graph AI surfaces: the Graph AI scope
+/// (GM-P4, chat with your graph) and `graph ask` (GM-P5, the traversal
+/// tool-loop). These knobs bound the *cost* of a graph question; per Inkhaven's
+/// permissive principle they inform and cap, they never block. Retrieval width
+/// for the Graph scope is shared with Book scope ([`BookRagConfig`]).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GraphConfig {
+    /// `graph ask` — the maximum number of LLM turns the traversal loop may take
+    /// before it is forced to answer from what it has already observed. Each
+    /// turn is one graph query; a higher cap explores deeper at higher cost.
+    pub ask_max_steps: usize,
+    /// `graph ask` — how many seed nodes each `search` action returns (and thus
+    /// how many handles the model can branch from per search).
+    pub ask_search_width: usize,
+}
+
+impl Default for GraphConfig {
+    fn default() -> Self {
+        Self { ask_max_steps: 8, ask_search_width: 6 }
+    }
+}
+
 /// INNER_EDITOR-1 (1.4.2+) — the Inner Editor literary/stylistic companion.
 /// All knobs default to behaviour-preserving values; the feature is enabled by
 /// default but only engages when an LLM provider is configured. Cost caps are
@@ -5857,6 +5884,18 @@ mod research_config_tests {
         assert!((r.session_budget_warn - 0.50).abs() < 1e-9);
         assert!((r.dedup_warn_score - 0.92).abs() < 1e-9);
         assert!(r.default_thread.is_none());
+    }
+
+    #[test]
+    fn graph_block_defaults_and_overrides() {
+        // Absent → the GRAPHMIND defaults.
+        let cfg: Config = serde_hjson::from_str("{}").unwrap();
+        assert_eq!(cfg.graph.ask_max_steps, 8);
+        assert_eq!(cfg.graph.ask_search_width, 6);
+        // A partial block overrides only the named field.
+        let cfg2: Config = serde_hjson::from_str("{ graph: { ask_max_steps: 12 } }").unwrap();
+        assert_eq!(cfg2.graph.ask_max_steps, 12);
+        assert_eq!(cfg2.graph.ask_search_width, 6); // untouched default
     }
 
     #[test]

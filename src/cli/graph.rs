@@ -380,8 +380,8 @@ pub fn ask(project: &Path, question: &str) -> Result<()> {
     let system = crate::graph_rag::ask::system_prompt(iso).to_string();
     let oracle = StoreOracle { store: &store, h: &h };
 
-    let max_steps = cfg.research.agentic.max_rounds.max(1) * 2 + 2;
-    let search_limit = 6usize;
+    let max_steps = cfg.graph.ask_max_steps.max(1);
+    let search_limit = cfg.graph.ask_search_width.max(1);
     let client = ai.client.clone();
     let modelname = model.to_string();
 
