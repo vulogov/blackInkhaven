@@ -96,5 +96,87 @@ sequence A first.
 **Status: the full arc GM-P0→P7 is SHIPPED on 2.0.1-dev (2026-08-01).** Part A fills the
 graph (agentic contradictions · fact-link proposals · the editor edge inbox); Part B
 interrogates it (the Graph AI scope · the `graph ask` traversal loop). Full suite green,
-warning-free. A streaming *in-editor* version of the P5 tool-loop (walking the graph under the
-Graph scope, not just P4's one-hop retrieval) is the natural next step beyond this RFC.
+warning-free.
+
+---
+
+# GM-P8 — the streaming in-editor graph walk (spec)
+
+**Goal.** Bring GM-P5's multi-turn graph *traversal* into the GM-P4 editor Graph scope —
+streamed and non-blocking — so the author can watch the model walk their graph live, instead
+of getting P4's single one-hop retrieval or leaving the editor for the `graph ask` CLI.
+
+**The one hard constraint that dictates the design.** The TUI render loop must never block, but
+`graph_rag::ask::ask()` is a *blocking* loop (`collect_blocking` → wait → query → repeat). We do
+**not** move it to a background thread: that thread would need the graph, and a second live
+`Store` handle onto the same DuckDB files is exactly the concurrency hazard the stability bar
+(1.2.15) guards against. Instead we keep **all graph access on the UI thread** and turn the
+blocking loop into a **frame-driven resumable state machine** layered over the *existing*
+single-shot streaming machinery (`spawn_chat_stream` → `Inference` → `pump_inference`). Local
+DuckDB queries are single-digit-ms, so running them inline between streamed turns is safe.
+
+**Turn protocol (settles the "streaming raw JSON is ugly" problem).** Two turn kinds:
+- **Exploration turns** keep P5's JSON-action protocol (`{"search":…}` / `{"neighbors":…}` / …).
+  Their tokens are *buffered* in `Inference.response` as usual but **never rendered raw** — on
+  completion we `parse_action`, run the query on the UI thread, and render a compact **step
+  line** (`🔍 search "the harbour" → n1 003·Quiet hour, n2 …`) into a live walk transcript.
+- **The terminal turn** is a single **prose synthesis**, streamed live token-by-token (the P4
+  experience): once the model emits `{"answer":…}` — or the step cap is hit (the existing
+  *forced synthesis* path) — we issue one final grounded-answer inference over all observations,
+  citation-validated. So the *exploration* streams as progress; the *answer* streams as prose.
+
+## Sub-phases
+
+- **P8a — resumable core (pure, no behaviour change).** Extract the loop *state* out of the
+  blocking `ask()` into an `AskSession` in `graph_rag::ask`: it owns `Handles`, `observations`,
+  `steps`, `step`/`max_steps`, `search_width`. Methods: `AskSession::new(question, max_steps,
+  width)`; `next_prompt(&self) -> String` (the current `build_prompt`); `on_reply(&mut self,
+  reply: &str, oracle: &dyn GraphOracle) -> AskStep` where `AskStep = Continue | Answer(String)
+  | Exhausted` (the last two both route to synthesis). The existing blocking `ask()` becomes a
+  thin driver over `AskSession` (`while let Continue = session.on_reply(llm(session.next_prompt())?, oracle) {}`),
+  so **the CLI + its 6 tests keep passing unchanged**. New unit tests drive `AskSession` directly
+  (a scripted reply sequence + the `FakeGraph` oracle already in the test module).
+- **P8b — `App` as a `GraphOracle`.** The oracle is `store` + `hierarchy`, both already on `App`.
+  Factor the CLI `StoreOracle` body (search=`search_text`; neighbors=`subgraph`+`render_neighbourhood`;
+  contradicting=`store.contradicting`; loci=`edges_out(CitesLocus)`; paths=`store.paths`) into a
+  shared `graph_rag::oracle::StoreOracleParts(&Store, &Hierarchy)` used by BOTH the CLI and a
+  thin `App` impl — no logic duplication. (App can't `impl GraphOracle for App` cleanly because
+  `on_reply` needs `&mut session` + `&self` oracle at once; see the borrow note below.)
+- **P8c — the frame driver.** New `App` state `graph_walk: Option<GraphWalk>` (the `AskSession` +
+  turn bookkeeping + the live transcript `Vec<String>`). Start from the **graph hub** — add
+  `w` to `Ctrl+B z` (`graph_hub_handle_key`) → `start_graph_walk()`, which takes the current AI
+  prompt as the question, builds the session, and kicks turn 1. The driver hooks the single
+  finalize point — `pump_inference`'s `just_finished` block (app.rs:4380) — *before* the normal
+  chat-history commit: if `graph_walk.is_some()` and this inference is the walk's, **intercept**.
+  `Option::take` the walk (so `session` is owned locally and the `&self` oracle borrow is
+  independent — resolves the split-borrow), call `on_reply`; on `Continue` append the step line
+  and kick the next exploration turn (do **not** commit an intermediate assistant turn); on
+  `Answer/Exhausted` fire the streamed synthesis turn, then let the *normal* finalize commit it
+  as the single assistant turn paired with the original question.
+- **P8d — live rendering.** Render `graph_walk.transcript` as a progress block above the
+  streaming answer (reuse the `book_rag_transparency_lines` prepend seam in `draw_chat_history`).
+  Status bar shows `graph walk · turn k/N`.
+- **P8e — cancel, cost, docs, tests.** `Esc` in the AI pane while `graph_walk.is_some()` aborts
+  the whole session (`graph_walk = None`, `inference = None`, status "walk cancelled") — not just
+  one turn. Each turn records usage `"graph_rag"`; the walk is bounded by `cfg.graph.ask_max_steps`
+  and the status surfaces the turn count (cost *informs*). Flip GRAPH.md's "Not yet wired" note;
+  KEYBINDING gets the hub `w`. Tests: a headless driver test (fake oracle + scripted replies →
+  assert the transcript + single committed turn + citation-validated answer) and an `Esc`-mid-walk
+  cancel test.
+
+## Decisions & risks
+
+- **Opt-in, not the Graph-scope default.** A walk is *N* billable calls; P4's one-hop stays the
+  light default. The walk is an explicit action (hub `Ctrl+B z → w`), so cost is chosen — the
+  permissive principle (cost informs, the author opts into depth).
+- **Split-borrow** (`&mut session` + `&self` oracle) is handled by `take`-ing the walk out of
+  `self` for the duration of `on_reply`; the oracle reads `store`/`hierarchy` immutably meanwhile.
+- **No background thread / no second Store handle** — the whole point of the frame-driven design;
+  keeps the 1.2.15 concurrency guarantees intact.
+- **Orthogonal to P4's retrieval cache** (`graph_rag_last_retrieval`): the walk doesn't use it;
+  a sticky Graph-scope chat and a walk can coexist without stepping on each other.
+- **Reuse ledger:** `parse_action`, `Handles`, `build_prompt`, `system_prompt`, the `GraphOracle`
+  trait, `validate_citations`, the `Inference`/`pump_inference` stream loop, the graph-hub modal —
+  all already exist. Net-new is the `AskSession` wrapper (P8a), the shared oracle (P8b), the frame
+  driver + transcript (P8c/d). Estimate: the smallest of the Part-B phases by new surface, but the
+  only one touching the TUI inference *lifecycle*, so it earns its own phase + test pass.
