@@ -152,10 +152,11 @@ truncate; the neighbourhood is hard-capped so a hub node can't flood the view.
 
 - **`Ctrl+B z`** opens the **graph hub** — press **`n`** for the neighbourhood view
   of the paragraph you're editing (the same tree, scrollable `↑↓`, `Esc` to close),
-  or **`i`** for the **edge inbox**: the advisory (`judged`) stance edges awaiting
+  **`i`** for the **edge inbox**: the advisory (`judged`) stance edges awaiting
   triage (from confront, `graph link`, and deep research), where **`P`** promotes
-  the selected edge and **`d`** rejects it. Populate the graph first with
-  `graph rebuild` / `graph lexical`.
+  the selected edge and **`d`** rejects it, or **`w`** to **walk the graph** to
+  answer the question in the AI prompt (see "Walking the graph" below). Populate
+  the graph first with `graph rebuild` / `graph lexical`.
 - On a **confront finding** in the Output pane (from `Ctrl+V ?`), **`P`** promotes
   its stance edge to a kept decision (survives `graph rebuild`), and **`d`**
   (dismiss) rejects the finding and deletes its edge.
@@ -209,6 +210,17 @@ graph: {
 }
 ```
 
+### Walking the graph in the editor
+
+The same traversal runs **inside the editor**, streamed: type a question in the AI
+prompt, then **`Ctrl+B z → w`**. The AI pane shows the walk unfold live — each
+step (`🔍 search…`, `🔗 neighbours…`, `⚖ contradicting…`) as the model takes it —
+then streams the grounded prose answer, which lands as a normal chat turn. The
+status bar shows `graph walk · turn k/N`; **`Esc`** stops the whole walk at any
+time. Same `ask_max_steps` / `ask_search_width` bounds as the CLI. It's an
+explicit action (a walk is several model calls, unlike the one-hop **Graph**
+scope), so the depth — and its cost — is something you opt into per question.
+
 ## Multilingual
 
 The graph is multilingual by construction. Edge *kinds* are language-neutral — a
@@ -246,11 +258,10 @@ edges are provably rebuildable, so a corrupted graph is never lost data — just
 ## Not yet wired
 
 The graph is a first-class data layer, a CLI surface (`graph` verbs + `graph
-ask`), an in-editor surface (the `Ctrl+B z` hub — neighbourhood + edge inbox —
-and the confront-finding `P`/`d` keys), and an AI surface (the **Graph** scope +
-`graph ask`). A `similar_to` materialisation is deliberately *not* done
+ask`), an in-editor surface (the `Ctrl+B z` hub — neighbourhood + edge inbox + the
+streamed graph walk — and the confront-finding `P`/`d` keys), and an AI surface
+(the **Graph** scope + `graph ask`, on the CLI *and* streamed in-editor via the
+hub `w` walk). A `similar_to` materialisation is deliberately *not* done
 (embedding similarity stays a live HNSW query). The declared world is imported
 (`declares` edges); the Inner-family grounding still reads those live for
-freshness rather than off the graph. `graph ask`'s traversal is a CLI loop; a
-streaming in-editor version of it (the tool-loop under the Graph scope, not just
-the one-hop retrieval) is a natural future step.
+freshness rather than off the graph.

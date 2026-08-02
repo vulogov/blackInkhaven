@@ -17,6 +17,7 @@
 //! location paths, validated by [`crate::book_rag::validate_citations`].
 
 pub mod ask;
+pub mod oracle;
 
 use std::collections::HashSet;
 

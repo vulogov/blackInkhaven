@@ -416,6 +416,12 @@ impl super::App {
             self.status = "empty prompt".into();
             return;
         }
+        // GRAPHMIND GM-P8 — a graph walk owns the inference lifecycle while it
+        // runs; don't let a normal send stomp its in-flight turn.
+        if self.graph_walk_active() {
+            self.status = "graph walk running — Esc to stop it before sending".into();
+            return;
+        }
         // 1.2.4+: stash the raw prompt in the history ring for
         // Up/Down recall. Avoids dupes-against-most-recent so
         // the list stays useful when the user re-sends the same
