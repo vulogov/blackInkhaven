@@ -2046,6 +2046,74 @@ impl super::super::App {
         }
     }
 
+    /// GRAPHMIND GM-P8 — render a running graph walk: the live exploration
+    /// transcript (one step line per graph query) followed by either an
+    /// "exploring…" pulse (while the model walks) or the streamed grounded
+    /// answer (once it synthesises). The raw JSON of exploration turns is never
+    /// shown — only the parsed step lines.
+    fn draw_graph_walk(&self, f: &mut ratatui::Frame, area: Rect) {
+        let Some(walk) = self.graph_walk() else {
+            return;
+        };
+        let dim = Style::default().add_modifier(Modifier::DIM);
+        let scope = Style::default().fg(self.theme.ai_scope_fg);
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        lines.push(Line::from(Span::styled(
+            "◈ Graph walk".to_string(),
+            scope.add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(""));
+
+        // The exploration transcript — what the model queried, in order.
+        for step in walk.transcript() {
+            lines.push(Line::from(Span::styled(step.clone(), dim)));
+        }
+        if walk.transcript().is_empty() {
+            lines.push(Line::from(Span::styled(
+                "  starting the walk…".to_string(),
+                dim,
+            )));
+        }
+        lines.push(Line::from(""));
+
+        if walk.synthesizing() {
+            // The terminal turn streams the grounded prose answer live.
+            lines.push(Line::from(Span::styled(
+                "Answer".to_string(),
+                scope.add_modifier(Modifier::BOLD),
+            )));
+            let answer = self
+                .inference
+                .as_ref()
+                .map(|i| i.response.as_str())
+                .unwrap_or("");
+            if answer.trim().is_empty() {
+                lines.push(Line::from(Span::styled("  …".to_string(), dim)));
+            } else {
+                lines.extend(super::super::super::markdown::render(answer));
+            }
+        } else {
+            lines.push(Line::from(Span::styled(
+                "  · exploring the graph…".to_string(),
+                scope,
+            )));
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "Esc to stop".to_string(),
+            dim,
+        )));
+
+        // Keep the tail visible (the newest steps + the streaming answer) when
+        // the walk outgrows the pane.
+        let height = area.height as usize;
+        let scroll = lines.len().saturating_sub(height) as u16;
+        let para = Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((scroll, 0));
+        f.render_widget(para, area);
+    }
+
     pub(in crate::tui::app) fn draw_ai(&self, f: &mut ratatui::Frame, area: Rect) {
         // Title carries the inference state plus mode chips so the user
         // can see at a glance:
@@ -2156,6 +2224,14 @@ impl super::super::App {
         let block = self.pane_block_line(title_line, Focus::Ai);
         let inner = block.inner(area);
         f.render_widget(block, area);
+
+        // GRAPHMIND GM-P8 — while a graph walk runs, the pane shows the live
+        // exploration (step lines + the streamed answer), NOT the raw JSON of
+        // the in-flight tool turn.
+        if self.graph_walk().is_some() {
+            self.draw_graph_walk(f, inner);
+            return;
+        }
 
         // BOOK_RAG-1 — Book scope is a conversation: render the running
         // transcript (retrieved-passages panel + prior turns + the streaming

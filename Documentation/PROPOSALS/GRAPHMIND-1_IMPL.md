@@ -100,6 +100,19 @@ warning-free.
 
 ---
 
+# GM-P8 — the streaming in-editor graph walk ✅ SHIPPED (2.0.1-dev)
+
+**Built as specced below.** `graph_rag::ask::AskSession` (the resumable core, extracted from
+the blocking `ask()` with no behaviour change — CLI + its tests unchanged, +2 session tests);
+`graph_rag::oracle::StoreOracle` (the P5 oracle body, now shared by CLI + TUI); the frame driver
+in `src/tui/app/graph_walk_impl.rs` (`GraphWalk` state + `start_graph_walk` / `advance_graph_walk`
+/ `cancel_graph_walk`, hooked at `pump_inference`'s finalize point); the live render
+(`draw_graph_walk` — step transcript + streamed answer, never raw JSON); hub `Ctrl+B z → w` to
+start, `Esc` to abort. Exploration turns use the JSON tool contract; the terminal turn streams
+the P4 prose-grounding contract and commits as one `(question → answer)` chat turn. Warning-free.
+
+---
+
 # GM-P8 — the streaming in-editor graph walk (spec)
 
 **Goal.** Bring GM-P5's multi-turn graph *traversal* into the GM-P4 editor Graph scope —

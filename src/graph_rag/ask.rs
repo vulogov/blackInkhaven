@@ -174,11 +174,192 @@ impl Handles {
     }
 }
 
-/// Run the graph-query tool-loop. `llm(user_prompt) -> reply` bakes in the
-/// system prompt (the tool contract); `oracle` executes the graph queries.
-/// Bounded by `max_steps` (total LLM turns) and `search_limit` (nodes per
-/// search). Never errors on a bad model turn — it feeds the error back and
-/// lets the model recover — but propagates a hard LLM transport error.
+/// What to do after feeding an exploration turn's reply back to the session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AskStep {
+    /// Keep exploring — issue another turn with [`AskSession::next_prompt`].
+    Continue,
+    /// The model gave a final answer directly (its `{"answer":…}`).
+    Answer(String),
+    /// The exploration budget is spent — the driver must issue ONE terminal
+    /// turn with [`AskSession::synthesize_prompt`] and finish via
+    /// [`AskSession::on_synthesis`].
+    Synthesize,
+}
+
+/// GM-P8 — the resumable core of the graph walk, extracted from the blocking
+/// loop so a caller can drive it turn by turn: the CLI blocks on each turn (see
+/// [`ask`]); the TUI advances it across render frames without blocking. Holds
+/// the handle registry + observations + transcript; the LLM and the graph stay
+/// outside (the driver calls the model between `next_prompt` and `on_reply`).
+pub struct AskSession {
+    question: String,
+    handles: Handles,
+    observations: Vec<String>,
+    steps: Vec<String>,
+    step: usize,
+    max_steps: usize,
+    search_width: usize,
+}
+
+impl AskSession {
+    /// A fresh walk for `question`, bounded by `max_steps` exploration turns and
+    /// `search_width` seed nodes per search (both floored at 1).
+    pub fn new(question: impl Into<String>, max_steps: usize, search_width: usize) -> Self {
+        AskSession {
+            question: question.into(),
+            handles: Handles::new(),
+            observations: Vec::new(),
+            steps: Vec::new(),
+            step: 0,
+            max_steps: max_steps.max(1),
+            search_width: search_width.max(1),
+        }
+    }
+
+    /// The transcript so far — one compact step line per action taken. The live
+    /// progress the TUI renders as the walk unfolds.
+    pub fn transcript(&self) -> &[String] {
+        &self.steps
+    }
+
+    /// 1-based index of the exploration turn about to run, and the cap — for a
+    /// `turn k/N` status line.
+    pub fn turn(&self) -> (usize, usize) {
+        ((self.step + 1).min(self.max_steps), self.max_steps)
+    }
+
+    fn exhausted(&self) -> bool {
+        self.step >= self.max_steps
+    }
+
+    /// The user prompt for the next exploration turn.
+    pub fn next_prompt(&self) -> String {
+        let last = self.step + 1 >= self.max_steps;
+        build_prompt(&self.question, &self.handles, &self.observations, last)
+    }
+
+    /// The user prompt for the terminal turn: a grounded PROSE answer (not a
+    /// JSON action), so the TUI can stream it live and the CLI can print it.
+    pub fn synthesize_prompt(&self) -> String {
+        format!(
+            "{}\n\nProvide your final answer to the question NOW, in prose — grounded only \
+             in the observations above, citing the node labels you relied on. Do not reply \
+             with a JSON action; write the answer itself.",
+            build_prompt(&self.question, &self.handles, &self.observations, true)
+        )
+    }
+
+    /// Feed back an exploration turn's reply: parse it, run any graph query
+    /// against `oracle`, record the observation + transcript step, and decide
+    /// what happens next. Never fails — a malformed reply or unknown handle is
+    /// fed back as an observation so the model can recover.
+    pub fn on_reply(&mut self, reply: &str, oracle: &dyn GraphOracle) -> AskStep {
+        let action = match parse_action(reply) {
+            Ok(a) => a,
+            Err(e) => {
+                self.observations.push(format!(
+                    "(your last reply was rejected: {e} — reply with exactly one JSON action)"
+                ));
+                self.steps.push(format!("· malformed reply: {e}"));
+                self.step += 1;
+                return self.after_step();
+            }
+        };
+        if let Action::Answer(text) = action {
+            return AskStep::Answer(text);
+        }
+        self.execute(action, oracle);
+        self.step += 1;
+        self.after_step()
+    }
+
+    /// Turn the terminal turn's reply into the final answer. The synthesis
+    /// prompt asks for prose, so this is usually the reply verbatim; a model
+    /// that still wrapped it in `{"answer":…}` is unwrapped anyway.
+    pub fn on_synthesis(&self, reply: &str) -> String {
+        match parse_action(reply) {
+            Ok(Action::Answer(a)) => a,
+            _ => reply.trim().to_string(),
+        }
+    }
+
+    fn after_step(&self) -> AskStep {
+        if self.exhausted() {
+            AskStep::Synthesize
+        } else {
+            AskStep::Continue
+        }
+    }
+
+    /// Run one tool action against the oracle and record it. `Answer` is handled
+    /// by the caller and never reaches here.
+    fn execute(&mut self, action: Action, oracle: &dyn GraphOracle) {
+        match action {
+            Action::Answer(_) => {}
+            Action::Search(q) => {
+                let found = oracle.search(&q, self.search_width);
+                let mut lines = vec![format!("search \"{q}\" →")];
+                if found.is_empty() {
+                    lines.push("  (no matching nodes)".to_string());
+                } else {
+                    for (id, label) in &found {
+                        let h = self.handles.register(*id);
+                        lines.push(format!("  {h}  {label}"));
+                    }
+                }
+                self.observations.push(lines.join("\n"));
+                self.steps.push(format!("· search \"{q}\" ({} node(s))", found.len()));
+            }
+            Action::Neighbors(h) => self.node_query(oracle, "neighbors", &h, |o, id| o.neighbors(id)),
+            Action::Contradicting(h) => {
+                self.node_query(oracle, "contradicting", &h, |o, id| o.contradicting(id))
+            }
+            Action::Loci(h) => self.node_query(oracle, "loci", &h, |o, id| o.loci(id)),
+            Action::Paths(a, b) => match (self.handles.resolve(&a), self.handles.resolve(&b)) {
+                (Some(x), Some(y)) => {
+                    let out = oracle.paths(x, y);
+                    self.observations.push(format!("paths {a} → {b}:\n{out}"));
+                    self.steps.push(format!("· paths {a} → {b}"));
+                }
+                _ => {
+                    self.observations.push(format!(
+                        "(unknown handle in paths {a}/{b} — search first, or use a listed handle)"
+                    ));
+                    self.steps.push(format!("· paths {a}/{b}: unknown handle"));
+                }
+            },
+        }
+    }
+
+    fn node_query(
+        &mut self,
+        oracle: &dyn GraphOracle,
+        verb: &str,
+        handle: &str,
+        query: impl Fn(&dyn GraphOracle, Uuid) -> String,
+    ) {
+        match self.handles.resolve(handle) {
+            Some(id) => {
+                let out = query(oracle, id);
+                self.observations
+                    .push(format!("{verb} {handle} ({}):\n{out}", oracle.label(id)));
+                self.steps.push(format!("· {verb} {handle}"));
+            }
+            None => {
+                self.observations.push(format!(
+                    "(unknown handle `{handle}` — search first, or use a listed handle)"
+                ));
+                self.steps.push(format!("· {verb} {handle}: unknown handle"));
+            }
+        }
+    }
+}
+
+/// Run the graph-query tool-loop to completion (the blocking driver, used by the
+/// `graph ask` CLI). `llm(user_prompt) -> reply` bakes in the system prompt (the
+/// tool contract); `oracle` executes the graph queries. A thin loop over
+/// [`AskSession`]; the TUI drives the same session across frames instead.
 pub fn ask(
     oracle: &dyn GraphOracle,
     mut llm: impl FnMut(&str) -> Result<String, String>,
@@ -186,122 +367,25 @@ pub fn ask(
     max_steps: usize,
     search_limit: usize,
 ) -> Result<AskOutcome, String> {
-    let mut handles = Handles::new();
-    let mut observations: Vec<String> = Vec::new();
-    let mut steps: Vec<String> = Vec::new();
+    let mut session = AskSession::new(question, max_steps, search_limit);
     let mut llm_calls = 0usize;
-    let max_steps = max_steps.max(1);
-
-    for step in 0..max_steps {
-        let last = step + 1 == max_steps;
-        let prompt = build_prompt(question, &handles, &observations, last);
-        let reply = llm(&prompt)?;
+    loop {
+        let reply = llm(&session.next_prompt())?;
         llm_calls += 1;
-
-        let action = match parse_action(&reply) {
-            Ok(a) => a,
-            Err(e) => {
-                observations.push(format!(
-                    "(your last reply was rejected: {e} — reply with exactly one JSON action)"
-                ));
-                steps.push(format!("· malformed reply: {e}"));
-                continue;
+        match session.on_reply(&reply, oracle) {
+            AskStep::Answer(answer) => {
+                return Ok(AskOutcome { answer, steps: session.steps, llm_calls, forced: false });
             }
-        };
-
-        match action {
-            Action::Answer(text) => {
-                return Ok(AskOutcome { answer: text, steps, llm_calls, forced: false });
-            }
-            Action::Search(q) => {
-                let found = oracle.search(&q, search_limit);
-                let mut lines = vec![format!("search \"{q}\" →")];
-                if found.is_empty() {
-                    lines.push("  (no matching nodes)".to_string());
-                } else {
-                    for (id, label) in &found {
-                        let h = handles.register(*id);
-                        lines.push(format!("  {h}  {label}"));
-                    }
-                }
-                observations.push(lines.join("\n"));
-                steps.push(format!("· search \"{q}\" ({} node(s))", found.len()));
-            }
-            Action::Neighbors(h) => {
-                run_node_query(oracle, &handles, &mut observations, &mut steps, "neighbors", &h, |o, id| {
-                    o.neighbors(id)
-                });
-            }
-            Action::Contradicting(h) => {
-                run_node_query(oracle, &handles, &mut observations, &mut steps, "contradicting", &h, |o, id| {
-                    o.contradicting(id)
-                });
-            }
-            Action::Loci(h) => {
-                run_node_query(oracle, &handles, &mut observations, &mut steps, "loci", &h, |o, id| {
-                    o.loci(id)
-                });
-            }
-            Action::Paths(a, b) => {
-                match (handles.resolve(&a), handles.resolve(&b)) {
-                    (Some(x), Some(y)) => {
-                        let out = oracle.paths(x, y);
-                        observations.push(format!("paths {a} → {b}:\n{out}"));
-                        steps.push(format!("· paths {a} → {b}"));
-                    }
-                    _ => {
-                        observations.push(format!(
-                            "(unknown handle in paths {a}/{b} — search first, or use a listed handle)"
-                        ));
-                        steps.push(format!("· paths {a}/{b}: unknown handle"));
-                    }
-                }
-            }
+            AskStep::Continue => {}
+            AskStep::Synthesize => break,
         }
     }
-
-    // Steps exhausted without an explicit answer — force a final synthesis so
-    // the run always yields something grounded rather than nothing.
-    let prompt = format!(
-        "{}\n\nYou have used all exploration steps. Answer the question NOW using only \
-         the observations above; reply with {{\"answer\":\"…\"}}.",
-        build_prompt(question, &handles, &observations, true)
-    );
-    let reply = llm(&prompt)?;
+    // Exploration budget spent — one terminal synthesis so the run always yields
+    // something grounded rather than nothing.
+    let reply = llm(&session.synthesize_prompt())?;
     llm_calls += 1;
-    let answer = match parse_action(&reply) {
-        Ok(Action::Answer(a)) => a,
-        // The model ignored the format on the forced turn — take its prose as-is
-        // rather than losing the synthesis.
-        _ => reply.trim().to_string(),
-    };
-    Ok(AskOutcome { answer, steps, llm_calls, forced: true })
-}
-
-/// Resolve a handle, run a single-node query, and record the observation +
-/// transcript step. Shared by neighbors / contradicting / loci.
-fn run_node_query(
-    oracle: &dyn GraphOracle,
-    handles: &Handles,
-    observations: &mut Vec<String>,
-    steps: &mut Vec<String>,
-    verb: &str,
-    handle: &str,
-    query: impl Fn(&dyn GraphOracle, Uuid) -> String,
-) {
-    match handles.resolve(handle) {
-        Some(id) => {
-            let out = query(oracle, id);
-            observations.push(format!("{verb} {handle} ({}):\n{out}", oracle.label(id)));
-            steps.push(format!("· {verb} {handle}"));
-        }
-        None => {
-            observations.push(format!(
-                "(unknown handle `{handle}` — search first, or use a listed handle)"
-            ));
-            steps.push(format!("· {verb} {handle}: unknown handle"));
-        }
-    }
+    let answer = session.on_synthesis(&reply);
+    Ok(AskOutcome { answer, steps: session.steps, llm_calls, forced: true })
 }
 
 /// Build the per-turn user prompt: the question, the known-node table, the
@@ -609,5 +693,43 @@ mod tests {
         assert_ne!(system_prompt("fr"), EN);
         assert_eq!(system_prompt("de-DE"), DE);
         assert_eq!(system_prompt("ja"), EN);
+    }
+
+    #[test]
+    fn session_drives_turn_by_turn_and_reports_progress() {
+        // The resumable core the TUI frame-driver rides: advance one turn at a
+        // time, observe the transcript grow, then answer.
+        let g = FakeGraph { a: Uuid::now_v7(), b: Uuid::now_v7() };
+        let mut s = AskSession::new("what contradicts the quiet hour?", 8, 5);
+        assert_eq!(s.turn(), (1, 8));
+        // The first prompt has no handles yet.
+        assert!(s.next_prompt().contains("start with a search"));
+
+        assert_eq!(s.on_reply("{\"search\":\"quiet\"}", &g), AskStep::Continue);
+        assert_eq!(s.turn(), (2, 8));
+        assert_eq!(s.transcript().len(), 1);
+        // The search minted handles the next prompt now lists.
+        assert!(s.next_prompt().contains("n1"));
+
+        assert_eq!(s.on_reply("{\"neighbors\":\"n1\"}", &g), AskStep::Continue);
+        assert_eq!(s.transcript().len(), 2);
+
+        // A direct answer ends the walk without a synthesis turn.
+        match s.on_reply("{\"answer\":\"003 contradicts 007\"}", &g) {
+            AskStep::Answer(a) => assert!(a.contains("contradicts")),
+            other => panic!("expected Answer, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn session_signals_synthesize_when_budget_spent() {
+        let g = FakeGraph { a: Uuid::now_v7(), b: Uuid::now_v7() };
+        let mut s = AskSession::new("q?", 2, 5);
+        assert_eq!(s.on_reply("{\"search\":\"x\"}", &g), AskStep::Continue);
+        // Second (last) exploration turn → the driver must synthesise next.
+        assert_eq!(s.on_reply("{\"search\":\"y\"}", &g), AskStep::Synthesize);
+        // The synthesis prompt asks for prose, not a JSON action.
+        assert!(s.synthesize_prompt().contains("in prose"));
+        assert_eq!(s.on_synthesis("Because the lantern was lit."), "Because the lantern was lit.");
     }
 }

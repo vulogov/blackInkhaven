@@ -2262,6 +2262,10 @@ pub(crate) struct App {
     /// Graph-scope prompt. Cached per chat session (like Book) and reused for
     /// follow-ups; the citable tokens flow through `pending_book_rag_cited`.
     graph_rag_last_retrieval: Option<Vec<crate::graph_rag::GraphPassage>>,
+    /// GRAPHMIND GM-P8 — the in-flight in-editor graph walk (the streamed
+    /// multi-turn traversal), if one is running. Drives the inference lifecycle
+    /// across frames; `None` when no walk is active.
+    graph_walk: Option<graph_walk_impl::GraphWalk>,
 
     /// How aggressively the model may draw on its own knowledge. Toggled
     /// globally by F10. Help inferences pin this to `Local` regardless of
@@ -2392,6 +2396,7 @@ mod render;
 mod snapshot_impl;
 mod book_rag_impl;
 mod graph_rag_impl;
+mod graph_walk_impl;
 mod inner_editor_impl;
 mod tag_impl;
 mod threads_impl;
@@ -3434,6 +3439,7 @@ impl App {
             ai_mode: AiMode::None,
             book_rag_last_retrieval: None,
             graph_rag_last_retrieval: None,
+            graph_walk: None,
             pending_book_rag_cited: None,
             book_rag_passages_expanded: false,
             book_rag_nudged_stale: false,
@@ -4410,6 +4416,18 @@ impl App {
             }
         }
         if just_finished {
+            // GRAPHMIND GM-P8 — a completed graph-walk turn. Exploration turns
+            // don't commit to chat history; they advance the traversal (parse →
+            // query → next turn). The terminal *synthesis* turn (`synthesizing`)
+            // falls through to the ordinary commit below, pairing the question
+            // (set in `pending_chat_user_msg`) with its streamed prose answer.
+            if let Some(walk) = self.graph_walk.as_ref() {
+                if !walk.synthesizing() {
+                    self.advance_graph_walk();
+                    return;
+                }
+                self.graph_walk = None;
+            }
             // 1.2.21+ FF.4d — if this completion was a fact-check chord,
             // parse its `claim | fact | detail` verdict into navigable
             // findings (cycled by Ctrl+B Shift+J).
@@ -6035,6 +6053,12 @@ impl App {
     }
 
     fn handle_passive_key(&mut self, key: KeyEvent) -> Result<bool> {
+        // GRAPHMIND GM-P8 — Esc aborts a running graph walk wholesale (not just
+        // the current turn), before any pane-specific Esc handling.
+        if self.graph_walk_active() && matches!(key.code, KeyCode::Esc) {
+            self.cancel_graph_walk();
+            return Ok(false);
+        }
         // Esc bounces AI pane → AI prompt so the user can edit / send the
         // next message without an extra Tab. Mirror of the AiPrompt → Ai
         // bounce in handle_input_key.
@@ -14272,7 +14296,7 @@ impl App {
     /// graph (`n` neighbourhood, `i` edge inbox).
     fn open_graph_hub(&mut self) {
         self.modal = Modal::GraphHub;
-        self.status = "graph hub · n neighbourhood · i inbox · Esc".into();
+        self.status = "graph hub · n neighbourhood · i inbox · w walk · Esc".into();
     }
 
     fn graph_hub_handle_key(&mut self, key: KeyEvent) -> bool {
@@ -14283,6 +14307,11 @@ impl App {
             }
             KeyCode::Char('n') => self.open_graph_neighbourhood_view(),
             KeyCode::Char('i') => self.open_graph_inbox_view(),
+            // GRAPHMIND GM-P8 — walk the graph to answer the AI-prompt question.
+            KeyCode::Char('w') => {
+                self.modal = Modal::None;
+                self.start_graph_walk();
+            }
             _ => {}
         }
         true
