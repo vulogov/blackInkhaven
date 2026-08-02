@@ -16,6 +16,8 @@
 //! verbatim** from Book scope: the citable tokens are the retrieved passages'
 //! location paths, validated by [`crate::book_rag::validate_citations`].
 
+pub mod ask;
+
 use std::collections::HashSet;
 
 use crate::book_rag::RetrievedPassage;
