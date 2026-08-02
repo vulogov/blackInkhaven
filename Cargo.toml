@@ -1,6 +1,6 @@
 [package]
 name = "inkhaven"
-version = "2.0.0"
+version = "2.0.1"
 edition = "2024"
 # Rust 1.85 stabilised edition 2024. Bump alongside any toolchain-only
 # feature usage (let-else / chained-comparisons / etc. are already stable).
@@ -58,11 +58,20 @@ exclude = [
     # imposed PDFs, kept for local verification only. Never ships in
     # the crate.
     "proof_corpus/**",
-    # NB: do NOT exclude `*.png` globally — `logo.png` at the
-    # repo root is `include_bytes!`'d into the binary; the
-    # build breaks without it. assets/* is also untouched
-    # because every file there is loaded via include_str! /
-    # include_bytes!.
+    # Branding art — the two large logo PNGs under assets/ are repo /
+    # website art only (NOT `include_bytes!`'d, unlike the root
+    # `logo.png`), ~4 MB of already-compressed pixels that pushed the
+    # crate over crates.io's 10 MiB payload limit. Keep them out.
+    "assets/logo_black.png",
+    "assets/logo_white.png",
+    # A stray per-project runtime store that got committed at the repo
+    # root; it is opened by project-relative path at runtime, never
+    # embedded, so it must not travel inside the published crate.
+    "inner_socrates.db",
+    # NB: do NOT exclude `*.png` globally — `logo.png` at the repo root
+    # is `include_bytes!`'d into the binary; the build breaks without
+    # it. The rest of assets/* is loaded via include_str! /
+    # include_bytes! (hjson / tsv / scm / md / txt) and must stay.
 ]
 
 # Distribution model: binary releases via GitHub Actions

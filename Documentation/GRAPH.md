@@ -126,6 +126,9 @@ inkhaven graph <verb>
 | `paths <from> <to>` | a bounded citation / link path between two nodes (≤ 8 hops) |
 | `promote <edge>` | accept a `judged` stance edge → `promoted` (kept across rebuilds) |
 | `dismiss <edge>` | delete a stance edge |
+| `pending` | the advisory (`judged`) edges awaiting triage — the edge inbox |
+| `link <node>` | propose stance edges from a fact to its related facts (needs an LLM); triage with `pending` |
+| `ask <question>` | answer a question by **walking** the graph — search → query neighbours / contradictions / loci / paths → grounded answer (needs an LLM) |
 
 ### `graph neighbors` — the neighbourhood view
 
@@ -147,14 +150,76 @@ truncate; the neighbourhood is hard-capped so a hub node can't flood the view.
 
 ### In the editor
 
-- **`Ctrl+V g`** opens the neighbourhood view for the paragraph you're editing —
-  the same tree, scrollable (`↑↓`), `Esc` to close. Populate the graph first with
-  `graph rebuild` / `graph lexical`.
+- **`Ctrl+B z`** opens the **graph hub** — press **`n`** for the neighbourhood view
+  of the paragraph you're editing (the same tree, scrollable `↑↓`, `Esc` to close),
+  **`i`** for the **edge inbox**: the advisory (`judged`) stance edges awaiting
+  triage (from confront, `graph link`, and deep research), where **`P`** promotes
+  the selected edge and **`d`** rejects it, or **`w`** to **walk the graph** to
+  answer the question in the AI prompt (see "Walking the graph" below). Populate
+  the graph first with `graph rebuild` / `graph lexical`.
 - On a **confront finding** in the Output pane (from `Ctrl+V ?`), **`P`** promotes
   its stance edge to a kept decision (survives `graph rebuild`), and **`d`**
   (dismiss) rejects the finding and deletes its edge.
 
 ---
+
+## Chat with your graph
+
+*(GRAPHMIND, 2.x — see [`PROPOSALS/GRAPHMIND-1_PLAN.md`](PROPOSALS/GRAPHMIND-1_PLAN.md))*
+
+The graph is not only queried by verb — you can **converse** with it. Two AI
+surfaces ground a language model in the graph's *relations*, not just the prose,
+so you can ask how your book connects — what contradicts what, what grounds a
+claim, how a scene is sourced — questions the flat manuscript can't answer.
+
+### The **Graph** AI scope (in the editor)
+
+Cycle the AI-pane scope with **F9** to **Graph** (it sits last, after Editor). A
+prompt in Graph scope retrieves the passages relevant to your question — the same
+semantic retrieval Book scope uses — and, beneath each, folds in the graph edges
+touching it (`contradicts` / `sourced_from` / `links_to` / `cites` / …). The
+answer is grounded in both the prose *and* those relations, with the same
+citation contract as Book scope (each claim cites a passage's `[location/path]`;
+invented labels are flagged). It's a **sticky** conversation scope, like Facts:
+it retrieves once per chat and re-grounds when you clear history. Press **`p`** in
+the AI pane to expand the "Retrieved passages + graph relations" transparency
+section and see the subgraph the answer stands on.
+
+### `graph ask` (the traversal loop, on the CLI)
+
+```
+inkhaven graph ask "which of my claims about the harbour contradict each other?"
+```
+
+Where the Graph scope reads one hop, `graph ask` lets the model **walk** the
+graph: it searches for seed nodes, then issues read-only graph queries
+(neighbours, contradictions, loci, paths) turn by turn until it can answer,
+grounding the answer in what it observed. The exploration transcript prints to
+stderr (so you can see the path it took); the answer to stdout (so you can pipe
+it). Honest by construction: when the relations don't record what you asked, it
+says so rather than inventing a connection — the graph is only as complete as
+`graph rebuild` / confront / `graph link` have made it.
+
+The cost of a question is bounded and tunable (the permissive principle — these
+inform and cap, they never block):
+
+```hjson
+graph: {
+  ask_max_steps: 8      // max LLM turns before a forced answer
+  ask_search_width: 6   // seed nodes per search
+}
+```
+
+### Walking the graph in the editor
+
+The same traversal runs **inside the editor**, streamed: type a question in the AI
+prompt, then **`Ctrl+B z → w`**. The AI pane shows the walk unfold live — each
+step (`🔍 search…`, `🔗 neighbours…`, `⚖ contradicting…`) as the model takes it —
+then streams the grounded prose answer, which lands as a normal chat turn. The
+status bar shows `graph walk · turn k/N`; **`Esc`** stops the whole walk at any
+time. Same `ask_max_steps` / `ask_search_width` bounds as the CLI. It's an
+explicit action (a walk is several model calls, unlike the one-hop **Graph**
+scope), so the depth — and its cost — is something you opt into per question.
 
 ## Multilingual
 
@@ -192,8 +257,11 @@ edges are provably rebuildable, so a corrupted graph is never lost data — just
 
 ## Not yet wired
 
-The graph is a first-class data layer, a CLI surface, and — via `Ctrl+V g` and
-the confront-finding `P`/`d` keys — an in-editor surface. A `similar_to`
-materialisation is deliberately *not* done (embedding similarity stays a live
-HNSW query). The declared world is imported (`declares` edges); the Inner-family
-grounding still reads those live for freshness rather than off the graph.
+The graph is a first-class data layer, a CLI surface (`graph` verbs + `graph
+ask`), an in-editor surface (the `Ctrl+B z` hub — neighbourhood + edge inbox + the
+streamed graph walk — and the confront-finding `P`/`d` keys), and an AI surface
+(the **Graph** scope + `graph ask`, on the CLI *and* streamed in-editor via the
+hub `w` walk). A `similar_to` materialisation is deliberately *not* done
+(embedding similarity stays a live HNSW query). The declared world is imported
+(`declares` edges); the Inner-family grounding still reads those live for
+freshness rather than off the graph.

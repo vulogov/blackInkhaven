@@ -2046,6 +2046,74 @@ impl super::super::App {
         }
     }
 
+    /// GRAPHMIND GM-P8 — render a running graph walk: the live exploration
+    /// transcript (one step line per graph query) followed by either an
+    /// "exploring…" pulse (while the model walks) or the streamed grounded
+    /// answer (once it synthesises). The raw JSON of exploration turns is never
+    /// shown — only the parsed step lines.
+    fn draw_graph_walk(&self, f: &mut ratatui::Frame, area: Rect) {
+        let Some(walk) = self.graph_walk() else {
+            return;
+        };
+        let dim = Style::default().add_modifier(Modifier::DIM);
+        let scope = Style::default().fg(self.theme.ai_scope_fg);
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        lines.push(Line::from(Span::styled(
+            "◈ Graph walk".to_string(),
+            scope.add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(""));
+
+        // The exploration transcript — what the model queried, in order.
+        for step in walk.transcript() {
+            lines.push(Line::from(Span::styled(step.clone(), dim)));
+        }
+        if walk.transcript().is_empty() {
+            lines.push(Line::from(Span::styled(
+                "  starting the walk…".to_string(),
+                dim,
+            )));
+        }
+        lines.push(Line::from(""));
+
+        if walk.synthesizing() {
+            // The terminal turn streams the grounded prose answer live.
+            lines.push(Line::from(Span::styled(
+                "Answer".to_string(),
+                scope.add_modifier(Modifier::BOLD),
+            )));
+            let answer = self
+                .inference
+                .as_ref()
+                .map(|i| i.response.as_str())
+                .unwrap_or("");
+            if answer.trim().is_empty() {
+                lines.push(Line::from(Span::styled("  …".to_string(), dim)));
+            } else {
+                lines.extend(super::super::super::markdown::render(answer));
+            }
+        } else {
+            lines.push(Line::from(Span::styled(
+                "  · exploring the graph…".to_string(),
+                scope,
+            )));
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "Esc to stop".to_string(),
+            dim,
+        )));
+
+        // Keep the tail visible (the newest steps + the streaming answer) when
+        // the walk outgrows the pane.
+        let height = area.height as usize;
+        let scroll = lines.len().saturating_sub(height) as u16;
+        let para = Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((scroll, 0));
+        f.render_widget(para, area);
+    }
+
     pub(in crate::tui::app) fn draw_ai(&self, f: &mut ratatui::Frame, area: Rect) {
         // Title carries the inference state plus mode chips so the user
         // can see at a glance:
@@ -2156,6 +2224,14 @@ impl super::super::App {
         let block = self.pane_block_line(title_line, Focus::Ai);
         let inner = block.inner(area);
         f.render_widget(block, area);
+
+        // GRAPHMIND GM-P8 — while a graph walk runs, the pane shows the live
+        // exploration (step lines + the streamed answer), NOT the raw JSON of
+        // the in-flight tool turn.
+        if self.graph_walk().is_some() {
+            self.draw_graph_walk(f, inner);
+            return;
+        }
 
         // BOOK_RAG-1 — Book scope is a conversation: render the running
         // transcript (retrieved-passages panel + prior turns + the streaming
@@ -2311,56 +2387,87 @@ impl super::super::App {
     /// the evidence behind a Book-scope answer. Collapsed by default;
     /// toggled with `p` in the AI pane. Empty when no retrieval is held.
     fn book_rag_transparency_lines(&self) -> Vec<Line<'static>> {
-        let Some(passages) = self.book_rag_last_retrieval.as_ref() else {
-            return Vec::new();
-        };
-        if passages.is_empty() {
-            return Vec::new();
-        }
         let dim = Style::default().add_modifier(Modifier::DIM);
-        let n = passages.len();
+        let scope_fg = Style::default().fg(self.theme.ai_scope_fg);
+
+        // One non-empty prose line, markup-stripped + truncated.
+        let opening_of = |body: &str| -> String {
+            body.lines()
+                .map(|l| l.trim_start_matches(['=', ' ', '#', '*', '_']).trim())
+                .find(|l| !l.is_empty())
+                .unwrap_or("")
+                .chars()
+                .take(72)
+                .collect()
+        };
+
+        // Book scope holds plain passages; GM-P4 Graph scope holds
+        // passages-plus-relations. Show whichever the active scope retrieved.
+        let book = self.book_rag_last_retrieval.as_ref().filter(|p| !p.is_empty());
+        let graph = self.graph_rag_last_retrieval.as_ref().filter(|p| !p.is_empty());
+
+        let (title, n) = match (book, graph) {
+            (Some(p), _) => ("Retrieved passages", p.len()),
+            (None, Some(g)) => ("Retrieved passages + graph relations", g.len()),
+            (None, None) => return Vec::new(),
+        };
+
         let mut out: Vec<Line<'static>> = Vec::new();
         if !self.book_rag_passages_expanded {
             out.push(Line::from(Span::styled(
-                format!("▶ Retrieved passages ({n}) · p to expand"),
+                format!("▶ {title} ({n}) · p to expand"),
                 dim,
             )));
-        } else {
-            out.push(Line::from(Span::styled(
-                format!("▼ Retrieved passages ({n}) · p to collapse"),
-                dim,
-            )));
+            out.push(Line::from(""));
+            return out;
+        }
+        out.push(Line::from(Span::styled(
+            format!("▼ {title} ({n}) · p to collapse"),
+            dim,
+        )));
+
+        // A passage header line + its opening prose line (returns 1–2 lines).
+        let passage_block = |score: f64, is_hit: bool, crumb: &str, body: &str| {
+            let star = if is_hit { "★" } else { " " };
+            let mut block = vec![Line::from(vec![
+                Span::styled(format!("  {score:.2} {star} "), scope_fg),
+                // The location path is the citation token the answer uses —
+                // show it, not the author-useless UUID.
+                Span::styled(format!("[{crumb}]"), dim),
+            ])];
+            let opening = opening_of(body);
+            if !opening.is_empty() {
+                block.push(Line::from(Span::styled(format!("      {opening}"), dim)));
+            }
+            block
+        };
+
+        if let Some(passages) = book {
             for p in passages {
-                let star = if p.is_hit { "★" } else { " " };
-                out.push(Line::from(vec![
-                    Span::styled(
-                        format!("  {:.2} {} ", p.score, star),
-                        Style::default().fg(self.theme.ai_scope_fg),
-                    ),
-                    // The location path is the citation token the answer uses —
-                    // show it, not the author-useless UUID.
-                    Span::styled(format!("[{}]", p.breadcrumb), dim),
-                ]));
-                // First non-empty prose line, markup-stripped + truncated.
-                let opening: String = p
-                    .body
-                    .lines()
-                    .map(|l| l.trim_start_matches(['=', ' ', '#', '*', '_']).trim())
-                    .find(|l| !l.is_empty())
-                    .unwrap_or("")
-                    .chars()
-                    .take(72)
-                    .collect();
-                if !opening.is_empty() {
-                    out.push(Line::from(Span::styled(format!("      {opening}"), dim)));
+                out.extend(passage_block(p.score, p.is_hit, &p.breadcrumb, &p.body));
+            }
+        } else if let Some(gps) = graph {
+            for g in gps {
+                let p = &g.passage;
+                out.extend(passage_block(p.score, p.is_hit, &p.breadcrumb, &p.body));
+                // The graph's differentiator: the edges touching this passage.
+                for r in g.relations.iter().take(4) {
+                    out.push(Line::from(Span::styled(format!("        {r}"), dim)));
+                }
+                if g.relations.len() > 4 {
+                    out.push(Line::from(Span::styled(
+                        format!("        … +{} more relation(s)", g.relations.len() - 4),
+                        dim,
+                    )));
                 }
             }
-            // Once-per-conversation: surface how to refresh.
-            out.push(Line::from(Span::styled(
-                "  (retrieved once for this chat — clear history to retrieve again)",
-                dim,
-            )));
         }
+
+        // Once-per-conversation: surface how to refresh.
+        out.push(Line::from(Span::styled(
+            "  (retrieved once for this chat — clear history to retrieve again)",
+            dim,
+        )));
         out.push(Line::from("")); // separator before the conversation
         out
     }

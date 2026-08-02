@@ -184,30 +184,32 @@ impl StorageEngine {
         self.execute("CHECKPOINT;")
     }
 
-    /// 1.2.16+ Phase P.4 — DuckDB integrity check.
-    /// Runs `PRAGMA integrity_check` and returns
-    /// the result string.  On a clean database
-    /// DuckDB returns `"ok"`; on corruption it
-    /// returns a list of issues — non-`"ok"` is
-    /// the failure signal.
+    /// DuckDB integrity check — returns `"ok"` on a healthy store, a `"corrupt
+    /// table …"` string on a scan failure.
     ///
-    /// Cheap on healthy databases (single-digit
-    /// milliseconds for typical project sizes);
-    /// scales linearly with corruption.  The
-    /// health monitor's 15 min cadence accounts
+    /// DuckDB has **no** `PRAGMA integrity_check` (that is a SQLite-ism; earlier
+    /// code inherited it from the bdslib→DuckDB migration and errored on every
+    /// call). Instead we enumerate the store's user tables and full-scan each
+    /// (`SELECT COUNT(*)`), which reads every data block and so surfaces
+    /// block-level corruption as a read error. Cheap on healthy databases;
+    /// scales with the row count. The health monitor's 15-min cadence accounts
     /// for that.
     pub fn integrity_check(&self) -> Result<String> {
-        let rows = self.select_all("PRAGMA integrity_check;")?;
-        // Expected shape: one row, one column, text
-        // `"ok"` on healthy.  Older DuckDB versions
-        // returned empty result instead of `"ok"`
-        // — treat empty as healthy too.
-        let val = rows.first().and_then(|r| r.first());
-        match val {
-            Some(duckdb::types::Value::Text(s)) => Ok(s.clone()),
-            Some(other) => Ok(format!("{other:?}")),
-            None => Ok("ok".to_string()),
+        let tables = self.select_all(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'",
+        )?;
+        for row in tables {
+            let Some(DuckValue::Text(name)) = row.into_iter().next() else {
+                continue;
+            };
+            // Table names come from information_schema (our own schema); quote to
+            // be safe and full-scan.
+            let quoted = name.replace('"', "\"\"");
+            if let Err(e) = self.select_all(&format!("SELECT COUNT(*) FROM \"{quoted}\"")) {
+                return Ok(format!("corrupt table {name}: {e}"));
+            }
         }
+        Ok("ok".to_string())
     }
 }
 
@@ -603,6 +605,23 @@ mod tests {
         let store = JsonStorage::new(dir.path().join("empty.db"), 2, "doc").unwrap();
         store.checkpoint().unwrap();
         store.checkpoint().unwrap(); // idempotent
+    }
+
+    /// `integrity_check` must return `"ok"` on a healthy store (and actually run
+    /// — DuckDB has no `PRAGMA integrity_check`, so the old implementation
+    /// errored on every call, which this test would have caught). A populated
+    /// store scans clean.
+    #[test]
+    fn integrity_check_is_ok_on_a_healthy_store() {
+        let dir = TempDir::new().unwrap();
+        let store = JsonStorage::new(dir.path().join("meta.db"), 2, "doc").unwrap();
+        for _ in 0..5 {
+            store.add_json_with_id(Uuid::now_v7(), json!({"k": "v"})).unwrap();
+        }
+        assert_eq!(store.integrity_check().unwrap(), "ok");
+        // An empty store is also healthy.
+        let blob = BlobStorage::new(dir.path().join("blobs.db"), 2).unwrap();
+        assert_eq!(blob.integrity_check().unwrap(), "ok");
     }
 
     /// Write-then-checkpoint-then-reopen round-trip — confirms data

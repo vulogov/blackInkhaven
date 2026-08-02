@@ -275,6 +275,14 @@ impl super::App {
             self.draw_graph_neighbourhood_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::GraphHub) {
+            self.draw_graph_hub_modal(f, area);
+            return;
+        }
+        if matches!(self.modal, Modal::GraphEdgeInbox { .. }) {
+            self.draw_graph_inbox_modal(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::EditorialPass { .. }) {
             self.draw_editorial_pass_modal(f, area);
             return;

@@ -37,9 +37,40 @@ response stays in history).
 
 #section("Scope (F9) recap")
 
-The scope you pick with F9 (Chapter 18) gets RAG-loaded as
-context BEFORE your typed query. So "explain this" with
-Paragraph scope sends the open paragraph + your query.
+The scope you pick with F9 gets RAG-loaded as context BEFORE
+your typed query. So "explain this" with Paragraph scope sends
+the open paragraph + your query. F9 cycles the full ring:
+
+#chord_table((
+  chord_row("None → Selection → Paragraph", "the local scopes — the selection, the open paragraph, its enclosing branches."),
+  chord_row("Subchapter → Chapter → Book", "widening manuscript context (Book is retrieval-grounded — relevant passages, cited)."),
+  chord_row("Facts → Socrates → Editor → Graph", "the sticky conversation scopes — they persist across follow-ups until you cycle away."),
+))
+
+#section("Chat with your graph (Graph scope + the walk)")
+
+The *Graph* scope (F9) is the relational sibling of Book scope:
+it retrieves the passages relevant to your question and folds
+in the knowledge-graph edges touching them — what each
+contradicts, is sourced from, links to, cites — so the answer
+is grounded in how your book *connects*, not just its prose.
+Press `p` in the AI pane to expand the retrieved passages + their
+relations. See `Documentation/GRAPH.md` for the graph itself.
+
+To let the model *walk* the graph — following contradictions and
+citations turn by turn — type a question in the AI prompt and
+press `Ctrl+B z → w` (the graph hub's *walk*):
+
+#chord_table((
+  chord_row("Ctrl+B z → w", "Start a graph walk for the AI-prompt question."),
+  chord_row("(watch)", "The pane streams each step — search → neighbours → contradictions → paths — then the grounded prose answer."),
+  chord_row("Esc", "Stop the walk (any time). The status bar shows `turn k/N`."),
+))
+
+A walk is several model calls (bounded by `graph.ask_max_steps`),
+so it's an explicit action rather than the one-hop Graph scope —
+you opt into the depth per question. The CLI equivalent is
+`inkhaven graph ask "<question>"`.
 
 #section("Applying answers")
 
@@ -110,7 +141,8 @@ can't remember where.
 
 #recap((
   [`Ctrl+I` focuses the prompt slot; Enter sends.],
-  [`F9` cycles scope (None → Selection → Paragraph → … → Book).],
+  [`F9` cycles scope (None → Selection → … → Book → Facts → Socrates → Editor → Graph).],
+  [`Graph` scope grounds answers in the knowledge graph's relations; `Ctrl+B z → w` *walks* the graph (`Esc` stops).],
   [Apply chords: `r` replace · `g` grammar replace · `i` insert · `t` top · `b` bottom · `c` copy.],
   [Chat history persists per project; `Ctrl+B C` clears it.],
   [`Ctrl+F` searches chat; `Ctrl+C` enters selection mode (copy / insert turns).],

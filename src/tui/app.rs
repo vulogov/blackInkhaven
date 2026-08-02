@@ -2258,6 +2258,14 @@ pub(crate) struct App {
     /// retrieval stale, so the "clear chat to re-ground" nudge fires only
     /// once per stale event (reset on the next fresh retrieval).
     book_rag_nudged_stale: bool,
+    /// GRAPHMIND GM-P4 — the passages-plus-relations retrieved for the last
+    /// Graph-scope prompt. Cached per chat session (like Book) and reused for
+    /// follow-ups; the citable tokens flow through `pending_book_rag_cited`.
+    graph_rag_last_retrieval: Option<Vec<crate::graph_rag::GraphPassage>>,
+    /// GRAPHMIND GM-P8 — the in-flight in-editor graph walk (the streamed
+    /// multi-turn traversal), if one is running. Drives the inference lifecycle
+    /// across frames; `None` when no walk is active.
+    graph_walk: Option<graph_walk_impl::GraphWalk>,
 
     /// How aggressively the model may draw on its own knowledge. Toggled
     /// globally by F10. Help inferences pin this to `Local` regardless of
@@ -2387,6 +2395,8 @@ mod q3_q4_impl;
 mod render;
 mod snapshot_impl;
 mod book_rag_impl;
+mod graph_rag_impl;
+mod graph_walk_impl;
 mod inner_editor_impl;
 mod tag_impl;
 mod threads_impl;
@@ -3428,6 +3438,8 @@ impl App {
             layout_ai_prompt: Rect::default(),
             ai_mode: AiMode::None,
             book_rag_last_retrieval: None,
+            graph_rag_last_retrieval: None,
+            graph_walk: None,
             pending_book_rag_cited: None,
             book_rag_passages_expanded: false,
             book_rag_nudged_stale: false,
@@ -4404,6 +4416,18 @@ impl App {
             }
         }
         if just_finished {
+            // GRAPHMIND GM-P8 — a completed graph-walk turn. Exploration turns
+            // don't commit to chat history; they advance the traversal (parse →
+            // query → next turn). The terminal *synthesis* turn (`synthesizing`)
+            // falls through to the ordinary commit below, pairing the question
+            // (set in `pending_chat_user_msg`) with its streamed prose answer.
+            if let Some(walk) = self.graph_walk.as_ref() {
+                if !walk.synthesizing() {
+                    self.advance_graph_walk();
+                    return;
+                }
+                self.graph_walk = None;
+            }
             // 1.2.21+ FF.4d — if this completion was a fact-check chord,
             // parse its `claim | fact | detail` verdict into navigable
             // findings (cycled by Ctrl+B Shift+J).
@@ -6029,6 +6053,12 @@ impl App {
     }
 
     fn handle_passive_key(&mut self, key: KeyEvent) -> Result<bool> {
+        // GRAPHMIND GM-P8 — Esc aborts a running graph walk wholesale (not just
+        // the current turn), before any pane-specific Esc handling.
+        if self.graph_walk_active() && matches!(key.code, KeyCode::Esc) {
+            self.cancel_graph_walk();
+            return Ok(false);
+        }
         // Esc bounces AI pane → AI prompt so the user can edit / send the
         // next message without an extra Tab. Mirror of the AiPrompt → Ai
         // bounce in handle_input_key.
@@ -12248,6 +12278,7 @@ impl App {
             A::OpenCharacterArc => self.open_character_arc_view(),
             A::OpenMythHeatmap => self.open_myth_heatmap(),
             A::OpenGraphNeighbourhood => self.open_graph_neighbourhood_view(),
+            A::OpenGraphHub => self.open_graph_hub(),
             A::OpenWorldOverview => self.open_world_overview(),
             A::OpenInnerSocratesOverview => self.open_inner_socrates_overview(),
             A::OpenInnerEditorOverview => self.open_inner_editor_overview(),
@@ -14259,6 +14290,147 @@ impl App {
             _ => {}
         }
         true
+    }
+
+    /// GRAPHMIND — `Ctrl+B z`. Open the knowledge-graph hub: a tiny menu onto the
+    /// graph (`n` neighbourhood, `i` edge inbox).
+    fn open_graph_hub(&mut self) {
+        self.modal = Modal::GraphHub;
+        self.status = "graph hub · n neighbourhood · i inbox · w walk · Esc".into();
+    }
+
+    fn graph_hub_handle_key(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "graph hub: closed".into();
+            }
+            KeyCode::Char('n') => self.open_graph_neighbourhood_view(),
+            KeyCode::Char('i') => self.open_graph_inbox_view(),
+            // GRAPHMIND GM-P8 — walk the graph to answer the AI-prompt question.
+            KeyCode::Char('w') => {
+                self.modal = Modal::None;
+                self.start_graph_walk();
+            }
+            _ => {}
+        }
+        true
+    }
+
+    /// GRAPHMIND GM-P3 — open the edge inbox: the advisory `Judged` stance edges
+    /// (from confront / `graph link` / deep research) awaiting triage. Each row
+    /// is promotable (`P`) or dismissable (`d`).
+    fn open_graph_inbox_view(&mut self) {
+        use crate::store::graph::EndpointRef;
+        let edges = match self.store.pending_edges() {
+            Ok(e) => e,
+            Err(e) => {
+                self.status = format!("graph inbox: {e}");
+                return;
+            }
+        };
+        if edges.is_empty() {
+            self.modal = Modal::None;
+            self.status = "graph inbox: clear — no advisory edges to triage".into();
+            return;
+        }
+        let h = &self.hierarchy;
+        let label = |ep: &EndpointRef| -> String {
+            match ep {
+                EndpointRef::Node(u) => h
+                    .get(*u)
+                    .map(|n| n.title.clone())
+                    .filter(|t| !t.trim().is_empty())
+                    .unwrap_or_else(|| format!("node {}", &u.to_string()[..8])),
+                EndpointRef::Extern(_) => {
+                    let (k, r) = ep.as_columns();
+                    format!("{k} {r}")
+                }
+            }
+        };
+        let rows: Vec<(Uuid, String)> = edges
+            .iter()
+            .map(|e| {
+                let reason = e
+                    .reason
+                    .as_deref()
+                    .filter(|r| !r.is_empty())
+                    .map(|r| format!(" — {r}"))
+                    .unwrap_or_default();
+                (
+                    e.id,
+                    format!("[{}] {} ⇢ {}{}", e.kind.as_str(), label(&e.src), label(&e.dst), reason),
+                )
+            })
+            .collect();
+        self.status = "graph inbox · ↑↓ · P keep · d reject · Esc".into();
+        self.modal = Modal::GraphEdgeInbox { rows, cursor: 0 };
+    }
+
+    fn graph_inbox_handle_key(&mut self, key: KeyEvent) -> bool {
+        let n = match &self.modal {
+            Modal::GraphEdgeInbox { rows, .. } => rows.len(),
+            _ => return false,
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "graph inbox: closed".into();
+            }
+            KeyCode::Up => {
+                if let Modal::GraphEdgeInbox { cursor, .. } = &mut self.modal {
+                    *cursor = cursor.saturating_sub(1);
+                }
+            }
+            KeyCode::Down => {
+                if let Modal::GraphEdgeInbox { cursor, .. } = &mut self.modal {
+                    if n > 0 {
+                        *cursor = (*cursor + 1).min(n - 1);
+                    }
+                }
+            }
+            KeyCode::Char('P') => self.graph_inbox_act(true),
+            KeyCode::Char('d') => self.graph_inbox_act(false),
+            _ => {}
+        }
+        true
+    }
+
+    /// Promote (`P`) or dismiss (`d`) the selected inbox edge, then drop its row.
+    fn graph_inbox_act(&mut self, promote: bool) {
+        let Some(id) = (match &self.modal {
+            Modal::GraphEdgeInbox { rows, cursor } => rows.get(*cursor).map(|(id, _)| *id),
+            _ => None,
+        }) else {
+            return;
+        };
+        let result = if promote {
+            self.store.promote_edge(id).map(|_| ())
+        } else {
+            self.store.dismiss_edge(id)
+        };
+        if let Err(e) = result {
+            self.status = format!("graph inbox: {e}");
+            return;
+        }
+        if let Modal::GraphEdgeInbox { rows, cursor } = &mut self.modal {
+            if *cursor < rows.len() {
+                rows.remove(*cursor);
+            }
+            if *cursor >= rows.len() {
+                *cursor = rows.len().saturating_sub(1);
+            }
+            if rows.is_empty() {
+                self.modal = Modal::None;
+                self.status = "graph inbox: clear".into();
+                return;
+            }
+        }
+        self.status = if promote {
+            "stance promoted — kept across rebuilds".into()
+        } else {
+            "finding rejected".into()
+        };
     }
 
     /// WORLD-4 — `Ctrl+B W`. Build the read-only World overview: the world
@@ -22648,6 +22820,13 @@ impl App {
             // INNER_EDITOR-1 — entering seeds the chat with the Editor's voice +
             // the open paragraph's observations.
             AiMode::EditorConversation => self.seed_editor_session(),
+            // GRAPHMIND GM-P4 — a sticky scope that retrieves on the first prompt
+            // (nothing to seed on entry); the retrieval caches for the session.
+            AiMode::Graph => {
+                self.status =
+                    "AI scope: Graph — ask about how your book connects (retrieves + walks the graph)"
+                        .into()
+            }
             other => {
                 self.status = format!(
                     "AI scope: {} (will prepend matching context to next prompt)",
@@ -22828,6 +23007,10 @@ impl App {
             // INNER_EDITOR-1 — likewise a seeded session scope (the Editor's
             // voice + observations are in the chat prologue); no per-query prefix.
             AiMode::EditorConversation => Ok(None),
+            // GRAPHMIND GM-P4 — like Book, the Graph scope builds its context in
+            // the submit path (retrieve passages + fold in their graph edges;
+            // see `graph_rag_context`), so it contributes nothing here.
+            AiMode::Graph => Ok(None),
         }
     }
 
@@ -25996,6 +26179,16 @@ impl App {
 
         if matches!(self.modal, Modal::GraphNeighbourhood { .. }) {
             self.graph_neighbourhood_handle_key(key);
+            return Ok(false);
+        }
+
+        if matches!(self.modal, Modal::GraphHub) {
+            self.graph_hub_handle_key(key);
+            return Ok(false);
+        }
+
+        if matches!(self.modal, Modal::GraphEdgeInbox { .. }) {
+            self.graph_inbox_handle_key(key);
             return Ok(false);
         }
 
