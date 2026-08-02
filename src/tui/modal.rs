@@ -1455,11 +1455,21 @@ pub(super) enum Modal {
         rows: Vec<String>,
         cursor: usize,
     },
-    /// SEMNET — the knowledge-graph neighbourhood view (`Ctrl+V g`) for the open
-    /// paragraph. `rows` are the pre-rendered `render_neighbourhood` tree;
+    /// SEMNET — the knowledge-graph neighbourhood view (graph hub → `n`) for the
+    /// open paragraph. `rows` are the pre-rendered `render_neighbourhood` tree;
     /// scrollable, read-only.
     GraphNeighbourhood {
         rows: Vec<String>,
+        cursor: usize,
+    },
+    /// GRAPHMIND — the knowledge-graph hub (`Ctrl+B z`): a tiny menu onto the
+    /// graph (`n` neighbourhood, `i` inbox).
+    GraphHub,
+    /// GRAPHMIND — the edge inbox (graph hub → `i`): the advisory `Judged` stance
+    /// edges awaiting triage. Each row is `(edge id, rendered line)`; the cursor
+    /// row is promotable (`P`) / dismissable (`d`).
+    GraphEdgeInbox {
+        rows: Vec<(uuid::Uuid, String)>,
         cursor: usize,
     },
 }

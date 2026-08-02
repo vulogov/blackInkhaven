@@ -132,6 +132,93 @@ pub fn neighbors(project: &Path, node: &str) -> Result<()> {
     Ok(())
 }
 
+/// A human label for an endpoint: a node's title (via the hierarchy), or an
+/// extern's `kind ref`.
+fn endpoint_label(ep: &EndpointRef, h: &Hierarchy) -> String {
+    match ep {
+        EndpointRef::Node(u) => h
+            .get(*u)
+            .map(|n| n.title.clone())
+            .filter(|t| !t.trim().is_empty())
+            .unwrap_or_else(|| format!("node {}", &u.to_string()[..8])),
+        EndpointRef::Extern(_) => {
+            let (k, r) = ep.as_columns();
+            format!("{k} {r}")
+        }
+    }
+}
+
+/// `inkhaven graph link <node>` — propose stance edges from a fact to its
+/// nearest related facts (the confront judge over your own corpus): retrieve the
+/// neighbours, grade each relation, and persist the non-Silent ones as advisory
+/// `Judged` edges. Triage them with `graph pending`. Needs an LLM provider.
+pub fn link(project: &Path, node: &str) -> Result<()> {
+    let (store, cfg) = open_with_cfg(project)?;
+    let id = parse_uuid(node, "node")?;
+    let ai = crate::ai::AiClient::from_config(&cfg.llm)
+        .map_err(|e| Error::Config(format!("LLM provider: {e:#}")))?;
+    let (model, _env) = ai
+        .resolve_provider(&cfg.llm, None)
+        .map_err(|e| Error::Config(format!("LLM provider: {e:#}")))?;
+    let h = Hierarchy::load(&store)?;
+    let Some(facts_book) = h
+        .iter()
+        .find(|n| n.system_tag.as_deref() == Some(crate::store::SYSTEM_TAG_FACTS))
+        .map(|n| n.id)
+    else {
+        return Err(Error::Config("this project has no Facts book to link against".into()));
+    };
+    let body = store
+        .raw()
+        .get_content(id)
+        .map_err(|e| Error::Store(e.to_string()))?
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
+        .ok_or_else(|| Error::Config(format!("no content for node {id}")))?;
+    // The /relate judge writes its reasons in the project language (a name, e.g.
+    // "English"), matching the confront path.
+    let iso = crate::ai::prompts::iso_from_long(&cfg.language);
+    let language = crate::inner_editor::prompt::language_name(iso).to_string();
+
+    let n = crate::research::graph_link::link_fact(
+        &store, &h, &cfg, &ai, &model, facts_book, id, &body, &language,
+    );
+    if n == 0 {
+        println!("no stance edges proposed (no related facts, or all silent)");
+    } else {
+        println!("proposed {n} advisory edge(s) — triage with `graph pending` (`graph promote`/`dismiss`)");
+    }
+    Ok(())
+}
+
+/// `inkhaven graph pending` — the advisory (Judged) stance edges awaiting triage:
+/// the edge inbox. Promote the ones that stick with `graph promote <id>`, reject
+/// the rest with `graph dismiss <id>`.
+pub fn pending(project: &Path) -> Result<()> {
+    let store = open(project)?;
+    let edges = store.pending_edges()?;
+    if edges.is_empty() {
+        println!("no pending edges — the graph's advisory layer is clear");
+        return Ok(());
+    }
+    let h = Hierarchy::load(&store)?;
+    println!(
+        "{} pending edge(s) — `graph promote <id>` to keep (across rebuilds), `graph dismiss <id>` to reject:",
+        edges.len()
+    );
+    for e in &edges {
+        let src = endpoint_label(&e.src, &h);
+        let dst = endpoint_label(&e.dst, &h);
+        let reason = e
+            .reason
+            .as_deref()
+            .filter(|r| !r.is_empty())
+            .map(|r| format!(" — {r}"))
+            .unwrap_or_default();
+        println!("  {}  [{}]  {src} ⇢ {dst}{reason}", e.id, e.kind.as_str());
+    }
+    Ok(())
+}
+
 /// `inkhaven graph loci <node>` — the primary-source loci a node cites.
 pub fn loci(project: &Path, node: &str) -> Result<()> {
     use crate::store::graph::EdgeKind;
@@ -147,6 +234,64 @@ pub fn loci(project: &Path, node: &str) -> Result<()> {
         let key = e.attrs.get("key").and_then(|v| v.as_str()).unwrap_or("");
         println!("@{key}  {r}");
     }
+    Ok(())
+}
+
+/// `inkhaven graph ask <question>` — GRAPHMIND GM-P5. Answer a question by
+/// *walking* the knowledge graph: the model searches for seed nodes, then issues
+/// read-only graph queries (neighbours / contradictions / loci / paths) turn by
+/// turn until it can answer, grounding the answer in what it observed. Needs an
+/// LLM provider. The exploration transcript goes to stderr; the answer to stdout.
+pub fn ask(project: &Path, question: &str) -> Result<()> {
+    let (store, cfg) = open_with_cfg(project)?;
+    let question = question.trim();
+    if question.is_empty() {
+        return Err(Error::Config(
+            "give a question, e.g. `graph ask \"what contradicts the storm scene?\"`".into(),
+        ));
+    }
+    let ai = crate::ai::AiClient::from_config(&cfg.llm)
+        .map_err(|e| Error::Config(format!("LLM provider: {e:#}")))?;
+    let (model, _env) = ai
+        .resolve_provider(&cfg.llm, None)
+        .map_err(|e| Error::Config(format!("LLM provider: {e:#}")))?;
+    let h = Hierarchy::load(&store)?;
+    let iso = crate::ai::prompts::iso_from_long(&cfg.language);
+    let system = crate::graph_rag::ask::system_prompt(iso).to_string();
+    let oracle = crate::graph_rag::oracle::StoreOracle { store: &store, hierarchy: &h };
+
+    let max_steps = cfg.graph.ask_max_steps.max(1);
+    let search_limit = cfg.graph.ask_search_width.max(1);
+    let client = ai.client.clone();
+    let modelname = model.to_string();
+
+    eprintln!("» graph ask: {question}");
+    let outcome = crate::graph_rag::ask::ask(
+        &oracle,
+        |prompt| {
+            crate::ai::stream::collect_blocking(
+                client.clone(),
+                modelname.clone(),
+                Some(system.clone()),
+                prompt.to_string(),
+            )
+        },
+        question,
+        max_steps,
+        search_limit,
+    )
+    .map_err(|e| Error::Config(format!("graph ask: {e}")))?;
+
+    for s in &outcome.steps {
+        eprintln!("{s}");
+    }
+    eprintln!(
+        "» {} step(s), {} model turn(s){}",
+        outcome.steps.len(),
+        outcome.llm_calls,
+        if outcome.forced { " · forced final answer (step budget spent)" } else { "" }
+    );
+    println!("{}", outcome.answer);
     Ok(())
 }
 
