@@ -437,10 +437,8 @@ pub(crate) fn confront_stance_edges(claim: Uuid, relations: &[Relation]) -> Vec<
 
 /// A fact↔fact contradiction (`/contradict`) as a symmetric `Judged`
 /// `Contradicts` edge between the two fact nodes, the cross-source flag in
-/// `attrs`. The mapping is ready + tested; its persist seam is wired when the
-/// `/contradict` flow gains a Store-access point (P3 follow-up — the live P3
-/// seam is confront via [`confront_stance_edges`]).
-#[allow(dead_code)]
+/// `attrs`. Persisted by the agentic contradiction gate (GRAPHMIND GM-P1) so
+/// deep research lands as a connected subgraph.
 pub(super) fn clash_edge(clash: &Clash) -> Edge {
     let mut e = Edge::new(
         EndpointRef::Node(clash.a.id),

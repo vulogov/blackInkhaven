@@ -249,6 +249,10 @@ fn detect_contradictions(
         match collect_blocking(ai.client.clone(), model.to_string(), Some(system.clone()), user) {
             Ok(reply) => {
                 for c in super::contradiction::parse_clashes(&reply, &gf) {
+                    // GRAPHMIND GM-P1 — persist the fact↔fact contradiction as a
+                    // durable Judged edge, so deep research lands as a connected
+                    // subgraph (triage it later with `graph pending`). Best-effort.
+                    let _ = store.add_edge(&super::contradiction::clash_edge(&c));
                     out.push((c.a.text.clone(), c.b.text.clone(), c.reason.clone()));
                 }
             }
