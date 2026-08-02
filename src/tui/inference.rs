@@ -88,6 +88,12 @@ pub(super) enum AiMode {
     /// INNER_EDITOR-1 — a sticky conversation scope: the AI is the Inner Editor,
     /// discussing its literary/stylistic observations about the open paragraph.
     EditorConversation,
+    /// GRAPHMIND GM-P4 — chat with your knowledge graph: retrieve the relevant
+    /// passages and fold in the graph edges touching them, so the answer is
+    /// grounded in how the book's parts *connect* (contradicts / sourced_from /
+    /// links_to / cites), not just in the prose. A sticky session scope like
+    /// `Facts` — the conversation stays in graph scope until F9 cycles away.
+    Graph,
 }
 
 impl AiMode {
@@ -102,6 +108,7 @@ impl AiMode {
             AiMode::Facts => "Facts",
             AiMode::Socratic => "Socrates",
             AiMode::EditorConversation => "Editor",
+            AiMode::Graph => "Graph",
         }
     }
     pub(super) fn next(self) -> Self {
@@ -114,7 +121,8 @@ impl AiMode {
             AiMode::Book => AiMode::Facts,
             AiMode::Facts => AiMode::Socratic,
             AiMode::Socratic => AiMode::EditorConversation,
-            AiMode::EditorConversation => AiMode::None,
+            AiMode::EditorConversation => AiMode::Graph,
+            AiMode::Graph => AiMode::None,
         }
     }
 }
@@ -176,8 +184,9 @@ pub(super) enum InferenceStatus {
 mod ai_mode_tests {
     use super::AiMode;
 
-    // 1.2.21+ — Facts cycles after Book (the widest manuscript
-    // scope) and wraps back to None; F9 visits all seven scopes.
+    // 1.2.21+ — Facts cycles after Book (the widest manuscript scope);
+    // GM-P4 adds Graph as the last stop before wrapping to None. F9 visits
+    // every scope.
     #[test]
     fn cycle_includes_facts_after_book_and_wraps() {
         let order: Vec<&str> = {
@@ -196,7 +205,7 @@ mod ai_mode_tests {
             order,
             vec![
                 "None", "Selection", "Paragraph", "Subchapter", "Chapter", "Book", "Facts",
-                "Socrates", "Editor",
+                "Socrates", "Editor", "Graph",
             ],
         );
         // Explicit: the new edges.
@@ -204,6 +213,8 @@ mod ai_mode_tests {
         assert_eq!(AiMode::Facts.next(), AiMode::Socratic);
         // INNER_EDITOR-1 — the Editor conversation scope cycles after Socrates.
         assert_eq!(AiMode::Socratic.next(), AiMode::EditorConversation);
-        assert_eq!(AiMode::EditorConversation.next(), AiMode::None);
+        // GRAPHMIND GM-P4 — Graph is the final scope, then wraps to None.
+        assert_eq!(AiMode::EditorConversation.next(), AiMode::Graph);
+        assert_eq!(AiMode::Graph.next(), AiMode::None);
     }
 }

@@ -2258,6 +2258,10 @@ pub(crate) struct App {
     /// retrieval stale, so the "clear chat to re-ground" nudge fires only
     /// once per stale event (reset on the next fresh retrieval).
     book_rag_nudged_stale: bool,
+    /// GRAPHMIND GM-P4 — the passages-plus-relations retrieved for the last
+    /// Graph-scope prompt. Cached per chat session (like Book) and reused for
+    /// follow-ups; the citable tokens flow through `pending_book_rag_cited`.
+    graph_rag_last_retrieval: Option<Vec<crate::graph_rag::GraphPassage>>,
 
     /// How aggressively the model may draw on its own knowledge. Toggled
     /// globally by F10. Help inferences pin this to `Local` regardless of
@@ -2387,6 +2391,7 @@ mod q3_q4_impl;
 mod render;
 mod snapshot_impl;
 mod book_rag_impl;
+mod graph_rag_impl;
 mod inner_editor_impl;
 mod tag_impl;
 mod threads_impl;
@@ -3428,6 +3433,7 @@ impl App {
             layout_ai_prompt: Rect::default(),
             ai_mode: AiMode::None,
             book_rag_last_retrieval: None,
+            graph_rag_last_retrieval: None,
             pending_book_rag_cited: None,
             book_rag_passages_expanded: false,
             book_rag_nudged_stale: false,
@@ -22785,6 +22791,13 @@ impl App {
             // INNER_EDITOR-1 — entering seeds the chat with the Editor's voice +
             // the open paragraph's observations.
             AiMode::EditorConversation => self.seed_editor_session(),
+            // GRAPHMIND GM-P4 — a sticky scope that retrieves on the first prompt
+            // (nothing to seed on entry); the retrieval caches for the session.
+            AiMode::Graph => {
+                self.status =
+                    "AI scope: Graph — ask about how your book connects (retrieves + walks the graph)"
+                        .into()
+            }
             other => {
                 self.status = format!(
                     "AI scope: {} (will prepend matching context to next prompt)",
@@ -22965,6 +22978,10 @@ impl App {
             // INNER_EDITOR-1 — likewise a seeded session scope (the Editor's
             // voice + observations are in the chat prologue); no per-query prefix.
             AiMode::EditorConversation => Ok(None),
+            // GRAPHMIND GM-P4 — like Book, the Graph scope builds its context in
+            // the submit path (retrieve passages + fold in their graph edges;
+            // see `graph_rag_context`), so it contributes nothing here.
+            AiMode::Graph => Ok(None),
         }
     }
 

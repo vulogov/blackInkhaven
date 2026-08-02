@@ -50,9 +50,9 @@ impl super::App {
         if self.book_rag_nudged_stale {
             return;
         }
-        let active = self.ai_mode == AiMode::Book
-            && self.book_rag_last_retrieval.is_some()
-            && !self.chat_history.is_empty();
+        let active = !self.chat_history.is_empty()
+            && ((self.ai_mode == AiMode::Book && self.book_rag_last_retrieval.is_some())
+                || (self.ai_mode == AiMode::Graph && self.graph_rag_last_retrieval.is_some()));
         if !active {
             return;
         }
@@ -62,18 +62,20 @@ impl super::App {
     }
 
     /// The user book containing the current anchor (open paragraph, else the
-    /// tree cursor). Mirrors `build_ai_mode_context`'s anchor resolution.
-    fn book_rag_anchor_book(&self) -> Result<Uuid, String> {
+    /// tree cursor). Mirrors `build_ai_mode_context`'s anchor resolution. Shared
+    /// by Book scope and the GM-P4 Graph scope — both retrieve within the book
+    /// the cursor is in — so the messages name no single scope.
+    pub(super) fn book_rag_anchor_book(&self) -> Result<Uuid, String> {
         let anchor_id = self
             .opened
             .as_ref()
             .map(|d| d.id)
             .or_else(|| self.rows.get(self.tree_cursor).map(|(id, _)| *id))
-            .ok_or_else(|| "AI scope `Book` needs an open paragraph or tree cursor".to_string())?;
+            .ok_or_else(|| "retrieval needs an open paragraph or tree cursor".to_string())?;
         let anchor = self
             .hierarchy
             .get(anchor_id)
-            .ok_or_else(|| "AI scope `Book` anchor vanished".to_string())?;
+            .ok_or_else(|| "retrieval anchor vanished".to_string())?;
         if anchor.kind == NodeKind::Book {
             return Ok(anchor.id);
         }
@@ -82,6 +84,6 @@ impl super::App {
             .into_iter()
             .find(|n| n.kind == NodeKind::Book)
             .map(|n| n.id)
-            .ok_or_else(|| "AI scope `Book` requires the cursor to be inside a book".to_string())
+            .ok_or_else(|| "retrieval requires the cursor to be inside a book".to_string())
     }
 }

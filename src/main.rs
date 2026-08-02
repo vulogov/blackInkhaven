@@ -4,6 +4,7 @@ mod audiobook;
 mod backup;
 mod cli;
 mod book_rag;
+mod graph_rag;
 mod config;
 mod config_tui;
 mod dayclock;
