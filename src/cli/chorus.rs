@@ -37,9 +37,10 @@ fn scan(project: &Path, book_name: Option<&str>, json: bool) -> Result<()> {
     let book = super::resolve_user_book(&h, book_name, "chorus").map_err(Error::Store)?;
 
     let findings = crate::chorus::pov::scan_head_hops(&layout, &h, &cfg, book);
+    let tense = crate::chorus::tense::scan_tense(&layout, &h, &cfg, book);
 
     if json {
-        let arr: Vec<serde_json::Value> = findings
+        let head_hops: Vec<serde_json::Value> = findings
             .iter()
             .map(|s| {
                 serde_json::json!({
@@ -53,7 +54,14 @@ fn scan(project: &Path, book_name: Option<&str>, json: bool) -> Result<()> {
                 })
             })
             .collect();
-        println!("{}", serde_json::to_string_pretty(&arr).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "head_hops": head_hops,
+                "tense": tense_json(&tense),
+            }))
+            .unwrap_or_default()
+        );
         return Ok(());
     }
 
@@ -73,14 +81,57 @@ fn scan(project: &Path, book_name: Option<&str>, json: bool) -> Result<()> {
                 );
             }
         }
-        println!("{}", "─".repeat(64));
         println!(
-            "Declare a scene's POV with a `pov:<name>` (or `pov:first` / `pov:omniscient`)\n\
-             paragraph tag to silence false positives."
+            "  · declare a scene's POV with a `pov:<name>` / `pov:first` / `pov:omniscient` tag"
         );
     }
     println!("{}", "─".repeat(64));
+    print_tense(&tense);
+    println!("{}", "─".repeat(64));
     Ok(())
+}
+
+fn tense_json(t: &crate::chorus::tense::TenseSummary) -> serde_json::Value {
+    use crate::chorus::tense::TenseSummary;
+    match t {
+        TenseSummary::Unsupported(reason) => serde_json::json!({"supported": false, "reason": reason}),
+        TenseSummary::Scanned(scenes) => serde_json::json!({
+            "supported": true,
+            "slips": scenes.iter().map(|s| serde_json::json!({
+                "chapter": s.chapter_ord,
+                "scene": s.scene_index,
+                "first_para": s.first_para.to_string(),
+                "dominant": s.dominant.label(),
+                "sentences": s.slips.iter().map(|sl| serde_json::json!({
+                    "tense": sl.tense.label(), "excerpt": sl.excerpt,
+                })).collect::<Vec<_>>(),
+            })).collect::<Vec<_>>(),
+        }),
+    }
+}
+
+fn print_tense(t: &crate::chorus::tense::TenseSummary) {
+    use crate::chorus::tense::TenseSummary;
+    println!("Tense discipline (advisory, English-only)");
+    match t {
+        TenseSummary::Unsupported(reason) => println!("  — not analysed: {reason}"),
+        TenseSummary::Scanned(scenes) if scenes.is_empty() => {
+            println!("  ✓ narration holds a consistent tense")
+        }
+        TenseSummary::Scanned(scenes) => {
+            for s in scenes {
+                println!(
+                    "  ch.{} · scene {} (dominant: {})",
+                    s.chapter_ord,
+                    s.scene_index,
+                    s.dominant.label()
+                );
+                for sl in &s.slips {
+                    println!("      ⚠ {}-tense slip: \"{}\"", sl.tense.label(), sl.excerpt);
+                }
+            }
+        }
+    }
 }
 
 fn now() -> String {
