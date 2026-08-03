@@ -15,10 +15,10 @@ use uuid::Uuid;
 
 use crate::config::Config;
 use crate::project::ProjectLayout;
-use crate::store::NodeKind;
 use crate::store::hierarchy::Hierarchy;
 use crate::store::node::Node;
 
+use super::scenes::book_scenes;
 use super::vocab::interiority_verbs;
 
 /// A scene's point of view.
@@ -166,9 +166,8 @@ pub(crate) struct SceneHeadHops {
     pub hops: Vec<HeadHop>,
 }
 
-/// Walk `book`'s chapters, split each into scenes (`is_scene_break`), and report
-/// the scenes with head-hops. Impure (reads paragraph files); the judgement is
-/// the pure [`scene_pov`] + [`head_hops`].
+/// Report the scenes of `book` that contain head-hops. Impure (walks scenes via
+/// [`book_scenes`]); the judgement is the pure [`scene_pov`] + [`head_hops`].
 pub(crate) fn scan_head_hops(
     layout: &ProjectLayout,
     h: &Hierarchy,
@@ -179,67 +178,21 @@ pub(crate) fn scan_head_hops(
     let roster = crate::dialogue::character_names(h);
     let verbs: HashSet<String> = interiority_verbs(&lang).iter().map(|s| s.to_string()).collect();
 
-    let chapters: Vec<&Node> = h
-        .children_of(Some(book.id))
-        .into_iter()
-        .filter(|n| n.kind == NodeKind::Chapter)
-        .collect();
-
     let mut out = Vec::new();
-    for (ci, ch) in chapters.iter().enumerate() {
-        let chapter_ord = (ci + 1) as u32;
-        let mut scene_idx = 0u32;
-        let mut cur: Vec<(Uuid, String, Vec<String>)> = Vec::new();
-        for id in h.collect_subtree(ch.id) {
-            let Some(n) = h.get(id) else { continue };
-            if n.kind != NodeKind::Paragraph || n.content_type.as_deref() == Some("jinja") {
-                continue;
-            }
-            let Some(rel) = n.file.as_ref() else { continue };
-            let Ok(raw) = std::fs::read_to_string(layout.root.join(rel)) else { continue };
-            let text = crate::audiobook::typst_to_plain(&raw);
-            if crate::manuscript::is_scene_break(&text) {
-                finish_scene(&mut cur, chapter_ord, &mut scene_idx, &roster, &verbs, &mut out);
-                continue;
-            }
-            cur.push((n.id, text, n.tags.clone()));
+    for s in book_scenes(layout, h, book) {
+        let pov = scene_pov(&s.text, &roster, s.declared_pov.as_deref());
+        let hops = head_hops(&s.text, &roster, &verbs, &pov);
+        if !hops.is_empty() {
+            out.push(SceneHeadHops {
+                chapter_ord: s.chapter_ord,
+                scene_index: s.scene_index,
+                pov,
+                first_para: s.first_para,
+                hops,
+            });
         }
-        finish_scene(&mut cur, chapter_ord, &mut scene_idx, &roster, &verbs, &mut out);
     }
     out
-}
-
-#[allow(clippy::too_many_arguments)]
-fn finish_scene(
-    cur: &mut Vec<(Uuid, String, Vec<String>)>,
-    chapter_ord: u32,
-    scene_idx: &mut u32,
-    roster: &[String],
-    verbs: &HashSet<String>,
-    out: &mut Vec<SceneHeadHops>,
-) {
-    if cur.is_empty() {
-        return;
-    }
-    *scene_idx += 1;
-    let first_para = cur[0].0;
-    let declared = cur
-        .iter()
-        .flat_map(|(_, _, tags)| tags.iter())
-        .find_map(|t| t.strip_prefix("pov:").map(|s| s.to_string()));
-    let text: String = cur.iter().map(|(_, t, _)| t.as_str()).collect::<Vec<_>>().join("\n");
-    let pov = scene_pov(&text, roster, declared.as_deref());
-    let hops = head_hops(&text, roster, verbs, &pov);
-    if !hops.is_empty() {
-        out.push(SceneHeadHops {
-            chapter_ord,
-            scene_index: *scene_idx,
-            pov,
-            first_para,
-            hops,
-        });
-    }
-    cur.clear();
 }
 
 #[cfg(test)]

@@ -13,5 +13,7 @@
 pub(crate) mod distinct;
 pub(crate) mod drift;
 pub(crate) mod pov;
+pub(crate) mod scenes;
+pub(crate) mod tense;
 pub(crate) mod vocab;
 pub(crate) mod voices;
