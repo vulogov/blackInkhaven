@@ -130,6 +130,11 @@ pub enum Action {
     /// the project) into the Output pane.
     #[serde(rename = "global.run_check")]
     RunCheck,
+    /// SENTINEL-1 (2.2, CT-P6) — the continuity ledger dashboard (Ctrl+B Shift+L):
+    /// the ranked deterministic continuity findings grouped by kind, Enter jumps to
+    /// a finding's paragraph.
+    #[serde(rename = "global.open_continuity_ledger")]
+    OpenContinuityLedger,
     /// 1.3.34+ — the unified AI cost dashboard (Ctrl+B $): today's LLM call tallies
     /// per capped subsystem vs their daily caps.
     #[serde(rename = "global.open_cost_dashboard")]
@@ -988,6 +993,7 @@ impl Action {
 
             Action::OpenCommandPalette => "command palette".into(),
             Action::RunCheck => "review pass".into(),
+            Action::OpenContinuityLedger => "continuity".into(),
             Action::OpenCostDashboard => "AI cost".into(),
             Action::OpenCredits => "credits".into(),
             Action::OpenBookInfo => "info".into(),
@@ -1214,6 +1220,8 @@ impl Action {
                 "Open the command palette (Ctrl+V Space): fuzzy-find any command by name or chord and run it. Type to filter, ↑↓ to select, Enter to run, Esc to close.".into(),
             Action::RunCheck =>
                 "Run the unified review pass (Ctrl+B Shift+C): every fast, deterministic checker at once — the world fact-checker + Inner Socrates over the open paragraph, plus the timeline critique over the project — emitting findings to the Output pane (filter them with f/S/t). Instant and LLM-free.".into(),
+            Action::OpenContinuityLedger =>
+                "Open the SENTINEL continuity ledger (Ctrl+B Shift+L): the ranked deterministic continuity findings — co-location, timeline, numeric, character-fact drift, and referenced-before-introduced — grouped by kind. ↑↓ to scroll, Enter to jump to a finding's paragraph, Esc to close. Zero-AI; the CLI equivalent is `inkhaven continuity check`.".into(),
             Action::OpenCostDashboard =>
                 "Open the AI cost dashboard (Ctrl+B $): today's LLM call tallies for each capped subsystem (world slow track, Inner Socrates slow track + any analytical-thread sub-budgets) against their daily caps. Read-only; the CLI equivalent is `inkhaven cost`.".into(),
             Action::OpenCredits =>
@@ -1613,6 +1621,8 @@ impl KeyBindings {
                 entry("Shift+b", Action::BackupNow, Scope::Any),
                 // 1.3.34+ — Ctrl+B Shift+C: the unified review pass.
                 entry("Shift+c", Action::RunCheck, Scope::Any),
+                // SENTINEL-1 (CT-P6) — Ctrl+B Shift+L: the continuity ledger.
+                entry("Shift+l", Action::OpenContinuityLedger, Scope::Any),
                 // 1.3.34+ — Ctrl+B $: the AI cost dashboard.
                 entry("$", Action::OpenCostDashboard, Scope::Any),
                 entry("o", Action::ScheduleTake, Scope::Any),
@@ -2788,6 +2798,17 @@ mod tests {
             k.resolve_meta_sub(&ev, Focus::Editor),
             Some(Action::RunCheck),
             "Ctrl+B Shift+C runs the unified review pass"
+        );
+    }
+
+    #[test]
+    fn continuity_ledger_is_bound_to_ctrl_b_shift_l() {
+        let k = KeyBindings::defaults();
+        let ev = KeyEvent::new(KeyCode::Char('L'), KeyModifiers::SHIFT);
+        assert_eq!(
+            k.resolve_meta_sub(&ev, Focus::Editor),
+            Some(Action::OpenContinuityLedger),
+            "Ctrl+B Shift+L opens the continuity ledger"
         );
     }
 

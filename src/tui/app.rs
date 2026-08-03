@@ -12404,6 +12404,7 @@ impl App {
             // ── Global ────────────────────────────────────────
             A::OpenCommandPalette => self.open_command_palette(),
             A::RunCheck => self.run_unified_check(),
+            A::OpenContinuityLedger => self.open_continuity_ledger(),
             A::OpenCostDashboard => self.open_cost_dashboard(),
             A::OpenCredits => self.open_credits(),
             A::OpenBookInfo => self.open_book_info(),
@@ -15963,6 +15964,117 @@ impl App {
                 self.status = format!("voice report: {e}");
             }
         }
+    }
+
+    /// SENTINEL-1 (CT-P6) — `Ctrl+B Shift+L`: the continuity ledger dashboard. Runs
+    /// the deterministic engine, groups the ranked findings by kind, and opens a
+    /// scrollable modal (Enter jumps to a finding's paragraph). Zero-AI.
+    fn open_continuity_ledger(&mut self) {
+        let (rows, anchors) = self.build_continuity_ledger_rows();
+        let breaks = anchors.iter().filter(|a| a.is_some()).count();
+        self.status = if breaks == 0 {
+            "continuity ledger: clean · Esc".into()
+        } else {
+            "continuity ledger · ↑↓ scroll · Enter jump · Esc".into()
+        };
+        self.modal = Modal::ContinuityLedger { rows, anchors, cursor: 0 };
+    }
+
+    /// Build the ledger's display rows + parallel jump anchors. Findings are
+    /// grouped under a bold per-kind header, most-severe kinds first.
+    fn build_continuity_ledger_rows(&self) -> (Vec<String>, Vec<Option<Uuid>>) {
+        use crate::continuity_intel::{engine, Severity};
+        let mut rows: Vec<String> = Vec::new();
+        let mut anchors: Vec<Option<Uuid>> = Vec::new();
+        let mut push = |text: String, anchor: Option<Uuid>| {
+            rows.push(text);
+            anchors.push(anchor);
+        };
+
+        let h = match crate::store::hierarchy::Hierarchy::load(&self.store) {
+            Ok(h) => h,
+            Err(e) => {
+                push(format!("continuity ledger unavailable: {e}"), None);
+                return (rows, anchors);
+            }
+        };
+        // The full ledger here (timeline included) — this is the dedicated view,
+        // not the review-pass line that dedups against the timeline critique.
+        let sel = engine::selector(&[], &[]);
+        let findings = engine::run(&self.store, &self.cfg, &self.layout, &h, &sel);
+
+        push(format!("◆ Continuity ledger — {} finding(s)", findings.len()), None);
+        push(String::new(), None);
+        if findings.is_empty() {
+            push("  ✓ no continuity breaks detected".into(), None);
+            return (rows, anchors);
+        }
+
+        // Group by kind, preserving the ranked order (kinds first seen stay first).
+        let mut order: Vec<&'static str> = Vec::new();
+        for f in &findings {
+            if !order.contains(&f.kind) {
+                order.push(f.kind);
+            }
+        }
+        for kind in order {
+            let group: Vec<&_> = findings.iter().filter(|f| f.kind == kind).collect();
+            push(format!("{kind} ({})", group.len()), None);
+            for f in group {
+                let mark = match f.severity {
+                    Severity::Contradiction => "⊗",
+                    Severity::Warning => "⚠",
+                    Severity::Info => "●",
+                };
+                let where_ = if f.chapter == 0 { String::new() } else { format!(" [ch. {}]", f.chapter) };
+                push(format!("  {mark} {}{where_}", f.message), f.anchor);
+            }
+            push(String::new(), None);
+        }
+        (rows, anchors)
+    }
+
+    fn continuity_ledger_handle_key(&mut self, key: KeyEvent) -> bool {
+        let n = match &self.modal {
+            Modal::ContinuityLedger { rows, .. } => rows.len(),
+            _ => return false,
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "continuity ledger: closed".into();
+            }
+            KeyCode::Up => {
+                if let Modal::ContinuityLedger { cursor, .. } = &mut self.modal {
+                    *cursor = cursor.saturating_sub(1);
+                }
+            }
+            KeyCode::Down => {
+                if let Modal::ContinuityLedger { cursor, .. } = &mut self.modal {
+                    if n > 0 {
+                        *cursor = (*cursor + 1).min(n - 1);
+                    }
+                }
+            }
+            KeyCode::Enter => {
+                let anchor = match &self.modal {
+                    Modal::ContinuityLedger { anchors, cursor, .. } => {
+                        anchors.get(*cursor).copied().flatten()
+                    }
+                    _ => None,
+                };
+                if let Some(id) = anchor {
+                    self.modal = Modal::None;
+                    if let Err(e) = self.open_paragraph_by_uuid(id) {
+                        self.status = format!("continuity ledger: {e}");
+                    }
+                } else {
+                    self.status = "continuity ledger: no paragraph to jump to on this row".into();
+                }
+            }
+            _ => {}
+        }
+        true
     }
 
     fn style_report_handle_key(&mut self, key: KeyEvent) -> bool {
@@ -26008,6 +26120,10 @@ impl App {
         }
         if matches!(self.modal, Modal::StyleReport { .. }) {
             self.style_report_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::ContinuityLedger { .. }) {
+            self.continuity_ledger_handle_key(key);
             return Ok(false);
         }
         if matches!(self.modal, Modal::PoemFormPicker { .. }) {
