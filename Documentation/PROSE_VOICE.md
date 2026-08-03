@@ -131,5 +131,11 @@ prose content; Jinja templates (STRUCT-1) are excluded.
 
 ---
 
-**See also:** [Tutorial 95 — Narrative voice](Tutorials/95-narrative-voice.md) ·
+> **NARR-1 profiles the narrator; [CHORUS](CHORUS.md) profiles the cast.** The
+> 2.1 CHORUS layer reuses this same metric engine per *character* (dialogue voice
+> fingerprints + a distinctiveness matrix), adds POV/tense/register discipline,
+> and synthesises it all through the Inner Stylist. `inkhaven chorus …`.
+
+**See also:** [CHORUS.md](CHORUS.md) — voice & style at book scale ·
+[Tutorial 95 — Narrative voice](Tutorials/95-narrative-voice.md) ·
 [KEYBINDING.md → `Ctrl+V V`](KEYBINDING.md) · `inkhaven prose --help`.
