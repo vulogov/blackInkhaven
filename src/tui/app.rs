@@ -2925,6 +2925,65 @@ fn run_theologian_check(
     Ok(findings.len())
 }
 
+/// INNER-STYLIST-1 (CHORUS CH-P7b) — the voice-at-scale observations over the
+/// whole book. Deterministic (no LLM): runs the CHORUS pillars, synthesises
+/// Praise/Note/Concern, drops the author's suppressions, clears the prior
+/// `kinds::STYLIST` messages, and re-emits. Gated on `stylist.enabled`.
+fn run_stylist_check(
+    store: &Store,
+    cfg: &Config,
+    layout: &ProjectLayout,
+) -> std::result::Result<usize, String> {
+    use crate::pane::output::{Lifetime, Message, Severity, kinds};
+
+    let clear = || {
+        if let Some(s) = crate::pane::output::active() {
+            if let Ok(msgs) = s.by_kind(kinds::STYLIST) {
+                for m in &msgs {
+                    let _ = s.dismiss(m.id);
+                }
+            }
+        }
+    };
+
+    if !cfg.stylist.enabled {
+        clear();
+        return Ok(0);
+    }
+
+    let h = crate::store::hierarchy::Hierarchy::load(store).map_err(|e| e.to_string())?;
+    let book = crate::cli::resolve_user_book(&h, None, "stylist")?.clone();
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut findings = crate::inner_stylist::pipeline::gather(store, layout, &h, cfg, &book, &now)?;
+    if let Ok(sstore) =
+        crate::inner_stylist::storage::InnerStylistStore::open_for_project(store.project_root())
+    {
+        if let Ok(silenced) = sstore.all_suppressions() {
+            findings.retain(|f| !silenced.contains(&f.key));
+        }
+    }
+
+    clear();
+    for f in &findings {
+        let sev = match f.severity {
+            crate::inner_stylist::Severity::Concern => Severity::Warning,
+            _ => Severity::Info,
+        };
+        crate::pane::output::emit(&Message::new(
+            kinds::STYLIST,
+            sev,
+            Lifetime::UntilActedOn,
+            serde_json::json!({
+                "text": format!("[stylist · {}] {}", f.kind, f.message),
+                "category": "stylist",
+                "kind": f.kind,
+                "key": f.key,
+            }),
+        ));
+    }
+    Ok(findings.len())
+}
+
 /// RIGOR — the deterministic reasoning-rigor findings over the book of the open
 /// paragraph. Zero-AI; clears the prior `kinds::RIGOR` messages and re-emits the
 /// current set, each anchored + advisory. Gated on `rigor.enabled && fast_track`.
@@ -15449,6 +15508,10 @@ impl App {
         // book-wide counterpart of the on-save scan).
         let orc = run_oracle_check(&self.store, &self.cfg, &self.layout).unwrap_or(0);
 
+        // INNER-STYLIST-1 (CHORUS) — voice-at-scale observations (character
+        // distinctiveness / drift / POV / tense / register), deterministic.
+        let sty = run_stylist_check(&self.store, &self.cfg, &self.layout).unwrap_or(0);
+
         // Reflect the instant findings in the tree report-card immediately.
         self.refresh_tree_badges();
 
@@ -15459,7 +15522,7 @@ impl App {
         // seconds later (and re-badge the tree on completion).
         let editor_spawned = self.maybe_spawn_check_editor();
 
-        let total = fact + soc + tl + dlg + uto + chr + theo + myth + rigor + orc;
+        let total = fact + soc + tl + dlg + uto + chr + theo + myth + rigor + orc + sty;
         if total == 0 && !editor_spawned {
             self.status = if checked == 0 {
                 "review pass: clean (no open paragraph; timeline + dialogue + utopia + character + theologian + myth included)".into()
@@ -15478,7 +15541,7 @@ impl App {
             format!("review pass: instant checks clean{editor_note}")
         } else {
             format!(
-                "review pass: {total} finding(s) — fact {fact} · socrates {soc} · timeline {tl} · dialogue {dlg} · utopia {uto} · character {chr} · theologian {theo} · myth {myth} · oracle {orc}{editor_note} → Output (^B Tab)"
+                "review pass: {total} finding(s) — fact {fact} · socrates {soc} · timeline {tl} · dialogue {dlg} · utopia {uto} · character {chr} · theologian {theo} · myth {myth} · oracle {orc} · stylist {sty}{editor_note} → Output (^B Tab)"
             )
         };
     }
@@ -15726,7 +15789,25 @@ impl App {
         let rows = self.build_inner_socrates_rows();
         self.modal = Modal::InnerSocratesOverview { rows, cursor: 0 };
         self.status =
-            "Inner Socrates · F fast-check ¶ · E engage (slow/LLM) · T theologian · R rigor ¶ · S persona · L ledger · A auto · Esc".into();
+            "Inner Socrates · F fast-check ¶ · E engage (slow/LLM) · T theologian · R rigor ¶ · P poet · Y stylist · S persona · L ledger · A auto · Esc".into();
+    }
+
+    /// CHORUS CH-P7b — `Ctrl+B J → Y`: run the Inner Stylist over the whole book
+    /// (deterministic voice-at-scale synthesis) and land its observations in the
+    /// Output pane. The LLM coaching track is `inkhaven chorus stylist --coach`.
+    fn stylist_check_book(&mut self) {
+        self.modal = Modal::None;
+        match run_stylist_check(&self.store, &self.cfg, &self.layout) {
+            Ok(0) => {
+                self.status = "Inner Stylist: the book's voice reads clean — nothing to raise".into()
+            }
+            Ok(n) => {
+                self.right_pane = RightPane::Output;
+                self.change_focus(Focus::Ai);
+                self.status = format!("Inner Stylist: {n} voice observation(s) → Output (^B Tab)");
+            }
+            Err(e) => self.status = format!("Inner Stylist: {e}"),
+        }
     }
 
     fn build_inner_socrates_rows(&self) -> Vec<String> {
@@ -15805,6 +15886,7 @@ impl App {
             KeyCode::Char('t') | KeyCode::Char('T') => self.theologian_engage_open_paragraph(),
             KeyCode::Char('r') | KeyCode::Char('R') => self.rigor_check_open_paragraph(),
             KeyCode::Char('p') | KeyCode::Char('P') => self.open_inner_poet_overview(),
+            KeyCode::Char('y') | KeyCode::Char('Y') => self.stylist_check_book(),
             KeyCode::Char('n') | KeyCode::Char('N') => self.socratic_persona_wizard(),
             KeyCode::Char('a') | KeyCode::Char('A') => {
                 self.socratic_auto = !self.socratic_auto;

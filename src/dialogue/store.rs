@@ -233,6 +233,28 @@ impl DialogueStore {
             .collect())
     }
 
+    /// CHORUS-1 (CH-P0) — every span across the book that resolved to a speaker
+    /// (`Certain` OR `Inferred`; `None` excluded), for the character-voice
+    /// corpus. Unlike [`certain_spans`], this keeps pronoun/action-beat–inferred
+    /// lines so a character's aggregated dialogue is as complete as attribution
+    /// allows; each span carries its own `attribution_conf` so a caller can weigh
+    /// by confidence.
+    pub(crate) fn attributed_spans(&self, book_slug: &str) -> Result<Vec<(u32, DialogueSpan)>> {
+        let bs = book_slug.to_string();
+        let sql = format!(
+            "SELECT chapter_ord, {SPAN_COLS} FROM dialogue_spans \
+             WHERE book_slug = ? AND attribution_conf <> 'none' ORDER BY chapter_ord"
+        );
+        let rows = self.engine.select_all_with(&sql, &[&bs])?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| {
+                let ord = as_i64(r.first()?)? as u32;
+                row_to_span(&r[1..]).map(|s| (ord, s))
+            })
+            .collect())
+    }
+
     pub(crate) fn chapter_stats(
         &self,
         book_slug: &str,
@@ -416,6 +438,31 @@ mod tests {
         let certain = st.certain_spans("book").unwrap();
         assert_eq!(certain.len(), 1);
         assert_eq!(certain[0].0, 3);
+    }
+
+    #[test]
+    fn attributed_spans_includes_inferred_excludes_none() {
+        // CHORUS-1 (CH-P0): the character-voice corpus keeps Certain AND
+        // Inferred lines, dropping only unattributed (None) ones.
+        let dir = tempfile::tempdir().unwrap();
+        let st = DialogueStore::open(dir.path()).unwrap();
+        st.upsert_span("book", 2, &span(0, Some("Mara"), AttributionConfidence::Certain), "now", 1)
+            .unwrap();
+        st.upsert_span("book", 2, &span(1, Some("Joren"), AttributionConfidence::Inferred), "now", 1)
+            .unwrap();
+        st.upsert_span("book", 2, &span(2, None, AttributionConfidence::None), "now", 1)
+            .unwrap();
+        // certain_spans keeps only the Certain line…
+        assert_eq!(st.certain_spans("book").unwrap().len(), 1);
+        // …attributed_spans keeps Certain + Inferred, drops None.
+        let attributed = st.attributed_spans("book").unwrap();
+        assert_eq!(attributed.len(), 2);
+        let mut names: Vec<String> = attributed
+            .iter()
+            .filter_map(|(_, s)| s.attribution_name.clone())
+            .collect();
+        names.sort();
+        assert_eq!(names, vec!["Joren".to_string(), "Mara".to_string()]);
     }
 
     #[test]

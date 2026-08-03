@@ -114,11 +114,15 @@ impl ProseStore {
         Ok(())
     }
 
-    /// All profiles for a book, ordered (book aggregate last is not guaranteed;
-    /// callers sort by scope as needed).
+    /// All *narrator* profiles for a book (book aggregate + chapters), ordered.
+    /// CHORUS-1 character voices (scope `character:<name>`) share this table but
+    /// are excluded here so the narrator surfaces (`prose profile` / `prose
+    /// drift`) never see them; the `chorus` path recomputes character profiles
+    /// from dialogue rather than reading them back.
     pub(crate) fn get_all(&self, book_slug: &str) -> Result<Vec<VoiceProfile>> {
         let sql = format!(
-            "SELECT {COLS} FROM prose_profiles WHERE book_slug = ? ORDER BY chapter_ord NULLS FIRST"
+            "SELECT {COLS} FROM prose_profiles WHERE book_slug = ? \
+             AND scope NOT LIKE 'character:%' ORDER BY chapter_ord NULLS FIRST"
         );
         let rows = self.engine.select_all_with(&sql, &[&book_slug])?;
         Ok(rows.iter().filter_map(|r| row_to_profile(r)).collect())
@@ -253,6 +257,24 @@ mod tests {
         assert!((chap.cv - p.cv).abs() < 1e-4);
         let book = all.iter().find(|p| p.scope == VoiceScope::Book).unwrap();
         assert!(book.tier2.is_none()); // shallow → NULL Tier-2 round-trips to None
+    }
+
+    #[test]
+    fn character_scopes_are_isolated_from_the_narrator_get_all() {
+        // CHORUS-1: character voices share the table but must not leak into the
+        // narrator surfaces (`prose profile` / `prose drift` read `get_all`).
+        let (_d, s) = tmp_store();
+        let book = compute_profile("A short book.", VoiceScope::Book, &En, false, 100);
+        s.upsert("book", &book, "2026-08-02T00:00:00Z").unwrap();
+        let mara =
+            compute_profile("Yes. No. Fine.", VoiceScope::Character("Mara".into()), &En, false, 100);
+        s.upsert("book", &mara, "2026-08-02T00:00:00Z").unwrap();
+        // get_all sees only the narrator's book profile…
+        let all = s.get_all("book").unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].scope, VoiceScope::Book);
+        // …but the character row IS persisted (its own stored hash is present).
+        assert!(s.stored_hash("book", "character:Mara").unwrap().is_some());
     }
 
     #[test]

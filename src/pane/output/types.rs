@@ -93,6 +93,11 @@ pub mod kinds {
     /// a stanza's rhyme measured against its declared `poem:` form. Deterministic,
     /// zero-AI; anchored to the verse paragraph.
     pub const POEM: &str = "poem";
+
+    /// INNER-STYLIST-1 (CHORUS CH-P7) — a voice-at-scale observation synthesised
+    /// from the CHORUS pillars (distinctiveness, drift, POV, tense, register).
+    /// Deterministic, book-wide; Praise/Note → Info, Concern → Warning.
+    pub const STYLIST: &str = "stylist";
 }
 
 /// Visual / priority class (RFC §7.4).
