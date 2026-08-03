@@ -27,36 +27,38 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 2.0.1 — GRAPHMIND: Chat with Your Graph
+## Latest release · 2.1.0 — CHORUS: Voice & Style at Book Scale
 
-Read the full notes: [`Documentation/RELEASE_NOTES/2.0.1.md`](Documentation/RELEASE_NOTES/2.0.1.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/2.1.0.md`](Documentation/RELEASE_NOTES/2.1.0.md)
 
-2.0 gave your project a knowledge graph (**SEMNET** — a typed-edge layer connecting every
-node into one interrogable whole). 2.0.1's flagship, **GRAPHMIND**, gives that graph a *mind*:
-it fills itself as you research, and you can **talk to it**. Ask how your book connects — what
-contradicts what, what grounds a claim, how a scene is sourced — and the model answers from the
-graph's *relations*, not just the prose. See [`Documentation/GRAPH.md`](Documentation/GRAPH.md).
+Inkhaven has long measured your *narrator's* voice (NARR-1). 2.1's flagship, **CHORUS**, measures
+the rest of what makes a book's voice hold together: does each **character** sound like themselves
+and distinct from the others, and does the manuscript keep its discipline — one POV per scene, a
+consistent tense, a stable register? *NARR-1 profiles the narrator; CHORUS profiles the cast,
+enforces the rules of the game, and coaches.* All advisory — it never edits your prose. See
+[`Documentation/CHORUS.md`](Documentation/CHORUS.md).
 
 ### What's new
 
-- **The graph builds itself** — deep research (`research --agentic`) persists the clashes it
-  finds as `contradicts` edges; **`graph link <node>`** proposes stance edges from a fact to its
-  nearest related facts. Advisory edges collect in an **edge inbox** to triage —
-  **`graph pending`** on the CLI, or the editor **graph hub `Ctrl+B z`** (`i` inbox, `P` keep /
-  `d` reject).
-- **The Graph AI scope (F9 → Graph)** — the relational sibling of Book scope: retrieves the
-  relevant passages *and* folds in the graph edges touching them, so answers are grounded in how
-  your book connects; reuses the Book-RAG citation contract (invented citations flagged), `p` to
-  see the evidence.
-- **`inkhaven graph ask "<question>"`** — answers by *walking* the graph (search → neighbours →
-  contradictions → paths → grounded answer), honest about what the graph doesn't record.
-- **The in-editor graph walk (`Ctrl+B z → w`)** — the same traversal, streamed live in the AI
-  pane and non-blocking, then the grounded prose answer as a chat turn; `Esc` stops it.
-- **Bounded, multilingual, opt-in** — a `graph` config block (`ask_max_steps`,
-  `ask_search_width`) caps cost (informs, never blocks); EN/RU/ES/FR/DE throughout; tagged
-  `graph_rag` in the cost dashboard.
-- **2.0 gate closed** — a 171k-iteration soak (no leak, consistent store) + a full-codebase panic
-  audit (zero reachable panics); the soak surfaced and fixed a broken edge-store integrity check.
+- **Character voice + the distinctiveness matrix** — each character's dialogue profiled with the
+  *same* engine as the narrator, then z-scored across the cast to flag any two who **read
+  identically** ("Mara and Joren read alike"); plus per-character drift across the arc. Sparse
+  voices are profiled but never flagged. `inkhaven chorus voices`.
+- **POV & tense discipline** — **head-hop** detection (a named non-POV character shown accessing
+  their interiority; declare a scene's POV with a `pov:<name>` / `pov:first` / `pov:omniscient`
+  tag) + **tense** slips. Tense is **English-only and Russian is excluded by design** (RU tense is
+  aspect — the historical present is legitimate; CHORUS says so rather than false-flagging).
+  `inkhaven chorus scan`.
+- **Register & diction drift** — contraction rate / archaism / formality / latinate, tracked per
+  chapter so drift becomes visible.
+- **The Inner Stylist** — the 7th inner-family reader synthesises all three pillars into
+  Praise/Note/Concern observations + grounded LLM coaching (never a rewrite), on the
+  `Ctrl+B Shift+C` review pass and `Ctrl+B J → Y`; CLI `chorus stylist` (`--coach` / `--suppress`)
+  and `chorus report` (the dashboard); own `inner_stylist.db`.
+- **Multilingual + honest** — character voice + head-hop work in Russian; every surface states its
+  limits; `chorus`/`stylist` config knobs inform and cap, never block.
+- **Docs caught up** — a new `CHORUS.md` + seven new tutorials (the knowledge graph, chat with
+  your graph, CHORUS, the worldbuilder, the map editor, WordNet, the Inner Poet).
 
 ### Dependencies & compatibility
 

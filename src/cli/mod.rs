@@ -46,6 +46,7 @@ pub mod terms;
 pub mod snippets;
 pub mod prose;
 pub mod dialogue;
+pub mod chorus;
 pub mod myth;
 pub mod tts;
 pub mod gen_fixture;
@@ -1321,6 +1322,14 @@ pub enum Command {
     #[command(subcommand)]
     Dialogue(DialogueCommand),
 
+    /// 2.1 CHORUS-1 — voice & style at book scale: profile each character's
+    /// dialogue with the narrator's own metric engine (CH-P1 `voices`), and the
+    /// distinctiveness / discipline surfaces that build on it. Needs an LLM only
+    /// for the Inner Stylist's slow track; the measurement is deterministic.
+    /// (The `style` command is the separate editor style-warning report.)
+    #[command(subcommand)]
+    Chorus(ChorusCommand),
+
     /// 1.3.24 PANE-1 — the Output message channel (CLI surface; the pane is TUI).
     #[command(subcommand)]
     Output(OutputCommand),
@@ -2263,6 +2272,62 @@ pub enum ProseCommand {
         book: Option<String>,
         #[arg(long)]
         language: Option<String>,
+    },
+}
+
+/// CHORUS-1 — sub-subcommands under `inkhaven chorus …`.
+#[derive(Debug, Subcommand)]
+pub enum ChorusCommand {
+    /// Character voice fingerprints (CH-P1) — each character's dialogue profiled
+    /// with the narrator's metric engine (rhythm, lexical diversity, hedging,
+    /// interiority), with a confidence from corpus size. Stored under
+    /// `character:<name>` scopes in `.inkhaven/prose.duckdb`.
+    Voices {
+        #[arg(long)]
+        book: Option<String>,
+        /// A single character (default: all).
+        #[arg(long)]
+        character: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Voice-discipline scan (CH-P4) — per-scene POV + head-hop detection
+    /// (a named character other than the scene's POV shown accessing their own
+    /// interiority). Advisory. Declare a scene's POV with a `pov:<name>` /
+    /// `pov:first` / `pov:omniscient` paragraph tag; otherwise it's inferred.
+    Scan {
+        #[arg(long)]
+        book: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// The book-scale voice report (CH-P8) — one dashboard: the narrator's voice
+    /// profile, the character voices + distinctiveness, and the Inner Stylist's
+    /// synthesised observations. `--json` for tooling.
+    Report {
+        #[arg(long)]
+        book: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// The Inner Stylist (CH-P7) — synthesise every pillar (distinctiveness,
+    /// drift, POV, tense, register) into Praise / Note / Concern observations
+    /// about the book's voice at scale. `--coach` streams LLM coaching over the
+    /// findings (needs a provider); `--suppress <key>` silences a finding.
+    Stylist {
+        #[arg(long)]
+        book: Option<String>,
+        /// Turn the findings into grounded LLM coaching (needs a provider).
+        #[arg(long)]
+        coach: bool,
+        /// Silence a finding by its key (from the listing), then exit.
+        #[arg(long)]
+        suppress: Option<String>,
+        /// Un-silence a finding by its key, then exit.
+        #[arg(long)]
+        unsuppress: Option<String>,
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -6664,6 +6729,9 @@ impl Cli {
             }
             Command::Dialogue(cmd) => {
                 dialogue::run(&project, cmd).map_err(Into::into)
+            }
+            Command::Chorus(cmd) => {
+                chorus::run(&project, cmd).map_err(Into::into)
             }
             Command::Prose(cmd) => {
                 prose::run(&project, cmd).map_err(Into::into)
