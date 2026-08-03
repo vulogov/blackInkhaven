@@ -129,3 +129,13 @@ The synthesised Praise/Note/Concern findings + suppression management. (The LLM
 This is a small, highly-regular cycle — three new files copying `prose.rs`, three
 one-line registrations, one docs pass — and it closes the scripting-parity gap
 the 2.x flagships opened.
+
+---
+
+**Status: B-1/B-2/B-3/B-4 SHIPPED on 2.2.0-dev (2026-08-03).** `ink.graph.*`
+(src/scripting/stdlib/graph.rs), `ink.chorus.*` (chorus.rs), `ink.stylist.*`
+(stylist.rs), registered in mod.rs, classified in the sandbox policy
+(`policy.rs` — reads store_read, rebuild/promote/dismiss/suppress store_write),
+docs in GRAPH.md + CHORUS.md. The `every_registered_word_is_classified` policy
+test enforces the classification. Deferred: the blocking LLM words
+(`ink.graph.ask_blocking`, `ink.stylist.coach_blocking`) — opt-in only.

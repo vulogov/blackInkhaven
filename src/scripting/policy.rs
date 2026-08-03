@@ -194,6 +194,33 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.dialogue.violations", category::STORE_READ),
     ("ink.dialogue.spans", category::STORE_READ),
     ("ink.dialogue.refresh", category::STORE_READ),
+    // SEMNET — graph reads over edges.db; rebuild/promote/dismiss mutate the
+    // graph layer (annotation over your nodes; the manuscript is untouched, but
+    // they change persisted edges, so store_write).
+    ("ink.graph.stats", category::STORE_READ),
+    ("ink.graph.neighbors", category::STORE_READ),
+    ("ink.graph.contradicting", category::STORE_READ),
+    ("ink.graph.loci", category::STORE_READ),
+    ("ink.graph.paths", category::STORE_READ),
+    ("ink.graph.pending", category::STORE_READ),
+    ("ink.graph.rebuild", category::STORE_WRITE),
+    ("ink.graph.promote", category::STORE_WRITE),
+    ("ink.graph.dismiss", category::STORE_WRITE),
+    // CHORUS — voice-at-scale reads; they refresh the derived prose/dialogue
+    // caches (not the manuscript), so they stay store_read, like `prose.refresh`.
+    ("ink.chorus.voices", category::STORE_READ),
+    ("ink.chorus.distinct", category::STORE_READ),
+    ("ink.chorus.drift", category::STORE_READ),
+    ("ink.chorus.headhops", category::STORE_READ),
+    ("ink.chorus.tense", category::STORE_READ),
+    ("ink.chorus.register", category::STORE_READ),
+    // INNER-STYLIST — synthesised findings (read); suppress/unsuppress write the
+    // derived inner_stylist.db (not the manuscript), but they change persisted
+    // author decisions, so store_write.
+    ("ink.stylist.findings", category::STORE_READ),
+    ("ink.stylist.suppressions", category::STORE_READ),
+    ("ink.stylist.suppress", category::STORE_WRITE),
+    ("ink.stylist.unsuppress", category::STORE_WRITE),
     // CHAR-1 — character-arc reads; `plan`/`refresh` write only the derived
     // char.duckdb cache (not the manuscript), so they stay store_read too.
     ("ink.char.arc", category::STORE_READ),

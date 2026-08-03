@@ -243,6 +243,25 @@ store computes.
 
 ---
 
+## From a script
+
+The graph is scriptable through Bund words (deterministic; the LLM `graph ask`
+is not a sync word):
+
+```
+ink.graph.stats         ( -- dict )            node/edge counts + per-kind
+ink.graph.neighbors     ( node -- list )       a node's one-hop edges
+ink.graph.contradicting ( node -- list )       stance clashes touching it
+ink.graph.loci          ( node -- list )       the primary-source loci it cites
+ink.graph.paths         ( from to -- list|nil ) a bounded citation/link path
+ink.graph.pending       ( -- list )            the judged edge inbox
+ink.graph.rebuild       ( -- dict )            re-derive structural edges
+ink.graph.promote       ( edge -- bool )       judged → promoted
+ink.graph.dismiss       ( edge -- )            delete a stance edge
+```
+
+---
+
 ## Storage & safety
 
 The graph lives in `edges.db` — its own DuckDB store beside `metadata.db`,

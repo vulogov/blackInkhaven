@@ -162,6 +162,27 @@ All knobs inform and cap — per Inkhaven's permissive principle, they never blo
 
 ---
 
+## From a script
+
+The deterministic surfaces are Bund words (all `-- list`/`-- dict`, zero-AI):
+
+```
+ink.chorus.voices    ( -- list )  per-character voice fingerprints
+ink.chorus.distinct  ( -- dict )  the distinctiveness matrix
+ink.chorus.drift     ( -- list )  per-character voice drift
+ink.chorus.headhops  ( -- list )  POV / head-hop findings
+ink.chorus.tense     ( -- dict )  the tense summary (or the honest reason)
+ink.chorus.register  ( -- dict )  per-chapter register + drifts
+
+ink.stylist.findings     ( -- list )  the synthesised Praise/Note/Concern, minus suppressions
+ink.stylist.suppress     ( key -- )    silence a finding by its key
+ink.stylist.suppressions ( -- list )   the silenced keys
+```
+
+(The knowledge graph has the parallel `ink.graph.*` surface — see
+[`GRAPH.md`](GRAPH.md).) The LLM coaching is not a sync word; use
+`chorus stylist --coach`.
+
 ## What CHORUS is *not*
 
 - Not a style *corrector* — it flags, it never rewrites.
@@ -174,6 +195,6 @@ All knobs inform and cap — per Inkhaven's permissive principle, they never blo
 
 ## Not yet wired
 
-A Bund `ink.chorus.*` scripting surface is the natural remaining step (the CLI +
-the in-editor overview/report/engage cover the interactive workflows). Tense
-covers EN/DE/FR/ES; other languages beyond Russian are simply not built yet.
+Tense covers EN/DE/FR/ES; other languages beyond Russian are simply not built
+yet. A *blocking* Bund word for the LLM coaching (`ink.stylist.coach_blocking`)
+could follow if wanted; the deterministic surface is complete.
