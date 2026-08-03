@@ -7,8 +7,11 @@
 //! reader (CH-P7). See `Documentation/PROPOSALS/CHORUS-1_PLAN.md`.
 //!
 //! CH-P1 lands character voice fingerprinting ([`voices`]); CH-P2 the
-//! distinctiveness matrix ([`distinct`]); CH-P3 per-character drift ([`drift`]).
+//! distinctiveness matrix ([`distinct`]); CH-P3 per-character drift ([`drift`]);
+//! CH-P4 POV & head-hop discipline ([`pov`], [`vocab`]).
 
 pub(crate) mod distinct;
 pub(crate) mod drift;
+pub(crate) mod pov;
+pub(crate) mod vocab;
 pub(crate) mod voices;
