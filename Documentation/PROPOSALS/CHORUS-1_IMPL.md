@@ -264,3 +264,19 @@ The seventh inner-family member, cloning `src/inner_poet/`.
    surface rather than inventing a new namespace.
 4. **DE/FR/ES tense** — ship English-only first; add others only with per-language
    validation (the RU exclusion is permanent by design).
+
+---
+
+**Status: CHORUS-1 shipped on 2.1.0-dev (2026-08-02).** CH-P0 substrate → P1
+character fingerprints → P2 distinctiveness matrix → P3 per-character drift → P4
+POV/head-hop → P5 tense (English-gated, Russian excluded) → P6 register → P7 the
+Inner Stylist reader (CLI-complete) → P7b review-pass + `Ctrl+B J → Y` hub → P8
+`chorus report` dashboard → P9 capstone docs (`CHORUS.md`, CONFIGURATION,
+KEYBINDING, README, PROSE_VOICE). Surfaces: `inkhaven chorus voices / scan /
+report / stylist` + the `Ctrl+B Shift+C` review pass + `Ctrl+B J → Y`.
+
+**Deferred (net-new, beyond the RFC):** a Bund `ink.chorus.*` scripting surface;
+an interactive TUI report modal + the Inner Stylist's in-editor engage-to-Thoughts
+(the CLI `chorus stylist --coach` covers the coaching today); DE/FR/ES tense
+(English-only ships; Russian is excluded permanently by design). A companion-book
+chapter can follow.

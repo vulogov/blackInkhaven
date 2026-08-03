@@ -2011,6 +2011,31 @@ the config for that run only; `--context` prints the composed grounding block
 the model would receive instead of the human-readable passage listing. See
 [Tutorial 87 — Chat with Your Book](Tutorials/87-chat-with-your-book.md).
 
+## 2.1 — CHORUS: voice & style at book scale (CHORUS-1)
+
+### `chorus` + `stylist` — voice-at-scale knobs
+
+CHORUS ([`CHORUS.md`](CHORUS.md)) profiles the cast's voices, enforces POV/tense/
+register discipline, and coaches via the Inner Stylist. All knobs are advisory —
+per the permissive principle they inform and cap, they never block.
+
+| Key | Type | Default | Meaning |
+| --- | ---- | ------- | ------- |
+| `chorus.distinct_threshold` | float | `0.5` | The RMS z-distance below which two characters' voices are flagged **indistinguishable** (genre-relative — the baseline is your own cast's spread). Lower = only near-identical pairs flagged. |
+| `chorus.distinct_ignore_pairs` | list | `[]` | Character pairs to never flag — deliberate twins, a uniform chorus, aliases. Each entry is two names separated by `|`, order- and case-insensitive: `["Mara|Joren"]`. |
+| `chorus.register_drift_threshold` | float | `0.08` | The change in a register metric (contraction rate / archaism / formality / latinate) versus chapter 1 that flags a **register drift**. |
+| `stylist.enabled` | bool | `true` | Master switch for the Inner Stylist (the voice-at-scale coach). |
+| `stylist.session_budget` | float | `0.15` | Informative daily budget (USD) for the LLM coaching track — shown in the cost dashboard, never enforced. |
+| `stylist.language` | string | (project) | Language override for the coaching prompt. |
+
+```hjson
+chorus:  { distinct_threshold: 0.5, distinct_ignore_pairs: ["Mara|Joren"], register_drift_threshold: 0.08 }
+stylist: { enabled: true, session_budget: 0.15 }
+```
+
+CLI: `inkhaven chorus voices / scan / report / stylist`; in the editor the Inner
+Stylist rides the `Ctrl+B Shift+C` review pass and `Ctrl+B J → Y`.
+
 ## 2.x — GRAPHMIND: chat with your graph (GRAPHMIND-1)
 
 ### `graph` (2.x+) — the knowledge-graph AI surfaces
