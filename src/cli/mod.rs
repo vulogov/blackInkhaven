@@ -2291,6 +2291,16 @@ pub enum ChorusCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Voice-discipline scan (CH-P4) — per-scene POV + head-hop detection
+    /// (a named character other than the scene's POV shown accessing their own
+    /// interiority). Advisory. Declare a scene's POV with a `pov:<name>` /
+    /// `pov:first` / `pov:omniscient` paragraph tag; otherwise it's inferred.
+    Scan {
+        #[arg(long)]
+        book: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// DIALOG-1 — sub-subcommands under `inkhaven dialogue …`.

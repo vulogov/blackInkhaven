@@ -24,7 +24,63 @@ pub fn run(project: &Path, cmd: ChorusCommand) -> Result<()> {
         ChorusCommand::Voices { book, character, json } => {
             voices(project, book.as_deref(), character.as_deref(), json)
         }
+        ChorusCommand::Scan { book, json } => scan(project, book.as_deref(), json),
     }
+}
+
+fn scan(project: &Path, book_name: Option<&str>, json: bool) -> Result<()> {
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout.clone(), &cfg)?;
+    let h = Hierarchy::load(&store)?;
+    let book = super::resolve_user_book(&h, book_name, "chorus").map_err(Error::Store)?;
+
+    let findings = crate::chorus::pov::scan_head_hops(&layout, &h, &cfg, book);
+
+    if json {
+        let arr: Vec<serde_json::Value> = findings
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "chapter": s.chapter_ord,
+                    "scene": s.scene_index,
+                    "pov": s.pov.describe(),
+                    "first_para": s.first_para.to_string(),
+                    "head_hops": s.hops.iter()
+                        .map(|hh| serde_json::json!({"experiencer": hh.experiencer, "count": hh.count}))
+                        .collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&arr).unwrap_or_default());
+        return Ok(());
+    }
+
+    println!("Voice discipline — `{}` [{}]", book.title, cfg.language);
+    println!("{}", "─".repeat(64));
+    println!("POV / head-hop (advisory)");
+    if findings.is_empty() {
+        println!("  ✓ no head-hops found — interiority stays with each scene's POV");
+    } else {
+        for s in &findings {
+            println!("  ch.{} · scene {} ({})", s.chapter_ord, s.scene_index, s.pov.describe());
+            for hh in &s.hops {
+                let times = if hh.count == 1 { String::new() } else { format!(" ({}×)", hh.count) };
+                println!(
+                    "      ⚠ {}'s interiority leaks{times} — not the scene's POV",
+                    hh.experiencer
+                );
+            }
+        }
+        println!("{}", "─".repeat(64));
+        println!(
+            "Declare a scene's POV with a `pov:<name>` (or `pov:first` / `pov:omniscient`)\n\
+             paragraph tag to silence false positives."
+        );
+    }
+    println!("{}", "─".repeat(64));
+    Ok(())
 }
 
 fn now() -> String {
