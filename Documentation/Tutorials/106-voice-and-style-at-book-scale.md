@@ -43,7 +43,7 @@ inkhaven chorus scan
 POV / head-hop (advisory)
   ch.3 · scene 2 (POV Mara)
       ⚠ Joren's interiority leaks — not the scene's POV
-Tense discipline (advisory, English-only)
+Tense discipline (advisory; EN/DE/FR/ES, Russian excluded)
   ch.5 · scene 1 (dominant: past)
       ⚠ present-tense slip: "She is at the door now, waiting."
 Register & diction (advisory, vs. chapter 1)
@@ -60,7 +60,7 @@ positives:
 | `pov:first` | first person — any *named* character's interiority leaks |
 | `pov:omniscient` | deliberately multi-POV — head-hop off |
 
-**Tense is English-only.** Russian narrative tense is aspect (the historical
+**Tense covers EN/DE/FR/ES; Russian is excluded by design.** Russian narrative tense is aspect (the historical
 present and perfective/imperfective interleaving are legitimate), so CHORUS says
 "not analysed" rather than false-flagging a Russian manuscript. Character voice
 and head-hop *do* work in Russian.

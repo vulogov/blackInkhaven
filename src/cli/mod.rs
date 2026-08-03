@@ -1377,6 +1377,10 @@ pub enum Command {
         /// Skip the timeline critique.
         #[arg(long = "no-timeline")]
         no_timeline: bool,
+        /// Skip the SENTINEL continuity ledger (co-location, numeric, char-facts,
+        /// referenced-before-introduced).
+        #[arg(long = "no-continuity")]
+        no_continuity: bool,
     },
     /// Road to 1.4.0 — the unified AI cost dashboard: today's LLM call tallies for
     /// each capped subsystem (world slow track, Inner Socrates slow track) vs their
@@ -1798,6 +1802,33 @@ pub enum ContinuityCommand {
     /// Dump the extracted continuity bible — each
     /// character's facts, by attribute + chapter.
     List,
+    /// SENTINEL — the unified deterministic continuity ledger: run every
+    /// detector (co-location, timeline, numeric, char-facts, and the
+    /// referenced-before-introduced invariant), deduped and ranked. Exits
+    /// non-zero when any Contradiction-severity break is found (for CI).
+    Check {
+        /// Only run these detectors (repeatable): co_location, timeline,
+        /// numeric, char_facts, introduce. Default: all.
+        #[arg(long)]
+        only: Vec<String>,
+        /// Skip these detectors (repeatable). Applied after `--only`.
+        #[arg(long)]
+        skip: Vec<String>,
+        /// Emit findings as JSON instead of human-readable text.
+        #[arg(long)]
+        json: bool,
+        /// Also run the LLM coherence pass (cross-paragraph contradictions the
+        /// deterministic detectors can't see). Explicit + cost-capped.
+        #[arg(long)]
+        coherence: bool,
+        /// Per-call soft cap (estimated tokens) for `--coherence`; the call is
+        /// skipped with a notice if exceeded unless `--force`.
+        #[arg(long, default_value_t = 8000)]
+        max_cost: usize,
+        /// Run the coherence pass even if the cost estimate exceeds `--max-cost`.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 /// 1.2.19+ C.4 — sub-subcommands under
@@ -6701,7 +6732,7 @@ impl Cli {
             Command::InnerSocrates(cmd) => inner_socrates::run(&project, cmd).map_err(Into::into),
             Command::InnerEditor(cmd) => inner_editor::run(&project, cmd).map_err(Into::into),
             Command::Companions => companions::run(&project).map_err(Into::into),
-            Command::Check { paragraph, book_name, no_fact, no_socrates, no_timeline } => {
+            Command::Check { paragraph, book_name, no_fact, no_socrates, no_timeline, no_continuity } => {
                 check::run(
                     &project,
                     paragraph.as_deref(),
@@ -6709,6 +6740,7 @@ impl Cli {
                     no_fact,
                     no_socrates,
                     no_timeline,
+                    no_continuity,
                 )
                 .map_err(Into::into)
             }

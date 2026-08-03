@@ -6429,6 +6429,139 @@ impl super::super::App {
         f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
     }
 
+    /// CHORUS CH-P7b — the Inner Stylist overview menu (`Ctrl+B J → Y`).
+    pub(in crate::tui::app) fn draw_inner_stylist_overview_modal(&self, f: &mut ratatui::Frame, area: Rect) {
+        if !matches!(self.modal, Modal::InnerStylistOverview) {
+            return;
+        }
+        let width = area.width.saturating_sub(8).clamp(44, 62);
+        let height = 11u16.min(area.height.saturating_sub(2));
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" ❝ Inner Stylist ")
+            .border_style(Style::default().fg(self.theme.modal_border).add_modifier(Modifier::BOLD))
+            .style(Style::default().bg(self.theme.modal_bg).fg(self.theme.modal_fg));
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let dim = Style::default().add_modifier(Modifier::DIM);
+        let lines = vec![
+            Line::from(""),
+            Line::from("  F   synthesise the book's voice → Output"),
+            Line::from("      (distinctiveness · drift · POV · tense · register)"),
+            Line::from(""),
+            Line::from("  E   engage the AI coach → Thoughts pane"),
+            Line::from(""),
+            Line::from("  R   the voice report dashboard"),
+            Line::from(""),
+            Line::from(Span::styled("  the Inner Stylist observes; it never rewrites.  Esc closes.", dim)),
+        ];
+        f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+    }
+
+    /// CHORUS CH-P8 — the scrollable book-scale voice report dashboard.
+    pub(in crate::tui::app) fn draw_style_report_modal(&self, f: &mut ratatui::Frame, area: Rect) {
+        let Modal::StyleReport { rows, cursor } = &self.modal else {
+            return;
+        };
+        let width = area.width.saturating_sub(6).clamp(52, 92);
+        let height = area.height.saturating_sub(4).max(12);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Voice report ")
+            .border_style(Style::default().fg(self.theme.modal_border).add_modifier(Modifier::BOLD))
+            .style(Style::default().bg(self.theme.modal_bg).fg(self.theme.modal_fg));
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let list_h = inner.height.saturating_sub(1).max(1) as usize;
+        let cur = (*cursor).min(rows.len().saturating_sub(1));
+        let start = if cur >= list_h { cur + 1 - list_h } else { 0 };
+        let dim = Style::default().add_modifier(Modifier::DIM);
+        let head = Style::default().fg(self.theme.modal_border).add_modifier(Modifier::BOLD);
+        let mut lines: Vec<Line> = Vec::new();
+        for r in rows.iter().skip(start).take(list_h) {
+            // Section headers (no leading space) are bold; indented rows are body.
+            let styled = if !r.starts_with(' ') && !r.is_empty() {
+                Line::from(Span::styled(truncate_to(r, 90), head))
+            } else {
+                Line::from(Span::styled(truncate_to(r, 90), dim))
+            };
+            lines.push(styled);
+        }
+        let body_rect = Rect { x: inner.x, y: inner.y, width: inner.width, height: list_h as u16 };
+        f.render_widget(Paragraph::new(lines), body_rect);
+
+        let footer = Rect { x: inner.x, y: inner.y + inner.height - 1, width: inner.width, height: 1 };
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(" ↑↓ scroll · Esc close", dim))),
+            footer,
+        );
+    }
+
+    /// SENTINEL-1 (CT-P6) — the scrollable continuity ledger dashboard. Like the
+    /// voice report, but the cursor row is highlighted (Enter jumps to its
+    /// paragraph when it has one).
+    pub(in crate::tui::app) fn draw_continuity_ledger_modal(&self, f: &mut ratatui::Frame, area: Rect) {
+        let Modal::ContinuityLedger { rows, anchors, cursor } = &self.modal else {
+            return;
+        };
+        let width = area.width.saturating_sub(6).clamp(52, 92);
+        let height = area.height.saturating_sub(4).max(12);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Continuity ledger ")
+            .border_style(Style::default().fg(self.theme.modal_border).add_modifier(Modifier::BOLD))
+            .style(Style::default().bg(self.theme.modal_bg).fg(self.theme.modal_fg));
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let list_h = inner.height.saturating_sub(1).max(1) as usize;
+        let cur = (*cursor).min(rows.len().saturating_sub(1));
+        let start = if cur >= list_h { cur + 1 - list_h } else { 0 };
+        let dim = Style::default().add_modifier(Modifier::DIM);
+        let head = Style::default().fg(self.theme.modal_border).add_modifier(Modifier::BOLD);
+        let sel = Style::default().bg(self.theme.modal_border).fg(self.theme.modal_bg).add_modifier(Modifier::BOLD);
+        let mut lines: Vec<Line> = Vec::new();
+        for (i, r) in rows.iter().enumerate().skip(start).take(list_h) {
+            let is_cursor = i == cur && anchors.get(i).copied().flatten().is_some();
+            let style = if is_cursor {
+                sel
+            } else if !r.starts_with(' ') && !r.is_empty() {
+                head
+            } else {
+                dim
+            };
+            lines.push(Line::from(Span::styled(truncate_to(r, 90), style)));
+        }
+        let body_rect = Rect { x: inner.x, y: inner.y, width: inner.width, height: list_h as u16 };
+        f.render_widget(Paragraph::new(lines), body_rect);
+
+        let footer = Rect { x: inner.x, y: inner.y + inner.height - 1, width: inner.width, height: 1 };
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                " ↑↓ scroll · Enter jump · k coherence pass (LLM) · Esc close",
+                dim,
+            ))),
+            footer,
+        );
+    }
+
     pub(in crate::tui::app) fn draw_inner_socrates_overview_modal(
         &mut self,
         f: &mut ratatui::Frame,

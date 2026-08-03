@@ -38,6 +38,7 @@ pub const SOURCES: &[&str] = &[
     "rigor",
     "oracle",
     "poem",
+    "continuity",
     "other",
 ];
 
@@ -80,6 +81,7 @@ pub fn message_source(msg: &Message) -> &'static str {
         kinds::RIGOR => "rigor",
         kinds::ORACLE => "oracle",
         kinds::POEM => "poem",
+        kinds::CONTINUITY => "continuity",
         _ => "other",
     }
 }

@@ -76,6 +76,9 @@ pub struct Config {
     /// INNER-STYLIST-1 (2.1) — the voice-at-scale coach (Inner-family reader).
     #[serde(default)]
     pub stylist: StylistConfig,
+    /// SENTINEL-1 (2.2) — the unified continuity ledger.
+    #[serde(default)]
+    pub continuity: ContinuityConfig,
     #[serde(default)]
     pub dialogue: DialogueConfig,
     #[serde(default)]
@@ -270,6 +273,7 @@ impl Default for Config {
             prose: ProseConfig::default(),
             chorus: ChorusConfig::default(),
             stylist: StylistConfig::default(),
+            continuity: ContinuityConfig::default(),
             dialogue: DialogueConfig::default(),
             utopia: UtopiaConfig::default(),
             char: CharConfig::default(),
@@ -4384,6 +4388,69 @@ impl Default for StylistConfig {
     }
 }
 
+/// SENTINEL-1 (CT-P3) — `continuity:` block. The unified continuity ledger's one
+/// config namespace: a master switch, the incremental-watch toggle + cooldown,
+/// per-detector toggles, and the referenced-before-introduced tolerance. The
+/// existing scattered knobs (`timeline.critique`, `editor.echo_*`) are untouched —
+/// the engine reads those where relevant; this block only adds. Deterministic +
+/// free at the core, so it's on by default (the permissive principle).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ContinuityConfig {
+    /// Master switch for the continuity ledger in the review pass. When off, the
+    /// review pass emits no `continuity` findings (the standalone `inkhaven
+    /// continuity check` command still runs — it's explicitly invoked).
+    pub enabled: bool,
+    /// CT-P5 — re-check the edit's scope on save (incremental "watches itself").
+    pub ambient: bool,
+    /// Minimum seconds between ambient re-checks (CT-P5 throttle).
+    pub ambient_cooldown_secs: u64,
+    /// Per-detector toggles. All on by default. `timeline` gates the engine's own
+    /// timeline critique; note the review pass already surfaces orphan / overlap
+    /// on their own line, so it excludes the engine's timeline pass regardless of
+    /// this flag — this toggle governs the standalone `continuity check`.
+    pub co_location: bool,
+    pub timeline: bool,
+    pub numeric: bool,
+    pub char_facts: bool,
+    pub introduce: bool,
+    /// Referenced-before-introduced tolerance, in chapters: a first reference at
+    /// most this many chapters before the introduction is treated as
+    /// foreshadowing, not a break (0 = flag any earlier-chapter reference).
+    pub introduce_tolerance: u32,
+}
+
+impl Default for ContinuityConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            ambient: false,
+            ambient_cooldown_secs: 30,
+            co_location: true,
+            timeline: true,
+            numeric: true,
+            char_facts: true,
+            introduce: true,
+            introduce_tolerance: 0,
+        }
+    }
+}
+
+impl ContinuityConfig {
+    /// Whether a detector (by its `continuity_intel::engine::DETECTORS` key) is
+    /// enabled in config. Unknown keys default enabled (forward-compatible).
+    pub fn detector_enabled(&self, key: &str) -> bool {
+        match key {
+            "co_location" => self.co_location,
+            "timeline" => self.timeline,
+            "numeric" => self.numeric,
+            "char_facts" => self.char_facts,
+            "introduce" => self.introduce,
+            _ => true,
+        }
+    }
+}
+
 /// DIALOG-1 — `dialogue:` block. Tunes the dialogue detection windows,
 /// finding thresholds, and the genre-specific verb extras. All optional;
 /// omitting the block uses these defaults (RFC §13).
@@ -5968,6 +6035,29 @@ mod research_config_tests {
         let cfg3: Config = serde_hjson::from_str("{ stylist: { enabled: false } }").unwrap();
         assert!(!cfg3.stylist.enabled);
         assert_eq!(cfg3.stylist.session_budget, 0.15); // untouched default
+    }
+
+    #[test]
+    fn continuity_block_defaults_and_overrides() {
+        // Absent → the SENTINEL defaults: on, all detectors on, tolerance 0.
+        let cfg: Config = serde_hjson::from_str("{}").unwrap();
+        assert!(cfg.continuity.enabled);
+        assert!(!cfg.continuity.ambient);
+        assert_eq!(cfg.continuity.introduce_tolerance, 0);
+        for key in ["co_location", "timeline", "numeric", "char_facts", "introduce"] {
+            assert!(cfg.continuity.detector_enabled(key), "{key} on by default");
+        }
+        // A partial block overrides only the named fields; the rest stay default.
+        let cfg2: Config = serde_hjson::from_str(
+            "{ continuity: { numeric: false, introduce_tolerance: 2 } }",
+        )
+        .unwrap();
+        assert!(!cfg2.continuity.detector_enabled("numeric"));
+        assert!(cfg2.continuity.detector_enabled("co_location")); // untouched default
+        assert_eq!(cfg2.continuity.introduce_tolerance, 2);
+        assert!(cfg2.continuity.enabled); // untouched default
+        // An unknown detector key is forward-compatibly enabled.
+        assert!(cfg.continuity.detector_enabled("future_detector"));
     }
 
     #[test]

@@ -284,7 +284,7 @@ pub(crate) fn slow_track_for_tui(
 /// preflight (soft cap overridable with `force`), retry-on-transient with
 /// backoff, usage record, and response parse. Used by both the per-paragraph slow
 /// track and the cross-paragraph coherence pass.
-fn slow_llm_call(
+pub(crate) fn slow_llm_call(
     project: &Path,
     label: &str,
     system: &str,

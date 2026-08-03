@@ -33,7 +33,97 @@ pub fn run(project: &Path, cmd: ContinuityCommand) -> Result<()> {
             extract(project, provider.as_deref())
         }
         ContinuityCommand::List => list(project),
+        ContinuityCommand::Check { only, skip, json, coherence, max_cost, force } => {
+            check(project, &only, &skip, json, coherence, max_cost, force)
+        }
     }
+}
+
+/// SENTINEL — the unified deterministic continuity ledger. Runs the engine over
+/// the selected detectors, prints the ranked findings (human or JSON), and exits
+/// non-zero when any Contradiction survives.
+#[allow(clippy::too_many_arguments)]
+fn check(
+    project: &Path,
+    only: &[String],
+    skip: &[String],
+    json: bool,
+    coherence: bool,
+    max_cost: usize,
+    force: bool,
+) -> Result<()> {
+    use crate::continuity_intel::{coherence as coh, engine, Severity};
+
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
+    let hierarchy = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
+
+    // Nudge on a mistyped detector name rather than silently running nothing.
+    for key in only.iter().chain(skip.iter()) {
+        if !engine::DETECTORS.contains(&key.to_ascii_lowercase().as_str()) {
+            eprintln!(
+                "continuity check: unknown detector `{key}` (known: {})",
+                engine::DETECTORS.join(", "),
+            );
+        }
+    }
+
+    let sel = engine::selector(only, skip);
+    let mut findings = engine::run(&store, &cfg, &layout, &hierarchy, &sel);
+
+    // The explicit, cost-capped LLM coherence pass (opt-in) — merged, re-ranked.
+    if coherence {
+        eprintln!("continuity check: running the LLM coherence pass…");
+        let slow = coh::run(project, None, max_cost, force).map_err(Error::Store)?;
+        findings.extend(slow);
+        crate::continuity_intel::rank(&mut findings);
+    }
+
+    let contradictions = findings.iter().filter(|f| f.severity == Severity::Contradiction).count();
+
+    if json {
+        let rows: Vec<serde_json::Value> = findings
+            .iter()
+            .map(|f| {
+                serde_json::json!({
+                    "kind": f.kind,
+                    "severity": f.severity.label(),
+                    "chapter": f.chapter,
+                    "anchor": f.anchor.map(|a| a.to_string()),
+                    "entities": f.entities,
+                    "message": f.message,
+                    "source": f.source,
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&rows).unwrap_or_else(|_| "[]".into()));
+    } else if findings.is_empty() {
+        println!("\u{2713} no continuity breaks detected");
+    } else {
+        for f in &findings {
+            let icon = match f.severity {
+                Severity::Contradiction => "\u{2297}", // ⊗
+                Severity::Warning => "\u{26a0}",       // ⚠
+                Severity::Info => "\u{25cf}",          // ●
+            };
+            let where_ = if f.chapter == 0 { String::new() } else { format!(" (ch. {})", f.chapter) };
+            println!("{icon} [{}] {}{where_}", f.source, f.message);
+        }
+        println!(
+            "\n{} finding(s): {contradictions} contradiction(s), {} other.",
+            findings.len(),
+            findings.len() - contradictions,
+        );
+    }
+
+    if contradictions > 0 {
+        return Err(Error::Store(format!(
+            "{contradictions} continuity contradiction(s) — see above"
+        )));
+    }
+    Ok(())
 }
 
 // The continuity-extract system prompt now lives, localized, in

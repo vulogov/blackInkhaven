@@ -36,6 +36,7 @@ pub fn run(
     no_fact: bool,
     no_socrates: bool,
     no_timeline: bool,
+    no_continuity: bool,
 ) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
@@ -109,6 +110,14 @@ pub fn run(
         run_timeline_critique(&hierarchy, &cfg, &mut findings);
     }
 
+    // ── project-wide checker: SENTINEL continuity ledger ─────────────────────
+    // `timeline` is skipped — the critique above already covers orphan / overlap.
+    let mut continuity_ran = false;
+    if !no_continuity && cfg.continuity.enabled {
+        continuity_ran = true;
+        run_continuity(&layout, &cfg, &store, &hierarchy, &mut findings);
+    }
+
     print_report(
         &findings,
         scope.len(),
@@ -116,9 +125,39 @@ pub fn run(
         world.is_some(),
         socratic.is_some(),
         timeline_ran,
+        continuity_ran,
         &hierarchy,
     );
     Ok(())
+}
+
+/// SENTINEL (CT-P4) — run the unified continuity engine (minus `timeline`, which
+/// has its own section) and fold its findings into the `check` summary. Each
+/// native finding also lands in the Output store via the engine's own emit path
+/// on the TUI; here we collect the summary rows.
+fn run_continuity(
+    layout: &ProjectLayout,
+    cfg: &Config,
+    store: &Store,
+    hierarchy: &Hierarchy,
+    findings: &mut Vec<CheckFinding>,
+) {
+    use crate::continuity_intel::{engine, Severity};
+    let sel = engine::selector(&[], &["timeline".to_string()]);
+    for f in engine::run(store, cfg, layout, hierarchy, &sel) {
+        let severity = match f.severity {
+            Severity::Contradiction => "contradiction",
+            Severity::Warning => "warning",
+            Severity::Info => "info",
+        };
+        findings.push(CheckFinding {
+            checker: "continuity",
+            severity: severity.to_string(),
+            label: f.source.to_string(),
+            body: f.message.clone(),
+            paragraph: f.anchor,
+        });
+    }
 }
 
 /// Resolve the scope to `(paragraph_id, prose)` pairs: a single `--paragraph`, or
@@ -261,6 +300,7 @@ fn print_report(
     fact_ran: bool,
     socratic_ran: bool,
     timeline_ran: bool,
+    continuity_ran: bool,
     hierarchy: &Hierarchy,
 ) {
     if findings.is_empty() {
@@ -300,6 +340,11 @@ fn print_report(
     } else {
         let why = if !cfg.timeline.enabled { " (timeline off)" } else { "" };
         println!("  timeline   : skipped{why}");
+    }
+    if continuity_ran {
+        println!("  continuity : {}", count("continuity"));
+    } else {
+        println!("  continuity : skipped");
     }
     println!("  ─────────────");
     println!("  TOTAL      : {}", findings.len());
