@@ -33,16 +33,26 @@ pub fn run(project: &Path, cmd: ContinuityCommand) -> Result<()> {
             extract(project, provider.as_deref())
         }
         ContinuityCommand::List => list(project),
-        ContinuityCommand::Check { only, skip, json } => check(project, &only, &skip, json),
+        ContinuityCommand::Check { only, skip, json, coherence, max_cost, force } => {
+            check(project, &only, &skip, json, coherence, max_cost, force)
+        }
     }
 }
 
 /// SENTINEL — the unified deterministic continuity ledger. Runs the engine over
 /// the selected detectors, prints the ranked findings (human or JSON), and exits
 /// non-zero when any Contradiction survives.
-fn check(project: &Path, only: &[String], skip: &[String], json: bool) -> Result<()> {
-    use crate::continuity_intel::engine;
-    use crate::continuity_intel::Severity;
+#[allow(clippy::too_many_arguments)]
+fn check(
+    project: &Path,
+    only: &[String],
+    skip: &[String],
+    json: bool,
+    coherence: bool,
+    max_cost: usize,
+    force: bool,
+) -> Result<()> {
+    use crate::continuity_intel::{coherence as coh, engine, Severity};
 
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
@@ -61,7 +71,16 @@ fn check(project: &Path, only: &[String], skip: &[String], json: bool) -> Result
     }
 
     let sel = engine::selector(only, skip);
-    let findings = engine::run(&store, &cfg, &layout, &hierarchy, &sel);
+    let mut findings = engine::run(&store, &cfg, &layout, &hierarchy, &sel);
+
+    // The explicit, cost-capped LLM coherence pass (opt-in) — merged, re-ranked.
+    if coherence {
+        eprintln!("continuity check: running the LLM coherence pass…");
+        let slow = coh::run(project, None, max_cost, force).map_err(Error::Store)?;
+        findings.extend(slow);
+        crate::continuity_intel::rank(&mut findings);
+    }
+
     let contradictions = findings.iter().filter(|f| f.severity == Severity::Contradiction).count();
 
     if json {

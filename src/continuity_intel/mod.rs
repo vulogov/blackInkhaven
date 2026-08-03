@@ -16,6 +16,7 @@ use std::collections::HashSet;
 
 use uuid::Uuid;
 
+pub(crate) mod coherence;
 pub(crate) mod engine;
 pub(crate) mod introduce;
 pub(crate) mod watch;

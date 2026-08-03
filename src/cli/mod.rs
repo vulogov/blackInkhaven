@@ -1817,6 +1817,17 @@ pub enum ContinuityCommand {
         /// Emit findings as JSON instead of human-readable text.
         #[arg(long)]
         json: bool,
+        /// Also run the LLM coherence pass (cross-paragraph contradictions the
+        /// deterministic detectors can't see). Explicit + cost-capped.
+        #[arg(long)]
+        coherence: bool,
+        /// Per-call soft cap (estimated tokens) for `--coherence`; the call is
+        /// skipped with a notice if exceeded unless `--force`.
+        #[arg(long, default_value_t = 8000)]
+        max_cost: usize,
+        /// Run the coherence pass even if the cost estimate exceeds `--max-cost`.
+        #[arg(long)]
+        force: bool,
     },
 }
 
