@@ -2301,6 +2301,25 @@ pub enum ChorusCommand {
         #[arg(long)]
         json: bool,
     },
+    /// The Inner Stylist (CH-P7) — synthesise every pillar (distinctiveness,
+    /// drift, POV, tense, register) into Praise / Note / Concern observations
+    /// about the book's voice at scale. `--coach` streams LLM coaching over the
+    /// findings (needs a provider); `--suppress <key>` silences a finding.
+    Stylist {
+        #[arg(long)]
+        book: Option<String>,
+        /// Turn the findings into grounded LLM coaching (needs a provider).
+        #[arg(long)]
+        coach: bool,
+        /// Silence a finding by its key (from the listing), then exit.
+        #[arg(long)]
+        suppress: Option<String>,
+        /// Un-silence a finding by its key, then exit.
+        #[arg(long)]
+        unsuppress: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// DIALOG-1 — sub-subcommands under `inkhaven dialogue …`.

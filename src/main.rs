@@ -55,6 +55,7 @@ mod prose;
 // DIALOG-1 — dialogue quality & attribution engine.
 mod dialogue;
 mod chorus;
+mod inner_stylist;
 // CHAR-1 — character arc tracking.
 mod character;
 // HAIKU-1 — zero-AI startup / new-paragraph / on-demand haiku.

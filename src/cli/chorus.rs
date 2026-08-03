@@ -25,7 +25,92 @@ pub fn run(project: &Path, cmd: ChorusCommand) -> Result<()> {
             voices(project, book.as_deref(), character.as_deref(), json)
         }
         ChorusCommand::Scan { book, json } => scan(project, book.as_deref(), json),
+        ChorusCommand::Stylist { book, coach, suppress, unsuppress, json } => {
+            stylist(project, book.as_deref(), coach, suppress, unsuppress, json)
+        }
     }
+}
+
+fn stylist(
+    project: &Path,
+    book_name: Option<&str>,
+    coach: bool,
+    suppress: Option<String>,
+    unsuppress: Option<String>,
+    json: bool,
+) -> Result<()> {
+    use crate::inner_stylist::storage::InnerStylistStore;
+
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout.clone(), &cfg)?;
+    let sstore = InnerStylistStore::open_for_project(store.project_root())
+        .map_err(|e| Error::Store(e.to_string()))?;
+
+    // Suppression management short-circuits.
+    if let Some(key) = suppress {
+        sstore.suppress(&key).map_err(|e| Error::Store(e.to_string()))?;
+        println!("silenced `{key}` — the Inner Stylist won't raise it again");
+        return Ok(());
+    }
+    if let Some(key) = unsuppress {
+        sstore.unsuppress(&key).map_err(|e| Error::Store(e.to_string()))?;
+        println!("restored `{key}`");
+        return Ok(());
+    }
+
+    let h = Hierarchy::load(&store)?;
+    let book = super::resolve_user_book(&h, book_name, "stylist").map_err(Error::Store)?;
+
+    let mut findings = crate::inner_stylist::pipeline::gather(&store, &layout, &h, &cfg, book, &now())
+        .map_err(Error::Store)?;
+    let silenced = sstore.all_suppressions().map_err(|e| Error::Store(e.to_string()))?;
+    findings.retain(|f| !silenced.contains(&f.key));
+
+    if coach {
+        let iso = crate::ai::prompts::iso_from_long(cfg.stylist.language.as_deref().unwrap_or(&cfg.language));
+        let lang = crate::prose::resolve_prose_language(Some(iso), &cfg.language).0;
+        let prompt = crate::inner_stylist::slow::build_coach_prompt(&findings, &lang);
+        let coaching = crate::inner_stylist::slow::stylist_llm_call(
+            &cfg,
+            crate::inner_stylist::slow::STYLIST_SYSTEM,
+            &prompt,
+        )
+        .map_err(Error::Store)?;
+        println!("{coaching}");
+        return Ok(());
+    }
+
+    if json {
+        let arr: Vec<serde_json::Value> = findings
+            .iter()
+            .map(|f| {
+                serde_json::json!({
+                    "severity": f.severity.label(),
+                    "kind": f.kind,
+                    "key": f.key,
+                    "message": f.message,
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&arr).unwrap_or_default());
+        return Ok(());
+    }
+
+    println!("Inner Stylist — `{}` [{}]", book.title, cfg.language);
+    println!("{}", "─".repeat(66));
+    if findings.is_empty() {
+        println!("  the book's voice reads clean — nothing to raise");
+    } else {
+        for f in &findings {
+            println!("  {} [{}] {}", f.severity.glyph(), f.kind, f.message);
+            println!("        key: {}  ·  silence with `chorus stylist --suppress {}`", f.key, f.key);
+        }
+    }
+    println!("{}", "─".repeat(66));
+    println!("`chorus stylist --coach` turns these into grounded LLM coaching.");
+    Ok(())
 }
 
 fn scan(project: &Path, book_name: Option<&str>, json: bool) -> Result<()> {
