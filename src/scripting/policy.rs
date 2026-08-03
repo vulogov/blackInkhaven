@@ -221,6 +221,10 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.stylist.suppressions", category::STORE_READ),
     ("ink.stylist.suppress", category::STORE_WRITE),
     ("ink.stylist.unsuppress", category::STORE_WRITE),
+    // SENTINEL — the deterministic continuity ledger; both are read-only sweeps
+    // (the LLM coherence pass is not exposed to Bund).
+    ("ink.continuity.findings", category::STORE_READ),
+    ("ink.continuity.check", category::STORE_READ),
     // CHAR-1 — character-arc reads; `plan`/`refresh` write only the derived
     // char.duckdb cache (not the manuscript), so they stay store_read too.
     ("ink.char.arc", category::STORE_READ),
