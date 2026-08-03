@@ -27,42 +27,43 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 2.1.0 — CHORUS: Voice & Style at Book Scale
+## Latest release · 2.2.0 — SENTINEL: Continuity Intelligence
 
-Read the full notes: [`Documentation/RELEASE_NOTES/2.1.0.md`](Documentation/RELEASE_NOTES/2.1.0.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/2.2.0.md`](Documentation/RELEASE_NOTES/2.2.0.md)
 
-Inkhaven has long measured your *narrator's* voice (NARR-1). 2.1's flagship, **CHORUS**, measures
-the rest of what makes a book's voice hold together: does each **character** sound like themselves
-and distinct from the others, and does the manuscript keep its discipline — one POV per scene, a
-consistent tense, a stable register? *NARR-1 profiles the narrator; CHORUS profiles the cast,
-enforces the rules of the game, and coaches.* All advisory — it never edits your prose. See
-[`Documentation/CHORUS.md`](Documentation/CHORUS.md).
+Inkhaven could already *check* a manuscript's continuity — but only if you knew which of six
+separate commands to run. 2.2's flagship, **SENTINEL**, makes it one always-watching concern:
+*continuity already exists in pieces; SENTINEL unifies them over the knowledge graph, adds the one
+invariant nobody had, and watches incrementally as you write.* Advisory (it flags, it never
+rewrites), deterministic and free at the core (no LLM). See
+[`Documentation/CONTINUITY.md`](Documentation/CONTINUITY.md).
 
 ### What's new
 
-- **Character voice + the distinctiveness matrix** — each character's dialogue profiled with the
-  *same* engine as the narrator, then z-scored across the cast to flag any two who **read
-  identically** ("Mara and Joren read alike"); plus per-character drift across the arc. Sparse
-  voices are profiled but never flagged. `inkhaven chorus voices`.
-- **POV & tense discipline** — **head-hop** detection (a named non-POV character shown accessing
-  their interiority; declare a scene's POV with a `pov:<name>` / `pov:first` / `pov:omniscient`
-  tag) + **tense** slips. Tense is **English-only and Russian is excluded by design** (RU tense is
-  aspect — the historical present is legitimate; CHORUS says so rather than false-flagging).
-  `inkhaven chorus scan`.
-- **Register & diction drift** — contraction rate / archaism / formality / latinate, tracked per
-  chapter so drift becomes visible.
-- **The Inner Stylist** — the 7th inner-family reader synthesises all three pillars into
-  Praise/Note/Concern observations + grounded LLM coaching (never a rewrite), on the
-  `Ctrl+B Shift+C` review pass and `Ctrl+B J → Y`; CLI `chorus stylist` (`--coach` / `--suppress`)
-  and `chorus report` (the dashboard); own `inner_stylist.db`.
-- **Multilingual + honest** — character voice + head-hop work in Russian; every surface states its
-  limits; `chorus`/`stylist` config knobs inform and cap, never block.
-- **Docs caught up** — a new `CHORUS.md` + seven new tutorials (the knowledge graph, chat with
-  your graph, CHORUS, the worldbuilder, the map editor, WordNet, the Inner Poet).
+- **Unify** — one engine runs every deterministic continuity detector and ranks them into one
+  ledger: **co-location** (a character in two places at once), **timeline** (orphans / fuzzy
+  overlaps), **numeric** (direction reversal / duration mismatch, EN/FR/ES), and **character-fact
+  drift** across chapters. `inkhaven continuity check` (`--only`/`--skip`/`--json`, non-zero exit
+  on a contradiction for CI).
+- **Complete** — the invariant nobody had: an entity **referenced before it's introduced** (its
+  first scene, read from the timeline). Same-chapter foreshadowing never flags; Unicode-aware, so
+  it works in every script — *"'Aldous' is referenced in ch. 2 but not introduced until ch. 5."*
+- **Watch** — turn on `continuity.ambient` and every save re-checks only what the edit touched (the
+  paragraph's entities + chapter, read from the SEMNET graph) and shows the delta inline. The book
+  watches itself as you write.
+- **The surfaces** — a `continuity` line on the `Ctrl+B Shift+C` review pass; the **`Ctrl+B Shift+S`
+  ledger dashboard** (ranked findings, Enter jumps to the slip); the opt-in **LLM coherence pass**
+  (`--coherence` / `k` in the ledger) for the cross-paragraph contradictions patterns can't see —
+  explicit, cost-capped; `ink.continuity.{findings,check}` Bund words (read-only).
+- **Multilingual + honest** — SENTINEL inherits each detector's coverage and never claims more; the
+  new `introduce` invariant is language-safe everywhere. `continuity:` config knobs inform, never
+  block.
+- **Docs caught up** — a new `CONTINUITY.md` + Tutorial 111 + the *Developing a Story* companion
+  book audited to the new surface.
 
 ### Dependencies & compatibility
 
-No new dependencies — SEMNET is a DuckDB table beside your existing stores, built on the crate
+No new dependencies — SENTINEL is the payoff of the 2.0 SEMNET graph, built on the crate
 graph you already have; the edge store is created lazily and additively (existing projects gain
 an empty `edges.db` on first open). Compiles warning-free. Test suite → 2769.
 

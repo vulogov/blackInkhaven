@@ -1859,6 +1859,7 @@ impl super::super::App {
                 crate::pane::output::kinds::RIGOR => "⊬ ",
                 crate::pane::output::kinds::ORACLE => "⌥ ",
                 crate::pane::output::kinds::POEM => "♪ ",
+                crate::pane::output::kinds::CONTINUITY => "⧗ ",
                 _ => "",
             };
             lines.push(Line::from(vec![

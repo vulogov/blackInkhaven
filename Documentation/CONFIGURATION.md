@@ -2070,6 +2070,42 @@ its exploration transcript to stderr and the grounded answer to stdout:
 inkhaven graph ask "which of my claims about the harbour contradict each other?"
 ```
 
+## 2.2 — SENTINEL: continuity intelligence (SENTINEL-1)
+
+### `continuity` — the unified continuity ledger
+
+SENTINEL ([`CONTINUITY.md`](CONTINUITY.md)) runs every deterministic continuity
+detector as one always-watching concern. All knobs are advisory and on by default
+(the core is zero-AI and free); the block only *adds* — the existing
+`timeline.critique` and `editor.echo_*` knobs are untouched.
+
+| Key | Type | Default | Meaning |
+| --- | ---- | ------- | ------- |
+| `continuity.enabled` | bool | `true` | Master switch for the review-pass ledger. Off silences the `Ctrl+B Shift+C` line; the standalone `inkhaven continuity check` still runs (explicit). |
+| `continuity.ambient` | bool | `false` | Re-check the edit's scope on every save (the incremental "watches itself" pass). Deterministic + free, runs inline. |
+| `continuity.ambient_cooldown_secs` | int | `30` | Throttle floor between ambient re-checks. |
+| `continuity.co_location` | bool | `true` | Per-detector toggle — a character in two places at overlapping times. |
+| `continuity.timeline` | bool | `true` | Per-detector toggle — orphaned events / fuzzy overlaps (the review pass surfaces these on their own line regardless; this governs the standalone check). |
+| `continuity.numeric` | bool | `true` | Per-detector toggle — direction reversal / conflicting durations (EN/FR/ES). |
+| `continuity.char_facts` | bool | `true` | Per-detector toggle — an established fact changed across chapters. |
+| `continuity.introduce` | bool | `true` | Per-detector toggle — an entity referenced before it's introduced. |
+| `continuity.introduce_tolerance` | int | `0` | Chapters of "referenced early" tolerated before `introduce` flags (`0` = any earlier-chapter reference; raise to allow foreshadowing). |
+
+```hjson
+continuity: {
+  enabled: true
+  ambient: false
+  ambient_cooldown_secs: 30
+  co_location: true, timeline: true, numeric: true, char_facts: true, introduce: true
+  introduce_tolerance: 0
+}
+```
+
+CLI: `inkhaven continuity check` (`--only`/`--skip`/`--json`/`--coherence`); in the
+editor the ledger is `Ctrl+B Shift+S` and the findings ride the `Ctrl+B Shift+C`
+review pass (Output `continuity` category). Bund: `ink.continuity.findings` /
+`ink.continuity.check`.
+
 ## 1.4.2–1.4.3 — Inner Editor (INNER_EDITOR-1)
 
 ### `inner_editor` (1.4.2+) — the literary/stylistic companion

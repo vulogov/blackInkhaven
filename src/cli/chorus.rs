@@ -325,7 +325,7 @@ fn tense_json(t: &crate::chorus::tense::TenseSummary) -> serde_json::Value {
 
 fn print_tense(t: &crate::chorus::tense::TenseSummary) {
     use crate::chorus::tense::TenseSummary;
-    println!("Tense discipline (advisory, English-only)");
+    println!("Tense discipline (advisory; EN/DE/FR/ES, Russian excluded)");
     match t {
         TenseSummary::Unsupported(reason) => println!("  — not analysed: {reason}"),
         TenseSummary::Scanned(scenes) if scenes.is_empty() => {

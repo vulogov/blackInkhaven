@@ -72,11 +72,13 @@ Tag any paragraph in the scene:
 
 Undeclared scenes infer the POV from mention counts.
 
-### The tense gate — English only, Russian excluded
+### The tense gate — EN/DE/FR/ES, Russian excluded
 
-Tense-slip detection is **English-only**. **Russian is excluded by design**: its
-narrative tense is governed by *aspect* — the historical present and
-perfective/imperfective interleaving are legitimate devices, not slips — and
+Tense-slip detection covers **English, German, French, and Spanish** — languages
+that share the "keep one narrative tense" convention, each with its own
+copula/auxiliary anchors and past-suffix markers. **Russian is excluded by
+design**: its narrative tense is governed by *aspect* — the historical present
+and perfective/imperfective interleaving are legitimate devices, not slips — and
 nothing in the tree models aspect, so a past→present heuristic would be *wrong*
 for Russian. `chorus scan` says so plainly rather than false-flagging. (Character
 voice and head-hop **do** work in Russian.)
@@ -110,9 +112,10 @@ three pillars and turns the numbers into a few grounded **Praise / Note /
 Concern** observations, and — on the slow track — LLM coaching in the
 inner-family voice (*"I notice…"*, never a rewrite).
 
-- **In the editor** — the review pass **`Ctrl+B Shift+C`** now includes the Inner
+- **In the editor** — the review pass **`Ctrl+B Shift+C`** includes the Inner
   Stylist (its observations land in the Output pane), and the family hub
-  **`Ctrl+B J → Y`** runs it on demand.
+  **`Ctrl+B J → Y`** opens its overview: **`F`** synthesises to Output, **`E`**
+  engages the AI coach into the Thoughts pane, **`R`** opens the report dashboard.
 - **On the CLI**:
 
 ```
@@ -135,7 +138,7 @@ CHORUS keys off the project language and is honest about coverage. Character
 voice + distinctiveness + drift work in every language (rhythm/diversity) with
 the language-sensitive axes filling in for EN/RU/DE/FR/ES. Head-hop reuses the
 per-language interiority markers (**including Russian**). Register is solid for
-EN/RU. Only the **tense** check is English-gated, and it says so. The Inner
+EN/RU. The **tense** check covers EN/DE/FR/ES (Russian excluded), and it says so. The Inner
 Stylist coaches in the book's language.
 
 ---
@@ -159,11 +162,32 @@ All knobs inform and cap — per Inkhaven's permissive principle, they never blo
 
 ---
 
+## From a script
+
+The deterministic surfaces are Bund words (all `-- list`/`-- dict`, zero-AI):
+
+```
+ink.chorus.voices    ( -- list )  per-character voice fingerprints
+ink.chorus.distinct  ( -- dict )  the distinctiveness matrix
+ink.chorus.drift     ( -- list )  per-character voice drift
+ink.chorus.headhops  ( -- list )  POV / head-hop findings
+ink.chorus.tense     ( -- dict )  the tense summary (or the honest reason)
+ink.chorus.register  ( -- dict )  per-chapter register + drifts
+
+ink.stylist.findings     ( -- list )  the synthesised Praise/Note/Concern, minus suppressions
+ink.stylist.suppress     ( key -- )    silence a finding by its key
+ink.stylist.suppressions ( -- list )   the silenced keys
+```
+
+(The knowledge graph has the parallel `ink.graph.*` surface — see
+[`GRAPH.md`](GRAPH.md).) The LLM coaching is not a sync word; use
+`chorus stylist --coach`.
+
 ## What CHORUS is *not*
 
 - Not a style *corrector* — it flags, it never rewrites.
 - Not a grammar checker — there's no parser; the tense check is an honest,
-  English-gated heuristic.
+  EN/DE/FR/ES heuristic (Russian excluded).
 - Not a "good writing" score — it measures *consistency and distinctiveness*, not
   quality. Statistical voice ≠ literary voice: every surface states its limits.
 
@@ -171,7 +195,6 @@ All knobs inform and cap — per Inkhaven's permissive principle, they never blo
 
 ## Not yet wired
 
-An interactive TUI report modal (the CLI `chorus report` + the review-pass
-findings cover the dashboard today) and a Bund `ink.chorus.*` scripting surface
-are natural future steps. The Inner Stylist's slow-track engage in the editor is
-currently the CLI `chorus stylist --coach`.
+Tense covers EN/DE/FR/ES; other languages beyond Russian are simply not built
+yet. A *blocking* Bund word for the LLM coaching (`ink.stylist.coach_blocking`)
+could follow if wanted; the deterministic surface is complete.

@@ -1801,6 +1801,9 @@ pub(crate) struct App {
     /// `prose.ambient`. `prose_last_run` is the cooldown floor.
     prose_auto: bool,
     prose_last_run: Option<std::time::Instant>,
+    /// SENTINEL-1 (CT-P5) — the continuity watch's cooldown floor. On-save
+    /// incremental re-check is gated by `continuity.ambient` + this throttle.
+    continuity_last_run: Option<std::time::Instant>,
     /// POEM-TUI (PO-P16) — ambient Inner Poet: auto fast-scan a verse paragraph
     /// on open when on (toggled `Ctrl+B J → P → A`). Free (no LLM), so no cost
     /// cap; `poet_ambient_fp` debounces re-scans of identical (paragraph, text).
@@ -2984,6 +2987,67 @@ fn run_stylist_check(
     Ok(findings.len())
 }
 
+/// SENTINEL (CT-P4) — the unified deterministic continuity ledger joins the
+/// review pass. Runs the continuity engine, clears the prior `kinds::CONTINUITY`
+/// messages, and re-emits the current set (Contradiction → Warning, else Info),
+/// each anchored to the finding's paragraph when it has one. Zero-AI.
+///
+/// The `timeline` detector is skipped here — the review pass already surfaces
+/// orphan / fuzzy-overlap on their own line (`collect_and_emit_timeline_critique`);
+/// running it again would double-report. The continuity line carries what nobody
+/// else in the pass does: co-location, numeric, char-facts, and the
+/// referenced-before-introduced invariant.
+fn run_continuity_check(
+    store: &Store,
+    cfg: &Config,
+    layout: &ProjectLayout,
+) -> std::result::Result<usize, String> {
+    use crate::pane::output::{Lifetime, Message, Severity, kinds};
+
+    let clear = || {
+        if let Some(s) = crate::pane::output::active() {
+            if let Ok(msgs) = s.by_kind(kinds::CONTINUITY) {
+                for m in &msgs {
+                    let _ = s.dismiss(m.id);
+                }
+            }
+        }
+    };
+
+    if !cfg.continuity.enabled {
+        clear();
+        return Ok(0);
+    }
+
+    let h = crate::store::hierarchy::Hierarchy::load(store).map_err(|e| e.to_string())?;
+    let sel = crate::continuity_intel::engine::selector(&[], &["timeline".to_string()]);
+    let findings = crate::continuity_intel::engine::run(store, cfg, layout, &h, &sel);
+
+    clear();
+    for f in &findings {
+        let sev = match f.severity {
+            crate::continuity_intel::Severity::Contradiction => Severity::Warning,
+            _ => Severity::Info,
+        };
+        let mut msg = Message::new(
+            kinds::CONTINUITY,
+            sev,
+            Lifetime::UntilActedOn,
+            serde_json::json!({
+                "text": format!("[continuity · {}] {}", f.source, f.message),
+                "category": "continuity",
+                "kind": f.kind,
+                "source": f.source,
+            }),
+        );
+        if let Some(anchor) = f.anchor {
+            msg = msg.with_source_paragraph(anchor);
+        }
+        crate::pane::output::emit(&msg);
+    }
+    Ok(findings.len())
+}
+
 /// RIGOR — the deterministic reasoning-rigor findings over the book of the open
 /// paragraph. Zero-AI; clears the prior `kinds::RIGOR` messages and re-emits the
 /// current set, each anchored + advisory. Gated on `rigor.enabled && fast_track`.
@@ -3377,6 +3441,7 @@ impl App {
             fc_scope_armed: false,
             prose_auto: prose_ambient,
             prose_last_run: None,
+            continuity_last_run: None,
             poet_ambient: false,
             poet_ambient_fp: None,
             poet_store,
@@ -4270,6 +4335,29 @@ impl App {
                         "♪ Inner Poet — in the Thoughts pane (↑↓ scroll · Ctrl+Z f fullscreen)".into();
                 }
                 Err(e) => self.status = format!("Inner Poet skipped: {e}"),
+            },
+            BgJobKind::StylistSlow => match result {
+                Ok(text) if text.trim().is_empty() => {
+                    self.status = "Inner Stylist: the voice reads clean".into();
+                }
+                Ok(text) => {
+                    self.push_thought(format!("## ❝ Inner Stylist\n\n{text}"));
+                    self.right_pane = RightPane::Thoughts;
+                    self.focus_cycle(Focus::Ai);
+                    self.status =
+                        "❝ Inner Stylist — in the Thoughts pane (↑↓ scroll · Ctrl+Z f fullscreen)".into();
+                }
+                Err(e) => self.status = format!("Inner Stylist skipped: {e}"),
+            },
+            BgJobKind::ContinuitySlow => match result {
+                Ok(n) if n == "0" => {
+                    self.status = "continuity coherence: no cross-paragraph contradictions".into();
+                }
+                Ok(n) => {
+                    self.right_pane = RightPane::Output;
+                    self.status = format!("continuity coherence: {n} finding(s) → Output (^B Tab)");
+                }
+                Err(e) => self.status = format!("continuity coherence skipped: {e}"),
             },
             BgJobKind::WorldOverview => match result {
                 Ok(joined) => {
@@ -7317,6 +7405,14 @@ pub(super) enum BgJobKind {
     /// worker observes the open stanza (enjambment / sound / caesura / volta) and
     /// the `Ok` payload is the observation text, shown in the Thoughts pane.
     PoetSlow,
+    /// CHORUS CH-P7b — the Inner Stylist slow track (LLM), `Ctrl+B J → Y → E`.
+    /// The worker turns the measured voice findings into grounded coaching; the
+    /// `Ok` payload is the coaching text, shown in the Thoughts pane.
+    StylistSlow,
+    /// SENTINEL-1 (CT-P7) — the continuity coherence pass (LLM), the ledger's `k`.
+    /// The worker runs the cross-paragraph coherence check over the open book and
+    /// emits its findings to Output; the `Ok` payload is the finding count.
+    ContinuitySlow,
     /// BUG-8 — the `Ctrl+B W` world overview compiled off-thread (deterministic,
     /// zero-AI). The `Ok` payload is the overview rows joined by `\n`.
     WorldOverview,
@@ -12322,6 +12418,7 @@ impl App {
             // ── Global ────────────────────────────────────────
             A::OpenCommandPalette => self.open_command_palette(),
             A::RunCheck => self.run_unified_check(),
+            A::OpenContinuityLedger => self.open_continuity_ledger(),
             A::OpenCostDashboard => self.open_cost_dashboard(),
             A::OpenCredits => self.open_credits(),
             A::OpenBookInfo => self.open_book_info(),
@@ -15512,6 +15609,11 @@ impl App {
         // distinctiveness / drift / POV / tense / register), deterministic.
         let sty = run_stylist_check(&self.store, &self.cfg, &self.layout).unwrap_or(0);
 
+        // SENTINEL — the unified continuity ledger (co-location, numeric,
+        // char-facts, referenced-before-introduced); deterministic. Timeline
+        // critique already has its own line above, so it's excluded here.
+        let ct = run_continuity_check(&self.store, &self.cfg, &self.layout).unwrap_or(0);
+
         // Reflect the instant findings in the tree report-card immediately.
         self.refresh_tree_badges();
 
@@ -15522,7 +15624,7 @@ impl App {
         // seconds later (and re-badge the tree on completion).
         let editor_spawned = self.maybe_spawn_check_editor();
 
-        let total = fact + soc + tl + dlg + uto + chr + theo + myth + rigor + orc + sty;
+        let total = fact + soc + tl + dlg + uto + chr + theo + myth + rigor + orc + sty + ct;
         if total == 0 && !editor_spawned {
             self.status = if checked == 0 {
                 "review pass: clean (no open paragraph; timeline + dialogue + utopia + character + theologian + myth included)".into()
@@ -15541,7 +15643,7 @@ impl App {
             format!("review pass: instant checks clean{editor_note}")
         } else {
             format!(
-                "review pass: {total} finding(s) — fact {fact} · socrates {soc} · timeline {tl} · dialogue {dlg} · utopia {uto} · character {chr} · theologian {theo} · myth {myth} · oracle {orc} · stylist {sty}{editor_note} → Output (^B Tab)"
+                "review pass: {total} finding(s) — fact {fact} · socrates {soc} · timeline {tl} · dialogue {dlg} · utopia {uto} · character {chr} · theologian {theo} · myth {myth} · oracle {orc} · stylist {sty} · continuity {ct}{editor_note} → Output (^B Tab)"
             )
         };
     }
@@ -15792,9 +15894,358 @@ impl App {
             "Inner Socrates · F fast-check ¶ · E engage (slow/LLM) · T theologian · R rigor ¶ · P poet · Y stylist · S persona · L ledger · A auto · Esc".into();
     }
 
-    /// CHORUS CH-P7b — `Ctrl+B J → Y`: run the Inner Stylist over the whole book
-    /// (deterministic voice-at-scale synthesis) and land its observations in the
-    /// Output pane. The LLM coaching track is `inkhaven chorus stylist --coach`.
+    /// CHORUS CH-P7b — `Ctrl+B J → Y`: the Inner Stylist overview menu.
+    fn open_inner_stylist_overview(&mut self) {
+        self.modal = Modal::InnerStylistOverview;
+        self.status =
+            "Inner Stylist · F synthesise → Output · E engage (LLM) → Thoughts · R report · Esc".into();
+    }
+
+    fn inner_stylist_overview_handle_key(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "Inner Stylist: closed".into();
+            }
+            KeyCode::Char('f') | KeyCode::Char('F') => self.stylist_check_book(),
+            KeyCode::Char('e') | KeyCode::Char('E') => self.stylist_engage(),
+            KeyCode::Char('r') | KeyCode::Char('R') => self.open_style_report(),
+            _ => {}
+        }
+        true
+    }
+
+    /// CHORUS CH-P7b — `Ctrl+B J → Y → E`: gather the voice findings (deterministic,
+    /// on the UI thread), then engage the LLM coach in the background; its grounded
+    /// coaching lands in the Thoughts pane. Never rewrites the prose.
+    fn stylist_engage(&mut self) {
+        if !self.cfg.stylist.enabled {
+            self.status = "Inner Stylist is disabled (stylist.enabled = false)".into();
+            return;
+        }
+        if let Err(e) = self.ai.resolve_provider(&self.cfg.llm, None) {
+            self.status = format!("Inner Stylist needs an LLM provider: {e}");
+            return;
+        }
+        let book = match crate::cli::resolve_user_book(&self.hierarchy, None, "stylist") {
+            Ok(b) => b.clone(),
+            Err(e) => {
+                self.status = format!("Inner Stylist: {e}");
+                return;
+            }
+        };
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut findings = match crate::inner_stylist::pipeline::gather(
+            &self.store, &self.layout, &self.hierarchy, &self.cfg, &book, &now,
+        ) {
+            Ok(f) => f,
+            Err(e) => {
+                self.status = format!("Inner Stylist: {e}");
+                return;
+            }
+        };
+        if let Ok(s) =
+            crate::inner_stylist::storage::InnerStylistStore::open_for_project(self.store.project_root())
+        {
+            if let Ok(silenced) = s.all_suppressions() {
+                findings.retain(|f| !silenced.contains(&f.key));
+            }
+        }
+        let (lang, _) =
+            crate::prose::resolve_prose_language(self.cfg.stylist.language.as_deref(), &self.cfg.language);
+        let prompt = crate::inner_stylist::slow::build_coach_prompt(&findings, &lang);
+        let cfg = self.cfg.clone();
+        self.modal = Modal::None;
+        self.right_pane = RightPane::Thoughts;
+        self.status = "⟳ Inner Stylist: reading the book's voice…".into();
+        self.start_bg_job(BgJobKind::StylistSlow, "inner stylist", move |tx, _cancel| {
+            use crate::inner_stylist::slow;
+            let result = slow::stylist_llm_call(&cfg, slow::STYLIST_SYSTEM, &prompt);
+            let _ = tx.send(BgMsg::Done(result));
+        });
+    }
+
+    /// CHORUS CH-P8 — `Ctrl+B J → Y → R`: the book-scale voice report dashboard,
+    /// a scrollable modal (narrator + cast + distinctiveness + Stylist findings).
+    fn open_style_report(&mut self) {
+        match self.build_style_report_rows() {
+            Ok(rows) => {
+                self.status = "voice report · ↑↓ scroll · Esc".into();
+                self.modal = Modal::StyleReport { rows, cursor: 0 };
+            }
+            Err(e) => {
+                self.modal = Modal::None;
+                self.status = format!("voice report: {e}");
+            }
+        }
+    }
+
+    /// SENTINEL-1 (CT-P6) — `Ctrl+B Shift+S`: the continuity ledger dashboard. Runs
+    /// the deterministic engine, groups the ranked findings by kind, and opens a
+    /// scrollable modal (Enter jumps to a finding's paragraph). Zero-AI.
+    fn open_continuity_ledger(&mut self) {
+        let (rows, anchors) = self.build_continuity_ledger_rows();
+        let breaks = anchors.iter().filter(|a| a.is_some()).count();
+        self.status = if breaks == 0 {
+            "continuity ledger: clean · k coherence pass · Esc".into()
+        } else {
+            "continuity ledger · ↑↓ scroll · Enter jump · k coherence · Esc".into()
+        };
+        self.modal = Modal::ContinuityLedger { rows, anchors, cursor: 0 };
+    }
+
+    /// Build the ledger's display rows + parallel jump anchors. Findings are
+    /// grouped under a bold per-kind header, most-severe kinds first.
+    fn build_continuity_ledger_rows(&self) -> (Vec<String>, Vec<Option<Uuid>>) {
+        use crate::continuity_intel::{engine, Severity};
+        let mut rows: Vec<String> = Vec::new();
+        let mut anchors: Vec<Option<Uuid>> = Vec::new();
+        let mut push = |text: String, anchor: Option<Uuid>| {
+            rows.push(text);
+            anchors.push(anchor);
+        };
+
+        let h = match crate::store::hierarchy::Hierarchy::load(&self.store) {
+            Ok(h) => h,
+            Err(e) => {
+                push(format!("continuity ledger unavailable: {e}"), None);
+                return (rows, anchors);
+            }
+        };
+        // The full ledger here (timeline included) — this is the dedicated view,
+        // not the review-pass line that dedups against the timeline critique.
+        let sel = engine::selector(&[], &[]);
+        let findings = engine::run(&self.store, &self.cfg, &self.layout, &h, &sel);
+
+        push(format!("◆ Continuity ledger — {} finding(s)", findings.len()), None);
+        push(String::new(), None);
+        if findings.is_empty() {
+            push("  ✓ no continuity breaks detected".into(), None);
+            return (rows, anchors);
+        }
+
+        // Group by kind, preserving the ranked order (kinds first seen stay first).
+        let mut order: Vec<&'static str> = Vec::new();
+        for f in &findings {
+            if !order.contains(&f.kind) {
+                order.push(f.kind);
+            }
+        }
+        for kind in order {
+            let group: Vec<&_> = findings.iter().filter(|f| f.kind == kind).collect();
+            push(format!("{kind} ({})", group.len()), None);
+            for f in group {
+                let mark = match f.severity {
+                    Severity::Contradiction => "⊗",
+                    Severity::Warning => "⚠",
+                    Severity::Info => "●",
+                };
+                let where_ = if f.chapter == 0 { String::new() } else { format!(" [ch. {}]", f.chapter) };
+                push(format!("  {mark} {}{where_}", f.message), f.anchor);
+            }
+            push(String::new(), None);
+        }
+        (rows, anchors)
+    }
+
+    fn continuity_ledger_handle_key(&mut self, key: KeyEvent) -> bool {
+        let n = match &self.modal {
+            Modal::ContinuityLedger { rows, .. } => rows.len(),
+            _ => return false,
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "continuity ledger: closed".into();
+            }
+            KeyCode::Up => {
+                if let Modal::ContinuityLedger { cursor, .. } = &mut self.modal {
+                    *cursor = cursor.saturating_sub(1);
+                }
+            }
+            KeyCode::Down => {
+                if let Modal::ContinuityLedger { cursor, .. } = &mut self.modal {
+                    if n > 0 {
+                        *cursor = (*cursor + 1).min(n - 1);
+                    }
+                }
+            }
+            KeyCode::Enter => {
+                let anchor = match &self.modal {
+                    Modal::ContinuityLedger { anchors, cursor, .. } => {
+                        anchors.get(*cursor).copied().flatten()
+                    }
+                    _ => None,
+                };
+                if let Some(id) = anchor {
+                    self.modal = Modal::None;
+                    if let Err(e) = self.open_paragraph_by_uuid(id) {
+                        self.status = format!("continuity ledger: {e}");
+                    }
+                } else {
+                    self.status = "continuity ledger: no paragraph to jump to on this row".into();
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Char('K') => {
+                self.continuity_ledger_run_coherence();
+            }
+            _ => {}
+        }
+        true
+    }
+
+    /// SENTINEL-1 (CT-P7) — the ledger's `k`: run the LLM coherence pass over the
+    /// open paragraph's book (whole project when nothing is open) as a background
+    /// job. Explicit + cost-capped; findings land in Output as `source:"coherence"`.
+    fn continuity_ledger_run_coherence(&mut self) {
+        if self.bg_job.is_some() {
+            self.status = "continuity: a background job is already running".into();
+            return;
+        }
+        // Scope: the open paragraph's book (fallback: the whole project).
+        let book_id = self.opened.as_ref().map(|d| d.id).and_then(|pid| {
+            let mut cur = self.hierarchy.get(pid);
+            while let Some(n) = cur {
+                if n.kind == NodeKind::Book {
+                    return Some(n.id);
+                }
+                cur = n.parent_id.and_then(|p| self.hierarchy.get(p));
+            }
+            None
+        });
+        let root = self.store.project_root().to_path_buf();
+        self.modal = Modal::None;
+        self.status = "⟳ continuity: reading for cross-paragraph contradictions…".into();
+        self.start_bg_job(BgJobKind::ContinuitySlow, "continuity coherence", move |tx, _cancel| {
+            use crate::pane::output::{kinds, Lifetime, Message, Severity};
+            let result = match crate::continuity_intel::coherence::run(&root, book_id, 8000, false) {
+                Ok(findings) => {
+                    let n = findings.len();
+                    for f in &findings {
+                        let sev = match f.severity {
+                            crate::continuity_intel::Severity::Contradiction => Severity::Warning,
+                            _ => Severity::Info,
+                        };
+                        crate::pane::output::emit(&Message::new(
+                            kinds::CONTINUITY,
+                            sev,
+                            Lifetime::UntilActedOn,
+                            serde_json::json!({
+                                "text": format!("[continuity · coherence] {}", f.message),
+                                "category": "continuity",
+                                "kind": "coherence",
+                                "source": "coherence",
+                            }),
+                        ));
+                    }
+                    Ok(n.to_string())
+                }
+                Err(e) => Err(e),
+            };
+            let _ = tx.send(BgMsg::Done(result));
+        });
+    }
+
+    fn style_report_handle_key(&mut self, key: KeyEvent) -> bool {
+        let n = match &self.modal {
+            Modal::StyleReport { rows, .. } => rows.len(),
+            _ => return false,
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "voice report: closed".into();
+            }
+            KeyCode::Up => {
+                if let Modal::StyleReport { cursor, .. } = &mut self.modal {
+                    *cursor = cursor.saturating_sub(1);
+                }
+            }
+            KeyCode::Down => {
+                if let Modal::StyleReport { cursor, .. } = &mut self.modal {
+                    if n > 0 {
+                        *cursor = (*cursor + 1).min(n - 1);
+                    }
+                }
+            }
+            _ => {}
+        }
+        true
+    }
+
+    /// Assemble the voice-report rows (shared shape with `inkhaven chorus report`).
+    fn build_style_report_rows(&self) -> std::result::Result<Vec<String>, String> {
+        use crate::chorus::{distinct, drift, register, tense, voices};
+        let book = crate::cli::resolve_user_book(&self.hierarchy, None, "stylist")?.clone();
+        let now = chrono::Utc::now().to_rfc3339();
+        let opt = |x: Option<f32>| x.map(|v| format!("{v:.3}")).unwrap_or_else(|| "n/a".into());
+
+        let mut rows: Vec<String> = Vec::new();
+        rows.push(format!("◆ Voice report — {}", book.title));
+        rows.push(String::new());
+
+        // Narrator.
+        let pstore = crate::prose::ProseStore::open(self.store.project_root()).map_err(|e| e.to_string())?;
+        let profiles = crate::prose::refresh_book(
+            &pstore, &self.layout, &self.hierarchy, &self.cfg, &book, None,
+            self.cfg.prose.deep_metrics, self.cfg.prose.mattr_window, &now,
+        )
+        .map_err(|e| e.to_string())?;
+        rows.push("Narrator".into());
+        if let Some(p) = profiles.iter().find(|p| matches!(p.scope, crate::prose::VoiceScope::Book)) {
+            rows.push(format!("    median sentence   {:.0} words", p.p50));
+            rows.push(format!("    rhythm (CV)       {:.2}", p.cv));
+            rows.push(format!("    diversity (MATTR) {:.2}", p.mattr));
+            rows.push(format!("    hedging           {}", opt(p.modal_density)));
+        } else {
+            rows.push("    (no prose yet)".into());
+        }
+        rows.push(String::new());
+
+        // Cast + distinctiveness.
+        let ds = crate::dialogue::DialogueStore::open(self.store.project_root()).map_err(|e| e.to_string())?;
+        crate::dialogue::refresh_book(&ds, &self.layout, &self.hierarchy, &self.cfg, &book, None, &now)
+            .map_err(|e| e.to_string())?;
+        let cast = voices::character_profiles(&pstore, &ds, &self.cfg, &book, None, &now)
+            .map_err(|e| e.to_string())?;
+        rows.push(format!("Cast ({} voice(s))", cast.len()));
+        for v in &cast {
+            let p = &v.profile;
+            rows.push(format!(
+                "    {:<16} {} · CV {:.2} · MATTR {:.2} · {} utt",
+                v.name, v.confidence.label(), p.cv, p.mattr, v.utterances
+            ));
+        }
+        let dm = distinct::matrix(&cast, self.cfg.chorus.distinct_threshold, &self.cfg.chorus.distinct_ignore_pairs);
+        if let (Some(c), Some(d)) = (dm.closest(), dm.most_distinct()) {
+            rows.push(format!("    closest {} ≈ {} ({:.2}) · most distinct {} ↔ {} ({:.2})",
+                c.a, c.b, c.distance, d.a, d.b, d.distance));
+        }
+        rows.push(String::new());
+
+        // The Inner Stylist synthesis.
+        let drifts: Vec<(String, Vec<crate::prose::violations::Violation>)> = cast
+            .iter()
+            .map(|v| (v.name.clone(), drift::character_drift(v, &self.cfg.prose.thresholds)))
+            .filter(|(_, d)| !d.is_empty())
+            .collect();
+        let head_hops = crate::chorus::pov::scan_head_hops(&self.layout, &self.hierarchy, &self.cfg, &book);
+        let ten = tense::scan_tense(&self.layout, &self.hierarchy, &self.cfg, &book);
+        let reg = register::scan_register(&self.layout, &self.hierarchy, &self.cfg, &book);
+        let findings = crate::inner_stylist::fast::synthesize(&dm, &drifts, &head_hops, &ten, &reg);
+        rows.push("Inner Stylist".into());
+        if findings.is_empty() {
+            rows.push("    the book's voice reads clean".into());
+        } else {
+            for f in &findings {
+                rows.push(format!("    {} [{}] {}", f.severity.glyph(), f.kind, f.message));
+            }
+        }
+        Ok(rows)
+    }
+
+    /// CHORUS CH-P7b — synthesise the voice findings and land them in the Output
+    /// pane (the `F` action / the review pass). The LLM coaching is `E` / the CLI.
     fn stylist_check_book(&mut self) {
         self.modal = Modal::None;
         match run_stylist_check(&self.store, &self.cfg, &self.layout) {
@@ -15886,7 +16337,7 @@ impl App {
             KeyCode::Char('t') | KeyCode::Char('T') => self.theologian_engage_open_paragraph(),
             KeyCode::Char('r') | KeyCode::Char('R') => self.rigor_check_open_paragraph(),
             KeyCode::Char('p') | KeyCode::Char('P') => self.open_inner_poet_overview(),
-            KeyCode::Char('y') | KeyCode::Char('Y') => self.stylist_check_book(),
+            KeyCode::Char('y') | KeyCode::Char('Y') => self.open_inner_stylist_overview(),
             KeyCode::Char('n') | KeyCode::Char('N') => self.socratic_persona_wizard(),
             KeyCode::Char('a') | KeyCode::Char('A') => {
                 self.socratic_auto = !self.socratic_auto;
@@ -16276,6 +16727,70 @@ impl App {
                 .with_source_language(lang.title.clone());
                 crate::pane::output::emit(&msg);
             }
+        }
+    }
+
+    /// SENTINEL-1 (CT-P5) — the continuity watch: on save, re-check only what the
+    /// edit touched and surface the delta. Gated on `continuity.enabled &&
+    /// continuity.ambient` + a cooldown floor. Deterministic + free, so it runs
+    /// synchronously on the UI thread (no background job). Clears this paragraph's
+    /// prior continuity findings, then re-emits the scoped set anchored to it.
+    fn continuity_scan_saved_paragraph(&mut self, para_id: Uuid) {
+        use crate::pane::output::{kinds, Lifetime, Message, Severity};
+
+        if !self.cfg.continuity.enabled || !self.cfg.continuity.ambient {
+            return;
+        }
+        let cooldown =
+            std::time::Duration::from_secs(self.cfg.continuity.ambient_cooldown_secs.max(5));
+        if self.continuity_last_run.map(|t| t.elapsed() < cooldown).unwrap_or(false) {
+            return;
+        }
+        self.continuity_last_run = Some(std::time::Instant::now());
+
+        // Clear this paragraph's prior continuity findings (re-emitted below).
+        if let Some(s) = crate::pane::output::active() {
+            if let Ok(msgs) = s.by_kind(kinds::CONTINUITY) {
+                for m in msgs.iter().filter(|m| m.source_paragraph_id == Some(para_id)) {
+                    let _ = s.dismiss(m.id);
+                }
+            }
+        }
+
+        let scope = crate::continuity_intel::watch::dirty_scope(&self.layout, &self.hierarchy, para_id);
+        if scope.is_empty() {
+            return;
+        }
+        let findings = crate::continuity_intel::watch::run_scoped(
+            &self.store,
+            &self.cfg,
+            &self.layout,
+            &self.hierarchy,
+            &scope,
+        );
+        for f in &findings {
+            let sev = match f.severity {
+                crate::continuity_intel::Severity::Contradiction => Severity::Warning,
+                _ => Severity::Info,
+            };
+            let msg = Message::new(
+                kinds::CONTINUITY,
+                sev,
+                Lifetime::UntilActedOn,
+                serde_json::json!({
+                    "text": format!("[continuity · {}] {}", f.source, f.message),
+                    "category": "continuity",
+                    "kind": f.kind,
+                    "source": f.source,
+                    "ambient": true,
+                }),
+            )
+            .with_source_paragraph(para_id);
+            crate::pane::output::emit(&msg);
+        }
+        if !findings.is_empty() {
+            self.status =
+                format!("continuity watch: {} finding(s) touching this edit", findings.len());
         }
     }
 
@@ -25666,6 +26181,18 @@ impl App {
         }
         if matches!(self.modal, Modal::InnerPoetOverview) {
             self.inner_poet_overview_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::InnerStylistOverview) {
+            self.inner_stylist_overview_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::StyleReport { .. }) {
+            self.style_report_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::ContinuityLedger { .. }) {
+            self.continuity_ledger_handle_key(key);
             return Ok(false);
         }
         if matches!(self.modal, Modal::PoemFormPicker { .. }) {

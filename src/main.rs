@@ -56,6 +56,7 @@ mod prose;
 mod dialogue;
 mod chorus;
 mod inner_stylist;
+mod continuity_intel;
 // CHAR-1 — character arc tracking.
 mod character;
 // HAIKU-1 — zero-AI startup / new-paragraph / on-demand haiku.

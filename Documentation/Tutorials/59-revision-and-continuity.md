@@ -27,6 +27,14 @@ point, you decide.
 Three run in the default scan; `unresolved-tension` is
 opt-in (see below).
 
+> **2.2 update — SENTINEL.** These detectors (plus co-location, timeline, and the
+> new *referenced-before-introduced* invariant) are now unified under one engine:
+> `inkhaven continuity check`, a `continuity` line in the `Ctrl+B Shift+C` review
+> pass, the `Ctrl+B Shift+S` ledger dashboard, and an on-save watch. This tutorial
+> still explains each detector in depth; for the unified surface see
+> [Tutorial 111 — Continuity Intelligence](111-continuity-intelligence.md) and
+> [`CONTINUITY.md`](../CONTINUITY.md).
+
 ## Echo detector
 
 ```bash
