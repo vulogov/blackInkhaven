@@ -858,6 +858,27 @@ mod tests {
     }
 
     #[test]
+    fn by_kind_filters_project_wide() {
+        // SENTINEL-1 (CT-P0) — the project-wide edges-of-one-kind sweep that
+        // `Store::edges_of_kind` wraps.
+        let (_d, s) = store();
+        s.insert(&link(Uuid::now_v7(), Uuid::now_v7())).unwrap();
+        s.insert(&link(Uuid::now_v7(), Uuid::now_v7())).unwrap();
+        let (a, b) = (Uuid::now_v7(), Uuid::now_v7());
+        s.insert(&Edge::new(
+            EndpointRef::Node(a),
+            EdgeKind::Cites,
+            EndpointRef::Node(b),
+            EdgeOrigin::Structural,
+        ))
+        .unwrap();
+        assert_eq!(s.by_kind(EdgeKind::LinksTo).unwrap().len(), 2);
+        let cites = s.by_kind(EdgeKind::Cites).unwrap();
+        assert_eq!(cites.len(), 1);
+        assert_eq!(cites[0].kind, EdgeKind::Cites);
+    }
+
+    #[test]
     fn edge_survives_checkpoint_and_reopen() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("edges.db");

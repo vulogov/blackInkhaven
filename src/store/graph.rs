@@ -124,6 +124,13 @@ impl Store {
         self.raw().edges_around(node, kinds).map_err(map_edge_err)
     }
 
+    /// SENTINEL-1 (CT-P0) — every edge of one `kind` across the whole project.
+    /// The project-wide counterpart of the node-centric queries, for continuity
+    /// invariants that sweep all `EventInvolves` / `Declares` edges at once.
+    pub fn edges_of_kind(&self, kind: EdgeKind) -> Result<Vec<Edge>> {
+        self.raw().edges_of_kind(kind).map_err(map_edge_err)
+    }
+
     /// Delete one edge by id.
     pub fn delete_edge(&self, id: Uuid) -> Result<()> {
         self.raw().delete_edge(id).map_err(map_edge_err)
