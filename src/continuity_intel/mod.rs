@@ -18,6 +18,7 @@ use uuid::Uuid;
 
 pub(crate) mod engine;
 pub(crate) mod introduce;
+pub(crate) mod watch;
 
 /// How serious a continuity finding is. `Contradiction` is a hard clash (a
 /// character in two places); `Warning` a likely problem; `Info` a nudge.

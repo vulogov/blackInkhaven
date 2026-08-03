@@ -137,7 +137,7 @@ fn para_text_lc(layout: &ProjectLayout, node: &Node) -> Option<String> {
 
 /// Direct-child entries (id + trimmed title) of the system book carrying
 /// `system_tag` — the Characters or Places roster.
-fn roster(h: &Hierarchy, system_tag: &str) -> Vec<(Uuid, String)> {
+pub(super) fn roster(h: &Hierarchy, system_tag: &str) -> Vec<(Uuid, String)> {
     let Some(book) = h
         .iter()
         .find(|n| n.kind == NodeKind::Book && n.system_tag.as_deref() == Some(system_tag))

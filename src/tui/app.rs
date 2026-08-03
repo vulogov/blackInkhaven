@@ -1801,6 +1801,9 @@ pub(crate) struct App {
     /// `prose.ambient`. `prose_last_run` is the cooldown floor.
     prose_auto: bool,
     prose_last_run: Option<std::time::Instant>,
+    /// SENTINEL-1 (CT-P5) — the continuity watch's cooldown floor. On-save
+    /// incremental re-check is gated by `continuity.ambient` + this throttle.
+    continuity_last_run: Option<std::time::Instant>,
     /// POEM-TUI (PO-P16) — ambient Inner Poet: auto fast-scan a verse paragraph
     /// on open when on (toggled `Ctrl+B J → P → A`). Free (no LLM), so no cost
     /// cap; `poet_ambient_fp` debounces re-scans of identical (paragraph, text).
@@ -3438,6 +3441,7 @@ impl App {
             fc_scope_armed: false,
             prose_auto: prose_ambient,
             prose_last_run: None,
+            continuity_last_run: None,
             poet_ambient: false,
             poet_ambient_fp: None,
             poet_store,
@@ -16542,6 +16546,70 @@ impl App {
                 .with_source_language(lang.title.clone());
                 crate::pane::output::emit(&msg);
             }
+        }
+    }
+
+    /// SENTINEL-1 (CT-P5) — the continuity watch: on save, re-check only what the
+    /// edit touched and surface the delta. Gated on `continuity.enabled &&
+    /// continuity.ambient` + a cooldown floor. Deterministic + free, so it runs
+    /// synchronously on the UI thread (no background job). Clears this paragraph's
+    /// prior continuity findings, then re-emits the scoped set anchored to it.
+    fn continuity_scan_saved_paragraph(&mut self, para_id: Uuid) {
+        use crate::pane::output::{kinds, Lifetime, Message, Severity};
+
+        if !self.cfg.continuity.enabled || !self.cfg.continuity.ambient {
+            return;
+        }
+        let cooldown =
+            std::time::Duration::from_secs(self.cfg.continuity.ambient_cooldown_secs.max(5));
+        if self.continuity_last_run.map(|t| t.elapsed() < cooldown).unwrap_or(false) {
+            return;
+        }
+        self.continuity_last_run = Some(std::time::Instant::now());
+
+        // Clear this paragraph's prior continuity findings (re-emitted below).
+        if let Some(s) = crate::pane::output::active() {
+            if let Ok(msgs) = s.by_kind(kinds::CONTINUITY) {
+                for m in msgs.iter().filter(|m| m.source_paragraph_id == Some(para_id)) {
+                    let _ = s.dismiss(m.id);
+                }
+            }
+        }
+
+        let scope = crate::continuity_intel::watch::dirty_scope(&self.layout, &self.hierarchy, para_id);
+        if scope.is_empty() {
+            return;
+        }
+        let findings = crate::continuity_intel::watch::run_scoped(
+            &self.store,
+            &self.cfg,
+            &self.layout,
+            &self.hierarchy,
+            &scope,
+        );
+        for f in &findings {
+            let sev = match f.severity {
+                crate::continuity_intel::Severity::Contradiction => Severity::Warning,
+                _ => Severity::Info,
+            };
+            let msg = Message::new(
+                kinds::CONTINUITY,
+                sev,
+                Lifetime::UntilActedOn,
+                serde_json::json!({
+                    "text": format!("[continuity · {}] {}", f.source, f.message),
+                    "category": "continuity",
+                    "kind": f.kind,
+                    "source": f.source,
+                    "ambient": true,
+                }),
+            )
+            .with_source_paragraph(para_id);
+            crate::pane::output::emit(&msg);
+        }
+        if !findings.is_empty() {
+            self.status =
+                format!("continuity watch: {} finding(s) touching this edit", findings.len());
         }
     }
 
