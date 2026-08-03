@@ -6,6 +6,8 @@
 //! tense / register discipline pillars — all synthesized by the Inner Stylist
 //! reader (CH-P7). See `Documentation/PROPOSALS/CHORUS-1_PLAN.md`.
 //!
-//! CH-P1 lands character voice fingerprinting: [`voices`].
+//! CH-P1 lands character voice fingerprinting ([`voices`]); CH-P2 the
+//! distinctiveness matrix ([`distinct`]).
 
+pub(crate) mod distinct;
 pub(crate) mod voices;

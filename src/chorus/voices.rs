@@ -53,6 +53,12 @@ impl Confidence {
             Confidence::High => "high",
         }
     }
+
+    /// Whether a voice has enough dialogue to take part in distinctiveness /
+    /// discipline comparisons. `Low` voices are computed but never flagged.
+    pub(crate) fn is_comparable(self) -> bool {
+        matches!(self, Confidence::Medium | Confidence::High)
+    }
 }
 
 /// One character's aggregated dialogue, ready to profile, with utterance/word
