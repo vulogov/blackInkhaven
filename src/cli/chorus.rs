@@ -6,7 +6,9 @@
 use std::path::Path;
 
 use crate::chorus::distinct::{DistinctMatrix, matrix};
+use crate::chorus::drift::character_drift;
 use crate::chorus::voices::{CharacterVoice, Confidence, character_profiles};
+use crate::prose::violations::Violation;
 use crate::config::Config;
 use crate::dialogue::{DialogueStore, refresh_book};
 use crate::error::{Error, Result};
@@ -57,11 +59,25 @@ fn voices(project: &Path, book_name: Option<&str>, character: Option<&str>, json
         None => voices.iter().collect(),
     };
 
+    // Per-character voice drift (CH-P3), over the shown set.
+    let drift: Vec<(String, Vec<Violation>)> = shown
+        .iter()
+        .copied()
+        .map(|v| (v.name.clone(), character_drift(v, &cfg.prose.thresholds)))
+        .filter(|(_, d)| !d.is_empty())
+        .collect();
+
     if json {
         let arr: Vec<serde_json::Value> = shown.iter().copied().map(voice_json).collect();
         let out = serde_json::json!({
             "voices": arr,
             "distinctiveness": distinct_json(&dm),
+            "drift": drift.iter().map(|(name, ds)| serde_json::json!({
+                "character": name,
+                "violations": ds.iter().map(|v| serde_json::json!({
+                    "chapter": v.chapter, "metric": v.metric, "delta": v.delta, "value": v.value,
+                })).collect::<Vec<_>>(),
+            })).collect::<Vec<_>>(),
         });
         println!("{}", serde_json::to_string_pretty(&out).unwrap_or_default());
         return Ok(());
@@ -71,7 +87,24 @@ fn voices(project: &Path, book_name: Option<&str>, character: Option<&str>, json
     if character.is_none() {
         print_distinctiveness(&dm);
     }
+    print_drift(&drift);
     Ok(())
+}
+
+fn print_drift(drift: &[(String, Vec<Violation>)]) {
+    if drift.is_empty() {
+        return;
+    }
+    println!("Voice drift (each character vs. their first chapter)");
+    println!("{}", "─".repeat(60));
+    for (name, violations) in drift {
+        println!("◆ {name}");
+        for v in violations {
+            let dir = if v.delta >= 0.0 { "rose" } else { "fell" };
+            println!("    ch.{}  {} {dir} to {:.2} (Δ {:+.2})", v.chapter, v.metric, v.value, v.delta);
+        }
+    }
+    println!("{}", "─".repeat(60));
 }
 
 fn distinct_json(dm: &DistinctMatrix) -> serde_json::Value {

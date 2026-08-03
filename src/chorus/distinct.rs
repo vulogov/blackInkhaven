@@ -164,7 +164,7 @@ mod tests {
             false,
             100,
         );
-        CharacterVoice { name: name.into(), profile, confidence, utterances: 30 }
+        CharacterVoice { name: name.into(), profile, confidence, utterances: 30, per_chapter: Vec::new() }
     }
 
     const CLIPPED: &str = "Yes. No. Go. Stop. Now. Wait. Fine. Leave. Run. Hide. Down. Up.";
