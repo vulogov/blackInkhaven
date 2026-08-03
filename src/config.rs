@@ -70,6 +70,9 @@ pub struct Config {
     /// NARR-1 — narrative-voice (`prose`) profiling.
     #[serde(default)]
     pub prose: ProseConfig,
+    /// CHORUS-1 (2.1) — voice & style at book scale.
+    #[serde(default)]
+    pub chorus: ChorusConfig,
     #[serde(default)]
     pub dialogue: DialogueConfig,
     #[serde(default)]
@@ -262,6 +265,7 @@ impl Default for Config {
             sources: SourcesConfig::default(),
             jinja: JinjaConfig::default(),
             prose: ProseConfig::default(),
+            chorus: ChorusConfig::default(),
             dialogue: DialogueConfig::default(),
             utopia: UtopiaConfig::default(),
             char: CharConfig::default(),
@@ -4320,6 +4324,31 @@ impl Default for ProseConfig {
     }
 }
 
+/// CHORUS-1 (2.1) — `chorus:` block. Voice & style at book scale (character
+/// voice fingerprints, the distinctiveness matrix, and the discipline pillars).
+/// CH-P2 lands the distinctiveness knobs; later phases extend this block. All
+/// optional; per the permissive principle these inform, they never block.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ChorusConfig {
+    /// The RMS z-distance below which two characters' voices are flagged
+    /// **indistinguishable** (~"less than this many pooled std-devs apart per
+    /// metric, on average"). Genre-relative — the baseline is your own cast's
+    /// spread. Lower = fewer, only near-identical pairs flagged. Calibration is
+    /// project-dependent; the default is deliberately conservative.
+    pub distinct_threshold: f32,
+    /// Character pairs to never flag as indistinguishable — deliberate twins, a
+    /// uniform chorus, aliases of one speaker. Each entry is two names separated
+    /// by `|`, order- and case-insensitive: `["Mara|Joren"]`.
+    pub distinct_ignore_pairs: Vec<String>,
+}
+
+impl Default for ChorusConfig {
+    fn default() -> Self {
+        Self { distinct_threshold: 0.5, distinct_ignore_pairs: Vec::new() }
+    }
+}
+
 /// DIALOG-1 — `dialogue:` block. Tunes the dialogue detection windows,
 /// finding thresholds, and the genre-specific verb extras. All optional;
 /// omitting the block uses these defaults (RFC §13).
@@ -5884,6 +5913,19 @@ mod research_config_tests {
         assert!((r.session_budget_warn - 0.50).abs() < 1e-9);
         assert!((r.dedup_warn_score - 0.92).abs() < 1e-9);
         assert!(r.default_thread.is_none());
+    }
+
+    #[test]
+    fn chorus_block_defaults_and_overrides() {
+        // Absent → the CHORUS defaults.
+        let cfg: Config = serde_hjson::from_str("{}").unwrap();
+        assert_eq!(cfg.chorus.distinct_threshold, 0.5);
+        assert!(cfg.chorus.distinct_ignore_pairs.is_empty());
+        // A partial block overrides only the named field.
+        let cfg2: Config =
+            serde_hjson::from_str("{ chorus: { distinct_ignore_pairs: [\"Mara|Joren\"] } }").unwrap();
+        assert_eq!(cfg2.chorus.distinct_ignore_pairs, vec!["Mara|Joren".to_string()]);
+        assert_eq!(cfg2.chorus.distinct_threshold, 0.5); // untouched default
     }
 
     #[test]

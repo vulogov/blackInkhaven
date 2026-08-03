@@ -5,6 +5,7 @@
 
 use std::path::Path;
 
+use crate::chorus::distinct::{DistinctMatrix, matrix};
 use crate::chorus::voices::{CharacterVoice, Confidence, character_profiles};
 use crate::config::Config;
 use crate::dialogue::{DialogueStore, refresh_book};
@@ -43,20 +44,67 @@ fn voices(project: &Path, book_name: Option<&str>, character: Option<&str>, json
         .map_err(|e| Error::Store(e.to_string()))?;
     let pstore = ProseStore::open(store.project_root()).map_err(|e| Error::Store(e.to_string()))?;
 
-    let mut voices = character_profiles(&pstore, &ds, &cfg, book, None, &now())
+    let voices = character_profiles(&pstore, &ds, &cfg, book, None, &now())
         .map_err(|e| Error::Store(e.to_string()))?;
-    if let Some(name) = character {
-        voices.retain(|v| v.name.eq_ignore_ascii_case(name));
-    }
+
+    // The distinctiveness matrix (CH-P2) is over the WHOLE cast — compute it
+    // before any `--character` narrowing.
+    let dm = matrix(&voices, cfg.chorus.distinct_threshold, &cfg.chorus.distinct_ignore_pairs);
+
+    // A `--character` view shows just that card; the full listing adds the matrix.
+    let shown: Vec<&CharacterVoice> = match character {
+        Some(name) => voices.iter().filter(|v| v.name.to_lowercase() == name.to_lowercase()).collect(),
+        None => voices.iter().collect(),
+    };
 
     if json {
-        let arr: Vec<serde_json::Value> = voices.iter().map(voice_json).collect();
-        println!("{}", serde_json::to_string_pretty(&arr).unwrap_or_default());
+        let arr: Vec<serde_json::Value> = shown.iter().copied().map(voice_json).collect();
+        let out = serde_json::json!({
+            "voices": arr,
+            "distinctiveness": distinct_json(&dm),
+        });
+        println!("{}", serde_json::to_string_pretty(&out).unwrap_or_default());
         return Ok(());
     }
 
-    print_cards(&book.title, &cfg.language, &voices);
+    print_cards(&book.title, &cfg.language, &shown);
+    if character.is_none() {
+        print_distinctiveness(&dm);
+    }
     Ok(())
+}
+
+fn distinct_json(dm: &DistinctMatrix) -> serde_json::Value {
+    serde_json::json!({
+        "compared": dm.names,
+        "indistinguishable": dm.indistinguishable.iter()
+            .map(|p| serde_json::json!({"a": p.a, "b": p.b, "distance": p.distance}))
+            .collect::<Vec<_>>(),
+        "closest": dm.closest().map(|p| serde_json::json!({"a": p.a, "b": p.b, "distance": p.distance})),
+        "most_distinct": dm.most_distinct().map(|p| serde_json::json!({"a": p.a, "b": p.b, "distance": p.distance})),
+    })
+}
+
+fn print_distinctiveness(dm: &DistinctMatrix) {
+    println!("Distinctiveness ({} comparable voice(s))", dm.names.len());
+    println!("{}", "─".repeat(60));
+    if dm.names.len() < 2 {
+        println!("  (need at least two well-attributed voices to compare)");
+        println!("{}", "─".repeat(60));
+        return;
+    }
+    if dm.indistinguishable.is_empty() {
+        println!("  ✓ every comparable voice is distinct");
+    } else {
+        for p in &dm.indistinguishable {
+            println!("  ⚠ {} ≈ {}  (distance {:.2}) — these read alike", p.a, p.b, p.distance);
+        }
+    }
+    if let (Some(c), Some(d)) = (dm.closest(), dm.most_distinct()) {
+        println!("    closest pair:  {} ↔ {}  ({:.2})", c.a, c.b, c.distance);
+        println!("    most distinct: {} ↔ {}  ({:.2})", d.a, d.b, d.distance);
+    }
+    println!("{}", "─".repeat(60));
 }
 
 fn voice_json(v: &CharacterVoice) -> serde_json::Value {
@@ -73,7 +121,7 @@ fn voice_json(v: &CharacterVoice) -> serde_json::Value {
     })
 }
 
-fn print_cards(book_title: &str, language: &str, voices: &[CharacterVoice]) {
+fn print_cards(book_title: &str, language: &str, voices: &[&CharacterVoice]) {
     println!("Character voices — `{book_title}` [{language}]");
     println!("{}", "─".repeat(60));
     if voices.is_empty() {
@@ -85,7 +133,7 @@ fn print_cards(book_title: &str, language: &str, voices: &[CharacterVoice]) {
     // Cast means over the voices confident enough to compare — a preview of the
     // CH-P2 distinctiveness matrix (Δ-from-cast-mean).
     let confident: Vec<&CharacterVoice> =
-        voices.iter().filter(|v| v.confidence != Confidence::Low).collect();
+        voices.iter().copied().filter(|v| v.confidence != Confidence::Low).collect();
     let mean_cv = mean(confident.iter().map(|v| v.profile.cv));
     let mean_mattr = mean(confident.iter().map(|v| v.profile.mattr));
 
