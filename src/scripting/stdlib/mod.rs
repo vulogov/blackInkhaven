@@ -27,6 +27,9 @@ mod terms;
 mod snippets;
 mod prose;
 mod dialogue;
+mod graph;
+mod chorus;
+mod stylist;
 mod utopia;
 #[path = "char.rs"]
 mod char_arc;
@@ -66,6 +69,9 @@ pub fn register_ink_stdlib(vm: &mut VM) -> Result<()> {
     snippets::register(vm)?;
     prose::register(vm)?;
     dialogue::register(vm)?;
+    graph::register(vm)?;
+    chorus::register(vm)?;
+    stylist::register(vm)?;
     utopia::register(vm)?;
     char_arc::register(vm)?;
     theologian::register(vm)?;
