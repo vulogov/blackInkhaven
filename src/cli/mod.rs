@@ -1377,6 +1377,10 @@ pub enum Command {
         /// Skip the timeline critique.
         #[arg(long = "no-timeline")]
         no_timeline: bool,
+        /// Skip the SENTINEL continuity ledger (co-location, numeric, char-facts,
+        /// referenced-before-introduced).
+        #[arg(long = "no-continuity")]
+        no_continuity: bool,
     },
     /// Road to 1.4.0 — the unified AI cost dashboard: today's LLM call tallies for
     /// each capped subsystem (world slow track, Inner Socrates slow track) vs their
@@ -6717,7 +6721,7 @@ impl Cli {
             Command::InnerSocrates(cmd) => inner_socrates::run(&project, cmd).map_err(Into::into),
             Command::InnerEditor(cmd) => inner_editor::run(&project, cmd).map_err(Into::into),
             Command::Companions => companions::run(&project).map_err(Into::into),
-            Command::Check { paragraph, book_name, no_fact, no_socrates, no_timeline } => {
+            Command::Check { paragraph, book_name, no_fact, no_socrates, no_timeline, no_continuity } => {
                 check::run(
                     &project,
                     paragraph.as_deref(),
@@ -6725,6 +6729,7 @@ impl Cli {
                     no_fact,
                     no_socrates,
                     no_timeline,
+                    no_continuity,
                 )
                 .map_err(Into::into)
             }

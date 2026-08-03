@@ -98,6 +98,11 @@ pub mod kinds {
     /// from the CHORUS pillars (distinctiveness, drift, POV, tense, register).
     /// Deterministic, book-wide; Praise/Note → Info, Concern → Warning.
     pub const STYLIST: &str = "stylist";
+
+    /// SENTINEL-1 (CT-P4) — a unified continuity break from the always-on
+    /// deterministic sweep (co-location, numeric, char-facts, and the
+    /// referenced-before-introduced invariant). Contradiction → Warning, else Info.
+    pub const CONTINUITY: &str = "continuity";
 }
 
 /// Visual / priority class (RFC §7.4).
