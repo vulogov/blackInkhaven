@@ -910,7 +910,7 @@ pub(super) enum Modal {
         rows: Vec<String>,
         cursor: usize,
     },
-    /// SENTINEL-1 (CT-P6) — the continuity ledger dashboard (`Ctrl+B Shift+L`):
+    /// SENTINEL-1 (CT-P6) — the continuity ledger dashboard (`Ctrl+B Shift+S`):
     /// the ranked deterministic findings grouped by kind. `↑↓` scroll, Enter jumps
     /// to the finding's paragraph when it has one, Esc closes. `anchors` is
     /// parallel to `rows` (a header/blank row carries `None`).

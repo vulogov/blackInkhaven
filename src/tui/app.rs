@@ -15980,7 +15980,7 @@ impl App {
         }
     }
 
-    /// SENTINEL-1 (CT-P6) — `Ctrl+B Shift+L`: the continuity ledger dashboard. Runs
+    /// SENTINEL-1 (CT-P6) — `Ctrl+B Shift+S`: the continuity ledger dashboard. Runs
     /// the deterministic engine, groups the ranked findings by kind, and opens a
     /// scrollable modal (Enter jumps to a finding's paragraph). Zero-AI.
     fn open_continuity_ledger(&mut self) {

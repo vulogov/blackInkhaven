@@ -2102,7 +2102,7 @@ continuity: {
 ```
 
 CLI: `inkhaven continuity check` (`--only`/`--skip`/`--json`/`--coherence`); in the
-editor the ledger is `Ctrl+B Shift+L` and the findings ride the `Ctrl+B Shift+C`
+editor the ledger is `Ctrl+B Shift+S` and the findings ride the `Ctrl+B Shift+C`
 review pass (Output `continuity` category). Bund: `ink.continuity.findings` /
 `ink.continuity.check`.
 
