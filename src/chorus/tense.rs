@@ -10,11 +10,14 @@
 //!
 //! ## The language gate (the RFC's honest decision)
 //!
-//! This is **English-only**. Russian narrative tense is governed by *aspect* —
-//! the historical present and perfective/imperfective interleaving are
-//! legitimate devices, not slips, and nothing in the tree models aspect — so a
-//! past→present heuristic is *wrong* for Russian. CHORUS says so plainly rather
-//! than false-flagging. Other languages are simply not covered yet.
+//! Covered: **English, German, French, Spanish** — languages that share the "keep
+//! one narrative tense" convention, each with its own copula/auxiliary anchors +
+//! irregular and regular past-suffix markers. **Russian is excluded by design**:
+//! its narrative tense is governed by *aspect* — the historical present and
+//! perfective/imperfective interleaving are legitimate devices, not slips, and
+//! nothing in the tree models aspect — so a past→present heuristic is *wrong* for
+//! Russian. CHORUS says so plainly rather than false-flagging. Other languages
+//! are not covered.
 
 use uuid::Uuid;
 
@@ -59,13 +62,17 @@ pub(crate) enum TenseScan {
 /// Why a language is (not) covered by the tense heuristic.
 pub(crate) fn tense_unsupported(lang: &ProseLanguage) -> Option<&'static str> {
     match lang {
-        ProseLanguage::En => None,
+        // English + German + French + Spanish share the "keep one narrative
+        // tense" convention, so the past↔present heuristic applies.
+        ProseLanguage::En | ProseLanguage::De | ProseLanguage::Fr | ProseLanguage::Es => None,
         ProseLanguage::Ru => Some(
             "Russian narrative tense is governed by aspect — the historical present and \
              perfective/imperfective interleaving are legitimate, not slips — so CHORUS does \
              not flag Russian tense.",
         ),
-        _ => Some("tense-slip detection is English-only for now."),
+        ProseLanguage::Other(_) => {
+            Some("tense-slip detection covers English, German, French, and Spanish.")
+        }
     }
 }
 
@@ -79,7 +86,7 @@ pub(crate) fn tense_scan(text: &str, lang: &ProseLanguage) -> TenseScan {
     let narration = strip_dialogue(text);
     let classified: Vec<(String, Tense)> = split_sentences(&narration)
         .into_iter()
-        .filter_map(|s| classify(&s).map(|t| (s, t)))
+        .filter_map(|s| classify(&s, lang).map(|t| (s, t)))
         .collect();
     if classified.len() < 3 {
         return TenseScan::Scanned { dominant: Tense::Past, slips: Vec::new() };
@@ -178,21 +185,25 @@ fn norm(tok: &str) -> String {
 
 /// Classify one sentence past/present, or `None` when the signal is too weak or
 /// balanced. Copula/auxiliary anchors carry the most weight (they are the least
-/// ambiguous tense markers); irregular pasts less; regular `-ed` least.
-fn classify(sentence: &str) -> Option<Tense> {
+/// ambiguous tense markers); irregular pasts less; a language's regular past
+/// suffix least. Language-keyed: English + German + French + Spanish share the
+/// "keep one narrative tense" convention (Russian is excluded — its tense is
+/// aspect — before this is ever reached).
+fn classify(sentence: &str, lang: &ProseLanguage) -> Option<Tense> {
+    let m = markers(lang);
     let (mut past, mut present) = (0i32, 0i32);
     for raw in sentence.split_whitespace() {
         let t = norm(raw);
         if t.is_empty() {
             continue;
         }
-        if PAST_ANCHOR.contains(&t.as_str()) {
+        if m.past_anchor.contains(&t.as_str()) {
             past += 3;
-        } else if PRESENT_ANCHOR.contains(&t.as_str()) {
+        } else if m.present_anchor.contains(&t.as_str()) {
             present += 3;
-        } else if IRREGULAR_PAST.contains(&t.as_str()) {
+        } else if m.irregular_past.contains(&t.as_str()) {
             past += 2;
-        } else if is_regular_ed(&t) {
+        } else if regular_past(&t, lang) {
             past += 1;
         }
     }
@@ -206,23 +217,108 @@ fn classify(sentence: &str) -> Option<Tense> {
     }
 }
 
-fn is_regular_ed(t: &str) -> bool {
-    t.len() >= 4 && t.ends_with("ed") && !ED_STOPLIST.contains(&t)
+struct Markers {
+    past_anchor: &'static [&'static str],
+    present_anchor: &'static [&'static str],
+    irregular_past: &'static [&'static str],
 }
 
-const PAST_ANCHOR: &[&str] = &["was", "were", "had", "did"];
-const PRESENT_ANCHOR: &[&str] = &["is", "are", "am", "has", "have", "does", "do"];
+fn markers(lang: &ProseLanguage) -> Markers {
+    match lang {
+        ProseLanguage::De => Markers { past_anchor: DE_PAST, present_anchor: DE_PRESENT, irregular_past: DE_IRREGULAR },
+        ProseLanguage::Fr => Markers { past_anchor: FR_PAST, present_anchor: FR_PRESENT, irregular_past: FR_IRREGULAR },
+        ProseLanguage::Es => Markers { past_anchor: ES_PAST, present_anchor: ES_PRESENT, irregular_past: ES_IRREGULAR },
+        _ => Markers { past_anchor: EN_PAST, present_anchor: EN_PRESENT, irregular_past: EN_IRREGULAR },
+    }
+}
 
-const IRREGULAR_PAST: &[&str] = &[
+/// A language's *regular* past-tense verb suffix — the weakest signal, so a stray
+/// noun that happens to share the ending only nudges, never decides, a sentence
+/// that has no stronger anchor.
+fn regular_past(t: &str, lang: &ProseLanguage) -> bool {
+    match lang {
+        // English weak past `-ed`.
+        ProseLanguage::En | ProseLanguage::Other(_) => {
+            t.len() >= 4 && t.ends_with("ed") && !EN_ED_STOPLIST.contains(&t)
+        }
+        // German weak preterite `-te`/`-ten` (sagte, machten).
+        ProseLanguage::De => {
+            t.len() >= 5 && (t.ends_with("te") || t.ends_with("ten")) && !DE_TE_STOPLIST.contains(&t)
+        }
+        // French imparfait `-ait`/`-aient` (marchait, parlaient) — reliable.
+        ProseLanguage::Fr => t.len() >= 5 && (t.ends_with("ait") || t.ends_with("aient")),
+        // Spanish imperfecto `-aba`/`-aban` + `-ía`/`-ían` (with a stoplist for
+        // common `-ía` nouns) + pretérito `-ó`/`-ió`/`-aron`/`-ieron`.
+        ProseLanguage::Es => {
+            (t.len() >= 4
+                && (t.ends_with("aba")
+                    || t.ends_with("aban")
+                    || ((t.ends_with("ía") || t.ends_with("ían")) && !ES_IA_STOPLIST.contains(&t))))
+                || (t.len() >= 5 && (t.ends_with("aron") || t.ends_with("ieron")))
+                || (t.len() >= 3 && (t.ends_with('ó') || t.ends_with("ió")))
+        }
+        ProseLanguage::Ru => false,
+    }
+}
+
+const EN_PAST: &[&str] = &["was", "were", "had", "did"];
+const EN_PRESENT: &[&str] = &["is", "are", "am", "has", "have", "does", "do"];
+const EN_IRREGULAR: &[&str] = &[
     "went", "came", "saw", "said", "knew", "felt", "thought", "took", "made", "found", "gave",
     "told", "ran", "stood", "sat", "became", "held", "heard", "kept", "left", "met", "brought",
     "began", "spoke", "wrote", "drove", "rode", "fell", "rose", "broke", "chose", "grew", "threw",
     "caught", "taught", "bought", "fought", "sought", "understood", "won", "lost", "sent", "spent",
 ];
-
-const ED_STOPLIST: &[&str] = &[
+const EN_ED_STOPLIST: &[&str] = &[
     "red", "bed", "fed", "led", "wed", "need", "indeed", "instead", "seed", "deed", "speed",
     "bleed", "greed", "freed", "embed", "ahead", "sacred", "hundred", "hatred", "naked", "wicked",
+];
+
+// German — sein/haben/werden + modals in Präteritum vs Präsens.
+const DE_PAST: &[&str] = &[
+    "war", "warst", "waren", "wart", "hatte", "hattest", "hatten", "hattet", "wurde", "wurdest",
+    "wurden", "konnte", "konnten", "wollte", "wollten", "musste", "mussten", "sollte", "sollten",
+    "durfte", "durften",
+];
+const DE_PRESENT: &[&str] = &[
+    "ist", "bist", "sind", "seid", "bin", "hat", "habe", "haben", "hast", "habt", "wird", "werden",
+    "wirst", "kann", "können", "will", "wollen", "muss", "müssen", "soll", "sollen",
+];
+const DE_IRREGULAR: &[&str] = &[
+    "ging", "kam", "sah", "gab", "nahm", "fand", "stand", "saß", "blieb", "hielt", "sprach",
+    "dachte", "wusste", "ließ", "trug", "fuhr", "rief", "schrieb", "zog", "schlug", "fiel", "hieß",
+    "las", "trank", "sang", "fing",
+];
+const DE_TE_STOPLIST: &[&str] =
+    &["heute", "mitte", "seite", "liste", "karte", "worte", "gute", "harte", "kette", "ernte"];
+
+// French — être/avoir in imparfait / passé simple vs présent.
+const FR_PAST: &[&str] = &[
+    "était", "étaient", "étais", "étiez", "étions", "fut", "furent", "fus", "avait", "avaient",
+    "avais", "aviez", "avions", "eut", "eurent", "eus",
+];
+const FR_PRESENT: &[&str] =
+    &["est", "sont", "es", "suis", "êtes", "sommes", "a", "ont", "as", "ai", "avez", "avons"];
+const FR_IRREGULAR: &[&str] = &[
+    "fit", "firent", "dit", "dirent", "vint", "vinrent", "prit", "prirent", "vit", "virent",
+    "alla", "allèrent", "sut", "surent", "put", "purent", "voulut", "mit", "mirent",
+];
+
+// Spanish — ser/estar/haber in pretérito / imperfecto vs presente.
+const ES_PAST: &[&str] = &[
+    "era", "eran", "eras", "fue", "fueron", "fui", "estaba", "estaban", "estabas", "estuvo",
+    "estuvieron", "había", "habían", "habías",
+];
+const ES_PRESENT: &[&str] =
+    &["es", "son", "eres", "soy", "somos", "está", "están", "estás", "estoy", "ha", "han", "has", "he", "hemos"];
+const ES_IRREGULAR: &[&str] = &[
+    "dijo", "dijeron", "hizo", "hicieron", "vino", "vinieron", "tuvo", "tuvieron", "pudo",
+    "pudieron", "quiso", "puso", "pusieron", "vio", "vieron", "dio", "dieron",
+];
+// Common `-ía`/`-ían` words that are NOT imperfecto verbs.
+const ES_IA_STOPLIST: &[&str] = &[
+    "día", "días", "todavía", "maría", "policía", "alegría", "melodía", "compañía", "sabiduría",
+    "cortesía", "energía", "vía", "guía", "fantasía", "poesía",
 ];
 
 #[cfg(test)]
@@ -231,12 +327,41 @@ mod tests {
 
     #[test]
     fn classifies_past_and_present() {
-        assert_eq!(classify("She walked home and it was cold"), Some(Tense::Past));
-        assert_eq!(classify("She walks home and it is cold"), Some(Tense::Present));
+        use ProseLanguage::En;
+        assert_eq!(classify("She walked home and it was cold", &En), Some(Tense::Past));
+        assert_eq!(classify("She walks home and it is cold", &En), Some(Tense::Present));
         // No verb signal → unclassified.
-        assert_eq!(classify("The wide grey sea"), None);
+        assert_eq!(classify("The wide grey sea", &En), None);
         // A lone -ed adjective doesn't pass the weight floor.
-        assert_eq!(classify("The red door"), None);
+        assert_eq!(classify("The red door", &En), None);
+    }
+
+    #[test]
+    fn classifies_german_french_spanish() {
+        use ProseLanguage::{De, Es, Fr};
+        // German: Präteritum sagte/war vs Präsens ist.
+        assert_eq!(classify("Sie ging nach Hause und es war kalt", &De), Some(Tense::Past));
+        assert_eq!(classify("Sie geht nach Hause und es ist kalt", &De), Some(Tense::Present));
+        // French: imparfait marchait/était vs présent est.
+        assert_eq!(classify("Elle marchait vers la maison et il faisait froid", &Fr), Some(Tense::Past));
+        assert_eq!(classify("Elle est là et il fait froid maintenant", &Fr), Some(Tense::Present));
+        // Spanish: pretérito/imperfecto caminaba/estaba vs presente está.
+        assert_eq!(classify("Ella caminaba a casa y hacía frío", &Es), Some(Tense::Past));
+        assert_eq!(classify("Ella está en casa y hace frío ahora", &Es), Some(Tense::Present));
+    }
+
+    #[test]
+    fn german_scans_a_present_slip() {
+        let text = "Sie ging zum Fenster. Der Regen hatte aufgehört. \
+                    Sie ist jetzt an der Tür. Er kam leise herein. Sie saßen am Feuer.";
+        match tense_scan(text, &ProseLanguage::De) {
+            TenseScan::Scanned { dominant, slips } => {
+                assert_eq!(dominant, Tense::Past);
+                assert_eq!(slips.len(), 1);
+                assert_eq!(slips[0].tense, Tense::Present);
+            }
+            TenseScan::Unsupported(_) => panic!("German should be supported"),
+        }
     }
 
     #[test]

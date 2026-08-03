@@ -72,11 +72,13 @@ Tag any paragraph in the scene:
 
 Undeclared scenes infer the POV from mention counts.
 
-### The tense gate — English only, Russian excluded
+### The tense gate — EN/DE/FR/ES, Russian excluded
 
-Tense-slip detection is **English-only**. **Russian is excluded by design**: its
-narrative tense is governed by *aspect* — the historical present and
-perfective/imperfective interleaving are legitimate devices, not slips — and
+Tense-slip detection covers **English, German, French, and Spanish** — languages
+that share the "keep one narrative tense" convention, each with its own
+copula/auxiliary anchors and past-suffix markers. **Russian is excluded by
+design**: its narrative tense is governed by *aspect* — the historical present
+and perfective/imperfective interleaving are legitimate devices, not slips — and
 nothing in the tree models aspect, so a past→present heuristic would be *wrong*
 for Russian. `chorus scan` says so plainly rather than false-flagging. (Character
 voice and head-hop **do** work in Russian.)
@@ -135,7 +137,7 @@ CHORUS keys off the project language and is honest about coverage. Character
 voice + distinctiveness + drift work in every language (rhythm/diversity) with
 the language-sensitive axes filling in for EN/RU/DE/FR/ES. Head-hop reuses the
 per-language interiority markers (**including Russian**). Register is solid for
-EN/RU. Only the **tense** check is English-gated, and it says so. The Inner
+EN/RU. The **tense** check covers EN/DE/FR/ES (Russian excluded), and it says so. The Inner
 Stylist coaches in the book's language.
 
 ---
@@ -163,7 +165,7 @@ All knobs inform and cap — per Inkhaven's permissive principle, they never blo
 
 - Not a style *corrector* — it flags, it never rewrites.
 - Not a grammar checker — there's no parser; the tense check is an honest,
-  English-gated heuristic.
+  EN/DE/FR/ES heuristic (Russian excluded).
 - Not a "good writing" score — it measures *consistency and distinctiveness*, not
   quality. Statistical voice ≠ literary voice: every surface states its limits.
 
