@@ -25,10 +25,99 @@ pub fn run(project: &Path, cmd: ChorusCommand) -> Result<()> {
             voices(project, book.as_deref(), character.as_deref(), json)
         }
         ChorusCommand::Scan { book, json } => scan(project, book.as_deref(), json),
+        ChorusCommand::Report { book, json } => report(project, book.as_deref(), json),
         ChorusCommand::Stylist { book, coach, suppress, unsuppress, json } => {
             stylist(project, book.as_deref(), coach, suppress, unsuppress, json)
         }
     }
+}
+
+/// CH-P8 — the unified voice dashboard: narrator profile + cast + distinctiveness
+/// + the Inner Stylist synthesis, over one book.
+fn report(project: &Path, book_name: Option<&str>, json: bool) -> Result<()> {
+    use crate::chorus::distinct::matrix;
+    use crate::chorus::drift::character_drift;
+    use crate::chorus::voices::character_profiles;
+    use crate::prose::VoiceScope;
+
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout.clone(), &cfg)?;
+    let h = Hierarchy::load(&store)?;
+    let book = super::resolve_user_book(&h, book_name, "chorus").map_err(Error::Store)?;
+
+    // Narrator profile (NARR-1 book aggregate).
+    let pstore = ProseStore::open(store.project_root()).map_err(|e| Error::Store(e.to_string()))?;
+    let narrator_profiles = crate::prose::refresh_book(
+        &pstore, &layout, &h, &cfg, book, None, cfg.prose.deep_metrics, cfg.prose.mattr_window, &now(),
+    )
+    .map_err(|e| Error::Store(e.to_string()))?;
+    let narrator = narrator_profiles.into_iter().find(|p| matches!(p.scope, VoiceScope::Book));
+
+    // Cast voices → distinctiveness + drift.
+    let ds = DialogueStore::open(store.project_root()).map_err(|e| Error::Store(e.to_string()))?;
+    crate::dialogue::refresh_book(&ds, &layout, &h, &cfg, book, None, &now())
+        .map_err(|e| Error::Store(e.to_string()))?;
+    let voices = character_profiles(&pstore, &ds, &cfg, book, None, &now())
+        .map_err(|e| Error::Store(e.to_string()))?;
+    let dm = matrix(&voices, cfg.chorus.distinct_threshold, &cfg.chorus.distinct_ignore_pairs);
+    let drifts: Vec<(String, Vec<crate::prose::violations::Violation>)> = voices
+        .iter()
+        .map(|v| (v.name.clone(), character_drift(v, &cfg.prose.thresholds)))
+        .filter(|(_, d)| !d.is_empty())
+        .collect();
+
+    // Discipline pillars → the Inner Stylist synthesis.
+    let head_hops = crate::chorus::pov::scan_head_hops(&layout, &h, &cfg, book);
+    let tense = crate::chorus::tense::scan_tense(&layout, &h, &cfg, book);
+    let register = crate::chorus::register::scan_register(&layout, &h, &cfg, book);
+    let findings =
+        crate::inner_stylist::fast::synthesize(&dm, &drifts, &head_hops, &tense, &register);
+
+    if json {
+        let out = serde_json::json!({
+            "narrator": narrator.as_ref().map(|p| serde_json::json!({
+                "median_sentence_words": p.p50, "cv": p.cv, "mattr": p.mattr,
+                "modal_density": p.modal_density, "interiority_ratio": p.interiority_ratio,
+            })),
+            "voices": voices.iter().map(voice_json).collect::<Vec<_>>(),
+            "distinctiveness": distinct_json(&dm),
+            "stylist": findings.iter().map(|f| serde_json::json!({
+                "severity": f.severity.label(), "kind": f.kind, "key": f.key, "message": f.message,
+            })).collect::<Vec<_>>(),
+        });
+        println!("{}", serde_json::to_string_pretty(&out).unwrap_or_default());
+        return Ok(());
+    }
+
+    println!("Voice report — `{}` [{}]", book.title, cfg.language);
+    println!("{}", "═".repeat(66));
+    println!("Narrator");
+    match &narrator {
+        Some(p) => {
+            println!("    sentence length (median)   {:.0} words", p.p50);
+            println!("    rhythm variety (CV)        {:.2}", p.cv);
+            println!("    lexical diversity (MATTR)  {:.2}", p.mattr);
+            println!("    hedging                    {}", opt(p.modal_density));
+            println!("    interiority                {}", opt(p.interiority_ratio));
+        }
+        None => println!("    (no narrator profile — the book has no prose yet)"),
+    }
+    println!("{}", "─".repeat(66));
+    print_cards(&book.title, &cfg.language, &voices.iter().collect::<Vec<_>>());
+    print_distinctiveness(&dm);
+    println!("{}", "─".repeat(66));
+    println!("Inner Stylist");
+    if findings.is_empty() {
+        println!("  the book's voice reads clean — nothing to raise");
+    } else {
+        for f in &findings {
+            println!("  {} [{}] {}", f.severity.glyph(), f.kind, f.message);
+        }
+    }
+    println!("{}", "═".repeat(66));
+    Ok(())
 }
 
 fn stylist(
