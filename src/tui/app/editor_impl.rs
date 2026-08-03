@@ -815,6 +815,9 @@ impl super::App {
         // break its phonotactics, as advisory Output findings. No-op unless
         // `oracle.on_save` and the project has languages.
         self.oracle_scan_saved_paragraph(node.id, &body);
+        // SENTINEL-1 (CT-P5) — the continuity watch: re-check what this edit
+        // touched and surface the delta. No-op unless `continuity.ambient`.
+        self.continuity_scan_saved_paragraph(node.id);
         Ok(())
     }
 
