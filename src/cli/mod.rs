@@ -1798,6 +1798,22 @@ pub enum ContinuityCommand {
     /// Dump the extracted continuity bible — each
     /// character's facts, by attribute + chapter.
     List,
+    /// SENTINEL — the unified deterministic continuity ledger: run every
+    /// detector (co-location, timeline, numeric, char-facts, and the
+    /// referenced-before-introduced invariant), deduped and ranked. Exits
+    /// non-zero when any Contradiction-severity break is found (for CI).
+    Check {
+        /// Only run these detectors (repeatable): co_location, timeline,
+        /// numeric, char_facts, introduce. Default: all.
+        #[arg(long)]
+        only: Vec<String>,
+        /// Skip these detectors (repeatable). Applied after `--only`.
+        #[arg(long)]
+        skip: Vec<String>,
+        /// Emit findings as JSON instead of human-readable text.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 /// 1.2.19+ C.4 — sub-subcommands under

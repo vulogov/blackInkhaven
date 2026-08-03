@@ -23,10 +23,6 @@
 //! Characters/Places books and `drift::mentions` is Unicode-aware, so Cyrillic
 //! and accented names match exactly as Latin ones do.
 
-// scan()/the pure invariant are consumed by CT-P2's engine (and CT-P4's review
-// pass). Until they land this is scaffolding — drop this allow at CT-P2.
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 
 use uuid::Uuid;
