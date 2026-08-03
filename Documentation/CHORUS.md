@@ -112,9 +112,10 @@ three pillars and turns the numbers into a few grounded **Praise / Note /
 Concern** observations, and — on the slow track — LLM coaching in the
 inner-family voice (*"I notice…"*, never a rewrite).
 
-- **In the editor** — the review pass **`Ctrl+B Shift+C`** now includes the Inner
+- **In the editor** — the review pass **`Ctrl+B Shift+C`** includes the Inner
   Stylist (its observations land in the Output pane), and the family hub
-  **`Ctrl+B J → Y`** runs it on demand.
+  **`Ctrl+B J → Y`** opens its overview: **`F`** synthesises to Output, **`E`**
+  engages the AI coach into the Thoughts pane, **`R`** opens the report dashboard.
 - **On the CLI**:
 
 ```
@@ -173,7 +174,6 @@ All knobs inform and cap — per Inkhaven's permissive principle, they never blo
 
 ## Not yet wired
 
-An interactive TUI report modal (the CLI `chorus report` + the review-pass
-findings cover the dashboard today) and a Bund `ink.chorus.*` scripting surface
-are natural future steps. The Inner Stylist's slow-track engage in the editor is
-currently the CLI `chorus stylist --coach`.
+A Bund `ink.chorus.*` scripting surface is the natural remaining step (the CLI +
+the in-editor overview/report/engage cover the interactive workflows). Tense
+covers EN/DE/FR/ES; other languages beyond Russian are simply not built yet.

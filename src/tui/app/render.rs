@@ -307,6 +307,14 @@ impl super::App {
             self.draw_inner_poet_overview_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::InnerStylistOverview) {
+            self.draw_inner_stylist_overview_modal(f, area);
+            return;
+        }
+        if matches!(self.modal, Modal::StyleReport { .. }) {
+            self.draw_style_report_modal(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::InnerEditorOverview { .. }) {
             self.draw_inner_editor_overview_modal(f, area);
             return;
