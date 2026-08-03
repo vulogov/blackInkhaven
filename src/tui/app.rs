@@ -4349,6 +4349,16 @@ impl App {
                 }
                 Err(e) => self.status = format!("Inner Stylist skipped: {e}"),
             },
+            BgJobKind::ContinuitySlow => match result {
+                Ok(n) if n == "0" => {
+                    self.status = "continuity coherence: no cross-paragraph contradictions".into();
+                }
+                Ok(n) => {
+                    self.right_pane = RightPane::Output;
+                    self.status = format!("continuity coherence: {n} finding(s) → Output (^B Tab)");
+                }
+                Err(e) => self.status = format!("continuity coherence skipped: {e}"),
+            },
             BgJobKind::WorldOverview => match result {
                 Ok(joined) => {
                     let rows: Vec<String> = joined.split('\n').map(str::to_string).collect();
@@ -7399,6 +7409,10 @@ pub(super) enum BgJobKind {
     /// The worker turns the measured voice findings into grounded coaching; the
     /// `Ok` payload is the coaching text, shown in the Thoughts pane.
     StylistSlow,
+    /// SENTINEL-1 (CT-P7) — the continuity coherence pass (LLM), the ledger's `k`.
+    /// The worker runs the cross-paragraph coherence check over the open book and
+    /// emits its findings to Output; the `Ok` payload is the finding count.
+    ContinuitySlow,
     /// BUG-8 — the `Ctrl+B W` world overview compiled off-thread (deterministic,
     /// zero-AI). The `Ok` payload is the overview rows joined by `\n`.
     WorldOverview,
@@ -15973,9 +15987,9 @@ impl App {
         let (rows, anchors) = self.build_continuity_ledger_rows();
         let breaks = anchors.iter().filter(|a| a.is_some()).count();
         self.status = if breaks == 0 {
-            "continuity ledger: clean · Esc".into()
+            "continuity ledger: clean · k coherence pass · Esc".into()
         } else {
-            "continuity ledger · ↑↓ scroll · Enter jump · Esc".into()
+            "continuity ledger · ↑↓ scroll · Enter jump · k coherence · Esc".into()
         };
         self.modal = Modal::ContinuityLedger { rows, anchors, cursor: 0 };
     }
@@ -16072,9 +16086,64 @@ impl App {
                     self.status = "continuity ledger: no paragraph to jump to on this row".into();
                 }
             }
+            KeyCode::Char('k') | KeyCode::Char('K') => {
+                self.continuity_ledger_run_coherence();
+            }
             _ => {}
         }
         true
+    }
+
+    /// SENTINEL-1 (CT-P7) — the ledger's `k`: run the LLM coherence pass over the
+    /// open paragraph's book (whole project when nothing is open) as a background
+    /// job. Explicit + cost-capped; findings land in Output as `source:"coherence"`.
+    fn continuity_ledger_run_coherence(&mut self) {
+        if self.bg_job.is_some() {
+            self.status = "continuity: a background job is already running".into();
+            return;
+        }
+        // Scope: the open paragraph's book (fallback: the whole project).
+        let book_id = self.opened.as_ref().map(|d| d.id).and_then(|pid| {
+            let mut cur = self.hierarchy.get(pid);
+            while let Some(n) = cur {
+                if n.kind == NodeKind::Book {
+                    return Some(n.id);
+                }
+                cur = n.parent_id.and_then(|p| self.hierarchy.get(p));
+            }
+            None
+        });
+        let root = self.store.project_root().to_path_buf();
+        self.modal = Modal::None;
+        self.status = "⟳ continuity: reading for cross-paragraph contradictions…".into();
+        self.start_bg_job(BgJobKind::ContinuitySlow, "continuity coherence", move |tx, _cancel| {
+            use crate::pane::output::{kinds, Lifetime, Message, Severity};
+            let result = match crate::continuity_intel::coherence::run(&root, book_id, 8000, false) {
+                Ok(findings) => {
+                    let n = findings.len();
+                    for f in &findings {
+                        let sev = match f.severity {
+                            crate::continuity_intel::Severity::Contradiction => Severity::Warning,
+                            _ => Severity::Info,
+                        };
+                        crate::pane::output::emit(&Message::new(
+                            kinds::CONTINUITY,
+                            sev,
+                            Lifetime::UntilActedOn,
+                            serde_json::json!({
+                                "text": format!("[continuity · coherence] {}", f.message),
+                                "category": "continuity",
+                                "kind": "coherence",
+                                "source": "coherence",
+                            }),
+                        ));
+                    }
+                    Ok(n.to_string())
+                }
+                Err(e) => Err(e),
+            };
+            let _ = tx.send(BgMsg::Done(result));
+        });
     }
 
     fn style_report_handle_key(&mut self, key: KeyEvent) -> bool {

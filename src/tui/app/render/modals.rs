@@ -6554,7 +6554,10 @@ impl super::super::App {
 
         let footer = Rect { x: inner.x, y: inner.y + inner.height - 1, width: inner.width, height: 1 };
         f.render_widget(
-            Paragraph::new(Line::from(Span::styled(" ↑↓ scroll · Enter jump · Esc close", dim))),
+            Paragraph::new(Line::from(Span::styled(
+                " ↑↓ scroll · Enter jump · k coherence pass (LLM) · Esc close",
+                dim,
+            ))),
             footer,
         );
     }
