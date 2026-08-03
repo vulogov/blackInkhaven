@@ -4341,11 +4341,20 @@ pub struct ChorusConfig {
     /// uniform chorus, aliases of one speaker. Each entry is two names separated
     /// by `|`, order- and case-insensitive: `["Mara|Joren"]`.
     pub distinct_ignore_pairs: Vec<String>,
+    /// The absolute change in a register metric (contraction rate, archaism
+    /// density, formality, latinate density — all fractions/ratios) versus the
+    /// baseline chapter that flags a **register drift** (CH-P6). Higher = only
+    /// larger shifts flagged. Advisory.
+    pub register_drift_threshold: f32,
 }
 
 impl Default for ChorusConfig {
     fn default() -> Self {
-        Self { distinct_threshold: 0.5, distinct_ignore_pairs: Vec::new() }
+        Self {
+            distinct_threshold: 0.5,
+            distinct_ignore_pairs: Vec::new(),
+            register_drift_threshold: 0.08,
+        }
     }
 }
 
@@ -5921,6 +5930,7 @@ mod research_config_tests {
         let cfg: Config = serde_hjson::from_str("{}").unwrap();
         assert_eq!(cfg.chorus.distinct_threshold, 0.5);
         assert!(cfg.chorus.distinct_ignore_pairs.is_empty());
+        assert_eq!(cfg.chorus.register_drift_threshold, 0.08);
         // A partial block overrides only the named field.
         let cfg2: Config =
             serde_hjson::from_str("{ chorus: { distinct_ignore_pairs: [\"Mara|Joren\"] } }").unwrap();
