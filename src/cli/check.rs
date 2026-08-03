@@ -113,7 +113,7 @@ pub fn run(
     // ── project-wide checker: SENTINEL continuity ledger ─────────────────────
     // `timeline` is skipped — the critique above already covers orphan / overlap.
     let mut continuity_ran = false;
-    if !no_continuity {
+    if !no_continuity && cfg.continuity.enabled {
         continuity_ran = true;
         run_continuity(&layout, &cfg, &store, &hierarchy, &mut findings);
     }
