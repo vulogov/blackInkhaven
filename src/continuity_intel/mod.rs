@@ -8,18 +8,15 @@
 //! `Documentation/PROPOSALS/SENTINEL-1_PLAN.md`.
 //!
 //! CT-P0 lands the shared vocabulary: [`ContinuityFinding`] + [`Severity`] + the
-//! dedup/rank primitives the engine (CT-P2) composes. CT-P1 adds the first
-//! detector — [`introduce`], the referenced-before-introduced invariant.
-
-// The type surface is consumed by CT-P1 (the first detector, which constructs
-// findings) and CT-P2 (the engine, which uses dedupe/rank); until the engine
-// lands the dedup/rank primitives are scaffolding. Drop this allow at CT-P2.
-#![allow(dead_code)]
+//! dedup/rank primitives. CT-P1 adds the first detector — [`introduce`], the
+//! referenced-before-introduced invariant. CT-P2's [`engine`] composes them:
+//! it fans out to every deterministic detector, normalises, ranks, and dedupes.
 
 use std::collections::HashSet;
 
 use uuid::Uuid;
 
+pub(crate) mod engine;
 pub(crate) mod introduce;
 
 /// How serious a continuity finding is. `Contradiction` is a hard clash (a
