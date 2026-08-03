@@ -53,6 +53,21 @@ pub(crate) fn book_scenes(layout: &ProjectLayout, h: &Hierarchy, book: &Node) ->
     out
 }
 
+/// Each chapter's prose as one stripped blob, `(chapter_ord, text)` in reading
+/// order — for the chapter-granular register axis (CH-P6). Built by grouping the
+/// scene walk, so it shares the same Jinja-excluding, Typst-stripping rules.
+pub(crate) fn chapter_texts(layout: &ProjectLayout, h: &Hierarchy, book: &Node) -> Vec<(u32, String)> {
+    let mut by_chapter: std::collections::BTreeMap<u32, String> = std::collections::BTreeMap::new();
+    for s in book_scenes(layout, h, book) {
+        let entry = by_chapter.entry(s.chapter_ord).or_default();
+        if !entry.is_empty() {
+            entry.push('\n');
+        }
+        entry.push_str(&s.text);
+    }
+    by_chapter.into_iter().collect()
+}
+
 fn push_scene(
     cur: &mut Vec<(Uuid, String, Vec<String>)>,
     chapter_ord: u32,

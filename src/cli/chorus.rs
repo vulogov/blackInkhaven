@@ -38,6 +38,7 @@ fn scan(project: &Path, book_name: Option<&str>, json: bool) -> Result<()> {
 
     let findings = crate::chorus::pov::scan_head_hops(&layout, &h, &cfg, book);
     let tense = crate::chorus::tense::scan_tense(&layout, &h, &cfg, book);
+    let register = crate::chorus::register::scan_register(&layout, &h, &cfg, book);
 
     if json {
         let head_hops: Vec<serde_json::Value> = findings
@@ -59,6 +60,7 @@ fn scan(project: &Path, book_name: Option<&str>, json: bool) -> Result<()> {
             serde_json::to_string_pretty(&serde_json::json!({
                 "head_hops": head_hops,
                 "tense": tense_json(&tense),
+                "register": register_json(&register),
             }))
             .unwrap_or_default()
         );
@@ -88,7 +90,44 @@ fn scan(project: &Path, book_name: Option<&str>, json: bool) -> Result<()> {
     println!("{}", "─".repeat(64));
     print_tense(&tense);
     println!("{}", "─".repeat(64));
+    print_register(&register);
+    println!("{}", "─".repeat(64));
     Ok(())
+}
+
+fn register_json(r: &crate::chorus::register::RegisterReport) -> serde_json::Value {
+    serde_json::json!({
+        "chapters": r.chapters.iter().map(|c| serde_json::json!({
+            "chapter": c.chapter_ord,
+            "contraction_rate": c.register.contraction_rate,
+            "archaism_density": c.register.archaism_density,
+            "formality": c.register.formality,
+            "latinate_density": c.register.latinate_density,
+        })).collect::<Vec<_>>(),
+        "drifts": r.drifts.iter().map(|d| serde_json::json!({
+            "chapter": d.chapter_ord, "metric": d.metric,
+            "baseline": d.baseline, "value": d.value, "delta": d.delta,
+        })).collect::<Vec<_>>(),
+    })
+}
+
+fn print_register(r: &crate::chorus::register::RegisterReport) {
+    println!("Register & diction (advisory, vs. chapter 1)");
+    if r.chapters.len() < 2 {
+        println!("  (need at least two substantial chapters to compare register)");
+        return;
+    }
+    if r.drifts.is_empty() {
+        println!("  ✓ register holds across the chapters");
+    } else {
+        for d in &r.drifts {
+            let dir = if d.delta >= 0.0 { "rose" } else { "fell" };
+            println!(
+                "  ⚠ ch.{}  {} {dir} to {:.3} (ch.1 {:.3}, Δ {:+.3})",
+                d.chapter_ord, d.metric, d.value, d.baseline, d.delta
+            );
+        }
+    }
 }
 
 fn tense_json(t: &crate::chorus::tense::TenseSummary) -> serde_json::Value {
