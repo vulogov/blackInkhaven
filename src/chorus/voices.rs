@@ -61,30 +61,39 @@ impl Confidence {
     }
 }
 
-/// One character's aggregated dialogue, ready to profile, with utterance/word
-/// counts. (CH-P3 adds per-chapter slices here for drift.)
+/// A character's dialogue in a chapter carries too few lines to profile below
+/// this word floor — skip it for drift (matches the `Confidence::Low` floor).
+const MIN_CHAPTER_WORDS: u32 = 40;
+
+/// One character's aggregated dialogue, ready to profile: the whole corpus plus
+/// the per-chapter slices (CH-P3 drift), with utterance/word counts.
 pub(crate) struct CharacterCorpus {
     pub all: String,
+    pub per_chapter: BTreeMap<u32, String>,
     pub utterances: u32,
     pub words: u32,
 }
 
-/// A character's voice — the FULL NARR-1 profile over their dialogue, plus a
-/// confidence from corpus size. (CH-P3 adds per-chapter profiles for drift.)
+/// A character's voice — the FULL NARR-1 profile over their dialogue, the
+/// per-chapter profiles (each scoped `Chapter(ord)` so the NARR-1 drift
+/// machinery consumes them directly — CH-P3), and a confidence from corpus size.
 pub(crate) struct CharacterVoice {
     pub name: String,
     pub profile: VoiceProfile,
     pub confidence: Confidence,
     pub utterances: u32,
+    /// Per-chapter profiles for chapters where the character has enough
+    /// dialogue (`Chapter(ord)` scope, ordered by chapter). CH-P3 drifts these.
+    pub per_chapter: Vec<VoiceProfile>,
 }
 
 /// PURE — group attributed spans into per-character corpora. The grouping key is
-/// the attribution name verbatim (roster-canonical); lines join with a space.
-/// Unattributed / empty spans are skipped (they shouldn't reach here from
-/// `attributed_spans`, but be defensive).
+/// the attribution name verbatim (roster-canonical); lines join with a space,
+/// chapters kept separate for drift. Unattributed / empty spans are skipped
+/// (they shouldn't reach here from `attributed_spans`, but be defensive).
 pub(crate) fn character_corpora(spans: &[(u32, DialogueSpan)]) -> BTreeMap<String, CharacterCorpus> {
     let mut out: BTreeMap<String, CharacterCorpus> = BTreeMap::new();
-    for (_ord, span) in spans {
+    for (ord, span) in spans {
         let Some(name) = span.attribution_name.as_deref().map(str::trim).filter(|s| !s.is_empty())
         else {
             continue;
@@ -95,10 +104,12 @@ pub(crate) fn character_corpora(spans: &[(u32, DialogueSpan)]) -> BTreeMap<Strin
         }
         let entry = out.entry(name.to_string()).or_insert_with(|| CharacterCorpus {
             all: String::new(),
+            per_chapter: BTreeMap::new(),
             utterances: 0,
             words: 0,
         });
         push_line(&mut entry.all, line);
+        push_line(entry.per_chapter.entry(*ord).or_default(), line);
         entry.utterances += 1;
         entry.words += span.word_count;
     }
@@ -150,11 +161,23 @@ pub(crate) fn character_profiles(
         );
         pstore.upsert(&book.slug, &profile, now)?;
 
+        // Per-chapter profiles for drift — scoped `Chapter(ord)` so NARR-1's
+        // `violations` reads them directly; only chapters with enough dialogue.
+        let per_chapter: Vec<VoiceProfile> = corpus
+            .per_chapter
+            .iter()
+            .map(|(ord, text)| {
+                compute_profile_with(text, VoiceScope::Chapter(*ord), &lang, &lx, deep, window)
+            })
+            .filter(|p| p.word_count >= MIN_CHAPTER_WORDS)
+            .collect();
+
         voices.push(CharacterVoice {
             name,
             profile,
             confidence: Confidence::from_counts(corpus.utterances, corpus.words),
             utterances: corpus.utterances,
+            per_chapter,
         });
     }
     voices.sort_by(|a, b| a.name.cmp(&b.name));
