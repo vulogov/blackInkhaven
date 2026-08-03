@@ -33,9 +33,13 @@ pub(crate) const DETECTORS: &[&str] =
 
 /// Run every enabled deterministic detector, normalise, rank, and dedupe.
 ///
-/// `enabled(key)` gates each detector by its `DETECTORS` key (the CLI's
-/// `--only`/`--skip`; CT-P3's config toggles). All detectors are deterministic
-/// and cheap, so this never touches the network.
+/// A detector runs only when BOTH its `continuity:` config toggle
+/// ([`crate::config::ContinuityConfig`]) and the caller's `enabled(key)`
+/// predicate allow it. The config is the standing gate (a detector switched off
+/// there never runs anywhere); `enabled` is the caller-specific narrowing — the
+/// CLI's `--only`/`--skip`, or the review pass excluding `timeline` (which it
+/// surfaces on its own line). All detectors are deterministic and cheap, so this
+/// never touches the network.
 pub(crate) fn run(
     store: &Store,
     cfg: &Config,
@@ -43,23 +47,24 @@ pub(crate) fn run(
     h: &Hierarchy,
     enabled: &dyn Fn(&str) -> bool,
 ) -> Vec<ContinuityFinding> {
+    let ct = &cfg.continuity;
+    let on = |key: &str| ct.detector_enabled(key) && enabled(key);
+
     let mut out: Vec<ContinuityFinding> = Vec::new();
-    if enabled("co_location") {
+    if on("co_location") {
         out.extend(co_location(layout, h));
     }
-    if enabled("timeline") {
+    if on("timeline") {
         out.extend(timeline(cfg, h));
     }
-    if enabled("numeric") {
+    if on("numeric") {
         out.extend(numeric(cfg, layout, h));
     }
-    if enabled("char_facts") {
+    if on("char_facts") {
         out.extend(char_facts(cfg, layout));
     }
-    if enabled("introduce") {
-        // CT-P3 makes the tolerance configurable; 0 = flag any earlier-chapter
-        // reference for now.
-        out.extend(introduce::scan(layout, h, 0));
+    if on("introduce") {
+        out.extend(introduce::scan(layout, h, ct.introduce_tolerance));
     }
     let _ = store; // reserved for CT-P5's scoped re-check
     // Rank before dedupe so the survivor of a folded group is the most severe.

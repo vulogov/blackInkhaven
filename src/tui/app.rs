@@ -3011,6 +3011,11 @@ fn run_continuity_check(
         }
     };
 
+    if !cfg.continuity.enabled {
+        clear();
+        return Ok(0);
+    }
+
     let h = crate::store::hierarchy::Hierarchy::load(store).map_err(|e| e.to_string())?;
     let sel = crate::continuity_intel::engine::selector(&[], &["timeline".to_string()]);
     let findings = crate::continuity_intel::engine::run(store, cfg, layout, &h, &sel);
