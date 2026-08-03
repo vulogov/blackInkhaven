@@ -900,6 +900,16 @@ pub(super) enum Modal {
     /// the open verse paragraph's metre + rhyme to Output, `E` engages the LLM
     /// slow track to the Thoughts pane, `D` declares a form, `Esc` closes.
     InnerPoetOverview,
+    /// CHORUS CH-P7b — the Inner Stylist overview (`Ctrl+B J → Y`): `F` runs the
+    /// voice-at-scale synthesis to Output, `E` engages the LLM coaching to the
+    /// Thoughts pane, `R` opens the report dashboard, `Esc` closes.
+    InnerStylistOverview,
+    /// CHORUS CH-P8 — the book-scale voice report dashboard (scrollable): the
+    /// narrator profile, the cast + distinctiveness, and the Stylist findings.
+    StyleReport {
+        rows: Vec<String>,
+        cursor: usize,
+    },
     /// POEM-TUI (PO-P12) — the form picker (`Ctrl+B J → P → D`): choose one of
     /// the built-in forms and attach its `poem:` block to the open verse
     /// paragraph as a sidecar leaf. `cursor` indexes `FormsLibrary::all()`;

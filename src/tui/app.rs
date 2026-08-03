@@ -4271,6 +4271,19 @@ impl App {
                 }
                 Err(e) => self.status = format!("Inner Poet skipped: {e}"),
             },
+            BgJobKind::StylistSlow => match result {
+                Ok(text) if text.trim().is_empty() => {
+                    self.status = "Inner Stylist: the voice reads clean".into();
+                }
+                Ok(text) => {
+                    self.push_thought(format!("## ❝ Inner Stylist\n\n{text}"));
+                    self.right_pane = RightPane::Thoughts;
+                    self.focus_cycle(Focus::Ai);
+                    self.status =
+                        "❝ Inner Stylist — in the Thoughts pane (↑↓ scroll · Ctrl+Z f fullscreen)".into();
+                }
+                Err(e) => self.status = format!("Inner Stylist skipped: {e}"),
+            },
             BgJobKind::WorldOverview => match result {
                 Ok(joined) => {
                     let rows: Vec<String> = joined.split('\n').map(str::to_string).collect();
@@ -7317,6 +7330,10 @@ pub(super) enum BgJobKind {
     /// worker observes the open stanza (enjambment / sound / caesura / volta) and
     /// the `Ok` payload is the observation text, shown in the Thoughts pane.
     PoetSlow,
+    /// CHORUS CH-P7b — the Inner Stylist slow track (LLM), `Ctrl+B J → Y → E`.
+    /// The worker turns the measured voice findings into grounded coaching; the
+    /// `Ok` payload is the coaching text, shown in the Thoughts pane.
+    StylistSlow,
     /// BUG-8 — the `Ctrl+B W` world overview compiled off-thread (deterministic,
     /// zero-AI). The `Ok` payload is the overview rows joined by `\n`.
     WorldOverview,
@@ -15792,9 +15809,192 @@ impl App {
             "Inner Socrates · F fast-check ¶ · E engage (slow/LLM) · T theologian · R rigor ¶ · P poet · Y stylist · S persona · L ledger · A auto · Esc".into();
     }
 
-    /// CHORUS CH-P7b — `Ctrl+B J → Y`: run the Inner Stylist over the whole book
-    /// (deterministic voice-at-scale synthesis) and land its observations in the
-    /// Output pane. The LLM coaching track is `inkhaven chorus stylist --coach`.
+    /// CHORUS CH-P7b — `Ctrl+B J → Y`: the Inner Stylist overview menu.
+    fn open_inner_stylist_overview(&mut self) {
+        self.modal = Modal::InnerStylistOverview;
+        self.status =
+            "Inner Stylist · F synthesise → Output · E engage (LLM) → Thoughts · R report · Esc".into();
+    }
+
+    fn inner_stylist_overview_handle_key(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "Inner Stylist: closed".into();
+            }
+            KeyCode::Char('f') | KeyCode::Char('F') => self.stylist_check_book(),
+            KeyCode::Char('e') | KeyCode::Char('E') => self.stylist_engage(),
+            KeyCode::Char('r') | KeyCode::Char('R') => self.open_style_report(),
+            _ => {}
+        }
+        true
+    }
+
+    /// CHORUS CH-P7b — `Ctrl+B J → Y → E`: gather the voice findings (deterministic,
+    /// on the UI thread), then engage the LLM coach in the background; its grounded
+    /// coaching lands in the Thoughts pane. Never rewrites the prose.
+    fn stylist_engage(&mut self) {
+        if !self.cfg.stylist.enabled {
+            self.status = "Inner Stylist is disabled (stylist.enabled = false)".into();
+            return;
+        }
+        if let Err(e) = self.ai.resolve_provider(&self.cfg.llm, None) {
+            self.status = format!("Inner Stylist needs an LLM provider: {e}");
+            return;
+        }
+        let book = match crate::cli::resolve_user_book(&self.hierarchy, None, "stylist") {
+            Ok(b) => b.clone(),
+            Err(e) => {
+                self.status = format!("Inner Stylist: {e}");
+                return;
+            }
+        };
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut findings = match crate::inner_stylist::pipeline::gather(
+            &self.store, &self.layout, &self.hierarchy, &self.cfg, &book, &now,
+        ) {
+            Ok(f) => f,
+            Err(e) => {
+                self.status = format!("Inner Stylist: {e}");
+                return;
+            }
+        };
+        if let Ok(s) =
+            crate::inner_stylist::storage::InnerStylistStore::open_for_project(self.store.project_root())
+        {
+            if let Ok(silenced) = s.all_suppressions() {
+                findings.retain(|f| !silenced.contains(&f.key));
+            }
+        }
+        let (lang, _) =
+            crate::prose::resolve_prose_language(self.cfg.stylist.language.as_deref(), &self.cfg.language);
+        let prompt = crate::inner_stylist::slow::build_coach_prompt(&findings, &lang);
+        let cfg = self.cfg.clone();
+        self.modal = Modal::None;
+        self.right_pane = RightPane::Thoughts;
+        self.status = "⟳ Inner Stylist: reading the book's voice…".into();
+        self.start_bg_job(BgJobKind::StylistSlow, "inner stylist", move |tx, _cancel| {
+            use crate::inner_stylist::slow;
+            let result = slow::stylist_llm_call(&cfg, slow::STYLIST_SYSTEM, &prompt);
+            let _ = tx.send(BgMsg::Done(result));
+        });
+    }
+
+    /// CHORUS CH-P8 — `Ctrl+B J → Y → R`: the book-scale voice report dashboard,
+    /// a scrollable modal (narrator + cast + distinctiveness + Stylist findings).
+    fn open_style_report(&mut self) {
+        match self.build_style_report_rows() {
+            Ok(rows) => {
+                self.status = "voice report · ↑↓ scroll · Esc".into();
+                self.modal = Modal::StyleReport { rows, cursor: 0 };
+            }
+            Err(e) => {
+                self.modal = Modal::None;
+                self.status = format!("voice report: {e}");
+            }
+        }
+    }
+
+    fn style_report_handle_key(&mut self, key: KeyEvent) -> bool {
+        let n = match &self.modal {
+            Modal::StyleReport { rows, .. } => rows.len(),
+            _ => return false,
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "voice report: closed".into();
+            }
+            KeyCode::Up => {
+                if let Modal::StyleReport { cursor, .. } = &mut self.modal {
+                    *cursor = cursor.saturating_sub(1);
+                }
+            }
+            KeyCode::Down => {
+                if let Modal::StyleReport { cursor, .. } = &mut self.modal {
+                    if n > 0 {
+                        *cursor = (*cursor + 1).min(n - 1);
+                    }
+                }
+            }
+            _ => {}
+        }
+        true
+    }
+
+    /// Assemble the voice-report rows (shared shape with `inkhaven chorus report`).
+    fn build_style_report_rows(&self) -> std::result::Result<Vec<String>, String> {
+        use crate::chorus::{distinct, drift, register, tense, voices};
+        let book = crate::cli::resolve_user_book(&self.hierarchy, None, "stylist")?.clone();
+        let now = chrono::Utc::now().to_rfc3339();
+        let opt = |x: Option<f32>| x.map(|v| format!("{v:.3}")).unwrap_or_else(|| "n/a".into());
+
+        let mut rows: Vec<String> = Vec::new();
+        rows.push(format!("◆ Voice report — {}", book.title));
+        rows.push(String::new());
+
+        // Narrator.
+        let pstore = crate::prose::ProseStore::open(self.store.project_root()).map_err(|e| e.to_string())?;
+        let profiles = crate::prose::refresh_book(
+            &pstore, &self.layout, &self.hierarchy, &self.cfg, &book, None,
+            self.cfg.prose.deep_metrics, self.cfg.prose.mattr_window, &now,
+        )
+        .map_err(|e| e.to_string())?;
+        rows.push("Narrator".into());
+        if let Some(p) = profiles.iter().find(|p| matches!(p.scope, crate::prose::VoiceScope::Book)) {
+            rows.push(format!("    median sentence   {:.0} words", p.p50));
+            rows.push(format!("    rhythm (CV)       {:.2}", p.cv));
+            rows.push(format!("    diversity (MATTR) {:.2}", p.mattr));
+            rows.push(format!("    hedging           {}", opt(p.modal_density)));
+        } else {
+            rows.push("    (no prose yet)".into());
+        }
+        rows.push(String::new());
+
+        // Cast + distinctiveness.
+        let ds = crate::dialogue::DialogueStore::open(self.store.project_root()).map_err(|e| e.to_string())?;
+        crate::dialogue::refresh_book(&ds, &self.layout, &self.hierarchy, &self.cfg, &book, None, &now)
+            .map_err(|e| e.to_string())?;
+        let cast = voices::character_profiles(&pstore, &ds, &self.cfg, &book, None, &now)
+            .map_err(|e| e.to_string())?;
+        rows.push(format!("Cast ({} voice(s))", cast.len()));
+        for v in &cast {
+            let p = &v.profile;
+            rows.push(format!(
+                "    {:<16} {} · CV {:.2} · MATTR {:.2} · {} utt",
+                v.name, v.confidence.label(), p.cv, p.mattr, v.utterances
+            ));
+        }
+        let dm = distinct::matrix(&cast, self.cfg.chorus.distinct_threshold, &self.cfg.chorus.distinct_ignore_pairs);
+        if let (Some(c), Some(d)) = (dm.closest(), dm.most_distinct()) {
+            rows.push(format!("    closest {} ≈ {} ({:.2}) · most distinct {} ↔ {} ({:.2})",
+                c.a, c.b, c.distance, d.a, d.b, d.distance));
+        }
+        rows.push(String::new());
+
+        // The Inner Stylist synthesis.
+        let drifts: Vec<(String, Vec<crate::prose::violations::Violation>)> = cast
+            .iter()
+            .map(|v| (v.name.clone(), drift::character_drift(v, &self.cfg.prose.thresholds)))
+            .filter(|(_, d)| !d.is_empty())
+            .collect();
+        let head_hops = crate::chorus::pov::scan_head_hops(&self.layout, &self.hierarchy, &self.cfg, &book);
+        let ten = tense::scan_tense(&self.layout, &self.hierarchy, &self.cfg, &book);
+        let reg = register::scan_register(&self.layout, &self.hierarchy, &self.cfg, &book);
+        let findings = crate::inner_stylist::fast::synthesize(&dm, &drifts, &head_hops, &ten, &reg);
+        rows.push("Inner Stylist".into());
+        if findings.is_empty() {
+            rows.push("    the book's voice reads clean".into());
+        } else {
+            for f in &findings {
+                rows.push(format!("    {} [{}] {}", f.severity.glyph(), f.kind, f.message));
+            }
+        }
+        Ok(rows)
+    }
+
+    /// CHORUS CH-P7b — synthesise the voice findings and land them in the Output
+    /// pane (the `F` action / the review pass). The LLM coaching is `E` / the CLI.
     fn stylist_check_book(&mut self) {
         self.modal = Modal::None;
         match run_stylist_check(&self.store, &self.cfg, &self.layout) {
@@ -15886,7 +16086,7 @@ impl App {
             KeyCode::Char('t') | KeyCode::Char('T') => self.theologian_engage_open_paragraph(),
             KeyCode::Char('r') | KeyCode::Char('R') => self.rigor_check_open_paragraph(),
             KeyCode::Char('p') | KeyCode::Char('P') => self.open_inner_poet_overview(),
-            KeyCode::Char('y') | KeyCode::Char('Y') => self.stylist_check_book(),
+            KeyCode::Char('y') | KeyCode::Char('Y') => self.open_inner_stylist_overview(),
             KeyCode::Char('n') | KeyCode::Char('N') => self.socratic_persona_wizard(),
             KeyCode::Char('a') | KeyCode::Char('A') => {
                 self.socratic_auto = !self.socratic_auto;
@@ -25666,6 +25866,14 @@ impl App {
         }
         if matches!(self.modal, Modal::InnerPoetOverview) {
             self.inner_poet_overview_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::InnerStylistOverview) {
+            self.inner_stylist_overview_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::StyleReport { .. }) {
+            self.style_report_handle_key(key);
             return Ok(false);
         }
         if matches!(self.modal, Modal::PoemFormPicker { .. }) {
