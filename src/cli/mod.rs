@@ -2301,6 +2301,15 @@ pub enum ChorusCommand {
         #[arg(long)]
         json: bool,
     },
+    /// The book-scale voice report (CH-P8) — one dashboard: the narrator's voice
+    /// profile, the character voices + distinctiveness, and the Inner Stylist's
+    /// synthesised observations. `--json` for tooling.
+    Report {
+        #[arg(long)]
+        book: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
     /// The Inner Stylist (CH-P7) — synthesise every pillar (distinctiveness,
     /// drift, POV, tense, register) into Praise / Note / Concern observations
     /// about the book's voice at scale. `--coach` streams LLM coaching over the
