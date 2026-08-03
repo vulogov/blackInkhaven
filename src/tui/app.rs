@@ -2984,6 +2984,62 @@ fn run_stylist_check(
     Ok(findings.len())
 }
 
+/// SENTINEL (CT-P4) — the unified deterministic continuity ledger joins the
+/// review pass. Runs the continuity engine, clears the prior `kinds::CONTINUITY`
+/// messages, and re-emits the current set (Contradiction → Warning, else Info),
+/// each anchored to the finding's paragraph when it has one. Zero-AI.
+///
+/// The `timeline` detector is skipped here — the review pass already surfaces
+/// orphan / fuzzy-overlap on their own line (`collect_and_emit_timeline_critique`);
+/// running it again would double-report. The continuity line carries what nobody
+/// else in the pass does: co-location, numeric, char-facts, and the
+/// referenced-before-introduced invariant.
+fn run_continuity_check(
+    store: &Store,
+    cfg: &Config,
+    layout: &ProjectLayout,
+) -> std::result::Result<usize, String> {
+    use crate::pane::output::{Lifetime, Message, Severity, kinds};
+
+    let clear = || {
+        if let Some(s) = crate::pane::output::active() {
+            if let Ok(msgs) = s.by_kind(kinds::CONTINUITY) {
+                for m in &msgs {
+                    let _ = s.dismiss(m.id);
+                }
+            }
+        }
+    };
+
+    let h = crate::store::hierarchy::Hierarchy::load(store).map_err(|e| e.to_string())?;
+    let sel = crate::continuity_intel::engine::selector(&[], &["timeline".to_string()]);
+    let findings = crate::continuity_intel::engine::run(store, cfg, layout, &h, &sel);
+
+    clear();
+    for f in &findings {
+        let sev = match f.severity {
+            crate::continuity_intel::Severity::Contradiction => Severity::Warning,
+            _ => Severity::Info,
+        };
+        let mut msg = Message::new(
+            kinds::CONTINUITY,
+            sev,
+            Lifetime::UntilActedOn,
+            serde_json::json!({
+                "text": format!("[continuity · {}] {}", f.source, f.message),
+                "category": "continuity",
+                "kind": f.kind,
+                "source": f.source,
+            }),
+        );
+        if let Some(anchor) = f.anchor {
+            msg = msg.with_source_paragraph(anchor);
+        }
+        crate::pane::output::emit(&msg);
+    }
+    Ok(findings.len())
+}
+
 /// RIGOR — the deterministic reasoning-rigor findings over the book of the open
 /// paragraph. Zero-AI; clears the prior `kinds::RIGOR` messages and re-emits the
 /// current set, each anchored + advisory. Gated on `rigor.enabled && fast_track`.
@@ -15529,6 +15585,11 @@ impl App {
         // distinctiveness / drift / POV / tense / register), deterministic.
         let sty = run_stylist_check(&self.store, &self.cfg, &self.layout).unwrap_or(0);
 
+        // SENTINEL — the unified continuity ledger (co-location, numeric,
+        // char-facts, referenced-before-introduced); deterministic. Timeline
+        // critique already has its own line above, so it's excluded here.
+        let ct = run_continuity_check(&self.store, &self.cfg, &self.layout).unwrap_or(0);
+
         // Reflect the instant findings in the tree report-card immediately.
         self.refresh_tree_badges();
 
@@ -15539,7 +15600,7 @@ impl App {
         // seconds later (and re-badge the tree on completion).
         let editor_spawned = self.maybe_spawn_check_editor();
 
-        let total = fact + soc + tl + dlg + uto + chr + theo + myth + rigor + orc + sty;
+        let total = fact + soc + tl + dlg + uto + chr + theo + myth + rigor + orc + sty + ct;
         if total == 0 && !editor_spawned {
             self.status = if checked == 0 {
                 "review pass: clean (no open paragraph; timeline + dialogue + utopia + character + theologian + myth included)".into()
@@ -15558,7 +15619,7 @@ impl App {
             format!("review pass: instant checks clean{editor_note}")
         } else {
             format!(
-                "review pass: {total} finding(s) — fact {fact} · socrates {soc} · timeline {tl} · dialogue {dlg} · utopia {uto} · character {chr} · theologian {theo} · myth {myth} · oracle {orc} · stylist {sty}{editor_note} → Output (^B Tab)"
+                "review pass: {total} finding(s) — fact {fact} · socrates {soc} · timeline {tl} · dialogue {dlg} · utopia {uto} · character {chr} · theologian {theo} · myth {myth} · oracle {orc} · stylist {sty} · continuity {ct}{editor_note} → Output (^B Tab)"
             )
         };
     }
