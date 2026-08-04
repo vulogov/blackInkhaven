@@ -26,27 +26,30 @@ pub fn run(project: &Path, deep: bool, max_cost: usize, force: bool, json: bool)
     // The forward walk (state + deterministic findings) and the scene/sequel beat.
     let rt = walk::read_forward(&store, &cfg, &layout, &h);
     let kinds = scene_sequel::chapter_kinds(&layout, &h, &cfg);
-    let kind_pairs: Vec<(u32, SceneKind)> = kinds.iter().map(|(c, _, k)| (*c, *k)).collect();
 
-    // Gather findings: the walk's (ranked/deduped) + arrhythmia + (opt) synthetic.
-    let mut findings: Vec<ReaderFinding> = rt.ranked_findings();
-    findings.extend(scene_sequel::arrhythmia(&kind_pairs));
+    // Gather findings: walk + scene/sequel arrhythmia + shape sags (+ opt synthetic).
+    let mut findings: Vec<ReaderFinding> = crate::lector::deterministic_findings(&rt, &layout, &h, &cfg);
     if deep {
         eprintln!("readthrough: running the synthetic first-read (LLM, cost-capped)…");
         findings.extend(synthetic::run(project, max_cost, force).map_err(Error::Store)?);
+        crate::lector::rank(&mut findings);
+        findings = crate::lector::dedupe(findings);
     }
-    crate::lector::rank(&mut findings);
-    let findings = crate::lector::dedupe(findings);
 
     if json {
         return print_json(&rt, &kinds, &findings);
     }
 
-    // ── the shape curve ──
+    // ── the shape curve: measured vs the framework's expected ──
     let n = rt.chapters.len();
-    println!("Read-through — {n} chapter(s)");
+    let fw = crate::lector::shape::resolve_framework(&cfg);
+    println!("Read-through — {n} chapter(s) · {}", fw.label());
     if n > 0 {
-        println!("  intensity  {}", crate::planning::intensity_sparkline(&rt.curve, n.max(1)));
+        println!("  measured   {}", crate::planning::intensity_sparkline(&rt.curve, n.max(1)));
+        let expected = crate::lector::shape::expected_curve(fw, n);
+        let exp_points: Vec<(f32, f32)> =
+            rt.curve.iter().zip(&expected).map(|((p, _), &e)| (*p, e)).collect();
+        println!("  expected   {}", crate::planning::intensity_sparkline(&exp_points, n.max(1)));
     }
 
     // ── per-chapter beats ──

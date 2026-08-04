@@ -3059,7 +3059,7 @@ fn run_lector_check(
     cfg: &Config,
     layout: &ProjectLayout,
 ) -> std::result::Result<usize, String> {
-    use crate::lector::{scene_sequel, walk};
+    use crate::lector::walk;
     use crate::pane::output::{Lifetime, Message, Severity, kinds};
 
     let clear = || {
@@ -3079,10 +3079,7 @@ fn run_lector_check(
 
     let h = crate::store::hierarchy::Hierarchy::load(store).map_err(|e| e.to_string())?;
     let rt = walk::read_forward(store, cfg, layout, &h);
-    let mut findings = rt.ranked_findings();
-    findings.extend(scene_sequel::scan(layout, &h, cfg));
-    crate::lector::rank(&mut findings);
-    let findings = crate::lector::dedupe(findings);
+    let findings = crate::lector::deterministic_findings(&rt, layout, &h, cfg);
 
     // Chapter → its first prose paragraph, to anchor findings that carry none.
     let chapters = h.user_book_chapters();
@@ -16274,16 +16271,17 @@ impl App {
         let first_para: Vec<Option<Uuid>> =
             chapters.iter().map(|(id, _)| self.first_paragraph_of(*id)).collect();
 
-        let mut findings = rt.ranked_findings();
-        let kind_pairs: Vec<(u32, SceneKind)> = kinds.iter().map(|(c, _, k)| (*c, *k)).collect();
-        findings.extend(scene_sequel::arrhythmia(&kind_pairs));
-        crate::lector::rank(&mut findings);
-        let findings = crate::lector::dedupe(findings);
+        let findings = crate::lector::deterministic_findings(&rt, &self.layout, h, &self.cfg);
 
         let n = rt.chapters.len();
-        push(format!("◆ Read-through — {n} chapter(s)"), None);
+        let fw = crate::lector::shape::resolve_framework(&self.cfg);
+        push(format!("◆ Read-through — {n} chapter(s) · {}", fw.label()), None);
         if n > 0 {
-            push(format!("  intensity  {}", crate::planning::intensity_sparkline(&rt.curve, n.max(1))), None);
+            push(format!("  measured   {}", crate::planning::intensity_sparkline(&rt.curve, n.max(1))), None);
+            let expected = crate::lector::shape::expected_curve(fw, n);
+            let exp_points: Vec<(f32, f32)> =
+                rt.curve.iter().zip(&expected).map(|((p, _), &e)| (*p, e)).collect();
+            push(format!("  expected   {}", crate::planning::intensity_sparkline(&exp_points, n.max(1))), None);
         }
         push(String::new(), None);
         for (i, c) in rt.chapters.iter().enumerate() {

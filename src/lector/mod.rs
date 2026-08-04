@@ -21,8 +21,25 @@ use uuid::Uuid;
 
 pub(crate) mod intensity;
 pub(crate) mod scene_sequel;
+pub(crate) mod shape;
 pub(crate) mod synthetic;
 pub(crate) mod walk;
+
+/// The full deterministic read-through findings — the forward walk's (LR-P3) +
+/// scene/sequel arrhythmia (LR-P2) + the expected-shape sags (LR-P7) — ranked and
+/// deduped. The one gather the report, the dashboard, and the review pass share.
+pub(crate) fn deterministic_findings(
+    rt: &ReadThrough,
+    layout: &crate::project::ProjectLayout,
+    h: &crate::store::hierarchy::Hierarchy,
+    cfg: &crate::config::Config,
+) -> Vec<ReaderFinding> {
+    let mut f = rt.ranked_findings();
+    f.extend(scene_sequel::scan(layout, h, cfg));
+    f.extend(shape::scan(rt, cfg));
+    rank(&mut f);
+    dedupe(f)
+}
 
 /// How much a reader finding matters. `Concern` is a real problem (a stretch a
 /// reader would likely put down); `Notice` is worth a look; `Info` is a nudge.
