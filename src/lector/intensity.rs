@@ -14,10 +14,6 @@
 //! exactly like the continuity-bible drift comparison, and skips cleanly for a
 //! language with no lexicon (the other signals still carry it).
 
-// `measure()` is consumed by LR-P3 (the walk's attention-dip) and LR-P5 (the
-// report curve); until they land it is scaffolding. Drop this allow at LR-P3.
-#![allow(dead_code)]
-
 use std::collections::HashSet;
 
 use rust_stemmers::Stemmer;
