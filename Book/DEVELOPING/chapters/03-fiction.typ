@@ -123,7 +123,7 @@ hold? `inkhaven drift scan` watches for style and continuity drift across the bo
 `inkhaven continuity check` unifies the deterministic continuity checks into one
 ranked ledger — co-location, timeline, numeric contradictions, character-fact
 drift, and an entity _referenced before it is introduced_ — surfaced together in
-the `Ctrl+B Shift+S` dashboard (Enter jumps to the slip; `k` runs the LLM
+the `Ctrl+B Shift+I` dashboard (Enter jumps to the slip; `k` runs the LLM
 coherence pass for the contradictions the patterns can't see). And a unified
 review pass (`Ctrl+B Shift+C`) folds the readers and all of these checks into one
 sweep over a finished stretch; with `continuity.ambient` on, the continuity slice

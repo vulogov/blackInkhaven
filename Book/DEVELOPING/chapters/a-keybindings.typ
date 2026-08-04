@@ -114,7 +114,7 @@ These reach the companion books and the per-paragraph tools.
   chord_row("Ctrl+B a / b", "Assemble / build the book."),
   chord_row("Ctrl+B Shift+B", "Back up the whole project to an archive."),
   chord_row("Ctrl+B Shift+C", "The unified review pass — readers and checks in one sweep."),
-  chord_row("Ctrl+B Shift+S", "The continuity ledger — every continuity break, ranked; Enter jumps, k runs the coherence pass."),
+  chord_row("Ctrl+B Shift+I", "The continuity ledger — every continuity break, ranked; Enter jumps, k runs the coherence pass."),
   chord_row("Ctrl+B $", "The cost dashboard — what the AI features have spent."),
   chord_row("Ctrl+B w / Shift+W", "The World overview / typewriter (focus) mode."),
   chord_row("Ctrl+B j", "The Inner Socrates reading overview."),
