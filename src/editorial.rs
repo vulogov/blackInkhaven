@@ -240,6 +240,18 @@ preserving the meaning, the author's voice, the language, and any Typst markup v
             label: "de-filter",
             scope: FixScope::Span,
         },
+        // REDLINE-1 (RD-P2) — the deterministic anachronism detector already marks
+        // the offending phrase (a char_range), so this is a Span fix like the others.
+        "anachronism" => FixSpec {
+            slug: "editorial-fix-anachronism",
+            builtin: "You replace an anachronistic word or phrase — one that postdates the story's \
+setting — with an era- and world-appropriate equivalent, while preserving the meaning, the author's \
+voice, the language, and any Typst markup verbatim. If no single word fits, lightly rephrase. Output \
+ONLY the replacement text for the marked phrase — no « » markers, none of the surrounding \
+paragraph, no preamble.",
+            label: "period-fit",
+            scope: FixScope::Span,
+        },
         _ => return None,
     })
 }
@@ -749,6 +761,19 @@ mod tests {
         assert_eq!(fix_spec("pacing").unwrap().scope, FixScope::Paragraph);
         assert_eq!(fix_spec("show-tell").unwrap().scope, FixScope::Span);
         assert_eq!(fix_spec("filter").unwrap().scope, FixScope::Span);
+        // RD-P2 — anachronism is now a Span fix (Rewrite-classified + fixable).
+        assert_eq!(fix_spec("anachronism").unwrap().scope, FixScope::Span);
+        assert_eq!(response_kind("anachronism"), ResponseKind::Rewrite);
+        let anach = EditorialFinding {
+            category: "anachronism".into(),
+            severity: Severity::Warn,
+            location: Location { paragraph: Some(uuid::Uuid::now_v7()), ..Default::default() },
+            message: "m".into(),
+            hint: None,
+            source: "world",
+            autofixable: false,
+        };
+        assert!(anach.rewritable(), "anachronism + a paragraph → rewritable");
     }
 
     #[test]
