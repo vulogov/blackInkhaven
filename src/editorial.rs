@@ -125,7 +125,6 @@ impl EditorialFinding {
     /// confirmed-diff [`ResponseKind::Rewrite`], a guided [`ResponseKind::Decision`],
     /// or a [`ResponseKind::Brief`]. Derived from the category (RD-P1's converters
     /// pick the category that carries the right default).
-    #[allow(dead_code)] // consumed by RD-P1 (the queue) / RD-P6 (the surface).
     pub fn response(&self) -> ResponseKind {
         response_kind(&self.category)
     }
@@ -135,7 +134,6 @@ impl EditorialFinding {
 /// Only [`Rewrite`](ResponseKind::Rewrite) ever touches prose, and only through the
 /// existing confirmed-diff + snapshot contract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // consumed by RD-P1 / RD-P3 (decision) / RD-P4 (brief) / RD-P6.
 pub enum ResponseKind {
     /// A diff-reviewed local prose fix (there's an honest single-locus rewrite).
     Rewrite,
@@ -147,7 +145,7 @@ pub enum ResponseKind {
 }
 
 impl ResponseKind {
-    #[allow(dead_code)]
+    #[allow(dead_code)] // consumed by RD-P6 (the response glyph / tag in the surface).
     pub fn label(self) -> &'static str {
         match self {
             ResponseKind::Rewrite => "rewrite",
@@ -163,7 +161,6 @@ impl ResponseKind {
 /// prose-vs-fact conflict) before a targeted rewrite; everything structural or
 /// book-level is a *Brief*. Unknown categories default to Brief — the safest, since
 /// a Brief never edits prose. Pure.
-#[allow(dead_code)] // consumed by RD-P1's converters + the surface.
 pub fn response_kind(category: &str) -> ResponseKind {
     match category {
         // Honest single-locus prose fixes.
@@ -251,6 +248,19 @@ ONLY the replacement text for the marked phrase — no « » markers, none of th
 paragraph, no preamble.",
             label: "period-fit",
             scope: FixScope::Span,
+        },
+        // REDLINE-1 (RD-P3) — the synthetic slug the decision flow rewrites through:
+        // the author has stated how to resolve the issue (passed as the rewrite's
+        // note), and the AI applies it locally to the anchored paragraph.
+        "decision-resolve" => FixSpec {
+            slug: "editorial-fix-decision",
+            builtin: "You reconcile a consistency issue in the paragraph below according to the \
+author's decision, which follows this instruction. Change ONLY what is needed to make the paragraph \
+consistent with that decision — leave everything else untouched. Preserve the meaning elsewhere, \
+the author's voice, the language, and any Typst markup verbatim. Output ONLY the rewritten \
+paragraph, no preamble.",
+            label: "reconcile",
+            scope: FixScope::Paragraph,
         },
         _ => return None,
     })
@@ -774,6 +784,8 @@ mod tests {
             autofixable: false,
         };
         assert!(anach.rewritable(), "anachronism + a paragraph → rewritable");
+        // RD-P3 — the decision flow reconciles through a Paragraph fix.
+        assert_eq!(fix_spec("decision-resolve").unwrap().scope, FixScope::Paragraph);
     }
 
     #[test]
