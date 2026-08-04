@@ -129,6 +129,31 @@ review pass (`Ctrl+B Shift+C`) folds the readers and all of these checks into on
 sweep over a finished stretch; with `continuity.ambient` on, the continuity slice
 re-checks itself on every save.
 
+#subsection("From finding to fix — the revision partner")
+
+Reading is only half of revision; the other half is _acting_, and Inkhaven treats
+that as its own discipline. `Ctrl+V Shift+R` opens the *Editorial Pass* — the one
+worklist that unifies every reader (the prose checks, continuity, the read-through,
+the Inner Editor, voice) — and beside each finding it shows _how_ it can be acted
+on. A `✎` finding has an honest local fix: press `f` and Inkhaven streams a rewrite
+into a diff you accept or reject. A `⇄` finding is a judgement only you can make —
+which scene a character is really in, which fact is canon; it asks you, then
+reconciles the paragraph to your answer. A `✉` finding is structural — a saggy act,
+a likely put-down point — and gets a written brief in the Thoughts pane, advice
+rather than a rewrite, because moving the furniture stays yours.
+
+For the overview a writer opens a revision with, `inkhaven revise` synthesises the
+same worklist into one editorial letter: the big picture first, then grouped by
+theme, most important first.
+
+#insight[
+  Every prose change the revision partner makes passes through the same contract:
+  a rewrite you see as a diff and confirm, and a snapshot of your old prose taken
+  _before_ the replace — recover it any time with `F6`. Inkhaven never edits your
+  sentences on its own. The reader points; the author decides; the old words are
+  always one keystroke back.
+]
+
 #pitfall[
   Don't run the heavy AI readers on every keystroke. They cost money and attention,
   and a first draft is not the place for a skeptic. Draft a scene to its end, _then_
