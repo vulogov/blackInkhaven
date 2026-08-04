@@ -26,6 +26,7 @@ use uuid::Uuid;
 
 pub(crate) mod intensity;
 pub(crate) mod scene_sequel;
+pub(crate) mod synthetic;
 pub(crate) mod walk;
 
 /// How much a reader finding matters. `Concern` is a real problem (a stretch a
