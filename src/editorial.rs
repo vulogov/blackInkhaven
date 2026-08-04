@@ -145,7 +145,6 @@ pub enum ResponseKind {
 }
 
 impl ResponseKind {
-    #[allow(dead_code)] // consumed by RD-P6 (the response glyph / tag in the surface).
     pub fn label(self) -> &'static str {
         match self {
             ResponseKind::Rewrite => "rewrite",
