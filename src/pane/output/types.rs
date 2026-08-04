@@ -103,6 +103,11 @@ pub mod kinds {
     /// deterministic sweep (co-location, numeric, char-facts, and the
     /// referenced-before-introduced invariant). Contradiction → Warning, else Info.
     pub const CONTINUITY: &str = "continuity";
+
+    /// LECTOR-1 (LR-P5/P6) — a read-through finding: the book read forward as a
+    /// first reader (confusion, attention dip, put-down risk, unpaid setup,
+    /// scene/sequel arrhythmia, and the LLM first-read). Concern → Warning, else Info.
+    pub const LECTOR: &str = "lector";
 }
 
 /// Visual / priority class (RFC §7.4).
