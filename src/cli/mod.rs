@@ -1410,8 +1410,9 @@ pub enum Command {
     /// the current draft; `list` shows the milestones. Pure measurement — CHRONICLE
     /// never edits the manuscript.
     Chronicle {
+        /// Omit for the trend since the last milestone (the default view).
         #[command(subcommand)]
-        cmd: ChronicleCommand,
+        cmd: Option<ChronicleCommand>,
     },
     /// LECTOR-1 (2.3) — the read-through report: the book read forward, once, as a
     /// first reader. The measured intensity curve + per-chapter scene/sequel beat +
@@ -3227,6 +3228,29 @@ pub enum ChronicleCommand {
     },
     /// List captured milestones, newest first.
     List {
+        /// Restrict to a single book (slug or title). Default: the whole project.
+        #[arg(long)]
+        book_name: Option<String>,
+        /// Emit as JSON instead of the table.
+        #[arg(long)]
+        json: bool,
+    },
+    /// The trend since the last milestone (the default when no subcommand is given):
+    /// capture the live state and diff it against the most recent mark.
+    Trend {
+        /// Restrict to a single book (slug or title). Default: the whole project.
+        #[arg(long)]
+        book_name: Option<String>,
+        /// Emit as JSON instead of the table.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Diff two named milestones head-to-head (`from` → `to`).
+    Diff {
+        /// The earlier ("from") milestone label.
+        from: String,
+        /// The later ("to") milestone label.
+        to: String,
         /// Restrict to a single book (slug or title). Default: the whole project.
         #[arg(long)]
         book_name: Option<String>,
@@ -6828,12 +6852,19 @@ impl Cli {
                 revise::run(&project, book_name.as_deref(), json).map_err(Into::into)
             }
             Command::Chronicle { cmd } => match cmd {
-                ChronicleCommand::Mark { label, git_ref, book_name } => {
+                None => chronicle::trend(&project, None, false).map_err(Into::into),
+                Some(ChronicleCommand::Mark { label, git_ref, book_name }) => {
                     chronicle::mark(&project, &label, git_ref.as_deref(), book_name.as_deref())
                         .map_err(Into::into)
                 }
-                ChronicleCommand::List { book_name, json } => {
+                Some(ChronicleCommand::List { book_name, json }) => {
                     chronicle::list(&project, book_name.as_deref(), json).map_err(Into::into)
+                }
+                Some(ChronicleCommand::Trend { book_name, json }) => {
+                    chronicle::trend(&project, book_name.as_deref(), json).map_err(Into::into)
+                }
+                Some(ChronicleCommand::Diff { from, to, book_name, json }) => {
+                    chronicle::diff(&project, &from, &to, book_name.as_deref(), json).map_err(Into::into)
                 }
             },
             Command::Readthrough { deep, max_cost, force, json } => {
