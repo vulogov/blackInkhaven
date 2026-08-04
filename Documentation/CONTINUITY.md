@@ -67,7 +67,7 @@ inkhaven continuity list       # dump the extracted continuity bible
   deterministic ledger, minus the timeline critique (which has its own line), each
   finding anchored so you can jump to it. Findings land in the Output pane under
   the `continuity` source (filter to it there).
-- **The ledger dashboard** (`Ctrl+B Shift+S`) — a scrollable modal of the ranked
+- **The ledger dashboard** (`Ctrl+B Shift+I`) — a scrollable modal of the ranked
   findings grouped by kind. `↑↓` to scroll, **Enter** to jump to a finding's
   paragraph, **`k`** to run the slow coherence pass, `Esc` to close.
 - **The watch** — with `continuity.ambient` on, every save re-checks only what the

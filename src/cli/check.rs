@@ -37,6 +37,7 @@ pub fn run(
     no_socrates: bool,
     no_timeline: bool,
     no_continuity: bool,
+    no_lector: bool,
 ) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
@@ -118,6 +119,13 @@ pub fn run(
         run_continuity(&layout, &cfg, &store, &hierarchy, &mut findings);
     }
 
+    // ── project-wide checker: LECTOR read-through (deterministic) ─────────────
+    let mut lector_ran = false;
+    if !no_lector && cfg.lector.enabled {
+        lector_ran = true;
+        run_lector(&layout, &cfg, &store, &hierarchy, &mut findings);
+    }
+
     print_report(
         &findings,
         scope.len(),
@@ -126,9 +134,38 @@ pub fn run(
         socratic.is_some(),
         timeline_ran,
         continuity_ran,
+        lector_ran,
         &hierarchy,
     );
     Ok(())
+}
+
+/// LECTOR (LR-P6) — the deterministic read-through (forward reader walk + scene/
+/// sequel arrhythmia; the synthetic first-read stays explicit) folded into the
+/// `check` summary.
+fn run_lector(
+    layout: &ProjectLayout,
+    cfg: &Config,
+    store: &Store,
+    hierarchy: &Hierarchy,
+    findings: &mut Vec<CheckFinding>,
+) {
+    use crate::lector::{walk, Severity};
+    let rt = walk::read_forward(store, cfg, layout, hierarchy);
+    for f in crate::lector::deterministic_findings(&rt, layout, hierarchy, cfg) {
+        let severity = match f.severity {
+            Severity::Concern => "warning",
+            Severity::Notice => "warning",
+            Severity::Info => "info",
+        };
+        findings.push(CheckFinding {
+            checker: "read-through",
+            severity: severity.to_string(),
+            label: f.kind.to_string(),
+            body: f.message.clone(),
+            paragraph: f.anchor,
+        });
+    }
 }
 
 /// SENTINEL (CT-P4) — run the unified continuity engine (minus `timeline`, which
@@ -301,6 +338,7 @@ fn print_report(
     socratic_ran: bool,
     timeline_ran: bool,
     continuity_ran: bool,
+    lector_ran: bool,
     hierarchy: &Hierarchy,
 ) {
     if findings.is_empty() {
@@ -345,6 +383,11 @@ fn print_report(
         println!("  continuity : {}", count("continuity"));
     } else {
         println!("  continuity : skipped");
+    }
+    if lector_ran {
+        println!("  read-through: {}", count("read-through"));
+    } else {
+        println!("  read-through: skipped");
     }
     println!("  ─────────────");
     println!("  TOTAL      : {}", findings.len());

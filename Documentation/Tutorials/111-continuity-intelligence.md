@@ -62,7 +62,7 @@ scripts as in Latin.
 - **The review pass** (`Ctrl+B Shift+C`) now includes a `continuity` line — each
   finding anchored so you can jump to it, in the Output pane's `continuity`
   category (filter to it there).
-- **The ledger dashboard** (`Ctrl+B Shift+S`) — a scrollable modal of the ranked
+- **The ledger dashboard** (`Ctrl+B Shift+I`) — a scrollable modal of the ranked
   findings grouped by kind. `↑↓` to scroll, **Enter** jumps to a finding's
   paragraph, `Esc` closes.
 - **The watch** — turn on `continuity.ambient` and every save re-checks only what
