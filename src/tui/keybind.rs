@@ -135,6 +135,11 @@ pub enum Action {
     /// a finding's paragraph.
     #[serde(rename = "global.open_continuity_ledger")]
     OpenContinuityLedger,
+    /// LECTOR-1 (2.3, LR-P5b) — the read-through dashboard (Ctrl+B Shift+A): the
+    /// measured intensity curve + per-chapter scene/sequel beat + ranked reader
+    /// findings; Enter jumps to a chapter, k runs the LLM synthetic first-read.
+    #[serde(rename = "global.open_read_through")]
+    OpenReadThrough,
     /// 1.3.34+ — the unified AI cost dashboard (Ctrl+B $): today's LLM call tallies
     /// per capped subsystem vs their daily caps.
     #[serde(rename = "global.open_cost_dashboard")]
@@ -994,6 +999,7 @@ impl Action {
             Action::OpenCommandPalette => "command palette".into(),
             Action::RunCheck => "review pass".into(),
             Action::OpenContinuityLedger => "continuity".into(),
+            Action::OpenReadThrough => "read-through".into(),
             Action::OpenCostDashboard => "AI cost".into(),
             Action::OpenCredits => "credits".into(),
             Action::OpenBookInfo => "info".into(),
@@ -1222,6 +1228,8 @@ impl Action {
                 "Run the unified review pass (Ctrl+B Shift+C): every fast, deterministic checker at once — the world fact-checker + Inner Socrates over the open paragraph, plus the timeline critique over the project — emitting findings to the Output pane (filter them with f/S/t). Instant and LLM-free.".into(),
             Action::OpenContinuityLedger =>
                 "Open the SENTINEL continuity ledger (Ctrl+B Shift+I): the ranked deterministic continuity findings — co-location, timeline, numeric, character-fact drift, and referenced-before-introduced — grouped by kind. ↑↓ to scroll, Enter to jump to a finding's paragraph, k runs the LLM coherence pass, Esc to close. Zero-AI at the core; the CLI equivalent is `inkhaven continuity check`.".into(),
+            Action::OpenReadThrough =>
+                "Open the LECTOR read-through dashboard (Ctrl+B Shift+A): the book read forward, once, as a first reader — the prose-measured intensity curve, the per-chapter scene/sequel beat, and the ranked reader findings (confusion, info-dump, attention-dip, put-down risk, unpaid setup, scene/sequel arrhythmia). ↑↓ scroll, Enter jumps to the chapter, k runs the cost-capped LLM synthetic first-read (its findings land in Output), Esc closes. Deterministic + free at the core; the CLI equivalent is `inkhaven readthrough` (`--deep` / `--json`).".into(),
             Action::OpenCostDashboard =>
                 "Open the AI cost dashboard (Ctrl+B $): today's LLM call tallies for each capped subsystem (world slow track, Inner Socrates slow track + any analytical-thread sub-budgets) against their daily caps. Read-only; the CLI equivalent is `inkhaven cost`.".into(),
             Action::OpenCredits =>
@@ -1625,6 +1633,9 @@ impl KeyBindings {
                 // contInuIty). Was Shift+S, which shadowed the editor's
                 // Ctrl+B Shift+S = Search Facts; Shift+L is the concordance.
                 entry("Shift+i", Action::OpenContinuityLedger, Scope::Any),
+                // LECTOR-1 (LR-P5b) — Ctrl+B Shift+A: the read-through dashboard
+                // (A for Audience; Shift+A/I/U/Z are the only free meta_sub chords).
+                entry("Shift+a", Action::OpenReadThrough, Scope::Any),
                 // 1.3.34+ — Ctrl+B $: the AI cost dashboard.
                 entry("$", Action::OpenCostDashboard, Scope::Any),
                 entry("o", Action::ScheduleTake, Scope::Any),
@@ -2826,6 +2837,7 @@ mod tests {
         assert_eq!(sub('L'), Some(Action::OpenConcordance), "Shift+L still concordance");
         assert_eq!(sub('S'), Some(Action::SearchFacts), "Shift+S still Search Facts (editor)");
         assert_eq!(sub('I'), Some(Action::OpenContinuityLedger));
+        assert_eq!(sub('A'), Some(Action::OpenReadThrough));
     }
 
     #[test]

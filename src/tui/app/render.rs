@@ -319,6 +319,10 @@ impl super::App {
             self.draw_continuity_ledger_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::ReadThrough { .. }) {
+            self.draw_read_through_modal(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::InnerEditorOverview { .. }) {
             self.draw_inner_editor_overview_modal(f, area);
             return;

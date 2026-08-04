@@ -1860,6 +1860,7 @@ impl super::super::App {
                 crate::pane::output::kinds::ORACLE => "⌥ ",
                 crate::pane::output::kinds::POEM => "♪ ",
                 crate::pane::output::kinds::CONTINUITY => "⧗ ",
+                crate::pane::output::kinds::LECTOR => "❧ ",
                 _ => "",
             };
             lines.push(Line::from(vec![

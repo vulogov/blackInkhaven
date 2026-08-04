@@ -89,7 +89,7 @@ fn kind_glyph(k: SceneKind) -> &'static str {
 }
 
 /// A one-cell sparkbar for a chapter's intensity.
-fn intensity_cell(intensity: Option<f32>) -> char {
+pub(crate) fn intensity_cell(intensity: Option<f32>) -> char {
     match intensity {
         None => ' ',
         Some(v) => {
