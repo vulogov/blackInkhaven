@@ -18,33 +18,47 @@ problem in one line, then give two or three SPECIFIC suggestions for how the aut
 it — grounded in craft, tied to what the issue says, not generic advice. You ADVISE; you do NOT \
 rewrite the prose. Keep it under a page, in the manuscript's language.";
 
-fn build_prompt(category: &str, message: &str, language: &str) -> String {
+const LETTER_SYSTEM: &str = "You are a developmental editor writing the opening of an editorial \
+letter to an author. You are given a list of diagnostic findings about their manuscript. Do NOT \
+list them back mechanically. SYNTHESISE: open with the BIG PICTURE — the one or two things a reader \
+will feel first — then group the rest by theme (continuity, structure & pacing, voice & character, \
+line & prose), most important first, saying briefly WHY each matters and roughly what to do about \
+it. Warm, specific, honest — the way a good editor opens. A page or two, in the manuscript's \
+language. You advise; you do not rewrite.";
+
+fn build_brief_prompt(category: &str, message: &str, language: &str) -> String {
     format!(
         "Manuscript language: {language}.\n\nThe issue (kind: {category}):\n{message}\n\n\
          Write the revision brief."
     )
 }
 
-/// Generate a revision brief for a finding. Self-contained (loads its own config +
-/// provider), so it is safe to call from a background worker. Retries transient
-/// errors, like the other slow tracks. Returns the brief text.
-pub(crate) fn brief(project: &Path, category: &str, message: &str) -> Result<String, String> {
-    let layout = ProjectLayout::new(project);
-    let cfg = Config::load_layered(&layout.config_path()).map_err(|e| e.to_string())?;
+fn build_letter_prompt(findings_block: &str, language: &str) -> String {
+    format!(
+        "Manuscript language: {language}.\n\nThe diagnostic findings (severity · category · \
+         location · how it can be acted on):\n{findings_block}\n\nWrite the editorial letter."
+    )
+}
+
+/// The manuscript language name for the prompt (empty config → English).
+fn language_of(cfg: &Config) -> String {
+    if cfg.language.trim().is_empty() { "English".to_string() } else { cfg.language.clone() }
+}
+
+/// One cost-informed raw-text LLM call with transient-error retry (the other slow
+/// tracks' pattern). Self-contained given a loaded config.
+fn call(cfg: &Config, system: &str, prompt: &str) -> Result<String, String> {
     let ai = crate::ai::AiClient::from_config(&cfg.llm)
-        .map_err(|e| format!("no LLM provider for the revision brief: {e}"))?;
+        .map_err(|e| format!("no LLM provider: {e}"))?;
     let (model, _env) =
         ai.resolve_provider(&cfg.llm, None).map_err(|e| format!("resolving provider: {e}"))?;
-    let language = if cfg.language.trim().is_empty() { "English" } else { &cfg.language };
-    let prompt = build_prompt(category, message, language);
-
     let mut last_err = String::new();
     for attempt in 0..3u32 {
         match crate::ai::stream::collect_blocking(
             ai.client.clone(),
             model.to_string(),
-            Some(BRIEF_SYSTEM.to_string()),
-            prompt.clone(),
+            Some(system.to_string()),
+            prompt.to_string(),
         ) {
             Ok(r) => return Ok(r),
             Err(e) => {
@@ -57,7 +71,22 @@ pub(crate) fn brief(project: &Path, category: &str, message: &str) -> Result<Str
             }
         }
     }
-    Err(format!("revision brief LLM error: {last_err}"))
+    Err(format!("revision LLM error: {last_err}"))
+}
+
+/// Generate a revision brief for one finding (RD-P4). Self-contained; bg-safe.
+pub(crate) fn brief(project: &Path, category: &str, message: &str) -> Result<String, String> {
+    let layout = ProjectLayout::new(project);
+    let cfg = Config::load_layered(&layout.config_path()).map_err(|e| e.to_string())?;
+    call(&cfg, BRIEF_SYSTEM, &build_brief_prompt(category, message, &language_of(&cfg)))
+}
+
+/// Synthesise the editorial letter over a pre-formatted findings block (RD-P5).
+/// Self-contained; safe to call from a background worker.
+pub(crate) fn letter(project: &Path, findings_block: &str) -> Result<String, String> {
+    let layout = ProjectLayout::new(project);
+    let cfg = Config::load_layered(&layout.config_path()).map_err(|e| e.to_string())?;
+    call(&cfg, LETTER_SYSTEM, &build_letter_prompt(findings_block, &language_of(&cfg)))
 }
 
 #[cfg(test)]
@@ -65,10 +94,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn prompt_carries_the_issue_and_forbids_rewriting() {
-        let p = build_prompt("shape_sag", "Act 2 sags in ch. 5–7.", "English");
-        assert!(p.contains("shape_sag"));
-        assert!(p.contains("Act 2 sags"));
+    fn brief_prompt_carries_the_issue_and_forbids_rewriting() {
+        let p = build_brief_prompt("shape_sag", "Act 2 sags in ch. 5–7.", "English");
+        assert!(p.contains("shape_sag") && p.contains("Act 2 sags"));
         assert!(BRIEF_SYSTEM.contains("do NOT rewrite"));
+    }
+
+    #[test]
+    fn letter_prompt_carries_the_findings_and_synthesises() {
+        let p = build_letter_prompt("- [high] co_location · ch. 3 (decision) — Mara in two places", "English");
+        assert!(p.contains("Mara in two places"));
+        assert!(LETTER_SYSTEM.contains("SYNTHESISE"));
     }
 }
