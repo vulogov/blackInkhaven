@@ -18,11 +18,66 @@
 #![allow(dead_code)]
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::editorial::{EditorialFinding, EditorialReport, Severity};
+
 pub mod store;
+
+/// The editorial severity word CHRONICLE stores (matches `EditorialReport`'s own
+/// `errors`/`warnings`/`infos` naming).
+fn sev_word(s: Severity) -> &'static str {
+    match s {
+        Severity::Error => "error",
+        Severity::Warn => "warn",
+        Severity::Info => "info",
+    }
+}
+
+/// Tally an [`EditorialReport`] into a [`MetricVector`] + the finding set — pure,
+/// so the capture logic is unit-testable without a project. The report's own
+/// severity/deferred/stale tallies are reused verbatim.
+pub fn summarise(report: &EditorialReport) -> (MetricVector, Vec<FindingRef>) {
+    let mut m = MetricVector {
+        total: report.findings.len(),
+        errors: report.errors,
+        warnings: report.warnings,
+        infos: report.infos,
+        deferred: report.deferred,
+        stale: report.stale,
+        ..Default::default()
+    };
+    for f in &report.findings {
+        *m.by_category.entry(f.category.clone()).or_insert(0) += 1;
+        *m.by_response.entry(f.response().label().to_string()).or_insert(0) += 1;
+        *m.by_source.entry(f.source.to_string()).or_insert(0) += 1;
+    }
+    m.sag_count = m.by_category.get("shape_sag").copied().unwrap_or(0);
+    let refs = report.findings.iter().map(finding_ref).collect();
+    (m, refs)
+}
+
+fn finding_ref(f: &EditorialFinding) -> FindingRef {
+    FindingRef {
+        fingerprint: f.fingerprint(),
+        category: f.category.clone(),
+        severity: sev_word(f.severity).to_string(),
+        location: Some(f.location.label()).filter(|s| s.as_str() != "—"),
+        paragraph: f.location.paragraph,
+    }
+}
+
+/// Capture the current draft state — one headless
+/// [`crate::cli::editorial::collect`] over the whole worklist, tallied into a
+/// [`MetricVector`] + finding set. Deterministic (no live AI); the LECTOR
+/// `mean_intensity` enrichment is folded in at CH-P2.
+pub fn capture(project: &Path, book_name: Option<&str>) -> crate::error::Result<(MetricVector, Vec<FindingRef>)> {
+    let report = crate::cli::editorial::collect(project, book_name, None, false)?;
+    Ok(summarise(&report))
+}
 
 /// The readers' collective verdict at one draft milestone, tallied from a single
 /// [`crate::cli::editorial::collect`] report. Every count is "fewer is better"
@@ -118,6 +173,53 @@ mod tests {
         let s = serde_json::to_string(&mv).unwrap();
         let back: MetricVector = serde_json::from_str(&s).unwrap();
         assert_eq!(mv, back);
+    }
+
+    #[test]
+    fn summarise_tallies_the_report_by_every_axis() {
+        use crate::editorial::{Location, Severity};
+        let mk = |cat: &str, sev: Severity, src: &'static str, para: bool| EditorialFinding {
+            category: cat.into(),
+            severity: sev,
+            location: Location {
+                chapter: Some("ch. 3".into()),
+                paragraph: para.then(uuid::Uuid::now_v7),
+                ..Default::default()
+            },
+            message: format!("{cat} msg"),
+            hint: None,
+            source: src,
+            autofixable: false,
+        };
+        let report = EditorialReport {
+            findings: vec![
+                mk("echo", Severity::Warn, "doctor", true),      // rewrite
+                mk("shape_sag", Severity::Info, "read-through", false), // brief
+                mk("co_location", Severity::Error, "continuity", true), // decision
+            ],
+            errors: 1,
+            warnings: 1,
+            infos: 1,
+            deferred: 2,
+            stale: true,
+        };
+        let (m, refs) = summarise(&report);
+        assert_eq!(m.total, 3);
+        assert_eq!((m.errors, m.warnings, m.infos), (1, 1, 1));
+        assert_eq!(m.deferred, 2);
+        assert!(m.stale);
+        assert_eq!(m.by_category.get("echo"), Some(&1));
+        assert_eq!(m.by_source.get("continuity"), Some(&1));
+        assert_eq!(m.by_response.get("rewrite"), Some(&1)); // echo
+        assert_eq!(m.by_response.get("decision"), Some(&1)); // co_location
+        assert_eq!(m.by_response.get("brief"), Some(&1)); // shape_sag
+        assert_eq!(m.sag_count, 1);
+        // finding set: fingerprints + severity words + jump targets.
+        assert_eq!(refs.len(), 3);
+        let co = refs.iter().find(|r| r.category == "co_location").unwrap();
+        assert_eq!(co.severity, "error");
+        assert!(co.paragraph.is_some());
+        assert_eq!(co.location.as_deref(), Some("ch. 3"));
     }
 
     #[test]
