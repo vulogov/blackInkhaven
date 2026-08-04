@@ -16,10 +16,6 @@
 //! preflight against the daily cap) and its JSON-array parser; no call/cost logic
 //! is re-implemented. Findings arrive `source:"reader"`.
 
-// Consumed by LR-P5 (`readthrough --deep`) / LR-P6 (the ledger's `k`); scaffolding
-// until then.
-#![allow(dead_code)]
-
 use std::path::Path;
 
 use super::{ReaderFinding, Severity};
