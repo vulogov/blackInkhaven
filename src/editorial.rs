@@ -461,6 +461,74 @@ pub fn from_plan_warning(w: &str) -> EditorialFinding {
     }
 }
 
+/// REDLINE-1 (RD-P1) — a SENTINEL continuity break → the worklist. `paragraph` is
+/// the caller-resolved anchor (the finding's own, or its chapter's first). The
+/// `kind` becomes the category, so [`response_kind`] routes it (co_location /
+/// char_facts / introduce → Decision, single-paragraph numeric → …).
+pub(crate) fn from_continuity_finding(
+    f: &crate::continuity_intel::ContinuityFinding,
+    paragraph: Option<Uuid>,
+) -> EditorialFinding {
+    use crate::continuity_intel::Severity as CS;
+    EditorialFinding {
+        category: f.kind.to_string(),
+        severity: match f.severity {
+            CS::Contradiction => Severity::Error,
+            CS::Warning => Severity::Warn,
+            CS::Info => Severity::Info,
+        },
+        location: Location { chapter: chapter_label(f.chapter), paragraph, ..Default::default() },
+        message: f.message.clone(),
+        hint: None,
+        source: "continuity",
+        autofixable: false,
+    }
+}
+
+/// REDLINE-1 (RD-P1) — a LECTOR read-through finding → the worklist.
+pub(crate) fn from_lector_finding(
+    f: &crate::lector::ReaderFinding,
+    paragraph: Option<Uuid>,
+) -> EditorialFinding {
+    use crate::lector::Severity as LS;
+    EditorialFinding {
+        category: f.kind.to_string(),
+        severity: match f.severity {
+            LS::Concern => Severity::Warn,
+            _ => Severity::Info,
+        },
+        location: Location { chapter: chapter_label(f.chapter), paragraph, ..Default::default() },
+        message: f.message.clone(),
+        hint: None,
+        source: "read-through",
+        autofixable: false,
+    }
+}
+
+/// REDLINE-1 (RD-P1) — an Inner Stylist (CHORUS) voice finding → the worklist.
+/// Book-level (no paragraph); its `kind` (distinctiveness / drift / pov / tense /
+/// register) routes it (all Brief today).
+pub(crate) fn from_stylist_finding(f: &crate::inner_stylist::Finding) -> EditorialFinding {
+    use crate::inner_stylist::Severity as SS;
+    EditorialFinding {
+        category: f.kind.to_string(),
+        severity: match f.severity {
+            SS::Concern => Severity::Warn,
+            _ => Severity::Info,
+        },
+        location: Location::default(),
+        message: f.message.clone(),
+        hint: None,
+        source: "stylist",
+        autofixable: false,
+    }
+}
+
+/// `"ch. N"` for a 1-based chapter ordinal, or `None` for book-level (0).
+fn chapter_label(chapter: u32) -> Option<String> {
+    (chapter > 0).then(|| format!("ch. {chapter}"))
+}
+
 /// Rank + dedup a flat list of findings into the report: sort by severity
 /// (error first), then category, then message; drop findings identical in
 /// category + message + location.
@@ -633,6 +701,46 @@ mod tests {
         };
         assert_eq!(f.response(), ResponseKind::Decision);
         assert_eq!(ResponseKind::Decision.label(), "decision");
+    }
+
+    #[test]
+    fn judgment_readers_convert_into_the_worklist() {
+        let para = uuid::Uuid::now_v7();
+        // SENTINEL continuity → a Decision item, anchored, Contradiction → Error.
+        let cf = crate::continuity_intel::ContinuityFinding {
+            kind: "co_location",
+            severity: crate::continuity_intel::Severity::Contradiction,
+            chapter: 3,
+            anchor: Some(para),
+            entities: vec![],
+            message: "Mara is in two places".into(),
+            source: "co_location",
+            dedup_key: "k".into(),
+        };
+        let f = from_continuity_finding(&cf, cf.anchor);
+        assert_eq!(f.category, "co_location");
+        assert_eq!(f.severity, Severity::Error);
+        assert_eq!(f.location.paragraph, Some(para));
+        assert_eq!(f.location.chapter.as_deref(), Some("ch. 3"));
+        assert_eq!(f.response(), ResponseKind::Decision);
+        assert_eq!(f.source, "continuity");
+
+        // LECTOR read-through → routed by its kind; chapter-only anchor honoured.
+        let lf = crate::lector::ReaderFinding {
+            kind: "put_down_risk",
+            severity: crate::lector::Severity::Concern,
+            chapter: 5,
+            anchor: None,
+            entities: vec![],
+            message: "flat run".into(),
+            source: "walk",
+            dedup_key: "k2".into(),
+        };
+        let f = from_lector_finding(&lf, None);
+        assert_eq!(f.category, "put_down_risk");
+        assert_eq!(f.severity, Severity::Warn);
+        assert_eq!(f.response(), ResponseKind::Brief);
+        assert_eq!(f.source, "read-through");
     }
 
     #[test]

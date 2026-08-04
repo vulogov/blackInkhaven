@@ -92,6 +92,51 @@ pub fn collect(
                     });
                 }
                 resolve_locations(&mut raw, &h, &layout);
+
+                // 5) REDLINE (RD-P1) — the deterministic book-wide judgment readers
+                //    join the worklist, each tagged (by category) Rewrite/Decision/
+                //    Brief. Anchors resolve to the finding's paragraph, else its
+                //    chapter's first. (Interactive per-paragraph readers — Inner
+                //    Editor / Socrates — stay in the editor flow, not this batch.)
+                let chapters = h.user_book_chapters();
+                let first_para = |chapter: u32| -> Option<uuid::Uuid> {
+                    let (cid, _) = chapters.get(chapter.saturating_sub(1) as usize)?;
+                    h.collect_subtree(*cid)
+                        .into_iter()
+                        .find(|id| h.get(*id).map(|n| n.kind == NodeKind::Paragraph).unwrap_or(false))
+                };
+                // SENTINEL continuity.
+                let sel = crate::continuity_intel::engine::selector(&[], &[]);
+                for f in crate::continuity_intel::engine::run(&store, &cfg, &layout, &h, &sel) {
+                    let para = f.anchor.or_else(|| first_para(f.chapter));
+                    raw.push(editorial::from_continuity_finding(&f, para));
+                }
+                // LECTOR read-through (deterministic; the synthetic first-read stays
+                // explicit).
+                let rt = crate::lector::walk::read_forward(&store, &cfg, &layout, &h);
+                for f in crate::lector::deterministic_findings(&rt, &layout, &h, &cfg) {
+                    let para = f.anchor.or_else(|| first_para(f.chapter));
+                    raw.push(editorial::from_lector_finding(&f, para));
+                }
+                // Inner Stylist (CHORUS) voice findings, minus suppressions.
+                if let Ok(book) = crate::cli::resolve_user_book(&h, book_name, "editorial") {
+                    let book = book.clone();
+                    let now = chrono::Utc::now().to_rfc3339();
+                    if let Ok(mut sf) =
+                        crate::inner_stylist::pipeline::gather(&store, &layout, &h, &cfg, &book, &now)
+                    {
+                        if let Ok(sstore) =
+                            crate::inner_stylist::storage::InnerStylistStore::open_for_project(store.project_root())
+                        {
+                            if let Ok(silenced) = sstore.all_suppressions() {
+                                sf.retain(|f| !silenced.contains(&f.key));
+                            }
+                        }
+                        for f in &sf {
+                            raw.push(editorial::from_stylist_finding(f));
+                        }
+                    }
+                }
             }
         }
     }
