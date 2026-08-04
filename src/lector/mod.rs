@@ -25,6 +25,7 @@ use std::collections::HashSet;
 use uuid::Uuid;
 
 pub(crate) mod intensity;
+pub(crate) mod scene_sequel;
 
 /// How much a reader finding matters. `Concern` is a real problem (a stretch a
 /// reader would likely put down); `Notice` is worth a look; `Info` is a nudge.
