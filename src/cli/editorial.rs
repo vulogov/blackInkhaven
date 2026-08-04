@@ -137,6 +137,20 @@ pub fn collect(
                         }
                     }
                 }
+                // Inner Editor craft observations (per-paragraph judgment) → the
+                // marquee finding-aware `editor` rewrites. Praise / suppressed /
+                // anchorless are dropped by the mapper.
+                if let Ok(estore) =
+                    crate::inner_editor::InnerEditorStore::open_for_project(store.project_root())
+                {
+                    if let Ok(rows) = estore.list_findings() {
+                        for row in &rows {
+                            if let Some(ef) = editorial::from_editor_finding(row) {
+                                raw.push(ef);
+                            }
+                        }
+                    }
+                }
             }
         }
     }
