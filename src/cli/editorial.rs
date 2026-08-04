@@ -355,7 +355,9 @@ mod tests {
         assert_eq!(e.location.paragraph, Some(id));
         assert!(e.location.char_range.is_some());
         assert!(e.message.contains("wristwatch") && e.message.contains("1900"));
-        assert!(!e.rewritable(), "anachronism is jump-only, not AI-rewritable");
+        // REDLINE RD-P2 — anachronism is now a Span rewrite (was jump-only): it has
+        // a paragraph + char_range and a fix_spec, so the cockpit's `f` can fix it.
+        assert!(e.rewritable(), "anachronism + a paragraph → rewritable");
     }
 
     #[test]
