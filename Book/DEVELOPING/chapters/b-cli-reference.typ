@@ -70,6 +70,7 @@ any command for its exact flags.
   [`inkhaven fact-check` — audit the manuscript against the world and the kept facts.],
   [`inkhaven continuity extract | list` — the continuity bible.],
   [`inkhaven continuity check` — SENTINEL's unified deterministic ledger: co-location, timeline, numeric, fact-drift, and _referenced-before-introduced_, ranked into one report (`--only`/`--skip`/`--json`; exits non-zero on a contradiction). `--coherence` adds the cost-capped LLM cross-paragraph pass.],
+  [`inkhaven readthrough` — LECTOR reads the book forward, once, as a first reader: the prose-measured intensity curve vs the framework's intended shape, the scene/sequel beat, and the reader findings (confusion, info-dump, attention-dip, put-down risk, unpaid setup, shape sag). `--deep` adds the cost-capped LLM synthetic first-read; `--json`.],
   [`inkhaven drift scan | list` — style and continuity drift across the book.],
   [`inkhaven terms suggest | check` — propose and enforce canonical terminology.],
   [`inkhaven thread doctor | add | list | export` — plot threads: setups, developments, and payoffs.],

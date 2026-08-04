@@ -2106,6 +2106,28 @@ editor the ledger is `Ctrl+B Shift+I` and the findings ride the `Ctrl+B Shift+C`
 review pass (Output `continuity` category). Bund: `ink.continuity.findings` /
 `ink.continuity.check`.
 
+## 2.3 — LECTOR: the read-through (LECTOR-1)
+
+### `lector` — the read-through
+
+LECTOR ([`LECTOR.md`](LECTOR.md)) reads the book forward, once, as a first reader —
+the prose-measured shape curve vs the framework's intended curve, plus the reader-
+experience findings. Deterministic + free at the core (the synthetic first-read is
+always explicit — the dashboard's `k` / `readthrough --deep`), so it's on by default.
+
+| Key | Type | Default | Meaning |
+| --- | ---- | ------- | ------- |
+| `lector.enabled` | bool | `true` | Master switch for the read-through line in the review pass. Off silences it; the standalone `inkhaven readthrough` still runs (explicit). |
+| `lector.framework` | string | (from `genre`) | The story-structure framework whose expected-tension curve the measured shape is read against: `three_act` / `save_the_cat` / `story_circle` / `hero_journey` / `seven_point` / `kishotenketsu`. `null` suggests one from the top-level `genre` (fantasy → Hero's Journey, thriller → Save the Cat, mystery → Seven-Point, slice-of-life → Kishōtenketsu, …), falling back to Three-Act. |
+
+```hjson
+lector: { enabled: true, framework: null }
+```
+
+CLI: `inkhaven readthrough` (`--deep` / `--json`); in the editor the dashboard is
+`Ctrl+B Shift+A` and the findings ride the `Ctrl+B Shift+C` review pass (Output
+`readthrough` category). Bund: `ink.readthrough.report` / `curve` / `check`.
+
 ## 1.4.2–1.4.3 — Inner Editor (INNER_EDITOR-1)
 
 ### `inner_editor` (1.4.2+) — the literary/stylistic companion
