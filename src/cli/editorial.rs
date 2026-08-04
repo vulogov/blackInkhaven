@@ -92,6 +92,65 @@ pub fn collect(
                     });
                 }
                 resolve_locations(&mut raw, &h, &layout);
+
+                // 5) REDLINE (RD-P1) — the deterministic book-wide judgment readers
+                //    join the worklist, each tagged (by category) Rewrite/Decision/
+                //    Brief. Anchors resolve to the finding's paragraph, else its
+                //    chapter's first. (Interactive per-paragraph readers — Inner
+                //    Editor / Socrates — stay in the editor flow, not this batch.)
+                let chapters = h.user_book_chapters();
+                let first_para = |chapter: u32| -> Option<uuid::Uuid> {
+                    let (cid, _) = chapters.get(chapter.saturating_sub(1) as usize)?;
+                    h.collect_subtree(*cid)
+                        .into_iter()
+                        .find(|id| h.get(*id).map(|n| n.kind == NodeKind::Paragraph).unwrap_or(false))
+                };
+                // SENTINEL continuity.
+                let sel = crate::continuity_intel::engine::selector(&[], &[]);
+                for f in crate::continuity_intel::engine::run(&store, &cfg, &layout, &h, &sel) {
+                    let para = f.anchor.or_else(|| first_para(f.chapter));
+                    raw.push(editorial::from_continuity_finding(&f, para));
+                }
+                // LECTOR read-through (deterministic; the synthetic first-read stays
+                // explicit).
+                let rt = crate::lector::walk::read_forward(&store, &cfg, &layout, &h);
+                for f in crate::lector::deterministic_findings(&rt, &layout, &h, &cfg) {
+                    let para = f.anchor.or_else(|| first_para(f.chapter));
+                    raw.push(editorial::from_lector_finding(&f, para));
+                }
+                // Inner Stylist (CHORUS) voice findings, minus suppressions.
+                if let Ok(book) = crate::cli::resolve_user_book(&h, book_name, "editorial") {
+                    let book = book.clone();
+                    let now = chrono::Utc::now().to_rfc3339();
+                    if let Ok(mut sf) =
+                        crate::inner_stylist::pipeline::gather(&store, &layout, &h, &cfg, &book, &now)
+                    {
+                        if let Ok(sstore) =
+                            crate::inner_stylist::storage::InnerStylistStore::open_for_project(store.project_root())
+                        {
+                            if let Ok(silenced) = sstore.all_suppressions() {
+                                sf.retain(|f| !silenced.contains(&f.key));
+                            }
+                        }
+                        for f in &sf {
+                            raw.push(editorial::from_stylist_finding(f));
+                        }
+                    }
+                }
+                // Inner Editor craft observations (per-paragraph judgment) → the
+                // marquee finding-aware `editor` rewrites. Praise / suppressed /
+                // anchorless are dropped by the mapper.
+                if let Ok(estore) =
+                    crate::inner_editor::InnerEditorStore::open_for_project(store.project_root())
+                {
+                    if let Ok(rows) = estore.list_findings() {
+                        for row in &rows {
+                            if let Some(ef) = editorial::from_editor_finding(row) {
+                                raw.push(ef);
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -310,7 +369,9 @@ mod tests {
         assert_eq!(e.location.paragraph, Some(id));
         assert!(e.location.char_range.is_some());
         assert!(e.message.contains("wristwatch") && e.message.contains("1900"));
-        assert!(!e.rewritable(), "anachronism is jump-only, not AI-rewritable");
+        // REDLINE RD-P2 — anachronism is now a Span rewrite (was jump-only): it has
+        // a paragraph + char_range and a fix_spec, so the cockpit's `f` can fix it.
+        assert!(e.rewritable(), "anachronism + a paragraph → rewritable");
     }
 
     #[test]

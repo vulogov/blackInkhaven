@@ -120,6 +120,73 @@ impl EditorialFinding {
     pub fn rewritable(&self) -> bool {
         self.location.paragraph.is_some() && fix_spec(&self.category).is_some()
     }
+
+    /// REDLINE-1 (RD-P0) — the *kind of help* this finding can be acted on with: a
+    /// confirmed-diff [`ResponseKind::Rewrite`], a guided [`ResponseKind::Decision`],
+    /// or a [`ResponseKind::Brief`]. Derived from the category (RD-P1's converters
+    /// pick the category that carries the right default).
+    pub fn response(&self) -> ResponseKind {
+        response_kind(&self.category)
+    }
+}
+
+/// REDLINE-1 (RD-P0) — how a finding can be turned into an author-confirmed change.
+/// Only [`Rewrite`](ResponseKind::Rewrite) ever touches prose, and only through the
+/// existing confirmed-diff + snapshot contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResponseKind {
+    /// A diff-reviewed local prose fix (there's an honest single-locus rewrite).
+    Rewrite,
+    /// A guided authorial choice — you decide which way is right, then REDLINE
+    /// reconciles the other as a confirmed rewrite.
+    Decision,
+    /// A concrete revision suggestion with no rewrite — structure is yours to move.
+    Brief,
+}
+
+impl ResponseKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            ResponseKind::Rewrite => "rewrite",
+            ResponseKind::Decision => "decision",
+            ResponseKind::Brief => "brief",
+        }
+    }
+
+    /// REDLINE-1 (RD-P6) — the one-glyph marker the Editorial Pass shows per row:
+    /// ✎ a diff-reviewed prose rewrite, ⇄ a guided authorial decision, ✉ a
+    /// revision brief (advice, never a rewrite).
+    pub fn glyph(self) -> char {
+        match self {
+            ResponseKind::Rewrite => '✎',
+            ResponseKind::Decision => '⇄',
+            ResponseKind::Brief => '✉',
+        }
+    }
+}
+
+/// Classify a finding category into its [`ResponseKind`]. A *Rewrite* is a category
+/// with an honest single-paragraph prose fix; a *Decision* needs the author to
+/// choose which way is right (a continuity break, a described-two-ways drift, a
+/// prose-vs-fact conflict) before a targeted rewrite; everything structural or
+/// book-level is a *Brief*. Unknown categories default to Brief — the safest, since
+/// a Brief never edits prose. Pure.
+pub fn response_kind(category: &str) -> ResponseKind {
+    match category {
+        // Honest single-locus prose fixes. `decision-resolve` is the synthetic
+        // reconcile category the Decision flow rewrites through — it never appears
+        // as a surfaced finding, but classifying it Rewrite keeps the RD-P7
+        // invariant clean: every category with a [`fix_spec`] is a Rewrite.
+        "echo" | "pacing" | "show-tell" | "filter" | "editor" | "voice"
+        | "anachronism" | "decision-resolve" => ResponseKind::Rewrite,
+        // The author must choose which way is right; then we reconcile.
+        "co_location" | "char_facts" | "drift" | "introduce" | "confusion"
+        | "unpaid_setup" | "numeric" | "continuity" | "fact" | "world" => {
+            ResponseKind::Decision
+        }
+        // Structural / book-level — a suggestion, never a rewrite.
+        _ => ResponseKind::Brief,
+    }
 }
 
 /// Whether an AI fix rewrites the whole paragraph or only the flagged phrase.
@@ -183,6 +250,43 @@ preserving the meaning, the author's voice, the language, and any Typst markup v
             label: "de-filter",
             scope: FixScope::Span,
         },
+        // REDLINE-1 (RD-P2) — the deterministic anachronism detector already marks
+        // the offending phrase (a char_range), so this is a Span fix like the others.
+        "anachronism" => FixSpec {
+            slug: "editorial-fix-anachronism",
+            builtin: "You replace an anachronistic word or phrase — one that postdates the story's \
+setting — with an era- and world-appropriate equivalent, while preserving the meaning, the author's \
+voice, the language, and any Typst markup verbatim. If no single word fits, lightly rephrase. Output \
+ONLY the replacement text for the marked phrase — no « » markers, none of the surrounding \
+paragraph, no preamble.",
+            label: "period-fit",
+            scope: FixScope::Span,
+        },
+        // REDLINE-1 (RD-P3) — the synthetic slug the decision flow rewrites through:
+        // the author has stated how to resolve the issue (passed as the rewrite's
+        // note), and the AI applies it locally to the anchored paragraph.
+        "decision-resolve" => FixSpec {
+            slug: "editorial-fix-decision",
+            builtin: "You reconcile a consistency issue in the paragraph below according to the \
+author's decision, which follows this instruction. Change ONLY what is needed to make the paragraph \
+consistent with that decision — leave everything else untouched. Preserve the meaning elsewhere, \
+the author's voice, the language, and any Typst markup verbatim. Output ONLY the rewritten \
+paragraph, no preamble.",
+            label: "reconcile",
+            scope: FixScope::Paragraph,
+        },
+        // REDLINE-1 (RD-P6) — the Inner Editor's own craft observation. The
+        // finding's text is passed as the rewrite's note (like the decision flow),
+        // so the model addresses THIS note rather than a generic category recipe.
+        "editor" => FixSpec {
+            slug: "editorial-fix-editor",
+            builtin: "You revise the paragraph below to address the editor's craft note, which \
+follows this instruction. Make the smallest change that honestly resolves the note — preserve the \
+meaning, the author's voice, the paragraph's language, and any Typst markup verbatim. Output ONLY \
+the rewritten paragraph, no preamble.",
+            label: "editor-note",
+            scope: FixScope::Paragraph,
+        },
         _ => return None,
     })
 }
@@ -194,11 +298,23 @@ pub type BatchFix = (Uuid, String, Option<(usize, usize)>);
 /// The ordered list of AI-rewritable fixes the cockpit's `F` (batch fix-all)
 /// walks: every finding matching `filter` (`None` = all) that is
 /// [`EditorialFinding::rewritable`], in the findings' display order. Pure.
+///
+/// REDLINE-1 (RD-P7) reversibility invariant: because `rewritable()` requires a
+/// [`fix_spec`] and every fixable category is [`ResponseKind::Rewrite`], this
+/// queue is Rewrite-only — a Decision or Brief finding can never enter the batch.
+/// Finding-aware `editor` rewrites are excluded too (each carries its own note,
+/// applied one at a time). Every fix the batch (or single `f`) applies streams
+/// through `start_editorial_rewrite` → the AI diff review, which snapshots the
+/// pre-rewrite prose (F6-restorable) before replacing — the sole prose-write path.
 pub fn batch_fix_queue(findings: &[EditorialFinding], filter: Option<&str>) -> Vec<BatchFix> {
     findings
         .iter()
         .filter(|f| filter.is_none_or(|c| f.category == c))
         .filter(|f| f.rewritable())
+        // REDLINE-1 (RD-P6) — an `editor` rewrite is finding-aware (each carries
+        // its own observation as the rewrite's note), so it's applied one at a
+        // time via `f`, never through the noteless batch sweep.
+        .filter(|f| f.category != "editor")
         .map(|f| {
             (
                 f.location.paragraph.expect("rewritable ⇒ has a paragraph"),
@@ -404,6 +520,104 @@ pub fn from_plan_warning(w: &str) -> EditorialFinding {
     }
 }
 
+/// REDLINE-1 (RD-P1) — a SENTINEL continuity break → the worklist. `paragraph` is
+/// the caller-resolved anchor (the finding's own, or its chapter's first). The
+/// `kind` becomes the category, so [`response_kind`] routes it (co_location /
+/// char_facts / introduce → Decision, single-paragraph numeric → …).
+pub(crate) fn from_continuity_finding(
+    f: &crate::continuity_intel::ContinuityFinding,
+    paragraph: Option<Uuid>,
+) -> EditorialFinding {
+    use crate::continuity_intel::Severity as CS;
+    EditorialFinding {
+        category: f.kind.to_string(),
+        severity: match f.severity {
+            CS::Contradiction => Severity::Error,
+            CS::Warning => Severity::Warn,
+            CS::Info => Severity::Info,
+        },
+        location: Location { chapter: chapter_label(f.chapter), paragraph, ..Default::default() },
+        message: f.message.clone(),
+        hint: None,
+        source: "continuity",
+        autofixable: false,
+    }
+}
+
+/// REDLINE-1 (RD-P1) — a LECTOR read-through finding → the worklist.
+pub(crate) fn from_lector_finding(
+    f: &crate::lector::ReaderFinding,
+    paragraph: Option<Uuid>,
+) -> EditorialFinding {
+    use crate::lector::Severity as LS;
+    EditorialFinding {
+        category: f.kind.to_string(),
+        severity: match f.severity {
+            LS::Concern => Severity::Warn,
+            _ => Severity::Info,
+        },
+        location: Location { chapter: chapter_label(f.chapter), paragraph, ..Default::default() },
+        message: f.message.clone(),
+        hint: None,
+        source: "read-through",
+        autofixable: false,
+    }
+}
+
+/// REDLINE-1 (RD-P1) — an Inner Stylist (CHORUS) voice finding → the worklist.
+/// Book-level (no paragraph); its `kind` (distinctiveness / drift / pov / tense /
+/// register) routes it (all Brief today).
+pub(crate) fn from_stylist_finding(f: &crate::inner_stylist::Finding) -> EditorialFinding {
+    use crate::inner_stylist::Severity as SS;
+    EditorialFinding {
+        category: f.kind.to_string(),
+        severity: match f.severity {
+            SS::Concern => Severity::Warn,
+            _ => Severity::Info,
+        },
+        location: Location::default(),
+        message: f.message.clone(),
+        hint: None,
+        source: "stylist",
+        autofixable: false,
+    }
+}
+
+/// REDLINE-1 (RD-P6) — an Inner Editor craft observation → the worklist as a
+/// finding-aware `editor` Rewrite: the observation itself becomes the rewrite's
+/// note (see [`fix_spec`]'s `editor` recipe), so the AI addresses THIS note.
+/// Returns `None` for Praise (celebratory — nothing to fix), for a suppressed
+/// finding (a declared intent already covers it), or when the finding has no
+/// paragraph anchor (nothing to rewrite). The observation stays in the
+/// paragraph's language; its evidence rides along as the hint.
+pub(crate) fn from_editor_finding(
+    f: &crate::inner_editor::StoredEditorFinding,
+) -> Option<EditorialFinding> {
+    use crate::inner_editor::types::EditorSeverity as ES;
+    let fin = &f.finding;
+    if fin.suppressed_by.is_some() || matches!(fin.severity, ES::Praise) {
+        return None;
+    }
+    let paragraph = f.paragraph_id?;
+    Some(EditorialFinding {
+        category: "editor".into(),
+        severity: match fin.severity {
+            ES::Concern => Severity::Warn,
+            _ => Severity::Info,
+        },
+        location: Location { paragraph: Some(paragraph), ..Default::default() },
+        message: fin.observation.clone(),
+        hint: fin.evidence.clone(),
+        source: "editor",
+        autofixable: false,
+    })
+}
+
+/// `"ch. N"` for a 1-based chapter ordinal, or `None` for book-level (0).
+fn chapter_label(chapter: u32) -> Option<String> {
+    (chapter > 0).then(|| format!("ch. {chapter}"))
+}
+
 /// Rank + dedup a flat list of findings into the report: sort by severity
 /// (error first), then category, then message; drop findings identical in
 /// category + message + location.
@@ -547,11 +761,210 @@ mod tests {
     }
 
     #[test]
+    fn response_kind_classifies_by_category() {
+        use ResponseKind::*;
+        // Honest single-locus prose fixes.
+        for c in ["echo", "pacing", "show-tell", "filter", "editor", "voice", "anachronism"] {
+            assert_eq!(response_kind(c), Rewrite, "{c} is a Rewrite");
+        }
+        // The author must choose which way is right, then reconcile.
+        for c in ["co_location", "char_facts", "drift", "introduce", "confusion", "unpaid_setup"] {
+            assert_eq!(response_kind(c), Decision, "{c} is a Decision");
+        }
+        // Structural / book-level, and anything unknown → Brief (never edits prose).
+        for c in ["structure", "shape_sag", "put_down_risk", "distinctiveness", "tension", "mystery-kind"] {
+            assert_eq!(response_kind(c), Brief, "{c} is a Brief");
+        }
+    }
+
+    #[test]
+    fn finding_reports_its_response_kind() {
+        let f = EditorialFinding {
+            category: "co_location".into(),
+            severity: Severity::Info,
+            location: Location::default(),
+            message: "m".into(),
+            hint: None,
+            source: "doctor",
+            autofixable: false,
+        };
+        assert_eq!(f.response(), ResponseKind::Decision);
+        assert_eq!(ResponseKind::Decision.label(), "decision");
+    }
+
+    #[test]
+    fn judgment_readers_convert_into_the_worklist() {
+        let para = uuid::Uuid::now_v7();
+        // SENTINEL continuity → a Decision item, anchored, Contradiction → Error.
+        let cf = crate::continuity_intel::ContinuityFinding {
+            kind: "co_location",
+            severity: crate::continuity_intel::Severity::Contradiction,
+            chapter: 3,
+            anchor: Some(para),
+            entities: vec![],
+            message: "Mara is in two places".into(),
+            source: "co_location",
+            dedup_key: "k".into(),
+        };
+        let f = from_continuity_finding(&cf, cf.anchor);
+        assert_eq!(f.category, "co_location");
+        assert_eq!(f.severity, Severity::Error);
+        assert_eq!(f.location.paragraph, Some(para));
+        assert_eq!(f.location.chapter.as_deref(), Some("ch. 3"));
+        assert_eq!(f.response(), ResponseKind::Decision);
+        assert_eq!(f.source, "continuity");
+
+        // LECTOR read-through → routed by its kind; chapter-only anchor honoured.
+        let lf = crate::lector::ReaderFinding {
+            kind: "put_down_risk",
+            severity: crate::lector::Severity::Concern,
+            chapter: 5,
+            anchor: None,
+            entities: vec![],
+            message: "flat run".into(),
+            source: "walk",
+            dedup_key: "k2".into(),
+        };
+        let f = from_lector_finding(&lf, None);
+        assert_eq!(f.category, "put_down_risk");
+        assert_eq!(f.severity, Severity::Warn);
+        assert_eq!(f.response(), ResponseKind::Brief);
+        assert_eq!(f.source, "read-through");
+    }
+
+    #[test]
+    fn response_kind_glyphs_are_distinct_and_stable() {
+        assert_eq!(ResponseKind::Rewrite.glyph(), '✎');
+        assert_eq!(ResponseKind::Decision.glyph(), '⇄');
+        assert_eq!(ResponseKind::Brief.glyph(), '✉');
+    }
+
+    #[test]
+    fn inner_editor_findings_become_finding_aware_editor_rewrites() {
+        use crate::inner_editor::types::{
+            EditorCategory, EditorFinding, EditorSeverity,
+        };
+        use crate::inner_editor::StoredEditorFinding;
+        let para = uuid::Uuid::now_v7();
+        let mk = |sev: EditorSeverity, paragraph: Option<uuid::Uuid>, suppressed: Option<String>| {
+            StoredEditorFinding {
+                id: uuid::Uuid::now_v7(),
+                paragraph_id: paragraph,
+                finding: EditorFinding {
+                    category: EditorCategory::StyleObservation,
+                    severity: sev,
+                    observation: "the verb tense wobbles mid-paragraph".into(),
+                    observation_en: "the verb tense wobbles mid-paragraph".into(),
+                    evidence: Some("«walked» then «walks»".into()),
+                    conditional: false,
+                    suppressed_by: suppressed,
+                },
+            }
+        };
+        // A Concern with an anchor → a rewritable `editor` finding whose message is
+        // the observation and whose hint is the evidence.
+        let f = from_editor_finding(&mk(EditorSeverity::Concern, Some(para), None))
+            .expect("Concern + anchor → a finding");
+        assert_eq!(f.category, "editor");
+        assert_eq!(f.severity, Severity::Warn);
+        assert_eq!(f.location.paragraph, Some(para));
+        assert_eq!(f.message, "the verb tense wobbles mid-paragraph");
+        assert_eq!(f.hint.as_deref(), Some("«walked» then «walks»"));
+        assert_eq!(f.response(), ResponseKind::Rewrite);
+        assert!(f.rewritable(), "editor + a paragraph ⇒ AI-rewritable");
+        assert_eq!(f.source, "editor");
+        // A Note maps to Info but is still a rewritable editor finding.
+        assert_eq!(
+            from_editor_finding(&mk(EditorSeverity::Note, Some(para), None)).unwrap().severity,
+            Severity::Info
+        );
+        // Praise, a suppressed finding, and an anchorless finding all drop out.
+        assert!(from_editor_finding(&mk(EditorSeverity::Praise, Some(para), None)).is_none());
+        assert!(
+            from_editor_finding(&mk(EditorSeverity::Concern, Some(para), Some("declared".into())))
+                .is_none()
+        );
+        assert!(from_editor_finding(&mk(EditorSeverity::Concern, None, None)).is_none());
+    }
+
+    #[test]
+    fn editor_rewrites_are_excluded_from_the_batch_sweep() {
+        let mk = |cat: &str| EditorialFinding {
+            category: cat.into(),
+            severity: Severity::Warn,
+            location: Location { paragraph: Some(uuid::Uuid::now_v7()), ..Default::default() },
+            message: "m".into(),
+            hint: None,
+            source: "x",
+            autofixable: false,
+        };
+        let findings = vec![mk("echo"), mk("editor"), mk("filter")];
+        let q = batch_fix_queue(&findings, None);
+        // echo + filter walk the batch; the finding-aware editor rewrite does not.
+        let cats: Vec<&str> = q.iter().map(|(_, c, _)| c.as_str()).collect();
+        assert_eq!(cats, vec!["echo", "filter"]);
+    }
+
+    #[test]
+    fn batch_is_rewrite_only_the_reversibility_invariant() {
+        // RD-P7 — the AI rewrite path (batch `F` and single `f`) is the ONLY thing
+        // that mutates prose, and it snapshots before replacing. Guard that only
+        // Rewrite findings can reach it: every category with a fix recipe is a
+        // Rewrite, so a Decision/Brief can never acquire one and slip through.
+        for cat in ["echo", "pacing", "show-tell", "filter", "anachronism", "editor", "decision-resolve"] {
+            assert!(fix_spec(cat).is_some(), "{cat} should have a fix recipe");
+            assert_eq!(response_kind(cat), ResponseKind::Rewrite, "{cat} must be a Rewrite");
+        }
+        // The converse over a mixed report: only Rewrite findings (minus the
+        // finding-aware `editor`) walk the batch, in display order.
+        let mk = |cat: &str| EditorialFinding {
+            category: cat.into(),
+            severity: Severity::Warn,
+            location: Location { paragraph: Some(uuid::Uuid::now_v7()), ..Default::default() },
+            message: "m".into(),
+            hint: None,
+            source: "x",
+            autofixable: false,
+        };
+        let report = vec![
+            mk("echo"),        // Rewrite → batched
+            mk("co_location"), // Decision → never
+            mk("shape_sag"),   // Brief → never
+            mk("editor"),      // Rewrite but finding-aware → excluded
+            mk("anachronism"), // Rewrite → batched
+        ];
+        let q = batch_fix_queue(&report, None);
+        assert_eq!(
+            q.iter().map(|(_, c, _)| c.as_str()).collect::<Vec<_>>(),
+            vec!["echo", "anachronism"]
+        );
+        assert!(
+            q.iter().all(|(_, c, _)| response_kind(c) == ResponseKind::Rewrite),
+            "everything the batch yields is Rewrite-classified"
+        );
+    }
+
+    #[test]
     fn fix_scope_paragraph_vs_span() {
         assert_eq!(fix_spec("echo").unwrap().scope, FixScope::Paragraph);
         assert_eq!(fix_spec("pacing").unwrap().scope, FixScope::Paragraph);
         assert_eq!(fix_spec("show-tell").unwrap().scope, FixScope::Span);
         assert_eq!(fix_spec("filter").unwrap().scope, FixScope::Span);
+        // RD-P2 — anachronism is now a Span fix (Rewrite-classified + fixable).
+        assert_eq!(fix_spec("anachronism").unwrap().scope, FixScope::Span);
+        assert_eq!(response_kind("anachronism"), ResponseKind::Rewrite);
+        let anach = EditorialFinding {
+            category: "anachronism".into(),
+            severity: Severity::Warn,
+            location: Location { paragraph: Some(uuid::Uuid::now_v7()), ..Default::default() },
+            message: "m".into(),
+            hint: None,
+            source: "world",
+            autofixable: false,
+        };
+        assert!(anach.rewritable(), "anachronism + a paragraph → rewritable");
+        // RD-P3 — the decision flow reconciles through a Paragraph fix.
+        assert_eq!(fix_spec("decision-resolve").unwrap().scope, FixScope::Paragraph);
     }
 
     #[test]

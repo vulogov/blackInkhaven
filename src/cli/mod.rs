@@ -26,6 +26,7 @@ pub mod check;
 pub mod cost;
 pub mod goals;
 pub mod readthrough;
+pub mod revise;
 pub mod event;
 pub mod event_critique;
 pub mod comments;
@@ -1390,6 +1391,19 @@ pub enum Command {
     /// each capped subsystem (world slow track, Inner Socrates slow track) vs their
     /// daily caps.
     Cost,
+    /// REDLINE-1 (2.4) — the editorial letter: the unified revision worklist (every
+    /// reader's findings) synthesised into one prioritized, thematically-grouped
+    /// developmental letter. `--json` dumps the findings (each tagged how it can be
+    /// acted on: rewrite / decision / brief). Advises; never rewrites — the
+    /// `Ctrl+V Shift+R` Editorial Pass owns the confirmed-diff fixes.
+    Revise {
+        /// Restrict to a single book (slug or title). Default: the whole project.
+        #[arg(long)]
+        book_name: Option<String>,
+        /// Emit the findings as JSON instead of the letter.
+        #[arg(long)]
+        json: bool,
+    },
     /// LECTOR-1 (2.3) — the read-through report: the book read forward, once, as a
     /// first reader. The measured intensity curve + per-chapter scene/sequel beat +
     /// the ranked reader findings (confusion, info-dump, attention-dip, put-down
@@ -6775,6 +6789,9 @@ impl Cli {
             )
             .map_err(Into::into),
             Command::Cost => cost::run(&project).map_err(Into::into),
+            Command::Revise { book_name, json } => {
+                revise::run(&project, book_name.as_deref(), json).map_err(Into::into)
+            }
             Command::Readthrough { deep, max_cost, force, json } => {
                 readthrough::run(&project, deep, max_cost, force, json).map_err(Into::into)
             }

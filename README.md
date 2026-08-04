@@ -27,42 +27,46 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 2.3.0 — LECTOR: The Read-Through
+## Latest release · 2.4.0 — REDLINE: The Revision Partner
 
-Read the full notes: [`Documentation/RELEASE_NOTES/2.3.0.md`](Documentation/RELEASE_NOTES/2.3.0.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/2.4.0.md`](Documentation/RELEASE_NOTES/2.4.0.md)
 
-Every reader Inkhaven had built reads *small* — a paragraph, a break, the voice. 2.3's flagship,
-**LECTOR**, reads the whole book the way the one reader who matters most does: the **first reader**,
-forward, once, whole, not knowing the ending. *No feature reads your book end to end. LECTOR does —
-reporting both the shape of the read and the experience of the read.* Advisory (it reports, it never
-rewrites), deterministic and free at the core. See [`Documentation/LECTOR.md`](Documentation/LECTOR.md).
+Every reader Inkhaven had built *diagnoses* — SENTINEL the continuity break, LECTOR the saggy act,
+the Inner Editor the telling-not-showing, CHORUS the two voices that read alike. Diagnosis is where
+most tools stop. 2.4's flagship, **REDLINE**, is the pass that helps you **act**: it turns every
+finding into an author-confirmed change, with the right kind of help per problem — and it **never
+edits your prose without a confirmed diff and a snapshot first**. See
+[`Documentation/REDLINE.md`](Documentation/REDLINE.md).
 
 ### What's new
 
-- **Shape** — LECTOR measures dramatic intensity **from the prose** (dialogue + a per-language
-  stakes lexicon + sentence rhythm + a chapter-ending turn — no tagging) and reads it against the
-  framework's intended curve, flagging the empirical **saggy middle** (`shape_sag`); plus a
-  **scene/sequel** beat and arrhythmia (breathless / sag). Six frameworks incl. the four-movement
-  **Kishōtenketsu**, **suggested from your `genre`**.
-- **Audience** — a **forward** walk carrying reader state flags **confusion** (an entity used before
-  it's introduced), **info-dump**, **attention-dip**, **put-down risk**, and **unpaid setup** —
-  forward-only, so a later payoff never cancels an earlier dip.
-- **The synthetic first-read** — the one LLM pass: an AI reacts to each chapter as a first reader who
-  doesn't know the ending (each call sees only a recap of what came before). Explicit + cost-capped:
-  `readthrough --deep`, or `k` in the dashboard.
-- **The surfaces** — `inkhaven readthrough` (`--deep`/`--json`); the **`Ctrl+B Shift+A`** dashboard
-  (curve + beats + findings, Enter jumps to the chapter); a `read-through` line on the `Ctrl+B Shift+C`
-  review pass; `ink.readthrough.*` Bund words; the `lector:` config.
-- **Multilingual + honest** — the intensity lexicons ship EN/RU/DE/FR/ES and skip cleanly elsewhere;
-  the forward walk's mention matching is Unicode-aware.
-- **Also** — the continuity ledger moves off `Ctrl+B Shift+S` (which shadowed *Search Facts*) to
-  **`Ctrl+B Shift+I`**. A new `LECTOR.md` + Tutorial 112 + the *Developing a Story* book audited.
+- **The unified worklist** — the Editorial Pass (`Ctrl+V Shift+R`) and `inkhaven revise` now gather
+  **every reader's findings into one ranked list**: the prose checks, `plan` structure, Facts &
+  drift, **SENTINEL** continuity, the **LECTOR** read-through, the **Inner Editor**'s craft notes,
+  and **CHORUS** voice.
+- **Three kinds of help** — each finding shows *how* it can be acted on: **`✎` rewrite** (a
+  diff-reviewed local prose fix — de-echo, tighten, show-don't-tell, de-filter, period-fit, or apply
+  an Inner-Editor craft note), **`⇄` decision** (the AI can't know which fact is right — you say
+  what's true, it reconciles the paragraph), **`✉` brief** (developmental advice for a structural
+  problem, never a rewrite — it lands in the Thoughts pane).
+- **The editorial letter** — `inkhaven revise` synthesises the whole worklist into one developmental
+  letter: the big picture first, then grouped by theme (continuity, structure & pacing, voice &
+  character, line & prose), most important first. `--json` dumps the findings for tooling.
+- **One safety contract** — every prose change streams through the same path: a rewrite you see as a
+  diff and accept or reject, and a **snapshot of your old prose taken before the replace**
+  (F6-restorable). There is no unconfirmed prose-write path; the `F` batch is Rewrite-only by
+  construction.
+- **The surfaces** — `inkhaven revise` (`--book-name`/`--json`); the `Ctrl+V Shift+R` Editorial Pass
+  with a response glyph per row; `ink.revise.{findings,check}` Bund words (read-only).
+- **Multilingual** — the editorial letter and every brief are written in the manuscript's language;
+  an Inner-Editor note is carried through in the language it was written in.
+- **Docs** — a new `REDLINE.md` + Tutorial 113 + the *Developing a Story* book audited.
 
 ### Dependencies & compatibility
 
-No new dependencies — SENTINEL is the payoff of the 2.0 SEMNET graph, built on the crate
-graph you already have; the edge store is created lazily and additively (existing projects gain
-an empty `edges.db` on first open). Compiles warning-free. Test suite → 2769.
+No new dependencies — REDLINE is the *actioning* layer over the readers you already have, built on
+the confirmed-diff + snapshot contract the editor has used since 1.2. It adds no unconfirmed
+prose-write path; existing projects need no migration. Compiles warning-free. Test suite → 2871.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

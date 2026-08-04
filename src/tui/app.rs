@@ -4436,6 +4436,19 @@ impl App {
                 }
                 Err(e) => self.status = format!("read-through skipped: {e}"),
             },
+            BgJobKind::RedlineBrief => match result {
+                Ok(text) if text.trim().is_empty() => {
+                    self.status = "revision brief: the model returned nothing".into();
+                }
+                Ok(text) => {
+                    self.push_thought(format!("## \u{2709} Revision brief\n\n{text}"));
+                    self.right_pane = RightPane::Thoughts;
+                    self.focus_cycle(Focus::Ai);
+                    self.status =
+                        "\u{2709} revision brief — in the Thoughts pane (\u{2191}\u{2193} scroll · Ctrl+Z f fullscreen)".into();
+                }
+                Err(e) => self.status = format!("revision brief skipped: {e}"),
+            },
             BgJobKind::WorldOverview => match result {
                 Ok(joined) => {
                     let rows: Vec<String> = joined.split('\n').map(str::to_string).collect();
@@ -7494,6 +7507,10 @@ pub(super) enum BgJobKind {
     /// The worker reads the book forward as a first reader and emits its findings
     /// to Output; the `Ok` payload is the finding count.
     LectorRead,
+    /// REDLINE-1 (RD-P4) — a revision brief (LLM) for a structural / book-level
+    /// editorial finding. The worker writes a developmental brief; the `Ok` payload
+    /// is the brief text, shown in the Thoughts pane. It never touches prose.
+    RedlineBrief,
     /// BUG-8 — the `Ctrl+B W` world overview compiled off-thread (deterministic,
     /// zero-AI). The `Ok` payload is the overview rows joined by `\n`.
     WorldOverview,
@@ -13326,7 +13343,7 @@ impl App {
                     note.push_str(" · ⚠ may be stale (Ctrl+V Shift+F)");
                 }
                 self.status = format!(
-                    "Editorial Pass · {n} finding(s){note} · ↑↓ · ⏎ jump · ✎ f fix · F fix-all · s skip · d defer · Esc"
+                    "Editorial Pass · {n} finding(s){note} · ↑↓ · ⏎ jump · f act (fix/decide/brief) · F fix-all · s skip · d defer · Esc"
                 );
             }
             Err(e) => self.status = format!("edit: {e}"),
@@ -13336,7 +13353,7 @@ impl App {
     fn editorial_pass_handle_key(&mut self, key: KeyEvent) -> bool {
         // Read everything into locals, then drop the borrow before calling
         // self methods (the established modal pattern).
-        let (filtered_len, cursor, cats, target, has_jump, sel_fp, sel_rewrite, batch) = {
+        let (filtered_len, cursor, cats, target, has_jump, sel_fp, sel_rewrite, sel_decision, sel_brief, batch) = {
             let Modal::EditorialPass { findings, cursor, filter, .. } = &self.modal else {
                 return false;
             };
@@ -13358,9 +13375,24 @@ impl App {
                 sel.and_then(|f| f.location.paragraph),
                 sel.map(|f| f.location.paragraph.is_some()).unwrap_or(false),
                 sel.map(|f| f.fingerprint()),
-                // (category, paragraph, span) when the finding is AI-rewritable
-                sel.filter(|f| f.rewritable())
-                    .map(|f| (f.category.clone(), f.location.paragraph.unwrap(), f.location.char_range)),
+                // (category, paragraph, span, note) when the finding is
+                // AI-rewritable. RD-P6 — a finding-aware `editor` rewrite carries
+                // its own observation as the note; the mechanical categories don't.
+                sel.filter(|f| f.rewritable()).map(|f| {
+                    let note = (f.category == "editor").then(|| f.message.clone());
+                    (f.category.clone(), f.location.paragraph.unwrap(), f.location.char_range, note)
+                }),
+                // REDLINE (RD-P3) — (finding, paragraph) when it's a Decision the
+                // author must resolve (needs an anchor to reconcile against).
+                sel.filter(|f| {
+                    f.response() == crate::editorial::ResponseKind::Decision
+                        && f.location.paragraph.is_some()
+                })
+                .map(|f| ((*f).clone(), f.location.paragraph.unwrap())),
+                // REDLINE (RD-P4) — (category, message) when it's a Brief (a
+                // structural / book-level finding a rewrite can't solve).
+                sel.filter(|f| f.response() == crate::editorial::ResponseKind::Brief)
+                    .map(|f| (f.category.clone(), f.message.clone())),
                 batch,
             )
         };
@@ -13392,17 +13424,24 @@ impl App {
             KeyCode::Char('D') => self.editorial_clear_deferred(),
             // AI rewrite-in-place: open the paragraph, stream a fix → diff.
             KeyCode::Char('f') => match sel_rewrite {
-                Some((category, pid, span)) => {
+                Some((category, pid, span, note)) => {
                     self.modal = Modal::None;
                     match self.open_paragraph_by_uuid(pid) {
-                        Ok(()) => self.start_editorial_rewrite(&category, span),
+                        Ok(()) => self.start_editorial_rewrite(&category, span, note),
                         Err(e) => self.status = format!("edit: {e}"),
                     }
                 }
-                None => {
-                    self.status =
-                        "editorial: this finding isn't AI-rewritable — jump (⏎) and edit it".into();
-                }
+                None => match (sel_decision, sel_brief) {
+                    // A judgment finding the author must decide on → the decision
+                    // modal (which then reconciles through the same confirmed diff).
+                    (Some((finding, pid)), _) => self.open_revision_decision(finding, pid),
+                    // A structural / book-level finding → a revision brief (advice,
+                    // never a rewrite) in the Thoughts pane.
+                    (None, Some((category, message))) => self.editorial_run_brief(category, message),
+                    (None, None) => {
+                        self.status = "editorial: jump (⏎) to edit this one by hand".into();
+                    }
+                },
             },
             // batch fix-all: walk every rewritable finding in the current
             // view through the per-item diff review.
@@ -13437,6 +13476,82 @@ impl App {
         true
     }
 
+    /// REDLINE-1 (RD-P4) — write a revision brief for a structural / book-level
+    /// finding as a background job. The brief lands in the Thoughts pane; the buffer
+    /// is never touched.
+    fn editorial_run_brief(&mut self, category: String, message: String) {
+        if self.bg_job.is_some() {
+            self.status = "revision brief: a background job is already running".into();
+            return;
+        }
+        let root = self.store.project_root().to_path_buf();
+        self.modal = Modal::None;
+        self.status = "\u{27f3} revision brief: thinking…".into();
+        self.start_bg_job(BgJobKind::RedlineBrief, "revision brief", move |tx, _cancel| {
+            let _ = tx.send(BgMsg::Done(crate::redline::brief(&root, &category, &message)));
+        });
+    }
+
+    /// REDLINE-1 (RD-P3) — open the guided-decision prompt for a judgment finding.
+    fn open_revision_decision(&mut self, finding: crate::editorial::EditorialFinding, paragraph: Uuid) {
+        self.status =
+            "decision: type what's true / how to resolve it · Enter reconcile · Esc cancel".into();
+        self.modal = Modal::RevisionDecision { finding, paragraph, input: String::new() };
+    }
+
+    /// REDLINE-1 (RD-P3) — the decision prompt's keys. The author states the
+    /// resolution; on Enter REDLINE opens the anchored paragraph and reconciles it
+    /// through the confirmed-diff contract (the author's statement is the rewrite's
+    /// note). The AI applies the *author's* decision — it never guesses which way is
+    /// right.
+    fn revision_decision_handle_key(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "decision: cancelled".into();
+            }
+            KeyCode::Backspace => {
+                if let Modal::RevisionDecision { input, .. } = &mut self.modal {
+                    input.pop();
+                }
+            }
+            KeyCode::Char(c) => {
+                if let Modal::RevisionDecision { input, .. } = &mut self.modal {
+                    input.push(c);
+                }
+            }
+            KeyCode::Enter => {
+                let resolved = match &self.modal {
+                    Modal::RevisionDecision { finding, paragraph, input } if !input.trim().is_empty() => {
+                        Some((
+                            *paragraph,
+                            format!(
+                                "The issue: {}\nThe author's decision (what is true / how to resolve it): {}",
+                                finding.message,
+                                input.trim()
+                            ),
+                        ))
+                    }
+                    _ => None,
+                };
+                match resolved {
+                    Some((pid, note)) => {
+                        self.modal = Modal::None;
+                        match self.open_paragraph_by_uuid(pid) {
+                            Ok(()) => self.start_editorial_rewrite("decision-resolve", None, Some(note)),
+                            Err(e) => self.status = format!("decision: {e}"),
+                        }
+                    }
+                    None => {
+                        self.status = "decision: type the resolution first (or Esc to cancel)".into();
+                    }
+                }
+            }
+            _ => {}
+        }
+        true
+    }
+
     /// 1.3.9 EDITORIAL-3 P3 — launch the next fix in an active batch: pop the
     /// front of the queue, open its paragraph, and stream the (span-aware)
     /// rewrite. `pump_inference` pops the diff review on completion; accepting
@@ -13456,7 +13571,7 @@ impl App {
                 };
                 match self.open_paragraph_by_uuid(pid) {
                     Ok(()) => {
-                        self.start_editorial_rewrite(&category, span);
+                        self.start_editorial_rewrite(&category, span, None);
                         self.status = format!(
                             "editorial batch {idx}/{total} ({category}): streaming · a accept · r skip · Esc stop"
                         );
@@ -26412,6 +26527,10 @@ impl App {
         }
         if matches!(self.modal, Modal::EditorialPass { .. }) {
             self.editorial_pass_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::RevisionDecision { .. }) {
+            self.revision_decision_handle_key(key);
             return Ok(false);
         }
         if matches!(self.modal, Modal::StoryBible { .. }) {
