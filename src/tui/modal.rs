@@ -859,6 +859,15 @@ pub(super) enum Modal {
         /// Active category filter (`None` = all); cycled by `[` / `]`.
         filter: Option<String>,
     },
+    /// REDLINE-1 (RD-P3) — the guided-decision prompt for a judgment finding the
+    /// author must resolve (a continuity break, an unpaid setup, …). The author
+    /// types what's actually true / how to resolve it; on Enter REDLINE reconciles
+    /// the anchored paragraph through the confirmed-diff contract. `Esc` cancels.
+    RevisionDecision {
+        finding: crate::editorial::EditorialFinding,
+        paragraph: Uuid,
+        input: String,
+    },
     /// 1.3.8 WORLD-1 — `Ctrl+V Shift+L` story bible: a consolidated,
     /// navigable view of the world (characters + continuity-bible
     /// attributes, places, artefacts, facts). `↑↓` navigate, `Enter` jumps

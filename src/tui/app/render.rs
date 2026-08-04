@@ -287,6 +287,10 @@ impl super::App {
             self.draw_editorial_pass_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::RevisionDecision { .. }) {
+            self.draw_revision_decision_modal(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::StoryBible { .. }) {
             self.draw_story_bible_modal(f, area);
             return;

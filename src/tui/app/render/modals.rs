@@ -5552,13 +5552,21 @@ impl super::super::App {
                 Severity::Warn => Color::Yellow,
                 Severity::Info => Color::DarkGray,
             };
-            // ✎ = AI-rewritable (press f); → = jumpable only.
-            let mark = if fnd.rewritable() {
-                '✎'
-            } else if fnd.location.paragraph.is_some() {
-                '→'
-            } else {
-                ' '
+            // RD-P6 — the mark shows what `f` will do, mirroring the handler:
+            // ✎ a diff-reviewed rewrite, ⇄ a guided decision, ✉ a revision brief;
+            // → jumpable only; blank = book-level with no anchor.
+            let mark = match fnd.response() {
+                crate::editorial::ResponseKind::Rewrite if fnd.rewritable() => {
+                    crate::editorial::ResponseKind::Rewrite.glyph()
+                }
+                crate::editorial::ResponseKind::Decision if fnd.location.paragraph.is_some() => {
+                    crate::editorial::ResponseKind::Decision.glyph()
+                }
+                crate::editorial::ResponseKind::Brief => {
+                    crate::editorial::ResponseKind::Brief.glyph()
+                }
+                _ if fnd.location.paragraph.is_some() => '→',
+                _ => ' ',
             };
             let row = format!(
                 "{} {} {:<10} {:<12} {}",
@@ -5597,7 +5605,7 @@ impl super::super::App {
         }
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                " ↑↓ · [ ] filter · ⏎ jump · ✎ f fix · F fix-all · s skip · d defer · Esc ",
+                " ↑↓ · [ ] filter · ⏎ jump · f act (✎⇄✉) · F fix-all · s skip · d defer · Esc ",
                 Style::default().add_modifier(Modifier::DIM),
             ))),
             footer_rect,
@@ -6556,6 +6564,53 @@ impl super::super::App {
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 " ↑↓ scroll · Enter jump · k coherence pass (LLM) · Esc close",
+                dim,
+            ))),
+            footer,
+        );
+    }
+
+    /// REDLINE-1 (RD-P3) — the guided-decision prompt: the finding + a text field
+    /// where the author states the resolution the AI will apply.
+    pub(in crate::tui::app) fn draw_revision_decision_modal(&self, f: &mut ratatui::Frame, area: Rect) {
+        let Modal::RevisionDecision { finding, input, .. } = &self.modal else {
+            return;
+        };
+        let width = area.width.saturating_sub(6).clamp(52, 88);
+        let height = 12u16.min(area.height.saturating_sub(2));
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(format!(" Decision · {} ", finding.category))
+            .border_style(Style::default().fg(self.theme.modal_border).add_modifier(Modifier::BOLD))
+            .style(Style::default().bg(self.theme.modal_bg).fg(self.theme.modal_fg));
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let dim = Style::default().add_modifier(Modifier::DIM);
+        let head = Style::default().fg(self.theme.modal_border).add_modifier(Modifier::BOLD);
+        let lines: Vec<Line> = vec![
+            Line::from(Span::styled(truncate_to(&finding.message, 82), dim)),
+            Line::from(""),
+            Line::from(Span::styled("What's true / how should it be resolved?", head)),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("› ", head),
+                Span::raw(truncate_to(input, 78)),
+                Span::styled("▏", head),
+            ]),
+        ];
+        let body = Rect { x: inner.x, y: inner.y, width: inner.width, height: inner.height.saturating_sub(1) };
+        f.render_widget(Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: false }), body);
+
+        let footer = Rect { x: inner.x, y: inner.y + inner.height - 1, width: inner.width, height: 1 };
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                " the AI applies YOUR decision · Enter reconcile · Esc cancel",
                 dim,
             ))),
             footer,

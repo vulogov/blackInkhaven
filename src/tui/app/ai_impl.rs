@@ -1589,7 +1589,12 @@ impl super::App {
     /// range. For a [`FixScope::Span`] category with a span, only that phrase
     /// is rewritten (marked in context, the reply spliced back); otherwise the
     /// whole paragraph is rewritten as before.
-    pub(super) fn start_editorial_rewrite(&mut self, category: &str, span: Option<(usize, usize)>) {
+    pub(super) fn start_editorial_rewrite(
+        &mut self,
+        category: &str,
+        span: Option<(usize, usize)>,
+        note: Option<String>,
+    ) {
         use crate::editorial::FixScope;
         let Some(spec) = crate::editorial::fix_spec(category) else {
             self.status = "editorial fix: this finding isn't AI-rewritable".into();
@@ -1629,7 +1634,13 @@ Rewrite ONLY that phrase. Output just the replacement text for it — no « » m
 surrounding paragraph, no preamble.\n\n── Paragraph: {title} (for context) ──\n{before}«{phrase}»{after}\n── end paragraph ──"
             )
         } else {
-            format!("{rendered}\n\n── Paragraph: {title} ──\n{body}\n── end paragraph ──")
+            // REDLINE (RD-P3) — a decision fix carries the author's resolution as a
+            // note the AI must apply; a plain fix has none.
+            let note_block = note
+                .as_deref()
+                .map(|n| format!("\n\n── The author's decision (apply this) ──\n{n}\n── end decision ──"))
+                .unwrap_or_default();
+            format!("{rendered}{note_block}\n\n── Paragraph: {title} ──\n{body}\n── end paragraph ──")
         };
         let (model, _env) = match self.ai.resolve_provider(&self.cfg.llm, None) {
             Ok(pair) => pair,
