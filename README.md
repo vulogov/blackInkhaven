@@ -27,39 +27,36 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 2.2.0 — SENTINEL: Continuity Intelligence
+## Latest release · 2.3.0 — LECTOR: The Read-Through
 
-Read the full notes: [`Documentation/RELEASE_NOTES/2.2.0.md`](Documentation/RELEASE_NOTES/2.2.0.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/2.3.0.md`](Documentation/RELEASE_NOTES/2.3.0.md)
 
-Inkhaven could already *check* a manuscript's continuity — but only if you knew which of six
-separate commands to run. 2.2's flagship, **SENTINEL**, makes it one always-watching concern:
-*continuity already exists in pieces; SENTINEL unifies them over the knowledge graph, adds the one
-invariant nobody had, and watches incrementally as you write.* Advisory (it flags, it never
-rewrites), deterministic and free at the core (no LLM). See
-[`Documentation/CONTINUITY.md`](Documentation/CONTINUITY.md).
+Every reader Inkhaven had built reads *small* — a paragraph, a break, the voice. 2.3's flagship,
+**LECTOR**, reads the whole book the way the one reader who matters most does: the **first reader**,
+forward, once, whole, not knowing the ending. *No feature reads your book end to end. LECTOR does —
+reporting both the shape of the read and the experience of the read.* Advisory (it reports, it never
+rewrites), deterministic and free at the core. See [`Documentation/LECTOR.md`](Documentation/LECTOR.md).
 
 ### What's new
 
-- **Unify** — one engine runs every deterministic continuity detector and ranks them into one
-  ledger: **co-location** (a character in two places at once), **timeline** (orphans / fuzzy
-  overlaps), **numeric** (direction reversal / duration mismatch, EN/FR/ES), and **character-fact
-  drift** across chapters. `inkhaven continuity check` (`--only`/`--skip`/`--json`, non-zero exit
-  on a contradiction for CI).
-- **Complete** — the invariant nobody had: an entity **referenced before it's introduced** (its
-  first scene, read from the timeline). Same-chapter foreshadowing never flags; Unicode-aware, so
-  it works in every script — *"'Aldous' is referenced in ch. 2 but not introduced until ch. 5."*
-- **Watch** — turn on `continuity.ambient` and every save re-checks only what the edit touched (the
-  paragraph's entities + chapter, read from the SEMNET graph) and shows the delta inline. The book
-  watches itself as you write.
-- **The surfaces** — a `continuity` line on the `Ctrl+B Shift+C` review pass; the **`Ctrl+B Shift+S`
-  ledger dashboard** (ranked findings, Enter jumps to the slip); the opt-in **LLM coherence pass**
-  (`--coherence` / `k` in the ledger) for the cross-paragraph contradictions patterns can't see —
-  explicit, cost-capped; `ink.continuity.{findings,check}` Bund words (read-only).
-- **Multilingual + honest** — SENTINEL inherits each detector's coverage and never claims more; the
-  new `introduce` invariant is language-safe everywhere. `continuity:` config knobs inform, never
-  block.
-- **Docs caught up** — a new `CONTINUITY.md` + Tutorial 111 + the *Developing a Story* companion
-  book audited to the new surface.
+- **Shape** — LECTOR measures dramatic intensity **from the prose** (dialogue + a per-language
+  stakes lexicon + sentence rhythm + a chapter-ending turn — no tagging) and reads it against the
+  framework's intended curve, flagging the empirical **saggy middle** (`shape_sag`); plus a
+  **scene/sequel** beat and arrhythmia (breathless / sag). Six frameworks incl. the four-movement
+  **Kishōtenketsu**, **suggested from your `genre`**.
+- **Audience** — a **forward** walk carrying reader state flags **confusion** (an entity used before
+  it's introduced), **info-dump**, **attention-dip**, **put-down risk**, and **unpaid setup** —
+  forward-only, so a later payoff never cancels an earlier dip.
+- **The synthetic first-read** — the one LLM pass: an AI reacts to each chapter as a first reader who
+  doesn't know the ending (each call sees only a recap of what came before). Explicit + cost-capped:
+  `readthrough --deep`, or `k` in the dashboard.
+- **The surfaces** — `inkhaven readthrough` (`--deep`/`--json`); the **`Ctrl+B Shift+A`** dashboard
+  (curve + beats + findings, Enter jumps to the chapter); a `read-through` line on the `Ctrl+B Shift+C`
+  review pass; `ink.readthrough.*` Bund words; the `lector:` config.
+- **Multilingual + honest** — the intensity lexicons ship EN/RU/DE/FR/ES and skip cleanly elsewhere;
+  the forward walk's mention matching is Unicode-aware.
+- **Also** — the continuity ledger moves off `Ctrl+B Shift+S` (which shadowed *Search Facts*) to
+  **`Ctrl+B Shift+I`**. A new `LECTOR.md` + Tutorial 112 + the *Developing a Story* book audited.
 
 ### Dependencies & compatibility
 
