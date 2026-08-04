@@ -8,7 +8,10 @@
 use std::path::Path;
 
 use crate::chronicle::store::ChronicleStore;
-use crate::chronicle::{capture, diff_vectors, Direction, Milestone, Trend, TrendDelta};
+use crate::chronicle::{
+    capture, diff_findings, diff_vectors, Direction, FindingDiff, FindingRef, Milestone, Trend,
+    TrendDelta,
+};
 use crate::error::{Error, Result};
 
 /// Capture a draft milestone now and persist it.
@@ -93,18 +96,15 @@ pub fn trend(project: &Path, book_name: Option<&str>, json: bool) -> Result<()> 
         println!("no milestone yet — `inkhaven chronicle mark <label>` captures a baseline first.");
         return Ok(());
     };
-    let (current, _refs) = capture(project, book_name)?;
+    let (current, current_refs) = capture(project, book_name)?;
+    let base_refs = store.findings_for(base.id).map_err(store_err)?;
     let t = diff_vectors(&base.metrics, &current);
+    let fd = diff_findings(&base_refs, &current_refs);
     if json {
-        let v = serde_json::json!({
-            "since": base.label,
-            "since_date": fmt_date(base.ts),
-            "trend": t,
-        });
-        println!("{}", serde_json::to_string_pretty(&v).unwrap_or_else(|_| "{}".into()));
+        println!("{}", trend_json(&base.label, fmt_date(base.ts), &t, &fd));
         return Ok(());
     }
-    render_trend(&format!("since “{}” ({}) → now", base.label, fmt_date(base.ts)), &t);
+    render_trend(&format!("since “{}” ({}) → now", base.label, fmt_date(base.ts)), &t, &fd);
     Ok(())
 }
 
@@ -125,17 +125,42 @@ pub fn diff(
             .ok_or_else(|| Error::Store(format!("chronicle diff: no milestone labelled “{label}”")))
     };
     let (ma, mb) = (by(a)?, by(b)?);
+    let a_refs = store.findings_for(ma.id).map_err(store_err)?;
+    let b_refs = store.findings_for(mb.id).map_err(store_err)?;
     let t = diff_vectors(&ma.metrics, &mb.metrics);
+    let fd = diff_findings(&a_refs, &b_refs);
     if json {
-        let v = serde_json::json!({ "from": ma.label, "to": mb.label, "trend": t });
-        println!("{}", serde_json::to_string_pretty(&v).unwrap_or_else(|_| "{}".into()));
+        println!("{}", trend_json(&ma.label, mb.label.clone(), &t, &fd));
         return Ok(());
     }
-    render_trend(&format!("“{}” → “{}”", ma.label, mb.label), &t);
+    render_trend(&format!("“{}” → “{}”", ma.label, mb.label), &t, &fd);
     Ok(())
 }
 
-fn render_trend(header: &str, t: &Trend) {
+/// Shared `--json` body for `trend` / `diff`: the deltas + the three finding lists.
+fn trend_json(from: &str, to_or_date: String, t: &Trend, fd: &FindingDiff) -> String {
+    let finding = |f: &FindingRef| {
+        serde_json::json!({
+            "category": f.category,
+            "severity": f.severity,
+            "location": f.location,
+            "message": f.message(),
+        })
+    };
+    let v = serde_json::json!({
+        "since": from,
+        "to": to_or_date,
+        "trend": t,
+        "findings": {
+            "cleared": fd.cleared.iter().map(finding).collect::<Vec<_>>(),
+            "introduced": fd.introduced.iter().map(finding).collect::<Vec<_>>(),
+            "persisted": fd.persisted.len(),
+        },
+    });
+    serde_json::to_string_pretty(&v).unwrap_or_else(|_| "{}".into())
+}
+
+fn render_trend(header: &str, t: &Trend, fd: &FindingDiff) {
     println!("Chronicle — {header}\n");
     for d in &t.headline {
         println!("  {}", fmt_delta(d));
@@ -151,6 +176,41 @@ fn render_trend(header: &str, t: &Trend) {
             println!("    {}", fmt_delta(d));
         }
     }
+
+    // The REDLINE hook: what the revision cleared, what it introduced.
+    println!(
+        "\n  \u{2713} {} cleared    \u{25b2} {} introduced    \u{b7} {} unchanged",
+        fd.cleared.len(),
+        fd.introduced.len(),
+        fd.persisted.len()
+    );
+    if !fd.introduced.is_empty() {
+        println!("\n  introduced (new since the last mark):");
+        for f in &fd.introduced {
+            println!("    {}", fmt_finding(f));
+        }
+    }
+}
+
+/// One introduced/cleared finding row: severity icon · category · location · head.
+fn fmt_finding(f: &FindingRef) -> String {
+    let icon = match f.severity.as_str() {
+        "error" => "✗",
+        "warn" => "⚠",
+        _ => "·",
+    };
+    let loc = f.location.as_deref().unwrap_or("—");
+    format!("{icon} {:<12} {:<10} {}", f.category, loc, head(f.message(), 56))
+}
+
+/// Char-safe truncation with an ellipsis (the finding message head).
+fn head(s: &str, max: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max {
+        return s.to_string();
+    }
+    let cut = max.saturating_sub(1);
+    format!("{}…", chars[..cut].iter().collect::<String>())
 }
 
 fn fmt_delta(d: &TrendDelta) -> String {

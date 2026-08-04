@@ -236,6 +236,61 @@ impl FindingRef {
     pub fn is_error(&self) -> bool {
         self.severity == "error"
     }
+
+    /// The finding's message — the part of the `fingerprint` after the category
+    /// (`category ⟂ message`). Falls back to the whole fingerprint if malformed.
+    pub fn message(&self) -> &str {
+        self.fingerprint.split('\u{1}').nth(1).unwrap_or(self.fingerprint.as_str())
+    }
+}
+
+/// The cleared / introduced / persisted split between two milestones' finding sets
+/// — the REDLINE hook. Set difference over each finding's stable `fingerprint`:
+/// what a revision *resolved*, what it *introduced*, and what still stands.
+#[derive(Debug, Clone, Default)]
+pub struct FindingDiff {
+    /// In `old`, gone from `new` — the revision resolved these.
+    pub cleared: Vec<FindingRef>,
+    /// New since `old` — the revision (or the edits around it) introduced these.
+    pub introduced: Vec<FindingRef>,
+    /// In both (the current copy) — unchanged.
+    pub persisted: Vec<FindingRef>,
+}
+
+/// Severity ordering for the itemised lists: errors first, then warnings, then info.
+fn sev_rank(sev: &str) -> u8 {
+    match sev {
+        "error" => 0,
+        "warn" => 1,
+        _ => 2,
+    }
+}
+
+/// Diff two finding sets (`old` → `new`) into cleared / introduced / persisted.
+/// `cleared` and `introduced` are sorted errors-first (the worst news at the top).
+/// Pure.
+pub fn diff_findings(old: &[FindingRef], new: &[FindingRef]) -> FindingDiff {
+    let old_fps: BTreeSet<&str> = old.iter().map(|f| f.fingerprint.as_str()).collect();
+    let new_fps: BTreeSet<&str> = new.iter().map(|f| f.fingerprint.as_str()).collect();
+
+    let mut cleared: Vec<FindingRef> =
+        old.iter().filter(|f| !new_fps.contains(f.fingerprint.as_str())).cloned().collect();
+    let mut introduced: Vec<FindingRef> =
+        new.iter().filter(|f| !old_fps.contains(f.fingerprint.as_str())).cloned().collect();
+    let persisted: Vec<FindingRef> =
+        new.iter().filter(|f| old_fps.contains(f.fingerprint.as_str())).cloned().collect();
+
+    let by_severity = |v: &mut Vec<FindingRef>| {
+        v.sort_by(|a, b| {
+            sev_rank(&a.severity)
+                .cmp(&sev_rank(&b.severity))
+                .then(a.category.cmp(&b.category))
+                .then(a.fingerprint.cmp(&b.fingerprint))
+        });
+    };
+    by_severity(&mut cleared);
+    by_severity(&mut introduced);
+    FindingDiff { cleared, introduced, persisted }
 }
 
 #[cfg(test)]
@@ -340,6 +395,53 @@ mod tests {
         let mut new = MetricVector::default();
         new.by_category.insert("echo".into(), 2);
         assert!(diff_vectors(&old, &new).categories.is_empty());
+    }
+
+    fn fref(fp: &str, cat: &str, sev: &str) -> FindingRef {
+        FindingRef {
+            fingerprint: fp.into(),
+            category: cat.into(),
+            severity: sev.into(),
+            location: None,
+            paragraph: None,
+        }
+    }
+
+    #[test]
+    fn diff_findings_partitions_and_extracts_message() {
+        let old = vec![
+            fref("echo\u{1}about ×5", "echo", "warn"),
+            fref("co_location\u{1}Mara in two places", "co_location", "error"),
+        ];
+        let new = vec![
+            fref("echo\u{1}about ×5", "echo", "warn"), // persisted
+            fref("confusion\u{1}who is Cael?", "confusion", "warn"), // introduced
+        ];
+        let d = diff_findings(&old, &new);
+        assert_eq!(cats(&d.cleared), vec!["co_location"]); // gone from new
+        assert_eq!(cats(&d.introduced), vec!["confusion"]); // new
+        assert_eq!(cats(&d.persisted), vec!["echo"]); // in both
+        // message extracts the part after the category.
+        assert_eq!(d.introduced[0].message(), "who is Cael?");
+        assert_eq!(d.cleared[0].message(), "Mara in two places");
+    }
+
+    #[test]
+    fn diff_findings_sorts_errors_first() {
+        let new = vec![
+            fref("z\u{1}i", "z-info", "info"),
+            fref("a\u{1}e", "a-error", "error"),
+            fref("m\u{1}w", "m-warn", "warn"),
+        ];
+        let d = diff_findings(&[], &new);
+        assert_eq!(
+            d.introduced.iter().map(|f| f.severity.as_str()).collect::<Vec<_>>(),
+            vec!["error", "warn", "info"]
+        );
+    }
+
+    fn cats(v: &[FindingRef]) -> Vec<&str> {
+        v.iter().map(|f| f.category.as_str()).collect()
     }
 
     #[test]
