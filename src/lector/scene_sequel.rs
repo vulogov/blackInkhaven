@@ -11,10 +11,6 @@
 //! (sequel evidence) — and flags the arrhythmia. Multilingual, same stemmed-lexicon
 //! plumbing as the intensity signal.
 
-// `chapter_kinds`/`scan` are consumed by LR-P3 (the walk) / LR-P5 (the report) /
-// LR-P6 (the rails); scaffolding until then. Drop this allow at LR-P3.
-#![allow(dead_code)]
-
 use std::collections::HashSet;
 
 use rust_stemmers::Stemmer;
