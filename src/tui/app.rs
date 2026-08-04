@@ -13336,7 +13336,7 @@ impl App {
     fn editorial_pass_handle_key(&mut self, key: KeyEvent) -> bool {
         // Read everything into locals, then drop the borrow before calling
         // self methods (the established modal pattern).
-        let (filtered_len, cursor, cats, target, has_jump, sel_fp, sel_rewrite, batch) = {
+        let (filtered_len, cursor, cats, target, has_jump, sel_fp, sel_rewrite, sel_decision, batch) = {
             let Modal::EditorialPass { findings, cursor, filter, .. } = &self.modal else {
                 return false;
             };
@@ -13361,6 +13361,13 @@ impl App {
                 // (category, paragraph, span) when the finding is AI-rewritable
                 sel.filter(|f| f.rewritable())
                     .map(|f| (f.category.clone(), f.location.paragraph.unwrap(), f.location.char_range)),
+                // REDLINE (RD-P3) — (finding, paragraph) when it's a Decision the
+                // author must resolve (needs an anchor to reconcile against).
+                sel.filter(|f| {
+                    f.response() == crate::editorial::ResponseKind::Decision
+                        && f.location.paragraph.is_some()
+                })
+                .map(|f| ((*f).clone(), f.location.paragraph.unwrap())),
                 batch,
             )
         };
@@ -13395,14 +13402,19 @@ impl App {
                 Some((category, pid, span)) => {
                     self.modal = Modal::None;
                     match self.open_paragraph_by_uuid(pid) {
-                        Ok(()) => self.start_editorial_rewrite(&category, span),
+                        Ok(()) => self.start_editorial_rewrite(&category, span, None),
                         Err(e) => self.status = format!("edit: {e}"),
                     }
                 }
-                None => {
-                    self.status =
-                        "editorial: this finding isn't AI-rewritable — jump (⏎) and edit it".into();
-                }
+                None => match sel_decision {
+                    // A judgment finding the author must decide on → the decision
+                    // modal (which then reconciles through the same confirmed diff).
+                    Some((finding, pid)) => self.open_revision_decision(finding, pid),
+                    None => {
+                        self.status =
+                            "editorial: this finding isn't AI-rewritable — jump (⏎) and edit it".into();
+                    }
+                },
             },
             // batch fix-all: walk every rewritable finding in the current
             // view through the per-item diff review.
@@ -13437,6 +13449,66 @@ impl App {
         true
     }
 
+    /// REDLINE-1 (RD-P3) — open the guided-decision prompt for a judgment finding.
+    fn open_revision_decision(&mut self, finding: crate::editorial::EditorialFinding, paragraph: Uuid) {
+        self.status =
+            "decision: type what's true / how to resolve it · Enter reconcile · Esc cancel".into();
+        self.modal = Modal::RevisionDecision { finding, paragraph, input: String::new() };
+    }
+
+    /// REDLINE-1 (RD-P3) — the decision prompt's keys. The author states the
+    /// resolution; on Enter REDLINE opens the anchored paragraph and reconciles it
+    /// through the confirmed-diff contract (the author's statement is the rewrite's
+    /// note). The AI applies the *author's* decision — it never guesses which way is
+    /// right.
+    fn revision_decision_handle_key(&mut self, key: KeyEvent) -> bool {
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "decision: cancelled".into();
+            }
+            KeyCode::Backspace => {
+                if let Modal::RevisionDecision { input, .. } = &mut self.modal {
+                    input.pop();
+                }
+            }
+            KeyCode::Char(c) => {
+                if let Modal::RevisionDecision { input, .. } = &mut self.modal {
+                    input.push(c);
+                }
+            }
+            KeyCode::Enter => {
+                let resolved = match &self.modal {
+                    Modal::RevisionDecision { finding, paragraph, input } if !input.trim().is_empty() => {
+                        Some((
+                            *paragraph,
+                            format!(
+                                "The issue: {}\nThe author's decision (what is true / how to resolve it): {}",
+                                finding.message,
+                                input.trim()
+                            ),
+                        ))
+                    }
+                    _ => None,
+                };
+                match resolved {
+                    Some((pid, note)) => {
+                        self.modal = Modal::None;
+                        match self.open_paragraph_by_uuid(pid) {
+                            Ok(()) => self.start_editorial_rewrite("decision-resolve", None, Some(note)),
+                            Err(e) => self.status = format!("decision: {e}"),
+                        }
+                    }
+                    None => {
+                        self.status = "decision: type the resolution first (or Esc to cancel)".into();
+                    }
+                }
+            }
+            _ => {}
+        }
+        true
+    }
+
     /// 1.3.9 EDITORIAL-3 P3 — launch the next fix in an active batch: pop the
     /// front of the queue, open its paragraph, and stream the (span-aware)
     /// rewrite. `pump_inference` pops the diff review on completion; accepting
@@ -13456,7 +13528,7 @@ impl App {
                 };
                 match self.open_paragraph_by_uuid(pid) {
                     Ok(()) => {
-                        self.start_editorial_rewrite(&category, span);
+                        self.start_editorial_rewrite(&category, span, None);
                         self.status = format!(
                             "editorial batch {idx}/{total} ({category}): streaming · a accept · r skip · Esc stop"
                         );
@@ -26412,6 +26484,10 @@ impl App {
         }
         if matches!(self.modal, Modal::EditorialPass { .. }) {
             self.editorial_pass_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::RevisionDecision { .. }) {
+            self.revision_decision_handle_key(key);
             return Ok(false);
         }
         if matches!(self.modal, Modal::StoryBible { .. }) {
