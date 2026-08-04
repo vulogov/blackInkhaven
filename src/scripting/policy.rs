@@ -230,6 +230,11 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.readthrough.report", category::STORE_READ),
     ("ink.readthrough.curve", category::STORE_READ),
     ("ink.readthrough.check", category::STORE_READ),
+    // REDLINE — the unified revision worklist; read-only (the AI editorial letter
+    // and every prose rewrite are not exposed to Bund). `collect` opens its own
+    // read handle, so both stay store_read.
+    ("ink.revise.findings", category::STORE_READ),
+    ("ink.revise.check", category::STORE_READ),
     // CHAR-1 — character-arc reads; `plan`/`refresh` write only the derived
     // char.duckdb cache (not the manuscript), so they stay store_read too.
     ("ink.char.arc", category::STORE_READ),
