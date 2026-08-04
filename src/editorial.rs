@@ -152,6 +152,17 @@ impl ResponseKind {
             ResponseKind::Brief => "brief",
         }
     }
+
+    /// REDLINE-1 (RD-P6) — the one-glyph marker the Editorial Pass shows per row:
+    /// ✎ a diff-reviewed prose rewrite, ⇄ a guided authorial decision, ✉ a
+    /// revision brief (advice, never a rewrite).
+    pub fn glyph(self) -> char {
+        match self {
+            ResponseKind::Rewrite => '✎',
+            ResponseKind::Decision => '⇄',
+            ResponseKind::Brief => '✉',
+        }
+    }
 }
 
 /// Classify a finding category into its [`ResponseKind`]. A *Rewrite* is a category
@@ -261,6 +272,18 @@ paragraph, no preamble.",
             label: "reconcile",
             scope: FixScope::Paragraph,
         },
+        // REDLINE-1 (RD-P6) — the Inner Editor's own craft observation. The
+        // finding's text is passed as the rewrite's note (like the decision flow),
+        // so the model addresses THIS note rather than a generic category recipe.
+        "editor" => FixSpec {
+            slug: "editorial-fix-editor",
+            builtin: "You revise the paragraph below to address the editor's craft note, which \
+follows this instruction. Make the smallest change that honestly resolves the note — preserve the \
+meaning, the author's voice, the paragraph's language, and any Typst markup verbatim. Output ONLY \
+the rewritten paragraph, no preamble.",
+            label: "editor-note",
+            scope: FixScope::Paragraph,
+        },
         _ => return None,
     })
 }
@@ -277,6 +300,10 @@ pub fn batch_fix_queue(findings: &[EditorialFinding], filter: Option<&str>) -> V
         .iter()
         .filter(|f| filter.is_none_or(|c| f.category == c))
         .filter(|f| f.rewritable())
+        // REDLINE-1 (RD-P6) — an `editor` rewrite is finding-aware (each carries
+        // its own observation as the rewrite's note), so it's applied one at a
+        // time via `f`, never through the noteless batch sweep.
+        .filter(|f| f.category != "editor")
         .map(|f| {
             (
                 f.location.paragraph.expect("rewritable ⇒ has a paragraph"),
@@ -545,6 +572,36 @@ pub(crate) fn from_stylist_finding(f: &crate::inner_stylist::Finding) -> Editori
     }
 }
 
+/// REDLINE-1 (RD-P6) — an Inner Editor craft observation → the worklist as a
+/// finding-aware `editor` Rewrite: the observation itself becomes the rewrite's
+/// note (see [`fix_spec`]'s `editor` recipe), so the AI addresses THIS note.
+/// Returns `None` for Praise (celebratory — nothing to fix), for a suppressed
+/// finding (a declared intent already covers it), or when the finding has no
+/// paragraph anchor (nothing to rewrite). The observation stays in the
+/// paragraph's language; its evidence rides along as the hint.
+pub(crate) fn from_editor_finding(
+    f: &crate::inner_editor::StoredEditorFinding,
+) -> Option<EditorialFinding> {
+    use crate::inner_editor::types::EditorSeverity as ES;
+    let fin = &f.finding;
+    if fin.suppressed_by.is_some() || matches!(fin.severity, ES::Praise) {
+        return None;
+    }
+    let paragraph = f.paragraph_id?;
+    Some(EditorialFinding {
+        category: "editor".into(),
+        severity: match fin.severity {
+            ES::Concern => Severity::Warn,
+            _ => Severity::Info,
+        },
+        location: Location { paragraph: Some(paragraph), ..Default::default() },
+        message: fin.observation.clone(),
+        hint: fin.evidence.clone(),
+        source: "editor",
+        autofixable: false,
+    })
+}
+
 /// `"ch. N"` for a 1-based chapter ordinal, or `None` for book-level (0).
 fn chapter_label(chapter: u32) -> Option<String> {
     (chapter > 0).then(|| format!("ch. {chapter}"))
@@ -762,6 +819,79 @@ mod tests {
         assert_eq!(f.severity, Severity::Warn);
         assert_eq!(f.response(), ResponseKind::Brief);
         assert_eq!(f.source, "read-through");
+    }
+
+    #[test]
+    fn response_kind_glyphs_are_distinct_and_stable() {
+        assert_eq!(ResponseKind::Rewrite.glyph(), '✎');
+        assert_eq!(ResponseKind::Decision.glyph(), '⇄');
+        assert_eq!(ResponseKind::Brief.glyph(), '✉');
+    }
+
+    #[test]
+    fn inner_editor_findings_become_finding_aware_editor_rewrites() {
+        use crate::inner_editor::types::{
+            EditorCategory, EditorFinding, EditorSeverity,
+        };
+        use crate::inner_editor::StoredEditorFinding;
+        let para = uuid::Uuid::now_v7();
+        let mk = |sev: EditorSeverity, paragraph: Option<uuid::Uuid>, suppressed: Option<String>| {
+            StoredEditorFinding {
+                id: uuid::Uuid::now_v7(),
+                paragraph_id: paragraph,
+                finding: EditorFinding {
+                    category: EditorCategory::StyleObservation,
+                    severity: sev,
+                    observation: "the verb tense wobbles mid-paragraph".into(),
+                    observation_en: "the verb tense wobbles mid-paragraph".into(),
+                    evidence: Some("«walked» then «walks»".into()),
+                    conditional: false,
+                    suppressed_by: suppressed,
+                },
+            }
+        };
+        // A Concern with an anchor → a rewritable `editor` finding whose message is
+        // the observation and whose hint is the evidence.
+        let f = from_editor_finding(&mk(EditorSeverity::Concern, Some(para), None))
+            .expect("Concern + anchor → a finding");
+        assert_eq!(f.category, "editor");
+        assert_eq!(f.severity, Severity::Warn);
+        assert_eq!(f.location.paragraph, Some(para));
+        assert_eq!(f.message, "the verb tense wobbles mid-paragraph");
+        assert_eq!(f.hint.as_deref(), Some("«walked» then «walks»"));
+        assert_eq!(f.response(), ResponseKind::Rewrite);
+        assert!(f.rewritable(), "editor + a paragraph ⇒ AI-rewritable");
+        assert_eq!(f.source, "editor");
+        // A Note maps to Info but is still a rewritable editor finding.
+        assert_eq!(
+            from_editor_finding(&mk(EditorSeverity::Note, Some(para), None)).unwrap().severity,
+            Severity::Info
+        );
+        // Praise, a suppressed finding, and an anchorless finding all drop out.
+        assert!(from_editor_finding(&mk(EditorSeverity::Praise, Some(para), None)).is_none());
+        assert!(
+            from_editor_finding(&mk(EditorSeverity::Concern, Some(para), Some("declared".into())))
+                .is_none()
+        );
+        assert!(from_editor_finding(&mk(EditorSeverity::Concern, None, None)).is_none());
+    }
+
+    #[test]
+    fn editor_rewrites_are_excluded_from_the_batch_sweep() {
+        let mk = |cat: &str| EditorialFinding {
+            category: cat.into(),
+            severity: Severity::Warn,
+            location: Location { paragraph: Some(uuid::Uuid::now_v7()), ..Default::default() },
+            message: "m".into(),
+            hint: None,
+            source: "x",
+            autofixable: false,
+        };
+        let findings = vec![mk("echo"), mk("editor"), mk("filter")];
+        let q = batch_fix_queue(&findings, None);
+        // echo + filter walk the batch; the finding-aware editor rewrite does not.
+        let cats: Vec<&str> = q.iter().map(|(_, c, _)| c.as_str()).collect();
+        assert_eq!(cats, vec!["echo", "filter"]);
     }
 
     #[test]

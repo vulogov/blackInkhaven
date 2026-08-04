@@ -13375,9 +13375,13 @@ impl App {
                 sel.and_then(|f| f.location.paragraph),
                 sel.map(|f| f.location.paragraph.is_some()).unwrap_or(false),
                 sel.map(|f| f.fingerprint()),
-                // (category, paragraph, span) when the finding is AI-rewritable
-                sel.filter(|f| f.rewritable())
-                    .map(|f| (f.category.clone(), f.location.paragraph.unwrap(), f.location.char_range)),
+                // (category, paragraph, span, note) when the finding is
+                // AI-rewritable. RD-P6 — a finding-aware `editor` rewrite carries
+                // its own observation as the note; the mechanical categories don't.
+                sel.filter(|f| f.rewritable()).map(|f| {
+                    let note = (f.category == "editor").then(|| f.message.clone());
+                    (f.category.clone(), f.location.paragraph.unwrap(), f.location.char_range, note)
+                }),
                 // REDLINE (RD-P3) — (finding, paragraph) when it's a Decision the
                 // author must resolve (needs an anchor to reconcile against).
                 sel.filter(|f| {
@@ -13420,10 +13424,10 @@ impl App {
             KeyCode::Char('D') => self.editorial_clear_deferred(),
             // AI rewrite-in-place: open the paragraph, stream a fix → diff.
             KeyCode::Char('f') => match sel_rewrite {
-                Some((category, pid, span)) => {
+                Some((category, pid, span, note)) => {
                     self.modal = Modal::None;
                     match self.open_paragraph_by_uuid(pid) {
-                        Ok(()) => self.start_editorial_rewrite(&category, span, None),
+                        Ok(()) => self.start_editorial_rewrite(&category, span, note),
                         Err(e) => self.status = format!("edit: {e}"),
                     }
                 }

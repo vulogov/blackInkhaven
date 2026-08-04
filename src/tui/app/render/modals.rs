@@ -5552,13 +5552,21 @@ impl super::super::App {
                 Severity::Warn => Color::Yellow,
                 Severity::Info => Color::DarkGray,
             };
-            // ✎ = AI-rewritable (press f); → = jumpable only.
-            let mark = if fnd.rewritable() {
-                '✎'
-            } else if fnd.location.paragraph.is_some() {
-                '→'
-            } else {
-                ' '
+            // RD-P6 — the mark shows what `f` will do, mirroring the handler:
+            // ✎ a diff-reviewed rewrite, ⇄ a guided decision, ✉ a revision brief;
+            // → jumpable only; blank = book-level with no anchor.
+            let mark = match fnd.response() {
+                crate::editorial::ResponseKind::Rewrite if fnd.rewritable() => {
+                    crate::editorial::ResponseKind::Rewrite.glyph()
+                }
+                crate::editorial::ResponseKind::Decision if fnd.location.paragraph.is_some() => {
+                    crate::editorial::ResponseKind::Decision.glyph()
+                }
+                crate::editorial::ResponseKind::Brief => {
+                    crate::editorial::ResponseKind::Brief.glyph()
+                }
+                _ if fnd.location.paragraph.is_some() => '→',
+                _ => ' ',
             };
             let row = format!(
                 "{} {} {:<10} {:<12} {}",
@@ -5597,7 +5605,7 @@ impl super::super::App {
         }
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                " ↑↓ · [ ] filter · ⏎ jump · ✎ f fix · F fix-all · s skip · d defer · Esc ",
+                " ↑↓ · [ ] filter · ⏎ jump · f act (✎⇄✉) · F fix-all · s skip · d defer · Esc ",
                 Style::default().add_modifier(Modifier::DIM),
             ))),
             footer_rect,
