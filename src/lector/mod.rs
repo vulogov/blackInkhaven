@@ -24,6 +24,8 @@ use std::collections::HashSet;
 
 use uuid::Uuid;
 
+pub(crate) mod intensity;
+
 /// How much a reader finding matters. `Concern` is a real problem (a stretch a
 /// reader would likely put down); `Notice` is worth a look; `Info` is a nudge.
 /// A local enum (mapped to the Output pane's severity only at emit time) keeps the
