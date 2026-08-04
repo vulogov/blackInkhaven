@@ -4436,6 +4436,19 @@ impl App {
                 }
                 Err(e) => self.status = format!("read-through skipped: {e}"),
             },
+            BgJobKind::RedlineBrief => match result {
+                Ok(text) if text.trim().is_empty() => {
+                    self.status = "revision brief: the model returned nothing".into();
+                }
+                Ok(text) => {
+                    self.push_thought(format!("## \u{2709} Revision brief\n\n{text}"));
+                    self.right_pane = RightPane::Thoughts;
+                    self.focus_cycle(Focus::Ai);
+                    self.status =
+                        "\u{2709} revision brief — in the Thoughts pane (\u{2191}\u{2193} scroll · Ctrl+Z f fullscreen)".into();
+                }
+                Err(e) => self.status = format!("revision brief skipped: {e}"),
+            },
             BgJobKind::WorldOverview => match result {
                 Ok(joined) => {
                     let rows: Vec<String> = joined.split('\n').map(str::to_string).collect();
@@ -7494,6 +7507,10 @@ pub(super) enum BgJobKind {
     /// The worker reads the book forward as a first reader and emits its findings
     /// to Output; the `Ok` payload is the finding count.
     LectorRead,
+    /// REDLINE-1 (RD-P4) — a revision brief (LLM) for a structural / book-level
+    /// editorial finding. The worker writes a developmental brief; the `Ok` payload
+    /// is the brief text, shown in the Thoughts pane. It never touches prose.
+    RedlineBrief,
     /// BUG-8 — the `Ctrl+B W` world overview compiled off-thread (deterministic,
     /// zero-AI). The `Ok` payload is the overview rows joined by `\n`.
     WorldOverview,
@@ -13326,7 +13343,7 @@ impl App {
                     note.push_str(" · ⚠ may be stale (Ctrl+V Shift+F)");
                 }
                 self.status = format!(
-                    "Editorial Pass · {n} finding(s){note} · ↑↓ · ⏎ jump · ✎ f fix · F fix-all · s skip · d defer · Esc"
+                    "Editorial Pass · {n} finding(s){note} · ↑↓ · ⏎ jump · f act (fix/decide/brief) · F fix-all · s skip · d defer · Esc"
                 );
             }
             Err(e) => self.status = format!("edit: {e}"),
@@ -13336,7 +13353,7 @@ impl App {
     fn editorial_pass_handle_key(&mut self, key: KeyEvent) -> bool {
         // Read everything into locals, then drop the borrow before calling
         // self methods (the established modal pattern).
-        let (filtered_len, cursor, cats, target, has_jump, sel_fp, sel_rewrite, sel_decision, batch) = {
+        let (filtered_len, cursor, cats, target, has_jump, sel_fp, sel_rewrite, sel_decision, sel_brief, batch) = {
             let Modal::EditorialPass { findings, cursor, filter, .. } = &self.modal else {
                 return false;
             };
@@ -13368,6 +13385,10 @@ impl App {
                         && f.location.paragraph.is_some()
                 })
                 .map(|f| ((*f).clone(), f.location.paragraph.unwrap())),
+                // REDLINE (RD-P4) — (category, message) when it's a Brief (a
+                // structural / book-level finding a rewrite can't solve).
+                sel.filter(|f| f.response() == crate::editorial::ResponseKind::Brief)
+                    .map(|f| (f.category.clone(), f.message.clone())),
                 batch,
             )
         };
@@ -13406,13 +13427,15 @@ impl App {
                         Err(e) => self.status = format!("edit: {e}"),
                     }
                 }
-                None => match sel_decision {
+                None => match (sel_decision, sel_brief) {
                     // A judgment finding the author must decide on → the decision
                     // modal (which then reconciles through the same confirmed diff).
-                    Some((finding, pid)) => self.open_revision_decision(finding, pid),
-                    None => {
-                        self.status =
-                            "editorial: this finding isn't AI-rewritable — jump (⏎) and edit it".into();
+                    (Some((finding, pid)), _) => self.open_revision_decision(finding, pid),
+                    // A structural / book-level finding → a revision brief (advice,
+                    // never a rewrite) in the Thoughts pane.
+                    (None, Some((category, message))) => self.editorial_run_brief(category, message),
+                    (None, None) => {
+                        self.status = "editorial: jump (⏎) to edit this one by hand".into();
                     }
                 },
             },
@@ -13447,6 +13470,22 @@ impl App {
             _ => {}
         }
         true
+    }
+
+    /// REDLINE-1 (RD-P4) — write a revision brief for a structural / book-level
+    /// finding as a background job. The brief lands in the Thoughts pane; the buffer
+    /// is never touched.
+    fn editorial_run_brief(&mut self, category: String, message: String) {
+        if self.bg_job.is_some() {
+            self.status = "revision brief: a background job is already running".into();
+            return;
+        }
+        let root = self.store.project_root().to_path_buf();
+        self.modal = Modal::None;
+        self.status = "\u{27f3} revision brief: thinking…".into();
+        self.start_bg_job(BgJobKind::RedlineBrief, "revision brief", move |tx, _cancel| {
+            let _ = tx.send(BgMsg::Done(crate::redline::brief(&root, &category, &message)));
+        });
     }
 
     /// REDLINE-1 (RD-P3) — open the guided-decision prompt for a judgment finding.
