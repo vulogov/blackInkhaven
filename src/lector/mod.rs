@@ -15,11 +15,6 @@
 //! the accumulated state of every chapter *before* it and never with knowledge of
 //! what comes after — that is what makes it a *reader* rather than an analyst.
 
-// The type surface is consumed by LR-P1 (intensity), LR-P3 (the walk), and LR-P5
-// (the report); until they land it is scaffolding. Drop this allow at LR-P3, when
-// the walk constructs findings and composes dedupe/rank.
-#![allow(dead_code)]
-
 use std::collections::HashSet;
 
 use uuid::Uuid;

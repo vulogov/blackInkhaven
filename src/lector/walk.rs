@@ -13,10 +13,6 @@
 //! *info_dump*), and LR-P1's measured intensity (a flat, eventless run ⇒
 //! *attention_dip* / *put_down_risk*).
 
-// `read_forward` is consumed by LR-P5 (the report) / LR-P6 (the rails); scaffolding
-// until then.
-#![allow(dead_code)]
-
 use std::collections::HashSet;
 
 use super::intensity;
@@ -106,7 +102,19 @@ pub(crate) fn read_forward(
     dip_and_put_down_findings(&mut reads);
     unpaid_setup_findings(&ledger, &cfg.language, &mut reads);
 
-    ReadThrough { chapters: reads, curve: Vec::new() }
+    // The measured shape curve — `(position, intensity)` per chapter, for the
+    // sparkline. (LR-P7 overlays the framework's expected curve.)
+    let n = reads.len();
+    let curve: Vec<(f32, f32)> = reads
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            let pos = if n > 1 { i as f32 / (n - 1) as f32 } else { 0.0 };
+            (pos, c.measured_intensity.unwrap_or(0.0))
+        })
+        .collect();
+
+    ReadThrough { chapters: reads, curve }
 }
 
 /// Attach a finding to its chapter's read (1-based; clamped to the valid range).
