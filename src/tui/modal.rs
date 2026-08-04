@@ -919,6 +919,15 @@ pub(super) enum Modal {
         anchors: Vec<Option<Uuid>>,
         cursor: usize,
     },
+    /// LECTOR-1 (LR-P5b) — the read-through dashboard (`Ctrl+B Shift+A`): the
+    /// measured intensity curve, the per-chapter scene/sequel beat, and the ranked
+    /// reader findings. `↑↓` scroll, Enter jumps to the chapter/finding, `k` runs
+    /// the LLM synthetic first-read, Esc closes. `anchors` parallels `rows`.
+    ReadThrough {
+        rows: Vec<String>,
+        anchors: Vec<Option<Uuid>>,
+        cursor: usize,
+    },
     /// POEM-TUI (PO-P12) — the form picker (`Ctrl+B J → P → D`): choose one of
     /// the built-in forms and attach its `poem:` block to the open verse
     /// paragraph as a sidecar leaf. `cursor` indexes `FormsLibrary::all()`;

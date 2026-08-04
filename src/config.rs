@@ -79,6 +79,9 @@ pub struct Config {
     /// SENTINEL-1 (2.2) — the unified continuity ledger.
     #[serde(default)]
     pub continuity: ContinuityConfig,
+    /// LECTOR-1 (2.3) — the read-through.
+    #[serde(default)]
+    pub lector: LectorConfig,
     #[serde(default)]
     pub dialogue: DialogueConfig,
     #[serde(default)]
@@ -274,6 +277,7 @@ impl Default for Config {
             chorus: ChorusConfig::default(),
             stylist: StylistConfig::default(),
             continuity: ContinuityConfig::default(),
+            lector: LectorConfig::default(),
             dialogue: DialogueConfig::default(),
             utopia: UtopiaConfig::default(),
             char: CharConfig::default(),
@@ -4451,6 +4455,31 @@ impl ContinuityConfig {
     }
 }
 
+/// LECTOR-1 (LR-P6) — `lector:` block. The read-through's config. Master switch
+/// for the deterministic read-through line in the review pass (the synthetic
+/// first-read is always explicit — the ledger's `k` / `readthrough --deep` — so it
+/// has no ambient toggle). Deterministic + free, so on by default. LR-P7 extends
+/// this with the genre-framework + intensity knobs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LectorConfig {
+    /// Master switch for the read-through line in the review pass. When off, the
+    /// review pass emits no `lector` findings (the standalone `inkhaven readthrough`
+    /// command still runs — it's explicitly invoked).
+    pub enabled: bool,
+    /// The story-structure framework whose expected-tension curve the read-through
+    /// compares the measured shape against (`three_act` | `save_the_cat` |
+    /// `story_circle` | `hero_journey` | `seven_point` | `kishotenketsu`). `null`
+    /// suggests one from the project `genre`, falling back to Three-Act.
+    pub framework: Option<String>,
+}
+
+impl Default for LectorConfig {
+    fn default() -> Self {
+        Self { enabled: true, framework: None }
+    }
+}
+
 /// DIALOG-1 — `dialogue:` block. Tunes the dialogue detection windows,
 /// finding thresholds, and the genre-specific verb extras. All optional;
 /// omitting the block uses these defaults (RFC §13).
@@ -6058,6 +6087,14 @@ mod research_config_tests {
         assert!(cfg2.continuity.enabled); // untouched default
         // An unknown detector key is forward-compatibly enabled.
         assert!(cfg.continuity.detector_enabled("future_detector"));
+    }
+
+    #[test]
+    fn lector_block_defaults_and_overrides() {
+        let cfg: Config = serde_hjson::from_str("{}").unwrap();
+        assert!(cfg.lector.enabled, "read-through on by default");
+        let cfg2: Config = serde_hjson::from_str("{ lector: { enabled: false } }").unwrap();
+        assert!(!cfg2.lector.enabled);
     }
 
     #[test]

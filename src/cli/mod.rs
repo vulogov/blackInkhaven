@@ -25,6 +25,7 @@ pub mod doctor_scan;
 pub mod check;
 pub mod cost;
 pub mod goals;
+pub mod readthrough;
 pub mod event;
 pub mod event_critique;
 pub mod comments;
@@ -1381,11 +1382,33 @@ pub enum Command {
         /// referenced-before-introduced).
         #[arg(long = "no-continuity")]
         no_continuity: bool,
+        /// Skip the LECTOR read-through (forward reader walk + scene/sequel).
+        #[arg(long = "no-lector")]
+        no_lector: bool,
     },
     /// Road to 1.4.0 — the unified AI cost dashboard: today's LLM call tallies for
     /// each capped subsystem (world slow track, Inner Socrates slow track) vs their
     /// daily caps.
     Cost,
+    /// LECTOR-1 (2.3) — the read-through report: the book read forward, once, as a
+    /// first reader. The measured intensity curve + per-chapter scene/sequel beat +
+    /// the ranked reader findings (confusion, info-dump, attention-dip, put-down
+    /// risk, unpaid setup, scene/sequel arrhythmia). `--deep` adds the cost-capped
+    /// LLM synthetic first-read. Advisory; deterministic + free unless `--deep`.
+    Readthrough {
+        /// Also run the LLM synthetic first-read (a forward, cost-capped pass).
+        #[arg(long)]
+        deep: bool,
+        /// Per-call soft cap (estimated tokens) for `--deep`.
+        #[arg(long, default_value_t = 8000)]
+        max_cost: usize,
+        /// Run the synthetic read even if a chapter's cost estimate exceeds the cap.
+        #[arg(long)]
+        force: bool,
+        /// Emit the report as JSON.
+        #[arg(long)]
+        json: bool,
+    },
     /// Road to 1.4.0 — the writing-goals report: project + per-book word totals,
     /// today vs the daily goal, current streak (with grace), per-book pace +
     /// deadline, weekly status promotions, and active time. The terminal
@@ -6732,19 +6755,29 @@ impl Cli {
             Command::InnerSocrates(cmd) => inner_socrates::run(&project, cmd).map_err(Into::into),
             Command::InnerEditor(cmd) => inner_editor::run(&project, cmd).map_err(Into::into),
             Command::Companions => companions::run(&project).map_err(Into::into),
-            Command::Check { paragraph, book_name, no_fact, no_socrates, no_timeline, no_continuity } => {
-                check::run(
-                    &project,
-                    paragraph.as_deref(),
-                    book_name.as_deref(),
-                    no_fact,
-                    no_socrates,
-                    no_timeline,
-                    no_continuity,
-                )
-                .map_err(Into::into)
-            }
+            Command::Check {
+                paragraph,
+                book_name,
+                no_fact,
+                no_socrates,
+                no_timeline,
+                no_continuity,
+                no_lector,
+            } => check::run(
+                &project,
+                paragraph.as_deref(),
+                book_name.as_deref(),
+                no_fact,
+                no_socrates,
+                no_timeline,
+                no_continuity,
+                no_lector,
+            )
+            .map_err(Into::into),
             Command::Cost => cost::run(&project).map_err(Into::into),
+            Command::Readthrough { deep, max_cost, force, json } => {
+                readthrough::run(&project, deep, max_cost, force, json).map_err(Into::into)
+            }
             Command::Goals => goals::run(&project).map_err(Into::into),
             Command::FactCheck { text, paragraph, slow, max_cost, force, timeline_aware, timeline_only } => {
                 realworld::fact_check(&project, text, paragraph, slow, max_cost, force, &timeline_aware, timeline_only)

@@ -3048,6 +3048,73 @@ fn run_continuity_check(
     Ok(findings.len())
 }
 
+/// LECTOR-1 (LR-P6) — the deterministic read-through joins the review pass. Runs
+/// the forward reader walk + scene/sequel arrhythmia (the LLM synthetic first-read
+/// stays explicit — the ledger's `k` / `readthrough --deep`), clears the prior
+/// `kinds::LECTOR` messages, and re-emits the current set (Concern → Warning, else
+/// Info), each anchored to the finding's paragraph or its chapter's first one.
+/// Gated on `lector.enabled`.
+fn run_lector_check(
+    store: &Store,
+    cfg: &Config,
+    layout: &ProjectLayout,
+) -> std::result::Result<usize, String> {
+    use crate::lector::walk;
+    use crate::pane::output::{Lifetime, Message, Severity, kinds};
+
+    let clear = || {
+        if let Some(s) = crate::pane::output::active() {
+            if let Ok(msgs) = s.by_kind(kinds::LECTOR) {
+                for m in &msgs {
+                    let _ = s.dismiss(m.id);
+                }
+            }
+        }
+    };
+
+    if !cfg.lector.enabled {
+        clear();
+        return Ok(0);
+    }
+
+    let h = crate::store::hierarchy::Hierarchy::load(store).map_err(|e| e.to_string())?;
+    let rt = walk::read_forward(store, cfg, layout, &h);
+    let findings = crate::lector::deterministic_findings(&rt, layout, &h, cfg);
+
+    // Chapter → its first prose paragraph, to anchor findings that carry none.
+    let chapters = h.user_book_chapters();
+    let first_para = |chapter: u32| -> Option<Uuid> {
+        let (cid, _) = chapters.get(chapter.saturating_sub(1) as usize)?;
+        h.collect_subtree(*cid)
+            .into_iter()
+            .find(|id| h.get(*id).map(|n| n.kind == NodeKind::Paragraph).unwrap_or(false))
+    };
+
+    clear();
+    for f in &findings {
+        let sev = match f.severity {
+            crate::lector::Severity::Concern => Severity::Warning,
+            _ => Severity::Info,
+        };
+        let mut msg = Message::new(
+            kinds::LECTOR,
+            sev,
+            Lifetime::UntilActedOn,
+            serde_json::json!({
+                "text": format!("[read-through · {}] {}", f.kind, f.message),
+                "category": "lector",
+                "kind": f.kind,
+                "source": f.source,
+            }),
+        );
+        if let Some(anchor) = f.anchor.or_else(|| first_para(f.chapter)) {
+            msg = msg.with_source_paragraph(anchor);
+        }
+        crate::pane::output::emit(&msg);
+    }
+    Ok(findings.len())
+}
+
 /// RIGOR — the deterministic reasoning-rigor findings over the book of the open
 /// paragraph. Zero-AI; clears the prior `kinds::RIGOR` messages and re-emits the
 /// current set, each anchored + advisory. Gated on `rigor.enabled && fast_track`.
@@ -4358,6 +4425,16 @@ impl App {
                     self.status = format!("continuity coherence: {n} finding(s) → Output (^B Tab)");
                 }
                 Err(e) => self.status = format!("continuity coherence skipped: {e}"),
+            },
+            BgJobKind::LectorRead => match result {
+                Ok(n) if n == "0" => {
+                    self.status = "read-through: the read holds — no first-read problems".into();
+                }
+                Ok(n) => {
+                    self.right_pane = RightPane::Output;
+                    self.status = format!("read-through: {n} first-read finding(s) → Output (^B Tab)");
+                }
+                Err(e) => self.status = format!("read-through skipped: {e}"),
             },
             BgJobKind::WorldOverview => match result {
                 Ok(joined) => {
@@ -7413,6 +7490,10 @@ pub(super) enum BgJobKind {
     /// The worker runs the cross-paragraph coherence check over the open book and
     /// emits its findings to Output; the `Ok` payload is the finding count.
     ContinuitySlow,
+    /// LECTOR-1 (LR-P5b) — the synthetic first-read (LLM), the read-through's `k`.
+    /// The worker reads the book forward as a first reader and emits its findings
+    /// to Output; the `Ok` payload is the finding count.
+    LectorRead,
     /// BUG-8 — the `Ctrl+B W` world overview compiled off-thread (deterministic,
     /// zero-AI). The `Ok` payload is the overview rows joined by `\n`.
     WorldOverview,
@@ -12419,6 +12500,7 @@ impl App {
             A::OpenCommandPalette => self.open_command_palette(),
             A::RunCheck => self.run_unified_check(),
             A::OpenContinuityLedger => self.open_continuity_ledger(),
+            A::OpenReadThrough => self.open_read_through(),
             A::OpenCostDashboard => self.open_cost_dashboard(),
             A::OpenCredits => self.open_credits(),
             A::OpenBookInfo => self.open_book_info(),
@@ -15614,6 +15696,10 @@ impl App {
         // critique already has its own line above, so it's excluded here.
         let ct = run_continuity_check(&self.store, &self.cfg, &self.layout).unwrap_or(0);
 
+        // LECTOR — the deterministic read-through (forward reader walk + scene/
+        // sequel arrhythmia); the synthetic first-read stays explicit.
+        let lc = run_lector_check(&self.store, &self.cfg, &self.layout).unwrap_or(0);
+
         // Reflect the instant findings in the tree report-card immediately.
         self.refresh_tree_badges();
 
@@ -15624,7 +15710,7 @@ impl App {
         // seconds later (and re-badge the tree on completion).
         let editor_spawned = self.maybe_spawn_check_editor();
 
-        let total = fact + soc + tl + dlg + uto + chr + theo + myth + rigor + orc + sty + ct;
+        let total = fact + soc + tl + dlg + uto + chr + theo + myth + rigor + orc + sty + ct + lc;
         if total == 0 && !editor_spawned {
             self.status = if checked == 0 {
                 "review pass: clean (no open paragraph; timeline + dialogue + utopia + character + theologian + myth included)".into()
@@ -15643,7 +15729,7 @@ impl App {
             format!("review pass: instant checks clean{editor_note}")
         } else {
             format!(
-                "review pass: {total} finding(s) — fact {fact} · socrates {soc} · timeline {tl} · dialogue {dlg} · utopia {uto} · character {chr} · theologian {theo} · myth {myth} · oracle {orc} · stylist {sty} · continuity {ct}{editor_note} → Output (^B Tab)"
+                "review pass: {total} finding(s) — fact {fact} · socrates {soc} · timeline {tl} · dialogue {dlg} · utopia {uto} · character {chr} · theologian {theo} · myth {myth} · oracle {orc} · stylist {sty} · continuity {ct} · read-through {lc}{editor_note} → Output (^B Tab)"
             )
         };
     }
@@ -16135,6 +16221,175 @@ impl App {
                                 "category": "continuity",
                                 "kind": "coherence",
                                 "source": "coherence",
+                            }),
+                        ));
+                    }
+                    Ok(n.to_string())
+                }
+                Err(e) => Err(e),
+            };
+            let _ = tx.send(BgMsg::Done(result));
+        });
+    }
+
+    /// LECTOR-1 (LR-P5b) — `Ctrl+B Shift+A`: the read-through dashboard. Builds the
+    /// deterministic read (curve + scene/sequel beat + reader findings) and opens a
+    /// scrollable modal (Enter jumps to a chapter/finding, `k` runs the LLM read).
+    fn open_read_through(&mut self) {
+        let (rows, anchors) = self.build_read_through_rows();
+        let breaks = anchors.iter().filter(|a| a.is_some()).count();
+        self.status = if breaks == 0 {
+            "read-through: clean · k deep read · Esc".into()
+        } else {
+            "read-through · ↑↓ scroll · Enter jump · k deep read · Esc".into()
+        };
+        self.modal = Modal::ReadThrough { rows, anchors, cursor: 0 };
+    }
+
+    /// The chapter's first prose paragraph, for jump-to-chapter.
+    fn first_paragraph_of(&self, chapter_id: Uuid) -> Option<Uuid> {
+        self.hierarchy
+            .collect_subtree(chapter_id)
+            .into_iter()
+            .find(|id| self.hierarchy.get(*id).map(|n| n.kind == NodeKind::Paragraph).unwrap_or(false))
+    }
+
+    fn build_read_through_rows(&self) -> (Vec<String>, Vec<Option<Uuid>>) {
+        use crate::lector::scene_sequel::SceneKind;
+        use crate::lector::{scene_sequel, walk, Severity};
+        let mut rows: Vec<String> = Vec::new();
+        let mut anchors: Vec<Option<Uuid>> = Vec::new();
+        let mut push = |text: String, anchor: Option<Uuid>| {
+            rows.push(text);
+            anchors.push(anchor);
+        };
+
+        let h = &self.hierarchy;
+        let rt = walk::read_forward(&self.store, &self.cfg, &self.layout, h);
+        let kinds = scene_sequel::chapter_kinds(&self.layout, h, &self.cfg);
+        let chapters = h.user_book_chapters();
+        let first_para: Vec<Option<Uuid>> =
+            chapters.iter().map(|(id, _)| self.first_paragraph_of(*id)).collect();
+
+        let findings = crate::lector::deterministic_findings(&rt, &self.layout, h, &self.cfg);
+
+        let n = rt.chapters.len();
+        let fw = crate::lector::shape::resolve_framework(&self.cfg);
+        push(format!("◆ Read-through — {n} chapter(s) · {}", fw.label()), None);
+        if n > 0 {
+            push(format!("  measured   {}", crate::planning::intensity_sparkline(&rt.curve, n.max(1))), None);
+            let expected = crate::lector::shape::expected_curve(fw, n);
+            let exp_points: Vec<(f32, f32)> =
+                rt.curve.iter().zip(&expected).map(|((p, _), &e)| (*p, e)).collect();
+            push(format!("  expected   {}", crate::planning::intensity_sparkline(&exp_points, n.max(1))), None);
+        }
+        push(String::new(), None);
+        for (i, c) in rt.chapters.iter().enumerate() {
+            let glyph = match kinds.get(i).map(|(_, _, k)| *k) {
+                Some(SceneKind::Scene) => "▶",
+                Some(SceneKind::Sequel) => "◉",
+                _ => "·",
+            };
+            let cell = crate::cli::readthrough::intensity_cell(c.measured_intensity);
+            push(
+                format!("  ch {:>2}  {cell} {glyph}  {}", c.chapter, c.title),
+                first_para.get(i).copied().flatten(),
+            );
+        }
+        push(String::new(), None);
+        if findings.is_empty() {
+            push("✓ the read holds — no reader problems flagged".into(), None);
+            return (rows, anchors);
+        }
+        push(format!("findings ({})", findings.len()), None);
+        for f in &findings {
+            let icon = match f.severity {
+                Severity::Concern => "⊗",
+                Severity::Notice => "⚠",
+                Severity::Info => "●",
+            };
+            let src = if f.source == "reader" { " · first-read" } else { "" };
+            let anchor = f
+                .anchor
+                .or_else(|| first_para.get(f.chapter.saturating_sub(1) as usize).copied().flatten());
+            push(format!("  {icon} [{}{src}] {}", f.kind, f.message), anchor);
+        }
+        (rows, anchors)
+    }
+
+    fn read_through_handle_key(&mut self, key: KeyEvent) -> bool {
+        let n = match &self.modal {
+            Modal::ReadThrough { rows, .. } => rows.len(),
+            _ => return false,
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "read-through: closed".into();
+            }
+            KeyCode::Up => {
+                if let Modal::ReadThrough { cursor, .. } = &mut self.modal {
+                    *cursor = cursor.saturating_sub(1);
+                }
+            }
+            KeyCode::Down => {
+                if let Modal::ReadThrough { cursor, .. } = &mut self.modal {
+                    if n > 0 {
+                        *cursor = (*cursor + 1).min(n - 1);
+                    }
+                }
+            }
+            KeyCode::Enter => {
+                let anchor = match &self.modal {
+                    Modal::ReadThrough { anchors, cursor, .. } => anchors.get(*cursor).copied().flatten(),
+                    _ => None,
+                };
+                if let Some(id) = anchor {
+                    self.modal = Modal::None;
+                    if let Err(e) = self.open_paragraph_by_uuid(id) {
+                        self.status = format!("read-through: {e}");
+                    }
+                } else {
+                    self.status = "read-through: nothing to jump to on this row".into();
+                }
+            }
+            KeyCode::Char('k') | KeyCode::Char('K') => {
+                self.read_through_run_synthetic();
+            }
+            _ => {}
+        }
+        true
+    }
+
+    /// LR-P5b — the dashboard's `k`: run the LLM synthetic first-read over the whole
+    /// manuscript as a background job; findings land in Output as `source:"reader"`.
+    fn read_through_run_synthetic(&mut self) {
+        if self.bg_job.is_some() {
+            self.status = "read-through: a background job is already running".into();
+            return;
+        }
+        let root = self.store.project_root().to_path_buf();
+        self.modal = Modal::None;
+        self.status = "⟳ read-through: reading forward as a first reader…".into();
+        self.start_bg_job(BgJobKind::LectorRead, "read-through", move |tx, _cancel| {
+            use crate::pane::output::{kinds, Lifetime, Message, Severity};
+            let result = match crate::lector::synthetic::run(&root, 8000, false) {
+                Ok(findings) => {
+                    let n = findings.len();
+                    for f in &findings {
+                        let sev = match f.severity {
+                            crate::lector::Severity::Concern => Severity::Warning,
+                            _ => Severity::Info,
+                        };
+                        crate::pane::output::emit(&Message::new(
+                            kinds::LECTOR,
+                            sev,
+                            Lifetime::UntilActedOn,
+                            serde_json::json!({
+                                "text": format!("[read-through · {}] {}", f.kind, f.message),
+                                "category": "lector",
+                                "kind": f.kind,
+                                "source": "reader",
                             }),
                         ));
                     }
@@ -26193,6 +26448,10 @@ impl App {
         }
         if matches!(self.modal, Modal::ContinuityLedger { .. }) {
             self.continuity_ledger_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::ReadThrough { .. }) {
+            self.read_through_handle_key(key);
             return Ok(false);
         }
         if matches!(self.modal, Modal::PoemFormPicker { .. }) {
