@@ -120,6 +120,63 @@ impl EditorialFinding {
     pub fn rewritable(&self) -> bool {
         self.location.paragraph.is_some() && fix_spec(&self.category).is_some()
     }
+
+    /// REDLINE-1 (RD-P0) — the *kind of help* this finding can be acted on with: a
+    /// confirmed-diff [`ResponseKind::Rewrite`], a guided [`ResponseKind::Decision`],
+    /// or a [`ResponseKind::Brief`]. Derived from the category (RD-P1's converters
+    /// pick the category that carries the right default).
+    #[allow(dead_code)] // consumed by RD-P1 (the queue) / RD-P6 (the surface).
+    pub fn response(&self) -> ResponseKind {
+        response_kind(&self.category)
+    }
+}
+
+/// REDLINE-1 (RD-P0) — how a finding can be turned into an author-confirmed change.
+/// Only [`Rewrite`](ResponseKind::Rewrite) ever touches prose, and only through the
+/// existing confirmed-diff + snapshot contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)] // consumed by RD-P1 / RD-P3 (decision) / RD-P4 (brief) / RD-P6.
+pub enum ResponseKind {
+    /// A diff-reviewed local prose fix (there's an honest single-locus rewrite).
+    Rewrite,
+    /// A guided authorial choice — you decide which way is right, then REDLINE
+    /// reconciles the other as a confirmed rewrite.
+    Decision,
+    /// A concrete revision suggestion with no rewrite — structure is yours to move.
+    Brief,
+}
+
+impl ResponseKind {
+    #[allow(dead_code)]
+    pub fn label(self) -> &'static str {
+        match self {
+            ResponseKind::Rewrite => "rewrite",
+            ResponseKind::Decision => "decision",
+            ResponseKind::Brief => "brief",
+        }
+    }
+}
+
+/// Classify a finding category into its [`ResponseKind`]. A *Rewrite* is a category
+/// with an honest single-paragraph prose fix; a *Decision* needs the author to
+/// choose which way is right (a continuity break, a described-two-ways drift, a
+/// prose-vs-fact conflict) before a targeted rewrite; everything structural or
+/// book-level is a *Brief*. Unknown categories default to Brief — the safest, since
+/// a Brief never edits prose. Pure.
+#[allow(dead_code)] // consumed by RD-P1's converters + the surface.
+pub fn response_kind(category: &str) -> ResponseKind {
+    match category {
+        // Honest single-locus prose fixes.
+        "echo" | "pacing" | "show-tell" | "filter" | "editor" | "voice"
+        | "anachronism" => ResponseKind::Rewrite,
+        // The author must choose which way is right; then we reconcile.
+        "co_location" | "char_facts" | "drift" | "introduce" | "confusion"
+        | "unpaid_setup" | "numeric" | "continuity" | "fact" | "world" => {
+            ResponseKind::Decision
+        }
+        // Structural / book-level — a suggestion, never a rewrite.
+        _ => ResponseKind::Brief,
+    }
 }
 
 /// Whether an AI fix rewrites the whole paragraph or only the flagged phrase.
@@ -544,6 +601,38 @@ mod tests {
         assert!(!mk("echo", false).rewritable(), "no paragraph → not rewritable");
         assert!(!mk("structure", true).rewritable(), "judgment category → not rewritable");
         assert!(fix_spec("echo").is_some() && fix_spec("structure").is_none());
+    }
+
+    #[test]
+    fn response_kind_classifies_by_category() {
+        use ResponseKind::*;
+        // Honest single-locus prose fixes.
+        for c in ["echo", "pacing", "show-tell", "filter", "editor", "voice", "anachronism"] {
+            assert_eq!(response_kind(c), Rewrite, "{c} is a Rewrite");
+        }
+        // The author must choose which way is right, then reconcile.
+        for c in ["co_location", "char_facts", "drift", "introduce", "confusion", "unpaid_setup"] {
+            assert_eq!(response_kind(c), Decision, "{c} is a Decision");
+        }
+        // Structural / book-level, and anything unknown → Brief (never edits prose).
+        for c in ["structure", "shape_sag", "put_down_risk", "distinctiveness", "tension", "mystery-kind"] {
+            assert_eq!(response_kind(c), Brief, "{c} is a Brief");
+        }
+    }
+
+    #[test]
+    fn finding_reports_its_response_kind() {
+        let f = EditorialFinding {
+            category: "co_location".into(),
+            severity: Severity::Info,
+            location: Location::default(),
+            message: "m".into(),
+            hint: None,
+            source: "doctor",
+            autofixable: false,
+        };
+        assert_eq!(f.response(), ResponseKind::Decision);
+        assert_eq!(ResponseKind::Decision.label(), "decision");
     }
 
     #[test]
