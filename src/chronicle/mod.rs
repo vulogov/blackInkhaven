@@ -17,7 +17,7 @@
 //! allow-until-consumer idiom — dropped as CH-P1..P3 wire these in.
 #![allow(dead_code)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -26,6 +26,86 @@ use uuid::Uuid;
 use crate::editorial::{EditorialFinding, EditorialReport, Severity};
 
 pub mod store;
+
+/// Which way a metric moved between two milestones. Every count CHRONICLE trends is
+/// "fewer is better" (findings the readers raised), so a fall is [`Better`](Direction::Better).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Direction {
+    Better,
+    Worse,
+    Same,
+}
+
+/// One metric's movement between two milestones.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct TrendDelta {
+    pub key: String,
+    pub old: i64,
+    pub new: i64,
+    pub direction: Direction,
+}
+
+/// The trend between two milestones: the headline counts (always shown) and the
+/// categories that changed (regressions first). `*_intensity` is the raw LECTOR
+/// shape reading — informational, never scored better/worse (`None` today; a
+/// forward-compatible slot).
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct Trend {
+    pub headline: Vec<TrendDelta>,
+    pub categories: Vec<TrendDelta>,
+    pub old_intensity: Option<f32>,
+    pub new_intensity: Option<f32>,
+}
+
+fn direction(old: i64, new: i64) -> Direction {
+    use std::cmp::Ordering::*;
+    match new.cmp(&old) {
+        Less => Direction::Better,
+        Greater => Direction::Worse,
+        Equal => Direction::Same,
+    }
+}
+
+fn delta(key: &str, old: usize, new: usize) -> TrendDelta {
+    TrendDelta { key: key.to_string(), old: old as i64, new: new as i64, direction: direction(old as i64, new as i64) }
+}
+
+fn worse_first(d: Direction) -> u8 {
+    match d {
+        Direction::Worse => 0,
+        Direction::Better => 1,
+        Direction::Same => 2,
+    }
+}
+
+/// Diff two metric vectors (`old` → `new`). Headline counts always appear;
+/// per-category rows appear only where the count changed, sorted regressions-first
+/// then by the size of the swing. Pure.
+pub fn diff_vectors(old: &MetricVector, new: &MetricVector) -> Trend {
+    let headline = vec![
+        delta("findings", old.total, new.total),
+        delta("errors", old.errors, new.errors),
+        delta("warnings", old.warnings, new.warnings),
+        delta("infos", old.infos, new.infos),
+    ];
+    let keys: BTreeSet<&String> = old.by_category.keys().chain(new.by_category.keys()).collect();
+    let mut categories: Vec<TrendDelta> = keys
+        .into_iter()
+        .filter_map(|k| {
+            let o = old.by_category.get(k).copied().unwrap_or(0);
+            let n = new.by_category.get(k).copied().unwrap_or(0);
+            (o != n).then(|| delta(k, o, n))
+        })
+        .collect();
+    categories.sort_by(|a, b| {
+        worse_first(a.direction)
+            .cmp(&worse_first(b.direction))
+            .then((b.new - b.old).abs().cmp(&(a.new - a.old).abs()))
+            .then(a.key.cmp(&b.key))
+    });
+    Trend { headline, categories, old_intensity: old.mean_intensity, new_intensity: new.mean_intensity }
+}
 
 /// The editorial severity word CHRONICLE stores (matches `EditorialReport`'s own
 /// `errors`/`warnings`/`infos` naming).
@@ -220,6 +300,46 @@ mod tests {
         assert_eq!(co.severity, "error");
         assert!(co.paragraph.is_some());
         assert_eq!(co.location.as_deref(), Some("ch. 3"));
+    }
+
+    #[test]
+    fn diff_vectors_polarity_and_regressions_first() {
+        let mut old = MetricVector { total: 31, errors: 4, warnings: 12, infos: 15, ..Default::default() };
+        old.by_category.insert("echo".into(), 4);
+        old.by_category.insert("co_location".into(), 2);
+        old.by_category.insert("shape_sag".into(), 3);
+        old.by_category.insert("filter".into(), 1); // unchanged below
+
+        let mut new = MetricVector { total: 27, errors: 2, warnings: 11, infos: 14, ..Default::default() };
+        new.by_category.insert("echo".into(), 2); // ▼
+        new.by_category.insert("co_location".into(), 0); // cleared
+        new.by_category.insert("shape_sag".into(), 1); // ▼
+        new.by_category.insert("filter".into(), 1); // unchanged → omitted
+        new.by_category.insert("confusion".into(), 1); // NEW ▲
+
+        let t = diff_vectors(&old, &new);
+
+        // Headline: fewer findings/errors = Better.
+        let findings = t.headline.iter().find(|d| d.key == "findings").unwrap();
+        assert_eq!((findings.old, findings.new), (31, 27));
+        assert_eq!(findings.direction, Direction::Better);
+        assert_eq!(t.headline.iter().find(|d| d.key == "errors").unwrap().direction, Direction::Better);
+
+        // Categories: only changed ones; the regression (confusion) sorts first.
+        assert_eq!(t.categories.first().unwrap().key, "confusion");
+        assert_eq!(t.categories.first().unwrap().direction, Direction::Worse);
+        assert!(t.categories.iter().all(|d| d.key != "filter"), "unchanged category omitted");
+        let colo = t.categories.iter().find(|d| d.key == "co_location").unwrap();
+        assert_eq!((colo.old, colo.new, colo.direction), (2, 0, Direction::Better));
+    }
+
+    #[test]
+    fn diff_vectors_omits_unchanged_categories() {
+        let mut old = MetricVector::default();
+        old.by_category.insert("echo".into(), 2);
+        let mut new = MetricVector::default();
+        new.by_category.insert("echo".into(), 2);
+        assert!(diff_vectors(&old, &new).categories.is_empty());
     }
 
     #[test]

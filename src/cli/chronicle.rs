@@ -7,9 +7,8 @@
 
 use std::path::Path;
 
-use crate::chronicle::capture;
 use crate::chronicle::store::ChronicleStore;
-use crate::chronicle::Milestone;
+use crate::chronicle::{capture, diff_vectors, Direction, Milestone, Trend, TrendDelta};
 use crate::error::{Error, Result};
 
 /// Capture a draft milestone now and persist it.
@@ -85,6 +84,91 @@ pub fn list(project: &Path, book_name: Option<&str>, json: bool) -> Result<()> {
     Ok(())
 }
 
+/// The trend since the last milestone: capture the live state and diff it against
+/// the most recent mark (the "did it get better since I last looked" view).
+pub fn trend(project: &Path, book_name: Option<&str>, json: bool) -> Result<()> {
+    let store = ChronicleStore::open_for_project(project).map_err(store_err)?;
+    let book_slug = resolve_book_slug(project, book_name)?;
+    let Some(base) = store.latest(book_slug.as_deref()).map_err(store_err)? else {
+        println!("no milestone yet — `inkhaven chronicle mark <label>` captures a baseline first.");
+        return Ok(());
+    };
+    let (current, _refs) = capture(project, book_name)?;
+    let t = diff_vectors(&base.metrics, &current);
+    if json {
+        let v = serde_json::json!({
+            "since": base.label,
+            "since_date": fmt_date(base.ts),
+            "trend": t,
+        });
+        println!("{}", serde_json::to_string_pretty(&v).unwrap_or_else(|_| "{}".into()));
+        return Ok(());
+    }
+    render_trend(&format!("since “{}” ({}) → now", base.label, fmt_date(base.ts)), &t);
+    Ok(())
+}
+
+/// Diff two named milestones head-to-head (`a` → `b`).
+pub fn diff(
+    project: &Path,
+    a: &str,
+    b: &str,
+    book_name: Option<&str>,
+    json: bool,
+) -> Result<()> {
+    let store = ChronicleStore::open_for_project(project).map_err(store_err)?;
+    let book_slug = resolve_book_slug(project, book_name)?;
+    let by = |label: &str| -> Result<Milestone> {
+        store
+            .by_label(label, book_slug.as_deref())
+            .map_err(store_err)?
+            .ok_or_else(|| Error::Store(format!("chronicle diff: no milestone labelled “{label}”")))
+    };
+    let (ma, mb) = (by(a)?, by(b)?);
+    let t = diff_vectors(&ma.metrics, &mb.metrics);
+    if json {
+        let v = serde_json::json!({ "from": ma.label, "to": mb.label, "trend": t });
+        println!("{}", serde_json::to_string_pretty(&v).unwrap_or_else(|_| "{}".into()));
+        return Ok(());
+    }
+    render_trend(&format!("“{}” → “{}”", ma.label, mb.label), &t);
+    Ok(())
+}
+
+fn render_trend(header: &str, t: &Trend) {
+    println!("Chronicle — {header}\n");
+    for d in &t.headline {
+        println!("  {}", fmt_delta(d));
+    }
+    if let (Some(o), Some(n)) = (t.old_intensity, t.new_intensity) {
+        println!("  {:<16} {o:>4.2} → {n:<4.2}   (reading)", "intensity");
+    }
+    if t.categories.is_empty() {
+        println!("\n  no category moved.");
+    } else {
+        println!("\n  by category:");
+        for d in &t.categories {
+            println!("    {}", fmt_delta(d));
+        }
+    }
+}
+
+fn fmt_delta(d: &TrendDelta) -> String {
+    let arrow = match d.direction {
+        Direction::Better => "▼",
+        Direction::Worse => "▲",
+        Direction::Same => "·",
+    };
+    let note = if d.old == 0 && d.new > 0 {
+        "  NEW"
+    } else if d.new == 0 && d.old > 0 {
+        "  cleared"
+    } else {
+        ""
+    };
+    format!("{:<16} {:>3} → {:>3}   {arrow}{note}", d.key, d.old, d.new)
+}
+
 /// `unix-seconds → "YYYY-MM-DD"` for the milestone rows.
 fn fmt_date(ts: i64) -> String {
     chrono::DateTime::from_timestamp(ts, 0)
@@ -109,4 +193,28 @@ fn resolve_book_slug(project: &Path, book_name: Option<&str>) -> Result<Option<S
     let h = crate::store::hierarchy::Hierarchy::load(&store)?;
     let book = crate::cli::resolve_user_book(&h, Some(name), "chronicle").map_err(Error::Store)?;
     Ok(Some(book.slug.clone()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn d(key: &str, old: i64, new: i64, direction: Direction) -> TrendDelta {
+        TrendDelta { key: key.into(), old, new, direction }
+    }
+
+    #[test]
+    fn fmt_delta_marks_arrows_new_and_cleared() {
+        // improvement ▼
+        assert!(fmt_delta(&d("echo", 4, 2, Direction::Better)).contains("▼"));
+        // regression ▲, freshly introduced → NEW
+        let worse = fmt_delta(&d("confusion", 0, 1, Direction::Worse));
+        assert!(worse.contains("▲") && worse.contains("NEW"));
+        // fell to zero → cleared
+        let gone = fmt_delta(&d("co_location", 2, 0, Direction::Better));
+        assert!(gone.contains("▼") && gone.contains("cleared"));
+        // unchanged → neutral, no NEW/cleared tag
+        let same = fmt_delta(&d("filter", 1, 1, Direction::Same));
+        assert!(same.contains("·") && !same.contains("NEW") && !same.contains("cleared"));
+    }
 }
