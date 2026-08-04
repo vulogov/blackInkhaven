@@ -173,9 +173,12 @@ impl ResponseKind {
 /// a Brief never edits prose. Pure.
 pub fn response_kind(category: &str) -> ResponseKind {
     match category {
-        // Honest single-locus prose fixes.
+        // Honest single-locus prose fixes. `decision-resolve` is the synthetic
+        // reconcile category the Decision flow rewrites through — it never appears
+        // as a surfaced finding, but classifying it Rewrite keeps the RD-P7
+        // invariant clean: every category with a [`fix_spec`] is a Rewrite.
         "echo" | "pacing" | "show-tell" | "filter" | "editor" | "voice"
-        | "anachronism" => ResponseKind::Rewrite,
+        | "anachronism" | "decision-resolve" => ResponseKind::Rewrite,
         // The author must choose which way is right; then we reconcile.
         "co_location" | "char_facts" | "drift" | "introduce" | "confusion"
         | "unpaid_setup" | "numeric" | "continuity" | "fact" | "world" => {
@@ -295,6 +298,14 @@ pub type BatchFix = (Uuid, String, Option<(usize, usize)>);
 /// The ordered list of AI-rewritable fixes the cockpit's `F` (batch fix-all)
 /// walks: every finding matching `filter` (`None` = all) that is
 /// [`EditorialFinding::rewritable`], in the findings' display order. Pure.
+///
+/// REDLINE-1 (RD-P7) reversibility invariant: because `rewritable()` requires a
+/// [`fix_spec`] and every fixable category is [`ResponseKind::Rewrite`], this
+/// queue is Rewrite-only — a Decision or Brief finding can never enter the batch.
+/// Finding-aware `editor` rewrites are excluded too (each carries its own note,
+/// applied one at a time). Every fix the batch (or single `f`) applies streams
+/// through `start_editorial_rewrite` → the AI diff review, which snapshots the
+/// pre-rewrite prose (F6-restorable) before replacing — the sole prose-write path.
 pub fn batch_fix_queue(findings: &[EditorialFinding], filter: Option<&str>) -> Vec<BatchFix> {
     findings
         .iter()
@@ -892,6 +903,45 @@ mod tests {
         // echo + filter walk the batch; the finding-aware editor rewrite does not.
         let cats: Vec<&str> = q.iter().map(|(_, c, _)| c.as_str()).collect();
         assert_eq!(cats, vec!["echo", "filter"]);
+    }
+
+    #[test]
+    fn batch_is_rewrite_only_the_reversibility_invariant() {
+        // RD-P7 — the AI rewrite path (batch `F` and single `f`) is the ONLY thing
+        // that mutates prose, and it snapshots before replacing. Guard that only
+        // Rewrite findings can reach it: every category with a fix recipe is a
+        // Rewrite, so a Decision/Brief can never acquire one and slip through.
+        for cat in ["echo", "pacing", "show-tell", "filter", "anachronism", "editor", "decision-resolve"] {
+            assert!(fix_spec(cat).is_some(), "{cat} should have a fix recipe");
+            assert_eq!(response_kind(cat), ResponseKind::Rewrite, "{cat} must be a Rewrite");
+        }
+        // The converse over a mixed report: only Rewrite findings (minus the
+        // finding-aware `editor`) walk the batch, in display order.
+        let mk = |cat: &str| EditorialFinding {
+            category: cat.into(),
+            severity: Severity::Warn,
+            location: Location { paragraph: Some(uuid::Uuid::now_v7()), ..Default::default() },
+            message: "m".into(),
+            hint: None,
+            source: "x",
+            autofixable: false,
+        };
+        let report = vec![
+            mk("echo"),        // Rewrite → batched
+            mk("co_location"), // Decision → never
+            mk("shape_sag"),   // Brief → never
+            mk("editor"),      // Rewrite but finding-aware → excluded
+            mk("anachronism"), // Rewrite → batched
+        ];
+        let q = batch_fix_queue(&report, None);
+        assert_eq!(
+            q.iter().map(|(_, c, _)| c.as_str()).collect::<Vec<_>>(),
+            vec!["echo", "anachronism"]
+        );
+        assert!(
+            q.iter().all(|(_, c, _)| response_kind(c) == ResponseKind::Rewrite),
+            "everything the batch yields is Rewrite-classified"
+        );
     }
 
     #[test]
