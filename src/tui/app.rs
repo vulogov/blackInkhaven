@@ -3048,6 +3048,76 @@ fn run_continuity_check(
     Ok(findings.len())
 }
 
+/// LECTOR-1 (LR-P6) — the deterministic read-through joins the review pass. Runs
+/// the forward reader walk + scene/sequel arrhythmia (the LLM synthetic first-read
+/// stays explicit — the ledger's `k` / `readthrough --deep`), clears the prior
+/// `kinds::LECTOR` messages, and re-emits the current set (Concern → Warning, else
+/// Info), each anchored to the finding's paragraph or its chapter's first one.
+/// Gated on `lector.enabled`.
+fn run_lector_check(
+    store: &Store,
+    cfg: &Config,
+    layout: &ProjectLayout,
+) -> std::result::Result<usize, String> {
+    use crate::lector::{scene_sequel, walk};
+    use crate::pane::output::{Lifetime, Message, Severity, kinds};
+
+    let clear = || {
+        if let Some(s) = crate::pane::output::active() {
+            if let Ok(msgs) = s.by_kind(kinds::LECTOR) {
+                for m in &msgs {
+                    let _ = s.dismiss(m.id);
+                }
+            }
+        }
+    };
+
+    if !cfg.lector.enabled {
+        clear();
+        return Ok(0);
+    }
+
+    let h = crate::store::hierarchy::Hierarchy::load(store).map_err(|e| e.to_string())?;
+    let rt = walk::read_forward(store, cfg, layout, &h);
+    let mut findings = rt.ranked_findings();
+    findings.extend(scene_sequel::scan(layout, &h, cfg));
+    crate::lector::rank(&mut findings);
+    let findings = crate::lector::dedupe(findings);
+
+    // Chapter → its first prose paragraph, to anchor findings that carry none.
+    let chapters = h.user_book_chapters();
+    let first_para = |chapter: u32| -> Option<Uuid> {
+        let (cid, _) = chapters.get(chapter.saturating_sub(1) as usize)?;
+        h.collect_subtree(*cid)
+            .into_iter()
+            .find(|id| h.get(*id).map(|n| n.kind == NodeKind::Paragraph).unwrap_or(false))
+    };
+
+    clear();
+    for f in &findings {
+        let sev = match f.severity {
+            crate::lector::Severity::Concern => Severity::Warning,
+            _ => Severity::Info,
+        };
+        let mut msg = Message::new(
+            kinds::LECTOR,
+            sev,
+            Lifetime::UntilActedOn,
+            serde_json::json!({
+                "text": format!("[read-through · {}] {}", f.kind, f.message),
+                "category": "lector",
+                "kind": f.kind,
+                "source": f.source,
+            }),
+        );
+        if let Some(anchor) = f.anchor.or_else(|| first_para(f.chapter)) {
+            msg = msg.with_source_paragraph(anchor);
+        }
+        crate::pane::output::emit(&msg);
+    }
+    Ok(findings.len())
+}
+
 /// RIGOR — the deterministic reasoning-rigor findings over the book of the open
 /// paragraph. Zero-AI; clears the prior `kinds::RIGOR` messages and re-emits the
 /// current set, each anchored + advisory. Gated on `rigor.enabled && fast_track`.
@@ -15629,6 +15699,10 @@ impl App {
         // critique already has its own line above, so it's excluded here.
         let ct = run_continuity_check(&self.store, &self.cfg, &self.layout).unwrap_or(0);
 
+        // LECTOR — the deterministic read-through (forward reader walk + scene/
+        // sequel arrhythmia); the synthetic first-read stays explicit.
+        let lc = run_lector_check(&self.store, &self.cfg, &self.layout).unwrap_or(0);
+
         // Reflect the instant findings in the tree report-card immediately.
         self.refresh_tree_badges();
 
@@ -15639,7 +15713,7 @@ impl App {
         // seconds later (and re-badge the tree on completion).
         let editor_spawned = self.maybe_spawn_check_editor();
 
-        let total = fact + soc + tl + dlg + uto + chr + theo + myth + rigor + orc + sty + ct;
+        let total = fact + soc + tl + dlg + uto + chr + theo + myth + rigor + orc + sty + ct + lc;
         if total == 0 && !editor_spawned {
             self.status = if checked == 0 {
                 "review pass: clean (no open paragraph; timeline + dialogue + utopia + character + theologian + myth included)".into()
@@ -15658,7 +15732,7 @@ impl App {
             format!("review pass: instant checks clean{editor_note}")
         } else {
             format!(
-                "review pass: {total} finding(s) — fact {fact} · socrates {soc} · timeline {tl} · dialogue {dlg} · utopia {uto} · character {chr} · theologian {theo} · myth {myth} · oracle {orc} · stylist {sty} · continuity {ct}{editor_note} → Output (^B Tab)"
+                "review pass: {total} finding(s) — fact {fact} · socrates {soc} · timeline {tl} · dialogue {dlg} · utopia {uto} · character {chr} · theologian {theo} · myth {myth} · oracle {orc} · stylist {sty} · continuity {ct} · read-through {lc}{editor_note} → Output (^B Tab)"
             )
         };
     }
