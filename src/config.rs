@@ -4467,11 +4467,16 @@ pub struct LectorConfig {
     /// review pass emits no `lector` findings (the standalone `inkhaven readthrough`
     /// command still runs — it's explicitly invoked).
     pub enabled: bool,
+    /// The story-structure framework whose expected-tension curve the read-through
+    /// compares the measured shape against (`three_act` | `save_the_cat` |
+    /// `story_circle` | `hero_journey` | `seven_point` | `kishotenketsu`). `null`
+    /// suggests one from the project `genre`, falling back to Three-Act.
+    pub framework: Option<String>,
 }
 
 impl Default for LectorConfig {
     fn default() -> Self {
-        Self { enabled: true }
+        Self { enabled: true, framework: None }
     }
 }
 

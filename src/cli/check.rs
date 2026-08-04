@@ -150,12 +150,9 @@ fn run_lector(
     hierarchy: &Hierarchy,
     findings: &mut Vec<CheckFinding>,
 ) {
-    use crate::lector::{scene_sequel, walk, Severity};
+    use crate::lector::{walk, Severity};
     let rt = walk::read_forward(store, cfg, layout, hierarchy);
-    let mut lf = rt.ranked_findings();
-    lf.extend(scene_sequel::scan(layout, hierarchy, cfg));
-    crate::lector::rank(&mut lf);
-    for f in crate::lector::dedupe(lf) {
+    for f in crate::lector::deterministic_findings(&rt, layout, hierarchy, cfg) {
         let severity = match f.severity {
             Severity::Concern => "warning",
             Severity::Notice => "warning",

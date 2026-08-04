@@ -55,17 +55,21 @@ pub enum Framework {
     StoryCircle,
     HeroJourney,
     SevenPoint,
+    /// The four-part East-Asian structure (ki-shō-ten-ketsu). Conflict-optional —
+    /// its energy peaks at the *ten* (the recontextualising twist), not a climax.
+    Kishotenketsu,
 }
 
 impl Framework {
     /// Used by the P2 framework picker + the tests.
     #[allow(dead_code)]
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::ThreeAct,
         Self::SaveTheCat,
         Self::StoryCircle,
         Self::HeroJourney,
         Self::SevenPoint,
+        Self::Kishotenketsu,
     ];
 
     pub fn parse(s: &str) -> Option<Self> {
@@ -75,6 +79,9 @@ impl Framework {
             "story_circle" | "storycircle" | "circle" => Some(Self::StoryCircle),
             "hero_journey" | "herojourney" | "heros_journey" | "hero" => Some(Self::HeroJourney),
             "seven_point" | "sevenpoint" | "7point" | "seven" => Some(Self::SevenPoint),
+            "kishotenketsu" | "kishoutenketsu" | "kisho" | "four_act" | "4act" => {
+                Some(Self::Kishotenketsu)
+            }
             _ => None,
         }
     }
@@ -86,6 +93,7 @@ impl Framework {
             Self::StoryCircle => "story_circle",
             Self::HeroJourney => "hero_journey",
             Self::SevenPoint => "seven_point",
+            Self::Kishotenketsu => "kishotenketsu",
         }
     }
 
@@ -96,6 +104,7 @@ impl Framework {
             Self::StoryCircle => "Story Circle",
             Self::HeroJourney => "Hero's Journey",
             Self::SevenPoint => "Seven-Point",
+            Self::Kishotenketsu => "Kish\u{014d}tenketsu",
         }
     }
 
@@ -106,6 +115,28 @@ impl Framework {
             Self::StoryCircle => STORY_CIRCLE,
             Self::HeroJourney => HERO_JOURNEY,
             Self::SevenPoint => SEVEN_POINT,
+            Self::Kishotenketsu => KISHOTENKETSU,
+        }
+    }
+
+    /// LECTOR-1 (LR-P7) — the framework that best fits a project `genre` string,
+    /// for the read-through's expected-shape overlay when none is declared.
+    /// Fuzzy + forgiving; falls back to Three-Act.
+    pub fn suggest_for_genre(genre: &str) -> Self {
+        let g = genre.trim().to_ascii_lowercase();
+        let has = |needles: &[&str]| needles.iter().any(|n| g.contains(n));
+        if has(&["kishotenketsu", "slice", "literary", "quiet", "vignette"]) {
+            Self::Kishotenketsu
+        } else if has(&["fantasy", "epic", "myth", "adventure", "hero", "quest"]) {
+            Self::HeroJourney
+        } else if has(&["thriller", "action", "screenplay", "commercial", "romance"]) {
+            Self::SaveTheCat
+        } else if has(&["mystery", "crime", "detective", "plot"]) {
+            Self::SevenPoint
+        } else if has(&["character", "coming", "transformation"]) {
+            Self::StoryCircle
+        } else {
+            Self::ThreeAct
         }
     }
 
@@ -1045,6 +1076,16 @@ const SEVEN_POINT: &[BeatSpec] = &[
     BeatSpec { name: "Resolution", act: 3, target_position: 1.00, expected_tension: 1.00 },
 ];
 
+// Kishōtenketsu — four movements, no obligatory conflict. The energy rises to the
+// *ten* (the twist that recontextualises what came before), then settles in the
+// *ketsu*; a gentler arc than the conflict-driven Western structures.
+const KISHOTENKETSU: &[BeatSpec] = &[
+    BeatSpec { name: "Ki — introduction", act: 1, target_position: 0.00, expected_tension: 0.15 },
+    BeatSpec { name: "Shō — development", act: 2, target_position: 0.35, expected_tension: 0.35 },
+    BeatSpec { name: "Ten — twist", act: 3, target_position: 0.65, expected_tension: 1.00 },
+    BeatSpec { name: "Ketsu — reconciliation", act: 4, target_position: 1.00, expected_tension: 0.30 },
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1054,7 +1095,10 @@ mod tests {
     fn every_framework_table_is_well_formed() {
         for fw in Framework::ALL {
             let beats = fw.beats();
-            assert!(beats.len() >= 7, "{} has enough beats", fw.slug());
+            // Kishōtenketsu is a deliberate 4-movement structure; the Western
+            // frameworks carry the full ≥7-beat map.
+            let min_beats = if fw == Framework::Kishotenketsu { 4 } else { 7 };
+            assert!(beats.len() >= min_beats, "{} has enough beats", fw.slug());
             let names: BTreeSet<_> = beats.iter().map(|b| b.name).collect();
             assert_eq!(names.len(), beats.len(), "{} beat names distinct", fw.slug());
             let mut prev_pos = -1.0f32;
@@ -1072,7 +1116,7 @@ mod tests {
                     fw.slug(),
                     b.name
                 );
-                assert!((1..=3).contains(&b.act), "{}/{} act 1..3", fw.slug(), b.name);
+                assert!((1..=4).contains(&b.act), "{}/{} act 1..4", fw.slug(), b.name);
                 assert!(b.act >= prev_act, "{}/{} acts non-decreasing", fw.slug(), b.name);
                 assert!(
                     (0.0..=1.0).contains(&b.expected_tension),
@@ -1159,12 +1203,16 @@ mod tests {
             let r = analyze(&fw.seed_beats(), &[], 0.10, &Default::default());
             let sum: f32 = r.acts.iter().map(|a| a.expected).sum();
             assert!((sum - 1.0).abs() < 1e-5, "{} sums to 1", fw.slug());
-            assert!(
-                (0.15..=0.30).contains(&r.acts[0].expected),
-                "{} act1 is a sane setup ({})",
-                fw.slug(),
-                r.acts[0].expected
-            );
+            // The canonical Western setup share; kishōtenketsu's front-loaded Ki
+            // (a 35% opening movement) is exempt by design.
+            if fw != Framework::Kishotenketsu {
+                assert!(
+                    (0.15..=0.30).contains(&r.acts[0].expected),
+                    "{} act1 is a sane setup ({})",
+                    fw.slug(),
+                    r.acts[0].expected
+                );
+            }
         }
     }
 
