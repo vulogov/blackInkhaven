@@ -93,8 +93,28 @@ pub(super) fn read_source(path: &Path) -> Result<String> {
         "md" | "markdown" | "txt" | "text" | "" => {
             std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))
         }
-        "pdf" => pdf_extract::extract_text(path)
-            .map_err(|e| anyhow!("PDF text extraction failed for {}: {e}", path.display())),
+        "pdf" => {
+            // `pdf-extract` byte-slices and can `panic!`/`unwrap`/index out of
+            // bounds internally on malformed or unusual PDFs (corrupt xref,
+            // broken font encodings). `.map_err` only catches the `Err` path —
+            // guard the panic too, exactly as the RTF importer does
+            // (`scrivener::rtf`), so a bad PDF never tears down the research TUI.
+            let guarded = crate::crash::suppress_panic_report(|| {
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    pdf_extract::extract_text(path)
+                }))
+            });
+            match guarded {
+                Ok(Ok(text)) => Ok(text),
+                Ok(Err(e)) => {
+                    Err(anyhow!("PDF text extraction failed for {}: {e}", path.display()))
+                }
+                Err(_) => Err(anyhow!(
+                    "PDF text extraction failed for {} (malformed or unsupported PDF)",
+                    path.display()
+                )),
+            }
+        }
         other => Err(anyhow!("unsupported source format: .{other} (md / txt / pdf)")),
     }
 }

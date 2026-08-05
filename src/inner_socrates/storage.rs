@@ -120,7 +120,7 @@ pub struct InnerSocratesStore {
 
 impl InnerSocratesStore {
     pub fn open(path: &Path) -> Result<Self> {
-        Ok(Self { engine: Arc::new(StorageEngine::new(path, INIT_SQL, 2)?) })
+        Ok(Self { engine: Arc::new(StorageEngine::new_versioned(path, INIT_SQL, 2, 1)?) })
     }
 
     /// `<project>/inner_socrates.db`, beside `world.db` / `output.db`.

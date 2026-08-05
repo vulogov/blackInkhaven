@@ -109,7 +109,7 @@ pub(crate) struct MythStore {
 impl MythStore {
     pub(crate) fn open(project_root: &Path) -> Result<MythStore> {
         let path = project_root.join("myth.duckdb");
-        Ok(MythStore { engine: Arc::new(StorageEngine::new(&path, INIT_SQL, 2)?) })
+        Ok(MythStore { engine: Arc::new(StorageEngine::new_versioned(&path, INIT_SQL, 2, 1)?) })
     }
 
     // ── declared inventory ──────────────────────────────────────────────────────
