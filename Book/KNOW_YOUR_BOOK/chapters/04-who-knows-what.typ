@@ -57,8 +57,8 @@ ground a break; it never invents one.
 #section("Where it lives")
 
 `inkhaven knowledge` runs the check from the command line and exits non-zero on a
-hard break, so you can gate a draft before it goes out. In the editor, `Ctrl+B
-Shift+Z` opens the findings grouped by kind — *Enter* jumps to the paragraph where
+hard break, so you can gate a draft before it goes out. In the editor,
+`Ctrl+B Shift+Z` opens the findings grouped by kind — *Enter* jumps to the paragraph where
 the character knew too much. And the same findings ride the revision worklist
 (`Ctrl+V Shift+R`), where you *decide* the fix: cut the reference, move the reveal
 earlier, or add the grant you forgot.
