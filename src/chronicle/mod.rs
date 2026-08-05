@@ -12,10 +12,8 @@
 //! is a set difference over each [`EditorialFinding`](crate::editorial::EditorialFinding)'s
 //! stable `fingerprint()` (CH-P3).
 //!
-//! CH-P0 lays the substrate: the metric vector, the milestone, and the DuckDB
-//! store (mirroring `progress`). The `#![allow(dead_code)]` below is the
-//! allow-until-consumer idiom — dropped as CH-P1..P3 wire these in.
-#![allow(dead_code)]
+//! CH-P0 laid the substrate; CH-P1..P5 wired it into capture, the trend/diff, the
+//! REDLINE hook, the dashboard, and the Bund surface.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
