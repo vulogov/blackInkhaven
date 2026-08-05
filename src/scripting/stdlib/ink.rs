@@ -1233,12 +1233,12 @@ fn do_ink_event_list_orphans(vm: &mut VM) -> Result<&mut VM> {
 // ── ink.thread.list ──────────────────────────────────────────────────
 // Stack: ( -- list )
 //
-// 1.2.16+ Phase I.4.a — return every thread in
-// the Threads system book as a list of dicts.
-// Each dict carries the thread's UUID + title +
-// slug + waypoint count.  Empty list when the
-// Threads system book is absent (Threads only
-// auto-spawns on 1.2.14+ projects).
+// 1.2.16+ Phase I.4.a — return every thread in the
+// Threads system book as a list of dicts. Threads are
+// HJSON-fronted Paragraphs under the Threads book (a
+// subtree walk, matching `inkhaven thread list`); each
+// dict carries the thread's UUID + title + slug + status
+// + weight. Empty list when the Threads book is absent.
 
 fn ink_thread_list(vm: &mut VM) -> BundResult<'_> {
     do_ink_thread_list(vm).map_err(to_bund_err)
@@ -1258,32 +1258,46 @@ fn do_ink_thread_list(vm: &mut VM) -> Result<&mut VM> {
             return Ok(vm);
         }
     };
-    let items: Vec<Value> = hierarchy
-        .children_of(Some(threads_root.id))
-        .into_iter()
-        .filter(|n| n.kind == crate::store::NodeKind::Chapter)
-        .map(|thread_chapter| {
-            let waypoint_count = hierarchy
-                .children_of(Some(thread_chapter.id))
-                .into_iter()
-                .filter(|n| n.kind == crate::store::NodeKind::Paragraph)
-                .count();
-            let mut h: HashMap<String, Value> = HashMap::new();
-            h.insert(
-                "id".into(),
-                Value::from_string(thread_chapter.id.to_string()),
-            );
-            h.insert("title".into(), Value::from_string(&thread_chapter.title));
-            h.insert("slug".into(), Value::from_string(&thread_chapter.slug));
-            h.insert(
-                "waypoint_count".into(),
-                Value::from_int(waypoint_count as i64),
-            );
-            Value::from_dict(h)
-        })
-        .collect();
+    // Threads are HJSON-fronted Paragraphs under the Threads book (subtree walk,
+    // matching `inkhaven thread list`); the earlier Chapter + waypoint-count
+    // model was a structural mismatch with the CLI that writes them.
+    let mut items: Vec<Value> = Vec::new();
+    for id in hierarchy.collect_subtree(threads_root.id) {
+        if id == threads_root.id {
+            continue;
+        }
+        let Some(node) = hierarchy.get(id) else { continue };
+        if node.kind != crate::store::NodeKind::Paragraph {
+            continue;
+        }
+        let (status, weight) = store
+            .get_content(id)
+            .ok()
+            .flatten()
+            .and_then(|b| String::from_utf8(b).ok())
+            .and_then(|body| serde_hjson::from_str::<ThreadListLite>(&body).ok())
+            .map(|t| (t.status, t.weight))
+            .unwrap_or_default();
+        let mut h: HashMap<String, Value> = HashMap::new();
+        h.insert("id".into(), Value::from_string(node.id.to_string()));
+        h.insert("title".into(), Value::from_string(&node.title));
+        h.insert("slug".into(), Value::from_string(&node.slug));
+        h.insert("status".into(), Value::from_string(&status));
+        h.insert("weight".into(), Value::from_string(&weight));
+        items.push(Value::from_dict(h));
+    }
     push(vm, Value::from_list(items));
     Ok(vm)
+}
+
+/// Minimal HJSON view of a thread paragraph for `ink.thread.list` — just the
+/// fields the list surfaces (status / weight); the CLI reads the fuller schema.
+#[derive(serde::Deserialize, Default)]
+struct ThreadListLite {
+    #[serde(default)]
+    status: String,
+    #[serde(default)]
+    weight: String,
 }
 
 // ── ink.event.add ────────────────────────────────────────────────────
