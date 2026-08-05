@@ -146,6 +146,19 @@ For the overview a writer opens a revision with, `inkhaven revise` synthesises t
 same worklist into one editorial letter: the big picture first, then grouped by
 theme, most important first.
 
+#subsection("Did it get better?")
+
+Revision is a leap of faith unless you can measure it. Before a serious pass, stamp
+a milestone — `inkhaven chronicle mark "draft-2"` — and Inkhaven records what every
+reader found. After the pass, `inkhaven chronicle` (or `Ctrl+B Shift+U` in the
+editor) captures the book again and trends it against that mark: fewer findings and
+fewer sags read as `▼`, new problems as `▲`. Its most useful line is the split — how
+many findings your revision _cleared_, and how many it _introduced_ — because good
+revision often trades one problem for another, and this is how you catch the trade
+before a reader does. Press `Enter` on an introduced finding to jump straight to the
+paragraph your last edits broke. Chronicle only ever measures; it never touches a
+word.
+
 #insight[
   Every prose change the revision partner makes passes through the same contract:
   a rewrite you see as a diff and confirm, and a snapshot of your old prose taken
