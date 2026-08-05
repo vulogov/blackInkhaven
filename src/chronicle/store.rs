@@ -5,7 +5,6 @@
 //! `milestone_findings` row per finding (the fingerprint set the cleared/introduced
 //! diff walks). Cloneable; clones share the pool. Read-only from the writer's
 //! side — CHRONICLE never mutates the manuscript.
-#![allow(dead_code)]
 
 use std::path::Path;
 use std::sync::Arc;
