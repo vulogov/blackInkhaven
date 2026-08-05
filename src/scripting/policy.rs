@@ -240,6 +240,11 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.chronicle.marks", category::STORE_READ),
     ("ink.chronicle.trend", category::STORE_READ),
     ("ink.chronicle.check", category::STORE_READ),
+    // KEN — the epistemic check (who knows what, when); read-only, deterministic.
+    // The opt-in --deep LLM implied_irony pass is not exposed (it costs).
+    ("ink.knowledge.grants", category::STORE_READ),
+    ("ink.knowledge.findings", category::STORE_READ),
+    ("ink.knowledge.check", category::STORE_READ),
     // CHAR-1 — character-arc reads; `plan`/`refresh` write only the derived
     // char.duckdb cache (not the manuscript), so they stay store_read too.
     ("ink.char.arc", category::STORE_READ),

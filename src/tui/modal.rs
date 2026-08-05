@@ -947,6 +947,15 @@ pub(super) enum Modal {
         anchors: Vec<Option<Uuid>>,
         cursor: usize,
     },
+    /// KEN-1 (2.6, KEN-P5) — the knowledge dashboard (`Ctrl+B Shift+Z`): the
+    /// epistemic-continuity findings (who knows what, when) grouped by kind. `↑↓`
+    /// scroll, Enter jumps to the offending paragraph, Esc closes. `anchors`
+    /// parallels `rows` (a header/blank row carries `None`).
+    Knowledge {
+        rows: Vec<String>,
+        anchors: Vec<Option<Uuid>>,
+        cursor: usize,
+    },
     /// POEM-TUI (PO-P12) — the form picker (`Ctrl+B J → P → D`): choose one of
     /// the built-in forms and attach its `poem:` block to the open verse
     /// paragraph as a sidecar leaf. `cursor` indexes `FormsLibrary::all()`;
