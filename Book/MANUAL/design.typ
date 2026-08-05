@@ -219,10 +219,12 @@
 #let chord_row(name, desc) = (name, desc)
 #let chord_table(rows) = block(width: 100%, {
   for (name, desc) in rows {
-    grid(columns: (28mm, 1fr), gutter: 4mm,
-      text(font: body_family, weight: "bold", size: 10pt, fill: ink_black, name),
-      text(font: body_family, size: 10pt, fill: ink_black, desc))
-    v(1.6mm)
+    block(breakable: false, width: 100%, {
+      grid(columns: (28mm, 1fr), gutter: 4mm,
+        text(font: body_family, weight: "bold", size: 10pt, fill: ink_black, name),
+        text(font: body_family, size: 10pt, fill: ink_black, desc))
+      v(1.6mm)
+    })
   }
 })
 
@@ -417,6 +419,7 @@
   set par(leading: 0.72em, justify: true, first-line-indent: 1em)
   show raw.where(block: true): it => block(
     fill: ink_code_bg, stroke: 0.5pt + ink_rule, inset: 7pt, radius: 2pt, width: 100%,
+    breakable: false,
     text(font: mono_family, size: 9pt, it),
   )
   show raw.where(block: false): it => box(
