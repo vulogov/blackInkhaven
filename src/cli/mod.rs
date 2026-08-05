@@ -28,6 +28,7 @@ pub mod goals;
 pub mod readthrough;
 pub mod revise;
 pub mod chronicle;
+pub mod knowledge;
 pub mod event;
 pub mod event_critique;
 pub mod comments;
@@ -1413,6 +1414,19 @@ pub enum Command {
         /// Omit for the trend since the last milestone (the default view).
         #[command(subcommand)]
         cmd: Option<ChronicleCommand>,
+    },
+    /// KEN-1 (2.6) — the knowledge check: who knows what, when. Flags a character
+    /// acting on a fact before they could know it (`premature_knowledge`), a
+    /// `secret:` used by someone never told it (`leaked_secret`), or a declared
+    /// reveal that never surfaces (`dropped_reveal`). Deterministic; non-zero exit
+    /// on a break (a CI gate). Declare with `secret:`/`know:`/`reveals:` tags.
+    Knowledge {
+        /// Restrict to a single book (slug or title). Default: the whole project.
+        #[arg(long)]
+        book_name: Option<String>,
+        /// Emit the findings as JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// LECTOR-1 (2.3) — the read-through report: the book read forward, once, as a
     /// first reader. The measured intensity curve + per-chapter scene/sequel beat +
@@ -6850,6 +6864,9 @@ impl Cli {
             Command::Cost => cost::run(&project).map_err(Into::into),
             Command::Revise { book_name, json } => {
                 revise::run(&project, book_name.as_deref(), json).map_err(Into::into)
+            }
+            Command::Knowledge { book_name, json } => {
+                knowledge::run(&project, book_name.as_deref(), json).map_err(Into::into)
             }
             Command::Chronicle { cmd } => match cmd {
                 None => chronicle::trend(&project, None, false).map_err(Into::into),

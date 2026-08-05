@@ -7,8 +7,6 @@
 //! an ungranted character is a `leaked_secret`. Silent where it can't ground —
 //! KEN never invents a break.
 
-#![allow(dead_code)]
-
 use std::collections::{BTreeSet, HashMap};
 
 use super::grants;
@@ -141,13 +139,17 @@ pub(crate) fn check(
         .map(|u| {
             let grant = earliest_grant(grants, &u.character, &u.topic);
             let kind = if secrets.contains(&u.topic) { "leaked_secret" } else { "premature_knowledge" };
+            let verb = match u.via {
+                UseVia::Dialogue => "speaks of",
+                UseVia::Pov => "references",
+            };
             let message = match grant {
                 Some(g) => format!(
-                    "{} references \u{201c}{}\u{201d} in ch. {} — before learning it in ch. {}",
+                    "{} {verb} \u{201c}{}\u{201d} in ch. {} — before learning it in ch. {}",
                     u.character, u.topic, u.at.chapter_ord, g.at.chapter_ord
                 ),
                 None => format!(
-                    "{} references \u{201c}{}\u{201d} in ch. {} — never established to know it",
+                    "{} {verb} \u{201c}{}\u{201d} in ch. {} — never established to know it",
                     u.character, u.topic, u.at.chapter_ord
                 ),
             };
