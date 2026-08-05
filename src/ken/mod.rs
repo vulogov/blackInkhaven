@@ -8,14 +8,12 @@
 //! dialogue / POV narration); it stays silent where it can't, and it never edits
 //! prose.
 //!
-//! CH-P0 lays the pure substrate: the reading-order position, the knowledge model
-//! (items / grants / uses), and the finding shape (mirroring `ContinuityFinding` /
-//! `ReaderFinding`). The `#![allow(dead_code)]` is the allow-until-consumer idiom —
-//! dropped as KEN-P1..P4 wire grants, use-detection, the check, and the worklist
-//! bridge in.
-#![allow(dead_code)]
+//! KEN-P0 laid the pure substrate (reading-order position, the knowledge model,
+//! the finding shape); KEN-P1..P6 wired it into grants, use-detection, the check,
+//! the worklist bridge, the dashboard, and the opt-in LLM `implied_irony` pass.
 
 pub mod check;
+pub mod deep;
 pub mod grants;
 pub mod walk;
 
@@ -45,8 +43,6 @@ pub enum GrantSource {
     Presence,
     /// The author declared it (a `know:` / `secret:` tag).
     Declared,
-    /// Told by another character (dialogue transmission — a later enrichment).
-    Told,
 }
 
 /// The earliest point a character could know a topic. `anchor` is the paragraph
