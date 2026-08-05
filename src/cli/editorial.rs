@@ -151,6 +151,13 @@ pub fn collect(
                         }
                     }
                 }
+                // KEN (2.6) — epistemic continuity (who knows what, when). Book-
+                // scoped; self-gating (no secret:/know: tags + no events → nothing).
+                if let Ok(book) = crate::cli::resolve_user_book(&h, book_name, "editorial") {
+                    for f in crate::ken::check::run(&layout, &h, &cfg, book) {
+                        raw.push(editorial::from_knowledge_finding(&f));
+                    }
+                }
             }
         }
     }

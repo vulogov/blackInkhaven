@@ -181,7 +181,8 @@ pub fn response_kind(category: &str) -> ResponseKind {
         | "anachronism" | "decision-resolve" => ResponseKind::Rewrite,
         // The author must choose which way is right; then we reconcile.
         "co_location" | "char_facts" | "drift" | "introduce" | "confusion"
-        | "unpaid_setup" | "numeric" | "continuity" | "fact" | "world" => {
+        | "unpaid_setup" | "numeric" | "continuity" | "fact" | "world"
+        | "premature_knowledge" | "leaked_secret" | "dropped_reveal" => {
             ResponseKind::Decision
         }
         // Structural / book-level — a suggestion, never a rewrite.
@@ -611,6 +612,27 @@ pub(crate) fn from_editor_finding(
         source: "editor",
         autofixable: false,
     })
+}
+
+/// KEN-1 (KEN-P4) — an epistemic-continuity finding (who knows what, when) → the
+/// worklist. `kind` (premature_knowledge / leaked_secret / dropped_reveal) routes
+/// it (all Decision — the author chooses: fix the leak, move the reveal, or add a
+/// grant). `anchor` is the offending paragraph.
+pub(crate) fn from_knowledge_finding(f: &crate::ken::KnowledgeFinding) -> EditorialFinding {
+    use crate::ken::Severity as KS;
+    EditorialFinding {
+        category: f.kind.to_string(),
+        severity: match f.severity {
+            KS::Break => Severity::Error,
+            KS::Notice => Severity::Warn,
+            KS::Info => Severity::Info,
+        },
+        location: Location { chapter: chapter_label(f.chapter), paragraph: f.anchor, ..Default::default() },
+        message: f.message.clone(),
+        hint: None,
+        source: "knowledge",
+        autofixable: false,
+    }
 }
 
 /// `"ch. N"` for a 1-based chapter ordinal, or `None` for book-level (0).

@@ -8,8 +8,6 @@
 //!
 //! Grants are kept un-deduped; [`super::earliest_grant`] picks the earliest per
 //! `(character, topic)` at query time (KEN-P2).
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 
 use uuid::Uuid;

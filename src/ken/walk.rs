@@ -4,8 +4,6 @@
 //! Typst-stripped) but exposes per-paragraph detail KEN needs: each prose
 //! paragraph's [`ScenePos`], its tags (for `secret:`/`know:` grants, KEN-P1), its
 //! stripped text (for use-detection, KEN-P2), and the scene's declared POV.
-#![allow(dead_code)]
-
 use uuid::Uuid;
 
 use super::ScenePos;
