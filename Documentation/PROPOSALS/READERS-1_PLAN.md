@@ -140,7 +140,34 @@ Reader reckoning — 3 readers · 47 notes
   → 4 confirmed findings promoted to the revision worklist (Ctrl+V Shift+R)
 ```
 
-## 6. Scope discipline (what READERS is not)
+## 6. Cost — a design invariant, near-zero at any book size
+
+READERS **never sends the manuscript to a model.** The reading is done by humans; the
+AI's role is bookkeeping. This is a stated invariant, not an accident:
+
+- **Anchoring** a note to a paragraph uses `book_rag::retrieve` — a **local** fastembed
+  embedding of the note (one sentence) plus a local HNSW vector search over paragraphs
+  that were already embedded once, locally, at index time. No API call.
+- **Reconciliation** is pure deterministic set-matching (group notes by paragraph, count
+  distinct readers, co-locate against `collect`'s findings). No model. `collect` itself
+  is deterministic — it reads computed findings + cached sidecars and makes **no live
+  LLM calls** (verified: it runs on projects with no LLM provider configured at all).
+- **Promotion** to the worklist is a struct conversion.
+
+So the whole core (import + reconcile + promote) costs **≈ $0 in API, independent of
+book length** — for a 1000-page volume the same as for a short story, because cost
+scales with the number of *notes* (hundreds), not pages, and every note-anchor is a
+local vector search. The book's one-time embedding is local, too.
+
+The **only** LLM touchpoint is opt-in and bounded: pressing `f` on a confirmed reader
+finding to get a REDLINE **brief** — one paragraph (~300 words) + the note, one call,
+user-triggered, under the daily cap. There is deliberately **no whole-book "let the AI
+judge reception" pass** (that would be prohibitive at scale — and it is exactly what
+READERS exists to avoid, since it has real readers). Reconciliation stays deterministic
+co-location; any future semantic-corroboration refinement must stay per-pair and
+cost-capped, never book-wide.
+
+## 7. Scope discipline (what READERS is not)
 
 - Not a new AI reader — it's the *conduit* for the real ones, and the reconciler that
   makes the AI ones earn out.
