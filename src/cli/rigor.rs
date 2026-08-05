@@ -45,7 +45,7 @@ fn scan(
             if crate::inner_rigor::RigorSignal::from_code(sig).is_none() {
                 return Err(Error::Config(format!(
                     "rigor: unknown --signal `{sig}` (use false-dichotomy | question-begging | \
-                     straw-man | overgeneralization | non-sequitur | all)"
+                     straw-man | overgeneralization | non-sequitur | equivocation | all)"
                 )));
             }
             findings.retain(|f| f.signal.as_code() == sig);

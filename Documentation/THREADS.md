@@ -86,13 +86,15 @@ One read-only word (classified `STORE_READ`) exposes the thread set to scripts a
 hooks:
 
 ```
-ink.thread.list  ( -- list )   every thread as a dict { id, title, slug, waypoint_count }
+ink.thread.list  ( -- list )   every thread as a dict { id, title, slug, status, weight }
 ```
 
-`waypoint_count` is the number of paragraph waypoints under a thread. When the
-`Threads` system book is absent (it only auto-spawns on 1.2.14+ projects) the word
-returns an empty list rather than erroring. Writing threads is not exposed to Bund —
-scripts read the weave, they don't author it.
+Each dict describes one thread paragraph under the `Threads` book — the same
+subtree the `inkhaven thread list` table reads, so the two agree. `status` and
+`weight` are parsed from the thread's HJSON body (empty strings if unset). When
+the `Threads` system book is absent (it only auto-spawns on 1.2.14+ projects) the
+word returns an empty list rather than erroring. Writing threads is not exposed to
+Bund — scripts read the weave, they don't author it.
 
 ---
 
