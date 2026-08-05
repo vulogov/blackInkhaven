@@ -27,42 +27,42 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 2.5.0 — CHRONICLE: The Draft Chronicle
+## Latest release · 2.6.0 — KEN: Who Knows What, When
 
-Read the full notes: [`Documentation/RELEASE_NOTES/2.5.0.md`](Documentation/RELEASE_NOTES/2.5.0.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/2.6.0.md`](Documentation/RELEASE_NOTES/2.6.0.md)
 
-Every reader Inkhaven has built *diagnoses* the current draft — SENTINEL the continuity break, LECTOR
-the saggy act, CHORUS the voices that read alike — and REDLINE (2.4) helped you *act* on all of it.
-But nothing remembered what your book measured last draft. 2.5's flagship, **CHRONICLE**, answers the
-one question a reviser most wants answered: *did it get better?* It snapshots the readers' collective
-verdict at each draft milestone and trends it — and it is **pure measurement**, with no prose-write
-path anywhere. See [`Documentation/CHRONICLE.md`](Documentation/CHRONICLE.md).
+Inkhaven watches where a character is, whether they exist yet, whether the world holds together, how
+their arc bends, whose head we're in — but nothing watched the one thing a mystery lives or dies on:
+what a character **knows**. 2.6's flagship, **KEN**, is SENTINEL's *referenced-before-introduced*
+invariant extended to **knowledge**: it flags a character acting on a fact before they could know it.
+It is **deterministic and free** at the core, and produces a finding a generic AI can't — because it
+needs the timeline, event-participant lists, character bible, and scene POV only inkhaven maintains.
+See [`Documentation/KNOWLEDGE.md`](Documentation/KNOWLEDGE.md).
 
 ### What's new
 
-- **Mark & trend** — `inkhaven chronicle mark "draft-2"` captures the whole diagnostic state in one
-  `collect` call (every reader's findings, tallied + fingerprinted); bare `inkhaven chronicle` trends
-  the live state against your last mark — headline counts + the categories that changed, every count
-  **fewer-is-better** (▼ improvement / ▲ regression, regressions first). `chronicle diff <a> <b>`
-  compares two milestones.
-- **The REDLINE hook — cleared vs introduced** — because every finding has a stable fingerprint,
-  CHRONICLE set-differences each revision into **cleared** (your revision resolved these),
-  **introduced** (new — your edits created these), and unchanged. This closes REDLINE's loop: proof
-  the work landed, plus an early warning on collateral damage.
-- **The dashboard** — `Ctrl+B Shift+U` opens the trend + the cleared/introduced split; **Enter**
-  jumps to an introduced finding's paragraph, **`m`** marks the current draft in place.
-- **The surfaces** — `inkhaven chronicle` (`mark` / `list` / `diff` / `--json`); the `Ctrl+B Shift+U`
-  dashboard; `ink.chronicle.{marks,trend,check}` Bund words (read-only — marking is not exposed;
-  `check.clean` = no error-severity finding introduced since the last mark, a pre-submit gate).
-- **Pure measurement** — no prose-write path anywhere; deterministic and free (it reuses every metric
-  engine 2.x shipped). CHRONICLE never resolves git refs — `--ref` is stored verbatim.
-- **Docs** — a new `CHRONICLE.md` + Tutorial 114 + the *Developing a Story* book audited.
+- **The grant — when could they know it?** — derived deterministically: **presence** (a character in
+  a timeline event's participant list knows it from the moment it happens) + **declared** tags
+  (`secret:<topic>`, `know:<topic>[@name]`, `reveals:<topic>`). No guessing.
+- **What it catches** — a *use* (a topic named in a character's attributed **dialogue** or **POV**
+  narration, matched Unicode-aware over DIALOG-1's speaker attribution) before the earliest grant:
+  **`premature_knowledge`**, **`leaked_secret`** (a `secret:` used by someone never told), and
+  **`dropped_reveal`** (a declared reveal that never surfaces). Opt-in **`implied_irony`** (`--deep`)
+  catches a character acting knowing *without naming it* — a cost-capped LLM pass.
+- **The surfaces** — `inkhaven knowledge` (`--json`, non-zero exit as a CI gate; `--deep`); the
+  `Ctrl+B Shift+Z` dashboard (Enter jumps to the paragraph — the last free Ctrl+B chord); the
+  `Ctrl+V Shift+R` Editorial Pass (routed **Decision**: fix the leak, move the reveal, or add a
+  grant); `ink.knowledge.{grants,findings,check}` Bund (read-only).
+- **Cost is a design invariant** — the core is a forward walk + mention matching, **no model, ≈ $0 at
+  any book size** (it scales with your tags, not your page count) and self-gating (no tags + no
+  events → no work). Only `--deep` calls a model, cost-capped.
+- **Docs** — a new `KNOWLEDGE.md` + Tutorial 115 + the *Developing a Story* book audited.
 
 ### Dependencies & compatibility
 
-No new dependencies and no new config — CHRONICLE reuses the unified worklist and every reader you
-already have, persisting milestones to a `chronicle.db` beside the other per-project stores (created
-lazily on first mark). Existing projects need no migration. Compiles warning-free. Test suite → 2884.
+No new dependencies and no new config — KEN reuses SENTINEL's mention matcher, DIALOG-1's attribution,
+CHORUS's scenes/POV, and the timeline you already keep; it declares knowledge with `secret:` /
+`know:` / `reveals:` tags. Existing projects need no migration. Compiles warning-free. Test suite → 2904.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

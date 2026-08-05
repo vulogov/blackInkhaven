@@ -124,10 +124,22 @@ hold? `inkhaven drift scan` watches for style and continuity drift across the bo
 ranked ledger — co-location, timeline, numeric contradictions, character-fact
 drift, and an entity _referenced before it is introduced_ — surfaced together in
 the `Ctrl+B Shift+I` dashboard (Enter jumps to the slip; `k` runs the LLM
-coherence pass for the contradictions the patterns can't see). And a unified
-review pass (`Ctrl+B Shift+C`) folds the readers and all of these checks into one
-sweep over a finished stretch; with `continuity.ambient` on, the continuity slice
-re-checks itself on every save.
+coherence pass for the contradictions the patterns can't see).
+
+There is one more axis of continuity, and it is the one a mystery lives or dies on:
+not where a character is, but what they _know_. `inkhaven knowledge` watches it. You
+declare the stakes with tags — `secret:the betrayal`, `know:the betrayal@Mara`,
+`reveals:` on the event that lets it slip — and KEN gets the rest for free from your
+timeline (anyone present at an event knows it). Then it walks the book and flags the
+moment a character speaks of, or acts on, something they could not know yet — a
+premature reference, a leaked secret, a reveal you set up and never spent. It is the
+_referenced-before-introduced_ rule, moved from existence to knowledge; the
+`Ctrl+B Shift+Z` dashboard jumps you straight to the slip. Deterministic and free —
+it costs nothing until you ask for the subtle, unnamed cases with `--deep`.
+
+A unified review pass (`Ctrl+B Shift+C`) folds the readers and all of these checks
+into one sweep over a finished stretch; with `continuity.ambient` on, the continuity
+slice re-checks itself on every save.
 
 #subsection("From finding to fix — the revision partner")
 

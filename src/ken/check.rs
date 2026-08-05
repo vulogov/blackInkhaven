@@ -332,6 +332,44 @@ mod tests {
     }
 
     #[test]
+    fn detect_uses_finds_the_dialogue_speaker_and_the_pov_reference() {
+        use super::super::walk::ParaRef;
+        let lang = crate::prose::ProseLanguage::En;
+        let paras = vec![
+            // Bob speaks the topic — DIALOG-1 attributes the line to Bob.
+            ParaRef {
+                id: Uuid::from_u128(1),
+                at: pos(4, 1),
+                tags: vec![],
+                text: "\"I heard about the betrayal,\" Bob said, going pale.".into(),
+                declared_pov: None,
+            },
+            // Mara's POV narration references the topic.
+            ParaRef {
+                id: Uuid::from_u128(2),
+                at: pos(5, 1),
+                tags: vec![],
+                text: "The betrayal haunted her all through the night.".into(),
+                declared_pov: Some("Mara".into()),
+            },
+        ];
+        let uses = detect_uses(
+            &paras,
+            &["the betrayal".to_string()],
+            &["Bob".to_string(), "Mara".to_string()],
+            &lang,
+        );
+        assert!(
+            uses.iter().any(|u| u.character == "Bob" && u.topic == "the betrayal" && u.via == UseVia::Dialogue),
+            "Bob's spoken use of the topic is detected: {uses:?}"
+        );
+        assert!(
+            uses.iter().any(|u| u.character == "Mara" && u.topic == "the betrayal" && u.via == UseVia::Pov),
+            "Mara's POV reference is detected: {uses:?}"
+        );
+    }
+
+    #[test]
     fn concrete_pov_skips_reserved_markers() {
         assert_eq!(concrete_pov(&Some("Mara".into())).as_deref(), Some("Mara"));
         assert!(concrete_pov(&Some("omniscient".into())).is_none());
