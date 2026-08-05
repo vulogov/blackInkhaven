@@ -76,7 +76,7 @@ fn int(v: Option<&DuckValue>) -> i64 {
 
 impl WorldStore {
     pub fn open(path: &Path) -> Result<Self> {
-        Ok(Self { engine: Arc::new(StorageEngine::new(path, INIT_SQL, 2)?) })
+        Ok(Self { engine: Arc::new(StorageEngine::new_versioned(path, INIT_SQL, 2, 1)?) })
     }
 
     /// `<project>/world.db`, beside `output.db` / `progress.db`.

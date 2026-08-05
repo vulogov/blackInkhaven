@@ -16,7 +16,7 @@
 #let book_subtitle = "A Worldbuilder's Process — from a Single Seed to a Living World"
 #let book_author   = "Vladimir Ulogov"
 #let book_year     = "2026"
-#let book_version  = "Inkhaven 1.10.0"
+#let book_version  = "Inkhaven 3.0.0"
 
 // ── Palette — warm paper, earth ink, growth-green accents ───────────
 #let ink_black   = rgb("#1e1a15")

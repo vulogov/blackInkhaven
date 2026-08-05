@@ -56,6 +56,62 @@ impl StorageEngine {
         Ok(Self { pool })
     }
 
+    /// Open like [`StorageEngine::new`], then stamp or verify a schema-version
+    /// anchor (M4, 3.0.0 freeze). Direct-engine feature stores that own their
+    /// own tables call this so a *future* binary can detect — and refuse — an
+    /// on-disk shape newer than it understands, instead of silently misreading
+    /// it. (`JsonStorage` manages its own `_inkhaven_schema`; this is for the
+    /// feature stores that talk to the engine directly.) All feature stores are
+    /// stamped `1` at the freeze; a later schema change bumps that store's
+    /// number and adds a migration in the `v < current` arm below.
+    pub fn new_versioned<P: AsRef<Path>>(
+        path: P,
+        init_sql: &str,
+        pool_size: u32,
+        schema_version: i64,
+    ) -> Result<Self> {
+        let engine = Self::new(path, init_sql, pool_size)?;
+        engine.ensure_schema_version(schema_version)?;
+        Ok(engine)
+    }
+
+    /// Create the `_inkhaven_schema` anchor if absent and stamp `current`;
+    /// error if the store was written by a schema *newer* than `current` so an
+    /// old binary fails loudly rather than misreading a shape it can't parse. A
+    /// store with no anchor (pre-freeze project) is stamped with `current`.
+    pub fn ensure_schema_version(&self, current: i64) -> Result<()> {
+        self.execute(
+            "CREATE TABLE IF NOT EXISTS _inkhaven_schema (
+                singleton INTEGER NOT NULL PRIMARY KEY,
+                version   BIGINT  NOT NULL
+            )",
+        )?;
+        let rows =
+            self.select_all("SELECT version FROM _inkhaven_schema WHERE singleton = 1")?;
+        let on_disk = rows
+            .into_iter()
+            .next()
+            .and_then(|r| r.into_iter().next())
+            .and_then(|v| match v {
+                DuckValue::BigInt(v) => Some(v),
+                DuckValue::Int(v) => Some(v as i64),
+                DuckValue::HugeInt(v) => Some(v as i64),
+                _ => None,
+            });
+        match on_disk {
+            Some(v) if v > current => Err(anyhow!(
+                "store schema is v{v}, but this inkhaven only supports v{current} — \
+                 upgrade inkhaven to open this project"
+            )),
+            Some(_) => Ok(()), // v <= current: nothing to migrate yet
+            None => self.execute_with(
+                "INSERT INTO _inkhaven_schema (singleton, version) VALUES (1, ?) \
+                 ON CONFLICT (singleton) DO UPDATE SET version = excluded.version",
+                &[&current],
+            ),
+        }
+    }
+
     /// Run a `SELECT` and collect every row as a `Vec` of raw DuckDB
     /// values. Used for the tiny set of internal queries this module
     /// emits — callers `match` on the variants directly.

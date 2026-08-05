@@ -150,10 +150,27 @@ pub(crate) fn run_stage2_group(
     group: &str,
 ) -> Result<usize> {
     let claims = store.claims_for_group(book_slug, group)?;
+    // H1 (3.0.0 P2) — Stage 2 is quadratic in consequence claims (the
+    // C(consequences,2) block). Refuse a runaway BEFORE clearing findings or
+    // firing any LLM call, so one command can't drain the wallet on thousands of
+    // sequential paid calls with no way to stop; the prior findings are left
+    // untouched. The author splits the premise group (the intended granularity)
+    // or raises `utopia.stage2_max_pairs`.
+    let pairs = select_pairs(&claims);
+    let cap = cfg.utopia.stage2_max_pairs.max(1);
+    if pairs.len() > cap {
+        let consequences = claims.iter().filter(|c| c.claim_type == ClaimType::Consequence).count();
+        return Err(anyhow::anyhow!(
+            "Stage 2 for group '{group}' would check {} claim-pairs (cap {cap}) — pairing is \
+             quadratic in consequence claims ({consequences} here). Split the premise group into \
+             smaller groups, or raise `utopia.stage2_max_pairs`. No LLM calls were made.",
+            pairs.len()
+        ));
+    }
     store.clear_group_findings_by_domain(book_slug, group, FindingDomain::Systemic)?;
     let now = chrono::Utc::now().to_rfc3339();
     let mut findings = 0;
-    for pair in select_pairs(&claims) {
+    for pair in pairs {
         let user = build_pair_prompt(pair.a, pair.b);
         let raw = utopia_llm_call(cfg, PAIR_SYSTEM, &user)?;
         let (compatible, reasoning) = parse_compatibility(&raw);

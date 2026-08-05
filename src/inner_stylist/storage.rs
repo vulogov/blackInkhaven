@@ -30,7 +30,7 @@ impl InnerStylistStore {
     /// `<project>/inner_stylist.db`, beside the other Inner-family stores.
     pub(crate) fn open_for_project(project_root: &Path) -> Result<Self> {
         let path = project_root.join("inner_stylist.db");
-        Ok(Self { engine: Arc::new(StorageEngine::new(&path, INIT_SQL, 2)?) })
+        Ok(Self { engine: Arc::new(StorageEngine::new_versioned(&path, INIT_SQL, 2, 1)?) })
     }
 
     /// Silence a finding by its stable key.

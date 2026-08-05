@@ -4535,6 +4535,12 @@ pub struct UtopiaConfig {
     /// Stage 2 cost-warning threshold (USD). Fires before pairing if the
     /// projected cost exceeds this — informs, never blocks.
     pub stage2_cost_warn: f32,
+    /// Stage 2 hard safety cap on claim-pairs checked per group per run. Stage 2
+    /// pairing is quadratic in consequence claims; beyond this many pairs the run
+    /// refuses (before any LLM call) with guidance to split the premise group,
+    /// rather than firing thousands of sequential paid calls. Raisable — it
+    /// guards a runaway, it does not cap ordinary use.
+    pub stage2_max_pairs: usize,
     /// Chapters processed per Stage 3 idle/background pass.
     pub stage3_batch_size: usize,
     /// Minimum chapter word count to include in the Stage 3 entailment scan.
@@ -4548,6 +4554,7 @@ impl Default for UtopiaConfig {
     fn default() -> Self {
         Self {
             stage2_cost_warn: 0.10,
+            stage2_max_pairs: 200,
             stage3_batch_size: 5,
             stage3_min_chapter_words: 200,
             group_gap_threshold: 1,

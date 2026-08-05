@@ -217,9 +217,16 @@ fn descends_from(
     book_id: uuid::Uuid,
 ) -> bool {
     let mut cur = node;
+    // L1 (3.0.0 P2) — guard a cyclic parent graph (a corrupt / hand-edited store
+    // whose parent links don't reach `book_id`) that would otherwise spin this
+    // walk forever on the inner-family worker.
+    let mut seen = std::collections::HashSet::new();
     loop {
         if cur.id == book_id {
             return true;
+        }
+        if !seen.insert(cur.id) {
+            return false;
         }
         let Some(pid) = cur.parent_id else { return false };
         match h.get(pid) {
