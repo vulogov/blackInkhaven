@@ -52,12 +52,36 @@ pub(crate) fn grants_from_tags(paras: &[ParaRef]) -> (Vec<Grant>, Vec<KnowledgeI
                 }
                 let character = who.or_else(|| p.declared_pov.as_deref().map(normalize_topic));
                 if let Some(character) = character.filter(|c| !c.is_empty()) {
-                    grants.push(Grant { character, topic, at: p.at, source: GrantSource::Declared });
+                    grants.push(Grant {
+                        character,
+                        topic,
+                        at: p.at,
+                        source: GrantSource::Declared,
+                        anchor: Some(p.id),
+                    });
                 }
             }
         }
     }
     (grants, items)
+}
+
+/// `reveals:<topic>` tags across the walk, mapping a paragraph id → the topics it
+/// declares an event reveals. Binds a terse event title to a matchable topic (the
+/// precision ladder: declared > `reveals:`-tag > bare-title). Pure.
+pub(crate) fn reveals_from_tags(paras: &[ParaRef]) -> HashMap<Uuid, Vec<String>> {
+    let mut m: HashMap<Uuid, Vec<String>> = HashMap::new();
+    for p in paras {
+        for tag in &p.tags {
+            if let Some(rest) = tag.strip_prefix("reveals:") {
+                let topic = normalize_topic(rest);
+                if !topic.is_empty() {
+                    m.entry(p.id).or_default().push(topic);
+                }
+            }
+        }
+    }
+    m
 }
 
 /// Presence grants: every character present at an event knows its subject (title)
@@ -67,24 +91,36 @@ pub(crate) fn grants_from_events(
     events: &[TlEvent],
     names: &HashMap<Uuid, String>,
     pos: &HashMap<Uuid, ScenePos>,
+    reveals: &HashMap<Uuid, Vec<String>>,
 ) -> Vec<Grant> {
     let mut out = Vec::new();
     for e in events {
-        let Some(&at) = e.linked_paragraphs.iter().find_map(|p| pos.get(p)) else {
+        let Some((anchor, at)) =
+            e.linked_paragraphs.iter().find_map(|p| pos.get(p).map(|sp| (*p, *sp)))
+        else {
             continue;
         };
-        let topic = normalize_topic(&e.title);
-        if topic.is_empty() {
-            continue;
+        // Topic: the `reveals:` tags on the event's linked paragraphs (precise),
+        // else the bare event title (fuzzy).
+        let mut topics: Vec<String> =
+            e.linked_paragraphs.iter().filter_map(|p| reveals.get(p)).flatten().cloned().collect();
+        if topics.is_empty() {
+            let t = normalize_topic(&e.title);
+            if !t.is_empty() {
+                topics.push(t);
+            }
         }
-        for cid in &e.characters {
-            if let Some(name) = names.get(cid) {
-                out.push(Grant {
-                    character: name.clone(),
-                    topic: topic.clone(),
-                    at,
-                    source: GrantSource::Presence,
-                });
+        for topic in &topics {
+            for cid in &e.characters {
+                if let Some(name) = names.get(cid) {
+                    out.push(Grant {
+                        character: name.clone(),
+                        topic: topic.clone(),
+                        at,
+                        source: GrantSource::Presence,
+                        anchor: Some(anchor),
+                    });
+                }
             }
         }
     }
@@ -103,13 +139,14 @@ pub(crate) fn build_grants(
     let pos: HashMap<Uuid, ScenePos> = paras.iter().map(|p| (p.id, p.at)).collect();
 
     let (mut grants, items) = grants_from_tags(&paras);
+    let reveals = reveals_from_tags(&paras);
 
     let names: HashMap<Uuid, String> =
         crate::continuity_intel::introduce::roster(h, crate::store::SYSTEM_TAG_CHARACTERS)
             .into_iter()
             .collect();
     let events = timeline_context::gather_events(h);
-    grants.extend(grants_from_events(&events, &names, &pos));
+    grants.extend(grants_from_events(&events, &names, &pos, &reveals));
 
     (grants, items, paras)
 }
@@ -170,11 +207,37 @@ mod tests {
             characters: vec![alice, bob, Uuid::from_u128(12)],
             places: vec![],
         }];
-        let grants = grants_from_events(&events, &names, &pos);
+        let grants = grants_from_events(&events, &names, &pos, &HashMap::new());
 
         assert_eq!(grants.len(), 2, "only rostered participants get a grant");
         assert!(grants.iter().all(|g| g.topic == "The Murder" && g.source == GrantSource::Presence));
         assert!(grants.iter().all(|g| g.at == ScenePos { chapter_ord: 6, scene_index: 2 }));
+        assert!(grants.iter().all(|g| g.anchor == Some(Uuid::from_u128(100))));
         assert!(grants.iter().any(|g| g.character == "Alice") && grants.iter().any(|g| g.character == "Bob"));
+    }
+
+    #[test]
+    fn reveals_tag_rebinds_the_event_topic_from_the_terse_title() {
+        let alice = Uuid::from_u128(10);
+        let para_id = Uuid::from_u128(100);
+        let names: HashMap<Uuid, String> = [(alice, "Alice".to_string())].into_iter().collect();
+        let pos: HashMap<Uuid, ScenePos> =
+            [(para_id, ScenePos { chapter_ord: 6, scene_index: 2 })].into_iter().collect();
+        // The event's title is terse; a reveals: tag on its linked paragraph gives
+        // the matchable topic.
+        let reveals: HashMap<Uuid, Vec<String>> =
+            [(para_id, vec!["the heir's true name".to_string()])].into_iter().collect();
+        let events = vec![TlEvent {
+            id: Uuid::from_u128(200),
+            title: "ch6-fight".into(),
+            start_ticks: 0,
+            end_ticks: None,
+            linked_paragraphs: vec![para_id],
+            characters: vec![alice],
+            places: vec![],
+        }];
+        let grants = grants_from_events(&events, &names, &pos, &reveals);
+        assert_eq!(grants.len(), 1);
+        assert_eq!(grants[0].topic, "the heir's true name", "reveals: overrides the bare title");
     }
 }

@@ -13,7 +13,9 @@ use std::collections::{BTreeSet, HashMap};
 
 use super::grants;
 use super::walk::ParaRef;
-use super::{earliest_grant, Grant, KnowledgeFinding, KnowledgeItem, Severity, Use, UseVia};
+use super::{
+    earliest_grant, Grant, GrantSource, KnowledgeFinding, KnowledgeItem, Severity, Use, UseVia,
+};
 use crate::config::Config;
 use crate::prose::ProseLanguage;
 use crate::project::ProjectLayout;
@@ -169,9 +171,41 @@ pub(crate) fn check(
     out
 }
 
-/// The impure driver KEN-P4's CLI calls: build grants → detect uses → check.
-/// Self-gating — a project with no `secret:`/`know:` tags and no events adds no
-/// topics and returns nothing.
+/// A declared reveal (`know:<topic>@<char>`) whose topic never surfaces again — the
+/// epistemic `unpaid_setup`. Only **declared** grants count (the author opted in by
+/// tagging the reveal); presence grants don't imply a topic must resurface. A
+/// `Notice` (dangling, not a hard break). Pure.
+pub(crate) fn dropped_reveals(grants: &[Grant], uses: &[Use]) -> Vec<KnowledgeFinding> {
+    let mut seen: BTreeSet<(String, String)> = BTreeSet::new();
+    let mut out = Vec::new();
+    for g in grants.iter().filter(|g| g.source == GrantSource::Declared) {
+        if !seen.insert((g.character.clone(), g.topic.clone())) {
+            continue;
+        }
+        let surfaces = uses.iter().any(|u| u.topic == g.topic && u.at >= g.at);
+        if surfaces {
+            continue;
+        }
+        out.push(KnowledgeFinding {
+            kind: "dropped_reveal",
+            severity: Severity::Notice,
+            chapter: g.at.chapter_ord,
+            anchor: g.anchor,
+            character: g.character.clone(),
+            topic: g.topic.clone(),
+            message: format!(
+                "{} is told \u{201c}{}\u{201d} in ch. {} — it never surfaces again",
+                g.character, g.topic, g.at.chapter_ord
+            ),
+        });
+    }
+    out
+}
+
+/// The impure driver KEN-P4's CLI calls: build grants → detect uses → the check
+/// (`premature_knowledge` / `leaked_secret`) + dropped reveals. Self-gating — a
+/// project with no `secret:`/`know:` tags and no events adds no topics and returns
+/// nothing.
 pub(crate) fn run(
     layout: &ProjectLayout,
     h: &Hierarchy,
@@ -188,7 +222,18 @@ pub(crate) fn run(
     let lang = ProseLanguage::from_label(&cfg.language);
     let names = crate::dialogue::character_names(h);
     let uses = detect_uses(&paras, &topics, &names, &lang);
-    check(&grants, &uses, &secrets)
+
+    let mut findings = check(&grants, &uses, &secrets);
+    findings.extend(dropped_reveals(&grants, &uses));
+    findings.sort_by(|a, b| {
+        b.severity
+            .rank()
+            .cmp(&a.severity.rank())
+            .then(a.chapter.cmp(&b.chapter))
+            .then(a.character.cmp(&b.character))
+            .then(a.topic.cmp(&b.topic))
+    });
+    findings
 }
 
 #[cfg(test)]
@@ -201,7 +246,13 @@ mod tests {
         ScenePos { chapter_ord: ch, scene_index: sc }
     }
     fn grant(c: &str, t: &str, ch: u32) -> Grant {
-        Grant { character: c.into(), topic: t.into(), at: pos(ch, 1), source: GrantSource::Declared }
+        Grant {
+            character: c.into(),
+            topic: t.into(),
+            at: pos(ch, 1),
+            source: GrantSource::Declared,
+            anchor: Some(Uuid::from_u128(1000 + ch as u128)),
+        }
     }
     fn usage(c: &str, t: &str, ch: u32) -> Use {
         Use { character: c.into(), topic: t.into(), at: pos(ch, 1), via: UseVia::Dialogue, anchor: Uuid::from_u128(ch as u128) }
@@ -242,6 +293,33 @@ mod tests {
         assert_eq!(out[0].kind, "leaked_secret");
         assert_eq!(out[0].chapter, 5, "the earliest premature use");
         assert_eq!(out[0].severity, Severity::Break);
+    }
+
+    #[test]
+    fn dropped_reveal_flags_a_declared_topic_that_never_surfaces() {
+        let grants = vec![
+            grant("Mara", "the betrayal", 7), // surfaces later → not dropped
+            grant("Joren", "the map", 3),     // never used → dropped
+        ];
+        let uses = vec![usage("Mara", "the betrayal", 9)];
+        let out = dropped_reveals(&grants, &uses);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].kind, "dropped_reveal");
+        assert_eq!((out[0].character.as_str(), out[0].topic.as_str()), ("Joren", "the map"));
+        assert_eq!(out[0].severity, Severity::Notice);
+        assert!(out[0].anchor.is_some());
+    }
+
+    #[test]
+    fn dropped_reveal_ignores_presence_grants() {
+        let g = Grant {
+            character: "Alice".into(),
+            topic: "the murder".into(),
+            at: pos(6, 1),
+            source: GrantSource::Presence, // not author-declared → not a dropped reveal
+            anchor: Some(Uuid::from_u128(1)),
+        };
+        assert!(dropped_reveals(&[g], &[]).is_empty());
     }
 
     #[test]

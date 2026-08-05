@@ -49,13 +49,16 @@ pub enum GrantSource {
     Told,
 }
 
-/// The earliest point a character could know a topic.
+/// The earliest point a character could know a topic. `anchor` is the paragraph
+/// the grant was derived from (the `know:` tag's paragraph, or the event's linked
+/// paragraph) — the jump target for a `dropped_reveal`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Grant {
     pub character: String,
     pub topic: String,
     pub at: ScenePos,
     pub source: GrantSource,
+    pub anchor: Option<Uuid>,
 }
 
 /// How a topic surfaced as *used* by a character.
@@ -162,24 +165,28 @@ mod tests {
                 topic: "the betrayal".into(),
                 at: ScenePos { chapter_ord: 7, scene_index: 0 },
                 source: GrantSource::Declared,
+                anchor: None,
             },
             Grant {
                 character: "Mara".into(),
                 topic: "the betrayal".into(),
                 at: ScenePos { chapter_ord: 4, scene_index: 1 },
                 source: GrantSource::Presence, // earlier — should win
+                anchor: None,
             },
             Grant {
                 character: "Bob".into(),
                 topic: "the betrayal".into(),
                 at: ScenePos { chapter_ord: 1, scene_index: 0 },
                 source: GrantSource::Presence, // different character
+                anchor: None,
             },
             Grant {
                 character: "Mara".into(),
                 topic: "the map".into(),
                 at: ScenePos { chapter_ord: 1, scene_index: 0 },
                 source: GrantSource::Declared, // different topic
+                anchor: None,
             },
         ];
         let g = earliest_grant(&grants, "Mara", "the betrayal").expect("Mara knows the betrayal");
