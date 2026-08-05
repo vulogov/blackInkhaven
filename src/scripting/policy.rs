@@ -235,6 +235,11 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     // read handle, so both stay store_read.
     ("ink.revise.findings", category::STORE_READ),
     ("ink.revise.check", category::STORE_READ),
+    // CHRONICLE — the draft-history intelligence; read-only. Marking (which writes
+    // a milestone) is deliberately NOT exposed to Bund.
+    ("ink.chronicle.marks", category::STORE_READ),
+    ("ink.chronicle.trend", category::STORE_READ),
+    ("ink.chronicle.check", category::STORE_READ),
     // CHAR-1 — character-arc reads; `plan`/`refresh` write only the derived
     // char.duckdb cache (not the manuscript), so they stay store_read too.
     ("ink.char.arc", category::STORE_READ),

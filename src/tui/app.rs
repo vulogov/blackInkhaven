@@ -12518,6 +12518,7 @@ impl App {
             A::RunCheck => self.run_unified_check(),
             A::OpenContinuityLedger => self.open_continuity_ledger(),
             A::OpenReadThrough => self.open_read_through(),
+            A::OpenChronicle => self.open_chronicle(),
             A::OpenCostDashboard => self.open_cost_dashboard(),
             A::OpenCredits => self.open_credits(),
             A::OpenBookInfo => self.open_book_info(),
@@ -16345,6 +16346,152 @@ impl App {
             };
             let _ = tx.send(BgMsg::Done(result));
         });
+    }
+
+    /// CHRONICLE-1 (CH-P4) — `Ctrl+B Shift+U`: the draft-history dashboard. Captures
+    /// the live state, diffs it against the latest milestone, and opens a scrollable
+    /// modal (Enter jumps to an introduced finding, `m` marks this draft).
+    fn open_chronicle(&mut self) {
+        let (rows, anchors) = self.build_chronicle_rows();
+        let jumps = anchors.iter().filter(|a| a.is_some()).count();
+        self.status = if jumps == 0 {
+            "chronicle · m mark this draft · Esc".into()
+        } else {
+            "chronicle · ↑↓ scroll · Enter jump · m mark · Esc".into()
+        };
+        self.modal = Modal::Chronicle { rows, anchors, cursor: 0 };
+    }
+
+    /// Build the dashboard's rows + parallel jump anchors: the trend since the last
+    /// milestone (headline + changed categories), the cleared/introduced summary,
+    /// and the itemised introduced list (each row anchored to its paragraph).
+    fn build_chronicle_rows(&self) -> (Vec<String>, Vec<Option<Uuid>>) {
+        use crate::chronicle::{capture, diff_findings, diff_vectors};
+        let mut rows: Vec<String> = Vec::new();
+        let mut anchors: Vec<Option<Uuid>> = Vec::new();
+        let mut push = |text: String, anchor: Option<Uuid>| {
+            rows.push(text);
+            anchors.push(anchor);
+        };
+        let project = self.store.project_root();
+        let store = match crate::chronicle::store::ChronicleStore::open_for_project(project) {
+            Ok(s) => s,
+            Err(e) => {
+                push(format!("chronicle unavailable: {e}"), None);
+                return (rows, anchors);
+            }
+        };
+        let base = match store.latest(None) {
+            Ok(Some(b)) => b,
+            Ok(None) => {
+                push("◆ Chronicle".into(), None);
+                push(String::new(), None);
+                push("  no milestone yet — press m to mark this draft.".into(), None);
+                return (rows, anchors);
+            }
+            Err(e) => {
+                push(format!("chronicle unavailable: {e}"), None);
+                return (rows, anchors);
+            }
+        };
+        let (current, current_refs) = match capture(project, None) {
+            Ok(x) => x,
+            Err(e) => {
+                push(format!("chronicle capture failed: {e}"), None);
+                return (rows, anchors);
+            }
+        };
+        let base_refs = store.findings_for(base.id).unwrap_or_default();
+        let t = diff_vectors(&base.metrics, &current);
+        let fd = diff_findings(&base_refs, &current_refs);
+
+        push(format!("◆ Chronicle — since “{}”", base.label), None);
+        push(String::new(), None);
+        for d in &t.headline {
+            push(format!("  {}", crate::cli::chronicle::fmt_delta(d)), None);
+        }
+        if !t.categories.is_empty() {
+            push(String::new(), None);
+            push("by category".into(), None);
+            for d in &t.categories {
+                push(format!("  {}", crate::cli::chronicle::fmt_delta(d)), None);
+            }
+        }
+        push(String::new(), None);
+        push(
+            format!(
+                "✓ {} cleared   ▲ {} introduced   · {} unchanged",
+                fd.cleared.len(),
+                fd.introduced.len(),
+                fd.persisted.len()
+            ),
+            None,
+        );
+        if !fd.introduced.is_empty() {
+            push(String::new(), None);
+            push("introduced".into(), None);
+            for f in &fd.introduced {
+                push(format!("  {}", crate::cli::chronicle::fmt_finding(f)), f.paragraph);
+            }
+        }
+        (rows, anchors)
+    }
+
+    fn chronicle_handle_key(&mut self, key: KeyEvent) -> bool {
+        let n = match &self.modal {
+            Modal::Chronicle { rows, .. } => rows.len(),
+            _ => return false,
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "chronicle: closed".into();
+            }
+            KeyCode::Up => {
+                if let Modal::Chronicle { cursor, .. } = &mut self.modal {
+                    *cursor = cursor.saturating_sub(1);
+                }
+            }
+            KeyCode::Down => {
+                if let Modal::Chronicle { cursor, .. } = &mut self.modal {
+                    if n > 0 {
+                        *cursor = (*cursor + 1).min(n - 1);
+                    }
+                }
+            }
+            KeyCode::Enter => {
+                let anchor = match &self.modal {
+                    Modal::Chronicle { anchors, cursor, .. } => anchors.get(*cursor).copied().flatten(),
+                    _ => None,
+                };
+                if let Some(id) = anchor {
+                    self.modal = Modal::None;
+                    if let Err(e) = self.open_paragraph_by_uuid(id) {
+                        self.status = format!("chronicle: {e}");
+                    }
+                } else {
+                    self.status = "chronicle: no paragraph to jump to on this row".into();
+                }
+            }
+            KeyCode::Char('m') | KeyCode::Char('M') => self.chronicle_quick_mark(),
+            _ => {}
+        }
+        true
+    }
+
+    /// The dashboard's `m` — capture a milestone now (label = today's date) and
+    /// rebuild the trend. Uses the no-print `chronicle::record` (never touches
+    /// stdout in raw mode); rename the milestone via `inkhaven chronicle` if wanted.
+    fn chronicle_quick_mark(&mut self) {
+        let project = self.store.project_root().to_path_buf();
+        let label = crate::dayclock::today_key();
+        match crate::chronicle::record(&project, &label, None, None, None) {
+            Ok(_) => {
+                self.open_chronicle();
+                self.status = format!("✓ chronicle: marked “{label}”");
+            }
+            Err(e) => self.status = format!("chronicle mark: {e}"),
+        }
     }
 
     /// LECTOR-1 (LR-P5b) — `Ctrl+B Shift+A`: the read-through dashboard. Builds the
@@ -26571,6 +26718,10 @@ impl App {
         }
         if matches!(self.modal, Modal::ReadThrough { .. }) {
             self.read_through_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::Chronicle { .. }) {
+            self.chronicle_handle_key(key);
             return Ok(false);
         }
         if matches!(self.modal, Modal::PoemFormPicker { .. }) {
