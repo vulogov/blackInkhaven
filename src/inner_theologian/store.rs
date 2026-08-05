@@ -52,7 +52,7 @@ pub(crate) struct TheologianStore {
 impl TheologianStore {
     pub(crate) fn open(project_root: &Path) -> Result<Self> {
         let path = project_root.join("inner_theologian.db");
-        Ok(Self { engine: Arc::new(StorageEngine::new(&path, INIT_SQL, 2)?) })
+        Ok(Self { engine: Arc::new(StorageEngine::new_versioned(&path, INIT_SQL, 2, 1)?) })
     }
 
     /// Drop a chapter's findings before a re-scan re-emits them.

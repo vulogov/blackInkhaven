@@ -77,7 +77,7 @@ fn boolean(v: Option<&DuckValue>) -> bool {
 impl OutputStore {
     /// Open (creating if needed) the Output store at `path`.
     pub fn open(path: &Path) -> Result<Self> {
-        let engine = StorageEngine::new(path, INIT_SQL, 2)?;
+        let engine = StorageEngine::new_versioned(path, INIT_SQL, 2, 1)?;
         Ok(Self { engine: Arc::new(engine) })
     }
 
