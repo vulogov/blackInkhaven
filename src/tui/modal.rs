@@ -937,6 +937,16 @@ pub(super) enum Modal {
         anchors: Vec<Option<Uuid>>,
         cursor: usize,
     },
+    /// CHRONICLE-1 (2.5, CH-P4) — the draft-history dashboard (`Ctrl+B Shift+U`):
+    /// the trend since the last milestone + the cleared/introduced split. `↑↓`
+    /// scroll, Enter jumps to an introduced finding's paragraph, `m` marks this
+    /// draft, Esc closes. `anchors` parallels `rows` (only introduced-finding rows
+    /// carry a jump target).
+    Chronicle {
+        rows: Vec<String>,
+        anchors: Vec<Option<Uuid>>,
+        cursor: usize,
+    },
     /// POEM-TUI (PO-P12) — the form picker (`Ctrl+B J → P → D`): choose one of
     /// the built-in forms and attach its `poem:` block to the open verse
     /// paragraph as a sidecar leaf. `cursor` indexes `FormsLibrary::all()`;

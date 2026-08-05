@@ -24,22 +24,13 @@ pub fn mark(
     if label.trim().is_empty() {
         return Err(Error::Store("chronicle mark: a milestone label is required".into()));
     }
-    let (metrics, findings) = capture(project, book_name)?;
     let book_slug = resolve_book_slug(project, book_name)?;
-    let milestone = Milestone {
-        id: uuid::Uuid::new_v4(),
-        label: label.trim().to_string(),
-        day: crate::dayclock::today_days(),
-        ts: crate::dayclock::now_secs(),
-        book_slug,
-        git_ref: git_ref.map(str::to_string),
-        metrics: metrics.clone(),
-    };
-    let store = ChronicleStore::open_for_project(project).map_err(store_err)?;
-    store.insert_milestone(&milestone, &findings).map_err(store_err)?;
+    let label = label.trim();
+    let metrics =
+        crate::chronicle::record(project, label, book_name, book_slug, git_ref.map(str::to_string))?;
     println!(
-        "\u{2713} marked \u{201c}{}\u{201d} — {} finding(s) ({} error · {} warn · {} info)",
-        milestone.label, metrics.total, metrics.errors, metrics.warnings, metrics.infos
+        "\u{2713} marked \u{201c}{label}\u{201d} — {} finding(s) ({} error · {} warn · {} info)",
+        metrics.total, metrics.errors, metrics.warnings, metrics.infos
     );
     Ok(())
 }
@@ -193,7 +184,7 @@ fn render_trend(header: &str, t: &Trend, fd: &FindingDiff) {
 }
 
 /// One introduced/cleared finding row: severity icon · category · location · head.
-fn fmt_finding(f: &FindingRef) -> String {
+pub(crate) fn fmt_finding(f: &FindingRef) -> String {
     let icon = match f.severity.as_str() {
         "error" => "✗",
         "warn" => "⚠",
@@ -213,7 +204,7 @@ fn head(s: &str, max: usize) -> String {
     format!("{}…", chars[..cut].iter().collect::<String>())
 }
 
-fn fmt_delta(d: &TrendDelta) -> String {
+pub(crate) fn fmt_delta(d: &TrendDelta) -> String {
     let arrow = match d.direction {
         Direction::Better => "▼",
         Direction::Worse => "▲",

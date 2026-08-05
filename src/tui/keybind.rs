@@ -140,6 +140,11 @@ pub enum Action {
     /// findings; Enter jumps to a chapter, k runs the LLM synthetic first-read.
     #[serde(rename = "global.open_read_through")]
     OpenReadThrough,
+    /// CHRONICLE-1 (2.5, CH-P4) — the draft-history dashboard (Ctrl+B Shift+U): the
+    /// trend since the last milestone + which findings the revision cleared vs
+    /// introduced; Enter jumps to an introduced finding, m marks this draft.
+    #[serde(rename = "global.open_chronicle")]
+    OpenChronicle,
     /// 1.3.34+ — the unified AI cost dashboard (Ctrl+B $): today's LLM call tallies
     /// per capped subsystem vs their daily caps.
     #[serde(rename = "global.open_cost_dashboard")]
@@ -1000,6 +1005,7 @@ impl Action {
             Action::RunCheck => "review pass".into(),
             Action::OpenContinuityLedger => "continuity".into(),
             Action::OpenReadThrough => "read-through".into(),
+            Action::OpenChronicle => "chronicle".into(),
             Action::OpenCostDashboard => "AI cost".into(),
             Action::OpenCredits => "credits".into(),
             Action::OpenBookInfo => "info".into(),
@@ -1230,6 +1236,8 @@ impl Action {
                 "Open the SENTINEL continuity ledger (Ctrl+B Shift+I): the ranked deterministic continuity findings — co-location, timeline, numeric, character-fact drift, and referenced-before-introduced — grouped by kind. ↑↓ to scroll, Enter to jump to a finding's paragraph, k runs the LLM coherence pass, Esc to close. Zero-AI at the core; the CLI equivalent is `inkhaven continuity check`.".into(),
             Action::OpenReadThrough =>
                 "Open the LECTOR read-through dashboard (Ctrl+B Shift+A): the book read forward, once, as a first reader — the prose-measured intensity curve, the per-chapter scene/sequel beat, and the ranked reader findings (confusion, info-dump, attention-dip, put-down risk, unpaid setup, scene/sequel arrhythmia). ↑↓ scroll, Enter jumps to the chapter, k runs the cost-capped LLM synthetic first-read (its findings land in Output), Esc closes. Deterministic + free at the core; the CLI equivalent is `inkhaven readthrough` (`--deep` / `--json`).".into(),
+            Action::OpenChronicle =>
+                "Open the CHRONICLE draft-history dashboard (Ctrl+B Shift+U): the trend since your last milestone — findings, errors, and per-category counts — plus which findings your revision cleared vs introduced. ↑↓ scroll, Enter jumps to an introduced finding's paragraph, m marks this draft (labelled by today's date; rename via the CLI), Esc closes. Pure measurement — it never edits the manuscript. The CLI equivalent is `inkhaven chronicle` (`mark` / `diff` / `--json`).".into(),
             Action::OpenCostDashboard =>
                 "Open the AI cost dashboard (Ctrl+B $): today's LLM call tallies for each capped subsystem (world slow track, Inner Socrates slow track + any analytical-thread sub-budgets) against their daily caps. Read-only; the CLI equivalent is `inkhaven cost`.".into(),
             Action::OpenCredits =>
@@ -1634,8 +1642,11 @@ impl KeyBindings {
                 // Ctrl+B Shift+S = Search Facts; Shift+L is the concordance.
                 entry("Shift+i", Action::OpenContinuityLedger, Scope::Any),
                 // LECTOR-1 (LR-P5b) — Ctrl+B Shift+A: the read-through dashboard
-                // (A for Audience; Shift+A/I/U/Z are the only free meta_sub chords).
+                // (A for Audience; Shift+A/I/U/Z were the last free meta_sub chords).
                 entry("Shift+a", Action::OpenReadThrough, Scope::Any),
+                // CHRONICLE-1 (CH-P4) — Ctrl+B Shift+U: the draft-history dashboard.
+                // Shift+U was one of the last two free meta_sub chords (with Z).
+                entry("Shift+u", Action::OpenChronicle, Scope::Any),
                 // 1.3.34+ — Ctrl+B $: the AI cost dashboard.
                 entry("$", Action::OpenCostDashboard, Scope::Any),
                 entry("o", Action::ScheduleTake, Scope::Any),
@@ -2838,6 +2849,25 @@ mod tests {
         assert_eq!(sub('S'), Some(Action::SearchFacts), "Shift+S still Search Facts (editor)");
         assert_eq!(sub('I'), Some(Action::OpenContinuityLedger));
         assert_eq!(sub('A'), Some(Action::OpenReadThrough));
+        assert_eq!(sub('U'), Some(Action::OpenChronicle));
+        // CHRONICLE's Shift+U must not shadow the bare `Ctrl+B u` = UndoLastDelete
+        // (the matcher tracks Shift separately).
+        let plain_u = k.resolve_meta_sub(
+            &KeyEvent::new(KeyCode::Char('u'), KeyModifiers::NONE),
+            Focus::Editor,
+        );
+        assert_eq!(plain_u, Some(Action::UndoLastDelete), "bare Ctrl+B u still UndoLastDelete");
+    }
+
+    #[test]
+    fn chronicle_is_bound_to_ctrl_b_shift_u() {
+        let k = KeyBindings::defaults();
+        let ev = KeyEvent::new(KeyCode::Char('U'), KeyModifiers::SHIFT);
+        assert_eq!(
+            k.resolve_meta_sub(&ev, Focus::Editor),
+            Some(Action::OpenChronicle),
+            "Ctrl+B Shift+U opens the chronicle dashboard"
+        );
     }
 
     #[test]
