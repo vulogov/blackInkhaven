@@ -30,6 +30,8 @@ Output: `KNOW_YOUR_BOOK.pdf`. Each chapter is its own file in `chapters/`.
 - **III · The Book Reads Itself** — the read-through (LECTOR); the voices (CHORUS).
 - **IV · Knowing You're Getting Somewhere** — did it get better? (CHRONICLE).
 - **V · All Together** — one scene through every check.
+- **VI · The Readers Who Question** — the inner family: Inner Socrates (the
+  Dialectician), the Inner Editor, the Inner Theologian, the Inner Poet.
 - **Appendix A** — the knowledge commands, chords, and tags.
 - **Appendix B** — glossary.
 

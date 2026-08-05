@@ -32,7 +32,18 @@ different question you would otherwise have to answer from memory:
   How does the whole thing read, start to end? ........   LECTOR
   Do my characters sound like different people? .......   CHORUS
   Did this revision actually make it better? ..........   CHRONICLE
+  ── and the readers who do not answer, but ask ──
+  Have I earned this claim, or only asserted it? ......   Inner Socrates
+  Is the prose doing what I think it's doing? .........   Inner Editor
+  Is the moral weight honest to its own tradition? ....   Inner Theologian
+  Does the verse keep the form it claims? .............   Inner Poet
 ```]
+
+The first group *tells you what is true* — the state of your book. The last group —
+the *inner readers* — does something quieter and stranger: it *asks whether you have
+earned it*. A Socratic questioner will not fix your argument; it will name the premise
+you never said aloud. Both are ways of knowing your book, and Part VI is given to the
+readers who question.
 
 You do not have to use all of them, and few books need every one. Read the chapter
 for the question that is nagging you today; the book is arranged so each stands on
