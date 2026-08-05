@@ -33,6 +33,19 @@ need the way to say it.
   chord_row("Ctrl+B Shift+C", "The unified review pass — the fast checks in one sweep."),
 ))
 
+#section("The readers who question (the inner family)")
+
+#chord_table((
+  chord_row("Ctrl+B J", "Inner Socrates — the overview; J → S cycles the persona, J → E the slow reading."),
+  chord_row("Ctrl+V O", "The Inner Editor — O for Observe; E engage, A ambient, F findings."),
+  chord_row("Ctrl+B J → T", "The Inner Theologian — the two-pass moral reading (eleven lenses)."),
+  chord_row("Ctrl+B J → P", "The Inner Poet — F scan, E deep, D declare form, T translation view, A ambient."),
+  chord_row("inkhaven inner-socrates", "The Dialectician from the command line. check / findings / persona."),
+  chord_row("inkhaven inner-editor", "The craft reading. engage / findings / config."),
+  chord_row("inkhaven theologian", "The moral reading. scan / session."),
+  chord_row("inkhaven poetry", "Verse measured against a declared form. forms / scan / metre / rhyme / trilemma."),
+))
+
 #section("The tags that declare knowledge (KEN)")
 
 #chord_table((

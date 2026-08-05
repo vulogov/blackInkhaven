@@ -36,6 +36,12 @@
   part(number: "V", title: "All Together"),
   include "chapters/08-a-scene-through-every-check.typ",
 
+  part(number: "VI", title: "The Readers Who Question"),
+  include "chapters/09-inner-socrates.typ",
+  include "chapters/10-inner-editor.typ",
+  include "chapters/11-inner-theologian.typ",
+  include "chapters/12-inner-poet.typ",
+
   include "chapters/a-the-knowledge-commands.typ",
   include "chapters/b-glossary.typ",
 
