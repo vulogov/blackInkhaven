@@ -15,6 +15,7 @@
 //! bridge in.
 #![allow(dead_code)]
 
+pub mod check;
 pub mod grants;
 pub mod walk;
 
@@ -67,13 +68,15 @@ pub enum UseVia {
 }
 
 /// A place where a character references / acts on a topic — the thing checked
-/// against their earliest grant.
+/// against their earliest grant. `anchor` is the paragraph the use occurs in (the
+/// jump target for a finding).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Use {
     pub character: String,
     pub topic: String,
     pub at: ScenePos,
     pub via: UseVia,
+    pub anchor: Uuid,
 }
 
 /// Epistemic-finding severity. Higher `rank` = more severe (matches the sibling
