@@ -11,7 +11,7 @@
 #let book_subtitle = "The Intelligence That Reads Along With You"
 #let book_author   = "Vladimir Ulogov"
 #let book_year     = "2026"
-#let book_version  = "Inkhaven 2.6.0"
+#let book_version  = "Inkhaven 3.0.0"
 
 // ── Palette — warm paper, cool ink, restrained accents ──────────────
 #let ink_black   = rgb("#1a1a1a")
