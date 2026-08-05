@@ -92,14 +92,21 @@ crates**.
 
 Three steps, each built almost entirely on substrate that already exists:
 
-**Import → notes become comments.**
-A reader note *is* a comment. `readers import <file> --reader "Sam"` parses a feedback
-file (a flat `ch N: …` list, a markdown notes doc, or plain paragraphs), and for each
-note **anchors it to a paragraph** — explicit `ch N` via the deterministic
-chapter-resolver, else free text via `book_rag::retrieve` (top-scored hit → paragraph
-Uuid) — then lands it as a `Comment` (author = the reader) in that paragraph's
-existing sidecar. Zero new storage: the `Ctrl+V Shift+C` comment panel, `ink.review.*`,
-resolve/export all light up for free. Fuzzy anchors are surfaced for confirmation.
+**Import → the readers' own comments become inkhaven comments.**
+READERS does **not** assume the author types notes. The real beta workflow is: the
+author distributes a `.docx` (or Google Doc), readers leave **inline comments**, and the
+author gets the commented file back — so `readers import book-with-sam-comments.docx`
+extracts each reader comment `(author, anchored-text, note)` straight out of
+`word/comments.xml`. The author transcribes nothing; the reader names and notes are the
+readers' own. (inkhaven already reads zips + XML for the EPUB importer — no new crates —
+and already *writes* `.docx`, so this completes that round-trip.) A plain `ch N: …` /
+markdown / notes file remains a **fallback** for feedback that arrived by email or a
+verbal call the author is pasting in. Either way each note is **anchored to a paragraph**
+— explicit `ch N` via the deterministic chapter-resolver, else the comment's anchored
+text via `book_rag::retrieve` (top-scored hit → paragraph Uuid) — and landed as a
+`Comment` (author = the reader) in that paragraph's existing sidecar. Zero new storage:
+the `Ctrl+V Shift+C` panel, `ink.review.*`, resolve/export all light up for free. Fuzzy
+anchors are surfaced for confirmation.
 
 **Reconcile → the native core.**
 `readers reconcile` reads the reader-authored comments and runs `collect` (every AI
@@ -171,7 +178,10 @@ cost-capped, never book-wide.
 
 - Not a new AI reader — it's the *conduit* for the real ones, and the reconciler that
   makes the AI ones earn out.
-- Not a survey tool — it ingests notes the writer already has; it doesn't collect them.
+- Not a survey/collection tool — it ingests the readers' *own* commented documents (the
+  `.docx` they annotated); it does **not** provide a reader-facing surface (no comment
+  server, no browser widget). It relies on the tools readers already use (Word, Google
+  Docs, later PDF). Building distribution/collection would be a different product.
 - Not a prose editor — it lands comments and promotes findings; it never writes prose
   (REDLINE, gated by the confirmed-diff contract, still owns every edit).
 - Not magic anchoring — every fuzzy anchor is a proposal the writer confirms.
