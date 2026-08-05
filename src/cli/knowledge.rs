@@ -13,7 +13,13 @@ use crate::project::ProjectLayout;
 use crate::store::hierarchy::Hierarchy;
 use crate::store::Store;
 
-pub fn run(project: &Path, book_name: Option<&str>, json: bool) -> Result<()> {
+pub fn run(
+    project: &Path,
+    book_name: Option<&str>,
+    json: bool,
+    deep: bool,
+    max_cost: usize,
+) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
     let cfg = Config::load_layered(&layout.config_path())?;
@@ -21,7 +27,12 @@ pub fn run(project: &Path, book_name: Option<&str>, json: bool) -> Result<()> {
     let h = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
     let book = crate::cli::resolve_user_book(&h, book_name, "knowledge").map_err(Error::Store)?;
 
-    let findings = crate::ken::check::run(&layout, &h, &cfg, book);
+    let mut findings = crate::ken::check::run(&layout, &h, &cfg, book);
+    // The opt-in, cost-capped LLM pass for the subtle (unnamed) cases.
+    if deep {
+        eprintln!("knowledge: running the LLM implied-irony pass…");
+        findings.extend(crate::ken::deep::run(project, book_name, max_cost, false).map_err(Error::Store)?);
+    }
     let breaks = findings.iter().filter(|f| f.severity == Severity::Break).count();
 
     if json {

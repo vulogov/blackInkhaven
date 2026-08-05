@@ -1427,6 +1427,14 @@ pub enum Command {
         /// Emit the findings as JSON.
         #[arg(long)]
         json: bool,
+        /// Add the opt-in, cost-capped LLM `implied_irony` pass — the subtle cases
+        /// (a character acting on knowledge without naming it) the deterministic
+        /// core can't see.
+        #[arg(long)]
+        deep: bool,
+        /// Soft token budget for `--deep` (informative preflight, never blocks).
+        #[arg(long, default_value_t = 8000)]
+        max_cost: usize,
     },
     /// LECTOR-1 (2.3) — the read-through report: the book read forward, once, as a
     /// first reader. The measured intensity curve + per-chapter scene/sequel beat +
@@ -6865,8 +6873,8 @@ impl Cli {
             Command::Revise { book_name, json } => {
                 revise::run(&project, book_name.as_deref(), json).map_err(Into::into)
             }
-            Command::Knowledge { book_name, json } => {
-                knowledge::run(&project, book_name.as_deref(), json).map_err(Into::into)
+            Command::Knowledge { book_name, json, deep, max_cost } => {
+                knowledge::run(&project, book_name.as_deref(), json, deep, max_cost).map_err(Into::into)
             }
             Command::Chronicle { cmd } => match cmd {
                 None => chronicle::trend(&project, None, false).map_err(Into::into),
