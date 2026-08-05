@@ -33,6 +33,7 @@ mod stylist;
 mod continuity;
 mod lector;
 mod revise;
+mod chronicle;
 mod utopia;
 #[path = "char.rs"]
 mod char_arc;
@@ -78,6 +79,7 @@ pub fn register_ink_stdlib(vm: &mut VM) -> Result<()> {
     continuity::register(vm)?;
     lector::register(vm)?;
     revise::register(vm)?;
+    chronicle::register(vm)?;
     utopia::register(vm)?;
     char_arc::register(vm)?;
     theologian::register(vm)?;

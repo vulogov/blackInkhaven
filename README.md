@@ -27,46 +27,42 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 2.4.0 — REDLINE: The Revision Partner
+## Latest release · 2.5.0 — CHRONICLE: The Draft Chronicle
 
-Read the full notes: [`Documentation/RELEASE_NOTES/2.4.0.md`](Documentation/RELEASE_NOTES/2.4.0.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/2.5.0.md`](Documentation/RELEASE_NOTES/2.5.0.md)
 
-Every reader Inkhaven had built *diagnoses* — SENTINEL the continuity break, LECTOR the saggy act,
-the Inner Editor the telling-not-showing, CHORUS the two voices that read alike. Diagnosis is where
-most tools stop. 2.4's flagship, **REDLINE**, is the pass that helps you **act**: it turns every
-finding into an author-confirmed change, with the right kind of help per problem — and it **never
-edits your prose without a confirmed diff and a snapshot first**. See
-[`Documentation/REDLINE.md`](Documentation/REDLINE.md).
+Every reader Inkhaven has built *diagnoses* the current draft — SENTINEL the continuity break, LECTOR
+the saggy act, CHORUS the voices that read alike — and REDLINE (2.4) helped you *act* on all of it.
+But nothing remembered what your book measured last draft. 2.5's flagship, **CHRONICLE**, answers the
+one question a reviser most wants answered: *did it get better?* It snapshots the readers' collective
+verdict at each draft milestone and trends it — and it is **pure measurement**, with no prose-write
+path anywhere. See [`Documentation/CHRONICLE.md`](Documentation/CHRONICLE.md).
 
 ### What's new
 
-- **The unified worklist** — the Editorial Pass (`Ctrl+V Shift+R`) and `inkhaven revise` now gather
-  **every reader's findings into one ranked list**: the prose checks, `plan` structure, Facts &
-  drift, **SENTINEL** continuity, the **LECTOR** read-through, the **Inner Editor**'s craft notes,
-  and **CHORUS** voice.
-- **Three kinds of help** — each finding shows *how* it can be acted on: **`✎` rewrite** (a
-  diff-reviewed local prose fix — de-echo, tighten, show-don't-tell, de-filter, period-fit, or apply
-  an Inner-Editor craft note), **`⇄` decision** (the AI can't know which fact is right — you say
-  what's true, it reconciles the paragraph), **`✉` brief** (developmental advice for a structural
-  problem, never a rewrite — it lands in the Thoughts pane).
-- **The editorial letter** — `inkhaven revise` synthesises the whole worklist into one developmental
-  letter: the big picture first, then grouped by theme (continuity, structure & pacing, voice &
-  character, line & prose), most important first. `--json` dumps the findings for tooling.
-- **One safety contract** — every prose change streams through the same path: a rewrite you see as a
-  diff and accept or reject, and a **snapshot of your old prose taken before the replace**
-  (F6-restorable). There is no unconfirmed prose-write path; the `F` batch is Rewrite-only by
-  construction.
-- **The surfaces** — `inkhaven revise` (`--book-name`/`--json`); the `Ctrl+V Shift+R` Editorial Pass
-  with a response glyph per row; `ink.revise.{findings,check}` Bund words (read-only).
-- **Multilingual** — the editorial letter and every brief are written in the manuscript's language;
-  an Inner-Editor note is carried through in the language it was written in.
-- **Docs** — a new `REDLINE.md` + Tutorial 113 + the *Developing a Story* book audited.
+- **Mark & trend** — `inkhaven chronicle mark "draft-2"` captures the whole diagnostic state in one
+  `collect` call (every reader's findings, tallied + fingerprinted); bare `inkhaven chronicle` trends
+  the live state against your last mark — headline counts + the categories that changed, every count
+  **fewer-is-better** (▼ improvement / ▲ regression, regressions first). `chronicle diff <a> <b>`
+  compares two milestones.
+- **The REDLINE hook — cleared vs introduced** — because every finding has a stable fingerprint,
+  CHRONICLE set-differences each revision into **cleared** (your revision resolved these),
+  **introduced** (new — your edits created these), and unchanged. This closes REDLINE's loop: proof
+  the work landed, plus an early warning on collateral damage.
+- **The dashboard** — `Ctrl+B Shift+U` opens the trend + the cleared/introduced split; **Enter**
+  jumps to an introduced finding's paragraph, **`m`** marks the current draft in place.
+- **The surfaces** — `inkhaven chronicle` (`mark` / `list` / `diff` / `--json`); the `Ctrl+B Shift+U`
+  dashboard; `ink.chronicle.{marks,trend,check}` Bund words (read-only — marking is not exposed;
+  `check.clean` = no error-severity finding introduced since the last mark, a pre-submit gate).
+- **Pure measurement** — no prose-write path anywhere; deterministic and free (it reuses every metric
+  engine 2.x shipped). CHRONICLE never resolves git refs — `--ref` is stored verbatim.
+- **Docs** — a new `CHRONICLE.md` + Tutorial 114 + the *Developing a Story* book audited.
 
 ### Dependencies & compatibility
 
-No new dependencies — REDLINE is the *actioning* layer over the readers you already have, built on
-the confirmed-diff + snapshot contract the editor has used since 1.2. It adds no unconfirmed
-prose-write path; existing projects need no migration. Compiles warning-free. Test suite → 2871.
+No new dependencies and no new config — CHRONICLE reuses the unified worklist and every reader you
+already have, persisting milestones to a `chronicle.db` beside the other per-project stores (created
+lazily on first mark). Existing projects need no migration. Compiles warning-free. Test suite → 2884.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

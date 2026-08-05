@@ -327,6 +327,10 @@ impl super::App {
             self.draw_read_through_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::Chronicle { .. }) {
+            self.draw_chronicle_modal(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::InnerEditorOverview { .. }) {
             self.draw_inner_editor_overview_modal(f, area);
             return;

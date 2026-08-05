@@ -27,6 +27,7 @@ pub mod cost;
 pub mod goals;
 pub mod readthrough;
 pub mod revise;
+pub mod chronicle;
 pub mod event;
 pub mod event_critique;
 pub mod comments;
@@ -1403,6 +1404,15 @@ pub enum Command {
         /// Emit the findings as JSON instead of the letter.
         #[arg(long)]
         json: bool,
+    },
+    /// CHRONICLE-1 (2.5) — the draft-history intelligence: capture the readers'
+    /// metrics as a named draft milestone, then trend it over time. `mark` stamps
+    /// the current draft; `list` shows the milestones. Pure measurement — CHRONICLE
+    /// never edits the manuscript.
+    Chronicle {
+        /// Omit for the trend since the last milestone (the default view).
+        #[command(subcommand)]
+        cmd: Option<ChronicleCommand>,
     },
     /// LECTOR-1 (2.3) — the read-through report: the book read forward, once, as a
     /// first reader. The measured intensity curve + per-chapter scene/sequel beat +
@@ -3201,8 +3211,57 @@ pub enum WordnetCommand {
     List,
 }
 
-/// 2.0 (SEMNET-P0/P3) — `inkhaven graph` verbs.
+/// CHRONICLE-1 (2.5) — `inkhaven chronicle` verbs.
 #[derive(Debug, clap::Subcommand)]
+pub enum ChronicleCommand {
+    /// Capture a draft milestone now — the readers' metrics + the finding set.
+    Mark {
+        /// A label for this draft ("draft-3", "beta-1", "post-edit", …).
+        label: String,
+        /// A git ref to record verbatim alongside the milestone (stored for your
+        /// bookkeeping; CHRONICLE never resolves or enumerates git refs).
+        #[arg(long = "ref")]
+        git_ref: Option<String>,
+        /// Restrict to a single book (slug or title). Default: the whole project.
+        #[arg(long)]
+        book_name: Option<String>,
+    },
+    /// List captured milestones, newest first.
+    List {
+        /// Restrict to a single book (slug or title). Default: the whole project.
+        #[arg(long)]
+        book_name: Option<String>,
+        /// Emit as JSON instead of the table.
+        #[arg(long)]
+        json: bool,
+    },
+    /// The trend since the last milestone (the default when no subcommand is given):
+    /// capture the live state and diff it against the most recent mark.
+    Trend {
+        /// Restrict to a single book (slug or title). Default: the whole project.
+        #[arg(long)]
+        book_name: Option<String>,
+        /// Emit as JSON instead of the table.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Diff two named milestones head-to-head (`from` → `to`).
+    Diff {
+        /// The earlier ("from") milestone label.
+        from: String,
+        /// The later ("to") milestone label.
+        to: String,
+        /// Restrict to a single book (slug or title). Default: the whole project.
+        #[arg(long)]
+        book_name: Option<String>,
+        /// Emit as JSON instead of the table.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+/// 2.0 (SEMNET-P0/P3) — `inkhaven graph` verbs.
+#[derive(Debug, Subcommand)]
 pub enum GraphCommand {
     /// Node + edge counts and a per-kind breakdown.
     Stats,
@@ -6792,6 +6851,22 @@ impl Cli {
             Command::Revise { book_name, json } => {
                 revise::run(&project, book_name.as_deref(), json).map_err(Into::into)
             }
+            Command::Chronicle { cmd } => match cmd {
+                None => chronicle::trend(&project, None, false).map_err(Into::into),
+                Some(ChronicleCommand::Mark { label, git_ref, book_name }) => {
+                    chronicle::mark(&project, &label, git_ref.as_deref(), book_name.as_deref())
+                        .map_err(Into::into)
+                }
+                Some(ChronicleCommand::List { book_name, json }) => {
+                    chronicle::list(&project, book_name.as_deref(), json).map_err(Into::into)
+                }
+                Some(ChronicleCommand::Trend { book_name, json }) => {
+                    chronicle::trend(&project, book_name.as_deref(), json).map_err(Into::into)
+                }
+                Some(ChronicleCommand::Diff { from, to, book_name, json }) => {
+                    chronicle::diff(&project, &from, &to, book_name.as_deref(), json).map_err(Into::into)
+                }
+            },
             Command::Readthrough { deep, max_cost, force, json } => {
                 readthrough::run(&project, deep, max_cost, force, json).map_err(Into::into)
             }
