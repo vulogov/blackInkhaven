@@ -95,10 +95,10 @@ static ES: DialogueLexicon = DialogueLexicon {
 };
 
 /// Like [`lexicon_for`], but with the config's genre verb extras folded in
-/// (`dialogue.extra_neutral_verbs` / `extra_said_bookisms`). Leaks the folded
-/// lists to `'static` — the same pattern `prose`'s lexicon uses; called once
-/// per refresh, so the leak is bounded by the (tiny) config size. Falls back to
-/// the static lexicon when there are no extras.
+/// (`dialogue.extra_neutral_verbs` / `extra_said_bookisms`). The folded lexicon
+/// is leaked to `'static` and cached per distinct (lang, extras), so repeated
+/// refreshes over a session reuse it rather than leaking anew each call. Falls
+/// back to the static lexicon when there are no extras.
 pub(crate) fn lexicon_for_with(
     lang: &ProseLanguage,
     extra_neutral: &[String],
@@ -108,6 +108,26 @@ pub(crate) fn lexicon_for_with(
     if extra_neutral.is_empty() && extra_bookism.is_empty() {
         return base;
     }
+    // M8 (3.0.0 P2) — fold the config's extra verbs into a `'static` lexicon
+    // ONCE per distinct (lang, extras) and cache it. This runs on every dialogue
+    // refresh; the old code `Box::leak`ed a fresh lexicon each call, so a long
+    // session with configured extras leaked unboundedly.
+    #[allow(clippy::type_complexity)]
+    static CACHE: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, &'static DialogueLexicon>>,
+    > = std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    let key = format!(
+        "{lang:?}\u{1}{}\u{1}{}",
+        extra_neutral.join("\u{2}"),
+        extra_bookism.join("\u{2}")
+    );
+    {
+        let map = cache.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(l) = map.get(&key) {
+            return l;
+        }
+    }
     let mut neutral: Vec<&'static str> = base.neutral.to_vec();
     for v in extra_neutral {
         neutral.push(Box::leak(v.to_lowercase().into_boxed_str()));
@@ -116,11 +136,16 @@ pub(crate) fn lexicon_for_with(
     for v in extra_bookism {
         bookism.push(Box::leak(v.to_lowercase().into_boxed_str()));
     }
-    Box::leak(Box::new(DialogueLexicon {
+    let leaked: &'static DialogueLexicon = Box::leak(Box::new(DialogueLexicon {
         neutral: Box::leak(neutral.into_boxed_slice()),
         said_bookism: Box::leak(bookism.into_boxed_slice()),
         stem_fallback: base.stem_fallback,
-    }))
+    }));
+    cache
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(key, leaked);
+    leaked
 }
 
 /// The verb lexicon for a language. `Other` falls back to the EN lists (per

@@ -38,6 +38,10 @@ fn seed_at(base: u64, i: usize) -> u64 {
 /// Returns fewer than `count` only when the inventory is too small to produce
 /// that many distinct forms.
 pub fn names(phon: &Phonology, count: usize, seed: u64) -> Vec<String> {
+    // L2 (3.0.0 P2) — cap the batch like `prose`; a script-supplied `count`
+    // (e.g. via `ink.lang.names`, which is default-allowed) was uncapped and
+    // drove an O(count^2) dedup + runaway Vec on the eval thread.
+    let count = count.min(crate::conlang::generate::word::MAX_GENERATE_BATCH);
     let mut out: Vec<String> = Vec::new();
     let limit = count.saturating_mul(40) + 50;
     let mut i = 0;
