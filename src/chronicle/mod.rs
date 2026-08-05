@@ -159,6 +159,36 @@ pub fn capture(project: &Path, book_name: Option<&str>) -> crate::error::Result<
     Ok(summarise(&report))
 }
 
+/// Capture and persist a milestone now, returning its metric vector. The no-IO
+/// path shared by `chronicle mark` (CLI, which then prints the headline) and the
+/// dashboard's `m` quick-mark (TUI, which must NOT touch stdout in raw mode).
+/// `book_slug` is the pre-resolved canonical slug to scope by (`None` = whole
+/// project); `book_name` is the same book as a `collect` filter.
+pub fn record(
+    project: &Path,
+    label: &str,
+    book_name: Option<&str>,
+    book_slug: Option<String>,
+    git_ref: Option<String>,
+) -> crate::error::Result<MetricVector> {
+    let (metrics, findings) = capture(project, book_name)?;
+    let milestone = Milestone {
+        id: Uuid::new_v4(),
+        label: label.to_string(),
+        day: crate::dayclock::today_days(),
+        ts: crate::dayclock::now_secs(),
+        book_slug,
+        git_ref,
+        metrics: metrics.clone(),
+    };
+    let store = store::ChronicleStore::open_for_project(project)
+        .map_err(|e| crate::error::Error::Store(e.to_string()))?;
+    store
+        .insert_milestone(&milestone, &findings)
+        .map_err(|e| crate::error::Error::Store(e.to_string()))?;
+    Ok(metrics)
+}
+
 /// The readers' collective verdict at one draft milestone, tallied from a single
 /// [`crate::cli::editorial::collect`] report. Every count is "fewer is better"
 /// (findings the readers raised), so a falling number is an improvement — except
