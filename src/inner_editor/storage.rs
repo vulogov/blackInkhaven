@@ -128,7 +128,7 @@ impl InnerEditorStore {
     pub const CONVERSATION_SUB_BUDGET: &'static str = "conversation";
 
     pub fn open(path: &Path) -> Result<Self> {
-        Ok(Self { engine: Arc::new(StorageEngine::new(path, INIT_SQL, 2)?) })
+        Ok(Self { engine: Arc::new(StorageEngine::new_versioned(path, INIT_SQL, 2, 1)?) })
     }
 
     /// `<project>/inner_editor.db`, beside `inner_socrates.db` / `world.db`.

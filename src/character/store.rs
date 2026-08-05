@@ -86,7 +86,7 @@ impl CharStore {
     pub(crate) fn open(project_root: &Path) -> Result<CharStore> {
         let dir = project_root.join(".inkhaven");
         std::fs::create_dir_all(&dir)?;
-        let engine = StorageEngine::new(dir.join("char.duckdb"), SCHEMA, 4)?;
+        let engine = StorageEngine::new_versioned(dir.join("char.duckdb"), SCHEMA, 4, 1)?;
         Ok(CharStore { engine })
     }
 

@@ -27,42 +27,34 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 2.6.0 — KEN: Who Knows What, When
+## Latest release · 3.0.0 — The Stable Edition
 
-Read the full notes: [`Documentation/RELEASE_NOTES/2.6.0.md`](Documentation/RELEASE_NOTES/2.6.0.md)
+Read the full notes: [`Documentation/RELEASE_NOTES/3.0.0.md`](Documentation/RELEASE_NOTES/3.0.0.md)
 
-Inkhaven watches where a character is, whether they exist yet, whether the world holds together, how
-their arc bends, whose head we're in — but nothing watched the one thing a mystery lives or dies on:
-what a character **knows**. 2.6's flagship, **KEN**, is SENTINEL's *referenced-before-introduced*
-invariant extended to **knowledge**: it flags a character acting on a fact before they could know it.
-It is **deterministic and free** at the core, and produces a finding a generic AI can't — because it
-needs the timeline, event-participant lists, character bible, and scene POV only inkhaven maintains.
-See [`Documentation/KNOWLEDGE.md`](Documentation/KNOWLEDGE.md).
+3.0.0 closes the 2.x arc and promotes Inkhaven to a **stable, maintained edition**. The intelligence
+suite — the book that watches, reads, and remembers itself (SEMNET → GRAPHMIND → CHORUS → SENTINEL →
+LECTOR → REDLINE → CHRONICLE → KEN) — is complete. From here the work is **maintenance: bug fixes and
+refinements to existing features, not new ones.** This release is the line drawn under the surface
+that will be maintained.
 
-### What's new
+### What "stable" meant
 
-- **The grant — when could they know it?** — derived deterministically: **presence** (a character in
-  a timeline event's participant list knows it from the moment it happens) + **declared** tags
-  (`secret:<topic>`, `know:<topic>[@name]`, `reveals:<topic>`). No guessing.
-- **What it catches** — a *use* (a topic named in a character's attributed **dialogue** or **POV**
-  narration, matched Unicode-aware over DIALOG-1's speaker attribution) before the earliest grant:
-  **`premature_knowledge`**, **`leaked_secret`** (a `secret:` used by someone never told), and
-  **`dropped_reveal`** (a declared reveal that never surfaces). Opt-in **`implied_irony`** (`--deep`)
-  catches a character acting knowing *without naming it* — a cost-capped LLM pass.
-- **The surfaces** — `inkhaven knowledge` (`--json`, non-zero exit as a CI gate; `--deep`); the
-  `Ctrl+B Shift+Z` dashboard (Enter jumps to the paragraph — the last free Ctrl+B chord); the
-  `Ctrl+V Shift+R` Editorial Pass (routed **Decision**: fix the leak, move the reveal, or add a
-  grant); `ink.knowledge.{grants,findings,check}` Bund (read-only).
-- **Cost is a design invariant** — the core is a forward walk + mention matching, **no model, ≈ $0 at
-  any book size** (it scales with your tags, not your page count) and self-gating (no tags + no
-  events → no work). Only `--deep` calls a model, cost-capped.
-- **Docs** — a new `KNOWLEDGE.md` + Tutorial 115 + the *Developing a Story* book audited.
+- **A seven-partition adversarial audit** of all 304K lines found the codebase fundamentally sound —
+  zero Critical issues; the Bund sandbox, UTF-8 handling across five languages, the panic surface, and
+  atomic saves all verified clean.
+- **Every surviving finding was fixed:** transactional chronicle writes + schema-version anchors on 14
+  stores; atomic EPUB/WordNet writes; a guarded PDF importer; a cap on the utopia Stage-2 paid-LLM
+  runaway; book-scale performance (no per-frame database query, no accidental O(n²), no full-book scan
+  on the editor thread); a closed scripting DoS. **Zero breaking changes.**
+- **The documentation is now the contract:** new docs for the scholarly apparatus, the technical-doc
+  checks, the rigor reader, threads, and the back-of-book index; 21 previously-undocumented config
+  blocks specified; and a canonical [`FEATURE_INDEX.md`](Documentation/FEATURE_INDEX.md) mapping every
+  feature to its CLI verb, chord, doc, and scripting namespace.
 
 ### Dependencies & compatibility
 
-No new dependencies and no new config — KEN reuses SENTINEL's mention matcher, DIALOG-1's attribution,
-CHORUS's scenes/POV, and the timeline you already keep; it declares knowledge with `secret:` /
-`know:` / `reveals:` tags. Existing projects need no migration. Compiles warning-free. Test suite → 2904.
+No new dependencies, no breaking changes. Existing projects open unchanged; the new schema anchors
+stamp themselves on first open. Compiles warning-free. Test suite → 2904.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).

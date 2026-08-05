@@ -100,7 +100,7 @@ pub struct InnerPoetStore {
 
 impl InnerPoetStore {
     pub fn open(path: &Path) -> Result<Self> {
-        Ok(Self { engine: Arc::new(StorageEngine::new(path, INIT_SQL, 2)?) })
+        Ok(Self { engine: Arc::new(StorageEngine::new_versioned(path, INIT_SQL, 2, 1)?) })
     }
 
     /// `<project>/inner_poet.db`, beside `inner_editor.db` / `inner_socrates.db`.

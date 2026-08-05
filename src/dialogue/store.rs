@@ -91,7 +91,7 @@ impl DialogueStore {
     pub(crate) fn open(project_root: &Path) -> Result<DialogueStore> {
         let dir = project_root.join(".inkhaven");
         std::fs::create_dir_all(&dir)?;
-        let engine = StorageEngine::new(dir.join("dialogue.duckdb"), SCHEMA, 4)?;
+        let engine = StorageEngine::new_versioned(dir.join("dialogue.duckdb"), SCHEMA, 4, 1)?;
         Ok(DialogueStore { engine })
     }
 

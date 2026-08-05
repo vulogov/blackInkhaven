@@ -480,7 +480,10 @@ pub fn detect_contradictions(
             let a = directed[a_i];
             let b = directed[b_i];
             if b.sentence.saturating_sub(a.sentence) > cfg.spatial_window {
-                continue;
+                // M7 (3.0.0 P2) — quantities are sentence-ascending (see
+                // `extract_quantities`), so once `b` is past the window every
+                // later `b` is too: break, don't scan the rest (was O(n^2)).
+                break;
             }
             let (Some(da), Some(db)) = (a.direction, b.direction) else {
                 continue;
@@ -511,7 +514,9 @@ pub fn detect_contradictions(
                 let a = temporal[a_i];
                 let b = temporal[b_i];
                 if b.sentence.saturating_sub(a.sentence) > cfg.temporal_window {
-                    continue;
+                    // M7 — sentence-ascending, so break rather than scan the
+                    // rest of the window-exceeding pairs (was O(n^2)).
+                    break;
                 }
                 // Different normalised duration → possible
                 // mismatch.  Equal durations (3 days vs 72

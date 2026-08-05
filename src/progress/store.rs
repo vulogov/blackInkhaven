@@ -57,7 +57,7 @@ pub struct ProgressStore {
 
 impl ProgressStore {
     pub fn open(path: &Path) -> Result<Self> {
-        let engine = StorageEngine::new(path, INIT_SQL, 2)?;
+        let engine = StorageEngine::new_versioned(path, INIT_SQL, 2, 1)?;
         Ok(Self {
             engine: std::sync::Arc::new(engine),
         })

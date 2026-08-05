@@ -89,7 +89,7 @@ fn row_to_finding(row: &[DuckValue]) -> Option<FindingRef> {
 impl ChronicleStore {
     /// Open (creating if needed) the store at `path`.
     pub fn open(path: &Path) -> Result<Self> {
-        let engine = StorageEngine::new(path, INIT_SQL, 2)?;
+        let engine = StorageEngine::new_versioned(path, INIT_SQL, 2, 1)?;
         Ok(Self { engine: Arc::new(engine) })
     }
 
@@ -103,21 +103,29 @@ impl ChronicleStore {
     pub fn insert_milestone(&self, m: &Milestone, findings: &[FindingRef]) -> Result<()> {
         let id = m.id.to_string();
         let metrics_json = serde_json::to_string(&m.metrics)?;
-        self.engine.execute_with(
-            "INSERT INTO milestones (id, label, day, ts, book_slug, git_ref, metrics_json)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
-            &[&id, &m.label, &m.day, &m.ts, &m.book_slug, &m.git_ref, &metrics_json],
-        )?;
-        for f in findings {
-            let para = f.paragraph.map(|p| p.to_string());
-            self.engine.execute_with(
-                "INSERT INTO milestone_findings
-                 (milestone_id, fingerprint, category, severity, location, paragraph)
-                 VALUES (?, ?, ?, ?, ?, ?)",
-                &[&id, &f.fingerprint, &f.category, &f.severity, &f.location, &para],
+        // One transaction, not N autocommitting INSERTs: a crash / disk-full /
+        // transient error mid-loop must not commit a milestone row with a
+        // *truncated* finding set — a partial milestone would make
+        // `chronicle diff` report never-written findings as CLEARED, silently
+        // corrupting non-rebuildable draft history. Mirrors the DELETE+INSERT
+        // transaction pattern in `inner_poet`/`inner_editor` storage.
+        self.engine.transaction(|conn| {
+            conn.execute(
+                "INSERT INTO milestones (id, label, day, ts, book_slug, git_ref, metrics_json)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+                duckdb::params![id, m.label, m.day, m.ts, m.book_slug, m.git_ref, metrics_json],
             )?;
-        }
-        Ok(())
+            for f in findings {
+                let para = f.paragraph.map(|p| p.to_string());
+                conn.execute(
+                    "INSERT INTO milestone_findings
+                     (milestone_id, fingerprint, category, severity, location, paragraph)
+                     VALUES (?, ?, ?, ?, ?, ?)",
+                    duckdb::params![id, f.fingerprint, f.category, f.severity, f.location, para],
+                )?;
+            }
+            Ok(())
+        })
     }
 
     /// Every milestone (newest first). `book_slug = Some(..)` restricts to that
