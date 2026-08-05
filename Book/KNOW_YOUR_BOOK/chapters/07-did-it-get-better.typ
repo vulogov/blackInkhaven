@@ -56,8 +56,8 @@ CHRONICLE closes the loop the rest of this book opens: the readers diagnose, you
 revise, and CHRONICLE tells you whether it worked.
 
 #recap((
-  [A *milestone* (`chronicle mark`) snapshots every reader's verdict; `inkhaven
-  chronicle` trends the live book against it, every count *fewer-is-better*.],
+  [A *milestone* (`chronicle mark`) snapshots every reader's verdict;
+  `inkhaven chronicle` trends the live book against it, every count *fewer-is-better*.],
   [The signature move is *cleared vs. introduced* — which findings your revision
   resolved, and which new ones it created.],
   [`Ctrl+B Shift+U` opens the dashboard; *Enter* jumps to an introduced finding. Pure

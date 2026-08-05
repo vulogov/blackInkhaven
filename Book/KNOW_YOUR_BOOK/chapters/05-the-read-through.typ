@@ -50,8 +50,8 @@ actually hits, forward-only, so a later payoff never excuses an earlier dip:
 
 #section("A reader's eyes, on request")
 
-The forward walk cannot judge whether the stakes *land*. For that, `readthrough
---deep` (or `k` in the `Ctrl+B Shift+A` dashboard) runs a single, cost-capped
+The forward walk cannot judge whether the stakes *land*. For that,
+`readthrough --deep` (or `k` in the `Ctrl+B Shift+A` dashboard) runs a single, cost-capped
 *synthetic first read* — a language model reacting chapter by chapter as a reader who
 does not know the ending, seeing only a recap of what came before. It is the one
 place the book gets a stranger's opinion, and it is always something you ask for.
