@@ -15,6 +15,9 @@
 //! bridge in.
 #![allow(dead_code)]
 
+pub mod grants;
+pub mod walk;
+
 use uuid::Uuid;
 
 /// A position in reading order — the forward-walk key. Ordered lexicographically
