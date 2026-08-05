@@ -305,7 +305,9 @@ impl WordNet {
         let mut bytes = Vec::from(INDEX_MAGIC);
         bytes.push(INDEX_VERSION);
         bytes.extend(bincode::serialize(self).map_err(|e| format!("serialize wordnet: {e}"))?);
-        std::fs::write(path, bytes).map_err(|e| format!("write {}: {e}", path.display()))
+        // M6 (3.0.0 P2) — atomic write (temp + fsync + rename), so Ctrl-C or a
+        // crash mid-write during `wordnet fetch` can't truncate the prior index.
+        crate::io_atomic::write(path, &bytes).map_err(|e| format!("write {}: {e}", path.display()))
     }
 
     /// Load a previously-built index, verifying the version header.
