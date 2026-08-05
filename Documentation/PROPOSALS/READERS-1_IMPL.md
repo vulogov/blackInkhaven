@@ -71,16 +71,38 @@ New `src/readers/mod.rs` (+ `mod readers;` in `main.rs`).
 
 ## RE-P1 — import (value enabler)
 
+**READERS does not assume the author types notes — it ingests the readers' OWN
+comments from the document they annotated.** The dominant beta workflow is: the author
+distributes a `.docx` (or Google Doc), readers leave inline comments, the author gets
+the commented file back. Each comment already carries `(author, anchored-text, note)` —
+everything a `ReaderNote` needs. The author transcribes nothing.
+
 New `src/readers/import.rs` + `src/cli/readers.rs` + `Command::Readers{ReadersCommand}`.
-- `readers import <file> --reader <name> [--book-name] [--dry-run]`:
-  1. **parse** the feedback file into `(chapter_hint: Option<String>, text)` notes —
-     support a flat `ch N: …` / `Chapter N — …` line grammar, a markdown `## ch`
-     sectioned doc, and a blank-line-separated plain-notes fallback (pure `parse_notes`,
-     unit-tested).
-  2. **anchor** each: a `ch N` hint → `resolve_locations`-style chapter→paragraph; else
-     `book_rag::retrieve(store, h, cfg, book_id, text)` → top `is_hit` paragraph (record
-     `Anchor::Retrieved(score)`); below a score floor → `Anchor::Unplaced` (lands on the
-     chapter's first paragraph, flagged for confirmation).
+`readers import <file> [--reader <name>] [--book-name] [--dry-run]` — the source is
+sniffed by extension:
+
+1. **`.docx` (primary path — Word *and* Google Docs, which "Download as .docx"
+   preserves).** A docx is a zip of XML; comments live in `word/comments.xml`
+   (`w:comment` → `w:author`, body text) with anchor ranges in `document.xml`
+   (`w:commentRangeStart/End`). Extract each comment → `(reader = w:author, text =
+   comment body, anchored-text = the runs the comment range spans)`. inkhaven already
+   reads zips + XML for the EPUB importer (`zip` + `quick-xml` in-tree) — **no new
+   crates.** This is the round-trip completion of the existing `inkhaven docx` exporter.
+2. **plain text (fallback — for emailed / verbal feedback the author *is* pasting in):**
+   a flat `ch N: …` / `Chapter N — …` line grammar, a markdown `## ch` sectioned doc, or
+   blank-line-separated notes; `--reader` names the source. Pure `parse_notes`,
+   unit-tested. This is the only path where the author does data entry, by choice.
+
+*(PDF-annotation ingest is a later add; inkhaven does NOT build a reader-facing
+annotation surface — it relies on the tools readers already use. That boundary is in
+the PLAN §7.)*
+
+Then, for every note from either source:
+  - **anchor** it: a `ch N` hint → `resolve_locations`-style chapter→paragraph; a docx
+    comment's anchored-text (or a free-text note) → `book_rag::retrieve(store, h, cfg,
+    book_id, text)` → top `is_hit` paragraph (record `Anchor::Retrieved(score)`); below a
+    score floor → `Anchor::Unplaced` (lands on the chapter's first paragraph, flagged for
+    confirmation).
   3. **land** as a `Comment { author: "reader:<name>", text, char_start/end: 0..0 or the
      retrieved-hit span }` appended to the paragraph's sidecar via `save_to_sidecar`
      (reuse verbatim). Report = `EpubImportReport`-shape `{ notes, anchored,
