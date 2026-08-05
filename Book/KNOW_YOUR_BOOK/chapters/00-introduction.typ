@@ -25,18 +25,18 @@ Inkhaven's knowledge features are not one tool but a family, each answering a
 different question you would otherwise have to answer from memory:
 
 #screen(caption: "The questions — and who answers them")[```
-  Is this fact right, and where did it come from? ......  the Facts bible
-  How does everything in my book connect? .............   the knowledge graph
-  Is my continuity holding — place, time, numbers? ....   SENTINEL
-  Could this character know this yet? .................   KEN
-  How does the whole thing read, start to end? ........   LECTOR
-  Do my characters sound like different people? .......   CHORUS
-  Did this revision actually make it better? ..........   CHRONICLE
-  ── and the readers who do not answer, but ask ──
-  Have I earned this claim, or only asserted it? ......   Inner Socrates
-  Is the prose doing what I think it's doing? .........   Inner Editor
-  Is the moral weight honest to its own tradition? ....   Inner Theologian
-  Does the verse keep the form it claims? .............   Inner Poet
+  the Facts bible  │ Is this fact right, sourced?
+  the graph        │ How does it all connect?
+  SENTINEL         │ Does the continuity hold?
+  KEN              │ Could they know this yet?
+  LECTOR           │ How does the whole thing read?
+  CHORUS           │ Do the voices differ?
+  CHRONICLE        │ Did the revision help?
+  ─────────────────┼─ these ask, they don't answer
+  Inner Socrates   │ Have I earned this claim?
+  Inner Editor     │ Is the prose doing its job?
+  Inner Theologian │ Is the moral weight honest?
+  Inner Poet       │ Does the verse keep its form?
 ```]
 
 The first group *tells you what is true* — the state of your book. The last group —
