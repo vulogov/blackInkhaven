@@ -10,7 +10,8 @@
 //! the cycling chord, and the `ink.io.*` Bund surface build on this.
 
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use duckdb::types::Value as DuckValue;
@@ -49,6 +50,22 @@ const INIT_SQL: &str = "
 #[derive(Clone)]
 pub struct OutputStore {
     engine: Arc<StorageEngine>,
+    // H4 (3.0.0 P2) — `active()` was re-querying DuckDB on every TUI frame the
+    // Output pane is visible (60×/s). Cache the active set, keyed on a
+    // write-generation counter (bumped by every mutation → instant refresh on
+    // emit/dismiss/pin/snooze/cleanup) plus a 1-second `bucket` (so wall-clock
+    // expiry still refreshes within a second). All clones share both via `Arc`,
+    // so the global handle and every clone see one coherent cache.
+    generation: Arc<AtomicU64>,
+    active_cache: Arc<Mutex<Option<ActiveCache>>>,
+}
+
+/// Cached `active()` result — served while both `generation` and the 1-second
+/// `bucket` still match the store's current state.
+struct ActiveCache {
+    generation: u64,
+    bucket: i64,
+    messages: Vec<Message>,
 }
 
 /// Pull a `String` out of a row column.
@@ -78,7 +95,17 @@ impl OutputStore {
     /// Open (creating if needed) the Output store at `path`.
     pub fn open(path: &Path) -> Result<Self> {
         let engine = StorageEngine::new_versioned(path, INIT_SQL, 2, 1)?;
-        Ok(Self { engine: Arc::new(engine) })
+        Ok(Self {
+            engine: Arc::new(engine),
+            generation: Arc::new(AtomicU64::new(0)),
+            active_cache: Arc::new(Mutex::new(None)),
+        })
+    }
+
+    /// Bump the write generation so the next `active()` re-queries (H4 cache).
+    /// Called by every method that mutates `pane_output_messages`.
+    fn bump(&self) {
+        self.generation.fetch_add(1, Ordering::Relaxed);
     }
 
     /// The conventional per-project store path (`<project>/output.db`), beside
@@ -127,6 +154,7 @@ impl OutputStore {
                 &trace,
             ],
         )?;
+        self.bump();
         Ok(message.id)
     }
 
@@ -174,6 +202,17 @@ impl OutputStore {
     /// first, then newest-first.
     pub fn active(&self) -> Result<Vec<Message>> {
         let now = now_secs();
+        let cur_gen = self.generation.load(Ordering::Relaxed);
+        // Cache hit: same write-generation and same 1-second bucket → the active
+        // set can't have changed (no mutation, no expiry crossed). Poison-safe.
+        {
+            let guard = self.active_cache.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(c) = guard.as_ref() {
+                if c.generation == cur_gen && c.bucket == now {
+                    return Ok(c.messages.clone());
+                }
+            }
+        }
         let sql = format!(
             "SELECT {cols} FROM pane_output_messages \
              WHERE NOT dismissed \
@@ -183,7 +222,15 @@ impl OutputStore {
             cols = Self::COLS
         );
         let rows = self.engine.select_all_with(&sql, &[&now, &now])?;
-        Ok(rows.iter().filter_map(|r| Self::parse_row(r)).collect())
+        let messages: Vec<Message> = rows.iter().filter_map(|r| Self::parse_row(r)).collect();
+        // Store under the generation we read BEFORE querying: if a write landed
+        // meanwhile it bumped past `gen`, so the next reader misses and re-queries
+        // — a stale set is never served.
+        {
+            let mut guard = self.active_cache.lock().unwrap_or_else(|e| e.into_inner());
+            *guard = Some(ActiveCache { generation: cur_gen, bucket: now, messages: messages.clone() });
+        }
+        Ok(messages)
     }
 
     /// Active messages of one kind.
@@ -216,7 +263,9 @@ impl OutputStore {
         self.engine.execute_with(
             "UPDATE pane_output_messages SET dismissed = TRUE, dismissed_at = ? WHERE id = ?",
             &[&now, &id],
-        )
+        )?;
+        self.bump();
+        Ok(())
     }
 
     /// Pin or unpin a message.
@@ -225,7 +274,9 @@ impl OutputStore {
         self.engine.execute_with(
             "UPDATE pane_output_messages SET pinned = ? WHERE id = ?",
             &[&pinned, &id],
-        )
+        )?;
+        self.bump();
+        Ok(())
     }
 
     /// Hide a message until `until` (unix secs).
@@ -234,7 +285,9 @@ impl OutputStore {
         self.engine.execute_with(
             "UPDATE pane_output_messages SET snoozed_until = ? WHERE id = ?",
             &[&until, &id],
-        )
+        )?;
+        self.bump();
+        Ok(())
     }
 
     /// Delete time-expired, unpinned messages, and trim each `Session(N)` kind to
@@ -271,6 +324,7 @@ impl OutputStore {
         }
         // The DELETEs above don't easily return affected counts via this engine
         // API; report a recomputed best-effort 0 (callers that care re-query).
+        self.bump();
         Ok(0)
     }
 }
