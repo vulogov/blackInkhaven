@@ -17360,8 +17360,10 @@ impl App {
 
     /// SENTINEL-1 (CT-P5) — the continuity watch: on save, re-check only what the
     /// edit touched and surface the delta. Gated on `continuity.enabled &&
-    /// continuity.ambient` + a cooldown floor. Deterministic + free, so it runs
-    /// synchronously on the UI thread (no background job). Clears this paragraph's
+    /// continuity.ambient` + a cooldown floor + a paragraph-count guard (skips the
+    /// inline scan on a very large manuscript to avoid a book-scale freeze).
+    /// Deterministic + free, so it runs synchronously on the UI thread when it
+    /// runs at all (no background job). Clears this paragraph's
     /// prior continuity findings, then re-emits the scoped set anchored to it.
     fn continuity_scan_saved_paragraph(&mut self, para_id: Uuid) {
         use crate::pane::output::{kinds, Lifetime, Message, Severity};
@@ -17375,6 +17377,25 @@ impl App {
             return;
         }
         self.continuity_last_run = Some(std::time::Instant::now());
+
+        // M3 (3.0.0 P4) — book-scale guard. The continuity engine is inherently
+        // book-wide (co-location, char-fact drift across chapters), so an ambient
+        // full scan on every save is O(book) and would freeze the editor on a very
+        // large manuscript. Above a paragraph threshold, skip the inline watch
+        // (cheap in-memory count, no I/O) and point the author at the explicit
+        // `Ctrl+B Shift+I` ledger / `inkhaven continuity check` for a full pass.
+        const AMBIENT_MAX_PARAGRAPHS: usize = 3000;
+        let para_count = self
+            .hierarchy
+            .iter()
+            .filter(|n| n.kind == NodeKind::Paragraph)
+            .count();
+        if para_count > AMBIENT_MAX_PARAGRAPHS {
+            self.status = format!(
+                "continuity watch skipped ({para_count} paragraphs) — run Ctrl+B Shift+I or `inkhaven continuity check` for a full pass"
+            );
+            return;
+        }
 
         // Clear this paragraph's prior continuity findings (re-emitted below).
         if let Some(s) = crate::pane::output::active() {
