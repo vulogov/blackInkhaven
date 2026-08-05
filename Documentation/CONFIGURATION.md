@@ -2788,3 +2788,560 @@ build with `inkhaven sources check` (exits non-zero on any undefined `@key`).
 Scripts get the read-only `ink.sources.{list,get,check,bibtex}` inspectors
 (all `store_read`). See
 [Tutorial 89 — Bibliography & Citations](Tutorials/89-bibliography-and-citations.md).
+
+---
+
+# Reference: remaining config blocks (3.0.0)
+
+The blocks below round out the config contract ahead of the 3.0.0 freeze.
+Every default here is copied verbatim from `src/config.rs`. As everywhere
+in this file, each field is `#[serde(default)]` — omit the block and you
+get exactly these values.
+
+## Typography & Typst output
+
+These blocks feed the synthesised `settings.typ` and `globals.typ` that
+`Book assembly` (Ctrl+B A) prepends to every assembled book. Empty / zero
+values generally fall through to Typst's own defaults, so a project that
+never touches HJSON still compiles.
+
+### `typst_page`
+
+Page geometry, fed into `#set page(...)`.
+
+```hjson
+typst_page: {
+  paper:          "us-letter"
+  margin_top:     "2.5cm"
+  margin_bottom:  "2.5cm"
+  margin_inside:  "3cm"
+  margin_outside: "2cm"
+  page_numbering: "1"
+  columns:        1
+}
+```
+
+| Field | Type | Default | Description |
+| ----- | ---- | ------- | ----------- |
+| `paper` | string | `"us-letter"` | Anything Typst's `paper:` argument accepts (`us-letter`, `a4`, `a5`, …). Empty = Typst default. |
+| `margin_top` | string | `"2.5cm"` | Top margin. |
+| `margin_bottom` | string | `"2.5cm"` | Bottom margin. |
+| `margin_inside` | string | `"3cm"` | Inside (binding-edge) margin. Typst swaps inside/outside automatically on two-sided books. |
+| `margin_outside` | string | `"2cm"` | Outside margin. |
+| `page_numbering` | string | `"1"` | Page-number format — `"1"`, `"i"`, `"1 of 1"`. Empty = no page numbers. |
+| `columns` | u32 | `1` | Column count. `0` / `1` both fall through to Typst's single-column default; `2+` sets multi-column. |
+
+### `typst_fonts`
+
+`#set text(...)` face, size, and language.
+
+```hjson
+typst_fonts: {
+  body:      "Linux Libertine"
+  body_size: "11pt"
+  monospace: "DejaVu Sans Mono"
+  language:  "en"
+}
+```
+
+| Field | Type | Default | Description |
+| ----- | ---- | ------- | ----------- |
+| `body` | string | `"Linux Libertine"` | Body typeface. Emitted as a fallback list ending in the bundled font, so a custom name that isn't installed still compiles. |
+| `body_size` | string | `"11pt"` | Body font size. |
+| `monospace` | string | `"DejaVu Sans Mono"` | Raw/code typeface, applied via a `show raw: set text(font: …)` rule (block + inline). |
+| `language` | string | `"en"` | Two-letter tag fed to `#set text(lang: …)`; drives Typst's hyphenation / smart-quote behaviour. |
+
+Both defaults (`Linux Libertine`, `DejaVu Sans Mono`) are fonts Typst
+bundles, so the shipped HJSON lays out cleanly on a host with no font
+installs.
+
+### `typst_layout`
+
+Paragraph + heading layout, fed into `#set par(...)` / `#set heading(...)`.
+
+```hjson
+typst_layout: {
+  justify:           true
+  leading:           "0.7em"
+  paragraph_indent:  ""
+  heading_numbering: ""
+}
+```
+
+| Field | Type | Default | Description |
+| ----- | ---- | ------- | ----------- |
+| `justify` | bool | `true` | Justify body paragraphs. |
+| `leading` | string | `"0.7em"` | Inter-line leading. Empty = Typst default. |
+| `paragraph_indent` | string | `""` | First-line indent. Empty = no indent. |
+| `heading_numbering` | string | `""` | `#set heading(numbering: …)` argument — `"1."`, `"1.1"`, `"I."`. Empty = unnumbered. |
+
+### `typst_templates`
+
+The eight `wrap_*` functions written into each book's `globals.typ`. Each
+node in the manuscript tree is fed through the matching call when the
+assembler synthesises the `.typ` files. **An empty string for any field
+falls back to the shipped default for that one function**, so you can
+override just the wrapper you care about.
+
+```hjson
+typst_templates: {
+  wrap_book:            ""   // empty ⇒ shipped default (below)
+  wrap_chapter:         ""
+  wrap_subchapter:      ""
+  wrap_paragraph:       ""
+  wrap_image_book:      ""
+  wrap_image_chapter:   ""
+  wrap_image_subchapter:""
+  wrap_image_inline:    ""
+}
+```
+
+| Field | Type | Default (shipped Typst body) |
+| ----- | ---- | ---------------------------- |
+| `wrap_book` | string | `#let wrap_book(body) = { body }` |
+| `wrap_chapter` | string | `#let wrap_chapter(title, body) = { heading(level: 1, title); body }` |
+| `wrap_subchapter` | string | `#let wrap_subchapter(title, body) = { heading(level: 2, title); body }` |
+| `wrap_paragraph` | string | `#let wrap_paragraph(body) = { body; parbreak() }` |
+| `wrap_image_book` | string | Frontispiece: `pagebreak` + centered `image(..., width: 90%)` + optional emphasised caption + `pagebreak`. Called for Image nodes under a Book. |
+| `wrap_image_chapter` | string | Chapter-art: `pagebreak` + centered `image(..., width: 80%)` + optional caption. Called for Image nodes under a Chapter. |
+| `wrap_image_subchapter` | string | Section image: centered `image(..., width: 60%)` + optional caption. Called for Image nodes under a Subchapter. |
+| `wrap_image_inline` | string | `figure(image(..., width: 80%), caption: caption)`. Not called by the assembler — available to call by hand from paragraph text. |
+
+The literal default bodies live in `default_wrap_*()` in `src/config.rs`;
+`inkhaven` regenerates `globals.typ` from these on every assembly, so free-
+form edits belong in the config, not the generated file.
+
+### `typst_universe`
+
+Source for the `Ctrl+V #` Typst-package import picker (1.6.15+). The
+manifest is fetched once and cached under `.inkhaven/`.
+
+```hjson
+typst_universe: {
+  url:       "https://orangex4.github.io/typst-universe-with-stars/packages.json"
+  ttl_hours: 24
+}
+```
+
+| Field | Type | Default | Description |
+| ----- | ---- | ------- | ----------- |
+| `url` | string | `"https://orangex4.github.io/typst-universe-with-stars/packages.json"` | Package-manifest URL — the community "with-stars" list (`typst_universe::DEFAULT_URL`). |
+| `ttl_hours` | u32 | `24` | Cache-freshness window, in hours. |
+
+### `frontmatter`
+
+Journal-article front matter (1.6.15+ PAPER). Rendered into a Typst title
+block — title, authors + affiliations, abstract, keywords, availability
+statements, funding — prepended to `typst`/`pdf`/`tex` exports and TUI
+assembly. **All-empty is the default → renders nothing**, so books that
+don't opt in are byte-for-byte unchanged. Labels are localized off the
+project `language`.
+
+```hjson
+frontmatter: {
+  abstract:          ""
+  keywords:          []
+  authors:           []   // list of { name, affiliation, orcid, email, corresponding }
+  funding:           ""
+  data_availability: ""
+  code_availability: ""
+}
+```
+
+| Field | Type | Default | Description |
+| ----- | ---- | ------- | ----------- |
+| `abstract` | string | `""` | Abstract — a single paragraph of plain prose. (HJSON key is literally `abstract`; the Rust field is `abstract_text`.) |
+| `keywords` | list of strings | `[]` | Keyword list. |
+| `authors` | list of `Author` | `[]` | Author records (see sub-fields below). |
+| `funding` | string | `""` | Funding / acknowledgements statement. **Identifying — dropped under `--blind`.** |
+| `data_availability` | string | `""` | Data-availability statement. Kept under `--blind`. |
+| `code_availability` | string | `""` | Code-availability statement. Kept under `--blind`. |
+
+Each entry in `authors` is an `Author`:
+
+| Sub-field | Type | Default | Description |
+| --------- | ---- | ------- | ----------- |
+| `name` | string | `""` | Author name. |
+| `affiliation` | string | `""` | Institutional affiliation. Authors sharing an affiliation share one superscript number. |
+| `orcid` | string | `""` | ORCID iD (bare `0000-…` or full URL — rendered verbatim). |
+| `email` | string | `""` | Contact email. |
+| `corresponding` | bool | `false` | Marks the corresponding author with a `*` and an email note. |
+
+Under `--blind` (double-blind submission) the identifying parts — authors,
+affiliations, ORCID, corresponding author, funding — are omitted; title,
+abstract, keywords, and availability statements remain.
+
+## Export
+
+### `html`
+
+Static-site HTML export (TDOC-4), driven by `inkhaven export html -o
+<dir>`. **This block is nested at `docs.html`** (its struct is
+`DocsHtmlConfig`), not a top-level `html:` key.
+
+```hjson
+docs: {
+  html: {
+    site_title:     null          // null ⇒ the exported book's title
+    theme:          "default"
+    template_dir:   "html"
+    variables_file: "html.hjson"
+    search:         true
+    citation_style: "author-year"
+    include: {
+      sources:    true
+      glossary:   true
+      characters: false
+      places:     false
+      language:   false
+      world:      false
+      mythology:  false
+      notes:      false
+      index:      false
+    }
+  }
+}
+```
+
+| Field | Type | Default | Description |
+| ----- | ---- | ------- | ----------- |
+| `site_title` | string \| null | `null` | Site title; `null` → the exported user book's title. |
+| `theme` | string | `"default"` | Bundled theme name (only `default` today). |
+| `template_dir` | string | `"html"` | Project override root holding `functional/` and/or `theme/` template files; a file there wins over the bundled default. |
+| `variables_file` | string | `"html.hjson"` | HJSON file whose parsed contents are exposed to templates as `site`. |
+| `search` | bool | `true` | TDOC-4.2 — build the client-side search index (accepted now, wired later). |
+| `citation_style` | string | `"author-year"` | TDOC-4.2 — `author-year` or `numeric` (accepted now, wired later). |
+| `include.sources` | bool | `true` | Fold the Sources companion book into the site. |
+| `include.glossary` | bool | `true` | Fold the Glossary in. |
+| `include.characters` | bool | `false` | Fold Characters in. |
+| `include.places` | bool | `false` | Fold Places in. |
+| `include.language` | bool | `false` | Fold the Language book in. |
+| `include.world` | bool | `false` | Fold the World book in. |
+| `include.mythology` | bool | `false` | Fold the Mythology book in. |
+| `include.notes` | bool | `false` | Fold Notes in. |
+| `include.index` | bool | `false` | INDEX-1 — fold a back-of-book index page in. |
+
+### `images`
+
+Image-node handling in the tree + editor.
+
+```hjson
+images: {
+  preview_enabled:    true
+  allowed_extensions: ["png", "jpg", "jpeg", "gif", "webp", "svg"]
+  max_size_bytes:     33554432   // 32 MiB
+}
+```
+
+| Field | Type | Default | Description |
+| ----- | ---- | ------- | ----------- |
+| `preview_enabled` | bool | `true` | Render image previews. |
+| `allowed_extensions` | list of strings | `["png", "jpg", "jpeg", "gif", "webp", "svg"]` | Extensions accepted for image nodes. |
+| `max_size_bytes` | u64 | `33554432` (32 MiB) | Upper size bound; a larger file is rejected with a status message. |
+
+### `tex_export`
+
+LaTeX export document class + preamble (1.6.15+ PAPER). `inkhaven export
+tex` runs tylax, which emits a complete `\documentclass{article}` document.
+**All-empty is the default → tylax's `article` output is left untouched**,
+so existing exports are byte-for-byte unchanged.
+
+```hjson
+tex_export: {
+  document_class: ""
+  class_options:  ""
+  extra_packages: []
+  preamble:       []
+}
+```
+
+| Field | Type | Default | Description |
+| ----- | ---- | ------- | ----------- |
+| `document_class` | string | `""` | Journal class (`IEEEtran`, `elsarticle`, `article`, …). Empty → keep tylax's `article`. |
+| `class_options` | string | `""` | Class options (`conference`, `twocolumn`, `11pt,a4paper`). Empty → `\documentclass{class}` with no bracket. |
+| `extra_packages` | list of strings | `[]` | Extra `\usepackage`s — bare names (`amsmath`) or full lines (`\usepackage[numbers]{natbib}`). |
+| `preamble` | list of strings | `[]` | Raw preamble lines inserted verbatim before `\begin{document}`. |
+
+## Research sources
+
+These blocks live under the top-level [`research`](#) config and configure
+the `inkhaven research` TUI's source slash-commands. Every one is keyless
+and on by default unless noted (GeoNames needs a free username). `max_chars`
+bounds the embedded portion of an ingested text; `auto_cite` mints a
+SOURCES-1 `BibEntry` on `/fact`.
+
+### `research.geonames`
+
+Real-world places via the GeoNames gazetteer (`/geonames`).
+
+```hjson
+research: {
+  geonames: {
+    enabled:  true
+    endpoint: "http://api.geonames.org"
+    username: ""
+  }
+}
+```
+
+| Field | Type | Default | Description |
+| ----- | ---- | ------- | ----------- |
+| `enabled` | bool | `true` | Master switch for `/geonames`. |
+| `endpoint` | string | `"http://api.geonames.org"` | GeoNames API host. |
+| `username` | string | `""` | Free GeoNames username (register at geonames.org). **Empty → the command stays unavailable.** |
+
+### `research.gutenberg`
+
+Project Gutenberg texts via Gutendex (`/gutenberg`).
+
+```hjson
+research: {
+  gutenberg: {
+    enabled:   true
+    endpoint:  "https://gutendex.com"
+    max_chars: 300000
+    auto_cite: true
+  }
+}
+```
+
+| Field | Type | Default | Description |
+| ----- | ---- | ------- | ----------- |
+| `enabled` | bool | `true` | Master switch for `/gutenberg` (keyless). |
+| `endpoint` | string | `"https://gutendex.com"` | Gutendex API host (override for a mirror). |
+| `max_chars` | usize | `300000` | Max characters ingested (bounds embedding cost). |
+| `auto_cite` | bool | `true` | Auto-create a SOURCES-1 `BibEntry` for an ingested book. |
+
+### `research.wikidata`
+
+Wikidata structured entity claims (`/wikidata`) — top of the trust ladder,
+so a `/fact` from it skips the fact-check gate. Wikipedia prose is
+deliberately excluded.
+
+```hjson
+research: {
+  wikidata: {
+    enabled:        true
+    endpoint:       "https://www.wikidata.org"
+    max_statements: 24
+  }
+}
+```
+
+| Field | Type | Default | Description |
+| ----- | ---- | ------- | ----------- |
+| `enabled` | bool | `true` | Master switch for `/wikidata` (keyless). |
+| `endpoint` | string | `"https://www.wikidata.org"` | Wikibase API host. |
+| `max_statements` | usize | `24` | Max property statements rendered per entity. |
+
+### `research.wikisource`
+
+Public-domain pages from `{lang}.wikisource.org` (`/wikisource`). The
+subdomain is the book's language code, falling back to `default_lang`.
+
+```hjson
+research: {
+  wikisource: {
+    enabled:      true
+    default_lang: "en"
+    max_chars:    300000
+    auto_cite:    true
+  }
+}
+```
+
+| Field | Type | Default | Description |
+| ----- | ---- | ------- | ----------- |
+| `enabled` | bool | `true` | Master switch for `/wikisource` (keyless). |
+| `default_lang` | string | `"en"` | Language subdomain used when the book language can't be resolved. |
+| `max_chars` | usize | `300000` | Max characters ingested (bounds embedding cost). |
+| `auto_cite` | bool | `true` | Auto-create a SOURCES-1 `BibEntry` for an ingested page. |
+
+### `research.scholarly`
+
+OpenAlex + arXiv (`/openalex`, `/arxiv`), keyless. Scholarly tier — a
+`/fact` from a paper auto-creates a `BibEntry`.
+
+```hjson
+research: {
+  scholarly: {
+    enabled:   true
+    mailto:    ""
+    auto_cite: true
+  }
+}
+```
+
+| Field | Type | Default | Description |
+| ----- | ---- | ------- | ----------- |
+| `enabled` | bool | `true` | Master switch for `/openalex` + `/arxiv`. |
+| `mailto` | string | `""` | Contact email for OpenAlex's "polite pool" — optional but recommended (avoids the anonymous rate limit). |
+| `auto_cite` | bool | `true` | Auto-create a bibliography entry when a `/fact` is taken from a paper. |
+
+### `research.scripture`
+
+Public-domain scripture (`/bible`, `/quran`, `/bookofmormon`), keyless.
+Each ingest auto-cites a *stable* key (`bible` / `quran` / `book-of-mormon`)
+so loci like `@bible[John 3:16]` group in the Index Locorum.
+
+```hjson
+research: {
+  scripture: {
+    enabled:          true
+    bible_endpoint:   "https://bolls.life"
+    quran_endpoint:   "https://api.alquran.cloud/v1"
+    bom_url:          "https://raw.githubusercontent.com/bcbooks/scriptures-json/master/book-of-mormon.json"
+    bible_translation: null
+    quran_translation: null
+    max_chars:        200000
+    auto_cite:        true
+  }
+}
+```
+
+| Field | Type | Default | Description |
+| ----- | ---- | ------- | ----------- |
+| `enabled` | bool | `true` | Master switch for `/bible` + `/quran` + `/bookofmormon` (keyless). |
+| `bible_endpoint` | string | `"https://bolls.life"` | bolls.life base URL (override for a mirror). |
+| `quran_endpoint` | string | `"https://api.alquran.cloud/v1"` | api.alquran.cloud v1 base URL. |
+| `bom_url` | string | `"https://raw.githubusercontent.com/bcbooks/scriptures-json/master/book-of-mormon.json"` | Public-domain 1830 Book of Mormon JSON corpus. |
+| `bible_translation` | string \| null | `null` | Force a bolls translation code; `null` = pick by language (en=WEB, ru=SYNOD, fr=FRLSG, de=LUT, es=RV1960). |
+| `quran_translation` | string \| null | `null` | Force an alquran.cloud edition; `null` = pick by language. Set `quran-uthmani` for the Arabic original. |
+| `max_chars` | usize | `200000` | Max characters of a passage ingested (bounds embedding cost). |
+| `auto_cite` | bool | `true` | Auto-create the stable SOURCES-1 `BibEntry` for an ingested passage. |
+
+## Feature knobs
+
+### `scholarly`
+
+See [`research.scholarly`](#researchscholarly) above — the scholarly-source
+block lives under `research`, not at top level.
+
+### `scripture`
+
+See [`research.scripture`](#researchscripture) above — the scripture block
+lives under `research`, not at top level.
+
+### `rigor`
+
+RIGOR — the deterministic reasoning-rigor reader (`rigor:` block). Flags
+weak argumentation patterns as advisory Output findings; zero-AI,
+deterministic, never edits prose.
+
+```hjson
+rigor: {
+  enabled:            true
+  fast_track:         true
+  language:           null
+  false_dichotomy:    true
+  question_begging:   true
+  straw_man:          true
+  overgeneralization: true
+  non_sequitur:       true
+  equivocation:       true
+}
+```
+
+| Field | Type | Default | Description |
+| ----- | ---- | ------- | ----------- |
+| `enabled` | bool | `true` | Master switch — `false` gates everything. |
+| `fast_track` | bool | `true` | Run the reader in the review pass / deep-refresh (the ambient surface). |
+| `language` | string \| null | `null` | Marker-language override (`en`/`ru`/`de`/`fr`/`es`); `null` → project language → English. |
+| `false_dichotomy` | bool | `true` | Flag forced-binary framings ("either … or", "the only alternative"). |
+| `question_begging` | bool | `true` | Flag unargued assertions ("obviously", "of course"). |
+| `straw_man` | bool | `true` | Flag dismissive characterizations ("so-called", "would have us believe"). |
+| `overgeneralization` | bool | `true` | Flag strong absolutes ("always", "never", "without exception"). |
+| `non_sequitur` | bool | `true` | Flag a conclusion connective with no warrant marker in the paragraph. |
+| `equivocation` | bool | `true` | Flag a Glossary-declared `watch_equivocation` multi-sense term used repeatedly without pinning a sense. |
+
+### `oracle`
+
+ORACLE (1.7.9+) — the conlang well-formedness Oracle (`oracle:` block). On
+save, the phonotactic guardian checks the conlang words in the saved
+paragraph — words that segment fully into a language's inventory but aren't
+listed — and flags any that break that language's phonotactics. Zero-AI,
+deterministic, never edits prose.
+
+```hjson
+oracle: {
+  enabled: true
+  on_save: true
+}
+```
+
+| Field | Type | Default | Description |
+| ----- | ---- | ------- | ----------- |
+| `enabled` | bool | `true` | Master switch — `false` gates the on-save scan entirely. |
+| `on_save` | bool | `true` | Run the phonotactic guardian when a paragraph is saved. |
+
+### `sound`
+
+TUI sound effects (opt-in). `Ctrl+B E` toggles in-session.
+
+```hjson
+sound: {
+  enabled: false
+  volume:  0.6
+}
+```
+
+| Field | Type | Default | Description |
+| ----- | ---- | ------- | ----------- |
+| `enabled` | bool | `false` | Master switch. Off by default so new users aren't surprised by audio at launch. |
+| `volume` | f32 | `0.6` | Master volume 0.0–1.0 applied uniformly to every synthesised sample. Clamped at load time. |
+
+### `fuzzy_overlap`
+
+Timeline critique — fuzzy-precision overlap detector. **Nested at
+`timeline.critique.fuzzy_overlap`** (struct `TimelineFuzzyOverlapConfig`).
+Gated by `timeline.enabled` and `timeline.critique.enabled`.
+
+```hjson
+timeline: {
+  critique: {
+    fuzzy_overlap: {
+      enabled:          true
+      min_suspicion:    "moderate"
+      cluster_min_size: 3
+    }
+  }
+}
+```
+
+| Field | Type | Default | Description |
+| ----- | ---- | ------- | ----------- |
+| `enabled` | bool | `true` | Run the fuzzy-overlap check. |
+| `min_suspicion` | string | `"moderate"` | Lowest suspicion to surface — `"low"` \| `"moderate"` \| `"high"`. |
+| `cluster_min_size` | usize | `3` | Minimum events for a cluster (vs pairwise) finding. |
+
+### `elaboration`
+
+Timeline critique — optional LLM elaboration of pattern-detected findings.
+**Nested at `timeline.critique.elaboration`** (struct
+`TimelineElaborationConfig`).
+
+```hjson
+timeline: {
+  critique: {
+    elaboration: {
+      enabled:             true
+      max_calls_per_run:   20
+      confirm_above_calls: 10
+    }
+  }
+}
+```
+
+| Field | Type | Default | Description |
+| ----- | ---- | ------- | ----------- |
+| `enabled` | bool | `true` | Use LLM elaboration when a provider is configured; falls back to pattern-only text otherwise. |
+| `max_calls_per_run` | usize | `20` | Hard cap on elaboration LLM calls per critique run. |
+| `confirm_above_calls` | usize | `10` | Ask for confirmation once a run would exceed this many calls. |
+
+### `legacy_flag_deprecation`
+
+Internal deprecation-warning toggle for the retired `event critique
+--legacy` path. **Nested at `timeline.critique.legacy_flag_deprecation`**
+(struct `TimelineLegacyDeprecationConfig`). Its single field
+`warn_on_use` (bool, default `true`) prints a deprecation warning when the
+legacy flag is used; you'll rarely touch it.
