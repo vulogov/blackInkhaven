@@ -61,6 +61,8 @@ mod lector;
 mod redline;
 // CHRONICLE-1 (2.5) — the draft-history intelligence.
 mod chronicle;
+// KEN-1 (2.6) — epistemic continuity: who knows what, when.
+mod ken;
 // CHAR-1 — character arc tracking.
 mod character;
 // HAIKU-1 — zero-AI startup / new-paragraph / on-demand haiku.

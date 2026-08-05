@@ -12519,6 +12519,7 @@ impl App {
             A::OpenContinuityLedger => self.open_continuity_ledger(),
             A::OpenReadThrough => self.open_read_through(),
             A::OpenChronicle => self.open_chronicle(),
+            A::OpenKnowledge => self.open_knowledge(),
             A::OpenCostDashboard => self.open_cost_dashboard(),
             A::OpenCredits => self.open_credits(),
             A::OpenBookInfo => self.open_book_info(),
@@ -16360,6 +16361,116 @@ impl App {
             "chronicle · ↑↓ scroll · Enter jump · m mark · Esc".into()
         };
         self.modal = Modal::Chronicle { rows, anchors, cursor: 0 };
+    }
+
+    /// KEN-1 (KEN-P5) — `Ctrl+B Shift+Z`: the knowledge dashboard. Runs the
+    /// deterministic epistemic check and opens a scrollable modal (Enter jumps to
+    /// the offending paragraph).
+    fn open_knowledge(&mut self) {
+        let (rows, anchors) = self.build_knowledge_rows();
+        let breaks = anchors.iter().filter(|a| a.is_some()).count();
+        self.status = if breaks == 0 {
+            "knowledge: clean · Esc".into()
+        } else {
+            "knowledge · ↑↓ scroll · Enter jump · Esc".into()
+        };
+        self.modal = Modal::Knowledge { rows, anchors, cursor: 0 };
+    }
+
+    /// Build the knowledge dashboard's rows + parallel jump anchors: the epistemic
+    /// findings grouped under a bold per-kind header, most-severe first.
+    fn build_knowledge_rows(&self) -> (Vec<String>, Vec<Option<Uuid>>) {
+        use crate::ken::Severity;
+        let mut rows: Vec<String> = Vec::new();
+        let mut anchors: Vec<Option<Uuid>> = Vec::new();
+        let mut push = |text: String, anchor: Option<Uuid>| {
+            rows.push(text);
+            anchors.push(anchor);
+        };
+        let h = match crate::store::hierarchy::Hierarchy::load(&self.store) {
+            Ok(h) => h,
+            Err(e) => {
+                push(format!("knowledge unavailable: {e}"), None);
+                return (rows, anchors);
+            }
+        };
+        let book = match crate::cli::resolve_user_book(&h, None, "knowledge") {
+            Ok(b) => b,
+            Err(e) => {
+                push(format!("knowledge: {e}"), None);
+                return (rows, anchors);
+            }
+        };
+        let findings = crate::ken::check::run(&self.layout, &h, &self.cfg, book);
+
+        push(format!("◆ Knowledge — {} finding(s)", findings.len()), None);
+        push(String::new(), None);
+        if findings.is_empty() {
+            push("  ✓ nobody knows what they shouldn't".into(), None);
+            return (rows, anchors);
+        }
+        // Group by kind, preserving the severity-ranked order run() produced.
+        let mut order: Vec<&'static str> = Vec::new();
+        for f in &findings {
+            if !order.contains(&f.kind) {
+                order.push(f.kind);
+            }
+        }
+        for kind in order {
+            let group: Vec<&_> = findings.iter().filter(|f| f.kind == kind).collect();
+            push(format!("{kind} ({})", group.len()), None);
+            for f in group {
+                let mark = match f.severity {
+                    Severity::Break => "\u{2297}",  // ⊗
+                    Severity::Notice => "\u{25cf}", // ●
+                    Severity::Info => "\u{b7}",     // ·
+                };
+                push(format!("  {mark} {}", f.message), f.anchor);
+            }
+            push(String::new(), None);
+        }
+        (rows, anchors)
+    }
+
+    fn knowledge_handle_key(&mut self, key: KeyEvent) -> bool {
+        let n = match &self.modal {
+            Modal::Knowledge { rows, .. } => rows.len(),
+            _ => return false,
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "knowledge: closed".into();
+            }
+            KeyCode::Up => {
+                if let Modal::Knowledge { cursor, .. } = &mut self.modal {
+                    *cursor = cursor.saturating_sub(1);
+                }
+            }
+            KeyCode::Down => {
+                if let Modal::Knowledge { cursor, .. } = &mut self.modal {
+                    if n > 0 {
+                        *cursor = (*cursor + 1).min(n - 1);
+                    }
+                }
+            }
+            KeyCode::Enter => {
+                let anchor = match &self.modal {
+                    Modal::Knowledge { anchors, cursor, .. } => anchors.get(*cursor).copied().flatten(),
+                    _ => None,
+                };
+                if let Some(id) = anchor {
+                    self.modal = Modal::None;
+                    if let Err(e) = self.open_paragraph_by_uuid(id) {
+                        self.status = format!("knowledge: {e}");
+                    }
+                } else {
+                    self.status = "knowledge: no paragraph to jump to on this row".into();
+                }
+            }
+            _ => {}
+        }
+        true
     }
 
     /// Build the dashboard's rows + parallel jump anchors: the trend since the last
@@ -26722,6 +26833,10 @@ impl App {
         }
         if matches!(self.modal, Modal::Chronicle { .. }) {
             self.chronicle_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::Knowledge { .. }) {
+            self.knowledge_handle_key(key);
             return Ok(false);
         }
         if matches!(self.modal, Modal::PoemFormPicker { .. }) {
