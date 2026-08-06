@@ -376,6 +376,26 @@ inkhaven knowledge --deep   # + the implied-irony pass
     [--book-name SLUG]      #   restrict to one book
 ```]
 
+That `SLUG` is a *book's slug* — the short, hyphenated handle Inkhaven derives
+from a book's title (`The Ninth Lantern` becomes `the-ninth-lantern`). You never
+have to memorise it. `inkhaven list` prints the project tree with every book's
+slug in the brackets, and `--book-name` will match a book's *title* just as
+happily as its slug — so `--book-name "The Ninth Lantern"` works too.
+
+#screen(caption: "inkhaven list — the slug is in the brackets")[```
+$ inkhaven list
+├─ The Ninth Lantern  [book, the-ninth-lantern]
+│    …chapters…
+├─ Places             [book, places]
+├─ Characters         [book, characters]
+└─ Facts              [book, facts]
+```]
+
+Most projects hold a single manuscript and never need the flag; reach for it
+only to scope the check to one book among several. Pass a slug it does not
+recognise and Inkhaven simply lists the books it *does* know, each with its slug,
+so a wrong guess is self-correcting rather than a dead end.
+
 `--deep` hands each scene and a ledger of who-learns-what-when to a model and
 asks for the *implied* breaks — Sella pouring two cups before Mira has said a
 word about a second visitor, a character who steps around the dark lantern too
