@@ -176,6 +176,18 @@ the scene an event is already linked to (opening the one paragraph, or a picker
 when several point at it). The link is also scriptable, through the
 `ink.event.link_paragraph` word covered at the end of this chapter.
 
+An event can also name its *participants* — the characters and places it
+involves. These explicit lists are exactly what KEN reads for its *presence*
+grants (a character present at an event knows what happens there), so you attach
+them by hand: `inkhaven event link-character <event-path> "<name>"` and
+`inkhaven event link-place <event-path> "<name>"` add an entry from your
+Characters or Places book to the event. The continuity *co-location* check is
+more forgiving — it *also* derives participants from the characters and places
+*named in the event's linked scenes*, so it can flag a character in two places
+at once even before you list anyone by hand; only KEN's knowledge grants insist
+on the explicit list, so a merely-mentioned name never grants knowledge it
+shouldn't.
+
 #callout(label: "Orphans are a nudge, not an error")[
   An orphan event — one with no linked scene — is drawn
   with a hollow `◌` glyph everywhere it appears, and opening one lands a hint on

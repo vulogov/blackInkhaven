@@ -52,10 +52,10 @@ pub(crate) fn run(
 
     let mut out: Vec<ContinuityFinding> = Vec::new();
     if on("co_location") {
-        out.extend(co_location(layout, h));
+        out.extend(co_location(store, layout, h));
     }
     if on("timeline") {
-        out.extend(timeline(cfg, h));
+        out.extend(timeline(store, cfg, h));
     }
     if on("numeric") {
         out.extend(numeric(cfg, layout, h));
@@ -66,7 +66,6 @@ pub(crate) fn run(
     if on("introduce") {
         out.extend(introduce::scan(layout, h, ct.introduce_tolerance));
     }
-    let _ = store; // reserved for CT-P5's scoped re-check
     // Rank before dedupe so the survivor of a folded group is the most severe.
     rank(&mut out);
     dedupe(out)
@@ -99,9 +98,11 @@ fn magic_ledger(layout: &ProjectLayout) -> crate::world::types::MagicLedger {
 }
 
 /// Character-in-two-places-at-once, from the timeline alone.
-fn co_location(layout: &ProjectLayout, h: &Hierarchy) -> Vec<ContinuityFinding> {
+fn co_location(store: &Store, layout: &ProjectLayout, h: &Hierarchy) -> Vec<ContinuityFinding> {
     use crate::world::timeline_context as tc;
-    let events = tc::gather_events(h);
+    // Advisory check: augment explicit participants with the entities named in
+    // each event's linked scenes (KEN presence stays explicit-only elsewhere).
+    let events = tc::gather_events_augmented(store, h);
     if events.is_empty() {
         return Vec::new();
     }
@@ -149,27 +150,44 @@ fn crit_severity(s: critique::CritSeverity) -> Severity {
 }
 
 /// Timeline-internal breaks: orphaned events + fuzzy-precision overlaps.
-fn timeline(cfg: &Config, h: &Hierarchy) -> Vec<ContinuityFinding> {
+fn timeline(store: &Store, cfg: &Config, h: &Hierarchy) -> Vec<ContinuityFinding> {
     use crate::timeline::Calendar;
     let calendar = Calendar::from_config(cfg.timeline.calendar.clone());
     let default_track = cfg.timeline.default_track.clone();
     let now = chrono::Utc::now();
+    // Fuzzy-overlap is advisory, so it may lean on scene-derived participants.
+    let derived = crate::world::timeline_context::derived_participants(store, h);
     let events: Vec<critique::CritiqueEvent> = h
         .flatten()
         .into_iter()
         .filter_map(|(n, _)| n.event.as_ref().map(|e| (n, e)))
-        .map(|(n, ev)| critique::CritiqueEvent {
-            id: n.id,
-            title: n.title.clone(),
-            start_ticks: ev.start_ticks,
-            end_ticks: ev.end_ticks,
-            precision: ev.precision,
-            track: ev.track.clone().unwrap_or_else(|| default_track.clone()),
-            is_orphan: ev.is_orphan(&n.linked_paragraphs),
-            linked_paragraph_count: n.linked_paragraphs.len(),
-            characters: ev.characters.clone(),
-            places: ev.places.clone(),
-            age_days: Some((now - n.modified_at).num_days().max(0)),
+        .map(|(n, ev)| {
+            let (dc, dp) = derived.get(&n.id).cloned().unwrap_or_default();
+            let mut characters = ev.characters.clone();
+            for c in dc {
+                if !characters.contains(&c) {
+                    characters.push(c);
+                }
+            }
+            let mut places = ev.places.clone();
+            for p in dp {
+                if !places.contains(&p) {
+                    places.push(p);
+                }
+            }
+            critique::CritiqueEvent {
+                id: n.id,
+                title: n.title.clone(),
+                start_ticks: ev.start_ticks,
+                end_ticks: ev.end_ticks,
+                precision: ev.precision,
+                track: ev.track.clone().unwrap_or_else(|| default_track.clone()),
+                is_orphan: ev.is_orphan(&n.linked_paragraphs),
+                linked_paragraph_count: n.linked_paragraphs.len(),
+                characters,
+                places,
+                age_days: Some((now - n.modified_at).num_days().max(0)),
+            }
         })
         .collect();
     if events.is_empty() {

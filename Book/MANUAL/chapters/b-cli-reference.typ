@@ -326,7 +326,10 @@ inkhaven graph stats | rebuild | neighbors <n> | paths <a> <b>
     it, triage advisory edges, or ask it a question. (Ctrl+B z.)
 inkhaven event add <title> --start <t> [--end <t>] [--track <k>]
 inkhaven event list | show <path> | critique [--track <k>]
-    Story-timeline events (needs timeline.enabled).
+inkhaven event link-character <path> <name>
+inkhaven event link-place <path> <name>
+    Story-timeline events (needs timeline.enabled). link-character
+    / link-place attach an explicit participant (feeds KEN presence).
 inkhaven fact-check [--text <t> | --paragraph <id>] [--slow]
                     [--timeline-aware auto|on|off] [--timeline-only]
     Check prose against the simulated world; respects the
