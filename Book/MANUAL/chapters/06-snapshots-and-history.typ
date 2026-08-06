@@ -142,7 +142,7 @@ one" three weeks later without reading every row.
 
 #section("The per-paragraph picker — F6")
 
-Press `F6` (or `Ctrl+B R`, for *history*) with a paragraph open and Inkhaven
+Press `F6` with a paragraph open and Inkhaven
 lists every snapshot of *that* paragraph, newest first. This is the workbench
 for one paragraph's past — where you read it, diff it, restore it, and prune it.
 
@@ -312,7 +312,7 @@ the most recently deleted paragraphs, whole and restorable.
   written to `.session.json`, so restarting Inkhaven clears it.
 ]
 
-When you delete a single paragraph from the Tree (`Ctrl+D`, then confirm), it is
+When you delete a single paragraph from the Tree (`-`, then confirm), it is
 pushed onto the front of the ring, and the status bar tells you both that it is
 gone and that `Ctrl+B U` will bring it back. What comes back is not just the
 prose but the whole paragraph: its title and slug (so the file lands at the same
@@ -498,7 +498,7 @@ protects your words against how much it writes to your disk to do it.
   and *automatically* before every risky op — AI rewrites, book-scope replace,
   branch deletes, and each restore — so *no path overwrites prose without a
   restorable copy landing first*.],
-  [*`F6`* (`Ctrl+B R`) is the per-paragraph picker: `Enter` restores (behind a
+  [*`F6`* is the per-paragraph picker: `Enter` restores (behind a
   *pre-restore safety snapshot*), `V` diffs against the live buffer, `D` deletes,
   `/` filters by annotation. *`Ctrl+F6`* is the project-wide browser over every
   snapshot, which hands acting-on-a-row back to `F6`.],

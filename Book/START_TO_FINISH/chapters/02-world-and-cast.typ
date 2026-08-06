@@ -147,8 +147,9 @@ its secrets.
 Places and Characters record *what things are called*. There is a third,
 optional file that records *how the world behaves* — its physics — and Saltmarch
 needs a whisper of it: the coast is cold, and the fret comes off the water. That
-file is `world.hjson` at the project root. It is opt-in; without it nothing
-changes, and drop one in and the world layer wakes up.
+file is `world.hjson` at the project root. It is opt-in — without it nothing
+changes — and once you write one and hand it to the project (two commands, just
+below), the world layer wakes up.
 
 We are going to keep this to the bone. Only two blocks are load-bearing — the
 world's `name` and its `astronomy` (everything about seasons and tides derives
@@ -187,12 +188,44 @@ by name, so a chapter that puts a warm afternoon on this cold coast has somethin
 to be measured against. We push the orbit out to `1.05` AU and give the world a
 subarctic town precisely so "cold" is a declared fact, not a vibe.
 
-#callout(label: "We are not compiling a world here")[
-  `world.hjson` can derive whole continents, rivers, and cities by simulation —
-  that is a large feature with a companion book of its own. *The Ninth Lantern*
-  needs none of it. We declare the sky and one cold town so the coast is honest,
-  and stop. Reach for the compiler when a story's geography has to hold together
-  across a map; a single harbour town does not.
+#subsection("Handing it to the project")
+
+Writing the file is not the last step — the project has to be told to read it.
+Two commands do that. `inkhaven realworld validate` parses `world.hjson` and
+checks that every layer actually *compiles*, so a stray quote or an impossible
+orbit surfaces here rather than three chapters later. Then
+`inkhaven realworld compile --layer astronomy --materialize` derives the
+seasons, tides, and calendar from the sky you declared and *writes them into the
+World system book* — a real, editable chapter in your tree. That last command is
+the import: after it, the world is a part of the project, and the fact-checker
+has the seasons and the gazetteer to measure a scene against.
+
+#screen(caption: "Validate, then materialize the sky into the World book")[```
+$ inkhaven realworld validate
+ok — world `Saltmarch coast`, seed 0x5a17, primary language `en`
+  astronomy:    ok · 1 moon(s), 12-month calendar
+  geology:      ok · 3 plate(s), 2 continent(s)
+  climate:      ok · 5 biome(s)
+  hydrology:    ok · 4 river(s), 1 lake(s)
+  demographics: ok · 7 settlement(s)
+
+$ inkhaven realworld compile --layer astronomy --materialize
+astronomy · Saltmarch coast
+  year:     365.0 planet-days  (365.2 Earth-days, 1.000 M☉ star)
+  tilt:     23.4°
+  moon the Watch:  synodic 29.5 planet-days, 12.4 lunations/yr
+  tides:    the Watch dominant; sun 0.46× the dominant moon
+  → World/Astronomy: 6 paragraph(s) created, 0 updated
+```]
+
+#callout(label: "Materialize the sky, do not simulate a world")[
+  Compiling `--layer astronomy` is cheap and honest: it writes back only the
+  sky you declared. The full compiler goes much further — deriving whole
+  continents, rivers, and cities from the seed — and that is a large feature
+  with a companion book of its own. *The Ninth Lantern* needs none of it. We
+  declare the sky and one cold town, materialize that much, and stop. Reach for
+  `--layer all` when a story's geography has to hold together across a map; a
+  single harbour town does not.
 ]
 
 #section("Watching it light up")
@@ -298,8 +331,9 @@ ground, and ask.
   Toft, Bryn), each body kept deliberately thin — and left the central secret
   unwritten.],
   [A light `world.hjson` — `name` + `astronomy` + one `geography` landmark —
-  declares the cold coast so "cold" is a checkable fact, without compiling a
-  whole simulated world.],
+  declares the cold coast; `realworld validate` then
+  `compile --layer astronomy --materialize` hands it to the project (into the
+  World book) so "cold" is a checkable fact, without simulating a whole world.],
   [Mentions light up live in the editor — *cyan* Places, *yellow* Characters —
   with *stemming* keyed to the project `language`, multi-word titles matched as a
   run, and Place winning any collision.],

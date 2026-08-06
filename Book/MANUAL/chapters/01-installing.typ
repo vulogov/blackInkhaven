@@ -444,10 +444,12 @@ is on-device.
 
 If opening a project reports a missing configuration field, you are opening a
 project whose `inkhaven.hjson` was written by an older release than the binary
-you just installed. Either add the missing field by hand, or regenerate a fresh
-configuration from the current template with `inkhaven init --force` (back the
-old file up first). New projects created by the version you installed never hit
-this.
+you just installed. Add the missing field by hand — the error names it, and
+Appendix C lists every key with its default. Do *not* reach for
+`inkhaven init --force` to "refresh" the config: `--force` deletes and recreates
+the *entire project directory* — every book, database, and word of prose — not
+just `inkhaven.hjson`. New projects created by the version you installed never
+hit this.
 
 #section("The CLI and the TUI")
 

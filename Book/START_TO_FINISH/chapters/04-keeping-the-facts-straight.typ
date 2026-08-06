@@ -133,11 +133,21 @@ walk the findings, you correct "eighth" to "ninth" and "eight lanterns" to
   in Russian?*, answers yes.
 ]
 
-The same check runs from the command line when you would rather script it or
-sweep a batch: `inkhaven fact-check --text "…"` checks a literal string against
-the Facts book, and `--paragraph <id>` checks a stored paragraph by id. In the
-editor, though, `Ctrl+B Shift+X` on the open paragraph is the motion you will
-reach for, because it lands where you are already looking.
+There is a command-line form for when you would rather sweep the whole book than
+check one paragraph: `inkhaven facts scan` walks every chapter, semantically
+matches each against the Facts book, and reports the contradictions — the
+scriptable, CI-friendly twin of the in-editor check (add `--json` for a
+machine-readable report). In the editor, though, `Ctrl+B Shift+X` on the open
+paragraph is the motion you will reach for, because it lands where you are
+already looking.
+
+#callout(label: "Two commands, easy to confuse")[
+  `inkhaven facts scan` — the one here — weighs your prose against the *Facts
+  book*. Do not mistake it for `inkhaven fact-check`, which weighs prose against
+  the *simulated world* from `world.hjson` (travel times, the gazetteer, the
+  `magic:` ledger). Same instinct, different canon: one guards the truths you
+  wrote down, the other the physics you declared.
+]
 
 #section("The book that watches as you write")
 

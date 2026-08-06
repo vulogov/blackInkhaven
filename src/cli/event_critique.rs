@@ -62,7 +62,7 @@ pub fn run(
         ));
     }
 
-    let events = gather(&hierarchy, calendar, cfg, book_filter_id, track);
+    let events = gather(store, &hierarchy, calendar, cfg, book_filter_id, track);
     if events.is_empty() {
         println!("(no events in scope — nothing to critique)");
         return Ok(());
@@ -186,6 +186,7 @@ fn elaborate_one(
 /// modification (the model carries no creation timestamp) — an untouched orphan
 /// reads as stale.
 fn gather(
+    store: &Store,
     hierarchy: &Hierarchy,
     _calendar: &Calendar,
     cfg: &Config,
@@ -194,11 +195,26 @@ fn gather(
 ) -> Vec<critique::CritiqueEvent> {
     let default_track = cfg.timeline.default_track.clone();
     let now = chrono::Utc::now();
+    // Fuzzy-overlap is advisory, so it may union in scene-derived participants.
+    let derived = crate::world::timeline_context::derived_participants(store, hierarchy);
     scope_nodes(hierarchy, book_filter_id, track, &default_track)
         .into_iter()
         .map(|(n, ev)| {
             let resolved = ev.track.clone().unwrap_or_else(|| default_track.clone());
             let age_days = (now - n.modified_at).num_days();
+            let (dc, dp) = derived.get(&n.id).cloned().unwrap_or_default();
+            let mut characters = ev.characters.clone();
+            for c in dc {
+                if !characters.contains(&c) {
+                    characters.push(c);
+                }
+            }
+            let mut places = ev.places.clone();
+            for p in dp {
+                if !places.contains(&p) {
+                    places.push(p);
+                }
+            }
             critique::CritiqueEvent {
                 id: n.id,
                 title: n.title.clone(),
@@ -208,8 +224,8 @@ fn gather(
                 track: resolved,
                 is_orphan: ev.is_orphan(&n.linked_paragraphs),
                 linked_paragraph_count: n.linked_paragraphs.len(),
-                characters: ev.characters.clone(),
-                places: ev.places.clone(),
+                characters,
+                places,
                 age_days: Some(age_days.max(0)),
             }
         })

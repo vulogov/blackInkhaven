@@ -407,8 +407,9 @@ Stylist — which is why the poetry key is `P`, one level in.
 #section("From the shell — inkhaven poetry")
 
 The same toolset is a command, for scripting, for a continuous-integration gate,
-or simply for a quick reading without opening the project. Every subcommand takes
-`--language en|ru|fr|de|es`, and several take `--json` for machine-readable output.
+or simply for a quick reading without opening the project. Every subcommand except
+`phonemes` (the English pronouncing dictionary) takes `--language en|ru|fr|de|es`,
+and several take `--json` for machine-readable output.
 
 #chord_table((
   chord_row("poetry forms", "List the forms; --form prints one's block, --new scaffolds a custom one."),

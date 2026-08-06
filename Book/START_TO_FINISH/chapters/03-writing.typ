@@ -225,8 +225,10 @@ Then you type. `Ctrl+I` drops focus to the prompt bar; you ask plainly and press
 ```]
 
 When it finishes, the title flips to `done` and a row of *destination chips*
-appears in the footer. Nothing has touched your buffer yet — the answer is a
-proposal, inert until you choose:
+appears in the footer. Focus is still on the prompt bar — handy for a follow-up
+question — but the chip keys are live only *inside the AI pane*. Press `Esc` to
+step from the prompt bar into the pane. Nothing has touched your buffer yet — the
+answer is a proposal, inert until you choose:
 
 #screen(caption: "Done — the scope has reset, and the proposal waits for a key")[```
 ┌─ AI · ollama · done · infer=Local ──────────────────────────┐
@@ -238,9 +240,9 @@ proposal, inert until you choose:
 ```]
 
 You read it against your own. It is tighter, it keeps *cold*, and it is
-genuinely better — so you accept it. `r` *replaces the selection* with the
-model's text, converting its markdown to Typst on the way in, and jumps focus
-back to the Editor so you land where the change did. And here the two threads of
+genuinely better — so you accept it. Now in the pane, `r` *replaces the
+selection* with the model's text, converting its markdown to Typst on the way
+in, and jumps focus back to the Editor so you land where the change did. And here the two threads of
 this chapter meet: because an apply marks the buffer dirty, the new sentence
 arrives *bold* — the same "new since save" diff you watched earlier — so you can
 read exactly what changed against what is still on disk:
@@ -302,7 +304,8 @@ which is exactly what the pane above is doing.
   `Ctrl+F` or `rg` instead when you want a specific literal string.],
   [The *AI assistant* is a co-author you steer with three dials: `F9` sets *scope*
   (what it sees — here `Selection`), `F10` sets *mode* (`Local` = only your
-  context), and a *destination chip* (`r` to replace) lands the answer. It advises
-  in the pane and changes nothing until you press the key — and the result arrives
-  as a bold, undoable diff.],
+  context), and — once you `Esc` from the prompt into the pane — a *destination
+  chip* (`r` to replace) lands the answer. It advises in the pane and changes
+  nothing until you press the key — and the result arrives as a bold, undoable
+  diff.],
 ))

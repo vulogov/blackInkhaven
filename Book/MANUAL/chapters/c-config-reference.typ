@@ -675,17 +675,23 @@ SOURCES-1 — the bibliography engine over the Sources book.
 
 #subsection("snippets")
 
-Trigger-keyed editor text expansions (1.2.14+). A trigger followed by Space
-expands. Placeholders: `{date}`, `{time}`, `{datetime}`, `{slug}`, `{book}`,
-`{chapter}`, `{author}`, `{cursor}`, the picker forms `{char_lookup}` /
-`{place_lookup}` / `{artefact_lookup}`, and a `bund:` body prefix.
+Trigger-keyed editor text expansions (1.2.14+), under `editor.snippets`. A
+trigger followed by Space expands. Placeholders: `{today}` (optionally with a
+format, `{today:%Y-%m-%d}`), `{now}`, `{paragraph_slug}`, `{paragraph_title}`,
+`{selection}`, `{author}`, `{cursor}`, the picker forms `{char_lookup}` /
+`{place_lookup}` / `{artefact_lookup}`, and a `bund:` body prefix. The trigger
+map lives under `.triggers`.
 
-#screen(caption: "snippets — a few bindings")[
+#screen(caption: "editor.snippets — a few bindings")[
 ```hjson
-snippets: {
-  "\\dt":   "{datetime}"
-  "\\au":   "— {author}"
-  "\\todo": "TODO ({date}): {cursor}"
+editor: {
+  snippets: {
+    triggers: {
+      "\\dt":   "{today:%Y-%m-%d}"
+      "\\au":   "— {author}"
+      "\\todo": "TODO ({today}): {cursor}"
+    }
+  }
 }
 ```
 ]

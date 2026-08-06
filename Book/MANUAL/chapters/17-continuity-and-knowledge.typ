@@ -338,7 +338,10 @@ DECLARED   you mark it with a tag:
 A *use* — a character referencing a topic — is caught the same deterministic
 way SENTINEL matches names: by Unicode-aware matching of the topic in that
 character's *attributed dialogue* or in the *narration of their POV scene*.
-Presence and the tags grant knowledge; a use before any grant is a break.
+Presence and the tags grant knowledge; a use before any grant is a break. You
+fill an event's participant list explicitly with `inkhaven event link-character`
+(Chapter 16) — presence then grants every listed character knowledge of that
+event, which is often less work than tagging each with `know:`.
 
 #term("Ken")[
   A character's *ken* is the range of what they know — the set of topics

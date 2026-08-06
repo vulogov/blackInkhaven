@@ -125,7 +125,7 @@ recomputable cache need not.
   judged      an LLM judgement, advisory  kept until dismiss
   imported    reference data (WordNet…)   its own command
   structural  derived from your fields   RECOMPUTED
-  derived     recomputable (similarity)  RECOMPUTED
+  derived     recomputable (similarity)  kept
 ```]
 
 `graph rebuild` clears and recomputes only the *structural* projection — the
@@ -468,8 +468,8 @@ your book hostage.
   attrs — stored in its own `edges.db` and indexed on *both* endpoints so a
   neighbourhood is a query, not a scan.],
   [An edge's *origin* decides its durability: `authorial`, `promoted`,
-  `judged`, and `imported` survive a rebuild; only the `structural` and
-  `derived` projections are recomputed — so `graph rebuild` is always safe.],
+  `judged`, and `imported` survive a rebuild; only the `structural`
+  projection is recomputed — so `graph rebuild` is always safe.],
   [Three actions fill the graph: `graph rebuild` (structural edges), `graph
   lexical` (the WordNet bridge), and *judged* edges accumulated live from
   confront / `/relate` / `graph link` into the *edge inbox*.],

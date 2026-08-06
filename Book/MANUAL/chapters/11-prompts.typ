@@ -317,7 +317,7 @@ resolve against.
 #callout(label: "Bootstrapping a whole language at once")[
   You do not have to translate the built-in prompts by hand. From the command
   line, `inkhaven prompts bootstrap russian` asks your configured model to
-  produce Russian variants of the seven embedded prompts and prints a ready-to-
+  produce Russian variants of the eight embedded prompts and prints a ready-to-
   paste HJSON snippet; add `--update` to merge them into `prompts.hjson` in
   place (with a timestamped backup, never clobbering your own entries). Covered
   under _From the command line_ below.

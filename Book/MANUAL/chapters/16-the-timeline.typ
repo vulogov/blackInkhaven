@@ -147,8 +147,8 @@ calendar's own display form.
 
 Inside the editor the everyday way is a chord. `Ctrl+V Shift+E` records an event
 from wherever you are: with text selected in the Editor, the selection becomes
-the event's title; on a paragraph row in the Tree, that paragraph's title
-pre-fills it; inside the timeline view it drops the event at the cursor's tick.
+the event's title; inside the timeline view it drops the event at the cursor's
+tick.
 This is the flow that fits actual writing — you are drafting a scene, you select
 the sentence that anchors it in time, you strike the chord, you type the date,
 and the event is on the timeline without your hands leaving the keyboard. Inside
@@ -168,20 +168,30 @@ the swim-lane view the bare `n` key does the same at the cursor's position.
 #subsection("Linking, characters, and places")
 
 A freshly added event is bare — it has a date and nothing else — which is why it
-starts life as an orphan. You give it substance by linking it to the things it
-touches. From the swim-lane view, `Enter` on an event opens the picker that
-attaches a manuscript paragraph — the scene that depicts the event — and saving
-that link drops the orphan mark. Characters and places attach the same way,
-pointing the event at entries under the book's Characters and Places system
-books; those two lists are exactly what the co-location check and the knowledge
-tracker read later, so an event that names its participants is an event the
-intelligences can reason about. The links are also scriptable, through the
+starts life as an orphan. You give it substance by linking it to the scene that
+depicts it: with the event's paragraph open, press `Ctrl+V A` and pick the
+manuscript paragraph. The link is recorded and the orphan mark clears. From the
+swim-lane view, `Enter` on an event does *not* create a link — it *navigates* to
+the scene an event is already linked to (opening the one paragraph, or a picker
+when several point at it). The link is also scriptable, through the
 `ink.event.link_paragraph` word covered at the end of this chapter.
 
+An event can also name its *participants* — the characters and places it
+involves. These explicit lists are exactly what KEN reads for its *presence*
+grants (a character present at an event knows what happens there), so you attach
+them by hand: `inkhaven event link-character <event-path> "<name>"` and
+`inkhaven event link-place <event-path> "<name>"` add an entry from your
+Characters or Places book to the event. The continuity *co-location* check is
+more forgiving — it *also* derives participants from the characters and places
+*named in the event's linked scenes*, so it can flag a character in two places
+at once even before you list anyone by hand; only KEN's knowledge grants insist
+on the explicit list, so a merely-mentioned name never grants knowledge it
+shouldn't.
+
 #callout(label: "Orphans are a nudge, not an error")[
-  An orphan event — no linked paragraph, no characters, no places — is drawn
+  An orphan event — one with no linked scene — is drawn
   with a hollow `◌` glyph everywhere it appears, and opening one lands a hint on
-  the status bar telling you the one chord that will link it. It is a soft
+  the status bar naming the one chord (`Ctrl+V A`) that will link it. It is a soft
   signal that a recorded moment might want a scene, not a mistake to be
   corrected. Deliberate backstory that will never get a scene is free to stay
   orphaned forever.
@@ -386,10 +396,11 @@ once instead of drowning you in pairwise noise.
 └─────────────────────────────────────────────────────┘
 ```]
 
-You run the critique over a *scope*, and four chords set how wide. Inside the
+You run the critique over a *scope*, and a few chords set how wide. Inside the
 swim-lane view, `y` runs it over the current view for the highlighted track
-only, `Y` over the current view for all tracks, `Ctrl+Y` widens to the whole
-book, and `F12` runs it over every event in the project. There is also a
+only, `Y` over the current view for all tracks, and `Ctrl+Y` widens to the whole
+book; `F12` is a global shortcut for that same whole-book pass, reachable from
+any pane. There is also a
 unified pass: `Ctrl+B Shift+C` runs every fast, deterministic checker at once —
 the fact-checker and the Socratic reader over the open paragraph, and the
 timeline critique over the project — and drops all their findings into the
