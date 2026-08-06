@@ -89,7 +89,7 @@ places, your sources, your facts. Anything you make lands *above* them.
 ▸ Places           [book · places]
 ▸ Characters       [book · characters]
 ▸ Threads          [book · threads]
-  …fourteen more system books…
+  …thirteen more system books…
 ```]
 
 This is worth a moment's respect before we write anything. Saltmarch will need a

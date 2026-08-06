@@ -210,7 +210,7 @@ path that no one wants to type. `Ctrl+B O` is the last rung: it does everything
 directory you launched Inkhaven from — under a name you can actually find:
 
 #screen(caption: "What Take drops in your launch directory")[```
-the-ninth-lantern-20260805-1730.pdf
+the-ninth-lantern-20260508-1730.pdf
 ```]
 
 The stem is the book's slug, `the-ninth-lantern`; the stamp is `YYYYDDMM-HHMM` —
@@ -227,9 +227,9 @@ inkhaven.hjson   books/   .inkhaven/
 ~/writing/ninth-lantern $ inkhaven          # ... write the book ...
                                             # ... Ctrl+B O ...
 ~/writing/ninth-lantern $ ls *.pdf
-the-ninth-lantern-20260805-1730.pdf
+the-ninth-lantern-20260508-1730.pdf
 
-~/writing/ninth-lantern $ open the-ninth-lantern-20260805-1730.pdf
+~/writing/ninth-lantern $ open the-ninth-lantern-20260508-1730.pdf
 ```]
 
 That is the buffer-to-book moment: you launched Inkhaven in an empty folder ten

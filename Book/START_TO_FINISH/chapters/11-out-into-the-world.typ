@@ -88,7 +88,9 @@ a proper EPUB 3 *popup*: a numbered reference in the flow and a collected note
 at the chapter's end, which Apple Books renders as a tap-to-pop and plainer
 readers show at the foot. The metadata — title, author (from your
 `editor.comment_author` config), language, a stable identifier — was filled in
-for you, and every part of it takes a flag if you want to override it.
+for you. The title and author each take a flag if you want to override them
+(`--title`, `--author`); the language follows your project `language` and the
+identifier is generated for you.
 
 #callout(label: "Two EPUB paths, one to prefer")[
   There is also a minimal `inkhaven export epub`, which packs the whole book as
