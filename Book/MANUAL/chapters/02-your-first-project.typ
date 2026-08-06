@@ -60,7 +60,7 @@ deleting the ground beneath your own feet leaves the terminal in a broken state.
 The templates are pre-built manuscript skeletons applied *after* the standard
 init, so a template never changes what init itself lays down — it only adds
 books and chapters on top. Run `inkhaven template list` to see them all; the
-built-in set is:
+most common are:
 
 #screen(caption: "inkhaven init --template <name>")[```
 empty          the default — system books only, no manuscript
@@ -240,9 +240,9 @@ this manual; here they are only named, so you recognise them in a tree.
 KIND          ON DISK        WHAT IT HOLDS
 paragraph     NN-slug.typ    prose (Typst) — the default leaf
 image         NN-slug.png    a picture: png / jpg / webp / svg
-hjson  ¶      NN-slug.hjson  structured data (a place, a source…)
+hjson  ❴      NN-slug.hjson  structured data (a place, a source…)
 jinja  ⟡      NN-slug.jinja  a template rendered to Typst on export
-bund   ⚙      NN-slug.bund   an embedded Bund script
+bund   λ      NN-slug.bund   an embedded Bund script
 ```]
 
 A few notes to fix the picture:

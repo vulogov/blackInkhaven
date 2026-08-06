@@ -30,10 +30,10 @@ Each right-hand cell reads `CLI` · `chord` · *ch N* · `ink.*`, in that order,
 #chord_table((
   ("World simulation", [CLI `realworld` · chord `Ctrl+B W` · *ch 14* · `ink.world`]),
   ("Interactive worldbuilder", [CLI `worldbuilder` (own TUI) · *ch 14* · `ink.world`]),
-  ("Utopia / dystopia coherence", [CLI `utopia` · *ch 14* · `ink.utopia`]),
-  ("Facts & fact-check", [CLI `factcheck` · chord `Ctrl+B Shift+X` · *ch 14*]),
+  ("Utopia / dystopia coherence", [CLI `world utopia-check` · *ch 14* · `ink.utopia`]),
+  ("Facts & fact-check", [CLI `fact-check` · chord `Ctrl+B Shift+X` · *ch 14*]),
   ("Semantic net (graph)", [CLI `graph` · chord `Ctrl+B z` · *ch 15* · `ink.graph`]),
-  ("Timeline & events", [CLI `timeline` · *ch 16* · `ink.event`]),
+  ("Timeline & events", [CLI `event` (export `export-timeline`) · *ch 16* · `ink.event`]),
   ("Places / Characters", [chord `Ctrl+B P` / `Ctrl+B C` · *ch 13* · `ink.char`]),
   ("Character arcs", [CLI `character` · chord `Ctrl+V Shift+N` · *ch 13* · `ink.char`]),
   ("Plot threads", [CLI `thread` · chord `Ctrl+V Shift+D` (doctor) · *ch —* · `ink.thread`]),
@@ -89,11 +89,11 @@ Each right-hand cell reads `CLI` · `chord` · *ch N* · `ink.*`, in that order,
 #section("Export & production")
 
 #chord_table((
-  ("Typst / PDF assembly", [CLI `export` / `assemble` · chord `Ctrl+V R` · *ch 24* · `ink.export` `ink.typst`]),
+  ("Typst / PDF assembly", [CLI `export` / `build` · chord `Ctrl+V R` · *ch 24* · `ink.export` `ink.typst`]),
   ("EPUB (import + export)", [CLI `import-epub` / `export` · *ch 25* · `ink.export`]),
   ("HTML website", [CLI `export html` · *ch 25*]),
   ("Technical-doc checks (TDOC)", [CLI `docs verify` / `links` / `review` · chord `Ctrl+B Shift+D` · *ch 26*]),
-  ("arXiv / scientific bundle", [CLI `export bundle` · *ch 25*]),
+  ("arXiv / scientific bundle", [CLI `export --bundle <path>` · *ch 25*]),
   ("Audiobook / TTS", [CLI `tts` · chord `Ctrl+B S` / `Ctrl+B Shift+V` · *ch 25* · `ink.tts`]),
   ("Scrivener import", [CLI `import-scrivener` · chord `F3` · *ch 25*]),
 ))

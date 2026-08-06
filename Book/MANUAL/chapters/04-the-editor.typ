@@ -284,7 +284,7 @@ There is one more reach in the replace modal. `Ctrl+B` toggles the *scope* of
 the replacement between this paragraph and the *whole book*. In book scope,
 `Enter` scans every paragraph in your user books and opens a review modal:
 matches shown in context, `↑↓` to move, `Space` to skip the one under the
-cursor, `a` to keep all, `n` to skip none, `Enter` to apply, `Esc` to cancel.
+cursor, `a` to apply all, `n` to skip all, `Enter` to apply, `Esc` to cancel.
 Book-wide replace starts in the safe whole-word literal mode, and `w`, `i`, `x`
 toggle whole-word, ignore-case, and full-regex in place. Every paragraph it
 changes is snapshotted first — annotated with the substitution — so `F6` is
@@ -414,12 +414,11 @@ wrote.
 └─────────────────────────────────────────────────────┘
 ```]
 
-Those red change-highlights are deliberately stubborn: unlike the "added since
-save" bolding, they *survive a save*, so the record of what the grammar pass
-altered stays visible while you read back over it. When you are satisfied,
-dismiss them explicitly — `Ctrl+B` then `C` clears the highlight, and so does
-simply moving to another paragraph. If the response has no correction Inkhaven
-can lift, `g` refuses with a status message rather than guessing.
+Those red change-highlights stay up while you read back over what the grammar
+pass altered, then clear on your *next save* — saving is the gesture that says
+*I accept the corrections*. They also clear when you move to another paragraph
+or the editor loses focus. If the response has no correction Inkhaven can lift,
+`g` refuses with a status message rather than guessing.
 
 #callout(label: "The AI never writes without your key")[
   `F7` only *shows* you a correction; `g` is the separate, deliberate keystroke
@@ -447,7 +446,7 @@ uses, with the structural markup stripped away.
 #chord_table((
   chord_row("F7", "Grammar-check the open paragraph (streams to the AI pane)."),
   chord_row("g", "In the AI pane: apply the correction to the buffer."),
-  chord_row("Ctrl+B C", "Dismiss the grammar change-highlights."),
+  chord_row("Ctrl+S", "Save the paragraph — clears the grammar change-highlights."),
   chord_row("Ctrl+B Shift+E", "Reading-pace preview (teleprompter over the paragraph)."),
 ))
 
