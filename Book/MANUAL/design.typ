@@ -420,7 +420,7 @@
   show raw.where(block: true): it => block(
     fill: ink_code_bg, stroke: 0.5pt + ink_rule, inset: 7pt, radius: 2pt, width: 100%,
     breakable: false,
-    text(font: mono_family, size: 9pt, it),
+    text(font: mono_family, size: 7.5pt, it),
   )
   show raw.where(block: false): it => box(
     fill: ink_code_bg, inset: (x: 2pt, y: 0pt), outset: (y: 2pt), radius: 1pt,

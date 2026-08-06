@@ -45,7 +45,7 @@ The book is in nine parts and a set of reference appendices:
   I    Getting Started ....... install, first project, the panes
   II   Writing .............. the editor, the tree, snapshots, search
   III  The AI Assistant ..... scopes, chat-with-your-book, prompts, cost
-  IV   The World & Facts .... places, characters, the world, graph, timeline
+  IV   The World & Facts .... places, characters, world, graph, timeline
   V    The Intelligences .... continuity, knowledge, read-through, voices,
                               revision, the inner readers
   VI   Language & Verse ..... conlang, poetry, research, scholarship
