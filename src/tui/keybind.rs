@@ -1363,9 +1363,9 @@ impl Action {
             Action::ViewThreadDoctor =>
                 "Open the thread doctor modal (Ctrl+V Shift+D, 1.2.14+). Walks every Threads paragraph + computes the same numbers `inkhaven thread doctor` prints: status distribution, weight distribution, average tension, and three blind-spot passes (ZERO LINKS — status past `setup` but no paragraph links to the thread; PAYOFF UNFIRED — status `payoff` but no paragraph links; DORMANT — status `develop` but ≤1 link project-wide).  Read-only modal; Esc closes.  Pairs with `Ctrl+V Shift+H` (picker, per-thread detail) + `Ctrl+V Shift+A` (AI audit of scope) — the doctor is the project-wide structural health check.".into(),
             Action::ViewAddComment =>
-                "Add an inline comment on the current selection (Ctrl+V c, 1.2.14+). When a selection is active, the comment anchors to that character range. When no selection, it anchors to the word at the cursor (Unicode word boundaries). Pops a multi-line text input modal for the comment body; on commit, writes a sidecar JSON file alongside the paragraph's .typ (`<paragraph>.comments.json`) so the comment travels with the prose in git and diffs cleanly. The commented span is rendered with `theme.comment_span_modifier` (default underline+italic); cursor inside the span surfaces the comment text + author + age in the editor footer. Character offsets (not byte) so UTF-8 boundary edits preserve anchoring.".into(),
+                "Add an inline comment on the current selection (Ctrl+Z c, 1.2.14+; moved off Ctrl+V c, which the LOCI citation check now owns). When a selection is active, the comment anchors to that character range. When no selection, it anchors to the word at the cursor (Unicode word boundaries). Pops a multi-line text input modal for the comment body; on commit, writes a sidecar JSON file alongside the paragraph's .typ (`<paragraph>.comments.json`) so the comment travels with the prose in git and diffs cleanly. The commented span is rendered with `theme.comment_span_modifier` (default underline+italic); cursor inside the span surfaces the comment text + author + age in the editor footer. Character offsets (not byte) so UTF-8 boundary edits preserve anchoring.".into(),
             Action::ViewCommentsPanel =>
-                "Open the project-wide comments panel (Ctrl+V Shift+C, 1.2.14+). Walks every paragraph's `.comments.json` sidecar and lists every comment with breadcrumb / author / age / text-snippet columns. Panel chords: ↑↓ navigate, Enter open the source paragraph (cursor positioned at the comment span start), r resolve, R reopen (cycles the resolved-filter), d delete (immediate, no confirm), / filter (substring across paragraph slug, author, text body), Esc close. Resolved comments hide by default; press R to toggle them back into view. Reads + writes the sidecar files at panel time — no in-memory cache to stale, so a CLI `inkhaven comments resolve` change between sessions is visible on next panel open.".into(),
+                "Open the project-wide comments panel (Ctrl+Z Shift+C, 1.2.14+; moved off Ctrl+V Shift+C, which the sourcing check now owns). Walks every paragraph's `.comments.json` sidecar and lists every comment with breadcrumb / author / age / text-snippet columns. Panel chords: ↑↓ navigate, Enter open the source paragraph (cursor positioned at the comment span start), r resolve, R reopen (cycles the resolved-filter), d delete (immediate, no confirm), / filter (substring across paragraph slug, author, text body), Esc close. Resolved comments hide by default; press R to toggle them back into view. Reads + writes the sidecar files at panel time — no in-memory cache to stale, so a CLI `inkhaven comments resolve` change between sessions is visible on next panel open.".into(),
             Action::AiContinuationDraft =>
                 "AI continuation drafting (Ctrl+V d, 1.2.14+). Asks the configured LLM to continue the open paragraph in the author's voice.  Prompt envelope sends the previous N paragraphs (configurable via `editor.continuation_anchor_count`, default 3) as voice anchors and the open paragraph with the cursor position marked.  Response wrapped in <<<DRAFT>>> / <<<END>>> markers; AI pane I apply lifts only the draft block at the cursor.  Pairs with snippet expansion (\\tdo + Ctrl+V d for AI-generated TODOs).".into(),
             Action::EditorInsertFootnote =>
@@ -1804,6 +1804,17 @@ impl KeyBindings {
                 // THOUGHTS-1 — Ctrl+Z f: fullscreen the current right pane
                 // (Output / Thoughts). F for Fullscreen; `f` is free here.
                 entry("f", Action::ToggleRightPaneFullscreen, Scope::Any),
+                // 1.2.14 comment features, relocated here from Ctrl+V c / Shift+C:
+                // those chords went to the 1.6.19+ LOCI/sourcing citation checks,
+                // which shadowed the comment pair (view.add_comment was Editor-scoped
+                // but ordered after the Any-scoped LintLoci, and view.comments_panel
+                // collided with the Any-scoped sourcing check). Ctrl+Z c / Ctrl+Z
+                // Shift+C were both free, so the "c for Comment" mnemonic is kept.
+                // Serde names stay `view.*` for config back-compat.
+                // Ctrl+Z c — add an inline comment on the current selection/word.
+                entry("c", Action::ViewAddComment, Scope::Editor),
+                // Ctrl+Z Shift+C — the project-wide comments panel.
+                entry("Shift+c", Action::ViewCommentsPanel, Scope::Any),
             ],
             view_sub: vec![
                 // 1.3.33+ — Ctrl+V Space: the command palette. A reliable two-key
@@ -1954,13 +1965,11 @@ impl KeyBindings {
                 // (TUI equivalent of CLI `thread
                 // doctor`).
                 entry("Shift+d", Action::ViewThreadDoctor, Scope::Any),
-                // 1.2.14+ Phase C.1 — Ctrl+V c adds an
-                // inline comment.  C for Comment.
-                entry("c", Action::ViewAddComment, Scope::Editor),
-                // 1.2.14+ Phase C.2 — Ctrl+V Shift+C
-                // opens the project-wide comments
-                // panel.
-                entry("Shift+c", Action::ViewCommentsPanel, Scope::Any),
+                // NOTE: the 1.2.14 comment features (view.add_comment /
+                // view.comments_panel) are NOT here — Ctrl+V c / Ctrl+V Shift+C
+                // belong to the 1.6.19+ LOCI/sourcing citation checks above, which
+                // used to shadow the comment pair. The comment pair now lives under
+                // the Ctrl+Z (Bund) prefix; see `bund_sub`.
                 // 1.2.14+ Phase Q.3 — Ctrl+V d
                 // continuation drafting.
                 entry("d", Action::AiContinuationDraft, Scope::Editor),
@@ -2781,6 +2790,30 @@ mod tests {
         assert_eq!(
             k.resolve_bund_sub(&ev('e'), Focus::Ai),
             Some(Action::BundOpenEvalModal)
+        );
+        // The 1.2.14 comment features moved here off Ctrl+V c / Shift+C (which the
+        // 1.6.19+ citation checks own). Guard that they resolve on Ctrl+Z — and that
+        // the citation checks are now reachable on Ctrl+V, no longer shadowed.
+        let shift_c = KeyEvent::new(KeyCode::Char('C'), KeyModifiers::SHIFT);
+        assert_eq!(
+            k.resolve_bund_sub(&ev('c'), Focus::Editor),
+            Some(Action::ViewAddComment),
+            "Ctrl+Z c = add comment"
+        );
+        assert_eq!(
+            k.resolve_bund_sub(&shift_c, Focus::Editor),
+            Some(Action::ViewCommentsPanel),
+            "Ctrl+Z Shift+C = comments panel"
+        );
+        assert_eq!(
+            k.resolve_view_sub(&ev('c'), Focus::Editor),
+            Some(Action::LintLoci),
+            "Ctrl+V c = LOCI check (the comment no longer shadows it)"
+        );
+        assert_eq!(
+            k.resolve_view_sub(&shift_c, Focus::Editor),
+            Some(Action::SourcingCheckParagraph),
+            "Ctrl+V Shift+C = sourcing check"
         );
     }
 

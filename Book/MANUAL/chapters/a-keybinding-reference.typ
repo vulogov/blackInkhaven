@@ -600,6 +600,8 @@ prose/craft checks. All of it is rebindable through `keys.bindings.view_sub`.
   chord_row("Ctrl+Z h", [(inside the shell) Toggle history-selection mode — `c` copies a turn, `i` inserts it into the editor.]),
   chord_row("Ctrl+Z p", [Emit a haiku to the Output pane, in the book's language.]),
   chord_row("Ctrl+Z f", [Fullscreen the current right pane (Output / Thoughts).]),
+  chord_row("Ctrl+Z c", [(editor) Add an inline comment on the selection — a sidecar `.comments.json` beside the paragraph. Moved here from `Ctrl+V c`, which the LOCI citation check now owns.]),
+  chord_row("Ctrl+Z Shift+C", [Open the project-wide comments panel over every `.comments.json` sidecar. Moved here from `Ctrl+V Shift+C`, now the sourcing check.]),
 ))
 
 #section("Modals and overlays")
