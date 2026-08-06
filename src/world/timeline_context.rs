@@ -108,6 +108,136 @@ pub fn gather_events(hierarchy: &Hierarchy) -> Vec<TlEvent> {
     out
 }
 
+/// Character/Place entries under their system books, as `(id, lowercase title,
+/// is_place)`. Used to detect which entities a scene names.
+fn entity_entries(hierarchy: &Hierarchy) -> Vec<(Uuid, String, bool)> {
+    let mut roots: Vec<(Uuid, bool)> = Vec::new();
+    for n in hierarchy.iter() {
+        match n.system_tag.as_deref() {
+            Some(crate::store::SYSTEM_TAG_CHARACTERS) => roots.push((n.id, false)),
+            Some(crate::store::SYSTEM_TAG_PLACES) => roots.push((n.id, true)),
+            _ => {}
+        }
+    }
+    let mut out: Vec<(Uuid, String, bool)> = Vec::new();
+    for (root, is_place) in roots {
+        let mut stack: Vec<Uuid> =
+            hierarchy.children_of(Some(root)).iter().map(|n| n.id).collect();
+        while let Some(id) = stack.pop() {
+            let Some(n) = hierarchy.get(id) else { continue };
+            if matches!(n.kind, crate::store::node::NodeKind::Paragraph) {
+                let t = n.title.trim().to_lowercase();
+                if !t.is_empty() {
+                    out.push((n.id, t, is_place));
+                }
+            }
+            stack.extend(hierarchy.children_of(Some(id)).iter().map(|n| n.id));
+        }
+    }
+    out
+}
+
+/// Pure core of the scene-mention derivation: the entity ids whose (lowercased)
+/// title is named whole-word in `body_lc`, split into (characters, places).
+fn entities_named_in(
+    body_lc: &str,
+    entries: &[(Uuid, String, bool)],
+) -> (Vec<Uuid>, Vec<Uuid>) {
+    let mut chars = Vec::new();
+    let mut places = Vec::new();
+    for (id, title_lc, is_place) in entries {
+        if crate::drift::mentions(body_lc, title_lc) {
+            let list = if *is_place { &mut places } else { &mut chars };
+            if !list.contains(id) {
+                list.push(*id);
+            }
+        }
+    }
+    (chars, places)
+}
+
+/// For every event, the Character/Place entities *named in its linked scenes* —
+/// a proxy for "present at the event", derived fresh from the prose. This feeds
+/// the ADVISORY continuity checks (co-location, fuzzy overlap) only; KEN
+/// presence deliberately ignores it and stays on explicit participants, so a
+/// merely-mentioned character can never mask a knowledge leak.
+///
+/// Matching is whole-word on the entity's title (proper nouns are not stemmed),
+/// so a multi-word name matches as a run and a first-name-only mention is missed
+/// — acceptable for an advisory signal.
+pub fn derived_participants(
+    store: &crate::store::Store,
+    hierarchy: &Hierarchy,
+) -> std::collections::HashMap<Uuid, (Vec<Uuid>, Vec<Uuid>)> {
+    let entries = entity_entries(hierarchy);
+    let mut map: std::collections::HashMap<Uuid, (Vec<Uuid>, Vec<Uuid>)> =
+        std::collections::HashMap::new();
+    if entries.is_empty() {
+        return map;
+    }
+    let mut body_cache: std::collections::HashMap<Uuid, String> =
+        std::collections::HashMap::new();
+    for n in hierarchy.iter() {
+        if n.event.is_none() {
+            continue;
+        }
+        let mut chars: Vec<Uuid> = Vec::new();
+        let mut places: Vec<Uuid> = Vec::new();
+        for pid in &n.linked_paragraphs {
+            let body = body_cache.entry(*pid).or_insert_with(|| {
+                store
+                    .get_content(*pid)
+                    .ok()
+                    .flatten()
+                    .and_then(|b| String::from_utf8(b).ok())
+                    .unwrap_or_default()
+                    .to_lowercase()
+            });
+            let (c, p) = entities_named_in(body, &entries);
+            for id in c {
+                if !chars.contains(&id) {
+                    chars.push(id);
+                }
+            }
+            for id in p {
+                if !places.contains(&id) {
+                    places.push(id);
+                }
+            }
+        }
+        if !chars.is_empty() || !places.is_empty() {
+            map.insert(n.id, (chars, places));
+        }
+    }
+    map
+}
+
+/// Like [`gather_events`], but each event's participant lists are the explicit
+/// participants UNIONed with the entities named in its linked scenes (see
+/// [`derived_participants`]). For the advisory checks only — never KEN.
+pub fn gather_events_augmented(
+    store: &crate::store::Store,
+    hierarchy: &Hierarchy,
+) -> Vec<TlEvent> {
+    let mut events = gather_events(hierarchy);
+    let derived = derived_participants(store, hierarchy);
+    for ev in &mut events {
+        if let Some((chars, places)) = derived.get(&ev.id) {
+            for c in chars {
+                if !ev.characters.contains(c) {
+                    ev.characters.push(*c);
+                }
+            }
+            for p in places {
+                if !ev.places.contains(p) {
+                    ev.places.push(*p);
+                }
+            }
+        }
+    }
+    events
+}
+
 /// Events whose start falls within `window` ticks of `ticks`.
 pub fn events_near(events: &[TlEvent], ticks: i64, window: i64) -> Vec<&TlEvent> {
     events.iter().filter(|e| (e.start_ticks - ticks).abs() <= window).collect()
@@ -230,6 +360,29 @@ mod tests {
             characters: chars.to_vec(),
             places: places.to_vec(),
         }
+    }
+
+    #[test]
+    fn entities_named_in_matches_whole_word_titles() {
+        let mira = Uuid::new_v4();
+        let bryn = Uuid::new_v4();
+        let mole = Uuid::new_v4();
+        let entries = vec![
+            (mira, "mira".to_string(), false),
+            (bryn, "bryn crane".to_string(), false),
+            (mole, "the long mole".to_string(), true),
+        ];
+        let body = "mira walked out onto the long mole, and bryn followed.".to_lowercase();
+        let (chars, places) = entities_named_in(&body, &entries);
+        assert!(chars.contains(&mira), "Mira should be detected");
+        assert!(
+            !chars.contains(&bryn),
+            "a first-name-only mention must not match the full title"
+        );
+        assert_eq!(places, vec![mole], "the multi-word place is matched as a run");
+        // whole-word: `mira` inside `admiral` must not match.
+        let (chars2, _) = entities_named_in("the admiral arrived", &entries);
+        assert!(chars2.is_empty(), "a substring inside a word must not match");
     }
 
     #[test]

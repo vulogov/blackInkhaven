@@ -1806,6 +1806,23 @@ pub enum EventCommand {
         #[arg(long)]
         force: bool,
     },
+    /// Link a Character (entry under the Characters system book) to an event as
+    /// an explicit participant. These explicit lists are what KEN's presence
+    /// grants read — a character present at an event knows what happens there.
+    LinkCharacter {
+        /// Slug-path of the event paragraph (as `event show` / `inkhaven list`).
+        path: String,
+        /// Character name (case-insensitive title of a Characters entry).
+        name: String,
+    },
+    /// Link a Place (entry under the Places system book) to an event as an
+    /// explicit participant. Feeds the co-location check.
+    LinkPlace {
+        /// Slug-path of the event paragraph.
+        path: String,
+        /// Place name (case-insensitive title of a Places entry).
+        name: String,
+    },
 }
 
 /// 1.2.12+ Phase B — sub-subcommands under

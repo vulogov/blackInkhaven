@@ -71,7 +71,101 @@ pub fn run(project: &Path, cmd: EventCommand) -> Result<()> {
             no_elaborate,
             force,
         ),
+        EventCommand::LinkCharacter { path, name } => {
+            link_entity(&store, &path, &name, false)
+        }
+        EventCommand::LinkPlace { path, name } => link_entity(&store, &path, &name, true),
     }
+}
+
+/// Resolve an event paragraph by its slug-path (as printed by `event show` /
+/// `inkhaven list`). Errors if the path is unknown or not an event.
+fn resolve_event_node(hierarchy: &Hierarchy, path: &str) -> Result<Node> {
+    let needle = path.trim().trim_matches('/');
+    let node = hierarchy
+        .flatten()
+        .into_iter()
+        .find_map(|(n, _)| {
+            let mut parts: Vec<&str> = n.path.iter().map(String::as_str).collect();
+            parts.push(n.slug.as_str());
+            if parts.join("/").eq_ignore_ascii_case(needle) {
+                Some(n.clone())
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| anyhow!("no node at `{path}`"))?;
+    if node.event.is_none() {
+        return Err(anyhow!("`{path}` is not an event (no event metadata attached)"));
+    }
+    Ok(node)
+}
+
+/// Find an entry (case-insensitive title match) under a system book.
+fn resolve_entity(
+    hierarchy: &Hierarchy,
+    system_tag: &str,
+    label: &str,
+    name: &str,
+) -> Result<(uuid::Uuid, String)> {
+    let root = hierarchy
+        .iter()
+        .find(|n| n.system_tag.as_deref() == Some(system_tag))
+        .ok_or_else(|| anyhow!("this project has no {label} book"))?;
+    let needle = name.trim();
+    let mut stack: Vec<uuid::Uuid> =
+        hierarchy.children_of(Some(root.id)).iter().map(|n| n.id).collect();
+    while let Some(id) = stack.pop() {
+        let Some(n) = hierarchy.get(id) else { continue };
+        if matches!(n.kind, NodeKind::Paragraph) && n.title.trim().eq_ignore_ascii_case(needle) {
+            return Ok((n.id, n.title.clone()));
+        }
+        stack.extend(hierarchy.children_of(Some(id)).iter().map(|n| n.id));
+    }
+    Err(anyhow!("no entry titled `{name}` under the {label} book"))
+}
+
+/// Attach an explicit Character/Place participant to an event. These explicit
+/// lists are what KEN's presence grants read (the advisory co-location check
+/// additionally derives participants from linked scenes).
+fn link_entity(store: &Store, path: &str, name: &str, is_place: bool) -> Result<()> {
+    let hierarchy = Hierarchy::load(store)?;
+    let mut node = resolve_event_node(&hierarchy, path)?;
+    let (system_tag, label, kind) = if is_place {
+        (crate::store::SYSTEM_TAG_PLACES, "Places", "place")
+    } else {
+        (crate::store::SYSTEM_TAG_CHARACTERS, "Characters", "character")
+    };
+    let (entity_id, entity_title) = resolve_entity(&hierarchy, system_tag, label, name)?;
+
+    let already = node
+        .event
+        .as_ref()
+        .map(|ev| {
+            let list = if is_place { &ev.places } else { &ev.characters };
+            list.contains(&entity_id)
+        })
+        .unwrap_or(false);
+    if already {
+        println!("`{entity_title}` is already linked to `{}`.", node.title);
+        return Ok(());
+    }
+    if let Some(ev) = node.event.as_mut() {
+        if is_place {
+            ev.places.push(entity_id);
+        } else {
+            ev.characters.push(entity_id);
+        }
+    }
+    reconcile_event_orphan_tag(&mut node);
+    node.modified_at = chrono::Utc::now();
+    store
+        .raw()
+        .update_metadata(node.id, node.to_json())
+        .map_err(|e| anyhow!("stamp event metadata: {e}"))?;
+    store.sync()?;
+    println!("linked {kind} `{entity_title}` to event `{}`.", node.title);
+    Ok(())
 }
 
 fn add(
