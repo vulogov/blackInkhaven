@@ -517,27 +517,24 @@ Registered in a Script node, this reinstalls itself at every project open
 (once the project is trusted). It reads only — `ink.paragraph.text` and
 `ink.search.text` are both `store_read` — so it needs no category opt-in.
 
-#subsection("Auto-tagging a chapter")
+#subsection("Tagging scenes for a pass")
 
-This one *does* write, so it needs `store_write` enabled. It walks a
-chapter's children and tags every paragraph in it — the kind of chore worth
-automating on a revision pass:
+This one *does* write, so it needs `store_write` enabled. `ink.tag.add` takes
+a paragraph's *slug path* — the bracketed path `inkhaven list` prints — and a
+tag name, and adds the tag to that paragraph. Marking the scenes you mean to
+revisit is the kind of chore worth scripting:
 
 ```bund
-"intro" ink.node.children       // ( list )
-{
-  dup "kind" get
-  "Paragraph" =
-  { "path" get "editing-pass-2" ink.tag.add }
-  { drop }
-  ifelse
-} each
+// ( path tag -- )  — root-anchored slug path, then the tag.
+"the-ninth-lantern/03-the-mole/opening"  "editing-pass-2" ink.tag.add
+"the-ninth-lantern/03-the-mole/the-turn" "editing-pass-2" ink.tag.add
 ```
 
-`ink.node.children` pushes the list; `each` runs the lambda once per node;
-inside it we read the node's `kind`, and only for a `Paragraph` do we read
-its `path` and hand it with a tag name to `ink.tag.add`. Run it once from
-`Ctrl+Z R`, or wrap it in a word you call when you start a pass.
+Each line pushes a path and a tag and calls `ink.tag.add`, which resolves the
+path to a paragraph and records the tag. (To *discover* paths programmatically,
+`"" ink.node.children` walks the top-level books and each node dict carries its
+`id`, `kind`, `title`, and `slug`.) Run it once from `Ctrl+Z R`, or wrap it in
+a word you call when you start a pass.
 
 #section("The inkhaven bund CLI")
 
@@ -549,7 +546,7 @@ top of the stack when it exits:
   20
 
   $ inkhaven --project ~/my-book \
-      bund 'ink.search.text "morning" 5'
+      bund '"morning" 5 ink.search.text'
   [ … five JSON search hits … ]
 ```]
 

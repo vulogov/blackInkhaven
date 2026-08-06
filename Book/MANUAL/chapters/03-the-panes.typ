@@ -219,7 +219,7 @@ cancels with a hint naming which pane's table it consulted.
 #term("Meta prefix")[
   `Ctrl+B` — the key that opens *meta mode*. The single most important thing to
   learn about it is that the action table is *pane-specific*: `Ctrl+B S` means
-  *save the paragraph* in the Editor, *add a subchapter* in the Tree, and
+  *read the paragraph aloud* in the Editor, *add a subchapter* in the Tree, and
   *clear the inference* is one of the AI pane's few actions. The same second
   key, read against a different pane, is a different command.
 ]
@@ -229,7 +229,7 @@ cancels with a hint naming which pane's table it consulted.
 │  1  The rain came sideways off the harbour, and…    │
 │                                                     │
 ├─────────────────────────────────────────────────────┤
-│ META  S save · N snapshot · R history · L load ·    │
+│ META  S read-aloud · N snapshot · R cycle-status ·  │
 │       T retitle · P place-RAG · C char-RAG · H help │
 └─────────────────────────────────────────────────────┘
 ```]
@@ -237,10 +237,12 @@ cancels with a hint naming which pane's table it consulted.
 That the table is pane-specific is not a complication to memorise but a
 simplification to lean on. You do not learn one enormous list of chords; you
 learn the handful that belong to the pane you are working in, and the same
-letters mean the natural thing in each place. In the Tree, `Ctrl+B B`, `C`, `S`,
-`P` add a *book*, a *chapter*, a *subchapter*, and a *paragraph* — the second
-key is the word's first letter. In the Editor, `Ctrl+B N` takes a *new* snapshot
-and `Ctrl+B R` opens its *history*. A last tier of meta chords — the ones that
+letters mean the natural thing in each place. In the Tree, `Ctrl+B C`, `S`, `P`
+add a *chapter*, a *subchapter*, and a *paragraph* — the second key is the
+word's first letter — while adding a *book* is the bare Tree key `B` (it has no
+meta-chord, since `Ctrl+B B` builds). In the Editor, `Ctrl+B N` takes a *new*
+snapshot
+and `F6` opens its *history* (`Ctrl+B R` cycles the paragraph's status). A last tier of meta chords — the ones that
 run whole-book intelligences, like `Ctrl+B Shift+C` to run every fast checker at
 once — work from *any* pane, because they belong to the book rather than to a
 place in it.

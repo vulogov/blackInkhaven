@@ -326,7 +326,10 @@ inkhaven graph stats | rebuild | neighbors <n> | paths <a> <b>
     it, triage advisory edges, or ask it a question. (Ctrl+B z.)
 inkhaven event add <title> --start <t> [--end <t>] [--track <k>]
 inkhaven event list | show <path> | critique [--track <k>]
-    Story-timeline events (needs timeline.enabled).
+inkhaven event link-character <path> <name>
+inkhaven event link-place <path> <name>
+    Story-timeline events (needs timeline.enabled). link-character
+    / link-place attach an explicit participant (feeds KEN presence).
 inkhaven fact-check [--text <t> | --paragraph <id>] [--slow]
                     [--timeline-aware auto|on|off] [--timeline-only]
     Check prose against the simulated world; respects the
@@ -482,9 +485,11 @@ inkhaven docs verify [--yes | --dry-run] | links [--external]
     currency. (Ctrl+B Shift+D.)
 ```]
 
-The whole `pdf` family operates on an existing PDF — typically Inkhaven's own
-`build` output. Every mutating op writes a `<stem>-<op>.pdf` sibling unless
-`--out` is given, and writes are atomic:
+Most of the `pdf` family operates on an existing PDF — typically Inkhaven's own
+`build` output. Those mutating ops write a `<stem>-<op>.pdf` sibling unless
+`--out` is given, and writes are atomic. The exceptions are `cover`, `barcode`,
+and `merge`: they take no single input PDF to derive a stem from, so `--out` is
+required.
 
 #screen(caption: "PDF page and print operations")[```
 inkhaven pdf info <in>
@@ -499,7 +504,7 @@ inkhaven pdf metadata <in> [--title …] [--strip]
 inkhaven pdf outline <in> [--set <toc>]
     Read / set document metadata and bookmarks.
 inkhaven pdf impose | booklet — print-ready signatures.
-inkhaven pdf cover --pages <n> [--isbn <i>] [--image <p>]
+inkhaven pdf cover --pages <n> --out <o> [--isbn <i>][--image <p>]
 inkhaven pdf barcode <isbn> --out <o>
     A full cover-and-spine PDF, or a standalone EAN-13 barcode.
 inkhaven pdf preflight | grayscale | optimize | watermark | sample

@@ -357,15 +357,17 @@ numbers the CLI prints.
 `↑ ↓` scroll the panel. `⏎` on an introduced finding jumps the editor straight
 to its paragraph — the same jump the read-through and continuity ledgers give
 you, so a regression is never more than one keystroke from the prose that
-carries it. `m` marks the current draft on the spot, labelled by today's date
-(rename it later from the CLI if you want a real name), and `Esc` closes.
+carries it. `m` marks the current draft on the spot, labelled by today's date;
+for a chosen name, mark from the CLI instead (`inkhaven chronicle mark
+"<name>"`). Each mark is a fresh milestone, so pick the date-stamped `m` or the
+named CLI form — not both. `Esc` closes.
 Marking from the dashboard is the one place the tool writes a milestone
 interactively; everything else the dashboard does is read-only.
 
 #chord_table((
   chord_row("↑ ↓", "Scroll the dashboard."),
   chord_row("⏎", "Jump to an introduced finding's paragraph."),
-  chord_row("m", "Mark the current draft now — labelled by today's date, renamed via the CLI."),
+  chord_row("m", "Mark the current draft now — labelled by today's date; for a chosen name, mark from the CLI (inkhaven chronicle mark \"<name>\") instead."),
   chord_row("Esc", "Close the dashboard."),
 ))
 

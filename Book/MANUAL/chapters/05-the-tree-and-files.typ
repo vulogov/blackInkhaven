@@ -18,9 +18,12 @@ Everything here happens with the Tree pane focused. Reach it with `Ctrl+T`, or
 `Tab` around to it; it is the pane that has focus when a project first opens. The
 plain-letter shortcuts in this chapter — `B`, `C`, `+`, `D`, `t`, `i`, `e`, and
 the rest — fire *only* while the Tree has focus, and they reject `Ctrl` and
-`Alt`, so `Ctrl+A` will never quietly add a subchapter. Every one of them also
-has a `Ctrl+B` chord equivalent that works from any pane; the bare letters exist
-because terminals and multiplexers so often eat the meta prefix.
+`Alt`, so `Ctrl+A` will never quietly add a subchapter. Some carry a `Ctrl+B`
+chord form too, but those structural adds are *Tree-scoped*: `Ctrl+B C`, `S`,
+`P` add a chapter, subchapter, and paragraph only while the Tree has focus —
+from the Editor the same chords are character-lookup, read-aloud, and
+place-lookup — and `Ctrl+B B` builds, so a book is the bare `B` alone. The bare
+letters exist because terminals and multiplexers so often eat the meta prefix.
 
 #section("What a tree row says")
 
@@ -201,8 +204,9 @@ understand about building a tree.
 The mnemonic is the shape of the keyboard row: the append keys sit under your
 fingers as whole words (`B`ook, `C`hapter, `A` for subchapter, `+` for one
 more), and the insert-after keys are the ones you reach for when order matters.
-Each has a `Ctrl+B` equivalent — `Ctrl+B B`, `Ctrl+B C`, `Ctrl+B S`, `Ctrl+B P`
-— that does the same thing from any pane.
+These also carry `Ctrl+B` chord forms — `Ctrl+B C`, `Ctrl+B S`, `Ctrl+B P` for
+chapter, subchapter, and paragraph — but only while the Tree has focus, not from
+any pane; adding a book stays the bare `B`, since `Ctrl+B B` builds instead.
 
 #screen(caption: "Append versus insert-after, on the same chapter")[```
   cursor on 'the-inn', press +        cursor on 'the-inn', press P

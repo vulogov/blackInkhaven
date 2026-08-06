@@ -253,8 +253,9 @@ colour table is Appendix C.
 #subsection("backup — the safety net")
 
 The `backup` block drives both the `inkhaven backup` command and the auto-backup
-that fires when you quit. `out_dir` (default empty, meaning a per-user data
-directory outside the project tree) is where `.zip` snapshots land; `max_age`
+that fires when you quit. `out_dir` (default empty, meaning a
+project-sibling `inkhaven-backups/<project-name>/` directory next to your
+project) is where `.zip` snapshots land; `max_age`
 (default `"7d"`, humantime-parsed, so `"24h"` or `"12h"` also work) is how stale
 the last backup may get before the exit hook makes a fresh one; `keep_last`
 (default `0`, meaning keep all) prunes older archives; and `auto_backup_on_exit`

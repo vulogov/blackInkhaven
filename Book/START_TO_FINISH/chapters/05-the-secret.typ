@@ -100,6 +100,50 @@ leak. We will see the difference bite in a moment.
   Put `secret:` where the truth is told.
 ]
 
+#subsection("Setting, viewing, and finding a tag")
+
+You have seen *what* to write; here is *where* you write it. A tag is not typed
+into the prose — it lives in a small picker attached to each paragraph, so the
+sentence in your manuscript stays clean. Open the paragraph that states the
+truth and press `Ctrl+B ]`. The picker lists every tag this paragraph already
+carries, and every tag anywhere in the project: press `A` to add a new one, type
+`secret:Aldous put the lantern out` at the prompt, and `T` applies it. The same
+picker is how you *read a paragraph's tags back* later — open it, `Ctrl+B ]`,
+and there they are.
+
+#screen(caption: "Ctrl+B ] — the per-paragraph tag picker")[```
+  tags · ¶ "…and the ninth had never once gone cold."
+
+  [x] secret:Aldous put the lantern out
+  [ ] pov:Mira
+  [ ] reveals:the end of the Mole
+
+  Space select · T apply · A add new · D delete (project-wide)
+```]
+
+Finding them again is the other half. `Ctrl+B }` opens the search-by-tag
+picker: choose a tag and it lists every paragraph that carries it, with a filter
+box to narrow the list, and Enter on a paragraph opens it in the editor. This is
+how you audit your own scaffolding — "show me every scene I marked `know:`" —
+before you trust KEN to reason over it.
+
+#screen(caption: "Ctrl+B } — search by tag")[```
+  search tags:  know:▊
+
+    know:Aldous put the lantern out@Aldous   ← Enter
+    know:Aldous put the lantern out@Sella
+
+  ── paragraphs carrying know:…@Aldous ───────────────
+    ch. 1 · The keeper's round            Enter → open
+```]
+
+#callout(label: "One picker, every tag")[
+  `Ctrl+B ]` and `Ctrl+B }` are not KEN-specific — they set and find *any*
+  paragraph tag: the `secret:` and `know:` of this chapter, the `pov:` of the
+  next, a `reveals:` on a scene, or a private tag of your own. Learn the two
+  chords once and every tagged feature in the book uses them.
+]
+
 #section("Granting the knowledge — two honest ways")
 
 A secret nobody may know is no use; the point is that *some* people know it, and
@@ -332,6 +376,26 @@ inkhaven knowledge --deep   # + the implied-irony pass
     [--book-name SLUG]      #   restrict to one book
 ```]
 
+That `SLUG` is a *book's slug* — the short, hyphenated handle Inkhaven derives
+from a book's title (`The Ninth Lantern` becomes `the-ninth-lantern`). You never
+have to memorise it. `inkhaven list` prints the project tree with every book's
+slug in the brackets, and `--book-name` will match a book's *title* just as
+happily as its slug — so `--book-name "The Ninth Lantern"` works too.
+
+#screen(caption: "inkhaven list — the slug is in the brackets")[```
+$ inkhaven list
+├─ The Ninth Lantern  [book, the-ninth-lantern]
+│    …chapters…
+├─ Places             [book, places]
+├─ Characters         [book, characters]
+└─ Facts              [book, facts]
+```]
+
+Most projects hold a single manuscript and never need the flag; reach for it
+only to scope the check to one book among several. Pass a slug it does not
+recognise and Inkhaven simply lists the books it *does* know, each with its slug,
+so a wrong guess is self-correcting rather than a dead end.
+
 `--deep` hands each scene and a ledger of who-learns-what-when to a model and
 asks for the *implied* breaks — Sella pouring two cups before Mira has said a
 word about a second visitor, a character who steps around the dark lantern too
@@ -358,7 +422,10 @@ and KEN does not guess.
   character *acting on a fact before they could learn it*. It *derives* each
   character's knowledge from structure and never guesses.],
   [Declare a secret with a `secret:<topic>` tag on the sentence that states it;
-  the words after the colon are the *topic* KEN hunts for in the prose.],
+  the words after the colon are the *topic* KEN hunts for in the prose. Tags are
+  not typed into the prose: `Ctrl+B ]` sets and reads back a paragraph's tags,
+  `Ctrl+B }` finds every paragraph carrying a given tag — the same two chords for
+  every tagged feature.],
   [Grant knowledge two deterministic ways: *presence* (a character in a timeline
   event's participant list knows it, free) — with a `reveals:<topic>` tag to
   bind a terse event to the real topic — and *declaration*

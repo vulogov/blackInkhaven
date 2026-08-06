@@ -180,8 +180,8 @@ $ inkhaven realworld compile --layer geology --materialize
     wrote assets/world/heightmap.png
 ```]
 
-`--layer` is one of `astronomy` (the default) / `geology` / `climate` /
-`hydrology` / `demographics`. The astronomy layer also does one check worth
+`--layer` is `all` (the default — the whole world) or one of `astronomy` /
+`geology` / `climate` / `hydrology` / `demographics`. The astronomy layer also does one check worth
 knowing about: if you *declare* an `orbit.year_length_days`, the compiler
 computes Kepler's value and warns when the two disagree by more than a day —
 your calendar and your orbit are allowed to drift, but you will be told they

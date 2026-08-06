@@ -194,7 +194,7 @@ the Tree's than to the editor's.
   chord_row("Tab / Shift+Tab", "Cycle focus: Facts tree → query prompt → chat."),
   chord_row("F10", "Cycle the RAG mode a plain question is grounded on: Facts+Full → Facts only → Full only. (The /rag command does the same.)"),
   chord_row("Ctrl+P (tree)", "Pin / unpin the cursor fact as RAG context — up to three, marked ⬡."),
-  chord_row("n (tree)", "Add a fact by hand: type a title, then Ctrl+S for the body."),
+  chord_row("n (tree)", "Add a fact by hand: type a title, press Enter, type the body, then Ctrl+S to save."),
   chord_row("Ctrl+B h", "The full quick reference — every key and every /command."),
   chord_row("? / q", "Toggle the hints bar · quit (Ctrl+C and Ctrl+Q also quit)."),
 ))
