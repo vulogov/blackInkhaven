@@ -40,10 +40,18 @@ because it is conflict-optional, a tension-light book is not scored as though it
 had failed to be a thriller. So we set the framework by hand rather than let the
 default `genre` guess pick the Seven-Point:
 
-#screen(caption: "Pinning the intended shape in the config")[```
-  [lector]
-  framework = "kishotenketsu"     # ki · shō · ten · ketsu
+#screen(caption: "inkhaven.hjson — pinning the intended shape")[```
+lector: {
+  framework: "kishotenketsu"   // ki · shō · ten · ketsu
+}
 ```]
+
+The `lector:` block lives in your project's `inkhaven.hjson` (open it by hand,
+or with `Ctrl+B 0`). `framework` takes any of the six shapes Inkhaven knows —
+`three_act`, `save_the_cat`, `story_circle`, `hero_journey`, `seven_point`, and
+`kishotenketsu`. Leave it unset and the read-through guesses one from the book's
+genre; name it by hand, as we do here, when you already know the shape you are
+writing to.
 
 Now run the read-through. It prints the whole read in one shot — the curve, the
 per-chapter beat, and the ranked findings:
@@ -280,8 +288,8 @@ stranger will stumble — and, in the next chapter, a disciplined way to act on 
 #recap((
   [*LECTOR* (`inkhaven readthrough`) reads the finished book forward, once, as a
   first reader, and reports two things: the *shape* of the read and the
-  *experience* of it. On *The Ninth Lantern* we pinned `framework =
-  "kishotenketsu"` because the book peaks on a recognition (the *ten*), not a
+  *experience* of it. On *The Ninth Lantern* we pinned the `lector` framework to
+  `kishotenketsu` because the book peaks on a recognition (the *ten*), not a
   fight.],
   [The *Shape* half measured the intensity curve from the prose and laid it
   against the framework, flagging `shape_sag` at chapter 5 — the search-heavy

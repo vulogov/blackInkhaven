@@ -198,15 +198,16 @@ keystroke: `m` stamps a fresh milestone on the spot, labelled by today's date.
 #chord_table((
   chord_row("↑ ↓", "Scroll the dashboard."),
   chord_row("⏎", "Jump to an introduced finding's paragraph — go fix the collateral where it lives."),
-  chord_row("m", "Mark the current draft now, labelled by today's date. Rename it later from the CLI."),
+  chord_row("m", "Mark the current draft now, labelled by today's date. For a chosen name, mark from the CLI instead."),
   chord_row("Esc", "Close the dashboard."),
 ))
 
 Marking from the dashboard is the *one* place CHRONICLE writes anything
 interactively, and even then it writes only a milestone — a row of numbers in
 `chronicle.db`, never a word of your prose. Everything else the panel does is
-read-only. Rename the date-stamped mark from the shell when you want a real name
-for it:
+read-only. When you want a milestone under a name of your own rather than a date
+stamp, mark it from the shell instead — there is no rename; each `mark` records a
+fresh milestone, so choose the date-stamped `m` or the named CLI form, not both:
 
 #screen(caption: "inkhaven chronicle mark — naming the revised draft")[```
 $ inkhaven chronicle mark "revised-1"

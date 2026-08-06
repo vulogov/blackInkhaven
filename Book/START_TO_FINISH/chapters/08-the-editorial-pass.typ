@@ -106,9 +106,8 @@ better" recipe.
 
 Nothing has changed yet. The model's rewrite has streamed into the AI pane and a
 diff-review modal is showing you the exact before-and-after — no more, no less.
-Now you choose. `a` accepts it as written; `e` lets you edit the suggestion first
-and then accept; `⏎` accepts; `r` rejects and the paragraph stays exactly as it
-was. Reject costs nothing — the flat line simply remains, and you can come back to
+Now you choose. `a`, `e`, and `⏎` all accept it as written; `r` rejects and the
+paragraph stays exactly as it was. Reject costs nothing — the flat line simply remains, and you can come back to
 it or fix it by hand. Accept, and *before* the new prose lands, your old sentence
 is snapshotted with a labelled entry, so the version you had is one `F6` away for
 as long as the project lives. That order — snapshot first, then replace — is not
@@ -305,8 +304,9 @@ inkhaven revise --json           # the findings as JSON: category,
 
 The `--json` form emits the ranked findings — the AI letter and every prose
 rewrite deliberately left out — ready for a hook or a report; and the read-only
-`ink.revise.check` Bund word gives a plain *is this draft ready?* gate that is
-`true` when nothing high-severity remains. Advice and prose changes stay
+`ink.revise.check` Bund word returns a small tally — findings counted by
+severity, plus a `clean` flag that is `true` when nothing high-severity remains —
+a ready-made *is this draft ready?* gate for a script. Advice and prose changes stay
 author-initiated; only the deterministic findings are scriptable.
 
 That is the pass. You arrived with four readers' findings on four screens and
