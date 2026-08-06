@@ -294,7 +294,11 @@ invent a feature or paraphrase a rule from general training data.
 
 An answer in the pane is inert until you decide what to do with it. When an
 inference is #emph[done] and has non-empty content, a row of action chips appears
-in the pane's footer, and each key sends the response somewhere different.
+in the pane's footer, and each key sends the response somewhere different. The
+chip keys fire only when the #emph[AI pane itself is focused]. After you press
+`Enter` to send a prompt, focus stays on the prompt bar, so pressing `r` there
+just types the letter — press `Esc` (or `Ctrl+3`) first to focus the pane, then
+press the chip key.
 
 #screen(caption: "The apply chips, shown when an inference is done")[```
  r replace   i insert   t top   b bottom   c copy   g grammar
@@ -346,11 +350,12 @@ A typical multi-turn pass reads like a dialogue with an editor who remembers:
 
 #screen(caption: "A continuous revision loop")[```
  1.  F9 → Paragraph.  Prompt: "Tighten this."  Enter.
- 2.  r  — replace the paragraph with the tightened text.
- 3.  Prompt: "Now another pass, harder on the dialogue
+ 2.  Esc  — focus the pane (chips only fire there).
+ 3.  r  — replace the paragraph with the tightened text.
+ 4.  Prompt: "Now another pass, harder on the dialogue
      tags."  Enter.   (History knows what "this" was.)
- 4.  r  — apply again.
- 5.  Ctrl+B C — clear the thread and start fresh.
+ 5.  Esc, then r  — focus the pane and apply again.
+ 6.  Ctrl+B C — clear the thread and start fresh.
 ```]
 
 `Ctrl+B C` clears the chat history along with the currently displayed inference —
@@ -380,15 +385,16 @@ invents a feature — without your leaving the prompt bar. The capitalisation is
 exact: `Help!`, not `help!` or `HELP!`, so an actual sentence that happens to
 start with the word "help" is never hijacked.
 
-#section("Providers — six bundled, and any the router reaches")
+#section("Providers — five pre-configured, and any the router reaches")
 
 Behind the pane sits a #emph[provider]: the company or runtime that actually runs
 the model. Inkhaven speaks to all of them through the
 #link("https://github.com/jeremychone/rust-genai")[genai] crate, which picks the
 right adapter from the #emph[model name] alone — so adding a new model is a matter
-of naming it, not writing code. Six providers are bundled as defaults.
+of naming it, not writing code. Five providers ship pre-configured in the default
+`llm.providers`; Ollama is supported (keyless, local) — add it yourself.
 
-#screen(caption: "The six bundled providers")[```
+#screen(caption: "The five pre-configured providers")[```
  Provider   Default model        API-key env var
  ────────   ──────────────────   ─────────────────
  gemini     gemini-2.5-pro       GEMINI_API_KEY
@@ -396,7 +402,6 @@ of naming it, not writing code. Six providers are bundled as defaults.
  openai     gpt-4o               OPENAI_API_KEY
  deepseek   deepseek-chat        DEEPSEEK_API_KEY
  grok       grok-2-latest        XAI_API_KEY
- ollama     (a local model)      — none (on-device)
 ```]
 
 You configure them in the `llm` block of `inkhaven.hjson`. Each entry names a

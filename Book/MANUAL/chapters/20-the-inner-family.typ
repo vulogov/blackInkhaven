@@ -26,7 +26,7 @@ book *Know Your Book* devotes its Part VI to exactly this family.
   Not one member of the Inner family ever edits your prose. Every finding is a
   question, an observation, or a flag — surfaced to the Output pane or printed
   to your terminal, and nothing more. There is no confirm-this-rewrite path
-  anywhere in the family; that machinery belongs to REDLINE (Chapter 24), not
+  anywhere in the family; that machinery belongs to REDLINE (Chapter 19), not
   here. The family reads; you write.
 ]
 
@@ -211,8 +211,8 @@ into the ledger — and from there a single sub-key does each thing.
 │   ◇ Inquiry [Framing]   ch03 · the-quay                │
 │   ◇ Inquiry [Hedging]   ch03 · the-inn                 │
 ├────────────────────────────────────────────────────────┤
-│ F fast ¶ · E engage slow · S persona · C converse      │
-│ N new · L ledger · A ambient · T theolog · P poet      │
+│ F fast ¶ · E slow · S persona · C converse · N new     │
+│ L ledger · A ambient · T theolog · P poet · R rigor    │
 └────────────────────────────────────────────────────────┘
 ```]
 
@@ -222,6 +222,7 @@ into the ledger — and from there a single sub-key does each thing.
   chord_row("J → E", "Engage the Slow pass — the LLM deep questions or verdict, run in the background."),
   chord_row("J → S", "Cycle the active persona through the fourteen."),
   chord_row("J → C", "Open a conversation with the persona in the AI pane (it discusses, never rewrites)."),
+  chord_row("J → R", "Run the deterministic reasoning-rigor reader over the open paragraph."),
   chord_row("J → N", "AI wizard to author a new persona."),
   chord_row("J → L", "View the intent ledger."),
   chord_row("J → A", "Toggle the ambient auto-check (off by default; runs on a writing pause)."),
@@ -484,9 +485,10 @@ you should answer.
 
 #subsection("The command line — and the CI gate")
 
-RIGOR has no editor chord of its own; it can join the review-pass ambient
-surface (set `fast_track: true` in the `rigor:` config block), but its home is
-the command line.
+RIGOR is reachable in the editor at `Ctrl+B J → R` — the deterministic
+reasoning-rigor reader over the open paragraph. It can also join the
+review-pass ambient surface (set `fast_track: true` in the `rigor:` config
+block), but its fuller home is the command line.
 
 #screen(caption: "Scanning for rigor, with the strict gate")[```
 $ inkhaven rigor scan --strict
@@ -532,7 +534,7 @@ run.
   Inner Editor    Ctrl+V O           slow only  ✎
   Inner Theologian Ctrl+B J → T      fast+slow  ⚖
   Inner Poet      Ctrl+B J → P       fast+slow  (P/N/C)
-  Rigor reader    inkhaven rigor     fast only  ⊬
+  Rigor reader    Ctrl+B J → R       fast only  ⊬
 ```]
 
 Reach for the Fast tracks and RIGOR freely — they are deterministic, instant,

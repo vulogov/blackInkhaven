@@ -393,8 +393,10 @@ mostly `Ctrl+B Shift+…`. They are collected in the next table.
 
 #subsection("Ctrl+B — prose, craft, and analysis")
 
-These are editor-scoped unless noted; several open a modal or stream into the AI
-pane.
+Most are editor-scoped, but the toggles and overlays — `Ctrl+B Shift+F`,
+`Ctrl+B Shift+L`, `Ctrl+B Shift+P`, `Ctrl+B Shift+N`, `Ctrl+B Shift+G`, and
+`Ctrl+B Shift+Y` — fire from any pane; the rest are editor-scoped. Several open a
+modal or stream into the AI pane.
 
 #chord_table((
   chord_row("Ctrl+B Shift+F", [Toggle the inline style-warning overlay (filter words, hedges) — a session-local override of `editor.style_warnings`.]),
@@ -433,11 +435,11 @@ pane.
   chord_row("Ctrl+B B", [Build the book — assemble then run `typst compile` (PDF to the artefacts dir).]),
   chord_row("Ctrl+B O", [Take the book — build, then copy the PDF (and configured extras) into the launch directory.]),
   chord_row("Ctrl+B Shift+B", [Run a project backup now, ignoring the exit-hook recency cooldown.]),
-  chord_row("Ctrl+B U", [Undo the most-recent paragraph delete (restores the front of the kill-ring).]),
+  chord_row("Ctrl+B U", [Undo the most-recent paragraph delete (restores the front of the kill-ring). From every pane EXCEPT the Tree, where `Ctrl+B U` reorders the node up (see the Tree section).]),
   chord_row("Ctrl+B K", [Toggle full-screen AI mode — the AI pane fills the window with the chat history and prompt.]),
   chord_row("Ctrl+B W", [Open the World overview — the `world.hjson` definition and every compiled layer (astronomy, geology, climate, hydrology, demographics), each marked once materialized. `C` compiles the world.]),
   chord_row("Ctrl+B Shift+W", [Toggle distraction-free / focus mode — hide every other pane and give the editor the full window.]),
-  chord_row("Ctrl+B J", [Open the Inner Socrates overview — the entrance to the whole inner-reader family (see the next section).]),
+  chord_row("Ctrl+B J", [Open the Inner Socrates overview — the entrance to the whole inner-reader family (see the next section). From every pane EXCEPT the Tree, where `Ctrl+B J` reorders the node down (see the Tree section).]),
   chord_row("Ctrl+B X", [Open the ConLang hub — a read-only overview of every constructed language: phoneme inventory, template/constraint counts, prosody, romanization, lexicon size, speakers.]),
   chord_row("Ctrl+B z", [Open the knowledge-graph hub — `n` the paragraph's one-hop edges, `i` the edge inbox (P promotes, d rejects), `w` walks the graph to answer the AI-prompt question.]),
   chord_row("Ctrl+B Shift+O", [Open the full-screen Outline pane (the reliable backup for `Ctrl+2`).]),
@@ -474,6 +476,8 @@ rewrite your prose.
   chord_row("Ctrl+B J then T", [Inner Theologian — a tradition-neutral reader poses moral questions through eleven lenses → the Thoughts / Output pane. It asks, never judges.]),
   chord_row("Ctrl+B J then P", [Inner Poet — scan the open verse paragraph's metre and rhyme against its declared `poem:` form. Sub-keys: F scan · E engage · D declare a form · T two-column translation · A ambient.]),
   chord_row("Ctrl+B J then Y", [Inner Stylist (CHORUS) — synthesise voice-at-scale (distinctiveness, POV/head-hop, tense, register). Sub-keys: F pillars → Output · E engage the coach · R the voice-report dashboard.]),
+  chord_row("Ctrl+B J then R", [Inner Rigor — run the reasoning-rigor reader over the open paragraph.]),
+  chord_row("Ctrl+B J then N", [New-persona wizard — create a new Reader Persona.]),
 ))
 
 #callout(label: "The Inner Editor lives elsewhere")[

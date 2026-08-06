@@ -32,7 +32,7 @@ notch; the pane's title and the status bar both name the current one
   The *scope* is what the AI pane sends the model alongside your prompt. `F9`
   cycles it. The first five stops are *manuscript slices* — a literal span of
   prose around your cursor. The last five are *structured scopes* — Book, Facts,
-  Graph, Socrates, and Editor — which retrieve or assemble grounding rather than
+  Socrates, Editor, and Graph — which retrieve or assemble grounding rather than
   sending text verbatim, and are *sticky*: the conversation stays in that scope,
   reasoning over the same evidence, until you cycle away.
 ]
@@ -423,9 +423,9 @@ always one key away.
   chord_row("F9", "Cycle the AI scope one notch; the status bar names it."),
   chord_row("F9 → Book", "RAG chat over the manuscript + author-content system books."),
   chord_row("F9 → Facts", "Chat grounded in the whole Facts book (the world's invariants)."),
-  chord_row("F9 → Graph", "Chat grounded in prose + the graph edges that connect it."),
   chord_row("F9 → Socrates", "Converse with the active Reader Persona about this paragraph."),
   chord_row("F9 → Editor", "Converse with the Inner Editor about this paragraph's craft."),
+  chord_row("F9 → Graph", "Chat grounded in prose + the graph edges that connect it."),
   chord_row("p", "In the AI pane: expand / collapse the retrieved-passages section."),
   chord_row("Ctrl+B z → w", "Walk the graph to answer the AI prompt, streamed live."),
   chord_row("Ctrl+B Shift+X", "One-shot fact-check of the open paragraph against the Facts book."),
