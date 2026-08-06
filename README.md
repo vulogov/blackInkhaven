@@ -27,9 +27,16 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 3.0.0 — The Stable Edition
+## Latest release · 3.0.2 · stable baseline 3.0.0 — The Stable Edition
 
-Read the full notes: [`Documentation/RELEASE_NOTES/3.0.0.md`](Documentation/RELEASE_NOTES/3.0.0.md)
+The current release is **3.0.2**, a maintenance patch over the **3.0.0 "Stable
+Edition"** baseline: two companion books (*The Inkhaven Manual* and *A Book,
+Start to Finish*), a source-verified accuracy audit of both, screen-frame
+rendering fixes, and a timeline bugfix that lets events carry explicit
+character/place participants — reviving KEN's presence grants and the
+co-location check. No feature surface changed.
+
+Read the full 3.0.0 notes: [`Documentation/RELEASE_NOTES/3.0.0.md`](Documentation/RELEASE_NOTES/3.0.0.md)
 
 3.0.0 closes the 2.x arc and promotes Inkhaven to a **stable, maintained edition**. The intelligence
 suite — the book that watches, reads, and remembers itself (SEMNET → GRAPHMIND → CHORUS → SENTINEL →
@@ -250,7 +257,7 @@ cargo install inkhaven
 ```
 
 Inkhaven is published on crates.io — every release tag pushes a
-new version (latest: 1.2.19).  The first build takes ~10 minutes on
+new version (latest: 3.0.2).  The first build takes ~10 minutes on
 a modern laptop because of DuckDB + fastembed + ONNX-runtime
 compilation; `cargo binstall` above is the fast path.
 
