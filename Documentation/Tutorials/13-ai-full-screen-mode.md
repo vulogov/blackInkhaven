@@ -36,7 +36,7 @@ Press `Ctrl+B` then `K` from any pane. The screen reshapes:
 
 The same `Ctrl+B K` returns to the normal layout. The two modes
 are mutually exclusive — entering AI full-screen disables
-Ctrl+B W typewriter mode and vice versa.
+Ctrl+B Shift+W typewriter mode and vice versa.
 
 Tree, editor, and search bar are hidden. The editor's buffer is
 still loaded — the `t`-action in selection mode (below) writes
@@ -219,7 +219,7 @@ A natural session:
   a paragraph.
 
 If you just want to **see less chrome** while typing prose, use
-`Ctrl+B W` (typewriter mode) instead — that's editor-only,
+`Ctrl+B Shift+W` (typewriter mode) instead — that's editor-only,
 zero-AI.
 
 ## Next steps

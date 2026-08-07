@@ -190,21 +190,35 @@ down. You don't have to memorise this — the gist:
   [CONFIGURATION.md](CONFIGURATION.md) for every field.
 - `prompts.hjson` — your prompt library. See [PROMPTS.md](PROMPTS.md).
 - `metadata.db`, `blobs.db`, `frequency.db`, `vectors/` — the bdslib
-  database. Hierarchy metadata, paragraph bodies, full-text index, and
+  database. Hierarchy metadata, paragraph bodies, term-frequency data, and
   HNSW vector index. You won't edit these by hand.
 - `books/` — your prose. Each paragraph is a real `.typ` file you can
   open in any other editor.
 
-`inkhaven list` prints the hierarchy. Right after `init` you will see six
+`inkhaven list` prints the hierarchy. Right after `init` you will see twenty
 **system books** that ship with every project:
 
 ```
 ├─ Notes  [book, notes]
 ├─ Research  [book, research]
+├─ Sources  [book, sources]
+├─ Glossary  [book, glossary]
+├─ Snippets  [book, snippets]
+├─ Facts  [book, facts]
 ├─ Prompts  [book, prompts]
 ├─ Places  [book, places]
 ├─ Characters  [book, characters]
-└─ Help  [book, help]
+├─ Artefacts  [book, artefacts]
+├─ World  [book, world]
+├─ Threads  [book, threads]
+├─ Planning  [book, planning]
+├─ Language  [book, language]
+├─ Submissions  [book, submissions]
+├─ Typst  [book, typst]
+├─ Scripts  [book, scripts]
+├─ Help  [book, help]
+├─ Intent  [book, intent]
+└─ Mythology  [book, mythology]
 ```
 
 These are seeded automatically — you cannot delete or rename them.

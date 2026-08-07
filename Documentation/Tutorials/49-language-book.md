@@ -953,23 +953,33 @@ Follow-up candidates (the §12 / §13 / §14 parts of
 `Documentation/PROPOSALS/LANGUAGE_BOOK.md` that
 didn't ship):
 
-- `--format grammar` and `--format phrasebook`
-  exports — need rule HJSON schema design (the
-  current template is the right shape; the
-  exporter doesn't yet parse it).
-- `inkhaven language test <name>` headless
-  roundtrip drift CLI.
-- `inkhaven language translate` headless
-  translation CLI.
-- `Ctrl+B Shift+R` reverse-lookup picker
-  ("find the entry whose translation is `X`").
-- `Ctrl+B Shift+W` word-of-the-day floating
-  card in the manuscript editor + phonotactic
-  generator in the Language book.
+Most of these shipped in later releases:
+
+- `inkhaven language test <name>` — the headless
+  roundtrip drift CLI (shipped).
+- `inkhaven language translate` and
+  `inkhaven language reverse` — sentence-level RBMT
+  translation between a conlang and English, in
+  both directions (shipped).
+- Structured exports via `inkhaven language export
+  --format dictionary|grammar|anki|json` (shipped;
+  a dedicated `phrasebook` format is still open).
+
+Still open — render / UX work, not data-model:
+
+- An in-editor reverse-lookup *picker* ("find the
+  entry whose translation is `X`"). The
+  `inkhaven language reverse` CLI covers sentence
+  reversal, but there is no interactive entry
+  picker, and no editor chord is assigned for one.
+- A word-of-the-day card and an in-editor
+  phonotactic generator.
 - Card renderers for Dictionary / Grammar /
   Phonology paragraphs viewed inside the Language
   book (the §7 / §10 visualisations from the
   proposal).
 
-The plumbing for all of these is in place; they're
-chord / render work, not data-model work.
+(The `Ctrl+B Shift+R` / `Ctrl+B Shift+W` chords once
+sketched for these are now used elsewhere — TTS
+save-to-audio and the typewriter-mode toggle — so
+any future pickers would need fresh bindings.)

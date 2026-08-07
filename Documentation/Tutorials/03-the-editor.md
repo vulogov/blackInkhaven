@@ -147,7 +147,7 @@ diff > lexicon > syntax).
 
 ## Focus mode (distraction-free)
 
-`Ctrl+B W` hides every other pane — Tree, AI, Search, AI-prompt —
+`Ctrl+B Shift+W` hides every other pane — Tree, AI, Search, AI-prompt —
 and gives the editor the full window. Useful for long drafting
 sessions where the cross-pane chrome is more distraction than
 help. Re-press to restore the four-pane layout. The chord is
