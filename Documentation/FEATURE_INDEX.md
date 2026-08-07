@@ -26,10 +26,10 @@ Legend: **CLI** = `inkhaven <verb>` · **Chord** = in-editor keystroke · **Doc*
 |---|---|---|---|---|
 | World simulation | `realworld` | `Ctrl+B W` | [WORLDBUILDING.md](WORLDBUILDING.md) | `ink.world` |
 | Interactive worldbuilder | `worldbuilder` | (own TUI) | [BUILDING_THE_WORLD book] | `ink.world` |
-| Utopia/dystopia coherence | `utopia` | (review pass) | [WORLDBUILDING.md](WORLDBUILDING.md) | `ink.utopia` |
-| Facts & fact-check | `factcheck` | `Ctrl+B Shift+X` | [Tutorial](Tutorials/README.md) | — |
+| Utopia/dystopia coherence | `world utopia-check` | (review pass) | [WORLDBUILDING.md](WORLDBUILDING.md) | `ink.utopia` |
+| Facts & fact-check | `fact-check` | `Ctrl+B Shift+X` | [Tutorial](Tutorials/README.md) | — |
 | Semantic net (graph) | `graph` | `Ctrl+B z` | [GRAPH.md](GRAPH.md) | `ink.graph` |
-| Timeline & events | `timeline` | — | [Tutorials 31, 80](Tutorials/README.md) | `ink.event` |
+| Timeline & events | `event` | — | [Tutorials 31, 80](Tutorials/README.md) | `ink.event` |
 | Places / Characters | — | `Ctrl+B P` / `Ctrl+B C` | [LOCATIONS.md](LOCATIONS.md) · [CHARACTERS.md](CHARACTERS.md) | `ink.char` |
 | Character arcs | `character` | `Ctrl+V Shift+N` | [CHARACTERS.md](CHARACTERS.md) | `ink.char` |
 | Plot threads | `thread` | `Ctrl+V Shift+D` (doctor) | [THREADS.md](THREADS.md) | `ink.thread` |
@@ -85,11 +85,11 @@ Legend: **CLI** = `inkhaven <verb>` · **Chord** = in-editor keystroke · **Doc*
 
 | Feature | CLI | Chord | Doc | Bund |
 |---|---|---|---|---|
-| Typst / PDF assembly | `export` / `assemble` | `Ctrl+V R` | [Tutorial 09](Tutorials/README.md) | `ink.export` `ink.typst` |
+| Typst / PDF assembly | `export` / `build` | `Ctrl+B A` / `Ctrl+B B` | [Tutorial 09](Tutorials/README.md) | `ink.export` `ink.typst` |
 | EPUB (import + export) | `import-epub` / `export` | — | [Tutorial](Tutorials/README.md) | `ink.export` |
 | HTML website | `export html` | — | [WEBSITE book] | — |
 | Technical-doc checks (TDOC) | `docs verify` / `links` / `review` | `Ctrl+B Shift+D` | [TDOC.md](TDOC.md) | — |
-| arXiv / scientific bundle | `export bundle` | — | — | — |
+| arXiv / scientific bundle | `export --bundle` | — | — | — |
 | Audiobook / TTS | `tts` | `Ctrl+B S` / `Ctrl+B Shift+V` | [Tutorials 56, 57](Tutorials/README.md) | `ink.tts` |
 | Scrivener import | `import-scrivener` | `F3` | [Tutorial 08](Tutorials/README.md) | — |
 
