@@ -27,14 +27,17 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 3.0.2 · stable baseline 3.0.0 — The Stable Edition
+## Latest release · 3.0.3 · stable baseline 3.0.0 — The Stable Edition
 
-The current release is **3.0.2**, a maintenance patch over the **3.0.0 "Stable
-Edition"** baseline: two companion books (*The Inkhaven Manual* and *A Book,
-Start to Finish*), a source-verified accuracy audit of both, screen-frame
-rendering fixes, and a timeline bugfix that lets events carry explicit
-character/place participants — reviving KEN's presence grants and the
-co-location check. No feature surface changed.
+The current release is **3.0.3**, a maintenance patch over the **3.0.0 "Stable
+Edition"** baseline. It hardens the running editor from an 8-partition stability
+audit — isolating background-worker panics from the live terminal, guarding
+against an uncatchable stack-overflow on deeply-nested config, fixing a
+config-splice corruption of quoteless string values, and tightening the Bund
+sandbox, importers, and web fetch — and clears a documentation-staleness sweep.
+3.0.2 shipped the two companion books (*The Inkhaven Manual*, *A Book, Start to
+Finish*) with a source-verified audit and a timeline participant-linking fix. No
+feature surface changed.
 
 Read the full 3.0.0 notes: [`Documentation/RELEASE_NOTES/3.0.0.md`](Documentation/RELEASE_NOTES/3.0.0.md)
 
@@ -259,14 +262,14 @@ cargo install inkhaven
 ```
 
 Inkhaven is published on crates.io — every release tag pushes a
-new version (latest: 3.0.2).  The first build takes ~10 minutes on
+new version (latest: 3.0.3).  The first build takes ~10 minutes on
 a modern laptop because of DuckDB + fastembed + ONNX-runtime
 compilation; `cargo binstall` above is the fast path.
 
 ### 4. `cargo install --git` (compile from a specific tag)
 
 ```bash
-cargo install --git https://github.com/vulogov/blackInkhaven --tag v3.0.2
+cargo install --git https://github.com/vulogov/blackInkhaven --tag v3.0.3
 ```
 
 Useful when you want a specific tag, a pre-release branch, or a
