@@ -1433,8 +1433,19 @@ fn perform_save(app: &mut App, edits: &[Edit]) -> Result<String> {
         app.index = prior_app_index;
     }
     let new_source = save::apply_edits(&working_index, &edits)?;
+    // F3 safety net — never commit a config we can't parse back. A splice bug
+    // would otherwise write a corrupt inkhaven.hjson with no clean recovery.
+    if let Err(e) = serde_hjson::from_str::<Value>(&new_source) {
+        anyhow::bail!(
+            "refusing to save: the edit produced invalid HJSON ({e}) — the file \
+             was left unchanged; edit it by hand"
+        );
+    }
+    // Pre-patch backup: snapshot the ORIGINAL config *before* writing, so there
+    // is a rollback point (the CLI apply path already does this; the interactive
+    // path previously backed up the already-patched result).
+    let backup = save::write_backup(&app.project_root, &working_source)?;
     let written = save::write_atomic(&app.cfg_path, &new_source)?;
-    let backup = save::write_backup(&app.project_root, &new_source)?;
     app.saved_at_least_once = true;
 
     // Refresh load state so subsequent saves diff

@@ -70,6 +70,10 @@ async fn searxng(cfg: &WebConfig, query: &str) -> Result<Vec<WebResult>> {
     let base = cfg.endpoint.trim_end_matches('/');
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
+        // SearXNG returns arbitrary result URLs which we then fetch; bound the
+        // redirect chain so a page can't bounce us to an internal address
+        // (169.254.169.254 / localhost / … — SSRF).
+        .redirect(reqwest::redirect::Policy::limited(5))
         .build()
         .map_err(|e| anyhow!("http client: {e}"))?;
     let resp = client
@@ -87,7 +91,7 @@ async fn searxng(cfg: &WebConfig, query: &str) -> Result<Vec<WebResult>> {
     if cfg.fetch {
         for r in results.iter_mut() {
             if let Ok(page) = client.get(&r.url).send().await {
-                if let Ok(html) = page.text().await {
+                if let Some(html) = read_capped_text(page).await {
                     let text = html_to_text(&html);
                     if text.len() > r.text.len() {
                         r.text = text;
@@ -97,6 +101,28 @@ async fn searxng(cfg: &WebConfig, query: &str) -> Result<Vec<WebResult>> {
         }
     }
     Ok(results)
+}
+
+/// Read an HTTP response body as UTF-8 text with a hard byte cap, so a hostile
+/// or huge fetched page — or a missing / lying `Content-Length` — can't stream
+/// unbounded bytes into memory (the 30s timeout bounds duration, not size).
+async fn read_capped_text(resp: reqwest::Response) -> Option<String> {
+    use futures_util::StreamExt;
+    const MAX_PAGE_BYTES: usize = 5 * 1024 * 1024; // 5 MiB
+    // Fast-reject a body that already declares itself oversized.
+    if resp.content_length().is_some_and(|len| len as usize > MAX_PAGE_BYTES) {
+        return None;
+    }
+    let mut stream = resp.bytes_stream();
+    let mut buf: Vec<u8> = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.ok()?;
+        if buf.len() + chunk.len() > MAX_PAGE_BYTES {
+            return None; // over the cap — drop the page rather than risk OOM
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    String::from_utf8(buf).ok()
 }
 
 /// Parse a `{ results: [ { title, url, content, raw_content } ] }` payload

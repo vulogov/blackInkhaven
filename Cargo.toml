@@ -115,7 +115,7 @@ pdf-extract = "0.9"
 # RESRCH-2 (R2-C) — HTTP client for web search & fetch (`/web`). Already in the
 # tree transitively via genai; pinned to rustls to avoid a native-TLS / OpenSSL
 # system dep. Only used when `research.web` is configured.
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 vecstore = "1"
 r2d2 = "0.8"
 parking_lot = "0.12"
