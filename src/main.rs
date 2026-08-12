@@ -16,6 +16,7 @@ mod crash;
 mod disk;
 mod facts_scan;
 mod health;
+mod hjson_guard;
 mod io_atomic;
 mod path_safety;
 mod pdf;

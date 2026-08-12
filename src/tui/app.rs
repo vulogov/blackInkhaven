@@ -4216,7 +4216,17 @@ impl App {
         let rt_handle = tokio::runtime::Handle::try_current().ok();
         std::thread::spawn(move || {
             let _rt_guard = rt_handle.as_ref().map(|h| h.enter());
-            work(tx, worker_cancel);
+            // Isolate a worker panic so it can't reach the process-global crash
+            // hook and tear the live terminal down (disable raw mode / leave the
+            // alt-screen) while the UI thread is still drawing. Mirrors the
+            // Bund-hook isolation in `scripting::hooks`: the suppress flag makes
+            // the hook skip its terminal-restore, and `catch_unwind` contains
+            // the unwind. `work` owns `tx`, so a panic drops it as the frame
+            // unwinds and the failure surfaces cleanly through
+            // `drain_bg_messages`' `Disconnected` arm.
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+                crate::crash::suppress_panic_report(move || work(tx, worker_cancel))
+            }));
         });
         self.status = format!("⟳ {label}…");
         self.bg_job =
