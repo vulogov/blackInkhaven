@@ -17,7 +17,7 @@ Your manuscript is organised as a hierarchy of `.typ` files
 **image** (`.png` / `.jpg` / …), **HJSON data** (`.hjson`), and
 **Bund script** (`.bund`) leaves alongside paragraphs. Inkhaven
 stores metadata in a local DuckDB database, indexes every text
-node for full-text and semantic search, keeps versioned
+node for semantic search, keeps versioned
 snapshots, embeds the [Bund](Documentation/Bund/README.md)
 scripting language for hooks + custom rules, and streams answers
 from your chosen LLM provider — six are bundled (**Gemini**,
@@ -85,16 +85,18 @@ Every prior release lives under
   Inkhaven does NOT provide inherent privacy when external providers
   (Gemini / Claude / OpenAI / DeepSeek / Grok) are used — prompts
   travel to their servers under their terms. For privacy, set
-  `llm.default_provider: "ollama"` and run a local model; every other
+  `llm.default: "ollama"` and run a local model; every other
   inkhaven subsystem (RAG embedding, semantic search, snapshot diff)
   is already on-device.
 - **Multilingual.** Snowball stemmers and multilingual embeddings make
   Russian, German, French, Spanish, Italian and others first-class. The
   shipped defaults cover English and Russian.
-- **Help, characters, places, artefacts, scripts — built in.** Nine
+- **Help, characters, places, artefacts, scripts — built in.** Twenty
   system books are seeded on every project: `Notes`, `Research`,
-  `Prompts`, `Places`, `Characters`, `Artefacts`, `Typst`, `Scripts`,
-  `Help`. Mentions of names from the lexicon books light up in the
+  `Sources`, `Glossary`, `Snippets`, `Facts`, `Prompts`, `Places`,
+  `Characters`, `Artefacts`, `World`, `Threads`, `Planning`, `Language`,
+  `Submissions`, `Typst`, `Scripts`, `Help`, `Intent`, `Mythology`.
+  Mentions of names from the lexicon books light up in the
   editor (cyan / amber / peach / underline). `Ctrl+B P` / `C` / `Y` /
   `G` query each via RAG. `F1` answers questions about Inkhaven itself
   by RAG over `Help`. `Scripts` (added in 1.2) holds `.bund` source
@@ -264,7 +266,7 @@ compilation; `cargo binstall` above is the fast path.
 ### 4. `cargo install --git` (compile from a specific tag)
 
 ```bash
-cargo install --git https://github.com/vulogov/blackInkhaven --tag v1.2.19
+cargo install --git https://github.com/vulogov/blackInkhaven --tag v3.0.2
 ```
 
 Useful when you want a specific tag, a pre-release branch, or a

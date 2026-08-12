@@ -168,7 +168,16 @@ pub fn import_epub(
         let _ = std::fs::create_dir_all(&dir);
         for item in orphans {
             if let Some(bytes) = archive.read(&item.href) {
-                let name = item.href.rsplit('/').next().unwrap_or("image");
+                // Take only the final path component, splitting on BOTH separators
+                // — a hostile OPF `href` can use `\` to slip past a `/`-only split
+                // on Windows (`..\..\evil.png`) — and refuse traversal, so
+                // `dir.join(name)` can never escape the sidecar folder.
+                let base = item.href.rsplit(['/', '\\']).next().unwrap_or("image");
+                let name = if base.is_empty() || base == ".." || base == "." {
+                    "image"
+                } else {
+                    base
+                };
                 if crate::io_atomic::write(&dir.join(name), &bytes).is_ok() {
                     report.images_extracted += 1;
                 }

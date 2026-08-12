@@ -199,11 +199,32 @@ pub fn init_adam() -> Result<()> {
             .map_err(|e| anyhow!("apply policy: {e}"))?;
     }
     if !p.bootstrap.trim().is_empty() {
-        if let Err(e) = bund.eval(p.bootstrap.clone()) {
+        // The bootstrap string is deserialized from the project's `inkhaven.hjson`,
+        // so a copied/untrusted project could inject code that runs at open. Gate
+        // it behind the SAME trust decision as store `Script` nodes — do not run
+        // it under `deny` / pending-opt-in. (No active store = no project context
+        // to distrust, e.g. a headless default eval.)
+        let allowed = match active_store() {
+            Some(store) => {
+                matches!(trust_decision(&p, store.project_root()), TrustOutcome::Trusted)
+            }
+            None => true,
+        };
+        if allowed {
+            if let Err(e) = bund.eval(p.bootstrap.clone()) {
+                tracing::warn!(
+                    target: "inkhaven::scripting",
+                    "bootstrap script failed: {}",
+                    e
+                );
+            }
+        } else {
             tracing::warn!(
-                target: "inkhaven::scripting",
-                "bootstrap script failed: {}",
-                e
+                target: "inkhaven::security",
+                "scripting.bootstrap NOT run — trust_decision is not \"trust\". \
+                 Create `<project>/.inkhaven/trust` (marker line `trust`) or set \
+                 `scripting.trust_decision: \"trust\"` in inkhaven.hjson if you \
+                 authored / audited this project."
             );
         }
     }

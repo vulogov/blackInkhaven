@@ -1769,7 +1769,11 @@ fn do_poem(vm: &mut VM) -> Result<&mut VM> {
     let meter: Vec<usize> = meter_s
         .split(',')
         .filter_map(|s| s.trim().parse::<usize>().ok())
-        .filter(|n| *n > 0)
+        // Clamp to a sane range — an unbounded value (a dropped digit →
+        // `5000000000`) would spin `creative::poem`'s `while total < target`
+        // loop for billions of iterations and OOM. Mirrors the CLI clamp in
+        // cli::language::authoring.
+        .filter(|n| (1..=64).contains(n))
         .collect();
     if meter.is_empty() {
         return Err(anyhow!("{tag}: invalid meter `{meter_s}` (e.g. 5,7,5)"));
