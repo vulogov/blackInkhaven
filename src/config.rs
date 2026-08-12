@@ -3244,6 +3244,9 @@ impl Default for HierarchyConfig {
 impl Config {
     pub fn load(path: &Path) -> crate::error::Result<Self> {
         let raw = std::fs::read_to_string(path).map_err(crate::error::Error::Io)?;
+        // Guard against deeply-nested HJSON that would stack-overflow the
+        // recursive parser into an uncatchable SIGABRT on startup.
+        crate::hjson_guard::check_hjson_depth(&raw).map_err(crate::error::Error::Config)?;
         let mut cfg: Self = serde_hjson::from_str(&raw)
             .map_err(|e| crate::error::Error::Config(e.to_string()))?;
         cfg.harden_security_floor();
@@ -3354,6 +3357,7 @@ impl Config {
 /// layer's value in place.
 fn read_hjson_value(path: &Path) -> crate::error::Result<serde_json::Value> {
     let raw = std::fs::read_to_string(path).map_err(crate::error::Error::Io)?;
+    crate::hjson_guard::check_hjson_depth(&raw).map_err(crate::error::Error::Config)?;
     serde_hjson::from_str::<serde_json::Value>(&raw)
         .map_err(|e| crate::error::Error::Config(e.to_string()))
 }

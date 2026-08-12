@@ -275,7 +275,13 @@ impl<'a> WalkCtx<'a> {
         // — Scrivener routinely leaves "empty" Text items with
         // no .rtf at all; just create an empty paragraph.
         let rtf_path = self.docs_dir.join(format!("{}.rtf", scriv_uuid));
-        let body = if rtf_path.is_file() {
+        // Skip a symlinked .rtf: a hostile bundle could point it at an
+        // out-of-bundle host file (config / credentials / source) to exfiltrate
+        // its contents into the imported project. Treated like a missing file.
+        let is_symlink = std::fs::symlink_metadata(&rtf_path)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false);
+        let body = if rtf_path.is_file() && !is_symlink {
             match std::fs::read(&rtf_path) {
                 Ok(bytes) => match rtf_to_typst(&bytes) {
                     Ok(s) => s,

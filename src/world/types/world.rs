@@ -149,6 +149,10 @@ impl WorldDefinition {
     /// Parse a `world.hjson` body. Mirrors `conlang::*::from_hjson` — HJSON in,
     /// a typed value out, a human-readable error string on failure.
     pub fn from_hjson(body: &str) -> std::result::Result<Self, String> {
+        // Depth-guard first: deeply-nested HJSON stack-overflows the recursive
+        // parser into an uncatchable SIGABRT (a hostile shared project's
+        // world.hjson could otherwise crash any command that loads it).
+        crate::hjson_guard::check_hjson_depth(body)?;
         serde_hjson::from_str(body).map_err(|e| e.to_string())
     }
 

@@ -55,12 +55,41 @@ fn do_ink_fs_read(vm: &mut VM) -> Result<&mut VM> {
     require_depth(vm, 1, tag)?;
     let path = value_to_string(pull(vm, tag)?, "path", tag)?;
     let resolved = resolve_fs_path(tag, &path)?;
+    reject_symlink_escape(tag, &path, &resolved)?;
     let bytes = std::fs::read(&resolved)
         .map_err(|e| anyhow!("{tag} `{path}`: {e}"))?;
     let s = String::from_utf8(bytes)
         .map_err(|e| anyhow!("{tag} `{path}`: not UTF-8: {e}"))?;
     push(vm, Value::from_string(s));
     Ok(vm)
+}
+
+/// Reject a resolved path whose real target (after following symlinks) escapes
+/// the project root. `resolve_within` deliberately does NOT follow links, so a
+/// symlinked path component inside the project could otherwise point `ink.fs.read`
+/// at an arbitrary host file. `canonicalize()` resolves every link; we assert the
+/// real target is still under the project root.
+fn reject_symlink_escape(tag: &str, raw: &str, resolved: &std::path::Path) -> Result<()> {
+    // `fs_unsandboxed` already returned the raw path unconfined — nothing to check.
+    if crate::scripting::active_policy().map(|p| p.fs_unsandboxed).unwrap_or(false) {
+        return Ok(());
+    }
+    let Some(store) = crate::scripting::active_store() else {
+        return Ok(());
+    };
+    // If either path can't be canonicalized (e.g. a missing file), there is no
+    // symlink target to escape through — `resolve_within` has already rejected
+    // `..` / absolute paths, so the confinement still holds.
+    let (Ok(real), Ok(root)) = (resolved.canonicalize(), store.project_root().canonicalize())
+    else {
+        return Ok(());
+    };
+    if !real.starts_with(&root) {
+        return Err(anyhow!(
+            "{tag} `{raw}`: rejected — resolves outside the project via a symlink"
+        ));
+    }
+    Ok(())
 }
 
 // ── ink.fs.write ────────────────────────────────────────────────────

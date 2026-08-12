@@ -223,48 +223,70 @@ impl VectorEngine {
         let dirty = self.dirty.clone();
         let in_flight = self.sync_in_flight.clone();
         std::thread::spawn(move || {
-            let mut failures: u32 = 0;
-            loop {
-                let (next_failures, backoff, give_up) =
-                    match Self::drain_dirty(&store, &dirty) {
-                        Ok(()) => sync_retry_step(true, failures),
-                        Err(e) => {
-                            tracing::warn!(
-                                target: "inkhaven::storage::vector",
-                                "background vector sync failed (attempt {}): {e}",
-                                failures + 1,
-                            );
-                            sync_retry_step(false, failures)
-                        }
-                    };
-                failures = next_failures;
-                if let Some(delay) = backoff {
-                    std::thread::sleep(delay);
-                }
-                // Release the flag, then re-check: a writer that set `dirty`
-                // during our save is flushed on this same thread instead of
-                // waiting for the next save / periodic tick. The release-then-
-                // recheck (with a reclaiming swap) closes the lost-wakeup window.
-                // Release BEFORE any give-up break so the next write can spawn a
-                // fresh sync once a persistent I/O fault clears.
-                in_flight.store(false, Ordering::Release);
-                if give_up {
-                    // A persistent save error (disk full / read-only / unplugged
-                    // volume): `dirty` stays set, so the next write or periodic
-                    // tick retries — but this thread exits instead of spinning a
-                    // core re-attempting the failing write.
-                    break;
-                }
-                if !dirty.load(Ordering::Acquire) {
-                    break;
-                }
-                if in_flight.swap(true, Ordering::AcqRel) {
-                    // Another sync_in_background reclaimed the flag first; it will
-                    // handle the pending write.
-                    break;
-                }
+            // Isolate a panic in the DuckDB sync from the process-global crash
+            // hook (suppress flag) so it can't tear down a live terminal while
+            // the UI thread is drawing; and on panic reset the single-flight
+            // flag so a later write can spawn a fresh sync instead of the flag
+            // pinning background sync off for the session.
+            let panic_reset = in_flight.clone();
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                crate::crash::suppress_panic_report(|| {
+                    Self::run_sync_loop(&store, &dirty, &in_flight);
+                })
+            }));
+            if outcome.is_err() {
+                panic_reset.store(false, Ordering::Release);
+                tracing::error!(
+                    target: "inkhaven::storage::vector",
+                    "background vector sync panicked (isolated + flag reset)"
+                );
             }
         });
+    }
+
+    /// The retry/backoff sync loop body, extracted so the spawn site can wrap it
+    /// in panic isolation. Takes shared references; owns nothing.
+    fn run_sync_loop(store: &Mutex<Option<VecStore>>, dirty: &AtomicBool, in_flight: &AtomicBool) {
+        let mut failures: u32 = 0;
+        loop {
+            let (next_failures, backoff, give_up) = match Self::drain_dirty(store, dirty) {
+                Ok(()) => sync_retry_step(true, failures),
+                Err(e) => {
+                    tracing::warn!(
+                        target: "inkhaven::storage::vector",
+                        "background vector sync failed (attempt {}): {e}",
+                        failures + 1,
+                    );
+                    sync_retry_step(false, failures)
+                }
+            };
+            failures = next_failures;
+            if let Some(delay) = backoff {
+                std::thread::sleep(delay);
+            }
+            // Release the flag, then re-check: a writer that set `dirty`
+            // during our save is flushed on this same thread instead of
+            // waiting for the next save / periodic tick. The release-then-
+            // recheck (with a reclaiming swap) closes the lost-wakeup window.
+            // Release BEFORE any give-up break so the next write can spawn a
+            // fresh sync once a persistent I/O fault clears.
+            in_flight.store(false, Ordering::Release);
+            if give_up {
+                // A persistent save error (disk full / read-only / unplugged
+                // volume): `dirty` stays set, so the next write or periodic
+                // tick retries — but this thread exits instead of spinning a
+                // core re-attempting the failing write.
+                break;
+            }
+            if !dirty.load(Ordering::Acquire) {
+                break;
+            }
+            if in_flight.swap(true, Ordering::AcqRel) {
+                // Another sync_in_background reclaimed the flag first; it will
+                // handle the pending write.
+                break;
+            }
+        }
     }
 
     /// The shared flush body for [`Self::sync`] and [`Self::sync_in_background`]:

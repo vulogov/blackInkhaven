@@ -116,11 +116,18 @@ pub enum ParseError {
     #[allow(dead_code)]
     #[error("unterminated block comment starting at byte {pos}")]
     UnterminatedBlockComment { pos: usize },
+    #[error("HJSON nested too deep (> {max} levels) — refusing to parse")]
+    TooDeep { max: usize },
 }
 
 pub type Result<T> = std::result::Result<T, ParseError>;
 
 pub fn parse(source: &str) -> Result<HjsonIndex> {
+    // Depth-guard: the walker recurses once per nesting level, so deeply-nested
+    // input would stack-overflow (an uncatchable SIGABRT) before returning.
+    if crate::hjson_guard::check_hjson_depth(source).is_err() {
+        return Err(ParseError::TooDeep { max: crate::hjson_guard::MAX_HJSON_DEPTH });
+    }
     let mut w = Walker::new(source);
     w.parse_top_level()?;
     Ok(HjsonIndex {
@@ -130,6 +137,21 @@ pub fn parse(source: &str) -> Result<HjsonIndex> {
         top_level_body_start: w.top_level_body_start,
         top_level_body_end: w.top_level_body_end,
     })
+}
+
+/// Whether an unquoted-scalar first token is a HJSON number / `true` / `false` /
+/// `null` (as opposed to a quoteless string). Used to decide whether a trailing
+/// `#` / `//` terminates the value (typed scalar) or is part of it (string).
+/// Non-finite floats (`inf` / `nan` / overflow) are treated as strings — the
+/// conservative direction, matching HJSON's quoteless-string fallback.
+fn is_number_bool_null(tok: &[u8]) -> bool {
+    if matches!(tok, b"true" | b"false" | b"null") {
+        return true;
+    }
+    std::str::from_utf8(tok)
+        .ok()
+        .and_then(|s| s.parse::<f64>().ok())
+        .is_some_and(|f| f.is_finite())
 }
 
 struct Walker<'a> {
@@ -433,32 +455,52 @@ impl<'a> Walker<'a> {
     }
 
     fn skip_unquoted_scalar(&mut self) {
-        // HJSON unquoted scalars run to the end of
-        // the line (newline) or to a `,` / `}` / `]`
-        // at the same nesting level.  Inline `#` /
-        // `//` start a trailing comment and terminate
-        // the value.
-        while let Some(c) = self.peek() {
-            if c == b'\n' || c == b'\r' || c == b',' || c == b'}' || c == b']' {
+        // HJSON unquoted scalars: a NUMBER / `true` / `false` / `null` value ends
+        // at whitespace (a trailing `#` / `//` after it is a comment). ANYTHING
+        // ELSE is a QUOTELESS STRING, which runs to the end of the line and
+        // *includes* `#` / `//` / `/*` — those are comment markers only for
+        // number/keyword values. Matching serde_hjson here is what stops the
+        // splice from truncating e.g. `endpoint: https://gutendex.com` at
+        // `https:` and corrupting the config on the next save.
+        let start = self.pos;
+        // Phase 1 — the first token: up to whitespace / newline / structural
+        // close / comment marker.
+        let mut first_end = self.pos;
+        while first_end < self.src.len() {
+            let c = self.src[first_end];
+            let is_break = c == b'\n'
+                || c == b'\r'
+                || c == b' '
+                || c == b'\t'
+                || c == b','
+                || c == b'}'
+                || c == b']'
+                || c == b'#'
+                || (c == b'/' && self.src.get(first_end + 1) == Some(&b'/'))
+                || (c == b'/' && self.src.get(first_end + 1) == Some(&b'*'));
+            if is_break {
                 break;
             }
-            // Trailing-comment terminator: only when
-            // it's at the start of a comment marker.
-            if c == b'#' {
-                break;
-            }
-            if c == b'/' && self.peek_at(1) == Some(b'/') {
-                break;
-            }
-            if c == b'/' && self.peek_at(1) == Some(b'*') {
-                break;
-            }
-            self.advance();
+            first_end += 1;
         }
-        // Trim trailing horizontal whitespace from
-        // the value so the splice replaces exactly
-        // the value text.
-        while self.pos > 0 {
+        if is_number_bool_null(&self.src[start..first_end]) {
+            // A typed scalar — the value is just the first token; trailing text
+            // (after whitespace) is a comment.
+            self.pos = first_end;
+        } else {
+            // A quoteless string — run to end of line / structural close, but do
+            // NOT stop at inline comment markers (they are part of the string).
+            self.pos = first_end;
+            while let Some(c) = self.peek() {
+                if c == b'\n' || c == b'\r' || c == b',' || c == b'}' || c == b']' {
+                    break;
+                }
+                self.advance();
+            }
+        }
+        // Trim trailing horizontal whitespace so the splice replaces exactly the
+        // value text.
+        while self.pos > start {
             let prev = self.src[self.pos - 1];
             if prev == b' ' || prev == b'\t' {
                 self.pos -= 1;
@@ -716,6 +758,29 @@ mod tests {
         let idx = parse(src).unwrap();
         let leaf = idx.leaves.get("port").unwrap();
         assert_eq!(&src[leaf.value_range.clone()], "8080");
+    }
+
+    #[test]
+    fn quoteless_url_string_not_truncated_at_slashes() {
+        // Regression (F2): a quoteless STRING value containing `//` must not be
+        // cut at the first `//` (which was truncating the span to `https:` and
+        // splice-corrupting the config on every save). The `//` is part of the
+        // string, not a comment — unlike a number/keyword value.
+        let src = "{\n  endpoint: https://gutendex.com\n}";
+        let idx = parse(src).unwrap();
+        let leaf = idx.leaves.get("endpoint").unwrap();
+        assert_eq!(&src[leaf.value_range.clone()], "https://gutendex.com");
+        // The recorded span must match what serde_hjson actually parses.
+        let v: serde_json::Value = serde_hjson::from_str(src).unwrap();
+        assert_eq!(v["endpoint"], "https://gutendex.com");
+    }
+
+    #[test]
+    fn quoteless_string_keeps_inline_hash_and_slashes() {
+        let src = "{\n  note: hello # world\n  frag: a//b\n}";
+        let idx = parse(src).unwrap();
+        assert_eq!(&src[idx.leaves.get("note").unwrap().value_range.clone()], "hello # world");
+        assert_eq!(&src[idx.leaves.get("frag").unwrap().value_range.clone()], "a//b");
     }
 
     #[test]

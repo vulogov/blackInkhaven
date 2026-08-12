@@ -88,7 +88,7 @@ to `~/.config`).
 
 A malformed **global** file is skipped with a warning rather than breaking
 every project — only a malformed **project** `inkhaven.hjson` is fatal. The
-in-app config editor (`Ctrl+B A`) still edits the *project* file directly,
+in-app config editor (`Ctrl+B 0`) still edits the *project* file directly,
 so what it shows is the raw project config, not the global-merged result.
 
 ## Top-level fields
@@ -97,7 +97,7 @@ so what it shows is the raw project config, not the global-merged result.
 {
   language: english
   prompts_file: prompts.hjson
-  sync_interval_seconds: 60
+  sync_interval_seconds: 600
 
   embeddings: { … }
   llm: { … }
@@ -507,7 +507,7 @@ Drives the `inkhaven backup` CLI and the TUI's auto-backup-on-exit hook.
 
 ```hjson
 backup: {
-  out_dir: "backups"
+  out_dir: "backups"   // override; default is "" → a project-sibling inkhaven-backups/ dir
   max_age: "7d"
   wait_for_key_after_backup: true
 }
@@ -515,7 +515,7 @@ backup: {
 
 | Field | Type | Default | Description |
 | ----- | ---- | ------- | ----------- |
-| `out_dir` | string | `"backups"` | Where `.zip` snapshots land. Relative paths resolve against the project root; absolute paths are used as-is. Created if missing. Empty string disables auto-backup. |
+| `out_dir` | string | `""` (empty) | Where `.zip` snapshots land. Relative paths resolve against the project root; absolute paths are used as-is. Created if missing. **Empty (the default) resolves to a project-sibling `<parent>/inkhaven-backups/<project-name>/` directory** (see `store::default_user_backup_dir`) — it does NOT disable auto-backup. To stop the exit-hook auto-backup, set `max_age: "0s"` or `auto_backup_on_exit: false`. |
 | `max_age` | [humantime](https://docs.rs/humantime) duration | `"7d"` | Maximum age of the last successful backup before the TUI's exit hook creates a fresh one. Values like `"24h"`, `"12h"`, `"30m"`, `"1w"` all work. `"0s"` disables auto-backup but keeps the manual `inkhaven backup` command active. |
 | `wait_for_key_after_backup` | bool | `true` | 1.2.6+. When a backup finishes — either the manual `Ctrl+B Shift+B` chord or the exit-hook auto-backup — hold the splash on screen with a `Press any key to continue…` prompt so the user can read the destination path before the TUI dismisses it. Set `false` to keep the 1.2.5 auto-dismiss behaviour. |
 
@@ -715,12 +715,12 @@ forecasting.
 ## `sync_interval_seconds`
 
 ```hjson
-sync_interval_seconds: 60
+sync_interval_seconds: 600
 ```
 
 | Type | Default | Description |
 | ---- | ------- | ----------- |
-| int | `60` | Seconds between background calls to `Store::sync()` — flushes the HNSW vector index and checkpoints DuckDB. `0` disables the background timer; saves still trigger sync explicitly. |
+| int | `600` | Seconds between background calls to `Store::sync()` — flushes the HNSW vector index and checkpoints DuckDB. `0` disables the background timer; saves still trigger sync explicitly. |
 
 You rarely need to touch this. The default is conservative.
 
@@ -2597,6 +2597,14 @@ research: {
   dedup_warn_score: 0.92
   // /import: max characters per embedded chunk of an imported document (R2-B).
   import_chunk_chars: 1500
+  // R3-E — cross-source triangulation before a `model`/`web`/`document` `/fact`
+  // commits (replaces the single-source self-check). Off by default; network-heavy.
+  // Informs — a weak verdict just asks to confirm again.
+  triangulate_gate: false
+  // R6-A — one adversarial refutation pass before an otherwise-ungated
+  // `model`/`document` `/fact` commits; a REFUTED verdict asks to confirm again.
+  // Off by default. Advisory, never a hard block.
+  refute_gate: false
   // RESRCH-6 — the autonomous deep-research loop (`inkhaven research --agentic
   // "<topic>"`): decompose a topic into sub-questions, gather evidence, and emit
   // the findings as Facts INTO the Facts book (each with `model` provenance, at an
@@ -2973,6 +2981,43 @@ abstract, keywords, and availability statements remain.
 
 ## Export
 
+### `docs` — verified code blocks, variables & back-of-book index
+
+The `docs:` block gathers the technical-documentation knobs (TDOC). Its
+`docs.html` sub-block is documented separately under [`html`](#html)
+below. All are opt-in; an empty `docs:` block changes nothing.
+
+```hjson
+docs: {
+  // TDOC-1 — verified code blocks (`inkhaven docs verify`). Nothing
+  // runs unless enabled AND a runner is named for the block's language.
+  verify: {
+    enabled:         false
+    timeout_seconds: 30
+    runners:         {}       // e.g. { rust: "rustc {file} -o {dir}/a.out && {dir}/a.out" }
+    extensions:      {}       // language → temp-file extension; seeded with common langs
+  }
+  // TDOC-3 — single-sourcing. `{{key}}` in any paragraph body is replaced
+  // by its value at assembly, across every export. Empty = no substitution.
+  variables: {}
+  // INDEX-1 — back-of-book index (`inkhaven index`).
+  index: {
+    from_glossary: true
+    terms:         []
+  }
+}
+```
+
+| Field | Type | Default | Description |
+| ----- | ---- | ------- | ----------- |
+| `verify.enabled` | bool | `false` | Master switch — nothing runs unless `true`. |
+| `verify.timeout_seconds` | u64 | `30` | Per-block wall-clock cap in seconds. |
+| `verify.runners` | map<lang, string> | `{}` | language → shell command. `{file}` is the temp file holding the block's code, `{dir}` its parent; run via `sh -c`. A language runs only if named here AND the fence carries the `verify` flag. |
+| `verify.extensions` | map<lang, string> | seeded (`rust`→`rs`, `python`→`py`, `bash`/`sh`→`sh`, `go`, `javascript`, `typescript`, `c`, `cpp`/`c++`, `java`, `ruby`, `toml`, `json`, `yaml`, `html`) | language → temp-file extension; overridable. Unknown languages fall back to `.txt`. |
+| `variables` | map<string, string> | `{}` | TDOC-3 `{{key}}` substitutions applied at assembly across every export. |
+| `index.from_glossary` | bool | `true` | Include every Glossary canonical term (synonyms become `see`-refs). |
+| `index.terms` | list of strings | `[]` | Extra index terms (names, topics) beyond the Glossary. |
+
 ### `html`
 
 Static-site HTML export (TDOC-4), driven by `inkhaven export html -o
@@ -3157,6 +3202,28 @@ research: {
 | `max_chars` | usize | `300000` | Max characters ingested (bounds embedding cost). |
 | `auto_cite` | bool | `true` | Auto-create a SOURCES-1 `BibEntry` for an ingested page. |
 
+### `research.archive`
+
+Internet Archive texts (`/archive`), keyless.
+
+```hjson
+research: {
+  archive: {
+    enabled:   true
+    endpoint:  "https://archive.org"
+    max_chars: 300000
+    auto_cite: true
+  }
+}
+```
+
+| Field | Type | Default | Description |
+| ----- | ---- | ------- | ----------- |
+| `enabled` | bool | `true` | Master switch for `/archive` (keyless). |
+| `endpoint` | string | `"https://archive.org"` | Internet Archive host (override for a mirror). |
+| `max_chars` | usize | `300000` | Max characters ingested (bounds embedding cost). |
+| `auto_cite` | bool | `true` | Auto-create a SOURCES-1 `BibEntry` for an ingested text. |
+
 ### `research.scholarly`
 
 OpenAlex + arXiv (`/openalex`, `/arxiv`), keyless. Scholarly tier — a
@@ -3289,6 +3356,33 @@ sound: {
 | ----- | ---- | ------- | ----------- |
 | `enabled` | bool | `false` | Master switch. Off by default so new users aren't surprised by audio at launch. |
 | `volume` | f32 | `0.6` | Master volume 0.0–1.0 applied uniformly to every synthesised sample. Clamped at load time. |
+
+### `orphan`
+
+Timeline critique — orphan-event detector (an event not linked to any
+scene). **Nested at `timeline.critique.orphan`** (struct
+`TimelineOrphanConfig`). Gated by `timeline.enabled` and the
+`timeline.critique.enabled` master switch (both default on; `critique.enabled`
+is `true`).
+
+```hjson
+timeline: {
+  critique: {
+    enabled: true            // master switch for the whole critique pass
+    orphan: {
+      enabled:             true
+      min_orphan_age_days: 0
+      min_significance:    "low"
+    }
+  }
+}
+```
+
+| Field | Type | Default | Description |
+| ----- | ---- | ------- | ----------- |
+| `enabled` | bool | `true` | Run the orphan check. |
+| `min_orphan_age_days` | i64 | `0` | Don't emit orphan findings for events younger than this (days). `0` = emit immediately. |
+| `min_significance` | string | `"low"` | Lowest significance to surface — `"low"` \| `"moderate"` \| `"high"`. |
 
 ### `fuzzy_overlap`
 
