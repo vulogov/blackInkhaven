@@ -385,6 +385,12 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     // 1.4.8 TERMS-1 — declaring a deliberate terminology variant writes an
     // intent-ledger row.
     ("ink.terms.declare_intent", category::STORE_WRITE),
+    // 3.0.4 Phase-3 — the importers write Book/Chapter/Paragraph nodes into the
+    // active store (store_write, default-denied). They also read an external
+    // bundle path, confined by the fs sandbox (`resolve_fs_path`) — so importing
+    // an out-of-project bundle additionally needs `fs_unsandboxed`.
+    ("ink.import.scrivener", category::STORE_WRITE),
+    ("ink.import.epub", category::STORE_WRITE),
 
     // ── keymap (default-denied) ───────────────────────────────
     ("ink.key.bind", category::KEYMAP),
@@ -468,6 +474,13 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     // user gets the responsibility.
     ("ink.fs.read", category::FS_READ),
     ("ink.fs.write", category::FS_WRITE),
+
+    // 3.0.4 Phase-3 — creating a backup writes a zip to the project's backup dir
+    // (fs_write, default-denied; the dir is derived from the project root, no
+    // user path). The Scrivener dry-run preview reads the external bundle and
+    // writes nothing (fs_read; the path is sandbox-confined like `ink.fs.read`).
+    ("ink.backup.make", category::FS_WRITE),
+    ("ink.import.scrivener_preview", category::FS_READ),
 
     // 1.3.0 PDF-1 — only the disk-crossing `ink.pdf.*` words are
     // categorised.  `load` reads a file (fs_read); `save` writes one
@@ -1197,6 +1210,26 @@ mod tests {
         // default-allowed).
         assert_eq!(cat("ink.backup.list"), Some(category::FS_READ));
         assert!(!denied.contains(category::FS_READ), "fs_read allowed by default");
+    }
+
+    // 3.0.4 Phase-3 — the opt-in write wrappers. The importers (store_write) and
+    // backup.make (fs_write) MUST be denied by default; only the Scrivener
+    // dry-run preview (fs_read) is allowed. Pin the whole chain so a refactor
+    // can't silently let an auto-loaded untrusted script import or backup.
+    #[test]
+    fn phase3_write_wrappers_default_denied() {
+        let cat = |w: &str| WORD_CATEGORIES.iter().find(|(n, _)| *n == w).map(|(_, c)| *c);
+        let policy = Policy::default();
+        let denied = policy.effective_denied_categories();
+        assert_eq!(cat("ink.import.scrivener"), Some(category::STORE_WRITE));
+        assert_eq!(cat("ink.import.epub"), Some(category::STORE_WRITE));
+        assert_eq!(cat("ink.backup.make"), Some(category::FS_WRITE));
+        for w in ["ink.import.scrivener", "ink.import.epub", "ink.backup.make"] {
+            assert!(denied.contains(cat(w).unwrap()), "{w} must be denied by default");
+        }
+        // The dry-run preview only reads — allowed by default.
+        assert_eq!(cat("ink.import.scrivener_preview"), Some(category::FS_READ));
+        assert!(!denied.contains(category::FS_READ), "preview allowed by default");
     }
 
     #[test]

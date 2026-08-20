@@ -56,6 +56,8 @@ mod companions;
 mod research;
 mod locorum;
 mod verborum;
+// 3.0.4 Phase-3 — opt-in write wrappers (default-denied).
+mod import;
 
 use anyhow::Result;
 use rust_multistackvm::multistackvm::VM;
@@ -113,5 +115,7 @@ pub fn register_ink_stdlib(vm: &mut VM) -> Result<()> {
     research::register(vm)?;
     locorum::register(vm)?;
     verborum::register(vm)?;
+    // 3.0.4 Phase-3 — opt-in write wrappers (default-denied).
+    import::register(vm)?;
     Ok(())
 }

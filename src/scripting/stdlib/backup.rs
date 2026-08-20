@@ -8,6 +8,9 @@
 //!   or NODATA if the project has never been backed up.
 //! - `ink.backup.list` ( -- list )  the backup zips, newest first, each
 //!   {name, bytes, modified}.
+//! - `ink.backup.make` ( -- dict )  create a backup zip now (fs_write,
+//!   default-denied) → {archive, kept}. Mirrors `inkhaven backup`; also records
+//!   the `.inkhaven-backup.json` timestamp `ink.backup.last` reads.
 
 use std::collections::HashMap;
 
@@ -16,12 +19,12 @@ use easy_error::Error as BundError;
 use rust_dynamic::value::Value;
 use rust_multistackvm::multistackvm::VM;
 
-use super::helpers::{active_store, push};
+use super::helpers::{active_config, active_store, push};
 use crate::backup::BackupState;
 
 pub fn register(vm: &mut VM) -> Result<()> {
     let words: &[(&str, fn(&mut VM) -> std::result::Result<&mut VM, BundError>)] =
-        &[("ink.backup.last", w_last), ("ink.backup.list", w_list)];
+        &[("ink.backup.last", w_last), ("ink.backup.list", w_list), ("ink.backup.make", w_make)];
     for (name, f) in words {
         vm.register_inline(name.to_string(), *f).map_err(|e| anyhow!("register {name}: {e}"))?;
     }
@@ -88,5 +91,32 @@ fn do_list(vm: &mut VM) -> Result<&mut VM> {
     }
     rows.sort_by(|a, b| b.0.cmp(&a.0));
     push(vm, Value::from_list(rows.into_iter().map(|(_, v)| v).collect()));
+    Ok(vm)
+}
+
+/// ( -- dict ) create a backup zip now → {archive, kept}. The same
+/// filesystem-level snapshot `inkhaven backup` writes (no store open needed);
+/// enforces the `backup.keep_last` retention cap and records the timestamp.
+fn w_make(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_make(vm).map_err(to_bund_err)
+}
+fn do_make(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.backup.make";
+    let store = active_store(tag)?;
+    let cfg = active_config(tag)?;
+    // Canonicalize like the CLI: `create_backup` strip_prefixes included paths
+    // against the project root, so a non-canonical root would fail.
+    let root = std::fs::canonicalize(store.project_root())
+        .map_err(|e| anyhow!("{tag}: canonicalize project root: {e}"))?;
+    let out = crate::store::default_user_backup_dir(&root);
+    let skip = crate::cli::backup::skip_dirs_for(&root, &out);
+    let archive = crate::backup::create_backup(&root, &out, &skip, None)
+        .map_err(|e| anyhow!("{tag}: {e}"))?;
+    crate::backup::prune_backups(&out, cfg.backup.keep_last);
+
+    let mut m: HashMap<String, Value> = HashMap::new();
+    m.insert("archive".into(), Value::from_string(&archive.display().to_string()));
+    m.insert("kept".into(), Value::from_int(cfg.backup.keep_last as i64));
+    push(vm, Value::from_dict(m));
     Ok(vm)
 }
