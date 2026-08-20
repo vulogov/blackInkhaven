@@ -389,7 +389,21 @@ pub fn scan_project(
     let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
     let hierarchy =
         crate::store::hierarchy::Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
+    Ok(scan_with_store(&store, &layout, &cfg, &hierarchy, selected))
+}
 
+/// The scan body over an ALREADY-OPEN store — the same sub-checks `scan_project`
+/// runs, but reusing a live `Store` / `Hierarchy` instead of a fresh
+/// `Store::open`. This lets an in-session caller (the TUI doctor panel, the
+/// `ink.doctor.scan` Bund word) scan without a second DB handle. Infallible:
+/// every sub-check handles its own I/O and simply omits what it can't compute.
+pub fn scan_with_store(
+    store: &Store,
+    layout: &ProjectLayout,
+    cfg: &Config,
+    hierarchy: &Hierarchy,
+    selected: Option<ScanClass>,
+) -> ScanReport {
     let mut report = ScanReport::new(&layout.root);
 
     // On the default (no `--class`) run, every class runs
@@ -404,7 +418,7 @@ pub fn scan_project(
     // we keep the cross-class findings filtered
     // down via the `run(...)` guard below.
     if run(ScanClass::ZeroByteFile) || run(ScanClass::BdslibOnly) {
-        for finding in scan_zero_byte_files(&layout, &hierarchy, &store) {
+        for finding in scan_zero_byte_files(layout, hierarchy, store) {
             if run(finding.class) {
                 report.findings.push(finding);
             }
@@ -414,77 +428,77 @@ pub fn scan_project(
         || run(ScanClass::MissingReferencedFile)
         || run(ScanClass::BdslibOnly)
     {
-        for finding in scan_orphans_and_missing(&layout, &hierarchy, &store) {
+        for finding in scan_orphans_and_missing(layout, hierarchy, store) {
             if run(finding.class) {
                 report.findings.push(finding);
             }
         }
     }
     if run(ScanClass::CorruptCommentsSidecar) {
-        report.findings.extend(scan_corrupt_comments(&layout, &hierarchy));
+        report.findings.extend(scan_corrupt_comments(layout, hierarchy));
     }
     // 1.2.16+ Phase A.6 — plot-mining detectors.
     // Each adds its own findings independently;
     // the doctor TUI panel + the CLI consumer
     // group them naturally via the `class` slug.
     if run(ScanClass::DroppedCharacter) {
-        report.findings.extend(scan_dropped_characters(&layout, &hierarchy));
+        report.findings.extend(scan_dropped_characters(layout, hierarchy));
     }
     if run(ScanClass::PacingCollapse) {
-        report.findings.extend(scan_pacing_collapse(&layout, &hierarchy));
+        report.findings.extend(scan_pacing_collapse(layout, hierarchy));
     }
     if run(ScanClass::StalledThread) {
-        report.findings.extend(scan_stalled_threads(&layout, &hierarchy));
+        report.findings.extend(scan_stalled_threads(layout, hierarchy));
     }
     if run(ScanClass::NamingInconsistency) {
-        report.findings.extend(scan_naming_inconsistencies(&layout, &hierarchy));
+        report.findings.extend(scan_naming_inconsistencies(layout, hierarchy));
     }
     // 1.2.19+ C.1 — echo / repetition-at-distance.
     if run(ScanClass::EchoRepetition) {
-        report.findings.extend(scan_echoes(&layout, &hierarchy, &cfg));
+        report.findings.extend(scan_echoes(layout, hierarchy, cfg));
     }
     // 1.2.19+ C.2 — numeric / temporal / spatial
     // contradictions.
     if run(ScanClass::NumericContradiction) {
-        report.findings.extend(scan_numeric_contradictions(&layout, &hierarchy, &cfg));
+        report.findings.extend(scan_numeric_contradictions(layout, hierarchy, cfg));
     }
     // 1.2.19+ C.3 — continuity-bible drift.
     if run(ScanClass::ContinuityDrift) {
-        report.findings.extend(scan_continuity_drift(&layout, &cfg));
+        report.findings.extend(scan_continuity_drift(layout, cfg));
     }
     // 1.2.19+ C.4 — unresolved tension.  Opt-in: the
     // `run` guard returns false for it on the default run
     // (is_opt_in), true only when explicitly selected.
     if run(ScanClass::UnresolvedTension) {
-        report.findings.extend(scan_unresolved_tension(&layout, &cfg));
+        report.findings.extend(scan_unresolved_tension(layout, cfg));
     }
     // 1.2.20+ R.3.b — paragraph read-time / wall-of-text.
     if run(ScanClass::ParagraphTooLong) {
-        report.findings.extend(scan_paragraphs_too_long(&layout, &hierarchy, &cfg));
+        report.findings.extend(scan_paragraphs_too_long(layout, hierarchy, cfg));
     }
     // 1.3.3+ — submissions sent but unanswered for a while.
     if run(ScanClass::StaleSubmission) {
-        report.findings.extend(scan_stale_submissions(&layout));
+        report.findings.extend(scan_stale_submissions(layout));
     }
     // 1.3.32+ — referential integrity over the loaded hierarchy
     // (pure, in-memory; no disk, no DB mutation).
     if run(ScanClass::BrokenParentRef) {
-        report.findings.extend(scan_broken_parents(&hierarchy));
+        report.findings.extend(scan_broken_parents(hierarchy));
     }
     if run(ScanClass::DanglingParagraphLink) {
-        report.findings.extend(scan_dangling_paragraph_links(&hierarchy));
+        report.findings.extend(scan_dangling_paragraph_links(hierarchy));
     }
     if run(ScanClass::DanglingEventRef) {
-        report.findings.extend(scan_dangling_event_refs(&hierarchy));
+        report.findings.extend(scan_dangling_event_refs(hierarchy));
     }
     if run(ScanClass::SiblingSlugCollision) {
-        report.findings.extend(scan_sibling_slug_collisions(&hierarchy));
+        report.findings.extend(scan_sibling_slug_collisions(hierarchy));
     }
     if run(ScanClass::DuplicateSystemBook) {
-        report.findings.extend(scan_duplicate_system_books(&hierarchy));
+        report.findings.extend(scan_duplicate_system_books(hierarchy));
     }
 
-    Ok(report)
+    report
 }
 
 // ── 1.3.32+ referential integrity ────────────────────────────────────────────
@@ -1167,6 +1181,19 @@ pub fn apply_fix(
     let store = Store::open(layout.clone(), &cfg).map_err(|e| Error::Store(e.to_string()))?;
     let hierarchy =
         crate::store::hierarchy::Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
+    apply_fix_with(&store, &layout, &hierarchy, finding)
+}
+
+/// Apply one fix over an ALREADY-OPEN store — the same repair `apply_fix` runs,
+/// but reusing a live `Store` / `Hierarchy` instead of a fresh `Store::open`.
+/// Lets an in-session caller (the `ink.doctor.autofix` Bund word) repair without
+/// a second DB handle.
+pub fn apply_fix_with(
+    store: &Store,
+    layout: &ProjectLayout,
+    hierarchy: &Hierarchy,
+    finding: &ScanFinding,
+) -> Result<String> {
     match finding.class {
         ScanClass::ZeroByteFile
         | ScanClass::OrphanParagraphRow
