@@ -306,7 +306,9 @@ impl Calendar {
         } else {
             self.cfg.epoch_before_label.clone()
         };
-        let year_abs = year.abs();
+        // `checked_abs` avoids the i64::MIN overflow (`.abs()` wraps to MIN in
+        // release, which would render a negative year magnitude).
+        let year_abs = year.checked_abs().unwrap_or(i64::MAX);
 
         // Substitute placeholders, then truncate by precision.
         // We render the full string then strip everything

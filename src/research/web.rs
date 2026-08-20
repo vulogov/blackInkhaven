@@ -106,6 +106,33 @@ async fn searxng(cfg: &WebConfig, query: &str) -> Result<Vec<WebResult>> {
 /// Read an HTTP response body as UTF-8 text with a hard byte cap, so a hostile
 /// or huge fetched page — or a missing / lying `Content-Length` — can't stream
 /// unbounded bytes into memory (the 30s timeout bounds duration, not size).
+/// Read an HTTP body as UTF-8 text, TRUNCATED to `max_bytes`. Unlike
+/// [`read_capped_text`] (which drops an over-cap page — right for an untrusted
+/// arbitrary URL), this keeps what fits, which is what a trusted host whose
+/// result we char-cap anyway wants: it only guards against a pathological
+/// multi-GB body OOMing the buffer, never rejecting a legitimate large book.
+pub(crate) async fn read_body_truncated(
+    resp: reqwest::Response,
+    max_bytes: usize,
+) -> anyhow::Result<String> {
+    use futures_util::StreamExt;
+    let mut stream = resp.bytes_stream();
+    let mut buf: Vec<u8> = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| anyhow!("body read: {e}"))?;
+        let room = max_bytes.saturating_sub(buf.len());
+        if room == 0 {
+            break;
+        }
+        let take = room.min(chunk.len());
+        buf.extend_from_slice(&chunk[..take]);
+        if take < chunk.len() {
+            break; // hit the cap — stop reading
+        }
+    }
+    Ok(String::from_utf8_lossy(&buf).into_owned())
+}
+
 async fn read_capped_text(resp: reqwest::Response) -> Option<String> {
     use futures_util::StreamExt;
     const MAX_PAGE_BYTES: usize = 5 * 1024 * 1024; // 5 MiB

@@ -94,24 +94,50 @@ pub(super) fn read_source(path: &Path) -> Result<String> {
             std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))
         }
         "pdf" => {
+            // Reject an oversized file up front — a crafted PDF can also drive
+            // `pdf-extract` into a huge allocation / unbounded loop.
+            const MAX_PDF_BYTES: u64 = 100 * 1024 * 1024; // 100 MiB
+            if let Ok(meta) = std::fs::metadata(path) {
+                if meta.len() > MAX_PDF_BYTES {
+                    return Err(anyhow!(
+                        "PDF too large to import ({} MiB > {} MiB cap): {}",
+                        meta.len() / (1024 * 1024),
+                        MAX_PDF_BYTES / (1024 * 1024),
+                        path.display()
+                    ));
+                }
+            }
             // `pdf-extract` byte-slices and can `panic!`/`unwrap`/index out of
-            // bounds internally on malformed or unusual PDFs (corrupt xref,
-            // broken font encodings). `.map_err` only catches the `Err` path —
-            // guard the panic too, exactly as the RTF importer does
-            // (`scrivener::rtf`), so a bad PDF never tears down the research TUI.
-            let guarded = crate::crash::suppress_panic_report(|| {
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    pdf_extract::extract_text(path)
-                }))
+            // bounds on malformed PDFs (corrupt xref, broken font encodings),
+            // and has no internal time/allocation bound — a pathological file
+            // can hang or OOM, which `catch_unwind` cannot catch (abort / loop).
+            // Run it on a worker thread with a deadline: a panic is isolated (as
+            // the RTF importer does), and a runaway is abandoned so the
+            // single-threaded research TUI stays responsive.
+            const PDF_EXTRACT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+            let owned = path.to_path_buf();
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let guarded = crate::crash::suppress_panic_report(|| {
+                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        pdf_extract::extract_text(&owned)
+                    }))
+                });
+                let _ = tx.send(guarded);
             });
-            match guarded {
-                Ok(Ok(text)) => Ok(text),
-                Ok(Err(e)) => {
+            match rx.recv_timeout(PDF_EXTRACT_TIMEOUT) {
+                Ok(Ok(Ok(text))) => Ok(text),
+                Ok(Ok(Err(e))) => {
                     Err(anyhow!("PDF text extraction failed for {}: {e}", path.display()))
                 }
-                Err(_) => Err(anyhow!(
+                Ok(Err(_)) => Err(anyhow!(
                     "PDF text extraction failed for {} (malformed or unsupported PDF)",
                     path.display()
+                )),
+                Err(_) => Err(anyhow!(
+                    "PDF text extraction timed out for {} (> {}s — malformed or pathological PDF)",
+                    path.display(),
+                    PDF_EXTRACT_TIMEOUT.as_secs()
                 )),
             }
         }
