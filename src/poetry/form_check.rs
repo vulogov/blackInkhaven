@@ -65,7 +65,7 @@ fn expected_lines(form: &PoemForm) -> Option<usize> {
         "villanelle" => 19,
         _ => {
             return if form.stanzas > 0 && form.lines_per_stanza > 0 {
-                Some((form.stanzas * form.lines_per_stanza) as usize)
+                Some(form.stanzas.saturating_mul(form.lines_per_stanza) as usize)
             } else {
                 None
             };
