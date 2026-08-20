@@ -275,6 +275,31 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     // OUTLINE-1 — reading the outline is store_read; the paragraph copy/move
     // mutators are store_write (below).
     ("ink.outline.print", category::STORE_READ),
+    // 3.0.4 Phase-1 — read-only wrappers over existing features. All
+    // deterministic reads (store / config / filesystem-metadata); nothing here
+    // calls the LLM (the AI passes of these families stay CLI-only, matching the
+    // LECTOR / REDLINE / KEN precedent) or mutates anything.
+    // Inner Rigor — the deterministic, zero-AI reasoning reader.
+    ("ink.rigor.scan", category::STORE_READ),
+    ("ink.rigor.check", category::STORE_READ),
+    ("ink.rigor.paragraph", category::STORE_READ),
+    // Planning — the canonical framework beat tables (pure static data).
+    ("ink.planning.frameworks", category::STORE_READ),
+    ("ink.planning.beats", category::STORE_READ),
+    // Cost — the AI ledger tally + configured caps (read-only reporting).
+    ("ink.cost.usage", category::STORE_READ),
+    ("ink.cost.caps", category::STORE_READ),
+    // Goals — the writing streak (writing-day history, no live total).
+    ("ink.goals.streak", category::STORE_READ),
+    // WordNet — installed-sources listing (filesystem `exists()` checks only;
+    // sense lookups/fetch/import land later).
+    ("ink.wordnet.list", category::STORE_READ),
+    // Doctor — the cheap standalone health checks over the live store.
+    ("ink.doctor.integrity", category::STORE_READ),
+    ("ink.doctor.vectors", category::STORE_READ),
+    // Backup — the last-backup timestamp (reads the sidecar; making a backup is
+    // fs_write, deferred).
+    ("ink.backup.last", category::STORE_READ),
 
     // ── store_write (default-denied) ──────────────────────────
     // 1.2.3+: Bund scripts can mutate the project tree, status
@@ -1067,6 +1092,33 @@ mod tests {
         assert!(denied.contains(category::STORE_WRITE));
         assert_eq!(cat("ink.inner_editor.engage"), Some(category::AI_WRITE));
         assert!(denied.contains(category::AI_WRITE));
+    }
+
+    // 3.0.4 Phase-1 — the read-only feature wrappers are all store_read and must
+    // stay allowed by default (they only read); pin them so a refactor can't
+    // silently re-gate them or wrongly mark one destructive.
+    #[test]
+    fn phase1_feature_wrappers_are_store_read() {
+        let cat = |w: &str| WORD_CATEGORIES.iter().find(|(n, _)| *n == w).map(|(_, c)| *c);
+        let policy = Policy::default();
+        let denied = policy.effective_denied_categories();
+        for w in [
+            "ink.rigor.scan",
+            "ink.rigor.check",
+            "ink.rigor.paragraph",
+            "ink.planning.frameworks",
+            "ink.planning.beats",
+            "ink.cost.usage",
+            "ink.cost.caps",
+            "ink.goals.streak",
+            "ink.wordnet.list",
+            "ink.doctor.integrity",
+            "ink.doctor.vectors",
+            "ink.backup.last",
+        ] {
+            assert_eq!(cat(w), Some(category::STORE_READ), "{w} must be store_read");
+            assert!(!denied.contains(cat(w).unwrap()), "{w} must be allowed by default");
+        }
     }
 
     #[test]
