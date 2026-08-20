@@ -1,10 +1,13 @@
-//! 3.0.4 Phase-1 — `ink.backup.*` Bund stdlib: the backup record, read-only.
-//! Phase 1 exposes the last-backup timestamp (a pure filesystem read of the
-//! `.inkhaven-backup.json` sidecar — no store open). Making a backup
-//! (`ink.backup.make`, fs_write) lands in a later phase.
+//! 3.0.4 — `ink.backup.*` Bund stdlib: the backup record, read-only. `last`
+//! reads the `.inkhaven-backup.json` sidecar (pure filesystem, no store open);
+//! `list` enumerates the backup zips on disk (an fs_read of the project's backup
+//! directory). Making a backup (`ink.backup.make`, fs_write) lands in a later
+//! phase.
 //!
 //! - `ink.backup.last` ( -- dict | NODATA )  {last_at} of the most recent backup,
 //!   or NODATA if the project has never been backed up.
+//! - `ink.backup.list` ( -- list )  the backup zips, newest first, each
+//!   {name, bytes, modified}.
 
 use std::collections::HashMap;
 
@@ -18,7 +21,7 @@ use crate::backup::BackupState;
 
 pub fn register(vm: &mut VM) -> Result<()> {
     let words: &[(&str, fn(&mut VM) -> std::result::Result<&mut VM, BundError>)] =
-        &[("ink.backup.last", w_last)];
+        &[("ink.backup.last", w_last), ("ink.backup.list", w_list)];
     for (name, f) in words {
         vm.register_inline(name.to_string(), *f).map_err(|e| anyhow!("register {name}: {e}"))?;
     }
@@ -50,5 +53,40 @@ fn do_last(vm: &mut VM) -> Result<&mut VM> {
         None => Value::nodata(),
     };
     push(vm, out);
+    Ok(vm)
+}
+
+/// ( -- list ) the backup zips in the project's backup dir, newest first, each
+/// {name, bytes, modified}. Mirrors `prune_backups`' selection predicate.
+fn w_list(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_list(vm).map_err(to_bund_err)
+}
+fn do_list(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.backup.list";
+    let store = active_store(tag)?;
+    let dir = crate::store::default_user_backup_dir(store.project_root());
+
+    // (mtime, dict) so we can sort newest-first like the pruner does.
+    let mut rows: Vec<(std::time::SystemTime, Value)> = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !(name.starts_with("blackinkhaven_") && name.ends_with(".zip")) {
+                continue;
+            }
+            let Ok(meta) = entry.metadata() else { continue };
+            let mtime = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+            let mut m: HashMap<String, Value> = HashMap::new();
+            m.insert("name".into(), Value::from_string(&name));
+            m.insert("bytes".into(), Value::from_int(meta.len() as i64));
+            m.insert(
+                "modified".into(),
+                Value::from_string(&chrono::DateTime::<chrono::Utc>::from(mtime).to_rfc3339()),
+            );
+            rows.push((mtime, Value::from_dict(m)));
+        }
+    }
+    rows.sort_by(|a, b| b.0.cmp(&a.0));
+    push(vm, Value::from_list(rows.into_iter().map(|(_, v)| v).collect()));
     Ok(vm)
 }

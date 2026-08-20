@@ -51,6 +51,11 @@ mod goals;
 mod wordnet;
 mod doctor;
 mod backup;
+// 3.0.4 Phase-2 — load-bearing read-only wrappers.
+mod companions;
+mod research;
+mod locorum;
+mod verborum;
 
 use anyhow::Result;
 use rust_multistackvm::multistackvm::VM;
@@ -103,5 +108,10 @@ pub fn register_ink_stdlib(vm: &mut VM) -> Result<()> {
     wordnet::register(vm)?;
     doctor::register(vm)?;
     backup::register(vm)?;
+    // 3.0.4 Phase-2 — load-bearing read-only wrappers.
+    companions::register(vm)?;
+    research::register(vm)?;
+    locorum::register(vm)?;
+    verborum::register(vm)?;
     Ok(())
 }

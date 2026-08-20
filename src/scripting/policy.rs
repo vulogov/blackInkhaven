@@ -300,6 +300,45 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     // Backup — the last-backup timestamp (reads the sidecar; making a backup is
     // fs_write, deferred).
     ("ink.backup.last", category::STORE_READ),
+    // 3.0.4 Phase-2 — load-bearing read-only wrappers. All deterministic reads
+    // (active store / project sidecars / installed indexes); no LLM, network, or
+    // writes. The AI passes of these families (research contradict/converge,
+    // planning analyze, world critique) stay CLI-only.
+    // WordNet — sense lookups load an installed `.wn` index (FS read, no network).
+    ("ink.wordnet.lookup", category::STORE_READ),
+    ("ink.wordnet.suggest", category::STORE_READ),
+    // Companions — the examined-authorship cockpit (inner sidecar DBs + World
+    // health via the already-open store; never reopens the project).
+    ("ink.companions.findings", category::STORE_READ),
+    ("ink.companions.promotions", category::STORE_READ),
+    ("ink.companions.world", category::STORE_READ),
+    ("ink.companions.summary", category::STORE_READ),
+    // Research — the evidence base: Facts inventory, provenance, source chunks,
+    // the persisted SCHOLAR report. Ingest (net) / LLM scans / fact writes stay
+    // CLI-only.
+    ("ink.research.facts", category::STORE_READ),
+    ("ink.research.undisputed", category::STORE_READ),
+    ("ink.research.provenance", category::STORE_READ),
+    ("ink.research.sources", category::STORE_READ),
+    ("ink.research.report", category::STORE_READ),
+    // Index Locorum / Verborum — the scholarly indexes (harvest = disk reads of
+    // the same files assembly compiles; no write, no LLM).
+    ("ink.locorum.build", category::STORE_READ),
+    ("ink.locorum.malformed", category::STORE_READ),
+    ("ink.locorum.render", category::STORE_READ),
+    ("ink.verborum.build", category::STORE_READ),
+    ("ink.verborum.render", category::STORE_READ),
+    // Backup — enumerating the backup zips is a project-directory read (fs_read,
+    // default-allowed; the dir is derived from the project root, no user path).
+    ("ink.backup.list", category::FS_READ),
+    // Cost — today's spend (opens the companion sidecar DBs fresh, safe).
+    ("ink.cost.today", category::STORE_READ),
+    // Goals — the full progress snapshot (per-book word-count walk + streak).
+    ("ink.goals.snapshot", category::STORE_READ),
+    // Planning — the deterministic structural report + its gap projection (the AI
+    // critique, `plan analyze`, is not exposed).
+    ("ink.planning.check", category::STORE_READ),
+    ("ink.planning.gaps", category::STORE_READ),
 
     // ── store_write (default-denied) ──────────────────────────
     // 1.2.3+: Bund scripts can mutate the project tree, status
@@ -1119,6 +1158,45 @@ mod tests {
             assert_eq!(cat(w), Some(category::STORE_READ), "{w} must be store_read");
             assert!(!denied.contains(cat(w).unwrap()), "{w} must be allowed by default");
         }
+    }
+
+    // 3.0.4 Phase-2 — the load-bearing read wrappers. All default-allowed reads
+    // (store_read, plus backup.list = fs_read); pin them so a refactor can't
+    // silently re-gate them or wrongly mark one destructive.
+    #[test]
+    fn phase2_feature_wrappers_are_reads() {
+        let cat = |w: &str| WORD_CATEGORIES.iter().find(|(n, _)| *n == w).map(|(_, c)| *c);
+        let policy = Policy::default();
+        let denied = policy.effective_denied_categories();
+        for w in [
+            "ink.wordnet.lookup",
+            "ink.wordnet.suggest",
+            "ink.companions.findings",
+            "ink.companions.promotions",
+            "ink.companions.world",
+            "ink.companions.summary",
+            "ink.research.facts",
+            "ink.research.undisputed",
+            "ink.research.provenance",
+            "ink.research.sources",
+            "ink.research.report",
+            "ink.locorum.build",
+            "ink.locorum.malformed",
+            "ink.locorum.render",
+            "ink.verborum.build",
+            "ink.verborum.render",
+            "ink.cost.today",
+            "ink.goals.snapshot",
+            "ink.planning.check",
+            "ink.planning.gaps",
+        ] {
+            assert_eq!(cat(w), Some(category::STORE_READ), "{w} must be store_read");
+            assert!(!denied.contains(cat(w).unwrap()), "{w} must be allowed by default");
+        }
+        // backup.list reads the project's backup directory → fs_read (also
+        // default-allowed).
+        assert_eq!(cat("ink.backup.list"), Some(category::FS_READ));
+        assert!(!denied.contains(category::FS_READ), "fs_read allowed by default");
     }
 
     #[test]

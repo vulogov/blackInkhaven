@@ -90,7 +90,9 @@ pub fn run(
 /// Harvest `@key[locus]` citations from every manuscript paragraph, tagged with
 /// its enclosing chapter. Reads **raw** prose (not flattened) so the `[…]`
 /// supplement survives.
-fn gather_citations(
+/// `pub(crate)` so the read-only `ink.locorum.*` Bund words can harvest the
+/// same citations the CLI does (disk reads only — no write, no LLM).
+pub(crate) fn gather_citations(
     layout: &ProjectLayout,
     h: &Hierarchy,
     book_name: Option<&str>,
@@ -126,7 +128,7 @@ fn gather_citations(
 /// reference-scheme name it declared (for validation). Reads all valid `BibEntry`
 /// paragraphs regardless of `sources.all` scoping — the index locorum spans
 /// whatever the manuscript actually cites.
-fn collect_titles_and_schemes(
+pub(crate) fn collect_titles_and_schemes(
     layout: &ProjectLayout,
     h: &Hierarchy,
 ) -> (HashMap<String, String>, HashMap<String, String>) {
