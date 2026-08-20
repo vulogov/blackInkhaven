@@ -6,6 +6,11 @@
 //! - `ink.cost.usage` ( -- list )  today's ledger, each a dict {category, calls}.
 //! - `ink.cost.caps`  ( -- dict )  the configured daily caps
 //!   {world, inner_socrates, inner_editor, retention_days}.
+//! - `ink.cost.today` ( -- dict )  today's spend the way `inkhaven cost` shows it:
+//!   {day, total_calls, entries:[{name, calls_today, daily_cap}]}. This one opens
+//!   the companion sidecar DBs fresh (their slow-track calls are deliberately
+//!   kept out of the flat usage ledger) — safe, the shipped `*.usage.today`
+//!   words do the same.
 
 use std::collections::HashMap;
 
@@ -17,8 +22,11 @@ use rust_multistackvm::multistackvm::VM;
 use super::helpers::{active_config, active_store, push};
 
 pub fn register(vm: &mut VM) -> Result<()> {
-    let words: &[(&str, fn(&mut VM) -> std::result::Result<&mut VM, BundError>)] =
-        &[("ink.cost.usage", w_usage), ("ink.cost.caps", w_caps)];
+    let words: &[(&str, fn(&mut VM) -> std::result::Result<&mut VM, BundError>)] = &[
+        ("ink.cost.usage", w_usage),
+        ("ink.cost.caps", w_caps),
+        ("ink.cost.today", w_today),
+    ];
     for (name, f) in words {
         vm.register_inline(name.to_string(), *f).map_err(|e| anyhow!("register {name}: {e}"))?;
     }
@@ -77,6 +85,42 @@ fn do_caps(vm: &mut VM) -> Result<&mut VM> {
         Value::from_int(cfg.inner_editor.llm.editor_engagement.max_calls_per_day),
     );
     m.insert("retention_days".into(), Value::from_int(cfg.cost.usage_retention_days as i64));
+    push(vm, Value::from_dict(m));
+    Ok(vm)
+}
+
+/// ( -- dict ) today's spend {day, total_calls, entries:[{name, calls_today, daily_cap}]}.
+fn w_today(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_today(vm).map_err(to_bund_err)
+}
+fn do_today(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.cost.today";
+    let store = active_store(tag)?;
+    let cfg = active_config(tag)?;
+    crate::dayclock::set_boundary(cfg.goals.day_boundary);
+    let day = crate::dayclock::today_key();
+    let report = crate::cli::cost::gather(
+        store.project_root(),
+        &day,
+        cfg.cost.world_daily_call_cap,
+        cfg.cost.inner_socrates_daily_call_cap,
+        cfg.inner_editor.llm.editor_engagement.max_calls_per_day,
+    );
+    let entries: Vec<Value> = report
+        .entries
+        .iter()
+        .map(|e| {
+            let mut d: HashMap<String, Value> = HashMap::new();
+            d.insert("name".into(), Value::from_string(&e.name));
+            d.insert("calls_today".into(), Value::from_int(e.calls_today));
+            d.insert("daily_cap".into(), Value::from_int(e.daily_cap));
+            Value::from_dict(d)
+        })
+        .collect();
+    let mut m: HashMap<String, Value> = HashMap::new();
+    m.insert("day".into(), Value::from_string(&report.day));
+    m.insert("total_calls".into(), Value::from_int(report.total_calls()));
+    m.insert("entries".into(), Value::from_list(entries));
     push(vm, Value::from_dict(m));
     Ok(vm)
 }
