@@ -294,9 +294,12 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     // WordNet — installed-sources listing (filesystem `exists()` checks only;
     // sense lookups/fetch/import land later).
     ("ink.wordnet.list", category::STORE_READ),
-    // Doctor — the cheap standalone health checks over the live store.
+    // Doctor — the cheap standalone health checks over the live store. `scan`
+    // runs the full project scan over the active store (read-only); `autofix`
+    // applies repairs, so it lives under store_write (below).
     ("ink.doctor.integrity", category::STORE_READ),
     ("ink.doctor.vectors", category::STORE_READ),
+    ("ink.doctor.scan", category::STORE_READ),
     // Backup — the last-backup timestamp (reads the sidecar; making a backup is
     // fs_write, deferred).
     ("ink.backup.last", category::STORE_READ),
@@ -391,6 +394,9 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     // an out-of-project bundle additionally needs `fs_unsandboxed`.
     ("ink.import.scrivener", category::STORE_WRITE),
     ("ink.import.epub", category::STORE_WRITE),
+    // 3.0.4 — doctor autofix applies repairs (delete orphan rows, rematerialize
+    // bdslib-only files, quarantine corrupt sidecars) over the active store.
+    ("ink.doctor.autofix", category::STORE_WRITE),
 
     // ── keymap (default-denied) ───────────────────────────────
     ("ink.key.bind", category::KEYMAP),
@@ -1166,6 +1172,7 @@ mod tests {
             "ink.wordnet.list",
             "ink.doctor.integrity",
             "ink.doctor.vectors",
+            "ink.doctor.scan",
             "ink.backup.last",
         ] {
             assert_eq!(cat(w), Some(category::STORE_READ), "{w} must be store_read");
@@ -1223,8 +1230,11 @@ mod tests {
         let denied = policy.effective_denied_categories();
         assert_eq!(cat("ink.import.scrivener"), Some(category::STORE_WRITE));
         assert_eq!(cat("ink.import.epub"), Some(category::STORE_WRITE));
+        assert_eq!(cat("ink.doctor.autofix"), Some(category::STORE_WRITE));
         assert_eq!(cat("ink.backup.make"), Some(category::FS_WRITE));
-        for w in ["ink.import.scrivener", "ink.import.epub", "ink.backup.make"] {
+        for w in
+            ["ink.import.scrivener", "ink.import.epub", "ink.doctor.autofix", "ink.backup.make"]
+        {
             assert!(denied.contains(cat(w).unwrap()), "{w} must be denied by default");
         }
         // The dry-run preview only reads — allowed by default.
