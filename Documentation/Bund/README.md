@@ -16,6 +16,7 @@ If you've never touched Bund: start with
 | Document | Read for |
 |----------|----------|
 | [`BUND_TUTORIAL.md`](BUND_TUTORIAL.md) | An afternoon's read. Stack model, syntax, lambdas, inkhaven's `ink.*` stdlib, hooks, sandbox. |
+| [`WORD_REFERENCE.md`](WORD_REFERENCE.md) | The exhaustive reference — every registered `ink.*` word (all 314) with its category, stack signature, and one-line description. |
 
 ## Where Bund touches inkhaven
 

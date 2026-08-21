@@ -21561,9 +21561,16 @@ impl App {
                 let Some(finding) = findings.get(cur).cloned() else {
                     return true;
                 };
-                let project = self.layout.root.clone();
-                let outcome = crate::cli::doctor_scan::apply_fix(&project, &finding);
-                crate::cli::doctor_scan::log_fix(&project, &finding, &outcome);
+                // Repair through the LIVE store handle (no second Store::open),
+                // matching the scan side. `self.store`/`layout`/`hierarchy` are
+                // disjoint fields from `self.modal`, so borrowing them here is fine.
+                let outcome = crate::cli::doctor_scan::apply_fix_with(
+                    &self.store,
+                    &self.layout,
+                    &self.hierarchy,
+                    &finding,
+                );
+                crate::cli::doctor_scan::log_fix(&self.layout.root, &finding, &outcome);
                 let summary = match &outcome {
                     Ok(s) => format!("repaired: {s}"),
                     Err(e) => format!("repair failed: {e:#}"),
@@ -21578,21 +21585,37 @@ impl App {
                     if *cursor >= findings.len() && *cursor > 0 {
                         *cursor -= 1;
                     }
+                    // The fix mutated the live store — reload the in-session
+                    // hierarchy so the repaired tree is reflected immediately
+                    // (a deleted node must not linger in the tree view).
+                    if let Ok(h) = crate::store::hierarchy::Hierarchy::load(&self.store) {
+                        self.hierarchy = h;
+                    }
                 }
                 true
             }
             KeyCode::Char('R') => {
-                // Apply every remaining finding.
-                let project = self.layout.root.clone();
+                // Apply every remaining finding through the live store handle.
                 let mut applied = 0usize;
                 let mut errors = 0usize;
                 let snapshot = findings.clone();
                 findings.clear();
                 for f in snapshot.iter() {
-                    let outcome = crate::cli::doctor_scan::apply_fix(&project, f);
-                    crate::cli::doctor_scan::log_fix(&project, f, &outcome);
+                    let outcome = crate::cli::doctor_scan::apply_fix_with(
+                        &self.store,
+                        &self.layout,
+                        &self.hierarchy,
+                        f,
+                    );
+                    crate::cli::doctor_scan::log_fix(&self.layout.root, f, &outcome);
                     if outcome.is_ok() {
                         applied += 1;
+                        // Reload after each successful fix so the next repair
+                        // resolves path→node against current state (a prior
+                        // subtree-delete must not stale the lookup).
+                        if let Ok(h) = crate::store::hierarchy::Hierarchy::load(&self.store) {
+                            self.hierarchy = h;
+                        }
                     } else {
                         errors += 1;
                         findings.push(f.clone());

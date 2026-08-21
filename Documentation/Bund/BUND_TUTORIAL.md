@@ -165,6 +165,11 @@ Bundcore (the language itself) gives you arithmetic, strings,
 lambdas, stack ops. Inkhaven layers an **`ink.*` stdlib** on top:
 words that reach into the project store.
 
+> The sections below teach the families by cycle. For the **complete list of
+> every registered `ink.*` word** (all 314 — category, stack signature,
+> description), see **[`WORD_REFERENCE.md`](WORD_REFERENCE.md)**. At runtime,
+> `ink.words` dumps the live list.
+
 ### Read-only `ink.*` words (default-allowed)
 
 | Word | Stack | What it does |
@@ -596,3 +601,92 @@ paragraph and read what survives:
 `inkhaven --project ~/my-book bund 'ink.inner_editor.config'`
 prints the active tuning + the categories the Editor will use —
 handy in a hook that adjusts behaviour per book.
+
+## 3.0.5 — feature-coverage `ink.*` words
+
+3.0.5 widened the Bund surface to cover the *existing* feature set: 39
+wrappers (plus `ink.words`) that expose readers and tools already reachable
+from the CLI/TUI. They follow the read-only advisory contract — deterministic
+**reads** are `store_read`/`fs_read` (default-allowed); **writes** (imports,
+backups, autofix) are default-denied and opt in via
+`scripting.enabled_categories`. The LLM passes of these families
+(research contradict/converge, `plan analyze`, world critique) stay CLI-only
+and are deliberately *not* exposed. Every word also answers to its short alias
+(`rigor.scan`, `doctor.scan`, …).
+
+**Craft & progress (reads).**
+
+| Word | Sandbox | Stack | What it does |
+|------|---------|-------|--------------|
+| `ink.rigor.scan` | `store_read` | `( -- list )` | argument-rigor findings across user books: `{signal, label, chapter, para_id, description}` |
+| `ink.rigor.check` | `store_read` | `( -- dict )` | summary `{findings, clean, by_signal}` |
+| `ink.rigor.paragraph` | `store_read` | `( text -- list )` | scan one passed-in paragraph: `{signal, label, description}` |
+| `ink.planning.frameworks` | `store_read` | `( -- list )` | every story framework `{slug, label}` |
+| `ink.planning.beats` | `store_read` | `( framework -- list )` | a framework's canonical beats `{name, act, target_position, expected_tension}` |
+| `ink.planning.check` | `store_read` | `( -- dict )` | deterministic structural report `{book, beats, gaps, acts, warnings, scenes, clean, tension}` (first user book) |
+| `ink.planning.gaps` | `store_read` | `( -- list )` | just the unmapped-beat names |
+| `ink.goals.streak` | `store_read` | `( -- dict )` | writing streak `{days, best, grace_used, grace_per_week}` |
+| `ink.goals.snapshot` | `store_read` | `( -- dict )` | full pacing dashboard `{project, books, status, streak, sparkline, active_seconds_today, active_seconds_week}` |
+| `ink.cost.usage` | `store_read` | `( -- list )` | today's AI ledger `{category, calls}` |
+| `ink.cost.caps` | `store_read` | `( -- dict )` | configured caps `{world, inner_socrates, inner_editor, retention_days}` |
+| `ink.cost.today` | `store_read` | `( -- dict )` | today's spend `{day, total_calls, entries:[{name, calls_today, daily_cap}]}` |
+| `ink.wordnet.list` | `store_read` | `( -- list )` | thesaurus sources `{lang, name, installed}` |
+| `ink.wordnet.lookup` | `store_read` | `( word lang -- dict )` | senses `{word, senses:[{pos, definition, synonyms, antonyms, hypernyms, hyponyms}]}` |
+| `ink.wordnet.suggest` | `store_read` | `( word lang -- list )` | flat replacement pick-list `{kind, word}` |
+
+**Companions, research & scholarly indexes (reads).**
+
+| Word | Sandbox | Stack | What it does |
+|------|---------|-------|--------------|
+| `ink.companions.findings` | `store_read` | `( -- dict )` | open findings `{socrates:[…], editor:[…]}` |
+| `ink.companions.promotions` | `store_read` | `( -- dict )` | promotion candidates `{socrates:[…], editor:[…]}` |
+| `ink.companions.world` | `store_read` | `( -- dict )` | World story-bible health (facts/entities/issues/`summary`/`stale`) |
+| `ink.companions.summary` | `store_read` | `( -- dict )` | the whole cockpit in one call |
+| `ink.research.facts` | `store_read` | `( -- list )` | disputed Facts `{id, location, text}` |
+| `ink.research.undisputed` | `store_read` | `( -- list )` | the `fact:undisputed` authorial facts |
+| `ink.research.provenance` | `store_read` | `( node-id -- dict \| NODATA )` | where a fact came from `{origin, detail, query, thread, created_at, summary}` |
+| `ink.research.sources` | `store_read` | `( query k -- list )` | ingested source chunks near `query` `{name, body}` (`k` clamped ≤ 200) |
+| `ink.research.report` | `store_read` | `( -- string )` | the persisted SCHOLAR contradiction/convergence report |
+| `ink.locorum.build` | `store_read` | `( -- list )` | Index Locorum `{key, title, loci:[{locus, chapters, valid}]}` |
+| `ink.locorum.malformed` | `store_read` | `( -- list )` | loci that fail their scheme `{key, title, locus, expected}` |
+| `ink.locorum.render` | `store_read` | `( fmt -- string )` | compiled index (`md` \| `typst` \| `json`) |
+| `ink.verborum.build` | `store_read` | `( -- list )` | Index Verborum `{term, original_forms, senses, chapters}` |
+| `ink.verborum.render` | `store_read` | `( fmt -- string )` | compiled index (`md` \| `typst` \| `json`) |
+
+**Health, backup & introspection.**
+
+| Word | Sandbox | Stack | What it does |
+|------|---------|-------|--------------|
+| `ink.doctor.integrity` | `store_read` | `( -- dict )` | DuckDB integrity `{meta, blobs, ok}` |
+| `ink.doctor.vectors` | `store_read` | `( -- dict )` | vector-index parity `{status, rows, vectors, detail}` |
+| `ink.doctor.scan` | `store_read` | `( -- list )` | full project scan `{class, severity, path, detail}` |
+| `ink.backup.last` | `store_read` | `( -- dict \| NODATA )` | last-backup timestamp `{last_at}` |
+| `ink.backup.list` | `fs_read` | `( -- list )` | backup zips, newest first `{name, bytes, modified}` |
+| `ink.words` | `pure` | `( -- list )` | every registered `ink.*` word `{word, category}` — introspect the surface |
+
+**Opt-in writes (default-denied).** Enable with
+`scripting: { enabled_categories: ["store_write", "fs_write"] }`. Import bundle
+paths are confined by the fs sandbox, so an *out-of-project* `.scriv`/`.epub`
+additionally needs `scripting.fs_unsandboxed: true` (a deliberate double opt-in).
+
+| Word | Sandbox | Stack | What it does |
+|------|---------|-------|--------------|
+| `ink.doctor.autofix` | `store_write` | `( -- dict )` | scan + apply every auto-fixable repair `{applied, failed, results:[{class, path, ok, message}]}` |
+| `ink.backup.make` | `fs_write` | `( -- dict )` | create a backup zip now `{archive, kept}` |
+| `ink.import.scrivener` | `store_write` | `( path -- dict )` | import a `.scriv` bundle `{books_created, chapters_created, subchapters_created, paragraphs_created, paragraphs_skipped, errors}` |
+| `ink.import.scrivener_preview` | `fs_read` | `( path -- dict )` | dry-run a `.scriv` import (same shape; writes nothing) |
+| `ink.import.epub` | `store_write` | `( path -- dict )` | import an `.epub` `{book_title, author, chapters_created, paragraphs_created, images_imported, images_extracted, errors}` |
+
+Example — a save-hook that refuses to snapshot a book with open continuity
+issues, and lists the doctor findings first:
+
+```bund
+ink.doctor.scan len 0 > if
+  "doctor: fix findings before backup" ink.io.log
+else
+  ink.backup.make "archive" get "backed up: " swap concat ink.io.log
+then
+```
+
+`inkhaven --project ~/my-book bund 'ink.words len'` prints how many `ink.*`
+words this build exposes; `'ink.words'` alone dumps the classified list.
