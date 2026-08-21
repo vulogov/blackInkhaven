@@ -27,23 +27,20 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 3.0.5 · stable baseline 3.0.0 — The Stable Edition
+## Latest release · 3.0.6 · stable baseline 3.0.0 — The Stable Edition
 
-The current release is **3.0.5**, a maintenance patch over the **3.0.0 "Stable
-Edition"** baseline. It widens the embedded **Bund** scripting layer to cover the
-existing feature surface — 39 new `ink.*` words wrapping the reasoning-rigor
-reader, the story-structure planner, the writing-goal and AI-cost ledgers, the
-WordNet thesaurus, the examined-authorship companions, the research evidence
-base, the scholarly indexes (Index Locorum / Verborum), the `doctor` health
-checks and repair, and backup/import. Each follows the read-only advisory
-contract: deterministic reads are default-allowed; writes (imports, backups,
-autofix) are default-denied and opt-in via `scripting.enabled_categories`. The
-`doctor` scan/repair gained `&Store` variants so they run over the live session
-without a second database handle. It also carries a residual-hardening batch
-(PDF/EPUB/Scrivener import size caps, saturating arithmetic in a few counters).
-No feature *axis* changed — this is existing capability made scriptable. 3.0.3
-hardened the running editor from an 8-partition stability audit; 3.0.2 shipped
-the two companion books.
+The current release is **3.0.6**, a maintenance patch over the **3.0.0 "Stable
+Edition"** baseline that hardens and documents the **Bund** scripting coverage
+shipped in 3.0.5. A two-partition adversarial audit of the new surface fixed the
+issues it found — the in-session `doctor` repair now runs through the live store
+(no second database handle, no stale tree view), `ink.research.sources` clamps
+its result count, and the planner tolerates multi-book projects. It adds an
+`ink.words` word to introspect the scriptable surface, a real end-to-end smoke
+test, and — closing a long-standing gap — a **complete Bund word reference**
+(`Documentation/Bund/WORD_REFERENCE.md`) covering all 314 registered `ink.*`
+words with their category, stack signature, and description. 3.0.5 widened the
+Bund layer to cover the existing feature surface (39 wrapper words); 3.0.3
+hardened the running editor from an 8-partition stability audit.
 
 Read the full 3.0.0 notes: [`Documentation/RELEASE_NOTES/3.0.0.md`](Documentation/RELEASE_NOTES/3.0.0.md)
 
@@ -268,14 +265,14 @@ cargo install inkhaven
 ```
 
 Inkhaven is published on crates.io — every release tag pushes a
-new version (latest: 3.0.5).  The first build takes ~10 minutes on
+new version (latest: 3.0.6).  The first build takes ~10 minutes on
 a modern laptop because of DuckDB + fastembed + ONNX-runtime
 compilation; `cargo binstall` above is the fast path.
 
 ### 4. `cargo install --git` (compile from a specific tag)
 
 ```bash
-cargo install --git https://github.com/vulogov/blackInkhaven --tag v3.0.5
+cargo install --git https://github.com/vulogov/blackInkhaven --tag v3.0.6
 ```
 
 Useful when you want a specific tag, a pre-release branch, or a
