@@ -165,6 +165,11 @@ Bundcore (the language itself) gives you arithmetic, strings,
 lambdas, stack ops. Inkhaven layers an **`ink.*` stdlib** on top:
 words that reach into the project store.
 
+> The sections below teach the families by cycle. For the **complete list of
+> every registered `ink.*` word** (all 314 — category, stack signature,
+> description), see **[`WORD_REFERENCE.md`](WORD_REFERENCE.md)**. At runtime,
+> `ink.words` dumps the live list.
+
 ### Read-only `ink.*` words (default-allowed)
 
 | Word | Stack | What it does |
