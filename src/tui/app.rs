@@ -21499,25 +21499,28 @@ impl App {
     }
 
     fn open_doctor_panel(&mut self) {
-        match crate::cli::doctor_scan::scan_project(&self.layout.root, None) {
-            Ok(report) => {
-                let count = report.findings.len();
-                self.modal = super::modal::Modal::DoctorPanel {
-                    findings: report.findings,
-                    cursor: 0,
-                    scroll: 0,
-                    last_status: None,
-                };
-                self.status = if count == 0 {
-                    "doctor: project is clean".into()
-                } else {
-                    format!("doctor: {count} finding(s) — r/R to repair · Esc closes")
-                };
-            }
-            Err(e) => {
-                self.status = format!("doctor scan failed: {e:#}");
-            }
-        }
+        // Reuse the live store/hierarchy instead of a fresh `Store::open` — no
+        // second DB handle while the session holds one. `scan_with_store` is
+        // infallible (each sub-check swallows its own I/O errors).
+        let report = crate::cli::doctor_scan::scan_with_store(
+            &self.store,
+            &self.layout,
+            &self.cfg,
+            &self.hierarchy,
+            None,
+        );
+        let count = report.findings.len();
+        self.modal = super::modal::Modal::DoctorPanel {
+            findings: report.findings,
+            cursor: 0,
+            scroll: 0,
+            last_status: None,
+        };
+        self.status = if count == 0 {
+            "doctor: project is clean".into()
+        } else {
+            format!("doctor: {count} finding(s) — r/R to repair · Esc closes")
+        };
     }
 
     /// 1.2.15+ Phase D.3 — handle a keystroke

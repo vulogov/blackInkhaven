@@ -17,19 +17,24 @@
 //! R-P1 — the entry point: terminal lifecycle, the minimum-width guard, the
 //! outer layout skeleton (placeholder panes), and `q` / `Ctrl+C` exit.
 
+// `factcheck` / `provenance` are `pub(crate)` so the read-only `ink.research.*`
+// Bund words can reach their fact-inventory / provenance readers. Only the read
+// paths inside them are `pub(crate)`; the write / LLM paths stay private.
+// `app` stays private (it holds many `pub(crate)` TUI helpers); we re-export just
+// the one read-only renderer the Bund report word needs, below.
 mod app;
 mod chat;
 mod command;
 pub(crate) mod deadlinks;
 mod extract;
-mod factcheck;
+pub(crate) mod factcheck;
 mod facts_tree;
 mod focus;
 mod imports;
 pub(crate) mod insert;
 mod llm;
 mod picker;
-mod provenance;
+pub(crate) mod provenance;
 pub(crate) mod rag;
 mod render;
 mod scholarly;
@@ -51,6 +56,9 @@ mod wikisource;
 /// SCRIPTURE — the /bible · /quran · /bookofmormon adapters; `pub(crate)` so the
 /// Index Locorum can reuse the Bible book-name canonicalizer for loci.
 pub(crate) mod scripture;
+/// The read-only SCHOLAR report renderer, re-exported for the `ink.research.report`
+/// Bund word (keeps `app` itself private).
+pub(crate) use app::report_render;
 /// SCHOLAR — the contradiction/relation engine; `pub(crate)` so the manuscript
 /// editor (`Ctrl+V ?` confront) can reuse the graded judge.
 pub(crate) mod contradiction;

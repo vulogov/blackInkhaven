@@ -93,12 +93,14 @@ pub(super) async fn fetch(
         (chosen, books)
     };
 
-    let raw = client
+    let resp = client
         .get(&chosen.text_url)
         .send()
         .await
-        .map_err(|e| anyhow!("gutenberg text: {e}"))?
-        .text()
+        .map_err(|e| anyhow!("gutenberg text: {e}"))?;
+    // Truncating cap (64 MiB, far above any real PG book) so a pathological
+    // response can't OOM the buffer; the char-cap below still applies.
+    let raw = crate::research::web::read_body_truncated(resp, 64 * 1024 * 1024)
         .await
         .map_err(|e| anyhow!("gutenberg text decode: {e}"))?;
     let stripped = strip_pg_boilerplate(&raw);
