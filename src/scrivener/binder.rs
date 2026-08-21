@@ -87,6 +87,9 @@ pub fn parse_project(scriv_root: &Path) -> Result<Vec<BinderItem>> {
 /// feed fixtures directly.
 /// Defensive nesting cap for the binder tree (see `parse_scrivx`).
 const MAX_BINDER_DEPTH: usize = 256;
+/// Total `<BinderItem>` cap — depth is bounded above, but a flat binder with
+/// millions of siblings would otherwise allocate an unbounded tree.
+const MAX_BINDER_ITEMS: usize = 200_000;
 
 pub fn parse_scrivx(bytes: &[u8]) -> Result<Vec<BinderItem>> {
     // Phase 1 — build a registry mapping keyword IDs to their
@@ -129,6 +132,7 @@ pub fn parse_scrivx(bytes: &[u8]) -> Result<Vec<BinderItem>> {
     // it afterwards so the truncation isn't silent.
     let mut binder_suppressed: usize = 0;
     let mut deep_items_dropped: usize = 0;
+    let mut total_items: usize = 0;
     let mut current_text: Option<TextBuf> = None;
     // Per-item state for the inline-keywords path. Set when we
     // enter a BinderItem's MetaData/Keywords element, cleared
@@ -156,12 +160,17 @@ pub fn parse_scrivx(bytes: &[u8]) -> Result<Vec<BinderItem>> {
                     .to_string();
                 match name.as_str() {
                     "BinderItem" => {
-                        if binder_suppressed > 0 || stack.len() >= MAX_BINDER_DEPTH {
-                            // Past the depth cap — drop this nested item and record
-                            // the imbalance so its matching close is skipped too.
+                        if binder_suppressed > 0
+                            || stack.len() >= MAX_BINDER_DEPTH
+                            || total_items >= MAX_BINDER_ITEMS
+                        {
+                            // Past the depth or total-item cap — drop this nested
+                            // item and record the imbalance so its matching close
+                            // is skipped too.
                             binder_suppressed += 1;
                             deep_items_dropped += 1;
                         } else {
+                        total_items += 1;
                         let mut uuid: Option<Uuid> = None;
                         let mut kind: String = "Unknown".into();
                         for attr in e.attributes().with_checks(false) {

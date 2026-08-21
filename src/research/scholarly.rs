@@ -220,13 +220,14 @@ fn reconstruct_abstract(inv: &Json) -> String {
 
 /// Query the arXiv Atom API for the top match (crate-free XML extraction).
 pub(super) async fn arxiv(query: String) -> Result<Paper> {
-    let xml = client()?
+    let resp = client()?
         .get("https://export.arxiv.org/api/query")
         .query(&[("search_query", format!("all:{query}")), ("max_results", "1".to_string())])
         .send()
         .await
-        .map_err(|e| anyhow!("arxiv request: {e}"))?
-        .text()
+        .map_err(|e| anyhow!("arxiv request: {e}"))?;
+    // Truncating cap (16 MiB) so a pathological response can't OOM the buffer.
+    let xml = crate::research::web::read_body_truncated(resp, 16 * 1024 * 1024)
         .await
         .map_err(|e| anyhow!("arxiv decode: {e}"))?;
     parse_arxiv_atom(&xml).ok_or_else(|| anyhow!("no arXiv result for `{query}`"))

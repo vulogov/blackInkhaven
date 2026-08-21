@@ -6879,7 +6879,9 @@ pub(crate) fn contradict_cli(
 
 /// SCHOLAR P3 — `/report` in the TUI: render the persisted, topic-clustered
 /// SCHOLAR report, flagging staleness if the Facts corpus moved since the scans.
-fn report_render(
+/// `pub(crate)` so the read-only `ink.research.report` Bund word can render the
+/// persisted report to a string (it reads a sidecar — no LLM, no write).
+pub(crate) fn report_render(
     store: &Store,
     hierarchy: &Hierarchy,
     layout: &ProjectLayout,

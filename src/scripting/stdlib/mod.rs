@@ -43,6 +43,21 @@ mod myth;
 pub(crate) mod calc;
 mod pdf;
 mod review;
+// 3.0.4 Phase-1 — read-only wrappers exposing existing features to Bund.
+mod rigor;
+mod planning;
+mod cost;
+mod goals;
+mod wordnet;
+mod doctor;
+mod backup;
+// 3.0.4 Phase-2 — load-bearing read-only wrappers.
+mod companions;
+mod research;
+mod locorum;
+mod verborum;
+// 3.0.4 Phase-3 — opt-in write wrappers (default-denied).
+mod import;
 
 use anyhow::Result;
 use rust_multistackvm::multistackvm::VM;
@@ -87,5 +102,20 @@ pub fn register_ink_stdlib(vm: &mut VM) -> Result<()> {
     theologian::register(vm)?;
     myth::register(vm)?;
     calc::register(vm)?;
+    // 3.0.4 Phase-1 — read-only feature wrappers.
+    rigor::register(vm)?;
+    planning::register(vm)?;
+    cost::register(vm)?;
+    goals::register(vm)?;
+    wordnet::register(vm)?;
+    doctor::register(vm)?;
+    backup::register(vm)?;
+    // 3.0.4 Phase-2 — load-bearing read-only wrappers.
+    companions::register(vm)?;
+    research::register(vm)?;
+    locorum::register(vm)?;
+    verborum::register(vm)?;
+    // 3.0.4 Phase-3 — opt-in write wrappers (default-denied).
+    import::register(vm)?;
     Ok(())
 }

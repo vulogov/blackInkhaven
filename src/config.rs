@@ -313,8 +313,10 @@ impl Default for Config {
 }
 
 /// Where backups land and how often the TUI should make one on exit. Empty
-/// `out_dir` disables auto-backup (manual `inkhaven backup` still works);
-/// `max_age = "0s"` (or unset) means "never auto-trigger".
+/// `out_dir` (the default) resolves to a project-sibling
+/// `<parent>/inkhaven-backups/<project-name>/` — it does NOT disable
+/// auto-backup. To turn auto-backup off, set `max_age = "0s"` or
+/// `auto_backup_on_exit = false` (manual `inkhaven backup` always works).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct BackupConfig {
@@ -829,11 +831,9 @@ pub struct TypstCompileConfig {
     ///   a child process. Pure shell-out, smallest binary footprint,
     ///   output exactly matches what the user gets typing
     ///   `typst compile` themselves.
-    /// * `"inprocess"` — run the in-process typst compiler. Not yet
-    ///   wired up in 1.2.5; the value is accepted today so HJSON
-    ///   configs written now survive when the engine lands. Falls
-    ///   back to `external` at runtime when the in-process engine
-    ///   isn't compiled in.
+    /// * `"inprocess"` — run the in-process typst compiler (no
+    ///   external `typst` binary needed). Falls back to `external`
+    ///   at runtime when the in-process engine isn't available.
     ///
     /// See the typst-as-library Phase plan in `Documentation/`.
     pub engine: String,

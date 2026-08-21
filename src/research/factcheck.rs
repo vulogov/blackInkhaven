@@ -14,7 +14,9 @@ use crate::store::Store;
 use crate::store::hierarchy::Hierarchy;
 
 /// One fact to audit: its node id, a readable location, and its prose.
-pub(super) struct FactEntry {
+/// `pub(crate)` so the read-only `ink.research.*` Bund words can surface the
+/// fact inventory (the write/LLM audit paths stay in this module).
+pub(crate) struct FactEntry {
     pub id: Uuid,
     pub location: String,
     pub text: String,
@@ -52,12 +54,12 @@ fn gather(store: &Store, h: &Hierarchy, book_id: Uuid, undisputed: bool) -> Vec<
 }
 
 /// The disputed facts — what `/factcheck` audits (undisputed ones are excluded).
-pub(super) fn gather_facts(store: &Store, h: &Hierarchy, book_id: Uuid) -> Vec<FactEntry> {
+pub(crate) fn gather_facts(store: &Store, h: &Hierarchy, book_id: Uuid) -> Vec<FactEntry> {
     gather(store, h, book_id, false)
 }
 
 /// The undisputed (authorial) facts — what `/undisputed` checks for common sense.
-pub(super) fn gather_undisputed(store: &Store, h: &Hierarchy, book_id: Uuid) -> Vec<FactEntry> {
+pub(crate) fn gather_undisputed(store: &Store, h: &Hierarchy, book_id: Uuid) -> Vec<FactEntry> {
     gather(store, h, book_id, true)
 }
 

@@ -275,6 +275,73 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     // OUTLINE-1 — reading the outline is store_read; the paragraph copy/move
     // mutators are store_write (below).
     ("ink.outline.print", category::STORE_READ),
+    // 3.0.4 Phase-1 — read-only wrappers over existing features. All
+    // deterministic reads (store / config / filesystem-metadata); nothing here
+    // calls the LLM (the AI passes of these families stay CLI-only, matching the
+    // LECTOR / REDLINE / KEN precedent) or mutates anything.
+    // Inner Rigor — the deterministic, zero-AI reasoning reader.
+    ("ink.rigor.scan", category::STORE_READ),
+    ("ink.rigor.check", category::STORE_READ),
+    ("ink.rigor.paragraph", category::STORE_READ),
+    // Planning — the canonical framework beat tables (pure static data).
+    ("ink.planning.frameworks", category::STORE_READ),
+    ("ink.planning.beats", category::STORE_READ),
+    // Cost — the AI ledger tally + configured caps (read-only reporting).
+    ("ink.cost.usage", category::STORE_READ),
+    ("ink.cost.caps", category::STORE_READ),
+    // Goals — the writing streak (writing-day history, no live total).
+    ("ink.goals.streak", category::STORE_READ),
+    // WordNet — installed-sources listing (filesystem `exists()` checks only;
+    // sense lookups/fetch/import land later).
+    ("ink.wordnet.list", category::STORE_READ),
+    // Doctor — the cheap standalone health checks over the live store. `scan`
+    // runs the full project scan over the active store (read-only); `autofix`
+    // applies repairs, so it lives under store_write (below).
+    ("ink.doctor.integrity", category::STORE_READ),
+    ("ink.doctor.vectors", category::STORE_READ),
+    ("ink.doctor.scan", category::STORE_READ),
+    // Backup — the last-backup timestamp (reads the sidecar; making a backup is
+    // fs_write, deferred).
+    ("ink.backup.last", category::STORE_READ),
+    // 3.0.4 Phase-2 — load-bearing read-only wrappers. All deterministic reads
+    // (active store / project sidecars / installed indexes); no LLM, network, or
+    // writes. The AI passes of these families (research contradict/converge,
+    // planning analyze, world critique) stay CLI-only.
+    // WordNet — sense lookups load an installed `.wn` index (FS read, no network).
+    ("ink.wordnet.lookup", category::STORE_READ),
+    ("ink.wordnet.suggest", category::STORE_READ),
+    // Companions — the examined-authorship cockpit (inner sidecar DBs + World
+    // health via the already-open store; never reopens the project).
+    ("ink.companions.findings", category::STORE_READ),
+    ("ink.companions.promotions", category::STORE_READ),
+    ("ink.companions.world", category::STORE_READ),
+    ("ink.companions.summary", category::STORE_READ),
+    // Research — the evidence base: Facts inventory, provenance, source chunks,
+    // the persisted SCHOLAR report. Ingest (net) / LLM scans / fact writes stay
+    // CLI-only.
+    ("ink.research.facts", category::STORE_READ),
+    ("ink.research.undisputed", category::STORE_READ),
+    ("ink.research.provenance", category::STORE_READ),
+    ("ink.research.sources", category::STORE_READ),
+    ("ink.research.report", category::STORE_READ),
+    // Index Locorum / Verborum — the scholarly indexes (harvest = disk reads of
+    // the same files assembly compiles; no write, no LLM).
+    ("ink.locorum.build", category::STORE_READ),
+    ("ink.locorum.malformed", category::STORE_READ),
+    ("ink.locorum.render", category::STORE_READ),
+    ("ink.verborum.build", category::STORE_READ),
+    ("ink.verborum.render", category::STORE_READ),
+    // Backup — enumerating the backup zips is a project-directory read (fs_read,
+    // default-allowed; the dir is derived from the project root, no user path).
+    ("ink.backup.list", category::FS_READ),
+    // Cost — today's spend (opens the companion sidecar DBs fresh, safe).
+    ("ink.cost.today", category::STORE_READ),
+    // Goals — the full progress snapshot (per-book word-count walk + streak).
+    ("ink.goals.snapshot", category::STORE_READ),
+    // Planning — the deterministic structural report + its gap projection (the AI
+    // critique, `plan analyze`, is not exposed).
+    ("ink.planning.check", category::STORE_READ),
+    ("ink.planning.gaps", category::STORE_READ),
 
     // ── store_write (default-denied) ──────────────────────────
     // 1.2.3+: Bund scripts can mutate the project tree, status
@@ -321,6 +388,15 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     // 1.4.8 TERMS-1 — declaring a deliberate terminology variant writes an
     // intent-ledger row.
     ("ink.terms.declare_intent", category::STORE_WRITE),
+    // 3.0.4 Phase-3 — the importers write Book/Chapter/Paragraph nodes into the
+    // active store (store_write, default-denied). They also read an external
+    // bundle path, confined by the fs sandbox (`resolve_fs_path`) — so importing
+    // an out-of-project bundle additionally needs `fs_unsandboxed`.
+    ("ink.import.scrivener", category::STORE_WRITE),
+    ("ink.import.epub", category::STORE_WRITE),
+    // 3.0.4 — doctor autofix applies repairs (delete orphan rows, rematerialize
+    // bdslib-only files, quarantine corrupt sidecars) over the active store.
+    ("ink.doctor.autofix", category::STORE_WRITE),
 
     // ── keymap (default-denied) ───────────────────────────────
     ("ink.key.bind", category::KEYMAP),
@@ -404,6 +480,13 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     // user gets the responsibility.
     ("ink.fs.read", category::FS_READ),
     ("ink.fs.write", category::FS_WRITE),
+
+    // 3.0.4 Phase-3 — creating a backup writes a zip to the project's backup dir
+    // (fs_write, default-denied; the dir is derived from the project root, no
+    // user path). The Scrivener dry-run preview reads the external bundle and
+    // writes nothing (fs_read; the path is sandbox-confined like `ink.fs.read`).
+    ("ink.backup.make", category::FS_WRITE),
+    ("ink.import.scrivener_preview", category::FS_READ),
 
     // 1.3.0 PDF-1 — only the disk-crossing `ink.pdf.*` words are
     // categorised.  `load` reads a file (fs_read); `save` writes one
@@ -1067,6 +1150,96 @@ mod tests {
         assert!(denied.contains(category::STORE_WRITE));
         assert_eq!(cat("ink.inner_editor.engage"), Some(category::AI_WRITE));
         assert!(denied.contains(category::AI_WRITE));
+    }
+
+    // 3.0.4 Phase-1 — the read-only feature wrappers are all store_read and must
+    // stay allowed by default (they only read); pin them so a refactor can't
+    // silently re-gate them or wrongly mark one destructive.
+    #[test]
+    fn phase1_feature_wrappers_are_store_read() {
+        let cat = |w: &str| WORD_CATEGORIES.iter().find(|(n, _)| *n == w).map(|(_, c)| *c);
+        let policy = Policy::default();
+        let denied = policy.effective_denied_categories();
+        for w in [
+            "ink.rigor.scan",
+            "ink.rigor.check",
+            "ink.rigor.paragraph",
+            "ink.planning.frameworks",
+            "ink.planning.beats",
+            "ink.cost.usage",
+            "ink.cost.caps",
+            "ink.goals.streak",
+            "ink.wordnet.list",
+            "ink.doctor.integrity",
+            "ink.doctor.vectors",
+            "ink.doctor.scan",
+            "ink.backup.last",
+        ] {
+            assert_eq!(cat(w), Some(category::STORE_READ), "{w} must be store_read");
+            assert!(!denied.contains(cat(w).unwrap()), "{w} must be allowed by default");
+        }
+    }
+
+    // 3.0.4 Phase-2 — the load-bearing read wrappers. All default-allowed reads
+    // (store_read, plus backup.list = fs_read); pin them so a refactor can't
+    // silently re-gate them or wrongly mark one destructive.
+    #[test]
+    fn phase2_feature_wrappers_are_reads() {
+        let cat = |w: &str| WORD_CATEGORIES.iter().find(|(n, _)| *n == w).map(|(_, c)| *c);
+        let policy = Policy::default();
+        let denied = policy.effective_denied_categories();
+        for w in [
+            "ink.wordnet.lookup",
+            "ink.wordnet.suggest",
+            "ink.companions.findings",
+            "ink.companions.promotions",
+            "ink.companions.world",
+            "ink.companions.summary",
+            "ink.research.facts",
+            "ink.research.undisputed",
+            "ink.research.provenance",
+            "ink.research.sources",
+            "ink.research.report",
+            "ink.locorum.build",
+            "ink.locorum.malformed",
+            "ink.locorum.render",
+            "ink.verborum.build",
+            "ink.verborum.render",
+            "ink.cost.today",
+            "ink.goals.snapshot",
+            "ink.planning.check",
+            "ink.planning.gaps",
+        ] {
+            assert_eq!(cat(w), Some(category::STORE_READ), "{w} must be store_read");
+            assert!(!denied.contains(cat(w).unwrap()), "{w} must be allowed by default");
+        }
+        // backup.list reads the project's backup directory → fs_read (also
+        // default-allowed).
+        assert_eq!(cat("ink.backup.list"), Some(category::FS_READ));
+        assert!(!denied.contains(category::FS_READ), "fs_read allowed by default");
+    }
+
+    // 3.0.4 Phase-3 — the opt-in write wrappers. The importers (store_write) and
+    // backup.make (fs_write) MUST be denied by default; only the Scrivener
+    // dry-run preview (fs_read) is allowed. Pin the whole chain so a refactor
+    // can't silently let an auto-loaded untrusted script import or backup.
+    #[test]
+    fn phase3_write_wrappers_default_denied() {
+        let cat = |w: &str| WORD_CATEGORIES.iter().find(|(n, _)| *n == w).map(|(_, c)| *c);
+        let policy = Policy::default();
+        let denied = policy.effective_denied_categories();
+        assert_eq!(cat("ink.import.scrivener"), Some(category::STORE_WRITE));
+        assert_eq!(cat("ink.import.epub"), Some(category::STORE_WRITE));
+        assert_eq!(cat("ink.doctor.autofix"), Some(category::STORE_WRITE));
+        assert_eq!(cat("ink.backup.make"), Some(category::FS_WRITE));
+        for w in
+            ["ink.import.scrivener", "ink.import.epub", "ink.doctor.autofix", "ink.backup.make"]
+        {
+            assert!(denied.contains(cat(w).unwrap()), "{w} must be denied by default");
+        }
+        // The dry-run preview only reads — allowed by default.
+        assert_eq!(cat("ink.import.scrivener_preview"), Some(category::FS_READ));
+        assert!(!denied.contains(category::FS_READ), "preview allowed by default");
     }
 
     #[test]

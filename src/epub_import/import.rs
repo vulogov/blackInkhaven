@@ -92,9 +92,32 @@ pub fn import_epub(
 
     // 2. Each spine document → a Chapter + one Paragraph of prose, and its
     //    referenced images → `NodeKind::Image` nodes under that chapter.
-    for (i, href) in pkg.spine.iter().enumerate() {
+    // Bound the import: a hostile EPUB can list a huge spine of itemrefs that
+    // each re-decompress a 64 MiB entry, burning CPU + memory. Per-entry size is
+    // already capped by the archive reader; these cap the aggregate.
+    const MAX_SPINE_DOCS: usize = 10_000;
+    const MAX_TOTAL_XHTML_BYTES: usize = 512 * 1024 * 1024; // across the whole import
+    if pkg.spine.len() > MAX_SPINE_DOCS {
+        report.errors.push(format!(
+            "EPUB has {} spine documents — importing only the first {}",
+            pkg.spine.len(),
+            MAX_SPINE_DOCS
+        ));
+    }
+    let mut total_xhtml_bytes: usize = 0;
+    for (i, href) in pkg.spine.iter().take(MAX_SPINE_DOCS).enumerate() {
         let xhtml = match archive.read(href) {
-            Some(b) => String::from_utf8_lossy(&b).into_owned(),
+            Some(b) => {
+                total_xhtml_bytes = total_xhtml_bytes.saturating_add(b.len());
+                if total_xhtml_bytes > MAX_TOTAL_XHTML_BYTES {
+                    report.errors.push(format!(
+                        "stopped: EPUB spine decompressed past {} MiB — refusing the rest",
+                        MAX_TOTAL_XHTML_BYTES / (1024 * 1024)
+                    ));
+                    break;
+                }
+                String::from_utf8_lossy(&b).into_owned()
+            }
             None => {
                 report.errors.push(format!("spine document `{href}` missing from the zip"));
                 continue;

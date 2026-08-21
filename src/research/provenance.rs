@@ -15,8 +15,10 @@ use serde::{Deserialize, Serialize};
 use crate::project::ProjectLayout;
 
 /// One fact's source record.
+/// `pub(crate)` so the read-only `ink.research.provenance` Bund word can surface
+/// where a fact came from (the write path — `new`/`record`/`save` — stays private).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(super) struct SourceRecord {
+pub(crate) struct SourceRecord {
     /// `model` | `manual` | `promoted` (open string; R2-B/C add `web` / `document`).
     pub origin: String,
     /// Origin-specific detail: the notes path for `promoted`; a URL / file later.
@@ -43,7 +45,7 @@ impl SourceRecord {
     }
 
     /// A one-line human summary for the overlay / `/sources` report.
-    pub(super) fn summary(&self) -> String {
+    pub(crate) fn summary(&self) -> String {
         match self.origin.as_str() {
             "computed" if !self.detail.is_empty() => format!("computed · {}", self.detail),
             "computed" => "computed (deterministic)".to_string(),
@@ -72,7 +74,7 @@ impl SourceRecord {
 
 /// The provenance sidecar: fact-node-id → source record.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub(super) struct Provenance {
+pub(crate) struct Provenance {
     #[serde(default)]
     pub facts: BTreeMap<String, SourceRecord>,
 }
@@ -83,7 +85,7 @@ impl Provenance {
     }
 
     /// Load the sidecar, or an empty map when absent / unreadable.
-    pub(super) fn load(layout: &ProjectLayout) -> Provenance {
+    pub(crate) fn load(layout: &ProjectLayout) -> Provenance {
         let p = Provenance::path(layout);
         match std::fs::read_to_string(p) {
             Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
@@ -111,7 +113,7 @@ impl Provenance {
     }
 
     /// The source record for a node, if any.
-    pub(super) fn for_node(&self, node_id: &str) -> Option<&SourceRecord> {
+    pub(crate) fn for_node(&self, node_id: &str) -> Option<&SourceRecord> {
         self.facts.get(node_id)
     }
 }

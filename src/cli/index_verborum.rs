@@ -52,7 +52,9 @@ pub fn run(project: &Path, book_name: Option<&str>, format: &str, out: Option<&P
 }
 
 /// A Glossary lexicon entry → the pure builder's `LexTerm`.
-fn to_lex_term(e: &GlossaryEntry) -> LexTerm {
+/// `pub(crate)` so the read-only `ink.verborum.*` Bund words can build the same
+/// index the CLI does (disk reads only — no write, no LLM).
+pub(crate) fn to_lex_term(e: &GlossaryEntry) -> LexTerm {
     LexTerm {
         term: e.term.trim().to_string(),
         original_forms: e.original_forms.iter().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),
@@ -71,7 +73,7 @@ fn to_lex_term(e: &GlossaryEntry) -> LexTerm {
 /// Harvest term-level and sense-level usages. Term-level: a term appears (whole-word,
 /// any surface form) in a chapter's plain prose. Sense-level: a `term#super[N]` tag
 /// in the raw prose attributes that use to sense N.
-fn harvest_usages(
+pub(crate) fn harvest_usages(
     layout: &ProjectLayout,
     h: &Hierarchy,
     book_name: Option<&str>,
