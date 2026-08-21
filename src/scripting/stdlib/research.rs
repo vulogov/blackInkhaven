@@ -128,11 +128,17 @@ fn do_provenance(vm: &mut VM) -> Result<&mut VM> {
     Ok(vm)
 }
 
+/// Upper bound on the requested chunk count. `rag::retrieve_source_passages`
+/// searches for `k * 4 + 8` candidates, so an unclamped user `k` would overflow
+/// `usize` (panic in debug, oversized allocation in release). 200 is far more
+/// source chunks than any dashboard needs.
+const MAX_SOURCE_K: i64 = 200;
+
 word!(w_sources, do_sources);
 fn do_sources(vm: &mut VM) -> Result<&mut VM> {
     let tag = "ink.research.sources";
     require_depth(vm, 2, tag)?;
-    let k = value_to_i64(pull(vm, tag)?, "k", tag)?.max(0) as usize;
+    let k = value_to_i64(pull(vm, tag)?, "k", tag)?.clamp(0, MAX_SOURCE_K) as usize;
     let query = value_to_string(pull(vm, tag)?, "query", tag)?;
     let store = active_store(tag)?;
     let items: Vec<Value> = rag::retrieve_source_passages(store, &query, k)
