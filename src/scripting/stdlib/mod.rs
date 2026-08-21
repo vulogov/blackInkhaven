@@ -58,6 +58,11 @@ mod locorum;
 mod verborum;
 // 3.0.4 Phase-3 — opt-in write wrappers (default-denied).
 mod import;
+// 3.0.6 — Bund surface introspection.
+mod words;
+// 3.0.6 — #[ignore]'d end-to-end smoke test over a real project store.
+#[cfg(test)]
+mod integration_tests;
 
 use anyhow::Result;
 use rust_multistackvm::multistackvm::VM;
@@ -117,5 +122,7 @@ pub fn register_ink_stdlib(vm: &mut VM) -> Result<()> {
     verborum::register(vm)?;
     // 3.0.4 Phase-3 — opt-in write wrappers (default-denied).
     import::register(vm)?;
+    // 3.0.6 — Bund surface introspection.
+    words::register(vm)?;
     Ok(())
 }

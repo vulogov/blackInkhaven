@@ -23,6 +23,7 @@ use super::helpers::{active_store, pull, push, require_depth, value_to_string};
 use crate::planning::{Framework, PlanReport};
 use crate::project::ProjectLayout;
 use crate::store::hierarchy::Hierarchy;
+use crate::store::NodeKind;
 
 /// The CLI's default beat-drift tolerance (`plan check` uses 0.10).
 const DEFAULT_DRIFT: f32 = 0.10;
@@ -98,8 +99,13 @@ fn do_beats(vm: &mut VM) -> Result<&mut VM> {
 // ── check / gaps (the deterministic structural report) ──────────────────────
 
 fn opt_f32(m: &mut HashMap<String, Value>, key: &str, v: Option<f32>) {
+    // Skip NaN / inf — `Value::from_float` stores them verbatim, and a degenerate
+    // position ratio on an edge-case book would otherwise leak NaN into the dict.
+    // A non-finite derived value reads as "absent", the same as `None`.
     if let Some(v) = v {
-        m.insert(key.into(), Value::from_float(v as f64));
+        if v.is_finite() {
+            m.insert(key.into(), Value::from_float(v as f64));
+        }
     }
 }
 
@@ -113,17 +119,27 @@ fn strs(xs: &[String]) -> Value {
     Value::from_list(xs.iter().map(Value::from_string).collect())
 }
 
-/// Build the deterministic PlanReport for the project's book off the active
-/// store (no LLM — that's `plan analyze`, kept CLI-only).
-fn plan_report(tag: &str) -> Result<PlanReport> {
+/// Build the deterministic PlanReport for the project's first user book off the
+/// active store (no LLM — that's `plan analyze`, kept CLI-only). Returns the
+/// report and the book's title so a caller can report which book was analyzed.
+///
+/// (The CLI's `resolve_user_book(None)` errors on a multi-book project since it
+/// can't disambiguate; a no-arg script word should still work, so we take the
+/// first user book and surface its label rather than failing.)
+fn plan_report(tag: &str) -> Result<(PlanReport, String)> {
     let store = active_store(tag)?;
     let layout = ProjectLayout::new(store.project_root());
     let h = Hierarchy::load(store).map_err(|e| anyhow!("{tag}: {e}"))?;
-    let book = crate::cli::resolve_user_book(&h, None, tag).map_err(|e| anyhow!("{e}"))?;
+    let book = h
+        .children_of(None)
+        .into_iter()
+        .find(|n| n.kind == NodeKind::Book && n.system_tag.is_none())
+        .ok_or_else(|| anyhow!("{tag}: no user book to plan (create a book first)"))?;
+    let label = book.title.clone();
     let (report, _framework, _chapters) =
         crate::cli::plan::build_report(store, &layout, &h, book, DEFAULT_DRIFT)
             .map_err(|e| anyhow!("{tag}: {e}"))?;
-    Ok(report)
+    Ok((report, label))
 }
 
 fn beat_dict(b: &crate::planning::BeatStatus) -> Value {
@@ -168,7 +184,7 @@ fn w_check(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
     do_check(vm).map_err(to_bund_err)
 }
 fn do_check(vm: &mut VM) -> Result<&mut VM> {
-    let report = plan_report("ink.planning.check")?;
+    let (report, book) = plan_report("ink.planning.check")?;
 
     let acts: Vec<Value> = report
         .acts
@@ -195,6 +211,7 @@ fn do_check(vm: &mut VM) -> Result<&mut VM> {
         .collect();
 
     let mut m: HashMap<String, Value> = HashMap::new();
+    m.insert("book".into(), Value::from_string(&book));
     m.insert("beats".into(), Value::from_list(report.beats.iter().map(beat_dict).collect()));
     m.insert("gaps".into(), strs(&report.gaps));
     m.insert("acts".into(), Value::from_list(acts));
@@ -214,7 +231,7 @@ fn w_gaps(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
     do_gaps(vm).map_err(to_bund_err)
 }
 fn do_gaps(vm: &mut VM) -> Result<&mut VM> {
-    let report = plan_report("ink.planning.gaps")?;
+    let (report, _book) = plan_report("ink.planning.gaps")?;
     push(vm, strs(&report.gaps));
     Ok(vm)
 }
