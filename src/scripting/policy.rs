@@ -620,6 +620,10 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
 /// checks against.
 #[allow(dead_code)] // consumed by the classification tests; a documentation artifact otherwise
 pub const PURE_UNCATEGORISED: &[&str] = &[
+    // 3.0.6 — `ink.words` introspects the registered word table itself (VM state
+    // only); it touches no store / filesystem / network, so it is intentionally
+    // pure (always available, even under a locked-down policy).
+    "ink.words",
     // Pure data constructor — builds a Bund dict from stack values.
     "ink.lang.dict",
     // PDF pipeline: `load` (fs_read) and `save` (fs_write) are the only FS gates;
