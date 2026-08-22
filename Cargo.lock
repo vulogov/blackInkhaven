@@ -3952,6 +3952,7 @@ dependencies = [
  "directories",
  "duckdb",
  "easy-error",
+ "encoding_rs",
  "fastembed",
  "flate2",
  "fs2",
