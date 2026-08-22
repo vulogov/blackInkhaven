@@ -27,19 +27,19 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 3.0.7 · stable baseline 3.0.0 — The Stable Edition
+## Latest release · 3.0.8 · stable baseline 3.0.0 — The Stable Edition
 
-The current release is **3.0.7**, a small maintenance patch over the **3.0.0
-"Stable Edition"** baseline. A light audit of the export pipeline fixed two real
-bugs: EPUB export no longer hardcodes English — it stamps the book's actual
-language on the metadata and content documents (correct e-reader hyphenation,
-TTS, and fonts for non-English books) — and DOCX/EPUB now drop XML-illegal
-control characters that a stray paste could use to corrupt the output. On the
-scripting side, `ink.words` gained a prefix filter, and a build-time guard now
-keeps the complete Bund word reference in lockstep with the registered surface,
-so it can't silently fall out of date; `FEATURE_INDEX.md` was refreshed to cover
-the 3.0.5/3.0.6 scripting families. 3.0.6 hardened and documented the Bund
-coverage; 3.0.5 widened the Bund layer to cover the existing feature surface.
+The current release is **3.0.8**, a small maintenance patch over the **3.0.0
+"Stable Edition"** baseline that fixes two real bugs found by targeted audits.
+Scrivener import no longer corrupts non-English prose: RTF `\'xx` escapes are now
+decoded through the document's declared codepage (`\ansicpg`), so Windows-Cyrillic
+and cp1252 documents import faithfully instead of turning "Москва" into mojibake.
+And the project-doctor chord (`Ctrl+B Shift+0`) — previously unreachable because
+it collided with the config-editor chord — works again, with a new build-time
+guard that prevents any keybinding from being silently shadowed. It also
+disambiguates same-second backup filenames and refreshes the configuration and
+keybinding references. 3.0.7 corrected EPUB export language + added a Bund
+doc-integrity guard; 3.0.5/3.0.6 built and hardened the Bund scripting coverage.
 
 Read the full 3.0.0 notes: [`Documentation/RELEASE_NOTES/3.0.0.md`](Documentation/RELEASE_NOTES/3.0.0.md)
 
@@ -264,14 +264,14 @@ cargo install inkhaven
 ```
 
 Inkhaven is published on crates.io — every release tag pushes a
-new version (latest: 3.0.7).  The first build takes ~10 minutes on
+new version (latest: 3.0.8).  The first build takes ~10 minutes on
 a modern laptop because of DuckDB + fastembed + ONNX-runtime
 compilation; `cargo binstall` above is the fast path.
 
 ### 4. `cargo install --git` (compile from a specific tag)
 
 ```bash
-cargo install --git https://github.com/vulogov/blackInkhaven --tag v3.0.7
+cargo install --git https://github.com/vulogov/blackInkhaven --tag v3.0.8
 ```
 
 Useful when you want a specific tag, a pre-release branch, or a
