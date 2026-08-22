@@ -1697,12 +1697,16 @@ impl KeyBindings {
                 // terminal layout (previous `|` binding was
                 // dropped on some terminals' chord state).
                 entry("0", Action::BundEditProjectHjson, Scope::Any),
-                // 1.2.15+ Phase D.3 — Ctrl+B Shift+0
-                // opens the project-wide doctor panel.
-                // Same digit row as Ctrl+B 0 (config
-                // editor) so the "system inspection"
-                // chord cluster lives together.
-                entry("Shift+0", Action::OpenDoctorPanel, Scope::Any),
+                // 1.2.15+ Phase D.3 — the project-wide doctor panel. Bound to the
+                // `)` glyph (Shift+0 on a US layout) so the keystroke is still
+                // "Ctrl+B Shift+0" and it sits in the same digit-row "system
+                // inspection" cluster as Ctrl+B 0 (config editor). NB: it must be
+                // `)`, NOT "Shift+0" — the chord parser drops SHIFT for
+                // non-alphabetic keys (terminals send the shifted glyph), so
+                // "Shift+0" normalises to "0" and was fully shadowed by the config
+                // editor (3.0.8 fix; the no_default_binding_is_fully_shadowed
+                // guard now prevents this class).
+                entry(")", Action::OpenDoctorPanel, Scope::Any),
                 // 1.2.9+ — Ctrl+B Shift+F toggles inline
                 // style-warning overlays (filter words).
                 entry("Shift+f", Action::ToggleStyleWarnings, Scope::Any),
@@ -2400,6 +2404,58 @@ mod tests {
 
     fn ev(c: char) -> KeyEvent {
         KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
+    }
+
+    /// 3.0.8 — every default binding must be reachable: for at least one focus,
+    /// it must be the FIRST entry `resolve_in` returns for its chord. An entry
+    /// that never wins (an earlier same-chord entry covers every focus it could
+    /// apply in) is dead — a documented chord silently unreachable, the class of
+    /// bug behind the 3.0.1 comment chord + PO-P13. A Tree-scoped entry placed
+    /// before an Any-scoped one is fine (each pane resolves correctly); only a
+    /// fully-shadowed entry is flagged.
+    #[test]
+    fn no_default_binding_is_fully_shadowed() {
+        const FOCI: [Focus; 5] =
+            [Focus::Tree, Focus::Editor, Focus::Ai, Focus::SearchBar, Focus::AiPrompt];
+
+        let k = KeyBindings::defaults();
+        let layers: [(&str, &[BindingEntry]); 4] = [
+            ("meta (Ctrl+B)", &k.meta_sub),
+            ("bund (Ctrl+Z)", &k.bund_sub),
+            ("view (Ctrl+V)", &k.view_sub),
+            ("top-level", &k.top_level),
+        ];
+
+        let mut conflicts: Vec<String> = Vec::new();
+        for (layer, table) in layers {
+            for (i, b) in table.iter().enumerate() {
+                // Live if, for some focus, `resolve_in` (first-match) returns THIS entry.
+                let live = FOCI.iter().any(|&f| {
+                    table.iter().position(|e| e.chord == b.chord && e.scope.matches(f))
+                        == Some(i)
+                });
+                if !live {
+                    let shadower = table[..i]
+                        .iter()
+                        .find(|e| e.chord == b.chord)
+                        .map(|e| format!("{:?} ({:?})", e.action, e.scope))
+                        .unwrap_or_else(|| "?".into());
+                    conflicts.push(format!(
+                        "{layer}: `{}` → {:?} ({:?}) is dead, shadowed by {shadower}",
+                        b.chord.to_display_string(),
+                        b.action,
+                        b.scope,
+                    ));
+                }
+            }
+        }
+
+        assert!(
+            conflicts.is_empty(),
+            "default keymap has fully-shadowed (unreachable) binding(s) — rebind one \
+             of each pair:\n{}",
+            conflicts.join("\n"),
+        );
     }
 
     #[test]
