@@ -1,6 +1,6 @@
 [package]
 name = "inkhaven"
-version = "3.0.7"
+version = "3.0.8"
 edition = "2024"
 # Rust 1.85 stabilised edition 2024. Bump alongside any toolchain-only
 # feature usage (let-else / chained-comparisons / etc. are already stable).
@@ -234,6 +234,9 @@ pulldown-cmark = { version = "0.13", default-features = false }
 # Also reused by the `inkhaven export epub` pipeline to assemble the
 # EPUB3 container — same `deflate` feature flag, no extra dep cost.
 zip = { version = "2", default-features = false, features = ["deflate"] }
+# Codepage decoding for Scrivener RTF `\'xx` escapes (honours `\ansicpg`, e.g.
+# windows-1251 Cyrillic / windows-1252). Already in the tree transitively.
+encoding_rs = "0.8"
 # Pure-Rust Typst→LaTeX converter for `inkhaven export tex` and the
 # Ctrl+B O extra-format pipeline. `default-features = false` drops
 # the bundled clap CLI; we only consume the library API
