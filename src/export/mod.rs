@@ -282,9 +282,10 @@ pub fn build_tex(combined: &str, tex_cfg: &crate::config::TexExportConfig) -> Ar
 }
 
 /// Build `Artefact::Epub` from a markdown source string. `title`
-/// shows up in the EPUB metadata + nav.
-pub fn build_epub(markdown_src: &str, title: &str) -> Result<Artefact> {
-    let bytes = epub::write_epub(markdown_src, title)?;
+/// shows up in the EPUB metadata + nav; `lang` is the BCP-47 tag
+/// stamped on the metadata + content documents.
+pub fn build_epub(markdown_src: &str, title: &str, lang: &str) -> Result<Artefact> {
+    let bytes = epub::write_epub(markdown_src, title, lang)?;
     Ok(Artefact::Epub(bytes))
 }
 

@@ -246,6 +246,10 @@ fn xml_escape(s: &str) -> String {
             '>' => out.push_str("&gt;"),
             '"' => out.push_str("&quot;"),
             '\'' => out.push_str("&apos;"),
+            // XML 1.0 forbids C0 control chars (even escaped) except tab/LF/CR;
+            // drop them so a stray control char can't make word/document.xml
+            // not-well-formed ("unreadable content").
+            '\u{0}'..='\u{8}' | '\u{B}' | '\u{C}' | '\u{E}'..='\u{1F}' => {}
             _ => out.push(c),
         }
     }
@@ -256,6 +260,14 @@ fn xml_escape(s: &str) -> String {
 mod tests {
     use super::*;
     use std::io::Read;
+
+    #[test]
+    fn xml_escape_drops_illegal_control_chars() {
+        // A form-feed / NUL must not reach word/document.xml (would be
+        // not-well-formed → "unreadable content"). Tab stays (legal).
+        assert_eq!(xml_escape("a\u{0}b\u{c}c\td"), "abc\td");
+        assert_eq!(xml_escape("<&>"), "&lt;&amp;&gt;");
+    }
 
     fn sample() -> (ManuscriptMeta, Vec<ManuscriptChapter>) {
         let meta = ManuscriptMeta {

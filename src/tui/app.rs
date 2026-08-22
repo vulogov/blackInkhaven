@@ -26147,7 +26147,11 @@ impl App {
             "tex" | "latex" => Some(Ok(crate::export::build_tex(combined, &self.cfg.tex_export))),
             "epub" => {
                 let md = crate::export::markdown::typst_to_markdown(combined);
-                Some(crate::export::build_epub(&md, book_title))
+                Some(crate::export::build_epub(
+                    &md,
+                    book_title,
+                    crate::ai::prompts::iso_from_long(&self.cfg.language),
+                ))
             }
             _ => None,
         }
