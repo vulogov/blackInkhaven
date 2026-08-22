@@ -4,9 +4,11 @@
 //! gated — without reading the source. Pure VM introspection: touches no store,
 //! filesystem, or network.
 //!
-//! - `ink.words` ( -- list )  every registered `ink.*` word as {word, category},
-//!   sorted by word. `category` is the policy class (store_read, store_write,
-//!   fs_read, …) or "pure" for the intentionally-uncategorised value transforms.
+//! - `ink.words` ( prefix -- list )  the registered `ink.*` words as
+//!   {word, category}, sorted by word, keeping only those starting with `prefix`
+//!   (an empty string lists everything). `category` is the policy class
+//!   (store_read, store_write, fs_read, …) or "pure" for the intentionally-
+//!   uncategorised value transforms.
 
 use std::collections::{HashMap, HashSet};
 
@@ -15,7 +17,7 @@ use easy_error::Error as BundError;
 use rust_dynamic::value::Value;
 use rust_multistackvm::multistackvm::VM;
 
-use super::helpers::push;
+use super::helpers::{pull, push, require_depth, value_to_string};
 use crate::scripting::policy::{PURE_UNCATEGORISED, WORD_CATEGORIES};
 
 pub fn register(vm: &mut VM) -> Result<()> {
@@ -25,8 +27,16 @@ pub fn register(vm: &mut VM) -> Result<()> {
     Ok(())
 }
 
-/// ( -- list ) every registered `ink.*` word as {word, category}.
+/// ( prefix -- list ) the registered `ink.*` words as {word, category}, filtered
+/// to those starting with `prefix` ("" = all).
 fn w_words(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
+    do_words(vm).map_err(|e| easy_error::err_msg(e.to_string()))
+}
+fn do_words(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.words";
+    require_depth(vm, 1, tag)?;
+    let prefix = value_to_string(pull(vm, tag)?, "prefix", tag)?;
+
     let cats: HashMap<&str, &str> = WORD_CATEGORIES.iter().copied().collect();
     let pure: HashSet<&str> = PURE_UNCATEGORISED.iter().copied().collect();
 
@@ -37,6 +47,7 @@ fn w_words(vm: &mut VM) -> std::result::Result<&mut VM, BundError> {
         .keys()
         .filter_map(|k| k.strip_suffix("_inline"))
         .filter(|n| n.starts_with("ink."))
+        .filter(|n| prefix.is_empty() || n.starts_with(prefix.as_str()))
         .map(String::from)
         .collect();
     names.sort();
@@ -65,8 +76,8 @@ mod tests {
 
     #[test]
     fn words_lists_the_ink_surface_with_categories() {
-        // Pure introspection — no project store needed.
-        let out = scripting::eval("ink.words").expect("eval");
+        // Pure introspection — no project store needed. "" = every word.
+        let out = scripting::eval("\"\" ink.words").expect("eval");
         let list = out.top.expect("a result").cast_list().expect("a list");
         assert!(list.len() > 100, "the ink.* surface is large (got {})", list.len());
 
@@ -86,5 +97,17 @@ mod tests {
             }
         }
         assert!(found_rigor, "ink.rigor.scan should appear in ink.words");
+    }
+
+    #[test]
+    fn words_prefix_filters() {
+        let out = scripting::eval("\"ink.rigor\" ink.words").expect("eval");
+        let list = out.top.expect("a result").cast_list().expect("a list");
+        assert_eq!(list.len(), 3, "three ink.rigor.* words");
+        for row in &list {
+            let d = row.cast_dict().expect("a dict");
+            let w = d.get("word").and_then(|v| v.cast_string().ok()).unwrap_or_default();
+            assert!(w.starts_with("ink.rigor"), "prefix filter leaked `{w}`");
+        }
     }
 }
