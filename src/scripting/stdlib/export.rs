@@ -160,7 +160,7 @@ fn do_epub(vm: &mut VM) -> Result<&mut VM> {
     let combined = combined(&ctx, tag)?;
     let md = crate::export::markdown::typst_to_markdown(&combined);
     let title = crate::cli::epub::clean_title(&ctx.book.title);
-    crate::export::build_epub(&md, &title)
+    crate::export::build_epub(&md, &title, crate::ai::prompts::iso_from_long(&ctx.cfg.language))
         .map_err(|e| anyhow!("{tag}: {e}"))?
         .write_to(&ctx.path)
         .map_err(|e| anyhow!("{tag}: write {}: {e}", ctx.path.display()))?;

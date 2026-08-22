@@ -179,7 +179,7 @@ pub fn write_epub(
         zip.start_file(format!("OEBPS/cover.{}", cover.file_ext), stored)?;
         zip.write_all(&cover.bytes)?;
         zip.start_file("OEBPS/cover.xhtml", deflated)?;
-        zip.write_all(cover_xhtml(&cover.file_ext).as_bytes())?;
+        zip.write_all(cover_xhtml(&cover.file_ext, &meta.language).as_bytes())?;
     }
 
     // Chapter documents + their inline images. Image
@@ -189,7 +189,7 @@ pub fn write_epub(
     for (i, ch) in chapters.iter().enumerate() {
         let name = chapter_filename(i);
         zip.start_file(format!("OEBPS/{name}"), deflated)?;
-        zip.write_all(chapter_xhtml(&ch.title, &ch.body_xhtml).as_bytes())?;
+        zip.write_all(chapter_xhtml(&ch.title, &ch.body_xhtml, &meta.language).as_bytes())?;
         for img in &ch.images {
             zip.start_file(format!("OEBPS/{}", img.href), stored)?;
             zip.write_all(&img.bytes)?;
@@ -198,7 +198,7 @@ pub fn write_epub(
 
     // Navigation + package + ncx.
     zip.start_file("OEBPS/nav.xhtml", deflated)?;
-    zip.write_all(nav_xhtml(chapters).as_bytes())?;
+    zip.write_all(nav_xhtml(chapters, &meta.language).as_bytes())?;
 
     zip.start_file("OEBPS/toc.ncx", deflated)?;
     zip.write_all(toc_ncx(meta, chapters).as_bytes())?;
@@ -398,11 +398,11 @@ a[role~="doc-noteref"] { text-decoration: none; }
 .footnotes p { text-indent: 0; }
 "#;
 
-fn chapter_xhtml(title: &str, body: &str) -> String {
+fn chapter_xhtml(title: &str, body: &str, lang: &str) -> String {
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="en">
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="{lang}" lang="{lang}">
 <head>
   <meta charset="UTF-8"/>
   <title>{title}</title>
@@ -417,17 +417,18 @@ fn chapter_xhtml(title: &str, body: &str) -> String {
 "#,
         title = escape_xml(title),
         body = body,
+        lang = escape_xml(lang),
     )
 }
 
 /// 1.2.20+ R.1.b — full-page cover wrapper.  A reader
 /// that honours `epub:type="cover"` shows this as the
 /// opening page; the image scales to the viewport.
-fn cover_xhtml(file_ext: &str) -> String {
+fn cover_xhtml(file_ext: &str, lang: &str) -> String {
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="en">
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="{lang}" lang="{lang}">
 <head>
   <meta charset="UTF-8"/>
   <title>Cover</title>
@@ -441,10 +442,11 @@ fn cover_xhtml(file_ext: &str) -> String {
 </html>
 "#,
         ext = file_ext,
+        lang = escape_xml(lang),
     )
 }
 
-fn nav_xhtml(chapters: &[EpubChapter]) -> String {
+fn nav_xhtml(chapters: &[EpubChapter], lang: &str) -> String {
     let mut items = String::new();
     for (i, ch) in chapters.iter().enumerate() {
         items.push_str(&format!(
@@ -456,7 +458,7 @@ fn nav_xhtml(chapters: &[EpubChapter]) -> String {
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" lang="en">
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xml:lang="{lang}" lang="{lang}">
 <head>
   <meta charset="UTF-8"/>
   <title>Contents</title>
@@ -471,6 +473,7 @@ fn nav_xhtml(chapters: &[EpubChapter]) -> String {
 </html>
 "#,
         items = items,
+        lang = escape_xml(lang),
     )
 }
 
@@ -823,7 +826,7 @@ mod tests {
 
     #[test]
     fn nav_lists_every_chapter() {
-        let nav = nav_xhtml(&sample_chapters());
+        let nav = nav_xhtml(&sample_chapters(), "en");
         assert!(nav.contains("chapter-001.xhtml"));
         assert!(nav.contains("Arrivals"));
         assert!(nav.contains("The Wharf"));
