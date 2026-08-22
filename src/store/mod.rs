@@ -1013,7 +1013,11 @@ symbol/motif proposals you can accept straight into this book.";
                     node.content_type = Some("markdown".to_string());
                     format!("# {}\n\n", node.title)
                 } else {
-                    format!("= {}\n\n", node.title)
+                    // Escape the title for Typst content mode so a seed heading
+                    // from a title like `Cost $5` or `The #1 Rule` is valid Typst
+                    // (the PDF assembler strips this heading, but the export-concat
+                    // path keeps it — an unescaped `$`/`#` would break that build).
+                    format!("= {}\n\n", crate::assemble::escape_typst_content(&node.title))
                 };
                 crate::io_atomic::write(&abs_path, template.as_bytes())?;
                 node.file = Some(rel_path.to_string_lossy().into_owned());

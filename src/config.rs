@@ -3936,17 +3936,8 @@ impl FrontmatterLabels {
 /// Escape Typst markup-special characters so author-supplied plain text sits
 /// safely in content (`[...]`) mode. Mirrors `conlang::output::typst_text`.
 fn frontmatter_escape_content(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        if matches!(
-            c,
-            '#' | '*' | '_' | '`' | '$' | '\\' | '<' | '>' | '@' | '[' | ']'
-        ) {
-            out.push('\\');
-        }
-        out.push(c);
-    }
-    out
+    // The canonical Typst content-mode escaper lives in `assemble`.
+    crate::assemble::escape_typst_content(s)
 }
 
 impl FrontmatterConfig {
