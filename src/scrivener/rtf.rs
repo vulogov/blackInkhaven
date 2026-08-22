@@ -28,15 +28,23 @@ use anyhow::Result;
 /// Convert RTF bytes to a Typst-friendly source string.
 /// Lossy by design — see module docs for what we drop.
 pub fn rtf_to_typst(rtf_bytes: &[u8]) -> Result<String> {
-    // Non-ASCII characters reach us either as ASCII `\'xx` escapes (which the
-    // structured parser decodes) or, in many real Scrivener projects, as raw
-    // UTF-8/Latin-1 bytes. `parse_structured` maps every raw high byte to `?` so
-    // the ASCII-only upstream lexer can't panic — meaning a document whose
-    // non-English prose is stored raw parses "successfully" with all its
-    // Cyrillic/accented text destroyed, and never reaches the fallback. `\'xx`
-    // escapes are pure ASCII, so any byte >= 0x80 is raw content: when present,
-    // prefer the plain-text fallback (`from_utf8_lossy`), which keeps the
-    // characters — trading lost structure for kept content.
+    // First decode any `\'xx` hex escapes through the document's declared
+    // codepage (`\ansicpg`, default windows-1252). Scrivener-for-Windows stores
+    // non-ASCII prose this way — cp1251 Cyrillic, cp1252 curly quotes/dashes —
+    // and the upstream structured parser decodes `\'xx` as *raw codepoints*
+    // (ignoring `\ansicpg`), which turns "Москва" into "Ìñâ" and `’` into a C1
+    // control char. Decoding here, up front, yields correct UTF-8 (3.0.8 fix).
+    let decoded = decode_ansi_escapes(rtf_bytes);
+    let rtf_bytes: &[u8] = &decoded;
+
+    // Non-ASCII now reaches us as raw UTF-8 bytes (either originally raw, or just
+    // decoded from `\'xx`). `parse_structured` maps every raw high byte to `?` so
+    // the ASCII-only upstream lexer can't panic — meaning a document with
+    // non-English prose parses "successfully" with all its Cyrillic/accented text
+    // destroyed. So when any byte >= 0x80 is present, prefer the plain-text
+    // fallback (`from_utf8_lossy`), which keeps the characters — trading lost
+    // structure for kept content. Pure-ASCII English (no escapes) still gets the
+    // structured parser below, so its bold/italic/headings survive.
     if rtf_bytes.iter().any(|&b| b >= 0x80) {
         return Ok(strip_to_plain_text(rtf_bytes));
     }
@@ -181,6 +189,61 @@ fn ensure_paragraph_break(out: &mut String) {
     out.push('\n');
 }
 
+/// The document's declared codepage (`\ansicpgNNNN`) as an `encoding_rs`
+/// encoding, defaulting to windows-1252 (the RTF/Word default) when absent or
+/// unrecognised. `\ansicpg65001` → UTF-8.
+fn detect_codepage(rtf: &[u8]) -> &'static encoding_rs::Encoding {
+    const TAG: &[u8] = b"\\ansicpg";
+    if let Some(pos) = rtf.windows(TAG.len()).position(|w| w == TAG) {
+        let digits: String = rtf[pos + TAG.len()..]
+            .iter()
+            .take_while(|b| b.is_ascii_digit())
+            .map(|&b| b as char)
+            .collect();
+        if let Ok(cp) = digits.parse::<u32>() {
+            if cp == 65001 {
+                return encoding_rs::UTF_8;
+            }
+            if let Some(enc) =
+                encoding_rs::Encoding::for_label(format!("windows-{cp}").as_bytes())
+            {
+                return enc;
+            }
+        }
+    }
+    encoding_rs::WINDOWS_1252
+}
+
+/// Replace every `\'xx` hex escape with the UTF-8 bytes of its codepage-decoded
+/// character (honouring `\ansicpg`), passing everything else through unchanged.
+/// A no-op for documents with no such escapes. This is what makes
+/// Windows-Cyrillic / cp1252 Scrivener prose import correctly instead of being
+/// decoded as raw codepoints.
+fn decode_ansi_escapes(rtf: &[u8]) -> Vec<u8> {
+    let enc = detect_codepage(rtf);
+    let mut out = Vec::with_capacity(rtf.len());
+    let mut i = 0;
+    while i < rtf.len() {
+        if rtf[i] == b'\\'
+            && i + 4 <= rtf.len()
+            && rtf[i + 1] == b'\''
+            && rtf[i + 2].is_ascii_hexdigit()
+            && rtf[i + 3].is_ascii_hexdigit()
+        {
+            let hi = (rtf[i + 2] as char).to_digit(16).unwrap() as u8;
+            let lo = (rtf[i + 3] as char).to_digit(16).unwrap() as u8;
+            let raw = [hi * 16 + lo];
+            let (decoded, _, _) = enc.decode(&raw);
+            out.extend_from_slice(decoded.as_bytes());
+            i += 4;
+        } else {
+            out.push(rtf[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
 /// Brute-force fallback: drop everything that looks like an
 /// RTF control sequence + bracket grouping, return what's
 /// left. Used when the structured parser bails on a pathological
@@ -248,6 +311,33 @@ mod tests {
         let rtf = b"{\\rtf1\\ansi The quick brown fox.}";
         let out = rtf_to_typst(rtf).unwrap();
         assert!(out.contains("The quick brown fox"));
+    }
+
+    #[test]
+    fn cp1251_hex_escapes_decode_to_cyrillic() {
+        // 3.0.8 regression — Scrivener-for-Windows stores Cyrillic as `\'xx`
+        // under \ansicpg1251. Must decode to "Москва", not the raw-codepoint
+        // mojibake "Ìñâ" the structured parser produced.
+        let rtf = b"{\\rtf1\\ansi\\ansicpg1251 \\'cc\\'ee\\'f1\\'ea\\'e2\\'e0}";
+        let out = rtf_to_typst(rtf).unwrap();
+        assert!(out.contains("Москва"), "cp1251 must decode: {out:?}");
+    }
+
+    #[test]
+    fn cp1252_smart_punctuation_decodes_not_c1_controls() {
+        // `\'92` is a curly apostrophe in cp1252, not U+0092. Must be `’`.
+        let rtf = b"{\\rtf1\\ansi\\ansicpg1252 don\\'92t}";
+        let out = rtf_to_typst(rtf).unwrap();
+        assert!(out.contains("don\u{2019}t"), "cp1252 apostrophe: {out:?}");
+        assert!(!out.contains('\u{92}'), "must not emit a C1 control: {out:?}");
+    }
+
+    #[test]
+    fn cp1252_latin1_accents_still_decode() {
+        // The common French/German/Spanish accents (0xA0-0xFF ≡ Latin-1) too.
+        let rtf = b"{\\rtf1\\ansi\\ansicpg1252 caf\\'e9}";
+        let out = rtf_to_typst(rtf).unwrap();
+        assert!(out.contains("caf\u{e9}"), "é must decode: {out:?}");
     }
 
     #[test]

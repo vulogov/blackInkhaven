@@ -114,7 +114,22 @@ pub fn create_backup(
 
     let now = Utc::now();
     let filename = backup_filename(now);
-    let out_path = out_dir.join(&filename);
+    let mut out_path = out_dir.join(&filename);
+    // The filename has 1-second resolution, so two backups in the same second —
+    // a scripted `ink.backup.make` loop, or a manual backup racing the TUI exit
+    // hook — would collide and silently overwrite the earlier archive. If the
+    // name is taken, disambiguate with a `-N` suffix (still `blackinkhaven_*.zip`
+    // so prune/list keep matching it).
+    if out_path.exists() {
+        let base = filename.strip_suffix(".zip").unwrap_or(&filename);
+        for n in 2..1000 {
+            let candidate = out_dir.join(format!("{base}-{n}.zip"));
+            if !candidate.exists() {
+                out_path = candidate;
+                break;
+            }
+        }
+    }
 
     // First pass: enumerate files so the progress callback gets a sensible
     // denominator. walkdir is cheap to traverse twice at literary scale.

@@ -97,6 +97,7 @@ so what it shows is the raw project config, not the global-merged result.
 {
   language: english
   prompts_file: prompts.hjson
+  artefacts_directory: ""
   sync_interval_seconds: 600
 
   embeddings: { … }
@@ -174,6 +175,7 @@ llm: {
 | `default` | string | `gemini` | Which entry in `providers` is used when no `--provider` flag is passed (CLI) and no override is hard-coded (TUI). |
 | `providers.<name>.model` | string | varies | Model identifier passed to [genai](https://github.com/jeremychone/rust-genai). genai picks the adapter (Gemini / OpenAI / Anthropic / Ollama / …) from this string. |
 | `providers.<name>.api_key_env` | string \| absent | varies | Environment variable that holds the API key. **Omit entirely** for local providers like Ollama. |
+| `auto_fallback` | bool | `true` | When the `default` provider's API key is unset, fall back to any other configured provider whose key IS available (or a keyless local provider). `false` fails with a clear error instead — for users who want the configured provider or nothing. |
 
 If `api_key_env` is set and that env var is unset at runtime, Inkhaven
 refuses to spawn the inference with a clean status message — no crash,
@@ -225,6 +227,7 @@ editor: {
 | `tab_width` | int | `2` | Currently informational — tui-textarea inserts a literal `\t`. |
 | `wrap` | bool | `true` | Soft word-wrap inside the editor. `false` → horizontal scroll on long lines. |
 | `autosave_seconds` | int | `5` | Seconds of editor inactivity after which a dirty paragraph is auto-saved. `0` disables idle autosave (Ctrl+S, paragraph-switch and quit-time autosaves still fire). Suspended while a grammar-correction highlight is active. |
+| `auto_close_pairs` | bool | `true` | Insert the matching close-bracket / quote when you type `(`, `[`, `{`, `"` or `'`. Enter inside a pair expands to a 3-line indented block; Backspace at the inside of a freshly-typed pair removes both halves. `false` inserts nothing. |
 | `startup_splash` | bool | `true` | 1.2.4+. Show a 7-second floating splash at launch with today's words / active minutes / streak / project shape. Any key dismisses early. Set `false` to skip. |
 | `mouse_captured` | bool | `true` | 1.2.8+. Initial mouse-capture state on launch. `true` hands every mouse event to the TUI (click-to-focus, scroll-wheel per pane, in-TUI drag-select). `false` releases capture at startup so the terminal's native drag-select + system-clipboard copy (Cmd/Ctrl+Shift+C) work without pressing `Ctrl+Shift+M` first. The runtime toggle still flips state regardless. |
 | `confirm_quit`   | bool | `false` | 1.2.8+. Pop a confirmation modal when the user presses `Ctrl+Q`. `Y` / `Enter` confirms and quits (with the usual autosave-first behaviour); `N` / `Esc` cancels. Useful when `Ctrl+Q` triggers terminal software flow-control or when the chord lands by accident. Default `false` — `Ctrl+Q` quits immediately as it always has. Ctrl+Q inside an already-open modal still quits unconditionally (intended as an escape hatch). |
@@ -251,6 +254,7 @@ editor: {
 | `pov_chip_enabled` | bool | `true` | 1.2.9+. Status-bar POV / character chip. When on, the status bar shows the most-mentioned character in the currently-open paragraph (the heuristic POV character) plus up to three additional named characters present. Driven by the project's existing `characters` lexicon — no separate tagging required. `Ctrl+B Shift+P` toggles in-session without rewriting HJSON. Chip colours are themed via `theme.pov_chip_bg` / `theme.pov_chip_fg` (1.2.10+ — explicit RGB defaults `#8b1d88` background / `#ffffff` foreground; tune these if the contrast doesn't read in your terminal palette). |
 | `prompt_language_mode` | string | `"book_defined"` | 1.2.11+. Prompt-language resolver mode. `"book_defined"` uses the top-level `language` field for every AI prompt resolution; `"paragraph_detected"` runs `whatlang` on the live paragraph body and falls back to `book_defined` for paragraphs shorter than `prompt_language_detection_min_chars`. `Ctrl+B Shift+N` cycles a session-local override on top of this knob; the AI pane title bar's `lang=` chip reflects the active mode. See `Documentation/PROPOSALS/MULTILINGUAL_PROMPTS.md` for the resolver design. |
 | `prompt_language_detection_min_chars` | int | `50` | 1.2.11+. Minimum non-whitespace character count required before `prompt_language_mode = "paragraph_detected"` will attempt whatlang detection. Below this threshold, the resolver silently uses the book language — whatlang is unreliable on short text. Edit-time cache invalidation (on save, on AI-diff accept, on external file change) also uses this value as the length-delta threshold. |
+| `comment_author` | string \| absent | _unset_ | Author name attached to inline comments. When unset, the resolver falls through to `$USER` → `$LOGNAME` → `$HOSTNAME` → `"anonymous"`. Set it when the inferred author is wrong (shared workstation, system account) or per-author attribution matters. |
 | `stemming.languages` | list of strings | `["english", "russian"]` | **Legacy** — superseded by top-level `language` when that is non-empty. See [`language`](#prompts_file-and-language). |
 
 The grammar-correction-highlight interaction: while you have an active
@@ -312,6 +316,7 @@ theme: {
   tree_chapter_fg:   "#89b4fa"
   tree_subchapter_fg:"#94e2d5"
   tree_paragraph_fg: "#cdd6f4"
+  tree_script_fg:    "#cba6f7"
 
   // Editor header
   editor_position_fg:"#89dceb"
@@ -346,6 +351,10 @@ theme: {
   // the same grammar as the three above.
   style_warning_echo_fg:                    "#b48ead"
   style_warning_echo_modifier:              ""
+  // 1.2.12+ — inline-comment span style.  Empty
+  // maps to the baked-in "underline+italic"; accepts
+  // the same "+"-combined tokens as the modifiers above.
+  comment_span_modifier:                    ""
 
   // Typst syntax
   syntax_heading:    "#cba6f7"
@@ -852,6 +861,8 @@ timeline: {
     swim_lane_max_rows:  12     # truncate beyond this with a
                                 # "+N more" row
     default_zoom:        1.0    # initial ticks-per-cell
+    grid_every_days:     7      # faint vertical bar every N
+                                # days (0 disables the grid)
   }
 }
 ```
@@ -1375,6 +1386,41 @@ to silence the automatic moments; the `Ctrl+Z p`
 chord still works on demand regardless.
 
 See [Tutorial 100 — The startup haiku](Tutorials/100-haiku.md).
+
+### `editor.haiku_semantic` (1.6.1+)
+
+HAIKU-2. Prefer *semantic* poem selection (the poem
+nearest the writing context) when the fastembed
+engine is already warm; falls back to the HAIKU-1
+rotation when it is cold (always the case at
+startup). No effect when `startup_haiku` is `false`.
+No AI API, no network. On by default.
+
+```hjson
+{
+  editor: {
+    haiku_semantic: true
+  }
+}
+```
+
+### `editor.haiku_scope` (1.6.7+)
+
+HAIKU-3. What the semantic haiku is chosen to
+reflect: `"paragraph"` (the default — the writing
+context under the cursor) or `"book"` (a centroid
+over a spread sample of the whole manuscript, so the
+poem reflects the book as a whole rather than the
+current passage). No effect when `haiku_semantic` is
+`false` or the engine is cold.
+
+```hjson
+{
+  editor: {
+    haiku_scope: "paragraph"
+  }
+}
+```
 
 ### `snippets` — `bund:` prefix + picker placeholders (1.2.16+)
 
