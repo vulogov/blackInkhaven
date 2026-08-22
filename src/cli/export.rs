@@ -98,8 +98,9 @@ pub fn run(
             // typst→markdown converter so what the user sees in the
             // .md export is exactly what's inside the .epub.
             let md = export::markdown::typst_to_markdown(&combined);
-            let artefact = export::build_epub(&md, &epub_title)
-                .map_err(|e| Error::Store(format!("epub: {e:#}")))?;
+            let artefact =
+                export::build_epub(&md, &epub_title, crate::ai::prompts::iso_from_long(&cfg.language))
+                    .map_err(|e| Error::Store(format!("epub: {e:#}")))?;
             write_artefact(artefact, output, "epub")
         }
         ExportFormat::Html => {

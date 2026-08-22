@@ -662,7 +662,7 @@ and are deliberately *not* exposed. Every word also answers to its short alias
 | `ink.doctor.scan` | `store_read` | `( -- list )` | full project scan `{class, severity, path, detail}` |
 | `ink.backup.last` | `store_read` | `( -- dict \| NODATA )` | last-backup timestamp `{last_at}` |
 | `ink.backup.list` | `fs_read` | `( -- list )` | backup zips, newest first `{name, bytes, modified}` |
-| `ink.words` | `pure` | `( -- list )` | every registered `ink.*` word `{word, category}` — introspect the surface |
+| `ink.words` | `pure` | `( prefix -- list )` | registered `ink.*` words `{word, category}` starting with `prefix` ("" = all) — introspect the surface |
 
 **Opt-in writes (default-denied).** Enable with
 `scripting: { enabled_categories: ["store_write", "fs_write"] }`. Import bundle
@@ -688,5 +688,6 @@ else
 then
 ```
 
-`inkhaven --project ~/my-book bund 'ink.words len'` prints how many `ink.*`
-words this build exposes; `'ink.words'` alone dumps the classified list.
+`inkhaven --project ~/my-book bund '"" ink.words len'` prints how many `ink.*`
+words this build exposes; `'"" ink.words'` dumps the whole classified list, and
+`'"ink.doctor" ink.words'` filters to one family.
