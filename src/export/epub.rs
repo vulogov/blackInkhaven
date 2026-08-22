@@ -18,8 +18,10 @@ use pulldown_cmark::{Event, HeadingLevel, Parser, Tag, TagEnd};
 use zip::write::SimpleFileOptions;
 
 /// Write a single-chapter EPUB3 archive. `title` lands in the
-/// metadata / nav; `markdown_src` becomes the body XHTML.
-pub fn write_epub(markdown_src: &str, title: &str) -> Result<Vec<u8>> {
+/// metadata / nav; `markdown_src` becomes the body XHTML; `lang` is the BCP-47
+/// language tag (`en`, `ru`, …) stamped on the OPF metadata and the content /
+/// nav documents so e-reader hyphenation, TTS, and font selection are correct.
+pub fn write_epub(markdown_src: &str, title: &str, lang: &str) -> Result<Vec<u8>> {
     let mut buf: Vec<u8> = Vec::new();
     {
         let cursor = std::io::Cursor::new(&mut buf);
@@ -39,22 +41,24 @@ pub fn write_epub(markdown_src: &str, title: &str) -> Result<Vec<u8>> {
         let chapter_xhtml = format!(
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
 <!DOCTYPE html>\n\
-<html xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:epub=\"http://www.idpf.org/2007/ops\">\n\
+<html xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:epub=\"http://www.idpf.org/2007/ops\" xml:lang=\"{lang}\" lang=\"{lang}\">\n\
 <head><meta charset=\"utf-8\"/><title>{title_esc}</title></head>\n\
 <body>{body}</body>\n\
 </html>\n",
             title_esc = xml_escape(title),
             body = html_body,
+            lang = xml_escape(lang),
         );
 
         let nav_xhtml = format!(
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
 <!DOCTYPE html>\n\
-<html xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:epub=\"http://www.idpf.org/2007/ops\">\n\
+<html xmlns=\"http://www.w3.org/1999/xhtml\" xmlns:epub=\"http://www.idpf.org/2007/ops\" xml:lang=\"{lang}\" lang=\"{lang}\">\n\
 <head><meta charset=\"utf-8\"/><title>Navigation</title></head>\n\
 <body><nav epub:type=\"toc\"><ol><li><a href=\"chapter.xhtml\">{title_esc}</a></li></ol></nav></body>\n\
 </html>\n",
             title_esc = xml_escape(title),
+            lang = xml_escape(lang),
         );
 
         // Stable UUID-ish identifier derived from the title +
@@ -73,7 +77,7 @@ pub fn write_epub(markdown_src: &str, title: &str) -> Result<Vec<u8>> {
   <metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\">\n\
     <dc:identifier id=\"book-id\">{id_esc}</dc:identifier>\n\
     <dc:title>{title_esc}</dc:title>\n\
-    <dc:language>en</dc:language>\n\
+    <dc:language>{lang_esc}</dc:language>\n\
     <meta property=\"dcterms:modified\">2025-01-01T00:00:00Z</meta>\n\
   </metadata>\n\
   <manifest>\n\
@@ -86,6 +90,7 @@ pub fn write_epub(markdown_src: &str, title: &str) -> Result<Vec<u8>> {
 </package>\n",
             id_esc = xml_escape(&identifier),
             title_esc = xml_escape(title),
+            lang_esc = xml_escape(lang),
         );
 
         let container_xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
@@ -197,10 +202,19 @@ fn xml_escape(s: &str) -> String {
             '>' => out.push_str("&gt;"),
             '"' => out.push_str("&quot;"),
             '\'' => out.push_str("&apos;"),
+            // XML 1.0 forbids C0 control chars (even escaped) except tab/LF/CR;
+            // drop them so a stray form-feed / NUL from a paste can't produce a
+            // not-well-formed document that readers silently reject.
+            c if is_xml_illegal(c) => {}
             other => out.push(other),
         }
     }
     out
+}
+
+/// True for a codepoint XML 1.0 disallows anywhere in a document.
+fn is_xml_illegal(c: char) -> bool {
+    matches!(c, '\u{0}'..='\u{8}' | '\u{B}' | '\u{C}' | '\u{E}'..='\u{1F}')
 }
 
 /// Lightweight content-hash used to make the EPUB identifier
@@ -213,4 +227,38 @@ fn crude_hash(s: &str) -> u64 {
         h = h.wrapping_mul(0x100000001b3);
     }
     h
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Read;
+
+    fn entry(zip_bytes: &[u8], name: &str) -> String {
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).expect("valid zip");
+        let mut f = zip.by_name(name).unwrap_or_else(|_| panic!("entry {name}"));
+        let mut s = String::new();
+        f.read_to_string(&mut s).expect("utf-8 entry");
+        s
+    }
+
+    #[test]
+    fn epub_stamps_the_book_language_not_hardcoded_en() {
+        // A Russian book must not claim English (multilingual — a hard bar).
+        let bytes = write_epub("# Глава\n\nПривет.\n", "Тест", "ru").expect("write");
+        let opf = entry(&bytes, "OEBPS/content.opf");
+        assert!(opf.contains("<dc:language>ru</dc:language>"), "OPF language: {opf}");
+        let chap = entry(&bytes, "OEBPS/chapter.xhtml");
+        assert!(chap.contains("lang=\"ru\""), "content-doc lang: {chap}");
+        assert!(!chap.contains("lang=\"en\""), "must not hardcode en");
+    }
+
+    #[test]
+    fn xml_escape_drops_illegal_control_chars() {
+        // A form-feed / NUL from a paste must not reach the XML (would be
+        // not-well-formed even escaped). Tab/newline are legal and kept.
+        let out = xml_escape("a\u{0}b\u{c}c\td");
+        assert_eq!(out, "abc\td");
+        assert_eq!(xml_escape("<&>"), "&lt;&amp;&gt;");
+    }
 }

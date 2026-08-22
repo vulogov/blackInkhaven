@@ -89,7 +89,7 @@ fn bund_words_smoke_over_a_real_project() {
     expect_list("backup.list");
     expect_list("planning.frameworks");
     expect_list("\"three_act\" planning.beats");
-    expect_list("ink.words");
+    expect_list("\"\" ink.words");
 
     // ── reader words that return a dict ──
     expect_dict("rigor.check");

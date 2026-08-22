@@ -886,6 +886,66 @@ mod tests {
         );
     }
 
+    /// 3.0.7 — the Bund word reference must not rot: every registered `ink.*`
+    /// word must appear in `Documentation/Bund/WORD_REFERENCE.md` with a matching
+    /// category, and the doc must list no word that isn't registered. The doc is
+    /// embedded at compile time, so this fails the build the moment the reference
+    /// falls out of sync with the policy table (the `WORD_CATEGORIES` + pure sets
+    /// are the authoritative surface, per `every_registered_word_is_classified`).
+    #[test]
+    fn word_reference_doc_matches_the_policy_table() {
+        const DOC: &str =
+            include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/Documentation/Bund/WORD_REFERENCE.md"));
+
+        // Authoritative: word -> expected category string.
+        let mut expected: std::collections::HashMap<&str, &str> =
+            WORD_CATEGORIES.iter().copied().collect();
+        for w in PURE_UNCATEGORISED {
+            expected.insert(w, "pure");
+        }
+
+        // Parse the doc's table rows: `| \`ink.x\` | category | sig | desc |`.
+        let mut doc: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        for line in DOC.lines() {
+            let line = line.trim_start();
+            if !line.starts_with("| `ink.") {
+                continue;
+            }
+            let cols: Vec<&str> = line.split('|').collect();
+            if cols.len() < 3 {
+                continue;
+            }
+            let word = cols[1].trim().trim_matches('`').trim();
+            let cat = cols[2].trim();
+            if word.starts_with("ink.") {
+                doc.insert(word.to_string(), cat.to_string());
+            }
+        }
+
+        let mut missing: Vec<&str> = Vec::new();
+        let mut wrong: Vec<String> = Vec::new();
+        for (w, c) in &expected {
+            match doc.get(*w) {
+                None => missing.push(w),
+                Some(dc) if dc != c => wrong.push(format!("{w}: doc={dc} policy={c}")),
+                _ => {}
+            }
+        }
+        let mut extra: Vec<&str> =
+            doc.keys().map(String::as_str).filter(|w| !expected.contains_key(w)).collect();
+        missing.sort();
+        wrong.sort();
+        extra.sort();
+
+        assert!(
+            missing.is_empty() && wrong.is_empty() && extra.is_empty(),
+            "Documentation/Bund/WORD_REFERENCE.md is out of sync with the policy table.\n\
+             MISSING (add a reference row): {missing:?}\n\
+             WRONG CATEGORY: {wrong:?}\n\
+             EXTRA (typo / removed word): {extra:?}",
+        );
+    }
+
     /// The pure-allowlist must not rot: every entry must still be a registered
     /// word, and must not also carry a category (which would be contradictory).
     #[test]
