@@ -245,6 +245,9 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.knowledge.grants", category::STORE_READ),
     ("ink.knowledge.findings", category::STORE_READ),
     ("ink.knowledge.check", category::STORE_READ),
+    ("ink.bonds.ties", category::STORE_READ),
+    ("ink.bonds.findings", category::STORE_READ),
+    ("ink.bonds.check", category::STORE_READ),
     // CHAR-1 — character-arc reads; `plan`/`refresh` write only the derived
     // char.duckdb cache (not the manuscript), so they stay store_read too.
     ("ink.char.arc", category::STORE_READ),

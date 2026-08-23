@@ -27,46 +27,57 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 3.0.9 · stable baseline 3.0.0 — The Stable Edition
+## Latest release · 3.1.0 — BONDS: Are the Bonds Earned?
 
-The current release is **3.0.9**, a small maintenance patch over the **3.0.0
-"Stable Edition"** baseline. An adversarial audit of the book-assembly → Typst
-pipeline confirmed the primary artifact path is clean — titles, front matter,
-image calls, and index labels are all correctly escaped, multilingual content
-passes through intact, and there are no injection or panic vectors — and tidied
-two minor cases where inkhaven emitted slightly-invalid Typst: a paragraph's
-seed heading is now escaped for content mode (so a title like `Cost $5` no longer
-breaks a markdown/tex/EPUB export), and generated comment lines are newline-safe.
-This closes the 3.0.x hardening arc: 3.0.5–3.0.8 built the Bund scripting
-coverage, then hardened it and the export/import/keymap subsystems through
-successive targeted audits, each leaving a build-time guard behind.
+The current release is **3.1.0**, the first feature of the post-freeze thaw and
+**KEN's sibling: relationship continuity.** Where KEN (2.6) checks *knowledge* —
+who could know what, when — **BONDS** checks *bonds*: are the relationships you
+**declare** between characters (`rel:<kind>:<A>:<B>` paragraph tags) actually
+**earned** on the page? Co-presence is **derived for free** — the per-scene cast
+is the union of the scene's POV, any character named in the prose, and the
+participants of any timeline event linked into the scene — and the mismatch
+between what you declared and what the page dramatises is the finding:
 
-Read the full 3.0.0 notes: [`Documentation/RELEASE_NOTES/3.0.0.md`](Documentation/RELEASE_NOTES/3.0.0.md)
+- **`unwritten_bond`** — a declared pair barely shares a scene: asserted, not
+  dramatised.
+- **`unearned_shift`** — a bond changes state (allies → enemies) with no shared
+  scene to turn it: the relationship plot-hole, the hard break.
+- **`dropped_bond`** — an established bond goes dormant for many chapters, then
+  resurfaces.
+- **`implied_cooling`** *(opt-in `--deep`)* — a relationship that warms or cools
+  on the page with no tag marking it — the subtle, undeclared drift, on a
+  cost-capped LLM pass.
 
-3.0.0 closes the 2.x arc and promotes Inkhaven to a **stable, maintained edition**. The intelligence
-suite — the book that watches, reads, and remembers itself (SEMNET → GRAPHMIND → CHORUS → SENTINEL →
-LECTOR → REDLINE → CHRONICLE → KEN) — is complete. From here the work is **maintenance: bug fixes and
-refinements to existing features, not new ones.** This release is the line drawn under the surface
-that will be maintained.
+Surfaces: **`inkhaven bonds`** (`--json`, non-zero exit on a break — a CI gate;
+`--deep`), the **`Ctrl+V Shift+O`** relationship dashboard, the `Ctrl+V Shift+R`
+Editorial Pass (an `unearned_shift` routed to a guided **Decision**), the new
+`bonds` config block, and read-only `ink.bonds.{ties,findings,check}` Bund. The
+core is **deterministic and ≈ $0 at any book size** (it scales with declared
+bonds, not pages, and stays silent on books that don't tag relationships), and it
+produces a finding a generic AI structurally can't — judging a relationship
+across a whole book needs the timeline, event participants, bible, and POV only
+inkhaven holds. No new runtime crates.
 
-### What "stable" meant
+Read the full notes: [`Documentation/RELEASE_NOTES/3.1.0.md`](Documentation/RELEASE_NOTES/3.1.0.md)
+· the reference: [`Documentation/BONDS.md`](Documentation/BONDS.md).
 
-- **A seven-partition adversarial audit** of all 304K lines found the codebase fundamentally sound —
-  zero Critical issues; the Bund sandbox, UTF-8 handling across five languages, the panic surface, and
-  atomic saves all verified clean.
-- **Every surviving finding was fixed:** transactional chronicle writes + schema-version anchors on 14
-  stores; atomic EPUB/WordNet writes; a guarded PDF importer; a cap on the utopia Stage-2 paid-LLM
-  runaway; book-scale performance (no per-frame database query, no accidental O(n²), no full-book scan
-  on the editor thread); a closed scripting DoS. **Zero breaking changes.**
-- **The documentation is now the contract:** new docs for the scholarly apparatus, the technical-doc
-  checks, the rigor reader, threads, and the back-of-book index; 21 previously-undocumented config
-  blocks specified; and a canonical [`FEATURE_INDEX.md`](Documentation/FEATURE_INDEX.md) mapping every
-  feature to its CLI verb, chord, doc, and scripting namespace.
+### The stable baseline · 3.0.0 — The Stable Edition
+
+**3.0.0** remains the stable baseline. It closed the 2.x arc and promoted Inkhaven
+to a **stable, maintained edition** — the intelligence suite that watches, reads,
+and remembers itself (SEMNET → GRAPHMIND → CHORUS → SENTINEL → LECTOR → REDLINE →
+CHRONICLE → KEN) verified sound by a seven-partition adversarial audit of all 304K
+lines (zero Critical), with every surviving finding fixed and zero breaking
+changes. The 3.0.x line (through 3.0.9) then hardened the Bund scripting coverage
+and the export/import/keymap/assembly subsystems through successive targeted
+audits, each leaving a build-time guard behind. **3.1.0 lifts the feature freeze**
+for BONDS while keeping that hardened surface intact. Full 3.0.0 notes:
+[`Documentation/RELEASE_NOTES/3.0.0.md`](Documentation/RELEASE_NOTES/3.0.0.md).
 
 ### Dependencies & compatibility
 
-No new dependencies, no breaking changes. Existing projects open unchanged; the new schema anchors
-stamp themselves on first open. Compiles warning-free. Test suite → 2904.
+No new dependencies, no breaking changes. Existing projects open unchanged. Compiles
+warning-free. Test suite → 2944.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
@@ -264,14 +275,14 @@ cargo install inkhaven
 ```
 
 Inkhaven is published on crates.io — every release tag pushes a
-new version (latest: 3.0.9).  The first build takes ~10 minutes on
+new version (latest: 3.1.0).  The first build takes ~10 minutes on
 a modern laptop because of DuckDB + fastembed + ONNX-runtime
 compilation; `cargo binstall` above is the fast path.
 
 ### 4. `cargo install --git` (compile from a specific tag)
 
 ```bash
-cargo install --git https://github.com/vulogov/blackInkhaven --tag v3.0.9
+cargo install --git https://github.com/vulogov/blackInkhaven --tag v3.1.0
 ```
 
 Useful when you want a specific tag, a pre-release branch, or a

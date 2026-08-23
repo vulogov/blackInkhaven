@@ -149,6 +149,11 @@ pub enum Action {
     /// findings (who knows what, when) grouped by kind; Enter jumps to the paragraph.
     #[serde(rename = "global.open_knowledge")]
     OpenKnowledge,
+    /// BONDS-1 (3.1, BD-P4) — the relationship dashboard (Ctrl+V Shift+O): the
+    /// relationship-continuity findings (are declared bonds earned on the page?)
+    /// grouped by kind; Enter jumps to the paragraph.
+    #[serde(rename = "global.open_bonds")]
+    OpenBonds,
     /// 1.3.34+ — the unified AI cost dashboard (Ctrl+B $): today's LLM call tallies
     /// per capped subsystem vs their daily caps.
     #[serde(rename = "global.open_cost_dashboard")]
@@ -1011,6 +1016,7 @@ impl Action {
             Action::OpenReadThrough => "read-through".into(),
             Action::OpenChronicle => "chronicle".into(),
             Action::OpenKnowledge => "knowledge".into(),
+            Action::OpenBonds => "bonds".into(),
             Action::OpenCostDashboard => "AI cost".into(),
             Action::OpenCredits => "credits".into(),
             Action::OpenBookInfo => "info".into(),
@@ -1245,6 +1251,8 @@ impl Action {
                 "Open the CHRONICLE draft-history dashboard (Ctrl+B Shift+U): the trend since your last milestone — findings, errors, and per-category counts — plus which findings your revision cleared vs introduced. ↑↓ scroll, Enter jumps to an introduced finding's paragraph, m marks this draft (labelled by today's date; for a chosen name, `inkhaven chronicle mark \"<name>\"` from the CLI instead), Esc closes. Pure measurement — it never edits the manuscript. The CLI equivalent is `inkhaven chronicle` (`mark` / `diff` / `--json`).".into(),
             Action::OpenKnowledge =>
                 "Open the KEN knowledge dashboard (Ctrl+B Shift+Z): the epistemic-continuity findings — who knows what, when — grouped by kind (premature_knowledge, leaked_secret, dropped_reveal). ↑↓ scroll, Enter jumps to the offending paragraph, Esc closes. Deterministic; declare with `secret:` / `know:` / `reveals:` tags. The CLI equivalent is `inkhaven knowledge` (`--json`).".into(),
+            Action::OpenBonds =>
+                "Open the BONDS relationship dashboard (Ctrl+V Shift+O): the relationship-continuity findings — are the bonds between characters earned on the page? — grouped by kind (unwritten_bond, unearned_shift, dropped_bond). ↑↓ scroll, Enter jumps to the offending paragraph, Esc closes. Deterministic; declare with `rel:<kind>:<A>:<B>` tags. The CLI equivalent is `inkhaven bonds` (`--json`).".into(),
             Action::OpenCostDashboard =>
                 "Open the AI cost dashboard (Ctrl+B $): today's LLM call tallies for each capped subsystem (world slow track, Inner Socrates slow track + any analytical-thread sub-budgets) against their daily caps. Read-only; the CLI equivalent is `inkhaven cost`.".into(),
             Action::OpenCredits =>
@@ -1938,6 +1946,11 @@ impl KeyBindings {
                 // taken (ToggleSound) so the family lives on `Ctrl+V O`
                 // (O = Observe, the Editor's defining act; user-directed).
                 entry("o", Action::OpenInnerEditorOverview, Scope::Any),
+                // BONDS-1 (3.1) — Ctrl+V Shift+O opens the relationship dashboard
+                // (are declared bonds earned on the page?). Shift+O for bOnds,
+                // beside the Inner Editor's `o`; KEN's sibling (KEN is Ctrl+B
+                // Shift+Z). Verified free in view_sub.
+                entry("Shift+o", Action::OpenBonds, Scope::Any),
                 // 1.2.6+ — new event from any pane. Opens the
                 // timeline view and immediately triggers the
                 // new-event prompt, so a fresh project (zero
