@@ -3485,3 +3485,34 @@ Internal deprecation-warning toggle for the retired `event critique
 (struct `TimelineLegacyDeprecationConfig`). Its single field
 `warn_on_use` (bool, default `true`) prints a deprecation warning when the
 legacy flag is used; you'll rarely touch it.
+
+## 3.1 — BONDS: relationship continuity (BONDS-1)
+
+### `bonds` — the relationship reader
+
+BONDS ([`BONDS.md`](BONDS.md)) is KEN's sibling: it checks whether the bonds you
+*declare* between characters (with `rel:<kind>:<A>:<B>` paragraph tags) are
+*earned* on the page. Co-presence is derived for free (the per-scene cast — POV,
+prose mentions, and linked timeline-event participants). Deterministic and ≈$0;
+the `bonds` block tunes the thresholds and the review-pass switch.
+
+| Field | Type | Default | Description |
+| ----- | ---- | ------- | ----------- |
+| `bonds.enabled` | bool | `true` | Master switch for the review-pass line (`inkhaven edit` / the Editorial Pass). Off silences it; the standalone `inkhaven bonds` and `Ctrl+V Shift+O` dashboard still run (explicit). |
+| `bonds.min_co_presence` | u32 | `2` | Below this many shared scenes, a declared pair raises `unwritten_bond` (asserted, not dramatised). Raise to demand more on-page time before a bond counts as earned. |
+| `bonds.dormancy_window` | u32 | `6` | Chapters a bond may go quiet before a later resurfacing raises `dropped_bond`. Raise for a book with long subplots; lower to catch shorter lapses. |
+
+```hjson
+bonds: {
+  enabled: true
+  min_co_presence: 2
+  dormancy_window: 6
+}
+```
+
+CLI: `inkhaven bonds` (`--book-name` / `--json`; non-zero exit on an
+`unearned_shift` break — a CI gate). In the editor: `Ctrl+V Shift+O` opens the
+relationship dashboard. The findings also join the unified worklist (`collect` →
+REDLINE): `unearned_shift` routes to a guided **Decision**, `unwritten_bond` /
+`dropped_bond` stay advisory **Briefs**. Bund: `ink.bonds.ties` /
+`ink.bonds.findings` / `ink.bonds.check`.

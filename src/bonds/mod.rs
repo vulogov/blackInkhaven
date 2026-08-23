@@ -24,6 +24,18 @@ use uuid::Uuid;
 // re-declaring them.
 pub use crate::ken::{ScenePos, Severity};
 
+/// The declared bond ledger for a book — every resolved, canonicalized `rel:`
+/// tag occurrence, in reading order. BD-P5's `ink.bonds.ties` read (the BONDS
+/// analog of `ink.knowledge.grants`). Impure: walks the book once.
+pub fn ties(
+    layout: &crate::project::ProjectLayout,
+    h: &crate::store::hierarchy::Hierarchy,
+    book: &crate::store::node::Node,
+) -> Vec<Declared> {
+    let (declared, _coscenes, _paras) = gather::build_bonds(layout, h, book);
+    declared
+}
+
 /// One author-declared bond state at a point in reading order — a single `rel:`
 /// tag occurrence. The pair `(a, b)` is stored **canonically** (sorted) so that
 /// `rel:ally:mara:kell` and `rel:ally:kell:mara` are the same bond; `kind` is the
