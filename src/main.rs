@@ -2,6 +2,7 @@ mod ai;
 mod assemble;
 mod audiobook;
 mod backup;
+mod bonds;
 mod cli;
 mod book_rag;
 mod graph_rag;

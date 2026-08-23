@@ -401,6 +401,14 @@ derived caches (never the manuscript); a few `suppress`/`promote`/`dismiss` are
 | `ink.knowledge.findings` | store_read | `( -- list )` | epistemic breaks `{kind, severity, chapter, character, topic, message}` |
 | `ink.knowledge.check` | store_read | `( -- dict )` | gate `{premature, leaked, dropped, clean}` |
 
+**`ink.bonds.*` — BONDS, relationship continuity**
+
+| Word | Category | Stack | Description |
+|------|----------|-------|-------------|
+| `ink.bonds.ties` | store_read | `( -- list )` | declared bond ledger `{a, b, kind, chapter}` |
+| `ink.bonds.findings` | store_read | `( -- list )` | relationship breaks `{kind, severity, chapter, a, b, message}` |
+| `ink.bonds.check` | store_read | `( -- dict )` | gate `{unwritten, unearned, dropped, clean}` |
+
 **`ink.prose.*` — NARR, narrative-voice profiling** · **`ink.dialogue.*` — DIALOG**
 
 | Word | Category | Stack | Description |

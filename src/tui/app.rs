@@ -12530,6 +12530,7 @@ impl App {
             A::OpenReadThrough => self.open_read_through(),
             A::OpenChronicle => self.open_chronicle(),
             A::OpenKnowledge => self.open_knowledge(),
+            A::OpenBonds => self.open_bonds(),
             A::OpenCostDashboard => self.open_cost_dashboard(),
             A::OpenCredits => self.open_credits(),
             A::OpenBookInfo => self.open_book_info(),
@@ -16476,6 +16477,116 @@ impl App {
                     }
                 } else {
                     self.status = "knowledge: no paragraph to jump to on this row".into();
+                }
+            }
+            _ => {}
+        }
+        true
+    }
+
+    /// BONDS-1 (BD-P4) — `Ctrl+V Shift+O`: the relationship dashboard. Runs the
+    /// deterministic relationship check and opens a scrollable modal (Enter jumps
+    /// to the offending paragraph). KEN's sibling — same shape, different axis.
+    fn open_bonds(&mut self) {
+        let (rows, anchors) = self.build_bonds_rows();
+        let breaks = anchors.iter().filter(|a| a.is_some()).count();
+        self.status = if breaks == 0 {
+            "bonds: clean · Esc".into()
+        } else {
+            "bonds · ↑↓ scroll · Enter jump · Esc".into()
+        };
+        self.modal = Modal::Bonds { rows, anchors, cursor: 0 };
+    }
+
+    /// Build the relationship dashboard's rows + parallel jump anchors: the bond
+    /// findings grouped under a per-kind header, most-severe first.
+    fn build_bonds_rows(&self) -> (Vec<String>, Vec<Option<Uuid>>) {
+        use crate::ken::Severity;
+        let mut rows: Vec<String> = Vec::new();
+        let mut anchors: Vec<Option<Uuid>> = Vec::new();
+        let mut push = |text: String, anchor: Option<Uuid>| {
+            rows.push(text);
+            anchors.push(anchor);
+        };
+        let h = match crate::store::hierarchy::Hierarchy::load(&self.store) {
+            Ok(h) => h,
+            Err(e) => {
+                push(format!("bonds unavailable: {e}"), None);
+                return (rows, anchors);
+            }
+        };
+        let book = match crate::cli::resolve_user_book(&h, None, "bonds") {
+            Ok(b) => b,
+            Err(e) => {
+                push(format!("bonds: {e}"), None);
+                return (rows, anchors);
+            }
+        };
+        let findings = crate::bonds::check::run(&self.layout, &h, &self.cfg, book);
+
+        push(format!("◆ Bonds — {} finding(s)", findings.len()), None);
+        push(String::new(), None);
+        if findings.is_empty() {
+            push("  ✓ every declared bond is earned on the page".into(), None);
+            return (rows, anchors);
+        }
+        // Group by kind, preserving the severity-ranked order run() produced.
+        let mut order: Vec<&'static str> = Vec::new();
+        for f in &findings {
+            if !order.contains(&f.kind) {
+                order.push(f.kind);
+            }
+        }
+        for kind in order {
+            let group: Vec<&_> = findings.iter().filter(|f| f.kind == kind).collect();
+            push(format!("{kind} ({})", group.len()), None);
+            for f in group {
+                let mark = match f.severity {
+                    Severity::Break => "\u{2297}",  // ⊗
+                    Severity::Notice => "\u{25cf}", // ●
+                    Severity::Info => "\u{b7}",     // ·
+                };
+                push(format!("  {mark} {}", f.message), f.anchor);
+            }
+            push(String::new(), None);
+        }
+        (rows, anchors)
+    }
+
+    fn bonds_handle_key(&mut self, key: KeyEvent) -> bool {
+        let n = match &self.modal {
+            Modal::Bonds { rows, .. } => rows.len(),
+            _ => return false,
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "bonds: closed".into();
+            }
+            KeyCode::Up => {
+                if let Modal::Bonds { cursor, .. } = &mut self.modal {
+                    *cursor = cursor.saturating_sub(1);
+                }
+            }
+            KeyCode::Down => {
+                if let Modal::Bonds { cursor, .. } = &mut self.modal {
+                    if n > 0 {
+                        *cursor = (*cursor + 1).min(n - 1);
+                    }
+                }
+            }
+            KeyCode::Enter => {
+                let anchor = match &self.modal {
+                    Modal::Bonds { anchors, cursor, .. } => anchors.get(*cursor).copied().flatten(),
+                    _ => None,
+                };
+                if let Some(id) = anchor {
+                    self.modal = Modal::None;
+                    if let Err(e) = self.open_paragraph_by_uuid(id) {
+                        self.status = format!("bonds: {e}");
+                    }
+                } else {
+                    self.status = "bonds: no paragraph to jump to on this row".into();
                 }
             }
             _ => {}
@@ -26898,6 +27009,10 @@ impl App {
         }
         if matches!(self.modal, Modal::Knowledge { .. }) {
             self.knowledge_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::Bonds { .. }) {
+            self.bonds_handle_key(key);
             return Ok(false);
         }
         if matches!(self.modal, Modal::PoemFormPicker { .. }) {

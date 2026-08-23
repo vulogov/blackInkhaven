@@ -331,6 +331,9 @@ impl super::App {
             self.draw_chronicle_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::Bonds { .. }) {
+            self.draw_bonds_modal(f, area);
+        }
         if matches!(self.modal, Modal::Knowledge { .. }) {
             self.draw_knowledge_modal(f, area);
             return;
