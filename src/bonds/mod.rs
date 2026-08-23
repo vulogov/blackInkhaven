@@ -14,10 +14,12 @@
 //! check, the worklist bridge, the dashboard, Bund, and the opt-in `--deep`
 //! `implied_cooling` pass. See `Documentation/PROPOSALS/BONDS-1_IMPL.md`.
 
-// BD-P0 scaffolding: every model type below is consumed by BD-P1..P3 (gather /
-// check / promote), which land next. Remove this once the module is wired — the
-// warning-free bar then guards the whole surface again.
+// Scaffolding for the value core (BD-P0..P3): the model + gather land before the
+// check + worklist bridge consume them. Remove this once BD-P3 wires BONDS into
+// `collect`, so the warning-free bar guards the whole surface again.
 #![allow(dead_code)]
+
+mod gather;
 
 use uuid::Uuid;
 
