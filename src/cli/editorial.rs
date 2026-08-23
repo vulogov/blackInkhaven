@@ -158,6 +158,17 @@ pub fn collect(
                         raw.push(editorial::from_knowledge_finding(&f));
                     }
                 }
+                // BONDS (3.1) — relationship continuity (declared `rel:` bonds vs.
+                // the scenes that earn them). Book-scoped; self-gating (no `rel:`
+                // tags → nothing). Config-gated so the review pass can be silenced
+                // without touching the standalone `inkhaven bonds` command.
+                if cfg.bonds.enabled {
+                    if let Ok(book) = crate::cli::resolve_user_book(&h, book_name, "editorial") {
+                        for f in crate::bonds::check::run(&layout, &h, &cfg, book) {
+                            raw.push(editorial::from_bonds_finding(&f));
+                        }
+                    }
+                }
             }
         }
     }
