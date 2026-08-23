@@ -79,6 +79,9 @@ pub struct Config {
     /// SENTINEL-1 (2.2) — the unified continuity ledger.
     #[serde(default)]
     pub continuity: ContinuityConfig,
+    /// BONDS-1 (3.1) — the relationship reader's thresholds.
+    #[serde(default)]
+    pub bonds: BondsConfig,
     /// LECTOR-1 (2.3) — the read-through.
     #[serde(default)]
     pub lector: LectorConfig,
@@ -277,6 +280,7 @@ impl Default for Config {
             chorus: ChorusConfig::default(),
             stylist: StylistConfig::default(),
             continuity: ContinuityConfig::default(),
+            bonds: BondsConfig::default(),
             lector: LectorConfig::default(),
             dialogue: DialogueConfig::default(),
             utopia: UtopiaConfig::default(),
@@ -4432,6 +4436,29 @@ impl Default for ContinuityConfig {
             introduce: true,
             introduce_tolerance: 0,
         }
+    }
+}
+
+/// BONDS-1 (3.1) — thresholds for the relationship reader (`inkhaven bonds`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BondsConfig {
+    /// Master switch for the relationship reader in the review pass. When off,
+    /// the review pass emits no `bonds` findings (the standalone `inkhaven bonds`
+    /// command still runs — it's explicitly invoked).
+    pub enabled: bool,
+    /// Minimum shared scenes for a declared bond to count as dramatised. Below
+    /// this, `unwritten_bond` fires (a bond asserted by a `rel:` tag but rarely
+    /// shown on the page together).
+    pub min_co_presence: u32,
+    /// Chapters of silence (no shared scene) before an established bond is
+    /// "dormant". A gap wider than this that then resurfaces fires `dropped_bond`.
+    pub dormancy_window: u32,
+}
+
+impl Default for BondsConfig {
+    fn default() -> Self {
+        Self { enabled: true, min_co_presence: 2, dormancy_window: 6 }
     }
 }
 
