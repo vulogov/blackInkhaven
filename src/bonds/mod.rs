@@ -14,11 +14,6 @@
 //! check, the worklist bridge, the dashboard, Bund, and the opt-in `--deep`
 //! `implied_cooling` pass. See `Documentation/PROPOSALS/BONDS-1_IMPL.md`.
 
-// Scaffolding for the value core (BD-P0..P3): the model + gather land before the
-// check + worklist bridge consume them. Remove this once BD-P3 wires BONDS into
-// `collect`, so the warning-free bar guards the whole surface again.
-#![allow(dead_code)]
-
 mod gather;
 pub mod check;
 

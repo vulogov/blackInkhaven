@@ -182,7 +182,11 @@ pub fn response_kind(category: &str) -> ResponseKind {
         // The author must choose which way is right; then we reconcile.
         "co_location" | "char_facts" | "drift" | "introduce" | "confusion"
         | "unpaid_setup" | "numeric" | "continuity" | "fact" | "world"
-        | "premature_knowledge" | "leaked_secret" | "dropped_reveal" => {
+        | "premature_knowledge" | "leaked_secret" | "dropped_reveal"
+        // BONDS (3.1): a relationship whose state changed with no scene to turn
+        // it — the author chooses (add the scene, or soften the declaration).
+        // unwritten_bond / dropped_bond stay Brief (advice, no single-locus fix).
+        | "unearned_shift" => {
             ResponseKind::Decision
         }
         // Structural / book-level — a suggestion, never a rewrite.
@@ -635,6 +639,28 @@ pub(crate) fn from_knowledge_finding(f: &crate::ken::KnowledgeFinding) -> Editor
     }
 }
 
+/// BD-P3 — map a BONDS relationship finding into the shared worklist. The
+/// character pair is already spelled out in the message, so this mirrors
+/// [`from_knowledge_finding`] exactly; the `category` is the finding kind so
+/// [`response_kind`] can route `unearned_shift` to a Decision (the others stay
+/// Brief). BONDS shares KEN's `Severity`, so the mapping is identical.
+pub(crate) fn from_bonds_finding(f: &crate::bonds::BondFinding) -> EditorialFinding {
+    use crate::ken::Severity as KS;
+    EditorialFinding {
+        category: f.kind.to_string(),
+        severity: match f.severity {
+            KS::Break => Severity::Error,
+            KS::Notice => Severity::Warn,
+            KS::Info => Severity::Info,
+        },
+        location: Location { chapter: chapter_label(f.chapter), paragraph: f.anchor, ..Default::default() },
+        message: f.message.clone(),
+        hint: None,
+        source: "bonds",
+        autofixable: false,
+    }
+}
+
 /// `"ch. N"` for a 1-based chapter ordinal, or `None` for book-level (0).
 fn chapter_label(chapter: u32) -> Option<String> {
     (chapter > 0).then(|| format!("ch. {chapter}"))
@@ -790,7 +816,7 @@ mod tests {
             assert_eq!(response_kind(c), Rewrite, "{c} is a Rewrite");
         }
         // The author must choose which way is right, then reconcile.
-        for c in ["co_location", "char_facts", "drift", "introduce", "confusion", "unpaid_setup"] {
+        for c in ["co_location", "char_facts", "drift", "introduce", "confusion", "unpaid_setup", "unearned_shift"] {
             assert_eq!(response_kind(c), Decision, "{c} is a Decision");
         }
         // Structural / book-level, and anything unknown → Brief (never edits prose).
