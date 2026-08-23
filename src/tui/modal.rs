@@ -956,6 +956,16 @@ pub(super) enum Modal {
         anchors: Vec<Option<Uuid>>,
         cursor: usize,
     },
+    /// BONDS-1 (3.1, BD-P4) — the relationship dashboard (`Ctrl+V Shift+O`): the
+    /// relationship-continuity findings (are declared bonds earned on the page?)
+    /// grouped by kind (unwritten_bond, unearned_shift, dropped_bond). `↑↓` scroll,
+    /// Enter jumps to the offending paragraph, Esc closes. `anchors` parallels
+    /// `rows` (a header/blank row carries `None`). KEN's sibling.
+    Bonds {
+        rows: Vec<String>,
+        anchors: Vec<Option<Uuid>>,
+        cursor: usize,
+    },
     /// POEM-TUI (PO-P12) — the form picker (`Ctrl+B J → P → D`): choose one of
     /// the built-in forms and attach its `poem:` block to the open verse
     /// paragraph as a sidecar leaf. `cursor` indexes `FormsLibrary::all()`;

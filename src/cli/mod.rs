@@ -29,6 +29,7 @@ pub mod readthrough;
 pub mod revise;
 pub mod chronicle;
 pub mod knowledge;
+pub mod bonds;
 pub mod event;
 pub mod event_critique;
 pub mod comments;
@@ -1435,6 +1436,20 @@ pub enum Command {
         /// Soft token budget for `--deep` (informative preflight, never blocks).
         #[arg(long, default_value_t = 8000)]
         max_cost: usize,
+    },
+    /// BONDS-1 (3.1) — the relationship check: are the bonds between characters
+    /// earned on the page, or merely asserted? Flags a declared bond barely on the
+    /// page together (`unwritten_bond`), a bond whose state shifts with no scene to
+    /// turn it (`unearned_shift`), or an established bond that goes dormant then
+    /// resurfaces (`dropped_bond`). Deterministic; non-zero exit on a break (a CI
+    /// gate). Declare with `rel:<kind>:<A>:<B>` tags.
+    Bonds {
+        /// Restrict to a single book (slug or title). Default: the whole project.
+        #[arg(long)]
+        book_name: Option<String>,
+        /// Emit the findings as JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// LECTOR-1 (2.3) — the read-through report: the book read forward, once, as a
     /// first reader. The measured intensity curve + per-chapter scene/sequel beat +
@@ -6892,6 +6907,9 @@ impl Cli {
             }
             Command::Knowledge { book_name, json, deep, max_cost } => {
                 knowledge::run(&project, book_name.as_deref(), json, deep, max_cost).map_err(Into::into)
+            }
+            Command::Bonds { book_name, json } => {
+                bonds::run(&project, book_name.as_deref(), json).map_err(Into::into)
             }
             Command::Chronicle { cmd } => match cmd {
                 None => chronicle::trend(&project, None, false).map_err(Into::into),
