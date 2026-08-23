@@ -2,8 +2,9 @@
 //!
 //! Runs the deterministic relationship-continuity check (declared `rel:` bonds
 //! vs. the scenes that earn them) and prints the findings (human or `--json`).
-//! Exits non-zero when any hard break survives (`unearned_shift`) — a CI gate,
-//! like `knowledge` / `continuity check`. Mirrors [`crate::cli::knowledge`].
+//! `--deep` adds the opt-in, cost-capped LLM `implied_cooling` pass. Exits
+//! non-zero when any hard break survives (`unearned_shift`) — a CI gate, like
+//! `knowledge` / `continuity check`. Mirrors [`crate::cli::knowledge`].
 
 use std::path::Path;
 
@@ -14,7 +15,13 @@ use crate::project::ProjectLayout;
 use crate::store::hierarchy::Hierarchy;
 use crate::store::Store;
 
-pub fn run(project: &Path, book_name: Option<&str>, json: bool) -> Result<()> {
+pub fn run(
+    project: &Path,
+    book_name: Option<&str>,
+    json: bool,
+    deep: bool,
+    max_cost: usize,
+) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
     let cfg = Config::load_layered(&layout.config_path())?;
@@ -22,7 +29,12 @@ pub fn run(project: &Path, book_name: Option<&str>, json: bool) -> Result<()> {
     let h = Hierarchy::load(&store).map_err(|e| Error::Store(e.to_string()))?;
     let book = crate::cli::resolve_user_book(&h, book_name, "bonds").map_err(Error::Store)?;
 
-    let findings = crate::bonds::check::run(&layout, &h, &cfg, book);
+    let mut findings = crate::bonds::check::run(&layout, &h, &cfg, book);
+    // The opt-in, cost-capped LLM pass for the subtle (undeclared) shifts.
+    if deep {
+        eprintln!("bonds: running the LLM implied-cooling pass…");
+        findings.extend(crate::bonds::deep::run(project, book_name, max_cost, false).map_err(Error::Store)?);
+    }
     let breaks = findings.iter().filter(|f| f.severity == Severity::Break).count();
 
     if json {

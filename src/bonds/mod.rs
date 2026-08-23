@@ -16,6 +16,7 @@
 
 mod gather;
 pub mod check;
+pub mod deep;
 
 use uuid::Uuid;
 

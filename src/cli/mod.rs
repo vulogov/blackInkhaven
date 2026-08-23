@@ -1450,6 +1450,14 @@ pub enum Command {
         /// Emit the findings as JSON.
         #[arg(long)]
         json: bool,
+        /// Add the opt-in, cost-capped LLM `implied_cooling` pass — the subtle
+        /// cases (a relationship that warms or cools on the page with no `rel:`
+        /// tag) the deterministic core can't see.
+        #[arg(long)]
+        deep: bool,
+        /// Soft token budget for `--deep` (informative preflight, never blocks).
+        #[arg(long, default_value_t = 8000)]
+        max_cost: usize,
     },
     /// LECTOR-1 (2.3) — the read-through report: the book read forward, once, as a
     /// first reader. The measured intensity curve + per-chapter scene/sequel beat +
@@ -6908,8 +6916,8 @@ impl Cli {
             Command::Knowledge { book_name, json, deep, max_cost } => {
                 knowledge::run(&project, book_name.as_deref(), json, deep, max_cost).map_err(Into::into)
             }
-            Command::Bonds { book_name, json } => {
-                bonds::run(&project, book_name.as_deref(), json).map_err(Into::into)
+            Command::Bonds { book_name, json, deep, max_cost } => {
+                bonds::run(&project, book_name.as_deref(), json, deep, max_cost).map_err(Into::into)
             }
             Command::Chronicle { cmd } => match cmd {
                 None => chronicle::trend(&project, None, false).map_err(Into::into),
