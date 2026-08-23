@@ -20,6 +20,7 @@
 #![allow(dead_code)]
 
 mod gather;
+pub mod check;
 
 use uuid::Uuid;
 
@@ -27,16 +28,6 @@ use uuid::Uuid;
 // same scenes and ranks findings on the same scale, so it reuses both rather than
 // re-declaring them.
 pub use crate::ken::{ScenePos, Severity};
-
-/// How a bond between two characters became visible — the provenance of the
-/// evidence, mirroring KEN's `GrantSource`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BondSource {
-    /// Two characters share a scene (derived: scene cast ∪ `TlEvent.characters`).
-    CoPresence,
-    /// The author declared the bond (a `rel:<kind>:<A>:<B>` tag).
-    Declared,
-}
 
 /// One author-declared bond state at a point in reading order — a single `rel:`
 /// tag occurrence. The pair `(a, b)` is stored **canonically** (sorted) so that
