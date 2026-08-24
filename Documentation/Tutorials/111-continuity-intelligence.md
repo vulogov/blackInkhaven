@@ -31,7 +31,7 @@ chapters first):
 | -------- | -------------------- |
 | `co_location` | a character in two places at overlapping times (from the timeline) |
 | `timeline` | orphaned events · fuzzy-precision overlaps |
-| `numeric` | a direction reversed or a duration that contradicts itself (EN/FR/ES) |
+| `numeric` | a direction reversed or a duration that contradicts itself (EN/FR/ES/DE/RU) |
 | `char_facts` | an established fact changed across chapters (over `continuity extract`) |
 | `introduce` | **an entity named before it's introduced** |
 

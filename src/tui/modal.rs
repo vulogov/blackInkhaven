@@ -858,6 +858,9 @@ pub(super) enum Modal {
         scroll: usize,
         /// Active category filter (`None` = all); cycled by `[` / `]`.
         filter: Option<String>,
+        /// 3.3.0 E2 — active response-kind filter (✎ Rewrite / ⇄ Decision /
+        /// ✉ Brief; `None` = all); cycled by `r`. AND-ed with the category filter.
+        kind_filter: Option<crate::editorial::ResponseKind>,
     },
     /// REDLINE-1 (RD-P3) — the guided-decision prompt for a judgment finding the
     /// author must resolve (a continuity break, an unpaid setup, …). The author

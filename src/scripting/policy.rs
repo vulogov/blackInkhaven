@@ -158,6 +158,9 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.inner_socrates.personas.list", category::STORE_READ),
     ("ink.inner_socrates.usage.today", category::STORE_READ),
     // World fact-check timeline queries — read-only lookups over the calendar.
+    ("ink.world.report", category::STORE_READ),
+    ("ink.world.undescribed", category::STORE_READ),
+    ("ink.world.check", category::STORE_READ),
     ("ink.world.fact_check.timeline.effective_date", category::STORE_READ),
     ("ink.world.fact_check.timeline.events_for_character", category::STORE_READ),
     ("ink.world.fact_check.timeline.events_for_place", category::STORE_READ),

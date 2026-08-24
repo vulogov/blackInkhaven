@@ -7,8 +7,10 @@
 //! baseline-drift shape NARR-1's `prose drift` uses, kept CHORUS-local so
 //! NARR-1's stored profile schema is untouched.
 //!
-//! Heuristic and word-list based (no parser). Solid for EN/RU; the sparser
-//! languages degrade to what their lists cover rather than guessing. Advisory.
+//! Heuristic and word-list based (no parser). All five project languages carry
+//! curated lists (EN/RU/FR + DE/ES as of 3.3.0); any other language degrades to
+//! what its lists cover rather than guessing. The latinate-diction proxy stays
+//! English-only (its suffixes are English). Advisory.
 
 use crate::config::Config;
 use crate::project::ProjectLayout;
@@ -111,6 +113,20 @@ fn lists(lang: &ProseLanguage) -> Lists {
             formal: FR_FORMAL,
             informal: &[],
         },
+        ProseLanguage::De => Lists {
+            contractions: DE_CONTRACTIONS,
+            archaisms: DE_ARCHAIC,
+            formal: DE_FORMAL,
+            informal: DE_INFORMAL,
+        },
+        // Spanish has only the neutral al/del fusions (not a register signal), so
+        // colloquial elisions (pa', na') live in the informal list instead.
+        ProseLanguage::Es => Lists {
+            contractions: &[],
+            archaisms: ES_ARCHAIC,
+            formal: ES_FORMAL,
+            informal: ES_INFORMAL,
+        },
         _ => Lists {
             contractions: EN_CONTRACTIONS,
             archaisms: EN_ARCHAIC,
@@ -158,6 +174,45 @@ const FR_CONTRACTIONS: &[&str] = &[
 ];
 const FR_FORMAL: &[&str] =
     &["néanmoins", "toutefois", "cependant", "ainsi", "donc", "or", "partant", "nonobstant"];
+
+// German (3.3.0 M1) — colloquial elisions, literary archaisms, formal discourse
+// connectives, and modal-particle informality. Single-word compounds are not
+// decomposed (the token matcher is whole-word).
+const DE_CONTRACTIONS: &[&str] = &[
+    "gibt's", "geht's", "hab's", "wie's", "wenn's", "so'n", "'ne", "'nen", "'nem",
+    "auf'm", "aufm", "unterm", "überm", "hinterm", "isses", "haste", "biste", "kannste",
+    "willste", "machste",
+];
+const DE_ARCHAIC: &[&str] = &[
+    "ward", "weiland", "alldieweil", "sintemal", "fürwahr", "gemach", "alsbald", "hernach",
+    "vormals", "dieweil", "obzwar", "dero", "nimmer", "traun", "maßen",
+];
+const DE_FORMAL: &[&str] = &[
+    "jedoch", "folglich", "daher", "somit", "dennoch", "ferner", "überdies", "mithin",
+    "demzufolge", "infolgedessen", "hinsichtlich", "bezüglich", "nichtsdestotrotz",
+    "nichtsdestoweniger", "gleichwohl", "indes", "indessen", "demgemäß", "desgleichen",
+];
+const DE_INFORMAL: &[&str] = &[
+    "halt", "eh", "nö", "krass", "voll", "irgendwie", "quatsch", "kumpel", "naja", "tja",
+    "hä", "mega", "total", "eben", "ne",
+];
+
+// Spanish (3.3.0 M1) — literary archaisms, formal connectives (single-token, since
+// the matcher is whole-word — "no obstante" contributes via "obstante"), and
+// pan-Hispanic colloquialisms incl. the elided forms (pa'/na'/to').
+const ES_ARCHAIC: &[&str] = &[
+    "otrora", "asaz", "cuan", "doquier", "doquiera", "mesmo", "agora", "ansí",
+    "fuere", "hubiere", "aqueste", "aquese", "vuesa", "acullá", "maguer",
+];
+const ES_FORMAL: &[&str] = &[
+    "asimismo", "además", "empero", "ergo", "consecuentemente", "ulteriormente",
+    "consiguientemente", "igualmente", "ciertamente", "efectivamente", "seguidamente",
+    "obstante", "consiguiente", "subsiguientemente",
+];
+const ES_INFORMAL: &[&str] = &[
+    "pa", "pa'", "na'", "to'", "tío", "tía", "tipo", "chaval", "guay", "vale", "mola",
+    "porfa", "nomás", "pos", "oye", "bueno",
+];
 
 #[allow(clippy::too_many_arguments)]
 fn push_drift(
@@ -251,6 +306,27 @@ mod tests {
         let r = register("Сей однако дабы", &ProseLanguage::Ru);
         assert!(r.archaism_density > 0.0, "сей/дабы archaic");
         assert!(r.formality > 0.0, "однако formal");
+        assert_eq!(r.latinate_density, 0.0, "latinate is English-only");
+    }
+
+    #[test]
+    fn register_works_in_german() {
+        // ward archaic · jedoch+folglich formal · gibt's contraction · halt informal.
+        // Before M1 these fell through to the English lists and matched nothing.
+        let r = register("Ward jedoch folglich gibt's halt", &ProseLanguage::De);
+        assert!(r.archaism_density > 0.0, "ward archaic");
+        assert!(r.formality > 0.0, "jedoch+folglich formal outweighs halt informal");
+        assert!(r.contraction_rate > 0.0, "gibt's contraction");
+        assert_eq!(r.latinate_density, 0.0, "latinate is English-only");
+    }
+
+    #[test]
+    fn register_works_in_spanish() {
+        // otrora archaic · asimismo+además formal · tío informal · no contractions.
+        let r = register("Otrora asimismo además tío", &ProseLanguage::Es);
+        assert!(r.archaism_density > 0.0, "otrora archaic");
+        assert!(r.formality > 0.0, "asimismo+además formal outweighs tío informal");
+        assert_eq!(r.contraction_rate, 0.0, "Spanish has no register contractions");
         assert_eq!(r.latinate_density, 0.0, "latinate is English-only");
     }
 

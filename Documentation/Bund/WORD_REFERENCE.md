@@ -129,6 +129,14 @@ Read and mutate the project tree, tags, snapshots, and DB. Reads are
 | `ink.world.fact_check.timeline.events_near` | store_read | `( point window -- list )` | events whose start is within window ticks of point |
 | `ink.world.fact_check.timeline.season_for` | store_read | `( point -- season )` | the calendar season covering a point ("" if none) |
 
+**`ink.world.*` — WORLD-REPORT (the `inkhaven world` reads, all `store_read`)**
+
+| Word | Category | Stack | Description |
+|------|----------|-------|-------------|
+| `ink.world.report` | store_read | `( -- dict )` | world state `{facts_total, characters, places, artefacts, continuity_attributes, entity_total, issue_count, undescribed, stale, summary}` |
+| `ink.world.undescribed` | store_read | `( -- list )` | entities defined but never named in the prose `{name, kind}` |
+| `ink.world.check` | store_read | `( -- dict )` | gate `{issues, undescribed, clean}` (clean = no world issue) |
+
 ## Editor, AI & UI
 
 **`ink.editor.*` — the live editor buffer (reads `editor_read`, writers `editor_write`)**

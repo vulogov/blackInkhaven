@@ -27,46 +27,51 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 3.2.0 — ENSEMBLE: Your Cast, Connected
+## Latest release · 3.3.0 — Wider Reach, Sharper Tools
 
-The current release is **3.2.0**, a **deepening** of the people layer rather than
-a new reader. You've declared who knows what (KEN), who's bonded to whom (BONDS),
-and where each arc bends (CHAR-1); ENSEMBLE stops treating those as separate
-findings and lets you **see the people** — the cast, their relationships, and
-their arcs — as one connected picture. Two pieces, both built straight on BONDS +
-the knowledge graph + the CHAR-1 store; deterministic, ≈ $0, no new subsystem:
+The current release is **3.3.0**, a **widen-and-polish** release — no new reader,
+no new axis. It takes capabilities Inkhaven already has and makes them reach
+further, across three tracks (deterministic, no new runtime crates):
 
-- **Relationships on the graph.** Every declared `rel:<kind>:<A>:<B>` bond becomes
-  a first-class symmetric **`relates`** graph edge on `inkhaven graph rebuild`
-  (the bond kind + first chapter in the edge; a transition ally → enemy shows as
-  two edges). So the whole existing graph stack reads them for free —
-  `graph neighbors` / `graph paths`, the `Ctrl+B z` hub (a bond renders
-  `⇄ Kell — ally (ch. 1)`), and the **F9 Graph** chat / `graph ask`.
-- **The Dramatis Personae.** **`inkhaven cast`** (`--json`; editor: `Ctrl+B z`
-  hub → `c`) joins the cast × their bonds × their arc state — arc shape, latest
-  observed chapter state, ✦change count, agency, and bonds — into one book-wide
-  view. Enter jumps to a character's bible node.
+- **Multilingual parity.** A per-reader audit found features that silently
+  narrowed outside English, and closed the ones a word-list can honestly fix:
+  **SENTINEL numeric** (direction / duration contradictions) gains **German +
+  Russian** lexicons — Russian with the case-inflected unit forms the counting
+  construction needs (`день` / `дня` / `дней`) and a `direction_preps` set for
+  `nach Norden` / `на север`; **CHORUS register** gains curated **DE + ES** lists
+  (they were being matched against the *English* lists → a false "clean
+  register"); **Inner Socrates tense-shift** now runs for **DE/FR/ES**, localized.
+  Honest limits stay limits (Socrates pronoun-ambiguity is EN-only — coreference
+  needs a parser; Russian tense stays surfaced-as-unsupported — aspect).
+- **`ink.world.*` Bund.** The last parked scripting namespace:
+  `ink.world.{report, undescribed, check}` wrap the core `inkhaven world` report
+  (entity inventory, coverage, a pre-submit gate) — read-only, reusing the
+  existing report path.
+- **Editorial Pass ergonomics.** Session skips (`s`) now **persist** across
+  reopening the pass (they were silently lost); **`r`** adds a response-kind
+  filter (✎ Rewrite / ⇄ Decision / ✉ Brief) beside the category filter, so you
+  can narrow to just the decisions you owe or just the batchable rewrites.
 
-It writes no new model call: the graph is derived edges, the Dramatis Personae a
-pure join over data already on disk. **Alias resolution** (nicknames resolving to
-a character across every reader) was deliberately deferred — it touches the shared
-mention-matcher and belongs in its own release. No new runtime crates.
+**Alias resolution** (nicknames / epithets resolving to a character across every
+reader) was **postponed, not dropped** — it touches the shared mention-matcher
+five readers depend on and is gated behind an architectural decision; it earns its
+own release. No new config; no new runtime crates.
 
-Read the full notes: [`Documentation/RELEASE_NOTES/3.2.0.md`](Documentation/RELEASE_NOTES/3.2.0.md)
-· the reference: [`Documentation/ENSEMBLE.md`](Documentation/ENSEMBLE.md).
+Read the full notes: [`Documentation/RELEASE_NOTES/3.3.0.md`](Documentation/RELEASE_NOTES/3.3.0.md).
 
-### Before it · 3.1.0 — BONDS: Are the Bonds Earned?
+### Recent releases
 
-**3.1.0** is BONDS, KEN's sibling and the first feature of the post-freeze thaw:
-relationship *continuity* — are the bonds you **declare** between characters
-**earned** on the page? Co-presence is derived free (POV ∪ prose mentions ∪
-timeline participants), and the declared-vs-derived mismatch is the finding —
-`unwritten_bond`, `unearned_shift` (the relationship plot-hole), `dropped_bond`,
-plus opt-in `--deep` `implied_cooling`. Surfaces: `inkhaven bonds`, the
-`Ctrl+V Shift+O` dashboard, the Editorial Pass (Decision), the `bonds` config
-block, `ink.bonds.*` Bund. Deterministic + ≈ $0. Full notes:
-[`Documentation/RELEASE_NOTES/3.1.0.md`](Documentation/RELEASE_NOTES/3.1.0.md)
-· [`Documentation/BONDS.md`](Documentation/BONDS.md).
+- **3.2.0 — ENSEMBLE: Your Cast, Connected.** Deepened the people layer: declared
+  `rel:` bonds became first-class **`relates` graph edges** (traversable via
+  `graph neighbors` / the `Ctrl+B z` hub / F9 Graph chat), and the **Dramatis
+  Personae** (`inkhaven cast`, hub → `c`) joined the cast × bonds × arc state into
+  one book-wide view.
+  [notes](Documentation/RELEASE_NOTES/3.2.0.md) · [`ENSEMBLE.md`](Documentation/ENSEMBLE.md)
+- **3.1.0 — BONDS: Are the Bonds Earned?** KEN's sibling: relationship
+  *continuity* — are the bonds you declare (`rel:` tags) earned on the page?
+  `unwritten_bond` / `unearned_shift` / `dropped_bond` + opt-in `implied_cooling`,
+  the `Ctrl+V Shift+O` dashboard, `ink.bonds.*`.
+  [notes](Documentation/RELEASE_NOTES/3.1.0.md) · [`BONDS.md`](Documentation/BONDS.md)
 
 ### The stable baseline · 3.0.0 — The Stable Edition
 
@@ -78,13 +83,14 @@ lines (zero Critical), with every surviving finding fixed and zero breaking
 changes. The 3.0.x line (through 3.0.9) then hardened the Bund scripting coverage
 and the export/import/keymap/assembly subsystems through successive targeted
 audits, each leaving a build-time guard behind. **3.1.0 lifted the feature freeze**
-(BONDS), and **3.2.0** (ENSEMBLE) continues on that hardened surface. Full 3.0.0
-notes: [`Documentation/RELEASE_NOTES/3.0.0.md`](Documentation/RELEASE_NOTES/3.0.0.md).
+(BONDS); **3.2.0** (ENSEMBLE) and **3.3.0** (multilingual parity + polish) continue
+on that hardened surface. Full 3.0.0 notes:
+[`Documentation/RELEASE_NOTES/3.0.0.md`](Documentation/RELEASE_NOTES/3.0.0.md).
 
 ### Dependencies & compatibility
 
 No new dependencies, no breaking changes. Existing projects open unchanged. Compiles
-warning-free. Test suite → 2948.
+warning-free. Test suite → 2961.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
@@ -282,14 +288,14 @@ cargo install inkhaven
 ```
 
 Inkhaven is published on crates.io — every release tag pushes a
-new version (latest: 3.2.0).  The first build takes ~10 minutes on
+new version (latest: 3.3.0).  The first build takes ~10 minutes on
 a modern laptop because of DuckDB + fastembed + ONNX-runtime
 compilation; `cargo binstall` above is the fast path.
 
 ### 4. `cargo install --git` (compile from a specific tag)
 
 ```bash
-cargo install --git https://github.com/vulogov/blackInkhaven --tag v3.2.0
+cargo install --git https://github.com/vulogov/blackInkhaven --tag v3.3.0
 ```
 
 Useful when you want a specific tag, a pre-release branch, or a
