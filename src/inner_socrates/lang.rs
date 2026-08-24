@@ -91,16 +91,25 @@ pub enum Msg<'a> {
     Monotone,
     LongSentence(usize),
     UnattributedDialogue(usize),
-    /// Detection is English-only (no UD parser); rendered in English in every
-    /// language until per-language tense/coreference tables land.
+    /// Detected via per-language auxiliary tables for EN/DE/FR/ES (3.3.0 M1) and
+    /// rendered in that language; Russian is excluded (aspect, no present copula).
     TenseShift,
+    /// Detection stays English-only (coreference needs POS/agreement, no UD
+    /// parser); rendered in English in every language.
     PronounAmbiguity,
 }
 
-/// English text for the two parser-adjacent categories (detection is English-only
-/// for now, so these render in English in every language).
+/// Tense-shift question, per language (detection runs for EN/DE/FR/ES; Russian is
+/// excluded so its render falls back to English but is never reached). Pronoun-
+/// ambiguity detection stays English-only, so its text renders in English.
 const TENSE_EN: &str =
     "The passage moves between past and present tense here. Is the shift deliberate?";
+const TENSE_ES: &str =
+    "El pasaje alterna aquí entre pasado y presente. ¿El cambio es deliberado?";
+const TENSE_FR: &str =
+    "Le passage alterne ici entre passé et présent. Ce changement est-il voulu ?";
+const TENSE_DE: &str =
+    "Der Abschnitt wechselt hier zwischen Vergangenheit und Gegenwart. Ist der Wechsel beabsichtigt?";
 const PRONOUN_EN: &str =
     "A pronoun here could point to more than one person named just before. Is the reference clear?";
 
@@ -152,7 +161,7 @@ fn render_es(m: &Msg) -> String {
         Msg::Monotone => "Varias frases aquí tienen una longitud casi idéntica. ¿El ritmo uniforme es intencionado?".into(),
         Msg::LongSentence(n) => format!("Una frase aquí llega a {n} palabras. ¿Su longitud lleva al lector o lo pierde?"),
         Msg::UnattributedDialogue(n) => format!("{n} líneas de diálogo pasan sin indicar quién habla. ¿El lector aún sabe quién habla?"),
-        Msg::TenseShift => TENSE_EN.into(),
+        Msg::TenseShift => TENSE_ES.into(),
         Msg::PronounAmbiguity => PRONOUN_EN.into(),
     }
 }
@@ -166,7 +175,7 @@ fn render_fr(m: &Msg) -> String {
         Msg::Monotone => "Plusieurs phrases ont ici une longueur presque identique. Ce rythme régulier est-il voulu ?".into(),
         Msg::LongSentence(n) => format!("Une phrase ici fait {n} mots. Sa longueur porte-t-elle le lecteur ou le perd-elle ?"),
         Msg::UnattributedDialogue(n) => format!("{n} répliques passent ici sans indiquer qui parle. Le lecteur sait-il encore qui parle ?"),
-        Msg::TenseShift => TENSE_EN.into(),
+        Msg::TenseShift => TENSE_FR.into(),
         Msg::PronounAmbiguity => PRONOUN_EN.into(),
     }
 }
@@ -180,7 +189,7 @@ fn render_de(m: &Msg) -> String {
         Msg::Monotone => "Mehrere Sätze sind hier fast gleich lang. Ist der gleichmäßige Rhythmus beabsichtigt?".into(),
         Msg::LongSentence(n) => format!("Ein Satz hier umfasst {n} Wörter. Trägt seine Länge den Leser, oder verliert sie ihn?"),
         Msg::UnattributedDialogue(n) => format!("{n} Dialogzeilen kommen hier ohne Sprecherangabe aus. Weiß der Leser noch, wer spricht?"),
-        Msg::TenseShift => TENSE_EN.into(),
+        Msg::TenseShift => TENSE_DE.into(),
         Msg::PronounAmbiguity => PRONOUN_EN.into(),
     }
 }
