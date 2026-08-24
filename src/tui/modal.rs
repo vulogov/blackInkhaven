@@ -966,6 +966,15 @@ pub(super) enum Modal {
         anchors: Vec<Option<Uuid>>,
         cursor: usize,
     },
+    /// ENSEMBLE (3.2, EN-P4) — the Dramatis Personae dashboard (graph hub → `c`):
+    /// the book's cast joined with their bonds + arc state. `↑↓` scroll, Enter
+    /// jumps to a character's bible node, Esc closes. `anchors` parallels `rows`
+    /// (a member header carries their node; bond/blank rows carry `None`).
+    Cast {
+        rows: Vec<String>,
+        anchors: Vec<Option<Uuid>>,
+        cursor: usize,
+    },
     /// POEM-TUI (PO-P12) — the form picker (`Ctrl+B J → P → D`): choose one of
     /// the built-in forms and attach its `poem:` block to the open verse
     /// paragraph as a sidecar leaf. `cursor` indexes `FormsLibrary::all()`;
