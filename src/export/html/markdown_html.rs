@@ -217,8 +217,9 @@ fn parse_image(s: &str) -> Option<(String, String)> {
 
 /// Inline markup → HTML. Inline math (`$…$`) is rendered to MathML and stashed out
 /// first so its content is not escaped or treated as markdown; input is then escaped
-/// and span markers applied; finally the math is restored.
-fn inline(s: &str) -> String {
+/// and span markers applied; finally the math is restored. Exposed for the verse
+/// renderer (XP-4), which applies it per line to preserve line breaks.
+pub(super) fn inline(s: &str) -> String {
     let mut stash: Vec<String> = Vec::new();
     let protected = stash_math(s, &mut stash);
     let escaped = escape_html(&protected);

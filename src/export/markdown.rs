@@ -7,14 +7,19 @@
 //! * `*bold*` → `**bold**`, `_italic_` → `*italic*`
 //! * Bullet lists (`- foo`) and ordered lists (`+ foo`) pass through
 //! * `#image("path")` → `![](path)`, `#image("path", caption: "x")` →
-//!   `![x](path)`
+//!   `![x](path)`, and a wrapped `#figure(image("path"), caption: [x])`
+//!   (single-line) → the same
+//! * `#footnote[body]` (inline, anywhere in a line) → a `[^N]` marker plus a
+//!   `[^N]: body` definition list emitted at the end; balanced-bracket aware
+//! * `@key` / `@key[locus]` references → pandoc-style `[@key]` / `[@key, locus]`
+//!   (a `@` only starts a ref at a word boundary)
 //! * Lines starting with `#` that we don't recognise are wrapped in
 //!   `` `…` `` so the user can see the un-converted macro in the
 //!   markdown without it bricking subsequent rendering.
 //!
-//! Out of scope: arbitrary Typst expressions, math, code blocks
-//! (anything inside a `#raw(…)` block is dropped through verbatim
-//! as a ` ``` ` fenced block).
+//! Out of scope: arbitrary Typst expressions, math, tables, and multi-line
+//! `#figure(…)` blocks; code blocks (anything inside a `#raw(…)` block is
+//! dropped through verbatim as a ` ``` ` fenced block).
 //!
 //! The converter is **lossy by design** — markdown can't represent
 //! everything Typst can. The goal is "readable plain-text dump
@@ -178,10 +183,134 @@ fn single_line_raw_inner(line: &str) -> Option<String> {
     Some(inner.to_string())
 }
 
+/// `#figure(image("path"), caption: [Cap])` (or `caption: "Cap"`) → `![Cap](path)`.
+/// The plain `#image(...)` case is [`convert_image_call`]; this catches the wrapped
+/// figure form the old converter leaked as literal code. Single-line only.
+fn convert_figure_image(line: &str) -> Option<String> {
+    let trimmed = line.trim_start();
+    if !trimmed.starts_with("#figure(") {
+        return None;
+    }
+    let img_idx = trimmed.find("image(")?;
+    let after = &trimmed[img_idx + "image(".len()..];
+    let (path, _) = read_quoted(after)?;
+    // Caption may be a string (`caption: "…"`) or content (`caption: [ … ]`).
+    let mut alt = String::new();
+    if let Some(idx) = trimmed.find("caption:") {
+        let after_cap = trimmed[idx + "caption:".len()..].trim_start();
+        if let Some((cap, _)) = read_quoted(after_cap) {
+            alt = cap;
+        } else if let Some(rest) = after_cap.strip_prefix('[') {
+            if let Some((cap, _)) = read_bracketed(rest) {
+                alt = cap.trim().to_string();
+            }
+        }
+    }
+    Some(format!("![{}]({})", alt.trim(), path))
+}
+
+/// Read a `[…]`-delimited body from `s` (which begins **after** the opening `[`),
+/// respecting nested brackets. Returns `(body, tail-after-])`. `None` if unbalanced.
+fn read_bracketed(s: &str) -> Option<(String, &str)> {
+    let mut depth = 1i32;
+    for (i, c) in s.char_indices() {
+        match c {
+            '[' => depth += 1,
+            ']' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some((s[..i].to_string(), &s[i + c.len_utf8()..]));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Replace each inline `#footnote[body]` with a markdown `[^N]` marker, collecting
+/// the (emphasis-/ref-converted) body into `notes` for a definition list emitted at
+/// the end. Balanced-bracket aware, so a body may itself contain `[…]`; an
+/// unbalanced `#footnote[` is left literal rather than eating the rest of the text.
+fn extract_footnotes(text: &str, notes: &mut Vec<String>) -> String {
+    const OPEN: &str = "#footnote[";
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(pos) = rest.find(OPEN) {
+        out.push_str(&rest[..pos]);
+        let after = &rest[pos + OPEN.len()..];
+        match read_bracketed(after) {
+            Some((body, tail)) => {
+                notes.push(convert_emphasis(&convert_refs(&body)));
+                out.push_str(&format!("[^{}]", notes.len()));
+                rest = tail;
+            }
+            None => {
+                out.push_str(&rest[pos..pos + OPEN.len()]);
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+fn is_ref_char(c: char) -> bool {
+    c.is_alphanumeric() || matches!(c, '-' | '_' | ':')
+}
+
+/// Convert Typst references / citations to pandoc-style markdown citations:
+/// `@key` → `[@key]`, `@key[locus]` → `[@key, locus]`. A `@` only starts a ref at a
+/// word boundary (start, or after whitespace / an opening bracket-quote), so a stray
+/// `@` inside prose is left alone. Pandoc understands both the cite and the label
+/// form; imperfect for figure cross-refs but far better than leaking literal `@key`.
+fn convert_refs(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len() + 8);
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        let boundary =
+            i == 0 || matches!(chars[i - 1], ' ' | '\t' | '(' | '[' | '"' | '\u{201c}' | '\u{ab}');
+        if c == '@' && boundary && chars.get(i + 1).is_some_and(|d| d.is_alphabetic()) {
+            let mut j = i + 1;
+            while j < chars.len() && is_ref_char(chars[j]) {
+                j += 1;
+            }
+            let key: String = chars[i + 1..j].iter().collect();
+            // Optional `[locus]`.
+            if chars.get(j) == Some(&'[') {
+                if let Some(close) = chars[j + 1..].iter().position(|&d| d == ']') {
+                    let locus: String = chars[j + 1..j + 1 + close].iter().collect();
+                    out.push_str(&format!("[@{key}, {}]", locus.trim()));
+                    i = j + 1 + close + 1;
+                    continue;
+                }
+            }
+            out.push_str(&format!("[@{key}]"));
+            i = j;
+            continue;
+        }
+        out.push(c);
+        i += 1;
+    }
+    out
+}
+
+/// The full inline transform for a line of prose (or a heading / list body):
+/// footnotes → refs → emphasis, in that order (footnotes and refs first so the
+/// emphasis rewrite never mangles their brackets). Footnote bodies are collected
+/// into `notes`.
+fn convert_inline(text: &str, notes: &mut Vec<String>) -> String {
+    let no_fn = extract_footnotes(text, notes);
+    convert_emphasis(&convert_refs(&no_fn))
+}
+
 /// Public entry. See module docs for the supported subset.
 pub fn typst_to_markdown(input: &str) -> String {
     let mut out = String::with_capacity(input.len() + 64);
     let mut in_raw_block = false;
+    let mut footnotes: Vec<String> = Vec::new();
     for raw_line in input.lines() {
         // Preserve raw-content blocks. The most common pattern is a
         // line containing `#raw(` followed by ` ``` …``` ` on its
@@ -231,13 +360,13 @@ pub fn typst_to_markdown(input: &str) -> String {
                 out.push('#');
             }
             out.push(' ');
-            out.push_str(&convert_emphasis(rest));
+            out.push_str(&convert_inline(rest, &mut footnotes));
             out.push('\n');
             continue;
         }
 
-        // Images.
-        if let Some(img) = convert_image_call(raw_line) {
+        // Images — plain `#image(...)` or a wrapped `#figure(image(...))`.
+        if let Some(img) = convert_image_call(raw_line).or_else(|| convert_figure_image(raw_line)) {
             out.push_str(&img);
             out.push('\n');
             continue;
@@ -246,13 +375,13 @@ pub fn typst_to_markdown(input: &str) -> String {
         // Bullet / ordered lists pass through.
         if let Some(rest) = raw_line.strip_prefix("- ") {
             out.push_str("- ");
-            out.push_str(&convert_emphasis(rest));
+            out.push_str(&convert_inline(rest, &mut footnotes));
             out.push('\n');
             continue;
         }
         if let Some(rest) = raw_line.strip_prefix("+ ") {
             out.push_str("1. ");
-            out.push_str(&convert_emphasis(rest));
+            out.push_str(&convert_inline(rest, &mut footnotes));
             out.push('\n');
             continue;
         }
@@ -268,12 +397,19 @@ pub fn typst_to_markdown(input: &str) -> String {
             continue;
         }
 
-        out.push_str(&convert_emphasis(raw_line));
+        out.push_str(&convert_inline(raw_line, &mut footnotes));
         out.push('\n');
     }
     if in_raw_block {
         // Unclosed raw block — close it so the markdown is valid.
         out.push_str("```\n");
+    }
+    // Emit the collected footnote definitions (markdown's `[^N]: …` list).
+    if !footnotes.is_empty() {
+        out.push('\n');
+        for (i, body) in footnotes.iter().enumerate() {
+            out.push_str(&format!("[^{}]: {body}\n", i + 1));
+        }
     }
     out
 }
@@ -342,5 +478,44 @@ mod tests {
     fn unknown_directive_quoted() {
         let md = typst_to_markdown("#set page(width: 10cm)\n");
         assert!(md.contains("`#set page(width: 10cm)`"));
+    }
+
+    #[test]
+    fn figure_image_with_content_caption() {
+        // XP-1 — a wrapped figure used to leak as literal code.
+        let md = typst_to_markdown("#figure(image(\"img/map.png\"), caption: [The Reach])\n");
+        assert!(md.contains("![The Reach](img/map.png)"), "{md:?}");
+        assert!(!md.contains('`'), "no literal-code leak: {md:?}");
+        // The string-caption form too.
+        let md2 = typst_to_markdown("#figure(image(\"a.png\"), caption: \"Cap\")\n");
+        assert!(md2.contains("![Cap](a.png)"), "{md2:?}");
+    }
+
+    #[test]
+    fn inline_footnote_becomes_marker_plus_definition() {
+        // XP-1 — inline #footnote[…] used to leak verbatim.
+        let md = typst_to_markdown("The bell rang#footnote[At dawn.] once.\n");
+        assert!(md.contains("The bell rang[^1] once."), "marker in place: {md:?}");
+        assert!(md.contains("[^1]: At dawn."), "definition emitted: {md:?}");
+        assert!(!md.contains("#footnote"), "no literal footnote source: {md:?}");
+    }
+
+    #[test]
+    fn footnote_body_may_contain_brackets_and_emphasis() {
+        let md = typst_to_markdown("x#footnote[see _note_ [ok]] y\n");
+        assert!(md.contains("x[^1] y"), "{md:?}");
+        // Body keeps its inner bracket and gets emphasis-converted.
+        assert!(md.contains("[^1]: see *note* [ok]"), "{md:?}");
+    }
+
+    #[test]
+    fn references_become_pandoc_citations() {
+        // XP-1 — @key / @key[locus] used to pass through literal.
+        let md = typst_to_markdown("As in @einstein1905[p. 4] and see @fig-map here.\n");
+        assert!(md.contains("[@einstein1905, p. 4]"), "cite with locus: {md:?}");
+        assert!(md.contains("[@fig-map]"), "bare ref: {md:?}");
+        // A stray non-boundary `@` is left alone.
+        let md2 = typst_to_markdown("email a@b later\n");
+        assert!(md2.contains("a@b"), "non-boundary @ untouched: {md2:?}");
     }
 }
