@@ -2154,6 +2154,12 @@ pub(crate) struct App {
     /// of the diff review advances it. `None` = no batch (single `f` and the
     /// rhythm rewrite leave it untouched, so they never auto-advance).
     pub(super) editorial_batch: Option<EditorialBatch>,
+    /// 3.3.0 E1 — fingerprints skipped (`s`) in the Editorial Pass this session.
+    /// A skip means "not now, but ask me again next time I run inkhaven" — it
+    /// survives closing and reopening the pass (the collect re-scan filters these
+    /// out) but is in-memory, so it clears on restart. Distinct from `defer` (`d`),
+    /// which persists to the `Dismissed` sidecar until the prose changes.
+    pub(super) editorial_session_skips: std::collections::BTreeSet<String>,
     /// 1.3.12 DEEP-1 — an in-flight background job (e.g. the deep AI refresh)
     /// run off the main thread against a shared `Store` clone. `None` when
     /// idle; the main loop drains its channel each tick. One at a time.
@@ -3609,6 +3615,7 @@ impl App {
             pending_rewrite_diff: None,
             pending_rewrite_span: None,
             editorial_batch: None,
+            editorial_session_skips: std::collections::BTreeSet::new(),
             bg_job: None,
             fact_check_pending: None,
             fact_check_nav: FactCheckNav::default(),
@@ -13337,7 +13344,13 @@ impl App {
     /// revision worklist (`inkhaven edit`), walkable + jump-to-location.
     fn open_editorial_pass(&mut self) {
         match crate::cli::editorial::collect(&self.layout.root, None, None, false) {
-            Ok(report) => {
+            Ok(mut report) => {
+                // E1 — drop the findings skipped this session (survives reopen).
+                let skipped;
+                (report.findings, skipped) = crate::editorial::drop_session_skips(
+                    report.findings,
+                    &self.editorial_session_skips,
+                );
                 let n = report.findings.len();
                 let deferred = report.deferred;
                 let stale = report.stale;
@@ -13352,6 +13365,9 @@ impl App {
                 } else {
                     String::new()
                 };
+                if skipped > 0 {
+                    note.push_str(&format!(" ({skipped} skipped)"));
+                }
                 if stale {
                     note.push_str(" · ⚠ may be stale (Ctrl+V Shift+F)");
                 }
@@ -13620,6 +13636,10 @@ impl App {
                 self.status = format!("edit: defer failed: {e}");
                 return;
             }
+        } else {
+            // E1 — a session skip: remember it so reopening the pass keeps it
+            // hidden (until restart).
+            self.editorial_session_skips.insert(fingerprint.to_string());
         }
         if let Modal::EditorialPass { findings, cursor, filter, .. } = &mut self.modal {
             findings.retain(|f| f.fingerprint() != fingerprint);
@@ -13641,8 +13661,11 @@ impl App {
             self.status = format!("edit: {e}");
             return;
         }
+        // E1 — `D` clears every dismissal: the persisted deferrals and this
+        // session's skips both.
+        self.editorial_session_skips.clear();
         self.open_editorial_pass();
-        self.status = "cleared all deferrals — re-scanned".into();
+        self.status = "cleared all deferrals + session skips — re-scanned".into();
     }
 
     /// 1.3.8 WORLD-1 P2 — open the story-bible view: the world consolidated
