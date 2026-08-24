@@ -8,9 +8,9 @@ source. No `pandoc`, no `tex live` install, no external binaries.
 | --------- | -------------------------------- | ----- |
 | `typst`   | (none — pass-through)            | The concatenated `.typ` source. |
 | `pdf`     | the `typst` CLI on PATH          | Same path as 1.1+. |
-| `markdown`| in-process converter             | The Typst subset inkhaven actually emits: headings, lists, emphasis, `#image(…)` with caption. |
+| `markdown`| in-process converter             | The Typst subset inkhaven actually emits: headings, lists, emphasis, `#image(…)` / `#figure(image(…))` with caption, inline `#footnote[…]` (→ `[^N]` + a definition list), and `@key`/`@key[locus]` references (→ pandoc `[@key]`). |
 | `tex`     | [`tylax`](https://crates.io/crates/tylax) (pure Rust) | Wraps tylax's `typst_document_to_latex`; adds a minimal `\documentclass{book}` preamble when missing. |
-| `epub`    | bundled `zip` + `pulldown-cmark` | EPUB3 zip with a single chapter, derived from the markdown intermediate. |
+| `epub`    | the rich `inkhaven epub` builder | Multi-chapter EPUB3 — a `nav` entry per chapter, embedded images, footnote popups, cover (3.4.0 — the CLI routes to the same builder as `inkhaven epub`, not the older single-chapter converter). |
 
 ## CLI: `inkhaven export <format>`
 
@@ -141,14 +141,17 @@ Handles the Typst subset inkhaven itself emits:
 - `= H1` / `== H2` / … → `#` / `##` / …
 - `*bold*` → `**bold**`, `_italic_` → `*italic*`
 - Bullet (`- foo`) and ordered (`+ foo` → `1. foo`) lists
-- `#image("p.png", caption: "alt")` → `![alt](p.png)`
-- Lines starting with `//` (Typst comments) are dropped
+- `#image("p.png", caption: "alt")` and `#figure(image("p.png"), caption: [alt])`
+  → `![alt](p.png)`
+- inline `#footnote[body]` → a `[^N]` marker plus a `[^N]: body` definition list
+  at the end (3.4.0)
+- `@key` / `@key[locus]` references → pandoc-style `[@key]` / `[@key, locus]` (3.4.0)
 - Anything else starting with `#` is preserved verbatim inside
   an inline-code span so you can see what was un-converted
 
-This is **lossy by design**. The goal is "readable plain-text
-dump good enough to share / paste / re-format", not round-trip
-fidelity.
+Still **lossy** (math, tables, and multi-line `#figure(…)` blocks are out of
+scope), but a good deal less so than before — the goal is "readable, largely
+faithful text you can share / paste / re-format."
 
 ### tex converter (`src/export/tex.rs`)
 
@@ -162,24 +165,19 @@ hand-editing.
 If tylax can't translate something it leaves an inline comment in
 the LaTeX — we don't second-guess, the file is what it is.
 
-### EPUB writer (`src/export/epub.rs`)
+### EPUB writer
 
-Minimal EPUB3:
+**CLI `inkhaven export --format epub` uses the rich builder** (`src/epub.rs`, the
+same as `inkhaven epub`) as of 3.4.0: a `nav` entry per chapter, embedded
+`NodeKind::Image` figures, EPUB3 footnote popups, and a cover (drop a `cover.png`
+next to `inkhaven.hjson`). Because it re-reads the book from the store, the
+export-pipeline filters (`--status` / `--tag` / `--profile` / `--blind`) don't
+apply to EPUB — a note is printed if you pass them.
 
-- `mimetype` (stored, not deflated — readers reject the archive
-  otherwise)
-- `META-INF/container.xml`
-- `OEBPS/content.opf` — title from `--book-name` or project dir
-  name; identifier deterministically derived from title + content
-  hash
-- `OEBPS/nav.xhtml` — single nav entry
-- `OEBPS/chapter.xhtml` — the markdown rendered to XHTML via
-  `pulldown-cmark`
-
-Single-chapter layout — if you want a richer EPUB with cover
-image + per-chapter splits + cross-references, that's outside
-the v1 scope. The output is valid EPUB3 and opens cleanly in
-the major readers.
+The older minimal single-chapter converter (`src/export/epub.rs`, markdown →
+XHTML via `pulldown-cmark`) is retained only for the Bund `ink.export.epub` word
+and the TUI's batch `output.extra_formats` builder, which produce an in-memory
+artefact from a combined-markdown string rather than reading the book structure.
 
 ## Troubleshooting
 
