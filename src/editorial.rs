@@ -417,6 +417,14 @@ impl Dismissed {
     }
 }
 
+/// 3.3.0 E2 — does a finding pass the Editorial Pass's active filters? The two
+/// axes AND together: a `category` (`None` = all) and a `kind` response-kind
+/// (`None` = all). The single predicate the pass's three filter sites share
+/// (key handler, cursor recount, render). Pure.
+pub fn matches_view(f: &EditorialFinding, category: Option<&str>, kind: Option<ResponseKind>) -> bool {
+    category.is_none_or(|c| f.category == c) && kind.is_none_or(|k| f.response() == k)
+}
+
 /// 3.3.0 E1 — drop the findings whose fingerprint was **skipped** this session,
 /// returning the kept findings and the number dropped. Unlike [`Dismissed`]
 /// (deferrals, persisted to disk), session skips live only in the editor's
@@ -805,6 +813,32 @@ mod tests {
         assert!(d.fingerprints.contains(&fp));
         Dismissed::clear(dir.path()).unwrap();
         assert!(Dismissed::load(dir.path()).fingerprints.is_empty());
+    }
+
+    #[test]
+    fn matches_view_ands_category_and_kind() {
+        // "echo" → Rewrite, "co_location" → Decision, "structure" → Brief.
+        let echo = EditorialFinding {
+            category: "echo".into(),
+            severity: Severity::Info,
+            location: Location::default(),
+            message: "m".into(),
+            hint: None,
+            source: "doctor",
+            autofixable: false,
+        };
+        let decision = EditorialFinding { category: "co_location".into(), ..echo.clone() };
+        // No filters → everything passes.
+        assert!(matches_view(&echo, None, None));
+        assert!(matches_view(&decision, None, None));
+        // Kind filter alone.
+        assert!(matches_view(&echo, None, Some(ResponseKind::Rewrite)));
+        assert!(!matches_view(&echo, None, Some(ResponseKind::Decision)));
+        assert!(matches_view(&decision, None, Some(ResponseKind::Decision)));
+        // The two axes AND: echo passes category=echo but not kind=Decision.
+        assert!(matches_view(&echo, Some("echo"), Some(ResponseKind::Rewrite)));
+        assert!(!matches_view(&echo, Some("echo"), Some(ResponseKind::Decision)));
+        assert!(!matches_view(&echo, Some("co_location"), Some(ResponseKind::Rewrite)));
     }
 
     #[test]
