@@ -129,8 +129,8 @@ pub enum ScanClass {
     /// … "200 leagues south"), or two different durations
     /// in immediate proximity ("the three-day journey …
     /// after a week").  Multilingual via the per-language
-    /// continuity lexicon (en/fr/es bundled; others skip
-    /// with a clear message).  Info severity — framed as
+    /// continuity lexicon (en/fr/es/de/ru bundled; others
+    /// skip with a clear message).  Info severity — framed as
     /// "review whether these refer to the same thing."
     /// No autofix.
     NumericContradiction,

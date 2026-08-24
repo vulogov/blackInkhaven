@@ -25,7 +25,7 @@ Warning > Info; earlier chapters first):
 | -------- | ---------------- | ------ |
 | `co_location` | a character in two places at overlapping times | the timeline (magic-ledger suppressed) |
 | `timeline` | orphaned events · fuzzy-precision overlaps | the timeline critique |
-| `numeric` | direction reversal · conflicting durations | prose quantities (EN/FR/ES) |
+| `numeric` | direction reversal · conflicting durations | prose quantities (EN/FR/ES/DE/RU) |
 | `char_facts` | an established fact changed across chapters | `.inkhaven/continuity.json` |
 | `introduce` | **an entity referenced before it's introduced** | the graph + prose mentions |
 
@@ -138,8 +138,10 @@ SENTINEL inherits each detector's language coverage and never claims more. The
 `introduce` invariant is language-safe everywhere — names come from your own
 Characters/Places books and the mention match is Unicode-aware, so Cyrillic and
 accented names match exactly as Latin ones do. `co_location`, `timeline`, and
-`char_facts` are multilingual as built; `numeric` is EN/FR/ES (it skips cleanly
-for other languages). Every finding carries its `source`, so *"does it work in
+`char_facts` are multilingual as built; `numeric` covers all five project
+languages — EN/FR/ES/DE/RU (3.3.0 added German + Russian, the latter with the
+case-inflected unit forms the counting construction needs) — and skips cleanly
+for any other language. Every finding carries its `source`, so *"does it work in
 Russian?"* answers itself per detector.
 
 ---
