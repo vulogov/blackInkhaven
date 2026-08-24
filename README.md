@@ -27,39 +27,46 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 3.1.0 — BONDS: Are the Bonds Earned?
+## Latest release · 3.2.0 — ENSEMBLE: Your Cast, Connected
 
-The current release is **3.1.0**, the first feature of the post-freeze thaw and
-**KEN's sibling: relationship continuity.** Where KEN (2.6) checks *knowledge* —
-who could know what, when — **BONDS** checks *bonds*: are the relationships you
-**declare** between characters (`rel:<kind>:<A>:<B>` paragraph tags) actually
-**earned** on the page? Co-presence is **derived for free** — the per-scene cast
-is the union of the scene's POV, any character named in the prose, and the
-participants of any timeline event linked into the scene — and the mismatch
-between what you declared and what the page dramatises is the finding:
+The current release is **3.2.0**, a **deepening** of the people layer rather than
+a new reader. You've declared who knows what (KEN), who's bonded to whom (BONDS),
+and where each arc bends (CHAR-1); ENSEMBLE stops treating those as separate
+findings and lets you **see the people** — the cast, their relationships, and
+their arcs — as one connected picture. Two pieces, both built straight on BONDS +
+the knowledge graph + the CHAR-1 store; deterministic, ≈ $0, no new subsystem:
 
-- **`unwritten_bond`** — a declared pair barely shares a scene: asserted, not
-  dramatised.
-- **`unearned_shift`** — a bond changes state (allies → enemies) with no shared
-  scene to turn it: the relationship plot-hole, the hard break.
-- **`dropped_bond`** — an established bond goes dormant for many chapters, then
-  resurfaces.
-- **`implied_cooling`** *(opt-in `--deep`)* — a relationship that warms or cools
-  on the page with no tag marking it — the subtle, undeclared drift, on a
-  cost-capped LLM pass.
+- **Relationships on the graph.** Every declared `rel:<kind>:<A>:<B>` bond becomes
+  a first-class symmetric **`relates`** graph edge on `inkhaven graph rebuild`
+  (the bond kind + first chapter in the edge; a transition ally → enemy shows as
+  two edges). So the whole existing graph stack reads them for free —
+  `graph neighbors` / `graph paths`, the `Ctrl+B z` hub (a bond renders
+  `⇄ Kell — ally (ch. 1)`), and the **F9 Graph** chat / `graph ask`.
+- **The Dramatis Personae.** **`inkhaven cast`** (`--json`; editor: `Ctrl+B z`
+  hub → `c`) joins the cast × their bonds × their arc state — arc shape, latest
+  observed chapter state, ✦change count, agency, and bonds — into one book-wide
+  view. Enter jumps to a character's bible node.
 
-Surfaces: **`inkhaven bonds`** (`--json`, non-zero exit on a break — a CI gate;
-`--deep`), the **`Ctrl+V Shift+O`** relationship dashboard, the `Ctrl+V Shift+R`
-Editorial Pass (an `unearned_shift` routed to a guided **Decision**), the new
-`bonds` config block, and read-only `ink.bonds.{ties,findings,check}` Bund. The
-core is **deterministic and ≈ $0 at any book size** (it scales with declared
-bonds, not pages, and stays silent on books that don't tag relationships), and it
-produces a finding a generic AI structurally can't — judging a relationship
-across a whole book needs the timeline, event participants, bible, and POV only
-inkhaven holds. No new runtime crates.
+It writes no new model call: the graph is derived edges, the Dramatis Personae a
+pure join over data already on disk. **Alias resolution** (nicknames resolving to
+a character across every reader) was deliberately deferred — it touches the shared
+mention-matcher and belongs in its own release. No new runtime crates.
 
-Read the full notes: [`Documentation/RELEASE_NOTES/3.1.0.md`](Documentation/RELEASE_NOTES/3.1.0.md)
-· the reference: [`Documentation/BONDS.md`](Documentation/BONDS.md).
+Read the full notes: [`Documentation/RELEASE_NOTES/3.2.0.md`](Documentation/RELEASE_NOTES/3.2.0.md)
+· the reference: [`Documentation/ENSEMBLE.md`](Documentation/ENSEMBLE.md).
+
+### Before it · 3.1.0 — BONDS: Are the Bonds Earned?
+
+**3.1.0** is BONDS, KEN's sibling and the first feature of the post-freeze thaw:
+relationship *continuity* — are the bonds you **declare** between characters
+**earned** on the page? Co-presence is derived free (POV ∪ prose mentions ∪
+timeline participants), and the declared-vs-derived mismatch is the finding —
+`unwritten_bond`, `unearned_shift` (the relationship plot-hole), `dropped_bond`,
+plus opt-in `--deep` `implied_cooling`. Surfaces: `inkhaven bonds`, the
+`Ctrl+V Shift+O` dashboard, the Editorial Pass (Decision), the `bonds` config
+block, `ink.bonds.*` Bund. Deterministic + ≈ $0. Full notes:
+[`Documentation/RELEASE_NOTES/3.1.0.md`](Documentation/RELEASE_NOTES/3.1.0.md)
+· [`Documentation/BONDS.md`](Documentation/BONDS.md).
 
 ### The stable baseline · 3.0.0 — The Stable Edition
 
@@ -70,14 +77,14 @@ CHRONICLE → KEN) verified sound by a seven-partition adversarial audit of all 
 lines (zero Critical), with every surviving finding fixed and zero breaking
 changes. The 3.0.x line (through 3.0.9) then hardened the Bund scripting coverage
 and the export/import/keymap/assembly subsystems through successive targeted
-audits, each leaving a build-time guard behind. **3.1.0 lifts the feature freeze**
-for BONDS while keeping that hardened surface intact. Full 3.0.0 notes:
-[`Documentation/RELEASE_NOTES/3.0.0.md`](Documentation/RELEASE_NOTES/3.0.0.md).
+audits, each leaving a build-time guard behind. **3.1.0 lifted the feature freeze**
+(BONDS), and **3.2.0** (ENSEMBLE) continues on that hardened surface. Full 3.0.0
+notes: [`Documentation/RELEASE_NOTES/3.0.0.md`](Documentation/RELEASE_NOTES/3.0.0.md).
 
 ### Dependencies & compatibility
 
 No new dependencies, no breaking changes. Existing projects open unchanged. Compiles
-warning-free. Test suite → 2944.
+warning-free. Test suite → 2948.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
@@ -275,14 +282,14 @@ cargo install inkhaven
 ```
 
 Inkhaven is published on crates.io — every release tag pushes a
-new version (latest: 3.1.0).  The first build takes ~10 minutes on
+new version (latest: 3.2.0).  The first build takes ~10 minutes on
 a modern laptop because of DuckDB + fastembed + ONNX-runtime
 compilation; `cargo binstall` above is the fast path.
 
 ### 4. `cargo install --git` (compile from a specific tag)
 
 ```bash
-cargo install --git https://github.com/vulogov/blackInkhaven --tag v3.1.0
+cargo install --git https://github.com/vulogov/blackInkhaven --tag v3.2.0
 ```
 
 Useful when you want a specific tag, a pre-release branch, or a
