@@ -43,6 +43,7 @@ Legend: **CLI** = `inkhaven <verb>` · **Chord** = in-editor keystroke · **Doc*
 | **SENTINEL** — continuity | `continuity check` | `Ctrl+B Shift+I` | [CONTINUITY.md](CONTINUITY.md) | `ink.continuity` |
 | **KEN** — who knows what | `knowledge` | `Ctrl+B Shift+Z` | [KNOWLEDGE.md](KNOWLEDGE.md) | `ink.knowledge` |
 | **BONDS** — earned relationships | `bonds` | `Ctrl+V Shift+O` | [BONDS.md](BONDS.md) | `ink.bonds` |
+| **ENSEMBLE** — cast, connected | `cast` | `Ctrl+B z → c` | [ENSEMBLE.md](ENSEMBLE.md) | — |
 | **LECTOR** — read-through | `readthrough` | `Ctrl+B Shift+A` | [LECTOR.md](LECTOR.md) | `ink.readthrough` |
 | **CHORUS** — voice at book scale | `chorus` | `Ctrl+B J → Y` | [CHORUS.md](CHORUS.md) | `ink.chorus` `ink.stylist` |
 | **NARR-1** — narrator voice | `prose` | `Ctrl+V V` | [PROSE_VOICE.md](PROSE_VOICE.md) | `ink.prose` |
