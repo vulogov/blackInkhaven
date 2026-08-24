@@ -417,6 +417,25 @@ impl Dismissed {
     }
 }
 
+/// 3.3.0 E1 — drop the findings whose fingerprint was **skipped** this session,
+/// returning the kept findings and the number dropped. Unlike [`Dismissed`]
+/// (deferrals, persisted to disk), session skips live only in the editor's
+/// memory, so this filter is applied every time the Editorial Pass re-collects.
+/// Pure.
+pub fn drop_session_skips(
+    findings: Vec<EditorialFinding>,
+    skips: &BTreeSet<String>,
+) -> (Vec<EditorialFinding>, usize) {
+    if skips.is_empty() {
+        return (findings, 0);
+    }
+    let before = findings.len();
+    let kept: Vec<EditorialFinding> =
+        findings.into_iter().filter(|f| !skips.contains(&f.fingerprint())).collect();
+    let dropped = before - kept.len();
+    (kept, dropped)
+}
+
 // ── per-source mappers (pure) ───────────────────────────────────────
 
 /// Map a doctor [`ScanFinding`] to an editorial finding — IFF it's an
@@ -786,6 +805,29 @@ mod tests {
         assert!(d.fingerprints.contains(&fp));
         Dismissed::clear(dir.path()).unwrap();
         assert!(Dismissed::load(dir.path()).fingerprints.is_empty());
+    }
+
+    #[test]
+    fn session_skips_drop_matching_findings_only() {
+        let mk = |msg: &str| EditorialFinding {
+            category: "echo".into(),
+            severity: Severity::Info,
+            location: Location::default(),
+            message: msg.into(),
+            hint: None,
+            source: "doctor",
+            autofixable: false,
+        };
+        let (a, b, c) = (mk("echo: `about` ×5"), mk("echo: `wind` ×4"), mk("echo: `grey` ×3"));
+        let skips: BTreeSet<String> = [a.fingerprint(), c.fingerprint()].into_iter().collect();
+        let (kept, dropped) = drop_session_skips(vec![a, b.clone(), c], &skips);
+        assert_eq!(dropped, 2);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].fingerprint(), b.fingerprint(), "only the un-skipped finding survives");
+        // Empty skip set is a no-op (and doesn't clone-walk).
+        let (kept2, dropped2) = drop_session_skips(vec![b.clone()], &BTreeSet::new());
+        assert_eq!(dropped2, 0);
+        assert_eq!(kept2.len(), 1);
     }
 
     #[test]
