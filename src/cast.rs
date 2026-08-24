@@ -6,11 +6,6 @@
 //! join ([`assemble`]) over gathered inputs, plus the impure [`build_cast`]
 //! driver. Read-only; it never edits anything.
 
-// Scaffolding: the builder + types land before EN-P4's `inkhaven cast` CLI and
-// dashboard consume them. Removed once EN-P4 wires them, so the warning-free bar
-// guards the whole surface again.
-#![allow(dead_code)]
-
 use std::collections::BTreeMap;
 
 use uuid::Uuid;

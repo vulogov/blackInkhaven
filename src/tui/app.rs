@@ -14662,7 +14662,7 @@ impl App {
     /// graph (`n` neighbourhood, `i` edge inbox).
     fn open_graph_hub(&mut self) {
         self.modal = Modal::GraphHub;
-        self.status = "graph hub · n neighbourhood · i inbox · w walk · Esc".into();
+        self.status = "graph hub · n neighbourhood · i inbox · w walk · c cast · Esc".into();
     }
 
     fn graph_hub_handle_key(&mut self, key: KeyEvent) -> bool {
@@ -14678,6 +14678,9 @@ impl App {
                 self.modal = Modal::None;
                 self.start_graph_walk();
             }
+            // ENSEMBLE (3.2) — the Dramatis Personae (cast × bonds × arc), the
+            // character-friendly view of the relationship graph.
+            KeyCode::Char('c') => self.open_cast(),
             _ => {}
         }
         true
@@ -16587,6 +16590,111 @@ impl App {
                     }
                 } else {
                     self.status = "bonds: no paragraph to jump to on this row".into();
+                }
+            }
+            _ => {}
+        }
+        true
+    }
+
+    /// ENSEMBLE (EN-P4) — graph hub → `c`: the Dramatis Personae dashboard. The
+    /// book's cast joined with their bonds + arc state; Enter jumps to a
+    /// character's bible node.
+    fn open_cast(&mut self) {
+        let (rows, anchors) = self.build_cast_rows();
+        self.status = "cast · ↑↓ scroll · Enter jump to character · Esc".into();
+        self.modal = Modal::Cast { rows, anchors, cursor: 0 };
+    }
+
+    /// Build the Dramatis Personae rows + parallel jump anchors: one header per
+    /// cast member (name · arc shape · latest state · ✦changes), the member's node
+    /// as the anchor, then their bonds indented beneath.
+    fn build_cast_rows(&self) -> (Vec<String>, Vec<Option<Uuid>>) {
+        let mut rows: Vec<String> = Vec::new();
+        let mut anchors: Vec<Option<Uuid>> = Vec::new();
+        let mut push = |text: String, anchor: Option<Uuid>| {
+            rows.push(text);
+            anchors.push(anchor);
+        };
+        let h = match crate::store::hierarchy::Hierarchy::load(&self.store) {
+            Ok(h) => h,
+            Err(e) => {
+                push(format!("cast unavailable: {e}"), None);
+                return (rows, anchors);
+            }
+        };
+        let book = match crate::cli::resolve_user_book(&h, None, "cast") {
+            Ok(b) => b,
+            Err(e) => {
+                push(format!("cast: {e}"), None);
+                return (rows, anchors);
+            }
+        };
+        let cast = crate::cast::build_cast(&self.layout, &h, &self.cfg, book);
+
+        push(format!("◆ Dramatis Personae — {} character(s)", cast.members.len()), None);
+        push(String::new(), None);
+        if cast.members.is_empty() {
+            push("  (declare characters in the Characters book, or tag rel: bonds)".into(), None);
+            return (rows, anchors);
+        }
+        for m in &cast.members {
+            let arc = m
+                .arc
+                .as_ref()
+                .map(|a| {
+                    let shape = a.arc_code.as_deref().unwrap_or("\u{2014}");
+                    let state = a.current_state.as_deref().unwrap_or("\u{2014}");
+                    let ch = if a.current_chapter > 0 {
+                        format!(" (ch. {})", a.current_chapter)
+                    } else {
+                        String::new()
+                    };
+                    format!("  [{shape} \u{b7} {state}{ch} \u{b7} \u{2726}{}]", a.changes)
+                })
+                .unwrap_or_default();
+            push(format!("{}{arc}", m.name), m.node);
+            for t in &m.bonds {
+                push(format!("    \u{21c4} {} \u{2014} {} (ch. {})", t.other, t.kind, t.chapter), None);
+            }
+        }
+        (rows, anchors)
+    }
+
+    fn cast_handle_key(&mut self, key: KeyEvent) -> bool {
+        let n = match &self.modal {
+            Modal::Cast { rows, .. } => rows.len(),
+            _ => return false,
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "cast: closed".into();
+            }
+            KeyCode::Up => {
+                if let Modal::Cast { cursor, .. } = &mut self.modal {
+                    *cursor = cursor.saturating_sub(1);
+                }
+            }
+            KeyCode::Down => {
+                if let Modal::Cast { cursor, .. } = &mut self.modal {
+                    if n > 0 {
+                        *cursor = (*cursor + 1).min(n - 1);
+                    }
+                }
+            }
+            KeyCode::Enter => {
+                let anchor = match &self.modal {
+                    Modal::Cast { anchors, cursor, .. } => anchors.get(*cursor).copied().flatten(),
+                    _ => None,
+                };
+                if let Some(id) = anchor {
+                    self.modal = Modal::None;
+                    if let Err(e) = self.open_paragraph_by_uuid(id) {
+                        self.status = format!("cast: {e}");
+                    }
+                } else {
+                    self.status = "cast: no character node to jump to on this row".into();
                 }
             }
             _ => {}
@@ -27013,6 +27121,10 @@ impl App {
         }
         if matches!(self.modal, Modal::Bonds { .. }) {
             self.bonds_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::Cast { .. }) {
+            self.cast_handle_key(key);
             return Ok(false);
         }
         if matches!(self.modal, Modal::PoemFormPicker { .. }) {

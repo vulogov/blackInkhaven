@@ -30,6 +30,7 @@ pub mod revise;
 pub mod chronicle;
 pub mod knowledge;
 pub mod bonds;
+pub mod cast;
 pub mod event;
 pub mod event_critique;
 pub mod comments;
@@ -1458,6 +1459,18 @@ pub enum Command {
         /// Soft token budget for `--deep` (informative preflight, never blocks).
         #[arg(long, default_value_t = 8000)]
         max_cost: usize,
+    },
+    /// ENSEMBLE (3.2) — the Dramatis Personae: the book's cast joined with their
+    /// declared BONDS relationships and their CHAR-1 arc state ("who is in this
+    /// book, how they connect, and where each arc stands"). Deterministic;
+    /// read-only.
+    Cast {
+        /// Restrict to a single book (slug or title). Default: the whole project.
+        #[arg(long)]
+        book_name: Option<String>,
+        /// Emit the cast as JSON.
+        #[arg(long)]
+        json: bool,
     },
     /// LECTOR-1 (2.3) — the read-through report: the book read forward, once, as a
     /// first reader. The measured intensity curve + per-chapter scene/sequel beat +
@@ -6918,6 +6931,9 @@ impl Cli {
             }
             Command::Bonds { book_name, json, deep, max_cost } => {
                 bonds::run(&project, book_name.as_deref(), json, deep, max_cost).map_err(Into::into)
+            }
+            Command::Cast { book_name, json } => {
+                cast::run(&project, book_name.as_deref(), json).map_err(Into::into)
             }
             Command::Chronicle { cmd } => match cmd {
                 None => chronicle::trend(&project, None, false).map_err(Into::into),
