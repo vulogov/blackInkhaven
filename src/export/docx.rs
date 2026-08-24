@@ -171,12 +171,29 @@ fn para(text: &str, props: &[Prop]) -> String {
     } else {
         format!("<w:pPr>{ppr}</w:pPr>")
     };
-    let run = if text.is_empty() {
-        String::new()
-    } else {
-        format!("<w:r><w:t xml:space=\"preserve\">{}</w:t></w:r>", xml_escape(text))
-    };
+    let run = if text.is_empty() { String::new() } else { runs(text) };
     format!("<w:p>{ppr}{run}</w:p>\n")
+}
+
+/// XP-2 — split `text` into `<w:r>` runs on authored `*bold*` / `_italic_`
+/// emphasis (shared tokenizer), so fiction italics render in Word instead of
+/// leaking as literal `*bold*`. Plain text with no delimiters yields one run,
+/// identical to the old output.
+fn runs(text: &str) -> String {
+    use crate::manuscript::Emphasis;
+    let mut out = String::with_capacity(text.len() + 16);
+    for span in crate::manuscript::parse_emphasis(text) {
+        let rpr = match span.emphasis {
+            Emphasis::Bold => "<w:rPr><w:b/></w:rPr>",
+            Emphasis::Italic => "<w:rPr><w:i/></w:rPr>",
+            Emphasis::None => "",
+        };
+        out.push_str(&format!(
+            "<w:r>{rpr}<w:t xml:space=\"preserve\">{}</w:t></w:r>",
+            xml_escape(&span.text)
+        ));
+    }
+    out
 }
 
 // ── header part (running header, page 2+) ───────────────────────────
@@ -267,6 +284,19 @@ mod tests {
         // not-well-formed → "unreadable content"). Tab stays (legal).
         assert_eq!(xml_escape("a\u{0}b\u{c}c\td"), "abc\td");
         assert_eq!(xml_escape("<&>"), "&lt;&amp;&gt;");
+    }
+
+    #[test]
+    fn emphasis_becomes_word_runs_not_literal_markers() {
+        // XP-2 — *bold* / _italic_ now emit <w:b>/<w:i> runs, not literal text.
+        let p = para("she was *very* _tired_ now", &[Prop::FirstLineIndent]);
+        assert!(p.contains("<w:b/>"), "bold run: {p}");
+        assert!(p.contains("<w:i/>"), "italic run: {p}");
+        assert!(p.contains("<w:t xml:space=\"preserve\">very</w:t>"), "bold text: {p}");
+        assert!(!p.contains('*') && !p.contains('_'), "no literal delimiters: {p}");
+        // Plain text with no emphasis is a single unchanged run.
+        let plain = para("just plain prose", &[]);
+        assert_eq!(plain.matches("<w:r>").count(), 1, "one run: {plain}");
     }
 
     fn sample() -> (ManuscriptMeta, Vec<ManuscriptChapter>) {

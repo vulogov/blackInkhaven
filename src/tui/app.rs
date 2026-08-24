@@ -2154,6 +2154,8 @@ pub(crate) struct App {
     /// of the diff review advances it. `None` = no batch (single `f` and the
     /// rhythm rewrite leave it untouched, so they never auto-advance).
     pub(super) editorial_batch: Option<EditorialBatch>,
+    /// 3.3.0 E3 — where to reopen the Editorial Pass after a jump / act / batch.
+    pub(super) editorial_return: Option<EditorialReturn>,
     /// 3.3.0 E1 — fingerprints skipped (`s`) in the Editorial Pass this session.
     /// A skip means "not now, but ask me again next time I run inkhaven" — it
     /// survives closing and reopening the pass (the collect re-scan filters these
@@ -3615,6 +3617,7 @@ impl App {
             pending_rewrite_diff: None,
             pending_rewrite_span: None,
             editorial_batch: None,
+            editorial_return: None,
             editorial_session_skips: std::collections::BTreeSet::new(),
             bg_job: None,
             fact_check_pending: None,
@@ -7466,6 +7469,38 @@ pub(super) struct EditorialBatch {
     pub total: usize,
     pub applied: usize,
     pub skipped: usize,
+}
+
+/// 3.3.0 E3 — the Editorial Pass position to restore when the pass reopens after a
+/// jump / act / batch, so the triage loop doesn't reset to the top every time. The
+/// filters are re-applied and the cursor lands on the same finding — or, if it was
+/// just fixed (fingerprint gone), on whatever now sits at that index (the *next*
+/// one). Cleared by a deliberate `Esc` close (→ next open starts fresh).
+#[derive(Debug, Clone)]
+pub(super) struct EditorialReturn {
+    pub filter: Option<String>,
+    pub kind: Option<crate::editorial::ResponseKind>,
+    pub fingerprint: Option<String>,
+    pub index: usize,
+}
+
+/// E3 — the cursor index (into the *filtered* view) to restore. Lands on the saved
+/// finding if it's still present; else on whatever now sits at the saved index —
+/// the next finding after a fix — clamped to the view. Pure.
+fn editorial_return_cursor(
+    findings: &[crate::editorial::EditorialFinding],
+    r: &EditorialReturn,
+) -> usize {
+    let view: Vec<&crate::editorial::EditorialFinding> = findings
+        .iter()
+        .filter(|f| crate::editorial::matches_view(f, r.filter.as_deref(), r.kind))
+        .collect();
+    if let Some(fp) = &r.fingerprint {
+        if let Some(pos) = view.iter().position(|f| &f.fingerprint() == fp) {
+            return pos;
+        }
+    }
+    r.index.min(view.len().saturating_sub(1))
 }
 
 /// 1.3.10 WORLD-2 P3 — the story bible's read-only view of the drift sidecar:
@@ -13354,12 +13389,24 @@ impl App {
                 let n = report.findings.len();
                 let deferred = report.deferred;
                 let stale = report.stale;
+                // E3 — if we're reopening after a jump / act / batch, restore the
+                // saved filter + kind and land on the same finding (or the next, if
+                // it was just fixed). A deliberate Esc cleared the return, so a fresh
+                // open falls through to the top.
+                let (filter, kind_filter, cursor) = match &self.editorial_return {
+                    Some(r) => {
+                        let cur = editorial_return_cursor(&report.findings, r);
+                        (r.filter.clone(), r.kind, cur)
+                    }
+                    None => (None, None, 0),
+                };
+                let returned = self.editorial_return.is_some();
                 self.modal = Modal::EditorialPass {
                     findings: report.findings,
-                    cursor: 0,
-                    scroll: 0,
-                    filter: None,
-                    kind_filter: None,
+                    cursor,
+                    scroll: cursor.saturating_sub(4),
+                    filter,
+                    kind_filter,
                 };
                 let mut note = if deferred > 0 {
                     format!(" ({deferred} deferred)")
@@ -13368,6 +13415,9 @@ impl App {
                 };
                 if skipped > 0 {
                     note.push_str(&format!(" ({skipped} skipped)"));
+                }
+                if returned {
+                    note.push_str(" · ↩ resumed");
                 }
                 if stale {
                     note.push_str(" · ⚠ may be stale (Ctrl+V Shift+F)");
@@ -13383,7 +13433,7 @@ impl App {
     fn editorial_pass_handle_key(&mut self, key: KeyEvent) -> bool {
         // Read everything into locals, then drop the borrow before calling
         // self methods (the established modal pattern).
-        let (filtered_len, cursor, cats, target, has_jump, sel_fp, sel_rewrite, sel_decision, sel_brief, batch) = {
+        let (filtered_len, cursor, cats, target, has_jump, sel_fp, sel_rewrite, sel_decision, sel_brief, batch, return_state) = {
             let Modal::EditorialPass { findings, cursor, filter, kind_filter, .. } = &self.modal else {
                 return false;
             };
@@ -13430,11 +13480,20 @@ impl App {
                 sel.filter(|f| f.response() == crate::editorial::ResponseKind::Brief)
                     .map(|f| (f.category.clone(), f.message.clone())),
                 batch,
+                // E3 — the position to restore if this key leaves the pass.
+                EditorialReturn {
+                    filter: filter.clone(),
+                    kind: kind_filter,
+                    fingerprint: sel.map(|f| f.fingerprint()),
+                    index: *cursor,
+                },
             )
         };
         match key.code {
             KeyCode::Esc => {
                 self.modal = Modal::None;
+                // E3 — a deliberate close forgets the position: next open is fresh.
+                self.editorial_return = None;
                 self.status = "editorial: closed".into();
             }
             KeyCode::Up => self.set_editorial_cursor(cursor.saturating_sub(1)),
@@ -13462,7 +13521,10 @@ impl App {
             // clear all deferrals + reload.
             KeyCode::Char('D') => self.editorial_clear_deferred(),
             // AI rewrite-in-place: open the paragraph, stream a fix → diff.
-            KeyCode::Char('f') => match sel_rewrite {
+            KeyCode::Char('f') => {
+              // E3 — remember where we were so reopening lands here (or the next).
+              self.editorial_return = Some(return_state.clone());
+              match sel_rewrite {
                 Some((category, pid, span, note)) => {
                     self.modal = Modal::None;
                     match self.open_paragraph_by_uuid(pid) {
@@ -13481,7 +13543,8 @@ impl App {
                         self.status = "editorial: jump (⏎) to edit this one by hand".into();
                     }
                 },
-            },
+              }
+            }
             // batch fix-all: walk every rewritable finding in the current
             // view through the per-item diff review.
             KeyCode::Char('F') => {
@@ -13491,6 +13554,8 @@ impl App {
                 } else {
                     let total = batch.len();
                     self.modal = Modal::None;
+                    // E3 — remember the view so the pass auto-reopens here afterward.
+                    self.editorial_return = Some(return_state.clone());
                     self.editorial_batch = Some(EditorialBatch {
                         queue: batch.into_iter().collect(),
                         total,
@@ -13503,6 +13568,7 @@ impl App {
             KeyCode::Enter => match (has_jump, target) {
                 (true, Some(pid)) => {
                     self.modal = Modal::None;
+                    self.editorial_return = Some(return_state);
                     match self.open_paragraph_by_uuid(pid) {
                         Ok(()) => self.status = "→ jumped to the finding".into(),
                         Err(e) => self.status = format!("edit: {e}"),
@@ -13631,6 +13697,10 @@ impl App {
                     .map(|b| (b.applied, b.skipped))
                     .unwrap_or((0, 0));
                 self.editorial_batch = None;
+                // E3 — the batch is done; reopen the pass (which restores the saved
+                // view + lands on what's left) so triage continues without a manual
+                // Ctrl+V Shift+R.
+                self.open_editorial_pass();
                 self.status =
                     format!("editorial batch: done — {applied} applied, {skipped} skipped");
             }
@@ -31991,6 +32061,59 @@ pub(super) fn format_progress_gauge(current: i64, target: i64) -> (String, i64, 
             .add_modifier(Modifier::DIM)
     };
     (gauge, pct, style)
+}
+
+#[cfg(test)]
+mod tests_editorial_return {
+    use super::*;
+    use crate::editorial::{EditorialFinding, Location, Severity};
+
+    fn finding(category: &str, message: &str) -> EditorialFinding {
+        EditorialFinding {
+            category: category.into(),
+            severity: Severity::Info,
+            location: Location::default(),
+            message: message.into(),
+            hint: None,
+            source: "t",
+            autofixable: false,
+        }
+    }
+
+    #[test]
+    fn cursor_lands_on_saved_finding_when_present() {
+        let (a, b, c) = (finding("echo", "a"), finding("echo", "b"), finding("echo", "c"));
+        let findings = vec![a, b.clone(), c];
+        let r = EditorialReturn { filter: None, kind: None, fingerprint: Some(b.fingerprint()), index: 1 };
+        assert_eq!(editorial_return_cursor(&findings, &r), 1);
+    }
+
+    #[test]
+    fn cursor_falls_to_next_when_saved_finding_was_fixed() {
+        // b was fixed and is gone; the saved index now points at what was "next".
+        let (a, b, c) = (finding("echo", "a"), finding("echo", "b"), finding("echo", "c"));
+        let remaining = vec![a, c];
+        let r = EditorialReturn { filter: None, kind: None, fingerprint: Some(b.fingerprint()), index: 1 };
+        assert_eq!(editorial_return_cursor(&remaining, &r), 1, "clamped to the item now at idx 1");
+        // Empty view clamps to 0.
+        let empty: Vec<EditorialFinding> = Vec::new();
+        assert_eq!(editorial_return_cursor(&empty, &r), 0);
+    }
+
+    #[test]
+    fn cursor_respects_the_saved_kind_filter() {
+        // A Decision saved under a kind filter; positions within the filtered view.
+        let (echo, decision) = (finding("echo", "x"), finding("co_location", "y"));
+        let findings = vec![echo, decision.clone()];
+        let r = EditorialReturn {
+            filter: None,
+            kind: Some(crate::editorial::ResponseKind::Decision),
+            fingerprint: Some(decision.fingerprint()),
+            index: 0,
+        };
+        // Only the decision is in view → index 0.
+        assert_eq!(editorial_return_cursor(&findings, &r), 0);
+    }
 }
 
 #[cfg(test)]

@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 use crate::export::markdown::typst_to_markdown;
 
-use super::markdown_html::{escape_html, markdown_to_html};
+use super::markdown_html::{escape_html, inline, markdown_to_html};
 
 /// Render a single paragraph body to HTML, applying single-sourcing variables and
 /// branching on the `para:*` structural subtype. Headings are demoted one level so
@@ -31,6 +31,9 @@ pub fn render_body(tags: &[String], body: &str, variables: &BTreeMap<String, Str
     if tags.iter().any(|t| t == "para:table") {
         return render_table(&body);
     }
+    if let Some(kind) = tags.iter().find_map(|t| t.strip_prefix("para:verse-")) {
+        return render_verse(kind, &body);
+    }
     if tags.iter().any(|t| t == "para:procedure") {
         // Typst `+ item` numbered list → markdown ordered list.
         let md: String = body
@@ -47,6 +50,38 @@ pub fn render_body(tags: &[String], body: &str, variables: &BTreeMap<String, Str
 
     let md = typst_to_markdown(&body);
     markdown_to_html(&demote_headings(&md, 1))
+}
+
+/// XP-4 — render a `para:verse-<kind>` block, **preserving line breaks** (the
+/// generic prose path collapses them, the one hole in the HTML exporter). Each
+/// line keeps its inline emphasis (typst → markdown → inline HTML); a blank line
+/// separates stanzas. `<div class="verse verse-<kind>">` with `<p class="stanza">`
+/// blocks, lines joined by `<br/>` — CSS-stylable, semantic.
+fn render_verse(kind: &str, body: &str) -> String {
+    let mut out = format!("<div class=\"verse verse-{}\">\n", escape_html(kind));
+    let mut stanza: Vec<String> = Vec::new();
+    for line in body.lines() {
+        if line.trim().is_empty() {
+            flush_stanza(&mut stanza, &mut out);
+        } else {
+            let md = typst_to_markdown(line);
+            stanza.push(inline(md.trim()));
+        }
+    }
+    flush_stanza(&mut stanza, &mut out);
+    out.push_str("</div>\n");
+    out
+}
+
+/// Emit the accumulated verse lines as one `<p class="stanza">` (lines joined by
+/// `<br/>`), then clear the buffer. A no-op on an empty stanza.
+fn flush_stanza(stanza: &mut Vec<String>, out: &mut String) {
+    if !stanza.is_empty() {
+        out.push_str("<p class=\"stanza\">\n");
+        out.push_str(&stanza.join("<br/>\n"));
+        out.push_str("\n</p>\n");
+        stanza.clear();
+    }
 }
 
 /// Render a `para:admonition-<kind>` block: pull the content out of the seed
@@ -334,5 +369,17 @@ mod tests {
         let html = render_body(&[], "= Overview\n\n{{product}} is here.\n", &BTreeMap::from([("product".to_string(), "Inkhaven".to_string())]));
         assert!(html.contains("<h2 id=\"overview\">Overview</h2>"), "got: {html}");
         assert!(html.contains("Inkhaven is here."));
+    }
+
+    #[test]
+    fn verse_preserves_line_breaks_and_stanzas() {
+        // XP-4 — two stanzas of two lines; blank line = stanza break. Emphasis kept.
+        let body = "Roses are *red*,\nviolets are blue,\n\nsugar is sweet,\nand so are you.\n";
+        let html = render_body(&["para:verse-quatrain".to_string()], body, &BTreeMap::new());
+        assert!(html.contains("class=\"verse verse-quatrain\""), "got: {html}");
+        assert!(html.contains("<br/>"), "line breaks preserved: {html}");
+        assert_eq!(html.matches("<p class=\"stanza\">").count(), 2, "two stanzas: {html}");
+        assert!(html.contains("<strong>red</strong>"), "inline emphasis kept: {html}");
+        // The generic prose path would have joined these into one <p> with no <br/>.
     }
 }

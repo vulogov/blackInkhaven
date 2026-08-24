@@ -99,6 +99,89 @@ pub fn is_scene_break(text: &str) -> bool {
     chars.iter().all(|c| *c == first)
 }
 
+/// XP-2 — an inline emphasis span: a run of text that is plain, bold, or italic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Emphasis {
+    None,
+    Bold,
+    Italic,
+}
+
+pub(crate) struct Span {
+    pub text: String,
+    pub emphasis: Emphasis,
+}
+
+/// Split prose into emphasis spans on balanced `*bold*` / `_italic_` runs (flat,
+/// non-nested — the common fiction case). An unbalanced or empty delimiter is
+/// kept as literal text. Shared by the docx exporter (→ `<w:b>`/`<w:i>` runs) and
+/// the Shunn-typst exporter (→ `*…*` / `_…_` markup), so authored emphasis stops
+/// rendering as literal `\*bold\*`.
+pub(crate) fn parse_emphasis(text: &str) -> Vec<Span> {
+    let mut spans = Vec::new();
+    let mut plain = String::new();
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        let em = match c {
+            '*' => Emphasis::Bold,
+            '_' => Emphasis::Italic,
+            _ => {
+                plain.push(c);
+                continue;
+            }
+        };
+        // Greedy: read until the next matching delimiter on this line.
+        let mut body = String::new();
+        let mut closed = false;
+        for d in chars.by_ref() {
+            if d == c {
+                closed = true;
+                break;
+            }
+            body.push(d);
+        }
+        if closed && !body.is_empty() {
+            if !plain.is_empty() {
+                spans.push(Span { text: std::mem::take(&mut plain), emphasis: Emphasis::None });
+            }
+            spans.push(Span { text: body, emphasis: em });
+        } else {
+            // Unbalanced / empty → literal delimiter + whatever we consumed.
+            plain.push(c);
+            plain.push_str(&body);
+        }
+    }
+    if !plain.is_empty() {
+        spans.push(Span { text: plain, emphasis: Emphasis::None });
+    }
+    spans
+}
+
+/// Escape a line of **prose** for typst while preserving authored emphasis:
+/// balanced `*bold*` / `_italic_` become real typst markup (delimiters kept, the
+/// content escaped), everything else is escaped literally. Used for chapter body
+/// paragraphs; titles / contact blocks use the plain [`escape_typst`].
+fn escape_typst_prose(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 8);
+    for span in parse_emphasis(s) {
+        let inner = escape_typst(&span.text);
+        match span.emphasis {
+            Emphasis::Bold => {
+                out.push('*');
+                out.push_str(&inner);
+                out.push('*');
+            }
+            Emphasis::Italic => {
+                out.push('_');
+                out.push_str(&inner);
+                out.push('_');
+            }
+            Emphasis::None => out.push_str(&inner),
+        }
+    }
+    out
+}
+
 /// Escape the characters typst treats as markup so prose
 /// renders literally.
 fn escape_typst(s: &str) -> String {
@@ -175,7 +258,7 @@ pub fn build_typst(meta: &ManuscriptMeta, chapters: &[ManuscriptChapter]) -> Str
             if is_scene_break(para) {
                 s.push_str("#align(center)[\\#]\n\n");
             } else {
-                s.push_str(&escape_typst(para.trim()));
+                s.push_str(&escape_typst_prose(para.trim()));
                 s.push_str("\n\n");
             }
         }
@@ -264,6 +347,34 @@ mod tests {
         assert!(e.contains("\\$"));
     }
 
+    #[test]
+    fn prose_escape_preserves_emphasis_but_escapes_content() {
+        // XP-2 — *bold* / _italic_ become real typst markup (not literal \*bold\*),
+        // while other specials inside them are still escaped.
+        let e = escape_typst_prose("say *bold #x* and _soft_ now");
+        assert!(e.contains("*bold \\#x*"), "bold markup kept, # escaped: {e}");
+        assert!(e.contains("_soft_"), "italic markup kept: {e}");
+        assert!(!e.contains("\\*"), "no escaped asterisk on balanced emphasis: {e}");
+        // An unbalanced delimiter stays literal (escaped).
+        let u = escape_typst_prose("2 * 3 = 6");
+        assert!(u.contains("\\*"), "stray asterisk stays literal: {u}");
+    }
+
+    #[test]
+    fn parse_emphasis_splits_flat_spans() {
+        let spans = parse_emphasis("a *b* c _d_");
+        let kinds: Vec<_> = spans.iter().map(|s| (s.text.as_str(), s.emphasis)).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                ("a ", Emphasis::None),
+                ("b", Emphasis::Bold),
+                (" c ", Emphasis::None),
+                ("d", Emphasis::Italic),
+            ]
+        );
+    }
+
     // ── build_typst structure ─────────────────────────
 
     fn sample() -> (ManuscriptMeta, Vec<ManuscriptChapter>) {
@@ -316,7 +427,7 @@ mod tests {
     }
 
     #[test]
-    fn typst_escapes_prose_markup() {
+    fn typst_escapes_prose_markup_but_keeps_emphasis() {
         let meta = ManuscriptMeta {
             title: "Test".into(),
             contact: "X".into(),
@@ -329,7 +440,11 @@ mod tests {
             paragraphs: vec!["A #hashtag and *stars* here.".into()],
         }];
         let out = build_typst(&meta, &chapters);
+        // A non-emphasis special is still escaped literally…
         assert!(out.contains("\\#hashtag"));
-        assert!(out.contains("\\*stars\\*"));
+        // …but XP-2 keeps authored *bold* as real typst markup (renders bold),
+        // rather than the old over-escaped literal `\*stars\*`.
+        assert!(out.contains("*stars*"), "{out}");
+        assert!(!out.contains("\\*stars"), "emphasis no longer escaped: {out}");
     }
 }
