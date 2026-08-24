@@ -859,7 +859,11 @@ fn bond_edges(ties: &[crate::bonds::Declared], by_name: &HashMap<String, Uuid>) 
                 EndpointRef::Node(b),
                 EdgeOrigin::Structural,
             )
+            // `attrs` is the structured form (graph/Bund consumers); `reason` is
+            // the human label the neighbourhood renderers already print, so a
+            // Relates edge reads "⇄ Kell — ally (ch. 1)" instead of a bare pair.
             .with_attrs(serde_json::json!({ "rel": kind, "chapter": chapter }))
+            .with_reason(format!("{kind} (ch. {chapter})"))
         })
         .collect()
 }
@@ -1359,6 +1363,8 @@ mod tests {
         assert!(edges.iter().all(|e| e.kind == EdgeKind::Relates && !e.directed && e.origin == EdgeOrigin::Structural));
         let ally = edges.iter().find(|e| e.attrs["rel"] == "ally").unwrap();
         assert_eq!(ally.attrs["chapter"], 1, "the earliest declaration wins");
+        // The human `reason` is what the neighbourhood renderers print.
+        assert_eq!(ally.reason.as_deref(), Some("ally (ch. 1)"));
 
         // An unresolvable end (not a known character) drops the bond entirely.
         let ghost = vec![Declared::new(
