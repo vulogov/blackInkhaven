@@ -99,8 +99,9 @@ archaic — tracked per chapter so *drift* becomes visible ("the prose gets casu
 in Act III"). A word-list bundle: contraction rate, archaism density, a
 formality balance, and an English latinate-diction proxy. Chapters that drift
 from the opening beyond `chorus.register_drift_threshold` are flagged (part of
-`chorus scan`). Solid for EN/RU; sparser languages degrade to what their lists
-cover rather than guessing.
+`chorus scan`). All five project languages carry curated register lists
+(EN/RU/FR + DE/ES as of 3.3.0); any other language degrades to what its lists
+cover rather than guessing. The latinate-diction proxy stays English-only.
 
 ---
 
@@ -137,8 +138,8 @@ distinctiveness, and the Stylist's synthesis together.
 CHORUS keys off the project language and is honest about coverage. Character
 voice + distinctiveness + drift work in every language (rhythm/diversity) with
 the language-sensitive axes filling in for EN/RU/DE/FR/ES. Head-hop reuses the
-per-language interiority markers (**including Russian**). Register is solid for
-EN/RU. The **tense** check covers EN/DE/FR/ES (Russian excluded), and it says so. The Inner
+per-language interiority markers (**including Russian**). Register carries curated
+lists for all five (EN/RU/FR/DE/ES). The **tense** check covers EN/DE/FR/ES (Russian excluded), and it says so. The Inner
 Stylist coaches in the book's language.
 
 ---
