@@ -13359,6 +13359,7 @@ impl App {
                     cursor: 0,
                     scroll: 0,
                     filter: None,
+                    kind_filter: None,
                 };
                 let mut note = if deferred > 0 {
                     format!(" ({deferred} deferred)")
@@ -13372,7 +13373,7 @@ impl App {
                     note.push_str(" · ⚠ may be stale (Ctrl+V Shift+F)");
                 }
                 self.status = format!(
-                    "Editorial Pass · {n} finding(s){note} · ↑↓ · ⏎ jump · f act (fix/decide/brief) · F fix-all · s skip · d defer · Esc"
+                    "Editorial Pass · {n} finding(s){note} · ↑↓ · ⏎ jump · f act · F fix-all · [ ] category · r kind · s skip · d defer · Esc"
                 );
             }
             Err(e) => self.status = format!("edit: {e}"),
@@ -13383,20 +13384,26 @@ impl App {
         // Read everything into locals, then drop the borrow before calling
         // self methods (the established modal pattern).
         let (filtered_len, cursor, cats, target, has_jump, sel_fp, sel_rewrite, sel_decision, sel_brief, batch) = {
-            let Modal::EditorialPass { findings, cursor, filter, .. } = &self.modal else {
+            let Modal::EditorialPass { findings, cursor, filter, kind_filter, .. } = &self.modal else {
                 return false;
             };
+            let kind_filter = *kind_filter;
             let mut cats: Vec<String> = findings.iter().map(|f| f.category.clone()).collect();
             cats.sort();
             cats.dedup();
             let keep = |f: &&crate::editorial::EditorialFinding| {
-                filter.as_deref().is_none_or(|c| f.category == c)
+                crate::editorial::matches_view(f, filter.as_deref(), kind_filter)
             };
             let filtered_len = findings.iter().filter(keep).count();
             let sel = findings.iter().filter(keep).nth(*cursor);
             // every AI-rewritable finding in the current view, in display order —
-            // the queue `F` walks.
-            let batch = crate::editorial::batch_fix_queue(findings, filter.as_deref());
+            // the queue `F` walks. A non-Rewrite kind view has nothing to batch
+            // (Decisions/Briefs are handled one at a time), so gate it there.
+            let batch = if kind_filter.is_some_and(|k| k != crate::editorial::ResponseKind::Rewrite) {
+                Vec::new()
+            } else {
+                crate::editorial::batch_fix_queue(findings, filter.as_deref())
+            };
             (
                 filtered_len,
                 *cursor,
@@ -13438,6 +13445,9 @@ impl App {
             }
             KeyCode::Char('[') => self.cycle_editorial_filter(&cats, false),
             KeyCode::Char(']') => self.cycle_editorial_filter(&cats, true),
+            // E2 — cycle the response-kind filter (✎ Rewrite / ⇄ Decision / ✉ Brief).
+            KeyCode::Char('r') => self.cycle_editorial_kind(true),
+            KeyCode::Char('R') => self.cycle_editorial_kind(false),
             // skip (session) / defer (persist) the selected finding.
             KeyCode::Char('s') => {
                 if let Some(fp) = sel_fp {
@@ -13641,11 +13651,12 @@ impl App {
             // hidden (until restart).
             self.editorial_session_skips.insert(fingerprint.to_string());
         }
-        if let Modal::EditorialPass { findings, cursor, filter, .. } = &mut self.modal {
+        if let Modal::EditorialPass { findings, cursor, filter, kind_filter, .. } = &mut self.modal {
             findings.retain(|f| f.fingerprint() != fingerprint);
+            let kf = *kind_filter;
             let flen = findings
                 .iter()
-                .filter(|f| filter.as_deref().is_none_or(|c| f.category == c))
+                .filter(|f| crate::editorial::matches_view(f, filter.as_deref(), kf))
                 .count();
             *cursor = (*cursor).min(flen.saturating_sub(1));
         }
@@ -19210,6 +19221,21 @@ impl App {
             let n = cats.len() + 1;
             let next = if forward { (cur + 1) % n } else { (cur + n - 1) % n };
             *filter = if next == 0 { None } else { Some(cats[next - 1].clone()) };
+            *cursor = 0;
+            *scroll = 0;
+        }
+    }
+
+    /// E2 — cycle the response-kind filter `None → ✎ → ⇄ → ✉ → None` (or
+    /// backwards), resetting the cursor. AND-ed with the category filter.
+    fn cycle_editorial_kind(&mut self, forward: bool) {
+        use crate::editorial::ResponseKind::{Brief, Decision, Rewrite};
+        const RING: [Option<crate::editorial::ResponseKind>; 4] =
+            [None, Some(Rewrite), Some(Decision), Some(Brief)];
+        if let Modal::EditorialPass { kind_filter, cursor, scroll, .. } = &mut self.modal {
+            let cur = RING.iter().position(|k| *k == *kind_filter).unwrap_or(0);
+            let next = if forward { (cur + 1) % 4 } else { (cur + 3) % 4 };
+            *kind_filter = RING[next];
             *cursor = 0;
             *scroll = 0;
         }
