@@ -27,40 +27,42 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 3.3.0 — Wider Reach, Sharper Tools
+## Latest release · 3.4.0 — Export Fidelity & a Smoother Revision Loop
 
-The current release is **3.3.0**, a **widen-and-polish** release — no new reader,
-no new axis. It takes capabilities Inkhaven already has and makes them reach
-further, across three tracks (deterministic, no new runtime crates):
+The current release is **3.4.0**, a **widen-and-polish** release — no new
+capability. It deepens the export formats you already have (so more of your
+manuscript survives the trip out) and tightens the Editorial Pass revision loop.
+Two tracks (deterministic, no new runtime crates):
 
-- **Multilingual parity.** A per-reader audit found features that silently
-  narrowed outside English, and closed the ones a word-list can honestly fix:
-  **SENTINEL numeric** (direction / duration contradictions) gains **German +
-  Russian** lexicons — Russian with the case-inflected unit forms the counting
-  construction needs (`день` / `дня` / `дней`) and a `direction_preps` set for
-  `nach Norden` / `на север`; **CHORUS register** gains curated **DE + ES** lists
-  (they were being matched against the *English* lists → a false "clean
-  register"); **Inner Socrates tense-shift** now runs for **DE/FR/ES**, localized.
-  Honest limits stay limits (Socrates pronoun-ambiguity is EN-only — coreference
-  needs a parser; Russian tense stays surfaced-as-unsupported — aspect).
-- **`ink.world.*` Bund.** The last parked scripting namespace:
-  `ink.world.{report, undescribed, check}` wrap the core `inkhaven world` report
-  (entity inventory, coverage, a pre-submit gate) — read-only, reusing the
-  existing report path.
-- **Editorial Pass ergonomics.** Session skips (`s`) now **persist** across
-  reopening the pass (they were silently lost); **`r`** adds a response-kind
-  filter (✎ Rewrite / ⇄ Decision / ✉ Brief) beside the category filter, so you
-  can narrow to just the decisions you owe or just the batchable rewrites.
+- **Export fidelity.** An audit of every export path found one lossy bottleneck
+  and a few format-specific holes. The shared **`typst_to_markdown`** converter
+  (which feeds markdown export, `export epub`, *and* the HTML prose path) now
+  handles `#figure(image(…))`, inline `#footnote[…]` (→ a `[^N]` marker + a
+  definition list), and `@key`/`@key[locus]` references (→ pandoc `[@key]`).
+  **docx + the Shunn-format PDF** render authored `*bold*`/`_italic_` as real
+  emphasis instead of literal `\*bold\*` (central for fiction). CLI
+  **`export epub`** routes to the rich, multi-chapter builder (images, footnote
+  popups, cover) instead of the old single-chapter converter. And **HTML verse**
+  (`para:verse-*`) preserves its line breaks + stanzas.
+- **Editorial Pass, round three.** The revision loop kept resetting to the top.
+  Now the pass **remembers your place**: after a jump / act / batch it reopens on
+  the same finding — or the next, if you just fixed it — with your filters intact;
+  a deliberate `Esc` forgets the position; and the `F` batch **auto-reopens** the
+  pass when it finishes, so triage continues without a manual `Ctrl+V Shift+R`.
 
-**Alias resolution** (nicknames / epithets resolving to a character across every
-reader) was **postponed, not dropped** — it touches the shared mention-matcher
-five readers depend on and is gated behind an architectural decision; it earns its
-own release. No new config; no new runtime crates.
+Deferred as follow-ups: the Scrivener non-ASCII import, the EPUB-import round-trip,
+and full retirement of the single-chapter epub toy (still used by the Bund/TUI
+in-memory exporters). No new config; no new runtime crates.
 
-Read the full notes: [`Documentation/RELEASE_NOTES/3.3.0.md`](Documentation/RELEASE_NOTES/3.3.0.md).
+Read the full notes: [`Documentation/RELEASE_NOTES/3.4.0.md`](Documentation/RELEASE_NOTES/3.4.0.md).
 
 ### Recent releases
 
+- **3.3.0 — Wider Reach, Sharper Tools.** Multilingual parity (SENTINEL numeric
+  DE+RU, CHORUS register DE+ES, Inner Socrates tense-shift DE/FR/ES), the
+  `ink.world.*` Bund reads, and the first Editorial Pass ergonomics (session-skip
+  persistence + the `r` response-kind filter).
+  [notes](Documentation/RELEASE_NOTES/3.3.0.md)
 - **3.2.0 — ENSEMBLE: Your Cast, Connected.** Deepened the people layer: declared
   `rel:` bonds became first-class **`relates` graph edges** (traversable via
   `graph neighbors` / the `Ctrl+B z` hub / F9 Graph chat), and the **Dramatis
@@ -83,14 +85,14 @@ lines (zero Critical), with every surviving finding fixed and zero breaking
 changes. The 3.0.x line (through 3.0.9) then hardened the Bund scripting coverage
 and the export/import/keymap/assembly subsystems through successive targeted
 audits, each leaving a build-time guard behind. **3.1.0 lifted the feature freeze**
-(BONDS); **3.2.0** (ENSEMBLE) and **3.3.0** (multilingual parity + polish) continue
+(BONDS); **3.2.0** (ENSEMBLE), **3.3.0** (multilingual parity), and **3.4.0** (export fidelity) continue
 on that hardened surface. Full 3.0.0 notes:
 [`Documentation/RELEASE_NOTES/3.0.0.md`](Documentation/RELEASE_NOTES/3.0.0.md).
 
 ### Dependencies & compatibility
 
 No new dependencies, no breaking changes. Existing projects open unchanged. Compiles
-warning-free. Test suite → 2961.
+warning-free. Test suite → 2972.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
@@ -288,14 +290,14 @@ cargo install inkhaven
 ```
 
 Inkhaven is published on crates.io — every release tag pushes a
-new version (latest: 3.3.0).  The first build takes ~10 minutes on
+new version (latest: 3.4.0).  The first build takes ~10 minutes on
 a modern laptop because of DuckDB + fastembed + ONNX-runtime
 compilation; `cargo binstall` above is the fast path.
 
 ### 4. `cargo install --git` (compile from a specific tag)
 
 ```bash
-cargo install --git https://github.com/vulogov/blackInkhaven --tag v3.3.0
+cargo install --git https://github.com/vulogov/blackInkhaven --tag v3.4.0
 ```
 
 Useful when you want a specific tag, a pre-release branch, or a
