@@ -2132,7 +2132,7 @@ detector as one always-watching concern. All knobs are advisory and on by defaul
 | `continuity.ambient_cooldown_secs` | int | `30` | Throttle floor between ambient re-checks. |
 | `continuity.co_location` | bool | `true` | Per-detector toggle — a character in two places at overlapping times. |
 | `continuity.timeline` | bool | `true` | Per-detector toggle — orphaned events / fuzzy overlaps (the review pass surfaces these on their own line regardless; this governs the standalone check). |
-| `continuity.numeric` | bool | `true` | Per-detector toggle — direction reversal / conflicting durations (EN/FR/ES). |
+| `continuity.numeric` | bool | `true` | Per-detector toggle — direction reversal / conflicting durations (EN/FR/ES/DE/RU). |
 | `continuity.char_facts` | bool | `true` | Per-detector toggle — an established fact changed across chapters. |
 | `continuity.introduce` | bool | `true` | Per-detector toggle — an entity referenced before it's introduced. |
 | `continuity.introduce_tolerance` | int | `0` | Chapters of "referenced early" tolerated before `introduce` flags (`0` = any earlier-chapter reference; raise to allow foreshadowing). |

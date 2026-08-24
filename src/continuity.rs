@@ -9,16 +9,21 @@
 //! directions (`north` / `nord` / `norte`) need a
 //! per-language lexicon.
 //!
-//! ## What ships in C.2
+//! ## Language coverage
 //!
-//! Built-in lexicons for **English, French, Spanish**
-//! (English + Romance — verifiable by hand).  Russian +
-//! German + the `bootstrap-continuity` LLM-seed CLI land
-//! in C.2.b (Cyrillic declension + German compounding
-//! want native-speaker / LLM verification).  Languages
-//! without a bundled lexicon skip the scan with a clear
-//! message — the graceful degradation the 1.2.19 plan
-//! promised, never silent garbage.
+//! Built-in lexicons for all five project languages —
+//! **English, French, Spanish** (C.2), and **German +
+//! Russian** (3.3.0 M1, the multilingual-parity pass).
+//! Russian carries the case-inflected unit forms the
+//! counting construction demands (`день`/`дня`/`дней`);
+//! German carries dative-plural forms (`Tagen`) but does
+//! not decompose single-word compounds (`einundzwanzig`)
+//! — digits cover those.  Both use a per-language
+//! `direction_preps` set so a prepositional direction
+//! (`nach Norden` / `на север`) is caught.  Any language
+//! without a bundled lexicon still skips the scan with a
+//! clear message — graceful degradation, never silent
+//! garbage.
 //!
 //! ## How contradiction detection stays conservative
 //!
@@ -46,7 +51,7 @@
 //! `este` = "east" AND "this") and the "a character
 //! legitimately walked north then south" false positive.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// Cardinal direction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,6 +113,11 @@ pub struct ContinuityLexicon {
     spatial: HashMap<String, f64>,
     /// Direction word → cardinal.
     directions: HashMap<String, Direction>,
+    /// One-token prepositions a direction may hide behind, so
+    /// `200 Meilen nach Norden` / `200 вёрст на север` are caught
+    /// as directed magnitudes. Empty for languages whose directions
+    /// follow the unit bare (EN `north`, FR `nord`, ES `norte`).
+    direction_preps: HashSet<String>,
 }
 
 // Base-unit constants.
@@ -124,9 +134,14 @@ const MILE: f64 = 1609.34;
 const KM: f64 = 1000.0;
 const LEAGUE: f64 = 5556.0;
 const PACE: f64 = 0.762;
+const VERST: f64 = 1066.8; // верста — Russian historical unit
 
 fn map(pairs: &[(&str, f64)]) -> HashMap<String, f64> {
     pairs.iter().map(|(k, v)| (k.to_string(), *v)).collect()
+}
+
+fn set(words: &[&str]) -> HashSet<String> {
+    words.iter().map(|w| w.to_string()).collect()
 }
 
 /// Built-in lexicon for a supported language, or `None`
@@ -137,6 +152,8 @@ pub fn built_in_lexicon(language: &str) -> Option<ContinuityLexicon> {
         "english" | "en" => Some(english()),
         "french" | "fr" => Some(french()),
         "spanish" | "es" => Some(spanish()),
+        "german" | "de" => Some(german()),
+        "russian" | "ru" => Some(russian()),
         _ => None,
     }
 }
@@ -179,6 +196,7 @@ fn english() -> ContinuityLexicon {
             ("pace", PACE), ("paces", PACE),
         ]),
         directions: directions_en(),
+        direction_preps: set(&[]),
     }
 }
 
@@ -231,6 +249,7 @@ fn french() -> ContinuityLexicon {
         .iter()
         .map(|(k, v)| (k.to_string(), *v))
         .collect(),
+        direction_preps: set(&[]),
     }
 }
 
@@ -277,6 +296,120 @@ fn spanish() -> ContinuityLexicon {
         .iter()
         .map(|(k, v)| (k.to_string(), *v))
         .collect(),
+        direction_preps: set(&[]),
+    }
+}
+
+/// German — number-words 0–90 + tens, plus dative-plural unit forms
+/// (`Tagen` / `Jahren`). Single-word compounds (`einundzwanzig` = 21)
+/// are not decomposed — digits (`21 Tage`) cover those; a documented
+/// limit of the lexicon approach for German. Directions attach via a
+/// preposition (`nach Norden`).
+fn german() -> ContinuityLexicon {
+    ContinuityLexicon {
+        numbers: map(&[
+            ("ein", 1.0), ("eine", 1.0), ("eins", 1.0),
+            ("null", 0.0), ("zwei", 2.0), ("drei", 3.0),
+            ("vier", 4.0), ("fünf", 5.0), ("sechs", 6.0),
+            ("sieben", 7.0), ("acht", 8.0), ("neun", 9.0),
+            ("zehn", 10.0), ("elf", 11.0), ("zwölf", 12.0),
+            ("dreizehn", 13.0), ("vierzehn", 14.0),
+            ("fünfzehn", 15.0), ("sechzehn", 16.0),
+            ("siebzehn", 17.0), ("achtzehn", 18.0),
+            ("neunzehn", 19.0), ("zwanzig", 20.0),
+            ("dreißig", 30.0), ("dreissig", 30.0),
+            ("vierzig", 40.0), ("fünfzig", 50.0),
+            ("sechzig", 60.0), ("siebzig", 70.0),
+            ("achtzig", 80.0), ("neunzig", 90.0),
+        ]),
+        scales: map(&[("hundert", 100.0), ("tausend", 1000.0)]),
+        temporal: map(&[
+            ("sekunde", 1.0), ("sekunden", 1.0),
+            ("minute", MINUTE), ("minuten", MINUTE),
+            ("stunde", HOUR), ("stunden", HOUR),
+            ("tag", DAY), ("tage", DAY), ("tagen", DAY),
+            ("woche", WEEK), ("wochen", WEEK),
+            ("monat", MONTH), ("monate", MONTH), ("monaten", MONTH),
+            ("jahr", YEAR), ("jahre", YEAR), ("jahren", YEAR),
+        ]),
+        spatial: map(&[
+            ("meter", 1.0), ("metern", 1.0),
+            ("kilometer", KM), ("kilometern", KM),
+            ("meile", MILE), ("meilen", MILE),
+            ("fuß", FOOT), ("fuss", FOOT),
+            ("schritt", PACE), ("schritte", PACE), ("schritten", PACE),
+        ]),
+        directions: [
+            ("norden", Direction::North), ("nord", Direction::North),
+            ("süden", Direction::South), ("süd", Direction::South),
+            ("osten", Direction::East), ("ost", Direction::East),
+            ("westen", Direction::West), ("west", Direction::West),
+        ]
+        .iter()
+        .map(|(k, v)| (k.to_string(), *v))
+        .collect(),
+        direction_preps: set(&["nach", "gen", "im", "in"]),
+    }
+}
+
+/// Russian — Cyrillic, with the case-inflected unit forms that the
+/// counting construction demands (`день` / `дня` / `дней` all = day;
+/// `год` / `года` / `лет` = year) and the oblique forms of the small
+/// numbers (`два` / `двух`, `три` / `трёх`). ё is folded to е in the
+/// tokenizer's `to_lowercase`, so both spellings are listed. Single-
+/// word hundreds (`двести` = 200) are not decomposed — digits cover
+/// those. Directions attach via a preposition (`на север` / `к северу`).
+fn russian() -> ContinuityLexicon {
+    ContinuityLexicon {
+        numbers: map(&[
+            ("один", 1.0), ("одна", 1.0), ("одно", 1.0),
+            ("ноль", 0.0),
+            ("два", 2.0), ("две", 2.0), ("двух", 2.0),
+            ("три", 3.0), ("трёх", 3.0), ("трех", 3.0),
+            ("четыре", 4.0), ("четырёх", 4.0), ("четырех", 4.0),
+            ("пять", 5.0), ("шесть", 6.0), ("семь", 7.0),
+            ("восемь", 8.0), ("девять", 9.0), ("десять", 10.0),
+            ("одиннадцать", 11.0), ("двенадцать", 12.0),
+            ("тринадцать", 13.0), ("четырнадцать", 14.0),
+            ("пятнадцать", 15.0), ("шестнадцать", 16.0),
+            ("семнадцать", 17.0), ("восемнадцать", 18.0),
+            ("девятнадцать", 19.0), ("двадцать", 20.0),
+            ("тридцать", 30.0), ("сорок", 40.0),
+            ("пятьдесят", 50.0), ("шестьдесят", 60.0),
+            ("семьдесят", 70.0), ("восемьдесят", 80.0),
+            ("девяносто", 90.0),
+        ]),
+        scales: map(&[
+            ("сто", 100.0),
+            ("тысяча", 1000.0), ("тысячи", 1000.0), ("тысяч", 1000.0),
+        ]),
+        temporal: map(&[
+            ("секунда", 1.0), ("секунды", 1.0), ("секунд", 1.0), ("секунду", 1.0),
+            ("минута", MINUTE), ("минуты", MINUTE), ("минут", MINUTE), ("минуту", MINUTE),
+            ("час", HOUR), ("часа", HOUR), ("часов", HOUR),
+            ("день", DAY), ("дня", DAY), ("дней", DAY), ("дню", DAY),
+            ("неделя", WEEK), ("недели", WEEK), ("недель", WEEK), ("неделю", WEEK),
+            ("месяц", MONTH), ("месяца", MONTH), ("месяцев", MONTH),
+            ("год", YEAR), ("года", YEAR), ("лет", YEAR),
+        ]),
+        spatial: map(&[
+            ("метр", 1.0), ("метра", 1.0), ("метров", 1.0),
+            ("километр", KM), ("километра", KM), ("километров", KM),
+            ("миля", MILE), ("мили", MILE), ("миль", MILE),
+            ("верста", VERST), ("версты", VERST), ("вёрст", VERST), ("верст", VERST),
+            ("лига", LEAGUE), ("лиги", LEAGUE), ("лиг", LEAGUE),
+            ("шаг", PACE), ("шага", PACE), ("шагов", PACE),
+        ]),
+        directions: [
+            ("север", Direction::North), ("северу", Direction::North),
+            ("юг", Direction::South), ("югу", Direction::South),
+            ("восток", Direction::East), ("востоку", Direction::East),
+            ("запад", Direction::West), ("западу", Direction::West),
+        ]
+        .iter()
+        .map(|(k, v)| (k.to_string(), *v))
+        .collect(),
+        direction_preps: set(&["на", "к", "в"]),
     }
 }
 
@@ -393,14 +526,20 @@ pub fn extract_quantities(
                 });
                 i = unit_idx + 1;
             } else if let Some(metres) = lex.spatial.get(unit_tok) {
-                // Optional trailing direction word.
-                let direction = tokens
-                    .get(unit_idx + 1)
-                    .and_then(|d| lex.directions.get(d).copied());
-                let raw_end = if direction.is_some() {
-                    unit_idx + 2
-                } else {
-                    unit_idx + 1
+                // Optional trailing direction word, possibly behind a
+                // one-token preposition (DE `nach Norden`, RU `на север`);
+                // `direction_preps` is empty for the bare-direction languages,
+                // so this collapses to the plain `unit_idx + 1` lookup there.
+                let mut probe = unit_idx + 1;
+                if tokens.get(probe).is_some_and(|t| lex.direction_preps.contains(t)) {
+                    probe += 1;
+                }
+                let (direction, raw_end) = match tokens
+                    .get(probe)
+                    .and_then(|d| lex.directions.get(d).copied())
+                {
+                    Some(dir) => (Some(dir), probe + 1),
+                    None => (None, unit_idx + 1),
                 };
                 out.push(Quantity {
                     base_value: value * metres,
@@ -731,18 +870,82 @@ mod tests {
         assert_eq!(c.len(), 1, "norte/sur reversal flagged; 'este' ignored");
     }
 
+    #[test]
+    fn german_temporal_and_dative_plural() {
+        let lex = german();
+        // "drei Tage" (nom pl) and "an drei Tagen" (dat pl) both = 3 days.
+        let q = extract_quantities(
+            &sents(&["Die Reise dauerte drei Tage.", "Nach drei Tagen kehrte er zurück."]),
+            &lex,
+        );
+        assert_eq!(q.len(), 2);
+        assert!(q.iter().all(|x| (x.base_value - 3.0 * DAY).abs() < 1.0));
+    }
+
+    #[test]
+    fn german_direction_reversal_through_preposition() {
+        let lex = german();
+        // Direction hides behind "nach": `200 Meilen nach Norden` … `nach Süden`.
+        let q = extract_quantities(
+            &sents(&[
+                "Sie ritten 200 Meilen nach Norden.",
+                "Dann 200 Meilen nach Süden.",
+            ]),
+            &lex,
+        );
+        assert_eq!(q.iter().filter(|x| x.direction.is_some()).count(), 2);
+        let c = detect_contradictions(&q, &ContradictionConfig::default());
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].kind, ContradictionKind::DirectionReversal);
+    }
+
+    #[test]
+    fn russian_temporal_declension_normalises() {
+        let lex = russian();
+        // "три дня" (gen sg) and "пять дней" (gen pl) — different forms of
+        // "day"; a genuine 3-vs-5 mismatch, both resolving to DAY units.
+        let q = extract_quantities(
+            &sents(&["Три дня пути закончились через пять дней."]),
+            &lex,
+        );
+        let days: Vec<f64> = q.iter().map(|x| x.base_value / DAY).collect();
+        assert_eq!(days, vec![3.0, 5.0]);
+        let c = detect_contradictions(&q, &ContradictionConfig::default());
+        assert!(c.iter().any(|x| x.kind == ContradictionKind::TemporalMismatch));
+    }
+
+    #[test]
+    fn russian_direction_reversal_through_preposition() {
+        let lex = russian();
+        // `200 вёрст на север` … `на юг` — direction behind the preposition "на".
+        let q = extract_quantities(
+            &sents(&[
+                "Они проехали 200 вёрст на север.",
+                "Потом 200 вёрст на юг.",
+            ]),
+            &lex,
+        );
+        assert_eq!(q.iter().filter(|x| x.direction.is_some()).count(), 2);
+        let c = detect_contradictions(&q, &ContradictionConfig::default());
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].kind, ContradictionKind::DirectionReversal);
+        assert_eq!((q[0].base_value / VERST).round(), 200.0);
+    }
+
     // ── lexicon availability ──────────────────────────
 
     #[test]
     fn unsupported_language_has_no_lexicon() {
         assert!(built_in_lexicon("japanese").is_none());
-        assert!(built_in_lexicon("russian").is_none()); // C.2.b
-        assert!(built_in_lexicon("german").is_none()); // C.2.b
+        assert!(built_in_lexicon("italian").is_none());
     }
 
     #[test]
     fn supported_languages_have_lexicons() {
-        for l in ["english", "en", "french", "fr", "spanish", "es"] {
+        for l in [
+            "english", "en", "french", "fr", "spanish", "es",
+            "german", "de", "russian", "ru",
+        ] {
             assert!(built_in_lexicon(l).is_some(), "missing lexicon: {l}");
         }
     }
