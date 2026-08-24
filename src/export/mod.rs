@@ -13,9 +13,13 @@
 //! * `tex` — typst → LaTeX via the `tylax` crate
 //!   ([`tex::typst_to_tex`]). Errors propagate as
 //!   `anyhow::Error` so the CLI surfaces them at the call site.
-//! * `epub` — markdown → minimal EPUB3 zip
-//!   ([`epub::write_epub`]). One paragraph per `nav` entry, built
-//!   from the same hierarchy walk the typst exporter uses.
+//! * `epub` — a minimal single-chapter markdown → EPUB3 zip
+//!   ([`epub::write_epub`]), producing an in-memory [`Artefact`]. Used by the
+//!   Bund `ink.export.epub` word and the TUI's batch "extra formats" builder,
+//!   which work from a combined-markdown string. **The CLI `inkhaven export
+//!   --format epub` does NOT use this** — since XP-3 it routes to the rich,
+//!   multi-chapter [`crate::cli::epub`] builder (`crate::epub`), which reads the
+//!   book from the store and embeds images + footnote popups + a cover.
 //!
 //! Everything in this module is **deterministic** given the same
 //! project state — used both from `inkhaven export <fmt>` and from

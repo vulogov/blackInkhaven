@@ -94,14 +94,18 @@ pub fn run(
             "tex",
         ),
         ExportFormat::Epub => {
-            // Markdown is the EPUB intermediate. We re-use the same
-            // typst→markdown converter so what the user sees in the
-            // .md export is exactly what's inside the .epub.
-            let md = export::markdown::typst_to_markdown(&combined);
-            let artefact =
-                export::build_epub(&md, &epub_title, crate::ai::prompts::iso_from_long(&cfg.language))
-                    .map_err(|e| Error::Store(format!("epub: {e:#}")))?;
-            write_artefact(artefact, output, "epub")
+            // XP-3 — the CLI EPUB export now uses the rich, multi-chapter builder
+            // (a `nav` entry per chapter, embedded `NodeKind::Image` figures,
+            // EPUB3 footnote popups, cover) — the same path as `inkhaven epub` —
+            // instead of the old single-chapter markdown→epub converter. That
+            // builder re-reads the book from the store, so the export-pipeline
+            // filters below (which shape `combined`) don't apply to EPUB.
+            if status_floor.is_some() || tag.is_some() || !profiles.is_empty() || blind {
+                eprintln!(
+                    "note: EPUB uses the full-book exporter — --status / --tag / --profile / --blind don't apply here."
+                );
+            }
+            crate::cli::epub::run(project, book_name, output, None, None)
         }
         ExportFormat::Html => {
             // `--eject-templates <dir>` scaffolds the bundled defaults and exits.
