@@ -1,8 +1,10 @@
-//! The Fast track — deterministic, instant (no LLM) Socratic observation. Five
+//! The Fast track — deterministic, instant (no LLM) Socratic observation. Six
 //! categories ship today (`modal_claims`, `hedged_uncertainty`,
-//! `structural_patterns`, `unattributed_dialogue`, `sentence_length_anomalies`);
-//! `pronoun_ambiguity` + `tense_voice_shifts` await the UD parser. Each detector
-//! produces a **question**, never a correction (the non-prescriptive spine).
+//! `structural_patterns`, `unattributed_dialogue`, `sentence_length_anomalies`,
+//! and `tense_voice_shifts` for the auxiliary-marked languages EN/DE/FR/ES);
+//! `pronoun_ambiguity` stays English-only (coreference needs a parser). Each
+//! detector produces a **question**, never a correction (the non-prescriptive
+//! spine).
 //!
 //! Multilingual (EN/RU/ES/FR/DE): the paragraph's language is detected, its marker
 //! table drives the vocabulary categories, and the question renders in that
@@ -49,25 +51,53 @@ pub fn check_paragraph(
     detect_structural_patterns(&sentences, lang, persona, ledger, ctx, &mut out);
     detect_unattributed_dialogue(text, &lower, lang, &m, persona, ledger, ctx, &mut out);
     detect_sentence_length(&sentences, lang, persona, ledger, ctx, &mut out);
-    // The two parser-adjacent categories use conservative English-only heuristics
-    // (no UD parser bundled); they stay quiet (Notice severity) to limit noise.
+    // Tense-shift runs wherever tense is auxiliary-marked (EN/DE/FR/ES); Russian
+    // is excluded (no present copula). Pronoun-ambiguity stays English-only —
+    // coreference needs POS/agreement no word list can supply. Both stay quiet
+    // (Notice severity) to limit noise; no UD parser is bundled.
+    if let Some((past_aux, present_aux)) = tense_aux(lang) {
+        detect_tense_shift(&sentences, lang, past_aux, present_aux, persona, ledger, ctx, &mut out);
+    }
     if lang == Lang::En {
-        detect_tense_shift(&sentences, persona, ledger, ctx, &mut out);
         detect_pronoun_ambiguity(&sentences, persona, ledger, ctx, &mut out);
     }
     out
 }
 
-/// Past-tense auxiliaries and present-tense auxiliaries — reliable function-word
-/// signals of a sentence's tense (more robust than `-ed` detection).
-const PAST_AUX: &[&str] = &["was", "were", "had", "did"];
-const PRESENT_AUX: &[&str] = &["is", "are", "am"];
+/// Past- and present-tense auxiliary/copula words per language — a reliable
+/// function-word signal of a sentence's tense (more robust than affix detection).
+/// `None` for a language whose tense isn't auxiliary-marked: Russian present has
+/// no copula (aspect-driven), so the heuristic can't work there — the same honest
+/// gate CHORUS's tense reader draws (3.3.0 M1 extended EN → EN/DE/FR/ES).
+fn tense_aux(lang: Lang) -> Option<(&'static [&'static str], &'static [&'static str])> {
+    match lang {
+        Lang::En => Some((&["was", "were", "had", "did"], &["is", "are", "am"])),
+        Lang::De => Some((
+            &["war", "waren", "hatte", "hatten", "wurde", "wurden"],
+            &["ist", "sind", "bin", "bist", "seid"],
+        )),
+        Lang::Fr => Some((
+            &["était", "étaient", "étais", "avait", "avaient", "fut", "furent"],
+            &["est", "sont", "suis", "es", "sommes"],
+        )),
+        Lang::Es => Some((
+            &["era", "eran", "estaba", "estaban", "había", "habían", "fue", "fueron", "estuvo"],
+            &["es", "son", "soy", "está", "están", "estoy"],
+        )),
+        // Russian: no present-tense copula to key off — excluded, like CHORUS tense.
+        Lang::Ru => None,
+    }
+}
 
 /// `tense_voice_shifts` — a paragraph that is clearly past-tense but slips into
 /// the present (or the reverse). Conservative: needs a ≥4-sentence paragraph with
-/// a strong past majority and a clear present outlier (dialogue ignored).
+/// a strong past majority and a clear present outlier (dialogue ignored). The
+/// auxiliary tables come from [`tense_aux`], so the question renders in `lang`.
 fn detect_tense_shift(
     sentences: &[&str],
+    lang: Lang,
+    past_aux: &[&str],
+    present_aux: &[&str],
     persona: &Persona,
     ledger: &IntentLedger,
     ctx: &FindingContext,
@@ -82,8 +112,8 @@ fn detect_tense_shift(
             continue; // dialogue: present tense there is normal
         }
         let low = s.to_lowercase();
-        let is_past = PAST_AUX.iter().any(|w| contains_word(&low, w));
-        let is_present = !is_past && PRESENT_AUX.iter().any(|w| contains_word(&low, w));
+        let is_past = past_aux.iter().any(|w| contains_word(&low, w));
+        let is_present = !is_past && present_aux.iter().any(|w| contains_word(&low, w));
         if is_past {
             past += 1;
         } else if is_present {
@@ -93,7 +123,7 @@ fn detect_tense_shift(
     // A clear past majority with a present outlier (simple-past verbs without an
     // auxiliary aren't counted, so the bar is ≥2 aux-past + present dominant).
     if past >= 2 && present >= 1 && past >= present * 2 {
-        push(out, persona, ledger, ctx, Lang::En, Category::TenseVoiceShifts, Severity::Notice, Msg::TenseShift);
+        push(out, persona, ledger, ctx, lang, Category::TenseVoiceShifts, Severity::Notice, Msg::TenseShift);
     }
 }
 
@@ -406,6 +436,57 @@ mod tests {
     #[test]
     fn consistent_tense_raises_no_shift() {
         let f = check("The regent rode north. The roads were empty. The cold had settled. He was afraid.");
+        assert!(f.iter().all(|x| x.category != Category::TenseVoiceShifts), "got {f:?}");
+    }
+
+    #[test]
+    fn german_tense_shift_is_detected_and_localized() {
+        // waren + hatte (past) vs ist (present outlier) → a shift, in German.
+        let f = check(
+            "Der Regent ritt lange nach Norden durch das kalte Land. \
+             Die Straßen waren leer und still. \
+             Die Kälte hatte sich tief in die Knochen gesetzt. \
+             Er ist jetzt voller Angst und Zweifel.",
+        );
+        let ts: Vec<_> = f.iter().filter(|x| x.category == Category::TenseVoiceShifts).collect();
+        assert_eq!(ts.len(), 1, "got {f:?}");
+        assert!(ts[0].question.contains("Wechsel"), "renders in German: {}", ts[0].question);
+    }
+
+    #[test]
+    fn french_tense_shift_is_detected() {
+        // étaient + avait (past) vs est (present outlier).
+        let f = check(
+            "Le régent chevaucha longtemps vers le nord. \
+             Les routes étaient désertes et silencieuses. \
+             Le froid avait pénétré jusqu'aux os. \
+             Il est maintenant plein de peur.",
+        );
+        assert!(f.iter().any(|x| x.category == Category::TenseVoiceShifts), "got {f:?}");
+    }
+
+    #[test]
+    fn spanish_tense_shift_is_detected() {
+        // estaban + había (past) vs está (present outlier).
+        let f = check(
+            "El regente cabalgó mucho tiempo hacia el norte. \
+             Los caminos estaban desiertos y silenciosos. \
+             El frío se había metido hasta los huesos. \
+             Ahora él está lleno de miedo.",
+        );
+        assert!(f.iter().any(|x| x.category == Category::TenseVoiceShifts), "got {f:?}");
+    }
+
+    #[test]
+    fn russian_tense_shift_is_not_attempted() {
+        // Russian present has no copula (aspect-driven) → tense-shift is excluded,
+        // the same honest gate CHORUS draws. Никогда не срабатывает.
+        let f = check(
+            "Регент долго скакал на север через холодные земли. \
+             Дороги были пусты и тихи. \
+             Холод пробрался до самых костей. \
+             Теперь он полон страха и сомнений.",
+        );
         assert!(f.iter().all(|x| x.category != Category::TenseVoiceShifts), "got {f:?}");
     }
 

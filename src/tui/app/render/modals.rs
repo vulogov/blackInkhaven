@@ -5496,11 +5496,13 @@ impl super::super::App {
     ) {
         use crate::editorial::Severity;
         use ratatui::style::Color;
-        let Modal::EditorialPass { findings, cursor, filter, .. } = &self.modal else {
+        let Modal::EditorialPass { findings, cursor, filter, kind_filter, .. } = &self.modal else {
             return;
         };
-        let keep =
-            |fnd: &&crate::editorial::EditorialFinding| filter.as_deref().is_none_or(|c| fnd.category == c);
+        let kind_filter = *kind_filter;
+        let keep = |fnd: &&crate::editorial::EditorialFinding| {
+            crate::editorial::matches_view(fnd, filter.as_deref(), kind_filter)
+        };
         let shown: Vec<&crate::editorial::EditorialFinding> = findings.iter().filter(keep).collect();
         let (mut ne, mut nw, mut ni) = (0usize, 0usize, 0usize);
         for fnd in &shown {
@@ -5518,7 +5520,11 @@ impl super::super::App {
         let rect = Rect { x, y, width, height };
         f.render_widget(ratatui::widgets::Clear, rect);
 
-        let filt = filter.as_deref().map(|c| format!(" · {c}")).unwrap_or_default();
+        let filt = {
+            let cat = filter.as_deref().map(|c| format!(" · {c}")).unwrap_or_default();
+            let kind = kind_filter.map(|k| format!(" · {}{}", k.glyph(), k.label())).unwrap_or_default();
+            format!("{cat}{kind}")
+        };
         let block = Block::default()
             .borders(Borders::ALL)
             .title(format!(
@@ -5605,7 +5611,7 @@ impl super::super::App {
         }
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                " ↑↓ · [ ] filter · ⏎ jump · f act (✎⇄✉) · F fix-all · s skip · d defer · Esc ",
+                " ↑↓ · [ ] category · r kind (✎⇄✉) · ⏎ jump · f act · F fix-all · s skip · d defer · Esc ",
                 Style::default().add_modifier(Modifier::DIM),
             ))),
             footer_rect,
