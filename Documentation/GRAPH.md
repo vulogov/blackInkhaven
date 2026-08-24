@@ -68,6 +68,7 @@ forcing 10 000 citations to become 10 000 nodes:
 | `translates` | sense → ili | cross-lingual pivot |
 | `mentions` | ¶ → sense | the manuscript↔lexicon bridge |
 | `declares` | book → declared entity | the book's cast / symbols / motifs / tensions |
+| `relates` | character ↔ character | declared BONDS `rel:` bonds (3.2); the bond kind (ally / enemy / …) + first chapter ride in `attrs`, and `reason` renders it (`⇄ Kell — ally (ch. 1)`) |
 | `similar_to` | ¶ ↔ ¶ | embedding similarity (a live HNSW query; not materialised) |
 
 ### Origin & durability

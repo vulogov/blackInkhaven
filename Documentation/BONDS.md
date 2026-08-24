@@ -85,6 +85,15 @@ check, no cost.
 
 ---
 
+## On the graph (3.2)
+
+`inkhaven graph rebuild` promotes every declared bond into a **`relates` edge**
+between the two characters' nodes (the bond kind + first chapter in the edge's
+`attrs`), so the relationship network is traversable with the tools you already
+have: `inkhaven graph neighbors <character-node>`, `graph paths`, the `Ctrl+B z`
+graph hub's one-hop tree (a bond reads `⇄ Kell — ally (ch. 1)`), and the F9 Graph
+chat / `graph ask` ("who is connected to Mara?"). See [`GRAPH.md`](GRAPH.md).
+
 ## Tuning it
 
 The `bonds` config block (see [`CONFIGURATION.md`](CONFIGURATION.md)):

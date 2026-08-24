@@ -3,6 +3,7 @@ mod assemble;
 mod audiobook;
 mod backup;
 mod bonds;
+mod cast;
 mod cli;
 mod book_rag;
 mod graph_rag;
