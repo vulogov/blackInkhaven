@@ -174,6 +174,10 @@ impl Store {
         // Follow-up — declared world (characters / symbols / motifs / tensions)
         // → Declares, so the graph holds what CharStore/MythStore/UtopiaStore know.
         derived.extend(self.gather_declares_edges(&hierarchy));
+        // ENSEMBLE (3.2) — declared BONDS rel: bonds → Relates edges, so the graph
+        // holds the relationship network (traversable via `graph neighbors/paths`,
+        // the Ctrl+B z hub, and F9 Graph chat).
+        derived.extend(self.gather_bond_edges(&hierarchy));
 
         let added = derived.len();
         if !derived.is_empty() {
@@ -275,6 +279,32 @@ impl Store {
             edges.extend(declares_edges(book.id, &declared));
         }
         edges
+    }
+
+    /// ENSEMBLE (EN-P1) — import the declared BONDS relationships across every
+    /// user book as `Relates` edges (character node ↔ character node), so the
+    /// graph holds the relationship network the reader family checks. Endpoints
+    /// resolve against the global Characters roster; bonds are gathered per book
+    /// then deduped globally. Degrades cleanly (no `rel:` tags → nothing). I/O;
+    /// the pure mapping is [`bond_edges`].
+    fn gather_bond_edges(&self, h: &Hierarchy) -> Vec<Edge> {
+        let layout = crate::project::ProjectLayout::new(self.project_root());
+        // Normalized character name → node id, from the Characters roster. BONDS
+        // stores its pairs under the same `normalize_topic`, so the keys align.
+        let by_name: HashMap<String, Uuid> =
+            crate::continuity_intel::introduce::roster(h, crate::store::SYSTEM_TAG_CHARACTERS)
+                .iter()
+                .map(|(id, name)| (crate::ken::grants::normalize_topic(name), *id))
+                .collect();
+        let mut ties: Vec<crate::bonds::Declared> = Vec::new();
+        for book in h
+            .children_of(None)
+            .into_iter()
+            .filter(|n| n.kind == NodeKind::Book && n.system_tag.is_none())
+        {
+            ties.extend(crate::bonds::ties(&layout, h, book));
+        }
+        bond_edges(&ties, &by_name)
     }
 
     /// SEMNET-P4 — a bounded path search between two nodes over the given edge
@@ -799,6 +829,45 @@ fn declares_edges(book: Uuid, declared: &[(String, String, Option<String>)]) -> 
     edges
 }
 
+/// ENSEMBLE (EN-P1) — pure: declared BONDS bonds → `Relates` edges between the
+/// two characters' nodes. Deduped to **one edge per distinct (pair, kind)** with
+/// the earliest chapter (so `ally@ch1` + `ally@ch3` collapse, but a transition
+/// `ally` → `enemy` yields two edges — both relationship states are on the
+/// graph). Both ends must resolve to a Characters-book node via `by_name` (an
+/// unresolvable end is skipped, like BONDS's own tag gathering). The bond kind +
+/// first chapter ride in `Edge.attrs`; the edge is symmetric (`directed = false`).
+fn bond_edges(ties: &[crate::bonds::Declared], by_name: &HashMap<String, Uuid>) -> Vec<Edge> {
+    // (a_id, b_id, kind) → earliest chapter. BTreeMap → deterministic edge order.
+    let mut seen: BTreeMap<(Uuid, Uuid, String), u32> = BTreeMap::new();
+    for d in ties {
+        let (Some(&a), Some(&b)) = (by_name.get(&d.a), by_name.get(&d.b)) else {
+            continue;
+        };
+        if a == b {
+            continue;
+        }
+        let ch = d.at.chapter_ord;
+        seen.entry((a, b, d.kind.clone()))
+            .and_modify(|c| *c = (*c).min(ch))
+            .or_insert(ch);
+    }
+    seen.into_iter()
+        .map(|((a, b, kind), chapter)| {
+            Edge::new(
+                EndpointRef::Node(a),
+                EdgeKind::Relates,
+                EndpointRef::Node(b),
+                EdgeOrigin::Structural,
+            )
+            // `attrs` is the structured form (graph/Bund consumers); `reason` is
+            // the human label the neighbourhood renderers already print, so a
+            // Relates edge reads "⇄ Kell — ally (ch. 1)" instead of a bare pair.
+            .with_attrs(serde_json::json!({ "rel": kind, "chapter": chapter }))
+            .with_reason(format!("{kind} (ch. {chapter})"))
+        })
+        .collect()
+}
+
 // ── SEMNET-P5: lexical bridge (WordNet) ──────────────────────────────
 
 /// Distinct content-word candidates from paragraph prose: alphabetic tokens of
@@ -1276,6 +1345,32 @@ mod tests {
         assert_eq!(ch.origin, EdgeOrigin::Structural);
         assert_eq!(ch.attrs["arc"], "corruption");
         assert!(edges.iter().any(|e| e.dst == EndpointRef::Extern(ExternRef::Declared { kind: "tension".into(), label: "#1".into() })));
+    }
+
+    #[test]
+    fn declared_bonds_become_relates_edges() {
+        use crate::bonds::{Declared, ScenePos};
+        let (mara, kell) = (Uuid::from_u128(1), Uuid::from_u128(2));
+        let by_name: HashMap<String, Uuid> =
+            [("Mara".to_string(), mara), ("Kell".to_string(), kell)].into_iter().collect();
+        let d = |kind, ch| {
+            Declared::new(kind, "Mara", "Kell", ScenePos { chapter_ord: ch, scene_index: 0 }, Uuid::from_u128(9))
+        };
+        // ally declared twice (collapses to earliest chapter) + a transition to enemy.
+        let ties = vec![d("ally", 3), d("ally", 1), d("enemy", 9)];
+        let edges = bond_edges(&ties, &by_name);
+        assert_eq!(edges.len(), 2, "ally (deduped) + enemy — both relationship states kept");
+        assert!(edges.iter().all(|e| e.kind == EdgeKind::Relates && !e.directed && e.origin == EdgeOrigin::Structural));
+        let ally = edges.iter().find(|e| e.attrs["rel"] == "ally").unwrap();
+        assert_eq!(ally.attrs["chapter"], 1, "the earliest declaration wins");
+        // The human `reason` is what the neighbourhood renderers print.
+        assert_eq!(ally.reason.as_deref(), Some("ally (ch. 1)"));
+
+        // An unresolvable end (not a known character) drops the bond entirely.
+        let ghost = vec![Declared::new(
+            "ally", "Mara", "Ghost", ScenePos { chapter_ord: 1, scene_index: 0 }, Uuid::from_u128(9),
+        )];
+        assert!(bond_edges(&ghost, &by_name).is_empty());
     }
 
     #[test]

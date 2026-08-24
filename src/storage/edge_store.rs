@@ -119,6 +119,11 @@ pub enum EdgeKind {
     Declares,
     /// Symmetric embedding-similarity (derived cache).
     SimilarTo,
+    /// Symmetric: two characters are related — a declared BONDS `rel:` bond
+    /// (3.2, ENSEMBLE). The bond kind (ally / enemy / …) + first chapter ride in
+    /// `Edge.attrs`; `origin = Structural`, derived from the `rel:` tags on
+    /// `graph rebuild`.
+    Relates,
 }
 
 impl EdgeKind {
@@ -142,6 +147,7 @@ impl EdgeKind {
             EdgeKind::Mentions => "mentions",
             EdgeKind::Declares => "declares",
             EdgeKind::SimilarTo => "similar_to",
+            EdgeKind::Relates => "relates",
         }
     }
 
@@ -165,6 +171,7 @@ impl EdgeKind {
             "mentions" => EdgeKind::Mentions,
             "declares" => EdgeKind::Declares,
             "similar_to" => EdgeKind::SimilarTo,
+            "relates" => EdgeKind::Relates,
             _ => return None,
         })
     }
@@ -180,6 +187,7 @@ impl EdgeKind {
                 | EdgeKind::Antonym
                 | EdgeKind::Synonym
                 | EdgeKind::SimilarTo
+                | EdgeKind::Relates
         )
     }
 
@@ -945,6 +953,30 @@ mod tests {
         s.insert(&e).unwrap();
         assert_eq!(s.neighbors(&EndpointRef::Node(a), &[]).unwrap().len(), 1);
         assert_eq!(s.neighbors(&EndpointRef::Node(b), &[]).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn relates_kind_round_trips_and_is_symmetric() {
+        // EN-P0 — the BONDS relationship edge kind (3.2, ENSEMBLE).
+        assert_eq!(EdgeKind::Relates.as_str(), "relates");
+        assert_eq!(EdgeKind::from_str("relates"), Some(EdgeKind::Relates));
+        assert!(EdgeKind::Relates.is_symmetric());
+        // A Relates edge stores directed=false; the bond kind rides in `attrs`
+        // and survives a round-trip through the store.
+        let (_d, s) = store();
+        let (a, b) = (Uuid::now_v7(), Uuid::now_v7());
+        let e = Edge::new(
+            EndpointRef::Node(a),
+            EdgeKind::Relates,
+            EndpointRef::Node(b),
+            EdgeOrigin::Structural,
+        )
+        .with_attrs(serde_json::json!({ "rel": "ally", "chapter": 3 }));
+        assert!(!e.directed, "Relates is symmetric → stored directed=false");
+        s.insert(&e).unwrap();
+        let found = s.neighbors(&EndpointRef::Node(b), &[EdgeKind::Relates]).unwrap();
+        assert_eq!(found.len(), 1, "symmetric Relates edge is found from the b side");
+        assert_eq!(found[0].attrs["rel"], "ally");
     }
 
     #[test]
