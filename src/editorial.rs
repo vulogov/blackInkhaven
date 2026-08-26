@@ -177,7 +177,7 @@ pub fn response_kind(category: &str) -> ResponseKind {
         // reconcile category the Decision flow rewrites through — it never appears
         // as a surfaced finding, but classifying it Rewrite keeps the RD-P7
         // invariant clean: every category with a [`fix_spec`] is a Rewrite.
-        "echo" | "pacing" | "show-tell" | "filter" | "editor" | "voice"
+        "echo" | "pacing" | "show-tell" | "filter" | "editor"
         | "anachronism" | "decision-resolve" => ResponseKind::Rewrite,
         // The author must choose which way is right; then we reconcile.
         "co_location" | "char_facts" | "drift" | "introduce" | "confusion"
@@ -976,10 +976,16 @@ mod tests {
     #[test]
     fn response_kind_classifies_by_category() {
         use ResponseKind::*;
-        // Honest single-locus prose fixes.
-        for c in ["echo", "pacing", "show-tell", "filter", "editor", "voice", "anachronism"] {
+        // Honest single-locus prose fixes. B5 — every surfaced Rewrite category
+        // MUST have a fix_spec, else the cockpit shows the ✎ glyph with a no-op
+        // `f` (the RD-P7 broken-affordance the invariant forbids). `voice` was
+        // Rewrite with no fix_spec and no producer — dropped.
+        for c in ["echo", "pacing", "show-tell", "filter", "editor", "anachronism"] {
             assert_eq!(response_kind(c), Rewrite, "{c} is a Rewrite");
+            assert!(fix_spec(c).is_some(), "{c} Rewrite must have a fix_spec");
         }
+        // `voice` is no longer a Rewrite (dead category → Brief default).
+        assert_eq!(response_kind("voice"), Brief, "dead `voice` category → Brief");
         // The author must choose which way is right, then reconcile.
         for c in ["co_location", "char_facts", "drift", "introduce", "confusion", "unpaid_setup", "unearned_shift"] {
             assert_eq!(response_kind(c), Decision, "{c} is a Decision");
