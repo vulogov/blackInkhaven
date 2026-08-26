@@ -18,6 +18,10 @@ use quick_xml::Reader;
 /// Convert one XHTML document body to typst prose. `img` `src`s are
 /// emitted verbatim as `#image("src")`; the orchestrator rewrites them
 /// to the on-disk path after extracting the image.
+///
+/// A5 — `<blockquote>` is preserved as `#quote[…]` and `<table>` as a real
+/// `#table(columns: N, …)` (its cells were previously concatenated into a
+/// run-on paragraph); both were formerly flattened / garbled.
 pub fn xhtml_to_typst(xhtml: &str) -> String {
     // I-2 — first pass: gather the collected footnote bodies so an inline
     // `noteref` can be rebuilt as `#footnote[body]` (the epub → import round-trip).
@@ -37,15 +41,15 @@ pub fn xhtml_to_typst(xhtml: &str) -> String {
     let mut fn_suppress = 0usize;
     // Inside an inline `<a noteref>` — suppress the superscript marker text.
     let mut in_noteref = false;
-
-    // Flush the current inline buffer as a plain block.
-    fn flush(blocks: &mut Vec<String>, line: &mut String) {
-        let t = line.trim();
-        if !t.is_empty() {
-            blocks.push(t.to_string());
-        }
-        line.clear();
-    }
+    // A5 — blockquote nesting; inner blocks accumulate here and are wrapped as
+    // `#quote[…]` when the outermost blockquote closes.
+    let mut quote_depth = 0usize;
+    let mut quote_buf: Vec<String> = Vec::new();
+    // A5 — table capture: rows of cells; `cell` is the buffer for the open td/th.
+    let mut table_depth = 0usize;
+    let mut table_rows: Vec<Vec<String>> = Vec::new();
+    let mut cur_row: Vec<String> = Vec::new();
+    let mut cell: Option<String> = None;
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -65,12 +69,27 @@ pub fn xhtml_to_typst(xhtml: &str) -> String {
                 match name {
                     b"head" => in_head = true,
                     b"h1" | b"h2" | b"h3" | b"h4" | b"h5" | b"h6" => {
-                        flush(&mut blocks, &mut line);
+                        flush_block(&mut blocks, &mut quote_buf, quote_depth, &mut line);
                         heading = Some(heading_level(name));
                     }
-                    b"p" | b"div" | b"blockquote" => flush(&mut blocks, &mut line),
-                    b"em" | b"i" => line.push('_'),
-                    b"strong" | b"b" => line.push('*'),
+                    b"table" => {
+                        flush_block(&mut blocks, &mut quote_buf, quote_depth, &mut line);
+                        table_depth += 1;
+                        table_rows.clear();
+                        cur_row.clear();
+                        cell = None;
+                    }
+                    b"tr" if table_depth > 0 => cur_row.clear(),
+                    b"td" | b"th" if table_depth > 0 => cell = Some(String::new()),
+                    b"p" | b"div" => {
+                        flush_block(&mut blocks, &mut quote_buf, quote_depth, &mut line)
+                    }
+                    b"blockquote" => {
+                        flush_block(&mut blocks, &mut quote_buf, quote_depth, &mut line);
+                        quote_depth += 1;
+                    }
+                    b"em" | b"i" => push_inline(&mut cell, table_depth, &mut line, '_'),
+                    b"strong" | b"b" => push_inline(&mut cell, table_depth, &mut line, '*'),
                     // Inline footnote reference → rebuild the note here.
                     b"a" if is_noteref(&e) => {
                         if let Some(body) = attr(&e, b"href")
@@ -80,14 +99,19 @@ pub fn xhtml_to_typst(xhtml: &str) -> String {
                             // Guard the content brackets so a `]` in the body
                             // can't close the `#footnote[…]` early.
                             let safe = body.replace('[', "\\[").replace(']', "\\]");
-                            line.push_str(&format!("#footnote[{safe}]"));
+                            push_inline_str(
+                                &mut cell,
+                                table_depth,
+                                &mut line,
+                                &format!("#footnote[{safe}]"),
+                            );
                         }
                         in_noteref = true;
                     }
                     b"ul" => list_stack.push('-'),
                     b"ol" => list_stack.push('+'),
                     b"li" => {
-                        flush(&mut blocks, &mut line);
+                        flush_block(&mut blocks, &mut quote_buf, quote_depth, &mut line);
                         let marker = list_stack.last().copied().unwrap_or('-');
                         line.push(marker);
                         line.push(' ');
@@ -116,9 +140,41 @@ pub fn xhtml_to_typst(xhtml: &str) -> String {
                             line.clear();
                         }
                     }
-                    b"p" | b"div" | b"blockquote" | b"li" => flush(&mut blocks, &mut line),
-                    b"em" | b"i" => line.push('_'),
-                    b"strong" | b"b" => line.push('*'),
+                    b"td" | b"th" if table_depth > 0 => {
+                        if let Some(c) = cell.take() {
+                            cur_row.push(c.trim().to_string());
+                        }
+                    }
+                    b"tr" if table_depth > 0 => {
+                        if !cur_row.is_empty() {
+                            table_rows.push(std::mem::take(&mut cur_row));
+                        }
+                    }
+                    b"table" => {
+                        table_depth = table_depth.saturating_sub(1);
+                        if table_depth == 0 {
+                            if let Some(tbl) = emit_table(&table_rows) {
+                                blocks.push(tbl);
+                            }
+                            table_rows.clear();
+                        }
+                    }
+                    b"p" | b"div" | b"li" => {
+                        flush_block(&mut blocks, &mut quote_buf, quote_depth, &mut line)
+                    }
+                    b"blockquote" => {
+                        flush_block(&mut blocks, &mut quote_buf, quote_depth, &mut line);
+                        quote_depth = quote_depth.saturating_sub(1);
+                        if quote_depth == 0 {
+                            let body = quote_buf.join("\n\n");
+                            quote_buf.clear();
+                            if !body.trim().is_empty() {
+                                blocks.push(format!("#quote[{body}]"));
+                            }
+                        }
+                    }
+                    b"em" | b"i" => push_inline(&mut cell, table_depth, &mut line, '_'),
+                    b"strong" | b"b" => push_inline(&mut cell, table_depth, &mut line, '*'),
                     b"a" if in_noteref => in_noteref = false,
                     b"ul" | b"ol" => {
                         list_stack.pop();
@@ -132,10 +188,15 @@ pub fn xhtml_to_typst(xhtml: &str) -> String {
                     continue;
                 }
                 match local(e.name().as_ref()) {
-                    b"br" => line.push(' '),
+                    b"br" => push_inline(&mut cell, table_depth, &mut line, ' '),
                     b"img" => {
                         if let Some(src) = attr(&e, b"src") {
-                            line.push_str(&format!("#image(\"{src}\")"));
+                            push_inline_str(
+                                &mut cell,
+                                table_depth,
+                                &mut line,
+                                &format!("#image(\"{src}\")"),
+                            );
                         }
                     }
                     _ => {}
@@ -145,7 +206,13 @@ pub fn xhtml_to_typst(xhtml: &str) -> String {
                 // Suppress footnote-section text and the noteref's marker digit.
                 if !in_head && fn_suppress == 0 && !in_noteref {
                     let s = t.unescape().unwrap_or_default();
-                    line.push_str(&escape_typst(&s));
+                    let esc = escape_typst(&s);
+                    if let Some(c) = cell.as_mut() {
+                        c.push_str(&esc);
+                    } else if table_depth == 0 {
+                        // Between table cells stray text/whitespace is dropped.
+                        line.push_str(&esc);
+                    }
                 }
             }
             Ok(Event::Eof) => break,
@@ -155,8 +222,77 @@ pub fn xhtml_to_typst(xhtml: &str) -> String {
         }
         buf.clear();
     }
-    flush(&mut blocks, &mut line);
+    // Drain any content left open by malformed / unclosed markup so nothing is lost.
+    flush_block(&mut blocks, &mut quote_buf, quote_depth, &mut line);
+    if !quote_buf.is_empty() {
+        blocks.push(format!("#quote[{}]", quote_buf.join("\n\n")));
+    }
+    if !cur_row.is_empty() {
+        table_rows.push(cur_row);
+    }
+    if let Some(tbl) = emit_table(&table_rows) {
+        blocks.push(tbl);
+    }
     blocks.join("\n\n")
+}
+
+/// Append inline `ch` to the active sink: the open table cell if any, else the
+/// main line (content between table cells is discarded).
+fn push_inline(cell: &mut Option<String>, table_depth: usize, line: &mut String, ch: char) {
+    if let Some(c) = cell.as_mut() {
+        c.push(ch);
+    } else if table_depth == 0 {
+        line.push(ch);
+    }
+}
+
+/// String form of [`push_inline`].
+fn push_inline_str(cell: &mut Option<String>, table_depth: usize, line: &mut String, s: &str) {
+    if let Some(c) = cell.as_mut() {
+        c.push_str(s);
+    } else if table_depth == 0 {
+        line.push_str(s);
+    }
+}
+
+/// Flush the current inline buffer as a block — into the quote buffer while
+/// inside a `<blockquote>`, otherwise straight into the block list.
+fn flush_block(
+    blocks: &mut Vec<String>,
+    quote_buf: &mut Vec<String>,
+    quote_depth: usize,
+    line: &mut String,
+) {
+    let t = line.trim();
+    if !t.is_empty() {
+        if quote_depth > 0 {
+            quote_buf.push(t.to_string());
+        } else {
+            blocks.push(t.to_string());
+        }
+    }
+    line.clear();
+}
+
+/// Render captured table rows as a typst `#table(columns: N, …)`. Short rows are
+/// padded to the widest so the column count stays consistent. `None` if empty.
+fn emit_table(rows: &[Vec<String>]) -> Option<String> {
+    let cols = rows.iter().map(Vec::len).max().unwrap_or(0);
+    if cols == 0 {
+        return None;
+    }
+    let mut s = format!("#table(\n  columns: {cols},");
+    for row in rows {
+        s.push_str("\n ");
+        for c in row {
+            s.push_str(&format!(" [{}],", c.trim()));
+        }
+        for _ in row.len()..cols {
+            s.push_str(" [],");
+        }
+    }
+    s.push_str("\n)");
+    Some(s)
 }
 
 fn heading_level(local: &[u8]) -> usize {
@@ -340,6 +476,43 @@ mod tests {
     }
 
     #[test]
+    fn blockquote_becomes_quote() {
+        // A5 — a <blockquote> keeps quote semantics as #quote[…], not a flat para.
+        let xhtml = "<body><p>He said:</p>\
+            <blockquote><p>The sea is <em>wide</em>.</p><p>And deep.</p></blockquote>\
+            <p>Then left.</p></body>";
+        let typ = xhtml_to_typst(xhtml);
+        assert!(typ.contains("#quote[The sea is _wide_.\n\nAnd deep.]"), "got: {typ}");
+        // The surrounding prose is untouched.
+        assert!(typ.contains("He said:") && typ.contains("Then left."), "got: {typ}");
+    }
+
+    #[test]
+    fn table_becomes_typst_table() {
+        // A5 — <table> cells become a real #table, not a run-on paragraph.
+        let xhtml = "<body><table>\
+            <tr><th>Name</th><th>Age</th></tr>\
+            <tr><td>Ada</td><td>36</td></tr>\
+            </table></body>";
+        let typ = xhtml_to_typst(xhtml);
+        assert!(typ.contains("#table("), "got: {typ}");
+        assert!(typ.contains("columns: 2"), "got: {typ}");
+        assert!(typ.contains("[Name],") && typ.contains("[Age],"), "got: {typ}");
+        assert!(typ.contains("[Ada],") && typ.contains("[36],"), "got: {typ}");
+        // No run-on paragraph gluing the cells together.
+        assert!(!typ.contains("NameAge"), "cells not concatenated: {typ}");
+    }
+
+    #[test]
+    fn blockquote_round_trips_through_export() {
+        // typst #quote → xhtml <blockquote> → typst #quote.
+        let xhtml = crate::epub::typst_to_xhtml("#quote[A borrowed line.]\n");
+        assert!(xhtml.contains("<blockquote>"), "export emits blockquote: {xhtml}");
+        let back = xhtml_to_typst(&xhtml);
+        assert!(back.contains("#quote[A borrowed line.]"), "round-trip: {xhtml:?} -> {back:?}");
+    }
+
+    #[test]
     fn footnote_round_trips_through_export() {
         // The true round-trip: a #footnote survives typst → xhtml → typst.
         let xhtml = crate::epub::typst_to_xhtml("A claim#footnote[The source.] stands.\n");
@@ -372,6 +545,8 @@ mod tests {
                 proptest::sample::select(vec![
                     "<p>", "</p>", "<h1>", "</h1>", "<strong>", "</strong>",
                     "<em>", "<ul>", "<li>", "</li>", "</ul>", "<br/>",
+                    "<blockquote>", "</blockquote>", "<table>", "</table>",
+                    "<tr>", "</tr>", "<td>", "</td>", "<th>", "</th>",
                     "<img src=\"x\"/>", "word", " ", "&amp;", "<", ">",
                 ]),
                 0..200,

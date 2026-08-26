@@ -256,6 +256,25 @@ pub fn typst_to_xhtml_pending(body: &str) -> String {
             out.push_str(&format!("<h2>{}</h2>\n", inline(rest)));
         } else if let Some(rest) = trimmed.strip_prefix("= ") {
             out.push_str(&format!("<h2>{}</h2>\n", inline(rest)));
+        } else if let Some(inner) = trimmed
+            .strip_prefix("#quote[")
+            .and_then(|r| r.strip_suffix(']'))
+        {
+            // A5 — authored `#quote[…]` → a real <blockquote> (round-trips with
+            // the importer). Inner paragraphs keep their blank-line separation.
+            out.push_str("<blockquote>\n");
+            for para in inner.split("\n\n") {
+                let joined = para
+                    .split('\n')
+                    .map(str::trim)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let joined = joined.trim();
+                if !joined.is_empty() {
+                    out.push_str(&format!("<p>{}</p>\n", inline(joined)));
+                }
+            }
+            out.push_str("</blockquote>\n");
         } else {
             // Collapse intra-block newlines into spaces
             // (typst treats a single newline as a space).
