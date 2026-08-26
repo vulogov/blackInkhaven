@@ -16,6 +16,14 @@ use crate::project::ProjectLayout;
 use crate::store::hierarchy::Hierarchy;
 use crate::store::node::NodeKind;
 
+/// B3 — a 1-based chapter ordinal → 0-based index into the chapter list, or
+/// `None` for book-level (chapter 0), which must not resolve to a paragraph
+/// anchor. (Was `saturating_sub(1)`, which mapped chapter 0 onto `chapters[0]`
+/// so a book-wide finding pointed a misleading ⏎ jump at ch. 1's first paragraph.)
+fn chapter_slot(chapter: u32) -> Option<usize> {
+    Some(chapter.checked_sub(1)? as usize)
+}
+
 /// Run every editorial detector, read the sidecars, fold in `plan check`,
 /// resolve locations against the hierarchy, and aggregate — the shared
 /// entry point for the CLI and the TUI cockpit. `only` filters by category.
@@ -100,7 +108,7 @@ pub fn collect(
                 //    Editor / Socrates — stay in the editor flow, not this batch.)
                 let chapters = h.user_book_chapters();
                 let first_para = |chapter: u32| -> Option<uuid::Uuid> {
-                    let (cid, _) = chapters.get(chapter.saturating_sub(1) as usize)?;
+                    let (cid, _) = chapters.get(chapter_slot(chapter)?)?;
                     h.collect_subtree(*cid)
                         .into_iter()
                         .find(|id| h.get(*id).map(|n| n.kind == NodeKind::Paragraph).unwrap_or(false))
@@ -373,6 +381,14 @@ fn paragraph_filter_word_findings(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chapter_slot_yields_none_for_book_level() {
+        // B3 — chapter 0 (book-level) must not anchor; 1-based chapters map down.
+        assert_eq!(chapter_slot(0), None);
+        assert_eq!(chapter_slot(1), Some(0));
+        assert_eq!(chapter_slot(3), Some(2));
+    }
 
     #[test]
     fn anachronism_mapping_names_the_term_and_earliest_year() {
