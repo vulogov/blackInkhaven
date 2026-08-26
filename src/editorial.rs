@@ -598,10 +598,12 @@ pub(crate) fn from_lector_finding(
 
 /// REDLINE-1 (RD-P1) — an Inner Stylist (CHORUS) voice finding → the worklist.
 /// Book-level (no paragraph); its `kind` (distinctiveness / drift / pov / tense /
-/// register) routes it (all Brief today). B2 — returns `None` for `Praise`
-/// (celebratory — nothing to fix), mirroring [`from_editor_finding`]; otherwise a
-/// Praise "all voices distinct" row would always sit in the worklist on a healthy
-/// multi-character book and "reads clean" could never fire.
+/// register) routes it — all Brief (a book-level voice observation, no single-locus
+/// fix). B4 — the `drift` kind is surfaced as category `voice-drift`, distinct from
+/// WORLD-2 semantic `drift` (which is a Decision with a paragraph anchor); sharing
+/// the bare `drift` category routed this anchorless finding to a dead-end Decision
+/// and lumped voice- and semantic-drift into one filter bucket. B2 — returns `None`
+/// for `Praise` (celebratory — nothing to fix), mirroring [`from_editor_finding`].
 pub(crate) fn from_stylist_finding(
     f: &crate::inner_stylist::Finding,
 ) -> Option<EditorialFinding> {
@@ -611,8 +613,12 @@ pub(crate) fn from_stylist_finding(
         SS::Concern => Severity::Warn,
         SS::Note => Severity::Info,
     };
+    let category = match f.kind {
+        "drift" => "voice-drift".to_string(),
+        other => other.to_string(),
+    };
     Some(EditorialFinding {
-        category: f.kind.to_string(),
+        category,
         severity,
         location: Location::default(),
         message: f.message.clone(),
@@ -878,6 +884,24 @@ mod tests {
         let note = SF { severity: SS::Note, ..praise.clone() };
         assert_eq!(from_stylist_finding(&concern).unwrap().severity, Severity::Warn);
         assert_eq!(from_stylist_finding(&note).unwrap().severity, Severity::Info);
+    }
+
+    #[test]
+    fn stylist_drift_is_voice_drift_and_routes_to_brief() {
+        // B4 — the stylist's voice `drift` is disambiguated from WORLD-2 semantic
+        // `drift`: distinct category, and Brief (not the anchorless dead-end Decision).
+        use crate::inner_stylist::{Finding as SF, Severity as SS};
+        let f = SF {
+            severity: SS::Note,
+            kind: "drift",
+            key: "k".into(),
+            message: "voice drifts toward the narrator's register.".into(),
+        };
+        let e = from_stylist_finding(&f).unwrap();
+        assert_eq!(e.category, "voice-drift");
+        assert_eq!(response_kind(&e.category), ResponseKind::Brief);
+        // Semantic drift keeps its Decision routing (it has a paragraph anchor).
+        assert_eq!(response_kind("drift"), ResponseKind::Decision);
     }
 
     #[test]
