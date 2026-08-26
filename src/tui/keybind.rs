@@ -154,6 +154,14 @@ pub enum Action {
     /// grouped by kind; Enter jumps to the paragraph.
     #[serde(rename = "global.open_bonds")]
     OpenBonds,
+    /// ENSEMBLE (3.2) — the Dramatis Personae (cast × bonds × arc). Also on the
+    /// graph hub (`Ctrl+B z → c`); this action lets the reader hub launch it.
+    #[serde(rename = "global.open_cast")]
+    OpenCast,
+    /// H-1 (3.5) — the reader hub (Ctrl+B *): a menu of every reader dashboard
+    /// with its live finding-count; Enter opens the selected reader.
+    #[serde(rename = "global.open_reader_hub")]
+    OpenReaderHub,
     /// 1.3.34+ — the unified AI cost dashboard (Ctrl+B $): today's LLM call tallies
     /// per capped subsystem vs their daily caps.
     #[serde(rename = "global.open_cost_dashboard")]
@@ -1017,6 +1025,8 @@ impl Action {
             Action::OpenChronicle => "chronicle".into(),
             Action::OpenKnowledge => "knowledge".into(),
             Action::OpenBonds => "bonds".into(),
+            Action::OpenCast => "cast".into(),
+            Action::OpenReaderHub => "reader hub".into(),
             Action::OpenCostDashboard => "AI cost".into(),
             Action::OpenCredits => "credits".into(),
             Action::OpenBookInfo => "info".into(),
@@ -1253,6 +1263,10 @@ impl Action {
                 "Open the KEN knowledge dashboard (Ctrl+B Shift+Z): the epistemic-continuity findings — who knows what, when — grouped by kind (premature_knowledge, leaked_secret, dropped_reveal). ↑↓ scroll, Enter jumps to the offending paragraph, Esc closes. Deterministic; declare with `secret:` / `know:` / `reveals:` tags. The CLI equivalent is `inkhaven knowledge` (`--json`).".into(),
             Action::OpenBonds =>
                 "Open the BONDS relationship dashboard (Ctrl+V Shift+O): the relationship-continuity findings — are the bonds between characters earned on the page? — grouped by kind (unwritten_bond, unearned_shift, dropped_bond). ↑↓ scroll, Enter jumps to the offending paragraph, Esc closes. Deterministic; declare with `rel:<kind>:<A>:<B>` tags. The CLI equivalent is `inkhaven bonds` (`--json`).".into(),
+            Action::OpenCast =>
+                "Open the Dramatis Personae (ENSEMBLE): the book's cast joined with their BONDS relationships and their CHAR-1 arc state. Also reachable via the graph hub (Ctrl+B z → c). ↑↓ scroll, Enter jumps to a character's bible node, Esc closes. The CLI equivalent is `inkhaven cast` (`--json`).".into(),
+            Action::OpenReaderHub =>
+                "Open the reader hub (Ctrl+B *): a menu of every reader dashboard — Knowledge, Bonds, Continuity, Read-through, Chronicle, Character arc, Myth, Cast, Story bible — each with its live finding-count (for the deterministic readers). ↑↓ scroll, Enter opens the selected reader's dashboard, Esc closes. The CLI equivalent is `inkhaven read`.".into(),
             Action::OpenCostDashboard =>
                 "Open the AI cost dashboard (Ctrl+B $): today's LLM call tallies for each capped subsystem (world slow track, Inner Socrates slow track + any analytical-thread sub-budgets) against their daily caps. Read-only; the CLI equivalent is `inkhaven cost`.".into(),
             Action::OpenCredits =>
@@ -1667,6 +1681,10 @@ impl KeyBindings {
                 entry("Shift+z", Action::OpenKnowledge, Scope::Any),
                 // 1.3.34+ — Ctrl+B $: the AI cost dashboard.
                 entry("$", Action::OpenCostDashboard, Scope::Any),
+                // H-1 (3.5) — Ctrl+B *: the reader hub (a menu of every reader
+                // dashboard + live counts). `*` = "all readers"; the Shift-letter
+                // and letter spaces of this layer are exhausted.
+                entry("*", Action::OpenReaderHub, Scope::Any),
                 entry("o", Action::ScheduleTake, Scope::Any),
                 // 1.2.7+ — Ctrl+B U undoes the most-recent
                 // paragraph delete (single-slot kill-ring).
@@ -2980,6 +2998,18 @@ mod tests {
             k.resolve_meta_sub(&ev, Focus::Editor),
             Some(Action::OpenKnowledge),
             "Ctrl+B Shift+Z opens the knowledge dashboard"
+        );
+    }
+
+    #[test]
+    fn reader_hub_is_bound_to_ctrl_b_star() {
+        // H-1 — `*` is on the exhausted meta layer (all letters + Shift-letters taken).
+        let k = KeyBindings::defaults();
+        let ev = KeyEvent::new(KeyCode::Char('*'), KeyModifiers::SHIFT);
+        assert_eq!(
+            k.resolve_meta_sub(&ev, Focus::Editor),
+            Some(Action::OpenReaderHub),
+            "Ctrl+B * opens the reader hub"
         );
     }
 

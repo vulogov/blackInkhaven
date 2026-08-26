@@ -969,6 +969,15 @@ pub(super) enum Modal {
         anchors: Vec<Option<Uuid>>,
         cursor: usize,
     },
+    /// H-1 (3.5) — the reader hub (`Ctrl+B *`): a launcher menu of every reader
+    /// dashboard, each with its live finding-count. `↑↓` scroll, Enter opens the
+    /// selected reader (dispatched via its `Action`), Esc closes. `actions`
+    /// parallels `rows`.
+    ReaderHub {
+        rows: Vec<String>,
+        actions: Vec<crate::tui::keybind::Action>,
+        cursor: usize,
+    },
     /// ENSEMBLE (3.2, EN-P4) — the Dramatis Personae dashboard (graph hub → `c`):
     /// the book's cast joined with their bonds + arc state. `↑↓` scroll, Enter
     /// jumps to a character's bible node, Esc closes. `anchors` parallels `rows`
