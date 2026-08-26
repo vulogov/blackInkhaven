@@ -1438,6 +1438,10 @@ pub enum Command {
         /// Soft token budget for `--deep` (informative preflight, never blocks).
         #[arg(long, default_value_t = 8000)]
         max_cost: usize,
+        /// Print the knowledge *ledger* (who could know what, when — the grants
+        /// model KEN reasons over) instead of the epistemic-break findings.
+        #[arg(long)]
+        ledger: bool,
     },
     /// BONDS-1 (3.1) — the relationship check: are the bonds between characters
     /// earned on the page, or merely asserted? Flags a declared bond barely on the
@@ -6938,8 +6942,9 @@ impl Cli {
             Command::Revise { book_name, json } => {
                 revise::run(&project, book_name.as_deref(), json).map_err(Into::into)
             }
-            Command::Knowledge { book_name, json, deep, max_cost } => {
-                knowledge::run(&project, book_name.as_deref(), json, deep, max_cost).map_err(Into::into)
+            Command::Knowledge { book_name, json, deep, max_cost, ledger } => {
+                knowledge::run(&project, book_name.as_deref(), json, deep, max_cost, ledger)
+                    .map_err(Into::into)
             }
             Command::Bonds { book_name, json, deep, max_cost } => {
                 bonds::run(&project, book_name.as_deref(), json, deep, max_cost).map_err(Into::into)

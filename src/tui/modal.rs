@@ -958,6 +958,9 @@ pub(super) enum Modal {
         rows: Vec<String>,
         anchors: Vec<Option<Uuid>>,
         cursor: usize,
+        /// D-1 (3.5) — `false` shows the epistemic-break findings, `true` shows the
+        /// knowledge *ledger* (who could know what, when). Toggled by `l`.
+        ledger: bool,
     },
     /// BONDS-1 (3.1, BD-P4) — the relationship dashboard (`Ctrl+V Shift+O`): the
     /// relationship-continuity findings (are declared bonds earned on the page?)

@@ -16488,13 +16488,75 @@ impl App {
     /// the offending paragraph).
     fn open_knowledge(&mut self) {
         let (rows, anchors) = self.build_knowledge_rows();
-        let breaks = anchors.iter().filter(|a| a.is_some()).count();
-        self.status = if breaks == 0 {
-            "knowledge: clean · Esc".into()
+        self.status = "knowledge · ↑↓ scroll · Enter jump · l ledger · Esc".into();
+        self.modal = Modal::Knowledge { rows, anchors, cursor: 0, ledger: false };
+    }
+
+    /// D-1 (3.5) — build the KEN dashboard's rows for the current mode: the
+    /// epistemic-break findings (`ledger = false`) or the knowledge *ledger*
+    /// (`ledger = true`, who could know what, when).
+    fn build_knowledge_view(&self, ledger: bool) -> (Vec<String>, Vec<Option<Uuid>>) {
+        if ledger {
+            self.build_knowledge_ledger_rows()
         } else {
-            "knowledge · ↑↓ scroll · Enter jump · Esc".into()
+            self.build_knowledge_rows()
+        }
+    }
+
+    /// Build the knowledge *ledger* rows + jump anchors: KEN's grants model (who
+    /// could know what, and when) grouped by character, each topic anchored to the
+    /// paragraph where it becomes knowable. Reuses `ken::grants::build_grants`.
+    fn build_knowledge_ledger_rows(&self) -> (Vec<String>, Vec<Option<Uuid>>) {
+        let mut rows: Vec<String> = Vec::new();
+        let mut anchors: Vec<Option<Uuid>> = Vec::new();
+        let mut push = |text: String, anchor: Option<Uuid>| {
+            rows.push(text);
+            anchors.push(anchor);
         };
-        self.modal = Modal::Knowledge { rows, anchors, cursor: 0 };
+        let h = match crate::store::hierarchy::Hierarchy::load(&self.store) {
+            Ok(h) => h,
+            Err(e) => {
+                push(format!("knowledge unavailable: {e}"), None);
+                return (rows, anchors);
+            }
+        };
+        let book = match crate::cli::resolve_user_book(&h, None, "knowledge") {
+            Ok(b) => b,
+            Err(e) => {
+                push(format!("knowledge: {e}"), None);
+                return (rows, anchors);
+            }
+        };
+        let (grants, _items, _paras) = crate::ken::grants::build_grants(&self.layout, &h, book);
+        push(format!("◆ Knowledge ledger — {} grant(s)", grants.len()), None);
+        push(String::new(), None);
+        if grants.is_empty() {
+            push("  (no grants — declare secret:/know:/reveals: or add timeline events)".into(), None);
+            return (rows, anchors);
+        }
+        // Group by character; within a character, in reading order then topic.
+        let mut order: Vec<&str> = Vec::new();
+        for g in &grants {
+            if !order.contains(&g.character.as_str()) {
+                order.push(g.character.as_str());
+            }
+        }
+        order.sort_unstable();
+        for character in order {
+            let mut gs: Vec<&crate::ken::Grant> =
+                grants.iter().filter(|g| g.character == character).collect();
+            gs.sort_by(|a, b| a.at.cmp(&b.at).then_with(|| a.topic.cmp(&b.topic)));
+            push(character.to_string(), None);
+            for g in gs {
+                let src = match g.source {
+                    crate::ken::GrantSource::Presence => "presence",
+                    crate::ken::GrantSource::Declared => "declared",
+                };
+                push(format!("  {} — ch. {} ({src})", g.topic, g.at.chapter_ord), g.anchor);
+            }
+            push(String::new(), None);
+        }
+        (rows, anchors)
     }
 
     /// Build the knowledge dashboard's rows + parallel jump anchors: the epistemic
@@ -16587,6 +16649,20 @@ impl App {
                 } else {
                     self.status = "knowledge: no paragraph to jump to on this row".into();
                 }
+            }
+            // D-1 — toggle between the findings and the knowledge ledger.
+            KeyCode::Char('l') => {
+                let ledger = match &self.modal {
+                    Modal::Knowledge { ledger, .. } => !*ledger,
+                    _ => return true,
+                };
+                let (rows, anchors) = self.build_knowledge_view(ledger);
+                self.modal = Modal::Knowledge { rows, anchors, cursor: 0, ledger };
+                self.status = if ledger {
+                    "knowledge ledger · ↑↓ · Enter jump · l findings · Esc".into()
+                } else {
+                    "knowledge · ↑↓ · Enter jump · l ledger · Esc".into()
+                };
             }
             _ => {}
         }
