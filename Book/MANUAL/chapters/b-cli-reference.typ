@@ -191,10 +191,20 @@ inkhaven continuity extract [--provider <p>]
 inkhaven continuity list
     Build / dump the AI continuity bible.
 inkhaven knowledge [--book-name <b>] [--json]
-                   [--deep [--max-cost <n>]]
+                   [--deep [--max-cost <n>]] [--ledger]
     KEN — who knows what, when: premature_knowledge,
     leaked_secret, dropped_reveal. Deterministic; --deep adds
-    the LLM implied-irony pass. (Ctrl+B Shift+Z.)
+    the LLM implied-irony pass. --ledger prints the knowledge
+    ledger — who could know what, and when, grouped by
+    character — instead of the findings. (Ctrl+B Shift+Z.)
+inkhaven bonds [--book-name <b>] [--json] [--deep] [--ledger]
+    Relationship continuity: declared rel:<kind>:<A>:<B> bonds
+    against the scenes that earn them — unwritten_bond,
+    unearned_shift, dropped_bond. Exits non-zero on an
+    unearned_shift, so it is a CI gate. --deep adds the opt-in,
+    cost-capped LLM implied_cooling pass; --ledger prints the
+    declared-bond model grouped by character pair, the mirror
+    of knowledge --ledger. (Ctrl+V Shift+O.)
 ```]
 
 #screen(caption: "Reading, voice, and dialogue")[```

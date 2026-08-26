@@ -51,7 +51,9 @@ draft-2` compares two saved milestones directly.
 
 ## Jump to what you broke
 
-In the editor, **`Ctrl+B Shift+U`** opens the dashboard. `↑↓` scroll, and **Enter**
+In the editor, **`Ctrl+B Shift+U`** opens the dashboard. `↑↓` scroll (`PgUp`/`PgDn`
+page, `Home`/`End` to the ends; blank separators are skipped, so **Enter** always
+lands on a real row), and **Enter**
 on an introduced finding jumps straight to its paragraph — so the thing your last
 edits broke is one keystroke away. Press **`m`** to mark the current draft without
 leaving the editor (it's labelled by today's date; rename via the CLI if you like).

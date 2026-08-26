@@ -47,8 +47,9 @@ KEN is **silent** where it can't ground a break — it never invents one — and
 ## Jump to the slip
 
 In the editor, **`Ctrl+B Shift+Z`** opens the knowledge dashboard: the findings grouped
-by kind. `↑↓` scroll, **Enter** jumps straight to the paragraph where the character
-knew too much. The same findings ride the `Ctrl+V Shift+R` Editorial Pass, where you
+by kind. `↑↓` scroll (`PgUp`/`PgDn` page, `Home`/`End` to the ends; blank separators are
+skipped, so **Enter** always lands on a real row), **Enter** jumps straight to the
+paragraph where the character knew too much. The same findings ride the `Ctrl+V Shift+R` Editorial Pass, where you
 **decide** the fix: cut the reference, move the reveal earlier, or add the grant you
 forgot.
 
