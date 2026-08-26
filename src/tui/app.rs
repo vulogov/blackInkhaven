@@ -27122,6 +27122,14 @@ impl App {
                 self.status = "save story PNG: cancelled · preview restored".into();
                 return Ok(false);
             }
+            // C1 — Thread-Weave grid: Esc returns to the ThreadsPicker it was
+            // opened from (its `return_to`), not all the way out.
+            if let Modal::ThreadWeaveView { return_to, .. } = &mut self.modal {
+                let prev = std::mem::replace(return_to.as_mut(), Modal::None);
+                self.modal = prev;
+                self.status = "weave: closed".into();
+                return Ok(false);
+            }
             // 1.2.5+ tag-add and tag-delete sub-modals — Esc
             // returns to the TagPicker that opened them.
             if let Modal::TagAddPrompt { return_to, .. } = &mut self.modal {
