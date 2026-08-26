@@ -133,7 +133,7 @@ pub(crate) fn collect_chapters(
         let paragraphs: Vec<String> =
             crate::cli::book_walk::chapter_paragraphs_raw(layout, h, chapter.id)
                 .into_iter()
-                .map(|text| crate::audiobook::typst_to_plain(&text))
+                .map(|text| crate::manuscript::flatten_prose(&text))
                 .filter(|plain| !plain.trim().is_empty())
                 .map(|plain| plain.trim().to_string())
                 .collect();
