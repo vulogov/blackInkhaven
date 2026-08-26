@@ -27192,6 +27192,22 @@ impl App {
                 *ff = false;
                 return Ok(false);
             }
+            // C2 — the filter pickers stage Esc the same way: while typing a `/`
+            // filter, the first Esc leaves filter-input mode (stays in the list);
+            // a second Esc then closes. Without this the global close below fired
+            // on the first Esc, dropping the whole panel mid-search.
+            if let Modal::CommentsPanel { filter_active: fa @ true, .. } = &mut self.modal {
+                *fa = false;
+                return Ok(false);
+            }
+            if let Modal::StyleTransferPicker { filter_active: fa @ true, .. } = &mut self.modal {
+                *fa = false;
+                return Ok(false);
+            }
+            if let Modal::ThreadsPicker { filter_active: fa @ true, .. } = &mut self.modal {
+                *fa = false;
+                return Ok(false);
+            }
             // OUTLINE-1 — staged Esc: exit filter-editing first, then clear an
             // active filter, then persist the view state and close.
             if matches!(self.modal, Modal::Outline) {
