@@ -157,11 +157,12 @@ fn w_epub(vm: &mut VM) -> BundResult<'_> {
 fn do_epub(vm: &mut VM) -> Result<&mut VM> {
     let tag = "ink.export.epub";
     let ctx = prologue(vm, tag)?;
-    let combined = combined(&ctx, tag)?;
-    let md = crate::export::markdown::typst_to_markdown(&combined);
-    let title = crate::cli::epub::clean_title(&ctx.book.title);
-    crate::export::build_epub(&md, &title, crate::ai::prompts::iso_from_long(&ctx.cfg.language))
-        .map_err(|e| anyhow!("{tag}: {e}"))?
+    // I-3 — the rich multi-chapter builder (a nav entry per chapter, images,
+    // footnote popups, cover), replacing the single-chapter markdown→epub toy.
+    let store = active_store(tag)?;
+    let bytes = crate::cli::epub::build_bytes(store, &ctx.h, ctx.cfg, &ctx.book, None, None)
+        .map_err(|e| anyhow!("{tag}: {e}"))?;
+    crate::export::Artefact::Epub(bytes)
         .write_to(&ctx.path)
         .map_err(|e| anyhow!("{tag}: write {}: {e}", ctx.path.display()))?;
     Ok(vm)
