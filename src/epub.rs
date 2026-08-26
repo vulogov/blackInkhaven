@@ -225,10 +225,22 @@ pub fn chapter_filename(index0: usize) -> String {
 
 // ── typst → XHTML ────────────────────────────────────
 
-/// Convert a paragraph's typst body to escaped XHTML
-/// (the inner content of `<body>`).  Pure.  See the
-/// module-level fidelity note for the supported subset.
+/// Convert a single paragraph/body of typst to escaped XHTML with footnotes
+/// promoted to EPUB 3 asides — the self-contained one-shot form.  The production
+/// chapter path instead uses [`typst_to_xhtml_pending`] per paragraph + one
+/// [`finalize_footnotes`] pass so footnote ids are unique across the chapter
+/// (A3); this wrapper is retained for single-body tests + the import inverse.
+#[cfg(test)]
 pub fn typst_to_xhtml(body: &str) -> String {
+    finalize_footnotes(&typst_to_xhtml_pending(body))
+}
+
+/// Convert a paragraph's typst body to escaped XHTML (the inner content of
+/// `<body>`), leaving footnote spans as un-promoted
+/// `<span class="footnote">[…]</span>` placeholders so a whole chapter's
+/// paragraphs can be assembled and then finalized in one pass with
+/// chapter-unique ids (A3).  Pure.  See the module-level fidelity note.
+pub fn typst_to_xhtml_pending(body: &str) -> String {
     let stripped = crate::typst_prose::strip_leading_heading(body);
     let blocks = crate::typst_prose::split_blocks(&stripped);
     let mut out = String::new();
@@ -255,11 +267,15 @@ pub fn typst_to_xhtml(body: &str) -> String {
             out.push_str(&format!("<p>{}</p>\n", inline(&joined)));
         }
     }
-    // 1.3.13 — promote inline footnote spans to EPUB 3 popup footnotes:
-    // numbered `noteref` links + a collected `<aside>` footnotes section
-    // (Apple Books & co. render these as tap-to-pop popups; other readers
-    // show the section at the chapter end).
-    footnotes_to_asides(&out)
+    out
+}
+
+/// A3 — promote every footnote placeholder in a fully-assembled chapter body to
+/// EPUB 3 popup footnotes: chapter-unique numbered `noteref` anchors + one
+/// trailing `<section epub:type="footnotes">`. Run once per chapter (after all
+/// paragraphs/subheadings/figures are appended) so ids don't collide. Pure.
+pub fn finalize_footnotes(body: &str) -> String {
+    footnotes_to_asides(body)
 }
 
 /// Convert the `<span class="footnote">[…]</span>` placeholders that `inline`
@@ -653,6 +669,24 @@ mod tests {
     #[test]
     fn no_footnotes_means_no_footnotes_section() {
         assert!(!typst_to_xhtml("plain prose").contains("footnotes"));
+    }
+
+    #[test]
+    fn per_chapter_footnotes_get_unique_ids_and_one_section() {
+        // A3 — a chapter's paragraphs are converted pending, then finalized once.
+        let p1 = typst_to_xhtml_pending("First#footnote[note one].\n");
+        let p2 = typst_to_xhtml_pending("Second#footnote[note two].\n");
+        // Pending output carries placeholders, not yet promoted ids.
+        assert!(p1.contains("<span class=\"footnote\">"), "placeholder kept: {p1}");
+        assert!(!p1.contains("fn-1"), "not finalized yet: {p1}");
+        let chapter = finalize_footnotes(&format!("{p1}{p2}"));
+        // Across the two paragraphs: ids 1 and 2, no duplicate fn-1.
+        assert!(chapter.contains("id=\"fn-1\"") && chapter.contains("id=\"fn-2\""), "{chapter}");
+        assert!(chapter.contains("href=\"#fn-1\"") && chapter.contains("href=\"#fn-2\""), "{chapter}");
+        assert!(!chapter.contains("<span class=\"footnote\">"), "placeholders consumed: {chapter}");
+        // Exactly one collected footnotes section for the whole chapter.
+        assert_eq!(chapter.matches("epub:type=\"footnotes\"").count(), 1, "one section: {chapter}");
+        assert!(chapter.contains("note one") && chapter.contains("note two"));
     }
 
     #[test]
