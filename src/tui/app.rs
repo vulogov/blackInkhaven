@@ -16371,27 +16371,67 @@ impl App {
         (rows, anchors)
     }
 
+    /// C3 — shared reader-dashboard cursor navigation: ↑/↓ (single step),
+    /// PgUp/PgDn (by a page), Home/End — all skipping blank separator rows so
+    /// Enter always lands on a real row. Returns the new cursor, or `None` when
+    /// `key` isn't a navigation key (so the caller's own arms — Enter, Esc, and
+    /// per-dashboard letters like `k`/`l`/`m` — still run). Pure.
+    fn dashboard_nav(cursor: usize, rows: &[String], key: KeyCode) -> Option<usize> {
+        let n = rows.len();
+        if n == 0 {
+            return None;
+        }
+        let last = n - 1;
+        let page = 10usize;
+        let (raw, dir): (usize, isize) = match key {
+            KeyCode::Up => (cursor.saturating_sub(1), -1),
+            KeyCode::Down => ((cursor + 1).min(last), 1),
+            KeyCode::PageUp => (cursor.saturating_sub(page), -1),
+            KeyCode::PageDown => ((cursor + page).min(last), 1),
+            KeyCode::Home => (0, 1),
+            KeyCode::End => (last, -1),
+            _ => return None,
+        };
+        Some(Self::snap_non_blank(raw, dir, rows).unwrap_or(cursor))
+    }
+
+    /// The nearest non-blank row to `from`, searching first in `dir` (+1/−1) then
+    /// the other way; `None` only when every row is blank. Pure.
+    fn snap_non_blank(from: usize, dir: isize, rows: &[String]) -> Option<usize> {
+        let last = rows.len() as isize - 1;
+        if last < 0 {
+            return None;
+        }
+        let blank = |i: isize| rows[i as usize].trim().is_empty();
+        for start_dir in [dir, -dir] {
+            let mut i = from as isize;
+            while (0..=last).contains(&i) {
+                if !blank(i) {
+                    return Some(i as usize);
+                }
+                i += start_dir;
+            }
+        }
+        None
+    }
+
     fn continuity_ledger_handle_key(&mut self, key: KeyEvent) -> bool {
-        let n = match &self.modal {
-            Modal::ContinuityLedger { rows, .. } => rows.len(),
+        let nav = match &self.modal {
+            Modal::ContinuityLedger { rows, cursor, .. } => {
+                Self::dashboard_nav(*cursor, rows, key.code)
+            }
             _ => return false,
         };
+        if let Some(nc) = nav {
+            if let Modal::ContinuityLedger { cursor, .. } = &mut self.modal {
+                *cursor = nc;
+            }
+            return true;
+        }
         match key.code {
             KeyCode::Esc => {
                 self.modal = Modal::None;
                 self.status = "continuity ledger: closed".into();
-            }
-            KeyCode::Up => {
-                if let Modal::ContinuityLedger { cursor, .. } = &mut self.modal {
-                    *cursor = cursor.saturating_sub(1);
-                }
-            }
-            KeyCode::Down => {
-                if let Modal::ContinuityLedger { cursor, .. } = &mut self.modal {
-                    if n > 0 {
-                        *cursor = (*cursor + 1).min(n - 1);
-                    }
-                }
             }
             KeyCode::Enter => {
                 let anchor = match &self.modal {
@@ -16615,26 +16655,20 @@ impl App {
     }
 
     fn knowledge_handle_key(&mut self, key: KeyEvent) -> bool {
-        let n = match &self.modal {
-            Modal::Knowledge { rows, .. } => rows.len(),
+        let nav = match &self.modal {
+            Modal::Knowledge { rows, cursor, .. } => Self::dashboard_nav(*cursor, rows, key.code),
             _ => return false,
         };
+        if let Some(nc) = nav {
+            if let Modal::Knowledge { cursor, .. } = &mut self.modal {
+                *cursor = nc;
+            }
+            return true;
+        }
         match key.code {
             KeyCode::Esc => {
                 self.modal = Modal::None;
                 self.status = "knowledge: closed".into();
-            }
-            KeyCode::Up => {
-                if let Modal::Knowledge { cursor, .. } = &mut self.modal {
-                    *cursor = cursor.saturating_sub(1);
-                }
-            }
-            KeyCode::Down => {
-                if let Modal::Knowledge { cursor, .. } = &mut self.modal {
-                    if n > 0 {
-                        *cursor = (*cursor + 1).min(n - 1);
-                    }
-                }
             }
             KeyCode::Enter => {
                 let anchor = match &self.modal {
@@ -16739,26 +16773,20 @@ impl App {
     }
 
     fn bonds_handle_key(&mut self, key: KeyEvent) -> bool {
-        let n = match &self.modal {
-            Modal::Bonds { rows, .. } => rows.len(),
+        let nav = match &self.modal {
+            Modal::Bonds { rows, cursor, .. } => Self::dashboard_nav(*cursor, rows, key.code),
             _ => return false,
         };
+        if let Some(nc) = nav {
+            if let Modal::Bonds { cursor, .. } = &mut self.modal {
+                *cursor = nc;
+            }
+            return true;
+        }
         match key.code {
             KeyCode::Esc => {
                 self.modal = Modal::None;
                 self.status = "bonds: closed".into();
-            }
-            KeyCode::Up => {
-                if let Modal::Bonds { cursor, .. } = &mut self.modal {
-                    *cursor = cursor.saturating_sub(1);
-                }
-            }
-            KeyCode::Down => {
-                if let Modal::Bonds { cursor, .. } = &mut self.modal {
-                    if n > 0 {
-                        *cursor = (*cursor + 1).min(n - 1);
-                    }
-                }
             }
             KeyCode::Enter => {
                 let anchor = match &self.modal {
@@ -16844,26 +16872,20 @@ impl App {
     }
 
     fn cast_handle_key(&mut self, key: KeyEvent) -> bool {
-        let n = match &self.modal {
-            Modal::Cast { rows, .. } => rows.len(),
+        let nav = match &self.modal {
+            Modal::Cast { rows, cursor, .. } => Self::dashboard_nav(*cursor, rows, key.code),
             _ => return false,
         };
+        if let Some(nc) = nav {
+            if let Modal::Cast { cursor, .. } = &mut self.modal {
+                *cursor = nc;
+            }
+            return true;
+        }
         match key.code {
             KeyCode::Esc => {
                 self.modal = Modal::None;
                 self.status = "cast: closed".into();
-            }
-            KeyCode::Up => {
-                if let Modal::Cast { cursor, .. } = &mut self.modal {
-                    *cursor = cursor.saturating_sub(1);
-                }
-            }
-            KeyCode::Down => {
-                if let Modal::Cast { cursor, .. } = &mut self.modal {
-                    if n > 0 {
-                        *cursor = (*cursor + 1).min(n - 1);
-                    }
-                }
             }
             KeyCode::Enter => {
                 let anchor = match &self.modal {
@@ -16931,26 +16953,20 @@ impl App {
     }
 
     fn reader_hub_handle_key(&mut self, key: KeyEvent) -> bool {
-        let n = match &self.modal {
-            Modal::ReaderHub { rows, .. } => rows.len(),
+        let nav = match &self.modal {
+            Modal::ReaderHub { rows, cursor, .. } => Self::dashboard_nav(*cursor, rows, key.code),
             _ => return false,
         };
+        if let Some(nc) = nav {
+            if let Modal::ReaderHub { cursor, .. } = &mut self.modal {
+                *cursor = nc;
+            }
+            return true;
+        }
         match key.code {
             KeyCode::Esc => {
                 self.modal = Modal::None;
                 self.status = "reader hub: closed".into();
-            }
-            KeyCode::Up => {
-                if let Modal::ReaderHub { cursor, .. } = &mut self.modal {
-                    *cursor = cursor.saturating_sub(1);
-                }
-            }
-            KeyCode::Down => {
-                if let Modal::ReaderHub { cursor, .. } = &mut self.modal {
-                    if n > 0 {
-                        *cursor = (*cursor + 1).min(n - 1);
-                    }
-                }
             }
             KeyCode::Enter => {
                 let action = match &self.modal {
@@ -17043,26 +17059,20 @@ impl App {
     }
 
     fn chronicle_handle_key(&mut self, key: KeyEvent) -> bool {
-        let n = match &self.modal {
-            Modal::Chronicle { rows, .. } => rows.len(),
+        let nav = match &self.modal {
+            Modal::Chronicle { rows, cursor, .. } => Self::dashboard_nav(*cursor, rows, key.code),
             _ => return false,
         };
+        if let Some(nc) = nav {
+            if let Modal::Chronicle { cursor, .. } = &mut self.modal {
+                *cursor = nc;
+            }
+            return true;
+        }
         match key.code {
             KeyCode::Esc => {
                 self.modal = Modal::None;
                 self.status = "chronicle: closed".into();
-            }
-            KeyCode::Up => {
-                if let Modal::Chronicle { cursor, .. } = &mut self.modal {
-                    *cursor = cursor.saturating_sub(1);
-                }
-            }
-            KeyCode::Down => {
-                if let Modal::Chronicle { cursor, .. } = &mut self.modal {
-                    if n > 0 {
-                        *cursor = (*cursor + 1).min(n - 1);
-                    }
-                }
             }
             KeyCode::Enter => {
                 let anchor = match &self.modal {
@@ -17185,26 +17195,20 @@ impl App {
     }
 
     fn read_through_handle_key(&mut self, key: KeyEvent) -> bool {
-        let n = match &self.modal {
-            Modal::ReadThrough { rows, .. } => rows.len(),
+        let nav = match &self.modal {
+            Modal::ReadThrough { rows, cursor, .. } => Self::dashboard_nav(*cursor, rows, key.code),
             _ => return false,
         };
+        if let Some(nc) = nav {
+            if let Modal::ReadThrough { cursor, .. } = &mut self.modal {
+                *cursor = nc;
+            }
+            return true;
+        }
         match key.code {
             KeyCode::Esc => {
                 self.modal = Modal::None;
                 self.status = "read-through: closed".into();
-            }
-            KeyCode::Up => {
-                if let Modal::ReadThrough { cursor, .. } = &mut self.modal {
-                    *cursor = cursor.saturating_sub(1);
-                }
-            }
-            KeyCode::Down => {
-                if let Modal::ReadThrough { cursor, .. } = &mut self.modal {
-                    if n > 0 {
-                        *cursor = (*cursor + 1).min(n - 1);
-                    }
-                }
             }
             KeyCode::Enter => {
                 let anchor = match &self.modal {
@@ -32250,6 +32254,55 @@ pub(super) fn format_progress_gauge(current: i64, target: i64) -> (String, i64, 
             .add_modifier(Modifier::DIM)
     };
     (gauge, pct, style)
+}
+
+#[cfg(test)]
+mod tests_dashboard_nav {
+    use super::App;
+    use crossterm::event::KeyCode;
+
+    // header, blank, item a, item b, blank, item c
+    fn rows() -> Vec<String> {
+        vec![
+            "◆ Header".into(),
+            String::new(),
+            "  a".into(),
+            "  b".into(),
+            String::new(),
+            "  c".into(),
+        ]
+    }
+
+    #[test]
+    fn down_up_skip_blank_separator_rows() {
+        let r = rows();
+        // Down from a(2) → b(3); from b(3) skips the blank(4) to c(5); at c stays.
+        assert_eq!(App::dashboard_nav(2, &r, KeyCode::Down), Some(3));
+        assert_eq!(App::dashboard_nav(3, &r, KeyCode::Down), Some(5));
+        assert_eq!(App::dashboard_nav(5, &r, KeyCode::Down), Some(5));
+        // Up from c(5) skips the blank(4) to b(3).
+        assert_eq!(App::dashboard_nav(5, &r, KeyCode::Up), Some(3));
+    }
+
+    #[test]
+    fn home_end_pageup_pagedown_land_on_real_rows() {
+        let r = rows();
+        assert_eq!(App::dashboard_nav(3, &r, KeyCode::Home), Some(0));
+        assert_eq!(App::dashboard_nav(0, &r, KeyCode::End), Some(5));
+        // A page jump past the end clamps to the last real row.
+        assert_eq!(App::dashboard_nav(0, &r, KeyCode::PageDown), Some(5));
+        assert_eq!(App::dashboard_nav(5, &r, KeyCode::PageUp), Some(0));
+    }
+
+    #[test]
+    fn non_nav_keys_and_empty_rows_return_none() {
+        let r = rows();
+        // Letters (per-dashboard chords) and Enter/Esc are not nav keys.
+        assert_eq!(App::dashboard_nav(2, &r, KeyCode::Char('k')), None);
+        assert_eq!(App::dashboard_nav(2, &r, KeyCode::Enter), None);
+        // Empty rows → nav is a no-op.
+        assert_eq!(App::dashboard_nav(0, &[], KeyCode::Down), None);
+    }
 }
 
 #[cfg(test)]
