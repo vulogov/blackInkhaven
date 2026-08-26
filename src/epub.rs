@@ -146,15 +146,23 @@ pub fn write_epub(
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    // M5 (3.0.0 P2) — stream to a sibling `.part` and rename on success, so a
-    // failed write (disk full, a large cover/image, an interrupted write) never
-    // truncates a previously-good .epub already at `dest`. Mirrors
-    // `export::bundle::write_zip`.
+    let bytes = build_epub_bytes(meta, chapters)?;
+    // M5 (3.0.0 P2) — write to a sibling `.part` and rename on success, so a
+    // failed write (disk full, an interrupted write) never truncates a
+    // previously-good .epub already at `dest`. Mirrors `export::bundle::write_zip`.
     let mut tmp_os = dest.as_os_str().to_owned();
     tmp_os.push(".part");
     let tmp = std::path::PathBuf::from(tmp_os);
-    let file = std::fs::File::create(&tmp)?;
-    let mut zip = ZipWriter::new(file);
+    std::fs::write(&tmp, &bytes)?;
+    std::fs::rename(&tmp, dest)?;
+    Ok(EpubReport { chapters: chapters.len(), bytes: bytes.len() as u64 })
+}
+
+/// I-3 — build the EPUB3 container entirely in memory. Shared by [`write_epub`]
+/// (→ disk) and the Bund `ink.export.epub` / TUI batch exporters, which need the
+/// bytes as an in-memory artefact. Deterministic given the same inputs.
+pub fn build_epub_bytes(meta: &EpubMeta, chapters: &[EpubChapter]) -> Result<Vec<u8>> {
+    let mut zip = ZipWriter::new(std::io::Cursor::new(Vec::<u8>::new()));
 
     // ── mimetype — MUST be first + stored (uncompressed)
     //    per the EPUB OCF spec.  Readers sniff the first
@@ -206,13 +214,8 @@ pub fn write_epub(
     zip.start_file("OEBPS/content.opf", deflated)?;
     zip.write_all(content_opf(meta, chapters).as_bytes())?;
 
-    zip.finish()?;
-    std::fs::rename(&tmp, dest)?;
-    let bytes = std::fs::metadata(dest).map(|m| m.len()).unwrap_or(0);
-    Ok(EpubReport {
-        chapters: chapters.len(),
-        bytes,
-    })
+    let cursor = zip.finish()?;
+    Ok(cursor.into_inner())
 }
 
 /// `chapter-001.xhtml`, `chapter-002.xhtml`, … (1-based).

@@ -91,6 +91,36 @@ pub fn run(
     Ok(())
 }
 
+/// I-3 — build a rich, multi-chapter EPUB in memory from an already-open store +
+/// book (a `nav` entry per chapter, embedded images, footnote popups, cover),
+/// returning the bytes. The bytes-returning sibling of [`run`] (which writes to
+/// disk) — used by the Bund `ink.export.epub` word and the TUI batch exporter so
+/// they no longer go through the retired single-chapter markdown→epub toy.
+pub fn build_bytes(
+    store: &Store,
+    h: &Hierarchy,
+    cfg: &Config,
+    book: &Node,
+    title: Option<&str>,
+    author: Option<&str>,
+) -> Result<Vec<u8>> {
+    let chapters = collect_chapters(store, h, book)?;
+    if chapters.is_empty() {
+        return Err(Error::Store(format!("epub: `{}` has no chapters to export", book.title)));
+    }
+    let meta = EpubMeta {
+        title: title.map(str::to_string).unwrap_or_else(|| book.title.clone()),
+        author: author
+            .map(str::to_string)
+            .or_else(|| cfg.editor.comment_author.clone())
+            .unwrap_or_else(|| "Unknown Author".to_string()),
+        language: crate::ai::prompts::iso_from_long(&cfg.language).to_string(),
+        identifier: format!("urn:uuid:{}", Uuid::now_v7()),
+        cover: detect_cover(store.project_root()),
+    };
+    epub::build_epub_bytes(&meta, &chapters).map_err(|e| Error::Store(format!("epub: {e:#}")))
+}
+
 /// Gather one `EpubChapter` per top-level Chapter under
 /// `book`, in display order.  Each chapter's body is the
 /// concatenated XHTML of its descendant paragraphs (in

@@ -26294,7 +26294,7 @@ impl App {
                 }
                 continue;
             }
-            let outcome = self.build_one_extra_format(&fmt, &combined, &book.title);
+            let outcome = self.build_one_extra_format(&fmt, &combined, book);
             let artefact = match outcome {
                 Some(Ok(art)) => art,
                 Some(Err(e)) => {
@@ -26478,19 +26478,19 @@ impl App {
         &self,
         fmt: &str,
         combined: &str,
-        book_title: &str,
+        book: &crate::store::node::Node,
     ) -> Option<anyhow::Result<crate::export::Artefact>> {
         match fmt {
             "markdown" | "md" => Some(Ok(crate::export::build_markdown(combined))),
             "tex" | "latex" => Some(Ok(crate::export::build_tex(combined, &self.cfg.tex_export))),
-            "epub" => {
-                let md = crate::export::markdown::typst_to_markdown(combined);
-                Some(crate::export::build_epub(
-                    &md,
-                    book_title,
-                    crate::ai::prompts::iso_from_long(&self.cfg.language),
-                ))
-            }
+            // I-3 — the rich multi-chapter builder from the store (per-chapter
+            // nav, images, footnote popups, cover), replacing the single-chapter
+            // markdown→epub toy.
+            "epub" => Some(
+                crate::cli::epub::build_bytes(&self.store, &self.hierarchy, &self.cfg, book, None, None)
+                    .map(crate::export::Artefact::Epub)
+                    .map_err(|e| anyhow::anyhow!("{e:#}")),
+            ),
             _ => None,
         }
     }
