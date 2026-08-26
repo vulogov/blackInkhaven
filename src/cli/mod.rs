@@ -31,6 +31,7 @@ pub mod chronicle;
 pub mod knowledge;
 pub mod bonds;
 pub mod cast;
+pub mod read;
 pub mod event;
 pub mod event_critique;
 pub mod comments;
@@ -1469,6 +1470,17 @@ pub enum Command {
         #[arg(long)]
         book_name: Option<String>,
         /// Emit the cast as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// H-2 (3.5) — the state of the manuscript: the reader family's finding-counts
+    /// grouped by reader + a health line. The glanceable overview companion to
+    /// `inkhaven edit` (the full worklist) and the `Ctrl+B *` reader hub.
+    Read {
+        /// Restrict to a single book (slug or title). Default: the whole project.
+        #[arg(long)]
+        book_name: Option<String>,
+        /// Emit the summary as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -6934,6 +6946,9 @@ impl Cli {
             }
             Command::Cast { book_name, json } => {
                 cast::run(&project, book_name.as_deref(), json).map_err(Into::into)
+            }
+            Command::Read { book_name, json } => {
+                read::run(&project, book_name.as_deref(), json).map_err(Into::into)
             }
             Command::Chronicle { cmd } => match cmd {
                 None => chronicle::trend(&project, None, false).map_err(Into::into),
