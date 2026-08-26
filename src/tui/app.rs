@@ -12573,6 +12573,8 @@ impl App {
             A::OpenChronicle => self.open_chronicle(),
             A::OpenKnowledge => self.open_knowledge(),
             A::OpenBonds => self.open_bonds(),
+            A::OpenCast => self.open_cast(),
+            A::OpenReaderHub => self.open_reader_hub(),
             A::OpenCostDashboard => self.open_cost_dashboard(),
             A::OpenCredits => self.open_credits(),
             A::OpenBookInfo => self.open_book_info(),
@@ -16799,6 +16801,89 @@ impl App {
                     }
                 } else {
                     self.status = "cast: no character node to jump to on this row".into();
+                }
+            }
+            _ => {}
+        }
+        true
+    }
+
+    /// H-1 (3.5) — the reader hub: a launcher menu of every reader dashboard, each
+    /// with its live finding-count (for the deterministic readers, from the unified
+    /// worklist). Enter opens the selected reader; the others (own store / view)
+    /// show `·`. One chord for the whole scattered reader family.
+    fn open_reader_hub(&mut self) {
+        use crate::tui::keybind::Action;
+        let counts = self.reader_hub_counts();
+        // (label, collect `source` for the count [None → own store, shown `·`], action)
+        let readers: [(&str, Option<&str>, Action); 9] = [
+            ("Knowledge (KEN)", Some("knowledge"), Action::OpenKnowledge),
+            ("Bonds", Some("bonds"), Action::OpenBonds),
+            ("Continuity (SENTINEL)", Some("continuity"), Action::OpenContinuityLedger),
+            ("Read-through (LECTOR)", Some("read-through"), Action::OpenReadThrough),
+            ("Cast (Dramatis Personae)", None, Action::OpenCast),
+            ("Character arc", None, Action::OpenCharacterArc),
+            ("Myth", None, Action::OpenMythHeatmap),
+            ("Chronicle", None, Action::OpenChronicle),
+            ("Story bible", None, Action::OpenStoryBible),
+        ];
+        let mut rows: Vec<String> = Vec::new();
+        let mut actions: Vec<Action> = Vec::new();
+        for (label, source, action) in readers {
+            let count = match source.map(|s| counts.get(s).copied().unwrap_or(0)) {
+                Some(n) if n > 0 => n.to_string(),
+                _ => "\u{b7}".to_string(),
+            };
+            rows.push(format!("{label:<26} {count:>4}"));
+            actions.push(action);
+        }
+        self.status = "reader hub \u{b7} \u{2191}\u{2193} \u{b7} Enter open \u{b7} Esc".into();
+        self.modal = Modal::ReaderHub { rows, actions, cursor: 0 };
+    }
+
+    /// Count the unified worklist findings by `source` for the reader-hub counts.
+    /// Deterministic readers only (via `collect`); an empty map on any error — the
+    /// hub still lists every reader as a launcher.
+    fn reader_hub_counts(&self) -> std::collections::BTreeMap<String, usize> {
+        let mut counts = std::collections::BTreeMap::new();
+        if let Ok(report) = crate::cli::editorial::collect(&self.layout.root, None, None, false) {
+            for f in &report.findings {
+                *counts.entry(f.source.to_string()).or_insert(0) += 1;
+            }
+        }
+        counts
+    }
+
+    fn reader_hub_handle_key(&mut self, key: KeyEvent) -> bool {
+        let n = match &self.modal {
+            Modal::ReaderHub { rows, .. } => rows.len(),
+            _ => return false,
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "reader hub: closed".into();
+            }
+            KeyCode::Up => {
+                if let Modal::ReaderHub { cursor, .. } = &mut self.modal {
+                    *cursor = cursor.saturating_sub(1);
+                }
+            }
+            KeyCode::Down => {
+                if let Modal::ReaderHub { cursor, .. } = &mut self.modal {
+                    if n > 0 {
+                        *cursor = (*cursor + 1).min(n - 1);
+                    }
+                }
+            }
+            KeyCode::Enter => {
+                let action = match &self.modal {
+                    Modal::ReaderHub { actions, cursor, .. } => actions.get(*cursor).cloned(),
+                    _ => None,
+                };
+                // Opening the reader replaces this modal with the reader's own.
+                if let Some(action) = action {
+                    self.run_action(action);
                 }
             }
             _ => {}
@@ -27244,6 +27329,10 @@ impl App {
         }
         if matches!(self.modal, Modal::Cast { .. }) {
             self.cast_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::ReaderHub { .. }) {
+            self.reader_hub_handle_key(key);
             return Ok(false);
         }
         if matches!(self.modal, Modal::PoemFormPicker { .. }) {
