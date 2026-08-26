@@ -706,7 +706,6 @@ impl App {
             grid,
             cursor_row,
             cursor_col,
-            return_to,
             ..
         } = &mut self.modal
         else {
@@ -765,11 +764,8 @@ impl App {
                 }
                 true
             }
-            KeyCode::Esc => {
-                let restored = std::mem::replace(return_to.as_mut(), Modal::None);
-                self.modal = restored;
-                true
-            }
+            // Esc is handled by the global modal handler (C1) — it restores the
+            // ThreadsPicker in `return_to`, so it never reaches here.
             _ => false,
         }
     }
