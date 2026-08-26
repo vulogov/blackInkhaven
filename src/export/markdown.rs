@@ -98,58 +98,43 @@ fn read_quoted(s: &str) -> Option<(String, &str)> {
     None
 }
 
-/// Inline-emphasis rewrite. Typst uses `*bold*` and `_italic_`;
-/// markdown wants `**bold**` and `*italic*`. We only touch
-/// well-balanced runs to avoid mangling stray asterisks inside
-/// code-ish content.
+/// Inline-emphasis rewrite. Typst uses `*bold*` and `_italic_`; markdown wants
+/// `**bold**` and `*italic*`. A7 — only a balanced pair whose inner content is
+/// non-empty and not whitespace-adjacent is converted, so stray `*` in prose
+/// (arithmetic like `3 * 4 * 5`, a literal glyph) survives — the same guard the
+/// HTML exporter's `replace_pair` uses. Bold runs first so the single `*` the
+/// italic pass emits isn't re-paired into bold.
 fn convert_emphasis(line: &str) -> String {
-    let mut out = String::with_capacity(line.len() + 8);
-    let mut chars = line.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            '*' => {
-                // Greedy: read until next un-escaped '*' on the same
-                // line. If we don't find one, treat the '*' as literal.
-                let mut body = String::new();
-                let mut closed = false;
-                for d in chars.by_ref() {
-                    if d == '*' {
-                        closed = true;
-                        break;
-                    }
-                    body.push(d);
-                }
-                if closed && !body.is_empty() {
-                    out.push_str("**");
-                    out.push_str(&body);
-                    out.push_str("**");
-                } else {
-                    out.push('*');
-                    out.push_str(&body);
-                }
+    let bold = replace_delim(line, '*', "**", "**");
+    replace_delim(&bold, '_', "*", "*")
+}
+
+/// Replace balanced `delim … delim` pairs with `open … close`, skipping any pair
+/// whose inner content is empty or starts/ends with a space (a stray delimiter).
+/// On a skip only the first delimiter is emitted literally, leaving the rest —
+/// including its potential closer — to be reconsidered as a later opener.
+fn replace_delim(s: &str, delim: char, open: &str, close: &str) -> String {
+    let d = delim.len_utf8();
+    let mut out = String::with_capacity(s.len() + 8);
+    let mut rest = s;
+    while let Some(start) = rest.find(delim) {
+        let after = &rest[start + d..];
+        if let Some(end) = after.find(delim) {
+            let inner = &after[..end];
+            if !inner.is_empty() && !inner.starts_with(' ') && !inner.ends_with(' ') {
+                out.push_str(&rest[..start]);
+                out.push_str(open);
+                out.push_str(inner);
+                out.push_str(close);
+                rest = &after[end + d..];
+                continue;
             }
-            '_' => {
-                let mut body = String::new();
-                let mut closed = false;
-                for d in chars.by_ref() {
-                    if d == '_' {
-                        closed = true;
-                        break;
-                    }
-                    body.push(d);
-                }
-                if closed && !body.is_empty() {
-                    out.push('*');
-                    out.push_str(&body);
-                    out.push('*');
-                } else {
-                    out.push('_');
-                    out.push_str(&body);
-                }
-            }
-            other => out.push(other),
         }
+        // No valid close (or a stray delimiter) — emit it literally and move on.
+        out.push_str(&rest[..start + d]);
+        rest = &rest[start + d..];
     }
+    out.push_str(rest);
     out
 }
 
@@ -466,6 +451,18 @@ mod tests {
         let md = typst_to_markdown("*bold* and _italic_ words.\n");
         assert!(md.contains("**bold**"));
         assert!(md.contains("*italic*"));
+    }
+
+    #[test]
+    fn stray_asterisks_are_not_emphasis() {
+        // A7 — arithmetic / literal `*` (whitespace-adjacent) survives verbatim
+        // instead of being mangled into bold.
+        let md = typst_to_markdown("multiply 3 * 4 * 5 now.\n");
+        assert!(md.contains("3 * 4 * 5"), "stray asterisks preserved: {md}");
+        assert!(!md.contains("**"), "no bold introduced: {md}");
+        // A real emphasis pair adjacent to a stray one still converts.
+        let md2 = typst_to_markdown("a *bold* b * c\n");
+        assert!(md2.contains("**bold**") && md2.contains("b * c"), "got: {md2}");
     }
 
     #[test]
