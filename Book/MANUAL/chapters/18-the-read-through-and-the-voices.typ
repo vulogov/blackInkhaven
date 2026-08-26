@@ -188,7 +188,8 @@ tooling. In the editor the read-through has its own dashboard.
 ```]
 
 `Ctrl+B Shift+A` opens that scrollable modal — the curve, the beats, and the
-ranked findings together. Arrow keys scroll it, `Enter` jumps straight to the
+ranked findings together. Arrow keys scroll it, `PgUp`/`PgDn` page through and
+`Home`/`End` jump to the ends (blank rows skipped), `Enter` jumps straight to the
 flagged chapter in the editor, `k` runs the cost-capped synthetic first-read (its
 results post to the Output pane's `readthrough` category), and `Esc` closes. The
 deterministic findings also ride the unified review pass: `Ctrl+B Shift+C` adds a

@@ -166,8 +166,9 @@ objects (`kind`, `severity`, `chapter`, `anchor`, `entities`, `message`,
 Inside the editor, the same ranked ledger is a keystroke away. `Ctrl+B
 Shift+I` opens the *continuity ledger* — a scrollable modal of every
 deterministic finding, grouped by kind and ranked as on the command line.
-`↑↓` scroll it; `Enter` jumps straight to the offending paragraph so you can
-see the break in context; `Esc` closes it. It is the fastest way to walk a
+`↑↓` scroll it; `PgUp`/`PgDn` page through the list and `Home`/`End` jump to its
+ends, skipping the blank separator rows; `Enter` jumps straight to the offending
+paragraph so you can see the break in context; `Esc` closes it. It is the fastest way to walk a
 book's continuity without leaving your place in it.
 
 #screen(caption: "Ctrl+B Shift+I — the continuity ledger")[```
@@ -415,8 +416,11 @@ the whole project is checked.
 #subsection("The knowledge dashboard — Ctrl+B Shift+Z")
 
 In the editor, `Ctrl+B Shift+Z` opens the *knowledge dashboard* — the
-findings grouped by kind, the same shape as the continuity ledger. `↑↓`
-scroll; `Enter` jumps to the offending paragraph; `Esc` closes.
+findings grouped by kind, the same shape as the continuity ledger. `l` toggles
+the dashboard between the findings and the knowledge ledger — who could know
+what, and when. `↑↓` scroll; `PgUp`/`PgDn` page through the list and
+`Home`/`End` jump to its ends, skipping the blank separator rows; `Enter` jumps
+to the offending paragraph; `Esc` closes.
 
 #screen(caption: "Ctrl+B Shift+Z — the knowledge dashboard")[```
 ┌─ Knowledge · who knows what, when · 3 ──────────────┐

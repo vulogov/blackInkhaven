@@ -51,10 +51,20 @@ It exits non-zero on an `unearned_shift`, so you can gate a draft in CI. BONDS i
 **silent** where you've declared nothing — no `rel:` tags, no work — and the core costs
 **nothing** (no model; it scales with your tags, not your page count).
 
+## See the model
+
+`inkhaven bonds` reports the *breaks*; `inkhaven bonds --ledger` reports the *model* it
+checked against — every declared `rel:` bond grouped by character pair, in reading order,
+transitions and all. It's the mirror of `inkhaven knowledge --ledger`: before you trust
+the findings, read back what you actually declared. `--json` gives the same model as
+structured output for a script.
+
 ## Jump to the slip
 
 In the editor, **`Ctrl+V Shift+O`** opens the relationship dashboard: the findings
-grouped by kind. `↑↓` scroll, **Enter** jumps straight to the paragraph. The same
+grouped by kind. `↑↓` scroll (`PgUp`/`PgDn` page, `Home`/`End` to the ends; blank
+separators are skipped, so **Enter** always lands on a real row), **Enter** jumps
+straight to the paragraph. The same
 findings ride the `Ctrl+V Shift+R` Editorial Pass, where an `unearned_shift` becomes a
 **Decision**: add the scene that earns the turn, or soften the declaration you couldn't
 back up.

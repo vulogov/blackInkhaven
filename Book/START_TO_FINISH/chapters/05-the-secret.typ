@@ -284,7 +284,8 @@ thing only a tool that knows which facts you meant to keep could possibly say.
 
 You do not have to leave the editor to see this. `Ctrl+B Shift+Z` opens the
 *knowledge dashboard* — every finding grouped by kind and ranked, breaks at the
-top. `↑↓` scrolls it, `Enter` jumps straight to the offending paragraph so you
+top. `↑↓` scrolls it — `PgUp`/`PgDn` page through a longer list and `Home`/`End`
+jump to its ends — `Enter` jumps straight to the offending paragraph so you
 see the slip in its own context, and `Esc` closes it. It is the fastest way to
 walk a book's secrets without losing your place in the prose.
 
