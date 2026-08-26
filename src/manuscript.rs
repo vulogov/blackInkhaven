@@ -99,6 +99,41 @@ pub fn is_scene_break(text: &str) -> bool {
     chars.iter().all(|c| *c == first)
 }
 
+/// A1 (3.6.0) — collapse a raw typst paragraph to a single manuscript-body line,
+/// **preserving** authored `*bold*` / `_italic_` emphasis so the typst and `.docx`
+/// exporters' emphasis parsing (`escape_typst_prose` / `runs`) actually sees the
+/// delimiters. Drops the leading `= heading` scaffold, keeps subheading text,
+/// collapses intra-block newlines to spaces, and — matching the prior behaviour —
+/// drops `#footnote[…]` from the body.
+///
+/// Distinct from the TTS-oriented [`crate::audiobook::typst_to_plain`], which
+/// *strips* the `*` / `_` delimiters (correct for speech, wrong for a submission
+/// manuscript where the emphasis must render).
+pub fn flatten_prose(raw: &str) -> String {
+    let stripped = crate::typst_prose::strip_leading_heading(raw);
+    let mut blocks: Vec<String> = Vec::new();
+    for block in crate::typst_prose::split_blocks(&stripped) {
+        let trimmed = block.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        // Subheadings: keep the text, drop the `=` marks.
+        let no_heading = trimmed.trim_start_matches('=').trim_start();
+        // Collapse intra-block newlines to spaces (a paragraph is one line).
+        let joined = no_heading
+            .split('\n')
+            .map(str::trim)
+            .collect::<Vec<_>>()
+            .join(" ");
+        let dropped = crate::audiobook::drop_footnotes(&joined);
+        let line = dropped.trim();
+        if !line.is_empty() {
+            blocks.push(line.to_string());
+        }
+    }
+    blocks.join("\n")
+}
+
 /// XP-2 — an inline emphasis span: a run of text that is plain, bold, or italic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Emphasis {
@@ -373,6 +408,31 @@ mod tests {
                 ("d", Emphasis::Italic),
             ]
         );
+    }
+
+    // ── flatten_prose (A1) ────────────────────────────
+
+    #[test]
+    fn flatten_prose_preserves_emphasis_unlike_tts() {
+        // A1 — the manuscript flattener keeps *bold* / _italic_ delimiters so the
+        // exporters' emphasis parsing actually fires (the TTS path strips them).
+        let raw = "She was *very* _tired_ now.";
+        assert_eq!(flatten_prose(raw), "She was *very* _tired_ now.");
+        assert_eq!(
+            crate::audiobook::typst_to_plain(raw),
+            "She was very tired now.",
+            "TTS path still strips — proving the two flatteners differ",
+        );
+    }
+
+    #[test]
+    fn flatten_prose_drops_heading_and_footnotes_collapses_lines() {
+        let raw = "= Chapter\nA line#footnote[a note]\nwrapped here.";
+        // Leading heading dropped, footnote dropped, newlines collapsed to spaces.
+        assert_eq!(flatten_prose(raw), "A line wrapped here.");
+        // A scene-break line survives intact (still detected downstream).
+        assert_eq!(flatten_prose("* * *"), "* * *");
+        assert!(is_scene_break(&flatten_prose("* * *")));
     }
 
     // ── build_typst structure ─────────────────────────
