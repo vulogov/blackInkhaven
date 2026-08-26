@@ -66,7 +66,13 @@ Knowledge check — 2 findings
 inkhaven knowledge                 # the deterministic check (non-zero exit on a break)
 inkhaven knowledge --json          # the findings as JSON
 inkhaven knowledge --deep          # + the opt-in, cost-capped implied_irony pass
+inkhaven knowledge --ledger        # the grants model: who could know what, when
 ```
+
+**The ledger** (3.5) prints not the breaks but the whole model KEN reasons over —
+every grant grouped by character, each topic with the chapter it becomes knowable
+and how (`presence` from a timeline event, or `declared` via a tag). It answers
+"does Mara know the betrayal by chapter 5?" directly. `--json` for scripts.
 
 `knowledge` exits non-zero on any hard break (`premature_knowledge` / `leaked_secret`)
 — a CI gate, like `continuity check`. It is **self-gating**: no `secret:`/`know:` tags
@@ -77,7 +83,9 @@ and no events → nothing to check, no cost.
 ## In the editor
 
 - **The dashboard** — **`Ctrl+B Shift+Z`** opens the knowledge findings grouped by
-  kind; `↑↓` scroll, **Enter** jumps to the offending paragraph, `Esc` closes.
+  kind; `↑↓` scroll, **Enter** jumps to the offending paragraph, **`l`** toggles to
+  the **ledger** view (the grants model; Enter there jumps to where the character
+  learns the topic), `Esc` closes. Also reachable from the reader hub (`Ctrl+B *`).
 - **The revision worklist** — knowledge findings ride the `Ctrl+V Shift+R` Editorial
   Pass (a `knowledge` source, routed **Decision**: *fix the leak, move the reveal, or
   add a grant?*) and `inkhaven revise`.
