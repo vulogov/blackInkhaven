@@ -6632,7 +6632,7 @@ impl super::super::App {
     /// KEN-1 (KEN-P5) — the knowledge dashboard: epistemic findings grouped by
     /// kind, same scrollable-rows shape as the continuity ledger.
     pub(in crate::tui::app) fn draw_knowledge_modal(&self, f: &mut ratatui::Frame, area: Rect) {
-        let Modal::Knowledge { rows, anchors, cursor } = &self.modal else {
+        let Modal::Knowledge { rows, anchors, cursor, ledger } = &self.modal else {
             return;
         };
         let width = area.width.saturating_sub(6).clamp(52, 92);
@@ -6644,7 +6644,7 @@ impl super::super::App {
 
         let block = Block::default()
             .borders(Borders::ALL)
-            .title(" Knowledge ")
+            .title(if *ledger { " Knowledge · ledger " } else { " Knowledge " })
             .border_style(Style::default().fg(self.theme.modal_border).add_modifier(Modifier::BOLD))
             .style(Style::default().bg(self.theme.modal_bg).fg(self.theme.modal_fg));
         let inner = block.inner(rect);
@@ -6674,7 +6674,11 @@ impl super::super::App {
         let footer = Rect { x: inner.x, y: inner.y + inner.height - 1, width: inner.width, height: 1 };
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                " ↑↓ scroll · Enter jump to the paragraph · Esc close",
+                if *ledger {
+                    " ↑↓ scroll · Enter jump · l findings · Esc close"
+                } else {
+                    " ↑↓ scroll · Enter jump · l ledger · Esc close"
+                },
                 dim,
             ))),
             footer,
