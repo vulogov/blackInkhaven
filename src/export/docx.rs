@@ -178,10 +178,21 @@ fn ppr_xml(props: &[Prop]) -> String {
     }
 }
 
-/// One `<w:p>` with the given text + properties.  Empty text → a blank
-/// (spacer) paragraph.  No footnote handling (title page / scene breaks).
+/// One `<w:p>` with the given text + properties as a single **plain** run —
+/// no emphasis parsing.  A6 — title-page fields (contact / title / byline) and
+/// chapter headings must stay literal, matching the typst path's `escape_typst`,
+/// so an email or name with `_`/`*` doesn't render italic/bold and lose the
+/// delimiter.  Body prose uses [`body_para`] (emphasis + footnotes) instead.
+/// Empty text → a blank (spacer) paragraph.
 fn para(text: &str, props: &[Prop]) -> String {
-    let run = if text.is_empty() { String::new() } else { runs(text) };
+    let run = if text.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "<w:r><w:t xml:space=\"preserve\">{}</w:t></w:r>",
+            xml_escape(text)
+        )
+    };
     format!("<w:p>{}{run}</w:p>\n", ppr_xml(props))
 }
 
@@ -362,16 +373,41 @@ mod tests {
     }
 
     #[test]
-    fn emphasis_becomes_word_runs_not_literal_markers() {
-        // XP-2 — *bold* / _italic_ now emit <w:b>/<w:i> runs, not literal text.
-        let p = para("she was *very* _tired_ now", &[Prop::FirstLineIndent]);
+    fn body_emphasis_becomes_word_runs_not_literal_markers() {
+        // XP-2 — *bold* / _italic_ emit <w:b>/<w:i> runs in body prose.
+        let mut fns = Vec::new();
+        let p = body_para("she was *very* _tired_ now", &[Prop::FirstLineIndent], &mut fns);
         assert!(p.contains("<w:b/>"), "bold run: {p}");
         assert!(p.contains("<w:i/>"), "italic run: {p}");
         assert!(p.contains("<w:t xml:space=\"preserve\">very</w:t>"), "bold text: {p}");
         assert!(!p.contains('*') && !p.contains('_'), "no literal delimiters: {p}");
         // Plain text with no emphasis is a single unchanged run.
-        let plain = para("just plain prose", &[]);
+        let plain = body_para("just plain prose", &[], &mut fns);
         assert_eq!(plain.matches("<w:r>").count(), 1, "one run: {plain}");
+    }
+
+    #[test]
+    fn title_page_fields_are_plain_not_emphasis_parsed() {
+        // A6 — a contact email / byline with `_`/`*` must stay literal (the
+        // title-page path is plain, matching build_typst's escape_typst), not
+        // get italicised with the delimiters eaten.
+        let meta = ManuscriptMeta {
+            title: "T".into(),
+            contact: "jane_q_writer@example.com".into(),
+            byline: "Jane_Q".into(),
+            surname: "X".into(),
+            word_count: 100,
+        };
+        let chapters = vec![ManuscriptChapter {
+            title: "One".into(),
+            paragraphs: vec!["plain body".into()],
+        }];
+        let doc = part(&build_docx(&meta, &chapters, DocxFont::TimesNewRoman).unwrap(), "word/document.xml");
+        // Underscores survive literally in the contact + byline.
+        assert!(doc.contains("jane_q_writer@example.com"), "contact underscores: {doc}");
+        assert!(doc.contains("Jane_Q"), "byline underscore: {doc}");
+        // The body is plain here, so nothing in the whole document is italic.
+        assert!(!doc.contains("<w:i/>"), "no stray italic run: {doc}");
     }
 
     fn sample() -> (ManuscriptMeta, Vec<ManuscriptChapter>) {
