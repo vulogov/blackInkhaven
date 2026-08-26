@@ -155,12 +155,17 @@ pub fn syllabify_conlang(word: &str, phon: &crate::conlang::types::Phonology) ->
         .collect()
 }
 
-/// If the word carries a combining acute accent (`\u{301}`) over a vowel — the
-/// way verse is stress-marked — return the 0-based syllable index it marks (the
-/// nucleus ordinal of the accented vowel), else `None`. Used by the metre scanner
-/// to override rule-based stress with the author's marks.
+/// If the word carries an explicit stress mark over a vowel — a combining acute
+/// (`\u{301}`, the way verse is stress-marked in any language) or, in **Spanish**,
+/// a precomposed acute vowel (á/é/í/ó/ú, which orthographically marks the stressed
+/// syllable) — return the 0-based nucleus ordinal it marks, else `None`. Used by
+/// the metre scanner + rhyme engine to override rule-based stress. D1 — the
+/// precomposed case was missing, so `está` / `corazón` / `canción` scanned on the
+/// wrong syllable. Precomposed acutes are NOT treated as stress in French (there
+/// they mark vowel quality, not stress), hence the `Es` gate.
 pub fn marked_syllable_index(word: &str, lang: ProseLanguage) -> Option<usize> {
     let vowels = vowels_for(&lang);
+    let es = matches!(lang, ProseLanguage::Es);
     let mut group_index: isize = -1;
     let mut in_v = false;
     for c in word.chars() {
@@ -171,9 +176,17 @@ pub fn marked_syllable_index(word: &str, lang: ProseLanguage) -> Option<usize> {
         if v && !in_v {
             group_index += 1;
         }
+        if es && group_index >= 0 && is_precomposed_acute(c) {
+            return Some(group_index as usize);
+        }
         in_v = v;
     }
     None
+}
+
+/// A Spanish precomposed acute vowel (á/é/í/ó/ú) — the written stress mark.
+fn is_precomposed_acute(c: char) -> bool {
+    matches!(c.to_lowercase().next().unwrap_or(c), 'á' | 'é' | 'í' | 'ó' | 'ú')
 }
 
 // ── internals ───────────────────────────────────────────────────────
@@ -301,20 +314,26 @@ fn default_stress_index(lang: &ProseLanguage, texts: &[String], vowels: &str) ->
         De => 0,
         // French: syllabic tradition — approximate the phrase-final accent.
         Fr => n - 1,
-        // Spanish: penultimate unless the word ends in a consonant other than n/s.
+        // Spanish: a written acute accent marks the stressed syllable outright
+        // (D1); otherwise penultimate, unless the word ends in a consonant other
+        // than n/s.
         Es => {
-            let ends_open = texts
-                .last()
-                .and_then(|s| s.chars().last())
-                .map(|c| {
-                    is_vowel(c, vowels)
-                        || matches!(c.to_lowercase().next().unwrap_or(c), 'n' | 's')
-                })
-                .unwrap_or(true);
-            if ends_open {
-                n.saturating_sub(2)
+            if let Some(i) = texts.iter().position(|s| s.chars().any(is_precomposed_acute)) {
+                i
             } else {
-                n - 1
+                let ends_open = texts
+                    .last()
+                    .and_then(|s| s.chars().last())
+                    .map(|c| {
+                        is_vowel(c, vowels)
+                            || matches!(c.to_lowercase().next().unwrap_or(c), 'n' | 's')
+                    })
+                    .unwrap_or(true);
+                if ends_open {
+                    n.saturating_sub(2)
+                } else {
+                    n - 1
+                }
             }
         }
         Other(_) => n.saturating_sub(2),
@@ -394,6 +413,23 @@ mod tests {
         // ends in a consonant other than n/s → final
         let reloj = syllabify("reloj", ProseLanguage::Es);
         assert_eq!(reloj.last().unwrap().stress, StressLevel::Primary);
+    }
+
+    #[test]
+    fn spanish_written_accent_marks_the_stressed_syllable() {
+        // D1 — common oxytones whose ending (vowel / n / s) would otherwise put
+        // the penúltima rule on the wrong syllable. The written acute wins.
+        for (w, idx) in [("está", 1), ("corazón", 2), ("canción", 1), ("café", 1), ("acabó", 2)] {
+            let m = marked_syllable_index(w, ProseLanguage::Es);
+            assert_eq!(m, Some(idx), "marked index for {w}");
+            let s = syllabify(w, ProseLanguage::Es);
+            let primary = s.iter().position(|x| x.stress == StressLevel::Primary);
+            assert_eq!(primary, Some(idx), "syllabify stress for {w}: {s:?}");
+        }
+        // An unaccented word still follows the rule (penúltima on a vowel ending).
+        assert_eq!(marked_syllable_index("casa", ProseLanguage::Es), None);
+        // Precomposed acutes are NOT stress marks in French (vowel quality only).
+        assert_eq!(marked_syllable_index("café", ProseLanguage::Fr), None);
     }
 
     #[test]
