@@ -135,6 +135,7 @@ Read and mutate the project tree, tags, snapshots, and DB. Reads are
 |------|----------|-------|-------------|
 | `ink.world.report` | store_read | `( -- dict )` | world state `{facts_total, characters, places, artefacts, continuity_attributes, entity_total, issue_count, undescribed, stale, summary}` |
 | `ink.world.undescribed` | store_read | `( -- list )` | entities defined but never named in the prose `{name, kind}` |
+| `ink.world.findings` | store_read | `( -- list )` | the discrete world conflicts + anachronisms `{kind, …}` (fact_conflict / drift / anachronism) |
 | `ink.world.check` | store_read | `( -- dict )` | gate `{issues, undescribed, clean}` (clean = no world issue) |
 
 ## Editor, AI & UI
