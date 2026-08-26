@@ -694,8 +694,11 @@ fn chapter_label(chapter: u32) -> Option<String> {
 }
 
 /// Rank + dedup a flat list of findings into the report: sort by severity
-/// (error first), then category, then message; drop findings identical in
-/// category + message + location.
+/// (error first), then category, then message, then location; drop findings
+/// identical in category + message + full location. B1 — the location tie-break
+/// includes paragraph + char_range so two occurrences of the same word in one
+/// chapter stay adjacent-but-distinct (only exact duplicates collapse), rather
+/// than one silently swallowing the other.
 pub fn aggregate(mut findings: Vec<EditorialFinding>) -> EditorialReport {
     findings.sort_by(|a, b| {
         a.severity
@@ -703,12 +706,18 @@ pub fn aggregate(mut findings: Vec<EditorialFinding>) -> EditorialReport {
             .cmp(&b.severity.rank())
             .then_with(|| a.category.cmp(&b.category))
             .then_with(|| a.message.cmp(&b.message))
+            .then_with(|| a.location.chapter.cmp(&b.location.chapter))
+            .then_with(|| a.location.path.cmp(&b.location.path))
+            .then_with(|| a.location.paragraph.cmp(&b.location.paragraph))
+            .then_with(|| a.location.char_range.cmp(&b.location.char_range))
     });
     findings.dedup_by(|a, b| {
         a.category == b.category
             && a.message == b.message
             && a.location.chapter == b.location.chapter
             && a.location.path == b.location.path
+            && a.location.paragraph == b.location.paragraph
+            && a.location.char_range == b.location.char_range
     });
     let errors = findings.iter().filter(|f| f.severity == Severity::Error).count();
     let warnings = findings.iter().filter(|f| f.severity == Severity::Warn).count();
@@ -813,6 +822,37 @@ mod tests {
         assert!(d.fingerprints.contains(&fp));
         Dismissed::clear(dir.path()).unwrap();
         assert!(Dismissed::load(dir.path()).fingerprints.is_empty());
+    }
+
+    #[test]
+    fn aggregate_keeps_distinct_occurrences_but_drops_exact_duplicates() {
+        // B1 — two "very"s in the same chapter differ only by char_range; both must
+        // survive. An exact duplicate (same everything) still collapses to one.
+        let mk = |para: Option<Uuid>, range: Option<(usize, usize)>| EditorialFinding {
+            category: "filter".into(),
+            severity: Severity::Info,
+            location: Location {
+                chapter: Some("ch. 1".into()),
+                paragraph: para,
+                char_range: range,
+                path: None,
+            },
+            message: "filter word: `very` — consider cutting".into(),
+            hint: None,
+            source: "stylist",
+            autofixable: false,
+        };
+        let p = Uuid::new_v4();
+        let a = mk(Some(p), Some((10, 14)));
+        let b = mk(Some(p), Some((40, 44))); // same word, different spot
+        let dup = a.clone(); // exact duplicate of a
+        let report = aggregate(vec![a, b, dup]);
+        let n = report
+            .findings
+            .iter()
+            .filter(|f| f.category == "filter")
+            .count();
+        assert_eq!(n, 2, "both occurrences kept, exact dup dropped: {:#?}", report.findings);
     }
 
     #[test]
