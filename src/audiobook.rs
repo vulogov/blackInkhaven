@@ -91,7 +91,7 @@ fn strip_inline_markup(s: &str) -> String {
         .collect()
 }
 
-pub(crate) fn drop_footnotes(s: &str) -> String {
+fn drop_footnotes(s: &str) -> String {
     let needle = "#footnote[";
     let mut out = String::new();
     let mut rest = s;

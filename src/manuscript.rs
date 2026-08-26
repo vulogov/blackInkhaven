@@ -103,12 +103,12 @@ pub fn is_scene_break(text: &str) -> bool {
 /// **preserving** authored `*bold*` / `_italic_` emphasis so the typst and `.docx`
 /// exporters' emphasis parsing (`escape_typst_prose` / `runs`) actually sees the
 /// delimiters. Drops the leading `= heading` scaffold, keeps subheading text,
-/// collapses intra-block newlines to spaces, and — matching the prior behaviour —
-/// drops `#footnote[…]` from the body.
+/// collapses intra-block newlines to spaces, and — as of A2 — **keeps**
+/// `#footnote[…]` so the exporters can render real footnotes.
 ///
 /// Distinct from the TTS-oriented [`crate::audiobook::typst_to_plain`], which
-/// *strips* the `*` / `_` delimiters (correct for speech, wrong for a submission
-/// manuscript where the emphasis must render).
+/// *strips* the `*` / `_` delimiters and *drops* footnotes (correct for speech,
+/// wrong for a submission manuscript where both must render).
 pub fn flatten_prose(raw: &str) -> String {
     let stripped = crate::typst_prose::strip_leading_heading(raw);
     let mut blocks: Vec<String> = Vec::new();
@@ -125,13 +125,32 @@ pub fn flatten_prose(raw: &str) -> String {
             .map(str::trim)
             .collect::<Vec<_>>()
             .join(" ");
-        let dropped = crate::audiobook::drop_footnotes(&joined);
-        let line = dropped.trim();
+        let line = joined.trim();
         if !line.is_empty() {
             blocks.push(line.to_string());
         }
     }
     blocks.join("\n")
+}
+
+/// Index of the `]` that closes the bracket group opened just before `s` (i.e.
+/// `s` is the text *after* a `[`), accounting for nested `[`…`]`. `None` if the
+/// group is never closed. Shared by the typst + docx footnote extractors.
+pub(crate) fn matching_bracket(s: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    for (i, c) in s.char_indices() {
+        match c {
+            '[' => depth += 1,
+            ']' => {
+                if depth == 0 {
+                    return Some(i);
+                }
+                depth -= 1;
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// XP-2 — an inline emphasis span: a run of text that is plain, bold, or italic.
@@ -192,11 +211,40 @@ pub(crate) fn parse_emphasis(text: &str) -> Vec<Span> {
     spans
 }
 
-/// Escape a line of **prose** for typst while preserving authored emphasis:
-/// balanced `*bold*` / `_italic_` become real typst markup (delimiters kept, the
-/// content escaped), everything else is escaped literally. Used for chapter body
-/// paragraphs; titles / contact blocks use the plain [`escape_typst`].
+/// Escape a line of **prose** for typst while preserving authored emphasis and
+/// footnotes: `#footnote[…]` passes through as real typst markup (its body
+/// recursively prose-escaped), balanced `*bold*` / `_italic_` become real typst
+/// markup (delimiters kept, the content escaped), everything else is escaped
+/// literally. Used for chapter body paragraphs; titles / contact blocks use the
+/// plain [`escape_typst`].
 fn escape_typst_prose(s: &str) -> String {
+    const FN_OPEN: &str = "#footnote[";
+    let mut out = String::with_capacity(s.len() + 8);
+    let mut rest = s;
+    while let Some(pos) = rest.find(FN_OPEN) {
+        // Prose before the footnote → emphasis-escaped.
+        out.push_str(&escape_prose_span(&rest[..pos]));
+        let after = &rest[pos + FN_OPEN.len()..];
+        match matching_bracket(after) {
+            Some(end) => {
+                out.push_str(FN_OPEN);
+                out.push_str(&escape_typst_prose(&after[..end])); // body: emphasis + escape
+                out.push(']');
+                rest = &after[end + 1..];
+            }
+            None => {
+                // Unterminated marker — treat the whole opener literally.
+                out.push_str(&escape_prose_span(FN_OPEN));
+                rest = after;
+            }
+        }
+    }
+    out.push_str(&escape_prose_span(rest));
+    out
+}
+
+/// The emphasis-only half of [`escape_typst_prose`] (no footnote handling).
+fn escape_prose_span(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 8);
     for span in parse_emphasis(s) {
         let inner = escape_typst(&span.text);
@@ -426,13 +474,27 @@ mod tests {
     }
 
     #[test]
-    fn flatten_prose_drops_heading_and_footnotes_collapses_lines() {
+    fn flatten_prose_drops_heading_keeps_footnotes_collapses_lines() {
         let raw = "= Chapter\nA line#footnote[a note]\nwrapped here.";
-        // Leading heading dropped, footnote dropped, newlines collapsed to spaces.
-        assert_eq!(flatten_prose(raw), "A line wrapped here.");
+        // Leading heading dropped, newlines collapsed — footnote KEPT (A2).
+        assert_eq!(flatten_prose(raw), "A line#footnote[a note] wrapped here.");
         // A scene-break line survives intact (still detected downstream).
         assert_eq!(flatten_prose("* * *"), "* * *");
         assert!(is_scene_break(&flatten_prose("* * *")));
+    }
+
+    #[test]
+    fn typst_prose_passes_footnotes_through_and_escapes_body() {
+        // A2 — #footnote[…] becomes a real typst footnote; the body is prose-escaped
+        // (its `#` escaped, its emphasis kept), and prose around it still escapes.
+        let e = escape_typst_prose("a claim#footnote[see *p. #5*] and on");
+        assert!(e.contains("#footnote[see *p. \\#5*]"), "{e}");
+        // The outer `#` of a stray hashtag is still escaped literally.
+        let s = escape_typst_prose("plain #tag here");
+        assert!(s.contains("\\#tag"), "{s}");
+        // Unterminated marker stays literal (# escaped), no panic.
+        let u = escape_typst_prose("oops #footnote[unclosed");
+        assert!(u.contains("\\#footnote[unclosed"), "{u}");
     }
 
     // ── build_typst structure ─────────────────────────
