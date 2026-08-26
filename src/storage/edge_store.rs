@@ -109,16 +109,12 @@ pub enum EdgeKind {
     Hyponym,
     /// Symmetric lexical opposite.
     Antonym,
-    /// Symmetric lexical synonym.
-    Synonym,
     /// Cross-lingual sense equivalence (via ILI).
     Translates,
     /// A node uses a word whose sense is this — the manuscript↔lexicon bridge.
     Mentions,
     /// A book declares a world entity (character / symbol / motif / tension).
     Declares,
-    /// Symmetric embedding-similarity (derived cache).
-    SimilarTo,
     /// Symmetric: two characters are related — a declared BONDS `rel:` bond
     /// (3.2, ENSEMBLE). The bond kind (ally / enemy / …) + first chapter ride in
     /// `Edge.attrs`; `origin = Structural`, derived from the `rel:` tags on
@@ -142,11 +138,9 @@ impl EdgeKind {
             EdgeKind::Hypernym => "hypernym",
             EdgeKind::Hyponym => "hyponym",
             EdgeKind::Antonym => "antonym",
-            EdgeKind::Synonym => "synonym",
             EdgeKind::Translates => "translates",
             EdgeKind::Mentions => "mentions",
             EdgeKind::Declares => "declares",
-            EdgeKind::SimilarTo => "similar_to",
             EdgeKind::Relates => "relates",
         }
     }
@@ -166,11 +160,9 @@ impl EdgeKind {
             "hypernym" => EdgeKind::Hypernym,
             "hyponym" => EdgeKind::Hyponym,
             "antonym" => EdgeKind::Antonym,
-            "synonym" => EdgeKind::Synonym,
             "translates" => EdgeKind::Translates,
             "mentions" => EdgeKind::Mentions,
             "declares" => EdgeKind::Declares,
-            "similar_to" => EdgeKind::SimilarTo,
             "relates" => EdgeKind::Relates,
             _ => return None,
         })
@@ -185,8 +177,6 @@ impl EdgeKind {
                 | EdgeKind::InTension
                 | EdgeKind::Agrees
                 | EdgeKind::Antonym
-                | EdgeKind::Synonym
-                | EdgeKind::SimilarTo
                 | EdgeKind::Relates
         )
     }
@@ -215,7 +205,7 @@ pub enum EdgeOrigin {
     Promoted,
     /// An LLM-judged relation, advisory until promoted.
     Judged,
-    /// Recomputable (e.g. `SimilarTo`) — a rebuildable cache.
+    /// Recomputable — a rebuildable cache (e.g. an embedding-similarity pass).
     Derived,
     /// Reference data bridged in (WordNet / citation registries).
     Imported,
@@ -1034,9 +1024,10 @@ mod tests {
     fn delete_by_origin_spares_durable_edges() {
         let (_d, s) = store();
         let durable = link(Uuid::now_v7(), Uuid::now_v7()); // Structural
+        // Any kind stamped Derived stands in for a rebuildable cache edge.
         let derived = Edge::new(
             EndpointRef::Node(Uuid::now_v7()),
-            EdgeKind::SimilarTo,
+            EdgeKind::LinksTo,
             EndpointRef::Node(Uuid::now_v7()),
             EdgeOrigin::Derived,
         );
