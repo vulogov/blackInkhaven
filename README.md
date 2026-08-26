@@ -27,37 +27,44 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 3.4.0 — Export Fidelity & a Smoother Revision Loop
+## Latest release · 3.5.0 — Finished Imports, One Reader Hub, a Deeper KEN
 
-The current release is **3.4.0**, a **widen-and-polish** release — no new
-capability. It deepens the export formats you already have (so more of your
-manuscript survives the trip out) and tightens the Editorial Pass revision loop.
-Two tracks (deterministic, no new runtime crates):
+The current release is **3.5.0**, a **widen-and-polish** release — no new
+capability. It finishes the export/import fidelity work, gives the now-large
+reader family a single front door, and turns KEN into a queryable knowledge
+model. Three tracks (deterministic, no new runtime crates):
 
-- **Export fidelity.** An audit of every export path found one lossy bottleneck
-  and a few format-specific holes. The shared **`typst_to_markdown`** converter
-  (which feeds markdown export, `export epub`, *and* the HTML prose path) now
-  handles `#figure(image(…))`, inline `#footnote[…]` (→ a `[^N]` marker + a
-  definition list), and `@key`/`@key[locus]` references (→ pandoc `[@key]`).
-  **docx + the Shunn-format PDF** render authored `*bold*`/`_italic_` as real
-  emphasis instead of literal `\*bold\*` (central for fiction). CLI
-  **`export epub`** routes to the rich, multi-chapter builder (images, footnote
-  popups, cover) instead of the old single-chapter converter. And **HTML verse**
-  (`para:verse-*`) preserves its line breaks + stanzas.
-- **Editorial Pass, round three.** The revision loop kept resetting to the top.
-  Now the pass **remembers your place**: after a jump / act / batch it reopens on
-  the same finding — or the next, if you just fixed it — with your filters intact;
-  a deliberate `Esc` forgets the position; and the `F` batch **auto-reopens** the
-  pass when it finishes, so triage continues without a manual `Ctrl+V Shift+R`.
+- **Export / import, finished.** A Cyrillic/accented **Scrivener `.rtf`** now
+  keeps its bold/italic/heading markup (the structured parser protects non-ASCII
+  characters through the ASCII-only lexer instead of falling back to plain text);
+  the **EPUB-import footnote round-trip** works (a `noteref` is rebuilt as
+  `#footnote[body]` from its collected aside); and the single-chapter **epub toy
+  is retired** — all epub export (CLI, the Bund word, the TUI batch) now uses the
+  rich multi-chapter builder.
+- **The reader hub.** With a dozen readers on a dozen scattered chords,
+  **`Ctrl+B *`** now opens one menu of every reader dashboard (Knowledge, Bonds,
+  Continuity, Read-through, Cast, Character arc, Myth, Chronicle, Story bible) with
+  live finding-counts; Enter opens the reader. **`inkhaven read`** is the CLI
+  *state of the manuscript* overview.
+- **A deeper KEN.** **`inkhaven knowledge --ledger`** (and **`l`** in the
+  `Ctrl+B Shift+Z` dashboard) surfaces the grants model — who could know what, when
+  — grouped by character. A *view* of what KEN already computes, with no new
+  finding-noise.
 
-Deferred as follow-ups: the Scrivener non-ASCII import, the EPUB-import round-trip,
-and full retirement of the single-chapter epub toy (still used by the Bund/TUI
-in-memory exporters). No new config; no new runtime crates.
+Deferred as follow-ups: third-party-epub blockquote/table import, and alias
+resolution (gated on its architectural decision). No new config; no new runtime
+crates.
 
-Read the full notes: [`Documentation/RELEASE_NOTES/3.4.0.md`](Documentation/RELEASE_NOTES/3.4.0.md).
+Read the full notes: [`Documentation/RELEASE_NOTES/3.5.0.md`](Documentation/RELEASE_NOTES/3.5.0.md).
 
 ### Recent releases
 
+- **3.4.0 — Export Fidelity & a Smoother Revision Loop.** The shared
+  `typst_to_markdown` converter gained figure-image / footnote / `@ref` support
+  (three formats at once), docx + Shunn PDF render authored `*bold*`/`_italic_`,
+  the CLI `export epub` went multi-chapter, HTML verse preserved line breaks, and
+  the Editorial Pass gained return-to-position + auto-reopen-after-batch.
+  [notes](Documentation/RELEASE_NOTES/3.4.0.md)
 - **3.3.0 — Wider Reach, Sharper Tools.** Multilingual parity (SENTINEL numeric
   DE+RU, CHORUS register DE+ES, Inner Socrates tense-shift DE/FR/ES), the
   `ink.world.*` Bund reads, and the first Editorial Pass ergonomics (session-skip
@@ -85,14 +92,14 @@ lines (zero Critical), with every surviving finding fixed and zero breaking
 changes. The 3.0.x line (through 3.0.9) then hardened the Bund scripting coverage
 and the export/import/keymap/assembly subsystems through successive targeted
 audits, each leaving a build-time guard behind. **3.1.0 lifted the feature freeze**
-(BONDS); **3.2.0** (ENSEMBLE), **3.3.0** (multilingual parity), and **3.4.0** (export fidelity) continue
+(BONDS); **3.2.0** (ENSEMBLE), **3.3.0** (multilingual parity), **3.4.0** (export fidelity), and **3.5.0** (imports + reader hub) continue
 on that hardened surface. Full 3.0.0 notes:
 [`Documentation/RELEASE_NOTES/3.0.0.md`](Documentation/RELEASE_NOTES/3.0.0.md).
 
 ### Dependencies & compatibility
 
 No new dependencies, no breaking changes. Existing projects open unchanged. Compiles
-warning-free. Test suite → 2972.
+warning-free. Test suite → 2977.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
@@ -290,14 +297,14 @@ cargo install inkhaven
 ```
 
 Inkhaven is published on crates.io — every release tag pushes a
-new version (latest: 3.4.0).  The first build takes ~10 minutes on
+new version (latest: 3.5.0).  The first build takes ~10 minutes on
 a modern laptop because of DuckDB + fastembed + ONNX-runtime
 compilation; `cargo binstall` above is the fast path.
 
 ### 4. `cargo install --git` (compile from a specific tag)
 
 ```bash
-cargo install --git https://github.com/vulogov/blackInkhaven --tag v3.4.0
+cargo install --git https://github.com/vulogov/blackInkhaven --tag v3.5.0
 ```
 
 Useful when you want a specific tag, a pre-release branch, or a
