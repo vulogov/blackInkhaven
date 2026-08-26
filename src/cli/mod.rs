@@ -31,6 +31,7 @@ pub mod chronicle;
 pub mod knowledge;
 pub mod bonds;
 pub mod cast;
+pub mod read;
 pub mod event;
 pub mod event_critique;
 pub mod comments;
@@ -1437,6 +1438,10 @@ pub enum Command {
         /// Soft token budget for `--deep` (informative preflight, never blocks).
         #[arg(long, default_value_t = 8000)]
         max_cost: usize,
+        /// Print the knowledge *ledger* (who could know what, when — the grants
+        /// model KEN reasons over) instead of the epistemic-break findings.
+        #[arg(long)]
+        ledger: bool,
     },
     /// BONDS-1 (3.1) — the relationship check: are the bonds between characters
     /// earned on the page, or merely asserted? Flags a declared bond barely on the
@@ -1469,6 +1474,17 @@ pub enum Command {
         #[arg(long)]
         book_name: Option<String>,
         /// Emit the cast as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+    /// H-2 (3.5) — the state of the manuscript: the reader family's finding-counts
+    /// grouped by reader + a health line. The glanceable overview companion to
+    /// `inkhaven edit` (the full worklist) and the `Ctrl+B *` reader hub.
+    Read {
+        /// Restrict to a single book (slug or title). Default: the whole project.
+        #[arg(long)]
+        book_name: Option<String>,
+        /// Emit the summary as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -6926,14 +6942,18 @@ impl Cli {
             Command::Revise { book_name, json } => {
                 revise::run(&project, book_name.as_deref(), json).map_err(Into::into)
             }
-            Command::Knowledge { book_name, json, deep, max_cost } => {
-                knowledge::run(&project, book_name.as_deref(), json, deep, max_cost).map_err(Into::into)
+            Command::Knowledge { book_name, json, deep, max_cost, ledger } => {
+                knowledge::run(&project, book_name.as_deref(), json, deep, max_cost, ledger)
+                    .map_err(Into::into)
             }
             Command::Bonds { book_name, json, deep, max_cost } => {
                 bonds::run(&project, book_name.as_deref(), json, deep, max_cost).map_err(Into::into)
             }
             Command::Cast { book_name, json } => {
                 cast::run(&project, book_name.as_deref(), json).map_err(Into::into)
+            }
+            Command::Read { book_name, json } => {
+                read::run(&project, book_name.as_deref(), json).map_err(Into::into)
             }
             Command::Chronicle { cmd } => match cmd {
                 None => chronicle::trend(&project, None, false).map_err(Into::into),

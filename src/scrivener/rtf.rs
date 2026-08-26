@@ -35,19 +35,18 @@ pub fn rtf_to_typst(rtf_bytes: &[u8]) -> Result<String> {
     // (ignoring `\ansicpg`), which turns "Москва" into "Ìñâ" and `’` into a C1
     // control char. Decoding here, up front, yields correct UTF-8 (3.0.8 fix).
     let decoded = decode_ansi_escapes(rtf_bytes);
-    let rtf_bytes: &[u8] = &decoded;
 
-    // Non-ASCII now reaches us as raw UTF-8 bytes (either originally raw, or just
-    // decoded from `\'xx`). `parse_structured` maps every raw high byte to `?` so
-    // the ASCII-only upstream lexer can't panic — meaning a document with
-    // non-English prose parses "successfully" with all its Cyrillic/accented text
-    // destroyed. So when any byte >= 0x80 is present, prefer the plain-text
-    // fallback (`from_utf8_lossy`), which keeps the characters — trading lost
-    // structure for kept content. Pure-ASCII English (no escapes) still gets the
-    // structured parser below, so its bold/italic/headings survive.
-    if rtf_bytes.iter().any(|&b| b >= 0x80) {
-        return Ok(strip_to_plain_text(rtf_bytes));
-    }
+    // I-1 — after `\'xx` decode, non-ASCII is correct UTF-8. Run the structured
+    // parser on it (it protects each non-ASCII char behind an ASCII placeholder so
+    // the ASCII-only upstream lexer neither panics nor flattens it to `?`, then
+    // restores it in the output) — so Cyrillic/accented prose keeps BOTH its text
+    // and its bold/italic/heading structure. Only genuinely malformed raw high
+    // bytes (not valid UTF-8 — rare; well-formed RTF escapes them) skip to the
+    // plain-text fallback, which at least keeps the characters.
+    let text = match std::str::from_utf8(&decoded) {
+        Ok(t) => t,
+        Err(_) => return Ok(strip_to_plain_text(&decoded)),
+    };
     // Try the structured parser first. If it returns Err — or the third-party
     // `rtf-parser-tt` lexer/parser *panics* on adversarial bytes (1.3.36
     // hardening: the upstream crate byte-slices and can panic even on ASCII
@@ -57,32 +56,44 @@ pub fn rtf_to_typst(rtf_bytes: &[u8]) -> Result<String> {
     // recovered lexer panic doesn't write a crash report / print "inkhaven
     // crashed" / tear the terminal down — the body is recovered, not lost.
     let structured = crate::crash::suppress_panic_report(|| {
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| parse_structured(rtf_bytes)))
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| parse_structured(text)))
     });
     match structured {
         Ok(Ok(s)) => Ok(s),
-        Ok(Err(_)) | Err(_) => Ok(strip_to_plain_text(rtf_bytes)),
+        Ok(Err(_)) | Err(_) => Ok(strip_to_plain_text(&decoded)),
     }
 }
 
+/// STX / ETX — the ASCII control chars (both < 0x80, neither RTF-special) that
+/// delimit a non-ASCII-character placeholder `<STX><index><ETX>` while the text
+/// passes through the ASCII-only upstream lexer.
+const PH_OPEN: char = '\u{2}';
+const PH_CLOSE: char = '\u{3}';
+
 /// Structured parse via `rtf-parser-tt`. Walks the
 /// `parse(...)`'s `body` tokens and emits Typst markup.
-fn parse_structured(rtf_bytes: &[u8]) -> Result<String> {
+fn parse_structured(text: &str) -> Result<String> {
     use rtf_parser_tt::lexer::Lexer;
     use rtf_parser_tt::parser::Parser;
 
-    // M4 — real Scrivener `.rtf` is frequently Windows-1252/Latin-1 with
-    // `\'xx` hex escapes for high bytes. Rejecting on the first non-UTF-8
-    // byte dropped ALL structure to the plain-text fallback. But the
-    // upstream RTF lexer byte-slices and panics on multi-byte chars, so
-    // we can't hand it raw lossy UTF-8 either — map every non-ASCII byte
-    // to `?` so it sees pure single-byte ASCII. Structure + the `\'xx`
-    // escapes (themselves ASCII, decoded by the parser) survive; only
-    // stray literal 8-bit bytes — rare in RTF — are flattened.
-    let ascii: String = rtf_bytes
-        .iter()
-        .map(|&b| if b < 0x80 { b as char } else { '?' })
-        .collect();
+    // I-1 — the upstream RTF lexer byte-slices and panics/flattens on any byte
+    // >= 0x80, so we can't hand it UTF-8 directly. Instead, swap each non-ASCII
+    // character for an ASCII placeholder (`<STX><index><ETX>`, all < 0x80 and not
+    // RTF-special), lex/parse the pure-ASCII stream, then restore the real
+    // characters in the emitted output — keeping Cyrillic/accented prose AND its
+    // structure (the old code mapped these to `?`, destroying the text).
+    let mut placeholders: Vec<char> = Vec::new();
+    let mut ascii = String::with_capacity(text.len());
+    for c in text.chars() {
+        if c.is_ascii() {
+            ascii.push(c);
+        } else {
+            ascii.push(PH_OPEN);
+            ascii.push_str(&placeholders.len().to_string());
+            ascii.push(PH_CLOSE);
+            placeholders.push(c);
+        }
+    }
     let tokens = Lexer::scan(&ascii)
         .map_err(|e| anyhow::anyhow!("rtf lex: {e}"))?;
     let mut parser = Parser::new(tokens);
@@ -118,7 +129,43 @@ fn parse_structured(rtf_bytes: &[u8]) -> Result<String> {
     while out.ends_with("\n\n\n") {
         out.pop();
     }
-    Ok(out)
+    Ok(restore_placeholders(&out, &placeholders))
+}
+
+/// Restore the `<STX><index><ETX>` placeholders [`parse_structured`] injected back
+/// to their real non-ASCII characters. A no-op when nothing was protected.
+fn restore_placeholders(s: &str, placeholders: &[char]) -> String {
+    if placeholders.is_empty() {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != PH_OPEN {
+            out.push(c);
+            continue;
+        }
+        let mut digits = String::new();
+        while let Some(&d) = chars.peek() {
+            if d == PH_CLOSE {
+                chars.next();
+                break;
+            }
+            if d.is_ascii_digit() {
+                digits.push(d);
+                chars.next();
+            } else {
+                break;
+            }
+        }
+        match digits.parse::<usize>().ok().and_then(|i| placeholders.get(i)) {
+            Some(&ch) => out.push(ch),
+            // Malformed / lexer-mangled placeholder — keep the digits verbatim
+            // rather than lose them.
+            None => out.push_str(&digits),
+        }
+    }
+    out
 }
 
 /// Emit one styled run. `line` is unstyled text; `painter`
@@ -311,6 +358,27 @@ mod tests {
         let rtf = b"{\\rtf1\\ansi The quick brown fox.}";
         let out = rtf_to_typst(rtf).unwrap();
         assert!(out.contains("The quick brown fox"));
+    }
+
+    #[test]
+    fn cyrillic_bold_keeps_text_and_structure() {
+        // I-1 — Windows Scrivener stores cp1251 Cyrillic as `\'xx`; here inside a
+        // bold run. Both the text ("Москва") AND the bold markup must survive —
+        // the old code dropped structure to plain text for any non-ASCII doc.
+        let rtf = b"{\\rtf1\\ansi\\ansicpg1251 \\b \\'cc\\'ee\\'f1\\'ea\\'e2\\'e0\\b0}";
+        let out = rtf_to_typst(rtf).unwrap();
+        assert!(out.contains("Москва"), "Cyrillic text survives: {out:?}");
+        assert!(out.contains("*Москва*"), "bold structure survives: {out:?}");
+        assert!(!out.contains('\u{2}') && !out.contains('\u{3}'), "placeholders restored: {out:?}");
+    }
+
+    #[test]
+    fn accented_italic_keeps_text_and_structure() {
+        // cp1252 é (`\'e9`) inside an italic run → "café" in typst italics.
+        let rtf = b"{\\rtf1\\ansi\\ansicpg1252 \\i caf\\'e9\\i0}";
+        let out = rtf_to_typst(rtf).unwrap();
+        assert!(out.contains("caf\u{e9}"), "accent survives: {out:?}");
+        assert!(out.contains("_caf\u{e9}_"), "italic structure survives: {out:?}");
     }
 
     #[test]

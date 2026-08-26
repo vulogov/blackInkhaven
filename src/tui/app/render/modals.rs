@@ -6632,7 +6632,7 @@ impl super::super::App {
     /// KEN-1 (KEN-P5) — the knowledge dashboard: epistemic findings grouped by
     /// kind, same scrollable-rows shape as the continuity ledger.
     pub(in crate::tui::app) fn draw_knowledge_modal(&self, f: &mut ratatui::Frame, area: Rect) {
-        let Modal::Knowledge { rows, anchors, cursor } = &self.modal else {
+        let Modal::Knowledge { rows, anchors, cursor, ledger } = &self.modal else {
             return;
         };
         let width = area.width.saturating_sub(6).clamp(52, 92);
@@ -6644,7 +6644,7 @@ impl super::super::App {
 
         let block = Block::default()
             .borders(Borders::ALL)
-            .title(" Knowledge ")
+            .title(if *ledger { " Knowledge · ledger " } else { " Knowledge " })
             .border_style(Style::default().fg(self.theme.modal_border).add_modifier(Modifier::BOLD))
             .style(Style::default().bg(self.theme.modal_bg).fg(self.theme.modal_fg));
         let inner = block.inner(rect);
@@ -6674,7 +6674,11 @@ impl super::super::App {
         let footer = Rect { x: inner.x, y: inner.y + inner.height - 1, width: inner.width, height: 1 };
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                " ↑↓ scroll · Enter jump to the paragraph · Esc close",
+                if *ledger {
+                    " ↑↓ scroll · Enter jump · l findings · Esc close"
+                } else {
+                    " ↑↓ scroll · Enter jump · l ledger · Esc close"
+                },
                 dim,
             ))),
             footer,
@@ -6779,6 +6783,54 @@ impl super::super::App {
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 " ↑↓ scroll · Enter jump to the character · Esc close",
+                dim,
+            ))),
+            footer,
+        );
+    }
+
+    /// H-1 (3.5) — the reader hub: a launcher menu of every reader dashboard with
+    /// its live finding-count. The cursor row is highlighted; Enter opens it.
+    pub(in crate::tui::app) fn draw_reader_hub_modal(&self, f: &mut ratatui::Frame, area: Rect) {
+        let Modal::ReaderHub { rows, cursor, .. } = &self.modal else {
+            return;
+        };
+        let width = area.width.saturating_sub(6).clamp(40, 64);
+        let height = (rows.len() as u16 + 3).clamp(8, area.height.saturating_sub(4));
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Reader Hub ")
+            .border_style(Style::default().fg(self.theme.modal_border).add_modifier(Modifier::BOLD))
+            .style(Style::default().bg(self.theme.modal_bg).fg(self.theme.modal_fg));
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let list_h = inner.height.saturating_sub(1).max(1) as usize;
+        let cur = (*cursor).min(rows.len().saturating_sub(1));
+        let start = if cur >= list_h { cur + 1 - list_h } else { 0 };
+        let dim = Style::default().add_modifier(Modifier::DIM);
+        let sel = Style::default().bg(self.theme.modal_border).fg(self.theme.modal_bg).add_modifier(Modifier::BOLD);
+        let mut lines: Vec<Line> = Vec::new();
+        for (i, r) in rows.iter().enumerate().skip(start).take(list_h) {
+            let style = if i == cur {
+                sel
+            } else {
+                Style::default().fg(self.theme.modal_fg)
+            };
+            lines.push(Line::from(Span::styled(truncate_to(r, 60), style)));
+        }
+        let body_rect = Rect { x: inner.x, y: inner.y, width: inner.width, height: list_h as u16 };
+        f.render_widget(Paragraph::new(lines), body_rect);
+
+        let footer = Rect { x: inner.x, y: inner.y + inner.height - 1, width: inner.width, height: 1 };
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                " ↑↓ · Enter open the reader · Esc close",
                 dim,
             ))),
             footer,
