@@ -337,6 +337,9 @@ impl super::App {
         if matches!(self.modal, Modal::Cast { .. }) {
             self.draw_cast_modal(f, area);
         }
+        if matches!(self.modal, Modal::ReaderHub { .. }) {
+            self.draw_reader_hub_modal(f, area);
+        }
         if matches!(self.modal, Modal::Knowledge { .. }) {
             self.draw_knowledge_modal(f, area);
             return;

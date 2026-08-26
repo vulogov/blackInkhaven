@@ -12573,6 +12573,8 @@ impl App {
             A::OpenChronicle => self.open_chronicle(),
             A::OpenKnowledge => self.open_knowledge(),
             A::OpenBonds => self.open_bonds(),
+            A::OpenCast => self.open_cast(),
+            A::OpenReaderHub => self.open_reader_hub(),
             A::OpenCostDashboard => self.open_cost_dashboard(),
             A::OpenCredits => self.open_credits(),
             A::OpenBookInfo => self.open_book_info(),
@@ -16486,13 +16488,75 @@ impl App {
     /// the offending paragraph).
     fn open_knowledge(&mut self) {
         let (rows, anchors) = self.build_knowledge_rows();
-        let breaks = anchors.iter().filter(|a| a.is_some()).count();
-        self.status = if breaks == 0 {
-            "knowledge: clean · Esc".into()
+        self.status = "knowledge · ↑↓ scroll · Enter jump · l ledger · Esc".into();
+        self.modal = Modal::Knowledge { rows, anchors, cursor: 0, ledger: false };
+    }
+
+    /// D-1 (3.5) — build the KEN dashboard's rows for the current mode: the
+    /// epistemic-break findings (`ledger = false`) or the knowledge *ledger*
+    /// (`ledger = true`, who could know what, when).
+    fn build_knowledge_view(&self, ledger: bool) -> (Vec<String>, Vec<Option<Uuid>>) {
+        if ledger {
+            self.build_knowledge_ledger_rows()
         } else {
-            "knowledge · ↑↓ scroll · Enter jump · Esc".into()
+            self.build_knowledge_rows()
+        }
+    }
+
+    /// Build the knowledge *ledger* rows + jump anchors: KEN's grants model (who
+    /// could know what, and when) grouped by character, each topic anchored to the
+    /// paragraph where it becomes knowable. Reuses `ken::grants::build_grants`.
+    fn build_knowledge_ledger_rows(&self) -> (Vec<String>, Vec<Option<Uuid>>) {
+        let mut rows: Vec<String> = Vec::new();
+        let mut anchors: Vec<Option<Uuid>> = Vec::new();
+        let mut push = |text: String, anchor: Option<Uuid>| {
+            rows.push(text);
+            anchors.push(anchor);
         };
-        self.modal = Modal::Knowledge { rows, anchors, cursor: 0 };
+        let h = match crate::store::hierarchy::Hierarchy::load(&self.store) {
+            Ok(h) => h,
+            Err(e) => {
+                push(format!("knowledge unavailable: {e}"), None);
+                return (rows, anchors);
+            }
+        };
+        let book = match crate::cli::resolve_user_book(&h, None, "knowledge") {
+            Ok(b) => b,
+            Err(e) => {
+                push(format!("knowledge: {e}"), None);
+                return (rows, anchors);
+            }
+        };
+        let (grants, _items, _paras) = crate::ken::grants::build_grants(&self.layout, &h, book);
+        push(format!("◆ Knowledge ledger — {} grant(s)", grants.len()), None);
+        push(String::new(), None);
+        if grants.is_empty() {
+            push("  (no grants — declare secret:/know:/reveals: or add timeline events)".into(), None);
+            return (rows, anchors);
+        }
+        // Group by character; within a character, in reading order then topic.
+        let mut order: Vec<&str> = Vec::new();
+        for g in &grants {
+            if !order.contains(&g.character.as_str()) {
+                order.push(g.character.as_str());
+            }
+        }
+        order.sort_unstable();
+        for character in order {
+            let mut gs: Vec<&crate::ken::Grant> =
+                grants.iter().filter(|g| g.character == character).collect();
+            gs.sort_by(|a, b| a.at.cmp(&b.at).then_with(|| a.topic.cmp(&b.topic)));
+            push(character.to_string(), None);
+            for g in gs {
+                let src = match g.source {
+                    crate::ken::GrantSource::Presence => "presence",
+                    crate::ken::GrantSource::Declared => "declared",
+                };
+                push(format!("  {} — ch. {} ({src})", g.topic, g.at.chapter_ord), g.anchor);
+            }
+            push(String::new(), None);
+        }
+        (rows, anchors)
     }
 
     /// Build the knowledge dashboard's rows + parallel jump anchors: the epistemic
@@ -16585,6 +16649,20 @@ impl App {
                 } else {
                     self.status = "knowledge: no paragraph to jump to on this row".into();
                 }
+            }
+            // D-1 — toggle between the findings and the knowledge ledger.
+            KeyCode::Char('l') => {
+                let ledger = match &self.modal {
+                    Modal::Knowledge { ledger, .. } => !*ledger,
+                    _ => return true,
+                };
+                let (rows, anchors) = self.build_knowledge_view(ledger);
+                self.modal = Modal::Knowledge { rows, anchors, cursor: 0, ledger };
+                self.status = if ledger {
+                    "knowledge ledger · ↑↓ · Enter jump · l findings · Esc".into()
+                } else {
+                    "knowledge · ↑↓ · Enter jump · l ledger · Esc".into()
+                };
             }
             _ => {}
         }
@@ -16799,6 +16877,89 @@ impl App {
                     }
                 } else {
                     self.status = "cast: no character node to jump to on this row".into();
+                }
+            }
+            _ => {}
+        }
+        true
+    }
+
+    /// H-1 (3.5) — the reader hub: a launcher menu of every reader dashboard, each
+    /// with its live finding-count (for the deterministic readers, from the unified
+    /// worklist). Enter opens the selected reader; the others (own store / view)
+    /// show `·`. One chord for the whole scattered reader family.
+    fn open_reader_hub(&mut self) {
+        use crate::tui::keybind::Action;
+        let counts = self.reader_hub_counts();
+        // (label, collect `source` for the count [None → own store, shown `·`], action)
+        let readers: [(&str, Option<&str>, Action); 9] = [
+            ("Knowledge (KEN)", Some("knowledge"), Action::OpenKnowledge),
+            ("Bonds", Some("bonds"), Action::OpenBonds),
+            ("Continuity (SENTINEL)", Some("continuity"), Action::OpenContinuityLedger),
+            ("Read-through (LECTOR)", Some("read-through"), Action::OpenReadThrough),
+            ("Cast (Dramatis Personae)", None, Action::OpenCast),
+            ("Character arc", None, Action::OpenCharacterArc),
+            ("Myth", None, Action::OpenMythHeatmap),
+            ("Chronicle", None, Action::OpenChronicle),
+            ("Story bible", None, Action::OpenStoryBible),
+        ];
+        let mut rows: Vec<String> = Vec::new();
+        let mut actions: Vec<Action> = Vec::new();
+        for (label, source, action) in readers {
+            let count = match source.map(|s| counts.get(s).copied().unwrap_or(0)) {
+                Some(n) if n > 0 => n.to_string(),
+                _ => "\u{b7}".to_string(),
+            };
+            rows.push(format!("{label:<26} {count:>4}"));
+            actions.push(action);
+        }
+        self.status = "reader hub \u{b7} \u{2191}\u{2193} \u{b7} Enter open \u{b7} Esc".into();
+        self.modal = Modal::ReaderHub { rows, actions, cursor: 0 };
+    }
+
+    /// Count the unified worklist findings by `source` for the reader-hub counts.
+    /// Deterministic readers only (via `collect`); an empty map on any error — the
+    /// hub still lists every reader as a launcher.
+    fn reader_hub_counts(&self) -> std::collections::BTreeMap<String, usize> {
+        let mut counts = std::collections::BTreeMap::new();
+        if let Ok(report) = crate::cli::editorial::collect(&self.layout.root, None, None, false) {
+            for f in &report.findings {
+                *counts.entry(f.source.to_string()).or_insert(0) += 1;
+            }
+        }
+        counts
+    }
+
+    fn reader_hub_handle_key(&mut self, key: KeyEvent) -> bool {
+        let n = match &self.modal {
+            Modal::ReaderHub { rows, .. } => rows.len(),
+            _ => return false,
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "reader hub: closed".into();
+            }
+            KeyCode::Up => {
+                if let Modal::ReaderHub { cursor, .. } = &mut self.modal {
+                    *cursor = cursor.saturating_sub(1);
+                }
+            }
+            KeyCode::Down => {
+                if let Modal::ReaderHub { cursor, .. } = &mut self.modal {
+                    if n > 0 {
+                        *cursor = (*cursor + 1).min(n - 1);
+                    }
+                }
+            }
+            KeyCode::Enter => {
+                let action = match &self.modal {
+                    Modal::ReaderHub { actions, cursor, .. } => actions.get(*cursor).cloned(),
+                    _ => None,
+                };
+                // Opening the reader replaces this modal with the reader's own.
+                if let Some(action) = action {
+                    self.run_action(action);
                 }
             }
             _ => {}
@@ -26294,7 +26455,7 @@ impl App {
                 }
                 continue;
             }
-            let outcome = self.build_one_extra_format(&fmt, &combined, &book.title);
+            let outcome = self.build_one_extra_format(&fmt, &combined, book);
             let artefact = match outcome {
                 Some(Ok(art)) => art,
                 Some(Err(e)) => {
@@ -26478,19 +26639,19 @@ impl App {
         &self,
         fmt: &str,
         combined: &str,
-        book_title: &str,
+        book: &crate::store::node::Node,
     ) -> Option<anyhow::Result<crate::export::Artefact>> {
         match fmt {
             "markdown" | "md" => Some(Ok(crate::export::build_markdown(combined))),
             "tex" | "latex" => Some(Ok(crate::export::build_tex(combined, &self.cfg.tex_export))),
-            "epub" => {
-                let md = crate::export::markdown::typst_to_markdown(combined);
-                Some(crate::export::build_epub(
-                    &md,
-                    book_title,
-                    crate::ai::prompts::iso_from_long(&self.cfg.language),
-                ))
-            }
+            // I-3 — the rich multi-chapter builder from the store (per-chapter
+            // nav, images, footnote popups, cover), replacing the single-chapter
+            // markdown→epub toy.
+            "epub" => Some(
+                crate::cli::epub::build_bytes(&self.store, &self.hierarchy, &self.cfg, book, None, None)
+                    .map(crate::export::Artefact::Epub)
+                    .map_err(|e| anyhow::anyhow!("{e:#}")),
+            ),
             _ => None,
         }
     }
@@ -27244,6 +27405,10 @@ impl App {
         }
         if matches!(self.modal, Modal::Cast { .. }) {
             self.cast_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::ReaderHub { .. }) {
+            self.reader_hub_handle_key(key);
             return Ok(false);
         }
         if matches!(self.modal, Modal::PoemFormPicker { .. }) {

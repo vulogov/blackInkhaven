@@ -13,13 +13,12 @@
 //! * `tex` — typst → LaTeX via the `tylax` crate
 //!   ([`tex::typst_to_tex`]). Errors propagate as
 //!   `anyhow::Error` so the CLI surfaces them at the call site.
-//! * `epub` — a minimal single-chapter markdown → EPUB3 zip
-//!   ([`epub::write_epub`]), producing an in-memory [`Artefact`]. Used by the
-//!   Bund `ink.export.epub` word and the TUI's batch "extra formats" builder,
-//!   which work from a combined-markdown string. **The CLI `inkhaven export
-//!   --format epub` does NOT use this** — since XP-3 it routes to the rich,
-//!   multi-chapter [`crate::cli::epub`] builder (`crate::epub`), which reads the
-//!   book from the store and embeds images + footnote popups + a cover.
+//! * `epub` — all EPUB export (CLI, the Bund `ink.export.epub` word, and the
+//!   TUI batch "extra formats" builder) goes through the rich, multi-chapter
+//!   [`crate::cli::epub`] builder (`crate::epub`), which reads the book from the
+//!   store and embeds images + footnote popups + a cover. The old single-chapter
+//!   markdown→epub converter was retired in I-3 (`build_bytes` returns the same
+//!   in-memory bytes the Bund/TUI callers need).
 //!
 //! Everything in this module is **deterministic** given the same
 //! project state — used both from `inkhaven export <fmt>` and from
@@ -29,7 +28,6 @@
 
 pub mod bundle;
 pub mod docx;
-pub mod epub;
 pub mod html;
 pub mod markdown;
 pub mod tex;
@@ -283,14 +281,6 @@ pub fn build_markdown(combined: &str) -> Artefact {
 /// the caller writes the bytes out and moves on.
 pub fn build_tex(combined: &str, tex_cfg: &crate::config::TexExportConfig) -> Artefact {
     Artefact::Tex(tex::typst_to_tex(combined, tex_cfg))
-}
-
-/// Build `Artefact::Epub` from a markdown source string. `title`
-/// shows up in the EPUB metadata + nav; `lang` is the BCP-47 tag
-/// stamped on the metadata + content documents.
-pub fn build_epub(markdown_src: &str, title: &str, lang: &str) -> Result<Artefact> {
-    let bytes = epub::write_epub(markdown_src, title, lang)?;
-    Ok(Artefact::Epub(bytes))
 }
 
 /// Replace the file extension on `path` with the artefact's
