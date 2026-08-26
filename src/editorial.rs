@@ -598,21 +598,28 @@ pub(crate) fn from_lector_finding(
 
 /// REDLINE-1 (RD-P1) — an Inner Stylist (CHORUS) voice finding → the worklist.
 /// Book-level (no paragraph); its `kind` (distinctiveness / drift / pov / tense /
-/// register) routes it (all Brief today).
-pub(crate) fn from_stylist_finding(f: &crate::inner_stylist::Finding) -> EditorialFinding {
+/// register) routes it (all Brief today). B2 — returns `None` for `Praise`
+/// (celebratory — nothing to fix), mirroring [`from_editor_finding`]; otherwise a
+/// Praise "all voices distinct" row would always sit in the worklist on a healthy
+/// multi-character book and "reads clean" could never fire.
+pub(crate) fn from_stylist_finding(
+    f: &crate::inner_stylist::Finding,
+) -> Option<EditorialFinding> {
     use crate::inner_stylist::Severity as SS;
-    EditorialFinding {
+    let severity = match f.severity {
+        SS::Praise => return None,
+        SS::Concern => Severity::Warn,
+        SS::Note => Severity::Info,
+    };
+    Some(EditorialFinding {
         category: f.kind.to_string(),
-        severity: match f.severity {
-            SS::Concern => Severity::Warn,
-            _ => Severity::Info,
-        },
+        severity,
         location: Location::default(),
         message: f.message.clone(),
         hint: None,
         source: "stylist",
         autofixable: false,
-    }
+    })
 }
 
 /// REDLINE-1 (RD-P6) — an Inner Editor craft observation → the worklist as a
@@ -853,6 +860,24 @@ mod tests {
             .filter(|f| f.category == "filter")
             .count();
         assert_eq!(n, 2, "both occurrences kept, exact dup dropped: {:#?}", report.findings);
+    }
+
+    #[test]
+    fn stylist_praise_is_dropped_not_surfaced() {
+        // B2 — a Praise "all voices distinct" finding must NOT enter the worklist
+        // (it would sit there forever on a healthy book); Concern/Note still map.
+        use crate::inner_stylist::{Finding as SF, Severity as SS};
+        let praise = SF {
+            severity: SS::Praise,
+            kind: "distinctiveness",
+            key: "k".into(),
+            message: "all distinct — nobody reads like anybody else.".into(),
+        };
+        assert!(from_stylist_finding(&praise).is_none(), "praise dropped");
+        let concern = SF { severity: SS::Concern, ..praise.clone() };
+        let note = SF { severity: SS::Note, ..praise.clone() };
+        assert_eq!(from_stylist_finding(&concern).unwrap().severity, Severity::Warn);
+        assert_eq!(from_stylist_finding(&note).unwrap().severity, Severity::Info);
     }
 
     #[test]

@@ -133,7 +133,8 @@ pub fn collect(
                             }
                         }
                         for f in &sf {
-                            raw.push(editorial::from_stylist_finding(f));
+                            // B2 — Praise is dropped (nothing to fix).
+                            raw.extend(editorial::from_stylist_finding(f));
                         }
                     }
                 }
