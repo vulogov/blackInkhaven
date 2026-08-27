@@ -241,7 +241,8 @@ beats, and the ranked findings together:
 └─────────────────────────────────────────────────────┘
 ```]
 
-Arrow keys scroll it; `Enter` jumps straight to the flagged chapter in the editor
+Arrow keys scroll it — `PgUp`/`PgDn` page through a longer list and `Home`/`End`
+jump to its ends — `Enter` jumps straight to the flagged chapter in the editor
 — select the `confusion` line and you land in chapter 3 on the stray "Bryn", ready
 to fix it; `k` runs the cost-capped synthetic first-read, whose reactions post to
 the Output pane's `readthrough` category; `Esc` closes. The deterministic findings

@@ -63,8 +63,9 @@ scripts as in Latin.
   finding anchored so you can jump to it, in the Output pane's `continuity`
   category (filter to it there).
 - **The ledger dashboard** (`Ctrl+B Shift+I`) — a scrollable modal of the ranked
-  findings grouped by kind. `↑↓` to scroll, **Enter** jumps to a finding's
-  paragraph, `Esc` closes.
+  findings grouped by kind. `↑↓` to scroll (`PgUp`/`PgDn` page, `Home`/`End` to
+  the ends; blank separators are skipped, so **Enter** always lands on a real
+  row), **Enter** jumps to a finding's paragraph, `Esc` closes.
 - **The watch** — turn on `continuity.ambient` and every save re-checks only what
   the edit touched (the paragraph's entities and chapter, read from the graph) and
   shows the delta immediately. Deterministic and free, so it runs inline — the

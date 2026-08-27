@@ -68,6 +68,11 @@ Each spine document's body is converted to Typst markup:
 - `<strong>` / `<b>` → `*strong*`
 - `<em>` / `<i>` → `_emph_`
 - `<ul>` / `<li>` → `-` lists; `<ol>` / `<li>` → `+` lists
+- `<blockquote>` → `#quote[…]`
+- `<table>` → a real `#table(columns: N, …)` — rows and cells stay
+  separate cells, not concatenated into one run-on paragraph
+- an inline `<a epub:type="noteref">` and its collected `<aside>` →
+  `#footnote[body]`, rebuilt at the reference point
 - `<br>` → line break
 - `<img>` → an in-prose comment (see images, below)
 
@@ -146,11 +151,15 @@ before you treat the round-trip as a backup:
   that chapter back as a single paragraph node. Your prose is
   intact; your *paragraph-node boundaries* are not preserved
   across the round-trip.
-- **Footnotes and complex tables aren't round-tripped yet.**
-  The export renders footnotes inline and tables as HTML; the
-  importer's converter handles the markup novelists actually
-  use (headings, emphasis, lists) and doesn't yet reconstruct
-  those structures.
+- **Footnotes, block quotes and tables now survive the import.**
+  An EPUB footnote (`<a epub:type="noteref">` plus its collected
+  `<aside>`) is rebuilt as `#footnote[…]` at its reference point, a
+  `<blockquote>` as `#quote[…]`, and a `<table>` as a real
+  `#table(columns: N, …)` — cells stay separate cells, not the old
+  run-on paragraph. The one honest gap is on the way *out*: an
+  authored `#table(…)` isn't re-emitted on EPUB *export* yet (Typst
+  still compiles it to PDF fine), so a table survives an import but
+  not yet a full export→import round-trip.
 - **Images are a sidecar, not inline nodes** (see above).
 
 For interchange and re-editing, that's plenty. For a

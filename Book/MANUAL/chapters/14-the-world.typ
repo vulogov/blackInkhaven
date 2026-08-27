@@ -508,6 +508,19 @@ reason about *when* things happen without re-deriving the calendar.
   chord_row("effective_date", "A paragraph's effective world-date."),
 ))
 
+The core world report is exposed the same way, one word per view. `ink.world.report`
+returns the headline world-state dict; `ink.world.undescribed` lists the entities the
+world defines but never names in prose; `ink.world.findings` returns the discrete world
+conflicts and anachronisms as a list, each carrying a `kind` of `fact_conflict`, `drift`,
+or `anachronism`; and `ink.world.check` is a pass/fail gate a script can branch on.
+
+#chord_table((
+  chord_row("report", "The headline world-state dict."),
+  chord_row("undescribed", "Entities the world defines but never names in prose."),
+  chord_row("findings", "World conflicts + anachronisms as a list (fact_conflict / drift / anachronism)."),
+  chord_row("check", "A pass/fail gate over the world checker."),
+))
+
 These are all `store_read` words — safe, side-effect-free, allowed by default in
 the Bund sandbox. The utopia checker has its own small read-only surface,
 `ink.utopia.*` (`model`, `findings`, `violations`, and a `suppress` action), for

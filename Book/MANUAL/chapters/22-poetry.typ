@@ -113,7 +113,11 @@ is *syllabic* — you count syllables and elide the mute *e* — so a French for
 switches its tradition and sets `elide_mute_e`; Russian accentual-syllabic verse
 allows the pyrrhic substitution and expects a final stress, so a Russian form
 sets `allow_pyrrhic` and `require_final_stress`. The same sonnet, asked for in
-Russian, comes back with the rules Russian prosody actually plays by.
+Russian, comes back with the rules Russian prosody actually plays by. Spanish
+leans on its own orthography: a written accent — the acute on *á/é/í/ó/ú* — fixes
+the stressed syllable outright, so an oxytone like *corazón*, *está*, or *café*
+scans on its true final stress, and both metre and rhyme land where the accent
+says they should.
 
 #term("The declared form")[
   A `poem:` block — the target the Inner Poet measures against. Its fields:
@@ -302,7 +306,10 @@ The engine is multilingual by construction. It works on the *rhyme tail* — fro
 the stressed vowel onward — with per-language normalisation: German final
 consonant devoicing (so *Hund* rhymes with *bunt*), French mute-*e* elision,
 light Russian vowel reduction, and Spanish *assonance*, where a vowel-only match
-counts. This is exact for the regular orthographies — Russian above all — and for
+counts. French adds one distinction the ending settles on its own — rhyme
+*gender*: a mute final *-e* (including *-es*, and the verb ending *-ent*) reads
+as a feminine rhyme, while an accented or consonant ending reads as masculine.
+This is exact for the regular orthographies — Russian above all — and for
 English it climbs to exact the moment the pronouncing dictionary is installed. In
 a fast-track scan, the engine walks your declared rhyme scheme, pairs up the lines
 that share a label, and reports any pair that falls to a near-rhyme (a Note) or

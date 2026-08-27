@@ -160,6 +160,7 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     // World fact-check timeline queries — read-only lookups over the calendar.
     ("ink.world.report", category::STORE_READ),
     ("ink.world.undescribed", category::STORE_READ),
+    ("ink.world.findings", category::STORE_READ),
     ("ink.world.check", category::STORE_READ),
     ("ink.world.fact_check.timeline.effective_date", category::STORE_READ),
     ("ink.world.fact_check.timeline.events_for_character", category::STORE_READ),
@@ -654,6 +655,17 @@ pub const PURE_UNCATEGORISED: &[&str] = &[
     "ink.pdf.strip_metadata",
 ];
 
+/// E4 — namespaces registered wholesale as pure (no store / filesystem / network
+/// access), classified by prefix rather than one entry per word. `calc.*` is
+/// inkhaven's pure-math stdlib (trig, unit conversions, finance/astronomy
+/// formulas — deterministic, touches no protected resource), ~100 words that
+/// would otherwise each need a `PURE_UNCATEGORISED` line. A word under one of
+/// these prefixes is always allowed at runtime (it isn't in `WORD_CATEGORIES`,
+/// so `apply_policy` never stubs it); this list only records that classification
+/// for the `every_registered_word_is_classified` guard, hence `#[cfg(test)]`.
+#[cfg(test)]
+const PURE_PREFIXES: &[&str] = &["calc."];
+
 /// Policy loaded from `inkhaven.hjson`'s `scripting` stanza. All
 /// three lists default to empty — combined with
 /// `DEFAULT_DENIED_CATEGORIES` they give the conservative
@@ -860,30 +872,40 @@ mod tests {
     #[test]
     fn every_registered_word_is_classified() {
         use rust_multistackvm::multistackvm::VM;
+        use std::collections::HashSet;
+
+        let gated: HashSet<&str> = WORD_CATEGORIES.iter().map(|(w, _)| *w).collect();
+        let pure: HashSet<&str> = PURE_UNCATEGORISED.iter().copied().collect();
+
+        // E4 — police exactly the words inkhaven ADDS, computed as the diff of the
+        // inline table across registration, rather than trusting an `ink.` prefix.
+        // A future *bare* (non-`ink.`) word inkhaven registers would slip a
+        // prefix filter but shows up here and must be consciously classified.
+        // (`register_inline` keys handlers as `<name>_inline`; aliases live in
+        // `name_mapping` and inherit their canonical word's gate. A word that
+        // upserts an existing bundcore default — `print` / `println` — isn't a new
+        // key, so it stays bundcore's benign output buffer, correctly unpoliced.)
         let mut vm = VM::new();
+        let before: HashSet<String> = vm.inline_fun.keys().cloned().collect();
         crate::scripting::stdlib::register_ink_stdlib(&mut vm).unwrap();
 
-        let gated: std::collections::HashSet<&str> =
-            WORD_CATEGORIES.iter().map(|(w, _)| *w).collect();
-        let pure: std::collections::HashSet<&str> =
-            PURE_UNCATEGORISED.iter().copied().collect();
-
-        // `register_inline` keys the handler as `<name>_inline`; aliases live in
-        // `name_mapping` and inherit the canonical word's gate, so we only police
-        // the canonical `ink.*` names here.
         let mut unclassified: Vec<String> = vm
             .inline_fun
             .keys()
+            .filter(|k| !before.contains(*k))
             .filter_map(|k| k.strip_suffix("_inline"))
-            .filter(|name| name.starts_with("ink."))
-            .filter(|name| !gated.contains(*name) && !pure.contains(*name))
+            .filter(|name| {
+                !gated.contains(*name)
+                    && !pure.contains(*name)
+                    && !PURE_PREFIXES.iter().any(|p| name.starts_with(p))
+            })
             .map(String::from)
             .collect();
         unclassified.sort();
 
         assert!(
             unclassified.is_empty(),
-            "{} ink.* verb(s) are neither in WORD_CATEGORIES nor PURE_UNCATEGORISED \
+            "{} registered verb(s) are neither in WORD_CATEGORIES nor PURE_UNCATEGORISED \
              (they would be silently allowed, bypassing disabled_categories). \
              Classify each — add a category or, if it touches no protected resource, \
              add it to PURE_UNCATEGORISED:\n{}",

@@ -177,7 +177,7 @@ pub fn response_kind(category: &str) -> ResponseKind {
         // reconcile category the Decision flow rewrites through — it never appears
         // as a surfaced finding, but classifying it Rewrite keeps the RD-P7
         // invariant clean: every category with a [`fix_spec`] is a Rewrite.
-        "echo" | "pacing" | "show-tell" | "filter" | "editor" | "voice"
+        "echo" | "pacing" | "show-tell" | "filter" | "editor"
         | "anachronism" | "decision-resolve" => ResponseKind::Rewrite,
         // The author must choose which way is right; then we reconcile.
         "co_location" | "char_facts" | "drift" | "introduce" | "confusion"
@@ -598,21 +598,34 @@ pub(crate) fn from_lector_finding(
 
 /// REDLINE-1 (RD-P1) — an Inner Stylist (CHORUS) voice finding → the worklist.
 /// Book-level (no paragraph); its `kind` (distinctiveness / drift / pov / tense /
-/// register) routes it (all Brief today).
-pub(crate) fn from_stylist_finding(f: &crate::inner_stylist::Finding) -> EditorialFinding {
+/// register) routes it — all Brief (a book-level voice observation, no single-locus
+/// fix). B4 — the `drift` kind is surfaced as category `voice-drift`, distinct from
+/// WORLD-2 semantic `drift` (which is a Decision with a paragraph anchor); sharing
+/// the bare `drift` category routed this anchorless finding to a dead-end Decision
+/// and lumped voice- and semantic-drift into one filter bucket. B2 — returns `None`
+/// for `Praise` (celebratory — nothing to fix), mirroring [`from_editor_finding`].
+pub(crate) fn from_stylist_finding(
+    f: &crate::inner_stylist::Finding,
+) -> Option<EditorialFinding> {
     use crate::inner_stylist::Severity as SS;
-    EditorialFinding {
-        category: f.kind.to_string(),
-        severity: match f.severity {
-            SS::Concern => Severity::Warn,
-            _ => Severity::Info,
-        },
+    let severity = match f.severity {
+        SS::Praise => return None,
+        SS::Concern => Severity::Warn,
+        SS::Note => Severity::Info,
+    };
+    let category = match f.kind {
+        "drift" => "voice-drift".to_string(),
+        other => other.to_string(),
+    };
+    Some(EditorialFinding {
+        category,
+        severity,
         location: Location::default(),
         message: f.message.clone(),
         hint: None,
         source: "stylist",
         autofixable: false,
-    }
+    })
 }
 
 /// REDLINE-1 (RD-P6) — an Inner Editor craft observation → the worklist as a
@@ -694,8 +707,11 @@ fn chapter_label(chapter: u32) -> Option<String> {
 }
 
 /// Rank + dedup a flat list of findings into the report: sort by severity
-/// (error first), then category, then message; drop findings identical in
-/// category + message + location.
+/// (error first), then category, then message, then location; drop findings
+/// identical in category + message + full location. B1 — the location tie-break
+/// includes paragraph + char_range so two occurrences of the same word in one
+/// chapter stay adjacent-but-distinct (only exact duplicates collapse), rather
+/// than one silently swallowing the other.
 pub fn aggregate(mut findings: Vec<EditorialFinding>) -> EditorialReport {
     findings.sort_by(|a, b| {
         a.severity
@@ -703,12 +719,18 @@ pub fn aggregate(mut findings: Vec<EditorialFinding>) -> EditorialReport {
             .cmp(&b.severity.rank())
             .then_with(|| a.category.cmp(&b.category))
             .then_with(|| a.message.cmp(&b.message))
+            .then_with(|| a.location.chapter.cmp(&b.location.chapter))
+            .then_with(|| a.location.path.cmp(&b.location.path))
+            .then_with(|| a.location.paragraph.cmp(&b.location.paragraph))
+            .then_with(|| a.location.char_range.cmp(&b.location.char_range))
     });
     findings.dedup_by(|a, b| {
         a.category == b.category
             && a.message == b.message
             && a.location.chapter == b.location.chapter
             && a.location.path == b.location.path
+            && a.location.paragraph == b.location.paragraph
+            && a.location.char_range == b.location.char_range
     });
     let errors = findings.iter().filter(|f| f.severity == Severity::Error).count();
     let warnings = findings.iter().filter(|f| f.severity == Severity::Warn).count();
@@ -816,6 +838,73 @@ mod tests {
     }
 
     #[test]
+    fn aggregate_keeps_distinct_occurrences_but_drops_exact_duplicates() {
+        // B1 — two "very"s in the same chapter differ only by char_range; both must
+        // survive. An exact duplicate (same everything) still collapses to one.
+        let mk = |para: Option<Uuid>, range: Option<(usize, usize)>| EditorialFinding {
+            category: "filter".into(),
+            severity: Severity::Info,
+            location: Location {
+                chapter: Some("ch. 1".into()),
+                paragraph: para,
+                char_range: range,
+                path: None,
+            },
+            message: "filter word: `very` — consider cutting".into(),
+            hint: None,
+            source: "stylist",
+            autofixable: false,
+        };
+        let p = Uuid::new_v4();
+        let a = mk(Some(p), Some((10, 14)));
+        let b = mk(Some(p), Some((40, 44))); // same word, different spot
+        let dup = a.clone(); // exact duplicate of a
+        let report = aggregate(vec![a, b, dup]);
+        let n = report
+            .findings
+            .iter()
+            .filter(|f| f.category == "filter")
+            .count();
+        assert_eq!(n, 2, "both occurrences kept, exact dup dropped: {:#?}", report.findings);
+    }
+
+    #[test]
+    fn stylist_praise_is_dropped_not_surfaced() {
+        // B2 — a Praise "all voices distinct" finding must NOT enter the worklist
+        // (it would sit there forever on a healthy book); Concern/Note still map.
+        use crate::inner_stylist::{Finding as SF, Severity as SS};
+        let praise = SF {
+            severity: SS::Praise,
+            kind: "distinctiveness",
+            key: "k".into(),
+            message: "all distinct — nobody reads like anybody else.".into(),
+        };
+        assert!(from_stylist_finding(&praise).is_none(), "praise dropped");
+        let concern = SF { severity: SS::Concern, ..praise.clone() };
+        let note = SF { severity: SS::Note, ..praise.clone() };
+        assert_eq!(from_stylist_finding(&concern).unwrap().severity, Severity::Warn);
+        assert_eq!(from_stylist_finding(&note).unwrap().severity, Severity::Info);
+    }
+
+    #[test]
+    fn stylist_drift_is_voice_drift_and_routes_to_brief() {
+        // B4 — the stylist's voice `drift` is disambiguated from WORLD-2 semantic
+        // `drift`: distinct category, and Brief (not the anchorless dead-end Decision).
+        use crate::inner_stylist::{Finding as SF, Severity as SS};
+        let f = SF {
+            severity: SS::Note,
+            kind: "drift",
+            key: "k".into(),
+            message: "voice drifts toward the narrator's register.".into(),
+        };
+        let e = from_stylist_finding(&f).unwrap();
+        assert_eq!(e.category, "voice-drift");
+        assert_eq!(response_kind(&e.category), ResponseKind::Brief);
+        // Semantic drift keeps its Decision routing (it has a paragraph anchor).
+        assert_eq!(response_kind("drift"), ResponseKind::Decision);
+    }
+
+    #[test]
     fn matches_view_ands_category_and_kind() {
         // "echo" → Rewrite, "co_location" → Decision, "structure" → Brief.
         let echo = EditorialFinding {
@@ -887,10 +976,16 @@ mod tests {
     #[test]
     fn response_kind_classifies_by_category() {
         use ResponseKind::*;
-        // Honest single-locus prose fixes.
-        for c in ["echo", "pacing", "show-tell", "filter", "editor", "voice", "anachronism"] {
+        // Honest single-locus prose fixes. B5 — every surfaced Rewrite category
+        // MUST have a fix_spec, else the cockpit shows the ✎ glyph with a no-op
+        // `f` (the RD-P7 broken-affordance the invariant forbids). `voice` was
+        // Rewrite with no fix_spec and no producer — dropped.
+        for c in ["echo", "pacing", "show-tell", "filter", "editor", "anachronism"] {
             assert_eq!(response_kind(c), Rewrite, "{c} is a Rewrite");
+            assert!(fix_spec(c).is_some(), "{c} Rewrite must have a fix_spec");
         }
+        // `voice` is no longer a Rewrite (dead category → Brief default).
+        assert_eq!(response_kind("voice"), Brief, "dead `voice` category → Brief");
         // The author must choose which way is right, then reconcile.
         for c in ["co_location", "char_facts", "drift", "introduce", "confusion", "unpaid_setup", "unearned_shift"] {
             assert_eq!(response_kind(c), Decision, "{c} is a Decision");

@@ -64,8 +64,9 @@ listed without an arc). `--json` gives you the whole structure for scripting.
 ## Open it in the editor
 
 Press **`Ctrl+B z`** for the graph hub, then **`c`** — the Dramatis Personae opens
-as a scrollable dashboard. `↑↓` to move, **Enter** to jump straight to a
-character's bible entry, `Esc` to close. It's the fastest way to answer "wait,
+as a scrollable dashboard. `↑↓` to move (`PgUp`/`PgDn` page, `Home`/`End` to the
+ends; blank separators are skipped, so **Enter** always lands on a real row),
+**Enter** to jump straight to a character's bible entry, `Esc` to close. It's the fastest way to answer "wait,
 who is this again, and who are they to everyone else?" three hundred pages in.
 
 ## What it costs
