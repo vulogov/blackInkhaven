@@ -1464,6 +1464,11 @@ pub enum Command {
         /// Soft token budget for `--deep` (informative preflight, never blocks).
         #[arg(long, default_value_t = 8000)]
         max_cost: usize,
+        /// Print the bond *ledger* (the declared `rel:` relationships BONDS reasons
+        /// over, grouped by pair) instead of the relationship-break findings — the
+        /// analog of `knowledge --ledger`.
+        #[arg(long)]
+        ledger: bool,
     },
     /// ENSEMBLE (3.2) — the Dramatis Personae: the book's cast joined with their
     /// declared BONDS relationships and their CHAR-1 arc state ("who is in this
@@ -6946,8 +6951,9 @@ impl Cli {
                 knowledge::run(&project, book_name.as_deref(), json, deep, max_cost, ledger)
                     .map_err(Into::into)
             }
-            Command::Bonds { book_name, json, deep, max_cost } => {
-                bonds::run(&project, book_name.as_deref(), json, deep, max_cost).map_err(Into::into)
+            Command::Bonds { book_name, json, deep, max_cost, ledger } => {
+                bonds::run(&project, book_name.as_deref(), json, deep, max_cost, ledger)
+                    .map_err(Into::into)
             }
             Command::Cast { book_name, json } => {
                 cast::run(&project, book_name.as_deref(), json).map_err(Into::into)

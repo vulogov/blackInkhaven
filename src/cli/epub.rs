@@ -138,6 +138,9 @@ fn collect_chapters(
         let mut body = String::new();
         let mut images = Vec::new();
         append_branch_prose(store, h, chapter, &mut body, &mut images, false)?;
+        // A3 — promote all footnote placeholders in one pass so ids are unique
+        // across the whole chapter and the notes collect into a single section.
+        let body = epub::finalize_footnotes(&body);
         chapters.push(EpubChapter {
             title: clean_title(&chapter.title),
             body_xhtml: body,
@@ -173,7 +176,9 @@ fn append_branch_prose(
         match child.kind {
             NodeKind::Paragraph => {
                 let raw = read_paragraph(store, child)?;
-                let xhtml = epub::typst_to_xhtml(&raw);
+                // A3 — footnotes are finalized once per chapter (see
+                // collect_chapters), so ids stay unique across paragraphs.
+                let xhtml = epub::typst_to_xhtml_pending(&raw);
                 body.push_str(&xhtml);
             }
             NodeKind::Subchapter => {

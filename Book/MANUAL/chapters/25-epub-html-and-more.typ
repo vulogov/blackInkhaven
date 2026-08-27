@@ -161,7 +161,10 @@ referenced by a chapter become Image nodes under it; manifest images that no
 chapter references (cover art, orphans) are extracted to a
 `<book-slug>-images/` sidecar folder for you to place by hand. Image references
 in the prose are rewritten to Typst comments so an imported chapter still
-compiles cleanly while telling you where the picture belonged.
+compiles cleanly while telling you where the picture belonged. Structural markup
+survives the conversion too: a source `<blockquote>` becomes a Typst `#quote[…]`,
+and a `<table>` becomes a real `#table(columns: N, …)` with its cells preserved,
+rather than being flattened into a run of concatenated text.
 
 #screen(caption: "Round-tripping a book back in")[```
 $ inkhaven import-epub harbor.epub
@@ -294,7 +297,10 @@ Its flags mirror the reader-facing exports: `--book-name`, `--output`,
 `--font` to choose the body typeface — `times` (the default) or `courier`, the
 two Shunn accepts. If you would rather submit a typeset PDF, `inkhaven
 manuscript` produces the same Shunn layout as a Typst document you compile with
-`typst compile`.
+`typst compile`. Both submission exporters keep the fine grain of your prose: the
+authored `*bold*` and `_italic_` emphasis you typed survives the trip, and a
+`#footnote[…]` comes across intact — the `.docx` as a real footnotes part Word
+renders natively, the `.typ` as a native Typst footnote.
 
 #subsection("Markdown, and plain LaTeX")
 

@@ -73,7 +73,9 @@ pub fn build_docx(
         put("word/_rels/document.xml.rels", DOC_RELS)?;
         put("word/styles.xml", &styles_xml(font))?;
         put("word/header2.xml", &header_xml(&meta.surname, &meta.title))?;
-        put("word/document.xml", &document_xml(meta, chapters))?;
+        let (doc, footnotes) = document_xml(meta, chapters);
+        put("word/document.xml", &doc)?;
+        put("word/footnotes.xml", &footnotes_xml(&footnotes))?;
         zw.finish()?;
     }
     Ok(buf)
@@ -81,7 +83,11 @@ pub fn build_docx(
 
 // ── document body ───────────────────────────────────────────────────
 
-fn document_xml(meta: &ManuscriptMeta, chapters: &[ManuscriptChapter]) -> String {
+/// Returns `(document.xml, footnote_bodies)`. Footnote bodies are collected
+/// document-wide (id = 1-based position) so `footnotes.xml` and the in-body
+/// `<w:footnoteReference>` ids agree.
+fn document_xml(meta: &ManuscriptMeta, chapters: &[ManuscriptChapter]) -> (String, Vec<String>) {
+    let mut footnotes: Vec<String> = Vec::new();
     let mut b = String::new();
     b.push_str(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n\
@@ -114,7 +120,7 @@ xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">
             if is_scene_break(p) {
                 b.push_str(&para("#", &[Prop::Center]));
             } else {
-                b.push_str(&para(p, &[Prop::FirstLineIndent]));
+                b.push_str(&body_para(p, &[Prop::FirstLineIndent], &mut footnotes));
             }
         }
     }
@@ -131,7 +137,7 @@ w:header=\"720\" w:footer=\"720\" w:gutter=\"0\"/>\
         m = TWIPS_INCH,
     ));
     b.push_str("</w:body>\n</w:document>\n");
-    b
+    (b, footnotes)
 }
 
 /// Paragraph property flags.
@@ -144,9 +150,8 @@ enum Prop {
     PageBreakBefore,
 }
 
-/// One `<w:p>` with the given text + properties.  Empty text → a blank
-/// (spacer) paragraph.
-fn para(text: &str, props: &[Prop]) -> String {
+/// The `<w:pPr>…</w:pPr>` block for the given properties (empty string if none).
+fn ppr_xml(props: &[Prop]) -> String {
     let mut ppr = String::new();
     if props.iter().any(|p| matches!(p, Prop::PageBreakBefore)) {
         ppr.push_str("<w:pageBreakBefore/>");
@@ -166,13 +171,88 @@ fn para(text: &str, props: &[Prop]) -> String {
     if let Some(jc) = jc {
         ppr.push_str(&format!("<w:jc w:val=\"{jc}\"/>"));
     }
-    let ppr = if ppr.is_empty() {
+    if ppr.is_empty() {
         String::new()
     } else {
         format!("<w:pPr>{ppr}</w:pPr>")
+    }
+}
+
+/// One `<w:p>` with the given text + properties as a single **plain** run —
+/// no emphasis parsing.  A6 — title-page fields (contact / title / byline) and
+/// chapter headings must stay literal, matching the typst path's `escape_typst`,
+/// so an email or name with `_`/`*` doesn't render italic/bold and lose the
+/// delimiter.  Body prose uses [`body_para`] (emphasis + footnotes) instead.
+/// Empty text → a blank (spacer) paragraph.
+fn para(text: &str, props: &[Prop]) -> String {
+    let run = if text.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "<w:r><w:t xml:space=\"preserve\">{}</w:t></w:r>",
+            xml_escape(text)
+        )
     };
-    let run = if text.is_empty() { String::new() } else { runs(text) };
-    format!("<w:p>{ppr}{run}</w:p>\n")
+    format!("<w:p>{}{run}</w:p>\n", ppr_xml(props))
+}
+
+/// A2 — a body paragraph whose `#footnote[…]` markers become real Word footnote
+/// references, their bodies pushed onto `footnotes` (id = 1-based position).
+fn body_para(text: &str, props: &[Prop], footnotes: &mut Vec<String>) -> String {
+    format!("<w:p>{}{}</w:p>\n", ppr_xml(props), runs_with_footnotes(text, footnotes))
+}
+
+/// Like [`runs`], but extracts `#footnote[body]` spans into `footnotes` and emits
+/// a superscript `<w:footnoteReference>` in their place.
+fn runs_with_footnotes(text: &str, footnotes: &mut Vec<String>) -> String {
+    const FN_OPEN: &str = "#footnote[";
+    let mut out = String::with_capacity(text.len() + 16);
+    let mut rest = text;
+    while let Some(pos) = rest.find(FN_OPEN) {
+        out.push_str(&runs(&rest[..pos]));
+        let after = &rest[pos + FN_OPEN.len()..];
+        match crate::manuscript::matching_bracket(after) {
+            Some(end) => {
+                footnotes.push(after[..end].to_string());
+                let id = footnotes.len(); // 1-based; -1/0 reserved for separators
+                out.push_str(&format!(
+                    "<w:r><w:rPr><w:rStyle w:val=\"FootnoteReference\"/>\
+<w:vertAlign w:val=\"superscript\"/></w:rPr><w:footnoteReference w:id=\"{id}\"/></w:r>"
+                ));
+                rest = &after[end + 1..];
+            }
+            None => {
+                // Unterminated marker — emit it literally, no note.
+                out.push_str(&runs(FN_OPEN));
+                rest = after;
+            }
+        }
+    }
+    out.push_str(&runs(rest));
+    out
+}
+
+/// The `word/footnotes.xml` part: the two mandatory separator notes (ids -1/0)
+/// plus one `<w:footnote>` per collected body (ids 1..). The reference glyph is a
+/// superscript `<w:footnoteRef/>`; the body renders emphasis like ordinary prose.
+fn footnotes_xml(bodies: &[String]) -> String {
+    let mut b = String::from(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n\
+<w:footnotes xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">\
+<w:footnote w:type=\"separator\" w:id=\"-1\"><w:p><w:r><w:separator/></w:r></w:p></w:footnote>\
+<w:footnote w:type=\"continuationSeparator\" w:id=\"0\"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:footnote>",
+    );
+    for (i, body) in bodies.iter().enumerate() {
+        let id = i + 1;
+        b.push_str(&format!(
+            "<w:footnote w:id=\"{id}\"><w:p><w:pPr><w:pStyle w:val=\"FootnoteText\"/></w:pPr>\
+<w:r><w:rPr><w:rStyle w:val=\"FootnoteReference\"/><w:vertAlign w:val=\"superscript\"/></w:rPr>\
+<w:footnoteRef/></w:r>{run}</w:p></w:footnote>",
+            run = runs(&format!(" {body}")),
+        ));
+    }
+    b.push_str("</w:footnotes>\n");
+    b
 }
 
 /// XP-2 — split `text` into `<w:r>` runs on authored `*bold*` / `_italic_`
@@ -225,6 +305,10 @@ fn styles_xml(font: DocxFont) -> String {
 <w:pPrDefault><w:pPr><w:spacing w:line=\"{line}\" w:lineRule=\"auto\"/></w:pPr></w:pPrDefault>\
 </w:docDefaults>\
 <w:style w:type=\"paragraph\" w:default=\"1\" w:styleId=\"Normal\"><w:name w:val=\"Normal\"/></w:style>\
+<w:style w:type=\"paragraph\" w:styleId=\"FootnoteText\"><w:name w:val=\"footnote text\"/>\
+<w:pPr><w:spacing w:line=\"240\" w:lineRule=\"auto\"/></w:pPr><w:rPr><w:sz w:val=\"20\"/><w:szCs w:val=\"20\"/></w:rPr></w:style>\
+<w:style w:type=\"character\" w:styleId=\"FootnoteReference\"><w:name w:val=\"footnote reference\"/>\
+<w:rPr><w:vertAlign w:val=\"superscript\"/></w:rPr></w:style>\
 </w:styles>\n",
         f = font.name(),
         sz = HALF_PT_12,
@@ -241,6 +325,7 @@ const CONTENT_TYPES: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone
 <Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>\
 <Override PartName=\"/word/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml\"/>\
 <Override PartName=\"/word/header2.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml\"/>\
+<Override PartName=\"/word/footnotes.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml\"/>\
 </Types>\n";
 
 const ROOT_RELS: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n\
@@ -252,6 +337,7 @@ const DOC_RELS: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"ye
 <Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\
 <Relationship Id=\"rIdStyles\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/>\
 <Relationship Id=\"rIdHeader\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/header\" Target=\"header2.xml\"/>\
+<Relationship Id=\"rIdFootnotes\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes\" Target=\"footnotes.xml\"/>\
 </Relationships>\n";
 
 fn xml_escape(s: &str) -> String {
@@ -287,16 +373,41 @@ mod tests {
     }
 
     #[test]
-    fn emphasis_becomes_word_runs_not_literal_markers() {
-        // XP-2 — *bold* / _italic_ now emit <w:b>/<w:i> runs, not literal text.
-        let p = para("she was *very* _tired_ now", &[Prop::FirstLineIndent]);
+    fn body_emphasis_becomes_word_runs_not_literal_markers() {
+        // XP-2 — *bold* / _italic_ emit <w:b>/<w:i> runs in body prose.
+        let mut fns = Vec::new();
+        let p = body_para("she was *very* _tired_ now", &[Prop::FirstLineIndent], &mut fns);
         assert!(p.contains("<w:b/>"), "bold run: {p}");
         assert!(p.contains("<w:i/>"), "italic run: {p}");
         assert!(p.contains("<w:t xml:space=\"preserve\">very</w:t>"), "bold text: {p}");
         assert!(!p.contains('*') && !p.contains('_'), "no literal delimiters: {p}");
         // Plain text with no emphasis is a single unchanged run.
-        let plain = para("just plain prose", &[]);
+        let plain = body_para("just plain prose", &[], &mut fns);
         assert_eq!(plain.matches("<w:r>").count(), 1, "one run: {plain}");
+    }
+
+    #[test]
+    fn title_page_fields_are_plain_not_emphasis_parsed() {
+        // A6 — a contact email / byline with `_`/`*` must stay literal (the
+        // title-page path is plain, matching build_typst's escape_typst), not
+        // get italicised with the delimiters eaten.
+        let meta = ManuscriptMeta {
+            title: "T".into(),
+            contact: "jane_q_writer@example.com".into(),
+            byline: "Jane_Q".into(),
+            surname: "X".into(),
+            word_count: 100,
+        };
+        let chapters = vec![ManuscriptChapter {
+            title: "One".into(),
+            paragraphs: vec!["plain body".into()],
+        }];
+        let doc = part(&build_docx(&meta, &chapters, DocxFont::TimesNewRoman).unwrap(), "word/document.xml");
+        // Underscores survive literally in the contact + byline.
+        assert!(doc.contains("jane_q_writer@example.com"), "contact underscores: {doc}");
+        assert!(doc.contains("Jane_Q"), "byline underscore: {doc}");
+        // The body is plain here, so nothing in the whole document is italic.
+        assert!(!doc.contains("<w:i/>"), "no stray italic run: {doc}");
     }
 
     fn sample() -> (ManuscriptMeta, Vec<ManuscriptChapter>) {
@@ -344,9 +455,40 @@ mod tests {
             "word/styles.xml",
             "word/header2.xml",
             "word/document.xml",
+            "word/footnotes.xml",
         ] {
             let _ = part(&bytes, p); // panics if absent
         }
+    }
+
+    #[test]
+    fn footnotes_become_real_word_notes_with_matching_ids() {
+        // A2 — #footnote[…] in body prose → a <w:footnoteReference> in the body
+        // plus a <w:footnote> in footnotes.xml, ids agreeing (1-based).
+        let meta = ManuscriptMeta {
+            title: "T".into(), contact: "X".into(), byline: "X".into(),
+            surname: "X".into(), word_count: 100,
+        };
+        let chapters = vec![ManuscriptChapter {
+            title: "One".into(),
+            paragraphs: vec![
+                "A claim#footnote[first note] stands.".into(),
+                "Another#footnote[second note].".into(),
+            ],
+        }];
+        let bytes = build_docx(&meta, &chapters, DocxFont::TimesNewRoman).unwrap();
+        let doc = part(&bytes, "word/document.xml");
+        let fns = part(&bytes, "word/footnotes.xml");
+        // Two references in the body, ids 1 and 2.
+        assert!(doc.contains("<w:footnoteReference w:id=\"1\"/>"), "{doc}");
+        assert!(doc.contains("<w:footnoteReference w:id=\"2\"/>"), "{doc}");
+        // The marker text itself is gone from the body.
+        assert!(!doc.contains("#footnote["), "marker consumed: {doc}");
+        // Both bodies live in footnotes.xml under matching ids + the separators.
+        assert!(fns.contains("w:type=\"separator\" w:id=\"-1\""), "{fns}");
+        assert!(fns.contains("<w:footnote w:id=\"1\">") && fns.contains("first note"), "{fns}");
+        assert!(fns.contains("<w:footnote w:id=\"2\">") && fns.contains("second note"), "{fns}");
+        assert!(quick_xml_well_formed(&fns), "footnotes.xml well-formed");
     }
 
     #[test]

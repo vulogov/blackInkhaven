@@ -352,7 +352,9 @@ fn first_heading(body: &str) -> Option<String> {
 /// Turn the `#image("href")` markers the XHTML converter emits into
 /// typst comments referencing the extracted basename, so an imported
 /// chapter compiles cleanly while still telling the author where the
-/// image was.
+/// image was. Uses a **block** comment (`/* … */`) — a line comment
+/// (`//`) would swallow any prose after an inline image on the same
+/// line when the chapter compiles.
 fn neutralize_image_refs(body: &str) -> String {
     const OPEN: &str = "#image(\"";
     let mut out = String::with_capacity(body.len());
@@ -363,8 +365,10 @@ fn neutralize_image_refs(body: &str) -> String {
         match after.find("\")") {
             Some(end) => {
                 let href = &after[..end];
+                // `base` is the last path segment, so it never contains a `/`
+                // and thus never a `*/` that could close the comment early.
                 let base = href.rsplit('/').next().unwrap_or(href);
-                out.push_str(&format!("// [imported image: {base}]"));
+                out.push_str(&format!("/* [imported image: {base}] */"));
                 rest = &after[end + 2..];
             }
             None => {
@@ -390,9 +394,14 @@ mod tests {
     }
 
     #[test]
-    fn neutralize_rewrites_image_refs_to_comments() {
+    fn neutralize_rewrites_image_refs_to_block_comments() {
+        // A4 — a block comment, so prose after an inline image survives
+        // compilation (a `//` line comment would swallow " here").
         let out = neutralize_image_refs("see #image(\"img/x.png\") here");
-        assert_eq!(out, "see // [imported image: x.png] here");
+        assert_eq!(out, "see /* [imported image: x.png] */ here");
+        assert!(!out.contains("//"), "no line comment that would eat trailing prose");
+        // Trailing prose after the image survives; only the closing */ appears.
+        assert!(out.ends_with("] */ here"), "{out}");
         // Unterminated marker is left verbatim, no panic.
         let bad = neutralize_image_refs("oops #image(\"x");
         assert!(bad.contains("#image(\"x"));

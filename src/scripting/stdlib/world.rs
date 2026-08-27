@@ -7,6 +7,7 @@
 //!
 //! - `ink.world.report`      ( -- dict )  {facts_total, characters, places, artefacts, continuity_attributes, entity_total, issue_count, undescribed, stale, summary}
 //! - `ink.world.undescribed` ( -- list )  {name, kind}
+//! - `ink.world.findings`    ( -- list )  the discrete conflicts + anachronisms ({kind, …})
 //! - `ink.world.check`       ( -- dict )  {issues, undescribed, clean}
 
 use std::collections::HashMap;
@@ -24,6 +25,7 @@ pub fn register(vm: &mut VM) -> Result<()> {
     let words: &[(&str, fn(&mut VM) -> std::result::Result<&mut VM, BundError>)] = &[
         ("ink.world.report", w_report),
         ("ink.world.undescribed", w_undescribed),
+        ("ink.world.findings", w_findings),
         ("ink.world.check", w_check),
     ];
     for (name, f) in words {
@@ -104,6 +106,49 @@ fn do_undescribed(vm: &mut VM) -> Result<&mut VM> {
     Ok(vm)
 }
 
+/// E2 — flatten the world report's discrete conflicts + anachronisms into one
+/// finding list, the `ink.world.*` analog of `ink.knowledge.findings` /
+/// `ink.bonds.findings`. Prose-vs-fact contradictions are a count only in the
+/// report (their items live in the facts-scan sidecar), so they aren't enumerated
+/// here. Pure.
+fn findings_list(r: &WorldReport) -> Vec<Value> {
+    let mut rows: Vec<Value> = Vec::new();
+    for c in &r.facts_conflicts {
+        let mut m: HashMap<String, Value> = HashMap::new();
+        m.insert("kind".into(), Value::from_string("fact_conflict"));
+        m.insert("a".into(), Value::from_string(&c.a));
+        m.insert("b".into(), Value::from_string(&c.b));
+        m.insert("detail".into(), Value::from_string(&c.detail));
+        rows.push(Value::from_dict(m));
+    }
+    for c in &r.drift_conflicts {
+        let mut m: HashMap<String, Value> = HashMap::new();
+        m.insert("kind".into(), Value::from_string("drift"));
+        m.insert("entity".into(), Value::from_string(&c.entity));
+        m.insert("a".into(), Value::from_string(&c.a));
+        m.insert("b".into(), Value::from_string(&c.b));
+        m.insert("chapter_a".into(), Value::from_string(&c.chapter_a));
+        m.insert("chapter_b".into(), Value::from_string(&c.chapter_b));
+        m.insert("detail".into(), Value::from_string(&c.detail));
+        rows.push(Value::from_dict(m));
+    }
+    for a in &r.anachronism_flags {
+        let mut m: HashMap<String, Value> = HashMap::new();
+        m.insert("kind".into(), Value::from_string("anachronism"));
+        m.insert("term".into(), Value::from_string(&a.term));
+        m.insert("chapter".into(), Value::from_string(&a.chapter));
+        rows.push(Value::from_dict(m));
+    }
+    rows
+}
+
+word!(w_findings, do_findings);
+fn do_findings(vm: &mut VM) -> Result<&mut VM> {
+    let (report, _) = active_report("ink.world.findings")?;
+    push(vm, Value::from_list(findings_list(&report)));
+    Ok(vm)
+}
+
 word!(w_check, do_check);
 fn do_check(vm: &mut VM) -> Result<&mut VM> {
     let (report, _) = active_report("ink.world.check")?;
@@ -140,5 +185,33 @@ mod tests {
         // The one-line summary reflects a clean world.
         let summary = d.get("summary").and_then(|v| v.cast_string().ok()).unwrap_or_default();
         assert!(summary.contains("consistent"), "summary: {summary}");
+    }
+
+    #[test]
+    fn findings_list_flattens_each_conflict_kind() {
+        // E2 — one of each discrete conflict type → three tagged rows.
+        let r = WorldReport {
+            facts_conflicts: vec![crate::facts_scan::FactConflict {
+                a: "born 1820".into(),
+                b: "born 1830".into(),
+                detail: "two birth years".into(),
+            }],
+            anachronism_flags: vec![crate::world_report::AnachronismFlag {
+                term: "wristwatch".into(),
+                chapter: "ch. 2".into(),
+            }],
+            ..WorldReport::default()
+        };
+        let rows = findings_list(&r);
+        assert_eq!(rows.len(), 2, "one fact conflict + one anachronism");
+        let kinds: Vec<String> = rows
+            .iter()
+            .filter_map(|v| v.clone().cast_dict().ok())
+            .filter_map(|d| d.get("kind").and_then(|k| k.clone().cast_string().ok()))
+            .collect();
+        assert!(kinds.contains(&"fact_conflict".to_string()), "kinds: {kinds:?}");
+        assert!(kinds.contains(&"anachronism".to_string()), "kinds: {kinds:?}");
+        // A clean report yields no findings.
+        assert!(findings_list(&WorldReport::default()).is_empty());
     }
 }

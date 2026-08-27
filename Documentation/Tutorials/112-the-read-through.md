@@ -74,8 +74,10 @@ never blocks).
 ## In the editor
 
 - **The dashboard** — **`Ctrl+B Shift+A`** opens the read-through: the curve, the
-  beats, the findings. `↑↓` to scroll, **Enter** jumps to the chapter, **`k`** runs
-  the synthetic first-read, `Esc` closes.
+  beats, the findings. `↑↓` to scroll (`PgUp`/`PgDn` page, `Home`/`End` to the
+  ends; blank separators are skipped, so **Enter** always lands on a real row),
+  **Enter** jumps to the chapter, **`k`** runs the synthetic first-read, `Esc`
+  closes.
 - **The review pass** — `Ctrl+B Shift+C` includes a `read-through` line (Output
   `readthrough` category), so the reader problems ride the same sweep as everything
   else.

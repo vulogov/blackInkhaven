@@ -201,13 +201,36 @@ fn rhyme_tail(word: &str, lang: &ProseLanguage) -> (String, RhymeType) {
         }
     }
 
-    let after = n - 1 - stressed;
-    let rtype = match after {
-        0 => RhymeType::Masculine,
-        1 => RhymeType::Feminine,
-        _ => RhymeType::Dactylic,
+    // D2 — French masculine/feminine is an orthographic distinction (a mute final
+    // -e), NOT a stress-position count: French stress is phrase-final, so the
+    // count below would call every French word masculine. Classify by the ending.
+    let rtype = if matches!(lang, ProseLanguage::Fr) {
+        french_rhyme_type(&clean)
+    } else {
+        match n - 1 - stressed {
+            0 => RhymeType::Masculine,
+            1 => RhymeType::Feminine,
+            _ => RhymeType::Dactylic,
+        }
     };
     (tail.to_lowercase(), rtype)
+}
+
+/// French rhyme gender from the spelling: a mute final `-e` (including `-es` and
+/// the 3rd-person-plural `-ent`) is a **feminine** rhyme; anything else —
+/// including an accented final `-é`/`-è` — is masculine. (The `-ent` of a noun
+/// like *argent* is voiced, but distinguishing that needs part-of-speech; the
+/// verb-ending convention is the standard prosodic reading.) French has no
+/// dactylic category.
+fn french_rhyme_type(word: &str) -> RhymeType {
+    let w = word
+        .trim_end_matches(|c: char| !c.is_alphabetic())
+        .to_lowercase();
+    if w.ends_with("ent") || w.ends_with("es") || w.ends_with('e') {
+        RhymeType::Feminine
+    } else {
+        RhymeType::Masculine
+    }
 }
 
 /// Per-language phonetic-ish normalization of a rhyme tail.
@@ -283,6 +306,23 @@ mod tests {
         assert_eq!(r.quality, RhymeQuality::Perfect);
         assert_eq!(r.rhyme_type, RhymeType::Masculine);
         assert_eq!(r.shared, "ом");
+    }
+
+    #[test]
+    fn french_rhyme_gender_is_orthographic_not_masculine_by_default() {
+        // D2 — a mute final -e is a feminine rhyme; an accented / consonant ending
+        // is masculine. Previously every French word came out masculine.
+        let table_fable = analyse_rhyme("table", "fable", Fr);
+        assert_eq!(table_fable.rhyme_type, RhymeType::Feminine, "mute -e → feminine");
+        let pensee_aimee = analyse_rhyme("pensée", "aimée", Fr);
+        assert_eq!(pensee_aimee.rhyme_type, RhymeType::Feminine, "-ée → feminine");
+        let chantent = analyse_rhyme("chantent", "portent", Fr);
+        assert_eq!(chantent.rhyme_type, RhymeType::Feminine, "verb -ent → feminine");
+        // Accented / consonant endings stay masculine.
+        let cafe_ete = analyse_rhyme("café", "été", Fr);
+        assert_eq!(cafe_ete.rhyme_type, RhymeType::Masculine, "accented -é → masculine");
+        let amour_toujours = analyse_rhyme("amour", "toujours", Fr);
+        assert_eq!(amour_toujours.rhyme_type, RhymeType::Masculine, "consonant → masculine");
     }
 
     #[test]
