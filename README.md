@@ -27,38 +27,53 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 3.5.0 — Finished Imports, One Reader Hub, a Deeper KEN
+## Latest release · 3.6.0 — Faithful Exports, a Trustworthy Worklist
 
-The current release is **3.5.0**, a **widen-and-polish** release — no new
-capability. It finishes the export/import fidelity work, gives the now-large
-reader family a single front door, and turns KEN into a queryable knowledge
-model. Three tracks (deterministic, no new runtime crates):
+The current release is **3.6.0**, a **widen-and-polish** release — no new
+capability, entirely fixes and finish, from a five-agent source audit. Four
+tracks (deterministic, no new runtime crates):
 
-- **Export / import, finished.** A Cyrillic/accented **Scrivener `.rtf`** now
-  keeps its bold/italic/heading markup (the structured parser protects non-ASCII
-  characters through the ASCII-only lexer instead of falling back to plain text);
-  the **EPUB-import footnote round-trip** works (a `noteref` is rebuilt as
-  `#footnote[body]` from its collected aside); and the single-chapter **epub toy
-  is retired** — all epub export (CLI, the Bund word, the TUI batch) now uses the
-  rich multi-chapter builder.
-- **The reader hub.** With a dozen readers on a dozen scattered chords,
-  **`Ctrl+B *`** now opens one menu of every reader dashboard (Knowledge, Bonds,
-  Continuity, Read-through, Cast, Character arc, Myth, Chronicle, Story bible) with
-  live finding-counts; Enter opens the reader. **`inkhaven read`** is the CLI
-  *state of the manuscript* overview.
-- **A deeper KEN.** **`inkhaven knowledge --ledger`** (and **`l`** in the
-  `Ctrl+B Shift+Z` dashboard) surfaces the grants model — who could know what, when
-  — grouped by character. A *view* of what KEN already computes, with no new
-  finding-noise.
+- **Export / import fidelity.** The headline was a silent data-loss bug:
+  authored **`*bold*`/`_italic_` and `#footnote[…]`** were flattened by the
+  text-to-speech cleaner *before* the `inkhaven manuscript`/`docx` builders ran,
+  so they rendered plain — now both survive (the `.docx` via a real footnotes
+  part). Plus: **EPUB footnote ids are unique per chapter** (were duplicate
+  `fn-1`, invalid XHTML); an imported inline `<img>` **no longer comments out**
+  the rest of its paragraph; third-party EPUB **blockquotes → `#quote[…]`** and
+  **tables → `#table(…)`** (were flattened/garbled); the `.docx` title page stays
+  literal (a contact email's `_` no longer italicises); and **markdown** stops
+  mangling stray `*` (`3 * 4 * 5`).
+- **The reader worklist, made trustworthy.** Dedup now keeps **distinct
+  occurrences** (was collapsing same-word findings in a chapter); Inner-Stylist
+  **Praise** no longer sits in the worklist (so "✓ reads clean" can fire);
+  **book-level findings** don't false-anchor to chapter 1; **voice-drift** is
+  disambiguated from semantic `drift`; and a dead `voice` Rewrite category is gone.
+- **Scansion that works in Spanish and French.** **Spanish** written accents
+  (á/é/í/ó/ú) now drive stress, so oxytones like `corazón`/`está` scan on the
+  right syllable (metre *and* rhyme); **French** rhyme gender is read from the
+  mute-final-`e` ending, so feminine rhymes (`pensée`/`table`) are no longer
+  misread as masculine.
+- **Ergonomics & symmetry.** `Esc` returns to the picker in Thread-Weave and
+  leaves filter-mode in the pickers; the seven reader dashboards gain
+  **PgUp/PgDn/Home/End** navigation with blank-row skipping; **`bonds --ledger`**
+  mirrors `knowledge --ledger`; **`ink.world.findings`** matches its Bund
+  siblings; two never-produced `EdgeKind` variants are removed; and the scripting
+  policy guard now polices every registered word, not just the `ink.`-prefixed.
 
-Deferred as follow-ups: third-party-epub blockquote/table import, and alias
+Deferred as follow-ups: authored `#table(…)` *export* to EPUB, and alias
 resolution (gated on its architectural decision). No new config; no new runtime
 crates.
 
-Read the full notes: [`Documentation/RELEASE_NOTES/3.5.0.md`](Documentation/RELEASE_NOTES/3.5.0.md).
+Read the full notes: [`Documentation/RELEASE_NOTES/3.6.0.md`](Documentation/RELEASE_NOTES/3.6.0.md).
 
 ### Recent releases
 
+- **3.5.0 — Finished Imports, One Reader Hub, a Deeper KEN.** Scrivener non-ASCII
+  `.rtf` keeps its markup, the EPUB-import footnote round-trip works, and the
+  single-chapter epub toy is retired; **`Ctrl+B *`** opens one menu of every
+  reader dashboard with live counts (`inkhaven read` is its CLI overview); and
+  **`inkhaven knowledge --ledger`** surfaces the grants model.
+  [notes](Documentation/RELEASE_NOTES/3.5.0.md)
 - **3.4.0 — Export Fidelity & a Smoother Revision Loop.** The shared
   `typst_to_markdown` converter gained figure-image / footnote / `@ref` support
   (three formats at once), docx + Shunn PDF render authored `*bold*`/`_italic_`,
@@ -92,14 +107,14 @@ lines (zero Critical), with every surviving finding fixed and zero breaking
 changes. The 3.0.x line (through 3.0.9) then hardened the Bund scripting coverage
 and the export/import/keymap/assembly subsystems through successive targeted
 audits, each leaving a build-time guard behind. **3.1.0 lifted the feature freeze**
-(BONDS); **3.2.0** (ENSEMBLE), **3.3.0** (multilingual parity), **3.4.0** (export fidelity), and **3.5.0** (imports + reader hub) continue
+(BONDS); **3.2.0** (ENSEMBLE), **3.3.0** (multilingual parity), **3.4.0** (export fidelity), **3.5.0** (imports + reader hub), and **3.6.0** (fidelity + worklist fixes) continue
 on that hardened surface. Full 3.0.0 notes:
 [`Documentation/RELEASE_NOTES/3.0.0.md`](Documentation/RELEASE_NOTES/3.0.0.md).
 
 ### Dependencies & compatibility
 
 No new dependencies, no breaking changes. Existing projects open unchanged. Compiles
-warning-free. Test suite → 2977.
+warning-free. Test suite → 2998.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
@@ -297,14 +312,14 @@ cargo install inkhaven
 ```
 
 Inkhaven is published on crates.io — every release tag pushes a
-new version (latest: 3.5.0).  The first build takes ~10 minutes on
+new version (latest: 3.6.0).  The first build takes ~10 minutes on
 a modern laptop because of DuckDB + fastembed + ONNX-runtime
 compilation; `cargo binstall` above is the fast path.
 
 ### 4. `cargo install --git` (compile from a specific tag)
 
 ```bash
-cargo install --git https://github.com/vulogov/blackInkhaven --tag v3.5.0
+cargo install --git https://github.com/vulogov/blackInkhaven --tag v3.6.0
 ```
 
 Useful when you want a specific tag, a pre-release branch, or a
