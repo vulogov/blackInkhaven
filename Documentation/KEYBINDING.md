@@ -18,6 +18,43 @@ its visual focus state but does not see input until the overlay closes.
 
 ---
 
+## Terminal compatibility (the enhanced keyboard protocol)
+
+Some chords need the **kitty keyboard protocol** — a modern terminal extension
+that lets an app receive keys the legacy TTY encoding can't represent. Inkhaven
+requests it on startup and, when the terminal doesn't answer (crossterm's
+`supports_keyboard_enhancement()` returns false), prints a one-time status-line
+notice naming your terminal.
+
+**Terminals that support it:** kitty, WezTerm, Ghostty, foot, and **iTerm2 ≥ 3.5**.
+**Terminals that don't:** macOS **Terminal.app** (no support at all).
+
+Without the protocol, these are affected:
+
+- **Control-code aliases collide.** The classic TTY has one byte for each of
+  these pairs, so the terminal literally cannot tell them apart:
+  `Ctrl+I` ≡ `Tab`, `Ctrl+M` ≡ `Enter`, `Ctrl+[` ≡ `Esc`, `Ctrl+H` ≡ `Backspace`.
+  So e.g. `Ctrl+I` (submit inference) fires the `Tab` action instead. This is a
+  terminal limitation, not something inkhaven can work around on that terminal.
+- **`Alt`/`Option`+arrow doesn't arrive.** Chords that put `Alt` on an arrow key
+  — browser back/forward (`Alt+Left`/`Alt+Right`) and vertical **block selection**
+  (`Alt+arrows`) — need the arrow to carry the `Alt` modifier. On macOS,
+  Terminal.app re-encodes Option+arrow as word-navigation escape sequences, so
+  inkhaven never sees the `Alt`; and kitty needs `macos_option_as_alt yes` in
+  `kitty.conf` for Option to act as `Alt` at all. Block selection has a
+  terminal-independent path — **`Ctrl+Z v`** then plain arrows (see §3.4).
+- **Some function keys may not arrive.** F-key delivery also depends on macOS
+  **System Settings → Keyboard → “Use F1, F2, etc. keys as standard function
+  keys”** (otherwise they're brightness/volume keys, consumed before any app).
+
+**Recommendation:** use a protocol-capable terminal (above) and enable standard
+function keys in macOS Keyboard settings. In iTerm2, also set the Option keys to
+“Esc+” (Profiles → Keys) so `Alt`+chords are delivered. Nothing at the *shell*
+level can fix the control-code aliasing — it's resolved by the terminal emulator
+before the shell sees anything.
+
+---
+
 ## 0. Mouse
 
 Inkhaven captures mouse input on startup. Left-click moves focus to the
@@ -126,6 +163,11 @@ These chords work from any focus except where noted. Chords marked
 | `Ctrl+V Shift+V` | (1.4.12) **Toggle ambient prose check** (NARR-1) — when on, the prose check re-runs after an editing pause, gated by a cooldown floor (`prose.ambient_cooldown_secs`, default 90s). Off by default. | `view.prose_toggle_ambient` |
 | `Ctrl+V Shift+Q` | (1.4.14) **Dialogue fingerprint** (DIALOG-1) — open the per-character dialogue voice signature for the nearest character (one named in the open paragraph, else the most-speaking): utterance count, average length, vocabulary diversity (MATTR), question / exclamation ratios, hedge density, as ASCII bars, with a compare line for the next two speakers. `↑↓` scroll, `Esc` closes. Built from confidently-attributed dialogue — run the `Ctrl+B Shift+C` review pass (or `inkhaven dialogue scan`) to populate it. Mnemonic: **Q** for Quote (`Ctrl+V D` was taken). The dialogue *findings* (zero-attribution / said-bookism density / talking-head sequences) ride the `Ctrl+B Shift+C` review pass into the Output pane. | `dialogue.open_view` |
 | `Ctrl+Z p` | (1.4.17) **Haiku** (HAIKU-1) — emit a hand-curated haiku to the Output pane on demand, in the book's language (EN/RU/DE/FR/ES, falling back to English). The same pool greets you at startup and when you create a new manuscript paragraph; a process-global rotation counter advances on every trigger, so you rarely see the same poem twice in a session. Zero-AI, baked into the binary (present even airgapped). Toggle the automatic moments with `editor.startup_haiku` (default `true`); this chord works regardless. Mnemonic: **P** for Poem (`p` is free in the `Ctrl+Z` Bund sub-chord table). | `haiku.show` |
+| `Ctrl+Z v` (editor) | (3.7) **Vertical block-select mode** — anchor a rectangular selection at the cursor, then extend it with **plain arrow keys** (no modifier). `c` / `Enter` copy the block to the clipboard and exit; `Esc` (or any other key) cancels. The terminal-independent replacement for `Alt`+arrows block selection — plain arrows always arrive, and it dodges the `Alt+Left`/`Alt+Right` back-forward collision. Mnemonic: **v** for **V**ertical (`v` is free under `Ctrl+Z`). See §3.4. | `editor.block_select` |
+| `Ctrl+Z g` (editor) | (3.7) **Go to line** — prompt for a line number and jump the cursor there, centred in the viewport (clamped to the buffer). Handy for chasing a Typst compile-error / diagnostic line (the gutter marks diagnostic lines with a red ●). Enter jumps, Esc cancels. Mnemonic: **g** for Goto. | `editor.goto_line` |
+| `Ctrl+Z w` (editor) | (3.7) **Toggle soft-wrap** — flip word-wrap display for the open buffer at runtime (session-only; the persisted default is `editor.wrap`). Switches between reading wrapped prose and editing unwrapped code/tables without editing config + restarting. Mnemonic: **w** for Wrap. | `editor.toggle_wrap` |
+| `Ctrl+Z t` (editor) | (3.7) **Strip trailing whitespace** — remove trailing spaces/tabs from every line as ONE undoable edit (`Ctrl+U` reverts). Cleans the noisy diffs `Ctrl+V ?` reports. Mnemonic: **t** for Trim. | `editor.strip_trailing_ws` |
+| `Ctrl+Z m` (editor) | (3.7) **Jump to matching bracket** — move the cursor to the `()`, `[]`, or `{}` pairing the bracket at or just before the cursor, across lines and respecting nesting. Balances `#figure(...)`, `#footnote[...]`, `#table(...)`. Mnemonic: **m** for Match. | `editor.match_bracket` |
 | `Ctrl+Z c` (editor) | (1.2.14) **Add inline comment** — anchor an editorial comment to the current selection's character range (or the word at the cursor); pops a multi-line body input; writes a sidecar `<paragraph>.comments.json` beside the `.typ` (travels with the prose in git, diffs cleanly). Commented spans render underlined + italic; the editor footer surfaces `comment by <author> · <age>`. Char-offset anchors for UTF-8 safety. **Moved here from `Ctrl+V c`** (which the 1.6.19+ LOCI citation check now owns and used to shadow this). Mnemonic: **c** for Comment (`c` / `Shift+C` are free under `Ctrl+Z`). | `view.add_comment` |
 | `Ctrl+Z Shift+C` | (1.2.14) **Comments panel** — project-wide panel over every `.comments.json` sidecar (breadcrumb / author / age / snippet / `(N/M in ¶)`). Panel chords: ↑↓ navigate, Enter jump to the comment span, `r` resolve, `R` toggle resolved-filter, `d` delete, `/` filter, `a` AI digest, `Esc` close. **Moved here from `Ctrl+V Shift+C`** (now the sourcing check). | `view.comments_panel` |
 | `Ctrl+V Shift+N` | (1.4.16) **Character arc** (CHAR-1) — open the tracked arc for the nearest character (one named in the open paragraph, else the first tracked one): the author-declared arc (start / midpoint / end), the chapter-by-chapter observable state chain (✦ marks a change) with each chapter's deterministic agency score, the arc-completeness checks, and any Planning-Board coverage gaps. Read-only over the cached `char.duckdb`; `↑↓` scroll, `Esc` closes. Populate it with the `Ctrl+B Shift+C` review pass (agency + stalls + planning, zero-AI) or `inkhaven character refresh` / `check` (the LLM passes). Mnemonic: **N** for the arc (the bend); plain `n` is next-diagnostic. The arc *findings* ride the `Ctrl+B Shift+C` review pass into the Output `character` category. | `character.open_arc` |
@@ -377,7 +419,7 @@ trigger (idle/quit/switch) won't catch the same change twice.
 | -------------------- | ----------------------------------------------------------- |
 | `←` / `→`            | One character left / right.                                 |
 | `↑` / `↓`            | One line up / down.                                         |
-| `Home`               | Start of current line.                                      |
+| `Home`               | **(3.7) Smart Home** — first press jumps to the first non-blank column; a second press (already there) jumps to column 0. `Shift+Home` still extends selection to line start. |
 | `End`                | End of current line.                                        |
 | `PageUp` / `PageDown`| One viewport up / down (tui-textarea internal).             |
 | `Ctrl+←`             | Previous word boundary.                                     |
@@ -389,7 +431,8 @@ trigger (idle/quit/switch) won't catch the same change twice.
 
 | Key                  | Action                                                      |
 | -------------------- | ----------------------------------------------------------- |
-| any character        | Insert at cursor. Replaces selection if one exists.         |
+| any character        | Insert at cursor. Replaces selection if one exists. **(3.7)** With `editor.auto_close_pairs` on, brackets auto-pair; quotes (`'`/`"`) auto-pair **only as opening quotes** (not adjacent to a word char) so `don't` no longer becomes `don''t`. |
+| paste (terminal)     | **(3.7) Bracketed paste** — a Cmd/Ctrl+V or middle-click paste is inserted in bulk (not replayed key-by-key), so multi-line pastes don't trigger auto-pair/snippets or submit at the first newline in the AI-prompt / search bar. |
 | `Enter`              | Insert newline.                                             |
 | `Backspace`          | Delete character before cursor (or whole selection).        |
 | `Delete`             | Delete character at cursor.                                 |
@@ -430,12 +473,26 @@ range. Always rectangular: anchor + current cursor define inclusive
 `(row_min..row_max, col_min..col_max)`. Drawn with REVERSED style on top of
 the syntax highlighting.
 
+**`Ctrl+Z v` — block-select mode (recommended).** Anchors the rectangle at the
+cursor and enters a mode where **PLAIN arrows** extend it — no modifier, so it
+works on every terminal, including macOS Terminal.app and kitty without
+`macos_option_as_alt`. This is the terminal-independent path; prefer it.
+
+| Key (in block-select mode)   | Action                                                  |
+| ---------------------------- | ------------------------------------------------------- |
+| `↑` / `↓` / `←` / `→`        | Move the cursor by one cell; the rectangle redraws each frame. |
+| `c` / `Enter`                | Copy the rectangle to the system clipboard (each row a line) and exit the mode. |
+| `Esc` / any other key        | Cancel block-select; keep the doc open.                 |
+
+**`Alt`+arrows — legacy path.** The original binding still works *where the
+terminal delivers `Alt`+arrow*, but on many setups it doesn't (see “Terminal
+compatibility” above), and `Alt+Left`/`Alt+Right` are also claimed by browser
+back/forward — so use `Ctrl+Z v` instead.
+
 | Key                          | Action                                                  |
 | ---------------------------- | ------------------------------------------------------- |
-| `Alt+↑` / `↓` / `←` / `→`    | Enter block-select mode (if not already), then move cursor by one cell without changing tui-textarea's linear selection. Rectangle redraws each frame. |
-| `Alt+C`                      | Copy the rectangle to system clipboard as a multi-line string (each row a line). Clears the anchor. |
-| `Esc`                        | Cancel block-select; keep the doc open.                 |
-| any non-Alt key              | Cancels block-select implicitly (falls through to normal editor handling). |
+| `Alt+↑` / `↓` / `←` / `→`    | Enter/extend block-select (only if the terminal delivers the `Alt` modifier). |
+| `Alt+C`                      | Copy the rectangle to system clipboard; clears the anchor. |
 
 **Deferred in this release**: rectangular cut and rectangular paste require
 bulk character-deletion across multiple lines, which tui-textarea doesn't
@@ -505,8 +562,9 @@ brighter **LightRed + bold** style so it stands out among siblings.
 
 | Key                | Action                                                                |
 | ------------------ | --------------------------------------------------------------------- |
-| `Ctrl+F`           | Open the **Find** modal (magenta-bordered). Type a regex, Enter to run. Cursor jumps to the first match; all matches stay highlighted. Status bar reports `match 1 / N`. |
-| `Ctrl+X`           | **"Repeat"** (multifunction). In search mode: jump to the next match (wraps). In replace mode: replace the current match and advance to the next. Only active while a search is in progress; otherwise the keystroke falls through. |
+| `Ctrl+F`           | Open the **Find** modal (magenta-bordered). Type a regex, Enter to run. **(3.7)** The cursor jumps to the first match **at or after the current cursor** (not the document top), wrapping if the cursor is past the last one; all matches stay highlighted. Status bar reports `match 1 / N`. |
+| `Ctrl+X`           | **Next match** (multifunction "repeat"). In search mode: jump to the next match (wraps). In replace mode: replace the current match and advance to the next. Only active while a search is in progress; otherwise the keystroke falls through. |
+| `Ctrl+G`           | **(3.7) Previous match** — step to the prior match (wraps), the mirror of `Ctrl+X`. Only active while a search is in progress. |
 | `Ctrl+R`           | **First press**: open the **Find & Replace** modal (search + replace fields, `Tab` switches between them). Enter applies the **first** replacement automatically and stays in replace mode. **Second press while in replace mode**: replace every remaining match and exit replace mode. |
 | `Ctrl+B` (in the modal) | (1.2.22) **Toggle scope** between *this paragraph* and *the whole book* (replace mode only; a chip shows which). In book scope, Enter scans every user-book paragraph and opens the **review modal**: matches shown in context, `↑↓` move, `Space` skip the one under the cursor, `a` keep all / `n` skip none, `Enter` apply, `Esc` cancel. Starts in whole-word literal mode (the safe default); **(1.2.23)** `w` / `i` / `x` toggle whole-word / ignore-case / regex in place (each re-runs the scan), and the header shows the active mode. Each changed paragraph is snapshotted (annotated `replace: X → Y`) before the write, so `F6` is the undo. Also available as `inkhaven replace <pat> <repl> [--regex] [--substring] [--ignore-case] [--book] [--include-system] [--dry-run] [--yes]`. See [Tutorial 64](Tutorials/64-project-find-and-replace.md). |
 | `Esc` (in editor)  | Clear the active search (drops the highlights, exits replace mode).   |

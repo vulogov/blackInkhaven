@@ -148,16 +148,60 @@ where
 /// run `body` with a ready [`Terminal`], then restore the terminal no matter
 /// how `body` returns. The crash hook guarantees a panic inside `body` still
 /// leaves the user's terminal usable.
+/// C4 — query + enable the enhanced (kitty) keyboard protocol on `out`, returning
+/// whether the terminal actually supports it (a real round-trip). Push only when
+/// supported so the Pop stays symmetric; otherwise log a one-time compat warning
+/// naming the terminal. Shared by the secondary TUIs (prompts / config editors,
+/// worldbuilder) so their chords disambiguate like the main editor's do.
+pub fn enable_keyboard_enhancement(out: &mut impl std::io::Write) -> bool {
+    let supported = crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false);
+    if supported {
+        let _ = execute!(
+            out,
+            crossterm::event::PushKeyboardEnhancementFlags(
+                crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                    | crossterm::event::KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS,
+            )
+        );
+    } else {
+        let term = std::env::var("TERM_PROGRAM")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "this terminal".into());
+        tracing::warn!(
+            target: "inkhaven::tui",
+            "{term} lacks the enhanced keyboard protocol — some chords (e.g. Ctrl+I / Ctrl+M) \
+             collide with Tab / Enter; use kitty, WezTerm, Ghostty, or iTerm2 ≥ 3.5."
+        );
+    }
+    supported
+}
+
+/// C4 — undo [`enable_keyboard_enhancement`] on teardown (only when it was pushed).
+pub fn disable_keyboard_enhancement(out: &mut impl std::io::Write, was_enabled: bool) {
+    if was_enabled {
+        let _ = execute!(out, crossterm::event::PopKeyboardEnhancementFlags);
+    }
+}
+
 pub fn with_terminal<F, R>(body: F) -> Result<R>
 where
     F: FnOnce(&mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<R>,
 {
+    // C4 — the crash closure must also release mouse capture: worldbuilder (and
+    // any future body) enables it, and a panic would otherwise leave the terminal
+    // spewing raw mouse escapes until reset.
     crate::crash::set_terminal_restore(Some(Box::new(|| {
         let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        let _ = execute!(
+            io::stdout(),
+            LeaveAlternateScreen,
+            crossterm::event::DisableMouseCapture
+        );
     })));
 
     enable_raw_mode()?;
+    let kbd_enhanced = enable_keyboard_enhancement(&mut io::stdout());
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
@@ -165,8 +209,13 @@ where
 
     let result = body(&mut terminal);
 
+    disable_keyboard_enhancement(&mut io::stdout(), kbd_enhanced);
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        crossterm::event::DisableMouseCapture
+    )?;
     terminal.show_cursor()?;
     crate::crash::set_terminal_restore(None);
 

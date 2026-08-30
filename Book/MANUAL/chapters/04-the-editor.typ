@@ -74,16 +74,19 @@ prose simply never lives under it.
 Movement is entirely conventional, which is the point — your existing habits
 transfer whole. The arrow keys move a cell or a line at a time. `Ctrl+←` and
 `Ctrl+→` jump by *word*, landing on each word boundary, for crossing a line
-faster than a character at a time. `Home` and `End` snap to the start and end
-of the current line; `Ctrl+Home` and `Ctrl+End` leap to the very top and
-bottom of the paragraph. `PageUp` and `PageDown` move by a viewport for the
-longer paragraphs. There is nothing here to unlearn.
+faster than a character at a time. `Home` is *smart*: the first press lands on
+the first non-blank column of the line — where the words actually start — and a
+second press, once you are already there, goes on to column 0; `End` snaps to the
+end of the line. `Ctrl+Home` and `Ctrl+End` leap to the very top and bottom of
+the paragraph. `PageUp` and `PageDown` move by a viewport for the longer
+paragraphs. There is nothing here to unlearn.
 
 #chord_table((
   chord_row("← → ↑ ↓", "Move one character or one line."),
   chord_row("Ctrl+←", "Jump to the previous word boundary."),
   chord_row("Ctrl+→", "Jump to the next word boundary."),
-  chord_row("Home / End", "Start / end of the current line."),
+  chord_row("Home", "First non-blank column; press again for column 0."),
+  chord_row("End", "End of the current line."),
   chord_row("Ctrl+Home", "Top of the paragraph."),
   chord_row("Ctrl+End", "Bottom of the paragraph."),
   chord_row("PageUp / PageDown", "Move one viewport up / down."),
@@ -124,13 +127,20 @@ linear selection is live; with none, they act on the cursor position instead.
 
 Sometimes what you want is not a run of text but a *rectangle* of it — a column
 of leading numbers, a stack of names, the aligned left edge of a verse stanza.
-For that, hold `Alt` and move. The first `Alt+arrow` drops an anchor at the
-cursor and enters block-select mode; every further `Alt+arrow` grows a
-rectangle from that anchor to the cursor, redrawn each frame in reversed video.
-When the rectangle covers what you want, `Alt+C` copies it to the system
-clipboard as a multi-line string — one line per row of the block. `Esc` cancels
-the block without copying, and any ordinary key ends block mode and falls back
-to normal editing.
+The terminal-independent way in is `Ctrl+Z v`: it drops an anchor at the cursor
+and enters block-select mode, and from there *plain* arrow keys (no modifier)
+grow a rectangle from that anchor to the cursor, redrawn each frame in reversed
+video. When the rectangle covers what you want, `c` or `Enter` copies it to the
+system clipboard as a multi-line string — one line per row of the block — and
+exits the mode; `Esc` (or any other key) cancels without copying. Because it
+leans on nothing but plain arrows, it works on every terminal, macOS Terminal.app
+included.
+
+The older path still works where your terminal delivers it: hold `Alt` and move,
+and `Alt+C` copies the rectangle. But `Alt`+arrow is exactly the input many
+terminals drop or re-encode (see the terminal note in Chapter 1), and
+`Alt+←`/`Alt+→` also collide with the back/forward navigation chords — so reach
+for `Ctrl+Z v` first and keep `Alt`+arrows as the fallback.
 
 #screen(caption: "A block selection — a rectangle, not a run")[```
 ┌─ Editor · Roster ───────────────────────────────────┐
@@ -139,7 +149,7 @@ to normal editing.
 │  3  ▓22▓  Elin      the counting-house               │
 │  4  ▓07▓  Bran      harbour gate                     │
 │                                                     │
-│  Alt+↑↓←→ grow · Alt+C copy rectangle · Esc cancel  │
+│  Ctrl+Z v · ↑↓←→ grow · c/Enter copy · Esc cancel   │
 └─────────────────────────────────────────────────────┘
 ```]
 
@@ -175,6 +185,14 @@ clipboard is reachable — a bare SSH login, some Wayland setups — the chords 
 not fail. They fall back to an internal yank buffer, so cut, copy, and paste
 keep working *within* the editor session; the only thing you lose is crossing
 the process boundary to other apps.
+
+A paste made with the *terminal's own* gesture — `Cmd`/`Ctrl+V`, a middle-click —
+is handled as a *bracketed paste*: the whole run of text arrives as one bulk
+insert rather than being replayed key by key. That is what you want for pasted
+prose. Because the characters are not seen as individual keystrokes, a multi-line
+paste never trips the auto-close pairs or a snippet expansion, and it never
+submits at the first newline when you paste into the AI prompt bar or the Search
+bar — the paragraph lands whole, and you press `Enter` yourself.
 
 #callout(label: "Why Ctrl+P for paste")[
   If your muscle memory reaches for `Ctrl+V`, retrain it here to `Ctrl+P`.
@@ -225,6 +243,27 @@ again.
   chord_row("Ctrl+Y", "Redo."),
 ))
 
+#section("A few editor conveniences")
+
+Four small utilities live under the Bund prefix `Ctrl+Z`, where the free letters
+were. `Ctrl+Z g` prompts for a line number and jumps there, centred in the
+viewport — the quick way to a Typst compile error the diagnostics list reported
+by line. `Ctrl+Z m` jumps to the *matching* bracket: put the cursor on (or just
+after) one of `(`, `[`, or `{` and it hops to its partner, across lines and
+respecting nesting, which keeps a long `#figure(…)` or `#footnote[…]` honest.
+`Ctrl+Z w` toggles soft-wrap for the open buffer at runtime — wrapped for reading
+prose, unwrapped for editing a wide table or code block — a session-only flip of
+the persisted `editor.wrap` default. And `Ctrl+Z t` strips trailing whitespace
+from every line as a single undoable edit, so `Ctrl+U` takes it back if you
+change your mind.
+
+#chord_table((
+  chord_row("Ctrl+Z g", "Go to line — jump the cursor to a line number, centred."),
+  chord_row("Ctrl+Z m", "Jump to the matching bracket (across lines, nesting-aware)."),
+  chord_row("Ctrl+Z w", "Toggle soft-wrap for the open buffer (session-only)."),
+  chord_row("Ctrl+Z t", "Strip trailing whitespace — one undoable edit."),
+))
+
 #section("Every change since the last save")
 
 While you write, Inkhaven quietly renders *bold* every character you have added
@@ -246,18 +285,21 @@ match, `(?i)` makes it case-insensitive, and `(?s)` lets `.` cross a line.
 
 Press `Ctrl+F` and a magenta-bordered Find modal opens. Type a pattern, press
 `Enter`, and every match in the buffer lights up in red while the cursor jumps
-to the first; the status bar reports `match 1 / N` so you know how many you
-have. From there, `Ctrl+X` is "repeat" — it advances to the next match and
-wraps at the end — and the match your cursor currently sits on is drawn a
-brighter red-and-bold so it stands out among its siblings. `Esc` clears the
-search and drops the highlights, returning you to plain editing.
+to the first match *at or after where the cursor already sits* — not back to the
+top of the paragraph — wrapping to the first if the cursor is past the last one;
+the status bar reports `match 1 / N` so you know how many you have. From there,
+`Ctrl+X` is "repeat" — it advances to the next match and wraps at the end — and
+`Ctrl+G` is its mirror, stepping to the *previous* match (also wrapping). The
+match your cursor currently sits on is drawn a brighter red-and-bold so it stands
+out among its siblings. `Esc` clears the search and drops the highlights,
+returning you to plain editing.
 
 #screen(caption: "Ctrl+F — the regex Find modal")[```
 ┌─ Find (regex) ──────────────────────────────────────┐
 │                                                     │
 │   Search:  the\s+thunder▏                           │
 │                                                     │
-│   Enter find · Ctrl+X next · Esc cancel             │
+│   Enter find · Ctrl+X next · Ctrl+G prev · Esc close │
 └─────────────────────────────────────────────────────┘
 ```]
 
@@ -458,15 +500,17 @@ uses, with the structural markup stripped away.
   `Ctrl+Home`/`Ctrl+End`, `PageUp`/`PageDown` — with `Ctrl+B >` / `Ctrl+B <` to
   hop between scene breaks.],
   [Selection is either *linear* (`Shift`+arrows, `Ctrl+A` for all) or a
-  *rectangular block* (`Alt`+arrows, `Alt+C` to copy — copy-only this release).],
+  *rectangular block* (`Ctrl+Z v` then plain arrows, `c`/`Enter` to copy — the
+  terminal-independent path; `Alt`+arrows still work where delivered).],
   [The clipboard breaks convention on purpose: *copy* `Ctrl+C`, *cut* `Ctrl+K`,
   *paste* `Ctrl+P` — the real system clipboard, with an in-editor fallback when
   none is reachable.],
   [Chunk-deletes (`Ctrl+Backspace` word, `Ctrl+D` line, `Ctrl+E` to end,
   `Ctrl+W` to start) never touch the clipboard; undo is `Ctrl+U`, redo
   `Ctrl+Y`, per paragraph.],
-  [`Ctrl+F` finds by regex (`Ctrl+X` next), `Ctrl+R` replaces (again for
-  replace-all, `Ctrl+B` to widen to whole-book with a review modal).],
+  [`Ctrl+F` finds by regex from the cursor (`Ctrl+X` next, `Ctrl+G` previous),
+  `Ctrl+R` replaces (again for replace-all, `Ctrl+B` to widen to whole-book with
+  a review modal).],
   [`Ctrl+S` saves, but Inkhaven also autosaves on idle, on paragraph switch, and
   on focus loss, and mirrors your dirty buffer against a crash.],
   [`F4` splits the pane to edit against a frozen snapshot (`Ctrl+F4` accepts it,

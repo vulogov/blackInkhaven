@@ -528,6 +528,28 @@ impl super::App {
                     body,
                 )
             }
+            Modal::GotoLine { input } => {
+                let body = vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        " Go to line:",
+                        Style::default()
+                            .fg(self.theme.tree_script_fg)
+                            .add_modifier(Modifier::BOLD),
+                    )),
+                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  Enter jumps · Esc cancels",
+                        Style::default().add_modifier(Modifier::DIM),
+                    )),
+                ];
+                (
+                    " Go to line — Ctrl+Z g ".to_string(),
+                    self.theme.tree_script_fg,
+                    body,
+                )
+            }
             Modal::TagDeleteConfirm { tag, affected, .. } => {
                 let body = vec![
                     Line::from(""),

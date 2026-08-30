@@ -73,6 +73,28 @@ impl SearchState {
         }
         self.current = (self.current + 1) % self.matches.len();
     }
+
+    /// A3 — move to the previous match (wraps). Mirror of [`advance`].
+    pub fn retreat(&mut self) {
+        if self.matches.is_empty() {
+            return;
+        }
+        self.current = (self.current + self.matches.len() - 1) % self.matches.len();
+    }
+
+    /// A3 — set `current` to the first match at or after `cursor` (row, col),
+    /// wrapping to the first match when the cursor is past the last one. So a
+    /// fresh find jumps FORWARD from where the cursor is, not to the document top.
+    pub fn seed_from_cursor(&mut self, cursor: (usize, usize)) {
+        if self.matches.is_empty() {
+            return;
+        }
+        self.current = self
+            .matches
+            .iter()
+            .position(|m| (m.row, m.col_start) >= cursor)
+            .unwrap_or(0);
+    }
 }
 
 fn collect_matches(regex: &Regex, lines: &[String]) -> Vec<MatchRange> {
@@ -165,6 +187,33 @@ mod tests {
         s.advance();
         assert_eq!(s.current, 2);
         s.advance();
+        assert_eq!(s.current, 0);
+    }
+
+    #[test]
+    fn retreat_wraps_backwards() {
+        let lines = vec!["a a a".to_string()];
+        let mut s = SearchState::build("a", None, &lines).unwrap();
+        assert_eq!(s.current, 0);
+        s.retreat();
+        assert_eq!(s.current, 2); // wraps to last
+        s.retreat();
+        assert_eq!(s.current, 1);
+    }
+
+    #[test]
+    fn seed_from_cursor_starts_forward_not_at_top() {
+        // A3 — three matches; a cursor on line 1 seeds the match on line 1, not the
+        // document-top match on line 0.
+        let lines = vec!["x here".to_string(), "x mid".to_string(), "x end".to_string()];
+        let mut s = SearchState::build("x", None, &lines).unwrap();
+        s.seed_from_cursor((1, 0));
+        assert_eq!(s.current, 1);
+        // A cursor past the last match wraps to the first.
+        s.seed_from_cursor((9, 0));
+        assert_eq!(s.current, 0);
+        // A cursor before everything picks the first.
+        s.seed_from_cursor((0, 0));
         assert_eq!(s.current, 0);
     }
 

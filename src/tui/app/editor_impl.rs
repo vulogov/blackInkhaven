@@ -44,6 +44,19 @@ impl super::App {
         doc.dirty = true;
     }
 
+    /// A2 — whether a typed quote at the cursor should auto-pair. A quote adjacent
+    /// to a word char is an apostrophe / closing quote / mid-word insert, not an
+    /// opening quote, so it must NOT spawn a phantom closer (`don't` → `don''t`).
+    pub(super) fn editor_quote_pair_ok(&self) -> bool {
+        let Some(doc) = self.opened.as_ref() else { return true };
+        let (row, col) = doc.textarea.cursor();
+        let line = doc.textarea.lines().get(row).cloned().unwrap_or_default();
+        let chars: Vec<char> = line.chars().collect();
+        let before = if col > 0 { chars.get(col - 1).copied() } else { None };
+        let after = chars.get(col).copied();
+        super::should_pair_quote(before, after)
+    }
+
     /// When the next char on the line is the same close character
     /// the user just typed, step over it instead of inserting a
     /// duplicate. Returns `false` when the next char doesn't match
@@ -530,6 +543,7 @@ impl super::App {
             scroll_row: init_scroll_row,
             scroll_col: init_scroll_col,
             block_anchor: None,
+            block_select_mode: false,
             last_activity: std::time::Instant::now(),
             saved_lines,
             comments,
@@ -1019,6 +1033,7 @@ impl super::App {
             scroll_row: init_scroll_row,
             scroll_col: init_scroll_col,
             block_anchor: None,
+            block_select_mode: false,
             last_activity: std::time::Instant::now(),
             saved_lines,
             comments,

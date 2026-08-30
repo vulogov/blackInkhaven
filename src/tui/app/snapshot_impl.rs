@@ -487,6 +487,7 @@ impl super::App {
             scroll_row: 0,
             scroll_col: 0,
             block_anchor: None,
+            block_select_mode: false,
             last_activity: std::time::Instant::now(),
             saved_lines,
             // 1.2.14+ Phase C.1 — snapshots are

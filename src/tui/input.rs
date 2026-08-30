@@ -66,6 +66,23 @@ impl TextInput {
         self.cursor += 1;
     }
 
+    /// A1 — insert a whole string at the cursor (bracketed paste). Newlines are
+    /// collapsed to single spaces (these are single-line inputs), so a multi-line
+    /// paste lands as one line instead of submitting at the first `\n`.
+    pub fn insert_str(&mut self, s: &str) {
+        let flat: String = s
+            .split(['\r', '\n'])
+            .filter(|seg| !seg.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
+        if flat.is_empty() {
+            return;
+        }
+        let byte_idx = self.byte_offset(self.cursor);
+        self.buffer.insert_str(byte_idx, &flat);
+        self.cursor += flat.chars().count();
+    }
+
     pub fn backspace(&mut self) {
         if self.cursor == 0 {
             return;
@@ -210,6 +227,29 @@ mod tests {
         t.backspace();
         assert_eq!(t.as_str(), "h");
         assert_eq!(t.cursor(), 1);
+    }
+
+    #[test]
+    fn insert_str_flattens_newlines_and_advances_cursor() {
+        // A1 — a multi-line paste lands as one line (newlines → single spaces),
+        // so it never submits at the first `\n`; cursor ends past the inserted text.
+        let mut t = TextInput::new();
+        t.insert_str("line one\nline two\r\nthree");
+        assert_eq!(t.as_str(), "line one line two three");
+        assert_eq!(t.cursor(), "line one line two three".chars().count());
+        // Inserts at the cursor, not just append.
+        let mut u = TextInput::new();
+        for c in "ac".chars() {
+            u.insert_char(c);
+        }
+        u.move_left(); // between a and c
+        u.insert_str("B");
+        assert_eq!(u.as_str(), "aBc");
+        // Unicode is char-counted, not byte-counted.
+        let mut v = TextInput::new();
+        v.insert_str("да\nнет");
+        assert_eq!(v.as_str(), "да нет");
+        assert_eq!(v.cursor(), 6);
     }
 
     #[test]

@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use chrono::Local;
 use crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent,
+    self, Event, KeyCode, KeyEvent,
     KeyEventKind, KeyModifiers,
 };
 use crossterm::execute;
@@ -52,15 +52,20 @@ pub fn run(project: &Path) -> Result<()> {
     }));
 
     enable_raw_mode()?;
+    // C4 — this editor never reads mouse events, so don't capture the mouse
+    // (leaving it off keeps the terminal's native drag-select working). Enable
+    // the enhanced keyboard protocol so its editing chords disambiguate.
+    let kbd_enhanced = crate::tui_host::enable_keyboard_enhancement(&mut io::stdout());
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
     let result = event_loop(&mut terminal, app);
 
+    crate::tui_host::disable_keyboard_enhancement(&mut io::stdout(), kbd_enhanced);
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
 
     result

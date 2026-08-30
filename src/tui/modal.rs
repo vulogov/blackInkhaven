@@ -580,6 +580,11 @@ pub(super) enum Modal {
         input: TextInput,
         return_to: Box<Modal>,
     },
+    /// A4 — `Ctrl+Z g` go-to-line prompt: a single-line number entry. Enter jumps
+    /// the editor cursor to that 1-based line (centred); Esc closes.
+    GotoLine {
+        input: TextInput,
+    },
     /// `D` from `TagPicker` — confirm + execute project-wide tag
     /// deletion. Removes the tag from every node that carries it.
     /// `affected` reports how many nodes will be touched.
