@@ -220,6 +220,18 @@ pub enum Action {
     /// for the `Alt`+arrow block selection.
     #[serde(rename = "editor.block_select")]
     EnterBlockSelect,
+    /// `Ctrl+Z g`. Prompt for a line number and jump the cursor there (centred),
+    /// for chasing a Typst compile-error / diagnostic line.
+    #[serde(rename = "editor.goto_line")]
+    GotoLine,
+    /// `Ctrl+Z w`. Toggle soft-wrap display for the open buffer (session-only;
+    /// the persisted default is `editor.wrap`).
+    #[serde(rename = "editor.toggle_wrap")]
+    ToggleSoftWrap,
+    /// `Ctrl+Z t`. Strip trailing whitespace from every line of the open buffer,
+    /// as one undoable edit.
+    #[serde(rename = "editor.strip_trailing_ws")]
+    StripTrailingWhitespace,
     /// THOUGHTS-1 — `Ctrl+Z f`. Fullscreen the current right pane (Output /
     /// Thoughts; the AI pane uses its own fullscreen).
     #[serde(rename = "pane.toggle_right_fullscreen")]
@@ -1049,6 +1061,9 @@ impl Action {
             Action::OpenGraphHub => "graph".into(),
             Action::ShowHaiku => "haiku".into(),
             Action::EnterBlockSelect => "block select".into(),
+            Action::GotoLine => "go to line".into(),
+            Action::ToggleSoftWrap => "toggle wrap".into(),
+            Action::StripTrailingWhitespace => "strip trailing ws".into(),
             Action::ToggleRightPaneFullscreen => "pane fullscreen".into(),
             Action::OpenConlangHub => "conlang".into(),
             Action::OpenOutline => "outline".into(),
@@ -1300,6 +1315,12 @@ impl Action {
                 "Emit a hand-curated haiku (HAIKU-1, Ctrl+Z p) to the Output pane, in the book's language (EN/RU/DE/FR/ES, falling back to English). A small pocket of stillness on demand — the same poem pool that greets you at startup and when you create a new manuscript paragraph; the rotation advances each time so you rarely see the same one twice in a session. Zero-AI, baked into the binary. Toggle the automatic moments with `editor.startup_haiku`. Mnemonic: P for Poem.".into(),
             Action::EnterBlockSelect =>
                 "Enter vertical block-select mode (Ctrl+Z v) at the cursor: a rectangular selection whose opposite corner you drag with PLAIN arrow keys — no modifier, so it works on terminals that don't deliver Alt+arrow (macOS Terminal.app; kitty without `macos_option_as_alt yes`). `c` or `Enter` copies the block to the clipboard and exits; `Esc` (or any other key) cancels. The terminal-independent replacement for the older Alt+arrows block selection (which also collided with Alt+Left/Right back-forward navigation). Mnemonic: V for Vertical.".into(),
+            Action::GotoLine =>
+                "Go to line (Ctrl+Z g) — prompt for a line number and jump the cursor there, centred in the viewport. Useful for chasing a Typst compile-error or diagnostic line (the gutter marks diagnostic lines with a red ●). Enter jumps, Esc cancels. Mnemonic: G for Goto.".into(),
+            Action::ToggleSoftWrap =>
+                "Toggle soft-wrap (Ctrl+Z w) — flip word-wrap display for the open buffer at runtime, without editing config + restarting. Session-only; the persisted default is `editor.wrap`. Handy when switching between reading wrapped prose and editing unwrapped code/tables. Mnemonic: W for Wrap.".into(),
+            Action::StripTrailingWhitespace =>
+                "Strip trailing whitespace (Ctrl+Z t) — remove trailing spaces/tabs from every line of the open buffer as ONE undoable edit (Ctrl+U reverts it). Cleans the noisy diffs and stray whitespace that `Ctrl+V ?` reports. Mnemonic: T for Trim.".into(),
             Action::OpenCharacterArc =>
                 "Open the character arc view (CHAR-1, Ctrl+V Shift+N) — the tracked arc for the nearest character (one named in the current paragraph, else the first tracked one): the author-declared arc (start / midpoint / end), the chapter-by-chapter observable state chain (✦ marks a change) with each chapter's deterministic agency score (active / passive presence), the arc-completeness checks, and any Planning-Board coverage gaps. Read-only over the cached char.duckdb; `↑↓` scroll, `Esc` closes. Populate it with the `Ctrl+B Shift+C` review pass (agency + stalls + planning, zero-AI) or `inkhaven character refresh` / `check` (the LLM passes). Mnemonic: N for arc (the bend).".into(),
             Action::OpenMythHeatmap =>
@@ -1849,6 +1870,10 @@ impl KeyBindings {
                 // without macos_option_as_alt) — and dodges the Alt+Left/Right
                 // back-forward collision the old Alt+arrows binding hit.
                 entry("v", Action::EnterBlockSelect, Scope::Editor),
+                // A4 editor niceties (Ctrl+Z is the utility prefix; g/w/t free):
+                entry("g", Action::GotoLine, Scope::Editor),
+                entry("w", Action::ToggleSoftWrap, Scope::Editor),
+                entry("t", Action::StripTrailingWhitespace, Scope::Editor),
                 // 1.2.14 comment features, relocated here from Ctrl+V c / Shift+C:
                 // those chords went to the 1.6.19+ LOCI/sourcing citation checks,
                 // which shadowed the comment pair (view.add_comment was Editor-scoped
@@ -3042,6 +3067,27 @@ mod tests {
         );
         // Editor-scoped: it does nothing from the tree.
         assert_eq!(k.resolve_bund_sub(&ev, Focus::Tree), None);
+    }
+
+    #[test]
+    fn a4_editor_niceties_are_bound_on_ctrl_z() {
+        // A4 — go-to-line / soft-wrap toggle / strip-trailing-whitespace live on
+        // the Ctrl+Z utility layer (g/w/t), Editor-scoped, plain letters (no
+        // terminal-ambiguous Shift).
+        let k = KeyBindings::defaults();
+        let none = KeyModifiers::NONE;
+        for (ch, action) in [
+            ('g', Action::GotoLine),
+            ('w', Action::ToggleSoftWrap),
+            ('t', Action::StripTrailingWhitespace),
+        ] {
+            let ev = KeyEvent::new(KeyCode::Char(ch), none);
+            assert_eq!(
+                k.resolve_bund_sub(&ev, Focus::Editor),
+                Some(action),
+                "Ctrl+Z {ch} should be bound in the editor"
+            );
+        }
     }
 
     #[test]
