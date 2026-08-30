@@ -6333,6 +6333,13 @@ impl App {
             }
         }
 
+        // A4 — smart Home: plain Home → first non-blank column, then column 0.
+        // (Shift+Home keeps the textarea's select-to-line-start default.)
+        if matches!(key.code, KeyCode::Home) && key.modifiers.is_empty() {
+            self.editor_smart_home();
+            return Ok(false);
+        }
+
         // Auto-close pairs (configurable). Only plain keystrokes — Ctrl /
         // Alt / Super combinations fall through to the textarea catch-all
         // below. Each helper returns `true` when it consumed the key,
@@ -6398,6 +6405,115 @@ impl App {
             self.maybe_expand_snippet();
         }
         Ok(false)
+    }
+
+    /// A4 — `Ctrl+Z g`: open the go-to-line prompt (needs an open buffer).
+    fn open_goto_line(&mut self) {
+        if self.opened.is_none() {
+            self.status = "go to line: open a paragraph first".into();
+            return;
+        }
+        self.modal = Modal::GotoLine { input: crate::tui::input::TextInput::new() };
+        self.status = "go to line: type a number · Enter jump · Esc cancel".into();
+    }
+
+    /// A4 — handle keys while the go-to-line prompt is open. Enter parses the
+    /// 1-based line number and jumps (centred); digits/backspace edit the input.
+    /// Esc is closed by the global modal handler.
+    fn goto_line_handle_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Enter => {
+                let text = match &self.modal {
+                    Modal::GotoLine { input } => input.as_str().trim().to_string(),
+                    _ => return,
+                };
+                self.modal = Modal::None;
+                let Ok(line) = text.parse::<usize>() else {
+                    if !text.is_empty() {
+                        self.status = format!("go to line: not a number: {text}");
+                    }
+                    return;
+                };
+                let last = self
+                    .opened
+                    .as_ref()
+                    .map_or(1, |d| d.textarea.lines().len().max(1));
+                let row = line.clamp(1, last) - 1; // 1-based → 0-based, clamped
+                let _ = self.ink_editor_goto(row, 0);
+                // Centre the target like the search jump does.
+                let viewport_h = (self.layout_editor.height as usize).saturating_sub(2);
+                if let Some(doc) = self.opened.as_mut() {
+                    if viewport_h > 0 {
+                        doc.scroll_row = row.saturating_sub(viewport_h / 2);
+                    }
+                }
+                self.status = format!("line {}", row + 1);
+            }
+            KeyCode::Char(c) if c.is_ascii_digit() => {
+                if let Modal::GotoLine { input } = &mut self.modal {
+                    input.insert_char(c);
+                }
+            }
+            KeyCode::Backspace => {
+                if let Modal::GotoLine { input } = &mut self.modal {
+                    input.backspace();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// A4 — smart Home: first press moves to the first non-blank column; a second
+    /// press (already there) moves to column 0. Standard for indented Typst blocks.
+    fn editor_smart_home(&mut self) {
+        let Some(doc) = self.opened.as_mut() else { return };
+        let (row, col) = doc.textarea.cursor();
+        let line = doc.textarea.lines().get(row).cloned().unwrap_or_default();
+        let first_non_blank = line.chars().take_while(|c| c.is_whitespace()).count();
+        let target = if col == first_non_blank { 0 } else { first_non_blank };
+        doc.textarea.move_cursor(CursorMove::Jump(row as u16, target as u16));
+    }
+
+    /// A4 — `Ctrl+Z w`: flip soft-wrap for the session (persisted default is
+    /// `editor.wrap`). The renderer reads `cfg.editor.wrap` each frame.
+    fn toggle_soft_wrap(&mut self) {
+        self.cfg.editor.wrap = !self.cfg.editor.wrap;
+        self.status = if self.cfg.editor.wrap {
+            "soft-wrap: on".into()
+        } else {
+            "soft-wrap: off".into()
+        };
+    }
+
+    /// A4 — `Ctrl+Z t`: strip trailing whitespace from every line, as ONE
+    /// undoable edit (select whole buffer → replace with the trimmed text).
+    fn editor_strip_trailing_whitespace(&mut self) {
+        let Some(doc) = self.opened.as_mut() else {
+            self.status = "strip whitespace: open a paragraph first".into();
+            return;
+        };
+        if doc.read_only {
+            self.status = "read-only buffer: strip whitespace ignored".into();
+            return;
+        }
+        let lines = doc.textarea.lines();
+        let trimmed: Vec<&str> = lines.iter().map(|l| l.trim_end()).collect();
+        // No-op fast path: nothing to strip → don't touch the undo history.
+        if trimmed.iter().zip(lines.iter()).all(|(t, l)| t.len() == l.len()) {
+            self.status = "no trailing whitespace".into();
+            return;
+        }
+        let n_lines = lines.len();
+        let last_col = lines.last().map_or(0, |l| l.chars().count());
+        let joined = trimmed.join("\n");
+        // Select the whole buffer, then replace it in one edit (reflow's pattern).
+        doc.textarea.move_cursor(CursorMove::Jump(0, 0));
+        doc.textarea.start_selection();
+        doc.textarea
+            .move_cursor(CursorMove::Jump((n_lines.saturating_sub(1)) as u16, last_col as u16));
+        doc.textarea.insert_str(&joined);
+        doc.dirty = true;
+        self.status = "stripped trailing whitespace".into();
     }
 
     /// `Ctrl+Z v` — enter vertical block-select mode: anchor the rectangle at the
@@ -12875,6 +12991,9 @@ impl App {
                 self.status = "✦ haiku written to Output".into();
             }
             A::EnterBlockSelect => self.enter_block_select(),
+            A::GotoLine => self.open_goto_line(),
+            A::ToggleSoftWrap => self.toggle_soft_wrap(),
+            A::StripTrailingWhitespace => self.editor_strip_trailing_whitespace(),
             A::ToggleRightPaneFullscreen => self.toggle_right_pane_fullscreen(),
             A::TtsReadParagraph => self.tts_read_paragraph(),
             A::TtsSaveAsAudio => self.tts_open_save_as_audio_picker(),
@@ -27577,6 +27696,10 @@ impl App {
         }
         if matches!(self.modal, Modal::SubmissionGenPicker { .. }) {
             self.submission_gen_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::GotoLine { .. }) {
+            self.goto_line_handle_key(key);
             return Ok(false);
         }
         if matches!(self.modal, Modal::PlanOutline { .. }) {
