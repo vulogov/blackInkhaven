@@ -168,7 +168,8 @@ with unsaved edits, white when unfocused (dirtiness then moves to the title's
 #chord_table((
   chord_row("← / →", [One character left / right.]),
   chord_row("↑ / ↓", [One line up / down.]),
-  chord_row("Home / End", [Start / end of the current line.]),
+  chord_row("Home", [Smart Home — first press jumps to the first non-blank column; a second press (already there) jumps to column 0. `Shift+Home` still extends the selection to line start.]),
+  chord_row("End", [End of the current line.]),
   chord_row("PageUp / PageDown", [One viewport up / down.]),
   chord_row("Ctrl+←", [Previous word boundary.]),
   chord_row("Ctrl+→", [Next word boundary.]),
@@ -179,8 +180,9 @@ with unsaved edits, white when unfocused (dirtiness then moves to the title's
 #subsection("Editing")
 
 #chord_table((
-  chord_row("any character", [Insert at the cursor; replaces the selection if one exists.]),
+  chord_row("any character", [Insert at the cursor; replaces the selection if one exists. With `editor.auto_close_pairs` on (the default), brackets auto-pair; quotes (`'` / `"`) auto-pair _only as opening quotes_ — never when adjacent to a word character — so `don't` stays `don't`.]),
   chord_row("Enter", [Insert a newline.]),
+  chord_row("paste (terminal)", [A terminal paste — `Cmd`/`Ctrl+V`, middle-click — arrives as a _bracketed paste_: inserted in bulk, not replayed key by key, so a multi-line paste never trips auto-pair or a snippet and never submits at the first newline in the AI-prompt or Search bar.]),
   chord_row("Backspace", [Delete the character before the cursor (or the whole selection).]),
   chord_row("Delete", [Delete the character at the cursor.]),
   chord_row("Ctrl+Backspace", [Delete the previous word.]),
@@ -212,8 +214,15 @@ the syntax highlighting. Rectangular _cut_ and _paste_ are deferred in this
 release; copy covers the common cases (a column of numbers, a list of names, a
 verse stanza).
 
+The terminal-independent way in is `Ctrl+Z v`, which extends the rectangle with
+_plain_ arrows and so works on every terminal (macOS Terminal.app included). The
+`Alt`+arrow path still works where the terminal delivers the modifier, but many
+do not, and `Alt+←`/`Alt+→` also collide with back/forward navigation — prefer
+`Ctrl+Z v`.
+
 #chord_table((
-  chord_row("Alt+↑ ↓ ← →", [Enter block-select mode if needed, then move the cursor one cell without touching the linear selection.]),
+  chord_row("Ctrl+Z v", [Enter block-select mode: anchor at the cursor, then _plain_ arrows extend the rectangle; `c` / `Enter` copy to the clipboard and exit, `Esc` (or any other key) cancels.]),
+  chord_row("Alt+↑ ↓ ← →", [(legacy, only if the terminal delivers `Alt`) Enter block-select mode if needed, then move the cursor one cell without touching the linear selection.]),
   chord_row("Alt+C", [Copy the rectangle to the system clipboard as a multi-line string; clears the anchor.]),
   chord_row("Esc", [Cancel block-select; keep the document open.]),
 ))
@@ -235,8 +244,9 @@ In-buffer regex search over Rust's `regex` syntax. Matches highlight red; the
 current match brightens.
 
 #chord_table((
-  chord_row("Ctrl+F", [Open the Find modal — type a regex, `Enter` to run; the cursor jumps to the first match.]),
+  chord_row("Ctrl+F", [Open the Find modal — type a regex, `Enter` to run; the cursor jumps to the first match _at or after the cursor_ (not the document top), wrapping if it is past the last.]),
   chord_row("Ctrl+X", [Repeat — in search mode jump to the next match; in replace mode replace the current match and advance. Active only while a search is in progress.]),
+  chord_row("Ctrl+G", [Previous match — the mirror of `Ctrl+X`, stepping to the prior match (wraps). Active only while a search is in progress.]),
   chord_row("Ctrl+R", [First press opens Find & Replace and applies the first replacement; a second press in replace mode replaces every remaining match.]),
   chord_row("Ctrl+B", [(inside the modal) Toggle scope between this paragraph and the whole book; book scope opens a per-match review modal.]),
   chord_row("Esc", [Clear the active search — drops the highlights and exits replace mode.]),
@@ -604,6 +614,10 @@ prose/craft checks. All of it is rebindable through `keys.bindings.view_sub`.
   chord_row("Ctrl+Z h", [(inside the shell) Toggle history-selection mode — `c` copies a turn, `i` inserts it into the editor.]),
   chord_row("Ctrl+Z p", [Emit a haiku to the Output pane, in the book's language.]),
   chord_row("Ctrl+Z f", [Fullscreen the current right pane (Output / Thoughts).]),
+  chord_row("Ctrl+Z g", [(editor) Go to line — prompt for a line number and jump there, centred in the viewport.]),
+  chord_row("Ctrl+Z m", [(editor) Jump to the matching bracket for the one at or just before the cursor — across lines, nesting-aware.]),
+  chord_row("Ctrl+Z w", [(editor) Toggle soft-wrap for the open buffer at runtime (session-only; the persisted default is `editor.wrap`).]),
+  chord_row("Ctrl+Z t", [(editor) Strip trailing whitespace from every line as one undoable edit (`Ctrl+U` reverts).]),
   chord_row("Ctrl+Z c", [(editor) Add an inline comment on the selection — a sidecar `.comments.json` beside the paragraph. Moved here from `Ctrl+V c`, which the LOCI citation check now owns.]),
   chord_row("Ctrl+Z Shift+C", [Open the project-wide comments panel over every `.comments.json` sidecar. Moved here from `Ctrl+V Shift+C`, now the sourcing check.]),
 ))
