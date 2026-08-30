@@ -5679,9 +5679,10 @@ impl super::super::App {
             });
         }
         f.render_widget(Paragraph::new(lines), body_rect);
+        let footer_text = dashboard_footer("⏎ jump to source", start, list_h, rows.len());
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                " ↑↓ · ⏎ jump to source · Esc ",
+                footer_text,
                 Style::default().add_modifier(Modifier::DIM),
             ))),
             footer_rect,
@@ -5736,9 +5737,10 @@ impl super::super::App {
             lines.push(line);
         }
         f.render_widget(Paragraph::new(lines), body_rect);
+        let footer_text = dashboard_footer("", start, list_h, rows.len());
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                " ↑↓ scroll · Esc ",
+                footer_text,
                 Style::default().add_modifier(Modifier::DIM),
             ))),
             footer_rect,
@@ -5794,9 +5796,10 @@ impl super::super::App {
             lines.push(line);
         }
         f.render_widget(Paragraph::new(lines), body_rect);
+        let footer_text = dashboard_footer("", start, list_h, rows.len());
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                " ↑↓ scroll · Esc ",
+                footer_text,
                 Style::default().add_modifier(Modifier::DIM),
             ))),
             footer_rect,
@@ -5854,9 +5857,10 @@ impl super::super::App {
             lines.push(line);
         }
         f.render_widget(Paragraph::new(lines), body_rect);
+        let footer_text = dashboard_footer("", start, list_h, rows.len());
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                " ↑↓ scroll · Esc ",
+                footer_text,
                 Style::default().add_modifier(Modifier::DIM),
             ))),
             footer_rect,
@@ -5914,9 +5918,10 @@ impl super::super::App {
             lines.push(line);
         }
         f.render_widget(Paragraph::new(lines), body_rect);
+        let footer_text = dashboard_footer("", start, list_h, rows.len());
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                " ↑↓ scroll · Esc ",
+                footer_text,
                 Style::default().add_modifier(Modifier::DIM),
             ))),
             footer_rect,
@@ -6047,9 +6052,15 @@ impl super::super::App {
             lines.push(line);
         }
         f.render_widget(Paragraph::new(lines), body_rect);
+        let footer_text = dashboard_footer(
+            "C compile · P proposals · F fact-check ¶",
+            start,
+            list_h,
+            rows.len(),
+        );
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                " ↑↓ · C compile · P proposals · F fact-check ¶ · Esc ",
+                footer_text,
                 Style::default().add_modifier(Modifier::DIM),
             ))),
             footer_rect,
@@ -6517,8 +6528,9 @@ impl super::super::App {
         f.render_widget(Paragraph::new(lines), body_rect);
 
         let footer = Rect { x: inner.x, y: inner.y + inner.height - 1, width: inner.width, height: 1 };
+        let footer_text = dashboard_footer("", start, list_h, rows.len());
         f.render_widget(
-            Paragraph::new(Line::from(Span::styled(" ↑↓ scroll · Esc close", dim))),
+            Paragraph::new(Line::from(Span::styled(footer_text, dim))),
             footer,
         );
     }
@@ -6567,11 +6579,9 @@ impl super::super::App {
         f.render_widget(Paragraph::new(lines), body_rect);
 
         let footer = Rect { x: inner.x, y: inner.y + inner.height - 1, width: inner.width, height: 1 };
+        let footer_text = dashboard_footer("Enter jump · k coherence pass (LLM)", start, list_h, rows.len());
         f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                " ↑↓ scroll · Enter jump · k coherence pass (LLM) · Esc close",
-                dim,
-            ))),
+            Paragraph::new(Line::from(Span::styled(footer_text, dim))),
             footer,
         );
     }
@@ -6620,11 +6630,14 @@ impl super::super::App {
         f.render_widget(Paragraph::new(lines), body_rect);
 
         let footer = Rect { x: inner.x, y: inner.y + inner.height - 1, width: inner.width, height: 1 };
+        let footer_text = dashboard_footer(
+            "Enter jump to an introduced finding · m mark this draft",
+            start,
+            list_h,
+            rows.len(),
+        );
         f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                " ↑↓ scroll · Enter jump to an introduced finding · m mark this draft · Esc close",
-                dim,
-            ))),
+            Paragraph::new(Line::from(Span::styled(footer_text, dim))),
             footer,
         );
     }
@@ -6672,15 +6685,14 @@ impl super::super::App {
         f.render_widget(Paragraph::new(lines), body_rect);
 
         let footer = Rect { x: inner.x, y: inner.y + inner.height - 1, width: inner.width, height: 1 };
+        let footer_text = dashboard_footer(
+            if *ledger { "Enter jump · l findings" } else { "Enter jump · l ledger" },
+            start,
+            list_h,
+            rows.len(),
+        );
         f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                if *ledger {
-                    " ↑↓ scroll · Enter jump · l findings · Esc close"
-                } else {
-                    " ↑↓ scroll · Enter jump · l ledger · Esc close"
-                },
-                dim,
-            ))),
+            Paragraph::new(Line::from(Span::styled(footer_text, dim))),
             footer,
         );
     }
@@ -6728,11 +6740,9 @@ impl super::super::App {
         f.render_widget(Paragraph::new(lines), body_rect);
 
         let footer = Rect { x: inner.x, y: inner.y + inner.height - 1, width: inner.width, height: 1 };
+        let footer_text = dashboard_footer("Enter jump to the paragraph", start, list_h, rows.len());
         f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                " ↑↓ scroll · Enter jump to the paragraph · Esc close",
-                dim,
-            ))),
+            Paragraph::new(Line::from(Span::styled(footer_text, dim))),
             footer,
         );
     }
@@ -6780,11 +6790,9 @@ impl super::super::App {
         f.render_widget(Paragraph::new(lines), body_rect);
 
         let footer = Rect { x: inner.x, y: inner.y + inner.height - 1, width: inner.width, height: 1 };
+        let footer_text = dashboard_footer("Enter jump to the character", start, list_h, rows.len());
         f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                " ↑↓ scroll · Enter jump to the character · Esc close",
-                dim,
-            ))),
+            Paragraph::new(Line::from(Span::styled(footer_text, dim))),
             footer,
         );
     }
@@ -6828,11 +6836,9 @@ impl super::super::App {
         f.render_widget(Paragraph::new(lines), body_rect);
 
         let footer = Rect { x: inner.x, y: inner.y + inner.height - 1, width: inner.width, height: 1 };
+        let footer_text = dashboard_footer("Enter open the reader", start, list_h, rows.len());
         f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                " ↑↓ · Enter open the reader · Esc close",
-                dim,
-            ))),
+            Paragraph::new(Line::from(Span::styled(footer_text, dim))),
             footer,
         );
     }
@@ -6926,11 +6932,9 @@ impl super::super::App {
         f.render_widget(Paragraph::new(lines), body_rect);
 
         let footer = Rect { x: inner.x, y: inner.y + inner.height - 1, width: inner.width, height: 1 };
+        let footer_text = dashboard_footer("Enter jump · k deep read (LLM)", start, list_h, rows.len());
         f.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                " ↑↓ scroll · Enter jump · k deep read (LLM) · Esc close",
-                dim,
-            ))),
+            Paragraph::new(Line::from(Span::styled(footer_text, dim))),
             footer,
         );
     }
@@ -6988,9 +6992,15 @@ impl super::super::App {
             lines.push(line);
         }
         f.render_widget(Paragraph::new(lines), body_rect);
+        let footer_text = dashboard_footer(
+            "F check · E engage (slow) · T theologian · C converse · N persona · S cycle · L ledger · A auto",
+            start,
+            list_h,
+            rows.len(),
+        );
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                " ↑↓ · F check · E engage (slow) · T theologian · C converse · N persona · S cycle · L ledger · A auto · Esc ",
+                footer_text,
                 Style::default().add_modifier(Modifier::DIM),
             )))
             .wrap(Wrap { trim: true }),
@@ -10014,6 +10024,51 @@ fn truncate_to(s: &str, max: usize) -> String {
         let mut out: String = s.chars().take(max - 1).collect();
         out.push('…');
         out
+    }
+}
+
+/// C2 — the shared reader-dashboard footer: the full navigation-key legend
+/// (matching what `App::dashboard_nav` actually handles) plus a scroll-position
+/// `(a–b of N)`. `extra` is the dashboard's own action keys, e.g. "Enter jump" or
+/// "Enter jump · k coherence pass (LLM)" (empty → nav + Esc only). `start` is the
+/// index of the first visible row, `visible` the number of rows shown, `total`
+/// the row count. Pure — so every dashboard advertises the same keys and can't
+/// drift back to a bare "↑↓".
+pub(in crate::tui::app) fn dashboard_footer(
+    extra: &str,
+    start: usize,
+    visible: usize,
+    total: usize,
+) -> String {
+    let (a, b) = if total == 0 {
+        (0, 0)
+    } else {
+        (start + 1, (start + visible).min(total))
+    };
+    let mut parts = vec!["↑↓/PgUp/PgDn/Home/End".to_string()];
+    if !extra.trim().is_empty() {
+        parts.push(extra.trim().to_string());
+    }
+    parts.push("Esc".to_string());
+    format!(" {}    ({a}–{b} of {total}) ", parts.join(" · "))
+}
+
+#[cfg(test)]
+mod dashboard_footer_tests {
+    use super::dashboard_footer;
+
+    #[test]
+    fn footer_lists_full_nav_and_position() {
+        // Advertises the keys dashboard_nav handles, the extra action, and a range.
+        let f = dashboard_footer("Enter jump", 0, 10, 42);
+        assert!(f.contains("PgUp/PgDn/Home/End"), "{f}");
+        assert!(f.contains("Enter jump") && f.contains("Esc"), "{f}");
+        assert!(f.contains("(1–10 of 42)"), "{f}");
+        // Scrolled down: the range reflects the window; clamps at the end.
+        assert!(dashboard_footer("", 38, 10, 42).contains("(39–42 of 42)"));
+        // Empty list → 0 of 0, no double separators.
+        let e = dashboard_footer("", 0, 10, 0);
+        assert!(e.contains("(0–0 of 0)") && !e.contains("··"), "{e}");
     }
 }
 
