@@ -4,7 +4,8 @@ use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent,
+    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste,
+    EnableMouseCapture, Event, KeyCode, KeyEvent,
     KeyEventKind, KeyModifiers, KeyboardEnhancementFlags, MouseButton,
     MouseEvent, MouseEventKind, PopKeyboardEnhancementFlags,
     PushKeyboardEnhancementFlags,
@@ -333,7 +334,10 @@ pub fn run(project: &Path) -> Result<()> {
     let kbd_enhanced =
         crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false);
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    // A1 — bracketed paste: the terminal wraps a paste in markers so it arrives
+    // as ONE `Event::Paste` instead of a stream of keystrokes (which would fire
+    // auto-pair / snippet expansion per char and submit at the first newline).
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture, EnableBracketedPaste)?;
     // Only push the enhancement flags when the terminal supports them, so the
     // enter/leave (`PopKeyboardEnhancementFlags`) stays symmetric with the real
     // capability. Pushing on an unsupporting terminal is harmless, but gating is
@@ -548,6 +552,7 @@ pub fn run(project: &Path) -> Result<()> {
         let _ = execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags);
     }
     let _ = execute!(terminal.backend_mut(), DisableMouseCapture);
+    let _ = execute!(terminal.backend_mut(), DisableBracketedPaste);
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
@@ -4004,9 +4009,41 @@ impl App {
                         }
                     }
                     Event::Mouse(mouse) => self.handle_mouse(mouse),
+                    Event::Paste(text) => self.handle_paste(text),
                     _ => {}
                 }
             }
+        }
+    }
+
+    /// A1 — a bracketed-paste chunk arrived as ONE event. Insert it in bulk at the
+    /// focused target, bypassing the per-keystroke editor side effects (auto-pair,
+    /// snippet expansion) and the input bars' Enter=submit that a
+    /// keystroke-by-keystroke paste would wrongly trigger. Single-line input bars
+    /// collapse newlines to spaces. A paste while a modal is open is dropped rather
+    /// than mis-routed into the pane beneath it (the modal owns its own field).
+    fn handle_paste(&mut self, text: String) {
+        if text.is_empty() {
+            return;
+        }
+        if !matches!(self.modal, Modal::None) {
+            self.status = "paste: close the dialog first (Ctrl+P pastes the clipboard)".into();
+            return;
+        }
+        match self.focus {
+            Focus::Editor => {
+                if self.opened.as_ref().is_some_and(|d| d.read_only) {
+                    self.status = "read-only buffer: paste ignored".into();
+                    return;
+                }
+                if let Some(doc) = self.opened.as_mut() {
+                    doc.textarea.insert_str(&text);
+                    doc.dirty = true;
+                }
+            }
+            Focus::Ai | Focus::AiPrompt => self.ai_input.insert_str(&text),
+            Focus::SearchBar => self.search_input.insert_str(&text),
+            Focus::Tree => {}
         }
     }
 
