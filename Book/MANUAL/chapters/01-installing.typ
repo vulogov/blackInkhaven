@@ -101,6 +101,19 @@ Any terminal from the last decade with 256-colour support will do; the richer
 ones (kitty, iTerm2, WezTerm) additionally give you inline image previews, but
 those are a luxury, not a requirement.
 
+#callout(label: "One terminal detail worth knowing")[
+  A handful of chords need the *enhanced (kitty) keyboard protocol* — a modern
+  extension that lets a program tell apart keys the legacy terminal encoding
+  cannot, such as `Ctrl+I` from `Tab` or `Ctrl+M` from `Enter`. On a terminal
+  without it (macOS *Terminal.app* is the common one), those pairs collide and
+  Inkhaven prints a one-time notice on the status line at startup naming your
+  terminal. Everything still runs; a few chords just alias to `Tab`/`Enter`. For
+  the full keyboard, use a protocol-capable terminal — kitty, WezTerm, Ghostty,
+  or iTerm2 ≥ 3.5. The "Terminal compatibility" section of
+  `Documentation/KEYBINDING.md` lists exactly what is affected and the
+  terminal-independent alternatives (block selection, for one).
+]
+
 #subsection("Disk space")
 
 A fresh, complete install occupies a few hundred megabytes, most of it the

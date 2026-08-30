@@ -161,10 +161,16 @@ pub(super) struct OpenedDoc {
     /// we maintain our own and never call `textarea.scroll()`.
     pub scroll_row: usize,
     pub scroll_col: usize,
-    /// Anchor of a vertical-block selection (entered with Alt+arrows).
-    /// While Some, the cursor's current position plus this anchor define a
-    /// rectangular selection drawn with REVERSED style.
+    /// Anchor of a vertical-block selection. While Some, the cursor's current
+    /// position plus this anchor define a rectangular selection drawn with
+    /// REVERSED style. Set either by `Alt`+arrows (where the terminal delivers
+    /// the modifier) or by the terminal-independent block-select MODE below.
     pub block_anchor: Option<(usize, usize)>,
+    /// Block-select MODE (entered with `Ctrl+Z v`). While true, PLAIN arrows
+    /// extend the rectangle — no modifier needed, so it works on terminals that
+    /// don't deliver `Alt`+arrow (Terminal.app; kitty without `macos_option_as_alt`).
+    /// `c`/Enter copy the block and exit; `Esc` or any other key cancels.
+    pub block_select_mode: bool,
     /// Wall-clock of the last key event handled by the editor. Idle autosave
     /// fires when (now - last_activity) >= editor.autosave_seconds.
     pub last_activity: std::time::Instant,

@@ -4,7 +4,8 @@ use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::event::{
-    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent,
+    self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste,
+    EnableMouseCapture, Event, KeyCode, KeyEvent,
     KeyEventKind, KeyModifiers, KeyboardEnhancementFlags, MouseButton,
     MouseEvent, MouseEventKind, PopKeyboardEnhancementFlags,
     PushKeyboardEnhancementFlags,
@@ -188,6 +189,42 @@ pub fn bench_render_frames(
     Ok(t.elapsed())
 }
 
+/// Friendly host-terminal name from `$TERM_PROGRAM` (falling back to `$TERM`),
+/// for the keyboard-protocol notice + diagnostics. Pure.
+fn terminal_label(term_program: Option<&str>, term: Option<&str>) -> String {
+    match term_program.map(str::trim).filter(|s| !s.is_empty()) {
+        Some("Apple_Terminal") => "Terminal.app".into(),
+        Some("iTerm.app") => "iTerm2".into(),
+        Some(other) => other.to_string(),
+        None => match term.map(str::trim).filter(|s| !s.is_empty()) {
+            Some(t) => t.to_string(),
+            None => "this terminal".into(),
+        },
+    }
+}
+
+/// The one-time keyboard-protocol compatibility notice for a terminal WITHOUT the
+/// enhanced (kitty) protocol, where the control-code aliases collide (`Ctrl+I`≡Tab,
+/// `Ctrl+M`≡Enter, `Ctrl+[`≡Esc, `Ctrl+H`≡Backspace) and some F-keys may not
+/// arrive. `None` when the protocol is supported. Pure — the caller reads the env.
+fn keyboard_protocol_notice(
+    supported: bool,
+    term_program: Option<&str>,
+    term: Option<&str>,
+) -> Option<String> {
+    if supported {
+        return None;
+    }
+    let label = terminal_label(term_program, term);
+    Some(format!(
+        "⚠ {label} lacks the enhanced keyboard protocol — chords like Ctrl+I / Ctrl+M \
+         collide with Tab / Enter, Alt-modified chords (e.g. back/forward) may not arrive, \
+         and some F-keys may not register. For the full key set use kitty, WezTerm, Ghostty, \
+         or iTerm2 ≥ 3.5 (+ enable “use F1/F2 as standard function keys” in macOS Keyboard \
+         settings). See Documentation/KEYBINDING.md."
+    ))
+}
+
 pub fn run(project: &Path) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized().map_err(anyhow::Error::from)?;
@@ -286,22 +323,34 @@ pub fn run(project: &Path) -> Result<()> {
     })));
 
     enable_raw_mode()?;
+    // Ask the terminal whether it actually speaks the kitty keyboard protocol —
+    // a real request/response round-trip (not just "did the write succeed", which
+    // is always Ok). Without it the legacy TTY encoding can't distinguish
+    // `Ctrl+I` from `Tab` (both 0x09), `Ctrl+M` from `Enter`, `Ctrl+[` from `Esc`,
+    // `Ctrl+H` from `Backspace`, nor encode `Ctrl+1` at all — so those chords
+    // collide and we surface a startup notice (below). Must run after raw mode +
+    // before any other stdin reader; it times out cleanly on terminals that
+    // don't answer (e.g. Terminal.app).
+    let kbd_enhanced =
+        crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false);
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-    // Try to enable the kitty keyboard protocol. Without it, legacy
-    // terminal encoding can't distinguish e.g. `Ctrl+1` from a bare `1`
-    // (the TTY only has dedicated bytes for Ctrl+A..Z + a handful of
-    // punctuation), so `Ctrl+1` ends up inserting "1" into the AI prompt.
-    // Best-effort: terminals that don't support it just ignore the CSI
-    // sequence and we run with reduced functionality.
-    let kbd_enhanced = execute!(
-        io::stdout(),
-        PushKeyboardEnhancementFlags(
-            KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-                | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS,
-        )
-    )
-    .is_ok();
+    // A1 — bracketed paste: the terminal wraps a paste in markers so it arrives
+    // as ONE `Event::Paste` instead of a stream of keystrokes (which would fire
+    // auto-pair / snippet expansion per char and submit at the first newline).
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture, EnableBracketedPaste)?;
+    // Only push the enhancement flags when the terminal supports them, so the
+    // enter/leave (`PopKeyboardEnhancementFlags`) stays symmetric with the real
+    // capability. Pushing on an unsupporting terminal is harmless, but gating is
+    // honest.
+    if kbd_enhanced {
+        let _ = execute!(
+            io::stdout(),
+            PushKeyboardEnhancementFlags(
+                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                    | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS,
+            )
+        );
+    }
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -417,6 +466,21 @@ pub fn run(project: &Path) -> Result<()> {
     app.restore_session();
     app.install_progress();
 
+    // Keyboard-protocol compatibility notice. On a terminal without the enhanced
+    // (kitty) protocol — e.g. Terminal.app — chords that alias a control byte
+    // (Ctrl+I≡Tab, Ctrl+M≡Enter, …) collide and some F-keys may not arrive; warn
+    // once at startup + log it, naming the host emulator. See item-2 of the
+    // 3.7.0 keyboard-compat work. The low-disk warning below (rarer, more urgent)
+    // may override the status line.
+    if let Some(notice) = keyboard_protocol_notice(
+        kbd_enhanced,
+        std::env::var("TERM_PROGRAM").ok().as_deref(),
+        std::env::var("TERM").ok().as_deref(),
+    ) {
+        tracing::warn!(target: "inkhaven::tui::run", "{notice}");
+        app.status = notice;
+    }
+
     // 1.2.20+ Phase G — low-disk pre-flight.  Best-effort,
     // one-time: warn in the status line if the project's
     // volume is critically low on free space before a
@@ -488,6 +552,7 @@ pub fn run(project: &Path) -> Result<()> {
         let _ = execute!(terminal.backend_mut(), PopKeyboardEnhancementFlags);
     }
     let _ = execute!(terminal.backend_mut(), DisableMouseCapture);
+    let _ = execute!(terminal.backend_mut(), DisableBracketedPaste);
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
@@ -1118,6 +1183,41 @@ mod book_info_tests {
         for c in ['(', '[', '{', 'a', '#'] {
             assert!(!is_close_pair_char(c), "{c} should not be");
         }
+    }
+
+    #[test]
+    fn matching_bracket_across_nesting_and_lines() {
+        let l = |s: &str| vec![s.to_string()];
+        // Open → close on the same line, respecting a nested pair.
+        assert_eq!(matching_bracket_at(&l("#figure(a[b]c)"), 0, 7), Some((0, 13)));
+        // Close → open (backward).
+        assert_eq!(matching_bracket_at(&l("#figure(a[b]c)"), 0, 13), Some((0, 7)));
+        // The nested bracket matches its own partner, not the outer one.
+        assert_eq!(matching_bracket_at(&l("(a(b)c)"), 0, 2), Some((0, 4)));
+        assert_eq!(matching_bracket_at(&l("(a(b)c)"), 0, 0), Some((0, 6)));
+        // Cursor just AFTER a bracket matches the bracket to its left.
+        assert_eq!(matching_bracket_at(&l("(x)"), 0, 1), Some((0, 2)));
+        // Across lines.
+        let multi = vec!["#table(".to_string(), "  [a], [b],".to_string(), ")".to_string()];
+        assert_eq!(matching_bracket_at(&multi, 0, 6), Some((2, 0)));
+        // Not on a bracket → None; unbalanced → None.
+        assert_eq!(matching_bracket_at(&l("abc"), 0, 1), None);
+        assert_eq!(matching_bracket_at(&l("(a b"), 0, 0), None);
+    }
+
+    #[test]
+    fn quotes_pair_only_as_opening_quotes() {
+        // A2 — pair only when NOT adjacent to a word char.
+        // Apostrophe / after a word (don'|, dogs'|): no phantom closer.
+        assert!(!should_pair_quote(Some('n'), None));
+        assert!(!should_pair_quote(Some('s'), Some(' ')));
+        // Before a word (typing a quote just before `word`): don't pair.
+        assert!(!should_pair_quote(Some(' '), Some('w')));
+        // A genuine opening quote: start of line, after a space, before a space
+        // or punctuation → pair.
+        assert!(should_pair_quote(None, None));
+        assert!(should_pair_quote(Some(' '), Some(' ')));
+        assert!(should_pair_quote(Some('('), None));
     }
 
     /// Reproduce the pair-detection rule used by the Enter and
@@ -3944,9 +4044,41 @@ impl App {
                         }
                     }
                     Event::Mouse(mouse) => self.handle_mouse(mouse),
+                    Event::Paste(text) => self.handle_paste(text),
                     _ => {}
                 }
             }
+        }
+    }
+
+    /// A1 — a bracketed-paste chunk arrived as ONE event. Insert it in bulk at the
+    /// focused target, bypassing the per-keystroke editor side effects (auto-pair,
+    /// snippet expansion) and the input bars' Enter=submit that a
+    /// keystroke-by-keystroke paste would wrongly trigger. Single-line input bars
+    /// collapse newlines to spaces. A paste while a modal is open is dropped rather
+    /// than mis-routed into the pane beneath it (the modal owns its own field).
+    fn handle_paste(&mut self, text: String) {
+        if text.is_empty() {
+            return;
+        }
+        if !matches!(self.modal, Modal::None) {
+            self.status = "paste: close the dialog first (Ctrl+P pastes the clipboard)".into();
+            return;
+        }
+        match self.focus {
+            Focus::Editor => {
+                if self.opened.as_ref().is_some_and(|d| d.read_only) {
+                    self.status = "read-only buffer: paste ignored".into();
+                    return;
+                }
+                if let Some(doc) = self.opened.as_mut() {
+                    doc.textarea.insert_str(&text);
+                    doc.dirty = true;
+                }
+            }
+            Focus::Ai | Focus::AiPrompt => self.ai_input.insert_str(&text),
+            Focus::SearchBar => self.search_input.insert_str(&text),
+            Focus::Tree => {}
         }
     }
 
@@ -5866,6 +5998,14 @@ impl App {
             doc.last_activity = std::time::Instant::now();
         }
 
+        // Block-select mode (Ctrl+Z v): while active, PLAIN arrows extend the
+        // rectangle and c/Enter/Esc finish it. Intercept before any other editor
+        // handling so the mode owns the keys (and plain arrows don't fall through
+        // to cursor-move / the "any key clears block" reset below).
+        if self.block_select_key(&key) {
+            return Ok(false);
+        }
+
         // Read-only gate (Help subtree): allow navigation, search, copy, and
         // focus-related chords; refuse anything that would touch the buffer
         // or the store.
@@ -5974,6 +6114,15 @@ impl App {
                     .map_or(false, |d| d.search.is_some())
             {
                 self.search_advance_or_replace();
+                return Ok(false);
+            }
+            // A3 — Ctrl+G steps to the PREVIOUS match while a search is active
+            // (pairs with Ctrl+X next). Ctrl+G is terminal-safe (BEL, 0x07) and
+            // was free. In replace mode it just moves the target index back.
+            if matches!(key.code, KeyCode::Char('g') | KeyCode::Char('G'))
+                && self.opened.as_ref().map_or(false, |d| d.search.is_some())
+            {
+                self.search_retreat();
                 return Ok(false);
             }
             match key.code {
@@ -6204,6 +6353,13 @@ impl App {
             }
         }
 
+        // A4 — smart Home: plain Home → first non-blank column, then column 0.
+        // (Shift+Home keeps the textarea's select-to-line-start default.)
+        if matches!(key.code, KeyCode::Home) && key.modifiers.is_empty() {
+            self.editor_smart_home();
+            return Ok(false);
+        }
+
         // Auto-close pairs (configurable). Only plain keystrokes — Ctrl /
         // Alt / Super combinations fall through to the textarea catch-all
         // below. Each helper returns `true` when it consumed the key,
@@ -6214,8 +6370,15 @@ impl App {
         if plain_no_mods && self.cfg.editor.auto_close_pairs {
             if let KeyCode::Char(c) = key.code {
                 if let Some(close) = open_pair_for(c) {
-                    self.editor_auto_open_pair(c, close);
-                    return Ok(false);
+                    // A2 — brackets always pair; a quote pairs only when it reads
+                    // as an opening quote (not an apostrophe / mid-word / closing
+                    // quote). A non-pairing quote falls through to skip-close-over
+                    // or a plain literal insert below.
+                    let pair = !matches!(c, '\'' | '"') || self.editor_quote_pair_ok();
+                    if pair {
+                        self.editor_auto_open_pair(c, close);
+                        return Ok(false);
+                    }
                 }
                 if is_close_pair_char(c) && self.editor_try_skip_close(c) {
                     return Ok(false);
@@ -6262,6 +6425,191 @@ impl App {
             self.maybe_expand_snippet();
         }
         Ok(false)
+    }
+
+    /// A4 — `Ctrl+Z g`: open the go-to-line prompt (needs an open buffer).
+    fn open_goto_line(&mut self) {
+        if self.opened.is_none() {
+            self.status = "go to line: open a paragraph first".into();
+            return;
+        }
+        self.modal = Modal::GotoLine { input: crate::tui::input::TextInput::new() };
+        self.status = "go to line: type a number · Enter jump · Esc cancel".into();
+    }
+
+    /// A4 — handle keys while the go-to-line prompt is open. Enter parses the
+    /// 1-based line number and jumps (centred); digits/backspace edit the input.
+    /// Esc is closed by the global modal handler.
+    fn goto_line_handle_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Enter => {
+                let text = match &self.modal {
+                    Modal::GotoLine { input } => input.as_str().trim().to_string(),
+                    _ => return,
+                };
+                self.modal = Modal::None;
+                let Ok(line) = text.parse::<usize>() else {
+                    if !text.is_empty() {
+                        self.status = format!("go to line: not a number: {text}");
+                    }
+                    return;
+                };
+                let last = self
+                    .opened
+                    .as_ref()
+                    .map_or(1, |d| d.textarea.lines().len().max(1));
+                let row = line.clamp(1, last) - 1; // 1-based → 0-based, clamped
+                let _ = self.ink_editor_goto(row, 0);
+                // Centre the target like the search jump does.
+                let viewport_h = (self.layout_editor.height as usize).saturating_sub(2);
+                if let Some(doc) = self.opened.as_mut() {
+                    if viewport_h > 0 {
+                        doc.scroll_row = row.saturating_sub(viewport_h / 2);
+                    }
+                }
+                self.status = format!("line {}", row + 1);
+            }
+            KeyCode::Char(c) if c.is_ascii_digit() => {
+                if let Modal::GotoLine { input } = &mut self.modal {
+                    input.insert_char(c);
+                }
+            }
+            KeyCode::Backspace => {
+                if let Modal::GotoLine { input } = &mut self.modal {
+                    input.backspace();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// A5 — `Ctrl+Z m`: jump the cursor to the bracket matching the one at/before
+    /// it (across lines, respecting nesting), centred like the search/goto jumps.
+    fn editor_jump_matching_bracket(&mut self) {
+        let target = self.opened.as_ref().and_then(|d| {
+            let (row, col) = d.textarea.cursor();
+            matching_bracket_at(d.textarea.lines(), row, col)
+        });
+        match target {
+            Some((r, c)) => {
+                let _ = self.ink_editor_goto(r, c);
+                let viewport_h = (self.layout_editor.height as usize).saturating_sub(2);
+                if let Some(doc) = self.opened.as_mut() {
+                    if viewport_h > 0 {
+                        doc.scroll_row = r.saturating_sub(viewport_h / 2);
+                    }
+                }
+                self.status = "jumped to matching bracket".into();
+            }
+            None => self.status = "no matching bracket at the cursor".into(),
+        }
+    }
+
+    /// A4 — smart Home: first press moves to the first non-blank column; a second
+    /// press (already there) moves to column 0. Standard for indented Typst blocks.
+    fn editor_smart_home(&mut self) {
+        let Some(doc) = self.opened.as_mut() else { return };
+        let (row, col) = doc.textarea.cursor();
+        let line = doc.textarea.lines().get(row).cloned().unwrap_or_default();
+        let first_non_blank = line.chars().take_while(|c| c.is_whitespace()).count();
+        let target = if col == first_non_blank { 0 } else { first_non_blank };
+        doc.textarea.move_cursor(CursorMove::Jump(row as u16, target as u16));
+    }
+
+    /// A4 — `Ctrl+Z w`: flip soft-wrap for the session (persisted default is
+    /// `editor.wrap`). The renderer reads `cfg.editor.wrap` each frame.
+    fn toggle_soft_wrap(&mut self) {
+        self.cfg.editor.wrap = !self.cfg.editor.wrap;
+        self.status = if self.cfg.editor.wrap {
+            "soft-wrap: on".into()
+        } else {
+            "soft-wrap: off".into()
+        };
+    }
+
+    /// A4 — `Ctrl+Z t`: strip trailing whitespace from every line, as ONE
+    /// undoable edit (select whole buffer → replace with the trimmed text).
+    fn editor_strip_trailing_whitespace(&mut self) {
+        let Some(doc) = self.opened.as_mut() else {
+            self.status = "strip whitespace: open a paragraph first".into();
+            return;
+        };
+        if doc.read_only {
+            self.status = "read-only buffer: strip whitespace ignored".into();
+            return;
+        }
+        let lines = doc.textarea.lines();
+        let trimmed: Vec<&str> = lines.iter().map(|l| l.trim_end()).collect();
+        // No-op fast path: nothing to strip → don't touch the undo history.
+        if trimmed.iter().zip(lines.iter()).all(|(t, l)| t.len() == l.len()) {
+            self.status = "no trailing whitespace".into();
+            return;
+        }
+        let n_lines = lines.len();
+        let last_col = lines.last().map_or(0, |l| l.chars().count());
+        let joined = trimmed.join("\n");
+        // Select the whole buffer, then replace it in one edit (reflow's pattern).
+        doc.textarea.move_cursor(CursorMove::Jump(0, 0));
+        doc.textarea.start_selection();
+        doc.textarea
+            .move_cursor(CursorMove::Jump((n_lines.saturating_sub(1)) as u16, last_col as u16));
+        doc.textarea.insert_str(&joined);
+        doc.dirty = true;
+        self.status = "stripped trailing whitespace".into();
+    }
+
+    /// `Ctrl+Z v` — enter vertical block-select mode: anchor the rectangle at the
+    /// cursor and let PLAIN arrows extend it (no modifier, so it works where
+    /// `Alt`+arrow doesn't arrive). Copy with `c`/Enter, cancel with `Esc`.
+    fn enter_block_select(&mut self) {
+        let Some(doc) = self.opened.as_mut() else {
+            self.status = "block select: open a paragraph first".into();
+            return;
+        };
+        doc.block_anchor = Some(doc.textarea.cursor());
+        doc.block_select_mode = true;
+        self.status =
+            "block select: ←↑↓→ extend · c/Enter copy · Esc cancel".into();
+    }
+
+    /// While block-select mode is active, PLAIN arrows extend the rectangle and
+    /// `c`/Enter/Esc finish it — no modifier needed. Returns `true` when the key
+    /// was consumed by the mode (so the caller stops processing it). Any key other
+    /// than the mode keys cancels the mode.
+    fn block_select_key(&mut self, key: &KeyEvent) -> bool {
+        if !self.opened.as_ref().is_some_and(|d| d.block_select_mode) {
+            return false;
+        }
+        match key.code {
+            KeyCode::Up | KeyCode::Down | KeyCode::Left | KeyCode::Right => {
+                if let Some(doc) = self.opened.as_mut() {
+                    match key.code {
+                        KeyCode::Up => doc.textarea.move_cursor(CursorMove::Up),
+                        KeyCode::Down => doc.textarea.move_cursor(CursorMove::Down),
+                        KeyCode::Left => doc.textarea.move_cursor(CursorMove::Back),
+                        KeyCode::Right => doc.textarea.move_cursor(CursorMove::Forward),
+                        _ => {}
+                    }
+                }
+                true
+            }
+            KeyCode::Char('c') | KeyCode::Char('C') | KeyCode::Enter => {
+                self.block_copy(); // copies + clears block_anchor
+                if let Some(doc) = self.opened.as_mut() {
+                    doc.block_select_mode = false;
+                }
+                true
+            }
+            _ => {
+                // Esc or any stray key cancels the mode without editing.
+                if let Some(doc) = self.opened.as_mut() {
+                    doc.block_anchor = None;
+                    doc.block_select_mode = false;
+                }
+                self.status = "block select: cancelled".into();
+                true
+            }
+        }
     }
 
     /// Copy the current rectangular selection to the system clipboard
@@ -8624,15 +8972,18 @@ impl App {
         };
         let lines = doc.textarea.lines().to_vec();
         match SearchState::build(&pattern, replace_with.clone(), &lines) {
-            Ok(state) => {
+            Ok(mut state) => {
                 let n = state.matches.len();
+                // A3 — start from the match at/after the cursor, not the document
+                // top, so `find` moves forward from where you are.
+                state.seed_from_cursor(doc.textarea.cursor());
                 doc.search = Some(state);
                 self.modal = Modal::None;
                 if n == 0 {
                     self.status = format!("no matches for /{pattern}/");
                     return;
                 }
-                // Jump cursor to first match
+                // Jump cursor to the seeded (first-forward) match.
                 self.jump_to_current_match();
                 if replace_with.is_some() {
                     // Replace mode: do the FIRST replacement automatically so
@@ -8644,11 +8995,11 @@ impl App {
                         .and_then(|d| d.search.as_ref())
                         .map_or(0, |s| s.matches.len());
                     self.status = format!(
-                        "/{pattern}/ → replaced 1 · {remaining} left · Ctrl+G next · Ctrl+R replace all · Esc clear"
+                        "/{pattern}/ → replaced 1 · {remaining} left · Ctrl+X next · Ctrl+R replace all · Esc clear"
                     );
                 } else {
                     self.status = format!(
-                        "/{pattern}/ → {n} match(es) · Ctrl+G next · Ctrl+R add replacement · Esc clear"
+                        "/{pattern}/ → {n} match(es) · Ctrl+X next · Ctrl+G prev · Ctrl+R add replacement · Esc clear"
                     );
                 }
             }
@@ -8694,6 +9045,24 @@ impl App {
                 let half = viewport_h / 2;
                 doc.scroll_row = row.saturating_sub(half);
             }
+        }
+    }
+
+    /// A3 — step to the previous match (Ctrl+G), the mirror of `Ctrl+X` next.
+    fn search_retreat(&mut self) {
+        if let Some(doc) = self.opened.as_mut() {
+            if let Some(state) = doc.search.as_mut() {
+                state.retreat();
+            }
+        }
+        self.jump_to_current_match();
+        let (idx, n) = self
+            .opened
+            .as_ref()
+            .and_then(|d| d.search.as_ref())
+            .map_or((0, 0), |s| (s.current + 1, s.matches.len()));
+        if n > 0 {
+            self.status = format!("match {idx}/{n} · Ctrl+X next · Ctrl+G prev · Esc clear");
         }
     }
 
@@ -12663,6 +13032,11 @@ impl App {
                 }
                 self.status = "✦ haiku written to Output".into();
             }
+            A::EnterBlockSelect => self.enter_block_select(),
+            A::GotoLine => self.open_goto_line(),
+            A::ToggleSoftWrap => self.toggle_soft_wrap(),
+            A::StripTrailingWhitespace => self.editor_strip_trailing_whitespace(),
+            A::JumpMatchingBracket => self.editor_jump_matching_bracket(),
             A::ToggleRightPaneFullscreen => self.toggle_right_pane_fullscreen(),
             A::TtsReadParagraph => self.tts_read_paragraph(),
             A::TtsSaveAsAudio => self.tts_open_save_as_audio_picker(),
@@ -13903,22 +14277,24 @@ impl App {
     }
 
     fn story_bible_handle_key(&mut self, key: KeyEvent) -> bool {
-        let (n, cursor, jump) = {
+        let (nav, jump) = {
             let Modal::StoryBible { rows, cursor } = &self.modal else {
                 return false;
             };
-            (rows.len(), *cursor, rows.get(*cursor).and_then(|r| r.jump))
+            let texts: Vec<String> = rows.iter().map(|r| r.text.clone()).collect();
+            (
+                Self::dashboard_nav(*cursor, &texts, key.code),
+                rows.get(*cursor).and_then(|r| r.jump),
+            )
         };
+        if let Some(nc) = nav {
+            self.set_story_bible_cursor(nc);
+            return true;
+        }
         match key.code {
             KeyCode::Esc => {
                 self.modal = Modal::None;
                 self.status = "story bible: closed".into();
-            }
-            KeyCode::Up => self.set_story_bible_cursor(cursor.saturating_sub(1)),
-            KeyCode::Down => {
-                if n > 0 {
-                    self.set_story_bible_cursor((cursor + 1).min(n - 1));
-                }
             }
             KeyCode::Enter => match jump {
                 Some(pid) => {
@@ -13954,26 +14330,23 @@ impl App {
     }
 
     fn conlang_hub_handle_key(&mut self, key: KeyEvent) -> bool {
-        let n = match &self.modal {
-            Modal::ConlangHub { rows, .. } => rows.len(),
+        let nav = match &self.modal {
+            Modal::ConlangHub { rows, cursor } => {
+                let texts: Vec<String> = rows.iter().map(|r| r.text.clone()).collect();
+                Self::dashboard_nav(*cursor, &texts, key.code)
+            }
             _ => return false,
         };
+        if let Some(nc) = nav {
+            if let Modal::ConlangHub { cursor, .. } = &mut self.modal {
+                *cursor = nc;
+            }
+            return true;
+        }
         match key.code {
             KeyCode::Esc => {
                 self.modal = Modal::None;
                 self.status = "conlang hub: closed".into();
-            }
-            KeyCode::Up => {
-                if let Modal::ConlangHub { cursor, .. } = &mut self.modal {
-                    *cursor = cursor.saturating_sub(1);
-                }
-            }
-            KeyCode::Down => {
-                if let Modal::ConlangHub { cursor, .. } = &mut self.modal {
-                    if n > 0 {
-                        *cursor = (*cursor + 1).min(n - 1);
-                    }
-                }
             }
             _ => {}
         }
@@ -14518,26 +14891,22 @@ impl App {
     }
 
     fn dialogue_fingerprint_handle_key(&mut self, key: KeyEvent) -> bool {
-        let n = match &self.modal {
-            Modal::DialogueFingerprint { rows, .. } => rows.len(),
+        let nav = match &self.modal {
+            Modal::DialogueFingerprint { rows, cursor, .. } => {
+                Self::dashboard_nav(*cursor, rows, key.code)
+            }
             _ => return false,
         };
+        if let Some(nc) = nav {
+            if let Modal::DialogueFingerprint { cursor, .. } = &mut self.modal {
+                *cursor = nc;
+            }
+            return true;
+        }
         match key.code {
             KeyCode::Esc => {
                 self.modal = Modal::None;
                 self.status = "dialogue fingerprint: closed".into();
-            }
-            KeyCode::Up => {
-                if let Modal::DialogueFingerprint { cursor, .. } = &mut self.modal {
-                    *cursor = cursor.saturating_sub(1);
-                }
-            }
-            KeyCode::Down => {
-                if let Modal::DialogueFingerprint { cursor, .. } = &mut self.modal {
-                    if n > 0 {
-                        *cursor = (*cursor + 1).min(n - 1);
-                    }
-                }
             }
             _ => {}
         }
@@ -14673,26 +15042,20 @@ impl App {
     }
 
     fn character_arc_handle_key(&mut self, key: KeyEvent) -> bool {
-        let n = match &self.modal {
-            Modal::CharacterArc { rows, .. } => rows.len(),
+        let nav = match &self.modal {
+            Modal::CharacterArc { rows, cursor, .. } => Self::dashboard_nav(*cursor, rows, key.code),
             _ => return false,
         };
+        if let Some(nc) = nav {
+            if let Modal::CharacterArc { cursor, .. } = &mut self.modal {
+                *cursor = nc;
+            }
+            return true;
+        }
         match key.code {
             KeyCode::Esc => {
                 self.modal = Modal::None;
                 self.status = "character arc: closed".into();
-            }
-            KeyCode::Up => {
-                if let Modal::CharacterArc { cursor, .. } = &mut self.modal {
-                    *cursor = cursor.saturating_sub(1);
-                }
-            }
-            KeyCode::Down => {
-                if let Modal::CharacterArc { cursor, .. } = &mut self.modal {
-                    if n > 0 {
-                        *cursor = (*cursor + 1).min(n - 1);
-                    }
-                }
             }
             _ => {}
         }
@@ -14738,26 +15101,22 @@ impl App {
     }
 
     fn graph_neighbourhood_handle_key(&mut self, key: KeyEvent) -> bool {
-        let n = match &self.modal {
-            Modal::GraphNeighbourhood { rows, .. } => rows.len(),
+        let nav = match &self.modal {
+            Modal::GraphNeighbourhood { rows, cursor, .. } => {
+                Self::dashboard_nav(*cursor, rows, key.code)
+            }
             _ => return false,
         };
+        if let Some(nc) = nav {
+            if let Modal::GraphNeighbourhood { cursor, .. } = &mut self.modal {
+                *cursor = nc;
+            }
+            return true;
+        }
         match key.code {
             KeyCode::Esc => {
                 self.modal = Modal::None;
                 self.status = "graph neighbourhood: closed".into();
-            }
-            KeyCode::Up => {
-                if let Modal::GraphNeighbourhood { cursor, .. } = &mut self.modal {
-                    *cursor = cursor.saturating_sub(1);
-                }
-            }
-            KeyCode::Down => {
-                if let Modal::GraphNeighbourhood { cursor, .. } = &mut self.modal {
-                    if n > 0 {
-                        *cursor = (*cursor + 1).min(n - 1);
-                    }
-                }
             }
             _ => {}
         }
@@ -15181,8 +15540,8 @@ impl App {
     }
 
     fn world_overview_handle_key(&mut self, key: KeyEvent) -> bool {
-        let n = match &self.modal {
-            Modal::WorldOverview { rows, .. } => rows.len(),
+        let nav = match &self.modal {
+            Modal::WorldOverview { rows, cursor } => Self::dashboard_nav(*cursor, rows, key.code),
             _ => return false,
         };
         // A pending F scope sub-chord intercepts the next key.
@@ -15197,22 +15556,16 @@ impl App {
             }
             return true;
         }
+        if let Some(nc) = nav {
+            if let Modal::WorldOverview { cursor, .. } = &mut self.modal {
+                *cursor = nc;
+            }
+            return true;
+        }
         match key.code {
             KeyCode::Esc => {
                 self.modal = Modal::None;
                 self.status = "World overview: closed".into();
-            }
-            KeyCode::Up => {
-                if let Modal::WorldOverview { cursor, .. } = &mut self.modal {
-                    *cursor = cursor.saturating_sub(1);
-                }
-            }
-            KeyCode::Down => {
-                if let Modal::WorldOverview { cursor, .. } = &mut self.modal {
-                    if n > 0 {
-                        *cursor = (*cursor + 1).min(n - 1);
-                    }
-                }
             }
             // C: compile the world (materialize all five layers + seed proposals).
             KeyCode::Char('c') | KeyCode::Char('C') => self.run_world_compile(),
@@ -17273,26 +17626,20 @@ impl App {
     }
 
     fn style_report_handle_key(&mut self, key: KeyEvent) -> bool {
-        let n = match &self.modal {
-            Modal::StyleReport { rows, .. } => rows.len(),
+        let nav = match &self.modal {
+            Modal::StyleReport { rows, cursor, .. } => Self::dashboard_nav(*cursor, rows, key.code),
             _ => return false,
         };
+        if let Some(nc) = nav {
+            if let Modal::StyleReport { cursor, .. } = &mut self.modal {
+                *cursor = nc;
+            }
+            return true;
+        }
         match key.code {
             KeyCode::Esc => {
                 self.modal = Modal::None;
                 self.status = "voice report: closed".into();
-            }
-            KeyCode::Up => {
-                if let Modal::StyleReport { cursor, .. } = &mut self.modal {
-                    *cursor = cursor.saturating_sub(1);
-                }
-            }
-            KeyCode::Down => {
-                if let Modal::StyleReport { cursor, .. } = &mut self.modal {
-                    if n > 0 {
-                        *cursor = (*cursor + 1).min(n - 1);
-                    }
-                }
             }
             _ => {}
         }
@@ -17434,26 +17781,22 @@ impl App {
     }
 
     fn inner_socrates_overview_handle_key(&mut self, key: KeyEvent) -> bool {
-        let n = match &self.modal {
-            Modal::InnerSocratesOverview { rows, .. } => rows.len(),
+        let nav = match &self.modal {
+            Modal::InnerSocratesOverview { rows, cursor, .. } => {
+                Self::dashboard_nav(*cursor, rows, key.code)
+            }
             _ => return false,
         };
+        if let Some(nc) = nav {
+            if let Modal::InnerSocratesOverview { cursor, .. } = &mut self.modal {
+                *cursor = nc;
+            }
+            return true;
+        }
         match key.code {
             KeyCode::Esc => {
                 self.modal = Modal::None;
                 self.status = "Inner Socrates: closed".into();
-            }
-            KeyCode::Up => {
-                if let Modal::InnerSocratesOverview { cursor, .. } = &mut self.modal {
-                    *cursor = cursor.saturating_sub(1);
-                }
-            }
-            KeyCode::Down => {
-                if let Modal::InnerSocratesOverview { cursor, .. } = &mut self.modal {
-                    if n > 0 {
-                        *cursor = (*cursor + 1).min(n - 1);
-                    }
-                }
             }
             KeyCode::Char('f') | KeyCode::Char('F') => self.socratic_check_open_paragraph(),
             KeyCode::Char('e') | KeyCode::Char('E') => self.inner_socrates_engage_open_paragraph(),
@@ -27367,6 +27710,10 @@ impl App {
             self.submission_gen_handle_key(key);
             return Ok(false);
         }
+        if matches!(self.modal, Modal::GotoLine { .. }) {
+            self.goto_line_handle_key(key);
+            return Ok(false);
+        }
         if matches!(self.modal, Modal::PlanOutline { .. }) {
             self.plan_outline_handle_key(key);
             return Ok(false);
@@ -32257,6 +32604,34 @@ pub(super) fn format_progress_gauge(current: i64, target: i64) -> (String, i64, 
 }
 
 #[cfg(test)]
+mod tests_keyboard_notice {
+    use super::{keyboard_protocol_notice, terminal_label};
+
+    #[test]
+    fn terminal_label_names_known_emulators() {
+        assert_eq!(terminal_label(Some("Apple_Terminal"), Some("xterm-256color")), "Terminal.app");
+        assert_eq!(terminal_label(Some("iTerm.app"), None), "iTerm2");
+        assert_eq!(terminal_label(Some("WezTerm"), None), "WezTerm"); // passthrough
+        // Falls back to $TERM, then a generic label.
+        assert_eq!(terminal_label(None, Some("xterm-kitty")), "xterm-kitty");
+        assert_eq!(terminal_label(None, None), "this terminal");
+        assert_eq!(terminal_label(Some("  "), Some("  ")), "this terminal"); // blank → fallback
+    }
+
+    #[test]
+    fn notice_only_when_unsupported_and_names_the_terminal() {
+        // Supported → no notice at all.
+        assert!(keyboard_protocol_notice(true, Some("Apple_Terminal"), None).is_none());
+        // Unsupported → a notice naming the terminal + the collision + the fix.
+        let n = keyboard_protocol_notice(false, Some("Apple_Terminal"), None).expect("a notice");
+        assert!(n.contains("Terminal.app"), "{n}");
+        assert!(n.contains("Ctrl+I") && n.contains("Tab"), "names the collision: {n}");
+        assert!(n.contains("Alt-modified"), "names the Alt casualty: {n}");
+        assert!(n.contains("kitty") && n.contains("iTerm2 ≥ 3.5"), "names the fix: {n}");
+    }
+}
+
+#[cfg(test)]
 mod tests_dashboard_nav {
     use super::App;
     use crossterm::event::KeyCode;
@@ -32760,6 +33135,79 @@ fn open_pair_for(c: char) -> Option<char> {
 
 fn is_close_pair_char(c: char) -> bool {
     matches!(c, ')' | ']' | '}' | '"' | '\'')
+}
+
+/// A2 — whether a typed quote (`'` / `"`) should auto-pair. Only when it reads as
+/// an OPENING quote: not right after a word char (an apostrophe or closing quote —
+/// `don't`, `dogs'`) and not right before one (inserting a quote inside a word).
+/// Brackets are always paired and never consult this. Pure.
+fn should_pair_quote(before: Option<char>, after: Option<char>) -> bool {
+    let is_word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric());
+    !is_word(before) && !is_word(after)
+}
+
+fn is_bracket(c: char) -> bool {
+    matches!(c, '(' | ')' | '[' | ']' | '{' | '}')
+}
+
+fn bracket_partner(c: char) -> char {
+    match c {
+        '(' => ')',
+        ')' => '(',
+        '[' => ']',
+        ']' => '[',
+        '{' => '}',
+        '}' => '{',
+        _ => c,
+    }
+}
+
+/// A5 — the `(row, col)` of the bracket matching the one AT the cursor (or just
+/// before it), scanning across lines with a depth counter that respects nesting.
+/// `None` when the cursor isn't on a bracket or the bracket is unbalanced. Char
+/// (not byte) coordinates, matching the editor's cursor. Pure.
+pub(crate) fn matching_bracket_at(
+    lines: &[String],
+    row: usize,
+    col: usize,
+) -> Option<(usize, usize)> {
+    let grid: Vec<Vec<char>> = lines.iter().map(|l| l.chars().collect()).collect();
+    let cur = grid.get(row)?;
+    // Prefer the bracket AT the cursor; else the one just to its left.
+    let (brow, bcol, bracket) = if cur.get(col).is_some_and(|c| is_bracket(*c)) {
+        (row, col, cur[col])
+    } else if col > 0 && cur.get(col - 1).is_some_and(|c| is_bracket(*c)) {
+        (row, col - 1, cur[col - 1])
+    } else {
+        return None;
+    };
+    let partner = bracket_partner(bracket);
+    let forward = matches!(bracket, '(' | '[' | '{');
+    let flat: Vec<(usize, usize, char)> = grid
+        .iter()
+        .enumerate()
+        .flat_map(|(r, line)| line.iter().copied().enumerate().map(move |(c, ch)| (r, c, ch)))
+        .collect();
+    let start = flat.iter().position(|&(r, c, _)| r == brow && c == bcol)?;
+    let mut depth = 1i32;
+    let mut scan = |it: &mut dyn Iterator<Item = &(usize, usize, char)>| -> Option<(usize, usize)> {
+        for &(r, c, ch) in it {
+            if ch == bracket {
+                depth += 1;
+            } else if ch == partner {
+                depth -= 1;
+                if depth == 0 {
+                    return Some((r, c));
+                }
+            }
+        }
+        None
+    };
+    if forward {
+        scan(&mut flat[start + 1..].iter())
+    } else {
+        scan(&mut flat[..start].iter().rev())
+    }
 }
 
 /// Case-insensitive substring filter over the baked-in typst function

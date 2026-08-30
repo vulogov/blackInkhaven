@@ -27,46 +27,48 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 3.6.0 — Faithful Exports, a Trustworthy Worklist
+## Latest release · 3.7.0 — The TUI Pass: Keys, Editing, Consistency
 
-The current release is **3.6.0**, a **widen-and-polish** release — no new
-capability, entirely fixes and finish, from a five-agent source audit. Four
-tracks (deterministic, no new runtime crates):
+The current release is **3.7.0**, dedicated to the **terminal experience itself**
+— no new reader or axis, from a five-agent TUI/editor audit. Three tracks
+(deterministic, no new runtime crates):
 
-- **Export / import fidelity.** The headline was a silent data-loss bug:
-  authored **`*bold*`/`_italic_` and `#footnote[…]`** were flattened by the
-  text-to-speech cleaner *before* the `inkhaven manuscript`/`docx` builders ran,
-  so they rendered plain — now both survive (the `.docx` via a real footnotes
-  part). Plus: **EPUB footnote ids are unique per chapter** (were duplicate
-  `fn-1`, invalid XHTML); an imported inline `<img>` **no longer comments out**
-  the rest of its paragraph; third-party EPUB **blockquotes → `#quote[…]`** and
-  **tables → `#table(…)`** (were flattened/garbled); the `.docx` title page stays
-  literal (a contact email's `_` no longer italicises); and **markdown** stops
-  mangling stray `*` (`3 * 4 * 5`).
-- **The reader worklist, made trustworthy.** Dedup now keeps **distinct
-  occurrences** (was collapsing same-word findings in a chapter); Inner-Stylist
-  **Praise** no longer sits in the worklist (so "✓ reads clean" can fire);
-  **book-level findings** don't false-anchor to chapter 1; **voice-drift** is
-  disambiguated from semantic `drift`; and a dead `voice` Rewrite category is gone.
-- **Scansion that works in Spanish and French.** **Spanish** written accents
-  (á/é/í/ó/ú) now drive stress, so oxytones like `corazón`/`está` scan on the
-  right syllable (metre *and* rhyme); **French** rhyme gender is read from the
-  mute-final-`e` ending, so feminine rhymes (`pensée`/`table`) are no longer
-  misread as masculine.
-- **Ergonomics & symmetry.** `Esc` returns to the picker in Thread-Weave and
-  leaves filter-mode in the pickers; the seven reader dashboards gain
-  **PgUp/PgDn/Home/End** navigation with blank-row skipping; **`bonds --ledger`**
-  mirrors `knowledge --ledger`; **`ink.world.findings`** matches its Bund
-  siblings; two never-produced `EdgeKind` variants are removed; and the scripting
-  policy guard now polices every registered word, not just the `ink.`-prefixed.
+- **Keys that actually arrive.** Inkhaven now *checks* whether the terminal
+  supports the kitty keyboard protocol (`supports_keyboard_enhancement`) and, when
+  it doesn't (macOS **Terminal.app**), prints a one-time startup notice naming the
+  terminal + the affected chords (`Ctrl+I`≡`Tab`, F-keys) with the fix
+  (kitty / WezTerm / Ghostty / iTerm2 ≥ 3.5). Vertical **block selection moved to
+  `Ctrl+Z v`** + PLAIN arrows — the old `Alt`+arrows failed on many terminals *and*
+  collided with back/forward, so it was broken even in kitty. The prompts/config
+  editors + worldbuilder are brought to parity (drop unused mouse capture, fix a
+  panic mouse-leak, request the protocol).
+- **Input & editing correctness.** **Bracketed paste** — a multi-line terminal
+  paste no longer mangles auto-pairs or submits at the first newline in the AI
+  prompt / search. Quotes auto-pair only as **opening** quotes (`don't` stays
+  `don't`). **Find searches from the cursor** (not the document top), with
+  `Ctrl+G` for the previous match. Editor niceties on `Ctrl+Z`: **g** go-to-line,
+  **w** wrap toggle, **t** strip trailing whitespace, **m** jump to matching
+  bracket — plus **smart Home**.
+- **Consistency & discoverability.** The shared dashboard navigation
+  (`PgUp/PgDn/Home/End` + blank-row skip) now reaches **all 15** dashboards;
+  **honest footers** advertise the keys + show `(a–b of N)`; and the quick
+  reference's F-key **drift** is fixed and guarded.
 
-Deferred as follow-ups: authored `#table(…)` *export* to EPUB, and alias
-resolution (gated on its architectural decision). No new config; no new runtime
-crates.
+Deferred as follow-ups: the always-on matching-bracket *highlight* (the jump
+ships), and the rendering / layout tracks (idle-redraw dirty flag, wide-char
+columns, theme). No new config; no new runtime crates.
 
-Read the full notes: [`Documentation/RELEASE_NOTES/3.6.0.md`](Documentation/RELEASE_NOTES/3.6.0.md).
+Read the full notes: [`Documentation/RELEASE_NOTES/3.7.0.md`](Documentation/RELEASE_NOTES/3.7.0.md).
 
 ### Recent releases
+
+- **3.6.0 — Faithful Exports, a Trustworthy Worklist.** A widen-and-polish fix
+  release from a five-agent audit: authored emphasis + footnotes survive into the
+  `manuscript`/`docx` exporters, EPUB footnote-id uniqueness, third-party EPUB
+  blockquote/table import, dedup keeps distinct occurrences, book-level findings
+  don't false-anchor, Spanish accent stress + French rhyme gender, `bonds --ledger`
+  + `ink.world.findings`.
+  [notes](Documentation/RELEASE_NOTES/3.6.0.md)
 
 - **3.5.0 — Finished Imports, One Reader Hub, a Deeper KEN.** Scrivener non-ASCII
   `.rtf` keeps its markup, the EPUB-import footnote round-trip works, and the
@@ -107,14 +109,14 @@ lines (zero Critical), with every surviving finding fixed and zero breaking
 changes. The 3.0.x line (through 3.0.9) then hardened the Bund scripting coverage
 and the export/import/keymap/assembly subsystems through successive targeted
 audits, each leaving a build-time guard behind. **3.1.0 lifted the feature freeze**
-(BONDS); **3.2.0** (ENSEMBLE), **3.3.0** (multilingual parity), **3.4.0** (export fidelity), **3.5.0** (imports + reader hub), and **3.6.0** (fidelity + worklist fixes) continue
+(BONDS); **3.2.0** (ENSEMBLE), **3.3.0** (multilingual parity), **3.4.0** (export fidelity), **3.5.0** (imports + reader hub), **3.6.0** (fidelity + worklist fixes), and **3.7.0** (the TUI pass) continue
 on that hardened surface. Full 3.0.0 notes:
 [`Documentation/RELEASE_NOTES/3.0.0.md`](Documentation/RELEASE_NOTES/3.0.0.md).
 
 ### Dependencies & compatibility
 
 No new dependencies, no breaking changes. Existing projects open unchanged. Compiles
-warning-free. Test suite → 2998.
+warning-free. Test suite → 3009.
 
 Every prior release lives under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
@@ -312,14 +314,14 @@ cargo install inkhaven
 ```
 
 Inkhaven is published on crates.io — every release tag pushes a
-new version (latest: 3.6.0).  The first build takes ~10 minutes on
+new version (latest: 3.7.0).  The first build takes ~10 minutes on
 a modern laptop because of DuckDB + fastembed + ONNX-runtime
 compilation; `cargo binstall` above is the fast path.
 
 ### 4. `cargo install --git` (compile from a specific tag)
 
 ```bash
-cargo install --git https://github.com/vulogov/blackInkhaven --tag v3.6.0
+cargo install --git https://github.com/vulogov/blackInkhaven --tag v3.7.0
 ```
 
 Useful when you want a specific tag, a pre-release branch, or a

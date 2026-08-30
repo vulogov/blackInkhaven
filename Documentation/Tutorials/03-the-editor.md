@@ -34,7 +34,8 @@ Editor — Opening Scene · L4 C18
 | --- | ------ |
 | arrows | Move cursor one cell |
 | `Ctrl+Left` / `Ctrl+Right` | Move one word |
-| `Home` / `End` | Start / end of line |
+| `Home` | Smart Home — first non-blank column, then column 0 on a second press |
+| `End` | End of line |
 | `Ctrl+Home` / `Ctrl+End` | Top / bottom of buffer |
 | `PageUp` / `PageDown` | One viewport |
 | `Shift+arrows` | Extend linear selection |
@@ -57,15 +58,22 @@ copy / paste operate on this selection.
 
 ### Vertical block selection
 
-For multi-line column edits. The flow:
+For multi-line column edits. The terminal-independent way in is
+**`Ctrl+Z v`**:
 
-1. `Alt+arrow` enters block-select mode and starts an anchor at the
-   current cursor. The selection forms a rectangle from the anchor
-   to the cursor.
-2. Keep moving with `Alt+arrows` to grow the rectangle.
-3. `Alt+C` copies the rectangle to the system clipboard as a
-   multi-line string (one row per line). Anchor cleared.
-4. `Esc` cancels without copying.
+1. `Ctrl+Z v` enters block-select mode and anchors at the current
+   cursor. The selection forms a rectangle from the anchor to the
+   cursor.
+2. Extend it with **plain arrows** (no modifier) — they arrive on
+   every terminal, macOS Terminal.app included.
+3. `c` or `Enter` copies the rectangle to the system clipboard as a
+   multi-line string (one row per line) and exits the mode.
+4. `Esc` (or any other key) cancels without copying.
+
+The older `Alt`+arrows path still works *where the terminal delivers
+the `Alt` modifier* — grow with `Alt+arrows`, copy with `Alt+C` — but
+many terminals drop or re-encode `Alt`+arrow, and `Alt+Left`/`Alt+Right`
+also collide with back/forward navigation, so prefer `Ctrl+Z v`.
 
 Rectangular **paste** is not yet supported in this release — block
 mode is copy-only.
@@ -86,6 +94,13 @@ gracefully if no clipboard is available (e.g. headless SSH session)
 (`Ctrl+V` would conflict with terminal paste bindings on many setups
 — `Ctrl+P` is the explicit Inkhaven paste.)
 
+A paste made with the *terminal's own* gesture (`Cmd`/`Ctrl+V`,
+middle-click) is handled as a **bracketed paste**: the text arrives
+as one bulk insert rather than being replayed key-by-key. So a
+multi-line paste never trips auto-close pairs or a snippet expansion,
+and never submits at the first newline when pasted into the AI prompt
+or Search bar — the whole block lands, and you press Enter yourself.
+
 ## Edits
 
 | Key | Action |
@@ -97,8 +112,11 @@ gracefully if no clipboard is available (e.g. headless SSH session)
 | `Ctrl+W` | Delete from cursor to start of line |
 | `Ctrl+Backspace` | Delete previous word |
 
-`Ctrl+Z` is **intentionally unbound** (it conflicts with the shell's
-job-control SIGTSTP on many setups). Use `Ctrl+U` for undo.
+Undo is **`Ctrl+U`**, not the usual `Ctrl+Z` — bare `Ctrl+Z`
+conflicts with the shell's job-control SIGTSTP on many setups, so
+Inkhaven uses it as the **Bund / scripting prefix** instead (e.g.
+`Ctrl+Z v` for block-select, `Ctrl+Z g` go-to-line). Reach for
+`Ctrl+U` to undo, `Ctrl+Y` to redo.
 
 ## Save
 
@@ -580,9 +598,13 @@ init cost on every keystroke.
 
 Type a pattern (Rust regex syntax — `(?i)` for case-insensitive,
 `(?s)` for dotall, `\bword\b` for word boundaries), press Enter.
-Every match in the buffer is painted; the cursor jumps to the first.
+Every match in the buffer is painted; the cursor jumps to the first
+match **at or after the current cursor** (not the top of the
+document), wrapping if the cursor is already past the last one.
 
 - `Ctrl+X` jumps to the next match (wraps at end).
+- `Ctrl+G` jumps to the **previous** match (wraps) — the mirror of
+  `Ctrl+X`.
 - `Esc` clears the search overlay (back to plain editing).
 
 For find-and-replace, press `Ctrl+R` instead:

@@ -108,10 +108,10 @@ fn global_entries() -> Vec<Entry> {
         entry("Ctrl+B $", "AI cost dashboard — today's LLM calls vs daily caps"),
         entry("Ctrl+V g  ·  e", "Writing progress — today/streak/best/pace; press e to edit goals → inkhaven.hjson"),
         entry("Ctrl+B H  ·  ? (tree)", "This quick reference"),
-        entry("F1", "Help-manual question (RAG over the Help book)"),
-        entry("F7", "Grammar check the open paragraph (→ AI pane)"),
-        entry("F9", "Cycle AI scope: None→Sel→Para→Sub→Chap→Book→Facts→None"),
-        entry("F10", "Toggle inference: Local↔Full (Help locked to Local)"),
+        // C3 — function keys are registry-bound Actions; list them from the live
+        // keymap (the "F-keys + top-level" section below) rather than hand-typing
+        // an incomplete subset here that drifts as bindings change.
+        entry("Fn keys", "Function-key actions (F1–F12) — see the “F-keys + top-level (live)” section below"),
         entry("Esc", "Close overlay / cancel"),
     ]
 }
@@ -178,8 +178,10 @@ fn editor_entries() -> Vec<Entry> {
         entry("Ctrl+R", "Open Replace · or replace all (while in replace mode)"),
         blank(),
         header("─ Block selection ─"),
-        entry("Alt+arrows", "Extend rectangular selection"),
-        entry("Alt+C", "Copy rectangular block"),
+        entry("Ctrl+Z v", "Enter block-select mode (then plain arrows extend)"),
+        entry("  arrows", "Extend the rectangle (in block-select mode)"),
+        entry("  c / Enter", "Copy the block + exit · Esc cancels"),
+        entry("Alt+arrows", "Extend rectangle (only where Alt+arrow is delivered)"),
         blank(),
         header("─ Files & snapshots ─"),
         entry("F3", "Load file → replace buffer (Ctrl+B F also toggles split)"),
@@ -311,5 +313,30 @@ mod tests {
             });
             assert!(listed, "command palette listed in quickref for {focus:?}");
         }
+    }
+
+    #[test]
+    fn global_section_has_no_hand_typed_fkey_rows() {
+        // C3 — function keys are registry-bound Actions listed by the live
+        // section; the Global static section must NOT hand-type an incomplete,
+        // drift-prone subset (F8 was missing while F1/F7/F9/F10 duplicated live).
+        let is_fkey_row = |key: &str| {
+            let mut cs = key.chars();
+            cs.next() == Some('F') && cs.next().is_some_and(|c| c.is_ascii_digit())
+        };
+        for e in global_entries() {
+            assert!(
+                !is_fkey_row(&e.key),
+                "Global static section must not hand-type F-key row `{}` — use the live section",
+                e.key
+            );
+        }
+        // F8 (DiagnosticsList) is a real bound top-level Action, so the live
+        // section surfaces it (Editor focus).
+        let editor = entries_for(Focus::Editor);
+        assert!(
+            editor.iter().any(|e| e.desc.to_lowercase().contains("diagnostic")),
+            "F8 diagnostics should appear via the live keymap section"
+        );
     }
 }
