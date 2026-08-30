@@ -14277,22 +14277,24 @@ impl App {
     }
 
     fn story_bible_handle_key(&mut self, key: KeyEvent) -> bool {
-        let (n, cursor, jump) = {
+        let (nav, jump) = {
             let Modal::StoryBible { rows, cursor } = &self.modal else {
                 return false;
             };
-            (rows.len(), *cursor, rows.get(*cursor).and_then(|r| r.jump))
+            let texts: Vec<String> = rows.iter().map(|r| r.text.clone()).collect();
+            (
+                Self::dashboard_nav(*cursor, &texts, key.code),
+                rows.get(*cursor).and_then(|r| r.jump),
+            )
         };
+        if let Some(nc) = nav {
+            self.set_story_bible_cursor(nc);
+            return true;
+        }
         match key.code {
             KeyCode::Esc => {
                 self.modal = Modal::None;
                 self.status = "story bible: closed".into();
-            }
-            KeyCode::Up => self.set_story_bible_cursor(cursor.saturating_sub(1)),
-            KeyCode::Down => {
-                if n > 0 {
-                    self.set_story_bible_cursor((cursor + 1).min(n - 1));
-                }
             }
             KeyCode::Enter => match jump {
                 Some(pid) => {
@@ -14328,26 +14330,23 @@ impl App {
     }
 
     fn conlang_hub_handle_key(&mut self, key: KeyEvent) -> bool {
-        let n = match &self.modal {
-            Modal::ConlangHub { rows, .. } => rows.len(),
+        let nav = match &self.modal {
+            Modal::ConlangHub { rows, cursor } => {
+                let texts: Vec<String> = rows.iter().map(|r| r.text.clone()).collect();
+                Self::dashboard_nav(*cursor, &texts, key.code)
+            }
             _ => return false,
         };
+        if let Some(nc) = nav {
+            if let Modal::ConlangHub { cursor, .. } = &mut self.modal {
+                *cursor = nc;
+            }
+            return true;
+        }
         match key.code {
             KeyCode::Esc => {
                 self.modal = Modal::None;
                 self.status = "conlang hub: closed".into();
-            }
-            KeyCode::Up => {
-                if let Modal::ConlangHub { cursor, .. } = &mut self.modal {
-                    *cursor = cursor.saturating_sub(1);
-                }
-            }
-            KeyCode::Down => {
-                if let Modal::ConlangHub { cursor, .. } = &mut self.modal {
-                    if n > 0 {
-                        *cursor = (*cursor + 1).min(n - 1);
-                    }
-                }
             }
             _ => {}
         }
@@ -14892,26 +14891,22 @@ impl App {
     }
 
     fn dialogue_fingerprint_handle_key(&mut self, key: KeyEvent) -> bool {
-        let n = match &self.modal {
-            Modal::DialogueFingerprint { rows, .. } => rows.len(),
+        let nav = match &self.modal {
+            Modal::DialogueFingerprint { rows, cursor, .. } => {
+                Self::dashboard_nav(*cursor, rows, key.code)
+            }
             _ => return false,
         };
+        if let Some(nc) = nav {
+            if let Modal::DialogueFingerprint { cursor, .. } = &mut self.modal {
+                *cursor = nc;
+            }
+            return true;
+        }
         match key.code {
             KeyCode::Esc => {
                 self.modal = Modal::None;
                 self.status = "dialogue fingerprint: closed".into();
-            }
-            KeyCode::Up => {
-                if let Modal::DialogueFingerprint { cursor, .. } = &mut self.modal {
-                    *cursor = cursor.saturating_sub(1);
-                }
-            }
-            KeyCode::Down => {
-                if let Modal::DialogueFingerprint { cursor, .. } = &mut self.modal {
-                    if n > 0 {
-                        *cursor = (*cursor + 1).min(n - 1);
-                    }
-                }
             }
             _ => {}
         }
@@ -15047,26 +15042,20 @@ impl App {
     }
 
     fn character_arc_handle_key(&mut self, key: KeyEvent) -> bool {
-        let n = match &self.modal {
-            Modal::CharacterArc { rows, .. } => rows.len(),
+        let nav = match &self.modal {
+            Modal::CharacterArc { rows, cursor, .. } => Self::dashboard_nav(*cursor, rows, key.code),
             _ => return false,
         };
+        if let Some(nc) = nav {
+            if let Modal::CharacterArc { cursor, .. } = &mut self.modal {
+                *cursor = nc;
+            }
+            return true;
+        }
         match key.code {
             KeyCode::Esc => {
                 self.modal = Modal::None;
                 self.status = "character arc: closed".into();
-            }
-            KeyCode::Up => {
-                if let Modal::CharacterArc { cursor, .. } = &mut self.modal {
-                    *cursor = cursor.saturating_sub(1);
-                }
-            }
-            KeyCode::Down => {
-                if let Modal::CharacterArc { cursor, .. } = &mut self.modal {
-                    if n > 0 {
-                        *cursor = (*cursor + 1).min(n - 1);
-                    }
-                }
             }
             _ => {}
         }
@@ -15112,26 +15101,22 @@ impl App {
     }
 
     fn graph_neighbourhood_handle_key(&mut self, key: KeyEvent) -> bool {
-        let n = match &self.modal {
-            Modal::GraphNeighbourhood { rows, .. } => rows.len(),
+        let nav = match &self.modal {
+            Modal::GraphNeighbourhood { rows, cursor, .. } => {
+                Self::dashboard_nav(*cursor, rows, key.code)
+            }
             _ => return false,
         };
+        if let Some(nc) = nav {
+            if let Modal::GraphNeighbourhood { cursor, .. } = &mut self.modal {
+                *cursor = nc;
+            }
+            return true;
+        }
         match key.code {
             KeyCode::Esc => {
                 self.modal = Modal::None;
                 self.status = "graph neighbourhood: closed".into();
-            }
-            KeyCode::Up => {
-                if let Modal::GraphNeighbourhood { cursor, .. } = &mut self.modal {
-                    *cursor = cursor.saturating_sub(1);
-                }
-            }
-            KeyCode::Down => {
-                if let Modal::GraphNeighbourhood { cursor, .. } = &mut self.modal {
-                    if n > 0 {
-                        *cursor = (*cursor + 1).min(n - 1);
-                    }
-                }
             }
             _ => {}
         }
@@ -15555,8 +15540,8 @@ impl App {
     }
 
     fn world_overview_handle_key(&mut self, key: KeyEvent) -> bool {
-        let n = match &self.modal {
-            Modal::WorldOverview { rows, .. } => rows.len(),
+        let nav = match &self.modal {
+            Modal::WorldOverview { rows, cursor } => Self::dashboard_nav(*cursor, rows, key.code),
             _ => return false,
         };
         // A pending F scope sub-chord intercepts the next key.
@@ -15571,22 +15556,16 @@ impl App {
             }
             return true;
         }
+        if let Some(nc) = nav {
+            if let Modal::WorldOverview { cursor, .. } = &mut self.modal {
+                *cursor = nc;
+            }
+            return true;
+        }
         match key.code {
             KeyCode::Esc => {
                 self.modal = Modal::None;
                 self.status = "World overview: closed".into();
-            }
-            KeyCode::Up => {
-                if let Modal::WorldOverview { cursor, .. } = &mut self.modal {
-                    *cursor = cursor.saturating_sub(1);
-                }
-            }
-            KeyCode::Down => {
-                if let Modal::WorldOverview { cursor, .. } = &mut self.modal {
-                    if n > 0 {
-                        *cursor = (*cursor + 1).min(n - 1);
-                    }
-                }
             }
             // C: compile the world (materialize all five layers + seed proposals).
             KeyCode::Char('c') | KeyCode::Char('C') => self.run_world_compile(),
@@ -17647,26 +17626,20 @@ impl App {
     }
 
     fn style_report_handle_key(&mut self, key: KeyEvent) -> bool {
-        let n = match &self.modal {
-            Modal::StyleReport { rows, .. } => rows.len(),
+        let nav = match &self.modal {
+            Modal::StyleReport { rows, cursor, .. } => Self::dashboard_nav(*cursor, rows, key.code),
             _ => return false,
         };
+        if let Some(nc) = nav {
+            if let Modal::StyleReport { cursor, .. } = &mut self.modal {
+                *cursor = nc;
+            }
+            return true;
+        }
         match key.code {
             KeyCode::Esc => {
                 self.modal = Modal::None;
                 self.status = "voice report: closed".into();
-            }
-            KeyCode::Up => {
-                if let Modal::StyleReport { cursor, .. } = &mut self.modal {
-                    *cursor = cursor.saturating_sub(1);
-                }
-            }
-            KeyCode::Down => {
-                if let Modal::StyleReport { cursor, .. } = &mut self.modal {
-                    if n > 0 {
-                        *cursor = (*cursor + 1).min(n - 1);
-                    }
-                }
             }
             _ => {}
         }
@@ -17808,26 +17781,22 @@ impl App {
     }
 
     fn inner_socrates_overview_handle_key(&mut self, key: KeyEvent) -> bool {
-        let n = match &self.modal {
-            Modal::InnerSocratesOverview { rows, .. } => rows.len(),
+        let nav = match &self.modal {
+            Modal::InnerSocratesOverview { rows, cursor, .. } => {
+                Self::dashboard_nav(*cursor, rows, key.code)
+            }
             _ => return false,
         };
+        if let Some(nc) = nav {
+            if let Modal::InnerSocratesOverview { cursor, .. } = &mut self.modal {
+                *cursor = nc;
+            }
+            return true;
+        }
         match key.code {
             KeyCode::Esc => {
                 self.modal = Modal::None;
                 self.status = "Inner Socrates: closed".into();
-            }
-            KeyCode::Up => {
-                if let Modal::InnerSocratesOverview { cursor, .. } = &mut self.modal {
-                    *cursor = cursor.saturating_sub(1);
-                }
-            }
-            KeyCode::Down => {
-                if let Modal::InnerSocratesOverview { cursor, .. } = &mut self.modal {
-                    if n > 0 {
-                        *cursor = (*cursor + 1).min(n - 1);
-                    }
-                }
             }
             KeyCode::Char('f') | KeyCode::Char('F') => self.socratic_check_open_paragraph(),
             KeyCode::Char('e') | KeyCode::Char('E') => self.inner_socrates_engage_open_paragraph(),
