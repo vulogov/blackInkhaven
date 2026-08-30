@@ -3935,7 +3935,7 @@ checksum = "a588916bfdfd92e71cacef98a63d9b1f0d74d6599980d11894290e7ddefffcf7"
 
 [[package]]
 name = "inkhaven"
-version = "3.7.0"
+version = "3.8.0-dev"
 dependencies = [
  "anyhow",
  "arboard",
