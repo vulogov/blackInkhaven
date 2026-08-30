@@ -41,7 +41,8 @@ Without the protocol, these are affected:
   (`Alt+arrows`) — need the arrow to carry the `Alt` modifier. On macOS,
   Terminal.app re-encodes Option+arrow as word-navigation escape sequences, so
   inkhaven never sees the `Alt`; and kitty needs `macos_option_as_alt yes` in
-  `kitty.conf` for Option to act as `Alt` at all.
+  `kitty.conf` for Option to act as `Alt` at all. Block selection has a
+  terminal-independent path — **`Ctrl+Z v`** then plain arrows (see §3.4).
 - **Some function keys may not arrive.** F-key delivery also depends on macOS
   **System Settings → Keyboard → “Use F1, F2, etc. keys as standard function
   keys”** (otherwise they're brightness/volume keys, consumed before any app).
@@ -162,6 +163,7 @@ These chords work from any focus except where noted. Chords marked
 | `Ctrl+V Shift+V` | (1.4.12) **Toggle ambient prose check** (NARR-1) — when on, the prose check re-runs after an editing pause, gated by a cooldown floor (`prose.ambient_cooldown_secs`, default 90s). Off by default. | `view.prose_toggle_ambient` |
 | `Ctrl+V Shift+Q` | (1.4.14) **Dialogue fingerprint** (DIALOG-1) — open the per-character dialogue voice signature for the nearest character (one named in the open paragraph, else the most-speaking): utterance count, average length, vocabulary diversity (MATTR), question / exclamation ratios, hedge density, as ASCII bars, with a compare line for the next two speakers. `↑↓` scroll, `Esc` closes. Built from confidently-attributed dialogue — run the `Ctrl+B Shift+C` review pass (or `inkhaven dialogue scan`) to populate it. Mnemonic: **Q** for Quote (`Ctrl+V D` was taken). The dialogue *findings* (zero-attribution / said-bookism density / talking-head sequences) ride the `Ctrl+B Shift+C` review pass into the Output pane. | `dialogue.open_view` |
 | `Ctrl+Z p` | (1.4.17) **Haiku** (HAIKU-1) — emit a hand-curated haiku to the Output pane on demand, in the book's language (EN/RU/DE/FR/ES, falling back to English). The same pool greets you at startup and when you create a new manuscript paragraph; a process-global rotation counter advances on every trigger, so you rarely see the same poem twice in a session. Zero-AI, baked into the binary (present even airgapped). Toggle the automatic moments with `editor.startup_haiku` (default `true`); this chord works regardless. Mnemonic: **P** for Poem (`p` is free in the `Ctrl+Z` Bund sub-chord table). | `haiku.show` |
+| `Ctrl+Z v` (editor) | (3.7) **Vertical block-select mode** — anchor a rectangular selection at the cursor, then extend it with **plain arrow keys** (no modifier). `c` / `Enter` copy the block to the clipboard and exit; `Esc` (or any other key) cancels. The terminal-independent replacement for `Alt`+arrows block selection — plain arrows always arrive, and it dodges the `Alt+Left`/`Alt+Right` back-forward collision. Mnemonic: **v** for **V**ertical (`v` is free under `Ctrl+Z`). See §3.4. | `editor.block_select` |
 | `Ctrl+Z c` (editor) | (1.2.14) **Add inline comment** — anchor an editorial comment to the current selection's character range (or the word at the cursor); pops a multi-line body input; writes a sidecar `<paragraph>.comments.json` beside the `.typ` (travels with the prose in git, diffs cleanly). Commented spans render underlined + italic; the editor footer surfaces `comment by <author> · <age>`. Char-offset anchors for UTF-8 safety. **Moved here from `Ctrl+V c`** (which the 1.6.19+ LOCI citation check now owns and used to shadow this). Mnemonic: **c** for Comment (`c` / `Shift+C` are free under `Ctrl+Z`). | `view.add_comment` |
 | `Ctrl+Z Shift+C` | (1.2.14) **Comments panel** — project-wide panel over every `.comments.json` sidecar (breadcrumb / author / age / snippet / `(N/M in ¶)`). Panel chords: ↑↓ navigate, Enter jump to the comment span, `r` resolve, `R` toggle resolved-filter, `d` delete, `/` filter, `a` AI digest, `Esc` close. **Moved here from `Ctrl+V Shift+C`** (now the sourcing check). | `view.comments_panel` |
 | `Ctrl+V Shift+N` | (1.4.16) **Character arc** (CHAR-1) — open the tracked arc for the nearest character (one named in the open paragraph, else the first tracked one): the author-declared arc (start / midpoint / end), the chapter-by-chapter observable state chain (✦ marks a change) with each chapter's deterministic agency score, the arc-completeness checks, and any Planning-Board coverage gaps. Read-only over the cached `char.duckdb`; `↑↓` scroll, `Esc` closes. Populate it with the `Ctrl+B Shift+C` review pass (agency + stalls + planning, zero-AI) or `inkhaven character refresh` / `check` (the LLM passes). Mnemonic: **N** for the arc (the bend); plain `n` is next-diagnostic. The arc *findings* ride the `Ctrl+B Shift+C` review pass into the Output `character` category. | `character.open_arc` |
@@ -466,12 +468,26 @@ range. Always rectangular: anchor + current cursor define inclusive
 `(row_min..row_max, col_min..col_max)`. Drawn with REVERSED style on top of
 the syntax highlighting.
 
+**`Ctrl+Z v` — block-select mode (recommended).** Anchors the rectangle at the
+cursor and enters a mode where **PLAIN arrows** extend it — no modifier, so it
+works on every terminal, including macOS Terminal.app and kitty without
+`macos_option_as_alt`. This is the terminal-independent path; prefer it.
+
+| Key (in block-select mode)   | Action                                                  |
+| ---------------------------- | ------------------------------------------------------- |
+| `↑` / `↓` / `←` / `→`        | Move the cursor by one cell; the rectangle redraws each frame. |
+| `c` / `Enter`                | Copy the rectangle to the system clipboard (each row a line) and exit the mode. |
+| `Esc` / any other key        | Cancel block-select; keep the doc open.                 |
+
+**`Alt`+arrows — legacy path.** The original binding still works *where the
+terminal delivers `Alt`+arrow*, but on many setups it doesn't (see “Terminal
+compatibility” above), and `Alt+Left`/`Alt+Right` are also claimed by browser
+back/forward — so use `Ctrl+Z v` instead.
+
 | Key                          | Action                                                  |
 | ---------------------------- | ------------------------------------------------------- |
-| `Alt+↑` / `↓` / `←` / `→`    | Enter block-select mode (if not already), then move cursor by one cell without changing tui-textarea's linear selection. Rectangle redraws each frame. |
-| `Alt+C`                      | Copy the rectangle to system clipboard as a multi-line string (each row a line). Clears the anchor. |
-| `Esc`                        | Cancel block-select; keep the doc open.                 |
-| any non-Alt key              | Cancels block-select implicitly (falls through to normal editor handling). |
+| `Alt+↑` / `↓` / `←` / `→`    | Enter/extend block-select (only if the terminal delivers the `Alt` modifier). |
+| `Alt+C`                      | Copy the rectangle to system clipboard; clears the anchor. |
 
 **Deferred in this release**: rectangular cut and rectangular paste require
 bulk character-deletion across multiple lines, which tui-textarea doesn't

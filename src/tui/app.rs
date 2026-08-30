@@ -5926,6 +5926,14 @@ impl App {
             doc.last_activity = std::time::Instant::now();
         }
 
+        // Block-select mode (Ctrl+Z v): while active, PLAIN arrows extend the
+        // rectangle and c/Enter/Esc finish it. Intercept before any other editor
+        // handling so the mode owns the keys (and plain arrows don't fall through
+        // to cursor-move / the "any key clears block" reset below).
+        if self.block_select_key(&key) {
+            return Ok(false);
+        }
+
         // Read-only gate (Help subtree): allow navigation, search, copy, and
         // focus-related chords; refuse anything that would touch the buffer
         // or the store.
@@ -6322,6 +6330,60 @@ impl App {
             self.maybe_expand_snippet();
         }
         Ok(false)
+    }
+
+    /// `Ctrl+Z v` — enter vertical block-select mode: anchor the rectangle at the
+    /// cursor and let PLAIN arrows extend it (no modifier, so it works where
+    /// `Alt`+arrow doesn't arrive). Copy with `c`/Enter, cancel with `Esc`.
+    fn enter_block_select(&mut self) {
+        let Some(doc) = self.opened.as_mut() else {
+            self.status = "block select: open a paragraph first".into();
+            return;
+        };
+        doc.block_anchor = Some(doc.textarea.cursor());
+        doc.block_select_mode = true;
+        self.status =
+            "block select: ←↑↓→ extend · c/Enter copy · Esc cancel".into();
+    }
+
+    /// While block-select mode is active, PLAIN arrows extend the rectangle and
+    /// `c`/Enter/Esc finish it — no modifier needed. Returns `true` when the key
+    /// was consumed by the mode (so the caller stops processing it). Any key other
+    /// than the mode keys cancels the mode.
+    fn block_select_key(&mut self, key: &KeyEvent) -> bool {
+        if !self.opened.as_ref().is_some_and(|d| d.block_select_mode) {
+            return false;
+        }
+        match key.code {
+            KeyCode::Up | KeyCode::Down | KeyCode::Left | KeyCode::Right => {
+                if let Some(doc) = self.opened.as_mut() {
+                    match key.code {
+                        KeyCode::Up => doc.textarea.move_cursor(CursorMove::Up),
+                        KeyCode::Down => doc.textarea.move_cursor(CursorMove::Down),
+                        KeyCode::Left => doc.textarea.move_cursor(CursorMove::Back),
+                        KeyCode::Right => doc.textarea.move_cursor(CursorMove::Forward),
+                        _ => {}
+                    }
+                }
+                true
+            }
+            KeyCode::Char('c') | KeyCode::Char('C') | KeyCode::Enter => {
+                self.block_copy(); // copies + clears block_anchor
+                if let Some(doc) = self.opened.as_mut() {
+                    doc.block_select_mode = false;
+                }
+                true
+            }
+            _ => {
+                // Esc or any stray key cancels the mode without editing.
+                if let Some(doc) = self.opened.as_mut() {
+                    doc.block_anchor = None;
+                    doc.block_select_mode = false;
+                }
+                self.status = "block select: cancelled".into();
+                true
+            }
+        }
     }
 
     /// Copy the current rectangular selection to the system clipboard
@@ -12723,6 +12785,7 @@ impl App {
                 }
                 self.status = "✦ haiku written to Output".into();
             }
+            A::EnterBlockSelect => self.enter_block_select(),
             A::ToggleRightPaneFullscreen => self.toggle_right_pane_fullscreen(),
             A::TtsReadParagraph => self.tts_read_paragraph(),
             A::TtsSaveAsAudio => self.tts_open_save_as_audio_picker(),
