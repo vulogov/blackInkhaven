@@ -18,6 +18,42 @@ its visual focus state but does not see input until the overlay closes.
 
 ---
 
+## Terminal compatibility (the enhanced keyboard protocol)
+
+Some chords need the **kitty keyboard protocol** — a modern terminal extension
+that lets an app receive keys the legacy TTY encoding can't represent. Inkhaven
+requests it on startup and, when the terminal doesn't answer (crossterm's
+`supports_keyboard_enhancement()` returns false), prints a one-time status-line
+notice naming your terminal.
+
+**Terminals that support it:** kitty, WezTerm, Ghostty, foot, and **iTerm2 ≥ 3.5**.
+**Terminals that don't:** macOS **Terminal.app** (no support at all).
+
+Without the protocol, these are affected:
+
+- **Control-code aliases collide.** The classic TTY has one byte for each of
+  these pairs, so the terminal literally cannot tell them apart:
+  `Ctrl+I` ≡ `Tab`, `Ctrl+M` ≡ `Enter`, `Ctrl+[` ≡ `Esc`, `Ctrl+H` ≡ `Backspace`.
+  So e.g. `Ctrl+I` (submit inference) fires the `Tab` action instead. This is a
+  terminal limitation, not something inkhaven can work around on that terminal.
+- **`Alt`/`Option`+arrow doesn't arrive.** Chords that put `Alt` on an arrow key
+  — browser back/forward (`Alt+Left`/`Alt+Right`) and vertical **block selection**
+  (`Alt+arrows`) — need the arrow to carry the `Alt` modifier. On macOS,
+  Terminal.app re-encodes Option+arrow as word-navigation escape sequences, so
+  inkhaven never sees the `Alt`; and kitty needs `macos_option_as_alt yes` in
+  `kitty.conf` for Option to act as `Alt` at all.
+- **Some function keys may not arrive.** F-key delivery also depends on macOS
+  **System Settings → Keyboard → “Use F1, F2, etc. keys as standard function
+  keys”** (otherwise they're brightness/volume keys, consumed before any app).
+
+**Recommendation:** use a protocol-capable terminal (above) and enable standard
+function keys in macOS Keyboard settings. In iTerm2, also set the Option keys to
+“Esc+” (Profiles → Keys) so `Alt`+chords are delivered. Nothing at the *shell*
+level can fix the control-code aliasing — it's resolved by the terminal emulator
+before the shell sees anything.
+
+---
+
 ## 0. Mouse
 
 Inkhaven captures mouse input on startup. Left-click moves focus to the

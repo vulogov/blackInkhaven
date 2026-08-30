@@ -188,6 +188,42 @@ pub fn bench_render_frames(
     Ok(t.elapsed())
 }
 
+/// Friendly host-terminal name from `$TERM_PROGRAM` (falling back to `$TERM`),
+/// for the keyboard-protocol notice + diagnostics. Pure.
+fn terminal_label(term_program: Option<&str>, term: Option<&str>) -> String {
+    match term_program.map(str::trim).filter(|s| !s.is_empty()) {
+        Some("Apple_Terminal") => "Terminal.app".into(),
+        Some("iTerm.app") => "iTerm2".into(),
+        Some(other) => other.to_string(),
+        None => match term.map(str::trim).filter(|s| !s.is_empty()) {
+            Some(t) => t.to_string(),
+            None => "this terminal".into(),
+        },
+    }
+}
+
+/// The one-time keyboard-protocol compatibility notice for a terminal WITHOUT the
+/// enhanced (kitty) protocol, where the control-code aliases collide (`Ctrl+I`≡Tab,
+/// `Ctrl+M`≡Enter, `Ctrl+[`≡Esc, `Ctrl+H`≡Backspace) and some F-keys may not
+/// arrive. `None` when the protocol is supported. Pure — the caller reads the env.
+fn keyboard_protocol_notice(
+    supported: bool,
+    term_program: Option<&str>,
+    term: Option<&str>,
+) -> Option<String> {
+    if supported {
+        return None;
+    }
+    let label = terminal_label(term_program, term);
+    Some(format!(
+        "⚠ {label} lacks the enhanced keyboard protocol — chords like Ctrl+I / Ctrl+M \
+         collide with Tab / Enter, Alt-modified chords (e.g. back/forward) may not arrive, \
+         and some F-keys may not register. For the full key set use kitty, WezTerm, Ghostty, \
+         or iTerm2 ≥ 3.5 (+ enable “use F1/F2 as standard function keys” in macOS Keyboard \
+         settings). See Documentation/KEYBINDING.md."
+    ))
+}
+
 pub fn run(project: &Path) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized().map_err(anyhow::Error::from)?;
@@ -286,22 +322,31 @@ pub fn run(project: &Path) -> Result<()> {
     })));
 
     enable_raw_mode()?;
+    // Ask the terminal whether it actually speaks the kitty keyboard protocol —
+    // a real request/response round-trip (not just "did the write succeed", which
+    // is always Ok). Without it the legacy TTY encoding can't distinguish
+    // `Ctrl+I` from `Tab` (both 0x09), `Ctrl+M` from `Enter`, `Ctrl+[` from `Esc`,
+    // `Ctrl+H` from `Backspace`, nor encode `Ctrl+1` at all — so those chords
+    // collide and we surface a startup notice (below). Must run after raw mode +
+    // before any other stdin reader; it times out cleanly on terminals that
+    // don't answer (e.g. Terminal.app).
+    let kbd_enhanced =
+        crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false);
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-    // Try to enable the kitty keyboard protocol. Without it, legacy
-    // terminal encoding can't distinguish e.g. `Ctrl+1` from a bare `1`
-    // (the TTY only has dedicated bytes for Ctrl+A..Z + a handful of
-    // punctuation), so `Ctrl+1` ends up inserting "1" into the AI prompt.
-    // Best-effort: terminals that don't support it just ignore the CSI
-    // sequence and we run with reduced functionality.
-    let kbd_enhanced = execute!(
-        io::stdout(),
-        PushKeyboardEnhancementFlags(
-            KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-                | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS,
-        )
-    )
-    .is_ok();
+    // Only push the enhancement flags when the terminal supports them, so the
+    // enter/leave (`PopKeyboardEnhancementFlags`) stays symmetric with the real
+    // capability. Pushing on an unsupporting terminal is harmless, but gating is
+    // honest.
+    if kbd_enhanced {
+        let _ = execute!(
+            io::stdout(),
+            PushKeyboardEnhancementFlags(
+                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                    | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS,
+            )
+        );
+    }
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -416,6 +461,21 @@ pub fn run(project: &Path) -> Result<()> {
     app.health_rx = health_rx;
     app.restore_session();
     app.install_progress();
+
+    // Keyboard-protocol compatibility notice. On a terminal without the enhanced
+    // (kitty) protocol — e.g. Terminal.app — chords that alias a control byte
+    // (Ctrl+I≡Tab, Ctrl+M≡Enter, …) collide and some F-keys may not arrive; warn
+    // once at startup + log it, naming the host emulator. See item-2 of the
+    // 3.7.0 keyboard-compat work. The low-disk warning below (rarer, more urgent)
+    // may override the status line.
+    if let Some(notice) = keyboard_protocol_notice(
+        kbd_enhanced,
+        std::env::var("TERM_PROGRAM").ok().as_deref(),
+        std::env::var("TERM").ok().as_deref(),
+    ) {
+        tracing::warn!(target: "inkhaven::tui::run", "{notice}");
+        app.status = notice;
+    }
 
     // 1.2.20+ Phase G — low-disk pre-flight.  Best-effort,
     // one-time: warn in the status line if the project's
@@ -32254,6 +32314,34 @@ pub(super) fn format_progress_gauge(current: i64, target: i64) -> (String, i64, 
             .add_modifier(Modifier::DIM)
     };
     (gauge, pct, style)
+}
+
+#[cfg(test)]
+mod tests_keyboard_notice {
+    use super::{keyboard_protocol_notice, terminal_label};
+
+    #[test]
+    fn terminal_label_names_known_emulators() {
+        assert_eq!(terminal_label(Some("Apple_Terminal"), Some("xterm-256color")), "Terminal.app");
+        assert_eq!(terminal_label(Some("iTerm.app"), None), "iTerm2");
+        assert_eq!(terminal_label(Some("WezTerm"), None), "WezTerm"); // passthrough
+        // Falls back to $TERM, then a generic label.
+        assert_eq!(terminal_label(None, Some("xterm-kitty")), "xterm-kitty");
+        assert_eq!(terminal_label(None, None), "this terminal");
+        assert_eq!(terminal_label(Some("  "), Some("  ")), "this terminal"); // blank → fallback
+    }
+
+    #[test]
+    fn notice_only_when_unsupported_and_names_the_terminal() {
+        // Supported → no notice at all.
+        assert!(keyboard_protocol_notice(true, Some("Apple_Terminal"), None).is_none());
+        // Unsupported → a notice naming the terminal + the collision + the fix.
+        let n = keyboard_protocol_notice(false, Some("Apple_Terminal"), None).expect("a notice");
+        assert!(n.contains("Terminal.app"), "{n}");
+        assert!(n.contains("Ctrl+I") && n.contains("Tab"), "names the collision: {n}");
+        assert!(n.contains("Alt-modified"), "names the Alt casualty: {n}");
+        assert!(n.contains("kitty") && n.contains("iTerm2 ≥ 3.5"), "names the fix: {n}");
+    }
 }
 
 #[cfg(test)]

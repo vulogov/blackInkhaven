@@ -83,6 +83,12 @@ pub struct Environment {
     /// rendering issues that only appear in certain
     /// terminal emulators.
     pub term: Option<String>,
+    /// `$TERM_PROGRAM` at process start (`Apple_Terminal`,
+    /// `iTerm.app`, `WezTerm`, `ghostty`, …).  Pins the host
+    /// emulator for keyboard-protocol / rendering triage —
+    /// `$TERM` alone is often just `xterm-256color`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub term_program: Option<String>,
     /// Locale at process start (`$LANG`).
     pub lang: Option<String>,
 }
@@ -130,6 +136,7 @@ impl CrashReport {
             os_family: std::env::consts::FAMILY.to_string(),
             os_arch: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
             term: std::env::var("TERM").ok(),
+            term_program: std::env::var("TERM_PROGRAM").ok(),
             lang: std::env::var("LANG").ok(),
         };
 
