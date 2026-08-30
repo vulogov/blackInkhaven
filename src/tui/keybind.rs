@@ -232,6 +232,10 @@ pub enum Action {
     /// as one undoable edit.
     #[serde(rename = "editor.strip_trailing_ws")]
     StripTrailingWhitespace,
+    /// `Ctrl+Z m`. Jump the cursor to the bracket matching the one at/before it,
+    /// across lines and respecting nesting.
+    #[serde(rename = "editor.match_bracket")]
+    JumpMatchingBracket,
     /// THOUGHTS-1 — `Ctrl+Z f`. Fullscreen the current right pane (Output /
     /// Thoughts; the AI pane uses its own fullscreen).
     #[serde(rename = "pane.toggle_right_fullscreen")]
@@ -1064,6 +1068,7 @@ impl Action {
             Action::GotoLine => "go to line".into(),
             Action::ToggleSoftWrap => "toggle wrap".into(),
             Action::StripTrailingWhitespace => "strip trailing ws".into(),
+            Action::JumpMatchingBracket => "match bracket".into(),
             Action::ToggleRightPaneFullscreen => "pane fullscreen".into(),
             Action::OpenConlangHub => "conlang".into(),
             Action::OpenOutline => "outline".into(),
@@ -1321,6 +1326,8 @@ impl Action {
                 "Toggle soft-wrap (Ctrl+Z w) — flip word-wrap display for the open buffer at runtime, without editing config + restarting. Session-only; the persisted default is `editor.wrap`. Handy when switching between reading wrapped prose and editing unwrapped code/tables. Mnemonic: W for Wrap.".into(),
             Action::StripTrailingWhitespace =>
                 "Strip trailing whitespace (Ctrl+Z t) — remove trailing spaces/tabs from every line of the open buffer as ONE undoable edit (Ctrl+U reverts it). Cleans the noisy diffs and stray whitespace that `Ctrl+V ?` reports. Mnemonic: T for Trim.".into(),
+            Action::JumpMatchingBracket =>
+                "Jump to matching bracket (Ctrl+Z m) — move the cursor to the (), [], or {} that pairs with the bracket at or just before the cursor, across lines and respecting nesting. Handy for balancing #figure(...), #footnote[...], and #table(...). Mnemonic: M for Match.".into(),
             Action::OpenCharacterArc =>
                 "Open the character arc view (CHAR-1, Ctrl+V Shift+N) — the tracked arc for the nearest character (one named in the current paragraph, else the first tracked one): the author-declared arc (start / midpoint / end), the chapter-by-chapter observable state chain (✦ marks a change) with each chapter's deterministic agency score (active / passive presence), the arc-completeness checks, and any Planning-Board coverage gaps. Read-only over the cached char.duckdb; `↑↓` scroll, `Esc` closes. Populate it with the `Ctrl+B Shift+C` review pass (agency + stalls + planning, zero-AI) or `inkhaven character refresh` / `check` (the LLM passes). Mnemonic: N for arc (the bend).".into(),
             Action::OpenMythHeatmap =>
@@ -1874,6 +1881,7 @@ impl KeyBindings {
                 entry("g", Action::GotoLine, Scope::Editor),
                 entry("w", Action::ToggleSoftWrap, Scope::Editor),
                 entry("t", Action::StripTrailingWhitespace, Scope::Editor),
+                entry("m", Action::JumpMatchingBracket, Scope::Editor),
                 // 1.2.14 comment features, relocated here from Ctrl+V c / Shift+C:
                 // those chords went to the 1.6.19+ LOCI/sourcing citation checks,
                 // which shadowed the comment pair (view.add_comment was Editor-scoped
@@ -3080,6 +3088,7 @@ mod tests {
             ('g', Action::GotoLine),
             ('w', Action::ToggleSoftWrap),
             ('t', Action::StripTrailingWhitespace),
+            ('m', Action::JumpMatchingBracket),
         ] {
             let ev = KeyEvent::new(KeyCode::Char(ch), none);
             assert_eq!(
