@@ -1186,6 +1186,26 @@ mod book_info_tests {
     }
 
     #[test]
+    fn matching_bracket_across_nesting_and_lines() {
+        let l = |s: &str| vec![s.to_string()];
+        // Open → close on the same line, respecting a nested pair.
+        assert_eq!(matching_bracket_at(&l("#figure(a[b]c)"), 0, 7), Some((0, 13)));
+        // Close → open (backward).
+        assert_eq!(matching_bracket_at(&l("#figure(a[b]c)"), 0, 13), Some((0, 7)));
+        // The nested bracket matches its own partner, not the outer one.
+        assert_eq!(matching_bracket_at(&l("(a(b)c)"), 0, 2), Some((0, 4)));
+        assert_eq!(matching_bracket_at(&l("(a(b)c)"), 0, 0), Some((0, 6)));
+        // Cursor just AFTER a bracket matches the bracket to its left.
+        assert_eq!(matching_bracket_at(&l("(x)"), 0, 1), Some((0, 2)));
+        // Across lines.
+        let multi = vec!["#table(".to_string(), "  [a], [b],".to_string(), ")".to_string()];
+        assert_eq!(matching_bracket_at(&multi, 0, 6), Some((2, 0)));
+        // Not on a bracket → None; unbalanced → None.
+        assert_eq!(matching_bracket_at(&l("abc"), 0, 1), None);
+        assert_eq!(matching_bracket_at(&l("(a b"), 0, 0), None);
+    }
+
+    #[test]
     fn quotes_pair_only_as_opening_quotes() {
         // A2 — pair only when NOT adjacent to a word char.
         // Apostrophe / after a word (don'|, dogs'|): no phantom closer.
@@ -6460,6 +6480,28 @@ impl App {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// A5 — `Ctrl+Z m`: jump the cursor to the bracket matching the one at/before
+    /// it (across lines, respecting nesting), centred like the search/goto jumps.
+    fn editor_jump_matching_bracket(&mut self) {
+        let target = self.opened.as_ref().and_then(|d| {
+            let (row, col) = d.textarea.cursor();
+            matching_bracket_at(d.textarea.lines(), row, col)
+        });
+        match target {
+            Some((r, c)) => {
+                let _ = self.ink_editor_goto(r, c);
+                let viewport_h = (self.layout_editor.height as usize).saturating_sub(2);
+                if let Some(doc) = self.opened.as_mut() {
+                    if viewport_h > 0 {
+                        doc.scroll_row = r.saturating_sub(viewport_h / 2);
+                    }
+                }
+                self.status = "jumped to matching bracket".into();
+            }
+            None => self.status = "no matching bracket at the cursor".into(),
         }
     }
 
@@ -12994,6 +13036,7 @@ impl App {
             A::GotoLine => self.open_goto_line(),
             A::ToggleSoftWrap => self.toggle_soft_wrap(),
             A::StripTrailingWhitespace => self.editor_strip_trailing_whitespace(),
+            A::JumpMatchingBracket => self.editor_jump_matching_bracket(),
             A::ToggleRightPaneFullscreen => self.toggle_right_pane_fullscreen(),
             A::TtsReadParagraph => self.tts_read_paragraph(),
             A::TtsSaveAsAudio => self.tts_open_save_as_audio_picker(),
@@ -33132,6 +33175,70 @@ fn is_close_pair_char(c: char) -> bool {
 fn should_pair_quote(before: Option<char>, after: Option<char>) -> bool {
     let is_word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric());
     !is_word(before) && !is_word(after)
+}
+
+fn is_bracket(c: char) -> bool {
+    matches!(c, '(' | ')' | '[' | ']' | '{' | '}')
+}
+
+fn bracket_partner(c: char) -> char {
+    match c {
+        '(' => ')',
+        ')' => '(',
+        '[' => ']',
+        ']' => '[',
+        '{' => '}',
+        '}' => '{',
+        _ => c,
+    }
+}
+
+/// A5 — the `(row, col)` of the bracket matching the one AT the cursor (or just
+/// before it), scanning across lines with a depth counter that respects nesting.
+/// `None` when the cursor isn't on a bracket or the bracket is unbalanced. Char
+/// (not byte) coordinates, matching the editor's cursor. Pure.
+pub(crate) fn matching_bracket_at(
+    lines: &[String],
+    row: usize,
+    col: usize,
+) -> Option<(usize, usize)> {
+    let grid: Vec<Vec<char>> = lines.iter().map(|l| l.chars().collect()).collect();
+    let cur = grid.get(row)?;
+    // Prefer the bracket AT the cursor; else the one just to its left.
+    let (brow, bcol, bracket) = if cur.get(col).is_some_and(|c| is_bracket(*c)) {
+        (row, col, cur[col])
+    } else if col > 0 && cur.get(col - 1).is_some_and(|c| is_bracket(*c)) {
+        (row, col - 1, cur[col - 1])
+    } else {
+        return None;
+    };
+    let partner = bracket_partner(bracket);
+    let forward = matches!(bracket, '(' | '[' | '{');
+    let flat: Vec<(usize, usize, char)> = grid
+        .iter()
+        .enumerate()
+        .flat_map(|(r, line)| line.iter().copied().enumerate().map(move |(c, ch)| (r, c, ch)))
+        .collect();
+    let start = flat.iter().position(|&(r, c, _)| r == brow && c == bcol)?;
+    let mut depth = 1i32;
+    let mut scan = |it: &mut dyn Iterator<Item = &(usize, usize, char)>| -> Option<(usize, usize)> {
+        for &(r, c, ch) in it {
+            if ch == bracket {
+                depth += 1;
+            } else if ch == partner {
+                depth -= 1;
+                if depth == 0 {
+                    return Some((r, c));
+                }
+            }
+        }
+        None
+    };
+    if forward {
+        scan(&mut flat[start + 1..].iter())
+    } else {
+        scan(&mut flat[..start].iter().rev())
+    }
 }
 
 /// Case-insensitive substring filter over the baked-in typst function
