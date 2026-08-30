@@ -1185,6 +1185,21 @@ mod book_info_tests {
         }
     }
 
+    #[test]
+    fn quotes_pair_only_as_opening_quotes() {
+        // A2 — pair only when NOT adjacent to a word char.
+        // Apostrophe / after a word (don'|, dogs'|): no phantom closer.
+        assert!(!should_pair_quote(Some('n'), None));
+        assert!(!should_pair_quote(Some('s'), Some(' ')));
+        // Before a word (typing a quote just before `word`): don't pair.
+        assert!(!should_pair_quote(Some(' '), Some('w')));
+        // A genuine opening quote: start of line, after a space, before a space
+        // or punctuation → pair.
+        assert!(should_pair_quote(None, None));
+        assert!(should_pair_quote(Some(' '), Some(' ')));
+        assert!(should_pair_quote(Some('('), None));
+    }
+
     /// Reproduce the pair-detection rule used by the Enter and
     /// Backspace handlers without going through tui-textarea.
     fn between_pair(line: &str, col: usize) -> bool {
@@ -6319,8 +6334,15 @@ impl App {
         if plain_no_mods && self.cfg.editor.auto_close_pairs {
             if let KeyCode::Char(c) = key.code {
                 if let Some(close) = open_pair_for(c) {
-                    self.editor_auto_open_pair(c, close);
-                    return Ok(false);
+                    // A2 — brackets always pair; a quote pairs only when it reads
+                    // as an opening quote (not an apostrophe / mid-word / closing
+                    // quote). A non-pairing quote falls through to skip-close-over
+                    // or a plain literal insert below.
+                    let pair = !matches!(c, '\'' | '"') || self.editor_quote_pair_ok();
+                    if pair {
+                        self.editor_auto_open_pair(c, close);
+                        return Ok(false);
+                    }
                 }
                 if is_close_pair_char(c) && self.editor_try_skip_close(c) {
                     return Ok(false);
@@ -32948,6 +32970,15 @@ fn open_pair_for(c: char) -> Option<char> {
 
 fn is_close_pair_char(c: char) -> bool {
     matches!(c, ')' | ']' | '}' | '"' | '\'')
+}
+
+/// A2 — whether a typed quote (`'` / `"`) should auto-pair. Only when it reads as
+/// an OPENING quote: not right after a word char (an apostrophe or closing quote —
+/// `don't`, `dogs'`) and not right before one (inserting a quote inside a word).
+/// Brackets are always paired and never consult this. Pure.
+fn should_pair_quote(before: Option<char>, after: Option<char>) -> bool {
+    let is_word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric());
+    !is_word(before) && !is_word(after)
 }
 
 /// Case-insensitive substring filter over the baked-in typst function
