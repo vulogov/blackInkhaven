@@ -6096,6 +6096,15 @@ impl App {
                 self.search_advance_or_replace();
                 return Ok(false);
             }
+            // A3 — Ctrl+G steps to the PREVIOUS match while a search is active
+            // (pairs with Ctrl+X next). Ctrl+G is terminal-safe (BEL, 0x07) and
+            // was free. In replace mode it just moves the target index back.
+            if matches!(key.code, KeyCode::Char('g') | KeyCode::Char('G'))
+                && self.opened.as_ref().map_or(false, |d| d.search.is_some())
+            {
+                self.search_retreat();
+                return Ok(false);
+            }
             match key.code {
                 KeyCode::Char('f') | KeyCode::Char('F') => {
                     self.open_find_modal(false);
@@ -8805,15 +8814,18 @@ impl App {
         };
         let lines = doc.textarea.lines().to_vec();
         match SearchState::build(&pattern, replace_with.clone(), &lines) {
-            Ok(state) => {
+            Ok(mut state) => {
                 let n = state.matches.len();
+                // A3 — start from the match at/after the cursor, not the document
+                // top, so `find` moves forward from where you are.
+                state.seed_from_cursor(doc.textarea.cursor());
                 doc.search = Some(state);
                 self.modal = Modal::None;
                 if n == 0 {
                     self.status = format!("no matches for /{pattern}/");
                     return;
                 }
-                // Jump cursor to first match
+                // Jump cursor to the seeded (first-forward) match.
                 self.jump_to_current_match();
                 if replace_with.is_some() {
                     // Replace mode: do the FIRST replacement automatically so
@@ -8825,11 +8837,11 @@ impl App {
                         .and_then(|d| d.search.as_ref())
                         .map_or(0, |s| s.matches.len());
                     self.status = format!(
-                        "/{pattern}/ → replaced 1 · {remaining} left · Ctrl+G next · Ctrl+R replace all · Esc clear"
+                        "/{pattern}/ → replaced 1 · {remaining} left · Ctrl+X next · Ctrl+R replace all · Esc clear"
                     );
                 } else {
                     self.status = format!(
-                        "/{pattern}/ → {n} match(es) · Ctrl+G next · Ctrl+R add replacement · Esc clear"
+                        "/{pattern}/ → {n} match(es) · Ctrl+X next · Ctrl+G prev · Ctrl+R add replacement · Esc clear"
                     );
                 }
             }
@@ -8875,6 +8887,24 @@ impl App {
                 let half = viewport_h / 2;
                 doc.scroll_row = row.saturating_sub(half);
             }
+        }
+    }
+
+    /// A3 — step to the previous match (Ctrl+G), the mirror of `Ctrl+X` next.
+    fn search_retreat(&mut self) {
+        if let Some(doc) = self.opened.as_mut() {
+            if let Some(state) = doc.search.as_mut() {
+                state.retreat();
+            }
+        }
+        self.jump_to_current_match();
+        let (idx, n) = self
+            .opened
+            .as_ref()
+            .and_then(|d| d.search.as_ref())
+            .map_or((0, 0), |s| (s.current + 1, s.matches.len()));
+        if n > 0 {
+            self.status = format!("match {idx}/{n} · Ctrl+X next · Ctrl+G prev · Esc clear");
         }
     }
 
