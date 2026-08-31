@@ -233,7 +233,8 @@ pub enum Action {
     #[serde(rename = "editor.strip_trailing_ws")]
     StripTrailingWhitespace,
     /// `Ctrl+Z m`. Jump the cursor to the bracket matching the one at/before it,
-    /// across lines and respecting nesting.
+    /// across lines and respecting nesting. The partner is also underlined
+    /// whenever the cursor sits on a bracket.
     #[serde(rename = "editor.match_bracket")]
     JumpMatchingBracket,
     /// THOUGHTS-1 — `Ctrl+Z f`. Fullscreen the current right pane (Output /
