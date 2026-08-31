@@ -116,6 +116,22 @@ paragraph was open. When fresh content arrives for a pane it will quietly
 surface that pane for you — unless you are actively working in a right pane at
 the time, in which case it holds still rather than steal your place mid-read.
 
+Findings arrive newest-first, at the top of the board, and the Output pane is
+built so that a stream of them never moves the ground under your feet. Your
+selection is anchored to the *message itself*, not to a row number: as new
+findings push in above, the cursor stays on the very finding you were reading,
+wherever it slides to. While the cursor rests on the top row the pane *follows
+the newest* arrival — a small `⟳follow` marker lights in its title bar — so a
+running check keeps the freshest finding under your cursor; move the selection
+down and following stops, return to the top and it resumes. Dismissing a
+finding with `d` keeps you on the row that shifts up into its place rather than
+flinging the cursor back to the top. And `Enter` on *any* finding that carries a
+source paragraph — a fact-check warning, a continuity note, a Socratic question —
+opens that paragraph in the Editor, which is what turns the board from a log into
+a worklist you can act down. Findings with their own primary action (accept a
+lexicon proposal, insert a translation, jump to a timeline event) still do that
+on `Enter`.
+
 #section("Moving your attention — focus and navigation")
 
 Only one pane listens to your keys at a time. Moving that attention around is

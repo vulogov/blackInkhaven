@@ -301,7 +301,11 @@ analysis), an extra `L` files it as a paragraph into the matching system book.
 #subsection("The Output / Thoughts pane")
 
 The right region cycles between three panes; content auto-surfaces the relevant
-one unless you are actively reading there.
+one unless you are actively reading there. Findings arrive newest-first; the
+selection is anchored to the message, not its row, so an incoming finding never
+slides your cursor onto a different one. Rest on the top row and the pane
+_follows the newest_ arrival (a `⟳follow` marker shows in the title bar); moving
+down stops following, returning to the top resumes it.
 
 #chord_table((
   chord_row("Ctrl+B Tab", [Cycle the right region Output → AI → Thoughts.]),
@@ -311,9 +315,9 @@ one unless you are actively reading there.
   chord_row("g / G", [First / last message.]),
   chord_row("o / Space", [Expand / collapse the selected message's structured detail.]),
   chord_row("a", [Ask the AI about the selected message (carries its full detail).]),
-  chord_row("d", [Dismiss the selected message.]),
+  chord_row("d", [Dismiss the selected message; the cursor stays on the row that shifts up into its place.]),
   chord_row("p", [Pin / unpin (pinned messages sort to the top).]),
-  chord_row("Enter", [Primary, kind-specific action — open target, accept proposal, jump to event.]),
+  chord_row("Enter", [Jump to the source paragraph of _any_ finding that records one (fact-check, continuity, Socratic, …); findings with a kind-specific primary action — accept a proposal, insert a translation, jump to an event — still do that instead.]),
   chord_row("r / e", [(translations) remember / edit-and-remember.]),
   chord_row("i / m / x", [(Socratic) record-as-intent / make-note / mark-addressed.]),
 ))
