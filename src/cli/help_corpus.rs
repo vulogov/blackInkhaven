@@ -58,8 +58,34 @@ fn cache_path() -> Option<PathBuf> {
     Some(dirs.cache_dir().join(CACHE_FILENAME))
 }
 
-/// MAINTAINER: walk `docs_dir` and package every `.md` file (path relative to
-/// `docs_dir` + content) into a [`HelpCorpus`].
+/// True when a doc (path relative to the docs root) belongs in the F1 help
+/// corpus. The corpus is USER how-to + reference, so this skips the meta /
+/// internal material that would otherwise dominate retrieval:
+///   - `RELEASE_NOTES/` — per-version changelogs (was ~43% of every file; the
+///     reason F1 kept surfacing "what changed in 3.6" instead of how-tos),
+///   - `PROPOSALS/` — internal RFCs / design docs / bugfix plans,
+///   - top-level index / plan / maintenance files.
+/// Everything else (Tutorials, KEYBINDING, CONFIGURATION, the feature guides,
+/// Bund) is kept.
+fn is_help_relevant(rel: &str) -> bool {
+    let rel = rel.replace('\\', "/");
+    let top = rel.split('/').next().unwrap_or("");
+    if matches!(top, "RELEASE_NOTES" | "PROPOSALS") {
+        return false;
+    }
+    let name = rel.rsplit('/').next().unwrap_or("").to_ascii_uppercase();
+    // Indexes + internal planning/maintenance docs, wherever they sit.
+    !(name == "README.MD"
+        || name == "MAINTENANCE.MD"
+        || name == "KEYS_REASSIGNMENT.MD"
+        || name.starts_with("BUGFIX_PLAN")
+        || name.ends_with("_PLAN.MD")
+        || name.contains("READINESS"))
+}
+
+/// MAINTAINER: walk `docs_dir` and package every help-relevant `.md` file (path
+/// relative to `docs_dir` + content) into a [`HelpCorpus`]. Meta / changelog /
+/// internal docs are filtered out (see [`is_help_relevant`]).
 pub fn package_from_dir(docs_dir: &Path, version: &str) -> Result<HelpCorpus> {
     if !docs_dir.is_dir() {
         return Err(Error::Store(format!(
@@ -68,6 +94,7 @@ pub fn package_from_dir(docs_dir: &Path, version: &str) -> Result<HelpCorpus> {
         )));
     }
     let mut files = Vec::new();
+    let mut skipped = 0usize;
     for entry in walkdir::WalkDir::new(docs_dir)
         .sort_by_file_name()
         .follow_links(false)
@@ -82,12 +109,21 @@ pub fn package_from_dir(docs_dir: &Path, version: &str) -> Result<HelpCorpus> {
         }
         let rel = path.strip_prefix(docs_dir).unwrap_or(path);
         let rel_str = rel.to_string_lossy().replace('\\', "/");
+        if !is_help_relevant(&rel_str) {
+            skipped += 1;
+            continue;
+        }
         let content = std::fs::read_to_string(path).map_err(Error::Io)?;
         files.push(HelpFile {
             path: rel_str,
             content,
         });
     }
+    eprintln!(
+        "included {} help doc(s); skipped {} meta/changelog doc(s)",
+        files.len(),
+        skipped
+    );
     Ok(HelpCorpus {
         version: version.to_string(),
         files,
@@ -248,6 +284,24 @@ mod tests {
             "tutorial one"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn help_relevance_filters_meta_and_changelogs() {
+        // Kept: user how-to + reference.
+        assert!(is_help_relevant("Tutorials/03-the-editor.md"));
+        assert!(is_help_relevant("KEYBINDING.md"));
+        assert!(is_help_relevant("CONFIGURATION.md"));
+        assert!(is_help_relevant("Bund/BUND_TUTORIAL.md"));
+        // Skipped: changelogs, internal RFCs/plans, indexes, maintenance.
+        assert!(!is_help_relevant("RELEASE_NOTES/3.6.0.md"));
+        assert!(!is_help_relevant("RELEASE_NOTES/README.md"));
+        assert!(!is_help_relevant("PROPOSALS/SEMNET-1_PLAN.md"));
+        assert!(!is_help_relevant("README.md"));
+        assert!(!is_help_relevant("MAINTENANCE.md"));
+        assert!(!is_help_relevant("KEYS_REASSIGNMENT.md"));
+        assert!(!is_help_relevant("BUGFIX_PLAN_1.5.9.md"));
+        assert!(!is_help_relevant("2.0_READINESS.md"));
     }
 
     #[test]
