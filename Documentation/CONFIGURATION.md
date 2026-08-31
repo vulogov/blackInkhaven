@@ -273,6 +273,13 @@ The shipping defaults are
 [Catppuccin Mocha](https://catppuccin.com/palette/) — a dark, balanced
 palette tested on plenty of terminals.
 
+**`NO_COLOR` (3.8+).** If the `NO_COLOR` environment variable is set to a
+non-empty value (the [no-color.org](https://no-color.org) convention), the
+whole `theme` block is ignored and every colour resolves to the terminal
+default — for monochrome, accessibility, or light-background terminals.
+Structure still reads through the bold / reversed / underlined modifiers.
+This is an environment override, not a config key; unset it to get colour back.
+
 ```hjson
 theme: {
   // Pane chrome
