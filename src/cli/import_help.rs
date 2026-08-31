@@ -123,11 +123,19 @@ pub fn run(project: &Path, documents_dir: &Path) -> Result<()> {
 
     // 3.10 — flush the freshly-built vector index to disk as the final step, so
     // `rebuild-help` leaves a complete, persisted index rather than relying on a
-    // later save. (The one-time HNSW *open* cost on next search is a vecstore
-    // concern — this just guarantees the on-disk index is current + clean.)
+    // later save.
     eprintln!("persisting the vector index…");
     if let Err(e) = store.sync() {
         eprintln!("warning: vector index sync failed: {e}");
+    }
+
+    // 3.10 — checkpoint the DuckDB stores so the ~7 MB of help rows this pass
+    // wrote land in the main `.db` files instead of the write-ahead log.
+    // Without this the WAL is replayed on every subsequent open — the first F1
+    // search was paying ~10 s of WAL replay on top of the (now fixed) index
+    // load. Draining it here makes opens fast for the life of the corpus.
+    if let Err(e) = store.checkpoint() {
+        eprintln!("warning: store checkpoint failed: {e}");
     }
 
     eprintln!(
