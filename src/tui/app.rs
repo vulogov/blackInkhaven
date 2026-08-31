@@ -6710,11 +6710,10 @@ impl App {
     /// `editor.wrap`). The renderer reads `cfg.editor.wrap` each frame.
     fn toggle_soft_wrap(&mut self) {
         self.cfg.editor.wrap = !self.cfg.editor.wrap;
-        self.status = if self.cfg.editor.wrap {
-            "soft-wrap: on".into()
-        } else {
-            "soft-wrap: off".into()
-        };
+        let on = self.cfg.editor.wrap;
+        // 3.10 — persist so the choice survives a restart (was session-only).
+        let saved = self.persist_config_key("editor", "wrap", if on { "true" } else { "false" });
+        self.status = format!("soft-wrap: {}{saved}", if on { "on" } else { "off" });
     }
 
     /// A4 — `Ctrl+Z t`: strip trailing whitespace from every line, as ONE
@@ -25123,6 +25122,28 @@ impl App {
     /// and toggle the live SoundPlayer's enabled flag. No-ops on hosts
     /// without an audio device beyond updating the config (so the
     /// preference persists for a future launch on a host that does).
+    /// 3.10 — persist a one-level-nested config key to inkhaven.hjson,
+    /// comment-preserving (mirrors `toggle_sound`'s write path), so a
+    /// writing-TUI toggle survives a restart instead of silently resetting.
+    /// Returns a status suffix: ` · saved` on success, or ` (session only:
+    /// <why>)` when the write can't happen — the caller still applies the
+    /// toggle in-session either way. `value_lit` must already be an HJSON
+    /// literal (`true` / `false` / a quoted string).
+    fn persist_config_key(&self, block: &str, key: &str, value_lit: &str) -> String {
+        let path = self.layout.config_path();
+        let raw = match std::fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(e) => return format!(" (session only: read config: {e})"),
+        };
+        match set_key_in_hjson_block(&raw, block, key, value_lit) {
+            Ok(updated) => match std::fs::write(&path, &updated) {
+                Ok(()) => " · saved".to_string(),
+                Err(e) => format!(" (session only: write config: {e})"),
+            },
+            Err(reason) => format!(" (session only: {reason})"),
+        }
+    }
+
     fn toggle_sound(&mut self) {
         let new_value = !self.cfg.sound.enabled;
         let config_path = self.layout.config_path();
