@@ -34,7 +34,7 @@ pub(super) fn embedded_logo_image() -> Option<&'static image::DynamicImage> {
 /// here too.
 const CREDITS_COMPONENTS: &[(&str, &str, &str)] = &[
     ("duckdb",                "MIT",             "embedded SQL engine — metadata + blob stores"),
-    ("vecstore",              "MIT",             "HNSW vector index — semantic search"),
+    ("hnsw_rs",               "MIT/Apache-2.0",  "HNSW nearest-neighbour index — semantic search"),
     ("fastembed",             "Apache-2.0",      "multilingual ONNX text embeddings"),
     ("ratatui",               "MIT",             "TUI rendering framework"),
     ("tui-textarea",          "MIT",             "multi-line text widget (state model)"),
