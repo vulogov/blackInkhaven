@@ -121,6 +121,15 @@ pub fn run(project: &Path, documents_dir: &Path) -> Result<()> {
         }
     }
 
+    // 3.10 — flush the freshly-built vector index to disk as the final step, so
+    // `rebuild-help` leaves a complete, persisted index rather than relying on a
+    // later save. (The one-time HNSW *open* cost on next search is a vecstore
+    // concern — this just guarantees the on-disk index is current + clean.)
+    eprintln!("persisting the vector index…");
+    if let Err(e) = store.sync() {
+        eprintln!("warning: vector index sync failed: {e}");
+    }
+
     eprintln!(
         "imported {} branch(es) and {} paragraph(s) into Help from {}",
         counts.branches,
