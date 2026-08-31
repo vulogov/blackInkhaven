@@ -130,14 +130,20 @@ fn push_chunk(
     });
 }
 
-/// Split a large markdown doc into retrievable chunks at its `## ` headings, so
-/// each section is independently searchable and not truncated away by the F1
-/// retrieval's per-paragraph char cap (a 160 KB `KEYBINDING.md` as one
-/// paragraph meant everything past its first ~2 KB — including the copy/paste
-/// keys — was invisible). Small docs pass through whole; docs with no `## `
-/// headings also pass through whole.
+/// Split a large markdown doc into retrievable chunks at its `## ` / `### `
+/// headings, so a big reference (a 160 KB `KEYBINDING.md`) isn't one paragraph
+/// truncated to ~2 KB by the F1 retrieval cap. Sections are **coalesced up to a
+/// target size** rather than emitted one-per-heading: splitting at every
+/// heading produced ~1800 tiny chunks → ~3600 extra HNSW vectors → a 30 s+
+/// index rebuild on first search. Merging small adjacent sections keeps each
+/// chunk retrieval-sized while cutting the vector count ~3×. Small docs (and
+/// docs with no `## `/`### ` headings) pass through whole; a single oversized
+/// section still becomes its own chunk (truncation there is inherent).
 fn chunk_markdown(rel_path: &str, content: &str) -> Vec<HelpFile> {
     const WHOLE_MAX: usize = 2000;
+    // Coalesce sections until a chunk reaches ~this many chars (kept under the
+    // retrieval per-paragraph cap so a merged chunk isn't truncated).
+    const TARGET: usize = 1800;
     if content.chars().count() <= WHOLE_MAX {
         return vec![HelpFile {
             path: rel_path.to_string(),
@@ -161,23 +167,30 @@ fn chunk_markdown(rel_path: &str, content: &str) -> Vec<HelpFile> {
     let doc_base = rel_path.trim_end_matches(".md");
 
     let mut chunks: Vec<HelpFile> = Vec::new();
+    // Heading that STARTED the current (possibly multi-section) chunk.
     let mut heading: Option<String> = None;
     let mut body: Vec<&str> = Vec::new();
+    let mut body_len = 0usize;
     for line in content.lines() {
-        // Split at level-2 and level-3 headings (`## ` / `### `) so a big
-        // reference like KEYBINDING splits down to individual sub-sections
-        // (e.g. §3.3 "Selection, clipboard, undo") rather than one giant
-        // "## Editor pane" chunk that would still truncate.
         let hashes = line.chars().take_while(|c| *c == '#').count();
         let is_section = (hashes == 2 || hashes == 3) && line[hashes..].starts_with(' ');
         if is_section {
-            push_chunk(&mut chunks, doc_base, &doc_title, &heading, &body);
-            heading = Some(line[hashes + 1..].trim().to_string());
-            body.clear();
-            body.push(line); // keep the heading in its section
-        } else {
-            body.push(line);
+            let h = line[hashes + 1..].trim().to_string();
+            if body_len >= TARGET {
+                // Current chunk is big enough — flush it and start fresh here.
+                push_chunk(&mut chunks, doc_base, &doc_title, &heading, &body);
+                body.clear();
+                body_len = 0;
+                heading = Some(h);
+            } else if heading.is_none() {
+                // Still filling the first chunk (empty/short preamble) — let this
+                // heading name it.
+                heading = Some(h);
+            }
+            // Otherwise merge this section into the current under-target chunk.
         }
+        body.push(line);
+        body_len += line.chars().count() + 1;
     }
     push_chunk(&mut chunks, doc_base, &doc_title, &heading, &body);
 
