@@ -901,6 +901,18 @@ impl super::App {
         let help_subtree: std::collections::HashSet<Uuid> =
             self.hierarchy.collect_subtree(help_id).into_iter().collect();
 
+        // 3.10 — the Help book seeds empty; if nothing's been indexed into it,
+        // point the user at the one-shot corpus build instead of the cryptic
+        // "no entries found" they'd otherwise get after the search.
+        let help_has_content = self.hierarchy.iter().any(|n| {
+            n.kind == NodeKind::Paragraph && help_subtree.contains(&n.id)
+        });
+        if !help_has_content {
+            self.status =
+                "Help corpus not built — run `inkhaven rebuild-help` (downloads inkhaven's docs; needs network once, then cached). F1 answers after that.".into();
+            return;
+        }
+
         // Search broadly, then filter to nodes inside the Help subtree. We
         // ask for more than we'll actually feed to the LLM so the post-filter
         // doesn't starve us if many hits are outside Help.
