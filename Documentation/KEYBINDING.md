@@ -702,15 +702,23 @@ remembered across restarts. **`Ctrl+Z f`** fullscreens the current right pane
 pane it auto-surfaces — unless you're actively working in a right pane, so it
 never steals focus mid-read.
 
+(3.8) Findings arrive **newest-first at the top**. The selection is **anchored
+by message id**, so a finding streaming in no longer shifts the cursor onto a
+different message — it stays on the one you were reading. While the cursor is
+**parked at the top row** the pane **follows the newest** finding as it arrives
+(a `⟳follow` cue rides in the title); move down and follow turns off, return to
+the top and it turns back on.
+
 | Key       | Action                                                                          |
 | --------- | ------------------------------------------------------------------------------- |
 | `↑` / `↓` (or `k` / `j`) | Select previous / next message.                                  |
 | `g` / `G` | First / last message.                                                           |
 | `o` / `Space` | Expand / collapse the selected message's structured detail.                 |
 | `a`       | Ask the AI about the selected message (carries its full detail by reference).   |
-| `d`       | Dismiss the selected message.                                                   |
+| `d`       | Dismiss the selected message (the cursor stays on the row that shifts up).       |
 | `p`       | Pin / unpin (pinned messages sort to the top).                                  |
-| `Enter`   | Primary action — kind-specific (open target, accept proposal, jump to event, …).|
+| `Enter`   | Primary action — kind-specific (accept proposal, insert translation, jump to event, …); (3.8) **for any other finding that records a source paragraph, opens that paragraph** in the editor. |
+| `/`       | (PANE-2) Open the free-text search line — type to filter live by message text / kind; `Enter` keeps, `Esc` clears. |
 | `r` / `e` | (translations) remember / edit+remember.                                        |
 | `i` / `m` / `x` | (Socratic) record-as-intent / make-note / mark-addressed.                 |
 
