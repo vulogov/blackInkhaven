@@ -2147,6 +2147,11 @@ pub(crate) struct App {
     /// `self.opened`; routing happens via a swap performed at
     /// the key-dispatch + save boundaries.
     secondary_focused: bool,
+    /// R1 — set whenever observable state changes (input handled, resize, a tick
+    /// that mutated the view). The main loop only calls `terminal.draw` when this
+    /// is set, an animation is live, or a ~1s backstop expires — so an idle editor
+    /// stops rebuilding the frame ~5×/sec.
+    needs_redraw: bool,
     status: String,
     show_results_overlay: bool,
     results: Vec<SearchHit>,
@@ -3684,6 +3689,7 @@ impl App {
             opened: None,
             secondary: None,
             secondary_focused: false,
+            needs_redraw: true,
             split_view: false,
             similar_mode: false,
             picker_target: PaneTarget::Primary,
@@ -3977,7 +3983,14 @@ impl App {
     }
 
     fn run<B: ratatui::backend::Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
+        // R1 — timestamp of the last real draw, for the redraw backstop below.
+        let mut last_draw = std::time::Instant::now();
         loop {
+            // R1 — any tick/pump that changes the status line (inference done, a
+            // background-job progress/result, a health-chip update, …) should
+            // redraw promptly rather than waiting for the backstop. Cheap to catch
+            // them all at once by diffing the status across the tick block.
+            let status_before = self.status.clone();
             self.pump_inference();
             self.pump_bg_job();
             self.tick_autosave();
@@ -4019,19 +4032,33 @@ impl App {
             if std::mem::take(&mut self.pending_backup_now) {
                 self.run_pending_backup_now(terminal);
             }
-            // 1.2.20+ C.1.b — refresh the echo-overlay stem
-            // cache before drawing (cheap when off or
-            // unchanged).
-            self.refresh_echo_overlay();
-            terminal.draw(|f| self.draw(f))?;
-            // Shorter poll interval while streaming so tokens render with low
-            // latency without burning CPU when idle.  1.2.18+ R.4 — the
-            // reader-pace teleprompter animates the highlight, so it also
-            // wants the fast tick (but only while playing, not paused).
-            let timeout = if self.is_streaming() || self.reader_pace_playing() {
+            // R1 — draw only when something changed, an animation is live, or the
+            // backstop expired. An animation (streaming tokens, the reader-pace
+            // teleprompter, a running background job) redraws continuously; the
+            // backstop guarantees the screen never goes stale > ~1s even if a
+            // redraw trigger was missed (so a forgotten `needs_redraw` degrades to
+            // a 1s lag, never a frozen UI). An idle editor thus rebuilds the frame
+            // ~once/second instead of ~5×.
+            if self.status != status_before {
+                self.needs_redraw = true;
+            }
+            let animating = self.is_animating();
+            let backstop = last_draw.elapsed() >= Duration::from_millis(1000);
+            if self.needs_redraw || animating || backstop {
+                // 1.2.20+ C.1.b — refresh the echo-overlay stem cache before
+                // drawing (cheap when off / unchanged).
+                self.refresh_echo_overlay();
+                terminal.draw(|f| self.draw(f))?;
+                self.needs_redraw = false;
+                last_draw = std::time::Instant::now();
+            }
+            // Shorter poll while animating so tokens/highlights render with low
+            // latency; longer when idle so the loop mostly sleeps (input still
+            // wakes it immediately — the timeout is only the max idle wait).
+            let timeout = if animating {
                 Duration::from_millis(40)
             } else {
-                Duration::from_millis(200)
+                Duration::from_millis(250)
             };
             if event::poll(timeout)? {
                 match event::read()? {
@@ -4042,13 +4069,29 @@ impl App {
                         if self.handle_key(key)? {
                             return Ok(());
                         }
+                        self.needs_redraw = true;
                     }
-                    Event::Mouse(mouse) => self.handle_mouse(mouse),
-                    Event::Paste(text) => self.handle_paste(text),
+                    Event::Mouse(mouse) => {
+                        self.handle_mouse(mouse);
+                        self.needs_redraw = true;
+                    }
+                    Event::Paste(text) => {
+                        self.handle_paste(text);
+                        self.needs_redraw = true;
+                    }
+                    Event::Resize(_, _) => self.needs_redraw = true,
                     _ => {}
                 }
             }
         }
+    }
+
+    /// R1 — a continuous animation is live, so the main loop should redraw every
+    /// (fast) tick: streaming inference, the reader-pace teleprompter, or a running
+    /// background job (its results stream in / the chip spins). Discrete one-off
+    /// changes set `needs_redraw` directly instead of appearing here.
+    fn is_animating(&self) -> bool {
+        self.is_streaming() || self.reader_pace_playing() || self.bg_job.is_some()
     }
 
     /// A1 — a bracketed-paste chunk arrived as ONE event. Insert it in bulk at the
