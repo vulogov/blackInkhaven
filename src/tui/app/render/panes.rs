@@ -3055,16 +3055,27 @@ impl super::super::App {
             }
         }
 
-        let body = Paragraph::new(lines).wrap(Wrap { trim: false }).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(title)
-                .border_style(
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                ),
-        );
+        // 3.9 — scroll the selected result into view. Each hit is exactly three
+        // rows (no wrap, so the height/scroll math stays exact — long headers /
+        // snippets truncate rather than spilling to a 4th row), so the cursor's
+        // block starts at `cursor*3`; scroll just enough to keep its bottom on
+        // screen. Without this, results below the fold — and an off-screen
+        // cursor — were unreachable on a short terminal.
+        let inner_rows = rect.height.saturating_sub(2) as usize;
+        let sel_bottom = self.results_cursor.saturating_add(1) * 3;
+        let offset = sel_bottom.saturating_sub(inner_rows);
+        let body = Paragraph::new(lines)
+            .scroll((offset.min(u16::MAX as usize) as u16, 0))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(title)
+                    .border_style(
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+            );
         f.render_widget(body, rect);
     }
 

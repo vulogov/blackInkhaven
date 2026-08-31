@@ -7192,6 +7192,22 @@ impl App {
                     self.results_cursor += 1;
                 }
             }
+            // 3.9 — page/jump through the results overlay (it now scrolls).
+            KeyCode::PageUp if is_search && self.show_results_overlay => {
+                self.results_cursor = self.results_cursor.saturating_sub(5);
+            }
+            KeyCode::PageDown if is_search && self.show_results_overlay => {
+                if !self.results.is_empty() {
+                    self.results_cursor =
+                        (self.results_cursor + 5).min(self.results.len() - 1);
+                }
+            }
+            KeyCode::Home if is_search && self.show_results_overlay => {
+                self.results_cursor = 0;
+            }
+            KeyCode::End if is_search && self.show_results_overlay => {
+                self.results_cursor = self.results.len().saturating_sub(1);
+            }
             // 3.9 — Up / Down in the search bar (no results overlay showing)
             // walks `search_history`, shell-style — same recall as the AI prompt.
             KeyCode::Up if is_search => {
@@ -8439,13 +8455,15 @@ impl App {
             }
         }
         self.search_history_cursor = None;
-        match self.store.search_text(&query, 10) {
+        // 3.9 — 50 (was 10): the overlay now scrolls + pages, so a wider net is
+        // navigable instead of silently truncated at ten.
+        match self.store.search_text(&query, 50) {
             Ok(raw) => {
                 self.results = raw.iter().filter_map(SearchHit::parse).collect();
                 self.results_cursor = 0;
                 self.show_results_overlay = true;
                 self.status = format!(
-                    "`{}` → {} result(s) · ↑/↓ to navigate · Enter to open · Esc to close",
+                    "`{}` → {} result(s) · ↑↓/PgUp/PgDn/Home/End · Enter open · Esc close",
                     query,
                     self.results.len()
                 );
