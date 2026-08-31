@@ -2461,7 +2461,12 @@ impl super::super::App {
                         Span::styled(" c ", reverse_chip(Color::Yellow)),
                         Span::raw("copy  "),
                         Span::styled(" g ", reverse_chip(Color::Green)),
-                        Span::raw("grammar"),
+                        Span::raw("grammar  "),
+                        // 3.9 — retry / edit-last.
+                        Span::styled(" z ", reverse_chip(Color::Cyan)),
+                        Span::raw("retry  "),
+                        Span::styled(" e ", reverse_chip(Color::Cyan)),
+                        Span::raw("edit"),
                     ];
                     // Only offered when this response carries a system-book
                     // destination (a submission draft / structural analysis).
