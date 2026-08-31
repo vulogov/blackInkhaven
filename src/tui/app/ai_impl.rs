@@ -437,6 +437,9 @@ impl super::App {
             }
         }
         self.ai_prompt_history_cursor = None;
+        // 3.9 — follow the new reply from the top (0 = pinned to the streaming
+        // tail); a stale scroll from the previous answer shouldn't carry over.
+        self.ai_response_scroll = 0;
         // "Help!" prefix (case-sensitive) reroutes through the F1 Help-book
         // RAG flow. The rest of the line becomes the question; the AI pane
         // shows the same grounded answer the F1 modal produces.

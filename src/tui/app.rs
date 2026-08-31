@@ -2485,6 +2485,13 @@ pub(crate) struct App {
     /// message is sent so the streaming reply is visible.
     chat_history_scroll: usize,
 
+    /// 3.9 — scroll for the split-view single-response AI view (non-Book scope),
+    /// as a distance UP from the auto-bottom-pin: `0` = pinned to the newest
+    /// tokens (follows the streaming tail as it grows), larger = scrolled back
+    /// toward the top. The render clamps it to the wrapped total. Reset to 0 on
+    /// each new inference so the reply is followed from the start.
+    ai_response_scroll: usize,
+
     /// THOUGHTS-1 — the Thoughts pane's entries (each a block of reflective
     /// text, e.g. an Inner Theologian session), newest last. Read-only.
     thoughts: Vec<String>,
@@ -3807,6 +3814,7 @@ impl App {
             ai_fullscreen: false,
             right_fullscreen: false,
             chat_history_scroll: 0,
+            ai_response_scroll: 0,
             chat_search: None,
             chat_selection: None,
             last_crash_mirror_at: None,
@@ -5147,10 +5155,14 @@ impl App {
                 Some(Focus::Tree) => self.move_cursor(-3),
                 Some(Focus::Editor) => self.mouse_scroll_editor(-3),
                 Some(Focus::Ai) => {
-                    // Wheel up = show older content
-                    // (chat_history_scroll grows backward).
-                    self.chat_history_scroll =
-                        self.chat_history_scroll.saturating_add(3);
+                    // Wheel up = show older content (scroll grows backward).
+                    // 3.9 — the split single-response view has its own scroll;
+                    // the Book conversation / fullscreen use chat_history_scroll.
+                    if self.ai_single_response_scrollable() {
+                        self.ai_response_scroll = self.ai_response_scroll.saturating_add(3);
+                    } else {
+                        self.chat_history_scroll = self.chat_history_scroll.saturating_add(3);
+                    }
                 }
                 _ => {}
             },
@@ -5158,8 +5170,11 @@ impl App {
                 Some(Focus::Tree) => self.move_cursor(3),
                 Some(Focus::Editor) => self.mouse_scroll_editor(3),
                 Some(Focus::Ai) => {
-                    self.chat_history_scroll =
-                        self.chat_history_scroll.saturating_sub(3);
+                    if self.ai_single_response_scrollable() {
+                        self.ai_response_scroll = self.ai_response_scroll.saturating_sub(3);
+                    } else {
+                        self.chat_history_scroll = self.chat_history_scroll.saturating_sub(3);
+                    }
                 }
                 _ => {}
             },
@@ -6825,6 +6840,16 @@ impl App {
         ))
     }
 
+    /// 3.9 — true when the AI pane is showing the split single-response view (a
+    /// live/finished inference under a non-Book scope, no graph walk in flight)
+    /// — the view that `ai_response_scroll` drives (arrows/PgUp-Dn/Home/End +
+    /// wheel). The Book conversation and fullscreen use `chat_history_scroll`.
+    fn ai_single_response_scrollable(&self) -> bool {
+        self.inference.is_some()
+            && self.ai_mode != AiMode::Book
+            && self.graph_walk().is_none()
+    }
+
     fn handle_passive_key(&mut self, key: KeyEvent) -> Result<bool> {
         // GRAPHMIND GM-P8 — Esc aborts a running graph walk wholesale (not just
         // the current turn), before any pane-specific Esc handling.
@@ -6851,6 +6876,41 @@ impl App {
                 "retrieved passages: collapsed".into()
             };
             return Ok(false);
+        }
+        // 3.9 — scroll the split-view single-response view (works while
+        // streaming or done). `ai_response_scroll` is a distance UP from the
+        // bottom-pin: 0 follows the streaming tail; Home tops out, End re-arms
+        // follow. Skipped for the Book conversation (its own scroll) and graph
+        // walks. Arrows/PgUp/PgDn/Home/End + j/k, none of which collide with the
+        // done-state letter actions (r/i/t/g/b/c/l).
+        if self.focus == Focus::Ai && self.ai_single_response_scrollable() {
+            match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.ai_response_scroll = self.ai_response_scroll.saturating_add(1);
+                    return Ok(false);
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.ai_response_scroll = self.ai_response_scroll.saturating_sub(1);
+                    return Ok(false);
+                }
+                KeyCode::PageUp => {
+                    self.ai_response_scroll = self.ai_response_scroll.saturating_add(10);
+                    return Ok(false);
+                }
+                KeyCode::PageDown => {
+                    self.ai_response_scroll = self.ai_response_scroll.saturating_sub(10);
+                    return Ok(false);
+                }
+                KeyCode::Home => {
+                    self.ai_response_scroll = usize::MAX;
+                    return Ok(false);
+                }
+                KeyCode::End => {
+                    self.ai_response_scroll = 0;
+                    return Ok(false);
+                }
+                _ => {}
+            }
         }
         // When the AI pane has a completed inference and is focused, single-
         // letter keys apply the result to the editor.
