@@ -1206,6 +1206,18 @@ mod book_info_tests {
     }
 
     #[test]
+    fn bracket_pair_returns_both_cells_to_highlight() {
+        let l = |s: &str| vec![s.to_string()];
+        // R2 — cursor ON the open bracket: [cursor_bracket, partner].
+        assert_eq!(bracket_pair_at(&l("#figure(a[b]c)"), 0, 7), Some([(0, 7), (0, 13)]));
+        // Cursor just AFTER a bracket highlights the bracket to its left + partner.
+        assert_eq!(bracket_pair_at(&l("(x)"), 0, 1), Some([(0, 0), (0, 2)]));
+        // Not on a matched bracket → nothing to highlight.
+        assert_eq!(bracket_pair_at(&l("abc"), 0, 1), None);
+        assert_eq!(bracket_pair_at(&l("(a b"), 0, 0), None);
+    }
+
+    #[test]
     fn quotes_pair_only_as_opening_quotes() {
         // A2 — pair only when NOT adjacent to a word char.
         // Apostrophe / after a word (don'|, dogs'|): no phantom closer.
@@ -1813,8 +1825,18 @@ pub(crate) struct App {
     /// PANE-1 — which pane the right-side region shows. Default AI preserves the
     /// pre-PANE-1 launch view; Output is reached with `Ctrl+B Tab`.
     right_pane: RightPane,
-    /// Selected row in the Output pane.
+    /// Selected row in the Output pane — the *derived* index into the filtered
+    /// view, reconciled from `output_selected_id` each keypress/frame.
     output_selected: usize,
+    /// 3.8 — id of the message under the cursor: the source of truth for the
+    /// selection. Findings prepend newest-first, so an index alone silently
+    /// re-points when new ones arrive; anchoring by id keeps the cursor on the
+    /// same finding across reshuffles. `None` → fall to the top row.
+    output_selected_id: Option<Uuid>,
+    /// 3.8 — follow-newest: while true the cursor stays pinned to the top
+    /// (newest) row as findings stream in. Any downward navigation turns it
+    /// off; returning to the top turns it back on. Not persisted.
+    output_follow: bool,
     /// Output messages whose detail is expanded (`o`/Space).
     output_expanded: std::collections::HashSet<Uuid>,
     /// Output-pane filter (source / severity / open-paragraph). Applied as a
@@ -2139,6 +2161,15 @@ pub(crate) struct App {
     /// marked paragraph instead of just the cursor's. Cleared
     /// by `Esc` in the tree.
     tree_marked: std::collections::HashSet<Uuid>,
+    /// 3.8 — in-tree `/` filter needle. Empty = no filter (rows honor the
+    /// collapsed set as usual). Non-empty = rows are the pruned path-to-match
+    /// tree (every node whose title/slug matches, case-insensitive and
+    /// Unicode-aware, plus its ancestors), ignoring folding — mirrors the
+    /// Outline pane's filter.
+    tree_filter: String,
+    /// True while the user is typing into the `/` filter (keystrokes edit the
+    /// needle rather than driving tree commands).
+    tree_filter_editing: bool,
     /// In similar-paragraph mode, which pane has keyboard focus.
     /// `false` (default) → left pane = `self.opened` is the
     /// keyboard target. `true` → right pane = `self.secondary`
@@ -2147,6 +2178,11 @@ pub(crate) struct App {
     /// `self.opened`; routing happens via a swap performed at
     /// the key-dispatch + save boundaries.
     secondary_focused: bool,
+    /// R1 — set whenever observable state changes (input handled, resize, a tick
+    /// that mutated the view). The main loop only calls `terminal.draw` when this
+    /// is set, an animation is live, or a ~1s backstop expires — so an idle editor
+    /// stops rebuilding the frame ~5×/sec.
+    needs_redraw: bool,
     status: String,
     show_results_overlay: bool,
     results: Vec<SearchHit>,
@@ -3609,6 +3645,8 @@ impl App {
             // from `.session.json` when a `right_pane` was saved.
             right_pane: RightPane::Output,
             output_selected: 0,
+            output_selected_id: None,
+            output_follow: true,
             fact_check_enabled: world_hjson_exists,
             fc_last_fp: None,
             fc_activity_at: None,
@@ -3684,12 +3722,15 @@ impl App {
             opened: None,
             secondary: None,
             secondary_focused: false,
+            needs_redraw: true,
             split_view: false,
             similar_mode: false,
             picker_target: PaneTarget::Primary,
             progress_cache: None,
             link_pick_for: None,
             tree_marked: std::collections::HashSet::new(),
+            tree_filter: String::new(),
+            tree_filter_editing: false,
             status: String::from(
                 "Tab=panes · Enter=open · Ctrl+S=save · Ctrl+B then B/C/S/P add · D delete · ↑/↓ reorder · Ctrl+Q quit",
             ),
@@ -3977,7 +4018,14 @@ impl App {
     }
 
     fn run<B: ratatui::backend::Backend>(&mut self, terminal: &mut Terminal<B>) -> Result<()> {
+        // R1 — timestamp of the last real draw, for the redraw backstop below.
+        let mut last_draw = std::time::Instant::now();
         loop {
+            // R1 — any tick/pump that changes the status line (inference done, a
+            // background-job progress/result, a health-chip update, …) should
+            // redraw promptly rather than waiting for the backstop. Cheap to catch
+            // them all at once by diffing the status across the tick block.
+            let status_before = self.status.clone();
             self.pump_inference();
             self.pump_bg_job();
             self.tick_autosave();
@@ -4019,19 +4067,33 @@ impl App {
             if std::mem::take(&mut self.pending_backup_now) {
                 self.run_pending_backup_now(terminal);
             }
-            // 1.2.20+ C.1.b — refresh the echo-overlay stem
-            // cache before drawing (cheap when off or
-            // unchanged).
-            self.refresh_echo_overlay();
-            terminal.draw(|f| self.draw(f))?;
-            // Shorter poll interval while streaming so tokens render with low
-            // latency without burning CPU when idle.  1.2.18+ R.4 — the
-            // reader-pace teleprompter animates the highlight, so it also
-            // wants the fast tick (but only while playing, not paused).
-            let timeout = if self.is_streaming() || self.reader_pace_playing() {
+            // R1 — draw only when something changed, an animation is live, or the
+            // backstop expired. An animation (streaming tokens, the reader-pace
+            // teleprompter, a running background job) redraws continuously; the
+            // backstop guarantees the screen never goes stale > ~1s even if a
+            // redraw trigger was missed (so a forgotten `needs_redraw` degrades to
+            // a 1s lag, never a frozen UI). An idle editor thus rebuilds the frame
+            // ~once/second instead of ~5×.
+            if self.status != status_before {
+                self.needs_redraw = true;
+            }
+            let animating = self.is_animating();
+            let backstop = last_draw.elapsed() >= Duration::from_millis(1000);
+            if self.needs_redraw || animating || backstop {
+                // 1.2.20+ C.1.b — refresh the echo-overlay stem cache before
+                // drawing (cheap when off / unchanged).
+                self.refresh_echo_overlay();
+                terminal.draw(|f| self.draw(f))?;
+                self.needs_redraw = false;
+                last_draw = std::time::Instant::now();
+            }
+            // Shorter poll while animating so tokens/highlights render with low
+            // latency; longer when idle so the loop mostly sleeps (input still
+            // wakes it immediately — the timeout is only the max idle wait).
+            let timeout = if animating {
                 Duration::from_millis(40)
             } else {
-                Duration::from_millis(200)
+                Duration::from_millis(250)
             };
             if event::poll(timeout)? {
                 match event::read()? {
@@ -4042,13 +4104,29 @@ impl App {
                         if self.handle_key(key)? {
                             return Ok(());
                         }
+                        self.needs_redraw = true;
                     }
-                    Event::Mouse(mouse) => self.handle_mouse(mouse),
-                    Event::Paste(text) => self.handle_paste(text),
+                    Event::Mouse(mouse) => {
+                        self.handle_mouse(mouse);
+                        self.needs_redraw = true;
+                    }
+                    Event::Paste(text) => {
+                        self.handle_paste(text);
+                        self.needs_redraw = true;
+                    }
+                    Event::Resize(_, _) => self.needs_redraw = true,
                     _ => {}
                 }
             }
         }
+    }
+
+    /// R1 — a continuous animation is live, so the main loop should redraw every
+    /// (fast) tick: streaming inference, the reader-pace teleprompter, or a running
+    /// background job (its results stream in / the chip spins). Discrete one-off
+    /// changes set `needs_redraw` directly instead of appearing here.
+    fn is_animating(&self) -> bool {
+        self.is_streaming() || self.reader_pace_playing() || self.bg_job.is_some()
     }
 
     /// A1 — a bracketed-paste chunk arrived as ONE event. Insert it in bulk at the
@@ -5248,12 +5326,29 @@ impl App {
         let rel_row = (row - inner_y) as usize;
         let rel_col = (col - inner_cursor_x) as usize;
         let src_row = (doc.scroll_row + rel_row).min(total_lines - 1);
-        let line_len = doc
+        // R4 — map the clicked terminal CELL to a char index by walking display
+        // widths from the horizontal scroll: a wide (CJK) char occupies 2 cells, so
+        // a click anywhere over it lands on that char. Reduces to
+        // `scroll_col + rel_col` for 1-cell text.
+        let chars: Vec<char> = doc
             .textarea
             .lines()
             .get(src_row)
-            .map_or(0, |s| s.chars().count());
-        let src_col = (doc.scroll_col + rel_col).min(line_len);
+            .map(|s| s.chars().collect())
+            .unwrap_or_default();
+        let src_col = {
+            let mut col = doc.scroll_col.min(chars.len());
+            let mut cells = 0usize;
+            while col < chars.len() {
+                let cw = crate::tui::highlight::char_cells(chars[col]).max(1);
+                if cells + cw > rel_col {
+                    break;
+                }
+                cells += cw;
+                col += 1;
+            }
+            col
+        };
         doc.textarea
             .move_cursor(tui_textarea::CursorMove::Jump(src_row as u16, src_col as u16));
         doc.last_activity = std::time::Instant::now();
@@ -5708,6 +5803,44 @@ impl App {
             .modifiers
             .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER);
 
+        // 3.8 — `/` filter input mode. While editing, keystrokes edit the
+        // needle (live-narrowing the tree) rather than driving tree commands.
+        if self.tree_filter_editing {
+            match key.code {
+                KeyCode::Esc => {
+                    self.tree_filter.clear();
+                    self.tree_filter_editing = false;
+                    self.rebuild_rows_preserving_cursor();
+                    self.status = "filter cleared".into();
+                }
+                KeyCode::Enter => {
+                    self.tree_filter_editing = false;
+                    if self.tree_filter.trim().is_empty() {
+                        self.tree_filter.clear();
+                        self.rebuild_rows_preserving_cursor();
+                    } else {
+                        self.status =
+                            format!("filter `{}` · {} row(s)", self.tree_filter, self.rows.len());
+                    }
+                }
+                KeyCode::Backspace => {
+                    self.tree_filter.pop();
+                    self.rebuild_rows_preserving_cursor();
+                    self.tree_cursor = 0;
+                }
+                // Arrows still move within the filtered matches while typing.
+                KeyCode::Up => self.move_cursor(-1),
+                KeyCode::Down => self.move_cursor(1),
+                KeyCode::Char(c) if plain => {
+                    self.tree_filter.push(c);
+                    self.rebuild_rows_preserving_cursor();
+                    self.tree_cursor = 0;
+                }
+                _ => {}
+            }
+            return Ok(false);
+        }
+
         match key.code {
             KeyCode::Char('q') | KeyCode::Char('Q') if plain => return Ok(self.request_quit()),
             // Esc cycles Tree → Search bar (third leg of the
@@ -5718,7 +5851,13 @@ impl App {
             // so the next chord operates on the cursor row,
             // not stale marks.
             KeyCode::Esc => {
-                if self.link_pick_for.is_some() {
+                if !self.tree_filter.is_empty() {
+                    // A committed `/` filter is still applied — Esc clears it
+                    // first (before cancelling link-pick / marks / focus).
+                    self.tree_filter.clear();
+                    self.rebuild_rows_preserving_cursor();
+                    self.status = "filter cleared".into();
+                } else if self.link_pick_for.is_some() {
                     self.link_pick_for = None;
                     self.status = "link cancelled".into();
                     self.change_focus(Focus::Editor);
@@ -5845,6 +5984,21 @@ impl App {
                 self.collapse_all_branches();
             }
 
+            // 3.8 — jump-by-kind: `{` / `}` move the cursor to the previous /
+            // next major structural row (Book or Chapter), skipping past long
+            // paragraph runs.
+            KeyCode::Char('}') if plain => self.jump_structural(true),
+            KeyCode::Char('{') if plain => self.jump_structural(false),
+
+            // 3.8 — `/` opens the in-tree filter: type to narrow the tree to
+            // matching titles + their ancestors, Enter keeps it (cursor on the
+            // first match), Esc clears.
+            KeyCode::Char('/') if plain => {
+                self.tree_filter_editing = true;
+                self.status =
+                    "filter: type to narrow · Enter keeps · Esc clears".into();
+            }
+
             // 1.2.4+: tree T cycles the type of the cursor row
             // (or every marked paragraph, when multi-select is
             // active). Same ladder as Ctrl+B M:
@@ -5911,12 +6065,16 @@ impl App {
 
     fn rebuild_rows_preserving_cursor(&mut self) {
         let prev_id = self.rows.get(self.tree_cursor).map(|(id, _)| *id);
-        self.rows = self
-            .hierarchy
-            .flatten_with_collapsed(&self.collapsed_nodes)
-            .into_iter()
-            .map(|(n, d)| (n.id, d))
-            .collect();
+        let needle = self.tree_filter.trim().to_lowercase();
+        self.rows = if needle.is_empty() {
+            self.hierarchy
+                .flatten_with_collapsed(&self.collapsed_nodes)
+                .into_iter()
+                .map(|(n, d)| (n.id, d))
+                .collect()
+        } else {
+            filtered_tree_rows(&self.hierarchy, &needle)
+        };
         if let Some(id) = prev_id {
             if let Some(i) = self.rows.iter().position(|(rid, _)| *rid == id) {
                 self.tree_cursor = i;
@@ -9331,6 +9489,37 @@ impl App {
             .collect()
     }
 
+    /// 3.8 — resolve the cursor's index into the current filtered view from the
+    /// id-anchored selection. Follow-newest (or no anchor) pins to the top row;
+    /// otherwise the anchored message's position, falling back to the top when
+    /// it has left the view (dismissed / expired / filtered out).
+    pub(in crate::tui) fn output_selection_index(
+        &self,
+        msgs: &[crate::pane::output::Message],
+    ) -> usize {
+        resolve_output_index(
+            self.output_follow,
+            self.output_selected_id,
+            msgs.iter().map(|m| m.id),
+        )
+    }
+
+    /// 3.8 — move the Output cursor to `idx` within the filtered view, anchoring
+    /// the selection by the message's id and toggling follow-newest (on only
+    /// while parked at the top row).
+    fn set_output_cursor(&mut self, msgs: &[crate::pane::output::Message], idx: usize) {
+        if msgs.is_empty() {
+            self.output_selected = 0;
+            self.output_selected_id = None;
+            self.output_follow = true;
+            return;
+        }
+        let idx = idx.min(msgs.len() - 1);
+        self.output_selected = idx;
+        self.output_selected_id = Some(msgs[idx].id);
+        self.output_follow = idx == 0;
+    }
+
     /// A status-line summary of the active Output filter (or "off").
     fn output_filter_status(&self) -> String {
         if self.output_filter.is_active() {
@@ -9345,6 +9534,8 @@ impl App {
     /// session so it survives a restart.
     fn after_output_filter_change(&mut self, status: String) {
         self.output_selected = 0;
+        self.output_selected_id = None;
+        self.output_follow = true;
         self.status = status;
         let _ = self.save_session();
     }
@@ -9354,9 +9545,10 @@ impl App {
         const OUTPUT_PAGE: usize = 10;
         let msgs = self.filtered_output_messages();
         let n = msgs.len();
-        if n > 0 && self.output_selected >= n {
-            self.output_selected = n - 1;
-        }
+        // 3.8 — reconcile the derived index from the id-anchored selection, so a
+        // finding that streamed in (shifting the newest-first list) doesn't
+        // silently re-point the cursor before this keypress acts.
+        self.output_selected = self.output_selection_index(&msgs);
         let plain = !key
             .modifiers
             .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER);
@@ -9426,28 +9618,28 @@ impl App {
                     }
                 }
                 self.output_selected = 0;
+                self.output_selected_id = None;
+                self.output_follow = true;
                 self.refresh_tree_badges();
                 self.status = format!("cleared {cleared} message(s)");
             }
             KeyCode::Up | KeyCode::Char('k') if plain => {
-                self.output_selected = self.output_selected.saturating_sub(1);
+                self.set_output_cursor(&msgs, self.output_selected.saturating_sub(1));
             }
             KeyCode::Down | KeyCode::Char('j') if plain => {
-                if self.output_selected + 1 < n {
-                    self.output_selected += 1;
-                }
+                self.set_output_cursor(&msgs, self.output_selected + 1);
             }
-            KeyCode::Char('g') if plain => self.output_selected = 0,
-            KeyCode::Char('G') => self.output_selected = n.saturating_sub(1),
+            KeyCode::Char('g') if plain => self.set_output_cursor(&msgs, 0),
+            KeyCode::Char('G') => self.set_output_cursor(&msgs, n.saturating_sub(1)),
             // Viewport-scale navigation. The list view follows the selection, so
             // moving the selection by a page / to the ends scrolls the pane.
-            KeyCode::Home if plain => self.output_selected = 0,
-            KeyCode::End if plain => self.output_selected = n.saturating_sub(1),
+            KeyCode::Home if plain => self.set_output_cursor(&msgs, 0),
+            KeyCode::End if plain => self.set_output_cursor(&msgs, n.saturating_sub(1)),
             KeyCode::PageUp if plain => {
-                self.output_selected = self.output_selected.saturating_sub(OUTPUT_PAGE);
+                self.set_output_cursor(&msgs, self.output_selected.saturating_sub(OUTPUT_PAGE));
             }
             KeyCode::PageDown if plain => {
-                self.output_selected = (self.output_selected + OUTPUT_PAGE).min(n.saturating_sub(1));
+                self.set_output_cursor(&msgs, self.output_selected + OUTPUT_PAGE);
             }
             KeyCode::Char('d') if plain => {
                 if let Some(m) = msgs.get(self.output_selected) {
@@ -9465,6 +9657,14 @@ impl App {
                         let _ = self.store.dismiss_edge(eid);
                     }
                     self.refresh_tree_badges();
+                    // 3.8 — keep the cursor on the row the dismissal shifts up
+                    // into (the next finding), rather than snapping to the top.
+                    let next_id = msgs
+                        .get(self.output_selected + 1)
+                        .or_else(|| self.output_selected.checked_sub(1).and_then(|i| msgs.get(i)))
+                        .map(|m| m.id);
+                    self.output_selected_id = next_id;
+                    self.output_follow = next_id.is_none() || self.output_selected == 0;
                     if !nudged_s && !nudged_e {
                         self.status = if edge.is_some() { "finding rejected".into() } else { "dismissed".into() };
                     }
@@ -9691,23 +9891,37 @@ impl App {
     /// into the Dictionary; an `ai_task_complete` jumps to its target paragraph.
     /// Kinds without a primary action say so.
     fn output_primary_action(&mut self) {
-        let kind = crate::pane::output::active()
-            .and_then(|s| s.active().ok())
-            .unwrap_or_default()
-            .get(self.output_selected)
-            .map(|m| m.kind.clone());
-        match kind.as_deref() {
-            Some(k) if k == crate::pane::output::kinds::TRANSLATION_RESULT => {
-                self.insert_output_translation();
+        use crate::pane::output::kinds;
+        // Resolve the finding through the id-anchored filtered view (the pane's
+        // actual contents), so Enter acts on the row the cursor is really on.
+        let msgs = self.filtered_output_messages();
+        let Some(m) = msgs.get(self.output_selection_index(&msgs)).cloned() else {
+            return;
+        };
+        if m.kind == kinds::TRANSLATION_RESULT {
+            self.insert_output_translation();
+        } else if m.kind == kinds::LEXICON_PROPOSAL {
+            self.promote_output_message();
+        } else if m.kind == kinds::AI_TASK_COMPLETE {
+            self.jump_to_output_target();
+        } else {
+            // 3.8 — universal fallback: any finding that points at a paragraph
+            // (its `source_paragraph_id`, else a `target_paragraph` uuid in
+            // metadata) opens that paragraph, so the Output pane is an
+            // actionable worklist, not just a log.
+            let target = m.source_paragraph_id.or_else(|| {
+                m.metadata
+                    .get("target_paragraph")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| uuid::Uuid::parse_str(s).ok())
+            });
+            match target {
+                Some(id) => match self.open_paragraph_by_uuid(id) {
+                    Ok(()) => self.status = "opened the finding's paragraph".into(),
+                    Err(e) => self.status = format!("jump: {e}"),
+                },
+                None => self.status = "no primary action for this message".into(),
             }
-            Some(k) if k == crate::pane::output::kinds::LEXICON_PROPOSAL => {
-                self.promote_output_message();
-            }
-            Some(k) if k == crate::pane::output::kinds::AI_TASK_COMPLETE => {
-                self.jump_to_output_target();
-            }
-            Some(_) => self.status = "no primary action for this message".into(),
-            None => {}
         }
     }
 
@@ -33210,6 +33424,24 @@ pub(crate) fn matching_bracket_at(
     }
 }
 
+/// R2 — both cells of the bracket pair to highlight when the cursor sits on (or
+/// just after) a bracket: `[cursor_bracket, partner]`. `None` when the cursor
+/// isn't on a matched bracket. Pure. Used by the editor render to underline both.
+pub(crate) fn bracket_pair_at(
+    lines: &[String],
+    row: usize,
+    col: usize,
+) -> Option<[(usize, usize); 2]> {
+    let partner = matching_bracket_at(lines, row, col)?;
+    let line: Vec<char> = lines.get(row)?.chars().collect();
+    let cursor_bracket = if line.get(col).is_some_and(|c| is_bracket(*c)) {
+        (row, col)
+    } else {
+        (row, col.saturating_sub(1))
+    };
+    Some([cursor_bracket, partner])
+}
+
 /// Case-insensitive substring filter over the baked-in typst function
 /// table. Results are returned sorted alphabetically (the table is
 /// already sorted; we just preserve order across filter steps).
@@ -34379,6 +34611,64 @@ Rules:
 /// 1.3.34+ — aggregate Output findings into per-node tree report-card badges: each
 /// finding tied to a source paragraph tallies a count + worst severity onto that
 /// paragraph and every ancestor (so a chapter shows the sum of its paragraphs).
+/// 3.8 — resolve the Output cursor's index into the current view from the
+/// id-anchored selection. `follow` (parked at the newest/top row) → 0;
+/// otherwise the anchored id's position, falling back to the top when it has
+/// left the view. Pure so the reshuffle-survival property is testable: the same
+/// `anchor` maps to wherever that id now sits, however the list reordered.
+fn resolve_output_index(
+    follow: bool,
+    anchor: Option<Uuid>,
+    ids: impl IntoIterator<Item = Uuid>,
+) -> usize {
+    if follow {
+        return 0;
+    }
+    match anchor {
+        Some(id) => ids.into_iter().position(|x| x == id).unwrap_or(0),
+        None => 0,
+    }
+}
+
+/// Build the flattened `(id, depth)` rows for an active `/` filter: the pruned
+/// path-to-match tree — every node whose title or slug contains `needle`
+/// (already lowercased by the caller), plus all of its ancestors, folding
+/// ignored. Mirrors the Outline pane's `collect_filtered`.
+fn filtered_tree_rows(
+    hierarchy: &crate::store::hierarchy::Hierarchy,
+    needle: &str,
+) -> Vec<(Uuid, usize)> {
+    fn walk(
+        hierarchy: &crate::store::hierarchy::Hierarchy,
+        node: &Node,
+        depth: usize,
+        needle: &str,
+        out: &mut Vec<(Uuid, usize)>,
+    ) -> bool {
+        let start = out.len();
+        let mut any_child = false;
+        for child in hierarchy.children_of(Some(node.id)) {
+            if walk(hierarchy, child, depth + 1, needle, out) {
+                any_child = true;
+            }
+        }
+        let self_match = node.title.to_lowercase().contains(needle)
+            || node.slug.to_lowercase().contains(needle);
+        if self_match || any_child {
+            out.insert(start, (node.id, depth));
+            true
+        } else {
+            out.truncate(start);
+            false
+        }
+    }
+    let mut out = Vec::new();
+    for root in hierarchy.children_of(None) {
+        walk(hierarchy, root, 0, needle, &mut out);
+    }
+    out
+}
+
 fn compute_tree_badges(
     hierarchy: &crate::store::hierarchy::Hierarchy,
     msgs: &[crate::pane::output::Message],
@@ -35086,6 +35376,110 @@ mod tests_snippet_include {
         let col = line.chars().take_while(|&c| c != 'g').count();
         let ctx = detect_include_context(line, col).expect("inside the string");
         assert!(ctx.snippet_slug.is_none(), "globals.typ is not a snippet");
+    }
+}
+
+#[cfg(test)]
+mod tests_tree_filter {
+    use super::filtered_tree_rows;
+    use crate::store::hierarchy::Hierarchy;
+    use crate::store::node::Node;
+    use uuid::Uuid;
+
+    fn node(id: Uuid, kind: &str, title: &str, slug: &str, parent: Option<Uuid>, order: i64) -> Node {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "kind": kind, "title": title, "slug": slug,
+            "path": [], "parent_id": parent, "order": order, "file": null,
+            "modified_at": "2026-01-01T00:00:00Z",
+        }))
+        .expect("test node")
+    }
+
+    fn sample() -> (Hierarchy, [Uuid; 5]) {
+        let book = Uuid::now_v7();
+        let ch = Uuid::now_v7();
+        let sub = Uuid::now_v7();
+        let p1 = Uuid::now_v7();
+        let p2 = Uuid::now_v7();
+        let h = Hierarchy::from_nodes_for_test(vec![
+            node(book, "book", "Velmaron", "velmaron", None, 1),
+            node(ch, "chapter", "The Harbour", "harbour", Some(book), 1),
+            node(sub, "subchapter", "Dawn", "dawn", Some(ch), 1),
+            node(p1, "paragraph", "The lantern glows", "lantern", Some(sub), 1),
+            node(p2, "paragraph", "A quiet street", "street", Some(sub), 2),
+        ]);
+        (h, [book, ch, sub, p1, p2])
+    }
+
+    #[test]
+    fn leaf_match_pulls_in_ancestor_chain_only() {
+        let (h, [book, ch, sub, p1, _p2]) = sample();
+        // "lantern" matches only p1; its whole ancestor chain is kept, the
+        // sibling paragraph is excluded.
+        let rows = filtered_tree_rows(&h, "lantern");
+        let ids: Vec<Uuid> = rows.iter().map(|(id, _)| *id).collect();
+        assert_eq!(ids, vec![book, ch, sub, p1]);
+        // Depths reflect the real hierarchy, not the filtered position.
+        assert_eq!(rows[0].1, 0);
+        assert_eq!(rows[3].1, 3);
+    }
+
+    #[test]
+    fn branch_match_is_case_insensitive_and_matches_slug() {
+        let (h, [book, ch, sub, ..]) = sample();
+        // The needle arrives already lowercased (the caller lowercases it);
+        // matching against the lowercased node title "The Harbour" is what
+        // makes the feature case-insensitive. Book ancestor kept; the
+        // subchapter/paragraphs below are pruned.
+        let by_title: Vec<Uuid> =
+            filtered_tree_rows(&h, "harbour").iter().map(|(id, _)| *id).collect();
+        assert_eq!(by_title, vec![book, ch]);
+        // A pure slug match also lands (subchapter title "Dawn", slug "dawn").
+        let by_slug: Vec<Uuid> =
+            filtered_tree_rows(&h, "dawn").iter().map(|(id, _)| *id).collect();
+        assert_eq!(by_slug, vec![book, ch, sub]);
+    }
+
+    #[test]
+    fn no_match_yields_empty() {
+        let (h, _) = sample();
+        assert!(filtered_tree_rows(&h, "zzz-nope").is_empty());
+    }
+}
+
+#[cfg(test)]
+mod tests_output_selection {
+    use super::resolve_output_index;
+    use uuid::Uuid;
+
+    #[test]
+    fn follow_pins_to_top_regardless_of_anchor() {
+        let ids = [Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7()];
+        // Follow-newest ignores the anchor and always returns the top row.
+        assert_eq!(resolve_output_index(true, Some(ids[2]), ids.iter().copied()), 0);
+        assert_eq!(resolve_output_index(true, None, ids.iter().copied()), 0);
+    }
+
+    #[test]
+    fn anchor_tracks_the_message_across_a_reshuffle() {
+        let a = Uuid::now_v7();
+        let b = Uuid::now_v7();
+        let c = Uuid::now_v7();
+        // Cursor anchored to `b`, currently at index 1.
+        assert_eq!(resolve_output_index(false, Some(b), [a, b, c]), 1);
+        // A new finding prepends (newest-first) — `b` is now at index 2. The
+        // anchor follows it instead of silently re-pointing at index 1.
+        let d = Uuid::now_v7();
+        assert_eq!(resolve_output_index(false, Some(b), [d, a, b, c]), 2);
+    }
+
+    #[test]
+    fn missing_anchor_falls_to_top() {
+        let a = Uuid::now_v7();
+        let gone = Uuid::now_v7();
+        // The anchored message was dismissed / filtered out → fall to the top.
+        assert_eq!(resolve_output_index(false, Some(gone), [a]), 0);
+        assert_eq!(resolve_output_index(false, None, [a]), 0);
     }
 }
 

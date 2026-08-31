@@ -250,6 +250,14 @@ This is the block most people put in a user-global file so one palette follows
 them across every book. The panes chapter shows what each colour paints; the full
 colour table is Appendix C.
 
+One override sits above the theme block entirely. If the `NO_COLOR` environment
+variable is set to any non-empty value — the #link("https://no-color.org/")[no-color.org]
+convention — every theme colour resolves to your terminal's default, painting the
+whole TUI monochrome for a light background, a monochrome terminal, or an
+accessibility preference. It is an environment override, not a config key, so it
+needs no file edit and leaves your `theme` untouched; structure still reads
+through the bold, reversed, and underlined text modifiers.
+
 #subsection("backup — the safety net")
 
 The `backup` block drives both the `inkhaven backup` command and the auto-backup

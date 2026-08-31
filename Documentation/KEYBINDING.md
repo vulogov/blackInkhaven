@@ -167,7 +167,7 @@ These chords work from any focus except where noted. Chords marked
 | `Ctrl+Z g` (editor) | (3.7) **Go to line** — prompt for a line number and jump the cursor there, centred in the viewport (clamped to the buffer). Handy for chasing a Typst compile-error / diagnostic line (the gutter marks diagnostic lines with a red ●). Enter jumps, Esc cancels. Mnemonic: **g** for Goto. | `editor.goto_line` |
 | `Ctrl+Z w` (editor) | (3.7) **Toggle soft-wrap** — flip word-wrap display for the open buffer at runtime (session-only; the persisted default is `editor.wrap`). Switches between reading wrapped prose and editing unwrapped code/tables without editing config + restarting. Mnemonic: **w** for Wrap. | `editor.toggle_wrap` |
 | `Ctrl+Z t` (editor) | (3.7) **Strip trailing whitespace** — remove trailing spaces/tabs from every line as ONE undoable edit (`Ctrl+U` reverts). Cleans the noisy diffs `Ctrl+V ?` reports. Mnemonic: **t** for Trim. | `editor.strip_trailing_ws` |
-| `Ctrl+Z m` (editor) | (3.7) **Jump to matching bracket** — move the cursor to the `()`, `[]`, or `{}` pairing the bracket at or just before the cursor, across lines and respecting nesting. Balances `#figure(...)`, `#footnote[...]`, `#table(...)`. Mnemonic: **m** for Match. | `editor.match_bracket` |
+| `Ctrl+Z m` (editor) | (3.7) **Jump to matching bracket** — move the cursor to the `()`, `[]`, or `{}` pairing the bracket at or just before the cursor, across lines and respecting nesting. Balances `#figure(...)`, `#footnote[...]`, `#table(...)`. Mnemonic: **m** for Match. (3.8) Whenever the cursor sits on a bracket, it and its partner are **underlined** automatically — no keypress needed. | `editor.match_bracket` |
 | `Ctrl+Z c` (editor) | (1.2.14) **Add inline comment** — anchor an editorial comment to the current selection's character range (or the word at the cursor); pops a multi-line body input; writes a sidecar `<paragraph>.comments.json` beside the `.typ` (travels with the prose in git, diffs cleanly). Commented spans render underlined + italic; the editor footer surfaces `comment by <author> · <age>`. Char-offset anchors for UTF-8 safety. **Moved here from `Ctrl+V c`** (which the 1.6.19+ LOCI citation check now owns and used to shadow this). Mnemonic: **c** for Comment (`c` / `Shift+C` are free under `Ctrl+Z`). | `view.add_comment` |
 | `Ctrl+Z Shift+C` | (1.2.14) **Comments panel** — project-wide panel over every `.comments.json` sidecar (breadcrumb / author / age / snippet / `(N/M in ¶)`). Panel chords: ↑↓ navigate, Enter jump to the comment span, `r` resolve, `R` toggle resolved-filter, `d` delete, `/` filter, `a` AI digest, `Esc` close. **Moved here from `Ctrl+V Shift+C`** (now the sourcing check). | `view.comments_panel` |
 | `Ctrl+V Shift+N` | (1.4.16) **Character arc** (CHAR-1) — open the tracked arc for the nearest character (one named in the open paragraph, else the first tracked one): the author-declared arc (start / midpoint / end), the chapter-by-chapter observable state chain (✦ marks a change) with each chapter's deterministic agency score, the arc-completeness checks, and any Planning-Board coverage gaps. Read-only over the cached `char.duckdb`; `↑↓` scroll, `Esc` closes. Populate it with the `Ctrl+B Shift+C` review pass (agency + stalls + planning, zero-AI) or `inkhaven character refresh` / `check` (the LLM passes). Mnemonic: **N** for the arc (the bend); plain `n` is next-diagnostic. The arc *findings* ride the `Ctrl+B Shift+C` review pass into the Output `character` category. | `character.open_arc` |
@@ -304,7 +304,11 @@ of cycling to the missing AI pane).
 
 Focused on launch. Shows the project hierarchy with depth indentation, kind
 glyphs (`📖` book, `▸` chapter, `▹` subchapter, `¶` paragraph), and a dim
-`Nw` word-count suffix for paragraphs.
+`Nw` word-count suffix for paragraphs. (3.8) Branch rows (Book / Chapter /
+Subchapter) show a dim **aggregate descendant word count** (e.g. `12.3k`) plus
+a roll-up progress pip when the subtree carries target-word goals; bookmarked
+paragraphs (`Ctrl+V B`) show a **`⚑` flag** glyph. A dimmed **key-legend
+footer** sits on the pane's bottom line.
 
 ### 2.1 Navigation
 
@@ -317,11 +321,13 @@ glyphs (`📖` book, `▸` chapter, `▹` subchapter, `¶` paragraph), and a dim
 | `End`                | Jump to last row.                                           |
 | `PageUp`             | Move cursor 10 rows up (configurable: `page_up`).           |
 | `PageDown`           | Move cursor 10 rows down (configurable: `page_down`).       |
+| `{` / `}`            | (3.8) **Jump by kind** — move the cursor to the previous / next major structural row (**Book or Chapter**), skipping past long paragraph runs. Stops at the first/last with a status hint; no wrap. |
+| `/`                  | (3.8) **Filter the tree** — type to narrow the tree live to nodes whose **title or slug** matches (case-insensitive, Unicode-aware) plus their ancestors, folding ignored. `Enter` keeps the filter (cursor on the first match); `Backspace` edits; `↑`/`↓` move within matches while typing; `Esc` clears. The active needle shows in the pane title. |
 | `Enter`              | Open the cursor's node. Paragraphs load into the editor and shift focus there; if a different paragraph was open with unsaved edits, it's autosaved first. Branches print a status hint and stay in Tree. |
 | `F2`                 | Open the **Rename** modal pre-filled with the current node's title. Slug + filesystem entry stay; only the displayed title changes (re-embeds for search). |
 | `F3`                 | Open the **file picker** dialog. Enter on a file creates a new paragraph (inserted after the current cursor) with that file's content. Enter on a directory **recursively imports** the tree — subdirectories become branches one level deeper (Book→Chapter→Subchapter), files become paragraphs. If the directory tree exceeds the hierarchy depth, the deeper files are flattened into the deepest legal branch (with `unbounded_subchapters: false`). See §12. |
 | `q` or `Q`           | Quit (autosaves the open paragraph first if dirty).         |
-| `Esc`                | Cycle focus to the **Search bar** (second leg of the Editor → Tree → Search → Editor rotation). |
+| `Esc`                | Clears an active `/` filter first (3.8); otherwise cancels link-pick / clears multi-select marks, else cycles focus to the **Search bar** (second leg of the Editor → Tree → Search → Editor rotation). |
 
 **Open-paragraph indicator** — the row of the paragraph currently loaded in
 the Editor is rendered with a **green bold "►"** marker (instead of the
@@ -696,15 +702,23 @@ remembered across restarts. **`Ctrl+Z f`** fullscreens the current right pane
 pane it auto-surfaces — unless you're actively working in a right pane, so it
 never steals focus mid-read.
 
+(3.8) Findings arrive **newest-first at the top**. The selection is **anchored
+by message id**, so a finding streaming in no longer shifts the cursor onto a
+different message — it stays on the one you were reading. While the cursor is
+**parked at the top row** the pane **follows the newest** finding as it arrives
+(a `⟳follow` cue rides in the title); move down and follow turns off, return to
+the top and it turns back on.
+
 | Key       | Action                                                                          |
 | --------- | ------------------------------------------------------------------------------- |
 | `↑` / `↓` (or `k` / `j`) | Select previous / next message.                                  |
 | `g` / `G` | First / last message.                                                           |
 | `o` / `Space` | Expand / collapse the selected message's structured detail.                 |
 | `a`       | Ask the AI about the selected message (carries its full detail by reference).   |
-| `d`       | Dismiss the selected message.                                                   |
+| `d`       | Dismiss the selected message (the cursor stays on the row that shifts up).       |
 | `p`       | Pin / unpin (pinned messages sort to the top).                                  |
-| `Enter`   | Primary action — kind-specific (open target, accept proposal, jump to event, …).|
+| `Enter`   | Primary action — kind-specific (accept proposal, insert translation, jump to event, …); (3.8) **for any other finding that records a source paragraph, opens that paragraph** in the editor. |
+| `/`       | (PANE-2) Open the free-text search line — type to filter live by message text / kind; `Enter` keeps, `Esc` clears. |
 | `r` / `e` | (translations) remember / edit+remember.                                        |
 | `i` / `m` / `x` | (Socratic) record-as-intent / make-note / mark-addressed.                 |
 

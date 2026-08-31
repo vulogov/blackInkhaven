@@ -27,38 +27,39 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 3.7.0 — The TUI Pass: Keys, Editing, Consistency
+## Latest release · 3.8.0 — A Quieter Editor, Sharper Panes
 
-The current release is **3.7.0**, dedicated to the **terminal experience itself**
-— no new reader or axis, from a five-agent TUI/editor audit. Three tracks
-(deterministic, no new runtime crates):
+The current release is **3.8.0**, the second dedicated TUI pass — no new reader
+or axis. Three tracks (deterministic, no new runtime crates):
 
-- **Keys that actually arrive.** Inkhaven now *checks* whether the terminal
-  supports the kitty keyboard protocol (`supports_keyboard_enhancement`) and, when
-  it doesn't (macOS **Terminal.app**), prints a one-time startup notice naming the
-  terminal + the affected chords (`Ctrl+I`≡`Tab`, F-keys) with the fix
-  (kitty / WezTerm / Ghostty / iTerm2 ≥ 3.5). Vertical **block selection moved to
-  `Ctrl+Z v`** + PLAIN arrows — the old `Alt`+arrows failed on many terminals *and*
-  collided with back/forward, so it was broken even in kitty. The prompts/config
-  editors + worldbuilder are brought to parity (drop unused mouse capture, fix a
-  panic mouse-leak, request the protocol).
-- **Input & editing correctness.** **Bracketed paste** — a multi-line terminal
-  paste no longer mangles auto-pairs or submits at the first newline in the AI
-  prompt / search. Quotes auto-pair only as **opening** quotes (`don't` stays
-  `don't`). **Find searches from the cursor** (not the document top), with
-  `Ctrl+G` for the previous match. Editor niceties on `Ctrl+Z`: **g** go-to-line,
-  **w** wrap toggle, **t** strip trailing whitespace, **m** jump to matching
-  bracket — plus **smart Home**.
-- **Consistency & discoverability.** The shared dashboard navigation
-  (`PgUp/PgDn/Home/End` + blank-row skip) now reaches **all 15** dashboards;
-  **honest footers** advertise the keys + show `(a–b of N)`; and the quick
-  reference's F-key **drift** is fixed and guarded.
+- **Rendering & responsiveness.** An **idle-redraw dirty flag** stops the editor
+  rebuilding the whole frame ~5×/second when nothing changed — it now draws only
+  on a real change, a live animation, or a ~1-second backstop, so an idle editor
+  (over SSH / on a laptop) rebuilds ~once a second. The **matching-bracket
+  highlight** ships: the cursor's bracket and its partner are underlined (both
+  render paths), completing 3.7's `Ctrl+Z m` jump. **Wide-character (CJK)
+  columns** — cursor placement, click-to-position, and wrapping are display-width
+  aware, so the cursor no longer drifts on wide text. And the theme survives
+  monochrome / light terminals: **`NO_COLOR`** is honored, and a hardcoded
+  code-block background that broke on light backgrounds is gone.
+- **The Tree pane.** An in-tree **`/` filter** (narrow live by title/slug +
+  ancestors, Unicode-aware); **branch word-count roll-ups** (a chapter finally
+  says how long it is — `12.3k`, with a progress pip); **`{` / `}` jump-by-kind**
+  (prev/next Book or Chapter); a **`⚑` bookmark marker**; and a mode-aware
+  **key-legend footer**.
+- **The Output pane.** **Follow-newest + id-anchored selection** — findings
+  prepend newest-first, so the old index cursor silently re-pointed on each
+  arrival; selection now anchors by message id (survives reshuffles) and, parked
+  at the top row, follows the newest finding (`⟳follow`) — the auto-scroll the
+  pane lacked. And **`Enter` on any finding jumps to its paragraph**, turning the
+  pane into an actionable worklist.
 
-Deferred as follow-ups: the always-on matching-bracket *highlight* (the jump
-ships), and the rendering / layout tracks (idle-redraw dirty flag, wide-char
-columns, theme). No new config; no new runtime crates.
+Deferred as follow-ups: a full light-palette preset (`NO_COLOR` covers
+readable-on-light for now), OSC-11 detection, and the viewport-only draw
+optimization. No new config; no new runtime crates (`unicode-width` was already
+transitive).
 
-Read the full notes: [`Documentation/RELEASE_NOTES/3.7.0.md`](Documentation/RELEASE_NOTES/3.7.0.md).
+Read the full notes: [`Documentation/RELEASE_NOTES/3.8.0.md`](Documentation/RELEASE_NOTES/3.8.0.md).
 
 ### Recent releases
 
@@ -109,7 +110,7 @@ lines (zero Critical), with every surviving finding fixed and zero breaking
 changes. The 3.0.x line (through 3.0.9) then hardened the Bund scripting coverage
 and the export/import/keymap/assembly subsystems through successive targeted
 audits, each leaving a build-time guard behind. **3.1.0 lifted the feature freeze**
-(BONDS); **3.2.0** (ENSEMBLE), **3.3.0** (multilingual parity), **3.4.0** (export fidelity), **3.5.0** (imports + reader hub), **3.6.0** (fidelity + worklist fixes), and **3.7.0** (the TUI pass) continue
+(BONDS); **3.2.0** (ENSEMBLE), **3.3.0** (multilingual parity), **3.4.0** (export fidelity), **3.5.0** (imports + reader hub), **3.6.0** (fidelity + worklist fixes), **3.7.0** (the TUI pass), and **3.8.0** (a second TUI pass — rendering + the Tree and Output panes) continue
 on that hardened surface. Full 3.0.0 notes:
 [`Documentation/RELEASE_NOTES/3.0.0.md`](Documentation/RELEASE_NOTES/3.0.0.md).
 
@@ -314,7 +315,7 @@ cargo install inkhaven
 ```
 
 Inkhaven is published on crates.io — every release tag pushes a
-new version (latest: 3.7.0).  The first build takes ~10 minutes on
+new version (latest: 3.8.0).  The first build takes ~10 minutes on
 a modern laptop because of DuckDB + fastembed + ONNX-runtime
 compilation; `cargo binstall` above is the fast path.
 

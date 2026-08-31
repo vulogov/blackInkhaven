@@ -6,7 +6,7 @@
 
 use ratatui::style::{Color, Modifier};
 
-use crate::config::{color_or, ThemeConfig};
+use crate::config::ThemeConfig;
 
 #[derive(Debug, Clone)]
 pub struct Theme {
@@ -140,6 +140,27 @@ pub struct Theme {
 
 impl Theme {
     pub fn from_config(cfg: &ThemeConfig) -> Self {
+        // R5 — honor NO_COLOR (https://no-color.org): when the env var is set
+        // (non-empty), every colour resolves to the terminal's default.
+        let no_color = std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty());
+        Self::from_config_with(cfg, no_color)
+    }
+
+    /// R5 — `from_config` with the NO_COLOR decision passed in (so it's testable
+    /// without touching the process environment). When `no_color`, every colour
+    /// resolves to `Color::Reset` (the terminal default) for monochrome /
+    /// accessibility / light-background terminals; structure still reads via the
+    /// bold/reversed/underlined modifiers the renderer applies separately.
+    pub fn from_config_with(cfg: &ThemeConfig, no_color: bool) -> Self {
+        // A local `color_or` shadows the crate helper so all fields route through
+        // the NO_COLOR gate.
+        let color_or = |s: &str, default: Color| -> Color {
+            if no_color {
+                Color::Reset
+            } else {
+                crate::config::color_or(s, default)
+            }
+        };
         // Per-field default mirrors `ThemeConfig::default()` — kept in sync
         // by hand because the round-trip would otherwise involve parsing
         // the defaults from strings (works, but adds a layer of indirection
@@ -430,6 +451,29 @@ pub fn parse_style_modifier(raw: &str) -> Modifier {
         }
     }
     if saw_known { acc } else { Modifier::UNDERLINED }
+}
+
+#[cfg(test)]
+mod tests_no_color {
+    use super::*;
+    use crate::config::ThemeConfig;
+
+    #[test]
+    fn no_color_resolves_every_colour_to_reset() {
+        // R5 — with NO_COLOR, all theme colours are the terminal default; the
+        // normal path keeps its Catppuccin colours.
+        let cfg = ThemeConfig::default();
+        let mono = Theme::from_config_with(&cfg, true);
+        assert_eq!(mono.pane_bg, Color::Reset);
+        assert_eq!(mono.pane_fg, Color::Reset);
+        assert_eq!(mono.border_focused, Color::Reset);
+        assert_eq!(mono.search_match_bg, Color::Reset);
+        assert_eq!(mono.modal_bg, Color::Reset);
+
+        let colour = Theme::from_config_with(&cfg, false);
+        assert_ne!(colour.pane_bg, Color::Reset, "normal path keeps colour");
+        assert_ne!(colour.border_focused, Color::Reset);
+    }
 }
 
 #[cfg(test)]

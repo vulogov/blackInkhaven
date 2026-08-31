@@ -6,6 +6,7 @@
 //! rendering ourselves with the data tree-sitter-highlight produces.
 
 use ratatui::style::{Color, Modifier, Style};
+use unicode_width::UnicodeWidthChar;
 use tree_sitter_highlight::{
     HighlightConfiguration, HighlightEvent, Highlighter as TsHighlighter,
 };
@@ -165,6 +166,19 @@ pub struct VisualRow {
 /// Prefers breaking at whitespace (last space within the segment); falls back
 /// to hard-breaking when a single token exceeds the width. Always returns at
 /// least one row, even for an empty source line.
+/// R4 — terminal cell width of a char: 2 for CJK / wide, 0 for combining marks,
+/// 1 for the rest. So the editor's cursor / click / wrap column math lines up
+/// with what the terminal actually draws. For 1-cell text (Latin, Cyrillic) this
+/// equals the char count, so nothing changes there.
+pub(in crate::tui) fn char_cells(c: char) -> usize {
+    UnicodeWidthChar::width(c).unwrap_or(0)
+}
+
+/// R4 — cell width of a slice of chars (prefix-sum of [`char_cells`]).
+pub(in crate::tui) fn cells_of(chars: &[char]) -> usize {
+    chars.iter().copied().map(char_cells).sum()
+}
+
 pub fn wrap_line(runs: &[StyledRun], src_row: usize, width: usize) -> Vec<VisualRow> {
     if width == 0 {
         return vec![VisualRow {
@@ -193,8 +207,21 @@ pub fn wrap_line(runs: &[StyledRun], src_row: usize, width: usize) -> Vec<Visual
     let mut out: Vec<VisualRow> = Vec::new();
     let mut i = 0usize;
     while i < chars.len() {
-        let remaining = chars.len() - i;
-        let take = remaining.min(width);
+        // R4 — take as many chars as fit in `width` CELLS (a CJK char is 2
+        // cells, a combining mark 0), not `width` chars, so a wrapped row never
+        // overflows the pane. Always take ≥ 1 char to avoid an infinite loop when
+        // a single wide char is wider than the pane.
+        let mut take = 0usize;
+        let mut cells = 0usize;
+        for (c, _) in &chars[i..] {
+            let cw = char_cells(*c);
+            if take > 0 && cells + cw > width {
+                break;
+            }
+            cells += cw;
+            take += 1;
+        }
+        let take = take.max(1);
         let mut end = i + take;
         // If we didn't consume the rest of the line, try to break on a space.
         if end < chars.len() {
@@ -458,6 +485,7 @@ pub fn build_visual_row_spans(
     style_hits: &[super::style_warnings::StyleHit],
     comment_hits: &[super::comments::RowHit],
     correction: AddedFlags,
+    bracket_match: Option<[(usize, usize); 2]>,
     theme: &super::theme::Theme,
 ) -> Vec<ratatui::text::Span<'static>> {
     use ratatui::text::Span;
@@ -526,6 +554,12 @@ pub fn build_visual_row_spans(
             {
                 style = style.patch(comment_style);
             }
+            // R2 — underline both cells of the matched bracket pair.
+            if bracket_match
+                .is_some_and(|pair| pair.iter().any(|&(r, cc)| r == row.src_row && cc == src_col))
+            {
+                style = style.add_modifier(Modifier::UNDERLINED | Modifier::BOLD);
+            }
             if is_selected || is_block {
                 style = style.add_modifier(Modifier::REVERSED);
             }
@@ -559,6 +593,7 @@ pub fn build_row_spans(
     style_hits: &[super::style_warnings::StyleHit],
     comment_hits: &[super::comments::RowHit],
     correction: AddedFlags,
+    bracket_match: Option<[(usize, usize); 2]>,
     theme: &super::theme::Theme,
 ) -> Vec<ratatui::text::Span<'static>> {
     use ratatui::text::Span;
@@ -635,6 +670,11 @@ pub fn build_row_spans(
                 comment_style_at(comment_hits, src_col, theme)
             {
                 style = style.patch(comment_style);
+            }
+            // R2 — underline both cells of the matched bracket pair.
+            if bracket_match.is_some_and(|pair| pair.iter().any(|&(r, c)| r == row && c == src_col))
+            {
+                style = style.add_modifier(Modifier::UNDERLINED | Modifier::BOLD);
             }
             if is_selected || is_block {
                 style = style.add_modifier(Modifier::REVERSED);
@@ -869,6 +909,38 @@ mod tests {
 
     fn t() -> super::super::theme::Theme {
         super::super::theme::Theme::from_config(&ThemeConfig::default())
+    }
+
+    fn run(s: &str) -> Vec<StyledRun> {
+        vec![StyledRun { text: s.to_string(), style: Style::default() }]
+    }
+
+    #[test]
+    fn char_cells_counts_display_width() {
+        // R4 — Latin/Cyrillic = 1 cell, CJK/wide = 2, combining marks = 0.
+        assert_eq!(char_cells('a'), 1);
+        assert_eq!(char_cells('я'), 1);
+        assert_eq!(char_cells('中'), 2);
+        assert_eq!(char_cells('\u{301}'), 0); // combining acute
+        // For 1-cell text, cells_of == the char count (so nothing changes there).
+        assert_eq!(cells_of(&"hello".chars().collect::<Vec<_>>()), 5);
+        assert_eq!(cells_of(&"中a".chars().collect::<Vec<_>>()), 3);
+    }
+
+    #[test]
+    fn wrap_line_budgets_by_cells_not_chars() {
+        // Three 2-cell chars in a width-4 pane → 2 per row (4 cells), then 1.
+        let rows = wrap_line(&run("中中中"), 0, 4);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].width_chars, 2, "first row holds 2 wide chars (4 cells)");
+        assert_eq!(rows[1].width_chars, 1);
+        // A single char wider than the pane still takes ≥1 (no infinite loop).
+        let narrow = wrap_line(&run("中"), 0, 1);
+        assert_eq!(narrow.len(), 1);
+        assert_eq!(narrow[0].width_chars, 1);
+        // 1-cell text is unchanged: 5 chars in width 3 → 3 + 2 (char == cell).
+        let ascii = wrap_line(&run("abcde"), 0, 3);
+        assert_eq!(ascii.iter().map(|r| r.width_chars).collect::<Vec<_>>(), vec![3, 2]);
     }
 
     #[test]

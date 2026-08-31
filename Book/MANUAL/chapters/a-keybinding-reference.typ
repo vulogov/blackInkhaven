@@ -110,6 +110,8 @@ with a green bold `►` regardless of focus.
   chord_row("←", [Collapse the cursor's branch; if already collapsed (or on a paragraph), move to the parent.]),
   chord_row("Home / End", [Jump to the first / last row.]),
   chord_row("PageUp / PageDown", [Move the cursor 10 rows up / down (`page_up` / `page_down`).]),
+  chord_row("{ / }", [(3.8) Jump to the previous / next Book or Chapter, skipping paragraph runs.]),
+  chord_row("/", [(3.8) Filter the tree — type to narrow to nodes whose title or slug matches (case-insensitive, Unicode-aware) plus their ancestors; `Enter` keeps it, `Esc` clears. The needle shows in the pane title.]),
   chord_row("Enter", [Open the cursor's node. Paragraphs load into the editor and shift focus there, autosaving any previously-open dirty paragraph; branches print a hint and stay.]),
   chord_row("Shift+Enter", [Pin the focused paragraph into the split-view secondary pane instead of opening it primary.]),
   chord_row("F2", [Open the Rename modal for the cursor node (changes the displayed title only; slug and file stay).]),
@@ -301,7 +303,11 @@ analysis), an extra `L` files it as a paragraph into the matching system book.
 #subsection("The Output / Thoughts pane")
 
 The right region cycles between three panes; content auto-surfaces the relevant
-one unless you are actively reading there.
+one unless you are actively reading there. Findings arrive newest-first; the
+selection is anchored to the message, not its row, so an incoming finding never
+slides your cursor onto a different one. Rest on the top row and the pane
+_follows the newest_ arrival (a `⟳follow` marker shows in the title bar); moving
+down stops following, returning to the top resumes it.
 
 #chord_table((
   chord_row("Ctrl+B Tab", [Cycle the right region Output → AI → Thoughts.]),
@@ -311,9 +317,9 @@ one unless you are actively reading there.
   chord_row("g / G", [First / last message.]),
   chord_row("o / Space", [Expand / collapse the selected message's structured detail.]),
   chord_row("a", [Ask the AI about the selected message (carries its full detail).]),
-  chord_row("d", [Dismiss the selected message.]),
+  chord_row("d", [Dismiss the selected message; the cursor stays on the row that shifts up into its place.]),
   chord_row("p", [Pin / unpin (pinned messages sort to the top).]),
-  chord_row("Enter", [Primary, kind-specific action — open target, accept proposal, jump to event.]),
+  chord_row("Enter", [Jump to the source paragraph of _any_ finding that records one (fact-check, continuity, Socratic, …); findings with a kind-specific primary action — accept a proposal, insert a translation, jump to an event — still do that instead.]),
   chord_row("r / e", [(translations) remember / edit-and-remember.]),
   chord_row("i / m / x", [(Socratic) record-as-intent / make-note / mark-addressed.]),
 ))

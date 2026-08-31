@@ -251,6 +251,10 @@ viewport — the quick way to a Typst compile error the diagnostics list reporte
 by line. `Ctrl+Z m` jumps to the *matching* bracket: put the cursor on (or just
 after) one of `(`, `[`, or `{` and it hops to its partner, across lines and
 respecting nesting, which keeps a long `#figure(…)` or `#footnote[…]` honest.
+You do not even need the jump to see the pairing: whenever the cursor rests on a
+bracket, that bracket *and* its match are underlined automatically — across lines,
+nesting-aware, no keypress — so a `#table(…)` or `#figure(…)` shows its balance at
+a glance.
 `Ctrl+Z w` toggles soft-wrap for the open buffer at runtime — wrapped for reading
 prose, unwrapped for editing a wide table or code block — a session-only flip of
 the persisted `editor.wrap` default. And `Ctrl+Z t` strips trailing whitespace

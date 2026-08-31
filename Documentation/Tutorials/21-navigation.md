@@ -78,6 +78,31 @@ position of a bookmark stays stable as you add new ones.
 Use when you want guaranteed-reachable jump points; use the
 fuzzy picker when you know what you're looking for.
 
+## In-tree filter — `/`
+
+The fuzzy picker (above) is a floating modal; sometimes you want to
+narrow the **tree itself** without leaving it. Press `/` with the Tree
+pane focused and type: the tree narrows live to nodes whose title or
+slug matches (case-insensitive, Unicode-aware), keeping each match's
+ancestors so the surviving rows stay properly nested. The active needle
+shows in the pane title.
+
+- **Enter** keeps the filtered view, dropping the cursor on the first
+  match.
+- **Esc** clears it and restores the full tree.
+
+## Jump by kind — `{` / `}`
+
+Two chords skip the paragraph runs entirely: `{` moves the cursor to the
+**previous** Book or Chapter, `}` to the **next** one. Handy for walking
+the skeleton of a long manuscript without arrowing through every
+paragraph in between.
+
+While you're in the tree, two visual cues ride along: a paragraph
+bookmarked with `Ctrl+V B` (above) carries a `⚑` flag glyph on its row,
+and the pane's bottom line shows a dimmed, context-aware key legend so
+the chords that apply right now are always in view.
+
 ## AI prompt history — Up / Down
 
 In the AI prompt input (Ctrl+I), `Up` arrow recalls the last
