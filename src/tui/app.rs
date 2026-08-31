@@ -1206,6 +1206,18 @@ mod book_info_tests {
     }
 
     #[test]
+    fn bracket_pair_returns_both_cells_to_highlight() {
+        let l = |s: &str| vec![s.to_string()];
+        // R2 — cursor ON the open bracket: [cursor_bracket, partner].
+        assert_eq!(bracket_pair_at(&l("#figure(a[b]c)"), 0, 7), Some([(0, 7), (0, 13)]));
+        // Cursor just AFTER a bracket highlights the bracket to its left + partner.
+        assert_eq!(bracket_pair_at(&l("(x)"), 0, 1), Some([(0, 0), (0, 2)]));
+        // Not on a matched bracket → nothing to highlight.
+        assert_eq!(bracket_pair_at(&l("abc"), 0, 1), None);
+        assert_eq!(bracket_pair_at(&l("(a b"), 0, 0), None);
+    }
+
+    #[test]
     fn quotes_pair_only_as_opening_quotes() {
         // A2 — pair only when NOT adjacent to a word char.
         // Apostrophe / after a word (don'|, dogs'|): no phantom closer.
@@ -33251,6 +33263,24 @@ pub(crate) fn matching_bracket_at(
     } else {
         scan(&mut flat[..start].iter().rev())
     }
+}
+
+/// R2 — both cells of the bracket pair to highlight when the cursor sits on (or
+/// just after) a bracket: `[cursor_bracket, partner]`. `None` when the cursor
+/// isn't on a matched bracket. Pure. Used by the editor render to underline both.
+pub(crate) fn bracket_pair_at(
+    lines: &[String],
+    row: usize,
+    col: usize,
+) -> Option<[(usize, usize); 2]> {
+    let partner = matching_bracket_at(lines, row, col)?;
+    let line: Vec<char> = lines.get(row)?.chars().collect();
+    let cursor_bracket = if line.get(col).is_some_and(|c| is_bracket(*c)) {
+        (row, col)
+    } else {
+        (row, col.saturating_sub(1))
+    };
+    Some([cursor_bracket, partner])
 }
 
 /// Case-insensitive substring filter over the baked-in typst function

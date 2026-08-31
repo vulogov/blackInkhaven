@@ -1116,6 +1116,9 @@ impl super::super::App {
             };
 
         let (cur_row, cur_col) = opened.textarea.cursor();
+        // R2 — the matched-bracket pair to underline (computed once per frame).
+        let bracket_match =
+            crate::tui::app::bracket_pair_at(&current_lines, cur_row, cur_col);
         let selection = opened.textarea.selection_range();
 
         let total_lines = highlighted.len().max(1);
@@ -1209,6 +1212,7 @@ impl super::super::App {
                 style_hits,
                 comment_hits,
                 correction_flags,
+                bracket_match,
                 theme,
             );
             if is_current {
@@ -1527,6 +1531,9 @@ impl super::super::App {
             };
 
         let (cur_row, cur_col) = opened.textarea.cursor();
+        // R2 — the matched-bracket pair to underline (computed once per frame).
+        let bracket_match =
+            crate::tui::app::bracket_pair_at(&current_lines, cur_row, cur_col);
         let selection = opened.textarea.selection_range();
 
         let total_lines = highlighted.len().max(1);
@@ -1635,6 +1642,7 @@ impl super::super::App {
                 style_hits,
                 comment_hits,
                 correction_flags,
+                bracket_match,
                 theme,
             );
             if is_current {
