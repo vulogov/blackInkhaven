@@ -138,6 +138,54 @@ impl super::App {
         self.tree_row_lines(row_idx, width).len().max(1)
     }
 
+    /// Sum `(word_count, target_words)` over every descendant of `id`.
+    /// Paragraphs carry the counts; branches contribute their whole
+    /// subtree. Used for the branch-level roll-up gauge — literary scale
+    /// keeps the recursive walk negligible, and with the 3.8 dirty flag it
+    /// only runs when the frame actually redraws.
+    /// Jump the cursor to the previous/next major structural row — a Book or
+    /// Chapter — in the flattened tree. Fast navigation past long paragraph
+    /// runs. Stops at the first/last such row (no wrap); reports when there is
+    /// none in that direction.
+    pub(super) fn jump_structural(&mut self, forward: bool) {
+        let is_major = |id: Uuid| {
+            self.hierarchy
+                .get(id)
+                .is_some_and(|n| matches!(n.kind, NodeKind::Book | NodeKind::Chapter))
+        };
+        let start = self.tree_cursor;
+        let target = if forward {
+            (start + 1..self.rows.len()).find(|&i| is_major(self.rows[i].0))
+        } else {
+            (0..start).rev().find(|&i| is_major(self.rows[i].0))
+        };
+        match target {
+            Some(i) => self.tree_cursor = i,
+            None => {
+                self.status = if forward {
+                    "no chapter below".into()
+                } else {
+                    "no chapter above".into()
+                };
+            }
+        }
+    }
+
+    pub(super) fn subtree_word_totals(&self, id: Uuid) -> (u64, i32) {
+        let mut words: u64 = 0;
+        let mut target: i32 = 0;
+        for child in self.hierarchy.children_of(Some(id)) {
+            words = words.saturating_add(child.word_count);
+            if let Some(t) = child.target_words.filter(|t| *t > 0) {
+                target = target.saturating_add(t);
+            }
+            let (w, t) = self.subtree_word_totals(child.id);
+            words = words.saturating_add(w);
+            target = target.saturating_add(t);
+        }
+        (words, target)
+    }
+
     /// Build the styled `Line`s for a single tree row. Returns
     /// one Line when the row fits on a single visual line;
     /// otherwise returns N+1 Lines where the title wraps with a
@@ -245,6 +293,16 @@ impl super::App {
         // appended to whichever Line carries the title's last
         // chunk.
         let mut pip_spans: Vec<Span<'_>> = Vec::new();
+        // 3.8 — bookmark marker: paragraphs flagged via Ctrl+V B show a flag
+        // glyph so bookmarked rows are visible while navigating (the jump
+        // itself stays in the Ctrl+V M picker).
+        if matches!(node.kind, NodeKind::Paragraph) && node.bookmark {
+            pip_spans.push(Span::raw(" "));
+            pip_spans.push(Span::styled(
+                "⚑",
+                Style::default().fg(Color::LightMagenta),
+            ));
+        }
         if matches!(node.kind, NodeKind::Paragraph) {
             if let Some(target) = node.target_words.filter(|n| *n > 0) {
                 let pct =
@@ -272,6 +330,39 @@ impl super::App {
                     Style::default().fg(Color::LightRed)
                 } else {
                     Style::default().fg(Color::Red).add_modifier(Modifier::DIM)
+                };
+                pip_spans.push(Span::raw(" "));
+                pip_spans.push(Span::styled(pip.to_string(), style));
+            }
+        }
+        // 3.8 — branch word-count roll-up: aggregate descendant word count on
+        // Book / Chapter / Subchapter rows (a chapter finally says how long it
+        // is), plus a roll-up progress pip when the subtree carries any
+        // target-word goals. Paragraph counts live in their own pip above.
+        if matches!(
+            node.kind,
+            NodeKind::Book | NodeKind::Chapter | NodeKind::Subchapter
+        ) {
+            let (words, target) = self.subtree_word_totals(node.id);
+            if words > 0 {
+                pip_spans.push(Span::raw(" "));
+                pip_spans.push(Span::styled(
+                    fmt_wordcount(words),
+                    Style::default().add_modifier(Modifier::DIM),
+                ));
+            }
+            if target > 0 {
+                let pct = (words as i64 * 100 / target as i64).clamp(0, 999);
+                let (pip, style) = if pct >= 100 {
+                    ("●", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+                } else if pct >= 75 {
+                    ("◕", Style::default().fg(Color::LightGreen))
+                } else if pct >= 50 {
+                    ("◑", Style::default().fg(Color::Yellow))
+                } else if pct >= 25 {
+                    ("◔", Style::default().fg(Color::LightRed))
+                } else {
+                    ("○", Style::default().fg(Color::Red).add_modifier(Modifier::DIM))
                 };
                 pip_spans.push(Span::raw(" "));
                 pip_spans.push(Span::styled(pip.to_string(), style));
@@ -369,4 +460,33 @@ impl super::App {
         out
     }
 
+}
+
+/// Compact word-count label for the branch roll-up pip: exact under 1 000,
+/// then `k` with one decimal (`12.3k`), dropping the decimal on round
+/// thousands (`12k`). Keeps the pip narrow in a slim pane.
+fn fmt_wordcount(n: u64) -> String {
+    if n < 1000 {
+        return n.to_string();
+    }
+    let thousands = n as f64 / 1000.0;
+    if n % 1000 == 0 {
+        format!("{}k", n / 1000)
+    } else {
+        format!("{thousands:.1}k")
+    }
+}
+
+#[cfg(test)]
+mod tests_rollup {
+    use super::fmt_wordcount;
+
+    #[test]
+    fn fmt_wordcount_is_compact() {
+        assert_eq!(fmt_wordcount(0), "0");
+        assert_eq!(fmt_wordcount(999), "999");
+        assert_eq!(fmt_wordcount(1000), "1k");
+        assert_eq!(fmt_wordcount(12_000), "12k");
+        assert_eq!(fmt_wordcount(12_345), "12.3k");
+    }
 }

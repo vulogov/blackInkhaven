@@ -122,11 +122,11 @@ pub fn render(src: &str) -> Vec<Line<'static>> {
                         flush_line(&mut lines, &mut current_spans);
                     }
                     in_code_block = true;
-                    style_stack.push(
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .bg(Color::Indexed(236)),
-                    );
+                    // R5 — was `.bg(Color::Indexed(236))`, a fixed 256-palette dark
+                    // grey that stays dark on a light terminal (an invisible box).
+                    // The adaptive Yellow fg already marks code; drop the fixed bg
+                    // so it reads on any background.
+                    style_stack.push(Style::default().fg(Color::Yellow));
                 }
                 Tag::List(start) => {
                     if !current_spans.is_empty() {
@@ -269,6 +269,17 @@ pub fn render(src: &str) -> Vec<Line<'static>> {
     // Flush trailing partial line (common during streaming).
     if !current_spans.is_empty() {
         flush_line(&mut lines, &mut current_spans);
+    }
+    // R5 — honor NO_COLOR: this renderer uses fixed ANSI colours (it isn't
+    // theme-driven), so strip every foreground/background here, leaving the
+    // bold/italic/underline structure intact.
+    if std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty()) {
+        for line in &mut lines {
+            for span in &mut line.spans {
+                span.style.fg = None;
+                span.style.bg = None;
+            }
+        }
     }
     lines
 }

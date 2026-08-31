@@ -163,6 +163,27 @@ You can leave them all on; conflicts resolve in a deterministic order
 so the most actionable cue wins (selection > search match > grammar
 diff > lexicon > syntax).
 
+## Matching-bracket highlight
+
+When the cursor sits on a bracket — `()`, `[]`, or `{}` — that bracket
+**and its matching partner** are underlined automatically, no keypress
+required. The match is nesting-aware and reaches across lines, so a
+partner far down the buffer still lights up. It pairs with the
+`Ctrl+Z m` "jump to matching bracket" chord (Tutorial covers the `Ctrl+Z`
+family): the highlight tells you *where* the partner is, `Ctrl+Z m` takes
+you *to* it. Handy for keeping Typst calls balanced — `#figure(…)`,
+`#footnote[…]`, `#table(…)` — when the argument list runs long.
+
+## Wide characters (CJK) and the cursor
+
+Cursor placement, mouse click-to-position, and line-wrapping are all
+**display-width aware**. A CJK or otherwise wide glyph counts as two
+terminal cells and a combining mark as zero, so the cursor no longer
+drifts on a line of wide text and a click lands on the character you
+actually pointed at. This is transparent for Latin and Cyrillic prose —
+it only changes behaviour where a line mixes in double-width or combining
+characters.
+
 ## Focus mode (distraction-free)
 
 `Ctrl+B Shift+W` hides every other pane — Tree, AI, Search, AI-prompt —
