@@ -61,6 +61,19 @@ With the pane focused:
 The footer hint row only ever shows the actions that apply to whatever
 you have selected — so you never guess which keys do something.
 
+New messages arrive **newest-first** at the top. Your selection is
+anchored by message id, not by row position, so a message landing while
+you read no longer bumps your cursor onto a different message — it stays
+on the one you're on. Two conveniences follow from that:
+
+- While parked on the **top** row, the pane **follows the newest**
+  message as it arrives — a `⟳follow` cue shows in the pane title.
+  Moving down (`↓` / `j`) turns follow off so the newest arrival can't
+  yank the board out from under you; returning to the top turns it back
+  on.
+- Dismissing (`d`) keeps the cursor on the row that shifts up into the
+  gap, so you can clear several in a row without re-aiming.
+
 ## Act on it
 
 The `Enter` key is the message's **primary** action, and it adapts:
@@ -72,6 +85,15 @@ The `Enter` key is the message's **primary** action, and it adapts:
   `generate-lexicon --yes` would, with no second model call.
 - On an **`ai_task_complete`**, `Enter` **opens** the task's target
   paragraph.
+
+More broadly, `Enter` on **any** message that records a source
+paragraph — a fact-check note, a continuity flag, a Socratic prompt, and
+the rest — **opens that paragraph in the editor**, so the board doubles
+as an actionable worklist: read a finding, press Enter, land on the
+sentence it's about. Kind-specific primary actions (promote a lexicon
+proposal, insert a translation, jump to a timeline event) are unchanged —
+this is simply the fallback for the many findings whose natural next step
+is "take me there".
 
 Two more, on translation results:
 

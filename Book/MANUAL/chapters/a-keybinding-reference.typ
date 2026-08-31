@@ -110,6 +110,8 @@ with a green bold `►` regardless of focus.
   chord_row("←", [Collapse the cursor's branch; if already collapsed (or on a paragraph), move to the parent.]),
   chord_row("Home / End", [Jump to the first / last row.]),
   chord_row("PageUp / PageDown", [Move the cursor 10 rows up / down (`page_up` / `page_down`).]),
+  chord_row("{ / }", [(3.8) Jump to the previous / next Book or Chapter, skipping paragraph runs.]),
+  chord_row("/", [(3.8) Filter the tree — type to narrow to nodes whose title or slug matches (case-insensitive, Unicode-aware) plus their ancestors; `Enter` keeps it, `Esc` clears. The needle shows in the pane title.]),
   chord_row("Enter", [Open the cursor's node. Paragraphs load into the editor and shift focus there, autosaving any previously-open dirty paragraph; branches print a hint and stay.]),
   chord_row("Shift+Enter", [Pin the focused paragraph into the split-view secondary pane instead of opening it primary.]),
   chord_row("F2", [Open the Rename modal for the cursor node (changes the displayed title only; slug and file stay).]),
