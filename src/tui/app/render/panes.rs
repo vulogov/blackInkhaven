@@ -1247,7 +1247,18 @@ impl super::super::App {
             && cur_col >= opened.scroll_col
             && cur_col < opened.scroll_col + w
         {
-            let x = inner.x + gutter_width + (cur_col - opened.scroll_col) as u16;
+            // R4 — the cursor's cell offset is the DISPLAY width of the chars
+            // between the horizontal scroll and the cursor, not their count, so it
+            // lands on the right glyph past a wide (CJK) char. Equals the count for
+            // 1-cell text.
+            let line_chars: Vec<char> = current_lines
+                .get(cur_row)
+                .map(|l| l.chars().collect())
+                .unwrap_or_default();
+            let cells = super::super::super::highlight::cells_of(
+                line_chars.get(opened.scroll_col..cur_col).unwrap_or(&[]),
+            );
+            let x = inner.x + gutter_width + cells as u16;
             let y = inner.y + (cur_row - opened.scroll_row) as u16;
             f.set_cursor_position((x, y));
         }
@@ -1676,7 +1687,21 @@ impl super::super::App {
             && cursor_visual.0 < opened.scroll_row + h
             && cursor_visual.1 < w
         {
-            let x = inner.x + gutter_width + cursor_visual.1 as u16;
+            // R4 — cell offset = display width of the visual row's chars up to the
+            // cursor (equals the char count for 1-cell text).
+            let cursor_cells = visual
+                .get(cursor_visual.0)
+                .map(|vr| {
+                    let taken: Vec<char> = vr
+                        .runs
+                        .iter()
+                        .flat_map(|r| r.text.chars())
+                        .take(cursor_visual.1)
+                        .collect();
+                    super::super::super::highlight::cells_of(&taken)
+                })
+                .unwrap_or(cursor_visual.1);
+            let x = inner.x + gutter_width + cursor_cells as u16;
             let y = inner.y + (cursor_visual.0 - opened.scroll_row) as u16;
             f.set_cursor_position((x, y));
         }
