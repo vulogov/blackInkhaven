@@ -83,11 +83,35 @@ fn is_help_relevant(rel: &str) -> bool {
         || name.contains("READINESS"))
 }
 
+/// A section heading turned into a filesystem-safe filename segment, so each
+/// chunk imports as a paragraph *titled by its section* (not by the parent
+/// file). Strips markdown formatting + path separators; caps the length.
+fn section_slug(heading: &str) -> String {
+    let cleaned: String = heading
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' => '-',
+            '`' | '*' | '#' | '[' | ']' => ' ',
+            c => c,
+        })
+        .collect();
+    let cleaned = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    let capped: String = cleaned.chars().take(80).collect();
+    let capped = capped.trim().to_string();
+    if capped.is_empty() {
+        "section".to_string()
+    } else {
+        capped
+    }
+}
+
 /// Append one chunk to `chunks`, prefixed with the document title + section
-/// label for retrieval context. Empty bodies are skipped.
+/// label for retrieval context. The chunk's path nests the section under a
+/// directory named for the doc (`<doc>/<section>.md`) so it imports as a
+/// distinctly-titled paragraph. Empty bodies are skipped.
 fn push_chunk(
     chunks: &mut Vec<HelpFile>,
-    rel_path: &str,
+    doc_base: &str,
     doc_title: &str,
     heading: &Option<String>,
     body: &[&str],
@@ -97,8 +121,8 @@ fn push_chunk(
         return;
     }
     let (label, path) = match heading {
-        Some(h) => (h.clone(), format!("{rel_path} § {h}")),
-        None => ("overview".to_string(), format!("{rel_path} (overview)")),
+        Some(h) => (h.clone(), format!("{doc_base}/{}.md", section_slug(h))),
+        None => ("overview".to_string(), format!("{doc_base}/overview.md")),
     };
     chunks.push(HelpFile {
         path,
@@ -132,6 +156,10 @@ fn chunk_markdown(rel_path: &str, content: &str) -> Vec<HelpFile> {
                 .to_string()
         });
 
+    // Sections nest under a directory named for the doc, so each imports as a
+    // distinctly-titled paragraph (`<doc>/<section>.md`).
+    let doc_base = rel_path.trim_end_matches(".md");
+
     let mut chunks: Vec<HelpFile> = Vec::new();
     let mut heading: Option<String> = None;
     let mut body: Vec<&str> = Vec::new();
@@ -143,7 +171,7 @@ fn chunk_markdown(rel_path: &str, content: &str) -> Vec<HelpFile> {
         let hashes = line.chars().take_while(|c| *c == '#').count();
         let is_section = (hashes == 2 || hashes == 3) && line[hashes..].starts_with(' ');
         if is_section {
-            push_chunk(&mut chunks, rel_path, &doc_title, &heading, &body);
+            push_chunk(&mut chunks, doc_base, &doc_title, &heading, &body);
             heading = Some(line[hashes + 1..].trim().to_string());
             body.clear();
             body.push(line); // keep the heading in its section
@@ -151,16 +179,26 @@ fn chunk_markdown(rel_path: &str, content: &str) -> Vec<HelpFile> {
             body.push(line);
         }
     }
-    push_chunk(&mut chunks, rel_path, &doc_title, &heading, &body);
+    push_chunk(&mut chunks, doc_base, &doc_title, &heading, &body);
 
     if chunks.is_empty() {
-        vec![HelpFile {
+        return vec![HelpFile {
             path: rel_path.to_string(),
             content: content.to_string(),
-        }]
-    } else {
-        chunks
+        }];
     }
+    // Disambiguate any two sections that slug to the same filename (rare, but a
+    // collision would otherwise drop a chunk when unpacked to disk).
+    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for chunk in &mut chunks {
+        let count = seen.entry(chunk.path.clone()).or_insert(0);
+        if *count > 0 {
+            let n = *count + 1;
+            chunk.path = format!("{} ({n}).md", chunk.path.trim_end_matches(".md"));
+        }
+        *count += 1;
+    }
+    chunks
 }
 
 /// MAINTAINER: walk `docs_dir` and package every help-relevant `.md` file (path
