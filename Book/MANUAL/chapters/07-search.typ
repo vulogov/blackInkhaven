@@ -122,6 +122,14 @@ pattern to match, so write it the way you would describe the scene to a friend.
   rewards description, not keyword-thrift.
 ]
 
+#callout(label: "Recalling a past query")[
+  With the results overlay closed, `↑` and `↓` walk the bar's #emph[query
+  history] shell-style — the last search you ran, the one before it, and so on —
+  so re-running or tweaking an earlier query costs no retyping. (It is the same
+  recall the AI prompt bar has.) The focused bar's title shows a `↑ history` cue
+  whenever there is history to step back through.
+]
+
 #subsection("Running it and reading the results")
 
 Press `Enter`. A ranked results overlay drops down over the body — the nearest
@@ -170,11 +178,14 @@ chapter you think it is in.
 
 #subsection("Jumping to a hit")
 
-`↑` and `↓` move the selection through the results. `Enter` on the highlighted
-row *opens that paragraph in the Editor* — focus moves there, the Editor loads
-the body, and the Tree cursor repositions onto the very same row, so you land in
-context and can move to neighbours immediately. One keystroke took you from "the
-scene where the light fails" to the cursor blinking inside it.
+`↑` and `↓` move the selection through the results, and the overlay scrolls the
+selected row into view as you go — so on a short terminal no hit is stranded
+off-screen below the fold. `PgUp` and `PgDn` page the cursor by five, and
+`Home` / `End` jump to the first / last result; the list holds up to fifty hits. `Enter`
+on the highlighted row *opens that paragraph in the Editor* — focus moves there,
+the Editor loads the body, and the Tree cursor repositions onto the very same
+row, so you land in context and can move to neighbours immediately. One keystroke
+took you from "the scene where the light fails" to the cursor blinking inside it.
 
 #subsection("Dismissing the overlay")
 
@@ -186,7 +197,10 @@ Editor if a paragraph is open, otherwise onward through the focus ring. Nothing
 #chord_table((
   chord_row("Ctrl+/", "Focus the Search bar (top). Ctrl+4 does the same."),
   chord_row("Enter", "Run the query; on an open result, open that paragraph."),
-  chord_row("↑ / ↓", "Move the selection through the ranked results."),
+  chord_row("↑ / ↓ (overlay closed)", "Walk the query history; a ↑ history cue shows when there is any."),
+  chord_row("↑ / ↓ (overlay open)", "Move the selection through the ranked results (scrolls it into view)."),
+  chord_row("PgUp / PgDn (overlay open)", "Page the result cursor by 5."),
+  chord_row("Home / End (overlay open)", "Jump to the first / last result."),
   chord_row("Esc", "Close the results overlay; press again to move focus on."),
   chord_row("Ctrl+F", "Literal regex find inside the open paragraph (not project-wide)."),
 ))

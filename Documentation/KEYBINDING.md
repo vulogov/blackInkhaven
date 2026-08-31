@@ -664,7 +664,10 @@ keystroke away. Pane title shows provider, streaming status, and a
 
 | Key       | Condition                       | Action                                              |
 | --------- | ------------------------------- | --------------------------------------------------- |
-| `Esc`     | always                          | Bounce focus back to the **AI prompt** bar (mirror of the AI-prompt → AI Esc). |
+| `Esc`     | inference in flight             | (3.9) **Cancel** the in-flight inference — stops the stream and **keeps the chat history** (vs `Ctrl+B c`, which wipes the whole conversation). Works from the AI prompt too. A `Esc cancel` cue shows in the title while streaming. |
+| `Esc`     | otherwise                       | Bounce focus back to the **AI prompt** bar (mirror of the AI-prompt → AI Esc). |
+| `↑`/`↓` (or `k`/`j`), `PgUp`/`PgDn` | inference present (non-Book scope) | (3.9) **Scroll** the single response. It follows the streaming tail by default (`⟳follow` in the title); scrolling up detaches (`↑scrolled`). Mouse wheel too. |
+| `Home` / `End` | inference present (non-Book scope) | (3.9) Jump to the **top** / **bottom**. `End` re-arms follow-the-tail. |
 | `r` / `R` | inference done, doc open        | Replace editor selection (or entire doc if no selection) with the AI text. Marks dirty, refocuses Editor. |
 | `i` / `I` | inference done, doc open        | Insert AI text at cursor. Marks dirty.              |
 | `t` / `T` | inference done, doc open        | Prepend AI text to top of paragraph (with blank line separator). |
@@ -695,7 +698,8 @@ Socratic, timeline critique, translation, lexicon, Bund, …), the **AI** pane,
 and (1.4.18; THOUGHTS-1) the **Thoughts** pane — a read-only, scrollable home for
 long reflective output, e.g. the Inner Theologian slow track (`Ctrl+B J→T`). In
 the Thoughts pane: `↑↓`/`j`/`k` scroll, `PageUp`/`PageDown`, `g`/`G` top/bottom,
-`c` clear, `Esc` to the editor. Plain **`Tab`** now cycles Tree → Editor → *the
+(3.9) **`y` copy** the whole transcript to the clipboard, `c` clear, `Esc` to
+the editor. Plain **`Tab`** now cycles Tree → Editor → *the
 currently-shown right pane* (no longer forced to AI). The active right pane is
 remembered across restarts. **`Ctrl+Z f`** fullscreens the current right pane
 (Output / Thoughts; the AI pane uses `Ctrl+B K`). When content arrives for a
@@ -747,10 +751,15 @@ character at the buffer's character position.
 | `←` / `→`            | Move cursor one char left / right.                          |
 | `Home`               | Cursor to start.                                            |
 | `End`                | Cursor to end.                                              |
-| `↑`                  | (overlay open) Move result cursor up.                       |
-| `↓`                  | (overlay open) Move result cursor down.                     |
-| `Enter`              | If results overlay is open: open the highlighted result. Otherwise: run `Store::search_text(query, 10)` and show results. |
+| `↑`                  | (overlay open) Move result cursor up. (3.9, overlay closed) **Recall the previous query** from history. |
+| `↓`                  | (overlay open) Move result cursor down. (3.9, overlay closed) Recall the next query (past the newest → clears the input). |
+| `PgUp`/`PgDn`, `Home`/`End` | (3.9, overlay open) Page the result cursor (±5) / jump to first / last. The overlay scrolls the selection into view. |
+| `Enter`              | If results overlay is open: open the highlighted result. Otherwise: run `Store::search_text(query, 50)` (3.9 — was 10) and show results. |
 | `Esc`                | If results overlay is open, close it (one press); else cycle focus to the **Editor** pane (third leg of the Editor → Tree → Search → Editor rotation). |
+
+(3.9) Sent queries are kept in a session history ring; `↑`/`↓` (with the
+overlay closed) walk it shell-style — the same recall the AI prompt has. The
+focused bar title shows a `↑ history` cue when the ring is non-empty.
 
 Opening a result from this overlay positions the tree cursor on the target
 node. Paragraphs additionally load into the editor (focus moves to Editor).
@@ -774,7 +783,7 @@ action and the `/`-triggered Prompt picker overlay.
 | `↓`                  | (picker open) Move selection down.                          |
 | `Tab`                | (picker open) Expand selected prompt template into the buffer with `{{selection}}` / `{{context}}` substituted. |
 | `Enter`              | If picker open: same as Tab — expand selected template. Otherwise: spawn a streaming inference. Focus **stays** on the AI prompt bar (it does not jump to the AI pane). The buffer is sent verbatim, except: a leading `/name` is resolved against the prompt library, and a leading `Help!` (case-sensitive) routes the rest of the line through the F1 Help-RAG flow. |
-| `Esc`                | If picker open, close it; else bounce focus to the **AI pane** so you can read or scroll the answer. Pressing `Esc` again from the AI pane brings you straight back here. |
+| `Esc`                | If picker open, close it; (3.9) else if an inference is in flight, **cancel** it (stops the stream, keeps the chat history); else bounce focus to the **AI pane** so you can read or scroll the answer. Pressing `Esc` again from the AI pane brings you straight back here. |
 | `Ctrl+1`             | Focus the **Editor** pane (global shortcut, works from this input too). |
 | `Ctrl+T`             | Focus the **Tree** pane (global shortcut, works from this input too). |
 
@@ -804,7 +813,9 @@ bar is focused (see §5). The pane's own keys are:
 
 | Key                  | Action                                                      |
 | -------------------- | ----------------------------------------------------------- |
-| `↑` / `↓`            | Move result cursor.                                         |
+| `↑` / `↓`            | Move result cursor. (3.9) The overlay **scrolls the selection into view**, so results below the fold are reachable on a short terminal. |
+| `PgUp` / `PgDn`      | (3.9) Page the cursor ±5.                                   |
+| `Home` / `End`       | (3.9) Jump to the first / last result.                      |
 | `Enter`              | Open the highlighted result.                                |
 | `Esc`                | Close the overlay (Search bar stays focused).               |
 | Typing               | Closes the overlay and continues editing the query.         |

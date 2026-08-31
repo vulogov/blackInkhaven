@@ -282,12 +282,17 @@ current match brightens.
 
 #section("The AI pane")
 
-Focus lands here when you bounce off the AI prompt with `Esc`. The action keys
+Focus lands here when you bounce off the AI prompt with `Esc`. The apply keys
 fire only once an inference is `Done` and non-empty; while streaming or on error
-only `q` and `Esc` respond.
+only `q`, `Esc`, and the scroll keys respond. The response scrolls, and by
+default #emph[follows the streaming tail] as tokens arrive (a `⟳follow` cue in
+the title); scrolling up detaches from follow (`↑scrolled`), `End` re-arms it.
 
 #chord_table((
-  chord_row("Esc", [Bounce focus back to the AI prompt bar.]),
+  chord_row("Esc", [While a stream is in flight, cancel it — the stream stops and the chat history is kept; otherwise bounce focus back to the AI prompt bar.]),
+  chord_row("↑ / k / PgUp / Home", [Scroll the response up; detaches from follow (the title shows `↑scrolled`).]),
+  chord_row("↓ / j / PgDn", [Scroll the response down.]),
+  chord_row("End", [Jump to the bottom and re-arm follow-the-stream (`⟳follow` in the title).]),
   chord_row("r / R", [Replace the editor selection (or the whole document) with the AI text; refocus the editor.]),
   chord_row("i / I", [Insert the AI text at the cursor.]),
   chord_row("t / T", [Prepend the AI text to the top of the paragraph.]),
@@ -322,6 +327,8 @@ down stops following, returning to the top resumes it.
   chord_row("Enter", [Jump to the source paragraph of _any_ finding that records one (fact-check, continuity, Socratic, …); findings with a kind-specific primary action — accept a proposal, insert a translation, jump to an event — still do that instead.]),
   chord_row("r / e", [(translations) remember / edit-and-remember.]),
   chord_row("i / m / x", [(Socratic) record-as-intent / make-note / mark-addressed.]),
+  chord_row("y", [(Thoughts pane) Copy the whole reflective transcript to the system clipboard.]),
+  chord_row("c", [(Thoughts pane) Clear the transcript — the pane's one destructive key.]),
 ))
 
 Output filtering — the title shows `shown/total · filter`, persisted in
@@ -347,7 +354,7 @@ streaming inference.
   chord_row("↑ / ↓", [(picker open) Move the selection.]),
   chord_row("Tab", [(picker open) Expand the selected template into the buffer with `{{selection}}` / `{{context}}` substituted.]),
   chord_row("Enter", [Picker open: expand the template. Otherwise: spawn a streaming inference; focus stays on the prompt bar.]),
-  chord_row("Esc", [Picker open: close it. Otherwise: bounce focus to the AI pane to read the answer.]),
+  chord_row("Esc", [Picker open: close it. Mid-stream: cancel the inference (the chat history is kept). Otherwise: bounce focus to the AI pane to read the answer.]),
 ))
 
 #section("The Search bar")
@@ -357,8 +364,11 @@ Activated by `Ctrl+/`. Semantic search over the whole project.
 #chord_table((
   chord_row("printable char", [Insert at the cursor; closes the results overlay (the query changed).]),
   chord_row("Backspace / Delete", [Edit the query; closes the results overlay.]),
-  chord_row("← / → / Home / End", [Cursor movement within the query.]),
-  chord_row("↑ / ↓", [(overlay open) Move the result cursor.]),
+  chord_row("← / → / Home / End", [Cursor movement within the query (overlay closed).]),
+  chord_row("↑ / ↓", [(overlay closed) Walk the query history, shell-style; the title shows `↑ history` when there is any to recall.]),
+  chord_row("↑ / ↓", [(overlay open) Move the result cursor — scrolls the selection into view.]),
+  chord_row("PgUp / PgDn", [(overlay open) Page the result cursor by 5.]),
+  chord_row("Home / End", [(overlay open) Jump to the first / last result.]),
   chord_row("Enter", [Overlay open: open the highlighted result. Otherwise: run the search and show results.]),
   chord_row("Esc", [Overlay open: close it. Otherwise: cycle focus to the Editor.]),
 ))
@@ -686,7 +696,9 @@ focus but sees no keys until the overlay closes. The conventions are consistent:
 #subsection("Search-results overlay")
 
 #chord_table((
-  chord_row("↑ / ↓", [Move the result cursor.]),
+  chord_row("↑ / ↓", [Move the result cursor; scrolls the selection into view.]),
+  chord_row("PgUp / PgDn", [Page the cursor by 5.]),
+  chord_row("Home / End", [Jump to the first / last result.]),
   chord_row("Enter", [Open the highlighted result.]),
   chord_row("Esc", [Close the overlay (the Search bar stays focused).]),
   chord_row("typing", [Close the overlay and continue editing the query.]),

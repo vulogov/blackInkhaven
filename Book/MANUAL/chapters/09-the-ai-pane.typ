@@ -128,10 +128,24 @@ status flips to an error, the title carries `error`, and the error text sits in
 the pane body. Fix the cause and re-send; nothing is lost.
 
 #callout(label: "Reading while it writes")[
-  You do not have to wait for `done`. Scroll the pane (`Ctrl+3`, then the arrows
-  or the wheel) while a stream is still running, or type your next question into
-  the prompt bar — Inkhaven queues nothing behind your back, so a follow-up sends
-  a fresh call once the current one settles.
+  You do not have to wait for `done`. A long or streaming answer #emph[scrolls]:
+  by default the pane #emph[follows the streaming tail] as tokens arrive — a
+  `⟳follow` cue lights in the title — so the freshest text stays in view. Scroll
+  back with `↑` / `k` / `PgUp` / `Home` (or the wheel) and following detaches, the
+  title switching to `↑scrolled`; `↓` / `j` / `PgDn` scroll down, and `End` jumps
+  to the bottom and re-arms follow. Or ignore the answer entirely and type your
+  next question into the prompt bar — Inkhaven queues nothing behind your back, so
+  a follow-up sends a fresh call once the current one settles.
+]
+
+#callout(label: "Cancelling a stream — Esc")[
+  While an inference is in flight, `Esc` — from the AI pane #emph[or] the AI
+  prompt bar — #emph[cancels] it: the stream stops where it is and the chat
+  history is kept intact, so every earlier turn survives. A dim `Esc cancel` cue
+  sits in the title while tokens are still arriving. This is a lighter touch than
+  `Ctrl+B C`, which clears the whole conversation; `Esc` stops only the call in
+  flight. (When no stream is running, `Esc` keeps its ordinary job of bouncing
+  focus between the pane and the prompt bar.)
 ]
 
 #section("Scope — telling the AI what to look at")
