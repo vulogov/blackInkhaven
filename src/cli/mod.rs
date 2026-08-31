@@ -498,7 +498,9 @@ pub enum Command {
     /// once (it caches, so later runs are offline). See also the automatic
     /// first-use build in the TUI.
     RebuildHelp {
-        /// Override the corpus URL (defaults to the GitHub release asset).
+        /// Override the corpus source (defaults to the GitHub release asset).
+        /// Accepts an `http(s)://` URL, a `file://` URL, or a local path — so
+        /// `--url ./help-corpus.json` works offline after `package-help-corpus`.
         #[arg(long)]
         url: Option<String>,
         /// Ignore the cache and re-download.
