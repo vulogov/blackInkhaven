@@ -304,7 +304,11 @@ of cycling to the missing AI pane).
 
 Focused on launch. Shows the project hierarchy with depth indentation, kind
 glyphs (`📖` book, `▸` chapter, `▹` subchapter, `¶` paragraph), and a dim
-`Nw` word-count suffix for paragraphs.
+`Nw` word-count suffix for paragraphs. (3.8) Branch rows (Book / Chapter /
+Subchapter) show a dim **aggregate descendant word count** (e.g. `12.3k`) plus
+a roll-up progress pip when the subtree carries target-word goals; bookmarked
+paragraphs (`Ctrl+V B`) show a **`⚑` flag** glyph. A dimmed **key-legend
+footer** sits on the pane's bottom line.
 
 ### 2.1 Navigation
 
@@ -317,11 +321,13 @@ glyphs (`📖` book, `▸` chapter, `▹` subchapter, `¶` paragraph), and a dim
 | `End`                | Jump to last row.                                           |
 | `PageUp`             | Move cursor 10 rows up (configurable: `page_up`).           |
 | `PageDown`           | Move cursor 10 rows down (configurable: `page_down`).       |
+| `{` / `}`            | (3.8) **Jump by kind** — move the cursor to the previous / next major structural row (**Book or Chapter**), skipping past long paragraph runs. Stops at the first/last with a status hint; no wrap. |
+| `/`                  | (3.8) **Filter the tree** — type to narrow the tree live to nodes whose **title or slug** matches (case-insensitive, Unicode-aware) plus their ancestors, folding ignored. `Enter` keeps the filter (cursor on the first match); `Backspace` edits; `↑`/`↓` move within matches while typing; `Esc` clears. The active needle shows in the pane title. |
 | `Enter`              | Open the cursor's node. Paragraphs load into the editor and shift focus there; if a different paragraph was open with unsaved edits, it's autosaved first. Branches print a status hint and stay in Tree. |
 | `F2`                 | Open the **Rename** modal pre-filled with the current node's title. Slug + filesystem entry stay; only the displayed title changes (re-embeds for search). |
 | `F3`                 | Open the **file picker** dialog. Enter on a file creates a new paragraph (inserted after the current cursor) with that file's content. Enter on a directory **recursively imports** the tree — subdirectories become branches one level deeper (Book→Chapter→Subchapter), files become paragraphs. If the directory tree exceeds the hierarchy depth, the deeper files are flattened into the deepest legal branch (with `unbounded_subchapters: false`). See §12. |
 | `q` or `Q`           | Quit (autosaves the open paragraph first if dirty).         |
-| `Esc`                | Cycle focus to the **Search bar** (second leg of the Editor → Tree → Search → Editor rotation). |
+| `Esc`                | Clears an active `/` filter first (3.8); otherwise cancels link-pick / clears multi-select marks, else cycles focus to the **Search bar** (second leg of the Editor → Tree → Search → Editor rotation). |
 
 **Open-paragraph indicator** — the row of the paragraph currently loaded in
 the Editor is rendered with a **green bold "►"** marker (instead of the

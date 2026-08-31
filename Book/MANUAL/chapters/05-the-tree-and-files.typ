@@ -111,7 +111,15 @@ readout you can act on.
   paragraphs beneath it, so a collapsed chapter still tells you something inside
   it needs attention. These come from the review pass (`Ctrl+B Shift+C`) and the
   intelligences in Part V.
+- A *bookmark flag* (`⚑`) marks any paragraph you have bookmarked with
+  `Ctrl+V B`, so bookmarked rows stay visible while you navigate. The `Ctrl+V M`
+  bookmark picker still handles jumping to one.
 - A dim `Nw` word count closes every paragraph row.
+- On a *branch* — a Book, Chapter, or Subchapter — the closing mark is instead a
+  dim *roll-up*: an aggregate word count of every paragraph beneath it, in
+  compact form (e.g. `12.3k`), and a roll-up progress pip (`○ ◔ ◑ ◕ ●`) when the
+  subtree holds paragraphs carrying word-count goals. Paragraph rows are
+  unchanged.
 
 #section("Moving through the tree")
 
@@ -161,6 +169,34 @@ bulk.
   chord_row("Space", "Mark / unmark the row for a batch operation."),
   chord_row("Esc", "Cycle focus onward to the Search bar."),
 ))
+
+#subsection("Finding your way around the tree")
+
+Two motions cut through a long outline without scrolling it row by row. Press
+`/` to open a live *filter*: as you type, the Tree narrows to the nodes whose
+title or slug contains the text — case-insensitively, Unicode-aware — together
+with all their ancestors, and folding is ignored while the filter is live so
+every match is on screen. `↑` / `↓` step through the matches as you type,
+`Backspace` edits the needle, `Enter` keeps the filter and drops the cursor on
+the first match, and `Esc` clears it. The active needle rides in the Tree pane's
+title bar, so you always know what is being filtered.
+
+Where `/` searches by text, `{` and `}` jump by *structure*: they move the
+cursor to the previous / next major row — a Book or Chapter — skipping the long
+runs of paragraphs between them. They stop at the first or last such row without
+wrapping, and print a status hint when there is none in that direction.
+
+#chord_table((
+  chord_row("/", "Open the live filter — narrow the tree by title or slug."),
+  chord_row("{ / }", "Jump to the previous / next Book or Chapter row."),
+))
+
+#callout(label: "The footer names your keys")[
+  The Tree pane's bottom line carries a dimmed, context-aware *key legend* — the
+  add, delete, move, fold, jump, and find shortcuts that apply right now,
+  swapping to the filter's own keys while `/` is open. It is a quiet reminder of
+  what the plain letters do, not a menu you click.
+]
 
 #section("Building the tree")
 
@@ -639,8 +675,10 @@ rung there is no seeded creator — you morph a paragraph around the cycle to
   chips, a finding badge, and a dim word count. The open paragraph always wears a
   green `►`.],
   [Navigate with the arrows; fold with `→` / `←` (single branch), `Z` (enclosing
-  subchapter), and `X` (everything). The *cursor* and the *open paragraph* are
-  two different things — moving the cursor opens nothing until you press `Enter`.],
+  subchapter), and `X` (everything); cut through a long tree with the `/` filter
+  and `{` / `}` jump-by-Book-or-Chapter. The *cursor* and the *open paragraph*
+  are two different things — moving the cursor opens nothing until you press
+  `Enter`.],
   [Build with `B` / `C` / `A` / `+` to *append at end* and `V` / `S` / `P` to
   *insert after* the cursor's same-kind ancestor; each has a `Ctrl+B` twin. New
   books slot above the protected system block.],
