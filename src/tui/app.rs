@@ -9499,9 +9499,10 @@ impl App {
     }
 
     /// THOUGHTS-1 — keys for the Thoughts pane (read-only, scrollable): ↑/↓ or
-    /// j/k line scroll, PageUp/PageDown, g/G top/bottom, `c` clear, Esc to the
-    /// editor. `thoughts_scroll` counts lines UP from the bottom; the renderer
-    /// clamps it.
+    /// j/k line scroll, PageUp/PageDown, g/G top/bottom, `y` copy, `c` clear,
+    /// Esc to the editor. `thoughts_scroll` is an offset DOWN from the top of
+    /// the newest-first list (0 = newest); the renderer clamps it to the
+    /// wrapped-row count.
     fn handle_thoughts_key(&mut self, key: KeyEvent) -> Result<bool> {
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
@@ -9514,6 +9515,9 @@ impl App {
             KeyCode::PageDown => self.thoughts_scroll = self.thoughts_scroll.saturating_add(10),
             KeyCode::Char('g') | KeyCode::Home => self.thoughts_scroll = 0,
             KeyCode::Char('G') | KeyCode::End => self.thoughts_scroll = usize::MAX,
+            // 3.9 — `y` yanks the whole reflective transcript to the clipboard
+            // (the pane has no per-block selection). Distinct from `c` = clear.
+            KeyCode::Char('y') | KeyCode::Char('Y') => self.thoughts_copy(),
             KeyCode::Char('c') | KeyCode::Char('C') => {
                 self.thoughts.clear();
                 self.thoughts_scroll = 0;
@@ -9530,6 +9534,38 @@ impl App {
             _ => return Ok(false),
         }
         Ok(false)
+    }
+
+    /// 3.9 — copy every thought block to the system clipboard, newest-first (the
+    /// on-screen order), joined by blank lines. The Thoughts pane has no
+    /// per-block selection, so this lifts the whole reflective transcript out at
+    /// once. Silently reports when no clipboard is available (headless host).
+    fn thoughts_copy(&mut self) {
+        if self.thoughts.is_empty() {
+            self.status = "no thoughts to copy".into();
+            return;
+        }
+        let text = self
+            .thoughts
+            .iter()
+            .rev()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let n = self.thoughts.len();
+        match self.clipboard.as_mut() {
+            Some(cb) => match cb.set_text(text.clone()) {
+                Ok(()) => {
+                    self.status =
+                        format!("copied {n} thought block(s) ({} chars)", text.chars().count());
+                }
+                Err(e) => self.status = format!("clipboard copy failed: {e}"),
+            },
+            None => {
+                self.status =
+                    "no system clipboard available — copy unavailable on this host".into();
+            }
+        }
     }
 
     /// PANE-1 — keys for the Output pane (active when the right region shows
