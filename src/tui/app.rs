@@ -1975,6 +1975,14 @@ pub(crate) struct App {
     /// picker is showing. Cleared on every send via push_back.
     /// 1.2.4+.
     ai_prompt_history: Vec<String>,
+    /// 3.9 — SearchBar query history (oldest first). Up/Down in the search bar
+    /// (when the results overlay isn't showing) walks this list, shell-style —
+    /// the same recall the AI prompt and F1 help query already have. Pushed on
+    /// every run (dedup against the immediate predecessor, capped); session-only.
+    search_history: Vec<String>,
+    /// Cursor into `search_history`; None = not navigating. Same semantics as
+    /// `ai_prompt_history_cursor`.
+    search_history_cursor: Option<usize>,
     /// 1.2.8+ — F1 help-query history. Up/Down inside the
     /// `Modal::HelpQuery` input walks this ring. Pushed on
     /// every successful Enter (dedup against the immediate
@@ -3701,6 +3709,8 @@ impl App {
             ai_input: TextInput::new(),
             ai_prompt_history: Vec::new(),
             ai_prompt_history_cursor: None,
+            search_history: Vec::new(),
+            search_history_cursor: None,
             help_query_history: Vec::new(),
             help_query_history_cursor: None,
             snapshot_filter: String::new(),
@@ -7104,6 +7114,41 @@ impl App {
                     self.results_cursor += 1;
                 }
             }
+            // 3.9 — Up / Down in the search bar (no results overlay showing)
+            // walks `search_history`, shell-style — same recall as the AI prompt.
+            KeyCode::Up if is_search => {
+                if !self.search_history.is_empty() {
+                    let next = match self.search_history_cursor {
+                        Some(0) => 0,
+                        Some(i) => i - 1,
+                        None => self.search_history.len() - 1,
+                    };
+                    self.search_history_cursor = Some(next);
+                    let entry = self.search_history[next].clone();
+                    self.search_input.clear();
+                    for c in entry.chars() {
+                        self.search_input.insert_char(c);
+                    }
+                    self.show_results_overlay = false;
+                }
+            }
+            KeyCode::Down if is_search => {
+                if let Some(cur) = self.search_history_cursor {
+                    let next = cur + 1;
+                    if next >= self.search_history.len() {
+                        self.search_history_cursor = None;
+                        self.search_input.clear();
+                    } else {
+                        self.search_history_cursor = Some(next);
+                        let entry = self.search_history[next].clone();
+                        self.search_input.clear();
+                        for c in entry.chars() {
+                            self.search_input.insert_char(c);
+                        }
+                    }
+                    self.show_results_overlay = false;
+                }
+            }
             KeyCode::Up if !is_search && self.show_prompt_picker => {
                 if self.prompt_picker_cursor > 0 {
                     self.prompt_picker_cursor -= 1;
@@ -7157,6 +7202,7 @@ impl App {
                 self.current_input(is_search).backspace();
                 if is_search {
                     self.show_results_overlay = false;
+                    self.search_history_cursor = None;
                 }
                 if !is_search {
                     self.ai_prompt_history_cursor = None;
@@ -7166,6 +7212,7 @@ impl App {
                 self.current_input(is_search).delete();
                 if is_search {
                     self.show_results_overlay = false;
+                    self.search_history_cursor = None;
                 }
                 if !is_search {
                     self.ai_prompt_history_cursor = None;
@@ -7209,6 +7256,7 @@ impl App {
                     self.current_input(is_search).insert_char(final_c);
                     if is_search {
                         self.show_results_overlay = false;
+                        self.search_history_cursor = None;
                     } else {
                         // 1.2.4+: typing in the AI prompt
                         // breaks history-recall navigation —
@@ -8303,6 +8351,16 @@ impl App {
             self.status = "empty query".into();
             return;
         }
+        // 3.9 — record the query for Up/Down recall (dedup against the last,
+        // cap the ring). Reset the walk cursor so the next Up starts fresh.
+        if self.search_history.last() != Some(&query) {
+            self.search_history.push(query.clone());
+            if self.search_history.len() > 500 {
+                let drop_n = self.search_history.len() - 500;
+                self.search_history.drain(..drop_n);
+            }
+        }
+        self.search_history_cursor = None;
         match self.store.search_text(&query, 10) {
             Ok(raw) => {
                 self.results = raw.iter().filter_map(SearchHit::parse).collect();
