@@ -55,6 +55,14 @@ plainly rather than confabulate — "the retrieved passages don't address that
 directly" — and then either ask you to refine the question or offer general
 knowledge clearly marked as *not from the book*.
 
+Because those `[chapter/scene]` tokens are real locations, you can **walk them**
+without leaving the pane. Focus the AI pane (`Esc` from the prompt, or `Ctrl+3`)
+and the `[` and `]` keys jump to the previous / next cited paragraph — in the
+order the answer cites them — opening each in the editor as you go. If the answer
+cited nothing explicitly, they fall back to the direct semantic hits that
+grounded it, so there's always somewhere to land. A `[ ] cited ¶` cue in the pane
+title tells you the jumps are available.
+
 ## 2. See what it retrieved
 
 You don't have to take the grounding on faith. Above the conversation, a
