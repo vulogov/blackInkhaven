@@ -23,10 +23,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 
-/// Stable GitHub release asset holding the packaged documentation corpus.
-/// Overridable per-invocation with `rebuild-help --url`.
+/// The packaged documentation corpus, committed at the repo root and served
+/// raw from GitHub (regenerated on every release cut so it tracks the docs).
+/// It is excluded from the crate tarball (see Cargo.toml) to keep the published
+/// crate lean — a `cargo install` user pulls it here on first `rebuild-help`.
+/// Overridable per-invocation with `rebuild-help --url` (also accepts a local
+/// path).
 pub const DEFAULT_CORPUS_URL: &str =
-    "https://github.com/vulogov/blackInkhaven/releases/download/help-corpus/help-corpus.json";
+    "https://raw.githubusercontent.com/vulogov/blackInkhaven/main/help-corpus.json";
 
 const CACHE_FILENAME: &str = "help-corpus.json";
 
