@@ -651,21 +651,25 @@ impl super::App {
                 )
             }
             Modal::HelpQuery { input } => {
-                // 3.10 — after Enter the (blocking) embed + search is deferred a
-                // tick so this "Searching…" frame paints first, instead of the
-                // UI freezing with no feedback.
-                let body = if self.pending_help_query.is_some() {
+                // 3.10 — the search runs on a background thread, so this frame
+                // keeps repainting (is_animating) and the spinner ACTUALLY
+                // animates while the embed + vector search runs.
+                let body = if let Some(hs) = &self.help_search {
+                    const SPIN: [&str; 10] =
+                        ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+                    let f = SPIN
+                        [(hs.started.elapsed().as_millis() / 80) as usize % SPIN.len()];
                     vec![
                         Line::from(""),
                         Line::from(Span::styled(
-                            "  ⠿ Searching the Help book…",
+                            format!("  {f} Searching the Help book…"),
                             Style::default()
                                 .fg(Color::Cyan)
                                 .add_modifier(Modifier::BOLD),
                         )),
                         Line::from(""),
                         Line::from(Span::styled(
-                            "  matching your question against the help excerpts, then the answer streams into the AI pane.",
+                            "  matching your question against the help excerpts, then the answer streams into the AI pane.  Esc cancels.",
                             Style::default().add_modifier(Modifier::DIM),
                         )),
                     ]
