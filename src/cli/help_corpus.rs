@@ -83,9 +83,90 @@ fn is_help_relevant(rel: &str) -> bool {
         || name.contains("READINESS"))
 }
 
+/// Append one chunk to `chunks`, prefixed with the document title + section
+/// label for retrieval context. Empty bodies are skipped.
+fn push_chunk(
+    chunks: &mut Vec<HelpFile>,
+    rel_path: &str,
+    doc_title: &str,
+    heading: &Option<String>,
+    body: &[&str],
+) {
+    let text = body.join("\n");
+    if text.trim().is_empty() {
+        return;
+    }
+    let (label, path) = match heading {
+        Some(h) => (h.clone(), format!("{rel_path} § {h}")),
+        None => ("overview".to_string(), format!("{rel_path} (overview)")),
+    };
+    chunks.push(HelpFile {
+        path,
+        content: format!("# {doc_title} — {label}\n\n{text}"),
+    });
+}
+
+/// Split a large markdown doc into retrievable chunks at its `## ` headings, so
+/// each section is independently searchable and not truncated away by the F1
+/// retrieval's per-paragraph char cap (a 160 KB `KEYBINDING.md` as one
+/// paragraph meant everything past its first ~2 KB — including the copy/paste
+/// keys — was invisible). Small docs pass through whole; docs with no `## `
+/// headings also pass through whole.
+fn chunk_markdown(rel_path: &str, content: &str) -> Vec<HelpFile> {
+    const WHOLE_MAX: usize = 2000;
+    if content.chars().count() <= WHOLE_MAX {
+        return vec![HelpFile {
+            path: rel_path.to_string(),
+            content: content.to_string(),
+        }];
+    }
+    let doc_title = content
+        .lines()
+        .find_map(|l| l.strip_prefix("# ").map(|s| s.trim().to_string()))
+        .unwrap_or_else(|| {
+            rel_path
+                .rsplit('/')
+                .next()
+                .unwrap_or(rel_path)
+                .trim_end_matches(".md")
+                .to_string()
+        });
+
+    let mut chunks: Vec<HelpFile> = Vec::new();
+    let mut heading: Option<String> = None;
+    let mut body: Vec<&str> = Vec::new();
+    for line in content.lines() {
+        // Split at level-2 and level-3 headings (`## ` / `### `) so a big
+        // reference like KEYBINDING splits down to individual sub-sections
+        // (e.g. §3.3 "Selection, clipboard, undo") rather than one giant
+        // "## Editor pane" chunk that would still truncate.
+        let hashes = line.chars().take_while(|c| *c == '#').count();
+        let is_section = (hashes == 2 || hashes == 3) && line[hashes..].starts_with(' ');
+        if is_section {
+            push_chunk(&mut chunks, rel_path, &doc_title, &heading, &body);
+            heading = Some(line[hashes + 1..].trim().to_string());
+            body.clear();
+            body.push(line); // keep the heading in its section
+        } else {
+            body.push(line);
+        }
+    }
+    push_chunk(&mut chunks, rel_path, &doc_title, &heading, &body);
+
+    if chunks.is_empty() {
+        vec![HelpFile {
+            path: rel_path.to_string(),
+            content: content.to_string(),
+        }]
+    } else {
+        chunks
+    }
+}
+
 /// MAINTAINER: walk `docs_dir` and package every help-relevant `.md` file (path
 /// relative to `docs_dir` + content) into a [`HelpCorpus`]. Meta / changelog /
-/// internal docs are filtered out (see [`is_help_relevant`]).
+/// internal docs are filtered out (see [`is_help_relevant`]); large docs are
+/// split into section chunks (see [`chunk_markdown`]).
 pub fn package_from_dir(docs_dir: &Path, version: &str) -> Result<HelpCorpus> {
     if !docs_dir.is_dir() {
         return Err(Error::Store(format!(
@@ -95,6 +176,7 @@ pub fn package_from_dir(docs_dir: &Path, version: &str) -> Result<HelpCorpus> {
     }
     let mut files = Vec::new();
     let mut skipped = 0usize;
+    let mut docs = 0usize;
     for entry in walkdir::WalkDir::new(docs_dir)
         .sort_by_file_name()
         .follow_links(false)
@@ -114,15 +196,12 @@ pub fn package_from_dir(docs_dir: &Path, version: &str) -> Result<HelpCorpus> {
             continue;
         }
         let content = std::fs::read_to_string(path).map_err(Error::Io)?;
-        files.push(HelpFile {
-            path: rel_str,
-            content,
-        });
+        files.extend(chunk_markdown(&rel_str, &content));
+        docs += 1;
     }
     eprintln!(
-        "included {} help doc(s); skipped {} meta/changelog doc(s)",
+        "included {docs} help doc(s) → {} searchable chunk(s); skipped {skipped} meta/changelog doc(s)",
         files.len(),
-        skipped
     );
     Ok(HelpCorpus {
         version: version.to_string(),
@@ -302,6 +381,30 @@ mod tests {
         assert!(!is_help_relevant("KEYS_REASSIGNMENT.md"));
         assert!(!is_help_relevant("BUGFIX_PLAN_1.5.9.md"));
         assert!(!is_help_relevant("2.0_READINESS.md"));
+    }
+
+    #[test]
+    fn chunk_markdown_splits_large_docs_by_heading() {
+        // Small doc → one whole chunk.
+        let small = chunk_markdown("x.md", "# Title\nshort body");
+        assert_eq!(small.len(), 1);
+        assert_eq!(small[0].path, "x.md");
+
+        // A large doc with `## ` sections → one chunk per section, each carrying
+        // the doc title + section label and the section's own content.
+        let big = format!(
+            "# Keys\n\n## Movement\n{pad}\n\n## Selection, clipboard\nCtrl+C copies.\n{pad}",
+            pad = "filler line\n".repeat(200)
+        );
+        let chunks = chunk_markdown("KEYBINDING.md", &big);
+        assert!(chunks.len() >= 2, "expected section chunks, got {}", chunks.len());
+        // The clipboard section is its own retrievable chunk (not truncated away).
+        let clip = chunks
+            .iter()
+            .find(|c| c.path.contains("Selection, clipboard"))
+            .expect("clipboard section chunk");
+        assert!(clip.content.contains("Ctrl+C copies."));
+        assert!(clip.content.starts_with("# Keys — Selection, clipboard"));
     }
 
     #[test]
