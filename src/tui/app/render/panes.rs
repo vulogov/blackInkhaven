@@ -2263,6 +2263,14 @@ impl super::super::App {
                 }
             };
             spans.push(Span::raw(status_text));
+            // 3.9 — advertise the streaming cancel (Esc keeps the chat; Ctrl+B c
+            // clears it).
+            if matches!(inf.status, InferenceStatus::Streaming) {
+                spans.push(Span::styled(
+                    " · Esc cancel",
+                    Style::default().add_modifier(Modifier::DIM),
+                ));
+            }
         }
         if self.ai_mode != AiMode::None {
             spans.push(Span::raw(" · scope="));
