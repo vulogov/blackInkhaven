@@ -1811,15 +1811,17 @@ impl super::super::App {
         // Clamp the scroll to the WRAPPED line count for the current width — the
         // offset counts wrapped lines, which shrink when the pane widens (e.g.
         // split → fullscreen), so a raw offset can land past the content and show
-        // a blank pane. Estimate wrapped rows by char width per line (ratatui's
-        // word-wrap breaks earlier, so this under-counts → the clamp is safe and
-        // never blanks).
+        // a blank pane. Count rows with the same greedy word-wrap ratatui renders
+        // (3.9 — the old char-width `div_ceil` under-counted, so `G`/`End` could
+        // never reach the true bottom).
         let w = body_rect.width.max(1) as usize;
         let wrapped_total: usize = lines
             .iter()
             .map(|l| {
-                let len: usize = l.spans.iter().map(|s| s.content.chars().count()).sum();
-                len.div_ceil(w).max(1)
+                let text: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+                super::super::super::text_utils::wrap_words_or_chars(&text, w)
+                    .len()
+                    .max(1)
             })
             .sum();
         let max_scroll = wrapped_total.saturating_sub(body_rect.height as usize);
@@ -1833,7 +1835,7 @@ impl super::super::App {
             let footer = Rect { x: inner.x, y: inner.y + inner.height - 1, width: inner.width, height: 1 };
             f.render_widget(
                 Paragraph::new(Line::from(Span::styled(
-                    " ↑↓ scroll · g/G top/bottom · c clear · Ctrl+Z f fullscreen · Ctrl+B Tab panes ",
+                    " ↑↓ scroll · g/G top/bottom · y copy · c clear · Ctrl+Z f fullscreen · Ctrl+B Tab panes ",
                     Style::default().add_modifier(Modifier::DIM),
                 ))),
                 footer,
