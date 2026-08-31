@@ -1846,13 +1846,26 @@ impl super::super::App {
         };
         // PANE-1 filtering — the same filtered view the key handler acts on.
         let msgs = self.filtered_output_messages();
+        // 3.8 — a follow-newest cue: while parked at the top row the cursor
+        // tracks incoming findings, so mark it so the behaviour is visible.
+        let follow = if self.output_follow && !msgs.is_empty() {
+            " · ⟳follow"
+        } else {
+            ""
+        };
         let title = if self.output_filter.is_active() {
             let total = crate::pane::output::active()
                 .and_then(|s| s.count_active(None).ok())
                 .unwrap_or(msgs.len());
-            format!(" Output · {}/{} · {} ", msgs.len(), total, self.output_filter.summary())
+            format!(
+                " Output · {}/{} · {}{} ",
+                msgs.len(),
+                total,
+                self.output_filter.summary(),
+                follow
+            )
         } else {
-            format!(" Output · {} ", msgs.len())
+            format!(" Output · {}{} ", msgs.len(), follow)
         };
         let block = Block::default()
             .borders(Borders::ALL)
@@ -1877,11 +1890,15 @@ impl super::super::App {
             return;
         }
 
+        // 3.8 — derive the highlighted row from the id-anchored selection so it
+        // tracks the same finding as messages stream in (the key handler
+        // reconciles the stored index to this same value).
+        let sel_index = self.output_selection_index(&msgs);
         let mut lines: Vec<Line> = Vec::new();
         let mut sel_line_idx = 0usize;
         for (i, m) in msgs.iter().enumerate() {
-            let sel = focused && i == self.output_selected;
-            if i == self.output_selected {
+            let sel = focused && i == sel_index;
+            if i == sel_index {
                 sel_line_idx = lines.len();
             }
             let (icon, mut color) = match m.severity {
@@ -2066,7 +2083,10 @@ impl super::super::App {
             // The action row is context-aware: a lexicon proposal advertises
             // its Enter→accept; a translation result, r→remember.
             use crate::pane::output::kinds as k;
-            let sel_kind = msgs.get(self.output_selected).map(|m| m.kind.as_str());
+            let sel_msg = msgs.get(sel_index);
+            let sel_kind = sel_msg.map(|m| m.kind.as_str());
+            // 3.8 — most findings carry a source paragraph; advertise Enter→jump.
+            let has_para = sel_msg.and_then(|m| m.source_paragraph_id).is_some();
             let hint_text = match sel_kind {
                 Some(s) if s == k::LEXICON_PROPOSAL => {
                     " ↑↓ · ⏎ accept · o expand · a ask AI · d dismiss · p pin · ^B Tab"
@@ -2078,16 +2098,19 @@ impl super::super::App {
                     " ↑↓ · ⏎ open target · o expand · d dismiss · p pin · ^B Tab"
                 }
                 Some(s) if s == k::SOCRATIC_INQUIRY => {
-                    " ↑↓ · i intent · m note · x addressed · a ask AI · d dismiss · ^B Tab"
+                    " ↑↓ · ⏎ jump to ¶ · i intent · m note · x addressed · a ask AI · d dismiss"
                 }
                 Some(s) if s == k::INNER_EDITOR_OBSERVATION => {
-                    " ↑↓ · i intent · o expand · a ask AI · d dismiss · ^B Tab"
+                    " ↑↓ · ⏎ jump to ¶ · i intent · o expand · a ask AI · d dismiss"
                 }
                 Some(s)
                     if s == k::TIMELINE_ORPHAN_WARNING
                         || s == k::TIMELINE_FUZZY_OVERLAP_WARNING =>
                 {
                     " ↑↓ · ⏎ jump to event · o expand · a ask AI · d dismiss · s snooze · ^B Tab"
+                }
+                _ if has_para => {
+                    " ↑↓ · ⏎ jump to ¶ · o expand · a ask AI · d dismiss · p pin · ^B Tab"
                 }
                 _ => " ↑↓ · o expand · r remember · a ask AI · d dismiss · p pin · ^B Tab",
             };
