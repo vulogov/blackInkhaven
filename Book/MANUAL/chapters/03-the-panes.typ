@@ -93,7 +93,10 @@ dismiss; each carries a severity glyph (`●` info, `⚠` warning, `⊗`
 contradiction, `↻` still-running) and expires on its own so the board never
 becomes a junk drawer. The Thoughts pane is a *reading* surface — a scrollable,
 read-only place where the longer, essayistic output lands, such as the Inner
-Theologian's questions or a developmental brief.
+Theologian's questions or a developmental brief. Because you read there rather
+than act, its keys are few: `y` copies the whole reflective transcript to the
+system clipboard — to carry a session out into a journal or a note — while `c`,
+the one destructive key, clears the pane.
 
 #screen(caption: "The right region showing the Output pane — a notice board")[```
 ┌─ Output · 3/4 · fact-check ─────────────────────────┐

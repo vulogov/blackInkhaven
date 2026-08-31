@@ -100,6 +100,32 @@ can read and scroll. Press `Esc` from the AI pane and it bounces
 back to the AI prompt. This Ai ↔ AiPrompt pairing is independent of
 the Editor / Tree / Search rotation.
 
+**While a response is streaming, `Esc` cancels it** — from either the
+AI pane or the AI prompt bar. The stream stops where it is and the
+chat history is kept, so earlier turns are untouched; the title shows
+a dim `Esc cancel` cue while tokens are still arriving. This is a
+lighter touch than `Ctrl+B C`, which clears the whole conversation
+(see [Chat history](#chat-history)) — `Esc` stops only the call in
+flight.
+
+## Scrolling the response, and following the stream
+
+The AI response scrolls. A long or still-streaming reply is no longer
+clamped to the top pane-height lines — focus the AI pane (`Esc` from
+the prompt, or `Ctrl+3`) and you can move through the whole answer:
+
+| Key | Action |
+| --- | ------ |
+| `↑` / `k` / `PgUp` / `Home` | Scroll back up (and stop following the stream). |
+| `↓` / `j` / `PgDn` | Scroll down. |
+| `End` | Jump to the bottom and re-arm follow. |
+
+The mouse wheel scrolls it too. By default the pane **follows the
+streaming tail** as tokens arrive — a `⟳follow` cue shows in the pane
+title so the freshest text stays in view. The moment you scroll back
+up, following detaches and the title switches to `↑scrolled`; press
+`End` (or scroll to the bottom) to catch back up and re-arm follow.
+
 ## Markdown rendering
 
 The AI pane renders the response as markdown — bold (`**foo**`),
@@ -306,6 +332,9 @@ hiccup), the status flips to an error and the AI pane title carries
 
 - An LLM streams tokens into the AI pane in response to your prompt.
 - `Ctrl+I` focuses the AI prompt. `Enter` sends. `Esc` bounces focus.
+- The AI response scrolls (`↑`/`↓`/`PgUp`/`PgDn`/`Home`/`End`) and
+  **follows the streaming tail** by default; `Esc` cancels an
+  in-flight stream while keeping the history.
 - The AI pane renders markdown.
 - After done, `r`/`i`/`t`/`b` apply to the editor (with
   markdown→Typst), `c` copies, `g` is the grammar-check apply.

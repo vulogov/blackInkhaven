@@ -36,6 +36,10 @@ poses two or three moral/theological questions through the lenses most illuminat
 **in the book's language**, always naming which tradition raises which — and always inviting you to
 say a lens is irrelevant ("that's useful information too"). Questions land in the Output pane.
 
+When a session lands in the Thoughts pane, press **`y`** to copy the whole reflective transcript to
+the system clipboard — the way to carry a set of questions out into a journal or a margin note.
+(`c` still clears the pane; that one is destructive.)
+
 ## From the terminal
 
 ```sh
