@@ -357,6 +357,15 @@ pub(super) enum Modal {
         cursor: usize,
         scroll: usize,
     },
+    /// 3.9 — Ctrl+Z k conversation library: reopen / save / delete named AI
+    /// chats. Reuses `ScriptPickerEntry`: `title` holds the file stem (the
+    /// name), `slug_path` a "N turns · date" descriptor; `id` is unused (nil).
+    /// Enter reopens · `s` saves the current chat · `d` deletes · `n` new.
+    Conversations {
+        entries: Vec<ScriptPickerEntry>,
+        cursor: usize,
+        scroll: usize,
+    },
     /// Ctrl+V P (1.2.4+) — fuzzy paragraph picker. The
     /// `entries` field is pre-computed from every paragraph
     /// node; the input box narrows the visible list as the

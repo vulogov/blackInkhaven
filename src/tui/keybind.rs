@@ -303,6 +303,10 @@ pub enum Action {
     // ── AI pane ───────────────────────────────────────────────
     #[serde(rename = "ai.clear_chat")]
     ClearChat,
+    /// `Ctrl+Z l` (3.9) — open the conversation library: reopen / save /
+    /// delete named AI chats.
+    #[serde(rename = "ai.conversations")]
+    OpenConversations,
 
     // ── Bund prefix ───────────────────────────────────────────
     #[serde(rename = "bund.run_buffer")]
@@ -1097,6 +1101,7 @@ impl Action {
             Action::TagSearch => "tag search".into(),
 
             Action::ClearChat => "clear chat".into(),
+            Action::OpenConversations => "conversations".into(),
 
             Action::BundRunBuffer => "run buffer".into(),
             Action::BundNewScript => "new script".into(),
@@ -1388,6 +1393,8 @@ impl Action {
             // ── AI ────────────────────────────────────────────
             Action::ClearChat =>
                 "Clear the chat history and any in-flight inference for a fresh AI session.".into(),
+            Action::OpenConversations =>
+                "Open the conversation library — reopen a saved AI chat, save the current one (auto-named from its first prompt), delete, or start a new one. Threads live under `.inkhaven/conversations/`.".into(),
 
             // ── Bund prefix ───────────────────────────────────
             Action::BundRunBuffer =>
@@ -1869,6 +1876,7 @@ impl KeyBindings {
                 // HAIKU-1 — Ctrl+Z p: a haiku on demand (P for Poem; `p` is free
                 // in the Bund sub-chord table).
                 entry("p", Action::ShowHaiku, Scope::Any),
+                entry("l", Action::OpenConversations, Scope::Any),
                 // THOUGHTS-1 — Ctrl+Z f: fullscreen the current right pane
                 // (Output / Thoughts). F for Fullscreen; `f` is free here.
                 entry("f", Action::ToggleRightPaneFullscreen, Scope::Any),
