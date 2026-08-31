@@ -143,6 +143,34 @@ impl super::App {
     /// subtree. Used for the branch-level roll-up gauge — literary scale
     /// keeps the recursive walk negligible, and with the 3.8 dirty flag it
     /// only runs when the frame actually redraws.
+    /// Jump the cursor to the previous/next major structural row — a Book or
+    /// Chapter — in the flattened tree. Fast navigation past long paragraph
+    /// runs. Stops at the first/last such row (no wrap); reports when there is
+    /// none in that direction.
+    pub(super) fn jump_structural(&mut self, forward: bool) {
+        let is_major = |id: Uuid| {
+            self.hierarchy
+                .get(id)
+                .is_some_and(|n| matches!(n.kind, NodeKind::Book | NodeKind::Chapter))
+        };
+        let start = self.tree_cursor;
+        let target = if forward {
+            (start + 1..self.rows.len()).find(|&i| is_major(self.rows[i].0))
+        } else {
+            (0..start).rev().find(|&i| is_major(self.rows[i].0))
+        };
+        match target {
+            Some(i) => self.tree_cursor = i,
+            None => {
+                self.status = if forward {
+                    "no chapter below".into()
+                } else {
+                    "no chapter above".into()
+                };
+            }
+        }
+    }
+
     pub(super) fn subtree_word_totals(&self, id: Uuid) -> (u64, i32) {
         let mut words: u64 = 0;
         let mut target: i32 = 0;
