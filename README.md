@@ -27,39 +27,33 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 3.8.0 — A Quieter Editor, Sharper Panes
+## Latest release · 3.9.0 — Panes That Keep Up
 
-The current release is **3.8.0**, the second dedicated TUI pass — no new reader
-or axis. Three tracks (deterministic, no new runtime crates):
+The current release is **3.9.0**, the third TUI pass — it finishes the
+pane-polish arc and then goes deeper on the AI pane. Two tracks (deterministic,
+no new runtime crates):
 
-- **Rendering & responsiveness.** An **idle-redraw dirty flag** stops the editor
-  rebuilding the whole frame ~5×/second when nothing changed — it now draws only
-  on a real change, a live animation, or a ~1-second backstop, so an idle editor
-  (over SSH / on a laptop) rebuilds ~once a second. The **matching-bracket
-  highlight** ships: the cursor's bracket and its partner are underlined (both
-  render paths), completing 3.7's `Ctrl+Z m` jump. **Wide-character (CJK)
-  columns** — cursor placement, click-to-position, and wrapping are display-width
-  aware, so the cursor no longer drifts on wide text. And the theme survives
-  monochrome / light terminals: **`NO_COLOR`** is honored, and a hardcoded
-  code-block background that broke on light backgrounds is gone.
-- **The Tree pane.** An in-tree **`/` filter** (narrow live by title/slug +
-  ancestors, Unicode-aware); **branch word-count roll-ups** (a chapter finally
-  says how long it is — `12.3k`, with a progress pip); **`{` / `}` jump-by-kind**
-  (prev/next Book or Chapter); a **`⚑` bookmark marker**; and a mode-aware
-  **key-legend footer**.
-- **The Output pane.** **Follow-newest + id-anchored selection** — findings
-  prepend newest-first, so the old index cursor silently re-pointed on each
-  arrival; selection now anchors by message id (survives reshuffles) and, parked
-  at the top row, follows the newest finding (`⟳follow`) — the auto-scroll the
-  pane lacked. And **`Enter` on any finding jumps to its paragraph**, turning the
-  pane into an actionable worklist.
+- **The AI pane grows up.** The prompt is now a **multi-line compose box** —
+  `Shift+Enter` inserts a newline, plain `Enter` still sends, a paste keeps its
+  newlines, and the box grows to fit and collapses back to one line when empty
+  (it was single-line and flattened newlines). **Retry / edit-and-resend**: `z`
+  regenerates the last reply, `e` pulls the last prompt back to tweak. **Navigable
+  citations**: `[` / `]` jump to the previous / next cited paragraph of a
+  Book-scope answer (they were inert text) — a grounded answer becomes a reading
+  path into the manuscript. And a **conversation library** (`Ctrl+Z l`) —
+  reopen / save / delete / new named threads under `.inkhaven/conversations/`,
+  instead of the old single auto-file.
+- **Pane polish.** The split-view AI response now **scrolls and follows the
+  streaming tail** (`⟳follow`; `Esc` **cancels** an in-flight inference, keeping
+  the chat). The **Search bar recalls prior queries** (`↑`/`↓`) and its **results
+  overlay scrolls and pages** (cap lifted 10→50). The **Thoughts pane** gains
+  `y` copy-out and a `G`/`End` bottom-reach fix.
 
-Deferred as follow-ups: a full light-palette preset (`NO_COLOR` covers
-readable-on-light for now), OSC-11 detection, and the viewport-only draw
-optimization. No new config; no new runtime crates (`unicode-width` was already
-transitive).
+Deferred as follow-ups: per-turn copy in the split Book view, incremental search,
+and a scroll offset independent of the selection. No new config; no new runtime
+crates.
 
-Read the full notes: [`Documentation/RELEASE_NOTES/3.8.0.md`](Documentation/RELEASE_NOTES/3.8.0.md).
+Read the full notes: [`Documentation/RELEASE_NOTES/3.9.0.md`](Documentation/RELEASE_NOTES/3.9.0.md).
 
 ### Recent releases
 
@@ -110,7 +104,7 @@ lines (zero Critical), with every surviving finding fixed and zero breaking
 changes. The 3.0.x line (through 3.0.9) then hardened the Bund scripting coverage
 and the export/import/keymap/assembly subsystems through successive targeted
 audits, each leaving a build-time guard behind. **3.1.0 lifted the feature freeze**
-(BONDS); **3.2.0** (ENSEMBLE), **3.3.0** (multilingual parity), **3.4.0** (export fidelity), **3.5.0** (imports + reader hub), **3.6.0** (fidelity + worklist fixes), **3.7.0** (the TUI pass), and **3.8.0** (a second TUI pass — rendering + the Tree and Output panes) continue
+(BONDS); **3.2.0** (ENSEMBLE), **3.3.0** (multilingual parity), **3.4.0** (export fidelity), **3.5.0** (imports + reader hub), **3.6.0** (fidelity + worklist fixes), **3.7.0** (the TUI pass), **3.8.0** (a second TUI pass — rendering + the Tree and Output panes), and **3.9.0** (a third — the AI / Search / Thoughts panes, plus AI-pane depth) continue
 on that hardened surface. Full 3.0.0 notes:
 [`Documentation/RELEASE_NOTES/3.0.0.md`](Documentation/RELEASE_NOTES/3.0.0.md).
 
@@ -315,7 +309,7 @@ cargo install inkhaven
 ```
 
 Inkhaven is published on crates.io — every release tag pushes a
-new version (latest: 3.8.0).  The first build takes ~10 minutes on
+new version (latest: 3.9.0).  The first build takes ~10 minutes on
 a modern laptop because of DuckDB + fastembed + ONNX-runtime
 compilation; `cargo binstall` above is the fast path.
 

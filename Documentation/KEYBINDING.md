@@ -163,6 +163,7 @@ These chords work from any focus except where noted. Chords marked
 | `Ctrl+V Shift+V` | (1.4.12) **Toggle ambient prose check** (NARR-1) — when on, the prose check re-runs after an editing pause, gated by a cooldown floor (`prose.ambient_cooldown_secs`, default 90s). Off by default. | `view.prose_toggle_ambient` |
 | `Ctrl+V Shift+Q` | (1.4.14) **Dialogue fingerprint** (DIALOG-1) — open the per-character dialogue voice signature for the nearest character (one named in the open paragraph, else the most-speaking): utterance count, average length, vocabulary diversity (MATTR), question / exclamation ratios, hedge density, as ASCII bars, with a compare line for the next two speakers. `↑↓` scroll, `Esc` closes. Built from confidently-attributed dialogue — run the `Ctrl+B Shift+C` review pass (or `inkhaven dialogue scan`) to populate it. Mnemonic: **Q** for Quote (`Ctrl+V D` was taken). The dialogue *findings* (zero-attribution / said-bookism density / talking-head sequences) ride the `Ctrl+B Shift+C` review pass into the Output pane. | `dialogue.open_view` |
 | `Ctrl+Z p` | (1.4.17) **Haiku** (HAIKU-1) — emit a hand-curated haiku to the Output pane on demand, in the book's language (EN/RU/DE/FR/ES, falling back to English). The same pool greets you at startup and when you create a new manuscript paragraph; a process-global rotation counter advances on every trigger, so you rarely see the same poem twice in a session. Zero-AI, baked into the binary (present even airgapped). Toggle the automatic moments with `editor.startup_haiku` (default `true`); this chord works regardless. Mnemonic: **P** for Poem (`p` is free in the `Ctrl+Z` Bund sub-chord table). | `haiku.show` |
+| `Ctrl+Z l` | (3.9) **Conversation library** — reopen / save / delete named AI chats. In the modal: `↑↓` select, `Enter` reopen a saved thread, **`s`** save the current chat (auto-named from its first prompt), **`d`** delete, **`n`** new, `Esc` close. Threads live under `.inkhaven/conversations/`, so a line of thinking survives the next `Ctrl+B c` clear. Mnemonic: **l** for Library. | `ai.conversations` |
 | `Ctrl+Z v` (editor) | (3.7) **Vertical block-select mode** — anchor a rectangular selection at the cursor, then extend it with **plain arrow keys** (no modifier). `c` / `Enter` copy the block to the clipboard and exit; `Esc` (or any other key) cancels. The terminal-independent replacement for `Alt`+arrows block selection — plain arrows always arrive, and it dodges the `Alt+Left`/`Alt+Right` back-forward collision. Mnemonic: **v** for **V**ertical (`v` is free under `Ctrl+Z`). See §3.4. | `editor.block_select` |
 | `Ctrl+Z g` (editor) | (3.7) **Go to line** — prompt for a line number and jump the cursor there, centred in the viewport (clamped to the buffer). Handy for chasing a Typst compile-error / diagnostic line (the gutter marks diagnostic lines with a red ●). Enter jumps, Esc cancels. Mnemonic: **g** for Goto. | `editor.goto_line` |
 | `Ctrl+Z w` (editor) | (3.7) **Toggle soft-wrap** — flip word-wrap display for the open buffer at runtime (session-only; the persisted default is `editor.wrap`). Switches between reading wrapped prose and editing unwrapped code/tables without editing config + restarting. Mnemonic: **w** for Wrap. | `editor.toggle_wrap` |
@@ -664,7 +665,13 @@ keystroke away. Pane title shows provider, streaming status, and a
 
 | Key       | Condition                       | Action                                              |
 | --------- | ------------------------------- | --------------------------------------------------- |
-| `Esc`     | always                          | Bounce focus back to the **AI prompt** bar (mirror of the AI-prompt → AI Esc). |
+| `Esc`     | inference in flight             | (3.9) **Cancel** the in-flight inference — stops the stream and **keeps the chat history** (vs `Ctrl+B c`, which wipes the whole conversation). Works from the AI prompt too. A `Esc cancel` cue shows in the title while streaming. |
+| `Esc`     | otherwise                       | Bounce focus back to the **AI prompt** bar (mirror of the AI-prompt → AI Esc). |
+| `↑`/`↓` (or `k`/`j`), `PgUp`/`PgDn` | inference present (non-Book scope) | (3.9) **Scroll** the single response. It follows the streaming tail by default (`⟳follow` in the title); scrolling up detaches (`↑scrolled`). Mouse wheel too. |
+| `Home` / `End` | inference present (non-Book scope) | (3.9) Jump to the **top** / **bottom**. `End` re-arms follow-the-tail. |
+| `z` | chat has a completed turn | (3.9) **Regenerate** — re-send the last prompt under the current scope. |
+| `e` | chat has a completed turn | (3.9) **Edit last** — pull the last prompt back into the compose box to tweak and resend. |
+| `[` / `]` | Book-scope answer with retrieval | (3.9) **Navigable citations** — jump to the previous / next cited paragraph (in citation order; falls back to the direct hits). A `[ ] cited ¶` cue shows in the title. |
 | `r` / `R` | inference done, doc open        | Replace editor selection (or entire doc if no selection) with the AI text. Marks dirty, refocuses Editor. |
 | `i` / `I` | inference done, doc open        | Insert AI text at cursor. Marks dirty.              |
 | `t` / `T` | inference done, doc open        | Prepend AI text to top of paragraph (with blank line separator). |
@@ -695,7 +702,8 @@ Socratic, timeline critique, translation, lexicon, Bund, …), the **AI** pane,
 and (1.4.18; THOUGHTS-1) the **Thoughts** pane — a read-only, scrollable home for
 long reflective output, e.g. the Inner Theologian slow track (`Ctrl+B J→T`). In
 the Thoughts pane: `↑↓`/`j`/`k` scroll, `PageUp`/`PageDown`, `g`/`G` top/bottom,
-`c` clear, `Esc` to the editor. Plain **`Tab`** now cycles Tree → Editor → *the
+(3.9) **`y` copy** the whole transcript to the clipboard, `c` clear, `Esc` to
+the editor. Plain **`Tab`** now cycles Tree → Editor → *the
 currently-shown right pane* (no longer forced to AI). The active right pane is
 remembered across restarts. **`Ctrl+Z f`** fullscreens the current right pane
 (Output / Thoughts; the AI pane uses `Ctrl+B K`). When content arrives for a
@@ -747,10 +755,15 @@ character at the buffer's character position.
 | `←` / `→`            | Move cursor one char left / right.                          |
 | `Home`               | Cursor to start.                                            |
 | `End`                | Cursor to end.                                              |
-| `↑`                  | (overlay open) Move result cursor up.                       |
-| `↓`                  | (overlay open) Move result cursor down.                     |
-| `Enter`              | If results overlay is open: open the highlighted result. Otherwise: run `Store::search_text(query, 10)` and show results. |
+| `↑`                  | (overlay open) Move result cursor up. (3.9, overlay closed) **Recall the previous query** from history. |
+| `↓`                  | (overlay open) Move result cursor down. (3.9, overlay closed) Recall the next query (past the newest → clears the input). |
+| `PgUp`/`PgDn`, `Home`/`End` | (3.9, overlay open) Page the result cursor (±5) / jump to first / last. The overlay scrolls the selection into view. |
+| `Enter`              | If results overlay is open: open the highlighted result. Otherwise: run `Store::search_text(query, 50)` (3.9 — was 10) and show results. |
 | `Esc`                | If results overlay is open, close it (one press); else cycle focus to the **Editor** pane (third leg of the Editor → Tree → Search → Editor rotation). |
+
+(3.9) Sent queries are kept in a session history ring; `↑`/`↓` (with the
+overlay closed) walk it shell-style — the same recall the AI prompt has. The
+focused bar title shows a `↑ history` cue when the ring is non-empty.
 
 Opening a result from this overlay positions the tree cursor on the target
 node. Paragraphs additionally load into the editor (focus moves to Editor).
@@ -770,11 +783,12 @@ action and the `/`-triggered Prompt picker overlay.
 | `←` / `→`            | Move cursor one char left / right.                          |
 | `Home`               | Cursor to start.                                            |
 | `End`                | Cursor to end.                                              |
-| `↑`                  | (picker open) Move selection up.                            |
-| `↓`                  | (picker open) Move selection down.                          |
+| `↑`                  | (picker open) Move selection up. (3.9) Otherwise, in the multi-line compose box, move up a line — falling through to prompt-history recall at the first line. |
+| `↓`                  | (picker open) Move selection down. (3.9) Otherwise move down a line, falling through to history recall at the last line. |
+| `Shift+Enter` / `Alt+Enter` | (3.9) Insert a **newline** in the multi-line compose box (kitty-class terminals distinguish these; a paste keeps its newlines everywhere). The box grows to fit and collapses back to one line when empty. |
 | `Tab`                | (picker open) Expand selected prompt template into the buffer with `{{selection}}` / `{{context}}` substituted. |
-| `Enter`              | If picker open: same as Tab — expand selected template. Otherwise: spawn a streaming inference. Focus **stays** on the AI prompt bar (it does not jump to the AI pane). The buffer is sent verbatim, except: a leading `/name` is resolved against the prompt library, and a leading `Help!` (case-sensitive) routes the rest of the line through the F1 Help-RAG flow. |
-| `Esc`                | If picker open, close it; else bounce focus to the **AI pane** so you can read or scroll the answer. Pressing `Esc` again from the AI pane brings you straight back here. |
+| `Enter`              | If picker open: same as Tab — expand selected template. Otherwise: spawn a streaming inference (plain Enter always sends — `Shift+Enter` is newline). Focus **stays** on the AI prompt bar. The buffer is sent verbatim, except: a leading `/name` is resolved against the prompt library, and a leading `Help!` (case-sensitive) routes the rest of the line through the F1 Help-RAG flow. |
+| `Esc`                | If picker open, close it; (3.9) else if an inference is in flight, **cancel** it (stops the stream, keeps the chat history); else bounce focus to the **AI pane** so you can read or scroll the answer. Pressing `Esc` again from the AI pane brings you straight back here. |
 | `Ctrl+1`             | Focus the **Editor** pane (global shortcut, works from this input too). |
 | `Ctrl+T`             | Focus the **Tree** pane (global shortcut, works from this input too). |
 
@@ -804,7 +818,9 @@ bar is focused (see §5). The pane's own keys are:
 
 | Key                  | Action                                                      |
 | -------------------- | ----------------------------------------------------------- |
-| `↑` / `↓`            | Move result cursor.                                         |
+| `↑` / `↓`            | Move result cursor. (3.9) The overlay **scrolls the selection into view**, so results below the fold are reachable on a short terminal. |
+| `PgUp` / `PgDn`      | (3.9) Page the cursor ±5.                                   |
+| `Home` / `End`       | (3.9) Jump to the first / last result.                      |
 | `Enter`              | Open the highlighted result.                                |
 | `Esc`                | Close the overlay (Search bar stays focused).               |
 | Typing               | Closes the overlay and continues editing the query.         |

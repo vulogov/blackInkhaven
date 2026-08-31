@@ -257,9 +257,15 @@ impl super::super::App {
         } else {
             Style::default().add_modifier(Modifier::DIM)
         };
+        // 3.9 — advertise the new Up/Down query recall when focused with history.
+        let title = if self.focus == Focus::SearchBar && !self.search_history.is_empty() {
+            " Search · ↑ history ".to_string()
+        } else {
+            "Search".to_string()
+        };
         let p = Paragraph::new(text)
             .style(style)
-            .block(self.pane_block("Search", Focus::SearchBar));
+            .block(self.pane_block(&title, Focus::SearchBar));
         f.render_widget(p, area);
     }
 
@@ -279,10 +285,14 @@ impl super::super::App {
         // Title carries the current AI scope so the user knows what
         // context will be prepended on the next submit. Bright when scope
         // is non-None — easy to spot accidentally-armed scope.
-        let title = match self.ai_mode {
+        let mut title = match self.ai_mode {
             AiMode::None => "AI prompt".to_string(),
             other => format!("AI prompt · scope: {}", other.label()),
         };
+        // 3.9 — while composing, advertise Enter=send / Shift+Enter=newline.
+        if self.focus == Focus::AiPrompt {
+            title.push_str(" · ⏎ send · ⇧⏎ newline");
+        }
         let p = Paragraph::new(text)
             .style(style)
             .block(self.pane_block(&title, Focus::AiPrompt));
@@ -1805,15 +1815,17 @@ impl super::super::App {
         // Clamp the scroll to the WRAPPED line count for the current width — the
         // offset counts wrapped lines, which shrink when the pane widens (e.g.
         // split → fullscreen), so a raw offset can land past the content and show
-        // a blank pane. Estimate wrapped rows by char width per line (ratatui's
-        // word-wrap breaks earlier, so this under-counts → the clamp is safe and
-        // never blanks).
+        // a blank pane. Count rows with the same greedy word-wrap ratatui renders
+        // (3.9 — the old char-width `div_ceil` under-counted, so `G`/`End` could
+        // never reach the true bottom).
         let w = body_rect.width.max(1) as usize;
         let wrapped_total: usize = lines
             .iter()
             .map(|l| {
-                let len: usize = l.spans.iter().map(|s| s.content.chars().count()).sum();
-                len.div_ceil(w).max(1)
+                let text: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
+                super::super::super::text_utils::wrap_words_or_chars(&text, w)
+                    .len()
+                    .max(1)
             })
             .sum();
         let max_scroll = wrapped_total.saturating_sub(body_rect.height as usize);
@@ -1827,7 +1839,7 @@ impl super::super::App {
             let footer = Rect { x: inner.x, y: inner.y + inner.height - 1, width: inner.width, height: 1 };
             f.render_widget(
                 Paragraph::new(Line::from(Span::styled(
-                    " ↑↓ scroll · g/G top/bottom · c clear · Ctrl+Z f fullscreen · Ctrl+B Tab panes ",
+                    " ↑↓ scroll · g/G top/bottom · y copy · c clear · Ctrl+Z f fullscreen · Ctrl+B Tab panes ",
                     Style::default().add_modifier(Modifier::DIM),
                 ))),
                 footer,
@@ -2255,6 +2267,14 @@ impl super::super::App {
                 }
             };
             spans.push(Span::raw(status_text));
+            // 3.9 — advertise the streaming cancel (Esc keeps the chat; Ctrl+B c
+            // clears it).
+            if matches!(inf.status, InferenceStatus::Streaming) {
+                spans.push(Span::styled(
+                    " · Esc cancel",
+                    Style::default().add_modifier(Modifier::DIM),
+                ));
+            }
         }
         if self.ai_mode != AiMode::None {
             spans.push(Span::raw(" · scope="));
@@ -2315,6 +2335,38 @@ impl super::super::App {
         if chat_turns > 0 {
             spans.push(Span::raw(format!(" · {chat_turns} turn(s)")));
         }
+        // 3.9 — navigable citations cue when a Book-scope grounding set is live.
+        if self.book_rag_last_retrieval.is_some() {
+            spans.push(Span::styled(
+                " · [ ] cited ¶",
+                Style::default().fg(Color::Cyan),
+            ));
+        }
+        // 3.9 — single-response scroll cue: `⟳follow` while the view is pinned to
+        // the streaming tail, `↑scrolled` (End to re-follow) once scrolled back.
+        if self.ai_mode != AiMode::Book && self.graph_walk().is_none() {
+            if let Some(inf) = &self.inference {
+                let live = matches!(
+                    inf.status,
+                    InferenceStatus::Streaming | InferenceStatus::Done
+                );
+                if live && !inf.response.is_empty() {
+                    if self.ai_response_scroll == 0 {
+                        if matches!(inf.status, InferenceStatus::Streaming) {
+                            spans.push(Span::styled(
+                                " · ⟳follow",
+                                Style::default().fg(Color::Cyan),
+                            ));
+                        }
+                    } else {
+                        spans.push(Span::styled(
+                            " · ↑scrolled",
+                            Style::default().fg(Color::Yellow),
+                        ));
+                    }
+                }
+            }
+        }
         spans.push(Span::raw(" "));
         let title_line = Line::from(spans);
         let block = self.pane_block_line(title_line, Focus::Ai);
@@ -2372,7 +2424,28 @@ impl super::super::App {
                         // headings/code/lists all light up. Partial input
                         // during streaming is tolerated by the renderer.
                         let lines = super::super::super::markdown::render(&inf.response);
-                        Paragraph::new(lines).wrap(Wrap { trim: false })
+                        // 3.9 — scrollable + follow-the-tail. Count wrapped rows
+                        // with the same greedy word-wrap ratatui renders, then
+                        // offset = bottom − distance, so `ai_response_scroll == 0`
+                        // pins to the newest tokens as they stream in.
+                        let w = body_rect.width.max(1) as usize;
+                        let wrapped_total: usize = lines
+                            .iter()
+                            .map(|l| {
+                                let text: String =
+                                    l.spans.iter().map(|s| s.content.as_ref()).collect();
+                                super::super::super::text_utils::wrap_words_or_chars(&text, w)
+                                    .len()
+                                    .max(1)
+                            })
+                            .sum();
+                        let max_scroll =
+                            wrapped_total.saturating_sub(body_rect.height as usize);
+                        let offset =
+                            max_scroll.saturating_sub(self.ai_response_scroll.min(max_scroll));
+                        Paragraph::new(lines)
+                            .wrap(Wrap { trim: false })
+                            .scroll((offset.min(u16::MAX as usize) as u16, 0))
                     }
                 };
                 f.render_widget(widget, body_rect);
@@ -2395,7 +2468,12 @@ impl super::super::App {
                         Span::styled(" c ", reverse_chip(Color::Yellow)),
                         Span::raw("copy  "),
                         Span::styled(" g ", reverse_chip(Color::Green)),
-                        Span::raw("grammar"),
+                        Span::raw("grammar  "),
+                        // 3.9 — retry / edit-last.
+                        Span::styled(" z ", reverse_chip(Color::Cyan)),
+                        Span::raw("retry  "),
+                        Span::styled(" e ", reverse_chip(Color::Cyan)),
+                        Span::raw("edit"),
                     ];
                     // Only offered when this response carries a system-book
                     // destination (a submission draft / structural analysis).
@@ -2993,16 +3071,27 @@ impl super::super::App {
             }
         }
 
-        let body = Paragraph::new(lines).wrap(Wrap { trim: false }).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(title)
-                .border_style(
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                ),
-        );
+        // 3.9 — scroll the selected result into view. Each hit is exactly three
+        // rows (no wrap, so the height/scroll math stays exact — long headers /
+        // snippets truncate rather than spilling to a 4th row), so the cursor's
+        // block starts at `cursor*3`; scroll just enough to keep its bottom on
+        // screen. Without this, results below the fold — and an off-screen
+        // cursor — were unreachable on a short terminal.
+        let inner_rows = rect.height.saturating_sub(2) as usize;
+        let sel_bottom = self.results_cursor.saturating_add(1) * 3;
+        let offset = sel_bottom.saturating_sub(inner_rows);
+        let body = Paragraph::new(lines)
+            .scroll((offset.min(u16::MAX as usize) as u16, 0))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(title)
+                    .border_style(
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+            );
         f.render_widget(body, rect);
     }
 

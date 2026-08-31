@@ -69,6 +69,15 @@ A loose paraphrase:
 > the moment the storm broke and someone left the deck
 ```
 
+### Recall a previous query
+
+With the results overlay closed, `↑` / `↓` walk the search bar's
+**query history** shell-style — the last thing you ran, the one before
+it, and so on — so re-running or tweaking an earlier search takes no
+retyping. (This is the same recall the AI prompt bar already has.) The
+focused search-bar title shows a `↑ history` cue whenever there is
+history to walk back through.
+
 ### Run the search
 
 `Enter`. Results overlay drops down:
@@ -98,9 +107,12 @@ Each row is three lines:
 
 ### Open a result
 
-`↑` / `↓` to move the cursor in the results. `Enter` opens the
-selected paragraph in the Editor pane (focus moves there) and
-positions the tree cursor on the same row.
+`↑` / `↓` to move the cursor in the results. The overlay scrolls the
+selected result into view as you go, so no hit is stranded off-screen
+on a short terminal: `PgUp` / `PgDn` page the cursor by 5, and `Home`
+/ `End` jump to the first / last result. Up to 50 results are shown.
+`Enter` opens the selected paragraph in the Editor pane (focus moves
+there) and positions the tree cursor on the same row.
 
 ### Dismiss the overlay
 
@@ -250,7 +262,9 @@ Tree pane.
 - Saving a paragraph indexes it in the HNSW semantic vector store
   automatically (no separate full-text index step).
 - `Ctrl+/` opens the Search bar; `Enter` runs the query; `Enter` on
-  a result opens the paragraph.
+  a result opens the paragraph. `↑` / `↓` recall past queries (overlay
+  closed); the results overlay scrolls and pages (`PgUp`/`PgDn`,
+  `Home`/`End`), up to 50 hits.
 - The results overlay shows score + kind + title-breadcrumb + snippet.
 - CLI: `inkhaven search "<query>" [--limit N]`.
 - Switching `embeddings.model` followed by `reindex` updates the
