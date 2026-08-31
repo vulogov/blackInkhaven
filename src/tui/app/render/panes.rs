@@ -2323,6 +2323,31 @@ impl super::super::App {
         if chat_turns > 0 {
             spans.push(Span::raw(format!(" · {chat_turns} turn(s)")));
         }
+        // 3.9 — single-response scroll cue: `⟳follow` while the view is pinned to
+        // the streaming tail, `↑scrolled` (End to re-follow) once scrolled back.
+        if self.ai_mode != AiMode::Book && self.graph_walk().is_none() {
+            if let Some(inf) = &self.inference {
+                let live = matches!(
+                    inf.status,
+                    InferenceStatus::Streaming | InferenceStatus::Done
+                );
+                if live && !inf.response.is_empty() {
+                    if self.ai_response_scroll == 0 {
+                        if matches!(inf.status, InferenceStatus::Streaming) {
+                            spans.push(Span::styled(
+                                " · ⟳follow",
+                                Style::default().fg(Color::Cyan),
+                            ));
+                        }
+                    } else {
+                        spans.push(Span::styled(
+                            " · ↑scrolled",
+                            Style::default().fg(Color::Yellow),
+                        ));
+                    }
+                }
+            }
+        }
         spans.push(Span::raw(" "));
         let title_line = Line::from(spans);
         let block = self.pane_block_line(title_line, Focus::Ai);
@@ -2380,7 +2405,28 @@ impl super::super::App {
                         // headings/code/lists all light up. Partial input
                         // during streaming is tolerated by the renderer.
                         let lines = super::super::super::markdown::render(&inf.response);
-                        Paragraph::new(lines).wrap(Wrap { trim: false })
+                        // 3.9 — scrollable + follow-the-tail. Count wrapped rows
+                        // with the same greedy word-wrap ratatui renders, then
+                        // offset = bottom − distance, so `ai_response_scroll == 0`
+                        // pins to the newest tokens as they stream in.
+                        let w = body_rect.width.max(1) as usize;
+                        let wrapped_total: usize = lines
+                            .iter()
+                            .map(|l| {
+                                let text: String =
+                                    l.spans.iter().map(|s| s.content.as_ref()).collect();
+                                super::super::super::text_utils::wrap_words_or_chars(&text, w)
+                                    .len()
+                                    .max(1)
+                            })
+                            .sum();
+                        let max_scroll =
+                            wrapped_total.saturating_sub(body_rect.height as usize);
+                        let offset =
+                            max_scroll.saturating_sub(self.ai_response_scroll.min(max_scroll));
+                        Paragraph::new(lines)
+                            .wrap(Wrap { trim: false })
+                            .scroll((offset.min(u16::MAX as usize) as u16, 0))
                     }
                 };
                 f.render_widget(widget, body_rect);
