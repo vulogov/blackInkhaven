@@ -6934,6 +6934,26 @@ impl App {
                 _ => {}
             }
         }
+        // 3.9 — retry / edit-last: operate on the last committed exchange,
+        // available whenever a resendable pair exists and nothing is streaming
+        // (even after the displayed reply was cleared). `e`/`z` don't collide
+        // with the done-state apply letters (r/i/t/g/b/c/l).
+        if self.focus == Focus::Ai
+            && !self.is_streaming_inference()
+            && self.has_resendable_turn()
+        {
+            match key.code {
+                KeyCode::Char('e') | KeyCode::Char('E') => {
+                    self.edit_last_turn();
+                    return Ok(false);
+                }
+                KeyCode::Char('z') | KeyCode::Char('Z') => {
+                    self.regenerate_last();
+                    return Ok(false);
+                }
+                _ => {}
+            }
+        }
         // When the AI pane has a completed inference and is focused, single-
         // letter keys apply the result to the editor.
         if self.focus == Focus::Ai && self.inference_done_with_text() {
@@ -25821,6 +25841,56 @@ impl App {
         };
     }
 
+    /// True while a reply is actively streaming.
+    fn is_streaming_inference(&self) -> bool {
+        matches!(
+            self.inference.as_ref().map(|i| &i.status),
+            Some(InferenceStatus::Streaming)
+        )
+    }
+
+    /// True when the chat ends with a `(User, Assistant)` pair that retry /
+    /// edit-last can operate on.
+    fn has_resendable_turn(&self) -> bool {
+        resendable_user_prompt(&self.chat_history).is_some()
+    }
+
+    /// 3.9 — pull the last exchange back for revision: pop the trailing
+    /// `(User, Assistant)` pair off the chat history, restore the user's prompt
+    /// into the (multi-line) compose box, drop the displayed reply, and focus
+    /// the prompt so it can be edited and re-sent. No-op while streaming.
+    /// Returns whether it popped a turn (so `regenerate_last` knows to re-send).
+    fn edit_last_turn(&mut self) -> bool {
+        if self.is_streaming_inference() {
+            self.status = "still streaming — Esc to cancel first".into();
+            return false;
+        }
+        if !self.has_resendable_turn() {
+            self.status = "no previous turn to edit".into();
+            return false;
+        }
+        let Some(user_text) = resendable_user_prompt(&self.chat_history) else {
+            return false;
+        };
+        let n = self.chat_history.len();
+        self.chat_history.truncate(n - 2);
+        self.ai_input.clear();
+        self.ai_input.insert_str(&user_text);
+        self.inference = None;
+        self.ai_response_scroll = 0;
+        self.change_focus(Focus::AiPrompt);
+        self.status = "edit the prompt and press Enter to resend".into();
+        true
+    }
+
+    /// 3.9 — regenerate the last reply: restore the prompt, drop the last pair,
+    /// and re-send immediately under the current scope (no editing round-trip).
+    fn regenerate_last(&mut self) {
+        if self.edit_last_turn() && !self.ai_input.as_str().trim().is_empty() {
+            self.start_inference();
+        }
+    }
+
     fn clear_chat_history(&mut self) {
         let turns = self.chat_history.len();
         self.chat_history.clear();
@@ -34862,6 +34932,20 @@ Rules:
 /// 1.3.34+ — aggregate Output findings into per-node tree report-card badges: each
 /// finding tied to a source paragraph tallies a count + worst severity onto that
 /// paragraph and every ancestor (so a chapter shows the sum of its paragraphs).
+/// 3.9 — the last user prompt eligible for retry / edit-last: `Some(text)` when
+/// the chat history ends with a `(User, Assistant)` pair, else `None`. Pure so
+/// the pair-detection is testable without an `App`.
+fn resendable_user_prompt(history: &[ChatTurn]) -> Option<String> {
+    let n = history.len();
+    if n < 2 {
+        return None;
+    }
+    match (&history[n - 2], &history[n - 1]) {
+        (ChatTurn::User(s), ChatTurn::Assistant(_)) => Some(s.clone()),
+        _ => None,
+    }
+}
+
 /// 3.8 — resolve the Output cursor's index into the current view from the
 /// id-anchored selection. `follow` (parked at the newest/top row) → 0;
 /// otherwise the anchored id's position, falling back to the top when it has
@@ -35695,6 +35779,43 @@ mod tests_tree_filter {
     fn no_match_yields_empty() {
         let (h, _) = sample();
         assert!(filtered_tree_rows(&h, "zzz-nope").is_empty());
+    }
+}
+
+#[cfg(test)]
+mod tests_resend {
+    use super::resendable_user_prompt;
+    use crate::ai::stream::ChatTurn;
+
+    #[test]
+    fn detects_trailing_user_assistant_pair() {
+        let h = vec![
+            ChatTurn::User("first".into()),
+            ChatTurn::Assistant("a1".into()),
+            ChatTurn::User("second".into()),
+            ChatTurn::Assistant("a2".into()),
+        ];
+        assert_eq!(resendable_user_prompt(&h), Some("second".to_string()));
+    }
+
+    #[test]
+    fn none_when_last_is_a_dangling_user_turn() {
+        // A user turn with no assistant reply yet (mid-stream) isn't resendable.
+        let h = vec![
+            ChatTurn::User("first".into()),
+            ChatTurn::Assistant("a1".into()),
+            ChatTurn::User("second".into()),
+        ];
+        assert_eq!(resendable_user_prompt(&h), None);
+    }
+
+    #[test]
+    fn none_when_empty_or_single() {
+        assert_eq!(resendable_user_prompt(&[]), None);
+        assert_eq!(
+            resendable_user_prompt(&[ChatTurn::Assistant("hi".into())]),
+            None
+        );
     }
 }
 
