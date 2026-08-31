@@ -116,6 +116,12 @@ What it shows, in order:
 Nothing here is interactive; for editing, use the in-app editor
 below or open `inkhaven.hjson` directly.
 
+The same descendant word totals now also surface live in the **Tree
+pane**: each Book / Chapter / Subchapter row shows an aggregate
+descendant word count (compact, e.g. `12.3k`), with a roll-up progress
+pip when the subtree carries `target_words` goals — so you can read a
+branch's size and progress without opening the report.
+
 ## Lifetime best streak + milestones (1.3.35)
 
 The streak now knows its **all-time best** — the longest run in

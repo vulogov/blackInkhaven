@@ -102,6 +102,25 @@ style-warning overlays, the AI chips — so switching restyles the whole UI
 cohesively. See [`color_styles/README.md`](../../color_styles/README.md)
 for the index.
 
+## `NO_COLOR` — monochrome everywhere
+
+Sometimes the answer isn't a different palette but *no* palette. Set the
+`NO_COLOR` environment variable to any non-empty value (the
+[no-color.org](https://no-color.org) convention) and the whole TUI goes
+monochrome — every theme colour, from any of the presets above, resolves
+to the terminal default:
+
+```bash
+NO_COLOR=1 inkhaven
+```
+
+Structure still reads perfectly: headings, selection, matches and the
+like fall back to **bold**, reversed, and underlined attributes rather
+than hue. Reach for it on a light-background or monochrome terminal, or
+for accessibility. It's an **environment override**, not a config key —
+it sits outside the cascade above and wins over any `theme` block,
+global or project.
+
 ## When something is wrong
 
 - A malformed **global** file is **skipped with a warning** — a typo in
