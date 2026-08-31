@@ -1002,11 +1002,17 @@ impl super::App {
             started_at: std::time::Instant::now(),
         });
         self.pending_chat_user_msg = None;
+        // 3.10 — surface the AI pane so the streaming answer is actually
+        // visible; without this it streams into a hidden right pane (Output /
+        // Thoughts) and F1 looks like nothing happened. Reset the response
+        // scroll so the reply is followed from the top.
+        self.right_pane = super::RightPane::Ai;
+        self.ai_response_scroll = 0;
         // Land on the AI prompt pane so the user can immediately ask a
         // follow-up Help question; Esc flips to the AI pane to read.
         self.change_focus(Focus::AiPrompt);
         self.status = format!(
-            "Help: streaming answer from {provider} (grounded on {included} excerpt(s))…"
+            "Help: waiting for {provider} (grounded on {included} excerpt(s))…"
         );
     }
 
