@@ -458,6 +458,7 @@ pub fn build_visual_row_spans(
     style_hits: &[super::style_warnings::StyleHit],
     comment_hits: &[super::comments::RowHit],
     correction: AddedFlags,
+    bracket_match: Option<[(usize, usize); 2]>,
     theme: &super::theme::Theme,
 ) -> Vec<ratatui::text::Span<'static>> {
     use ratatui::text::Span;
@@ -526,6 +527,12 @@ pub fn build_visual_row_spans(
             {
                 style = style.patch(comment_style);
             }
+            // R2 — underline both cells of the matched bracket pair.
+            if bracket_match
+                .is_some_and(|pair| pair.iter().any(|&(r, cc)| r == row.src_row && cc == src_col))
+            {
+                style = style.add_modifier(Modifier::UNDERLINED | Modifier::BOLD);
+            }
             if is_selected || is_block {
                 style = style.add_modifier(Modifier::REVERSED);
             }
@@ -559,6 +566,7 @@ pub fn build_row_spans(
     style_hits: &[super::style_warnings::StyleHit],
     comment_hits: &[super::comments::RowHit],
     correction: AddedFlags,
+    bracket_match: Option<[(usize, usize); 2]>,
     theme: &super::theme::Theme,
 ) -> Vec<ratatui::text::Span<'static>> {
     use ratatui::text::Span;
@@ -635,6 +643,11 @@ pub fn build_row_spans(
                 comment_style_at(comment_hits, src_col, theme)
             {
                 style = style.patch(comment_style);
+            }
+            // R2 — underline both cells of the matched bracket pair.
+            if bracket_match.is_some_and(|pair| pair.iter().any(|&(r, c)| r == row && c == src_col))
+            {
+                style = style.add_modifier(Modifier::UNDERLINED | Modifier::BOLD);
             }
             if is_selected || is_block {
                 style = style.add_modifier(Modifier::REVERSED);
