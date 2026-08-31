@@ -100,9 +100,13 @@ pub fn package_from_dir(docs_dir: &Path, version: &str) -> Result<HelpCorpus> {
 /// user who packaged their own docs.
 fn read_source(source: &str) -> std::result::Result<Vec<u8>, String> {
     if source.starts_with("http://") || source.starts_with("https://") {
-        crate::typst_universe::reqwest_fetch(source)
+        eprintln!("downloading help corpus from {source} …");
+        let bytes = crate::typst_universe::reqwest_fetch(source)?;
+        eprintln!("  downloaded {} KiB", bytes.len() / 1024);
+        Ok(bytes)
     } else {
         let path = source.strip_prefix("file://").unwrap_or(source);
+        eprintln!("reading help corpus from {path}");
         std::fs::read(path).map_err(|e| format!("read `{path}`: {e}"))
     }
 }
@@ -116,6 +120,7 @@ pub fn fetch(url: &str, force: bool) -> Result<HelpCorpus> {
         if let Some(cp) = &cache {
             if let Ok(bytes) = std::fs::read(cp) {
                 if let Ok(corpus) = serde_json::from_slice::<HelpCorpus>(&bytes) {
+                    eprintln!("using cached help corpus ({})", cp.display());
                     return Ok(corpus);
                 }
             }
@@ -130,7 +135,9 @@ pub fn fetch(url: &str, force: bool) -> Result<HelpCorpus> {
                 if let Some(parent) = cp.parent() {
                     let _ = std::fs::create_dir_all(parent);
                 }
-                let _ = crate::io_atomic::write(cp, &bytes);
+                if crate::io_atomic::write(cp, &bytes).is_ok() {
+                    eprintln!("  cached to {} (offline next time)", cp.display());
+                }
             }
             Ok(corpus)
         }
@@ -177,17 +184,24 @@ fn unpack_to_dir(corpus: &HelpCorpus, dir: &Path) -> Result<()> {
 pub fn rebuild(project: &Path, url: &str, force: bool) -> Result<()> {
     let corpus = fetch(url, force)?;
     let n = corpus.files.len();
+    let ver = if corpus.version.is_empty() {
+        String::new()
+    } else {
+        format!(" (built from inkhaven {})", corpus.version)
+    };
+    eprintln!("loaded {n} document(s){ver}");
     // Transient scratch — the importer copies content into the project store,
     // so this directory is discarded afterwards.
     let scratch =
         std::env::temp_dir().join(format!("inkhaven-help-corpus-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&scratch);
     std::fs::create_dir_all(&scratch).map_err(Error::Io)?;
+    eprintln!("unpacking to {} …", scratch.display());
     unpack_to_dir(&corpus, &scratch)?;
     let res = super::import_help::run(project, &scratch);
     let _ = std::fs::remove_dir_all(&scratch);
     res?;
-    eprintln!("help corpus rebuilt from {n} document(s)");
+    eprintln!("✓ help corpus rebuilt — {n} document(s) indexed into the Help book. F1 is ready.");
     Ok(())
 }
 

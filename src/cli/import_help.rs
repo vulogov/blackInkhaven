@@ -33,6 +33,10 @@ use crate::store::{InsertPosition, Store, SYSTEM_TAG_HELP};
 struct Counts {
     branches: usize,
     paragraphs: usize,
+    /// Total files to import, counted up front so per-file progress can show
+    /// `[X/N]` (embedding each paragraph is the slow part, so real-time
+    /// progress matters). Zero disables the per-file lines.
+    total: usize,
 }
 
 pub fn run(project: &Path, documents_dir: &Path) -> Result<()> {
@@ -78,7 +82,26 @@ pub fn run(project: &Path, documents_dir: &Path) -> Result<()> {
     // from the in-memory `hierarchy` we captured above.
     let _ = Hierarchy::load(&store)?;
 
-    let mut counts = Counts::default();
+    // Count the files up front so import can report `[X/N]` progress — the
+    // embedding inside each `import_file` is what makes a large corpus slow.
+    let total = walkdir::WalkDir::new(documents_dir)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+        .filter(|e| {
+            e.file_type().is_file()
+                && !e
+                    .file_name()
+                    .to_str()
+                    .map(|s| s.starts_with('.'))
+                    .unwrap_or(false)
+        })
+        .count();
+    let mut counts = Counts {
+        total,
+        ..Default::default()
+    };
+    eprintln!("indexing {total} document(s) into Help (embedding each — this can take a minute)…");
 
     // Children of the source directory become either branches or paragraphs
     // directly under Help. Sorted dirs-first / alphabetical so the output
@@ -250,6 +273,11 @@ fn import_file(
         store.update_paragraph_content(&mut node, &bytes)?;
     }
     counts.paragraphs += 1;
+    // Per-file progress (printed after this file's embedding completes, so the
+    // line is real progress, not a queued estimate).
+    if counts.total > 0 {
+        eprintln!("  [{}/{}] {}", counts.paragraphs, counts.total, title);
+    }
     Ok(())
 }
 
