@@ -75,6 +75,10 @@ pub fn run(project: &Path, prune: bool, adopt: bool) -> Result<()> {
     };
 
     store.sync()?;
+    // Drain the DuckDB write-ahead log into the main `.db` files so the next
+    // open doesn't replay it. A bulk reindex can leave several MB of WAL, which
+    // otherwise lands as multi-second replay on the first search after opening.
+    store.checkpoint()?;
 
     eprintln!(
         "reindex: {updated} updated, {unchanged} unchanged, {} missing, {} orphan(s)",
