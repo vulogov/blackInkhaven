@@ -2151,6 +2151,15 @@ pub(crate) struct App {
     /// marked paragraph instead of just the cursor's. Cleared
     /// by `Esc` in the tree.
     tree_marked: std::collections::HashSet<Uuid>,
+    /// 3.8 — in-tree `/` filter needle. Empty = no filter (rows honor the
+    /// collapsed set as usual). Non-empty = rows are the pruned path-to-match
+    /// tree (every node whose title/slug matches, case-insensitive and
+    /// Unicode-aware, plus its ancestors), ignoring folding — mirrors the
+    /// Outline pane's filter.
+    tree_filter: String,
+    /// True while the user is typing into the `/` filter (keystrokes edit the
+    /// needle rather than driving tree commands).
+    tree_filter_editing: bool,
     /// In similar-paragraph mode, which pane has keyboard focus.
     /// `false` (default) → left pane = `self.opened` is the
     /// keyboard target. `true` → right pane = `self.secondary`
@@ -3708,6 +3717,8 @@ impl App {
             progress_cache: None,
             link_pick_for: None,
             tree_marked: std::collections::HashSet::new(),
+            tree_filter: String::new(),
+            tree_filter_editing: false,
             status: String::from(
                 "Tab=panes · Enter=open · Ctrl+S=save · Ctrl+B then B/C/S/P add · D delete · ↑/↓ reorder · Ctrl+Q quit",
             ),
@@ -5780,6 +5791,44 @@ impl App {
             .modifiers
             .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER);
 
+        // 3.8 — `/` filter input mode. While editing, keystrokes edit the
+        // needle (live-narrowing the tree) rather than driving tree commands.
+        if self.tree_filter_editing {
+            match key.code {
+                KeyCode::Esc => {
+                    self.tree_filter.clear();
+                    self.tree_filter_editing = false;
+                    self.rebuild_rows_preserving_cursor();
+                    self.status = "filter cleared".into();
+                }
+                KeyCode::Enter => {
+                    self.tree_filter_editing = false;
+                    if self.tree_filter.trim().is_empty() {
+                        self.tree_filter.clear();
+                        self.rebuild_rows_preserving_cursor();
+                    } else {
+                        self.status =
+                            format!("filter `{}` · {} row(s)", self.tree_filter, self.rows.len());
+                    }
+                }
+                KeyCode::Backspace => {
+                    self.tree_filter.pop();
+                    self.rebuild_rows_preserving_cursor();
+                    self.tree_cursor = 0;
+                }
+                // Arrows still move within the filtered matches while typing.
+                KeyCode::Up => self.move_cursor(-1),
+                KeyCode::Down => self.move_cursor(1),
+                KeyCode::Char(c) if plain => {
+                    self.tree_filter.push(c);
+                    self.rebuild_rows_preserving_cursor();
+                    self.tree_cursor = 0;
+                }
+                _ => {}
+            }
+            return Ok(false);
+        }
+
         match key.code {
             KeyCode::Char('q') | KeyCode::Char('Q') if plain => return Ok(self.request_quit()),
             // Esc cycles Tree → Search bar (third leg of the
@@ -5790,7 +5839,13 @@ impl App {
             // so the next chord operates on the cursor row,
             // not stale marks.
             KeyCode::Esc => {
-                if self.link_pick_for.is_some() {
+                if !self.tree_filter.is_empty() {
+                    // A committed `/` filter is still applied — Esc clears it
+                    // first (before cancelling link-pick / marks / focus).
+                    self.tree_filter.clear();
+                    self.rebuild_rows_preserving_cursor();
+                    self.status = "filter cleared".into();
+                } else if self.link_pick_for.is_some() {
                     self.link_pick_for = None;
                     self.status = "link cancelled".into();
                     self.change_focus(Focus::Editor);
@@ -5923,6 +5978,15 @@ impl App {
             KeyCode::Char('}') if plain => self.jump_structural(true),
             KeyCode::Char('{') if plain => self.jump_structural(false),
 
+            // 3.8 — `/` opens the in-tree filter: type to narrow the tree to
+            // matching titles + their ancestors, Enter keeps it (cursor on the
+            // first match), Esc clears.
+            KeyCode::Char('/') if plain => {
+                self.tree_filter_editing = true;
+                self.status =
+                    "filter: type to narrow · Enter keeps · Esc clears".into();
+            }
+
             // 1.2.4+: tree T cycles the type of the cursor row
             // (or every marked paragraph, when multi-select is
             // active). Same ladder as Ctrl+B M:
@@ -5989,12 +6053,16 @@ impl App {
 
     fn rebuild_rows_preserving_cursor(&mut self) {
         let prev_id = self.rows.get(self.tree_cursor).map(|(id, _)| *id);
-        self.rows = self
-            .hierarchy
-            .flatten_with_collapsed(&self.collapsed_nodes)
-            .into_iter()
-            .map(|(n, d)| (n.id, d))
-            .collect();
+        let needle = self.tree_filter.trim().to_lowercase();
+        self.rows = if needle.is_empty() {
+            self.hierarchy
+                .flatten_with_collapsed(&self.collapsed_nodes)
+                .into_iter()
+                .map(|(n, d)| (n.id, d))
+                .collect()
+        } else {
+            filtered_tree_rows(&self.hierarchy, &needle)
+        };
         if let Some(id) = prev_id {
             if let Some(i) = self.rows.iter().position(|(rid, _)| *rid == id) {
                 self.tree_cursor = i;
@@ -34475,6 +34543,45 @@ Rules:
 /// 1.3.34+ — aggregate Output findings into per-node tree report-card badges: each
 /// finding tied to a source paragraph tallies a count + worst severity onto that
 /// paragraph and every ancestor (so a chapter shows the sum of its paragraphs).
+/// Build the flattened `(id, depth)` rows for an active `/` filter: the pruned
+/// path-to-match tree — every node whose title or slug contains `needle`
+/// (already lowercased by the caller), plus all of its ancestors, folding
+/// ignored. Mirrors the Outline pane's `collect_filtered`.
+fn filtered_tree_rows(
+    hierarchy: &crate::store::hierarchy::Hierarchy,
+    needle: &str,
+) -> Vec<(Uuid, usize)> {
+    fn walk(
+        hierarchy: &crate::store::hierarchy::Hierarchy,
+        node: &Node,
+        depth: usize,
+        needle: &str,
+        out: &mut Vec<(Uuid, usize)>,
+    ) -> bool {
+        let start = out.len();
+        let mut any_child = false;
+        for child in hierarchy.children_of(Some(node.id)) {
+            if walk(hierarchy, child, depth + 1, needle, out) {
+                any_child = true;
+            }
+        }
+        let self_match = node.title.to_lowercase().contains(needle)
+            || node.slug.to_lowercase().contains(needle);
+        if self_match || any_child {
+            out.insert(start, (node.id, depth));
+            true
+        } else {
+            out.truncate(start);
+            false
+        }
+    }
+    let mut out = Vec::new();
+    for root in hierarchy.children_of(None) {
+        walk(hierarchy, root, 0, needle, &mut out);
+    }
+    out
+}
+
 fn compute_tree_badges(
     hierarchy: &crate::store::hierarchy::Hierarchy,
     msgs: &[crate::pane::output::Message],
@@ -35182,6 +35289,74 @@ mod tests_snippet_include {
         let col = line.chars().take_while(|&c| c != 'g').count();
         let ctx = detect_include_context(line, col).expect("inside the string");
         assert!(ctx.snippet_slug.is_none(), "globals.typ is not a snippet");
+    }
+}
+
+#[cfg(test)]
+mod tests_tree_filter {
+    use super::filtered_tree_rows;
+    use crate::store::hierarchy::Hierarchy;
+    use crate::store::node::Node;
+    use uuid::Uuid;
+
+    fn node(id: Uuid, kind: &str, title: &str, slug: &str, parent: Option<Uuid>, order: i64) -> Node {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "kind": kind, "title": title, "slug": slug,
+            "path": [], "parent_id": parent, "order": order, "file": null,
+            "modified_at": "2026-01-01T00:00:00Z",
+        }))
+        .expect("test node")
+    }
+
+    fn sample() -> (Hierarchy, [Uuid; 5]) {
+        let book = Uuid::now_v7();
+        let ch = Uuid::now_v7();
+        let sub = Uuid::now_v7();
+        let p1 = Uuid::now_v7();
+        let p2 = Uuid::now_v7();
+        let h = Hierarchy::from_nodes_for_test(vec![
+            node(book, "book", "Velmaron", "velmaron", None, 1),
+            node(ch, "chapter", "The Harbour", "harbour", Some(book), 1),
+            node(sub, "subchapter", "Dawn", "dawn", Some(ch), 1),
+            node(p1, "paragraph", "The lantern glows", "lantern", Some(sub), 1),
+            node(p2, "paragraph", "A quiet street", "street", Some(sub), 2),
+        ]);
+        (h, [book, ch, sub, p1, p2])
+    }
+
+    #[test]
+    fn leaf_match_pulls_in_ancestor_chain_only() {
+        let (h, [book, ch, sub, p1, _p2]) = sample();
+        // "lantern" matches only p1; its whole ancestor chain is kept, the
+        // sibling paragraph is excluded.
+        let rows = filtered_tree_rows(&h, "lantern");
+        let ids: Vec<Uuid> = rows.iter().map(|(id, _)| *id).collect();
+        assert_eq!(ids, vec![book, ch, sub, p1]);
+        // Depths reflect the real hierarchy, not the filtered position.
+        assert_eq!(rows[0].1, 0);
+        assert_eq!(rows[3].1, 3);
+    }
+
+    #[test]
+    fn branch_match_is_case_insensitive_and_matches_slug() {
+        let (h, [book, ch, sub, ..]) = sample();
+        // The needle arrives already lowercased (the caller lowercases it);
+        // matching against the lowercased node title "The Harbour" is what
+        // makes the feature case-insensitive. Book ancestor kept; the
+        // subchapter/paragraphs below are pruned.
+        let by_title: Vec<Uuid> =
+            filtered_tree_rows(&h, "harbour").iter().map(|(id, _)| *id).collect();
+        assert_eq!(by_title, vec![book, ch]);
+        // A pure slug match also lands (subchapter title "Dawn", slug "dawn").
+        let by_slug: Vec<Uuid> =
+            filtered_tree_rows(&h, "dawn").iter().map(|(id, _)| *id).collect();
+        assert_eq!(by_slug, vec![book, ch, sub]);
+    }
+
+    #[test]
+    fn no_match_yields_empty() {
+        let (h, _) = sample();
+        assert!(filtered_tree_rows(&h, "zzz-nope").is_empty());
     }
 }
 
