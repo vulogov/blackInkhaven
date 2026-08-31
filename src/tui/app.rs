@@ -5917,6 +5917,12 @@ impl App {
                 self.collapse_all_branches();
             }
 
+            // 3.8 — jump-by-kind: `{` / `}` move the cursor to the previous /
+            // next major structural row (Book or Chapter), skipping past long
+            // paragraph runs.
+            KeyCode::Char('}') if plain => self.jump_structural(true),
+            KeyCode::Char('{') if plain => self.jump_structural(false),
+
             // 1.2.4+: tree T cycles the type of the cursor row
             // (or every marked paragraph, when multi-select is
             // active). Same ladder as Ctrl+B M:
