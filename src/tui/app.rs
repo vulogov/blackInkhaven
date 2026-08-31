@@ -6857,6 +6857,17 @@ impl App {
             self.cancel_graph_walk();
             return Ok(false);
         }
+        // 3.9 — Esc cancels an in-flight inference (stop the stream, keep the
+        // conversation) before doing anything else. Distinct from Ctrl+B c,
+        // which wipes the whole chat.
+        if self.focus == Focus::Ai
+            && matches!(key.code, KeyCode::Esc)
+            && self.inference.is_some()
+            && !self.graph_walk_active()
+        {
+            self.cancel_inference();
+            return Ok(false);
+        }
         // Esc bounces AI pane → AI prompt so the user can edit / send the
         // next message without an extra Tab. Mirror of the AiPrompt → Ai
         // bounce in handle_input_key.
@@ -7134,6 +7145,13 @@ impl App {
                     self.show_results_overlay = false;
                 } else if !is_search && self.show_prompt_picker {
                     self.show_prompt_picker = false;
+                } else if !is_search
+                    && self.inference.is_some()
+                    && !self.graph_walk_active()
+                {
+                    // 3.9 — cancel an in-flight inference from the prompt too,
+                    // rather than bouncing focus while a reply streams.
+                    self.cancel_inference();
                 } else {
                     self.show_results_overlay = false;
                     self.show_prompt_picker = false;
@@ -25725,6 +25743,35 @@ impl App {
         self.ai_mode = AiMode::Facts;
         self.chat_history_scroll = 0;
         n
+    }
+
+    /// 3.9 — cancel an in-flight inference without touching the conversation.
+    /// Dropping the `Inference` drops its receiver, so the background stream
+    /// task abandons the provider call at its next token send (see
+    /// `spawn_chat_stream`). The partial reply is discarded and the pending
+    /// turn state is cleared so it can't pair with a later response; prior
+    /// `chat_history` is kept. Distinct from `clear_chat_history` (Ctrl+B c),
+    /// which wipes the whole conversation. No-op when nothing is in flight or a
+    /// graph walk owns the lifecycle.
+    fn cancel_inference(&mut self) {
+        if self.inference.is_none() || self.graph_walk_active() {
+            return;
+        }
+        let was_streaming = matches!(
+            self.inference.as_ref().map(|i| &i.status),
+            Some(InferenceStatus::Streaming)
+        );
+        self.inference = None;
+        self.pending_chat_user_msg = None;
+        self.pending_paragraph_memory_target = None;
+        self.pending_book_rag_cited = None;
+        self.pending_translation = false;
+        self.ai_response_scroll = 0;
+        self.status = if was_streaming {
+            "inference cancelled — chat history kept".into()
+        } else {
+            "cleared the response — chat history kept".into()
+        };
     }
 
     fn clear_chat_history(&mut self) {
