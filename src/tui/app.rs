@@ -3713,7 +3713,9 @@ impl App {
             tree_cursor: 0,
             tree_scroll: 0,
             search_input: TextInput::new(),
-            ai_input: TextInput::new(),
+            // 3.9 — the AI prompt is a multi-line compose box (Shift+Enter
+            // newline, paste keeps newlines, box grows/collapses with content).
+            ai_input: TextInput::multiline(),
             ai_prompt_history: Vec::new(),
             ai_prompt_history_cursor: None,
             search_history: Vec::new(),
@@ -6844,6 +6846,15 @@ impl App {
     /// live/finished inference under a non-Book scope, no graph walk in flight)
     /// — the view that `ai_response_scroll` drives (arrows/PgUp-Dn/Home/End +
     /// wheel). The Book conversation and fullscreen use `chat_history_scroll`.
+    /// 3.9 — height in rows (incl. top/bottom borders) of the AI prompt box:
+    /// one content line when empty / single-line, growing with newlines up to a
+    /// cap, so a multi-line compose expands and then collapses back to one line.
+    fn ai_prompt_box_height(&self) -> u16 {
+        const MAX_PROMPT_LINES: usize = 8;
+        let content = self.ai_input.line_count().clamp(1, MAX_PROMPT_LINES);
+        content as u16 + 2
+    }
+
     fn ai_single_response_scrollable(&self) -> bool {
         self.inference.is_some()
             && self.ai_mode != AiMode::Book
@@ -7166,6 +7177,19 @@ impl App {
                     self.change_focus(target);
                 }
             }
+            // 3.9 — Shift+Enter / Alt+Enter inserts a newline in the multi-line
+            // AI prompt (kitty-class terminals distinguish these; paste keeps
+            // newlines everywhere). Plain Enter still sends.
+            KeyCode::Enter
+                if !is_search
+                    && !self.show_prompt_picker
+                    && key
+                        .modifiers
+                        .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT) =>
+            {
+                self.ai_input.insert_newline();
+                self.ai_prompt_history_cursor = None;
+            }
             KeyCode::Enter => {
                 if is_search {
                     if self.show_results_overlay && !self.results.is_empty() {
@@ -7254,10 +7278,12 @@ impl App {
                     self.prompt_picker_cursor += 1;
                 }
             }
-            // 1.2.4+: Up / Down in the AI prompt (no picker
-            // showing) walks `ai_prompt_history`. Shell-style.
+            // 1.2.4+: Up / Down in the AI prompt (no picker showing) walks
+            // `ai_prompt_history`, shell-style. 3.9 — in the multi-line compose
+            // box, they first move between lines; only at the first/last line do
+            // they fall through to history recall.
             KeyCode::Up if !is_search => {
-                if !self.ai_prompt_history.is_empty() {
+                if !self.ai_input.move_up() && !self.ai_prompt_history.is_empty() {
                     let next = match self.ai_prompt_history_cursor {
                         Some(0) => 0,
                         Some(i) => i - 1,
@@ -7270,6 +7296,9 @@ impl App {
                         self.ai_input.insert_char(c);
                     }
                 }
+            }
+            KeyCode::Down if !is_search && self.ai_input.move_down() => {
+                // Moved down a line within the compose box; nothing else to do.
             }
             KeyCode::Down if !is_search => {
                 if let Some(cur) = self.ai_prompt_history_cursor {
@@ -31054,7 +31083,7 @@ impl App {
                 .direction(Direction::Vertical)
                 .constraints([
                     Constraint::Min(0),
-                    Constraint::Length(3),
+                    Constraint::Length(self.ai_prompt_box_height()),
                     Constraint::Length(1),
                 ])
                 .split(f.area());
@@ -31097,7 +31126,7 @@ impl App {
                 .direction(Direction::Vertical)
                 .constraints([
                     Constraint::Min(0),
-                    Constraint::Length(3),
+                    Constraint::Length(self.ai_prompt_box_height()),
                     Constraint::Length(1),
                 ])
                 .split(f.area());
@@ -31148,12 +31177,15 @@ impl App {
             return;
         }
 
+        // 3.9 — the AI prompt box grows with its content (multi-line compose)
+        // and collapses back to a single line when empty/one-line.
+        let prompt_h = self.ai_prompt_box_height();
         let outer = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(3),
                 Constraint::Min(0),
-                Constraint::Length(3),
+                Constraint::Length(prompt_h),
                 Constraint::Length(1),
             ])
             .split(f.area());
