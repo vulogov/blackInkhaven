@@ -3524,6 +3524,20 @@ fn chapter_first_paragraphs(
 
 impl App {
     fn new(layout: ProjectLayout, cfg: Config, store: Store) -> Result<Self> {
+        // 3.10 — warm the vector index + embedding model on a background thread
+        // at startup. Opening the HNSW index (which rebuilds it from the
+        // persisted vectors) is a one-time, potentially multi-second cost that
+        // otherwise lands on whatever search runs first — most visibly the first
+        // F1 help query. Doing it here off the render thread means the store's
+        // shared VecStore/model handles are already warm by the time the user
+        // searches; the tiny query also loads the ONNX model. Errors are
+        // ignored — this is pure prefetch.
+        {
+            let warm = store.clone();
+            std::thread::spawn(move || {
+                let _ = warm.search_text("warm", 1);
+            });
+        }
         // NARR-1 — captured before `cfg` is moved into the struct.
         let prose_ambient = cfg.prose.ambient;
         let keymap = Keymap::from_config(&cfg).map_err(anyhow::Error::from)?;
