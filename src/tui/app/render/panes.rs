@@ -298,6 +298,12 @@ impl super::super::App {
                 " Tree · select paragraph that will link to current · Esc cancels "
                     .into()
             }
+            None if self.tree_filter_editing => {
+                format!(" Tree · /{}▏", self.tree_filter)
+            }
+            None if !self.tree_filter.is_empty() => {
+                format!(" Tree · /{} ({}) ", self.tree_filter, self.rows.len())
+            }
             None => "Tree".into(),
         };
         let block = self.pane_block(&tree_title, Focus::Tree);
