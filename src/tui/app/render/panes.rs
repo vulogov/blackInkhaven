@@ -285,10 +285,14 @@ impl super::super::App {
         // Title carries the current AI scope so the user knows what
         // context will be prepended on the next submit. Bright when scope
         // is non-None — easy to spot accidentally-armed scope.
-        let title = match self.ai_mode {
+        let mut title = match self.ai_mode {
             AiMode::None => "AI prompt".to_string(),
             other => format!("AI prompt · scope: {}", other.label()),
         };
+        // 3.9 — while composing, advertise Enter=send / Shift+Enter=newline.
+        if self.focus == Focus::AiPrompt {
+            title.push_str(" · ⏎ send · ⇧⏎ newline");
+        }
         let p = Paragraph::new(text)
             .style(style)
             .block(self.pane_block(&title, Focus::AiPrompt));
