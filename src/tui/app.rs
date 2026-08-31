@@ -1742,6 +1742,19 @@ pub(crate) enum SocraticOutcome {
     Addressed,
 }
 
+/// 3.10 — an F1 help search running on a background thread. The slow part (the
+/// query embed + vector search over the whole store) runs off the main loop so
+/// the "Searching…" spinner keeps animating; `pump_help_search` picks up the
+/// raw hits and finishes on the main thread (filter → assemble → spawn LLM).
+struct HelpSearch {
+    query: String,
+    /// The Help book's subtree ids, captured up front so the background result
+    /// can be filtered to Help without touching the hierarchy off-thread.
+    subtree: std::collections::HashSet<Uuid>,
+    started: std::time::Instant,
+    rx: std::sync::mpsc::Receiver<std::result::Result<Vec<serde_json::Value>, String>>,
+}
+
 pub(crate) struct App {
     layout: ProjectLayout,
     store: Store,
@@ -1983,10 +1996,13 @@ pub(crate) struct App {
     /// Cursor into `search_history`; None = not navigating. Same semantics as
     /// `ai_prompt_history_cursor`.
     search_history_cursor: Option<usize>,
-    /// 3.10 — a submitted F1 query awaiting its (blocking) embed + vector
-    /// search. Set on Enter so the run loop can paint a "Searching…" frame
-    /// first, then run the search on the next tick (`start_help_inference`).
-    pending_help_query: Option<String>,
+    /// 3.10 — an in-flight F1 help search running on a background thread (the
+    /// query embed + vector search is slow over ~1800 paragraphs). While it's
+    /// `Some`, the Help modal stays up with an ANIMATED "Searching…" spinner
+    /// (the loop keeps redrawing because `is_animating` includes this), and
+    /// `pump_help_search` finishes it — assembling the context and spawning the
+    /// inference — when the background result arrives.
+    help_search: Option<HelpSearch>,
     /// 1.2.8+ — F1 help-query history. Up/Down inside the
     /// `Modal::HelpQuery` input walks this ring. Pushed on
     /// every successful Enter (dedup against the immediate
@@ -3728,7 +3744,7 @@ impl App {
             ai_prompt_history_cursor: None,
             search_history: Vec::new(),
             search_history_cursor: None,
-            pending_help_query: None,
+            help_search: None,
             help_query_history: Vec::new(),
             help_query_history_cursor: None,
             snapshot_filter: String::new(),
@@ -4057,6 +4073,7 @@ impl App {
             // them all at once by diffing the status across the tick block.
             let status_before = self.status.clone();
             self.pump_inference();
+            self.pump_help_search();
             self.pump_bg_job();
             self.tick_autosave();
             self.tick_crash_mirror();
@@ -4116,14 +4133,6 @@ impl App {
                 terminal.draw(|f| self.draw(f))?;
                 self.needs_redraw = false;
                 last_draw = std::time::Instant::now();
-                // 3.10 — now that the "Searching…" frame is on screen, run the
-                // deferred F1 search (blocking) and spawn the inference. The
-                // brief freeze here happens with feedback already painted.
-                if let Some(q) = self.pending_help_query.take() {
-                    self.modal = Modal::None;
-                    self.start_help_inference(&q);
-                    self.needs_redraw = true;
-                }
             }
             // Shorter poll while animating so tokens/highlights render with low
             // latency; longer when idle so the loop mostly sleeps (input still
@@ -4164,7 +4173,10 @@ impl App {
     /// background job (its results stream in / the chip spins). Discrete one-off
     /// changes set `needs_redraw` directly instead of appearing here.
     fn is_animating(&self) -> bool {
-        self.is_streaming() || self.reader_pace_playing() || self.bg_job.is_some()
+        self.is_streaming()
+            || self.reader_pace_playing()
+            || self.bg_job.is_some()
+            || self.help_search.is_some()
     }
 
     /// A1 — a bracketed-paste chunk arrived as ONE event. Insert it in bulk at the
@@ -28085,6 +28097,14 @@ impl App {
 
     fn handle_modal_key(&mut self, key: KeyEvent) -> Result<bool> {
         if matches!(key.code, KeyCode::Esc) {
+            // 3.10 — cancelling the Help modal also drops any in-flight
+            // background search (its result is ignored by pump_help_search).
+            if self.help_search.is_some() && matches!(self.modal, Modal::HelpQuery { .. }) {
+                self.help_search = None;
+                self.modal = Modal::None;
+                self.status = "Help: cancelled".into();
+                return Ok(false);
+            }
             // SnapshotDiff stashes the picker it opened from in
             // `return_to`; popping that back makes Esc behave
             // like "close the diff, stay in the picker".
@@ -28543,21 +28563,23 @@ impl App {
                     self.help_query_history.push(trimmed.to_string());
                 }
                 self.help_query_history_cursor = None;
-                // 3.10 — the query embed + vector search is blocking (now over
-                // ~1800 help paragraphs), so running it inline froze the UI with
-                // no feedback. Defer it: stash the query, keep the modal up
-                // showing "Searching…", and the run loop executes the search on
-                // the next tick — after that frame has painted.
+                // 3.10 — the query embed + vector search is slow (now over
+                // ~1800 help paragraphs). Run it on a background thread so the
+                // UI stays live: the Help modal stays up with an ANIMATED
+                // "Searching…" spinner, and `pump_help_search` finishes + spawns
+                // the answer when the hits arrive.
                 if !trimmed.is_empty() {
-                    self.pending_help_query = Some(query);
+                    self.begin_help_search(&query);
                     self.needs_redraw = true;
                 } else {
                     self.modal = Modal::None;
                 }
                 return Ok(false);
             }
-            // While the deferred search is pending, swallow further keys.
-            if self.pending_help_query.is_some() {
+            // While a search is in flight, swallow further keys (Esc is handled
+            // above and cancels by closing the modal; the thread result is
+            // dropped harmlessly by `pump_help_search`).
+            if self.help_search.is_some() {
                 return Ok(false);
             }
             // 1.2.8+ — Up / Down walks help_query_history.  Mirrors
