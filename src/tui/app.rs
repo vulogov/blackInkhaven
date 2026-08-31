@@ -5303,12 +5303,29 @@ impl App {
         let rel_row = (row - inner_y) as usize;
         let rel_col = (col - inner_cursor_x) as usize;
         let src_row = (doc.scroll_row + rel_row).min(total_lines - 1);
-        let line_len = doc
+        // R4 — map the clicked terminal CELL to a char index by walking display
+        // widths from the horizontal scroll: a wide (CJK) char occupies 2 cells, so
+        // a click anywhere over it lands on that char. Reduces to
+        // `scroll_col + rel_col` for 1-cell text.
+        let chars: Vec<char> = doc
             .textarea
             .lines()
             .get(src_row)
-            .map_or(0, |s| s.chars().count());
-        let src_col = (doc.scroll_col + rel_col).min(line_len);
+            .map(|s| s.chars().collect())
+            .unwrap_or_default();
+        let src_col = {
+            let mut col = doc.scroll_col.min(chars.len());
+            let mut cells = 0usize;
+            while col < chars.len() {
+                let cw = crate::tui::highlight::char_cells(chars[col]).max(1);
+                if cells + cw > rel_col {
+                    break;
+                }
+                cells += cw;
+                col += 1;
+            }
+            col
+        };
         doc.textarea
             .move_cursor(tui_textarea::CursorMove::Jump(src_row as u16, src_col as u16));
         doc.last_activity = std::time::Instant::now();
