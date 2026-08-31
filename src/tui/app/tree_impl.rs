@@ -265,6 +265,16 @@ impl super::App {
         // appended to whichever Line carries the title's last
         // chunk.
         let mut pip_spans: Vec<Span<'_>> = Vec::new();
+        // 3.8 — bookmark marker: paragraphs flagged via Ctrl+V B show a flag
+        // glyph so bookmarked rows are visible while navigating (the jump
+        // itself stays in the Ctrl+V M picker).
+        if matches!(node.kind, NodeKind::Paragraph) && node.bookmark {
+            pip_spans.push(Span::raw(" "));
+            pip_spans.push(Span::styled(
+                "⚑",
+                Style::default().fg(Color::LightMagenta),
+            ));
+        }
         if matches!(node.kind, NodeKind::Paragraph) {
             if let Some(target) = node.target_words.filter(|n| *n > 0) {
                 let pct =
