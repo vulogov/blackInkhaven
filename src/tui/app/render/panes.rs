@@ -2335,6 +2335,13 @@ impl super::super::App {
         if chat_turns > 0 {
             spans.push(Span::raw(format!(" · {chat_turns} turn(s)")));
         }
+        // 3.9 — navigable citations cue when a Book-scope grounding set is live.
+        if self.book_rag_last_retrieval.is_some() {
+            spans.push(Span::styled(
+                " · [ ] cited ¶",
+                Style::default().fg(Color::Cyan),
+            ));
+        }
         // 3.9 — single-response scroll cue: `⟳follow` while the view is pinned to
         // the streaming tail, `↑scrolled` (End to re-follow) once scrolled back.
         if self.ai_mode != AiMode::Book && self.graph_walk().is_none() {

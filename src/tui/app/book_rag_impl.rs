@@ -36,6 +36,8 @@ impl super::App {
         let prefix = crate::book_rag::compose_context_prefix(&passages);
         // Keep the retrieval for citation validation (P2) + transparency (P3).
         self.book_rag_last_retrieval = Some(passages);
+        // 3.9 — a new grounding set: restart `[`/`]` citation navigation.
+        self.book_rag_cite_cursor = usize::MAX;
         // A fresh retrieval grounds on the current text — clear the
         // staleness nudge so it can fire again after the next edit.
         self.book_rag_nudged_stale = false;

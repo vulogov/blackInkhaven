@@ -2409,6 +2409,10 @@ pub(crate) struct App {
     /// BOOK_RAG-1 — whether the "Retrieved passages" transparency section is
     /// expanded in the chat pane. Collapsed by default; toggled with `p`.
     book_rag_passages_expanded: bool,
+    /// 3.9 — cursor into the answer's cited passages for `[`/`]` navigation
+    /// (jump to the cited paragraph). `usize::MAX` = not started; reset on each
+    /// fresh retrieval.
+    book_rag_cite_cursor: usize,
     /// BOOK_RAG-1 — set once after a save makes the active Book-scope
     /// retrieval stale, so the "clear chat to re-ground" nudge fires only
     /// once per stale event (reset on the next fresh retrieval).
@@ -3803,6 +3807,7 @@ impl App {
             graph_walk: None,
             pending_book_rag_cited: None,
             book_rag_passages_expanded: false,
+            book_rag_cite_cursor: usize::MAX,
             book_rag_nudged_stale: false,
             inference_mode: InferenceMode::Full,
             pending_import: None,
@@ -6929,6 +6934,21 @@ impl App {
                 }
                 KeyCode::End => {
                     self.ai_response_scroll = 0;
+                    return Ok(false);
+                }
+                _ => {}
+            }
+        }
+        // 3.9 — `[` / `]` jump to the previous / next cited paragraph of a
+        // Book-scope answer (navigable citations). Reading path into the book.
+        if self.focus == Focus::Ai && self.book_rag_last_retrieval.is_some() {
+            match key.code {
+                KeyCode::Char(']') => {
+                    self.jump_book_citation(true);
+                    return Ok(false);
+                }
+                KeyCode::Char('[') => {
+                    self.jump_book_citation(false);
                     return Ok(false);
                 }
                 _ => {}
@@ -25841,6 +25861,61 @@ impl App {
         };
     }
 
+    /// The AI answer currently on screen: the in-flight/just-finished response,
+    /// else the most recent assistant turn in the chat history.
+    fn current_ai_answer(&self) -> Option<String> {
+        if let Some(inf) = &self.inference {
+            if !inf.response.is_empty() {
+                return Some(inf.response.clone());
+            }
+        }
+        self.chat_history.iter().rev().find_map(|t| match t {
+            ChatTurn::Assistant(s) => Some(s.clone()),
+            _ => None,
+        })
+    }
+
+    /// 3.9 — jump to a cited paragraph: navigate the passages the answer cites
+    /// (in citation order), opening each in the editor. Falls back to the direct
+    /// semantic hits when the answer cited nothing explicitly. `[` previous, `]`
+    /// next, wrapping. The Book scope's grounded answer becomes a reading path.
+    fn jump_book_citation(&mut self, forward: bool) {
+        let Some(passages) = self.book_rag_last_retrieval.clone() else {
+            self.status = "no retrieved sources for this scope".into();
+            return;
+        };
+        let answer = self.current_ai_answer().unwrap_or_default();
+        let mut order = cited_passages_ordered(&answer, &passages);
+        if order.is_empty() {
+            // Nothing explicitly cited → offer the direct hits as sources.
+            order = passages
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| p.is_hit)
+                .map(|(i, _)| i)
+                .collect();
+        }
+        if order.is_empty() {
+            self.status = "no citations to jump to".into();
+            return;
+        }
+        let n = order.len();
+        let next = if self.book_rag_cite_cursor == usize::MAX {
+            if forward { 0 } else { n - 1 }
+        } else if forward {
+            (self.book_rag_cite_cursor + 1) % n
+        } else {
+            (self.book_rag_cite_cursor + n - 1) % n
+        };
+        self.book_rag_cite_cursor = next;
+        let p = &passages[order[next]];
+        let (bc, id) = (p.breadcrumb.clone(), p.id);
+        match self.open_paragraph_by_uuid(id) {
+            Ok(()) => self.status = format!("cited source [{bc}] ({}/{n})", next + 1),
+            Err(e) => self.status = format!("jump: {e}"),
+        }
+    }
+
     /// True while a reply is actively streaming.
     fn is_streaming_inference(&self) -> bool {
         matches!(
@@ -34932,6 +35007,24 @@ Rules:
 /// 1.3.34+ — aggregate Output findings into per-node tree report-card badges: each
 /// finding tied to a source paragraph tallies a count + worst severity onto that
 /// paragraph and every ancestor (so a chapter shows the sum of its paragraphs).
+/// 3.9 — passage indices in the order their `[breadcrumb]` citation first
+/// appears in the answer (deduped) — the navigable citation order. Empty when
+/// the answer cites none of the retrieved passages. Pure + testable.
+fn cited_passages_ordered(
+    answer: &str,
+    passages: &[crate::book_rag::RetrievedPassage],
+) -> Vec<usize> {
+    let mut hits: Vec<(usize, usize)> = Vec::new();
+    for (i, p) in passages.iter().enumerate() {
+        let token = format!("[{}]", p.breadcrumb);
+        if let Some(pos) = answer.find(&token) {
+            hits.push((pos, i));
+        }
+    }
+    hits.sort_by_key(|(pos, _)| *pos);
+    hits.into_iter().map(|(_, i)| i).collect()
+}
+
 /// 3.9 — the last user prompt eligible for retry / edit-last: `Some(text)` when
 /// the chat history ends with a `(User, Assistant)` pair, else `None`. Pure so
 /// the pair-detection is testable without an `App`.
@@ -35779,6 +35872,42 @@ mod tests_tree_filter {
     fn no_match_yields_empty() {
         let (h, _) = sample();
         assert!(filtered_tree_rows(&h, "zzz-nope").is_empty());
+    }
+}
+
+#[cfg(test)]
+mod tests_citations {
+    use super::cited_passages_ordered;
+    use crate::book_rag::RetrievedPassage;
+    use uuid::Uuid;
+
+    fn passage(bc: &str) -> RetrievedPassage {
+        RetrievedPassage {
+            id: Uuid::now_v7(),
+            breadcrumb: bc.to_string(),
+            body: String::new(),
+            score: 1.0,
+            is_hit: true,
+        }
+    }
+
+    #[test]
+    fn orders_by_first_appearance_and_skips_uncited() {
+        let passages = vec![
+            passage("ch1/scene-a"),
+            passage("ch2/scene-b"),
+            passage("ch3/scene-c"),
+        ];
+        // Answer cites b then a (c not cited).
+        let answer = "As shown in [ch2/scene-b], and earlier [ch1/scene-a].";
+        // Citation order follows appearance: b (idx 1) then a (idx 0).
+        assert_eq!(cited_passages_ordered(answer, &passages), vec![1, 0]);
+    }
+
+    #[test]
+    fn empty_when_nothing_cited() {
+        let passages = vec![passage("ch1/scene-a")];
+        assert!(cited_passages_ordered("no citations here", &passages).is_empty());
     }
 }
 
