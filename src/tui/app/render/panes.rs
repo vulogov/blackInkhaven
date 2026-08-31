@@ -307,14 +307,46 @@ impl super::super::App {
             None => "Tree".into(),
         };
         let block = self.pane_block(&tree_title, Focus::Tree);
-        let inner = block.inner(area);
+        let full_inner = block.inner(area);
         f.render_widget(block, area);
 
         if self.rows.is_empty() {
             let hint = Paragraph::new("(empty project — `inkhaven add book \"…\"` from the CLI)")
                 .style(Style::default().add_modifier(Modifier::DIM));
-            f.render_widget(hint, inner);
+            f.render_widget(hint, full_inner);
             return;
+        }
+
+        // 3.8 — reserve the bottom line for a contextual key legend (footer),
+        // matching the dashboard-footer treatment the rest of the TUI got in
+        // 3.7. Only when there's room for at least one row above it.
+        let (inner, footer_area) = if full_inner.height >= 2 {
+            let footer = Rect {
+                y: full_inner.y + full_inner.height - 1,
+                height: 1,
+                ..full_inner
+            };
+            let body = Rect {
+                height: full_inner.height - 1,
+                ..full_inner
+            };
+            (body, Some(footer))
+        } else {
+            (full_inner, None)
+        };
+        if let Some(footer) = footer_area {
+            let legend = if self.tree_filter_editing {
+                "type to filter · Enter keeps · Esc clears"
+            } else if !self.tree_filter.is_empty() {
+                "/ edit · Esc clear · Enter open · ↑↓ move"
+            } else {
+                "b/c/a add · d/- del · u/j move · z/x fold · {} chap · / find"
+            };
+            let footer_p = Paragraph::new(Line::from(Span::styled(
+                legend,
+                Style::default().add_modifier(Modifier::DIM),
+            )));
+            f.render_widget(footer_p, footer);
         }
 
         let height = inner.height as usize;
