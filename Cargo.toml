@@ -68,6 +68,11 @@ exclude = [
     # root; it is opened by project-relative path at runtime, never
     # embedded, so it must not travel inside the published crate.
     "inner_socrates.db",
+    # The packaged F1 help corpus (~4.5 MB). Committed at the repo root and
+    # served raw from GitHub for `inkhaven rebuild-help`; it must NOT travel
+    # inside the crate — that would blow the crate past crates.io's payload
+    # limit and defeat the whole "fetch, don't bundle" design.
+    "help-corpus.json",
     # NB: do NOT exclude `*.png` globally — `logo.png` at the repo root
     # is `include_bytes!`'d into the binary; the build breaks without
     # it. The rest of assets/* is loaded via include_str! /
