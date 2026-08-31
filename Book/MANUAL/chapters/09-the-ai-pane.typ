@@ -55,7 +55,26 @@ extended session. Press it again to return to four panes.
   chord_row("Ctrl+B Tab", "Cycle the right region Output → AI → Thoughts."),
   chord_row("Ctrl+B K", "Fullscreen the AI pane with its history and prompt (toggle)."),
   chord_row("Enter", "Send the prompt (from the prompt bar)."),
+  chord_row("Shift+Enter / Alt+Enter", "Insert a newline in the compose box without sending."),
 ))
+
+#section("The compose box — a prompt is not a single line")
+
+The prompt bar is a #emph[multi-line compose box], not the one-line field it once
+was. Plain `Enter` still #emph[sends] — that never changes — but `Shift+Enter`
+(or `Alt+Enter` where your terminal delivers it) inserts a newline instead, so a
+prompt can carry its own paragraph breaks. Paste behaves the same way: the pasted
+text keeps its newlines rather than being flattened into one run of spaces, so a
+multi-paragraph instruction arrives intact.
+
+The box #emph[grows] downward to fit whatever you are composing and #emph[collapses]
+back to a single line the moment it is empty — most visibly right after you send,
+when it snaps shut and waits for the next question. While you compose, `Up` and
+`Down` move between the lines of the box; only when the cursor is already on the
+first or last line do they fall through to prompt-history recall, so navigating a
+multi-line prompt never yanks a stale one back over your work. The single-line
+search bar and the modal inputs are untouched — this is the AI prompt's behaviour
+alone.
 
 #section("The title bar — the pane's state at a glance")
 
@@ -128,10 +147,24 @@ status flips to an error, the title carries `error`, and the error text sits in
 the pane body. Fix the cause and re-send; nothing is lost.
 
 #callout(label: "Reading while it writes")[
-  You do not have to wait for `done`. Scroll the pane (`Ctrl+3`, then the arrows
-  or the wheel) while a stream is still running, or type your next question into
-  the prompt bar — Inkhaven queues nothing behind your back, so a follow-up sends
-  a fresh call once the current one settles.
+  You do not have to wait for `done`. A long or streaming answer #emph[scrolls]:
+  by default the pane #emph[follows the streaming tail] as tokens arrive — a
+  `⟳follow` cue lights in the title — so the freshest text stays in view. Scroll
+  back with `↑` / `k` / `PgUp` / `Home` (or the wheel) and following detaches, the
+  title switching to `↑scrolled`; `↓` / `j` / `PgDn` scroll down, and `End` jumps
+  to the bottom and re-arms follow. Or ignore the answer entirely and type your
+  next question into the prompt bar — Inkhaven queues nothing behind your back, so
+  a follow-up sends a fresh call once the current one settles.
+]
+
+#callout(label: "Cancelling a stream — Esc")[
+  While an inference is in flight, `Esc` — from the AI pane #emph[or] the AI
+  prompt bar — #emph[cancels] it: the stream stops where it is and the chat
+  history is kept intact, so every earlier turn survives. A dim `Esc cancel` cue
+  sits in the title while tokens are still arriving. This is a lighter touch than
+  `Ctrl+B C`, which clears the whole conversation; `Esc` stops only the call in
+  flight. (When no stream is running, `Esc` keeps its ordinary job of bouncing
+  focus between the pane and the prompt bar.)
 ]
 
 #section("Scope — telling the AI what to look at")
@@ -191,6 +224,14 @@ retrieves the passages most relevant to your question from the book's semantic
 index and cites those, rather than sending the whole text. A book-wide question
 therefore stays affordable and pointed, at the price of the model seeing the
 relevant passages rather than literally every word.
+
+A `Book`-scope answer cites its evidence with `[chapter/scene]` location tokens,
+and those tokens are #emph[navigable] from the AI pane. Focus the pane and the
+`[` and `]` keys jump to the previous / next cited paragraph — in the order the
+answer cites them — opening each in the editor so you read the claim against the
+prose it rests on. When the answer cited nothing explicitly, the same keys fall
+back to the direct semantic hits that grounded it, so there is always a paragraph
+to land on. A `[ ] cited ¶` cue in the pane title tells you the jumps are live.
 
 #two_track(
   [Match the scope to the question's reach. Brainstorming one sentence?
@@ -365,6 +406,51 @@ stream you no longer want. (Help answers never enter the history at all — they
 are deliberately one-shot, so a question about Inkhaven itself never pollutes the
 thread you are having about your prose.)
 
+#subsection("Retry and edit-last — z and e")
+
+Two keys let you re-run the exchange you just had. They fire only when the #emph[AI
+pane itself is focused] — like the destination chips, they are pane keys, not
+prompt-bar keys — and only when the chat ends on a completed `(you, ai)` pair.
+Pressing `z` #emph[regenerates] the last reply: it re-sends the same prompt under
+the current scope for a fresh answer, useful when the first pass wandered.
+Pressing `e` instead pulls the last prompt back into the compose box for you to
+#emph[edit and resend] — the move when the answer was fine but the question could
+have been sharper.
+
+#chord_table((
+  chord_row("z", "Regenerate the last reply — re-send the same prompt under the current scope."),
+  chord_row("e", "Edit the last prompt — pull it back into the compose box to reword and resend."),
+))
+
+#section("The conversation library — keeping threads")
+
+For most of Inkhaven's life the chat persisted as a single auto-saved file:
+whatever you were last talking about, and no way to keep a second thread beside
+it. The #emph[conversation library] replaces that with named, saved threads you
+can return to. Press `Ctrl+Z l` to open it.
+
+#screen(caption: "The conversation library modal")[```
+ Key    Action
+ ────    ──────────────────────────────────────────────
+ ↑ ↓    Select a saved thread.
+ Enter  Reopen the selected thread.
+ s      Save the current chat (auto-named from its
+        first prompt).
+ d      Delete the selected thread.
+ n      Start a new conversation.
+ Esc    Close the library.
+```]
+
+Saving auto-names the thread from its first prompt, so a chat is one keystroke
+from being kept without your having to title it. The saved threads live under
+`.inkhaven/conversations/` in the project, which means a line of inquiry you want
+to resume — a character's arc, a worldbuilding thread — survives closing and
+reopening the book.
+
+#chord_table((
+  chord_row("Ctrl+Z l", "Open the conversation library — save, name, reopen, and delete chat threads."),
+))
+
 #section("Prompt templates and the Help! prefix")
 
 Two shortcuts live in the prompt bar itself. Typing `/` opens the #emph[prompt
@@ -508,4 +594,10 @@ you toggle.
   answers in: #emph[book_defined] (the project language) or
   #emph[paragraph_detected] (`whatlang` over the live paragraph, above a 50-char
   floor); the title's `lang=` chip records which decided.],
+  [The prompt bar is a #emph[multi-line compose box]: `Shift+Enter` / `Alt+Enter`
+  add a newline, plain `Enter` sends, pastes keep their newlines, and the box
+  grows and collapses to fit. In the AI pane, `z` regenerates the last reply and
+  `e` edits the last prompt to resend; the `[` and `]` keys walk a `Book`-scope
+  answer's cited paragraphs. `Ctrl+Z l` opens the conversation library to save,
+  name, reopen, and delete chat threads under `.inkhaven/conversations/`.],
 ))

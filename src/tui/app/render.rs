@@ -186,6 +186,10 @@ impl super::App {
             self.draw_bookmark_picker_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::Conversations { .. }) {
+            self.draw_conversations_modal(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::FuzzyParagraphPicker { .. }) {
             self.draw_fuzzy_paragraph_picker_modal(f, area);
             return;

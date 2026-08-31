@@ -1975,6 +1975,14 @@ pub(crate) struct App {
     /// picker is showing. Cleared on every send via push_back.
     /// 1.2.4+.
     ai_prompt_history: Vec<String>,
+    /// 3.9 — SearchBar query history (oldest first). Up/Down in the search bar
+    /// (when the results overlay isn't showing) walks this list, shell-style —
+    /// the same recall the AI prompt and F1 help query already have. Pushed on
+    /// every run (dedup against the immediate predecessor, capped); session-only.
+    search_history: Vec<String>,
+    /// Cursor into `search_history`; None = not navigating. Same semantics as
+    /// `ai_prompt_history_cursor`.
+    search_history_cursor: Option<usize>,
     /// 1.2.8+ — F1 help-query history. Up/Down inside the
     /// `Modal::HelpQuery` input walks this ring. Pushed on
     /// every successful Enter (dedup against the immediate
@@ -2401,6 +2409,10 @@ pub(crate) struct App {
     /// BOOK_RAG-1 — whether the "Retrieved passages" transparency section is
     /// expanded in the chat pane. Collapsed by default; toggled with `p`.
     book_rag_passages_expanded: bool,
+    /// 3.9 — cursor into the answer's cited passages for `[`/`]` navigation
+    /// (jump to the cited paragraph). `usize::MAX` = not started; reset on each
+    /// fresh retrieval.
+    book_rag_cite_cursor: usize,
     /// BOOK_RAG-1 — set once after a save makes the active Book-scope
     /// retrieval stale, so the "clear chat to re-ground" nudge fires only
     /// once per stale event (reset on the next fresh retrieval).
@@ -2476,6 +2488,13 @@ pub(crate) struct App {
     /// at the top of the history. Reset to 0 each time a new user
     /// message is sent so the streaming reply is visible.
     chat_history_scroll: usize,
+
+    /// 3.9 — scroll for the split-view single-response AI view (non-Book scope),
+    /// as a distance UP from the auto-bottom-pin: `0` = pinned to the newest
+    /// tokens (follows the streaming tail as it grows), larger = scrolled back
+    /// toward the top. The render clamps it to the wrapped total. Reset to 0 on
+    /// each new inference so the reply is followed from the start.
+    ai_response_scroll: usize,
 
     /// THOUGHTS-1 — the Thoughts pane's entries (each a block of reflective
     /// text, e.g. an Inner Theologian session), newest last. Read-only.
@@ -3698,9 +3717,13 @@ impl App {
             tree_cursor: 0,
             tree_scroll: 0,
             search_input: TextInput::new(),
-            ai_input: TextInput::new(),
+            // 3.9 — the AI prompt is a multi-line compose box (Shift+Enter
+            // newline, paste keeps newlines, box grows/collapses with content).
+            ai_input: TextInput::multiline(),
             ai_prompt_history: Vec::new(),
             ai_prompt_history_cursor: None,
+            search_history: Vec::new(),
+            search_history_cursor: None,
             help_query_history: Vec::new(),
             help_query_history_cursor: None,
             snapshot_filter: String::new(),
@@ -3784,6 +3807,7 @@ impl App {
             graph_walk: None,
             pending_book_rag_cited: None,
             book_rag_passages_expanded: false,
+            book_rag_cite_cursor: usize::MAX,
             book_rag_nudged_stale: false,
             inference_mode: InferenceMode::Full,
             pending_import: None,
@@ -3797,6 +3821,7 @@ impl App {
             ai_fullscreen: false,
             right_fullscreen: false,
             chat_history_scroll: 0,
+            ai_response_scroll: 0,
             chat_search: None,
             chat_selection: None,
             last_crash_mirror_at: None,
@@ -5137,10 +5162,14 @@ impl App {
                 Some(Focus::Tree) => self.move_cursor(-3),
                 Some(Focus::Editor) => self.mouse_scroll_editor(-3),
                 Some(Focus::Ai) => {
-                    // Wheel up = show older content
-                    // (chat_history_scroll grows backward).
-                    self.chat_history_scroll =
-                        self.chat_history_scroll.saturating_add(3);
+                    // Wheel up = show older content (scroll grows backward).
+                    // 3.9 — the split single-response view has its own scroll;
+                    // the Book conversation / fullscreen use chat_history_scroll.
+                    if self.ai_single_response_scrollable() {
+                        self.ai_response_scroll = self.ai_response_scroll.saturating_add(3);
+                    } else {
+                        self.chat_history_scroll = self.chat_history_scroll.saturating_add(3);
+                    }
                 }
                 _ => {}
             },
@@ -5148,8 +5177,11 @@ impl App {
                 Some(Focus::Tree) => self.move_cursor(3),
                 Some(Focus::Editor) => self.mouse_scroll_editor(3),
                 Some(Focus::Ai) => {
-                    self.chat_history_scroll =
-                        self.chat_history_scroll.saturating_sub(3);
+                    if self.ai_single_response_scrollable() {
+                        self.ai_response_scroll = self.ai_response_scroll.saturating_sub(3);
+                    } else {
+                        self.chat_history_scroll = self.chat_history_scroll.saturating_sub(3);
+                    }
                 }
                 _ => {}
             },
@@ -6815,11 +6847,41 @@ impl App {
         ))
     }
 
+    /// 3.9 — true when the AI pane is showing the split single-response view (a
+    /// live/finished inference under a non-Book scope, no graph walk in flight)
+    /// — the view that `ai_response_scroll` drives (arrows/PgUp-Dn/Home/End +
+    /// wheel). The Book conversation and fullscreen use `chat_history_scroll`.
+    /// 3.9 — height in rows (incl. top/bottom borders) of the AI prompt box:
+    /// one content line when empty / single-line, growing with newlines up to a
+    /// cap, so a multi-line compose expands and then collapses back to one line.
+    fn ai_prompt_box_height(&self) -> u16 {
+        const MAX_PROMPT_LINES: usize = 8;
+        let content = self.ai_input.line_count().clamp(1, MAX_PROMPT_LINES);
+        content as u16 + 2
+    }
+
+    fn ai_single_response_scrollable(&self) -> bool {
+        self.inference.is_some()
+            && self.ai_mode != AiMode::Book
+            && self.graph_walk().is_none()
+    }
+
     fn handle_passive_key(&mut self, key: KeyEvent) -> Result<bool> {
         // GRAPHMIND GM-P8 — Esc aborts a running graph walk wholesale (not just
         // the current turn), before any pane-specific Esc handling.
         if self.graph_walk_active() && matches!(key.code, KeyCode::Esc) {
             self.cancel_graph_walk();
+            return Ok(false);
+        }
+        // 3.9 — Esc cancels an in-flight inference (stop the stream, keep the
+        // conversation) before doing anything else. Distinct from Ctrl+B c,
+        // which wipes the whole chat.
+        if self.focus == Focus::Ai
+            && matches!(key.code, KeyCode::Esc)
+            && self.inference.is_some()
+            && !self.graph_walk_active()
+        {
+            self.cancel_inference();
             return Ok(false);
         }
         // Esc bounces AI pane → AI prompt so the user can edit / send the
@@ -6841,6 +6903,76 @@ impl App {
                 "retrieved passages: collapsed".into()
             };
             return Ok(false);
+        }
+        // 3.9 — scroll the split-view single-response view (works while
+        // streaming or done). `ai_response_scroll` is a distance UP from the
+        // bottom-pin: 0 follows the streaming tail; Home tops out, End re-arms
+        // follow. Skipped for the Book conversation (its own scroll) and graph
+        // walks. Arrows/PgUp/PgDn/Home/End + j/k, none of which collide with the
+        // done-state letter actions (r/i/t/g/b/c/l).
+        if self.focus == Focus::Ai && self.ai_single_response_scrollable() {
+            match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    self.ai_response_scroll = self.ai_response_scroll.saturating_add(1);
+                    return Ok(false);
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    self.ai_response_scroll = self.ai_response_scroll.saturating_sub(1);
+                    return Ok(false);
+                }
+                KeyCode::PageUp => {
+                    self.ai_response_scroll = self.ai_response_scroll.saturating_add(10);
+                    return Ok(false);
+                }
+                KeyCode::PageDown => {
+                    self.ai_response_scroll = self.ai_response_scroll.saturating_sub(10);
+                    return Ok(false);
+                }
+                KeyCode::Home => {
+                    self.ai_response_scroll = usize::MAX;
+                    return Ok(false);
+                }
+                KeyCode::End => {
+                    self.ai_response_scroll = 0;
+                    return Ok(false);
+                }
+                _ => {}
+            }
+        }
+        // 3.9 — `[` / `]` jump to the previous / next cited paragraph of a
+        // Book-scope answer (navigable citations). Reading path into the book.
+        if self.focus == Focus::Ai && self.book_rag_last_retrieval.is_some() {
+            match key.code {
+                KeyCode::Char(']') => {
+                    self.jump_book_citation(true);
+                    return Ok(false);
+                }
+                KeyCode::Char('[') => {
+                    self.jump_book_citation(false);
+                    return Ok(false);
+                }
+                _ => {}
+            }
+        }
+        // 3.9 — retry / edit-last: operate on the last committed exchange,
+        // available whenever a resendable pair exists and nothing is streaming
+        // (even after the displayed reply was cleared). `e`/`z` don't collide
+        // with the done-state apply letters (r/i/t/g/b/c/l).
+        if self.focus == Focus::Ai
+            && !self.is_streaming_inference()
+            && self.has_resendable_turn()
+        {
+            match key.code {
+                KeyCode::Char('e') | KeyCode::Char('E') => {
+                    self.edit_last_turn();
+                    return Ok(false);
+                }
+                KeyCode::Char('z') | KeyCode::Char('Z') => {
+                    self.regenerate_last();
+                    return Ok(false);
+                }
+                _ => {}
+            }
         }
         // When the AI pane has a completed inference and is focused, single-
         // letter keys apply the result to the editor.
@@ -7064,6 +7196,13 @@ impl App {
                     self.show_results_overlay = false;
                 } else if !is_search && self.show_prompt_picker {
                     self.show_prompt_picker = false;
+                } else if !is_search
+                    && self.inference.is_some()
+                    && !self.graph_walk_active()
+                {
+                    // 3.9 — cancel an in-flight inference from the prompt too,
+                    // rather than bouncing focus while a reply streams.
+                    self.cancel_inference();
                 } else {
                     self.show_results_overlay = false;
                     self.show_prompt_picker = false;
@@ -7077,6 +7216,19 @@ impl App {
                     };
                     self.change_focus(target);
                 }
+            }
+            // 3.9 — Shift+Enter / Alt+Enter inserts a newline in the multi-line
+            // AI prompt (kitty-class terminals distinguish these; paste keeps
+            // newlines everywhere). Plain Enter still sends.
+            KeyCode::Enter
+                if !is_search
+                    && !self.show_prompt_picker
+                    && key
+                        .modifiers
+                        .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT) =>
+            {
+                self.ai_input.insert_newline();
+                self.ai_prompt_history_cursor = None;
             }
             KeyCode::Enter => {
                 if is_search {
@@ -7104,6 +7256,57 @@ impl App {
                     self.results_cursor += 1;
                 }
             }
+            // 3.9 — page/jump through the results overlay (it now scrolls).
+            KeyCode::PageUp if is_search && self.show_results_overlay => {
+                self.results_cursor = self.results_cursor.saturating_sub(5);
+            }
+            KeyCode::PageDown if is_search && self.show_results_overlay => {
+                if !self.results.is_empty() {
+                    self.results_cursor =
+                        (self.results_cursor + 5).min(self.results.len() - 1);
+                }
+            }
+            KeyCode::Home if is_search && self.show_results_overlay => {
+                self.results_cursor = 0;
+            }
+            KeyCode::End if is_search && self.show_results_overlay => {
+                self.results_cursor = self.results.len().saturating_sub(1);
+            }
+            // 3.9 — Up / Down in the search bar (no results overlay showing)
+            // walks `search_history`, shell-style — same recall as the AI prompt.
+            KeyCode::Up if is_search => {
+                if !self.search_history.is_empty() {
+                    let next = match self.search_history_cursor {
+                        Some(0) => 0,
+                        Some(i) => i - 1,
+                        None => self.search_history.len() - 1,
+                    };
+                    self.search_history_cursor = Some(next);
+                    let entry = self.search_history[next].clone();
+                    self.search_input.clear();
+                    for c in entry.chars() {
+                        self.search_input.insert_char(c);
+                    }
+                    self.show_results_overlay = false;
+                }
+            }
+            KeyCode::Down if is_search => {
+                if let Some(cur) = self.search_history_cursor {
+                    let next = cur + 1;
+                    if next >= self.search_history.len() {
+                        self.search_history_cursor = None;
+                        self.search_input.clear();
+                    } else {
+                        self.search_history_cursor = Some(next);
+                        let entry = self.search_history[next].clone();
+                        self.search_input.clear();
+                        for c in entry.chars() {
+                            self.search_input.insert_char(c);
+                        }
+                    }
+                    self.show_results_overlay = false;
+                }
+            }
             KeyCode::Up if !is_search && self.show_prompt_picker => {
                 if self.prompt_picker_cursor > 0 {
                     self.prompt_picker_cursor -= 1;
@@ -7115,10 +7318,12 @@ impl App {
                     self.prompt_picker_cursor += 1;
                 }
             }
-            // 1.2.4+: Up / Down in the AI prompt (no picker
-            // showing) walks `ai_prompt_history`. Shell-style.
+            // 1.2.4+: Up / Down in the AI prompt (no picker showing) walks
+            // `ai_prompt_history`, shell-style. 3.9 — in the multi-line compose
+            // box, they first move between lines; only at the first/last line do
+            // they fall through to history recall.
             KeyCode::Up if !is_search => {
-                if !self.ai_prompt_history.is_empty() {
+                if !self.ai_input.move_up() && !self.ai_prompt_history.is_empty() {
                     let next = match self.ai_prompt_history_cursor {
                         Some(0) => 0,
                         Some(i) => i - 1,
@@ -7131,6 +7336,9 @@ impl App {
                         self.ai_input.insert_char(c);
                     }
                 }
+            }
+            KeyCode::Down if !is_search && self.ai_input.move_down() => {
+                // Moved down a line within the compose box; nothing else to do.
             }
             KeyCode::Down if !is_search => {
                 if let Some(cur) = self.ai_prompt_history_cursor {
@@ -7157,6 +7365,7 @@ impl App {
                 self.current_input(is_search).backspace();
                 if is_search {
                     self.show_results_overlay = false;
+                    self.search_history_cursor = None;
                 }
                 if !is_search {
                     self.ai_prompt_history_cursor = None;
@@ -7166,6 +7375,7 @@ impl App {
                 self.current_input(is_search).delete();
                 if is_search {
                     self.show_results_overlay = false;
+                    self.search_history_cursor = None;
                 }
                 if !is_search {
                     self.ai_prompt_history_cursor = None;
@@ -7209,6 +7419,7 @@ impl App {
                     self.current_input(is_search).insert_char(final_c);
                     if is_search {
                         self.show_results_overlay = false;
+                        self.search_history_cursor = None;
                     } else {
                         // 1.2.4+: typing in the AI prompt
                         // breaks history-recall navigation —
@@ -8303,13 +8514,25 @@ impl App {
             self.status = "empty query".into();
             return;
         }
-        match self.store.search_text(&query, 10) {
+        // 3.9 — record the query for Up/Down recall (dedup against the last,
+        // cap the ring). Reset the walk cursor so the next Up starts fresh.
+        if self.search_history.last() != Some(&query) {
+            self.search_history.push(query.clone());
+            if self.search_history.len() > 500 {
+                let drop_n = self.search_history.len() - 500;
+                self.search_history.drain(..drop_n);
+            }
+        }
+        self.search_history_cursor = None;
+        // 3.9 — 50 (was 10): the overlay now scrolls + pages, so a wider net is
+        // navigable instead of silently truncated at ten.
+        match self.store.search_text(&query, 50) {
             Ok(raw) => {
                 self.results = raw.iter().filter_map(SearchHit::parse).collect();
                 self.results_cursor = 0;
                 self.show_results_overlay = true;
                 self.status = format!(
-                    "`{}` → {} result(s) · ↑/↓ to navigate · Enter to open · Esc to close",
+                    "`{}` → {} result(s) · ↑↓/PgUp/PgDn/Home/End · Enter open · Esc close",
                     query,
                     self.results.len()
                 );
@@ -9441,9 +9664,10 @@ impl App {
     }
 
     /// THOUGHTS-1 — keys for the Thoughts pane (read-only, scrollable): ↑/↓ or
-    /// j/k line scroll, PageUp/PageDown, g/G top/bottom, `c` clear, Esc to the
-    /// editor. `thoughts_scroll` counts lines UP from the bottom; the renderer
-    /// clamps it.
+    /// j/k line scroll, PageUp/PageDown, g/G top/bottom, `y` copy, `c` clear,
+    /// Esc to the editor. `thoughts_scroll` is an offset DOWN from the top of
+    /// the newest-first list (0 = newest); the renderer clamps it to the
+    /// wrapped-row count.
     fn handle_thoughts_key(&mut self, key: KeyEvent) -> Result<bool> {
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
@@ -9456,6 +9680,9 @@ impl App {
             KeyCode::PageDown => self.thoughts_scroll = self.thoughts_scroll.saturating_add(10),
             KeyCode::Char('g') | KeyCode::Home => self.thoughts_scroll = 0,
             KeyCode::Char('G') | KeyCode::End => self.thoughts_scroll = usize::MAX,
+            // 3.9 — `y` yanks the whole reflective transcript to the clipboard
+            // (the pane has no per-block selection). Distinct from `c` = clear.
+            KeyCode::Char('y') | KeyCode::Char('Y') => self.thoughts_copy(),
             KeyCode::Char('c') | KeyCode::Char('C') => {
                 self.thoughts.clear();
                 self.thoughts_scroll = 0;
@@ -9472,6 +9699,38 @@ impl App {
             _ => return Ok(false),
         }
         Ok(false)
+    }
+
+    /// 3.9 — copy every thought block to the system clipboard, newest-first (the
+    /// on-screen order), joined by blank lines. The Thoughts pane has no
+    /// per-block selection, so this lifts the whole reflective transcript out at
+    /// once. Silently reports when no clipboard is available (headless host).
+    fn thoughts_copy(&mut self) {
+        if self.thoughts.is_empty() {
+            self.status = "no thoughts to copy".into();
+            return;
+        }
+        let text = self
+            .thoughts
+            .iter()
+            .rev()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let n = self.thoughts.len();
+        match self.clipboard.as_mut() {
+            Some(cb) => match cb.set_text(text.clone()) {
+                Ok(()) => {
+                    self.status =
+                        format!("copied {n} thought block(s) ({} chars)", text.chars().count());
+                }
+                Err(e) => self.status = format!("clipboard copy failed: {e}"),
+            },
+            None => {
+                self.status =
+                    "no system clipboard available — copy unavailable on this host".into();
+            }
+        }
     }
 
     /// PANE-1 — keys for the Output pane (active when the right region shows
@@ -13204,6 +13463,7 @@ impl App {
 
             // ── AI pane ───────────────────────────────────────
             A::ClearChat => self.clear_chat_history(),
+            A::OpenConversations => self.open_conversations_modal(),
 
             // ── Bund prefix ───────────────────────────────────
             A::BundRunBuffer => self.bund_run_buffer(),
@@ -25573,6 +25833,140 @@ impl App {
         n
     }
 
+    /// 3.9 — cancel an in-flight inference without touching the conversation.
+    /// Dropping the `Inference` drops its receiver, so the background stream
+    /// task abandons the provider call at its next token send (see
+    /// `spawn_chat_stream`). The partial reply is discarded and the pending
+    /// turn state is cleared so it can't pair with a later response; prior
+    /// `chat_history` is kept. Distinct from `clear_chat_history` (Ctrl+B c),
+    /// which wipes the whole conversation. No-op when nothing is in flight or a
+    /// graph walk owns the lifecycle.
+    fn cancel_inference(&mut self) {
+        if self.inference.is_none() || self.graph_walk_active() {
+            return;
+        }
+        let was_streaming = matches!(
+            self.inference.as_ref().map(|i| &i.status),
+            Some(InferenceStatus::Streaming)
+        );
+        self.inference = None;
+        self.pending_chat_user_msg = None;
+        self.pending_paragraph_memory_target = None;
+        self.pending_book_rag_cited = None;
+        self.pending_translation = false;
+        self.ai_response_scroll = 0;
+        self.status = if was_streaming {
+            "inference cancelled — chat history kept".into()
+        } else {
+            "cleared the response — chat history kept".into()
+        };
+    }
+
+    /// The AI answer currently on screen: the in-flight/just-finished response,
+    /// else the most recent assistant turn in the chat history.
+    fn current_ai_answer(&self) -> Option<String> {
+        if let Some(inf) = &self.inference {
+            if !inf.response.is_empty() {
+                return Some(inf.response.clone());
+            }
+        }
+        self.chat_history.iter().rev().find_map(|t| match t {
+            ChatTurn::Assistant(s) => Some(s.clone()),
+            _ => None,
+        })
+    }
+
+    /// 3.9 — jump to a cited paragraph: navigate the passages the answer cites
+    /// (in citation order), opening each in the editor. Falls back to the direct
+    /// semantic hits when the answer cited nothing explicitly. `[` previous, `]`
+    /// next, wrapping. The Book scope's grounded answer becomes a reading path.
+    fn jump_book_citation(&mut self, forward: bool) {
+        let Some(passages) = self.book_rag_last_retrieval.clone() else {
+            self.status = "no retrieved sources for this scope".into();
+            return;
+        };
+        let answer = self.current_ai_answer().unwrap_or_default();
+        let mut order = cited_passages_ordered(&answer, &passages);
+        if order.is_empty() {
+            // Nothing explicitly cited → offer the direct hits as sources.
+            order = passages
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| p.is_hit)
+                .map(|(i, _)| i)
+                .collect();
+        }
+        if order.is_empty() {
+            self.status = "no citations to jump to".into();
+            return;
+        }
+        let n = order.len();
+        let next = if self.book_rag_cite_cursor == usize::MAX {
+            if forward { 0 } else { n - 1 }
+        } else if forward {
+            (self.book_rag_cite_cursor + 1) % n
+        } else {
+            (self.book_rag_cite_cursor + n - 1) % n
+        };
+        self.book_rag_cite_cursor = next;
+        let p = &passages[order[next]];
+        let (bc, id) = (p.breadcrumb.clone(), p.id);
+        match self.open_paragraph_by_uuid(id) {
+            Ok(()) => self.status = format!("cited source [{bc}] ({}/{n})", next + 1),
+            Err(e) => self.status = format!("jump: {e}"),
+        }
+    }
+
+    /// True while a reply is actively streaming.
+    fn is_streaming_inference(&self) -> bool {
+        matches!(
+            self.inference.as_ref().map(|i| &i.status),
+            Some(InferenceStatus::Streaming)
+        )
+    }
+
+    /// True when the chat ends with a `(User, Assistant)` pair that retry /
+    /// edit-last can operate on.
+    fn has_resendable_turn(&self) -> bool {
+        resendable_user_prompt(&self.chat_history).is_some()
+    }
+
+    /// 3.9 — pull the last exchange back for revision: pop the trailing
+    /// `(User, Assistant)` pair off the chat history, restore the user's prompt
+    /// into the (multi-line) compose box, drop the displayed reply, and focus
+    /// the prompt so it can be edited and re-sent. No-op while streaming.
+    /// Returns whether it popped a turn (so `regenerate_last` knows to re-send).
+    fn edit_last_turn(&mut self) -> bool {
+        if self.is_streaming_inference() {
+            self.status = "still streaming — Esc to cancel first".into();
+            return false;
+        }
+        if !self.has_resendable_turn() {
+            self.status = "no previous turn to edit".into();
+            return false;
+        }
+        let Some(user_text) = resendable_user_prompt(&self.chat_history) else {
+            return false;
+        };
+        let n = self.chat_history.len();
+        self.chat_history.truncate(n - 2);
+        self.ai_input.clear();
+        self.ai_input.insert_str(&user_text);
+        self.inference = None;
+        self.ai_response_scroll = 0;
+        self.change_focus(Focus::AiPrompt);
+        self.status = "edit the prompt and press Enter to resend".into();
+        true
+    }
+
+    /// 3.9 — regenerate the last reply: restore the prompt, drop the last pair,
+    /// and re-send immediately under the current scope (no editing round-trip).
+    fn regenerate_last(&mut self) {
+        if self.edit_last_turn() && !self.ai_input.as_str().trim().is_empty() {
+            self.start_inference();
+        }
+    }
+
     fn clear_chat_history(&mut self) {
         let turns = self.chat_history.len();
         self.chat_history.clear();
@@ -27863,6 +28257,7 @@ impl App {
         let is_link_picker = matches!(self.modal, Modal::LinkPicker { .. });
         let is_backlink_picker = matches!(self.modal, Modal::BacklinkPicker { .. });
         let is_bookmark_picker = matches!(self.modal, Modal::BookmarkPicker { .. });
+        let is_conversations = matches!(self.modal, Modal::Conversations { .. });
         let is_fuzzy_paragraph_picker = matches!(self.modal, Modal::FuzzyParagraphPicker { .. });
         let is_cite_picker = matches!(self.modal, Modal::CitePicker { .. });
         let is_universe_picker = matches!(self.modal, Modal::UniversePicker { .. });
@@ -28236,6 +28631,11 @@ impl App {
 
         if is_bookmark_picker {
             self.bookmark_picker_handle_key(key);
+            return Ok(false);
+        }
+
+        if is_conversations {
+            self.conversations_handle_key(key);
             return Ok(false);
         }
 
@@ -30835,7 +31235,7 @@ impl App {
                 .direction(Direction::Vertical)
                 .constraints([
                     Constraint::Min(0),
-                    Constraint::Length(3),
+                    Constraint::Length(self.ai_prompt_box_height()),
                     Constraint::Length(1),
                 ])
                 .split(f.area());
@@ -30878,7 +31278,7 @@ impl App {
                 .direction(Direction::Vertical)
                 .constraints([
                     Constraint::Min(0),
-                    Constraint::Length(3),
+                    Constraint::Length(self.ai_prompt_box_height()),
                     Constraint::Length(1),
                 ])
                 .split(f.area());
@@ -30929,12 +31329,15 @@ impl App {
             return;
         }
 
+        // 3.9 — the AI prompt box grows with its content (multi-line compose)
+        // and collapses back to a single line when empty/one-line.
+        let prompt_h = self.ai_prompt_box_height();
         let outer = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(3),
                 Constraint::Min(0),
-                Constraint::Length(3),
+                Constraint::Length(prompt_h),
                 Constraint::Length(1),
             ])
             .split(f.area());
@@ -31402,6 +31805,99 @@ impl App {
         if let Some(id) = to_open {
             self.modal = Modal::None;
             self.dispatch_picker_accept(id, pin_to_secondary);
+        }
+    }
+
+    /// 3.9 — open the conversation library (Ctrl+Z k).
+    fn open_conversations_modal(&mut self) {
+        let entries = self.list_conversation_entries();
+        self.modal = Modal::Conversations {
+            entries,
+            cursor: 0,
+            scroll: 0,
+        };
+        self.status =
+            "conversations: ⏎ reopen · s save current · d delete · n new · Esc close".into();
+    }
+
+    fn conversations_handle_key(&mut self, key: KeyEvent) {
+        let page: usize = 12;
+        // Capture the chosen action + selected stem, then act outside the borrow.
+        enum Act {
+            Open(String),
+            Delete(String),
+            Save,
+            New,
+        }
+        let act = {
+            let Modal::Conversations { entries, cursor, scroll } = &mut self.modal else {
+                return;
+            };
+            let total = entries.len();
+            let mut act: Option<Act> = None;
+            match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    *cursor = cursor.saturating_sub(1);
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if *cursor + 1 < total {
+                        *cursor += 1;
+                    }
+                }
+                KeyCode::PageUp => *cursor = cursor.saturating_sub(page),
+                KeyCode::PageDown => *cursor = (*cursor + page).min(total.saturating_sub(1)),
+                KeyCode::Home => *cursor = 0,
+                KeyCode::End => *cursor = total.saturating_sub(1),
+                KeyCode::Enter => {
+                    if let Some(e) = entries.get(*cursor) {
+                        act = Some(Act::Open(e.title.clone()));
+                    }
+                }
+                KeyCode::Char('d') | KeyCode::Char('D') | KeyCode::Delete => {
+                    if let Some(e) = entries.get(*cursor) {
+                        act = Some(Act::Delete(e.title.clone()));
+                    }
+                }
+                KeyCode::Char('s') | KeyCode::Char('S') => act = Some(Act::Save),
+                KeyCode::Char('n') | KeyCode::Char('N') => act = Some(Act::New),
+                _ => {}
+            }
+            if *cursor < *scroll {
+                *scroll = *cursor;
+            } else if *cursor >= *scroll + page {
+                *scroll = *cursor + 1 - page;
+            }
+            act
+        };
+        match act {
+            Some(Act::Open(stem)) => {
+                self.open_conversation(&stem);
+                self.modal = Modal::None;
+                self.change_focus(Focus::Ai);
+            }
+            Some(Act::New) => {
+                self.clear_chat_history();
+                self.modal = Modal::None;
+                self.change_focus(Focus::AiPrompt);
+            }
+            Some(Act::Save) => {
+                self.save_current_conversation();
+                let fresh = self.list_conversation_entries();
+                if let Modal::Conversations { entries, cursor, .. } = &mut self.modal {
+                    *entries = fresh;
+                    *cursor = 0;
+                }
+            }
+            Some(Act::Delete(stem)) => {
+                self.delete_conversation(&stem);
+                let fresh = self.list_conversation_entries();
+                if let Modal::Conversations { entries, cursor, scroll } = &mut self.modal {
+                    *cursor = (*cursor).min(fresh.len().saturating_sub(1));
+                    *scroll = (*scroll).min(*cursor);
+                    *entries = fresh;
+                }
+            }
+            None => {}
         }
     }
 
@@ -34611,6 +35107,38 @@ Rules:
 /// 1.3.34+ — aggregate Output findings into per-node tree report-card badges: each
 /// finding tied to a source paragraph tallies a count + worst severity onto that
 /// paragraph and every ancestor (so a chapter shows the sum of its paragraphs).
+/// 3.9 — passage indices in the order their `[breadcrumb]` citation first
+/// appears in the answer (deduped) — the navigable citation order. Empty when
+/// the answer cites none of the retrieved passages. Pure + testable.
+fn cited_passages_ordered(
+    answer: &str,
+    passages: &[crate::book_rag::RetrievedPassage],
+) -> Vec<usize> {
+    let mut hits: Vec<(usize, usize)> = Vec::new();
+    for (i, p) in passages.iter().enumerate() {
+        let token = format!("[{}]", p.breadcrumb);
+        if let Some(pos) = answer.find(&token) {
+            hits.push((pos, i));
+        }
+    }
+    hits.sort_by_key(|(pos, _)| *pos);
+    hits.into_iter().map(|(_, i)| i).collect()
+}
+
+/// 3.9 — the last user prompt eligible for retry / edit-last: `Some(text)` when
+/// the chat history ends with a `(User, Assistant)` pair, else `None`. Pure so
+/// the pair-detection is testable without an `App`.
+fn resendable_user_prompt(history: &[ChatTurn]) -> Option<String> {
+    let n = history.len();
+    if n < 2 {
+        return None;
+    }
+    match (&history[n - 2], &history[n - 1]) {
+        (ChatTurn::User(s), ChatTurn::Assistant(_)) => Some(s.clone()),
+        _ => None,
+    }
+}
+
 /// 3.8 — resolve the Output cursor's index into the current view from the
 /// id-anchored selection. `follow` (parked at the newest/top row) → 0;
 /// otherwise the anchored id's position, falling back to the top when it has
@@ -35444,6 +35972,79 @@ mod tests_tree_filter {
     fn no_match_yields_empty() {
         let (h, _) = sample();
         assert!(filtered_tree_rows(&h, "zzz-nope").is_empty());
+    }
+}
+
+#[cfg(test)]
+mod tests_citations {
+    use super::cited_passages_ordered;
+    use crate::book_rag::RetrievedPassage;
+    use uuid::Uuid;
+
+    fn passage(bc: &str) -> RetrievedPassage {
+        RetrievedPassage {
+            id: Uuid::now_v7(),
+            breadcrumb: bc.to_string(),
+            body: String::new(),
+            score: 1.0,
+            is_hit: true,
+        }
+    }
+
+    #[test]
+    fn orders_by_first_appearance_and_skips_uncited() {
+        let passages = vec![
+            passage("ch1/scene-a"),
+            passage("ch2/scene-b"),
+            passage("ch3/scene-c"),
+        ];
+        // Answer cites b then a (c not cited).
+        let answer = "As shown in [ch2/scene-b], and earlier [ch1/scene-a].";
+        // Citation order follows appearance: b (idx 1) then a (idx 0).
+        assert_eq!(cited_passages_ordered(answer, &passages), vec![1, 0]);
+    }
+
+    #[test]
+    fn empty_when_nothing_cited() {
+        let passages = vec![passage("ch1/scene-a")];
+        assert!(cited_passages_ordered("no citations here", &passages).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod tests_resend {
+    use super::resendable_user_prompt;
+    use crate::ai::stream::ChatTurn;
+
+    #[test]
+    fn detects_trailing_user_assistant_pair() {
+        let h = vec![
+            ChatTurn::User("first".into()),
+            ChatTurn::Assistant("a1".into()),
+            ChatTurn::User("second".into()),
+            ChatTurn::Assistant("a2".into()),
+        ];
+        assert_eq!(resendable_user_prompt(&h), Some("second".to_string()));
+    }
+
+    #[test]
+    fn none_when_last_is_a_dangling_user_turn() {
+        // A user turn with no assistant reply yet (mid-stream) isn't resendable.
+        let h = vec![
+            ChatTurn::User("first".into()),
+            ChatTurn::Assistant("a1".into()),
+            ChatTurn::User("second".into()),
+        ];
+        assert_eq!(resendable_user_prompt(&h), None);
+    }
+
+    #[test]
+    fn none_when_empty_or_single() {
+        assert_eq!(resendable_user_prompt(&[]), None);
+        assert_eq!(
+            resendable_user_prompt(&[ChatTurn::Assistant("hi".into())]),
+            None
+        );
     }
 }
 

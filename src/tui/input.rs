@@ -6,11 +6,41 @@ pub struct TextInput {
     buffer: String,
     /// Cursor position as a *character* index, not a byte index.
     cursor: usize,
+    /// 3.9 — when true the buffer may hold `\n` (the AI prompt compose box):
+    /// paste preserves newlines, `insert_newline` works, and `move_up`/`down`
+    /// + `Home`/`End` become line-aware. Default false keeps every single-line
+    /// consumer (search bar, modal inputs) byte-for-byte unchanged.
+    multiline: bool,
 }
 
 impl TextInput {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// 3.9 — a multi-line input (the AI prompt compose box).
+    pub fn multiline() -> Self {
+        Self {
+            multiline: true,
+            ..Self::default()
+        }
+    }
+
+    /// Visual line count: `1 + '\n' count` for a multi-line input, always `1`
+    /// for a single-line one. Drives the AI prompt box's expand/collapse.
+    pub fn line_count(&self) -> usize {
+        if !self.multiline {
+            return 1;
+        }
+        self.buffer.chars().filter(|c| *c == '\n').count() + 1
+    }
+
+    /// 3.9 — insert a newline at the cursor (Shift/Alt+Enter). No-op for a
+    /// single-line input, so Enter-to-submit callers can route here safely.
+    pub fn insert_newline(&mut self) {
+        if self.multiline {
+            self.insert_char('\n');
+        }
     }
 
     pub fn as_str(&self) -> &str {
@@ -66,21 +96,26 @@ impl TextInput {
         self.cursor += 1;
     }
 
-    /// A1 — insert a whole string at the cursor (bracketed paste). Newlines are
-    /// collapsed to single spaces (these are single-line inputs), so a multi-line
-    /// paste lands as one line instead of submitting at the first `\n`.
+    /// A1 — insert a whole string at the cursor (bracketed paste). For a
+    /// single-line input, newlines collapse to single spaces so a multi-line
+    /// paste lands as one line instead of submitting at the first `\n`. For a
+    /// multi-line input (3.9 — the AI prompt), newlines are preserved (CRLF
+    /// normalised to LF) so a pasted excerpt keeps its shape.
     pub fn insert_str(&mut self, s: &str) {
-        let flat: String = s
-            .split(['\r', '\n'])
-            .filter(|seg| !seg.is_empty())
-            .collect::<Vec<_>>()
-            .join(" ");
-        if flat.is_empty() {
+        let text: String = if self.multiline {
+            s.replace("\r\n", "\n").replace('\r', "\n")
+        } else {
+            s.split(['\r', '\n'])
+                .filter(|seg| !seg.is_empty())
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        if text.is_empty() {
             return;
         }
         let byte_idx = self.byte_offset(self.cursor);
-        self.buffer.insert_str(byte_idx, &flat);
-        self.cursor += flat.chars().count();
+        self.buffer.insert_str(byte_idx, &text);
+        self.cursor += text.chars().count();
     }
 
     pub fn backspace(&mut self) {
@@ -117,11 +152,99 @@ impl TextInput {
     }
 
     pub fn move_home(&mut self) {
-        self.cursor = 0;
+        if self.multiline {
+            // Start of the current line (after the preceding '\n').
+            let chars: Vec<char> = self.buffer.chars().collect();
+            let mut i = self.cursor;
+            while i > 0 && chars[i - 1] != '\n' {
+                i -= 1;
+            }
+            self.cursor = i;
+        } else {
+            self.cursor = 0;
+        }
     }
 
     pub fn move_end(&mut self) {
-        self.cursor = self.buffer.chars().count();
+        if self.multiline {
+            // End of the current line (before the next '\n').
+            let chars: Vec<char> = self.buffer.chars().collect();
+            let mut i = self.cursor;
+            while i < chars.len() && chars[i] != '\n' {
+                i += 1;
+            }
+            self.cursor = i;
+        } else {
+            self.cursor = self.buffer.chars().count();
+        }
+    }
+
+    /// 3.9 — move the cursor up/down one line, preserving the column (clamped to
+    /// the target line's length). No-op for a single-line input. Returns whether
+    /// it moved, so the AI-prompt handler can fall back to history recall when
+    /// the cursor is already on the first/last line.
+    pub fn move_up(&mut self) -> bool {
+        if !self.multiline {
+            return false;
+        }
+        let (line, col) = self.cursor_line_col();
+        if line == 0 {
+            return false;
+        }
+        self.cursor = self.char_index_of(line - 1, col);
+        true
+    }
+
+    pub fn move_down(&mut self) -> bool {
+        if !self.multiline {
+            return false;
+        }
+        let (line, col) = self.cursor_line_col();
+        if line + 1 >= self.line_count() {
+            return false;
+        }
+        self.cursor = self.char_index_of(line + 1, col);
+        true
+    }
+
+    /// Cursor's `(line, column)` in the multi-line buffer (both 0-based).
+    fn cursor_line_col(&self) -> (usize, usize) {
+        let mut line = 0;
+        let mut col = 0;
+        for c in self.buffer.chars().take(self.cursor) {
+            if c == '\n' {
+                line += 1;
+                col = 0;
+            } else {
+                col += 1;
+            }
+        }
+        (line, col)
+    }
+
+    /// Char index of `(line, column)`, with `column` clamped to that line's
+    /// length (so vertical moves land inside a shorter line, not past its end).
+    fn char_index_of(&self, target_line: usize, target_col: usize) -> usize {
+        let mut idx = 0;
+        let mut line = 0;
+        let mut col = 0;
+        for c in self.buffer.chars() {
+            if line == target_line && col == target_col {
+                return idx;
+            }
+            if c == '\n' {
+                if line == target_line {
+                    // Reached end of the target line before target_col — clamp here.
+                    return idx;
+                }
+                line += 1;
+                col = 0;
+            } else {
+                col += 1;
+            }
+            idx += 1;
+        }
+        idx
     }
 
     /// 1.2.8+ — kill from the cursor to the start of the
@@ -378,6 +501,68 @@ mod tests {
         }
         t2.kill_word_left();
         assert_eq!(t2.as_str(), "git ");
+    }
+
+    #[test]
+    fn multiline_preserves_newlines_and_counts_lines() {
+        let mut t = TextInput::multiline();
+        t.insert_str("line one\r\nline two\rthree");
+        assert_eq!(t.as_str(), "line one\nline two\nthree");
+        assert_eq!(t.line_count(), 3);
+        // A single-line input still flattens (unchanged behaviour).
+        let mut s = TextInput::new();
+        s.insert_str("a\nb");
+        assert_eq!(s.as_str(), "a b");
+        assert_eq!(s.line_count(), 1);
+    }
+
+    #[test]
+    fn multiline_insert_newline_and_no_op_when_single_line() {
+        let mut t = TextInput::multiline();
+        for c in "ab".chars() {
+            t.insert_char(c);
+        }
+        t.insert_newline();
+        for c in "cd".chars() {
+            t.insert_char(c);
+        }
+        assert_eq!(t.as_str(), "ab\ncd");
+        assert_eq!(t.line_count(), 2);
+        // insert_newline is a no-op on a single-line input.
+        let mut s = TextInput::new();
+        s.insert_char('x');
+        s.insert_newline();
+        assert_eq!(s.as_str(), "x");
+    }
+
+    #[test]
+    fn multiline_vertical_move_preserves_column_and_clamps() {
+        let mut t = TextInput::multiline();
+        t.insert_str("hello\nhi\nworld");
+        // Cursor at end (on "world", col 5). Up → "hi" line, clamped to col 2.
+        assert!(t.move_up());
+        assert_eq!(t.cursor_line_col(), (1, 2));
+        // Up again → "hello" line, col 2 (fits).
+        assert!(t.move_up());
+        assert_eq!(t.cursor_line_col(), (0, 2));
+        // Already on the first line → no move, returns false (→ history recall).
+        assert!(!t.move_up());
+        // Down twice back to the last line.
+        assert!(t.move_down());
+        assert!(t.move_down());
+        assert_eq!(t.cursor_line_col(), (2, 2));
+        assert!(!t.move_down());
+    }
+
+    #[test]
+    fn multiline_home_end_are_line_local() {
+        let mut t = TextInput::multiline();
+        t.insert_str("hello\nworld");
+        // Cursor at end of "world"; Home → start of that line.
+        t.move_home();
+        assert_eq!(t.cursor_line_col(), (1, 0));
+        t.move_end();
+        assert_eq!(t.cursor_line_col(), (1, 5));
     }
 
     #[test]

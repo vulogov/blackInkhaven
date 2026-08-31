@@ -3622,6 +3622,94 @@ impl super::super::App {
         );
     }
 
+    pub(in crate::tui::app) fn draw_conversations_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
+        let Modal::Conversations { entries, cursor, scroll } = &self.modal else {
+            return;
+        };
+        let width = area.width.saturating_sub(8).max(60);
+        let height = area.height.saturating_sub(4).max(12);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let header = format!(" Conversations ({}) ", entries.len());
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(header)
+            .border_style(
+                Style::default()
+                    .fg(self.theme.modal_border)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .style(
+                Style::default()
+                    .bg(self.theme.modal_bg)
+                    .fg(self.theme.modal_fg),
+            );
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let body_h = inner.height.saturating_sub(1) as usize;
+        let footer_rect = Rect {
+            x: inner.x,
+            y: inner.y + inner.height.saturating_sub(1),
+            width: inner.width,
+            height: 1,
+        };
+        let body_rect = Rect {
+            x: inner.x,
+            y: inner.y,
+            width: inner.width,
+            height: inner.height.saturating_sub(1),
+        };
+
+        if entries.is_empty() {
+            f.render_widget(
+                Paragraph::new(vec![
+                    Line::from(""),
+                    Line::from(Span::styled(
+                        "  No saved conversations yet.",
+                        Style::default().add_modifier(Modifier::DIM),
+                    )),
+                    Line::from(Span::styled(
+                        "  Press `s` to save the current chat.",
+                        Style::default().add_modifier(Modifier::DIM),
+                    )),
+                ]),
+                body_rect,
+            );
+        } else {
+            let lines: Vec<Line<'_>> = entries
+                .iter()
+                .enumerate()
+                .skip(*scroll)
+                .take(body_h)
+                .map(|(i, e)| {
+                    let head = format!(" 💬 {}", e.title);
+                    let path_dim = format!("    {}", e.slug_path);
+                    let mut line = Line::from(vec![
+                        Span::raw(head),
+                        Span::styled(path_dim, Style::default().add_modifier(Modifier::DIM)),
+                    ]);
+                    if i == *cursor {
+                        line = line.style(Style::default().add_modifier(Modifier::REVERSED));
+                    }
+                    line
+                })
+                .collect();
+            f.render_widget(Paragraph::new(lines), body_rect);
+        }
+
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                " ↑↓ · ⏎ reopen · s save current · d delete · n new · Esc close ",
+                Style::default().add_modifier(Modifier::DIM),
+            ))),
+            footer_rect,
+        );
+    }
+
     pub(in crate::tui::app) fn draw_bookmark_picker_modal(&mut self, f: &mut ratatui::Frame, area: Rect) {
         let Modal::BookmarkPicker { entries, cursor, scroll } = &self.modal else {
             return;

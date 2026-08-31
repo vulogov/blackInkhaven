@@ -23,7 +23,7 @@ use crate::store::node::{Node, NodeKind};
 
 use super::super::input::TextInput;
 use super::super::lexicon_build::build_lexicon;
-use super::super::modal::Modal;
+use super::super::modal::{Modal, ScriptPickerEntry};
 use super::super::session::{
     EditorSession, ParagraphCursor, SessionState, TimelineViewSnapshot, TreeSession,
 };
@@ -390,6 +390,144 @@ impl super::App {
         let n = history.len();
         self.chat_history = history;
         Ok(n)
+    }
+
+    /// 3.9 — conversation library directory (`<root>/.inkhaven/conversations/`).
+    fn conversations_dir(&self) -> std::path::PathBuf {
+        self.layout.root.join(".inkhaven").join("conversations")
+    }
+
+    /// 3.9 — saved conversations as picker rows (title = file stem, slug_path =
+    /// "N turn(s) · date"), newest first.
+    pub(super) fn list_conversation_entries(&self) -> Vec<ScriptPickerEntry> {
+        let Ok(rd) = std::fs::read_dir(self.conversations_dir()) else {
+            return Vec::new();
+        };
+        let mut rows: Vec<(std::time::SystemTime, ScriptPickerEntry)> = Vec::new();
+        for e in rd.flatten() {
+            let path = e.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("json") {
+                continue;
+            }
+            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                continue;
+            };
+            let turns = std::fs::read(&path)
+                .ok()
+                .and_then(|b| serde_json::from_slice::<Vec<ChatTurn>>(&b).ok())
+                .map(|h| h.len())
+                .unwrap_or(0);
+            let mtime = e
+                .metadata()
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            let when = chrono::DateTime::<chrono::Local>::from(mtime)
+                .format("%Y-%m-%d %H:%M")
+                .to_string();
+            rows.push((
+                mtime,
+                ScriptPickerEntry {
+                    id: Uuid::nil(),
+                    title: stem.to_string(),
+                    slug_path: format!("{turns} turn(s) · {when}"),
+                },
+            ));
+        }
+        rows.sort_by(|a, b| b.0.cmp(&a.0));
+        rows.into_iter().map(|(_, e)| e).collect()
+    }
+
+    /// 3.9 — save the current chat into the library under a name auto-derived
+    /// from its first user turn (counter-suffixed to avoid clobbering).
+    pub(super) fn save_current_conversation(&mut self) {
+        if self.chat_history.is_empty() {
+            self.status = "no conversation to save".into();
+            return;
+        }
+        let base = self
+            .chat_history
+            .iter()
+            .find_map(|t| match t {
+                ChatTurn::User(s) => Some(s.as_str()),
+                _ => None,
+            })
+            .unwrap_or("conversation");
+        // Slugify the first prompt into a filesystem-safe stem: lowercase,
+        // non-alphanumerics collapse to single '-', trimmed, length-capped.
+        let mut stem = String::with_capacity(48);
+        let mut prev_dash = false;
+        for c in base.chars().flat_map(|c| c.to_lowercase()) {
+            if c.is_alphanumeric() {
+                stem.push(c);
+                prev_dash = false;
+            } else if !prev_dash && !stem.is_empty() {
+                stem.push('-');
+                prev_dash = true;
+            }
+            if stem.chars().count() >= 48 {
+                break;
+            }
+        }
+        let stem: String = stem.trim_matches('-').to_string();
+        let stem = if stem.is_empty() {
+            "conversation".to_string()
+        } else {
+            stem
+        };
+        let dir = self.conversations_dir();
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            self.status = format!("save conversation: {e}");
+            return;
+        }
+        let mut path = dir.join(format!("{stem}.json"));
+        let mut n = 2;
+        while path.exists() {
+            path = dir.join(format!("{stem}-{n}.json"));
+            n += 1;
+        }
+        let json = match serde_json::to_string_pretty(&self.chat_history) {
+            Ok(j) => j,
+            Err(e) => {
+                self.status = format!("save conversation: {e}");
+                return;
+            }
+        };
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string();
+        match std::fs::write(&path, json) {
+            Ok(()) => self.status = format!("saved conversation `{name}`"),
+            Err(e) => self.status = format!("save conversation: {e}"),
+        }
+    }
+
+    /// 3.9 — reopen a saved conversation by stem, replacing the current chat.
+    pub(super) fn open_conversation(&mut self, stem: &str) {
+        let path = self.conversations_dir().join(format!("{stem}.json"));
+        match std::fs::read(&path) {
+            Ok(bytes) => match serde_json::from_slice::<Vec<ChatTurn>>(&bytes) {
+                Ok(history) => {
+                    let n = history.len();
+                    self.chat_history = history;
+                    self.chat_history_scroll = 0;
+                    self.inference = None;
+                    self.status = format!("opened conversation `{stem}` ({n} turn(s))");
+                }
+                Err(e) => self.status = format!("open conversation: {e}"),
+            },
+            Err(e) => self.status = format!("open conversation: {e}"),
+        }
+    }
+
+    /// 3.9 — delete a saved conversation by stem.
+    pub(super) fn delete_conversation(&mut self, stem: &str) {
+        let path = self.conversations_dir().join(format!("{stem}.json"));
+        match std::fs::remove_file(&path) {
+            Ok(()) => self.status = format!("deleted conversation `{stem}`"),
+            Err(e) => self.status = format!("delete conversation: {e}"),
+        }
     }
 
     pub(super) fn load_file_into_editor(&mut self, path: &std::path::Path) {
