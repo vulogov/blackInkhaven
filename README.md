@@ -137,7 +137,13 @@ Every prior release lives under
   travel to their servers under their terms. For privacy, set
   `llm.default: "ollama"` and run a local model; every other
   inkhaven subsystem (RAG embedding, semantic search, snapshot diff)
-  is already on-device.
+  is already on-device. Inkhaven never sends your prose or any
+  telemetry anywhere unprompted; it only *pulls* data on the network
+  in a few spots — the embedding model (from Hugging Face, first embed)
+  and `inkhaven rebuild-help`, which fetches the F1 help corpus from
+  inkhaven's GitHub release (a one-time pull, then cached; never
+  fetched silently at startup). See
+  [`Documentation/SECURITY_WARNING.md`](Documentation/SECURITY_WARNING.md).
 - **Multilingual.** Snowball stemmers and multilingual embeddings make
   Russian, German, French, Spanish, Italian and others first-class. The
   shipped defaults cover English and Russian.
