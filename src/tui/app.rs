@@ -1983,6 +1983,10 @@ pub(crate) struct App {
     /// Cursor into `search_history`; None = not navigating. Same semantics as
     /// `ai_prompt_history_cursor`.
     search_history_cursor: Option<usize>,
+    /// 3.10 — a submitted F1 query awaiting its (blocking) embed + vector
+    /// search. Set on Enter so the run loop can paint a "Searching…" frame
+    /// first, then run the search on the next tick (`start_help_inference`).
+    pending_help_query: Option<String>,
     /// 1.2.8+ — F1 help-query history. Up/Down inside the
     /// `Modal::HelpQuery` input walks this ring. Pushed on
     /// every successful Enter (dedup against the immediate
@@ -3724,6 +3728,7 @@ impl App {
             ai_prompt_history_cursor: None,
             search_history: Vec::new(),
             search_history_cursor: None,
+            pending_help_query: None,
             help_query_history: Vec::new(),
             help_query_history_cursor: None,
             snapshot_filter: String::new(),
@@ -4111,6 +4116,14 @@ impl App {
                 terminal.draw(|f| self.draw(f))?;
                 self.needs_redraw = false;
                 last_draw = std::time::Instant::now();
+                // 3.10 — now that the "Searching…" frame is on screen, run the
+                // deferred F1 search (blocking) and spawn the inference. The
+                // brief freeze here happens with feedback already painted.
+                if let Some(q) = self.pending_help_query.take() {
+                    self.modal = Modal::None;
+                    self.start_help_inference(&q);
+                    self.needs_redraw = true;
+                }
             }
             // Shorter poll while animating so tokens/highlights render with low
             // latency; longer when idle so the loop mostly sleeps (input still
@@ -28530,8 +28543,21 @@ impl App {
                     self.help_query_history.push(trimmed.to_string());
                 }
                 self.help_query_history_cursor = None;
-                self.modal = Modal::None;
-                self.start_help_inference(&query);
+                // 3.10 — the query embed + vector search is blocking (now over
+                // ~1800 help paragraphs), so running it inline froze the UI with
+                // no feedback. Defer it: stash the query, keep the modal up
+                // showing "Searching…", and the run loop executes the search on
+                // the next tick — after that frame has painted.
+                if !trimmed.is_empty() {
+                    self.pending_help_query = Some(query);
+                    self.needs_redraw = true;
+                } else {
+                    self.modal = Modal::None;
+                }
+                return Ok(false);
+            }
+            // While the deferred search is pending, swallow further keys.
+            if self.pending_help_query.is_some() {
                 return Ok(false);
             }
             // 1.2.8+ — Up / Down walks help_query_history.  Mirrors

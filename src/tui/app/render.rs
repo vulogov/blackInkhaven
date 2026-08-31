@@ -651,19 +651,39 @@ impl super::App {
                 )
             }
             Modal::HelpQuery { input } => {
-                let body = vec![
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        " Ask the Help book:",
-                        Style::default().add_modifier(Modifier::BOLD),
-                    )),
-                    Line::from(format!(" › {}", input.render_with_cursor('│'))),
-                    Line::from(""),
-                    Line::from(Span::styled(
-                        "  Enter to ask · Esc to cancel · answer streams into the AI pane",
-                        Style::default().add_modifier(Modifier::DIM),
-                    )),
-                ];
+                // 3.10 — after Enter the (blocking) embed + search is deferred a
+                // tick so this "Searching…" frame paints first, instead of the
+                // UI freezing with no feedback.
+                let body = if self.pending_help_query.is_some() {
+                    vec![
+                        Line::from(""),
+                        Line::from(Span::styled(
+                            "  ⠿ Searching the Help book…",
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                        )),
+                        Line::from(""),
+                        Line::from(Span::styled(
+                            "  matching your question against the help excerpts, then the answer streams into the AI pane.",
+                            Style::default().add_modifier(Modifier::DIM),
+                        )),
+                    ]
+                } else {
+                    vec![
+                        Line::from(""),
+                        Line::from(Span::styled(
+                            " Ask the Help book:",
+                            Style::default().add_modifier(Modifier::BOLD),
+                        )),
+                        Line::from(format!(" › {}", input.render_with_cursor('│'))),
+                        Line::from(""),
+                        Line::from(Span::styled(
+                            "  Enter to ask · Esc to cancel · answer streams into the AI pane",
+                            Style::default().add_modifier(Modifier::DIM),
+                        )),
+                    ]
+                };
                 (" Help — F1 ".to_string(), Color::Cyan, body)
             }
             Modal::BundInput { prompt, input, hook } => {
