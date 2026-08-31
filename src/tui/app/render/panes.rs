@@ -257,9 +257,15 @@ impl super::super::App {
         } else {
             Style::default().add_modifier(Modifier::DIM)
         };
+        // 3.9 — advertise the new Up/Down query recall when focused with history.
+        let title = if self.focus == Focus::SearchBar && !self.search_history.is_empty() {
+            " Search · ↑ history ".to_string()
+        } else {
+            "Search".to_string()
+        };
         let p = Paragraph::new(text)
             .style(style)
-            .block(self.pane_block("Search", Focus::SearchBar));
+            .block(self.pane_block(&title, Focus::SearchBar));
         f.render_widget(p, area);
     }
 
