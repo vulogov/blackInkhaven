@@ -13463,6 +13463,7 @@ impl App {
 
             // ── AI pane ───────────────────────────────────────
             A::ClearChat => self.clear_chat_history(),
+            A::OpenConversations => self.open_conversations_modal(),
 
             // ── Bund prefix ───────────────────────────────────
             A::BundRunBuffer => self.bund_run_buffer(),
@@ -28256,6 +28257,7 @@ impl App {
         let is_link_picker = matches!(self.modal, Modal::LinkPicker { .. });
         let is_backlink_picker = matches!(self.modal, Modal::BacklinkPicker { .. });
         let is_bookmark_picker = matches!(self.modal, Modal::BookmarkPicker { .. });
+        let is_conversations = matches!(self.modal, Modal::Conversations { .. });
         let is_fuzzy_paragraph_picker = matches!(self.modal, Modal::FuzzyParagraphPicker { .. });
         let is_cite_picker = matches!(self.modal, Modal::CitePicker { .. });
         let is_universe_picker = matches!(self.modal, Modal::UniversePicker { .. });
@@ -28629,6 +28631,11 @@ impl App {
 
         if is_bookmark_picker {
             self.bookmark_picker_handle_key(key);
+            return Ok(false);
+        }
+
+        if is_conversations {
+            self.conversations_handle_key(key);
             return Ok(false);
         }
 
@@ -31798,6 +31805,99 @@ impl App {
         if let Some(id) = to_open {
             self.modal = Modal::None;
             self.dispatch_picker_accept(id, pin_to_secondary);
+        }
+    }
+
+    /// 3.9 — open the conversation library (Ctrl+Z k).
+    fn open_conversations_modal(&mut self) {
+        let entries = self.list_conversation_entries();
+        self.modal = Modal::Conversations {
+            entries,
+            cursor: 0,
+            scroll: 0,
+        };
+        self.status =
+            "conversations: ⏎ reopen · s save current · d delete · n new · Esc close".into();
+    }
+
+    fn conversations_handle_key(&mut self, key: KeyEvent) {
+        let page: usize = 12;
+        // Capture the chosen action + selected stem, then act outside the borrow.
+        enum Act {
+            Open(String),
+            Delete(String),
+            Save,
+            New,
+        }
+        let act = {
+            let Modal::Conversations { entries, cursor, scroll } = &mut self.modal else {
+                return;
+            };
+            let total = entries.len();
+            let mut act: Option<Act> = None;
+            match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    *cursor = cursor.saturating_sub(1);
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if *cursor + 1 < total {
+                        *cursor += 1;
+                    }
+                }
+                KeyCode::PageUp => *cursor = cursor.saturating_sub(page),
+                KeyCode::PageDown => *cursor = (*cursor + page).min(total.saturating_sub(1)),
+                KeyCode::Home => *cursor = 0,
+                KeyCode::End => *cursor = total.saturating_sub(1),
+                KeyCode::Enter => {
+                    if let Some(e) = entries.get(*cursor) {
+                        act = Some(Act::Open(e.title.clone()));
+                    }
+                }
+                KeyCode::Char('d') | KeyCode::Char('D') | KeyCode::Delete => {
+                    if let Some(e) = entries.get(*cursor) {
+                        act = Some(Act::Delete(e.title.clone()));
+                    }
+                }
+                KeyCode::Char('s') | KeyCode::Char('S') => act = Some(Act::Save),
+                KeyCode::Char('n') | KeyCode::Char('N') => act = Some(Act::New),
+                _ => {}
+            }
+            if *cursor < *scroll {
+                *scroll = *cursor;
+            } else if *cursor >= *scroll + page {
+                *scroll = *cursor + 1 - page;
+            }
+            act
+        };
+        match act {
+            Some(Act::Open(stem)) => {
+                self.open_conversation(&stem);
+                self.modal = Modal::None;
+                self.change_focus(Focus::Ai);
+            }
+            Some(Act::New) => {
+                self.clear_chat_history();
+                self.modal = Modal::None;
+                self.change_focus(Focus::AiPrompt);
+            }
+            Some(Act::Save) => {
+                self.save_current_conversation();
+                let fresh = self.list_conversation_entries();
+                if let Modal::Conversations { entries, cursor, .. } = &mut self.modal {
+                    *entries = fresh;
+                    *cursor = 0;
+                }
+            }
+            Some(Act::Delete(stem)) => {
+                self.delete_conversation(&stem);
+                let fresh = self.list_conversation_entries();
+                if let Modal::Conversations { entries, cursor, scroll } = &mut self.modal {
+                    *cursor = (*cursor).min(fresh.len().saturating_sub(1));
+                    *scroll = (*scroll).min(*cursor);
+                    *entries = fresh;
+                }
+            }
+            None => {}
         }
     }
 
