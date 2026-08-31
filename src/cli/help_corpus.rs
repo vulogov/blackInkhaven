@@ -90,9 +90,22 @@ pub fn package_from_dir(docs_dir: &Path, version: &str) -> Result<HelpCorpus> {
     })
 }
 
+/// Read the corpus bytes from `source`, which may be an `http(s)://` URL (fetched
+/// with the shared reqwest helper), a `file://` URL, or a bare local filesystem
+/// path — so `rebuild-help --url ./help-corpus.json` works offline and for a
+/// user who packaged their own docs.
+fn read_source(source: &str) -> std::result::Result<Vec<u8>, String> {
+    if source.starts_with("http://") || source.starts_with("https://") {
+        crate::typst_universe::reqwest_fetch(source)
+    } else {
+        let path = source.strip_prefix("file://").unwrap_or(source);
+        std::fs::read(path).map_err(|e| format!("read `{path}`: {e}"))
+    }
+}
+
 /// Fetch the corpus: a readable cache short-circuits the network (unless
-/// `force`); otherwise download it, parse, and cache atomically; on a network
-/// error fall back to a stale cache when one exists.
+/// `force`); otherwise read it from `url` (remote or local), parse, and cache
+/// atomically; on a fetch error fall back to a stale cache when one exists.
 pub fn fetch(url: &str, force: bool) -> Result<HelpCorpus> {
     let cache = cache_path();
     if !force {
@@ -104,7 +117,7 @@ pub fn fetch(url: &str, force: bool) -> Result<HelpCorpus> {
             }
         }
     }
-    match crate::typst_universe::reqwest_fetch(url) {
+    match read_source(url) {
         Ok(bytes) => {
             // Parse before writing so a corrupt download never poisons the cache.
             let corpus: HelpCorpus = serde_json::from_slice(&bytes)
@@ -126,7 +139,7 @@ pub fn fetch(url: &str, force: bool) -> Result<HelpCorpus> {
                 }
             }
             Err(Error::Store(format!(
-                "download help corpus: {net} — and no cached copy is available (are you offline?)"
+                "fetch help corpus: {net} — and no cached copy is available (offline? or the corpus isn't published yet — try `--url ./help-corpus.json` after `package-help-corpus`)"
             )))
         }
     }
