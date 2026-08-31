@@ -93,6 +93,20 @@ Focus stays on the AI prompt bar throughout — you can type a
 follow-up question and press Enter again to continue the conversation
 (see [Chat history](#chat-history) below).
 
+## The compose box (multi-line)
+
+The AI prompt is a **multi-line compose box**. Plain `Enter` still
+**sends**; to add a newline without sending, press `Shift+Enter` (or
+`Alt+Enter`). A paste keeps its own newlines rather than flattening
+them to spaces, so a multi-paragraph prompt arrives intact.
+
+The box **grows** to fit multi-line content and **collapses** back to
+a single line when it's empty — for instance right after you send.
+`Up` / `Down` move between the lines you're composing, and fall
+through to prompt-history recall once the cursor is on the first or
+last line. (The single-line search bar and the modal inputs are
+unchanged — this only affects the AI prompt.)
+
 ## Pressing Esc
 
 `Esc` from the AI prompt bar **bounces focus** to the AI pane so you
@@ -253,6 +267,38 @@ A typical multi-turn flow:
    turn replayed it.)
 5. `g` to apply. Or `Ctrl+B C` to start fresh.
 
+## Retry and edit-last (z / e)
+
+Two keys in the **AI pane** (not the prompt bar — focus the pane first
+with `Esc` or `Ctrl+3`) let you re-run the last exchange:
+
+| Key | Action |
+| --- | ------ |
+| `z` | **Regenerate** — re-send the same last prompt under the current scope, for a fresh answer. |
+| `e` | **Edit last** — pull the last prompt back into the compose box so you can reword it and resend. |
+
+Both work whenever the chat ends with a completed `(user, assistant)`
+exchange — so a first answer you didn't like is one keystroke from a
+retry (`z`), or one edit away from a sharper phrasing (`e`).
+
+## The conversation library (Ctrl+Z l)
+
+Chat used to persist as a single auto-saved file, with no way to keep
+or name separate threads. Press **`Ctrl+Z l`** to open the
+**conversation library** modal and manage them:
+
+| Key | Action |
+| --- | ------ |
+| `↑` / `↓` | Select a saved thread. |
+| `Enter` | Reopen the selected thread. |
+| `s` | Save the current chat (auto-named from its first prompt). |
+| `d` | Delete the selected thread. |
+| `n` | Start a new conversation. |
+| `Esc` | Close the modal. |
+
+Saved threads live under `.inkhaven/conversations/`, so a line of
+inquiry you want to return to survives across sessions.
+
 ## The prompt picker (/)
 
 For reusable prompt templates, type `/` in the AI prompt bar. The
@@ -336,10 +382,16 @@ hiccup), the status flips to an error and the AI pane title carries
   **follows the streaming tail** by default; `Esc` cancels an
   in-flight stream while keeping the history.
 - The AI pane renders markdown.
+- The prompt is a multi-line compose box: `Shift+Enter` (or
+  `Alt+Enter`) adds a newline, plain `Enter` sends, pastes keep their
+  newlines, and the box grows and collapses to fit.
 - After done, `r`/`i`/`t`/`b` apply to the editor (with
   markdown→Typst), `c` copies, `g` is the grammar-check apply.
+- In the AI pane, `z` regenerates the last reply and `e` edits the
+  last prompt to resend.
 - F9 cycles **scope**; F10 toggles **inference mode**.
-- Chat history accumulates; `Ctrl+B C` clears it.
+- Chat history accumulates; `Ctrl+B C` clears it; `Ctrl+Z l` opens the
+  conversation library to save, name, and reopen threads.
 - `/` opens the prompt picker; `Help!` prefix routes to the
   help-manual flow.
 
