@@ -1011,10 +1011,12 @@ impl super::App {
         }
 
         if included == 0 {
-            self.status = format!(
-                "Help: no entries found for `{}`. Try a different question.",
-                query
-            );
+            self.status = if self.store.vector_index_appears_stale() {
+                "Help: the index is empty — run `inkhaven rebuild-help` to build the F1 corpus."
+                    .to_string()
+            } else {
+                format!("Help: no entries found for `{}`. Try a different question.", query)
+            };
             return;
         }
 

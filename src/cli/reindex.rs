@@ -21,6 +21,13 @@ pub fn run(project: &Path, prune: bool, adopt: bool) -> Result<()> {
     let store = Store::open(layout.clone(), &cfg)?;
     let h = Hierarchy::load(&store)?;
 
+    // 3.10 — when the vector index is empty but the project has content (e.g.
+    // after upgrading past the owned-store format change, which can't read the
+    // old on-disk index), reindex must re-embed every document even though the
+    // .typ files on disk are byte-for-byte unchanged. Change-detection alone
+    // would report "unchanged" and rebuild nothing, leaving search empty.
+    let force_vectors = store.vector_index_appears_stale();
+
     let mut updated = 0usize;
     let mut unchanged = 0usize;
     let mut missing_ids: Vec<Uuid> = Vec::new();
@@ -51,7 +58,7 @@ pub fn run(project: &Path, prune: bool, adopt: bool) -> Result<()> {
 
         let bytes = std::fs::read(&abs).map_err(Error::Io)?;
         let current = store.get_content(node.id)?;
-        if current.as_deref() == Some(bytes.as_slice()) {
+        if !force_vectors && current.as_deref() == Some(bytes.as_slice()) {
             unchanged += 1;
             continue;
         }
@@ -80,6 +87,11 @@ pub fn run(project: &Path, prune: bool, adopt: bool) -> Result<()> {
     // otherwise lands as multi-second replay on the first search after opening.
     store.checkpoint()?;
 
+    if force_vectors {
+        eprintln!(
+            "reindex: vector index was empty — rebuilt embeddings for all {updated} document(s)"
+        );
+    }
     eprintln!(
         "reindex: {updated} updated, {unchanged} unchanged, {} missing, {} orphan(s)",
         missing_ids.len(),
