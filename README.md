@@ -27,35 +27,39 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 3.9.0 — Panes That Keep Up
+## Latest release · 3.10.0 — Own the Index
 
-The current release is **3.9.0**, the third TUI pass — it finishes the
-pane-polish arc and then goes deeper on the AI pane. Two tracks (deterministic,
-no new runtime crates):
+The current release is **3.10.0**, two tracks aimed at one key — F1. Deterministic
+core, warning-free:
 
-- **The AI pane grows up.** The prompt is now a **multi-line compose box** —
-  `Shift+Enter` inserts a newline, plain `Enter` still sends, a paste keeps its
-  newlines, and the box grows to fit and collapses back to one line when empty
-  (it was single-line and flattened newlines). **Retry / edit-and-resend**: `z`
-  regenerates the last reply, `e` pulls the last prompt back to tweak. **Navigable
-  citations**: `[` / `]` jump to the previous / next cited paragraph of a
-  Book-scope answer (they were inert text) — a grounded answer becomes a reading
-  path into the manuscript. And a **conversation library** (`Ctrl+Z l`) —
-  reopen / save / delete / new named threads under `.inkhaven/conversations/`,
-  instead of the old single auto-file.
-- **Pane polish.** The split-view AI response now **scrolls and follows the
-  streaming tail** (`⟳follow`; `Esc` **cancels** an in-flight inference, keeping
-  the chat). The **Search bar recalls prior queries** (`↑`/`↓`) and its **results
-  overlay scrolls and pages** (cap lifted 10→50). The **Thoughts pane** gains
-  `y` copy-out and a `G`/`End` bottom-reach fix.
+- **Own the index.** The abandoned `vecstore` crate is gone, replaced by an
+  in-tree vector store built directly on `hnsw_rs`. The old store **rebuilt the
+  whole HNSW search graph on every open** (15–31 s, landing on your first F1
+  search); the owned store **loads** it instead (~50 ms), while saving a
+  paragraph still re-indexes just that paragraph. And `rebuild-help` / `reindex`
+  now **checkpoint DuckDB** so opens don't replay a multi-second write-ahead log.
+  Together the first F1 search drops from **40–60 s to about a second**. Upgrading
+  is guided: an old-format index is detected and `reindex` rebuilds it.
+- **F1 help that builds itself.** **`inkhaven rebuild-help`** fetches inkhaven's
+  documentation from GitHub, curates it (release notes and internal docs filtered
+  out), chunks large docs by section for precise retrieval, and indexes it — no
+  manual corpus assembly. The search runs on a **background thread with an
+  animated spinner** instead of freezing the modal, and F1 points at
+  `rebuild-help` when the Help book is empty. (`rebuild-help` is inkhaven's one
+  deliberate network fetch — disclosed in the docs.)
+- **Config coverage.** `Option`-`None` fields are now editable from the config
+  TUI, and the soft-wrap toggle persists to `inkhaven.hjson`.
 
-Deferred as follow-ups: per-turn copy in the split Book view, incremental search,
-and a scroll offset independent of the selection. No new config; no new runtime
-crates.
-
-Read the full notes: [`Documentation/RELEASE_NOTES/3.9.0.md`](Documentation/RELEASE_NOTES/3.9.0.md).
+Read the full notes: [`Documentation/RELEASE_NOTES/3.10.0.md`](Documentation/RELEASE_NOTES/3.10.0.md).
 
 ### Recent releases
+
+- **3.9.0 — Panes That Keep Up.** The third TUI pass: the AI pane gains a
+  multi-line compose box, retry / edit-and-resend, navigable Book-scope citations,
+  and a named conversation library (`Ctrl+Z l`); the split AI response scrolls +
+  follows the stream with `Esc` cancel; the Search bar recalls queries and its
+  results overlay scrolls/pages; Thoughts gains copy-out.
+  [notes](Documentation/RELEASE_NOTES/3.9.0.md)
 
 - **3.6.0 — Faithful Exports, a Trustworthy Worklist.** A widen-and-polish fix
   release from a five-agent audit: authored emphasis + footnotes survive into the
@@ -104,7 +108,7 @@ lines (zero Critical), with every surviving finding fixed and zero breaking
 changes. The 3.0.x line (through 3.0.9) then hardened the Bund scripting coverage
 and the export/import/keymap/assembly subsystems through successive targeted
 audits, each leaving a build-time guard behind. **3.1.0 lifted the feature freeze**
-(BONDS); **3.2.0** (ENSEMBLE), **3.3.0** (multilingual parity), **3.4.0** (export fidelity), **3.5.0** (imports + reader hub), **3.6.0** (fidelity + worklist fixes), **3.7.0** (the TUI pass), **3.8.0** (a second TUI pass — rendering + the Tree and Output panes), and **3.9.0** (a third — the AI / Search / Thoughts panes, plus AI-pane depth) continue
+(BONDS); **3.2.0** (ENSEMBLE), **3.3.0** (multilingual parity), **3.4.0** (export fidelity), **3.5.0** (imports + reader hub), **3.6.0** (fidelity + worklist fixes), **3.7.0** (the TUI pass), **3.8.0** (a second TUI pass — rendering + the Tree and Output panes), **3.9.0** (a third — the AI / Search / Thoughts panes, plus AI-pane depth), and **3.10.0** (a self-building F1 help corpus + an owned, load-on-open vector index) continue
 on that hardened surface. Full 3.0.0 notes:
 [`Documentation/RELEASE_NOTES/3.0.0.md`](Documentation/RELEASE_NOTES/3.0.0.md).
 
@@ -315,7 +319,7 @@ cargo install inkhaven
 ```
 
 Inkhaven is published on crates.io — every release tag pushes a
-new version (latest: 3.9.0).  The first build takes ~10 minutes on
+new version (latest: 3.10.0).  The first build takes ~10 minutes on
 a modern laptop because of DuckDB + fastembed + ONNX-runtime
 compilation; `cargo binstall` above is the fast path.
 
