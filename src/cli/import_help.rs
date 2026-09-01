@@ -33,6 +33,10 @@ use crate::store::{InsertPosition, Store, SYSTEM_TAG_HELP};
 struct Counts {
     branches: usize,
     paragraphs: usize,
+    /// Total files to import, counted up front so per-file progress can show
+    /// `[X/N]` (embedding each paragraph is the slow part, so real-time
+    /// progress matters). Zero disables the per-file lines.
+    total: usize,
 }
 
 pub fn run(project: &Path, documents_dir: &Path) -> Result<()> {
@@ -78,7 +82,26 @@ pub fn run(project: &Path, documents_dir: &Path) -> Result<()> {
     // from the in-memory `hierarchy` we captured above.
     let _ = Hierarchy::load(&store)?;
 
-    let mut counts = Counts::default();
+    // Count the files up front so import can report `[X/N]` progress — the
+    // embedding inside each `import_file` is what makes a large corpus slow.
+    let total = walkdir::WalkDir::new(documents_dir)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+        .filter(|e| {
+            e.file_type().is_file()
+                && !e
+                    .file_name()
+                    .to_str()
+                    .map(|s| s.starts_with('.'))
+                    .unwrap_or(false)
+        })
+        .count();
+    let mut counts = Counts {
+        total,
+        ..Default::default()
+    };
+    eprintln!("indexing {total} document(s) into Help (embedding each — this can take a minute)…");
 
     // Children of the source directory become either branches or paragraphs
     // directly under Help. Sorted dirs-first / alphabetical so the output
@@ -96,6 +119,23 @@ pub fn run(project: &Path, documents_dir: &Path) -> Result<()> {
                 entry.display()
             );
         }
+    }
+
+    // 3.10 — flush the freshly-built vector index to disk as the final step, so
+    // `rebuild-help` leaves a complete, persisted index rather than relying on a
+    // later save.
+    eprintln!("persisting the vector index…");
+    if let Err(e) = store.sync() {
+        eprintln!("warning: vector index sync failed: {e}");
+    }
+
+    // 3.10 — checkpoint the DuckDB stores so the ~7 MB of help rows this pass
+    // wrote land in the main `.db` files instead of the write-ahead log.
+    // Without this the WAL is replayed on every subsequent open — the first F1
+    // search was paying ~10 s of WAL replay on top of the (now fixed) index
+    // load. Draining it here makes opens fast for the life of the corpus.
+    if let Err(e) = store.checkpoint() {
+        eprintln!("warning: store checkpoint failed: {e}");
     }
 
     eprintln!(
@@ -250,6 +290,11 @@ fn import_file(
         store.update_paragraph_content(&mut node, &bytes)?;
     }
     counts.paragraphs += 1;
+    // Per-file progress (printed after this file's embedding completes, so the
+    // line is real progress, not a queued estimate).
+    if counts.total > 0 {
+        eprintln!("  [{}/{}] {}", counts.paragraphs, counts.total, title);
+    }
     Ok(())
 }
 

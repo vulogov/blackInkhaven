@@ -886,8 +886,17 @@ impl super::App {
         );
     }
 
+    /// 3.10 — kick off an F1 help query. The slow query-embed + vector search
+    /// runs on a background thread so the UI stays live (the "Searching…"
+    /// spinner animates); `pump_help_search` finishes it when the hits arrive.
+    /// The old synchronous entry point is preserved as a thin wrapper for any
+    /// non-interactive caller (it just begins the async search).
     pub(super) fn start_help_inference(&mut self, query: &str) {
-        let query = query.trim();
+        self.begin_help_search(query);
+    }
+
+    pub(super) fn begin_help_search(&mut self, query: &str) {
+        let query = query.trim().to_string();
         if query.is_empty() {
             self.status = "Help: empty question".into();
             return;
@@ -901,16 +910,70 @@ impl super::App {
         let help_subtree: std::collections::HashSet<Uuid> =
             self.hierarchy.collect_subtree(help_id).into_iter().collect();
 
-        // Search broadly, then filter to nodes inside the Help subtree. We
-        // ask for more than we'll actually feed to the LLM so the post-filter
-        // doesn't starve us if many hits are outside Help.
-        let raw_hits = match self.store.search_text(query, 40) {
-            Ok(hits) => hits,
-            Err(e) => {
-                self.status = format!("Help: search failed: {e}");
-                return;
-            }
+        // 3.10 — the Help book seeds empty; if nothing's been indexed into it,
+        // point the user at the one-shot corpus build instead of the cryptic
+        // "no entries found" they'd otherwise get after the search.
+        let help_has_content = self.hierarchy.iter().any(|n| {
+            n.kind == NodeKind::Paragraph && help_subtree.contains(&n.id)
+        });
+        if !help_has_content {
+            self.modal = crate::tui::modal::Modal::None;
+            self.status =
+                "Help corpus not built — run `inkhaven rebuild-help` (downloads inkhaven's docs; needs network once, then cached). F1 answers after that.".into();
+            return;
+        }
+
+        // Run the broad search on a background thread (cloned store handle) so
+        // the embed + HNSW over the whole store doesn't freeze the UI. We ask
+        // for more than we'll feed the LLM so the post-filter to the Help
+        // subtree doesn't starve.
+        let (tx, rx) = std::sync::mpsc::channel();
+        let store = self.store.clone();
+        let q = query.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(store.search_text(&q, 40).map_err(|e| e.to_string()));
+        });
+        self.help_search = Some(super::HelpSearch {
+            query,
+            subtree: help_subtree,
+            started: std::time::Instant::now(),
+            rx,
+        });
+        self.status = "Help: searching…".into();
+    }
+
+    /// Poll the background help search; when its hits arrive, finish on the main
+    /// thread (filter → fetch content → assemble grounding → spawn the LLM).
+    pub(super) fn pump_help_search(&mut self) {
+        let Some(hs) = &self.help_search else {
+            return;
         };
+        match hs.rx.try_recv() {
+            Ok(result) => {
+                let hs = self.help_search.take().expect("just checked Some");
+                self.modal = crate::tui::modal::Modal::None;
+                match result {
+                    Ok(raw_hits) => self.finish_help_search(&hs.query, &hs.subtree, raw_hits),
+                    Err(e) => self.status = format!("Help: search failed: {e}"),
+                }
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.help_search = None;
+                self.modal = crate::tui::modal::Modal::None;
+                self.status = "Help: search thread ended unexpectedly".into();
+            }
+        }
+    }
+
+    /// Main-thread completion of a help search: filter the hits to the Help
+    /// subtree, fetch + assemble the grounding context, and spawn the LLM.
+    fn finish_help_search(
+        &mut self,
+        query: &str,
+        help_subtree: &std::collections::HashSet<Uuid>,
+        raw_hits: Vec<serde_json::Value>,
+    ) {
         let mut chosen: Vec<SearchHit> = raw_hits
             .iter()
             .filter_map(SearchHit::parse)
@@ -948,10 +1011,12 @@ impl super::App {
         }
 
         if included == 0 {
-            self.status = format!(
-                "Help: no entries found for `{}`. Try a different question.",
-                query
-            );
+            self.status = if self.store.vector_index_appears_stale() {
+                "Help: the index is empty — run `inkhaven rebuild-help` to build the F1 corpus."
+                    .to_string()
+            } else {
+                format!("Help: no entries found for `{}`. Try a different question.", query)
+            };
             return;
         }
 
@@ -990,11 +1055,17 @@ impl super::App {
             started_at: std::time::Instant::now(),
         });
         self.pending_chat_user_msg = None;
+        // 3.10 — surface the AI pane so the streaming answer is actually
+        // visible; without this it streams into a hidden right pane (Output /
+        // Thoughts) and F1 looks like nothing happened. Reset the response
+        // scroll so the reply is followed from the top.
+        self.right_pane = super::RightPane::Ai;
+        self.ai_response_scroll = 0;
         // Land on the AI prompt pane so the user can immediately ask a
         // follow-up Help question; Esc flips to the AI pane to read.
         self.change_focus(Focus::AiPrompt);
         self.status = format!(
-            "Help: streaming answer from {provider} (grounded on {included} excerpt(s))…"
+            "Help: waiting for {provider} (grounded on {included} excerpt(s))…"
         );
     }
 

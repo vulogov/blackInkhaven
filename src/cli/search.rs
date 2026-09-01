@@ -17,7 +17,16 @@ pub fn run(project: &Path, query: &str, limit: usize) -> Result<()> {
     let results = store.search_text(query, limit)?;
 
     if results.is_empty() {
-        eprintln!("No results.");
+        if store.vector_index_appears_stale() {
+            eprintln!(
+                "No results — the vector index is empty but this project has content.\n\
+                 It's likely from an older index format. Rebuild it with:\n\
+                 \x20   inkhaven reindex        (your books)\n\
+                 \x20   inkhaven rebuild-help   (the F1 help corpus)"
+            );
+        } else {
+            eprintln!("No results.");
+        }
         return Ok(());
     }
 
