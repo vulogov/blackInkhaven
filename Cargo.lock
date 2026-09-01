@@ -3981,7 +3981,7 @@ checksum = "a588916bfdfd92e71cacef98a63d9b1f0d74d6599980d11894290e7ddefffcf7"
 
 [[package]]
 name = "inkhaven"
-version = "3.9.0"
+version = "3.10.0"
 dependencies = [
  "anyhow",
  "arboard",
@@ -4004,6 +4004,7 @@ dependencies = [
  "fs2",
  "futures-util",
  "genai",
+ "hnsw_rs",
  "humantime",
  "humantime-serde",
  "hypher",
@@ -4063,7 +4064,6 @@ dependencies = [
  "unicode-segmentation",
  "unicode-width 0.2.0",
  "uuid",
- "vecstore",
  "walkdir",
  "whatlang",
  "write-fonts 0.43.0",
@@ -6253,17 +6253,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
 
 [[package]]
-name = "ordered-float"
-version = "5.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c860fd3227ca4ac3cc032e2cd20cba3f02ccdf4b610538f8ee6584d56bb62e96"
-dependencies = [
- "num-traits",
- "rand 0.8.8",
- "serde",
-]
-
-[[package]]
 name = "ort"
 version = "2.0.0-rc.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7261,7 +7250,6 @@ dependencies = [
  "libc",
  "rand_chacha 0.3.1",
  "rand_core 0.6.4",
- "serde",
 ]
 
 [[package]]
@@ -7331,7 +7319,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec0be4795e2f6a28069bec0b5ff3e2ac9bafc99e6a9a7dc3547996c5c816922c"
 dependencies = [
  "getrandom 0.2.17",
- "serde",
 ]
 
 [[package]]
@@ -9593,16 +9580,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tracing-serde"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "704b1aeb7be0d0a84fc9828cae51dab5970fee5088f83d1dd7ee6f6246fc6ff1"
-dependencies = [
- "serde",
- "tracing-core",
-]
-
-[[package]]
 name = "tracing-subscriber"
 version = "0.3.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9612,15 +9589,12 @@ dependencies = [
  "nu-ansi-term",
  "once_cell",
  "regex-automata",
- "serde",
- "serde_json",
  "sharded-slab",
  "smallvec",
  "thread_local",
  "tracing",
  "tracing-core",
  "tracing-log",
- "tracing-serde",
 ]
 
 [[package]]
@@ -10710,32 +10684,6 @@ name = "vcpkg"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
-
-[[package]]
-name = "vecstore"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3daf977e0141f86e73f9c99a7a8110470e66d6ed90a4e34b817524c002dc289a"
-dependencies = [
- "anyhow",
- "bincode",
- "chrono",
- "clap",
- "directories",
- "getrandom 0.2.17",
- "hnsw_rs",
- "memmap2",
- "ordered-float",
- "rand 0.8.8",
- "rayon",
- "regex",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.20",
- "tracing",
- "tracing-subscriber",
-]
 
 [[package]]
 name = "version_check"

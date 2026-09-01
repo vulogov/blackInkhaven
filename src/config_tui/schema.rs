@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 /// Phase 6+ also consults a metadata table
 /// (`refined_type`) that narrows generic `String`s
 /// into `Color` / `Path` / `Enum` based on the path.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConfigType {
     Bool,
     Int,
@@ -116,9 +116,34 @@ pub fn refined_type(path: &str, inferred: &ConfigType) -> ConfigType {
     if let Some(variants) = enum_variants_for(path) {
         return ConfigType::Enum(variants);
     }
-    // Color overrides — only apply to fields that
-    // were inferred as `String` to begin with.
-    if matches!(inferred, ConfigType::String) {
+    // 3.10 — per-reader `.language` overrides (jinja/stylist/dialogue/char/…)
+    // use the same full-name language set as the top-level `language` field.
+    // (`typst_page.language` uses ISO codes and is caught by the exact table
+    // above, so it never reaches here.)
+    if path.ends_with(".language") {
+        return ConfigType::Enum(vec![
+            "english", "russian", "french", "german", "spanish",
+        ]);
+    }
+    // 3.10 — an `Option<T>` field defaulting to `None` serialises to JSON null,
+    // so `ConfigType::infer` returns `Unknown` and the field was **uneditable**
+    // in the config editor even when a value was present in the file. Recover an
+    // editable type from the path: an explicit int hint for the two numeric
+    // optionals, else the filesystem-suffix rules below, else plain String.
+    let effective = if matches!(inferred, ConfigType::Unknown) {
+        if path.ends_with("anachronism.year")
+            || path.ends_with("idle_threshold_seconds")
+        {
+            ConfigType::Int
+        } else {
+            ConfigType::String
+        }
+    } else {
+        inferred.clone()
+    };
+    // Color / Path refinements — apply to string-shaped leaves, including a
+    // recovered Option<String>.
+    if matches!(effective, ConfigType::String) {
         if path.starts_with("theme.")
             && (path.ends_with("_bg")
                 || path.ends_with("_fg")
@@ -134,7 +159,7 @@ pub fn refined_type(path: &str, inferred: &ConfigType) -> ConfigType {
             return ConfigType::Path;
         }
     }
-    inferred.clone()
+    effective
 }
 
 fn enum_variants_for(path: &str) -> Option<Vec<&'static str>> {
@@ -518,6 +543,39 @@ pub fn index_by_path(root: &SchemaNode) -> BTreeMap<String, &SchemaNode> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn option_none_leaves_recover_an_editable_type() {
+        // 3.10 — Option<T>=None serialises to null → inferred Unknown; without
+        // recovery the config editor showed these as uneditable "unknown".
+        assert_eq!(
+            refined_type("genre", &ConfigType::Unknown),
+            ConfigType::String
+        );
+        assert_eq!(
+            refined_type("editor.comment_author", &ConfigType::Unknown),
+            ConfigType::String
+        );
+        // Filesystem-suffix optionals recover as Path.
+        assert_eq!(
+            refined_type("editor.tts.binary_path", &ConfigType::Unknown),
+            ConfigType::Path
+        );
+        // The two numeric optionals recover as Int, not String.
+        assert_eq!(
+            refined_type("editor.anachronism.year", &ConfigType::Unknown),
+            ConfigType::Int
+        );
+        assert_eq!(
+            refined_type("docs_verify.idle_threshold_seconds", &ConfigType::Unknown),
+            ConfigType::Int
+        );
+        // Per-reader `.language` overrides become the language enum.
+        assert!(matches!(
+            refined_type("dialogue.language", &ConfigType::Unknown),
+            ConfigType::Enum(_)
+        ));
+    }
 
     #[test]
     fn empty_live_marks_everything_default() {

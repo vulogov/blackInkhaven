@@ -1,7 +1,10 @@
-//! HNSW vector index backed by the `vecstore` crate. Mirrors the
-//! ergonomics of bdslib's `vectorengine.rs` — same lazy open, same
+//! HNSW vector index backed by inkhaven's owned store
+//! (`crate::storage::hnsw_store`, built directly on `hnsw_rs`). Mirrors
+//! the ergonomics of bdslib's `vectorengine.rs` — same lazy open, same
 //! cosine-distance-to-similarity score flip — but with the reranker
-//! pathway and unused batch/single-doc helpers removed.
+//! pathway and unused batch/single-doc helpers removed. The owned store
+//! reloads the persisted graph on open instead of rebuilding it, so the
+//! first search no longer pays a multi-second index reconstruction.
 
 use anyhow::{anyhow, Result};
 use parking_lot::Mutex;
@@ -9,9 +12,9 @@ use serde_json::Value as JsonValue;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use vecstore::{Metadata, Query, VecStore};
+use crate::storage::hnsw_store::{Metadata, Query, VecStore};
 
-pub use vecstore::Neighbor as SearchResult;
+pub use crate::storage::hnsw_store::Neighbor as SearchResult;
 
 use crate::storage::embedding::EmbeddingEngine;
 use crate::storage::fingerprint::json_fingerprint;

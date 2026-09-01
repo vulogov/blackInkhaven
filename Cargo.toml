@@ -1,6 +1,6 @@
 [package]
 name = "inkhaven"
-version = "3.9.0"
+version = "3.10.0"
 edition = "2024"
 # Rust 1.85 stabilised edition 2024. Bump alongside any toolchain-only
 # feature usage (let-else / chained-comparisons / etc. are already stable).
@@ -68,6 +68,11 @@ exclude = [
     # root; it is opened by project-relative path at runtime, never
     # embedded, so it must not travel inside the published crate.
     "inner_socrates.db",
+    # The packaged F1 help corpus (~4.5 MB). Committed at the repo root and
+    # served raw from GitHub for `inkhaven rebuild-help`; it must NOT travel
+    # inside the crate — that would blow the crate past crates.io's payload
+    # limit and defeat the whole "fetch, don't bundle" design.
+    "help-corpus.json",
     # NB: do NOT exclude `*.png` globally — `logo.png` at the repo root
     # is `include_bytes!`'d into the binary; the build breaks without
     # it. The rest of assets/* is loaded via include_str! /
@@ -103,10 +108,11 @@ path = "src/main.rs"
 [dependencies]
 # Storage / search. Inkhaven owns its own slim storage layer at
 # `src/storage/` — DuckDB-backed metadata + blob stores, an HNSW vector
-# index via `vecstore`, and a fastembed wrapper for multilingual
-# embeddings. This module replaces what used to be a dependency on
-# `bdslib` (vendored at vendor/bdslib/), shedding ~300+ transitive
-# crates that inkhaven never reached (Tantivy, augurs, axum, …).
+# index owned in-tree at `src/storage/hnsw_store.rs` (built directly on
+# `hnsw_rs`), and a fastembed wrapper for multilingual embeddings. This
+# module replaces what used to be a dependency on `bdslib` (vendored at
+# vendor/bdslib/), shedding ~300+ transitive crates that inkhaven never
+# reached (Tantivy, augurs, axum, …).
 duckdb = { version = "1", features = ["bundled", "r2d2"] }
 fastembed = "5"
 # RESRCH-2 (R2-B) — text extraction from imported PDF research sources. The
@@ -116,7 +122,11 @@ pdf-extract = "0.9"
 # tree transitively via genai; pinned to rustls to avoid a native-TLS / OpenSSL
 # system dep. Only used when `research.web` is configured.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
-vecstore = "1"
+# HNSW library backing our owned vector index (src/storage/hnsw_store.rs).
+# We call it directly — load the persisted graph on open, insert incrementally
+# on save — rather than through the abandoned `vecstore` wrapper that rebuilt
+# the whole graph on every open.
+hnsw_rs = "0.3"
 r2d2 = "0.8"
 parking_lot = "0.12"
 

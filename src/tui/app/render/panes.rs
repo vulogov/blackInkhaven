@@ -2249,24 +2249,45 @@ impl super::super::App {
                 .add_modifier(Modifier::BOLD),
         ));
         if let Some(inf) = &self.inference {
+            // 3.10 — an animated braille spinner while the request is in flight,
+            // so there's immediate, live feedback between pressing Enter and the
+            // first token (the dirty-flag loop redraws every 40 ms while
+            // streaming, so it visibly spins). Phase derives from elapsed time,
+            // needing no extra state. Before any token arrives the label reads
+            // "waiting" — the answer to "did anything happen?".
+            const SPINNER: [&str; 10] =
+                ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+            let frame = SPINNER
+                [(inf.started_at.elapsed().as_millis() / 80) as usize % SPINNER.len()];
+            let verb = if inf.response.is_empty() {
+                "waiting"
+            } else {
+                "streaming"
+            };
             // Suppress the redundant provider tag when the in-flight
             // run is on the bound default — the chip already shows it.
             // When the user fired the request and THEN swapped default
             // (Ctrl+B L) the two diverge — show both.
-            let status_text = if inf.provider == self.cfg.llm.default {
-                match &inf.status {
-                    InferenceStatus::Streaming => " · streaming…".to_string(),
-                    InferenceStatus::Done => " · done".to_string(),
-                    InferenceStatus::Error(_) => " · error".to_string(),
-                }
+            let provider_tag = if inf.provider == self.cfg.llm.default {
+                String::new()
             } else {
-                match &inf.status {
-                    InferenceStatus::Streaming => format!(" — {} · streaming…", inf.provider),
-                    InferenceStatus::Done => format!(" — {} · done", inf.provider),
-                    InferenceStatus::Error(_) => format!(" — {} · error", inf.provider),
-                }
+                format!(" — {}", inf.provider)
             };
-            spans.push(Span::raw(status_text));
+            match &inf.status {
+                InferenceStatus::Streaming => {
+                    spans.push(Span::raw(format!("{provider_tag} · ")));
+                    spans.push(Span::styled(
+                        format!("{frame} {verb}…"),
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    ));
+                }
+                InferenceStatus::Done => spans.push(Span::raw(format!("{provider_tag} · done"))),
+                InferenceStatus::Error(_) => {
+                    spans.push(Span::raw(format!("{provider_tag} · error")))
+                }
+            }
             // 3.9 — advertise the streaming cancel (Esc keeps the chat; Ctrl+B c
             // clears it).
             if matches!(inf.status, InferenceStatus::Streaming) {
@@ -2419,6 +2440,24 @@ impl super::super::App {
                     InferenceStatus::Error(e) => Paragraph::new(e.clone())
                         .style(Style::default().fg(Color::Red))
                         .wrap(Wrap { trim: false }),
+                    // 3.10 — the wait before the first token left the body blank,
+                    // reading as "nothing happened". Show a live spinner line.
+                    InferenceStatus::Streaming if inf.response.is_empty() => {
+                        const SPIN: [&str; 10] =
+                            ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+                        let f = SPIN[(inf.started_at.elapsed().as_millis() / 80) as usize
+                            % SPIN.len()];
+                        Paragraph::new(Line::from(vec![
+                            Span::styled(
+                                format!("  {f} "),
+                                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                            ),
+                            Span::styled(
+                                format!("waiting for {}…", inf.provider),
+                                Style::default().add_modifier(Modifier::DIM),
+                            ),
+                        ]))
+                    }
                     InferenceStatus::Streaming | InferenceStatus::Done => {
                         // Render the response as markdown — bold/italic/
                         // headings/code/lists all light up. Partial input

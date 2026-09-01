@@ -8,6 +8,7 @@ pub mod recover;
 pub mod export;
 pub mod export_concordance;
 pub mod export_timeline;
+pub mod help_corpus;
 pub mod import_help;
 pub mod import_epub;
 pub mod import_scrivener;
@@ -490,6 +491,33 @@ pub enum Command {
     /// (RAG over Help) can answer typst questions from grounded
     /// context. Offline — the reference is bundled with the binary.
     ImportTypstHelp,
+
+    /// Rebuild the F1 Help corpus: download inkhaven's documentation from its
+    /// GitHub release and index it into the Help book. No manual `import-help`
+    /// and no local docs folder needed — a `cargo install` user just runs this
+    /// once (it caches, so later runs are offline). See also the automatic
+    /// first-use build in the TUI.
+    RebuildHelp {
+        /// Override the corpus source (defaults to the GitHub release asset).
+        /// Accepts an `http(s)://` URL, a `file://` URL, or a local path — so
+        /// `--url ./help-corpus.json` works offline after `package-help-corpus`.
+        #[arg(long)]
+        url: Option<String>,
+        /// Ignore the cache and re-download.
+        #[arg(long)]
+        force: bool,
+    },
+
+    /// MAINTAINER: package a documentation directory into the `help-corpus.json`
+    /// artifact uploaded to the GitHub release (consumed by `rebuild-help`).
+    PackageHelpCorpus {
+        /// Docs directory to package (every `.md` beneath it).
+        #[arg(long, default_value = "Documentation")]
+        documents_directory: PathBuf,
+        /// Output artifact path.
+        #[arg(long, default_value = "help-corpus.json")]
+        out: PathBuf,
+    },
 
     /// Import a Scrivener (.scriv) project into the current
     /// inkhaven project (1.2.4+). Walks the binder, converts
@@ -6440,6 +6468,7 @@ fn command_mutates(command: &Command) -> bool {
             | Command::ImportEpub { .. }
             | Command::ImportHelp { .. }
             | Command::ImportTypstHelp
+            | Command::RebuildHelp { .. }
             | Command::Recover { .. }
             | Command::Event(EventCommand::Add { .. })
             | Command::Sources(SourcesCommand::Import { .. })
@@ -6628,6 +6657,20 @@ impl Cli {
             Command::ImportTypstHelp => {
                 import_typst_help::run(&project).map_err(Into::into)
             }
+            Command::RebuildHelp { url, force } => {
+                let u = url
+                    .unwrap_or_else(|| help_corpus::DEFAULT_CORPUS_URL.to_string());
+                help_corpus::rebuild(&project, &u, force).map_err(Into::into)
+            }
+            Command::PackageHelpCorpus {
+                documents_directory,
+                out,
+            } => help_corpus::package(
+                &documents_directory,
+                &out,
+                env!("CARGO_PKG_VERSION"),
+            )
+            .map_err(Into::into),
             Command::ImportScrivener {
                 scriv_path,
                 draft_as_book,

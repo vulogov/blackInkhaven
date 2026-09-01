@@ -785,6 +785,17 @@ symbol/motif proposals you can accept straight into this book.";
             .map_err(|e| Error::Store(e.to_string()))
     }
 
+    /// 3.10 — does the vector index look like it needs (re)building? True when
+    /// the project holds content (DuckDB rows) but the HNSW index is empty —
+    /// which is exactly the state an older on-disk index format leaves after the
+    /// owned store replaced `vecstore` (the old files can't be read, so the
+    /// index opens empty). Format-agnostic on purpose: it also catches a lost or
+    /// corrupt dump. Callers surface a "run `inkhaven reindex`" hint instead of a
+    /// bare "no results". Cheap (two counts); safe to call on the search path.
+    pub fn vector_index_appears_stale(&self) -> bool {
+        matches!((self.row_count(), self.vector_count()), (Ok(rows), Ok(vecs)) if rows > 0 && vecs == 0)
+    }
+
     /// Add a hierarchy node to bdslib. The metadata is serialized; the content
     /// bytes are indexed for vector search. Returns the bdslib-assigned UUIDv7
     /// after we copy it back onto the Node.

@@ -14,6 +14,7 @@ pub mod edge_store;
 pub mod embedding;
 pub mod engine;
 pub mod fingerprint;
+pub mod hnsw_store;
 pub mod vector;
 
 pub use document::DocumentStorage;

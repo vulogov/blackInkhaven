@@ -216,6 +216,23 @@ Inkhaven for a given purpose.
   `llm.default_provider` field — set it to `ollama` and run a
   local model if you require on-device-only operation.
 
+* **First-party network fetches (no manuscript / telemetry sent).**
+  Beyond the LLM path above, Inkhaven makes a few outbound
+  requests that *pull* data to your machine — it never sends
+  your prose, project, or any usage/telemetry anywhere
+  unprompted.  These are: the **embedding model** (downloaded
+  from Hugging Face on first embed, then cached on-device);
+  **`inkhaven rebuild-help`**, which fetches the F1 help corpus
+  from Inkhaven's **GitHub release** (a one-time pull, then
+  cached — so F1 help is *not* built until you run it or
+  configure it, and Inkhaven does not fetch it silently at
+  startup); and the **optional research features** (Project
+  Gutenberg, GeoNames, Wikisource, web search) which only reach
+  out when you invoke them.  So "on-device except the AI
+  providers you choose" carries this one honest caveat: getting
+  the help corpus and the embedding model onto your machine each
+  needs the network once.
+
 * **Bund scripting can break the editor's invariants.**
   Even with sandbox + trust gate + default-deny categories
   active, a user who explicitly enables `STORE_WRITE` or

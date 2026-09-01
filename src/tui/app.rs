@@ -1742,6 +1742,19 @@ pub(crate) enum SocraticOutcome {
     Addressed,
 }
 
+/// 3.10 — an F1 help search running on a background thread. The slow part (the
+/// query embed + vector search over the whole store) runs off the main loop so
+/// the "Searching…" spinner keeps animating; `pump_help_search` picks up the
+/// raw hits and finishes on the main thread (filter → assemble → spawn LLM).
+struct HelpSearch {
+    query: String,
+    /// The Help book's subtree ids, captured up front so the background result
+    /// can be filtered to Help without touching the hierarchy off-thread.
+    subtree: std::collections::HashSet<Uuid>,
+    started: std::time::Instant,
+    rx: std::sync::mpsc::Receiver<std::result::Result<Vec<serde_json::Value>, String>>,
+}
+
 pub(crate) struct App {
     layout: ProjectLayout,
     store: Store,
@@ -1983,6 +1996,13 @@ pub(crate) struct App {
     /// Cursor into `search_history`; None = not navigating. Same semantics as
     /// `ai_prompt_history_cursor`.
     search_history_cursor: Option<usize>,
+    /// 3.10 — an in-flight F1 help search running on a background thread (the
+    /// query embed + vector search is slow over ~1800 paragraphs). While it's
+    /// `Some`, the Help modal stays up with an ANIMATED "Searching…" spinner
+    /// (the loop keeps redrawing because `is_animating` includes this), and
+    /// `pump_help_search` finishes it — assembling the context and spawning the
+    /// inference — when the background result arrives.
+    help_search: Option<HelpSearch>,
     /// 1.2.8+ — F1 help-query history. Up/Down inside the
     /// `Modal::HelpQuery` input walks this ring. Pushed on
     /// every successful Enter (dedup against the immediate
@@ -3724,6 +3744,7 @@ impl App {
             ai_prompt_history_cursor: None,
             search_history: Vec::new(),
             search_history_cursor: None,
+            help_search: None,
             help_query_history: Vec::new(),
             help_query_history_cursor: None,
             snapshot_filter: String::new(),
@@ -4052,6 +4073,7 @@ impl App {
             // them all at once by diffing the status across the tick block.
             let status_before = self.status.clone();
             self.pump_inference();
+            self.pump_help_search();
             self.pump_bg_job();
             self.tick_autosave();
             self.tick_crash_mirror();
@@ -4151,7 +4173,10 @@ impl App {
     /// background job (its results stream in / the chip spins). Discrete one-off
     /// changes set `needs_redraw` directly instead of appearing here.
     fn is_animating(&self) -> bool {
-        self.is_streaming() || self.reader_pace_playing() || self.bg_job.is_some()
+        self.is_streaming()
+            || self.reader_pace_playing()
+            || self.bg_job.is_some()
+            || self.help_search.is_some()
     }
 
     /// A1 — a bracketed-paste chunk arrived as ONE event. Insert it in bulk at the
@@ -6710,11 +6735,10 @@ impl App {
     /// `editor.wrap`). The renderer reads `cfg.editor.wrap` each frame.
     fn toggle_soft_wrap(&mut self) {
         self.cfg.editor.wrap = !self.cfg.editor.wrap;
-        self.status = if self.cfg.editor.wrap {
-            "soft-wrap: on".into()
-        } else {
-            "soft-wrap: off".into()
-        };
+        let on = self.cfg.editor.wrap;
+        // 3.10 — persist so the choice survives a restart (was session-only).
+        let saved = self.persist_config_key("editor", "wrap", if on { "true" } else { "false" });
+        self.status = format!("soft-wrap: {}{saved}", if on { "on" } else { "off" });
     }
 
     /// A4 — `Ctrl+Z t`: strip trailing whitespace from every line, as ONE
@@ -25123,6 +25147,28 @@ impl App {
     /// and toggle the live SoundPlayer's enabled flag. No-ops on hosts
     /// without an audio device beyond updating the config (so the
     /// preference persists for a future launch on a host that does).
+    /// 3.10 — persist a one-level-nested config key to inkhaven.hjson,
+    /// comment-preserving (mirrors `toggle_sound`'s write path), so a
+    /// writing-TUI toggle survives a restart instead of silently resetting.
+    /// Returns a status suffix: ` · saved` on success, or ` (session only:
+    /// <why>)` when the write can't happen — the caller still applies the
+    /// toggle in-session either way. `value_lit` must already be an HJSON
+    /// literal (`true` / `false` / a quoted string).
+    fn persist_config_key(&self, block: &str, key: &str, value_lit: &str) -> String {
+        let path = self.layout.config_path();
+        let raw = match std::fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(e) => return format!(" (session only: read config: {e})"),
+        };
+        match set_key_in_hjson_block(&raw, block, key, value_lit) {
+            Ok(updated) => match std::fs::write(&path, &updated) {
+                Ok(()) => " · saved".to_string(),
+                Err(e) => format!(" (session only: write config: {e})"),
+            },
+            Err(reason) => format!(" (session only: {reason})"),
+        }
+    }
+
     fn toggle_sound(&mut self) {
         let new_value = !self.cfg.sound.enabled;
         let config_path = self.layout.config_path();
@@ -28051,6 +28097,14 @@ impl App {
 
     fn handle_modal_key(&mut self, key: KeyEvent) -> Result<bool> {
         if matches!(key.code, KeyCode::Esc) {
+            // 3.10 — cancelling the Help modal also drops any in-flight
+            // background search (its result is ignored by pump_help_search).
+            if self.help_search.is_some() && matches!(self.modal, Modal::HelpQuery { .. }) {
+                self.help_search = None;
+                self.modal = Modal::None;
+                self.status = "Help: cancelled".into();
+                return Ok(false);
+            }
             // SnapshotDiff stashes the picker it opened from in
             // `return_to`; popping that back makes Esc behave
             // like "close the diff, stay in the picker".
@@ -28509,8 +28563,23 @@ impl App {
                     self.help_query_history.push(trimmed.to_string());
                 }
                 self.help_query_history_cursor = None;
-                self.modal = Modal::None;
-                self.start_help_inference(&query);
+                // 3.10 — the query embed + vector search is slow (now over
+                // ~1800 help paragraphs). Run it on a background thread so the
+                // UI stays live: the Help modal stays up with an ANIMATED
+                // "Searching…" spinner, and `pump_help_search` finishes + spawns
+                // the answer when the hits arrive.
+                if !trimmed.is_empty() {
+                    self.begin_help_search(&query);
+                    self.needs_redraw = true;
+                } else {
+                    self.modal = Modal::None;
+                }
+                return Ok(false);
+            }
+            // While a search is in flight, swallow further keys (Esc is handled
+            // above and cancels by closing the modal; the thread result is
+            // dropped harmlessly by `pump_help_search`).
+            if self.help_search.is_some() {
                 return Ok(false);
             }
             // 1.2.8+ — Up / Down walks help_query_history.  Mirrors
