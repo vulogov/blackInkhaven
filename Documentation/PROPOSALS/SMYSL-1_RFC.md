@@ -5,7 +5,7 @@ Scope: changes requested in the **smysl** crate (github.com/vulogov/smysl, curre
 format `smysl/1.0`) so inkhaven can adopt it. This RFC lives in inkhaven's PROPOSALS because inkhaven
 is the motivating consumer; the two concrete asks (§2, §3) are additive `1.x` changes to smysl and, by
 smysl's own `cargo-semver-checks` discipline (new public items → minor), land as **smysl 1.8.0** — not
-a 2.0. Every compatibility claim below was verified against the smysl tree; see §7.
+a 2.0. Every compatibility claim below was verified against the smysl tree; see §8.
 
 ---
 
@@ -28,7 +28,7 @@ inkhaven captures today:
   fingerprints + a `MetricVector`, diffed as cleared-vs-introduced (`src/chronicle/`). That is the
   history of *problems detected*, not of *decisions made*: the symptom, not the decision.
 
-Verified (§7): inkhaven has **no** decision/canon development-history ledger — the axis is genuinely
+Verified (§8): inkhaven has **no** decision/canon development-history ledger — the axis is genuinely
 open, so this is not reinventing an existing subsystem.
 
 smysl is architecturally built for the decision-level history: an **append-only store**, **content-
@@ -38,7 +38,7 @@ addressed identity** (`Uid = blake3(det_cbor(UnitCore))`), a **logical clock** w
 (`grounds` = "this reveal depends on that setup"; `retract` blast-radius = "if I cut this, what
 breaks"; `trace` = "why is this true in my world"; `diff` = "what changed in canon since draft 2").
 
-Three gaps stood between smysl and this use. Verification (see §7) reduced them to **two real,
+Three gaps stood between smysl and this use. Verification (see §8) reduced them to **two real,
 additive changes** plus one that **already exists** and one **larger track**.
 
 ---
@@ -102,7 +102,7 @@ Mirror rule-M on the new axis: **a unit may not be more *committed* than the wea
 measured claim resting on a guess" — the *canonical-scene-built-on-sand* detector, surfaced not hoped
 for. Same shape as the existing rule M (`status > cap`), a new axis (`commitment > min(grounds)`).
 
-### Compatibility (verified — §7)
+### Compatibility (verified — §8)
 - **1.x, identity-preserving.** The field lives on `Unit` (`#[non_exhaustive]`), never `UnitCore`.
   `canonical_uid` hashes `UnitCore` only; a test already pins that `.with_salience(…)` etc. do not
   change the `Uid`. A new independent enum is unaffected by `Status`'s order.
@@ -135,7 +135,7 @@ smysl is the content-addressed ledger over it, cross-linked by this `SourceRef`)
 SourceKind::Node    // host-defined id + optional locator, e.g. { host: "inkhaven", id, path }
 ```
 
-### Compatibility (verified — §7)
+### Compatibility (verified — §8)
 **1.x.** `SourceKind` is `#[repr(u8)] #[non_exhaustive]`, so a new variant is non-breaking. No deps,
 deterministic.
 
@@ -195,7 +195,48 @@ design (a separate inkhaven PLAN); it is summarized here only to justify the smy
 
 ---
 
-## 7. Verification record (against the smysl tree, `1.7.0`)
+## 7. Scaling & budget
+
+Two budgets: the **token/context** budget (`pack`) and the **resource/cost** budget. The feature
+scales like inkhaven's existing per-project stores (the owned vector index, `chronicle.db`) because it
+shares their shape — per-project store, incremental append on save, deterministic queries.
+
+- **Data.** O(10²–10³) canon decisions for a novel, low 10⁴ for deep worldbuilding — tiny for a graph
+  (cf. the ~4k-vector help corpus loads in 49 ms). Append-only growth is proportional to *distinct
+  decisions + revisions*, not to save count: content-addressing dedups idempotent re-derivations, and a
+  *changed* decision appends one unit + a `Supersedes`. Superseded / `Retconned` units are the history
+  you want, filterable by commitment and compactable if ever heavy (same story as the vector store's
+  orphans, see [[owned-vector-store]] / RELEASE_NOTES 3.10.0).
+- **Compute — deterministic, ~$0.** Every author-facing query is a pure function, no model call:
+  `salience` fixed 32 iterations (`O(32·E)`); `pack` greedy over the *scoped* subgraph (exact
+  branch-and-bound gated behind a feature + `EXACT_THRESHOLD`); `retract` blast-radius =
+  reverse-reachability over `grounds`; `trace` / `diff` = bounded walk / Uid-set compare.
+  Sub-millisecond at book scale. "What breaks if I cut this," canon `diff`, and `trace` spend **zero
+  tokens**.
+- **On-save latency — the real constraint.** Deterministic harvest (SENTINEL continuity detectors,
+  `world/fact_check`) appends units **backgrounded like the vector-index sync** (`sync_in_background`).
+  **Model-based** harvest ("what decision does this paragraph *establish*") is **opt-in /
+  milestone-triggered** (natural at a CHRONICLE mark) or batched — never on the save hot path, per the
+  AI-advisory + cost-caps-inform principles. Automatic per-save LLM harvest is explicitly **out**.
+- **Token/context budget.** Context cost is **constant in canon size**: `pack --budget b --reserve r`
+  reserves prompt + question + answer room and closure-fills the rest (a decision drags in its grounds
+  + rebuttals); `scope` + `focus` (HNSW-seeded via `role_weights`, §4) bound the input; selection is
+  deterministic and free. A bigger canon means *better selection into the same window*, not bigger
+  prompts — strictly tighter than today's best-hits truncation (`src/book_rag/retrieval.rs`).
+- **$ / memory / deps.** Deterministic ops $0; LLM only at opt-in harvest + grounded chat (which
+  tighter packing can make *cheaper* per query). Loaded store is single-digit MB (10³–10⁴ units × a few
+  hundred bytes) beside the ~21 MB vector index. Pure-profile dependency (§1), no async/HTTP/C++, no
+  crate-publish bloat.
+
+**Scale-up (large project / series).** A single project's store stays in the ranges above; `scope`
+keeps every query bounded to the relevant book/character subgraph, so per-operation cost tracks the
+subgraph, not the whole store. A **series** is the one case with more than one store: SMYSL's
+coordinator-free **merge** unions per-project ledgers into a series canon (O(total) once; contentions
+= cross-book inconsistencies) — the SAGA path, deferred and gated on a real series user. Persistence is
+**one store per project** (`<project>/canon.cbor` beside `chronicle.db`), never per-paragraph:
+paragraph/chapter/character are *views* via the host `SourceRef` (§3) + `scope`, not separate files.
+
+## 8. Verification record (against the smysl tree, `1.7.0`)
 
 Two read-only passes confirmed the compatibility claims:
 
@@ -250,7 +291,7 @@ The asks A+C are unchanged by this pass; it confirms the *motivation* is real an
 
 ---
 
-## 8. Status & next
+## 9. Status & next
 
 - **smysl asks:** A (commitment axis) and C (host `SourceRef`) — additive, land as **smysl 1.8.0**.
 - **No 2.0** required; no new dependency; identity + determinism preserved.
