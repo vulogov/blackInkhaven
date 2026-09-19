@@ -762,6 +762,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "blake3"
+version = "1.8.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d9e454fc11f76977dc803893aff6304ed33d6a26efae8696573bea74baa27ae"
+dependencies = [
+ "arrayvec",
+ "cc",
+ "cfg-if",
+ "constant_time_eq",
+ "cpufeatures 0.3.1",
+]
+
+[[package]]
 name = "block-buffer"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -777,6 +790,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a8894febbff9f758034a5b8e12d87918f56dfc64a8e1fe757d65e29041538d93"
 dependencies = [
  "generic-array",
+]
+
+[[package]]
+name = "bm25"
+version = "2.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1cbd8ffdfb7b4c2ff038726178a780a94f90525ed0ad264c0afaa75dd8c18a64"
+dependencies = [
+ "fxhash",
 ]
 
 [[package]]
@@ -1463,6 +1485,12 @@ dependencies = [
  "quote",
  "unicode-xid",
 ]
+
+[[package]]
+name = "constant_time_eq"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 
 [[package]]
 name = "convert_case"
@@ -4042,6 +4070,7 @@ dependencies = [
  "similar",
  "skrifa 0.37.0",
  "slug",
+ "smysl",
  "syn 2.0.119",
  "tar",
  "tempfile",
@@ -8607,6 +8636,92 @@ checksum = "4aaa7368fcf4852a4c2dd92df0cace6a71f2091ca0a23391ce7f3a31833f1523"
 dependencies = [
  "borsh",
  "serde_core",
+]
+
+[[package]]
+name = "smysl"
+version = "1.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6dac84a01e8f187d544d860692e22ab346fa0adf571262cb75d852e9f11947d2"
+dependencies = [
+ "smysl-check",
+ "smysl-core",
+ "smysl-graph",
+ "smysl-pack",
+ "smysl-render",
+ "smysl-retrieve",
+ "smysl-thread",
+]
+
+[[package]]
+name = "smysl-check"
+version = "1.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4982146d988dbc22a6fbf33b23dff43fea4f240a07339d01f0fd4e1fa401f31f"
+dependencies = [
+ "smysl-core",
+ "smysl-graph",
+]
+
+[[package]]
+name = "smysl-core"
+version = "1.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56764ebaeb87ed45e5330b03e0255f1f44d04e849321fa3db9bc6b5c28d4f806"
+dependencies = [
+ "blake3",
+ "unicode-normalization",
+]
+
+[[package]]
+name = "smysl-graph"
+version = "1.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf4c69005da52aed90d4a4e39632c9adcf48aa8b772ca25bc64aa95c86fa03ff"
+dependencies = [
+ "smysl-core",
+]
+
+[[package]]
+name = "smysl-pack"
+version = "1.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7076690433c31b853d2f9df07f4255667d4989aed6e8a3685d531d5a391dc374"
+dependencies = [
+ "smysl-core",
+ "smysl-graph",
+]
+
+[[package]]
+name = "smysl-render"
+version = "1.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9b32bcf26aa00372ea422c691a08160cb5387e39da8f8c8d42c4e555d21d987b"
+dependencies = [
+ "smysl-core",
+ "smysl-graph",
+ "smysl-thread",
+]
+
+[[package]]
+name = "smysl-retrieve"
+version = "1.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8629997d9fadcb7bcb669c7262a1822b111d83e0e17a66685663208a2f7fee8f"
+dependencies = [
+ "bm25",
+ "smysl-core",
+ "smysl-graph",
+]
+
+[[package]]
+name = "smysl-thread"
+version = "1.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "861a691f11d05bb04a904e95d051dc909a18b6394df862efd655c95a37bad2fd"
+dependencies = [
+ "smysl-core",
+ "smysl-graph",
 ]
 
 [[package]]
