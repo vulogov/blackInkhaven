@@ -27,8 +27,12 @@ use parking_lot::Mutex;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use uuid::Uuid;
 
-use smysl::{from_cbor_seq, to_cbor_seq, Record, Store};
+use smysl::{canonical_uid, from_cbor_seq, to_cbor_seq, Record, Status, Store, Uid, UnitCoreBuilder};
+
+mod model;
+pub use model::NarrativeKind;
 
 /// After this many consecutive background-flush failures, give up the pass
 /// (leaving `dirty` set for the next trigger) rather than spinning — the same
@@ -98,6 +102,36 @@ impl CanonLedger {
     /// Total record count in the ledger.
     pub fn count(&self) -> Result<usize> {
         self.with_store(|s| Ok(s.len()))
+    }
+
+    /// CL-P1 — record a canon decision derived from an inkhaven node, returning
+    /// its content-addressed `Uid`. `grounds` names the decisions this one rests
+    /// on (empty for a base fact). Narrative units sit at `Status::Speculative` —
+    /// the epistemic axis is inert for fiction; canonicity is the commitment axis
+    /// (CL-P4). Marks the ledger dirty via [`Self::append`].
+    pub fn record_decision(
+        &self,
+        kind: NarrativeKind,
+        gist: &str,
+        node: Uuid,
+        breadcrumb: &str,
+        grounds: &[Uid],
+    ) -> Result<Uid> {
+        let core = UnitCoreBuilder::new(kind.schema_id(), gist, Status::Speculative)
+            .source(model::node_source(node, breadcrumb))
+            .grounds(grounds.iter().copied())
+            .build()
+            .map_err(|e| anyhow!("canon: invalid {kind:?} decision: {e}"))?;
+        let uid = canonical_uid(&core);
+        self.append(&[Record::Unit(core)])?;
+        Ok(uid)
+    }
+
+    /// CL-P1 — the node bridge (reverse lookup): the `Uid`s of every canon unit
+    /// derived from `node`, via the `inkhaven:<uuid>` source-reference prefix.
+    pub fn units_for_node(&self, node: Uuid) -> Result<Vec<Uid>> {
+        let prefix = model::node_prefix(node);
+        self.with_store(|s| Ok(s.units_with_source_prefix(&prefix)))
     }
 
     /// Flush to disk, but only when there are unpersisted writes. The clean-path
@@ -301,6 +335,53 @@ mod tests {
         assert_eq!(led.count().unwrap(), 0);
         led.sync().unwrap();
         assert!(!Path::new(&path_s).exists(), "a clean ledger writes no file");
+    }
+
+    #[test]
+    fn narrative_schema_strings_are_valid_extension_ids() {
+        use smysl::SchemaId;
+        for k in NarrativeKind::ALL {
+            let id = SchemaId::parse(k.schema_str()).expect("valid extension id");
+            assert!(matches!(id, SchemaId::Extension(_)), "{k:?} is an extension schema");
+        }
+    }
+
+    #[test]
+    fn node_reference_shapes() {
+        use super::model::{node_prefix, node_reference};
+        let n = Uuid::from_u128(0x1234);
+        assert_eq!(node_reference(n, "ch3/scene2"), format!("inkhaven:{n}#ch3/scene2"));
+        assert_eq!(node_reference(n, ""), format!("inkhaven:{n}"));
+        assert_eq!(node_prefix(n), format!("inkhaven:{n}"));
+    }
+
+    #[test]
+    fn record_decision_and_node_reverse_lookup() {
+        let dir = tempfile::tempdir().unwrap();
+        let path_s = dir.path().join("canon.cbor").to_str().unwrap().to_string();
+        let led = CanonLedger::new(&path_s);
+
+        let node_a = Uuid::from_u128(0xA);
+        let node_b = Uuid::from_u128(0xB);
+
+        // A base world-fact on node A, then a plot-point on node B grounded on it.
+        let base = led
+            .record_decision(NarrativeKind::WorldFact, "the harbour freezes each winter", node_a, "ch1/scene1", &[])
+            .unwrap();
+        let plot = led
+            .record_decision(NarrativeKind::PlotPoint, "escape by sea is impossible in winter", node_b, "ch9/scene3", &[base])
+            .unwrap();
+        assert_ne!(base, plot, "distinct decisions get distinct uids");
+
+        // The node bridge isolates units by their source node.
+        assert_eq!(led.units_for_node(node_a).unwrap(), vec![base], "node A → its world-fact");
+        assert_eq!(led.units_for_node(node_b).unwrap(), vec![plot], "node B → its plot-point");
+        assert!(led.units_for_node(Uuid::from_u128(0xC)).unwrap().is_empty(), "unknown node → none");
+
+        // Persists across reopen.
+        led.sync().unwrap();
+        let led2 = CanonLedger::new(&path_s);
+        assert_eq!(led2.units_for_node(node_a).unwrap(), vec![base], "node bridge survives reload");
     }
 
     #[test]
