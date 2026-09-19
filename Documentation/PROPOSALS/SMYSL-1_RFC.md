@@ -1,7 +1,7 @@
 # SMYSL-1 — a narrative-development substrate (SMYSL feature RFC)
 
-Status: **SHIPPED in smysl 1.7.0** (unreleased at time of writing; last published tag `v1.6.0`).
-Written 2026-09-18 as a proposal; updated the same day to record what landed.
+Status: **SHIPPED & PUBLISHED in smysl 1.7.0** (on crates.io as of 2026-09-19).
+Written 2026-09-18 as a proposal; updated to record what landed and its publication.
 Scope: changes to the **smysl** crate (github.com/vulogov/smysl, format `smysl/1.0`) so inkhaven can
 adopt it as a story-canon development ledger. This RFC lives in inkhaven's PROPOSALS because inkhaven is
 the motivating consumer. Both concrete asks (§2, §3) were **implemented in the open 1.7.0 cycle**
@@ -337,8 +337,8 @@ A third pass (the as-built read) plus a green gate confirmed the shipped result:
   **CommitmentFork (SMY-W058)** adds concurrent-disagreement detection on the axis (shipped + green, §8).
 - **Verified green at HEAD `1af075f`** (incl. CommitmentFork): `cargo test --workspace --all-features` =
   **1880 passed, 0 failed**; `xtask check-purity` + `xtask determinism` pass (§8).
-- **inkhaven side — now unblocked:** the smysl dependency is real code, not a proposal. Next is a separate
-  Canon-Ledger PLAN (harvest-on-save, `retract` blast-radius, and now CommitmentFork-surfaced author↔reader
-  disagreement), still gated on the ~1-user test ("would the author keep a canon ledger while writing").
-  inkhaven would depend on smysl `default-features = false` + `render-typst`, and can plug its own
-  fastembed/HNSW retriever into smysl's `Retriever` seam.
+- **inkhaven side — now unblocked:** smysl 1.7.0 is **published on crates.io**, so inkhaven can depend on
+  it directly (`smysl = "1.7"`, `default-features = false` + `render-typst`) and plug its own fastembed/HNSW
+  retriever into smysl's `Retriever` seam. Next is a separate Canon-Ledger PLAN (harvest-on-save, `retract`
+  blast-radius, and CommitmentFork-surfaced author↔reader disagreement), still gated on the ~1-user test
+  ("would the author keep a canon ledger while writing") — not yet greenlit.
