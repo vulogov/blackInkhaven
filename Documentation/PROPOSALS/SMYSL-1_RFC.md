@@ -110,7 +110,7 @@ commitment-axis analogue of smysl's content **contention**, detected at merge �
 → a `Contention` with diag `SMY-W058` (`crates/smysl-graph/src/merge/contention.rs::commitment_forks`). It
 matters directly for inkhaven's harvest-on-save, where the author and an AI reader (or two writing sessions)
 can disagree about how settled a decision is; the fork is **recorded**, not silently resolved to a winner.
-*In progress in the 1.7.0 tree as of this update — pending the re-verification in §8.*
+Shipped in 1.7.0 and verified green (§8).
 
 ### Render — deliberately deferred
 The proposal asked for profile-marker display; 1.7.0 **shipped the data + checks and deferred render**
@@ -317,15 +317,15 @@ A third pass (the as-built read) plus a green gate confirmed the shipped result:
   `x.narrative/…` kinds work in `find`/`pack`; and the hybrid engine exposes a library `Retriever` seam, so
   inkhaven can drop its own fastembed/HNSW backend into `Hybrid::new(lexical, my_retriever)` with no
   `model2vec`/C++ path.
-- **Green gate** at HEAD `1005cfe` (before CommitmentFork): `cargo test --workspace --all-features` =
-  **1875 passed, 0 failed**; `cargo xtask check-purity` ✅ and `cargo xtask determinism` ✅ (pack / salience /
-  merge / derive_thread / render bit-identical); build clean. (A plain `cargo test` showed 3 `cmd_merge`
-  failures — a feature-unification artifact where the exec'd binary lost its default `ingest`; all pass under
-  `--all-features`, smysl's canonical gate.)
-- **⚠ CommitmentFork (SMY-W058) is in progress and uncommitted** as of this update
-  (`merge/contention.rs`, `annex.rs`, `diag.rs`, `tests/commitment.rs`, `src/lib.rs`, `SMYSL_FORMAT_SPEC.md`).
-  The green gate above **predates it** — re-run `cargo test --workspace --all-features` + the two xtask gates
-  after it lands, before publishing.
+- **Green gate** — `cargo test --workspace --all-features` = **1880 passed, 0 failed** at HEAD `1af075f`
+  (re-run after CommitmentFork landed; 1875 at the prior `1005cfe`); `cargo xtask check-purity` ✅ and
+  `cargo xtask determinism` ✅ (pack / salience / merge / derive_thread / render bit-identical); build clean.
+  (A plain `cargo test` had shown 3 `cmd_merge` failures — a feature-unification artifact where the exec'd
+  binary lost its default `ingest`; all pass under `--all-features`, smysl's canonical gate.)
+- **CommitmentFork (SMY-W058) landed and is green** (HEAD `1af075f`): the re-run includes its 8 tests
+  (`two_agents_disagreeing_is_a_fork`, `one_agent_changing_their_mind_is_not_a_fork`,
+  `the_fork_is_found_whatever_order_the_records_arrive_in`, and the not-a-fork chain/settled cases). No
+  caveat remains.
 - **PLAN doc:** `smysl:Documentation/PLAN_1.7_COMMITMENT.md`.
 
 ---
@@ -334,9 +334,9 @@ A third pass (the as-built read) plus a green gate confirmed the shipped result:
 
 - **smysl asks:** A (commitment axis) and C (host `SourceRef`) — **shipped in smysl 1.7.0** (unreleased;
   additive over `v1.6.0`, so no 1.8.0 or 2.0). Commitment render display deliberately deferred.
-  **CommitmentFork (SMY-W058)** adds concurrent-disagreement detection on the axis (in progress, §8).
-- **Verified green at HEAD `1005cfe`:** `cargo test --workspace --all-features` = **1875 passed, 0 failed**;
-  purity + determinism pass (§8). The gate must be **re-run after CommitmentFork lands**, before publishing.
+  **CommitmentFork (SMY-W058)** adds concurrent-disagreement detection on the axis (shipped + green, §8).
+- **Verified green at HEAD `1af075f`** (incl. CommitmentFork): `cargo test --workspace --all-features` =
+  **1880 passed, 0 failed**; `xtask check-purity` + `xtask determinism` pass (§8).
 - **inkhaven side — now unblocked:** the smysl dependency is real code, not a proposal. Next is a separate
   Canon-Ledger PLAN (harvest-on-save, `retract` blast-radius, and now CommitmentFork-surfaced author↔reader
   disagreement), still gated on the ~1-user test ("would the author keep a canon ledger while writing").
