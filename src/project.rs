@@ -10,6 +10,10 @@ pub const METADATA_DB: &str = "metadata.db";
 pub const VECSTORE_DIR: &str = "vectors";
 pub const BOOKS_DIR: &str = "books";
 pub const PROMPTS_FILE_DEFAULT: &str = "prompts.hjson";
+/// CANON-LEDGER-1 (CL-P0) — the smysl canon ledger, one CBOR store per project,
+/// beside `metadata.db` / `chronicle.db`. Consumed from CL-P1 onward.
+#[allow(dead_code)]
+pub const CANON_STORE: &str = "canon.cbor";
 
 #[derive(Debug, Clone)]
 pub struct ProjectLayout {
@@ -31,6 +35,13 @@ impl ProjectLayout {
 
     pub fn vecstore_path(&self) -> PathBuf {
         self.root.join(VECSTORE_DIR)
+    }
+
+    /// CANON-LEDGER-1 (CL-P0) — path to the project's canon ledger (`canon.cbor`).
+    /// Wired into the store open path in CL-P1.
+    #[allow(dead_code)]
+    pub fn canon_path(&self) -> PathBuf {
+        self.root.join(CANON_STORE)
     }
 
     pub fn books_path(&self) -> PathBuf {
