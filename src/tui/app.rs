@@ -17379,63 +17379,67 @@ impl App {
     /// the development-ledger decisions with kind + commitment, plus commitment
     /// forks. Enter jumps to a decision's source paragraph.
     fn open_canon(&mut self) {
-        let (rows, anchors) = self.build_canon_rows();
+        let (rows, anchors, decisions) = self.build_canon_rows();
         let jumps = anchors.iter().filter(|a| a.is_some()).count();
         self.status = if jumps == 0 {
             "canon · Esc".into()
         } else {
-            "canon · ↑↓ scroll · Enter jump to source · Esc".into()
+            "canon · ↑↓ scroll · Enter jump · g ground · Esc".into()
         };
-        self.modal = Modal::Canon { rows, anchors, cursor: 0 };
+        self.modal = Modal::Canon { rows, anchors, decisions, cursor: 0, grounding: None };
     }
 
-    fn build_canon_rows(&self) -> (Vec<String>, Vec<Option<Uuid>>) {
+    fn build_canon_rows(&self) -> (Vec<String>, Vec<Option<Uuid>>, Vec<Option<smysl::Uid>>) {
         let mut rows: Vec<String> = Vec::new();
         let mut anchors: Vec<Option<Uuid>> = Vec::new();
-        let mut push = |text: String, anchor: Option<Uuid>| {
+        let mut decisions_ids: Vec<Option<smysl::Uid>> = Vec::new();
+        let mut push = |text: String, anchor: Option<Uuid>, decision: Option<smysl::Uid>| {
             rows.push(text);
             anchors.push(anchor);
+            decisions_ids.push(decision);
         };
         let canon = self.store.raw().canon();
         let decisions = match canon.all_decisions() {
             Ok(d) => d,
             Err(e) => {
-                push(format!("canon unavailable: {e}"), None);
-                return (rows, anchors);
+                push(format!("canon unavailable: {e}"), None, None);
+                return (rows, anchors, decisions_ids);
             }
         };
         if decisions.is_empty() {
-            push("◆ Canon ledger".into(), None);
-            push(String::new(), None);
+            push("◆ Canon ledger".into(), None, None);
+            push(String::new(), None, None);
             push(
                 "  no decisions yet — tag paragraphs (rel:…) or run `inkhaven canon harvest`.".into(),
                 None,
+                None,
             );
-            return (rows, anchors);
+            return (rows, anchors, decisions_ids);
         }
-        push(format!("◆ Canon ledger — {} decision(s)", decisions.len()), None);
-        push(String::new(), None);
+        push(format!("◆ Canon ledger — {} decision(s)", decisions.len()), None, None);
+        push(String::new(), None, None);
         for v in &decisions {
             let kind = v
                 .kind
                 .map(|k| k.schema_str().trim_start_matches("x.narrative/"))
                 .unwrap_or("?");
             let commit = v.commitment.map(|c| format!(" «{c}»")).unwrap_or_default();
-            push(format!("  [{kind}]{commit} {}", v.gist), v.node);
+            push(format!("  [{kind}]{commit} {}", v.gist), v.node, Some(v.uid));
         }
         if let Ok(forks) = canon.commitment_forks() {
             if !forks.is_empty() {
-                push(String::new(), None);
+                push(String::new(), None, None);
                 push(
                     format!("⚠ {} commitment fork(s) — agents disagree on canonicity", forks.len()),
                     None,
+                    None,
                 );
                 for fk in &forks {
-                    push(format!("  {}", fk.unit.gist), fk.unit.node);
+                    push(format!("  {}", fk.unit.gist), fk.unit.node, None);
                 }
             }
         }
-        (rows, anchors)
+        (rows, anchors, decisions_ids)
     }
 
     fn canon_handle_key(&mut self, key: KeyEvent) -> bool {
@@ -17449,10 +17453,42 @@ impl App {
             }
             return true;
         }
+        // Whether we're currently picking a ground target (CG-P3).
+        let grounding = matches!(&self.modal, Modal::Canon { grounding: Some(_), .. });
         match key.code {
+            KeyCode::Esc if grounding => {
+                // Cancel target-picking, keep the dashboard open.
+                if let Modal::Canon { grounding, .. } = &mut self.modal {
+                    *grounding = None;
+                }
+                self.status = "canon · grounding cancelled".into();
+            }
             KeyCode::Esc => {
                 self.modal = Modal::None;
                 self.status = "canon: closed".into();
+            }
+            KeyCode::Char('g') if !grounding => {
+                // Begin grounding the cursored decision, if this row is one.
+                match &mut self.modal {
+                    Modal::Canon { decisions, cursor, grounding, .. }
+                        if decisions.get(*cursor).copied().flatten().is_some() =>
+                    {
+                        *grounding = Some(*cursor);
+                        self.status =
+                            "canon · pick the decision it rests on, Enter to ground · Esc cancel".into();
+                    }
+                    _ => self.status = "canon: put the cursor on a decision, then g".into(),
+                }
+            }
+            KeyCode::Enter if grounding => {
+                let (src, dst) = match &self.modal {
+                    Modal::Canon { decisions, cursor, grounding: Some(g), .. } => (
+                        decisions.get(*g).copied().flatten(),
+                        decisions.get(*cursor).copied().flatten(),
+                    ),
+                    _ => (None, None),
+                };
+                self.canon_apply_ground(src, dst);
             }
             KeyCode::Enter => {
                 let anchor = match &self.modal {
@@ -17471,6 +17507,40 @@ impl App {
             _ => {}
         }
         true
+    }
+
+    /// CG-P3 — apply a dashboard grounding: `src` rests on `dst`, then rebuild the
+    /// modal so the (superseded) ids and rows stay in sync. Advisory and reversible
+    /// (`canon unground` from the CLI).
+    fn canon_apply_ground(&mut self, src: Option<smysl::Uid>, dst: Option<smysl::Uid>) {
+        let (src, dst) = match (src, dst) {
+            (Some(s), Some(d)) => (s, d),
+            _ => {
+                self.status = "canon: pick a decision to ground on".into();
+                return;
+            }
+        };
+        if src == dst {
+            self.status = "canon: a decision cannot ground on itself".into();
+            if let Modal::Canon { grounding, .. } = &mut self.modal {
+                *grounding = None;
+            }
+            return;
+        }
+        let canon = self.store.raw().canon();
+        let outcome = canon.reground(src, &[dst]).and_then(|new| canon.sync().map(|_| new));
+        match outcome {
+            Ok(new) if new == src => self.status = "canon: already grounded — no change".into(),
+            Ok(_) => self.status = "canon · grounded".into(),
+            Err(e) => self.status = format!("canon: grounding failed — {e}"),
+        }
+        // Rebuild (grounding cleared), reflecting the new/​superseded ids.
+        let (rows, anchors, decisions) = self.build_canon_rows();
+        let cursor = match &self.modal {
+            Modal::Canon { cursor, .. } => (*cursor).min(rows.len().saturating_sub(1)),
+            _ => 0,
+        };
+        self.modal = Modal::Canon { rows, anchors, decisions, cursor, grounding: None };
     }
 
     /// KEN-1 (KEN-P5) — `Ctrl+B Shift+Z`: the knowledge dashboard. Runs the

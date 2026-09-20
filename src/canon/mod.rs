@@ -223,16 +223,18 @@ impl CanonLedger {
         Ok(out)
     }
 
-    /// CANON-2 (CG-P0) — add grounds to an existing decision. A unit's `grounds`
-    /// are part of its content address, so this cannot mutate in place: it emits
-    /// a NEW unit (same kind / gist / source, grounds = old ∪ `added`) that
-    /// **supersedes** the old one, then relinks so anything that rested on the old
-    /// decision follows to the new one (smysl `relink`, append-only). Returns the
-    /// new decision's `Uid`; a no-op (every `added` already present, or `added`
-    /// empty) returns the existing `Uid` unchanged. Caller flushes (`sync`).
-    /// (Consumer: the manual `canon ground` command + dashboard, CG-P3.)
-    #[allow(dead_code)]
-    pub fn reground(&self, uid: Uid, added: &[Uid]) -> Result<Uid> {
+    /// CANON-2 (CG-P0) — the supersede primitive. A unit's `grounds` are part of
+    /// its content address, so grounds cannot be mutated in place: this rebuilds
+    /// the decision (same kind / gist / source) with `mutate`d grounds into a NEW
+    /// unit that **supersedes** the old one, then relinks so anything that rested
+    /// on the old decision follows to the new one (smysl `relink`, append-only).
+    /// `mutate` returns `true` if it changed the set; a no-op returns the existing
+    /// `Uid` unchanged. Caller flushes (`sync`).
+    fn supersede_grounds(
+        &self,
+        uid: Uid,
+        mutate: impl FnOnce(&mut std::collections::BTreeSet<Uid>) -> bool,
+    ) -> Result<Uid> {
         let dirty = self.dirty.clone();
         self.with_store(|s| {
             let unit = s
@@ -240,11 +242,10 @@ impl CanonLedger {
                 .ok_or_else(|| anyhow!("canon: no decision matches id {}", uid.short()))?;
             let core = &unit.core;
             let mut grounds: std::collections::BTreeSet<Uid> = core.grounds.iter().copied().collect();
-            let before = grounds.len();
-            grounds.extend(added.iter().copied());
+            let changed = mutate(&mut grounds);
             grounds.remove(&uid); // a decision never grounds on itself
-            if grounds.len() == before {
-                return Ok(uid); // nothing new to add
+            if !changed {
+                return Ok(uid);
             }
             let mut builder = UnitCoreBuilder::new(core.schema.clone(), core.gist.clone(), core.status)
                 .grounds(grounds.iter().copied());
@@ -267,6 +268,29 @@ impl CanonLedger {
             }
             dirty.store(true, Ordering::Release);
             Ok(new_uid)
+        })
+    }
+
+    /// CANON-2 — add grounds to an existing decision (CG-P0 primitive; consumer:
+    /// the manual `canon ground` command, CG-P3). Returns the new (or unchanged,
+    /// on a no-op) `Uid`.
+    pub fn reground(&self, uid: Uid, added: &[Uid]) -> Result<Uid> {
+        self.supersede_grounds(uid, |grounds| {
+            let before = grounds.len();
+            grounds.extend(added.iter().copied());
+            grounds.len() != before
+        })
+    }
+
+    /// CANON-2 (CG-P3) — remove grounds from a decision (correcting a wrong or
+    /// inferred edge), superseding back. Returns the new (or unchanged) `Uid`.
+    pub fn unground(&self, uid: Uid, removed: &[Uid]) -> Result<Uid> {
+        self.supersede_grounds(uid, |grounds| {
+            let before = grounds.len();
+            for r in removed {
+                grounds.remove(r);
+            }
+            grounds.len() != before
         })
     }
 
