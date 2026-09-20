@@ -33,7 +33,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use uuid::Uuid;
 
-use smysl::{canonical_uid, from_cbor_seq, to_cbor_seq, Record, Status, Store, Uid, UnitCoreBuilder};
+use smysl::{
+    canonical_uid, from_cbor_seq, relink, to_cbor_seq, Record, RelKind, Relation, Status, Store,
+    Uid, UnitCoreBuilder,
+};
 
 mod commit;
 mod context;
@@ -160,12 +163,66 @@ impl CanonLedger {
         Ok(uid)
     }
 
-    /// CL-P1 — the node bridge (reverse lookup): the `Uid`s of every canon unit
-    /// derived from `node`, via the `inkhaven:<uuid>` source-reference prefix.
-    /// Consumed by the CL-P6 query→canon context bridge.
+    /// CANON-2 (CG-P0) — add grounds to an existing decision. A unit's `grounds`
+    /// are part of its content address, so this cannot mutate in place: it emits
+    /// a NEW unit (same kind / gist / source, grounds = old ∪ `added`) that
+    /// **supersedes** the old one, then relinks so anything that rested on the old
+    /// decision follows to the new one (smysl `relink`, append-only). Returns the
+    /// new decision's `Uid`; a no-op (every `added` already present, or `added`
+    /// empty) returns the existing `Uid` unchanged. Caller flushes (`sync`).
+    /// (Consumer: the manual `canon ground` command + dashboard, CG-P3.)
+    #[allow(dead_code)]
+    pub fn reground(&self, uid: Uid, added: &[Uid]) -> Result<Uid> {
+        let dirty = self.dirty.clone();
+        self.with_store(|s| {
+            let unit = s
+                .get(&uid)
+                .ok_or_else(|| anyhow!("canon: no decision matches id {}", uid.short()))?;
+            let core = &unit.core;
+            let mut grounds: std::collections::BTreeSet<Uid> = core.grounds.iter().copied().collect();
+            let before = grounds.len();
+            grounds.extend(added.iter().copied());
+            grounds.remove(&uid); // a decision never grounds on itself
+            if grounds.len() == before {
+                return Ok(uid); // nothing new to add
+            }
+            let mut builder = UnitCoreBuilder::new(core.schema.clone(), core.gist.clone(), core.status)
+                .grounds(grounds.iter().copied());
+            if let Some(src) = core.source.clone() {
+                builder = builder.source(src);
+            }
+            let new_core = builder.build().map_err(|e| anyhow!("canon: reground {}: {e}", uid.short()))?;
+            let new_uid = canonical_uid(&new_core);
+            s.append(&[
+                Record::Unit(new_core),
+                Record::Relation(Relation::new(RelKind::Supersedes, new_uid, uid)),
+            ])
+            .map_err(|e| anyhow!("canon: reground append failed: {e}"))?;
+            // Re-point every decision that rested on the old unit onto the new one
+            // (append-only corrections + their own supersedes edges, cascading).
+            let relinked = relink(s);
+            if !relinked.records.is_empty() {
+                s.append(&relinked.records)
+                    .map_err(|e| anyhow!("canon: reground relink failed: {e}"))?;
+            }
+            dirty.store(true, Ordering::Release);
+            Ok(new_uid)
+        })
+    }
+
+    /// CL-P1 — the node bridge (reverse lookup): the `Uid`s of every LIVE canon
+    /// unit derived from `node`, via the `inkhaven:<uuid>` source-reference prefix
+    /// (superseded versions are skipped). Consumed by the CL-P6 query→canon
+    /// context bridge.
     pub fn units_for_node(&self, node: Uuid) -> Result<Vec<Uid>> {
         let prefix = model::node_prefix(node);
-        self.with_store(|s| Ok(s.units_with_source_prefix(&prefix)))
+        self.with_store(|s| {
+            let dead = query::superseded_uids(s);
+            Ok(s.units_with_source_prefix(&prefix)
+                .into_iter()
+                .filter(|u| !dead.contains(u))
+                .collect())
+        })
     }
 
     /// Flush to disk, but only when there are unpersisted writes. The clean-path
