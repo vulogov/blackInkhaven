@@ -9,7 +9,7 @@
 //! - [`CanonLedger::resolve`] — a short/prefix id → a unique unit.
 
 use anyhow::{anyhow, Result};
-use smysl::{dependents, trace, SchemaId, Store, TraceKind, Uid};
+use smysl::{dependents, trace, Commitment, SchemaId, Store, TraceKind, Uid};
 use uuid::Uuid;
 
 use super::model::{self, NarrativeKind};
@@ -22,6 +22,8 @@ pub struct CanonView {
     /// The narrative kind, or `None` for a non-narrative unit.
     pub kind: Option<NarrativeKind>,
     pub gist: String,
+    /// The author's commitment level (canonicity), or `None` if unmarked (CL-P4).
+    pub commitment: Option<Commitment>,
     /// The inkhaven node the decision was derived from — the handle a
     /// jump-to-source action needs (consumer: CL-P8 node view).
     #[allow(dead_code)]
@@ -32,7 +34,7 @@ pub struct CanonView {
 
 impl CanonLedger {
     /// Build a [`CanonView`] for `uid`, or `None` if the store has no such unit.
-    fn view_from_unit(store: &Store, uid: Uid) -> Option<CanonView> {
+    pub(super) fn view_from_unit(store: &Store, uid: Uid) -> Option<CanonView> {
         let unit = store.get(&uid)?;
         let kind = match &unit.core.schema {
             SchemaId::Extension(s) => NarrativeKind::from_schema_str(s),
@@ -49,6 +51,7 @@ impl CanonLedger {
             uid,
             kind,
             gist: unit.core.gist.clone(),
+            commitment: store.commitment_of(&uid),
             node,
             locator,
         })
