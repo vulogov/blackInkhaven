@@ -47,7 +47,7 @@ The book is in nine parts and a set of reference appendices:
   III  The AI Assistant ..... scopes, chat-with-your-book, prompts, cost
   IV   The World & Facts .... places, characters, world, graph, timeline
   V    The Intelligences .... continuity, knowledge, read-through, voices,
-                              revision, the inner readers
+                              revision, the decision ledger, inner readers
   VI   Language & Verse ..... conlang, poetry, research, scholarship
   VII  Producing the Book ... PDF, EPUB, web, technical docs
   VIII Scripting ............ the embedded Bund language
