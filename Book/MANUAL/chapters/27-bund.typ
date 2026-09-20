@@ -360,8 +360,9 @@ exact stack diagrams.
 #screen(caption: "The reading intelligences (read-only)")[```
   ink.continuity.*  ink.knowledge.*  ink.readthrough.*
   ink.chorus.*      ink.stylist.*    ink.revise.*
-  ink.chronicle.*   ink.char.*       ink.dialogue.*
-  ink.prose.*       ink.graph.*      ink.myth.*
+  ink.chronicle.*   ink.canon.*      ink.char.*
+  ink.dialogue.*    ink.prose.*      ink.graph.*
+  ink.myth.*
   ink.utopia.*      ink.theologian.* ink.outline.*
   ink.inner_editor.*   ink.inner_socrates.*
   ink.sources.*  ink.terms.*  ink.snippets.*

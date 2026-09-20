@@ -1,8 +1,8 @@
 #import "../design.typ": *
 
-#chapter(number: 8, title: "A Scene Through Every Check")
+#chapter(number: 9, title: "A Scene Through Every Check")
 
-Read separately, these intelligences are seven tools. Used together, on one scene,
+Read separately, these intelligences are eight tools. Used together, on one scene,
 they are a single sense — the feeling of *knowing your book* that no writer has
 unaided. Let us take one chapter through all of them, in the order you would actually
 reach for them, and watch the book come into focus.
@@ -49,6 +49,22 @@ Move the reveal earlier, or give Mara a grant, and the scene holds.
   ● [attention_dip] ch. 7 runs low-energy after a flat ch. 6.
 ```]
 
+#section("Before you move the reveal — what rests on it?")
+
+KEN's fix was "move the reveal earlier." But the reveal is a *decision*, and other
+decisions may lean on where it sits. `Ctrl+B *` → *Canon*, or `canon impact`, tells
+you before you touch it.
+
+#screen(caption: "5 · what breaks if I move it? (CANON)")[```
+canon impact b3:pgdf   [reveal]  Sella's betrayal, revealed ch. 9
+  1 decision would be affected:
+    b3:x3k7  [plot-point · canonical]  Mara's trust survives to ch. 11
+       — moving the reveal earlier undercuts it.
+```]
+
+Now the "move it earlier" fix is not a shot in the dark: the ledger names the one
+downstream choice the move would strain, so you decide with the blast radius in view.
+
 #section("Act on it — and confirm it landed")
 
 Every finding above rides one worklist, `Ctrl+V Shift+R`, where each gets the right
@@ -56,7 +72,7 @@ kind of help: a rewrite you review as a diff, a decision you make ("move the rev
 cut the line?"), a brief where structure is yours to move. Fix the scene there — and
 then, before the next pass, mark a milestone and let CHRONICLE tell you the truth:
 
-#screen(caption: "5 · did it get better? (CHRONICLE)")[```
+#screen(caption: "6 · did it get better? (CHRONICLE)")[```
 Chronicle — since "before ch.7 pass" → now
   ✓ 3 cleared  (co_location, premature_knowledge, the voice flag)
   ▲ 0 introduced
@@ -68,8 +84,8 @@ which no one can, but to have an instrument for every question you would otherwi
 to answer from memory, and the honesty to tell you when the answer changed.
 
 #recap((
-  [The intelligences compose: facts → continuity → knowledge → voice → shape → act →
-  measure, on one scene.],
+  [The intelligences compose: facts → continuity → knowledge → voice → shape →
+  what-rests-on-it → act → measure, on one scene.],
   [Everything converges on the `Ctrl+V Shift+R` worklist to act, and `Ctrl+B Shift+U`
   (CHRONICLE) to confirm the fix landed without collateral damage.],
   [Knowing your book is not holding it in your head — it is having an instrument for

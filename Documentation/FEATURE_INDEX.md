@@ -51,6 +51,7 @@ Legend: **CLI** = `inkhaven <verb>` · **Chord** = in-editor keystroke · **Doc*
 | Dialogue quality & attribution | `dialogue` | `Ctrl+V Shift+Q` | [Tutorial 97](Tutorials/97-dialogue-quality.md) | `ink.dialogue` |
 | **REDLINE** — revision partner | `revise` | `Ctrl+V Shift+R` | [REDLINE.md](REDLINE.md) | `ink.revise` `ink.review` |
 | **CHRONICLE** — draft history | `chronicle` | `Ctrl+B Shift+U` | [CHRONICLE.md](CHRONICLE.md) | `ink.chronicle` |
+| **CANON** — decision ledger | `canon` | `Ctrl+B *` → Canon | [CANON.md](CANON.md) | `ink.canon` |
 | Unified review pass | `check` | `Ctrl+B Shift+C` | [MAINTENANCE.md](MAINTENANCE.md) | — |
 
 ## The inner family (readers who question)

@@ -427,6 +427,17 @@ Series-shared canon (1.3.8). One field.
   chord_row("shared_path", "string? · null — a directory of plain-text fact files layered under each book's Facts book (local wins on a clash)"),
 ))
 
+#subsection("canon")
+
+CANON — the decision ledger (3.11). The ledger is derived data, so the knobs are
+behavioural only.
+
+#chord_table((
+  chord_row("harvest_on_save", "bool · true — save a paragraph and its authored tags (rel:) harvest into the ledger, off-thread and free for untagged paragraphs; off leaves it populated only by explicit canon harvest/accept"),
+  chord_row("context_budget", "usize · 2000 — default soft token budget for canon context when --budget is omitted (informative, never blocks)"),
+  chord_row("context_reserve", "usize · 400 — default tokens held back (of the budget) for the prompt + answer when --reserve is omitted"),
+))
+
 #section("The Inner family & readers")
 
 #subsection("inner_editor")

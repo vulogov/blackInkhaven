@@ -3523,3 +3523,34 @@ relationship dashboard. The findings also join the unified worklist (`collect` �
 REDLINE): `unearned_shift` routes to a guided **Decision**, `unwritten_bond` /
 `dropped_bond` stay advisory **Briefs**. Bund: `ink.bonds.ties` /
 `ink.bonds.findings` / `ink.bonds.check`.
+
+## 3.11 — CANON: the decision ledger (CANON-LEDGER-1)
+
+### `canon` — the story-canon development ledger
+
+CANON ([`CANON.md`](CANON.md)) records the *decisions* behind the fiction — a
+world-fact, a plot point, a reveal — with what each rests on and how settled it
+is. The ledger is a **derived** artifact (rebuildable by re-harvest from the
+manuscript), so the only knobs are behavioural, not data.
+
+| Field | Type | Default | Description |
+| ----- | ---- | ------- | ----------- |
+| `canon.harvest_on_save` | bool | `true` | When on, saving a paragraph deterministically harvests its authored tags (e.g. `rel:`) into the ledger — off-thread, advisory, and free for untagged paragraphs. Off keeps the ledger populated only by explicit `canon harvest`/`accept`; every query still works. |
+| `canon.context_budget` | usize | `2000` | Default soft token budget for `canon context` (the grounded-context pack) when `--budget` is not passed. Informative, never blocks. |
+| `canon.context_reserve` | usize | `400` | Default tokens reserved (out of the budget) for the prompt framing and answer when `--reserve` is not passed. |
+
+```hjson
+canon: {
+  harvest_on_save: true
+  context_budget: 2000
+  context_reserve: 400
+}
+```
+
+CLI: `inkhaven canon {list, impact, why, commit, check, merge, forks, context,
+harvest, staged, accept}`. In the editor: the reader hub (`Ctrl+B *` → **Canon**)
+opens the decision dashboard. Commitment **forks** (two agents disagreeing on a
+decision's canonicity after a `canon merge`) also join the unified worklist
+(`collect` → REDLINE / the Editorial Pass) as advisory **Briefs** — reconcile the
+ledger with `canon commit` / `canon merge`, not the prose. Bund: `ink.canon.list`
+/ `ink.canon.impact` / `ink.canon.why` / `ink.canon.forks` (read-only).

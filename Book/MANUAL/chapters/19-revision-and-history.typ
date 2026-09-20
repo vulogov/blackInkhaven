@@ -7,19 +7,24 @@ continuity break; LECTOR finds the saggy act and the point a reader would put
 the book down; the Inner Editor finds the paragraph that tells where it should
 show; CHORUS finds the two characters whose voices read alike. That is where
 most writing tools stop — with a list of what is wrong. But a diagnosis is not
-a revision. Between the finding and the fixed book lie two questions no
-detector answers on its own: *what do I do about this one?* and, a draft later,
-*did any of it actually help?*
+a revision. Between the finding and the fixed book lie three questions no
+detector answers on its own: *what do I do about this one?*; a draft later, *did
+any of it actually help?*; and, before you cut a scene or a premise, *what else
+in the book rests on this?*
 
-This chapter is about the two intelligences that answer those questions.
+This chapter is about the three intelligences that answer those questions.
 *REDLINE* is the revision partner — it gathers every reader's findings into one
 worklist and gives each the right kind of help, turning a diagnosis into an
 author-confirmed change without ever touching your prose on its own. *CHRONICLE*
 is the draft historian — it remembers what your book measured at each milestone
 and trends it, so the question "did the revision work?" finally has a number
-behind it. The two are a matched pair: REDLINE closes the loop, CHRONICLE
-measures whether it stayed closed. Read this chapter as the operator's tour of
-both; the companion book *Know Your Book* holds the fuller treatment of the
+behind it. *CANON* is the ledger of the story's *decisions* — it remembers the
+load-bearing choices behind the fiction (a world-fact, a plot point, a reveal)
+and what each one rests on, so before you cut a premise you can see the blast
+radius. Together they cover a revision from three sides: REDLINE acts on the
+findings, CHRONICLE measures whether the acting helped, and CANON guards the
+decisions the whole book stands on. Read this chapter as the operator's tour of
+all three; the companion book *Know Your Book* holds the fuller treatment of the
 readers they draw on.
 
 #section("REDLINE — the revision partner")
@@ -404,10 +409,133 @@ marked a draft degrades gracefully rather than erroring.
   keystroke — `chronicle mark` on the CLI, or `m` in the dashboard.
 ]
 
+#section("CANON — the decision ledger")
+
+CHRONICLE remembers what the *readers* found. But a book stands on a second
+kind of history that no finding captures: the *decisions* behind the fiction.
+The city floats on the back of a sleeping leviathan; the only way out is the sea
+gate in its flank; the harbour-master has known for years and told no one. Those
+are not prose problems and they are not measurements — they are load-bearing
+choices, and until CANON they lived only in your head and scattered across the
+chapters that assume them. Git versions the *text*; CANON versions the
+*commitments*. It never edits your prose — it records decisions, and you decide.
+
+#term("Decision")[
+  One load-bearing choice behind the story — a *world-fact*, *character trait*,
+  *plot point*, *reveal*, or *setup* — recorded with its *grounds* (the decisions
+  it rests on), a *commitment* level (how settled it is), and a link back to the
+  paragraph it came from. Its identity is a content hash, so recording the same
+  decision twice is idempotent, and two ledgers merge without a coordinator.
+]
+
+#subsection("How decisions enter — you always confirm")
+
+You do not hand-maintain a story bible. Decisions reach the ledger two ways, and
+the model can never add one you did not accept.
+
+#chord_table((
+  chord_row("Tags you already write", "A rel:<kind>:<A>:<B> relationship tag on a paragraph becomes a character-trait decision the moment you save — deterministic, off-thread, and free. Untagged paragraphs cost nothing, so the ledger fills as you write without a flood."),
+  chord_row("An opt-in model pass", "inkhaven canon harvest <scope> asks a model to read prose and propose decisions in your project language. Nothing enters the ledger — the proposals are STAGED. You review them with canon staged and confirm with canon accept, the one and only thing that writes."),
+))
+
+#screen(caption: "The opt-in harvest is staged, never automatic")[```
+inkhaven canon harvest my-book/chapter-1   # model proposes …
+inkhaven canon staged                       # … you review …
+    4 staged proposal(s) (not yet in the ledger):
+      [world-fact]  The city of Vell floats on a sleeping leviathan.
+      [reveal]      Mara has never told anyone the tremors are the beast.
+      …
+inkhaven canon accept                       # … you confirm. Only this writes.
+```]
+
+#callout(label: "The model proposes; you decide")[
+  Harvest is the *one* model path in CANON, and it cannot touch the ledger on its
+  own — it writes proposals to a staging file, and `canon accept` is the human
+  keystroke that turns a proposal into a decision. This is the same advisory
+  contract REDLINE keeps for prose: the machine may suggest, but a change only
+  lands on your confirmation.
+]
+
+#subsection("The question that matters — canon impact")
+
+The reason to keep a ledger at all is the one question revision keeps raising and
+nothing else in the tool could answer: *if I cut this, what breaks?* Because each
+decision records what it rests on, CANON can walk the dependency graph and name
+the blast radius before you make the cut.
+
+#screen(caption: "canon impact — the blast radius of a cut")[```
+inkhaven canon commit b3:lypx --level canonical
+inkhaven canon impact b3:lypx
+    If cut:  b3:lypx  [world-fact]  The city floats on a leviathan.
+      2 decision(s) would dangle:
+        b3:x3k7  [plot-point]  The escape uses the sea gate in its flank.
+        b3:q0m2  [reveal]      The tremors are the beast waking.
+```]
+
+That is the payoff: cut the leviathan and the ledger tells you, at once, that the
+escape route and the central reveal both dangle — instead of discovering it three
+chapters later when the book stops making sense.
+
+#subsection("The other questions")
+
+The rest of the surface is the same shape — deterministic, instant, free — each
+a pure function over the project's own small ledger.
+
+#chord_table((
+  chord_row("canon list", "Every decision, with its kind, «commitment», and source paragraph."),
+  chord_row("canon why <id>", "The grounds chain a decision rests on — the inverse of impact."),
+  chord_row("canon commit <id> --level <l>", "Set how settled a decision is: floated → drafted → committed → canonical → retconned. This is authorial canonicity, not real-world truth."),
+  chord_row("canon check", "Anything you have marked canonical that rests on something only floated — a scene built on sand (the SMY-W057 support check)."),
+  chord_row("canon forks", "Commitment forks: decisions whose agents disagree on canonicity after a merge (SMY-W058)."),
+  chord_row("canon context \"<query>\"", "Fit the relevant decisions and their grounds to a token budget, closure-complete — grounded context for an answer."),
+))
+
+The id is the short hash `canon list` prints; a unique prefix is enough.
+
+#subsection("In the editor, and in the Editorial Pass")
+
+Inside the editor the reader hub (`Ctrl+B *`) gains a *Canon* entry: a scrollable
+dashboard of every decision with its kind and `«commitment»`, plus a
+commitment-forks section, and `⏎` jumps to the decision's source paragraph — the
+same jump the read-through and continuity ledgers give you.
+
+CANON also meets REDLINE. A *commitment fork* — two agents disagreeing on whether
+a decision is canonical, which only arises after you `canon merge` a second
+ledger (another device, a co-writer, a future model pass) — joins the unified
+worklist as an advisory *✉ Brief*. There is no single paragraph to rewrite, so
+the brief points you at the fix that fits: reconcile the *ledger* with `canon
+commit` or `canon merge`, not the prose. A solo ledger never forks, so this line
+is empty and free until the day you merge.
+
+#subsection("Configuration and scripting")
+
+The ledger is *derived* — rebuildable by re-harvest — so the `canon:` config block
+holds only behavioural knobs: `harvest_on_save` (default `true`) toggles the
+deterministic on-save tag harvest, and `context_budget` / `context_reserve` set
+the defaults `canon context` uses when its flags are omitted. Four Bund words
+expose the ledger read-only, mirroring CHRONICLE's discipline — the writes
+(`commit`, and the author-confirmed harvest) stay on the CLI and in the editor.
+
+#screen(caption: "The CANON Bund surface — read-only")[```
+ink.canon.list    ( -- list )      { uid, kind, gist, commitment,
+                                     locator, node }
+ink.canon.impact  ( id -- list )   the blast radius of a decision
+ink.canon.why     ( id -- list )   the grounds chain it rests on
+ink.canon.forks   ( -- list )      { uid, gist, positions, resolved }
+```]
+
+#callout(label: "Derived, and safe to lose")[
+  The whole ledger lives in the project's own `canon.cbor`, beside your prose but
+  never mixed into it. Because it is re-derivable from the manuscript, a lost or
+  corrupt file costs at most a re-harvest — never a word of the book. Harvested
+  gists are written in your project language, so the ledger answers *"does it work
+  in Russian?"* the same way every other reader does.
+]
+
 #section("Closing the loop")
 
-The two intelligences in this chapter are one workflow read from two ends. Set
-them side by side and the shape is plain.
+The three intelligences in this chapter are one workflow read from three sides.
+Set them together and the shape is plain.
 
 REDLINE *acts*. It gathers every reader's diagnosis into one worklist, hands each
 finding the honest kind of help — a diff-reviewed rewrite, a decision it asks you
@@ -423,10 +551,18 @@ the introduced list is the warning about the ones your edits created three
 chapters away. The counts trend fewer-is-better; the split names names. Neither
 touches your prose — CHRONICLE only ever reads.
 
-That is the loop. REDLINE closes findings; CHRONICLE proves they stayed closed
-and catches what opened up in their place. Do the work in the pass, stamp a
-milestone, and the next time you open the dashboard the book tells you, in its
-own numbers, whether the revision was a revision — or merely a rearrangement.
+CANON *remembers*. Beneath the findings and the measurements sit the decisions
+the book is built on, and the ledger keeps them with their dependencies. When a
+revision means cutting a scene or reversing a premise, `canon impact` tells you
+what rests on it *before* the cut, so the change you make in one chapter does not
+quietly break the payoff in another. Like CHRONICLE, it only reads your prose;
+the one path that could add a decision waits for your `accept`.
+
+That is the loop. CANON remembers the decisions and what depends on them; REDLINE
+closes the findings; CHRONICLE proves they stayed closed and catches what opened
+up in their place. Consult the ledger before you cut, do the work in the pass,
+stamp a milestone, and the next time you open the dashboard the book tells you, in
+its own numbers, whether the revision was a revision — or merely a rearrangement.
 
 #recap((
   [*REDLINE* gathers *every reader's findings* into one ranked worklist — the
@@ -453,4 +589,18 @@ own numbers, whether the revision was a revision — or merely a rearrangement.
   [`Ctrl+B Shift+U` opens the dashboard (`⏎` jumps to an introduced finding, `m`
   marks the draft); `ink.chronicle.*` and its own `chronicle.db` keep the history.
   CHRONICLE is *pure measurement* — no prose-write path anywhere.],
+  [*CANON* is the ledger of the story's *decisions* — a world-fact, plot point, or
+  reveal, each with its *grounds* and a *commitment* level. Decisions enter from
+  the `rel:` tags you save (deterministic, free) or from an opt-in `canon harvest`
+  that *stages* proposals until you `canon accept` — the model proposes, you
+  decide.],
+  [The headline is `canon impact <id>`: *what breaks if I cut this?* — the blast
+  radius of a decision, before the cut. `canon why` traces its grounds; `canon
+  commit`/`canon check` track how settled it is and flag a canonical choice
+  resting on a floated one; `canon forks` surfaces post-merge disagreements, which
+  also reach the Editorial Pass as ✉ Briefs.],
+  [The reader hub (`Ctrl+B *` → *Canon*) is the dashboard (`⏎` jumps to source);
+  `ink.canon.*` reads it from a script; the `canon:` block tunes `harvest_on_save`
+  and the `context` budget. The ledger is *derived* (`canon.cbor`) — losing it
+  costs a re-harvest, never prose.],
 ))

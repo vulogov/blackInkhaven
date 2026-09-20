@@ -6730,6 +6730,62 @@ impl super::super::App {
         );
     }
 
+    /// CANON-LEDGER-1 (CL-P8) — the canon dashboard: the story's development-ledger
+    /// decisions with kind + commitment, plus commitment forks. Same scrollable-rows
+    /// shape as the chronicle; decision rows carry a jump anchor to their source.
+    pub(in crate::tui::app) fn draw_canon_modal(&self, f: &mut ratatui::Frame, area: Rect) {
+        let Modal::Canon { rows, anchors, cursor } = &self.modal else {
+            return;
+        };
+        let width = area.width.saturating_sub(6).clamp(52, 92);
+        let height = area.height.saturating_sub(4).max(12);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Canon ")
+            .border_style(Style::default().fg(self.theme.modal_border).add_modifier(Modifier::BOLD))
+            .style(Style::default().bg(self.theme.modal_bg).fg(self.theme.modal_fg));
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let list_h = inner.height.saturating_sub(1).max(1) as usize;
+        let cur = (*cursor).min(rows.len().saturating_sub(1));
+        let start = if cur >= list_h { cur + 1 - list_h } else { 0 };
+        let dim = Style::default().add_modifier(Modifier::DIM);
+        let head = Style::default().fg(self.theme.modal_border).add_modifier(Modifier::BOLD);
+        let sel = Style::default().bg(self.theme.modal_border).fg(self.theme.modal_bg).add_modifier(Modifier::BOLD);
+        let mut lines: Vec<Line> = Vec::new();
+        for (i, r) in rows.iter().enumerate().skip(start).take(list_h) {
+            let is_cursor = i == cur && anchors.get(i).copied().flatten().is_some();
+            let style = if is_cursor {
+                sel
+            } else if !r.starts_with(' ') && !r.is_empty() {
+                head
+            } else {
+                dim
+            };
+            lines.push(Line::from(Span::styled(truncate_to(r, 90), style)));
+        }
+        let body_rect = Rect { x: inner.x, y: inner.y, width: inner.width, height: list_h as u16 };
+        f.render_widget(Paragraph::new(lines), body_rect);
+
+        let footer = Rect { x: inner.x, y: inner.y + inner.height - 1, width: inner.width, height: 1 };
+        let footer_text = dashboard_footer(
+            "Enter jumps to the decision's source paragraph",
+            start,
+            list_h,
+            rows.len(),
+        );
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(footer_text, dim))),
+            footer,
+        );
+    }
+
     /// KEN-1 (KEN-P5) — the knowledge dashboard: epistemic findings grouped by
     /// kind, same scrollable-rows shape as the continuity ledger.
     pub(in crate::tui::app) fn draw_knowledge_modal(&self, f: &mut ratatui::Frame, area: Rect) {

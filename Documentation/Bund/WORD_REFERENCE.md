@@ -402,6 +402,17 @@ derived caches (never the manuscript); a few `suppress`/`promote`/`dismiss` are
 | `ink.chronicle.trend` | store_read | `( -- dict )` | live-vs-latest trend (recaptures current state) |
 | `ink.chronicle.check` | store_read | `( -- dict )` | gate `{baseline, cleared, introduced, introduced_errors, clean}` |
 
+**`ink.canon.*` — CANON, the decision ledger**
+
+Read-only. Setting a decision's commitment (`commit`) and the opt-in, author-confirmed LLM harvest (`accept`) are deliberate authorial acts — CLI/TUI only, not scriptable (the same discipline as `ink.chronicle`'s `mark`).
+
+| Word | Category | Stack | Description |
+|------|----------|-------|-------------|
+| `ink.canon.list` | store_read | `( -- list )` | every decision `{uid, kind, gist, commitment, locator, node}` |
+| `ink.canon.impact` | store_read | `( id -- list )` | blast radius of `id`: decisions that transitively rest on it |
+| `ink.canon.why` | store_read | `( id -- list )` | the grounds chain `id` rests on |
+| `ink.canon.forks` | store_read | `( -- list )` | commitment forks `{uid, gist, positions:[{agent, level}], resolved}` |
+
 **`ink.knowledge.*` — KEN, epistemic continuity**
 
 | Word | Category | Stack | Description |

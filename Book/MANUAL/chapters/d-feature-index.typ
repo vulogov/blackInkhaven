@@ -52,6 +52,7 @@ Each right-hand cell reads `CLI` · `chord` · *ch N* · `ink.*`, in that order,
   ("Dialogue quality & attribution", [CLI `dialogue` · chord `Ctrl+V Shift+Q` · *ch 18* · `ink.dialogue`]),
   ("REDLINE — revision partner", [CLI `revise` · chord `Ctrl+V Shift+R` · *ch 19* · `ink.revise` `ink.review`]),
   ("CHRONICLE — draft history", [CLI `chronicle` · chord `Ctrl+B Shift+U` · *ch 19* · `ink.chronicle`]),
+  ("CANON — the decision ledger", [CLI `canon` · chord `Ctrl+B *` → `Canon` · *ch 19* · `ink.canon`]),
   ("Unified review pass", [CLI `check` · chord `Ctrl+B Shift+C` · *ch 19*]),
 ))
 

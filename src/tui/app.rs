@@ -13437,6 +13437,7 @@ impl App {
             A::OpenContinuityLedger => self.open_continuity_ledger(),
             A::OpenReadThrough => self.open_read_through(),
             A::OpenChronicle => self.open_chronicle(),
+            A::OpenCanon => self.open_canon(),
             A::OpenKnowledge => self.open_knowledge(),
             A::OpenBonds => self.open_bonds(),
             A::OpenCast => self.open_cast(),
@@ -17374,6 +17375,104 @@ impl App {
         self.modal = Modal::Chronicle { rows, anchors, cursor: 0 };
     }
 
+    /// CANON-LEDGER-1 (CL-P8) — open the canon dashboard (reader hub → Canon):
+    /// the development-ledger decisions with kind + commitment, plus commitment
+    /// forks. Enter jumps to a decision's source paragraph.
+    fn open_canon(&mut self) {
+        let (rows, anchors) = self.build_canon_rows();
+        let jumps = anchors.iter().filter(|a| a.is_some()).count();
+        self.status = if jumps == 0 {
+            "canon · Esc".into()
+        } else {
+            "canon · ↑↓ scroll · Enter jump to source · Esc".into()
+        };
+        self.modal = Modal::Canon { rows, anchors, cursor: 0 };
+    }
+
+    fn build_canon_rows(&self) -> (Vec<String>, Vec<Option<Uuid>>) {
+        let mut rows: Vec<String> = Vec::new();
+        let mut anchors: Vec<Option<Uuid>> = Vec::new();
+        let mut push = |text: String, anchor: Option<Uuid>| {
+            rows.push(text);
+            anchors.push(anchor);
+        };
+        let canon = self.store.raw().canon();
+        let decisions = match canon.all_decisions() {
+            Ok(d) => d,
+            Err(e) => {
+                push(format!("canon unavailable: {e}"), None);
+                return (rows, anchors);
+            }
+        };
+        if decisions.is_empty() {
+            push("◆ Canon ledger".into(), None);
+            push(String::new(), None);
+            push(
+                "  no decisions yet — tag paragraphs (rel:…) or run `inkhaven canon harvest`.".into(),
+                None,
+            );
+            return (rows, anchors);
+        }
+        push(format!("◆ Canon ledger — {} decision(s)", decisions.len()), None);
+        push(String::new(), None);
+        for v in &decisions {
+            let kind = v
+                .kind
+                .map(|k| k.schema_str().trim_start_matches("x.narrative/"))
+                .unwrap_or("?");
+            let commit = v.commitment.map(|c| format!(" «{c}»")).unwrap_or_default();
+            push(format!("  [{kind}]{commit} {}", v.gist), v.node);
+        }
+        if let Ok(forks) = canon.commitment_forks() {
+            if !forks.is_empty() {
+                push(String::new(), None);
+                push(
+                    format!("⚠ {} commitment fork(s) — agents disagree on canonicity", forks.len()),
+                    None,
+                );
+                for fk in &forks {
+                    push(format!("  {}", fk.unit.gist), fk.unit.node);
+                }
+            }
+        }
+        (rows, anchors)
+    }
+
+    fn canon_handle_key(&mut self, key: KeyEvent) -> bool {
+        let nav = match &self.modal {
+            Modal::Canon { rows, cursor, .. } => Self::dashboard_nav(*cursor, rows, key.code),
+            _ => return false,
+        };
+        if let Some(nc) = nav {
+            if let Modal::Canon { cursor, .. } = &mut self.modal {
+                *cursor = nc;
+            }
+            return true;
+        }
+        match key.code {
+            KeyCode::Esc => {
+                self.modal = Modal::None;
+                self.status = "canon: closed".into();
+            }
+            KeyCode::Enter => {
+                let anchor = match &self.modal {
+                    Modal::Canon { anchors, cursor, .. } => anchors.get(*cursor).copied().flatten(),
+                    _ => None,
+                };
+                if let Some(id) = anchor {
+                    self.modal = Modal::None;
+                    if let Err(e) = self.open_paragraph_by_uuid(id) {
+                        self.status = format!("canon: {e}");
+                    }
+                } else {
+                    self.status = "canon: no paragraph to jump to on this row".into();
+                }
+            }
+            _ => {}
+        }
+        true
+    }
+
     /// KEN-1 (KEN-P5) — `Ctrl+B Shift+Z`: the knowledge dashboard. Runs the
     /// deterministic epistemic check and opens a scrollable modal (Enter jumps to
     /// the offending paragraph).
@@ -17765,7 +17864,7 @@ impl App {
         use crate::tui::keybind::Action;
         let counts = self.reader_hub_counts();
         // (label, collect `source` for the count [None → own store, shown `·`], action)
-        let readers: [(&str, Option<&str>, Action); 9] = [
+        let readers: [(&str, Option<&str>, Action); 10] = [
             ("Knowledge (KEN)", Some("knowledge"), Action::OpenKnowledge),
             ("Bonds", Some("bonds"), Action::OpenBonds),
             ("Continuity (SENTINEL)", Some("continuity"), Action::OpenContinuityLedger),
@@ -17774,6 +17873,7 @@ impl App {
             ("Character arc", None, Action::OpenCharacterArc),
             ("Myth", None, Action::OpenMythHeatmap),
             ("Chronicle", None, Action::OpenChronicle),
+            ("Canon (development ledger)", None, Action::OpenCanon),
             ("Story bible", None, Action::OpenStoryBible),
         ];
         let mut rows: Vec<String> = Vec::new();
@@ -28431,6 +28531,10 @@ impl App {
         }
         if matches!(self.modal, Modal::Chronicle { .. }) {
             self.chronicle_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::Canon { .. }) {
+            self.canon_handle_key(key);
             return Ok(false);
         }
         if matches!(self.modal, Modal::Knowledge { .. }) {

@@ -335,6 +335,10 @@ impl super::App {
             self.draw_chronicle_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::Canon { .. }) {
+            self.draw_canon_modal(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::Bonds { .. }) {
             self.draw_bonds_modal(f, area);
         }

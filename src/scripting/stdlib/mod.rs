@@ -35,6 +35,7 @@ mod continuity;
 mod lector;
 mod revise;
 mod chronicle;
+mod canon;
 mod knowledge;
 mod bonds;
 mod utopia;
@@ -104,6 +105,7 @@ pub fn register_ink_stdlib(vm: &mut VM) -> Result<()> {
     lector::register(vm)?;
     revise::register(vm)?;
     chronicle::register(vm)?;
+    canon::register(vm)?;
     knowledge::register(vm)?;
     bonds::register(vm)?;
     utopia::register(vm)?;

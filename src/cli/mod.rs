@@ -16,6 +16,7 @@ pub mod import_typst_help;
 pub mod init;
 pub mod list;
 pub mod mv;
+pub mod canon;
 pub mod outline;
 pub mod paragraph;
 pub mod reindex;
@@ -325,6 +326,11 @@ pub enum Command {
     /// terminal: inspect the passages Book-scope chat would ground on.
     #[command(subcommand)]
     BookRag(BookRagCommand),
+
+    /// CANON-LEDGER-1 (CL-P3) — query the story's canon development ledger
+    /// (`canon list` / `impact <id>` / `why <id>`).
+    #[command(subcommand)]
+    Canon(CanonCommand),
 
     /// Re-index all `.typ` files from disk into the document store.
     Reindex {
@@ -1746,6 +1752,66 @@ pub enum Command {
 
 /// OUTLINE-1 — sub-subcommands under `inkhaven paragraph …`. `src` / `dest`
 /// are slash-separated slug paths (as printed by `inkhaven outline`).
+/// sub-subcommands under `inkhaven canon …` (CL-P3).
+#[derive(Debug, Subcommand)]
+pub enum CanonCommand {
+    /// List the recorded canon decisions (id, kind, gist, location).
+    List,
+    /// Show what would break if a decision were cut — its blast radius.
+    Impact {
+        /// A decision id (canonical or short prefix, as printed by `list`).
+        id: String,
+    },
+    /// Show the grounds a decision rests on.
+    Why {
+        /// A decision id (canonical or short prefix, as printed by `list`).
+        id: String,
+    },
+    /// Mark a decision's commitment (canonicity) level.
+    Commit {
+        /// A decision id (canonical or short prefix, as printed by `list`).
+        id: String,
+        /// floated | drafted | committed | canonical | retconned.
+        #[arg(long)]
+        level: String,
+        /// Agent id (default `human:author`); a bare name becomes `human:<name>`.
+        #[arg(long = "as")]
+        as_agent: Option<String>,
+    },
+    /// Flag decisions committed above their foundation (SMY-W057).
+    Check,
+    /// Merge another project's canon ledger into this one.
+    Merge {
+        /// Path to the other project's `canon.cbor`.
+        path: String,
+    },
+    /// List commitment forks — decisions whose agents disagree on canonicity (SMY-W058).
+    Forks,
+    /// Show the budget-fit canon context that would ground an answer to a query.
+    Context {
+        query: String,
+        /// Token budget for the packed context. Defaults to `canon.context_budget`.
+        #[arg(long)]
+        budget: Option<usize>,
+        /// Tokens held back for the prompt + answer. Defaults to `canon.context_reserve`.
+        #[arg(long)]
+        reserve: Option<usize>,
+        /// How many relevant paragraphs to seed from.
+        #[arg(long, default_value_t = 12)]
+        limit: usize,
+    },
+    /// Opt-in LLM harvest of prose into staged canon proposals (needs a model).
+    Harvest {
+        /// Slug path to harvest under; empty / `all` for the whole project.
+        #[arg(default_value = "")]
+        scope: String,
+    },
+    /// List the model's staged canon proposals awaiting confirmation.
+    Staged,
+    /// Confirm the staged proposals into the ledger (author's accept).
+    Accept,
+}
+
 #[derive(Debug, Subcommand)]
 pub enum ParagraphCommand {
     /// Duplicate a paragraph under a destination node (fresh uuid; the
@@ -6596,6 +6662,23 @@ impl Cli {
                     context,
                 )
                 .map_err(Into::into),
+            },
+            Command::Canon(cmd) => match cmd {
+                CanonCommand::List => canon::list(&project).map_err(Into::into),
+                CanonCommand::Impact { id } => canon::impact(&project, &id).map_err(Into::into),
+                CanonCommand::Why { id } => canon::why(&project, &id).map_err(Into::into),
+                CanonCommand::Commit { id, level, as_agent } => {
+                    canon::commit(&project, &id, &level, as_agent).map_err(Into::into)
+                }
+                CanonCommand::Check => canon::check(&project).map_err(Into::into),
+                CanonCommand::Merge { path } => canon::merge(&project, &path).map_err(Into::into),
+                CanonCommand::Forks => canon::forks(&project).map_err(Into::into),
+                CanonCommand::Context { query, budget, reserve, limit } => {
+                    canon::context(&project, &query, limit, budget, reserve).map_err(Into::into)
+                }
+                CanonCommand::Harvest { scope } => canon::harvest(&project, &scope).map_err(Into::into),
+                CanonCommand::Staged => canon::staged(&project).map_err(Into::into),
+                CanonCommand::Accept => canon::accept(&project).map_err(Into::into),
             },
             Command::Reindex { prune, adopt } => {
                 reindex::run(&project, prune, adopt).map_err(Into::into)

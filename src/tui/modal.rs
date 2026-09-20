@@ -964,6 +964,16 @@ pub(super) enum Modal {
         anchors: Vec<Option<Uuid>>,
         cursor: usize,
     },
+    /// CANON-LEDGER-1 (CL-P8) — the canon dashboard (reader hub → Canon): the
+    /// story's development-ledger decisions with kind + commitment, plus any
+    /// commitment forks. `↑↓` scroll, Enter jumps to the decision's source
+    /// paragraph, Esc closes. `anchors` parallels `rows` (header/blank rows carry
+    /// `None`).
+    Canon {
+        rows: Vec<String>,
+        anchors: Vec<Option<Uuid>>,
+        cursor: usize,
+    },
     /// KEN-1 (2.6, KEN-P5) — the knowledge dashboard (`Ctrl+B Shift+Z`): the
     /// epistemic-continuity findings (who knows what, when) grouped by kind. `↑↓`
     /// scroll, Enter jumps to the offending paragraph, Esc closes. `anchors`
