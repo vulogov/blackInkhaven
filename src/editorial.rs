@@ -701,6 +701,35 @@ pub(crate) fn from_bonds_finding(f: &crate::bonds::BondFinding) -> EditorialFind
     }
 }
 
+/// CANON-LEDGER-1 — surface a commitment fork (two agents disagree on a
+/// decision's canonicity, SMY-W058) as a Brief: there's no single prose locus to
+/// rewrite, so the author reconciles the *ledger* with `canon commit` / `canon
+/// merge`, not the manuscript. Forks only exist after a merge (a single serialized
+/// ledger advances one agent's view monotonically), so single-author projects
+/// surface none — this source is free in the common case. The fork's source
+/// paragraph anchors the row so the cockpit can jump to it.
+pub(crate) fn from_canon_fork(f: &crate::canon::CommitmentForkView) -> EditorialFinding {
+    let positions = f
+        .positions
+        .iter()
+        .map(|(agent, level)| format!("{agent}→{level}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    EditorialFinding {
+        category: "commitment_fork".into(),
+        severity: Severity::Warn,
+        location: Location { paragraph: f.unit.node, ..Default::default() },
+        message: format!(
+            "canon fork on “{}” — agents disagree on its canonicity ({positions}); \
+             reconcile with `canon commit` / `canon merge`.",
+            f.unit.gist
+        ),
+        hint: None,
+        source: "canon",
+        autofixable: false,
+    }
+}
+
 /// `"ch. N"` for a 1-based chapter ordinal, or `None` for book-level (0).
 fn chapter_label(chapter: u32) -> Option<String> {
     (chapter > 0).then(|| format!("ch. {chapter}"))
@@ -991,7 +1020,8 @@ mod tests {
             assert_eq!(response_kind(c), Decision, "{c} is a Decision");
         }
         // Structural / book-level, and anything unknown → Brief (never edits prose).
-        for c in ["structure", "shape_sag", "put_down_risk", "distinctiveness", "tension", "mystery-kind"] {
+        // `commitment_fork` is a ledger reconciliation, not a prose fix → Brief.
+        for c in ["structure", "shape_sag", "put_down_risk", "distinctiveness", "tension", "mystery-kind", "commitment_fork"] {
             assert_eq!(response_kind(c), Brief, "{c} is a Brief");
         }
     }

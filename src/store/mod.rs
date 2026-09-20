@@ -232,6 +232,9 @@ impl Store {
             inner,
             layout: Arc::new(layout),
         };
+        // CANON-LEDGER-1 — apply the `canon.harvest_on_save` knob to the ledger
+        // now that config is in hand (the save path has no cfg of its own).
+        store.inner.canon().set_harvest_on_save(cfg.canon.harvest_on_save);
         let t2 = std::time::Instant::now();
         store.ensure_system_books(cfg)?;
         perf_mark(perf, "store.open.ensure_system_books", t2.elapsed());
