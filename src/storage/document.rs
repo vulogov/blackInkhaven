@@ -105,6 +105,29 @@ impl DocumentStorage {
     pub fn canon(&self) -> &crate::canon::CanonLedger {
         &self.canon
     }
+
+    /// CL-P6 — grounded canon context for `query`: semantic retrieval picks the
+    /// relevant paragraphs, their canon units seed the pack, and pack fits the
+    /// closure to `budget` (holding back `reserve`). No embedding dependency
+    /// beyond the one inkhaven already loads for search.
+    pub fn canon_context_for_query(
+        &self,
+        query: &str,
+        limit: usize,
+        budget: usize,
+        reserve: usize,
+    ) -> Result<crate::canon::PackedContext> {
+        let hits = self.search_document_text(query, limit)?;
+        let mut relevant = Vec::new();
+        for hit in &hits {
+            if let Some(id) = hit.get("id").and_then(|v| v.as_str()) {
+                if let Ok(node) = Uuid::parse_str(id) {
+                    relevant.extend(self.canon.units_for_node(node)?);
+                }
+            }
+        }
+        self.canon.pack_context(&relevant, budget, reserve)
+    }
 }
 
 /// SEMNET-P0 graph pass-throughs. Several are consumed by the Store graph API /

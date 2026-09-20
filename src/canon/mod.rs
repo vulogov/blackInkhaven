@@ -19,10 +19,11 @@
 //!
 //! CL-P2 wired the write path (harvest-on-save); CL-P3 adds the read side
 //! (`impact` / `why` / `all_decisions` / `resolve`, in `query.rs`) and the
-//! `inkhaven canon` CLI that consumes it; CL-P4 adds commitment marking + the
-//! SMY-W057 advisory (`commit.rs`). A couple of substrate methods still land
-//! ahead of their consumer — `count` awaits a stats surface, `units_for_node`
-//! a P8 node view — and carry a local `#[allow(dead_code)]` rather than a
+//! `inkhaven canon` CLI that consumes it; CL-P4 adds commitment + the SMY-W057
+//! advisory (`commit.rs`), CL-P5 adds merge + CommitmentFork surfacing
+//! (`merge.rs`), CL-P6 adds budget-fit grounded context (`context.rs`). The
+//! last substrate method still ahead of its consumer is `count` (awaiting a
+//! stats surface); it carries a local `#[allow(dead_code)]` rather than a
 //! blanket module one, so genuinely dead code still surfaces.
 
 use anyhow::{anyhow, Result};
@@ -35,11 +36,13 @@ use uuid::Uuid;
 use smysl::{canonical_uid, from_cbor_seq, to_cbor_seq, Record, Status, Store, Uid, UnitCoreBuilder};
 
 mod commit;
+mod context;
 mod harvest;
 mod merge;
 mod model;
 mod query;
 pub use commit::CommitmentWarning;
+pub use context::PackedContext;
 pub use harvest::harvest_tags;
 pub use merge::{CommitmentForkView, MergeSummary};
 pub use model::NarrativeKind;
@@ -141,8 +144,7 @@ impl CanonLedger {
 
     /// CL-P1 — the node bridge (reverse lookup): the `Uid`s of every canon unit
     /// derived from `node`, via the `inkhaven:<uuid>` source-reference prefix.
-    /// (Consumer: a node-scoped ledger view in CL-P8.)
-    #[allow(dead_code)]
+    /// Consumed by the CL-P6 query→canon context bridge.
     pub fn units_for_node(&self, node: Uuid) -> Result<Vec<Uid>> {
         let prefix = model::node_prefix(node);
         self.with_store(|s| Ok(s.units_with_source_prefix(&prefix)))
