@@ -12,7 +12,7 @@ use std::path::Path;
 
 use smysl::Commitment;
 
-use crate::canon::{CanonView, CommitmentWarning};
+use crate::canon::{CanonView, CommitmentForkView, CommitmentWarning, MergeSummary};
 use crate::config::Config;
 use crate::error::{Error, Result};
 use crate::project::ProjectLayout;
@@ -128,6 +128,42 @@ pub fn check(project: &Path) -> Result<()> {
         );
         println!("      {}", w.unit.gist);
         println!("        ⟵ needs: {}", w.weakest_ground.gist);
+    }
+    Ok(())
+}
+
+/// `inkhaven canon merge <path>`
+pub fn merge(project: &Path, other: &str) -> Result<()> {
+    let store = open(project)?;
+    let summary: MergeSummary = store.raw().canon().merge_from(other).map_err(store_err)?;
+    eprintln!(
+        "merged {other}: {} added, {} duplicate(s), {} commitment fork(s)",
+        summary.added, summary.duplicates, summary.forks
+    );
+    if summary.forks > 0 {
+        eprintln!("  run `inkhaven canon forks` to review them.");
+    }
+    Ok(())
+}
+
+/// `inkhaven canon forks`
+pub fn forks(project: &Path) -> Result<()> {
+    let store = open(project)?;
+    let forks: Vec<CommitmentForkView> = store.raw().canon().commitment_forks().map_err(store_err)?;
+    if forks.is_empty() {
+        eprintln!("No commitment forks — no decision has agents disagreeing on how settled it is.");
+        return Ok(());
+    }
+    eprintln!(
+        "{} commitment fork(s) (SMY-W058 — agents disagree on canonicity):",
+        forks.len()
+    );
+    for f in &forks {
+        let status = if f.resolved { "  (resolved)" } else { "" };
+        println!("  {}  {}{status}", f.unit.uid.short(), f.unit.gist);
+        for (agent, level) in &f.positions {
+            println!("      {agent} → {level}");
+        }
     }
     Ok(())
 }

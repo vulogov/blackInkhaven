@@ -1780,6 +1780,13 @@ pub enum CanonCommand {
     },
     /// Flag decisions committed above their foundation (SMY-W057).
     Check,
+    /// Merge another project's canon ledger into this one.
+    Merge {
+        /// Path to the other project's `canon.cbor`.
+        path: String,
+    },
+    /// List commitment forks — decisions whose agents disagree on canonicity (SMY-W058).
+    Forks,
 }
 
 #[derive(Debug, Subcommand)]
@@ -6641,6 +6648,8 @@ impl Cli {
                     canon::commit(&project, &id, &level, as_agent).map_err(Into::into)
                 }
                 CanonCommand::Check => canon::check(&project).map_err(Into::into),
+                CanonCommand::Merge { path } => canon::merge(&project, &path).map_err(Into::into),
+                CanonCommand::Forks => canon::forks(&project).map_err(Into::into),
             },
             Command::Reindex { prune, adopt } => {
                 reindex::run(&project, prune, adopt).map_err(Into::into)
