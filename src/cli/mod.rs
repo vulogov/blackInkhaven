@@ -1790,12 +1790,12 @@ pub enum CanonCommand {
     /// Show the budget-fit canon context that would ground an answer to a query.
     Context {
         query: String,
-        /// Token budget for the packed context.
-        #[arg(long, default_value_t = 2000)]
-        budget: usize,
-        /// Tokens held back for the prompt + answer.
-        #[arg(long, default_value_t = 400)]
-        reserve: usize,
+        /// Token budget for the packed context. Defaults to `canon.context_budget`.
+        #[arg(long)]
+        budget: Option<usize>,
+        /// Tokens held back for the prompt + answer. Defaults to `canon.context_reserve`.
+        #[arg(long)]
+        reserve: Option<usize>,
         /// How many relevant paragraphs to seed from.
         #[arg(long, default_value_t = 12)]
         limit: usize,

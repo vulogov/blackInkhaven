@@ -83,6 +83,10 @@ impl DocumentStorage {
         slug: &str,
         tags: &[String],
     ) -> Result<usize> {
+        // Honour the `canon.harvest_on_save` config knob (set at Store::open).
+        if !self.canon.harvest_on_save() {
+            return Ok(0);
+        }
         let decisions = crate::canon::harvest_tags(tags);
         if decisions.is_empty() {
             return Ok(0);

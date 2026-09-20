@@ -178,6 +178,13 @@ pub fn collect(
                         }
                     }
                 }
+                // CANON (3.11) — commitment forks: decisions whose agents disagree
+                // on canonicity (SMY-W058). Project-level, self-gating (forks only
+                // exist after a `canon merge`, so a single-author ledger surfaces
+                // none — the query is empty and free in the common case).
+                for f in store.raw().canon().commitment_forks().unwrap_or_default() {
+                    raw.push(editorial::from_canon_fork(&f));
+                }
             }
         }
     }

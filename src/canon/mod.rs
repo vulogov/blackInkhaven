@@ -85,6 +85,10 @@ pub struct CanonLedger {
     /// True while a background flush thread is running, so a burst of appends
     /// spawns at most one such thread (it coalesces later writes).
     sync_in_flight: Arc<AtomicBool>,
+    /// Whether saving a paragraph auto-harvests its authored tags into the
+    /// ledger (the `canon.harvest_on_save` config knob). Set from config at
+    /// `Store::open`; `true` until then, matching the config default.
+    harvest_on_save: Arc<AtomicBool>,
 }
 
 impl CanonLedger {
@@ -97,7 +101,19 @@ impl CanonLedger {
             store: Arc::new(Mutex::new(None)),
             dirty: Arc::new(AtomicBool::new(false)),
             sync_in_flight: Arc::new(AtomicBool::new(false)),
+            harvest_on_save: Arc::new(AtomicBool::new(true)),
         }
+    }
+
+    /// Set whether saving a paragraph auto-harvests its tags (config
+    /// `canon.harvest_on_save`). Called from [`crate::store::Store::open`].
+    pub fn set_harvest_on_save(&self, on: bool) {
+        self.harvest_on_save.store(on, Ordering::Relaxed);
+    }
+
+    /// Whether on-save tag harvest is enabled (see [`Self::set_harvest_on_save`]).
+    pub fn harvest_on_save(&self) -> bool {
+        self.harvest_on_save.load(Ordering::Relaxed)
     }
 
     /// Append records to the ledger and mark it dirty. smysl content-addresses

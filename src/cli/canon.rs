@@ -297,8 +297,20 @@ pub fn forks(project: &Path) -> Result<()> {
 }
 
 /// `inkhaven canon context <query> [--budget N] [--reserve N] [--limit N]`
-pub fn context(project: &Path, query: &str, limit: usize, budget: usize, reserve: usize) -> Result<()> {
-    let store = open(project)?;
+pub fn context(
+    project: &Path,
+    query: &str,
+    limit: usize,
+    budget: Option<usize>,
+    reserve: Option<usize>,
+) -> Result<()> {
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    // `--budget` / `--reserve` win; else the `canon:` config defaults.
+    let budget = budget.unwrap_or(cfg.canon.context_budget);
+    let reserve = reserve.unwrap_or(cfg.canon.context_reserve);
+    let store = Store::open(layout, &cfg)?;
     let ctx: PackedContext = store
         .raw()
         .canon_context_for_query(query, limit, budget, reserve)

@@ -79,6 +79,24 @@ of every decision with its kind and `«commitment»`, plus a commitment-forks
 section. `↑↓` scrolls, **`Enter` jumps to the decision's source paragraph**, `Esc`
 closes.
 
+Commitment **forks** — two agents disagreeing on a decision's canonicity after a
+`canon merge` — also surface in the unified worklist (`inkhaven revise` / the
+Editorial Pass, `Ctrl+V Shift+R`) as advisory **Briefs**: there's no single prose
+locus to rewrite, so you reconcile the *ledger* (with `canon commit` / `canon
+merge`), not the manuscript. A single-author ledger never forks, so this line is
+empty and free in the common case.
+
+## Configuration
+
+The `canon:` block ([`CONFIGURATION.md`](CONFIGURATION.md#311--canon-the-decision-ledger-canon-ledger-1))
+holds behavioural knobs only (the ledger is derived data, nothing to tune there):
+`harvest_on_save` (default `true`) toggles the deterministic on-save tag harvest;
+`context_budget` / `context_reserve` set the default token budget for `canon
+context` when its `--budget` / `--reserve` flags are omitted. A Bund script reads
+the ledger through `ink.canon.{list,impact,why,forks}` (read-only — the writes,
+`commit` and the author-confirmed harvest/`accept`, stay on the CLI and in the
+editor).
+
 ## Quick start
 
 ```
