@@ -54,6 +54,19 @@ pub use merge::{CommitmentForkView, MergeSummary};
 pub use model::NarrativeKind;
 pub use query::CanonView;
 
+/// One decision to record via [`CanonLedger::record_grounded_batch`], with the
+/// grounds the LLM harvest proposed (CG-P2) carried as gist references — resolved
+/// to Uids at record time and unioned with the deterministic inference (CG-P1).
+pub struct NewDecision {
+    pub kind: NarrativeKind,
+    pub gist: String,
+    pub node: Uuid,
+    pub breadcrumb: String,
+    /// Gists of sibling decisions this one rests on, as the model named them.
+    /// Empty for a deterministic-only path (e.g. a decision with no model grounds).
+    pub proposed_grounds: Vec<String>,
+}
+
 /// After this many consecutive background-flush failures, give up the pass
 /// (leaving `dirty` set for the next trigger) rather than spinning — the same
 /// no-spin guarantee the vector index makes.
@@ -164,16 +177,18 @@ impl CanonLedger {
         Ok(uid)
     }
 
-    /// CANON-2 (CG-P1) — record a batch of new decisions, each **born with its
-    /// deterministically-inferred grounds** (kind rules + salient-word overlap of
-    /// gists, free, no model). Ground-providers (world-facts, setups) are recorded
-    /// first, so a dependent in the same batch (a reveal, a plot point) can rest on
-    /// a same-batch provider as well as on the existing ledger. Grounds are set at
-    /// creation, so no supersession is needed. Returns the recorded uids (in
-    /// recording order). Caller flushes (`sync`).
+    /// CANON-2 (CG-P1/P2) — record a batch of new decisions, each **born with its
+    /// grounds**: the deterministically-inferred edges (kind rules + salient-word
+    /// overlap of gists, free, no model — CG-P1) unioned with any the LLM harvest
+    /// *proposed* by gist reference (resolved against this batch + the ledger,
+    /// unresolved/ambiguous refs dropped — CG-P2). Ground-providers (world-facts,
+    /// setups) are recorded first, so a dependent in the same batch (a reveal, a
+    /// plot point) can rest on a same-batch provider as well as on the existing
+    /// ledger. Grounds are set at creation, so no supersession is needed. Returns
+    /// the recorded uids (in recording order). Caller flushes (`sync`).
     pub fn record_grounded_batch(
         &self,
-        items: &[(NarrativeKind, String, Uuid, String)],
+        items: &[NewDecision],
         language: &crate::prose::ProseLanguage,
     ) -> Result<Vec<Uid>> {
         let lang = grounding::stemmer_language_name(language);
@@ -186,13 +201,23 @@ impl CanonLedger {
             })
             .collect();
         let mut order: Vec<usize> = (0..items.len()).collect();
-        order.sort_by_key(|&i| grounding::ground_rank(items[i].0));
+        order.sort_by_key(|&i| grounding::ground_rank(items[i].kind));
         let mut out = Vec::with_capacity(items.len());
         for &i in &order {
-            let (kind, gist, node, breadcrumb) = &items[i];
-            let grounds = grounding::infer_grounds(*kind, gist, lang, &candidates);
-            let uid = self.record_decision(*kind, gist, *node, breadcrumb, &grounds)?;
-            candidates.push(grounding::Candidate { uid, kind: *kind, gist: gist.clone() });
+            let it = &items[i];
+            let mut grounds = grounding::infer_grounds(it.kind, &it.gist, lang, &candidates);
+            // Union the model-proposed grounds (CG-P2), resolved by gist against
+            // the batch-so-far + ledger (the item itself is not yet a candidate,
+            // so a ref can't resolve to self).
+            for gref in &it.proposed_grounds {
+                if let Some(uid) = grounding::resolve_gist_ref(gref, &candidates) {
+                    if !grounds.contains(&uid) {
+                        grounds.push(uid);
+                    }
+                }
+            }
+            let uid = self.record_decision(it.kind, &it.gist, it.node, &it.breadcrumb, &grounds)?;
+            candidates.push(grounding::Candidate { uid, kind: it.kind, gist: it.gist.clone() });
             out.push(uid);
         }
         Ok(out)
@@ -543,16 +568,18 @@ mod tests {
         let led = CanonLedger::new(&path_s);
         let n = Uuid::from_u128(0x33);
 
+        let mk = |kind, gist: &str, bc: &str| NewDecision {
+            kind,
+            gist: gist.to_string(),
+            node: n,
+            breadcrumb: bc.to_string(),
+            proposed_grounds: Vec::new(),
+        };
         let items = vec![
-            (NarrativeKind::Reveal, "the tremors are the beast waking".to_string(), n, "ch9".to_string()),
-            (
-                NarrativeKind::PlotPoint,
-                "the escape uses the sea gate in the leviathan's flank".to_string(),
-                n,
-                "ch12".to_string(),
-            ),
-            (NarrativeKind::WorldFact, "the city floats on a sleeping leviathan".to_string(), n, "ch1".to_string()),
-            (NarrativeKind::Setup, "the tremors shake the lower city".to_string(), n, "ch3".to_string()),
+            mk(NarrativeKind::Reveal, "the tremors are the beast waking", "ch9"),
+            mk(NarrativeKind::PlotPoint, "the escape uses the sea gate in the leviathan's flank", "ch12"),
+            mk(NarrativeKind::WorldFact, "the city floats on a sleeping leviathan", "ch1"),
+            mk(NarrativeKind::Setup, "the tremors shake the lower city", "ch3"),
         ];
         led.record_grounded_batch(&items, &ProseLanguage::En).unwrap();
 
@@ -570,6 +597,44 @@ mod tests {
         assert!(
             led.why(reveal).unwrap().iter().any(|v| v.gist.contains("shake the lower city")),
             "the reveal grounds the tremor setup even though it was listed first"
+        );
+    }
+
+    #[test]
+    fn model_proposed_grounds_draw_an_edge_overlap_would_miss() {
+        // CG-P2: a plot point that shares NO salient word with the world-fact —
+        // deterministic overlap gives nothing — but the model asserted the
+        // dependency by gist reference, so accept wires it.
+        use crate::prose::ProseLanguage;
+        let dir = tempfile::tempdir().unwrap();
+        let path_s = dir.path().join("canon.cbor").to_str().unwrap().to_string();
+        let led = CanonLedger::new(&path_s);
+        let n = Uuid::from_u128(0x44);
+
+        let items = vec![
+            NewDecision {
+                kind: NarrativeKind::WorldFact,
+                gist: "the moons rise together at midsummer".into(),
+                node: n,
+                breadcrumb: "ch1".into(),
+                proposed_grounds: Vec::new(),
+            },
+            NewDecision {
+                kind: NarrativeKind::PlotPoint,
+                gist: "the escape uses the sea gate".into(),
+                node: n,
+                breadcrumb: "ch12".into(),
+                // No shared word, but the model says it rests on the moons fact.
+                proposed_grounds: vec!["the moons rise together at midsummer".into()],
+            },
+        ];
+        led.record_grounded_batch(&items, &ProseLanguage::En).unwrap();
+
+        let all = led.all_decisions().unwrap();
+        let moons = all.iter().find(|v| v.gist.contains("moons")).unwrap().uid;
+        assert!(
+            led.impact(moons).unwrap().iter().any(|v| v.gist.contains("sea gate")),
+            "the model-proposed ground wired the edge deterministic overlap would have missed"
         );
     }
 

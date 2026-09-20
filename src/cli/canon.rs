@@ -127,6 +127,9 @@ pub fn staged(project: &Path) -> Result<()> {
     for p in &staged.proposals {
         let kind = p.kind.schema_str().trim_start_matches("x.narrative/");
         println!("  [{kind}]  {}  ({})", p.gist, p.breadcrumb);
+        for g in &p.grounds {
+            println!("      ↳ rests on: {g}");
+        }
     }
     Ok(())
 }
@@ -147,10 +150,16 @@ pub fn accept(project: &Path) -> Result<()> {
     // CG-P1 — decisions are born with their deterministically-inferred grounds,
     // in the project language (so `canon impact`/`why` have a graph to walk).
     let (language, _) = crate::prose::resolve_prose_language(None, &cfg.language);
-    let items: Vec<_> = staged
+    let items: Vec<crate::canon::NewDecision> = staged
         .proposals
         .iter()
-        .map(|p| (p.kind, p.gist.clone(), p.node, p.breadcrumb.clone()))
+        .map(|p| crate::canon::NewDecision {
+            kind: p.kind,
+            gist: p.gist.clone(),
+            node: p.node,
+            breadcrumb: p.breadcrumb.clone(),
+            proposed_grounds: p.grounds.clone(),
+        })
         .collect();
     let n = canon.record_grounded_batch(&items, &language).map_err(store_err)?.len();
     canon.sync().map_err(store_err)?;
