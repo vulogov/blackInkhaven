@@ -145,6 +145,11 @@ pub enum Action {
     /// introduced; Enter jumps to an introduced finding, m marks this draft.
     #[serde(rename = "global.open_chronicle")]
     OpenChronicle,
+    /// CANON-LEDGER-1 (CL-P8) — the canon dashboard (reader hub → Canon): the
+    /// story's development-ledger decisions with kind + commitment + forks; Enter
+    /// jumps to a decision's source paragraph.
+    #[serde(rename = "global.open_canon")]
+    OpenCanon,
     /// KEN-1 (2.6, KEN-P5) — the knowledge dashboard (Ctrl+B Shift+Z): the epistemic
     /// findings (who knows what, when) grouped by kind; Enter jumps to the paragraph.
     #[serde(rename = "global.open_knowledge")]
@@ -1050,6 +1055,7 @@ impl Action {
             Action::OpenContinuityLedger => "continuity".into(),
             Action::OpenReadThrough => "read-through".into(),
             Action::OpenChronicle => "chronicle".into(),
+            Action::OpenCanon => "canon".into(),
             Action::OpenKnowledge => "knowledge".into(),
             Action::OpenBonds => "bonds".into(),
             Action::OpenCast => "cast".into(),
@@ -1294,6 +1300,8 @@ impl Action {
                 "Open the CHRONICLE draft-history dashboard (Ctrl+B Shift+U): the trend since your last milestone — findings, errors, and per-category counts — plus which findings your revision cleared vs introduced. ↑↓ scroll, Enter jumps to an introduced finding's paragraph, m marks this draft (labelled by today's date; for a chosen name, `inkhaven chronicle mark \"<name>\"` from the CLI instead), Esc closes. Pure measurement — it never edits the manuscript. The CLI equivalent is `inkhaven chronicle` (`mark` / `diff` / `--json`).".into(),
             Action::OpenKnowledge =>
                 "Open the KEN knowledge dashboard (Ctrl+B Shift+Z): the epistemic-continuity findings — who knows what, when — grouped by kind (premature_knowledge, leaked_secret, dropped_reveal). ↑↓ scroll, Enter jumps to the offending paragraph, Esc closes. Deterministic; declare with `secret:` / `know:` / `reveals:` tags. The CLI equivalent is `inkhaven knowledge` (`--json`).".into(),
+            Action::OpenCanon =>
+                "Open the CANON ledger dashboard (reader hub → Canon): the story's development-history decisions (world-facts, character traits, plot points, reveals, setups) with their kind and commitment level, plus any commitment forks. ↑↓ scroll, Enter jumps to the decision's source paragraph, Esc closes. Populated deterministically from authored tags on save and by `inkhaven canon harvest`. The CLI equivalent is `inkhaven canon` (`list` / `impact` / `why` / `commit` / `forks`).".into(),
             Action::OpenBonds =>
                 "Open the BONDS relationship dashboard (Ctrl+V Shift+O): the relationship-continuity findings — are the bonds between characters earned on the page? — grouped by kind (unwritten_bond, unearned_shift, dropped_bond). ↑↓ scroll, Enter jumps to the offending paragraph, Esc closes. Deterministic; declare with `rel:<kind>:<A>:<B>` tags. The CLI equivalent is `inkhaven bonds` (`--json`).".into(),
             Action::OpenCast =>

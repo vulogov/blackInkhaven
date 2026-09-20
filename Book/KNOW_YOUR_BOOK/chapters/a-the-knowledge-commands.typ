@@ -17,6 +17,7 @@ need the way to say it.
   chord_row("inkhaven readthrough", "The LECTOR read-through. --deep for the synthetic first read; --json."),
   chord_row("inkhaven chorus", "Voice profiles + the distinctiveness matrix. scan / report / stylist."),
   chord_row("inkhaven chronicle", "The draft trend since the last mark. mark / list / diff / --json."),
+  chord_row("inkhaven canon", "The decision ledger. impact / why / list / commit / check / forks / context; harvest → staged → accept (only accept writes)."),
 ))
 
 #section("Inside the editor")
@@ -29,6 +30,7 @@ need the way to say it.
   chord_row("Ctrl+B Shift+A", "The LECTOR read-through dashboard (k = the synthetic first read)."),
   chord_row("Ctrl+B J → Y", "The Inner Stylist — CHORUS's voice observations."),
   chord_row("Ctrl+B Shift+U", "The CHRONICLE draft-history dashboard (m = mark this draft)."),
+  chord_row("Ctrl+B * → Canon", "The CANON decision ledger (⏎ = jump to a decision's source paragraph)."),
   chord_row("Ctrl+V Shift+R", "The Editorial Pass — every reader's findings, one worklist, acted on."),
   chord_row("Ctrl+B Shift+C", "The unified review pass — the fast checks in one sweep."),
 ))
@@ -60,6 +62,6 @@ need the way to say it.
 
 Every check reads out to Bund, read-only, for hooks and gates:
 `ink.knowledge.{grants,findings,check}`, `ink.continuity.{findings,check}`,
-`ink.readthrough.{report,curve,check}`, `ink.chronicle.{marks,trend,check}`, and the
-graph words. Each `check` returns a `clean` flag — a one-line pass/fail gate for a
-pre-submit script.
+`ink.readthrough.{report,curve,check}`, `ink.chronicle.{marks,trend,check}`,
+`ink.canon.{list,impact,why,forks}`, and the graph words. Each `check` returns a
+`clean` flag — a one-line pass/fail gate for a pre-submit script.

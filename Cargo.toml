@@ -1,6 +1,6 @@
 [package]
 name = "inkhaven"
-version = "3.10.0"
+version = "3.11.0"
 edition = "2024"
 # Rust 1.85 stabilised edition 2024. Bump alongside any toolchain-only
 # feature usage (let-else / chained-comparisons / etc. are already stable).
@@ -127,6 +127,10 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 # on save — rather than through the abandoned `vecstore` wrapper that rebuilt
 # the whole graph on every open.
 hnsw_rs = "0.3"
+# CANON-LEDGER-1 (CL-P0) — the story's development-history ledger. Pure profile
+# only (no async/HTTP/C++/arg-parser); `render-typst` adds no external deps.
+# Never enable `semantic` — inkhaven supplies its own embeddings.
+smysl = { version = "1.7", default-features = false, features = ["render-typst"] }
 r2d2 = "0.8"
 parking_lot = "0.12"
 

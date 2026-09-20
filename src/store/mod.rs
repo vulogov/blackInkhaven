@@ -232,6 +232,9 @@ impl Store {
             inner,
             layout: Arc::new(layout),
         };
+        // CANON-LEDGER-1 — apply the `canon.harvest_on_save` knob to the ledger
+        // now that config is in hand (the save path has no cfg of its own).
+        store.inner.canon().set_harvest_on_save(cfg.canon.harvest_on_save);
         let t2 = std::time::Instant::now();
         store.ensure_system_books(cfg)?;
         perf_mark(perf, "store.open.ensure_system_books", t2.elapsed());
@@ -2027,6 +2030,18 @@ symbol/motif proposals you can accept straight into this book.";
         self.inner
             .reembed_document(id)
             .map_err(|e| Error::Store(format!("reembed_document: {e}")))?;
+        // CL-P2 — deterministically harvest this paragraph's authored tags into
+        // the canon ledger. Advisory: the ledger is a derived artifact, so a
+        // harvest failure must never fail the save (only the prose is sacred).
+        if let Err(e) = self
+            .inner
+            .harvest_paragraph(id, &node.path, &node.slug, &node.tags)
+        {
+            tracing::warn!(
+                target: "inkhaven::canon",
+                "canon harvest on save failed (advisory, ignored): {e}"
+            );
+        }
         // Fire hook.on_save ( uuid -- ).
         fire_hook("hook.on_save", vec![bund_string(&id.to_string())]);
         Ok(())

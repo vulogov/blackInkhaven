@@ -1,6 +1,6 @@
 #import "../design.typ": *
 
-#chapter(number: 11, title: "The Inner Theologian")
+#chapter(number: 12, title: "The Inner Theologian")
 
 Some books carry moral weight whether or not their authors meant them to. A death is
 mourned or it is not; a sacrifice means something or it is spent cheaply; a

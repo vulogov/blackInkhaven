@@ -66,6 +66,8 @@ mod redline;
 mod chronicle;
 // KEN-1 (2.6) — epistemic continuity: who knows what, when.
 mod ken;
+// CANON-LEDGER-1 (CL-P0) — the story's development-history ledger, on smysl.
+mod canon;
 // CHAR-1 — character arc tracking.
 mod character;
 // HAIKU-1 — zero-AI startup / new-paragraph / on-demand haiku.

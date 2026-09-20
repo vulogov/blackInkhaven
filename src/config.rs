@@ -121,6 +121,9 @@ pub struct Config {
     /// MYTH-1 — mythological & symbolic pattern library.
     #[serde(default)]
     pub myth: MythConfig,
+    /// CANON-LEDGER-1 — the story-canon development ledger (`inkhaven canon`).
+    #[serde(default)]
+    pub canon: CanonConfig,
     /// WORLD-12 — the AI world-critique pass (`realworld critique`).
     #[serde(default)]
     pub world: WorldConfig,
@@ -293,6 +296,7 @@ impl Default for Config {
             tex_export: TexExportConfig::default(),
             typst_universe: TypstUniverseConfig::default(),
             myth: MythConfig::default(),
+            canon: CanonConfig::default(),
             world: WorldConfig::default(),
             research: ResearchConfig::default(),
             genre: None,
@@ -1560,11 +1564,13 @@ pub struct LlmConfig {
 impl Default for LlmConfig {
     fn default() -> Self {
         let mut providers = std::collections::BTreeMap::new();
-        // Gemini — Google.
+        // Gemini — Google. `gemini-2.5-pro` was retired for new API users
+        // (404 NOT_FOUND, "use gemini-3.1-pro-preview") — the id below is what
+        // Google's own error steers to; the `gemini` cost-table row covers it.
         providers.insert(
             "gemini".into(),
             LlmProvider {
-                model: "gemini-2.5-pro".into(),
+                model: "gemini-3.1-pro-preview".into(),
                 api_key_env: Some("GEMINI_API_KEY".into()),
             },
         );
@@ -4459,6 +4465,33 @@ pub struct BondsConfig {
 impl Default for BondsConfig {
     fn default() -> Self {
         Self { enabled: true, min_co_presence: 2, dormancy_window: 6 }
+    }
+}
+
+/// CANON-LEDGER-1 — the `canon:` block. The story-canon development ledger is a
+/// **derived** artifact (rebuildable from the manuscript), so the only knobs are
+/// behavioural, not data: whether saving a paragraph auto-harvests its authored
+/// tags into the ledger, and the default token budget the grounded-context pack
+/// (`canon context`) fits decisions to. Deterministic and free; on by default.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CanonConfig {
+    /// When `true` (default), saving a paragraph deterministically harvests its
+    /// authored tags (e.g. `rel:`) into the ledger, off-thread and advisory —
+    /// untagged paragraphs cost nothing. Set `false` to keep the ledger populated
+    /// only by explicit `canon harvest`/`accept`; the CLI queries still work.
+    pub harvest_on_save: bool,
+    /// Default soft token budget for `canon context` (the grounded-context pack),
+    /// used when the CLI `--budget` flag is left at its own default. Never blocks.
+    pub context_budget: usize,
+    /// Default tokens reserved (out of `context_budget`) for the prompt framing
+    /// and the model's answer, used when `--reserve` is left at its default.
+    pub context_reserve: usize,
+}
+
+impl Default for CanonConfig {
+    fn default() -> Self {
+        Self { harvest_on_save: true, context_budget: 2000, context_reserve: 400 }
     }
 }
 
