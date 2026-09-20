@@ -28292,6 +28292,7 @@ impl App {
             .filter(|n| n.kind == NodeKind::Paragraph)
             .map(|n| n.word_count)
             .sum();
+        let canon_note = self.build_canon_delete_note(&ids);
         self.modal = Modal::Deleting {
             root_id: id,
             root_kind: node.kind,
@@ -28299,7 +28300,56 @@ impl App {
             descendant_count,
             word_count,
             ids,
+            canon_note,
         };
+    }
+
+    /// CANON-2 (CG-P5) — the pre-cut guard. Advisory lines for the delete
+    /// confirmation naming the canon decisions the paragraphs being deleted
+    /// *established*, and how many other decisions rest on them. The ledger is
+    /// derived and separate, so deleting the prose does NOT prune these decisions
+    /// — it leaves them source-orphaned; the note says so. Empty when nothing here
+    /// sources a decision (the common case, so a normal delete stays quiet).
+    fn build_canon_delete_note(&self, ids: &[Uuid]) -> Vec<String> {
+        let canon = self.store.raw().canon();
+        let mut sourced: Vec<crate::canon::CanonView> = Vec::new();
+        for pid in ids {
+            if self.hierarchy.get(*pid).map(|n| n.kind) != Some(NodeKind::Paragraph) {
+                continue;
+            }
+            if let Ok(uids) = canon.units_for_node(*pid) {
+                for u in uids {
+                    if let Ok(Some(v)) = canon.view(u) {
+                        sourced.push(v);
+                    }
+                }
+            }
+        }
+        if sourced.is_empty() {
+            return Vec::new();
+        }
+        let mut lines = vec![format!(
+            "⚠ {} canon decision(s) were established here:",
+            sourced.len()
+        )];
+        for v in sourced.iter().take(3) {
+            let kind =
+                v.kind.map(|k| k.schema_str().trim_start_matches("x.narrative/")).unwrap_or("?");
+            let commit = v.commitment.map(|c| format!(" «{c}»")).unwrap_or_default();
+            let deps = canon.impact(v.uid).map(|d| d.len()).unwrap_or(0);
+            let rest = if deps > 0 {
+                format!(" — {deps} rest on it")
+            } else {
+                String::new()
+            };
+            let gist: String = v.gist.chars().take(46).collect();
+            lines.push(format!("  [{kind}]{commit} {gist}{rest}"));
+        }
+        if sourced.len() > 3 {
+            lines.push(format!("  …and {} more", sourced.len() - 3));
+        }
+        lines.push("The ledger keeps these (run `canon impact` before cutting).".into());
+        lines
     }
 
     /// Returns `Some(reason)` if the given node (or any ancestor) is a

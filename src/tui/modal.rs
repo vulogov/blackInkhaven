@@ -241,6 +241,10 @@ pub(super) enum Modal {
         /// deleted, surfaced in the confirmation so the author sees what's lost.
         word_count: u64,
         ids: Vec<Uuid>,
+        /// CANON-2 (CG-P5) — the pre-cut guard: advisory lines naming the canon
+        /// decisions these paragraphs established and how much rests on them, shown
+        /// in the confirmation. Empty when no paragraph here sources a decision.
+        canon_note: Vec<String>,
     },
     Renaming {
         node_id: Uuid,
