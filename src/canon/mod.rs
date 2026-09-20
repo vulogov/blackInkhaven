@@ -17,11 +17,13 @@
 //! bridge (CL-P1), on-save harvest (CL-P2), and the impact / why / diff queries
 //! (CL-P3). CL-P0 provides only open / append / count / flush.
 //!
-//! CL-P2 wires the write path — the document store harvests a paragraph's
-//! authored tags into the ledger on save. The read/query surface
-//! (`units_for_node`, `count`, the foreground `sync`) gets its consumers in
-//! CL-P3, so the module keeps `allow(dead_code)` until then.
-#![allow(dead_code)]
+//! CL-P2 wired the write path (harvest-on-save); CL-P3 adds the read side
+//! (`impact` / `why` / `all_decisions` / `resolve`, in `query.rs`) and the
+//! `inkhaven canon` CLI that consumes it. A few substrate methods still land
+//! ahead of their consumer — the foreground `sync` and `count` await the TUI /
+//! stats surface, `units_for_node` a P8 node view — and carry a local
+//! `#[allow(dead_code)]` rather than a blanket module one, so genuinely dead
+//! code still surfaces.
 
 use anyhow::{anyhow, Result};
 use parking_lot::Mutex;
@@ -34,8 +36,10 @@ use smysl::{canonical_uid, from_cbor_seq, to_cbor_seq, Record, Status, Store, Ui
 
 mod harvest;
 mod model;
+mod query;
 pub use harvest::harvest_tags;
 pub use model::NarrativeKind;
+pub use query::CanonView;
 
 /// After this many consecutive background-flush failures, give up the pass
 /// (leaving `dirty` set for the next trigger) rather than spinning — the same
@@ -102,7 +106,8 @@ impl CanonLedger {
         })
     }
 
-    /// Total record count in the ledger.
+    /// Total record count in the ledger. (Consumer: a stats surface in CL-P8.)
+    #[allow(dead_code)]
     pub fn count(&self) -> Result<usize> {
         self.with_store(|s| Ok(s.len()))
     }
@@ -132,13 +137,16 @@ impl CanonLedger {
 
     /// CL-P1 — the node bridge (reverse lookup): the `Uid`s of every canon unit
     /// derived from `node`, via the `inkhaven:<uuid>` source-reference prefix.
+    /// (Consumer: a node-scoped ledger view in CL-P8.)
+    #[allow(dead_code)]
     pub fn units_for_node(&self, node: Uuid) -> Result<Vec<Uid>> {
         let prefix = model::node_prefix(node);
         self.with_store(|s| Ok(s.units_with_source_prefix(&prefix)))
     }
 
     /// Flush to disk, but only when there are unpersisted writes. The clean-path
-    /// fast return skips the lock entirely.
+    /// fast return skips the lock entirely. (Consumer: the TUI quit path, CL-P8.)
+    #[allow(dead_code)]
     pub fn sync(&self) -> Result<()> {
         if !self.dirty.load(Ordering::Acquire) {
             return Ok(());

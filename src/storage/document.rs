@@ -99,6 +99,12 @@ impl DocumentStorage {
         self.canon.sync_in_background();
         Ok(decisions.len())
     }
+
+    /// CL-P3 — the canon ledger, for the read-side queries (`impact` / `why` /
+    /// `all_decisions` / `resolve`).
+    pub fn canon(&self) -> &crate::canon::CanonLedger {
+        &self.canon
+    }
 }
 
 /// SEMNET-P0 graph pass-throughs. Several are consumed by the Store graph API /

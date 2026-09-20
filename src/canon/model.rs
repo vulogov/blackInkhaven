@@ -52,6 +52,12 @@ impl NarrativeKind {
         SchemaId::parse(self.schema_str())
             .expect("narrative schema strings are valid extension ids")
     }
+
+    /// Recover the kind from an `x.narrative/…` schema string (`None` for any
+    /// other schema — the inverse of [`Self::schema_str`]).
+    pub fn from_schema_str(s: &str) -> Option<NarrativeKind> {
+        NarrativeKind::ALL.into_iter().find(|k| k.schema_str() == s)
+    }
 }
 
 /// The `SourceRef.reference` linking a canon unit to its inkhaven node:
@@ -68,6 +74,18 @@ pub fn node_reference(node: Uuid, breadcrumb: &str) -> String {
 /// fixed-length and unique, so this never matches another node's units.
 pub fn node_prefix(node: Uuid) -> String {
     format!("inkhaven:{node}")
+}
+
+/// Parse a node source reference (`inkhaven:<uuid>#<breadcrumb>`, or
+/// `inkhaven:<uuid>`) back into its node id and optional breadcrumb — the
+/// inverse of [`node_reference`].
+pub fn parse_node_reference(reference: &str) -> Option<(Uuid, Option<String>)> {
+    let rest = reference.strip_prefix("inkhaven:")?;
+    let (uuid_str, breadcrumb) = match rest.split_once('#') {
+        Some((u, bc)) => (u, (!bc.is_empty()).then(|| bc.to_string())),
+        None => (rest, None),
+    };
+    Some((Uuid::parse_str(uuid_str).ok()?, breadcrumb))
 }
 
 /// The `SourceRef` for a node-derived canon unit.
