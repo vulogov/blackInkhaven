@@ -36,10 +36,12 @@ use smysl::{canonical_uid, from_cbor_seq, to_cbor_seq, Record, Status, Store, Ui
 
 mod commit;
 mod harvest;
+mod merge;
 mod model;
 mod query;
 pub use commit::CommitmentWarning;
 pub use harvest::harvest_tags;
+pub use merge::{CommitmentForkView, MergeSummary};
 pub use model::NarrativeKind;
 pub use query::CanonView;
 
