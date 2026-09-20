@@ -17,9 +17,10 @@
 //! bridge (CL-P1), on-save harvest (CL-P2), and the impact / why / diff queries
 //! (CL-P3). CL-P0 provides only open / append / count / flush.
 //!
-//! The wrapper is exercised by this module's tests but not yet wired into the
-//! binary (its consumers land in CL-P1+), so the surface is `allow(dead_code)`
-//! until then — the annotation is removed when the store/CLI first calls it.
+//! CL-P2 wires the write path — the document store harvests a paragraph's
+//! authored tags into the ledger on save. The read/query surface
+//! (`units_for_node`, `count`, the foreground `sync`) gets its consumers in
+//! CL-P3, so the module keeps `allow(dead_code)` until then.
 #![allow(dead_code)]
 
 use anyhow::{anyhow, Result};
@@ -31,7 +32,9 @@ use uuid::Uuid;
 
 use smysl::{canonical_uid, from_cbor_seq, to_cbor_seq, Record, Status, Store, Uid, UnitCoreBuilder};
 
+mod harvest;
 mod model;
+pub use harvest::harvest_tags;
 pub use model::NarrativeKind;
 
 /// After this many consecutive background-flush failures, give up the pass
@@ -382,6 +385,28 @@ mod tests {
         led.sync().unwrap();
         let led2 = CanonLedger::new(&path_s);
         assert_eq!(led2.units_for_node(node_a).unwrap(), vec![base], "node bridge survives reload");
+    }
+
+    #[test]
+    fn harvest_to_record_to_lookup_flow() {
+        // CL-P2 end to end at the canon layer (no Store/DuckDB): authored tags →
+        // harvest_tags → record_decision → units_for_node.
+        let dir = tempfile::tempdir().unwrap();
+        let path_s = dir.path().join("canon.cbor").to_str().unwrap().to_string();
+        let led = CanonLedger::new(&path_s);
+        let node = Uuid::from_u128(0x7);
+
+        let tags = vec!["rel:friend:Alice:Bob".to_string(), "pov:Alice".to_string()];
+        let decisions = super::harvest_tags(&tags);
+        assert_eq!(decisions.len(), 1, "one rel: tag harvests to one decision");
+        for (kind, gist) in &decisions {
+            led.record_decision(*kind, gist, node, "ch1/scene1", &[]).unwrap();
+        }
+        assert_eq!(
+            led.units_for_node(node).unwrap().len(),
+            1,
+            "the harvested tag became one canon unit under its node"
+        );
     }
 
     #[test]
