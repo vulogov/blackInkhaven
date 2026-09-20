@@ -27,6 +27,12 @@ pub struct Proposal {
     pub breadcrumb: String,
     pub kind: NarrativeKind,
     pub gist: String,
+    /// CG-P2 — the gists of sibling decisions (in the same harvest response) the
+    /// model says this one rests on. Resolved to grounds Uids on `accept`;
+    /// unresolved or ambiguous refs are dropped. `#[serde(default)]` so a staged
+    /// file written before CG-P2 still loads.
+    #[serde(default)]
+    pub grounds: Vec<String>,
 }
 
 /// The staging sidecar: proposals harvested but not yet in the ledger.
@@ -89,12 +95,17 @@ pub fn system_prompt(language: &str) -> String {
          story bible — not a summary, only decisions the passage actually commits to.\n\n\
          Output ONLY a JSON array, no prose around it. Each item:\n\
          {{ \"kind\": one of \"world-fact\" | \"character-trait\" | \"plot-point\" | \"reveal\" | \"setup\", \
-         \"gist\": a single declarative sentence in {language} }}\n\n\
+         \"gist\": a single declarative sentence in {language}, \
+         \"grounds\": an array (possibly empty) of the gists of OTHER items in THIS array that \
+         this decision depends on }}\n\n\
          Rules:\n\
          - Extract only what the passage establishes; do NOT infer or invent. If it establishes \
          nothing, output [].\n\
          - Write every gist in {language}. Do NOT translate to English.\n\
-         - Keep each gist to one sentence, no citation, no commentary."
+         - Keep each gist to one sentence, no citation, no commentary.\n\
+         - In \"grounds\", copy the referenced gist VERBATIM from another item in this same array \
+         (a reveal often grounds a setup; a plot-point grounds a world-fact). Only reference \
+         items present in this array; use [] when a decision stands on its own."
     )
 }
 
@@ -107,6 +118,8 @@ pub fn parse_proposals(raw: &str, node: Uuid, breadcrumb: &str) -> Vec<Proposal>
     struct RawItem {
         kind: String,
         gist: String,
+        #[serde(default)]
+        grounds: Vec<String>,
     }
     let slice = match (raw.find('['), raw.rfind(']')) {
         (Some(a), Some(b)) if b > a => &raw[a..=b],
@@ -124,11 +137,19 @@ pub fn parse_proposals(raw: &str, node: Uuid, breadcrumb: &str) -> Vec<Proposal>
             if gist.is_empty() {
                 return None;
             }
+            // Keep only non-empty ground refs that aren't the decision's own gist.
+            let grounds: Vec<String> = it
+                .grounds
+                .into_iter()
+                .map(|g| g.trim().to_string())
+                .filter(|g| !g.is_empty() && !g.eq_ignore_ascii_case(gist))
+                .collect();
             Some(Proposal {
                 node,
                 breadcrumb: breadcrumb.to_string(),
                 kind,
                 gist: gist.to_string(),
+                grounds,
             })
         })
         .collect()
@@ -154,6 +175,24 @@ mod tests {
         assert_eq!(got[0].kind, NarrativeKind::WorldFact);
         assert_eq!(got[1].kind, NarrativeKind::Reveal);
         assert!(got.iter().all(|p| p.node == node && p.breadcrumb == "ch1/scene1"));
+        assert!(got.iter().all(|p| p.grounds.is_empty()), "no grounds given → empty");
+    }
+
+    #[test]
+    fn parse_reads_grounds_refs_and_drops_self_and_blanks() {
+        let raw = r#"[
+          {"kind": "world-fact", "gist": "The city floats on a leviathan.", "grounds": []},
+          {"kind": "plot-point", "gist": "The escape uses the sea gate.",
+           "grounds": ["The city floats on a leviathan.", "  ", "The escape uses the sea gate."]}
+        ]"#;
+        let got = parse_proposals(raw, Uuid::from_u128(0x3), "ch1");
+        assert_eq!(got.len(), 2);
+        assert!(got[0].grounds.is_empty());
+        assert_eq!(
+            got[1].grounds,
+            vec!["The city floats on a leviathan.".to_string()],
+            "blank ref and the self-reference are dropped"
+        );
     }
 
     #[test]
@@ -169,6 +208,7 @@ mod tests {
         let p = system_prompt("Russian");
         assert!(p.contains("Russian") && p.contains("Do NOT translate"));
         assert!(p.contains("world-fact") && p.contains("JSON array"));
+        assert!(p.contains("grounds"), "the prompt asks for ground references");
     }
 
     #[test]
@@ -183,6 +223,7 @@ mod tests {
                 breadcrumb: "ch2".into(),
                 kind: NarrativeKind::PlotPoint,
                 gist: "the escape must wait for the thaw".into(),
+                grounds: vec!["the harbour freezes each winter".into()],
             }],
         };
         staged.save(&layout).unwrap();

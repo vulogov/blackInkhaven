@@ -107,6 +107,34 @@ pub(super) fn infer_grounds(
         .collect()
 }
 
+/// Normalise a gist for reference matching: trimmed, lowercased, internal
+/// whitespace collapsed. So a model's ground reference that copies a gist with
+/// slightly different spacing/case still resolves.
+fn normalize_gist(gist: &str) -> String {
+    gist.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+}
+
+/// Resolve a model-proposed ground reference (a gist string, CG-P2) to the Uid of
+/// the candidate whose gist it names. Conservative: returns `Some` only on a
+/// UNIQUE normalized match — an absent or ambiguous reference is dropped (`None`),
+/// so a loose reference never draws a wrong edge.
+pub(super) fn resolve_gist_ref(gist_ref: &str, candidates: &[Candidate]) -> Option<Uid> {
+    let needle = normalize_gist(gist_ref);
+    if needle.is_empty() {
+        return None;
+    }
+    let mut hit: Option<Uid> = None;
+    for c in candidates {
+        if normalize_gist(&c.gist) == needle {
+            if hit.is_some() {
+                return None; // ambiguous — two candidates share this gist
+            }
+            hit = Some(c.uid);
+        }
+    }
+    hit
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -185,5 +213,23 @@ mod tests {
         let grounds =
             infer_grounds(NarrativeKind::PlotPoint, "the escape uses the sea gate", "english", &[wf]);
         assert!(grounds.is_empty(), "no shared salient word → no ground");
+    }
+
+    #[test]
+    fn gist_ref_resolves_uniquely_and_tolerates_spacing() {
+        let cands = [
+            Candidate { uid: uid(1), kind: NarrativeKind::WorldFact, gist: "The moons rise at midsummer.".into() },
+            Candidate { uid: uid(2), kind: NarrativeKind::Setup, gist: "A lantern burns in the tower.".into() },
+        ];
+        // Case + collapsed whitespace still resolve.
+        assert_eq!(resolve_gist_ref("the   moons rise at MIDSUMMER.", &cands), Some(uid(1)));
+        // Absent → None.
+        assert_eq!(resolve_gist_ref("something never said", &cands), None);
+        // Ambiguous (two candidates share the gist) → None.
+        let dup = [
+            Candidate { uid: uid(3), kind: NarrativeKind::WorldFact, gist: "same gist".into() },
+            Candidate { uid: uid(4), kind: NarrativeKind::Setup, gist: "same gist".into() },
+        ];
+        assert_eq!(resolve_gist_ref("same gist", &dup), None);
     }
 }
