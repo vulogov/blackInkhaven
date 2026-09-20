@@ -27,32 +27,42 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 3.10.0 — Own the Index
+## Latest release · 3.11.0 — The Canon Ledger
 
-The current release is **3.10.0**, two tracks aimed at one key — F1. Deterministic
-core, warning-free:
+The current release is **3.11.0**, a new axis: inkhaven now remembers **the
+decisions behind the fiction**, not just the text (git) or the current state
+(Facts / SEMNET / KEN / SENTINEL) or the readers' findings over time (CHRONICLE).
+Deterministic core, warning-free:
 
-- **Own the index.** The abandoned `vecstore` crate is gone, replaced by an
-  in-tree vector store built directly on `hnsw_rs`. The old store **rebuilt the
-  whole HNSW search graph on every open** (15–31 s, landing on your first F1
-  search); the owned store **loads** it instead (~50 ms), while saving a
-  paragraph still re-indexes just that paragraph. And `rebuild-help` / `reindex`
-  now **checkpoint DuckDB** so opens don't replay a multi-second write-ahead log.
-  Together the first F1 search drops from **40–60 s to about a second**. Upgrading
-  is guided: an old-format index is detected and `reindex` rebuilds it.
-- **F1 help that builds itself.** **`inkhaven rebuild-help`** fetches inkhaven's
-  documentation from GitHub, curates it (release notes and internal docs filtered
-  out), chunks large docs by section for precise retrieval, and indexes it — no
-  manual corpus assembly. The search runs on a **background thread with an
-  animated spinner** instead of freezing the modal, and F1 points at
-  `rebuild-help` when the Help book is empty. (`rebuild-help` is inkhaven's one
-  deliberate network fetch — disclosed in the docs.)
-- **Config coverage.** `Option`-`None` fields are now editable from the config
-  TUI, and the soft-wrap toggle persists to `inkhaven.hjson`.
+- **The Canon Ledger.** Every load-bearing decision — a world-fact, character
+  trait, plot point, reveal, or setup — is recorded with its **grounds** (what it
+  rests on), a **commitment** level (`floated → drafted → committed → canonical →
+  retconned`), and a link back to its source paragraph. So you can finally ask
+  the question revision keeps raising: **`canon impact <id>` — what breaks if I
+  cut this?** — the transitive blast radius, before the cut. `canon why` traces
+  the grounds; `canon check` flags a canonical scene resting on a floated premise.
+- **Author always in control.** Decisions enter deterministically from the `rel:`
+  tags you already write (on save, free), or from an **opt-in `canon harvest`**
+  that *proposes* decisions from prose in your project language — staged, and
+  **nothing enters the ledger until you `canon accept`**. The model proposes; you
+  decide. The ledger is a **derived** artifact: a lost `canon.cbor` costs a
+  re-harvest, never prose.
+- **Reachable everywhere.** The reader hub (`Ctrl+B *`) gains a **Canon**
+  dashboard (`Enter` jumps to source); commitment forks (after a `canon merge`)
+  surface in the Editorial Pass; `ink.canon.*` reads the ledger from Bund; the
+  `canon:` config block tunes on-save harvest and the context budget. Built on the
+  pure-profile [`smysl`](https://github.com/vulogov/smysl) crate.
 
-Read the full notes: [`Documentation/RELEASE_NOTES/3.10.0.md`](Documentation/RELEASE_NOTES/3.10.0.md).
+Read the full notes: [`Documentation/RELEASE_NOTES/3.11.0.md`](Documentation/RELEASE_NOTES/3.11.0.md).
 
 ### Recent releases
+
+- **3.10.0 — Own the Index.** Two tracks aimed at F1: an in-tree vector store on
+  `hnsw_rs` that **loads** the HNSW graph (~50 ms) instead of rebuilding it
+  (15–31 s) + DuckDB checkpointing — first F1 search **40–60 s → about a second**;
+  and **`inkhaven rebuild-help`**, a self-building F1 help corpus fetched and
+  curated from GitHub, searched on a background thread.
+  [notes](Documentation/RELEASE_NOTES/3.10.0.md)
 
 - **3.9.0 — Panes That Keep Up.** The third TUI pass: the AI pane gains a
   multi-line compose box, retry / edit-and-resend, navigable Book-scope citations,
@@ -108,7 +118,7 @@ lines (zero Critical), with every surviving finding fixed and zero breaking
 changes. The 3.0.x line (through 3.0.9) then hardened the Bund scripting coverage
 and the export/import/keymap/assembly subsystems through successive targeted
 audits, each leaving a build-time guard behind. **3.1.0 lifted the feature freeze**
-(BONDS); **3.2.0** (ENSEMBLE), **3.3.0** (multilingual parity), **3.4.0** (export fidelity), **3.5.0** (imports + reader hub), **3.6.0** (fidelity + worklist fixes), **3.7.0** (the TUI pass), **3.8.0** (a second TUI pass — rendering + the Tree and Output panes), **3.9.0** (a third — the AI / Search / Thoughts panes, plus AI-pane depth), and **3.10.0** (a self-building F1 help corpus + an owned, load-on-open vector index) continue
+(BONDS); **3.2.0** (ENSEMBLE), **3.3.0** (multilingual parity), **3.4.0** (export fidelity), **3.5.0** (imports + reader hub), **3.6.0** (fidelity + worklist fixes), **3.7.0** (the TUI pass), **3.8.0** (a second TUI pass — rendering + the Tree and Output panes), **3.9.0** (a third — the AI / Search / Thoughts panes, plus AI-pane depth), **3.10.0** (a self-building F1 help corpus + an owned, load-on-open vector index), and **3.11.0** (the Canon Ledger — the decisions behind the fiction, and what breaks if you cut one) continue
 on that hardened surface. Full 3.0.0 notes:
 [`Documentation/RELEASE_NOTES/3.0.0.md`](Documentation/RELEASE_NOTES/3.0.0.md).
 
@@ -319,7 +329,7 @@ cargo install inkhaven
 ```
 
 Inkhaven is published on crates.io — every release tag pushes a
-new version (latest: 3.10.0).  The first build takes ~10 minutes on
+new version (latest: 3.11.0).  The first build takes ~10 minutes on
 a modern laptop because of DuckDB + fastembed + ONNX-runtime
 compilation; `cargo binstall` above is the fast path.
 
