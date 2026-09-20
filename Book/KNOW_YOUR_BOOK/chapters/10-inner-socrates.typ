@@ -1,6 +1,6 @@
 #import "../design.typ": *
 
-#chapter(number: 9, title: "Inner Socrates — the Dialectician")
+#chapter(number: 10, title: "Inner Socrates — the Dialectician")
 
 Everything so far in this book *answers*. The Facts bible answers whether a claim is
 true; SENTINEL answers whether the continuity holds; KEN answers whether a character

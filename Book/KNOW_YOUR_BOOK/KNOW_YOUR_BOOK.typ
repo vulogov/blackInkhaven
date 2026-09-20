@@ -30,17 +30,18 @@
   include "chapters/05-the-read-through.typ",
   include "chapters/06-the-voices.typ",
 
-  part(number: "IV", title: "Knowing You're Getting Somewhere"),
+  part(number: "IV", title: "Knowing Where You Stand"),
   include "chapters/07-did-it-get-better.typ",
+  include "chapters/08-the-canon-ledger.typ",
 
   part(number: "V", title: "All Together"),
-  include "chapters/08-a-scene-through-every-check.typ",
+  include "chapters/09-a-scene-through-every-check.typ",
 
   part(number: "VI", title: "The Readers Who Question"),
-  include "chapters/09-inner-socrates.typ",
-  include "chapters/10-inner-editor.typ",
-  include "chapters/11-inner-theologian.typ",
-  include "chapters/12-inner-poet.typ",
+  include "chapters/10-inner-socrates.typ",
+  include "chapters/11-inner-editor.typ",
+  include "chapters/12-inner-theologian.typ",
+  include "chapters/13-inner-poet.typ",
 
   include "chapters/a-the-knowledge-commands.typ",
   include "chapters/b-glossary.typ",

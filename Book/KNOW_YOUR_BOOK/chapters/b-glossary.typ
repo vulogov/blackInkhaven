@@ -53,6 +53,24 @@ The vocabulary of knowing your book, gathered in one place.
   draft can be trended against it — cleared vs. introduced.
 ]
 
+#term("Decision (CANON)")[
+  A load-bearing choice behind the story — a world-fact, character trait, plot
+  point, reveal, or setup — kept in the decision ledger with its grounds, its
+  commitment level, and a link to the paragraph it came from.
+]
+
+#term("Commitment")[
+  How firmly the author has settled a decision, on a ladder from *floated* through
+  *drafted*, *committed*, and *canonical* to *retconned*. It is canonicity, not
+  truth: not whether the decision is correct, but how firmly you stand behind it.
+]
+
+#term("Grounds")[
+  The decisions a decision rests on. `canon impact` walks them forward — what would
+  dangle if you cut a choice — and `canon why` walks them back, to the choices a
+  decision stands on.
+]
+
 #term("Deterministic / cost-capped")[
   *Deterministic* means the tool reads your manuscript and its structure with no model,
   at no cost. Where a language model genuinely helps, it is *cost-capped* and opt-in —

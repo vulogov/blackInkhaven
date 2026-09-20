@@ -1,6 +1,6 @@
 #import "../design.typ": *
 
-#chapter(number: 12, title: "The Inner Poet")
+#chapter(number: 13, title: "The Inner Poet")
 
 Verse is the one place in a book where the *form* is a promise. Call a stanza a
 sonnet and you have sworn to fourteen lines and a turn; call it iambic and every foot
