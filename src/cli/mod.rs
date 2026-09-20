@@ -1767,6 +1767,19 @@ pub enum CanonCommand {
         /// A decision id (canonical or short prefix, as printed by `list`).
         id: String,
     },
+    /// Mark a decision's commitment (canonicity) level.
+    Commit {
+        /// A decision id (canonical or short prefix, as printed by `list`).
+        id: String,
+        /// floated | drafted | committed | canonical | retconned.
+        #[arg(long)]
+        level: String,
+        /// Agent id (default `human:author`); a bare name becomes `human:<name>`.
+        #[arg(long = "as")]
+        as_agent: Option<String>,
+    },
+    /// Flag decisions committed above their foundation (SMY-W057).
+    Check,
 }
 
 #[derive(Debug, Subcommand)]
@@ -6624,6 +6637,10 @@ impl Cli {
                 CanonCommand::List => canon::list(&project).map_err(Into::into),
                 CanonCommand::Impact { id } => canon::impact(&project, &id).map_err(Into::into),
                 CanonCommand::Why { id } => canon::why(&project, &id).map_err(Into::into),
+                CanonCommand::Commit { id, level, as_agent } => {
+                    canon::commit(&project, &id, &level, as_agent).map_err(Into::into)
+                }
+                CanonCommand::Check => canon::check(&project).map_err(Into::into),
             },
             Command::Reindex { prune, adopt } => {
                 reindex::run(&project, prune, adopt).map_err(Into::into)

@@ -19,11 +19,11 @@
 //!
 //! CL-P2 wired the write path (harvest-on-save); CL-P3 adds the read side
 //! (`impact` / `why` / `all_decisions` / `resolve`, in `query.rs`) and the
-//! `inkhaven canon` CLI that consumes it. A few substrate methods still land
-//! ahead of their consumer — the foreground `sync` and `count` await the TUI /
-//! stats surface, `units_for_node` a P8 node view — and carry a local
-//! `#[allow(dead_code)]` rather than a blanket module one, so genuinely dead
-//! code still surfaces.
+//! `inkhaven canon` CLI that consumes it; CL-P4 adds commitment marking + the
+//! SMY-W057 advisory (`commit.rs`). A couple of substrate methods still land
+//! ahead of their consumer — `count` awaits a stats surface, `units_for_node`
+//! a P8 node view — and carry a local `#[allow(dead_code)]` rather than a
+//! blanket module one, so genuinely dead code still surfaces.
 
 use anyhow::{anyhow, Result};
 use parking_lot::Mutex;
@@ -34,9 +34,11 @@ use uuid::Uuid;
 
 use smysl::{canonical_uid, from_cbor_seq, to_cbor_seq, Record, Status, Store, Uid, UnitCoreBuilder};
 
+mod commit;
 mod harvest;
 mod model;
 mod query;
+pub use commit::CommitmentWarning;
 pub use harvest::harvest_tags;
 pub use model::NarrativeKind;
 pub use query::CanonView;
@@ -145,8 +147,7 @@ impl CanonLedger {
     }
 
     /// Flush to disk, but only when there are unpersisted writes. The clean-path
-    /// fast return skips the lock entirely. (Consumer: the TUI quit path, CL-P8.)
-    #[allow(dead_code)]
+    /// fast return skips the lock entirely.
     pub fn sync(&self) -> Result<()> {
         if !self.dirty.load(Ordering::Acquire) {
             return Ok(());

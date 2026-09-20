@@ -10,7 +10,9 @@
 
 use std::path::Path;
 
-use crate::canon::CanonView;
+use smysl::Commitment;
+
+use crate::canon::{CanonView, CommitmentWarning};
 use crate::config::Config;
 use crate::error::{Error, Result};
 use crate::project::ProjectLayout;
@@ -88,16 +90,62 @@ pub fn why(project: &Path, id: &str) -> Result<()> {
     Ok(())
 }
 
+/// `inkhaven canon commit <id> --level <level> [--as <agent>]`
+pub fn commit(project: &Path, id: &str, level: &str, agent: Option<String>) -> Result<()> {
+    let store = open(project)?;
+    let canon = store.raw().canon();
+    let uid = canon.resolve(id).map_err(store_err)?;
+    let level = Commitment::parse(level).ok_or_else(|| {
+        let valid: Vec<String> = Commitment::ALL.iter().map(|c| c.to_string()).collect();
+        Error::Store(format!("unknown commitment level {level:?} — valid: {}", valid.join(", ")))
+    })?;
+    let agent = agent.unwrap_or_else(|| "author".to_string());
+    canon.commit(uid, level, &agent).map_err(store_err)?;
+    eprintln!("committed {} → {level}", uid.short());
+    Ok(())
+}
+
+/// `inkhaven canon check` — the SMY-W057 advisory.
+pub fn check(project: &Path) -> Result<()> {
+    let store = open(project)?;
+    let warnings: Vec<CommitmentWarning> =
+        store.raw().canon().commitment_warnings().map_err(store_err)?;
+    if warnings.is_empty() {
+        eprintln!("No commitment issues — nothing is committed above what it rests on (SMY-W057).");
+        return Ok(());
+    }
+    eprintln!(
+        "{} decision(s) committed above their foundation (SMY-W057 — \"built on sand\"):",
+        warnings.len()
+    );
+    for w in &warnings {
+        println!(
+            "  {} [{}]  rests on  {} [{}]",
+            w.unit.uid.short(),
+            w.level,
+            w.weakest_ground.uid.short(),
+            w.ground_level
+        );
+        println!("      {}", w.unit.gist);
+        println!("        ⟵ needs: {}", w.weakest_ground.gist);
+    }
+    Ok(())
+}
+
 fn print_view(v: &CanonView) {
     let kind = v
         .kind
         .map(|k| k.schema_str().trim_start_matches("x.narrative/").to_string())
         .unwrap_or_else(|| "?".to_string());
+    let commitment = v
+        .commitment
+        .map(|c| format!(" «{c}»"))
+        .unwrap_or_default();
     let loc = v.locator.as_deref().unwrap_or("");
     let loc = if loc.is_empty() {
         String::new()
     } else {
         format!("  ({loc})")
     };
-    println!("  {}  [{kind}]  {}{loc}", v.uid.short(), v.gist);
+    println!("  {}  [{kind}]{commitment}  {}{loc}", v.uid.short(), v.gist);
 }
