@@ -244,6 +244,13 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.chronicle.marks", category::STORE_READ),
     ("ink.chronicle.trend", category::STORE_READ),
     ("ink.chronicle.check", category::STORE_READ),
+    // CANON — the decision ledger; read-only. `commit` (sets commitment) and the
+    // opt-in author-confirmed LLM harvest/`accept` (writes) stay CLI/TUI-only, the
+    // same discipline as chronicle's `mark`.
+    ("ink.canon.list", category::STORE_READ),
+    ("ink.canon.impact", category::STORE_READ),
+    ("ink.canon.why", category::STORE_READ),
+    ("ink.canon.forks", category::STORE_READ),
     // KEN — the epistemic check (who knows what, when); read-only, deterministic.
     // The opt-in --deep LLM implied_irony pass is not exposed (it costs).
     ("ink.knowledge.grants", category::STORE_READ),
