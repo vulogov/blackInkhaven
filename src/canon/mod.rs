@@ -52,7 +52,7 @@ pub use harvest::harvest_tags;
 pub use harvest_llm::{language_name, parse_proposals, system_prompt, Proposal, StagedCanon};
 pub use merge::{CommitmentForkView, MergeSummary};
 pub use model::NarrativeKind;
-pub use query::CanonView;
+pub use query::{CanonView, DecisionHistory, LogEntry};
 
 /// One decision to record via [`CanonLedger::record_grounded_batch`], with the
 /// grounds the LLM harvest proposed (CG-P2) carried as gist references — resolved

@@ -17384,7 +17384,7 @@ impl App {
         self.status = if jumps == 0 {
             "canon · Esc".into()
         } else {
-            "canon · ↑↓ scroll · Enter jump · g ground · Esc".into()
+            "canon · ↑↓ scroll · Enter jump · g ground · h history · Esc".into()
         };
         self.modal = Modal::Canon { rows, anchors, decisions, cursor: 0, grounding: None };
     }
@@ -17480,6 +17480,17 @@ impl App {
                     _ => self.status = "canon: put the cursor on a decision, then g".into(),
                 }
             }
+            KeyCode::Char('h') if !grounding => {
+                // Show the cursored decision's development history in Thoughts.
+                let target = match &self.modal {
+                    Modal::Canon { decisions, cursor, .. } => decisions.get(*cursor).copied().flatten(),
+                    _ => None,
+                };
+                match target {
+                    Some(uid) => self.canon_show_history(uid),
+                    None => self.status = "canon: put the cursor on a decision, then h".into(),
+                }
+            }
             KeyCode::Enter if grounding => {
                 let (src, dst) = match &self.modal {
                     Modal::Canon { decisions, cursor, grounding: Some(g), .. } => (
@@ -17541,6 +17552,56 @@ impl App {
             _ => 0,
         };
         self.modal = Modal::Canon { rows, anchors, decisions, cursor, grounding: None };
+    }
+
+    /// CG-P4 — render the cursored decision's development history (grounds +
+    /// commitment trajectory) into the Thoughts pane and show it.
+    fn canon_show_history(&mut self, uid: smysl::Uid) {
+        let hist = match self.store.raw().canon().history(uid) {
+            Ok(Some(h)) => h,
+            Ok(None) => {
+                self.status = "canon: no such decision".into();
+                return;
+            }
+            Err(e) => {
+                self.status = format!("canon: {e}");
+                return;
+            }
+        };
+        let kind = hist
+            .decision
+            .kind
+            .map(|k| k.schema_str().trim_start_matches("x.narrative/"))
+            .unwrap_or("?");
+        let commit = hist.decision.commitment.map(|c| format!(" «{c}»")).unwrap_or_default();
+        let mut md = format!("## ◆ Canon history\n\n**[{kind}]{commit}** {}\n", hist.decision.gist);
+        if hist.grounds.is_empty() {
+            md.push_str("\n_rests on nothing recorded — a base decision._\n");
+        } else {
+            md.push_str("\n**Rests on:**\n\n");
+            for g in &hist.grounds {
+                md.push_str(&format!("- {}\n", g.gist));
+            }
+        }
+        md.push_str("\n**Commitment history:**\n\n");
+        if hist.trajectory.is_empty() {
+            md.push_str("_no commitments recorded yet._\n");
+        } else {
+            for e in &hist.trajectory {
+                let ts = if e.wall_ms == 0 {
+                    "—".to_string()
+                } else {
+                    chrono::DateTime::from_timestamp_millis(e.wall_ms as i64)
+                        .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
+                        .unwrap_or_else(|| "—".to_string())
+                };
+                md.push_str(&format!("- {ts}  {} → {}\n", e.agent, e.level));
+            }
+        }
+        self.modal = Modal::None;
+        self.push_thought(md);
+        self.right_pane = RightPane::Thoughts;
+        self.status = "canon · history → Thoughts".into();
     }
 
     /// KEN-1 (KEN-P5) — `Ctrl+B Shift+Z`: the knowledge dashboard. Runs the

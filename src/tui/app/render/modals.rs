@@ -6784,7 +6784,7 @@ impl super::super::App {
         let footer_hint = if grounding.is_some() {
             "pick the decision it rests on · Enter ground · Esc cancel"
         } else {
-            "Enter jumps to source · g grounds this decision on another"
+            "Enter jumps to source · g grounds · h history"
         };
         let footer_text = dashboard_footer(footer_hint, start, list_h, rows.len());
         f.render_widget(

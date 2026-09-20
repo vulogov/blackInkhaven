@@ -12,6 +12,8 @@
 //! - `ink.canon.impact` ( id -- list ) the blast radius of `id`: every decision
 //!   that transitively rests on it (same dict shape).
 //! - `ink.canon.why` ( id -- list )    the grounds chain `id` rests on.
+//! - `ink.canon.history` ( id -- list ) `id`'s commitment trajectory over time,
+//!   as dicts {level, agent, ts} (oldest first).
 //! - `ink.canon.forks` ( -- list )     commitment forks as dicts {uid, gist,
 //!   positions:[{agent, level}], resolved}.
 
@@ -30,6 +32,7 @@ pub fn register(vm: &mut VM) -> Result<()> {
         ("ink.canon.list", w_list),
         ("ink.canon.impact", w_impact),
         ("ink.canon.why", w_why),
+        ("ink.canon.history", w_history),
         ("ink.canon.forks", w_forks),
     ];
     for (name, f) in words {
@@ -114,6 +117,26 @@ fn do_why(vm: &mut VM) -> Result<&mut VM> {
     let (uid, canon) = resolve_arg(vm, tag)?;
     let views = canon.why(uid).map_err(|e| anyhow!("{tag}: {e}"))?;
     push(vm, Value::from_list(views.iter().map(view_dict).collect()));
+    Ok(vm)
+}
+
+word!(w_history, do_history);
+fn do_history(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.canon.history";
+    let (uid, canon) = resolve_arg(vm, tag)?;
+    let hist = canon.history(uid).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let events = hist.map(|h| h.trajectory).unwrap_or_default();
+    let list: Vec<Value> = events
+        .iter()
+        .map(|e| {
+            let mut d: HashMap<String, Value> = HashMap::new();
+            d.insert("level".into(), Value::from_string(e.level.to_string()));
+            d.insert("agent".into(), Value::from_string(&e.agent));
+            d.insert("ts".into(), Value::from_int(e.wall_ms as i64));
+            Value::from_dict(d)
+        })
+        .collect();
+    push(vm, Value::from_list(list));
     Ok(vm)
 }
 
