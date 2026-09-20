@@ -16,6 +16,7 @@ pub mod import_typst_help;
 pub mod init;
 pub mod list;
 pub mod mv;
+pub mod canon;
 pub mod outline;
 pub mod paragraph;
 pub mod reindex;
@@ -325,6 +326,11 @@ pub enum Command {
     /// terminal: inspect the passages Book-scope chat would ground on.
     #[command(subcommand)]
     BookRag(BookRagCommand),
+
+    /// CANON-LEDGER-1 (CL-P3) — query the story's canon development ledger
+    /// (`canon list` / `impact <id>` / `why <id>`).
+    #[command(subcommand)]
+    Canon(CanonCommand),
 
     /// Re-index all `.typ` files from disk into the document store.
     Reindex {
@@ -1746,6 +1752,23 @@ pub enum Command {
 
 /// OUTLINE-1 — sub-subcommands under `inkhaven paragraph …`. `src` / `dest`
 /// are slash-separated slug paths (as printed by `inkhaven outline`).
+/// sub-subcommands under `inkhaven canon …` (CL-P3).
+#[derive(Debug, Subcommand)]
+pub enum CanonCommand {
+    /// List the recorded canon decisions (id, kind, gist, location).
+    List,
+    /// Show what would break if a decision were cut — its blast radius.
+    Impact {
+        /// A decision id (canonical or short prefix, as printed by `list`).
+        id: String,
+    },
+    /// Show the grounds a decision rests on.
+    Why {
+        /// A decision id (canonical or short prefix, as printed by `list`).
+        id: String,
+    },
+}
+
 #[derive(Debug, Subcommand)]
 pub enum ParagraphCommand {
     /// Duplicate a paragraph under a destination node (fresh uuid; the
@@ -6596,6 +6619,11 @@ impl Cli {
                     context,
                 )
                 .map_err(Into::into),
+            },
+            Command::Canon(cmd) => match cmd {
+                CanonCommand::List => canon::list(&project).map_err(Into::into),
+                CanonCommand::Impact { id } => canon::impact(&project, &id).map_err(Into::into),
+                CanonCommand::Why { id } => canon::why(&project, &id).map_err(Into::into),
             },
             Command::Reindex { prune, adopt } => {
                 reindex::run(&project, prune, adopt).map_err(Into::into)
