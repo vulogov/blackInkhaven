@@ -1800,6 +1800,16 @@ pub enum CanonCommand {
         #[arg(long, default_value_t = 12)]
         limit: usize,
     },
+    /// Opt-in LLM harvest of prose into staged canon proposals (needs a model).
+    Harvest {
+        /// Slug path to harvest under; empty / `all` for the whole project.
+        #[arg(default_value = "")]
+        scope: String,
+    },
+    /// List the model's staged canon proposals awaiting confirmation.
+    Staged,
+    /// Confirm the staged proposals into the ledger (author's accept).
+    Accept,
 }
 
 #[derive(Debug, Subcommand)]
@@ -6666,6 +6676,9 @@ impl Cli {
                 CanonCommand::Context { query, budget, reserve, limit } => {
                     canon::context(&project, &query, limit, budget, reserve).map_err(Into::into)
                 }
+                CanonCommand::Harvest { scope } => canon::harvest(&project, &scope).map_err(Into::into),
+                CanonCommand::Staged => canon::staged(&project).map_err(Into::into),
+                CanonCommand::Accept => canon::accept(&project).map_err(Into::into),
             },
             Command::Reindex { prune, adopt } => {
                 reindex::run(&project, prune, adopt).map_err(Into::into)

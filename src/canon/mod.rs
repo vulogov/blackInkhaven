@@ -38,12 +38,14 @@ use smysl::{canonical_uid, from_cbor_seq, to_cbor_seq, Record, Status, Store, Ui
 mod commit;
 mod context;
 mod harvest;
+mod harvest_llm;
 mod merge;
 mod model;
 mod query;
 pub use commit::CommitmentWarning;
 pub use context::PackedContext;
 pub use harvest::harvest_tags;
+pub use harvest_llm::{language_name, parse_proposals, system_prompt, Proposal, StagedCanon};
 pub use merge::{CommitmentForkView, MergeSummary};
 pub use model::NarrativeKind;
 pub use query::CanonView;
