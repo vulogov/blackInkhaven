@@ -16,7 +16,7 @@ use crate::ai::stream::collect_blocking;
 use crate::ai::AiClient;
 use crate::canon::{
     language_name, parse_proposals, system_prompt, CanonView, CommitmentForkView, CommitmentWarning,
-    MergeSummary, PackedContext, Proposal, StagedCanon,
+    DecisionHistory, LogEntry, MergeSummary, PackedContext, Proposal, StagedCanon,
 };
 use crate::config::Config;
 use crate::error::{Error, Result};
@@ -111,6 +111,66 @@ pub fn harvest(project: &Path, scope: &str) -> Result<()> {
     staged.save(&layout).map_err(store_err)?;
     eprintln!("\nstaged {n} proposal(s) → .inkhaven/canon-staged.json (nothing entered the ledger).");
     eprintln!("review with `inkhaven canon staged`, then `inkhaven canon accept`.");
+    Ok(())
+}
+
+/// A `wall_ms` epoch timestamp as `YYYY-MM-DD HH:MM`, or `—` when unset (0).
+fn fmt_ts(wall_ms: u64) -> String {
+    if wall_ms == 0 {
+        return "—".to_string();
+    }
+    chrono::DateTime::from_timestamp_millis(wall_ms as i64)
+        .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
+        .unwrap_or_else(|| "—".to_string())
+}
+
+/// `inkhaven canon history <id>` — a decision's development history: its grounds
+/// and its commitment trajectory over time (CG-P4).
+pub fn history(project: &Path, id: &str) -> Result<()> {
+    let store = open(project)?;
+    let canon = store.raw().canon();
+    let uid = canon.resolve(id).map_err(store_err)?;
+    let h: DecisionHistory = match canon.history(uid).map_err(store_err)? {
+        Some(h) => h,
+        None => {
+            eprintln!("no canon decision matches id {id:?}");
+            return Ok(());
+        }
+    };
+    eprint!("Decision: ");
+    print_view(&h.decision);
+    if h.grounds.is_empty() {
+        eprintln!("  rests on nothing recorded — a base decision.");
+    } else {
+        eprintln!("  rests on:");
+        for g in &h.grounds {
+            print_view(g);
+        }
+    }
+    if h.trajectory.is_empty() {
+        eprintln!("  no commitments recorded yet — set canonicity with `canon commit`.");
+    } else {
+        eprintln!("  commitment history:");
+        for e in &h.trajectory {
+            println!("    {}  {} → {}", fmt_ts(e.wall_ms), e.agent, e.level);
+        }
+    }
+    Ok(())
+}
+
+/// `inkhaven canon log` — the ledger's commitment log, the story's canon settling
+/// over time (oldest first, CG-P4).
+pub fn log(project: &Path) -> Result<()> {
+    let store = open(project)?;
+    let entries: Vec<LogEntry> = store.raw().canon().log().map_err(store_err)?;
+    if entries.is_empty() {
+        eprintln!("No commitments recorded yet. Set canonicity with `canon commit <id> --level <l>`.");
+        return Ok(());
+    }
+    eprintln!("canon log — {} commitment event(s), oldest first:", entries.len());
+    for e in &entries {
+        println!("  {}  {}  {}  [{}]  {}", fmt_ts(e.wall_ms), e.uid.short(), e.agent, e.level, e.gist);
+    }
     Ok(())
 }
 

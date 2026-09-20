@@ -1767,6 +1767,13 @@ pub enum CanonCommand {
         /// A decision id (canonical or short prefix, as printed by `list`).
         id: String,
     },
+    /// Show a decision's development history — its grounds and commitment trajectory.
+    History {
+        /// A decision id (canonical or short prefix, as printed by `list`).
+        id: String,
+    },
+    /// Show the ledger's commitment log — the story's canon settling over time.
+    Log,
     /// Ground one decision on another by hand: `<id>` rests on `--on <id>`.
     Ground {
         /// The decision that rests on another (canonical or short prefix).
@@ -6683,6 +6690,8 @@ impl Cli {
                 CanonCommand::List => canon::list(&project).map_err(Into::into),
                 CanonCommand::Impact { id } => canon::impact(&project, &id).map_err(Into::into),
                 CanonCommand::Why { id } => canon::why(&project, &id).map_err(Into::into),
+                CanonCommand::History { id } => canon::history(&project, &id).map_err(Into::into),
+                CanonCommand::Log => canon::log(&project).map_err(Into::into),
                 CanonCommand::Ground { id, on } => {
                     canon::ground(&project, &id, &on).map_err(Into::into)
                 }
