@@ -244,6 +244,17 @@ inkhaven chronicle mark <label> [--ref <r>] [--book-name <b>]
 inkhaven chronicle list | trend | diff <from> <to>  [--json]
     CHRONICLE — draft-history: stamp the readers' metrics as a
     milestone, then trend/diff them. (Ctrl+B Shift+U.)
+inkhaven canon list | why <id> | impact <id>
+inkhaven canon commit <id> --level <l> [--as <agent>]
+inkhaven canon check | forks | merge <path>
+inkhaven canon context <query> [--budget <n>] [--reserve <n>]
+                               [--limit <n>]
+inkhaven canon harvest [<scope>] | staged | accept
+    CANON — the decision ledger: record load-bearing choices and
+    what each rests on. impact = the blast radius of a cut; why =
+    the grounds chain; commit/check = canonicity vs its weakest
+    ground; harvest→staged→accept is the opt-in, author-confirmed
+    model pass (only accept writes). (Ctrl+B * → Canon.)
 inkhaven character arc <name> | check | refresh | plan
     CHAR-1 — the arc report, completeness checks, agency
     re-scoring, and Planning-Board coverage gaps.
