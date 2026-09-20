@@ -245,4 +245,33 @@ mod tests {
         assert_eq!(led.reground(base2, &[extra]).unwrap(), base2, "no-op reground returns the same uid");
         assert_eq!(led.all_decisions().unwrap().len(), 3, "no-op adds no decision");
     }
+
+    #[test]
+    fn unground_removes_an_edge_by_superseding_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let path_s = dir.path().join("canon.cbor").to_str().unwrap().to_string();
+        let led = CanonLedger::new(&path_s);
+        let n = Uuid::from_u128(0x55);
+
+        let base = led
+            .record_decision(NarrativeKind::WorldFact, "the harbour freezes each winter", n, "ch1", &[])
+            .unwrap();
+        let plot = led
+            .record_decision(NarrativeKind::PlotPoint, "escape by sea waits for the thaw", n, "ch9", &[base])
+            .unwrap();
+        assert!(led.why(plot).unwrap().iter().any(|v| v.uid == base), "plot rests on base to start");
+
+        let plot2 = led.unground(plot, &[base]).unwrap();
+        assert_ne!(plot2, plot, "ungrounding mints a new version");
+
+        let live_plot =
+            led.all_decisions().unwrap().into_iter().find(|v| v.gist.contains("escape")).unwrap().uid;
+        assert!(led.why(live_plot).unwrap().is_empty(), "the ground is gone");
+        assert!(
+            led.impact(base).unwrap().iter().all(|v| !v.gist.contains("escape")),
+            "base no longer counts the plot in its blast radius"
+        );
+        // Removing an absent ground is a no-op.
+        assert_eq!(led.unground(live_plot, &[base]).unwrap(), live_plot, "no-op unground");
+    }
 }

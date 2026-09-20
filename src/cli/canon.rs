@@ -114,6 +114,43 @@ pub fn harvest(project: &Path, scope: &str) -> Result<()> {
     Ok(())
 }
 
+/// `inkhaven canon ground <id> --on <ground>` — ground one decision on another by
+/// hand (the edge the harvest missed), via the supersede primitive.
+pub fn ground(project: &Path, id: &str, on: &str) -> Result<()> {
+    let store = open(project)?;
+    let canon = store.raw().canon();
+    let src = canon.resolve(id).map_err(store_err)?;
+    let dst = canon.resolve(on).map_err(store_err)?;
+    if src == dst {
+        return Err(Error::Store("a decision cannot ground on itself".into()));
+    }
+    let new = canon.reground(src, &[dst]).map_err(store_err)?;
+    canon.sync().map_err(store_err)?;
+    if new == src {
+        eprintln!("{} already rests on {} — no change.", src.short(), dst.short());
+    } else {
+        eprintln!("{} now rests on {} (was {}).", new.short(), dst.short(), src.short());
+    }
+    Ok(())
+}
+
+/// `inkhaven canon unground <id> --from <ground>` — remove a ground (a wrong or
+/// unwanted edge), superseding back.
+pub fn unground(project: &Path, id: &str, from: &str) -> Result<()> {
+    let store = open(project)?;
+    let canon = store.raw().canon();
+    let src = canon.resolve(id).map_err(store_err)?;
+    let dst = canon.resolve(from).map_err(store_err)?;
+    let new = canon.unground(src, &[dst]).map_err(store_err)?;
+    canon.sync().map_err(store_err)?;
+    if new == src {
+        eprintln!("{} did not rest on {} — no change.", src.short(), dst.short());
+    } else {
+        eprintln!("{} no longer rests on {} (was {}).", new.short(), dst.short(), src.short());
+    }
+    Ok(())
+}
+
 /// `inkhaven canon staged` — list the model's proposals awaiting confirmation.
 pub fn staged(project: &Path) -> Result<()> {
     let layout = ProjectLayout::new(project);

@@ -6734,7 +6734,7 @@ impl super::super::App {
     /// decisions with kind + commitment, plus commitment forks. Same scrollable-rows
     /// shape as the chronicle; decision rows carry a jump anchor to their source.
     pub(in crate::tui::app) fn draw_canon_modal(&self, f: &mut ratatui::Frame, area: Rect) {
-        let Modal::Canon { rows, anchors, cursor } = &self.modal else {
+        let Modal::Canon { rows, anchors, cursor, grounding, .. } = &self.modal else {
             return;
         };
         let width = area.width.saturating_sub(6).clamp(52, 92);
@@ -6758,28 +6758,35 @@ impl super::super::App {
         let dim = Style::default().add_modifier(Modifier::DIM);
         let head = Style::default().fg(self.theme.modal_border).add_modifier(Modifier::BOLD);
         let sel = Style::default().bg(self.theme.modal_border).fg(self.theme.modal_bg).add_modifier(Modifier::BOLD);
+        // CG-P3 — while grounding, mark the source row so it's clear what will rest
+        // on the target the cursor lands on.
+        let src_style = Style::default().fg(self.theme.modal_border).add_modifier(Modifier::REVERSED);
         let mut lines: Vec<Line> = Vec::new();
         for (i, r) in rows.iter().enumerate().skip(start).take(list_h) {
-            let is_cursor = i == cur && anchors.get(i).copied().flatten().is_some();
-            let style = if is_cursor {
+            let is_cursor = i == cur;
+            let is_source = *grounding == Some(i);
+            let prefix = if is_source { "▸ " } else { "" };
+            let style = if is_cursor && (anchors.get(i).copied().flatten().is_some() || grounding.is_some()) {
                 sel
+            } else if is_source {
+                src_style
             } else if !r.starts_with(' ') && !r.is_empty() {
                 head
             } else {
                 dim
             };
-            lines.push(Line::from(Span::styled(truncate_to(r, 90), style)));
+            lines.push(Line::from(Span::styled(truncate_to(&format!("{prefix}{r}"), 90), style)));
         }
         let body_rect = Rect { x: inner.x, y: inner.y, width: inner.width, height: list_h as u16 };
         f.render_widget(Paragraph::new(lines), body_rect);
 
         let footer = Rect { x: inner.x, y: inner.y + inner.height - 1, width: inner.width, height: 1 };
-        let footer_text = dashboard_footer(
-            "Enter jumps to the decision's source paragraph",
-            start,
-            list_h,
-            rows.len(),
-        );
+        let footer_hint = if grounding.is_some() {
+            "pick the decision it rests on · Enter ground · Esc cancel"
+        } else {
+            "Enter jumps to source · g grounds this decision on another"
+        };
+        let footer_text = dashboard_footer(footer_hint, start, list_h, rows.len());
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(footer_text, dim))),
             footer,

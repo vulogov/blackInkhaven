@@ -968,11 +968,15 @@ pub(super) enum Modal {
     /// story's development-ledger decisions with kind + commitment, plus any
     /// commitment forks. `↑↓` scroll, Enter jumps to the decision's source
     /// paragraph, Esc closes. `anchors` parallels `rows` (header/blank rows carry
-    /// `None`).
+    /// `None`). CANON-2 (CG-P3): `decisions` parallels `rows` with each row's canon
+    /// decision id (for `g` grounding); `grounding` holds the source row while the
+    /// author picks a target to ground it on.
     Canon {
         rows: Vec<String>,
         anchors: Vec<Option<Uuid>>,
+        decisions: Vec<Option<smysl::Uid>>,
         cursor: usize,
+        grounding: Option<usize>,
     },
     /// KEN-1 (2.6, KEN-P5) — the knowledge dashboard (`Ctrl+B Shift+Z`): the
     /// epistemic-continuity findings (who knows what, when) grouped by kind. `↑↓`
