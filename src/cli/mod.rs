@@ -1787,6 +1787,19 @@ pub enum CanonCommand {
     },
     /// List commitment forks — decisions whose agents disagree on canonicity (SMY-W058).
     Forks,
+    /// Show the budget-fit canon context that would ground an answer to a query.
+    Context {
+        query: String,
+        /// Token budget for the packed context.
+        #[arg(long, default_value_t = 2000)]
+        budget: usize,
+        /// Tokens held back for the prompt + answer.
+        #[arg(long, default_value_t = 400)]
+        reserve: usize,
+        /// How many relevant paragraphs to seed from.
+        #[arg(long, default_value_t = 12)]
+        limit: usize,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -6650,6 +6663,9 @@ impl Cli {
                 CanonCommand::Check => canon::check(&project).map_err(Into::into),
                 CanonCommand::Merge { path } => canon::merge(&project, &path).map_err(Into::into),
                 CanonCommand::Forks => canon::forks(&project).map_err(Into::into),
+                CanonCommand::Context { query, budget, reserve, limit } => {
+                    canon::context(&project, &query, limit, budget, reserve).map_err(Into::into)
+                }
             },
             Command::Reindex { prune, adopt } => {
                 reindex::run(&project, prune, adopt).map_err(Into::into)

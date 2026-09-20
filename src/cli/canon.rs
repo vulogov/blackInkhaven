@@ -12,7 +12,7 @@ use std::path::Path;
 
 use smysl::Commitment;
 
-use crate::canon::{CanonView, CommitmentForkView, CommitmentWarning, MergeSummary};
+use crate::canon::{CanonView, CommitmentForkView, CommitmentWarning, MergeSummary, PackedContext};
 use crate::config::Config;
 use crate::error::{Error, Result};
 use crate::project::ProjectLayout;
@@ -165,6 +165,29 @@ pub fn forks(project: &Path) -> Result<()> {
             println!("      {agent} → {level}");
         }
     }
+    Ok(())
+}
+
+/// `inkhaven canon context <query> [--budget N] [--reserve N] [--limit N]`
+pub fn context(project: &Path, query: &str, limit: usize, budget: usize, reserve: usize) -> Result<()> {
+    let store = open(project)?;
+    let ctx: PackedContext = store
+        .raw()
+        .canon_context_for_query(query, limit, budget, reserve)
+        .map_err(store_err)?;
+    if ctx.views.is_empty() {
+        eprintln!("No canon context for {query:?} (empty ledger, or nothing relevant).");
+        return Ok(());
+    }
+    eprintln!(
+        "canon context for {query:?} — {} decision(s), {}/{} tokens ({} reserved, {} dropped):",
+        ctx.views.len(),
+        ctx.used,
+        ctx.budget,
+        ctx.reserved,
+        ctx.dropped
+    );
+    print!("{}", ctx.to_prompt());
     Ok(())
 }
 
