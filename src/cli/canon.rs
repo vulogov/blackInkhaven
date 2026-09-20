@@ -144,13 +144,15 @@ pub fn accept(project: &Path) -> Result<()> {
         return Ok(());
     }
     let canon = store.raw().canon();
-    let mut n = 0usize;
-    for p in &staged.proposals {
-        canon
-            .record_decision(p.kind, &p.gist, p.node, &p.breadcrumb, &[])
-            .map_err(store_err)?;
-        n += 1;
-    }
+    // CG-P1 — decisions are born with their deterministically-inferred grounds,
+    // in the project language (so `canon impact`/`why` have a graph to walk).
+    let (language, _) = crate::prose::resolve_prose_language(None, &cfg.language);
+    let items: Vec<_> = staged
+        .proposals
+        .iter()
+        .map(|p| (p.kind, p.gist.clone(), p.node, p.breadcrumb.clone()))
+        .collect();
+    let n = canon.record_grounded_batch(&items, &language).map_err(store_err)?.len();
     canon.sync().map_err(store_err)?;
     StagedCanon::clear(&layout).map_err(store_err)?;
     eprintln!("accepted {n} proposal(s) into the canon ledger (uncommitted — set canonicity with `canon commit`).");

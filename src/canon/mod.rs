@@ -40,6 +40,7 @@ use smysl::{
 
 mod commit;
 mod context;
+mod grounding;
 mod harvest;
 mod harvest_llm;
 mod merge;
@@ -161,6 +162,40 @@ impl CanonLedger {
         let uid = canonical_uid(&core);
         self.append(&[Record::Unit(core)])?;
         Ok(uid)
+    }
+
+    /// CANON-2 (CG-P1) — record a batch of new decisions, each **born with its
+    /// deterministically-inferred grounds** (kind rules + salient-word overlap of
+    /// gists, free, no model). Ground-providers (world-facts, setups) are recorded
+    /// first, so a dependent in the same batch (a reveal, a plot point) can rest on
+    /// a same-batch provider as well as on the existing ledger. Grounds are set at
+    /// creation, so no supersession is needed. Returns the recorded uids (in
+    /// recording order). Caller flushes (`sync`).
+    pub fn record_grounded_batch(
+        &self,
+        items: &[(NarrativeKind, String, Uuid, String)],
+        language: &crate::prose::ProseLanguage,
+    ) -> Result<Vec<Uid>> {
+        let lang = grounding::stemmer_language_name(language);
+        // Existing live decisions are the initial candidate grounds.
+        let mut candidates: Vec<grounding::Candidate> = self
+            .all_decisions()?
+            .into_iter()
+            .filter_map(|v| {
+                v.kind.map(|k| grounding::Candidate { uid: v.uid, kind: k, gist: v.gist })
+            })
+            .collect();
+        let mut order: Vec<usize> = (0..items.len()).collect();
+        order.sort_by_key(|&i| grounding::ground_rank(items[i].0));
+        let mut out = Vec::with_capacity(items.len());
+        for &i in &order {
+            let (kind, gist, node, breadcrumb) = &items[i];
+            let grounds = grounding::infer_grounds(*kind, gist, lang, &candidates);
+            let uid = self.record_decision(*kind, gist, *node, breadcrumb, &grounds)?;
+            candidates.push(grounding::Candidate { uid, kind: *kind, gist: gist.clone() });
+            out.push(uid);
+        }
+        Ok(out)
     }
 
     /// CANON-2 (CG-P0) — add grounds to an existing decision. A unit's `grounds`
@@ -494,6 +529,47 @@ mod tests {
             led.units_for_node(node).unwrap().len(),
             1,
             "the harvested tag became one canon unit under its node"
+        );
+    }
+
+    #[test]
+    fn grounded_batch_wires_impact_and_why_deterministically() {
+        // CG-P1 end to end: a mixed batch, given dependents-first to prove the
+        // providers-first ordering fixes it, comes out with edges so impact/why
+        // are non-empty — the whole point of "Grounds That Hold".
+        use crate::prose::ProseLanguage;
+        let dir = tempfile::tempdir().unwrap();
+        let path_s = dir.path().join("canon.cbor").to_str().unwrap().to_string();
+        let led = CanonLedger::new(&path_s);
+        let n = Uuid::from_u128(0x33);
+
+        let items = vec![
+            (NarrativeKind::Reveal, "the tremors are the beast waking".to_string(), n, "ch9".to_string()),
+            (
+                NarrativeKind::PlotPoint,
+                "the escape uses the sea gate in the leviathan's flank".to_string(),
+                n,
+                "ch12".to_string(),
+            ),
+            (NarrativeKind::WorldFact, "the city floats on a sleeping leviathan".to_string(), n, "ch1".to_string()),
+            (NarrativeKind::Setup, "the tremors shake the lower city".to_string(), n, "ch3".to_string()),
+        ];
+        led.record_grounded_batch(&items, &ProseLanguage::En).unwrap();
+
+        let all = led.all_decisions().unwrap();
+        assert_eq!(all.len(), 4, "four decisions, no supersession (grounds set at birth)");
+
+        // The leviathan world-fact has the plot-point in its blast radius.
+        let leviathan = all.iter().find(|v| v.gist.contains("floats")).unwrap().uid;
+        assert!(
+            led.impact(leviathan).unwrap().iter().any(|v| v.gist.contains("sea gate")),
+            "the plot-point grounds the leviathan world-fact"
+        );
+        // The reveal rests on the tremor setup (dependents-first input, correctly ordered).
+        let reveal = all.iter().find(|v| v.gist.contains("beast waking")).unwrap().uid;
+        assert!(
+            led.why(reveal).unwrap().iter().any(|v| v.gist.contains("shake the lower city")),
+            "the reveal grounds the tremor setup even though it was listed first"
         );
     }
 
