@@ -1,6 +1,6 @@
 #import "../design.typ": *
 
-#chapter(number: 10, title: "The Inner Editor")
+#chapter(number: 11, title: "The Inner Editor")
 
 Where Inner Socrates asks, the Inner Editor *observes*. It is the reader who sits with
 a single paragraph and notices what the prose is actually doing — the tautology you

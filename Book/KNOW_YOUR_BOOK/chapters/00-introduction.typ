@@ -32,6 +32,7 @@ different question you would otherwise have to answer from memory:
   LECTOR           │ How does the whole thing read?
   CHORUS           │ Do the voices differ?
   CHRONICLE        │ Did the revision help?
+  CANON            │ What breaks if I cut this?
   ─────────────────┼─ these ask, they don't answer
   Inner Socrates   │ Have I earned this claim?
   Inner Editor     │ Is the prose doing its job?
