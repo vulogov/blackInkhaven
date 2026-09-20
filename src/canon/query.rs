@@ -24,9 +24,8 @@ pub struct CanonView {
     pub gist: String,
     /// The author's commitment level (canonicity), or `None` if unmarked (CL-P4).
     pub commitment: Option<Commitment>,
-    /// The inkhaven node the decision was derived from — the handle a
-    /// jump-to-source action needs (consumer: CL-P8 node view).
-    #[allow(dead_code)]
+    /// The inkhaven node the decision was derived from — the jump-to-source
+    /// handle the CL-P8 canon dashboard uses.
     pub node: Option<Uuid>,
     /// The manuscript breadcrumb (`book/ch1/scene1`), when the source carried one.
     pub locator: Option<String>,
