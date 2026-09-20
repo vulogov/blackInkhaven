@@ -12,10 +12,17 @@ use std::path::Path;
 
 use smysl::Commitment;
 
-use crate::canon::{CanonView, CommitmentForkView, CommitmentWarning, MergeSummary, PackedContext};
+use crate::ai::stream::collect_blocking;
+use crate::ai::AiClient;
+use crate::canon::{
+    language_name, parse_proposals, system_prompt, CanonView, CommitmentForkView, CommitmentWarning,
+    MergeSummary, PackedContext, Proposal, StagedCanon,
+};
 use crate::config::Config;
 use crate::error::{Error, Result};
 use crate::project::ProjectLayout;
+use crate::store::hierarchy::Hierarchy;
+use crate::store::node::{Node, NodeKind};
 use crate::store::Store;
 
 fn open(project: &Path) -> Result<Store> {
@@ -27,6 +34,127 @@ fn open(project: &Path) -> Result<Store> {
 
 fn store_err(e: anyhow::Error) -> Error {
     Error::Store(e.to_string())
+}
+
+/// The manuscript breadcrumb for a node (`book/ch1/scene1`).
+fn breadcrumb_of(node: &Node) -> String {
+    let mut b = node.path.join("/");
+    if !b.is_empty() {
+        b.push('/');
+    }
+    b.push_str(&node.slug);
+    b
+}
+
+/// Collect the paragraph nodes at or under `node`.
+fn collect_paragraphs<'a>(h: &'a Hierarchy, node: &'a Node, out: &mut Vec<&'a Node>) {
+    if node.kind == NodeKind::Paragraph {
+        out.push(node);
+    }
+    for child in h.children_of(Some(node.id)) {
+        collect_paragraphs(h, child, out);
+    }
+}
+
+/// `inkhaven canon harvest [<scope>]` — opt-in LLM harvest of prose into
+/// *staged* proposals (nothing enters the ledger until `canon accept`).
+pub fn harvest(project: &Path, scope: &str) -> Result<()> {
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout.clone(), &cfg)?;
+
+    let ai = AiClient::from_config(&cfg.llm)?;
+    let (model, _env) = ai.resolve_provider(&cfg.llm, None)?;
+    let model = model.to_string();
+    let (lang, _note) = crate::prose::resolve_prose_language(None, &cfg.language);
+    let system = system_prompt(language_name(&lang));
+
+    let h = Hierarchy::load(&store)?;
+    let mut paragraphs: Vec<&Node> = Vec::new();
+    if scope.is_empty() || scope == "." || scope == "all" {
+        for root in h.children_of(None) {
+            collect_paragraphs(&h, root, &mut paragraphs);
+        }
+    } else {
+        let node = h
+            .find_by_path(scope)
+            .ok_or_else(|| Error::Store(format!("no node at path {scope:?}")))?;
+        collect_paragraphs(&h, node, &mut paragraphs);
+    }
+    if paragraphs.is_empty() {
+        eprintln!("No paragraphs under {scope:?} to harvest.");
+        return Ok(());
+    }
+
+    eprintln!(
+        "harvesting canon from {} paragraph(s) via {model} — one LLM call each…",
+        paragraphs.len()
+    );
+    let mut proposals: Vec<Proposal> = Vec::new();
+    for (i, node) in paragraphs.iter().enumerate() {
+        let bytes = store.get_content(node.id)?.unwrap_or_default();
+        let text = String::from_utf8_lossy(&bytes);
+        if text.trim().is_empty() {
+            continue;
+        }
+        eprint!("  [{}/{}] {} … ", i + 1, paragraphs.len(), node.slug);
+        let raw = collect_blocking(ai.client.clone(), model.clone(), Some(system.clone()), text.into_owned())
+            .map_err(|e| Error::Store(format!("llm harvest failed: {e}")))?;
+        let found = parse_proposals(&raw, node.id, &breadcrumb_of(node));
+        eprintln!("{} proposal(s)", found.len());
+        proposals.extend(found);
+    }
+
+    let staged = StagedCanon { proposals };
+    let n = staged.proposals.len();
+    staged.save(&layout).map_err(store_err)?;
+    eprintln!("\nstaged {n} proposal(s) → .inkhaven/canon-staged.json (nothing entered the ledger).");
+    eprintln!("review with `inkhaven canon staged`, then `inkhaven canon accept`.");
+    Ok(())
+}
+
+/// `inkhaven canon staged` — list the model's proposals awaiting confirmation.
+pub fn staged(project: &Path) -> Result<()> {
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let staged = StagedCanon::load(&layout).map_err(store_err)?;
+    if staged.proposals.is_empty() {
+        eprintln!("No staged canon proposals. Run `inkhaven canon harvest <scope>`.");
+        return Ok(());
+    }
+    eprintln!("{} staged proposal(s) (not yet in the ledger):", staged.proposals.len());
+    for p in &staged.proposals {
+        let kind = p.kind.schema_str().trim_start_matches("x.narrative/");
+        println!("  [{kind}]  {}  ({})", p.gist, p.breadcrumb);
+    }
+    Ok(())
+}
+
+/// `inkhaven canon accept` — the author's confirmation: record the staged
+/// proposals into the ledger (uncommitted), then clear staging.
+pub fn accept(project: &Path) -> Result<()> {
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout.clone(), &cfg)?;
+    let staged = StagedCanon::load(&layout).map_err(store_err)?;
+    if staged.proposals.is_empty() {
+        eprintln!("Nothing staged to accept.");
+        return Ok(());
+    }
+    let canon = store.raw().canon();
+    let mut n = 0usize;
+    for p in &staged.proposals {
+        canon
+            .record_decision(p.kind, &p.gist, p.node, &p.breadcrumb, &[])
+            .map_err(store_err)?;
+        n += 1;
+    }
+    canon.sync().map_err(store_err)?;
+    StagedCanon::clear(&layout).map_err(store_err)?;
+    eprintln!("accepted {n} proposal(s) into the canon ledger (uncommitted — set canonicity with `canon commit`).");
+    Ok(())
 }
 
 /// `inkhaven canon list`

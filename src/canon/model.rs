@@ -7,12 +7,13 @@
 //! fiction — a plot decision is not *measured* — so narrative units sit at
 //! `Speculative`; canonicity rides the separate commitment axis (CL-P4).
 
+use serde::{Deserialize, Serialize};
 use smysl::{SchemaId, SourceKind, SourceRef};
 use uuid::Uuid;
 
 /// The kinds of load-bearing decision the ledger records, each an
 /// `x.narrative/<kind>` extension schema.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum NarrativeKind {
     /// A fact about the world (`x.narrative/world-fact`).
     WorldFact,
@@ -57,6 +58,15 @@ impl NarrativeKind {
     /// other schema — the inverse of [`Self::schema_str`]).
     pub fn from_schema_str(s: &str) -> Option<NarrativeKind> {
         NarrativeKind::ALL.into_iter().find(|k| k.schema_str() == s)
+    }
+
+    /// Recover the kind from its short name (`world-fact`, `plot-point`, …), as
+    /// an LLM harvest emits it (the schema suffix without `x.narrative/`).
+    pub fn from_short(s: &str) -> Option<NarrativeKind> {
+        let s = s.trim();
+        NarrativeKind::ALL
+            .into_iter()
+            .find(|k| k.schema_str().trim_start_matches("x.narrative/") == s)
     }
 }
 
