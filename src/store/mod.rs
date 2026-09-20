@@ -2027,6 +2027,18 @@ symbol/motif proposals you can accept straight into this book.";
         self.inner
             .reembed_document(id)
             .map_err(|e| Error::Store(format!("reembed_document: {e}")))?;
+        // CL-P2 — deterministically harvest this paragraph's authored tags into
+        // the canon ledger. Advisory: the ledger is a derived artifact, so a
+        // harvest failure must never fail the save (only the prose is sacred).
+        if let Err(e) = self
+            .inner
+            .harvest_paragraph(id, &node.path, &node.slug, &node.tags)
+        {
+            tracing::warn!(
+                target: "inkhaven::canon",
+                "canon harvest on save failed (advisory, ignored): {e}"
+            );
+        }
         // Fire hook.on_save ( uuid -- ).
         fire_hook("hook.on_save", vec![bund_string(&id.to_string())]);
         Ok(())

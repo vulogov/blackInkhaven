@@ -41,6 +41,10 @@ pub struct DocumentStorage {
     /// as the vector index — durable edges are source-of-truth, derived ones a
     /// rebuildable cache).
     edges:   EdgeStore,
+    /// CANON-LEDGER-1 (CL-P2) — the story's development-history ledger
+    /// (`canon.cbor`). Derived + advisory, on the same doctrine as the vector
+    /// index: source content is durable, the ledger is a rebuildable projection.
+    canon:   crate::canon::CanonLedger,
 }
 
 impl DocumentStorage {
@@ -63,7 +67,37 @@ impl DocumentStorage {
             blobs:   BlobStorage::new(&paths.blobs_db, pool)?,
             vectors: VectorEngine::with_embedding(&paths.vec, engine)?,
             edges:   EdgeStore::new(&paths.edges_db, pool)?,
+            canon:   crate::canon::CanonLedger::new(&paths.canon),
         })
+    }
+
+    /// CL-P2 — deterministically harvest a paragraph's authored tags into canon
+    /// units under its node, flushing the ledger off-thread. **Advisory:** the
+    /// canon ledger is derived, so callers treat a harvest error as non-fatal to
+    /// the save. Returns the number of decisions recorded — `0` when the paragraph
+    /// carries no harvestable tags (the common case, and a near-free no-op).
+    pub fn harvest_paragraph(
+        &self,
+        node_id: Uuid,
+        path: &[String],
+        slug: &str,
+        tags: &[String],
+    ) -> Result<usize> {
+        let decisions = crate::canon::harvest_tags(tags);
+        if decisions.is_empty() {
+            return Ok(0);
+        }
+        let mut breadcrumb = path.join("/");
+        if !breadcrumb.is_empty() {
+            breadcrumb.push('/');
+        }
+        breadcrumb.push_str(slug);
+        for (kind, gist) in &decisions {
+            self.canon
+                .record_decision(*kind, gist, node_id, &breadcrumb, &[])?;
+        }
+        self.canon.sync_in_background();
+        Ok(decisions.len())
     }
 }
 
@@ -384,6 +418,7 @@ struct Paths {
     blobs_db:    String,
     vec:         String,
     edges_db:    String,
+    canon:       String,
 }
 
 impl Paths {
@@ -398,6 +433,7 @@ impl Paths {
             blobs_db:    root.join("blobs.db").to_string_lossy().into_owned(),
             vec:         root.join("vectors").to_string_lossy().into_owned(),
             edges_db:    root.join("edges.db").to_string_lossy().into_owned(),
+            canon:       root.join("canon.cbor").to_string_lossy().into_owned(),
         })
     }
 }
