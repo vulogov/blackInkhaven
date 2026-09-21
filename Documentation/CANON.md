@@ -1,7 +1,10 @@
 # The Canon Ledger (CANON)
 
-*(3.11, CANON-LEDGER-1 — see [`PROPOSALS/CANON-LEDGER-1_PLAN.md`](PROPOSALS/CANON-LEDGER-1_PLAN.md)
-and [`PROPOSALS/SMYSL-1_RFC.md`](PROPOSALS/SMYSL-1_RFC.md). Built on the
+*(3.11 CANON-LEDGER-1; 3.12 CANON-2 "Grounds That Hold" — the dependency graph now
+populates itself, so `impact`/`why` work; plus development history and the pre-cut
+guard. See [`PROPOSALS/CANON-LEDGER-1_PLAN.md`](PROPOSALS/CANON-LEDGER-1_PLAN.md),
+[`PROPOSALS/CANON-2_PLAN.md`](PROPOSALS/CANON-2_PLAN.md), and
+[`PROPOSALS/SMYSL-1_RFC.md`](PROPOSALS/SMYSL-1_RFC.md). Built on the
 [`smysl`](https://github.com/vulogov/smysl) crate.)*
 
 Inkhaven has always understood your **text** (that's what git versions) and the
@@ -41,6 +44,28 @@ Its identity is a hash of its content, so recording the same decision twice is
 idempotent, and two writing sessions or devices reconcile by **merge** with no
 coordinator.
 
+## Grounds — the dependency graph `impact` and `why` walk
+
+`canon impact` and `canon why` are only as useful as the **grounds** edges between
+decisions, and those get drawn three ways — you rarely draw them by hand:
+
+1. **Deterministically, at no cost (3.12).** When a decision enters the ledger, its
+   grounds are inferred from **kind rules + shared content words**: a *reveal* rests
+   on the *setup* that shares a word with it; a *plot-point* / *reveal* rests on the
+   *world-fact* whose subject it reuses (matching is stemmed and stop-word-filtered
+   in your project language, so "leviathan" ~ "leviathan's" but function words never
+   match). Conservative on purpose — a spurious ground would distort `impact`.
+2. **By the opt-in harvest (3.12).** The harvest model, already reading a scene,
+   names which sibling decisions each one rests on; those grounds are resolved on
+   `canon accept` and unioned with the deterministic ones. Still author-confirmed.
+3. **By hand.** `canon ground <id> --on <ground>` draws an edge the harvest missed;
+   `canon unground <id> --from <ground>` removes a wrong one. In the editor, `g` in
+   the Canon dashboard grounds the cursored decision on a target you pick.
+
+Because grounds are part of a decision's content hash, editing them mints a **new**
+version that *supersedes* the old one and relinks anything that rested on it — the
+history is kept, and a decision's **commitment survives** a regrounding.
+
 ## How decisions get into the ledger
 
 Three ways, in increasing model-involvement:
@@ -65,8 +90,11 @@ Three ways, in increasing model-involvement:
 | **What breaks if I cut this?** | `canon impact <id>` | Every decision that transitively rests on it — the blast radius. |
 | Why is this canon? | `canon why <id>` | The grounds chain the decision rests on. |
 | What decisions are there? | `canon list` | Every decision, with kind, commitment, and source. |
+| How did this one develop? | `canon history <id>` | Its grounds and its commitment trajectory over time. |
+| How did the canon settle? | `canon log` | Every commitment event across the ledger, oldest first. |
 | How settled is it? | `canon commit <id> --level <l>` | Set the canonicity (`floated…canonical…retconned`). |
 | Am I building on sand? | `canon check` | Decisions committed **above** the weakest thing they rest on (SMY-W057). |
+| Draw / cut a dependency | `canon ground <id> --on <g>` · `canon unground <id> --from <g>` | Ground a decision on another by hand, or remove an edge. |
 | Where do agents disagree? | `canon forks` | Commitment forks — concurrent disagreement on canonicity (SMY-W058). |
 | Ground an answer on canon | `canon context "<query>"` | Fit the relevant decisions (+ their grounds/rebuttals) to a token budget. |
 
@@ -76,8 +104,17 @@ Three ways, in increasing model-involvement:
 
 Open the **reader hub** (`Ctrl+B *`) and choose **Canon**: a scrollable dashboard
 of every decision with its kind and `«commitment»`, plus a commitment-forks
-section. `↑↓` scrolls, **`Enter` jumps to the decision's source paragraph**, `Esc`
+section. `↑↓` scrolls, **`Enter` jumps to the decision's source paragraph**, **`g`
+grounds** the cursored decision on a target you then pick, **`h`** shows its
+development history (grounds + commitment trajectory) in the Thoughts pane, `Esc`
 closes.
+
+**The pre-cut guard.** When you delete a paragraph that *established* canon
+decisions, the delete confirmation warns first — naming the decisions and how many
+others rest on them ("2 canon decision(s) were established here… — 3 rest on it").
+It's advisory: it informs, never blocks, and since the ledger is derived and
+separate, deleting the prose keeps the decisions (they're left source-orphaned, not
+pruned) — so *"what breaks if I cut this?"* is answered at the moment of cutting.
 
 Commitment **forks** — two agents disagreeing on a decision's canonicity after a
 `canon merge` — also surface in the unified worklist (`inkhaven revise` / the
@@ -93,9 +130,9 @@ holds behavioural knobs only (the ledger is derived data, nothing to tune there)
 `harvest_on_save` (default `true`) toggles the deterministic on-save tag harvest;
 `context_budget` / `context_reserve` set the default token budget for `canon
 context` when its `--budget` / `--reserve` flags are omitted. A Bund script reads
-the ledger through `ink.canon.{list,impact,why,forks}` (read-only — the writes,
-`commit` and the author-confirmed harvest/`accept`, stay on the CLI and in the
-editor).
+the ledger through `ink.canon.{list,impact,why,history,forks}` (read-only — the
+writes, `commit`, `ground`/`unground`, and the author-confirmed harvest/`accept`,
+stay on the CLI and in the editor).
 
 ## Quick start
 
@@ -109,14 +146,19 @@ inkhaven canon staged                    # review the proposals
 inkhaven canon accept                    # confirm them into the ledger
 inkhaven canon commit b3:ab… --level canonical
 inkhaven canon impact b3:ab…             # what would break if you cut it
+inkhaven canon why b3:cd…                # what it rests on
+inkhaven canon ground b3:cd… --on b3:ab… # draw an edge the harvest missed
+inkhaven canon history b3:ab…            # its grounds + commitment over time
+inkhaven canon log                       # the canon settling, oldest first
 inkhaven canon check                     # anything canonical resting on sand?
 ```
 
 ## Principles it keeps
 
 - **Advisory.** The model never writes canon; it proposes, you confirm.
-- **Deterministic + free.** `impact`/`why`/`list`/`diff`/`check`/`forks` are pure
-  functions over the store — no model call, milliseconds at book scale.
+- **Deterministic + free.** `impact`/`why`/`list`/`history`/`log`/`check`/`forks`
+  and grounding are pure functions over the store — no model call, milliseconds at
+  book scale.
 - **Off the hot path.** On-save harvest is deterministic and backgrounded; the LLM
   harvest is explicit and opt-in.
 - **Multilingual.** Harvested gists are written in your project language.
