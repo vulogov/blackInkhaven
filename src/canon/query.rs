@@ -11,7 +11,7 @@
 use std::collections::HashSet;
 
 use anyhow::{anyhow, Result};
-use smysl::{dependents, trace, Commitment, RelKind, SchemaId, Store, TraceKind, Uid};
+use smysl::{dependents, trace, Commit, Commitment, RelKind, SchemaId, Store, TraceKind, Uid};
 use uuid::Uuid;
 
 use super::model::{self, NarrativeKind};
@@ -51,13 +51,28 @@ pub(super) fn supersession_chain(store: &Store, uid: Uid) -> Vec<Uid> {
     chain
 }
 
-/// The live commitment of a decision, **following supersession** (CG-P4). A unit's
-/// `Commit` records key on its exact uid, but regrounding mints a new uid — so a
-/// canonical decision would read as uncommitted after `canon ground` unless we
-/// walk its lineage. Newest version with a commit wins (a re-commit after
-/// regrounding overrides the inherited level).
+/// The live commitment *record* of a decision, **following supersession** (CG-P4):
+/// the winning `Commit` from the newest version in its lineage that carries one
+/// (latest by `(wall_ms, counter, agent)` within that version). Carries the agent
+/// and timestamp too, which `canon compact` needs to pin the commitment onto the
+/// live head before dropping superseded predecessors.
+pub(super) fn live_commit(store: &Store, uid: Uid) -> Option<Commit> {
+    for u in supersession_chain(store, uid) {
+        if let Some(c) = store.commits_of(&u).iter().max_by(|a, b| {
+            (a.ts.wall_ms, a.ts.counter, a.agent.as_str())
+                .cmp(&(b.ts.wall_ms, b.ts.counter, b.agent.as_str()))
+        }) {
+            return Some(c.clone());
+        }
+    }
+    None
+}
+
+/// The live commitment level, following supersession. A unit's `Commit` records
+/// key on its exact uid, but regrounding mints a new uid — so a canonical decision
+/// would read as uncommitted after `canon ground` unless we walk its lineage.
 pub(super) fn commitment_live(store: &Store, uid: Uid) -> Option<Commitment> {
-    supersession_chain(store, uid).into_iter().find_map(|u| store.commitment_of(&u))
+    live_commit(store, uid).map(|c| c.level)
 }
 
 /// A human-facing view of a canon decision, resolved from a stored unit.
