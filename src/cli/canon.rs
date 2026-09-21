@@ -211,6 +211,43 @@ pub fn unground(project: &Path, id: &str, from: &str) -> Result<()> {
     Ok(())
 }
 
+/// `inkhaven canon reground [--dry-run]` — backfill deterministic grounds across
+/// the whole ledger (for a pre-3.12 or under-grounded ledger; no re-harvest).
+pub fn reground(project: &Path, dry_run: bool) -> Result<()> {
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let (language, _) = crate::prose::resolve_prose_language(None, &cfg.language);
+    let store = Store::open(layout, &cfg)?;
+    let report = store.raw().canon().reground_deterministic(&language, dry_run).map_err(store_err)?;
+
+    if dry_run {
+        if report.preview.is_empty() {
+            eprintln!("No new grounds to add — the ledger is already fully grounded.");
+            return Ok(());
+        }
+        eprintln!(
+            "{} grounds edge(s) would be added across {} decision(s):",
+            report.preview.len(),
+            report.decisions_touched
+        );
+        for (d, g) in &report.preview {
+            let d: String = d.chars().take(52).collect();
+            let g: String = g.chars().take(52).collect();
+            println!("  {d}  ↳ rests on ↳  {g}");
+        }
+        eprintln!("Run `inkhaven canon reground` (without --dry-run) to apply.");
+    } else if report.edges_added == 0 {
+        eprintln!("No new grounds to add — the ledger is already grounded.");
+    } else {
+        eprintln!(
+            "Added {} grounds edge(s) across {} decision(s).",
+            report.edges_added, report.decisions_touched
+        );
+    }
+    Ok(())
+}
+
 /// `inkhaven canon staged` — list the model's proposals awaiting confirmation.
 pub fn staged(project: &Path) -> Result<()> {
     let layout = ProjectLayout::new(project);
