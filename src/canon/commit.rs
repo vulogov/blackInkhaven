@@ -70,10 +70,18 @@ impl CanonLedger {
     /// explicitly-committed thing they rest on. Deterministic; no model call.
     pub fn commitment_warnings(&self) -> Result<Vec<CommitmentWarning>> {
         self.with_store(|s| {
-            let uids: Vec<Uid> = s.units().map(|(u, _)| *u).collect();
+            // CANON-2: only live decisions, and follow supersession for commitment.
+            // A regrounded decision's commitment lives on an earlier uid (grounds
+            // are part of the content hash, so regrounding mints a new uid with no
+            // commit of its own); without `commitment_live` a canonical-on-floated
+            // situation on a regrounded decision would escape the check, and the
+            // stale superseded version would be checked in its place.
+            let dead = super::query::superseded_uids(s);
+            let uids: Vec<Uid> =
+                s.units().map(|(u, _)| *u).filter(|u| !dead.contains(u)).collect();
             let mut out = Vec::new();
             for u in uids {
-                let Some(level) = s.commitment_of(&u) else { continue }; // unmarked → not checked
+                let Some(level) = super::query::commitment_live(s, u) else { continue }; // unmarked → not checked
                 if level == Commitment::Retconned {
                     continue; // a retcon resting on something weaker is expected
                 }
@@ -84,7 +92,7 @@ impl CanonLedger {
                 // The weakest ground that is *explicitly* committed below `level`.
                 let mut weakest: Option<(Uid, Commitment)> = None;
                 for g in grounds {
-                    if let Some(gl) = s.commitment_of(&g) {
+                    if let Some(gl) = super::query::commitment_live(s, g) {
                         if gl < level && weakest.map_or(true, |(_, wl)| gl < wl) {
                             weakest = Some((g, gl));
                         }
@@ -152,5 +160,40 @@ mod tests {
         // Persists + latest-wins across reopen.
         let led2 = CanonLedger::new(&path_s);
         assert_eq!(led2.commitment(base).unwrap(), Some(Commitment::Canonical));
+    }
+
+    #[test]
+    fn check_follows_regrounding_and_skips_superseded() {
+        // Regression (CANON-2): after `canon ground`, the check must still flag a
+        // canonical decision resting on a floated one — the commitment lives on the
+        // pre-reground uid — and must not double-count or report the dead version.
+        let dir = tempfile::tempdir().unwrap();
+        let path_s = dir.path().join("canon.cbor").to_str().unwrap().to_string();
+        let led = CanonLedger::new(&path_s);
+        let n = Uuid::from_u128(0x77);
+
+        let base = led
+            .record_decision(NarrativeKind::WorldFact, "there is a hidden sea gate", n, "ch1", &[])
+            .unwrap();
+        let ending = led
+            .record_decision(NarrativeKind::PlotPoint, "the escape uses the sea gate", n, "ch12", &[base])
+            .unwrap();
+        let extra = led
+            .record_decision(NarrativeKind::WorldFact, "the tide turns at dawn", n, "ch3", &[])
+            .unwrap();
+        led.commit(ending, Commitment::Canonical, "author").unwrap();
+        led.commit(base, Commitment::Floated, "author").unwrap();
+        assert_eq!(led.commitment_warnings().unwrap().len(), 1, "flagged before regrounding");
+
+        // Reground the canonical ending onto a second premise → it gets a new uid
+        // with no commit of its own. The check must follow the lineage.
+        let ending2 = led.reground(ending, &[extra]).unwrap();
+        assert_ne!(ending2, ending);
+        let warns = led.commitment_warnings().unwrap();
+        assert_eq!(warns.len(), 1, "still exactly one warning after regrounding (not 0, not 2)");
+        assert_eq!(warns[0].unit.uid, ending2, "reported against the live version, not the superseded one");
+        assert_eq!(warns[0].level, Commitment::Canonical, "commitment followed the regrounding");
+        assert_eq!(warns[0].weakest_ground.uid, base);
+        assert_eq!(warns[0].ground_level, Commitment::Floated);
     }
 }
