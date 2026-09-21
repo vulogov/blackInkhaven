@@ -1,6 +1,6 @@
 # Inkhaven — Feature Index
 
-The canonical map of Inkhaven's features as of the **3.0.0** freeze, maintained through **3.0.6**: what each one is, how you reach it (CLI verb and/or editor chord), its authoritative doc, and its scripting surface. Use this as the maintenance reference — every user-facing feature should appear here with at least a doc.
+The canonical map of Inkhaven's features as of the **3.0.0** freeze, maintained through **3.13.0**: what each one is, how you reach it (CLI verb and/or editor chord), its authoritative doc, and its scripting surface. Use this as the maintenance reference — every user-facing feature should appear here with at least a doc.
 
 Legend: **CLI** = `inkhaven <verb>` · **Chord** = in-editor keystroke · **Doc** = the topic guide · **Bund** = the `ink.*` scripting namespace (read-only unless noted). The exhaustive per-word list is [Bund/WORD_REFERENCE.md](Bund/WORD_REFERENCE.md).
 

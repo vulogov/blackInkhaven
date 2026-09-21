@@ -248,7 +248,12 @@ pub fn reqwest_fetch(url: &str) -> Result<Vec<u8>, String> {
                     .timeout(Duration::from_secs(30))
                     .build()
                     .map_err(|e| format!("http client: {e}"))?;
-                let resp = client
+                // Cap the download so a hostile or misconfigured server can't
+                // drive memory exhaustion — the real corpus is low single-digit
+                // MiB; 64 MiB is generous headroom. Reject a declared oversize
+                // up front, and bound the actual read for a lying/absent header.
+                const MAX_FETCH_BYTES: usize = 64 * 1024 * 1024;
+                let mut resp = client
                     .get(&url)
                     .send()
                     .await
@@ -256,8 +261,23 @@ pub fn reqwest_fetch(url: &str) -> Result<Vec<u8>, String> {
                 if !resp.status().is_success() {
                     return Err(format!("HTTP {}", resp.status()));
                 }
-                let bytes = resp.bytes().await.map_err(|e| format!("read body: {e}"))?;
-                Ok(bytes.to_vec())
+                if let Some(len) = resp.content_length() {
+                    if len as usize > MAX_FETCH_BYTES {
+                        return Err(format!(
+                            "response too large: {len} bytes (cap {MAX_FETCH_BYTES})"
+                        ));
+                    }
+                }
+                let mut out: Vec<u8> = Vec::new();
+                while let Some(chunk) =
+                    resp.chunk().await.map_err(|e| format!("read body: {e}"))?
+                {
+                    if out.len() + chunk.len() > MAX_FETCH_BYTES {
+                        return Err(format!("response exceeded {MAX_FETCH_BYTES} bytes"));
+                    }
+                    out.extend_from_slice(&chunk);
+                }
+                Ok(out)
             })
         })
         .join()

@@ -538,10 +538,10 @@ is empty and free until the day you merge.
 The ledger is *derived* — rebuildable by re-harvest — so the `canon:` config block
 holds only behavioural knobs: `harvest_on_save` (default `true`) toggles the
 deterministic on-save tag harvest, and `context_budget` / `context_reserve` set
-the defaults `canon context` uses when its flags are omitted. Five Bund words
+the defaults `canon context` uses when its flags are omitted. Six Bund words
 expose the ledger read-only, mirroring CHRONICLE's discipline — the writes
-(`commit`, `ground`/`unground`, and the author-confirmed harvest) stay on the CLI
-and in the editor.
+(`commit`, `ground`/`unground`, `reground`, `compact`, and the author-confirmed
+harvest) stay on the CLI and in the editor.
 
 #screen(caption: "The CANON Bund surface — read-only")[```
 ink.canon.list    ( -- list )      { uid, kind, gist, commitment,
@@ -550,7 +550,16 @@ ink.canon.impact  ( id -- list )   the blast radius of a decision
 ink.canon.why     ( id -- list )   the grounds chain it rests on
 ink.canon.history ( id -- list )   its commitment trajectory over time
 ink.canon.forks   ( -- list )      { uid, gist, positions, resolved }
+ink.canon.graph   ( -- list )      grounds adjacency per decision
 ```]
+
+Three maintenance commands round it out. *`canon reground`* deterministically
+backfills grounds across the whole ledger — the migration path for a ledger made
+before grounds populated themselves, so `impact`/`why` light up without a
+re-harvest (`--dry-run` previews). *`canon compact`* drops the superseded versions
+that regrounding leaves behind, keeping every live decision's id, grounds, and
+commitment. And *`canon graph [<id>]`* prints the grounds DAG — each foundation
+with what rests on it indented beneath.
 
 #callout(label: "Derived, and safe to lose")[
   The whole ledger lives in the project's own `canon.cbor`, beside your prose but

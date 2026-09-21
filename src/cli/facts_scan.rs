@@ -232,7 +232,7 @@ fn init(project: &Path, force: bool, genre: Option<&str>) -> Result<()> {
         let body = format!("= {title}\n\n{hint}\n");
         if let Some(rel) = &node.file {
             let abs = store.project_root().join(rel);
-            std::fs::write(&abs, body.as_bytes()).map_err(Error::Io)?;
+            crate::io_atomic::write(&abs, body.as_bytes()).map_err(Error::Io)?;
             store.update_paragraph_content(&mut node, body.as_bytes())?;
         }
         added += 1;
@@ -442,7 +442,7 @@ fn add_fact(
     let body = format!("= {title}\n\n{}\n", cand.statement.trim());
     if let Some(rel) = &node.file {
         let abs = layout.root.join(rel);
-        std::fs::write(&abs, body.as_bytes()).map_err(Error::Io)?;
+        crate::io_atomic::write(&abs, body.as_bytes()).map_err(Error::Io)?;
         store.update_paragraph_content(&mut node, body.as_bytes())?;
     }
     Ok(())
@@ -810,7 +810,7 @@ fn import(project: &Path, from: Option<&str>, yes: bool) -> Result<()> {
         let para_body = format!("= {title}\n\n{}\n", body.trim());
         if let Some(rel) = &node.file {
             let abs = store.project_root().join(rel);
-            std::fs::write(&abs, para_body.as_bytes()).map_err(Error::Io)?;
+            crate::io_atomic::write(&abs, para_body.as_bytes()).map_err(Error::Io)?;
             store.update_paragraph_content(&mut node, para_body.as_bytes())?;
         }
     }

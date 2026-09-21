@@ -71,6 +71,12 @@ one rests on. And when you know an edge the tool missed, you draw it yourself �
 `canon ground <id> --on <ground>`, or `g` on the dashboard — and `canon unground`
 takes one back. You do not maintain the graph; you correct it.
 
+If you kept a ledger before the tool drew grounds for you, `canon reground` runs
+the inference across the whole of it at once, so an old ledger's `impact` and `why`
+light up without a re-harvest. `canon compact` later reclaims the versions that
+grounding leaves behind (your decisions and their commitments are kept), and
+`canon graph` prints the whole shape — each foundation, and what rests on it.
+
 #term("Grounds")[
   The decisions a decision rests on. They are what `impact` and `why` walk, so a
   ledger with no grounds answers nothing — which is why they are inferred
