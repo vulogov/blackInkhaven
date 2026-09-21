@@ -63,7 +63,10 @@ impl CanonLedger {
     /// commitment through `CanonView` instead.)
     #[allow(dead_code)]
     pub fn commitment(&self, uid: Uid) -> Result<Option<Commitment>> {
-        self.with_store(|s| Ok(s.commitment_of(&uid)))
+        // Follow supersession so a regrounded decision reports its live level, not
+        // `None` (its commit lives on the pre-reground uid). Consistent with
+        // `CanonView.commitment` and `commitment_warnings`.
+        self.with_store(|s| Ok(super::query::commitment_live(s, uid)))
     }
 
     /// The SMY-W057-shaped advisories: decisions committed above the weakest

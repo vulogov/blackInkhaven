@@ -229,6 +229,9 @@ impl CanonLedger {
     /// loses the earlier commitments). `None` if the id names no live decision.
     pub fn history(&self, uid: Uid) -> Result<Option<DecisionHistory>> {
         self.with_store(|s| {
+            if superseded_uids(s).contains(&uid) {
+                return Ok(None); // a superseded version is history, not a live decision
+            }
             let Some(decision) = Self::view_from_unit(s, uid) else {
                 return Ok(None);
             };
@@ -566,6 +569,8 @@ mod tests {
         assert!(h.grounds.iter().any(|g| g.gist.contains("freezes")), "history shows the added ground");
         assert_eq!(h.trajectory.len(), 1, "the one commitment survives in the trajectory");
         assert_eq!(h.trajectory[0].level, Commitment::Canonical);
+        // and the superseded version has no live history (contract guard).
+        assert!(led.history(plot).unwrap().is_none(), "a superseded version yields no history");
 
         // log: the one commitment event, resolved to the committed gist.
         let log = led.log().unwrap();
