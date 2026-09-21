@@ -1,6 +1,10 @@
 # CANON-2 — "Grounds That Hold" (3.12.0)
 
-*Status: PLAN. Follows CANON-LEDGER-1 (3.11.0, shipped). On `3.12.0-dev`.*
+*Status: **SHIPPED** on `3.12.0-dev` (CG-P0…P6). Follows CANON-LEDGER-1 (3.11.0).
+CG-P0 grounds substrate (supersede + live-only filter) · CG-P1 deterministic
+grounding at creation · CG-P2 opt-in harvest proposes grounds · CG-P3 manual
+`canon ground`/`unground` + dashboard `g` · CG-P4 `canon log`/`history` + the
+commitment-survives-regrounding fix · CG-P5 the pre-cut guard · CG-P6 docs.*
 
 ## Why
 
