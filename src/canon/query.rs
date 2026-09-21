@@ -8,7 +8,7 @@
 //! - [`CanonLedger::all_decisions`] — every narrative decision, for `list`.
 //! - [`CanonLedger::resolve`] — a short/prefix id → a unique unit.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{anyhow, Result};
 use smysl::{dependents, trace, Commit, Commitment, RelKind, SchemaId, Store, TraceKind, Uid};
@@ -66,6 +66,32 @@ pub(super) fn live_commit(store: &Store, uid: Uid) -> Option<Commit> {
         }
     }
     None
+}
+
+/// Depth-first emit for [`CanonLedger::graph`]: `uid` at `depth`, then everything
+/// that rests on it. `path` guards against a cycle re-entering the same node; the
+/// depth cap is a belt-and-braces bound on a malformed store.
+fn walk_graph(
+    uid: Uid,
+    depth: usize,
+    deps: &HashMap<Uid, Vec<Uid>>,
+    views: &HashMap<Uid, CanonView>,
+    path: &mut Vec<Uid>,
+    rows: &mut Vec<GraphRow>,
+) {
+    if depth > 64 || path.contains(&uid) {
+        return;
+    }
+    if let Some(v) = views.get(&uid) {
+        rows.push(GraphRow { depth, view: v.clone() });
+    }
+    path.push(uid);
+    if let Some(children) = deps.get(&uid) {
+        for c in children {
+            walk_graph(*c, depth + 1, deps, views, path, rows);
+        }
+    }
+    path.pop();
 }
 
 /// The live commitment level, following supersession. A unit's `Commit` records
@@ -223,6 +249,73 @@ impl CanonLedger {
         })
     }
 
+    /// CANON-3 (CG3-P3) — the grounds DAG as an indented walk: each **root** (a
+    /// decision that rests on nothing — a foundation) followed by what transitively
+    /// **rests on** it, depth-first, so the foundations and their blast radius read
+    /// top-down. `root = Some(id)` shows just that decision's subtree. Live-only; a
+    /// decision that rests on several grounds appears under each (it's a DAG). A
+    /// path cycle-guard + depth cap keep it finite even on a malformed store.
+    pub fn graph(&self, root: Option<Uid>) -> Result<Vec<GraphRow>> {
+        self.with_store(|s| {
+            let dead = superseded_uids(s);
+            let live: Vec<CanonView> = s
+                .units()
+                .map(|(u, _)| *u)
+                .filter(|u| !dead.contains(u))
+                .filter_map(|u| Self::view_from_unit(s, u))
+                .filter(|v| v.kind.is_some())
+                .collect();
+            let views: HashMap<Uid, CanonView> = live.iter().map(|v| (v.uid, v.clone())).collect();
+            // Reverse edges: for each ground, the live decisions that rest on it.
+            let mut deps: HashMap<Uid, Vec<Uid>> = HashMap::new();
+            for v in &live {
+                for g in &v.grounds {
+                    if views.contains_key(g) {
+                        deps.entry(*g).or_default().push(v.uid);
+                    }
+                }
+            }
+            for children in deps.values_mut() {
+                children.sort_by_key(|u| u.canonical());
+                children.dedup();
+            }
+
+            let mut rows = Vec::new();
+            let mut path = Vec::new();
+            match root {
+                Some(r) => {
+                    if !views.contains_key(&r) {
+                        return Err(anyhow!("no live canon decision matches that id"));
+                    }
+                    walk_graph(r, 0, &deps, &views, &mut path, &mut rows);
+                }
+                None => {
+                    // Roots: live decisions resting on no live ground (the foundations).
+                    let mut roots: Vec<Uid> = live
+                        .iter()
+                        .filter(|v| !v.grounds.iter().any(|g| views.contains_key(g)))
+                        .map(|v| v.uid)
+                        .collect();
+                    roots.sort_by_key(|u| u.canonical());
+                    for r in roots {
+                        walk_graph(r, 0, &deps, &views, &mut path, &mut rows);
+                    }
+                    // Any decision never reached (a cycle with no root) — list it flat.
+                    let seen: HashSet<Uid> = rows.iter().map(|r| r.view.uid).collect();
+                    let mut orphans: Vec<Uid> =
+                        live.iter().map(|v| v.uid).filter(|u| !seen.contains(u)).collect();
+                    orphans.sort_by_key(|u| u.canonical());
+                    for u in orphans {
+                        if let Some(v) = views.get(&u) {
+                            rows.push(GraphRow { depth: 0, view: v.clone() });
+                        }
+                    }
+                }
+            }
+            Ok(rows)
+        })
+    }
+
     /// CANON-2 (CG-P4) — the ledger's commitment log: every `Commit` ever made,
     /// oldest first, as the story's canon settling over time. Includes commits on
     /// now-superseded versions (the honest development record); the gist is that of
@@ -265,6 +358,14 @@ pub struct DecisionHistory {
     pub decision: CanonView,
     pub grounds: Vec<CanonView>,
     pub trajectory: Vec<CommitEvent>,
+}
+
+/// One row of the grounds DAG walk (CG3-P3): a decision at an indentation `depth`
+/// (0 = a foundation), where deeper rows *rest on* the row above them.
+#[derive(Debug, Clone)]
+pub struct GraphRow {
+    pub depth: usize,
+    pub view: CanonView,
 }
 
 /// One entry in the ledger-wide commitment log (CG-P4).
@@ -396,6 +497,40 @@ mod tests {
         );
         // Removing an absent ground is a no-op.
         assert_eq!(led.unground(live_plot, &[base]).unwrap(), live_plot, "no-op unground");
+    }
+
+    #[test]
+    fn graph_walks_foundations_then_what_rests_on_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let path_s = dir.path().join("canon.cbor").to_str().unwrap().to_string();
+        let led = CanonLedger::new(&path_s);
+        let n = Uuid::from_u128(0xA1);
+
+        // base ← plot ← reveal (a chain, grounds set explicitly).
+        let base = led
+            .record_decision(NarrativeKind::WorldFact, "the city floats on a leviathan", n, "ch1", &[])
+            .unwrap();
+        let plot = led
+            .record_decision(NarrativeKind::PlotPoint, "the escape uses the sea gate", n, "ch12", &[base])
+            .unwrap();
+        led.record_decision(NarrativeKind::Reveal, "the tremors are the beast", n, "ch9", &[plot]).unwrap();
+
+        // Whole graph: the foundation first, then what rests on it, depth-first.
+        let rows = led.graph(None).unwrap();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].depth, 0);
+        assert!(rows[0].view.gist.contains("floats"), "foundation is the leviathan world-fact");
+        assert_eq!(rows[1].depth, 1);
+        assert!(rows[1].view.gist.contains("sea gate"));
+        assert_eq!(rows[2].depth, 2);
+        assert!(rows[2].view.gist.contains("tremors"));
+
+        // A subtree rooted at the plot-point: it, then the reveal beneath it.
+        let sub = led.graph(Some(plot)).unwrap();
+        assert_eq!(sub.len(), 2);
+        assert_eq!(sub[0].view.uid, plot);
+        assert_eq!(sub[0].depth, 0);
+        assert_eq!(sub[1].depth, 1);
     }
 
     #[test]

@@ -16,6 +16,8 @@
 //!   as dicts {level, agent, ts} (oldest first).
 //! - `ink.canon.forks` ( -- list )     commitment forks as dicts {uid, gist,
 //!   positions:[{agent, level}], resolved}.
+//! - `ink.canon.graph` ( -- list )     the grounds adjacency: every decision as a
+//!   dict {uid, kind, gist, commitment, grounds:[uid]} (what it rests on).
 
 use std::collections::HashMap;
 
@@ -34,6 +36,7 @@ pub fn register(vm: &mut VM) -> Result<()> {
         ("ink.canon.why", w_why),
         ("ink.canon.history", w_history),
         ("ink.canon.forks", w_forks),
+        ("ink.canon.graph", w_graph),
     ];
     for (name, f) in words {
         vm.register_inline(name.to_string(), *f).map_err(|e| anyhow!("register {name}: {e}"))?;
@@ -83,6 +86,38 @@ fn view_dict(v: &CanonView) -> Value {
         v.node.map(|n| Value::from_string(n.to_string())).unwrap_or_else(Value::nodata),
     );
     Value::from_dict(d)
+}
+
+word!(w_graph, do_graph);
+fn do_graph(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.canon.graph";
+    let canon = active_store(tag)?.raw().canon();
+    let views = canon.all_decisions().map_err(|e| anyhow!("{tag}: {e}"))?;
+    let list: Vec<Value> = views
+        .iter()
+        .map(|v| {
+            let mut d: HashMap<String, Value> = HashMap::new();
+            d.insert("uid".into(), Value::from_string(v.uid.short()));
+            d.insert(
+                "kind".into(),
+                v.kind
+                    .map(|k| Value::from_string(k.schema_str().trim_start_matches("x.narrative/")))
+                    .unwrap_or_else(Value::nodata),
+            );
+            d.insert("gist".into(), Value::from_string(&v.gist));
+            d.insert(
+                "commitment".into(),
+                v.commitment.map(|c| Value::from_string(c.to_string())).unwrap_or_else(Value::nodata),
+            );
+            d.insert(
+                "grounds".into(),
+                Value::from_list(v.grounds.iter().map(|g| Value::from_string(g.short())).collect()),
+            );
+            Value::from_dict(d)
+        })
+        .collect();
+    push(vm, Value::from_list(list));
+    Ok(vm)
 }
 
 /// Resolve a uid prefix argument against the active project's ledger.

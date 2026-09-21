@@ -264,6 +264,34 @@ pub fn compact(project: &Path) -> Result<()> {
     Ok(())
 }
 
+/// `inkhaven canon graph [<id>]` — the grounds DAG: foundations, with what rests
+/// on them indented beneath.
+pub fn graph(project: &Path, id: Option<&str>) -> Result<()> {
+    let store = open(project)?;
+    let canon = store.raw().canon();
+    let root = match id {
+        Some(p) => Some(canon.resolve(p).map_err(store_err)?),
+        None => None,
+    };
+    let rows = canon.graph(root).map_err(store_err)?;
+    if rows.is_empty() {
+        eprintln!("No canon decisions yet.");
+        return Ok(());
+    }
+    eprintln!("canon graph — foundations, and (indented) what rests on them:");
+    for r in &rows {
+        let kind = r
+            .view
+            .kind
+            .map(|k| k.schema_str().trim_start_matches("x.narrative/"))
+            .unwrap_or("?");
+        let commit = r.view.commitment.map(|c| format!(" «{c}»")).unwrap_or_default();
+        let indent = "  ".repeat(r.depth + 1);
+        println!("{indent}[{kind}]{commit} {}", r.view.gist);
+    }
+    Ok(())
+}
+
 /// `inkhaven canon staged` — list the model's proposals awaiting confirmation.
 pub fn staged(project: &Path) -> Result<()> {
     let layout = ProjectLayout::new(project);

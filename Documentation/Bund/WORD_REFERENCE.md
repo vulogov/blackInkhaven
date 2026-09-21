@@ -413,6 +413,7 @@ Read-only. Setting a decision's commitment (`commit`) and the opt-in, author-con
 | `ink.canon.why` | store_read | `( id -- list )` | the grounds chain `id` rests on |
 | `ink.canon.history` | store_read | `( id -- list )` | `id`'s commitment trajectory over time `{level, agent, ts}` (oldest first) |
 | `ink.canon.forks` | store_read | `( -- list )` | commitment forks `{uid, gist, positions:[{agent, level}], resolved}` |
+| `ink.canon.graph` | store_read | `( -- list )` | the grounds adjacency: every decision `{uid, kind, gist, commitment, grounds:[uid]}` |
 
 **`ink.knowledge.*` — KEN, epistemic continuity**
 
