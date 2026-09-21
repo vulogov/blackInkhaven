@@ -476,6 +476,21 @@ That is the payoff: cut the leviathan and the ledger tells you, at once, that th
 escape route and the central reveal both dangle — instead of discovering it three
 chapters later when the book stops making sense.
 
+#subsection("Where the grounds come from")
+
+That answer is only as good as the *grounds* — the edges between decisions — and
+you rarely draw them by hand. When a decision enters the ledger, its grounds are
+*inferred* for free: kind rules plus shared content words, so a reveal is grounded
+on the setup it echoes and a plot point on the world-fact whose subject it reuses
+(the matching is stemmed and stop-word-filtered in your project language, so
+"leviathan" catches "leviathan's" but "the" never binds anything). The opt-in
+harvest goes further — the model, already reading the scene, names which sibling
+decisions each one rests on, and those edges enter with your `canon accept`. And
+when you know an edge the tool missed, `canon ground <id> --on <ground>` draws it
+by hand; `canon unground … --from …` removes a wrong one. Because grounds are part
+of a decision's identity, editing them files a *new* version that supersedes the
+old — the history is kept, and the decision's commitment carries across the change.
+
 #subsection("The other questions")
 
 The rest of the surface is the same shape — deterministic, instant, free — each
@@ -484,7 +499,10 @@ a pure function over the project's own small ledger.
 #chord_table((
   chord_row("canon list", "Every decision, with its kind, «commitment», and source paragraph."),
   chord_row("canon why <id>", "The grounds chain a decision rests on — the inverse of impact."),
+  chord_row("canon history <id>", "One decision's development: its grounds and its commitment trajectory over time."),
+  chord_row("canon log", "Every commitment event across the ledger, oldest first — the canon settling, draft by draft."),
   chord_row("canon commit <id> --level <l>", "Set how settled a decision is: floated → drafted → committed → canonical → retconned. This is authorial canonicity, not real-world truth."),
+  chord_row("canon ground / unground", "Draw a grounds edge by hand (--on), or remove one (--from)."),
   chord_row("canon check", "Anything you have marked canonical that rests on something only floated — a scene built on sand (the SMY-W057 support check)."),
   chord_row("canon forks", "Commitment forks: decisions whose agents disagree on canonicity after a merge (SMY-W058)."),
   chord_row("canon context \"<query>\"", "Fit the relevant decisions and their grounds to a token budget, closure-complete — grounded context for an answer."),
@@ -496,8 +514,16 @@ The id is the short hash `canon list` prints; a unique prefix is enough.
 
 Inside the editor the reader hub (`Ctrl+B *`) gains a *Canon* entry: a scrollable
 dashboard of every decision with its kind and `«commitment»`, plus a
-commitment-forks section, and `⏎` jumps to the decision's source paragraph — the
-same jump the read-through and continuity ledgers give you.
+commitment-forks section. `⏎` jumps to the decision's source paragraph — the same
+jump the read-through and continuity ledgers give you — `g` grounds the cursored
+decision on a target you then pick, and `h` renders its development history (its
+grounds and commitment trajectory) into the Thoughts pane.
+
+The blast radius also finds you at the moment you would cause it: delete a
+paragraph that *established* canon decisions and the confirmation warns first,
+naming them and how many others rest on them. It never blocks — and because the
+ledger is derived and separate, deleting the prose leaves the decisions in place
+(source-orphaned, not pruned), so the warning is advice, not an obstacle.
 
 CANON also meets REDLINE. A *commitment fork* — two agents disagreeing on whether
 a decision is canonical, which only arises after you `canon merge` a second
@@ -512,15 +538,17 @@ is empty and free until the day you merge.
 The ledger is *derived* — rebuildable by re-harvest — so the `canon:` config block
 holds only behavioural knobs: `harvest_on_save` (default `true`) toggles the
 deterministic on-save tag harvest, and `context_budget` / `context_reserve` set
-the defaults `canon context` uses when its flags are omitted. Four Bund words
+the defaults `canon context` uses when its flags are omitted. Five Bund words
 expose the ledger read-only, mirroring CHRONICLE's discipline — the writes
-(`commit`, and the author-confirmed harvest) stay on the CLI and in the editor.
+(`commit`, `ground`/`unground`, and the author-confirmed harvest) stay on the CLI
+and in the editor.
 
 #screen(caption: "The CANON Bund surface — read-only")[```
 ink.canon.list    ( -- list )      { uid, kind, gist, commitment,
                                      locator, node }
 ink.canon.impact  ( id -- list )   the blast radius of a decision
 ink.canon.why     ( id -- list )   the grounds chain it rests on
+ink.canon.history ( id -- list )   its commitment trajectory over time
 ink.canon.forks   ( -- list )      { uid, gist, positions, resolved }
 ```]
 
@@ -595,12 +623,18 @@ its own numbers, whether the revision was a revision — or merely a rearrangeme
   that *stages* proposals until you `canon accept` — the model proposes, you
   decide.],
   [The headline is `canon impact <id>`: *what breaks if I cut this?* — the blast
-  radius of a decision, before the cut. `canon why` traces its grounds; `canon
-  commit`/`canon check` track how settled it is and flag a canonical choice
-  resting on a floated one; `canon forks` surfaces post-merge disagreements, which
-  also reach the Editorial Pass as ✉ Briefs.],
-  [The reader hub (`Ctrl+B *` → *Canon*) is the dashboard (`⏎` jumps to source);
-  `ink.canon.*` reads it from a script; the `canon:` block tunes `harvest_on_save`
-  and the `context` budget. The ledger is *derived* (`canon.cbor`) — losing it
-  costs a re-harvest, never prose.],
+  radius of a decision, before the cut. It works because *grounds populate
+  themselves*: inferred at no cost (kind rules + shared content words), proposed by
+  the opt-in harvest, or drawn by hand with `canon ground`/`unground`. `canon why`
+  traces them; `canon commit`/`canon check` track how settled a decision is; `canon
+  forks` surfaces post-merge disagreements, which also reach the Editorial Pass as
+  ✉ Briefs.],
+  [`canon history <id>` and `canon log` read the *development history* off the
+  append-only store — a decision's commitment trajectory, and the canon settling
+  draft by draft. Deleting a paragraph that established decisions warns with their
+  blast radius first (advisory — the ledger keeps them).],
+  [The reader hub (`Ctrl+B *` → *Canon*) is the dashboard (`⏎` jumps to source, `g`
+  grounds, `h` shows history); `ink.canon.*` reads it from a script; the `canon:`
+  block tunes `harvest_on_save` and the `context` budget. The ledger is *derived*
+  (`canon.cbor`) — losing it costs a re-harvest, never prose.],
 ))

@@ -1009,6 +1009,7 @@ impl super::App {
                 title,
                 descendant_count,
                 word_count,
+                canon_note,
                 ..
             } => {
                 // STRUCT-2 (B-1) — show how many words are about to be lost.
@@ -1033,7 +1034,7 @@ impl super::App {
                 } else {
                     format!(" Delete {} `{}`{}?", root_kind.as_str(), title, word_str)
                 };
-                let body = vec![
+                let mut body = vec![
                     Line::from(""),
                     Line::from(Span::styled(
                         prompt,
@@ -1046,11 +1047,23 @@ impl super::App {
                         " Removes files from disk AND records from the store.",
                         Style::default().add_modifier(Modifier::DIM),
                     )),
-                    Line::from(Span::styled(
-                        " y / Enter to confirm · n / Esc to cancel ",
-                        Style::default().add_modifier(Modifier::DIM),
-                    )),
                 ];
+                // CANON-2 (CG-P5) — the pre-cut guard: what canon rests on this.
+                if !canon_note.is_empty() {
+                    body.push(Line::from(""));
+                    for (i, note) in canon_note.iter().enumerate() {
+                        let style = if i == 0 {
+                            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default().fg(Color::Yellow)
+                        };
+                        body.push(Line::from(Span::styled(format!(" {note}"), style)));
+                    }
+                }
+                body.push(Line::from(Span::styled(
+                    " y / Enter to confirm · n / Esc to cancel ",
+                    Style::default().add_modifier(Modifier::DIM),
+                )));
                 (" Confirm delete ".into(), Color::Red, body)
             }
             Modal::Renaming { kind, input, .. } => {
