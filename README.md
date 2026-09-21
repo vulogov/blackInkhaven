@@ -27,29 +27,24 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 3.12.0 — Grounds That Hold
+## Latest release · 3.13.0 — Tend the Ledger
 
-3.12.0 makes the **Canon Ledger** — the record of the *decisions behind the
-fiction*, distinct from the text (git) or the current state (Facts / SEMNET / KEN /
-SENTINEL) — deliver on its flagship question. Each decision is recorded with its
-**grounds** (what it rests on), a **commitment** level (`floated → … → canonical →
-retconned`), and a link to its source paragraph; 3.11.0 recorded them but nothing
-populated the dependency graph, so `canon impact` came back empty. Now it fills
-itself. Deterministic core, warning-free:
+3.13.0 is the maintenance trio for the **Canon Ledger** — the record of the
+*decisions behind the fiction* (distinct from the text, the current state, or the
+readers' findings), whose dependency graph now populates itself (3.12) so
+**`canon impact` — "what breaks if I cut this?"** — returns real answers. This
+release keeps that graph healthy. Deterministic core, warning-free:
 
-- **The dependency graph populates itself.** A decision's grounds are inferred at
-  no cost (kind rules + shared content words, in your project language), proposed
-  by the opt-in `canon harvest` (still author-confirmed via `canon accept`), or
-  drawn by hand (`canon ground` / `unground`, or `g` in the dashboard). So
-  **`canon impact <id>` — what breaks if I cut this?** — returns real answers, and
-  `canon why` traces the chain the other way.
-- **Development history.** `canon history <id>` shows a decision's grounds and its
-  commitment trajectory over time; `canon log` shows the whole canon settling,
-  draft by draft — read straight off the append-only ledger.
-- **The pre-cut guard.** Deleting a paragraph that established decisions warns with
-  their blast radius first — advisory, and the ledger keeps the decisions regardless.
+- **`canon reground`** — backfill grounds across a whole existing ledger (the
+  migration path for a pre-3.12 ledger, so `impact`/`why` light up without a
+  re-harvest); `--dry-run` previews.
+- **`canon compact`** — reclaim the append-only churn from hand-grounding, keeping
+  every live decision's id, grounds, **and commitment** (carried onto the live
+  version before the superseded ones are dropped).
+- **`canon graph`** — see the whole shape: each foundation, with what transitively
+  rests on it indented beneath (`canon graph <id>` for one decision's subtree).
 
-Read the full notes: [`Documentation/RELEASE_NOTES/3.12.0.md`](Documentation/RELEASE_NOTES/3.12.0.md).
+Read the full notes: [`Documentation/RELEASE_NOTES/3.13.0.md`](Documentation/RELEASE_NOTES/3.13.0.md).
 No breaking changes; existing projects open unchanged; compiles warning-free.
 
 **Stable baseline · 3.0.0.** 3.0.0 remains the stable, maintained edition — the
@@ -175,7 +170,8 @@ hardened surface. Every release's notes live under
 - **The Canon Ledger** (`inkhaven canon`, hub → **Canon**) — the *decisions behind
   the fiction* (world-facts, plot points, reveals) with their **grounds** and a
   **commitment** level. **`canon impact`** answers *"what breaks if I cut this?"*;
-  `canon why` / `history` / `log` trace and time it; grounds populate themselves;
+  `canon why` / `history` / `log` / `graph` trace, time, and map it; grounds
+  populate themselves (`reground` backfills an old ledger, `compact` tidies it);
   the model may *propose* decisions but only `canon accept` writes.
 - **The companions** — a triad that observes craft without rewriting your prose:
   the **World fact-checker** (`Ctrl+B W`, checks scenes against your worldbuilding
@@ -225,8 +221,9 @@ hardened surface. Every release's notes live under
   bibliography checks (CI-ready; exit non-zero on a problem).
 - `inner-socrates` / `inner-editor` / `realworld` — the companions from the
   shell; `check` runs the fast deterministic pass over the project.
-- `canon list` / `impact` / `why` / `history` / `log` / `commit` / `ground` /
-  `harvest` — the Canon Ledger from the shell (impact = the blast radius of a cut).
+- `canon list` / `impact` / `why` / `history` / `log` / `graph` / `commit` /
+  `ground` / `reground` / `compact` / `harvest` — the Canon Ledger from the shell
+  (impact = the blast radius of a cut).
 - `import-epub` / `import-scrivener` — bring an existing manuscript in.
 - `backup` / `restore` — see above.
 - `ai "prompt"` — one-shot inference from the shell (no TUI).
