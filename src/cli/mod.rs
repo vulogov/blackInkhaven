@@ -1797,6 +1797,9 @@ pub enum CanonCommand {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Reclaim append-only churn: drop superseded decision versions left by
+    /// grounding/ungrounding. Live decisions and their commitments are preserved.
+    Compact,
     /// Mark a decision's commitment (canonicity) level.
     Commit {
         /// A decision id (canonical or short prefix, as printed by `list`).
@@ -6708,6 +6711,7 @@ impl Cli {
                 CanonCommand::Reground { dry_run } => {
                     canon::reground(&project, dry_run).map_err(Into::into)
                 }
+                CanonCommand::Compact => canon::compact(&project).map_err(Into::into),
                 CanonCommand::Commit { id, level, as_agent } => {
                     canon::commit(&project, &id, &level, as_agent).map_err(Into::into)
                 }

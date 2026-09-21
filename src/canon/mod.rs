@@ -34,8 +34,8 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use smysl::{
-    canonical_uid, from_cbor_seq, relink, to_cbor_seq, Record, RelKind, Relation, Status, Store,
-    Uid, UnitCoreBuilder,
+    canonical_uid, compact, from_cbor_seq, relink, to_cbor_seq, Commit, Hlc, Record, RelKind,
+    Relation, Status, Store, Uid, UnitCoreBuilder,
 };
 
 mod commit;
@@ -64,6 +64,15 @@ pub struct BackfillReport {
     pub decisions_touched: usize,
     /// On a dry run, the `(decision gist, ground gist)` edges that would be added.
     pub preview: Vec<(String, String)>,
+}
+
+/// CANON-3 (CG3-P2) — the outcome of a compaction ([`CanonLedger::compact`]).
+#[derive(Debug, Clone, Default)]
+pub struct CompactReport {
+    pub records_before: usize,
+    pub records_after: usize,
+    /// Superseded unit versions dropped.
+    pub dropped_units: usize,
 }
 
 /// One decision to record via [`CanonLedger::record_grounded_batch`], with the
@@ -307,6 +316,61 @@ impl CanonLedger {
         }
         self.sync()?;
         Ok(BackfillReport { edges_added, decisions_touched, preview: Vec::new() })
+    }
+
+    /// CANON-3 (CG3-P2) — reclaim the append-only churn: drop superseded unit
+    /// versions that regrounding / ungrounding left behind (smysl `compact`). Pure
+    /// bookkeeping — live decisions keep their ids and edges. Two safeguards before
+    /// dropping: **relink** first, so every live reference points at a live unit
+    /// (compact keeps a superseded unit anything live still references); and
+    /// **carry each live head's commitment onto its own uid** — a regrounded
+    /// decision's commitment lives on a superseded predecessor (that's how
+    /// `commitment_live` finds it), and compact drops that predecessor's supersedes
+    /// edge, so without this the commitment would be lost. Orphaned `Commit` records
+    /// on dropped units are filtered out too. Flushes.
+    pub fn compact(&self) -> Result<CompactReport> {
+        let dirty = self.dirty.clone();
+        let report = self.with_store(|s| {
+            // (1) Relink so live references point at live units → predecessors become
+            // droppable. relink may itself supersede a committed live unit, so this
+            // must precede the commitment carry-forward.
+            let relinked = relink(s);
+            if !relinked.records.is_empty() {
+                s.append(&relinked.records).map_err(|e| anyhow!("canon compact: relink {e}"))?;
+            }
+            // (2) Pin each live head's inherited commitment onto its own uid.
+            let dead = query::superseded_uids(s);
+            let live: Vec<Uid> = s.units().map(|(u, _)| *u).filter(|u| !dead.contains(u)).collect();
+            let mut carries: Vec<Record> = Vec::new();
+            for u in &live {
+                if !s.commits_of(u).is_empty() {
+                    continue; // already committed on its own uid
+                }
+                if let Some(c) = query::live_commit(s, *u) {
+                    let ts = Hlc::now(&c.ts, &c.agent);
+                    carries.push(Record::Commit(Commit::new(*u, c.level, c.agent.clone(), ts)));
+                }
+            }
+            if !carries.is_empty() {
+                s.append(&carries).map_err(|e| anyhow!("canon compact: carry commitment {e}"))?;
+            }
+            // (3) Compact, then drop orphaned commits on dropped units, and rebuild.
+            let before = s.iter().count();
+            let compacted = compact(s);
+            let dropped_units = compacted.dropped.len();
+            let dropped = compacted.dropped;
+            let records: Vec<Record> = compacted
+                .records
+                .into_iter()
+                .filter(|r| !matches!(r, Record::Commit(c) if dropped.contains(&c.unit)))
+                .collect();
+            let after = records.len();
+            *s = Store::from_records(records);
+            dirty.store(true, Ordering::Release);
+            Ok(CompactReport { records_before: before, records_after: after, dropped_units })
+        })?;
+        self.sync()?;
+        Ok(report)
     }
 
     /// CANON-2 (CG-P0) — the supersede primitive. A unit's `grounds` are part of
@@ -753,6 +817,52 @@ mod tests {
 
         // Idempotent — a second apply adds nothing.
         assert_eq!(led.reground_deterministic(&ProseLanguage::En, false).unwrap().edges_added, 0);
+    }
+
+    #[test]
+    fn compact_drops_superseded_versions_but_keeps_commitment_and_grounds() {
+        let dir = tempfile::tempdir().unwrap();
+        let path_s = dir.path().join("canon.cbor").to_str().unwrap().to_string();
+        let led = CanonLedger::new(&path_s);
+        let n = Uuid::from_u128(0x99);
+
+        let base = led
+            .record_decision(NarrativeKind::WorldFact, "the harbour freezes each winter", n, "ch1", &[])
+            .unwrap();
+        let plot = led
+            .record_decision(NarrativeKind::PlotPoint, "escape by sea waits for the thaw", n, "ch9", &[])
+            .unwrap();
+        led.commit(plot, smysl::Commitment::Canonical, "author").unwrap();
+        // Reground the committed plot onto base → plot is superseded; its commitment
+        // now lives on the superseded uid (found via commitment_live).
+        let plot2 = led.reground(plot, &[base]).unwrap();
+        assert_ne!(plot2, plot);
+        let pre = led.all_decisions().unwrap();
+        assert_eq!(
+            pre.iter().find(|v| v.gist.contains("thaw")).unwrap().commitment,
+            Some(smysl::Commitment::Canonical)
+        );
+
+        // Compact: the superseded plot version is dropped, records shrink.
+        let rep = led.compact().unwrap();
+        assert!(rep.dropped_units >= 1, "the superseded version was dropped");
+        assert!(rep.records_after < rep.records_before, "records shrank");
+
+        // The live decision, its grounds, and its commitment all survive.
+        let post = led.all_decisions().unwrap();
+        assert_eq!(post.len(), 2, "base + the live plot");
+        let live = post.iter().find(|v| v.gist.contains("thaw")).unwrap();
+        assert_eq!(live.commitment, Some(smysl::Commitment::Canonical), "commitment survived compaction");
+        assert!(led.why(live.uid).unwrap().iter().any(|v| v.gist.contains("freezes")), "grounds survived");
+
+        // Idempotent + durable: nothing left to drop, commitment still there.
+        assert_eq!(led.compact().unwrap().dropped_units, 0, "second compact is a no-op");
+        let led2 = CanonLedger::new(&path_s);
+        assert_eq!(
+            led2.all_decisions().unwrap().iter().find(|v| v.gist.contains("thaw")).unwrap().commitment,
+            Some(smysl::Commitment::Canonical),
+            "commitment persists across reopen after compaction"
+        );
     }
 
     #[test]

@@ -248,6 +248,22 @@ pub fn reground(project: &Path, dry_run: bool) -> Result<()> {
     Ok(())
 }
 
+/// `inkhaven canon compact` — drop superseded decision versions left by
+/// grounding/ungrounding; live decisions + their commitments are preserved.
+pub fn compact(project: &Path) -> Result<()> {
+    let store = open(project)?;
+    let r = store.raw().canon().compact().map_err(store_err)?;
+    if r.dropped_units == 0 {
+        eprintln!("Nothing to compact — no superseded versions ({} records).", r.records_before);
+    } else {
+        eprintln!(
+            "Compacted: dropped {} superseded version(s); {} → {} records.",
+            r.dropped_units, r.records_before, r.records_after
+        );
+    }
+    Ok(())
+}
+
 /// `inkhaven canon staged` — list the model's proposals awaiting confirmation.
 pub fn staged(project: &Path) -> Result<()> {
     let layout = ProjectLayout::new(project);
