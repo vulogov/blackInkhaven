@@ -78,6 +78,32 @@ fn panic_report_suppressed() -> bool {
     SUPPRESS_PANIC_REPORT.with(|c| c.get())
 }
 
+/// The main thread's id, captured when the hook is installed (in `main`, on the
+/// main thread). Lets the hook tell a background-thread panic (thread/task-
+/// contained — the process survives) from a fatal main-thread panic.
+static MAIN_THREAD: OnceLock<std::thread::ThreadId> = OnceLock::new();
+
+/// True while the interactive TUI has a terminal-restore armed. A background-
+/// thread panic during a live TUI must NOT restore the terminal or write to
+/// stderr — that corrupts the screen the main loop is still drawing; a background
+/// panic in a plain CLI run (never armed) still reports normally.
+static TUI_ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether the calling thread is the main thread. **Fail-safe:** returns `true`
+/// when the main-thread id was never captured, so a panic is only ever treated as
+/// *background* when we are certain it is — a main-thread crash is never wrongly
+/// suppressed (the terminal always restores on a real crash).
+fn is_main_thread() -> bool {
+    MAIN_THREAD.get().map_or(true, |id| *id == std::thread::current().id())
+}
+
+/// The Step-0.6 decision, factored out for testing: suppress the crash hook's
+/// terminal-teardown only when the TUI is armed AND the panic is on a background
+/// thread. Never suppresses a main-thread panic (so a real crash always restores).
+fn should_suppress_background(tui_armed: bool, is_main: bool) -> bool {
+    tui_armed && !is_main
+}
+
 /// Maximum size of the recent-action ring.  Each entry
 /// is ~80 bytes typical, so 50 caps at ~4 KB — small
 /// enough to keep around forever, large enough to
@@ -195,6 +221,8 @@ fn terminal_restore_slot() -> &'static Mutex<Option<TerminalRestore>> {
 /// Stored in a process-wide slot so the hook can find
 /// it without owning anything App-specific.
 pub fn set_terminal_restore(restore: Option<TerminalRestore>) {
+    // Arm/disarm the background-panic guard alongside the restore closure.
+    TUI_ARMED.store(restore.is_some(), std::sync::atomic::Ordering::SeqCst);
     if let Ok(mut slot) = terminal_restore_slot().lock() {
         *slot = restore;
     }
@@ -232,6 +260,10 @@ pub(crate) fn is_broken_pipe_panic(msg: &str) -> bool {
 }
 
 pub fn install_panic_hook() {
+    // Capture the main thread's id (this runs in `main`, on the main thread) so
+    // the hook can distinguish a fatal main-thread panic from a contained
+    // background-thread one.
+    let _ = MAIN_THREAD.set(std::thread::current().id());
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         // Step 0 — a broken pipe on stdout/stderr (a piped reader closed
@@ -263,6 +295,27 @@ pub fn install_panic_hook() {
             tracing::warn!(
                 target: "inkhaven::crash",
                 "recovered panic (suppressed report): {msg}"
+            );
+            return;
+        }
+
+        // Step 0.6 — a panic on a BACKGROUND thread during a live TUI. The panic
+        // is contained at the thread/task boundary (the process survives and the
+        // main render loop keeps running), so restoring the terminal, flushing
+        // rescue, printing a breadcrumb, or chaining the default backtrace would
+        // corrupt the screen the main loop is still drawing — for a fault the app
+        // rides through. Log and return, as for a suppressed panic. Gated on the
+        // TUI being armed (a background panic in a plain CLI run reports normally)
+        // and fail-safe on thread identity (a main-thread crash is never
+        // suppressed here). This is the class-wide backstop behind the per-path
+        // `suppress_panic_report` wraps.
+        if should_suppress_background(
+            TUI_ARMED.load(std::sync::atomic::Ordering::SeqCst),
+            is_main_thread(),
+        ) {
+            tracing::warn!(
+                target: "inkhaven::crash",
+                "background-thread panic during TUI (terminal left intact): {msg}"
             );
             return;
         }
@@ -419,5 +472,19 @@ mod tests {
             "name = {name}"
         );
         assert!(name.ends_with(".hjson"), "name = {name}");
+    }
+
+    #[test]
+    fn background_panic_guard_only_fires_when_armed_and_not_main() {
+        use super::should_suppress_background;
+        // Not armed (plain CLI) → never suppress, background or not.
+        assert!(!should_suppress_background(false, false));
+        assert!(!should_suppress_background(false, true));
+        // Armed TUI, but the panic is on the MAIN thread → still restore (a real
+        // crash must tear the terminal down). Fail-safe: is_main_thread() also
+        // returns true when the main id is unknown, so this arm covers that.
+        assert!(!should_suppress_background(true, true));
+        // Armed TUI + a background thread → suppress the teardown (the only case).
+        assert!(should_suppress_background(true, false));
     }
 }
