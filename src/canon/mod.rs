@@ -296,7 +296,13 @@ impl CanonLedger {
 
         let mut edges_added = 0usize;
         let mut decisions_touched = 0usize;
-        loop {
+        // Each round grounds exactly one decision, and a decision is grounded at
+        // most once (its gist/kind are stable, so its inferred edges don't change),
+        // so this converges in ≤ (live count) rounds. The cap is belt-and-braces
+        // against a pathological relink cascade — the no-hang posture, mirroring
+        // `walk_graph`'s depth cap — never expected to bind.
+        let max_rounds = self.all_decisions()?.len().saturating_mul(2).saturating_add(16);
+        for _ in 0..max_rounds {
             let live = self.all_decisions()?;
             let mut applied = false;
             for v in &live {
@@ -334,9 +340,11 @@ impl CanonLedger {
             // (1) Relink so live references point at live units → predecessors become
             // droppable. relink may itself supersede a committed live unit, so this
             // must precede the commitment carry-forward.
+            let mut mutated = false;
             let relinked = relink(s);
             if !relinked.records.is_empty() {
                 s.append(&relinked.records).map_err(|e| anyhow!("canon compact: relink {e}"))?;
+                mutated = true;
             }
             // (2) Pin each live head's inherited commitment onto its own uid.
             let dead = query::superseded_uids(s);
@@ -353,11 +361,17 @@ impl CanonLedger {
             }
             if !carries.is_empty() {
                 s.append(&carries).map_err(|e| anyhow!("canon compact: carry commitment {e}"))?;
+                mutated = true;
             }
             // (3) Compact, then drop orphaned commits on dropped units, and rebuild.
             let before = s.iter().count();
             let compacted = compact(s);
             let dropped_units = compacted.dropped.len();
+            if dropped_units == 0 && !mutated {
+                // Nothing superseded and no relink/carry — leave the store untouched
+                // rather than rewrite `canon.cbor` with identical bytes.
+                return Ok(CompactReport { records_before: before, records_after: before, dropped_units: 0 });
+            }
             let dropped = compacted.dropped;
             let records: Vec<Record> = compacted
                 .records
@@ -456,6 +470,23 @@ impl CanonLedger {
                 .into_iter()
                 .filter(|u| !dead.contains(u))
                 .collect())
+        })
+    }
+
+    /// The live canon units sourced by any of `nodes`, computing the superseded set
+    /// **once** for the whole batch (vs. per node). Used by the pre-cut delete guard
+    /// over a whole subtree, where per-node scans would be O(nodes × relations).
+    pub fn units_for_nodes(&self, nodes: &[Uuid]) -> Result<Vec<Uid>> {
+        self.with_store(|s| {
+            let dead = query::superseded_uids(s);
+            let mut out = Vec::new();
+            for node in nodes {
+                let prefix = model::node_prefix(*node);
+                out.extend(
+                    s.units_with_source_prefix(&prefix).into_iter().filter(|u| !dead.contains(u)),
+                );
+            }
+            Ok(out)
         })
     }
 
