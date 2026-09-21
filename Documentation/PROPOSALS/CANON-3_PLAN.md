@@ -1,6 +1,9 @@
 # CANON-3 — "Tend the Ledger" (3.13.0)
 
-*Status: PLAN. Follows CANON-2 (3.12.0, shipped). On `3.13.0-dev`.*
+*Status: **SHIPPED** on `3.13.0-dev` (CG3-P1…P4). Follows CANON-2 (3.12.0).
+CG3-P1 `canon reground` (deterministic backfill, `--dry-run`) · CG3-P2 `canon
+compact` (drop superseded churn; carries commitment forward first) · CG3-P3 `canon
+graph` (grounds DAG; `ink.canon.graph`) · CG3-P4 docs.*
 
 ## Why
 
