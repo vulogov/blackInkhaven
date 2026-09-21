@@ -54,6 +54,18 @@ pub use merge::{CommitmentForkView, MergeSummary};
 pub use model::NarrativeKind;
 pub use query::{CanonView, DecisionHistory, LogEntry};
 
+/// CANON-3 (CG3-P1) — the outcome of a deterministic backfill
+/// ([`CanonLedger::reground_deterministic`]).
+#[derive(Debug, Clone, Default)]
+pub struct BackfillReport {
+    /// Grounds edges added (0 on a dry run).
+    pub edges_added: usize,
+    /// Distinct decisions that gained (or would gain) an edge.
+    pub decisions_touched: usize,
+    /// On a dry run, the `(decision gist, ground gist)` edges that would be added.
+    pub preview: Vec<(String, String)>,
+}
+
 /// One decision to record via [`CanonLedger::record_grounded_batch`], with the
 /// grounds the LLM harvest proposed (CG-P2) carried as gist references — resolved
 /// to Uids at record time and unioned with the deterministic inference (CG-P1).
@@ -221,6 +233,80 @@ impl CanonLedger {
             out.push(uid);
         }
         Ok(out)
+    }
+
+    /// CANON-3 (CG3-P1) — deterministically backfill grounds over the WHOLE live
+    /// ledger, so a ledger recorded before 3.12 (or otherwise under-grounded) gets
+    /// the edges CG-P1 would have drawn at creation, with no re-harvest. A
+    /// fixpoint: each round infers each live decision's deterministic grounds over
+    /// the others and regrounds the first one with a missing edge, then recomputes
+    /// (regrounding mints new uids + relinks dependents). `dry_run` reports what it
+    /// would add without writing. Idempotent — a second run is a no-op. Flushes on
+    /// apply.
+    pub fn reground_deterministic(
+        &self,
+        language: &crate::prose::ProseLanguage,
+        dry_run: bool,
+    ) -> Result<BackfillReport> {
+        let lang = grounding::stemmer_language_name(language);
+        // The deterministic grounds a live decision `v` is missing, as candidate
+        // uids drawn from `live` (excluding self).
+        let missing_for = |v: &CanonView, live: &[CanonView]| -> Vec<Uid> {
+            let Some(kind) = v.kind else { return Vec::new() };
+            let others: Vec<grounding::Candidate> = live
+                .iter()
+                .filter(|c| c.uid != v.uid)
+                .filter_map(|c| {
+                    c.kind.map(|k| grounding::Candidate { uid: c.uid, kind: k, gist: c.gist.clone() })
+                })
+                .collect();
+            grounding::infer_grounds(kind, &v.gist, lang, &others)
+                .into_iter()
+                .filter(|g| !v.grounds.contains(g))
+                .collect()
+        };
+
+        if dry_run {
+            let live = self.all_decisions()?;
+            let mut preview = Vec::new();
+            let mut touched = 0usize;
+            for v in &live {
+                let missing = missing_for(v, &live);
+                if missing.is_empty() {
+                    continue;
+                }
+                touched += 1;
+                for g in &missing {
+                    if let Some(gv) = live.iter().find(|x| &x.uid == g) {
+                        preview.push((v.gist.clone(), gv.gist.clone()));
+                    }
+                }
+            }
+            return Ok(BackfillReport { edges_added: 0, decisions_touched: touched, preview });
+        }
+
+        let mut edges_added = 0usize;
+        let mut decisions_touched = 0usize;
+        loop {
+            let live = self.all_decisions()?;
+            let mut applied = false;
+            for v in &live {
+                let missing = missing_for(v, &live);
+                if missing.is_empty() {
+                    continue;
+                }
+                self.reground(v.uid, &missing)?;
+                edges_added += missing.len();
+                decisions_touched += 1;
+                applied = true;
+                break; // uids changed under us — recompute over the live set
+            }
+            if !applied {
+                break;
+            }
+        }
+        self.sync()?;
+        Ok(BackfillReport { edges_added, decisions_touched, preview: Vec::new() })
     }
 
     /// CANON-2 (CG-P0) — the supersede primitive. A unit's `grounds` are part of
@@ -622,6 +708,51 @@ mod tests {
             led.why(reveal).unwrap().iter().any(|v| v.gist.contains("shake the lower city")),
             "the reveal grounds the tremor setup even though it was listed first"
         );
+    }
+
+    #[test]
+    fn deterministic_backfill_grounds_a_pre_312_ledger() {
+        // Simulate a pre-3.12 ledger: decisions recorded with NO grounds (&[]).
+        use crate::prose::ProseLanguage;
+        let dir = tempfile::tempdir().unwrap();
+        let path_s = dir.path().join("canon.cbor").to_str().unwrap().to_string();
+        let led = CanonLedger::new(&path_s);
+        let n = Uuid::from_u128(0x88);
+
+        let base = led
+            .record_decision(NarrativeKind::WorldFact, "the city floats on a sleeping leviathan", n, "ch1", &[])
+            .unwrap();
+        led.record_decision(NarrativeKind::PlotPoint, "the escape uses the sea gate in the leviathan's flank", n, "ch12", &[]).unwrap();
+        led.record_decision(NarrativeKind::Setup, "the tremors shake the lower city", n, "ch3", &[]).unwrap();
+        led.record_decision(NarrativeKind::Reveal, "the tremors are the beast waking", n, "ch9", &[]).unwrap();
+
+        // Nothing is grounded yet — impact is empty.
+        assert!(led.impact(base).unwrap().is_empty(), "no edges before backfill");
+
+        // Dry run reports edges but writes nothing.
+        let dry = led.reground_deterministic(&ProseLanguage::En, true).unwrap();
+        assert_eq!(dry.edges_added, 0);
+        assert!(!dry.preview.is_empty(), "dry run previews the edges it would add");
+        assert!(led.impact(base).unwrap().is_empty(), "dry run wrote nothing");
+
+        // Apply: the edges get wired.
+        let rep = led.reground_deterministic(&ProseLanguage::En, false).unwrap();
+        assert!(rep.edges_added >= 2, "at least the leviathan and tremor edges");
+
+        let live = led.all_decisions().unwrap();
+        let leviathan = live.iter().find(|v| v.gist.contains("floats")).unwrap().uid;
+        assert!(
+            led.impact(leviathan).unwrap().iter().any(|v| v.gist.contains("sea gate")),
+            "the plot-point now rests on the leviathan world-fact"
+        );
+        let reveal = live.iter().find(|v| v.gist.contains("beast waking")).unwrap().uid;
+        assert!(
+            led.why(reveal).unwrap().iter().any(|v| v.gist.contains("shake the lower city")),
+            "the reveal now rests on the tremor setup"
+        );
+
+        // Idempotent — a second apply adds nothing.
+        assert_eq!(led.reground_deterministic(&ProseLanguage::En, false).unwrap().edges_added, 0);
     }
 
     #[test]

@@ -1790,6 +1790,13 @@ pub enum CanonCommand {
         #[arg(long = "from")]
         from: String,
     },
+    /// Backfill deterministic grounds across the whole ledger (for a pre-3.12 or
+    /// under-grounded ledger — no re-harvest needed).
+    Reground {
+        /// Report what would be added without writing.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Mark a decision's commitment (canonicity) level.
     Commit {
         /// A decision id (canonical or short prefix, as printed by `list`).
@@ -6697,6 +6704,9 @@ impl Cli {
                 }
                 CanonCommand::Unground { id, from } => {
                     canon::unground(&project, &id, &from).map_err(Into::into)
+                }
+                CanonCommand::Reground { dry_run } => {
+                    canon::reground(&project, dry_run).map_err(Into::into)
                 }
                 CanonCommand::Commit { id, level, as_agent } => {
                     canon::commit(&project, &id, &level, as_agent).map_err(Into::into)
