@@ -34,8 +34,8 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use smysl::{
-    canonical_uid, from_cbor_seq, relink, to_cbor_seq, Record, RelKind, Relation, Status, Store,
-    Uid, UnitCoreBuilder,
+    canonical_uid, compact, from_cbor_seq, relink, to_cbor_seq, Commit, Hlc, Record, RelKind,
+    Relation, Status, Store, Uid, UnitCoreBuilder,
 };
 
 mod commit;
@@ -53,6 +53,27 @@ pub use harvest_llm::{language_name, parse_proposals, system_prompt, Proposal, S
 pub use merge::{CommitmentForkView, MergeSummary};
 pub use model::NarrativeKind;
 pub use query::{CanonView, DecisionHistory, LogEntry};
+
+/// CANON-3 (CG3-P1) — the outcome of a deterministic backfill
+/// ([`CanonLedger::reground_deterministic`]).
+#[derive(Debug, Clone, Default)]
+pub struct BackfillReport {
+    /// Grounds edges added (0 on a dry run).
+    pub edges_added: usize,
+    /// Distinct decisions that gained (or would gain) an edge.
+    pub decisions_touched: usize,
+    /// On a dry run, the `(decision gist, ground gist)` edges that would be added.
+    pub preview: Vec<(String, String)>,
+}
+
+/// CANON-3 (CG3-P2) — the outcome of a compaction ([`CanonLedger::compact`]).
+#[derive(Debug, Clone, Default)]
+pub struct CompactReport {
+    pub records_before: usize,
+    pub records_after: usize,
+    /// Superseded unit versions dropped.
+    pub dropped_units: usize,
+}
 
 /// One decision to record via [`CanonLedger::record_grounded_batch`], with the
 /// grounds the LLM harvest proposed (CG-P2) carried as gist references — resolved
@@ -223,6 +244,149 @@ impl CanonLedger {
         Ok(out)
     }
 
+    /// CANON-3 (CG3-P1) — deterministically backfill grounds over the WHOLE live
+    /// ledger, so a ledger recorded before 3.12 (or otherwise under-grounded) gets
+    /// the edges CG-P1 would have drawn at creation, with no re-harvest. A
+    /// fixpoint: each round infers each live decision's deterministic grounds over
+    /// the others and regrounds the first one with a missing edge, then recomputes
+    /// (regrounding mints new uids + relinks dependents). `dry_run` reports what it
+    /// would add without writing. Idempotent — a second run is a no-op. Flushes on
+    /// apply.
+    pub fn reground_deterministic(
+        &self,
+        language: &crate::prose::ProseLanguage,
+        dry_run: bool,
+    ) -> Result<BackfillReport> {
+        let lang = grounding::stemmer_language_name(language);
+        // The deterministic grounds a live decision `v` is missing, as candidate
+        // uids drawn from `live` (excluding self).
+        let missing_for = |v: &CanonView, live: &[CanonView]| -> Vec<Uid> {
+            let Some(kind) = v.kind else { return Vec::new() };
+            let others: Vec<grounding::Candidate> = live
+                .iter()
+                .filter(|c| c.uid != v.uid)
+                .filter_map(|c| {
+                    c.kind.map(|k| grounding::Candidate { uid: c.uid, kind: k, gist: c.gist.clone() })
+                })
+                .collect();
+            grounding::infer_grounds(kind, &v.gist, lang, &others)
+                .into_iter()
+                .filter(|g| !v.grounds.contains(g))
+                .collect()
+        };
+
+        if dry_run {
+            let live = self.all_decisions()?;
+            let mut preview = Vec::new();
+            let mut touched = 0usize;
+            for v in &live {
+                let missing = missing_for(v, &live);
+                if missing.is_empty() {
+                    continue;
+                }
+                touched += 1;
+                for g in &missing {
+                    if let Some(gv) = live.iter().find(|x| &x.uid == g) {
+                        preview.push((v.gist.clone(), gv.gist.clone()));
+                    }
+                }
+            }
+            return Ok(BackfillReport { edges_added: 0, decisions_touched: touched, preview });
+        }
+
+        let mut edges_added = 0usize;
+        let mut decisions_touched = 0usize;
+        // Each round grounds exactly one decision, and a decision is grounded at
+        // most once (its gist/kind are stable, so its inferred edges don't change),
+        // so this converges in ≤ (live count) rounds. The cap is belt-and-braces
+        // against a pathological relink cascade — the no-hang posture, mirroring
+        // `walk_graph`'s depth cap — never expected to bind.
+        let max_rounds = self.all_decisions()?.len().saturating_mul(2).saturating_add(16);
+        for _ in 0..max_rounds {
+            let live = self.all_decisions()?;
+            let mut applied = false;
+            for v in &live {
+                let missing = missing_for(v, &live);
+                if missing.is_empty() {
+                    continue;
+                }
+                self.reground(v.uid, &missing)?;
+                edges_added += missing.len();
+                decisions_touched += 1;
+                applied = true;
+                break; // uids changed under us — recompute over the live set
+            }
+            if !applied {
+                break;
+            }
+        }
+        self.sync()?;
+        Ok(BackfillReport { edges_added, decisions_touched, preview: Vec::new() })
+    }
+
+    /// CANON-3 (CG3-P2) — reclaim the append-only churn: drop superseded unit
+    /// versions that regrounding / ungrounding left behind (smysl `compact`). Pure
+    /// bookkeeping — live decisions keep their ids and edges. Two safeguards before
+    /// dropping: **relink** first, so every live reference points at a live unit
+    /// (compact keeps a superseded unit anything live still references); and
+    /// **carry each live head's commitment onto its own uid** — a regrounded
+    /// decision's commitment lives on a superseded predecessor (that's how
+    /// `commitment_live` finds it), and compact drops that predecessor's supersedes
+    /// edge, so without this the commitment would be lost. Orphaned `Commit` records
+    /// on dropped units are filtered out too. Flushes.
+    pub fn compact(&self) -> Result<CompactReport> {
+        let dirty = self.dirty.clone();
+        let report = self.with_store(|s| {
+            // (1) Relink so live references point at live units → predecessors become
+            // droppable. relink may itself supersede a committed live unit, so this
+            // must precede the commitment carry-forward.
+            let mut mutated = false;
+            let relinked = relink(s);
+            if !relinked.records.is_empty() {
+                s.append(&relinked.records).map_err(|e| anyhow!("canon compact: relink {e}"))?;
+                mutated = true;
+            }
+            // (2) Pin each live head's inherited commitment onto its own uid.
+            let dead = query::superseded_uids(s);
+            let live: Vec<Uid> = s.units().map(|(u, _)| *u).filter(|u| !dead.contains(u)).collect();
+            let mut carries: Vec<Record> = Vec::new();
+            for u in &live {
+                if !s.commits_of(u).is_empty() {
+                    continue; // already committed on its own uid
+                }
+                if let Some(c) = query::live_commit(s, *u) {
+                    let ts = Hlc::now(&c.ts, &c.agent);
+                    carries.push(Record::Commit(Commit::new(*u, c.level, c.agent.clone(), ts)));
+                }
+            }
+            if !carries.is_empty() {
+                s.append(&carries).map_err(|e| anyhow!("canon compact: carry commitment {e}"))?;
+                mutated = true;
+            }
+            // (3) Compact, then drop orphaned commits on dropped units, and rebuild.
+            let before = s.iter().count();
+            let compacted = compact(s);
+            let dropped_units = compacted.dropped.len();
+            if dropped_units == 0 && !mutated {
+                // Nothing superseded and no relink/carry — leave the store untouched
+                // rather than rewrite `canon.cbor` with identical bytes.
+                return Ok(CompactReport { records_before: before, records_after: before, dropped_units: 0 });
+            }
+            let dropped = compacted.dropped;
+            let records: Vec<Record> = compacted
+                .records
+                .into_iter()
+                .filter(|r| !matches!(r, Record::Commit(c) if dropped.contains(&c.unit)))
+                .collect();
+            let after = records.len();
+            *s = Store::from_records(records);
+            dirty.store(true, Ordering::Release);
+            Ok(CompactReport { records_before: before, records_after: after, dropped_units })
+        })?;
+        self.sync()?;
+        Ok(report)
+    }
+
     /// CANON-2 (CG-P0) — the supersede primitive. A unit's `grounds` are part of
     /// its content address, so grounds cannot be mutated in place: this rebuilds
     /// the decision (same kind / gist / source) with `mutate`d grounds into a NEW
@@ -306,6 +470,23 @@ impl CanonLedger {
                 .into_iter()
                 .filter(|u| !dead.contains(u))
                 .collect())
+        })
+    }
+
+    /// The live canon units sourced by any of `nodes`, computing the superseded set
+    /// **once** for the whole batch (vs. per node). Used by the pre-cut delete guard
+    /// over a whole subtree, where per-node scans would be O(nodes × relations).
+    pub fn units_for_nodes(&self, nodes: &[Uuid]) -> Result<Vec<Uid>> {
+        self.with_store(|s| {
+            let dead = query::superseded_uids(s);
+            let mut out = Vec::new();
+            for node in nodes {
+                let prefix = model::node_prefix(*node);
+                out.extend(
+                    s.units_with_source_prefix(&prefix).into_iter().filter(|u| !dead.contains(u)),
+                );
+            }
+            Ok(out)
         })
     }
 
@@ -621,6 +802,97 @@ mod tests {
         assert!(
             led.why(reveal).unwrap().iter().any(|v| v.gist.contains("shake the lower city")),
             "the reveal grounds the tremor setup even though it was listed first"
+        );
+    }
+
+    #[test]
+    fn deterministic_backfill_grounds_a_pre_312_ledger() {
+        // Simulate a pre-3.12 ledger: decisions recorded with NO grounds (&[]).
+        use crate::prose::ProseLanguage;
+        let dir = tempfile::tempdir().unwrap();
+        let path_s = dir.path().join("canon.cbor").to_str().unwrap().to_string();
+        let led = CanonLedger::new(&path_s);
+        let n = Uuid::from_u128(0x88);
+
+        let base = led
+            .record_decision(NarrativeKind::WorldFact, "the city floats on a sleeping leviathan", n, "ch1", &[])
+            .unwrap();
+        led.record_decision(NarrativeKind::PlotPoint, "the escape uses the sea gate in the leviathan's flank", n, "ch12", &[]).unwrap();
+        led.record_decision(NarrativeKind::Setup, "the tremors shake the lower city", n, "ch3", &[]).unwrap();
+        led.record_decision(NarrativeKind::Reveal, "the tremors are the beast waking", n, "ch9", &[]).unwrap();
+
+        // Nothing is grounded yet — impact is empty.
+        assert!(led.impact(base).unwrap().is_empty(), "no edges before backfill");
+
+        // Dry run reports edges but writes nothing.
+        let dry = led.reground_deterministic(&ProseLanguage::En, true).unwrap();
+        assert_eq!(dry.edges_added, 0);
+        assert!(!dry.preview.is_empty(), "dry run previews the edges it would add");
+        assert!(led.impact(base).unwrap().is_empty(), "dry run wrote nothing");
+
+        // Apply: the edges get wired.
+        let rep = led.reground_deterministic(&ProseLanguage::En, false).unwrap();
+        assert!(rep.edges_added >= 2, "at least the leviathan and tremor edges");
+
+        let live = led.all_decisions().unwrap();
+        let leviathan = live.iter().find(|v| v.gist.contains("floats")).unwrap().uid;
+        assert!(
+            led.impact(leviathan).unwrap().iter().any(|v| v.gist.contains("sea gate")),
+            "the plot-point now rests on the leviathan world-fact"
+        );
+        let reveal = live.iter().find(|v| v.gist.contains("beast waking")).unwrap().uid;
+        assert!(
+            led.why(reveal).unwrap().iter().any(|v| v.gist.contains("shake the lower city")),
+            "the reveal now rests on the tremor setup"
+        );
+
+        // Idempotent — a second apply adds nothing.
+        assert_eq!(led.reground_deterministic(&ProseLanguage::En, false).unwrap().edges_added, 0);
+    }
+
+    #[test]
+    fn compact_drops_superseded_versions_but_keeps_commitment_and_grounds() {
+        let dir = tempfile::tempdir().unwrap();
+        let path_s = dir.path().join("canon.cbor").to_str().unwrap().to_string();
+        let led = CanonLedger::new(&path_s);
+        let n = Uuid::from_u128(0x99);
+
+        let base = led
+            .record_decision(NarrativeKind::WorldFact, "the harbour freezes each winter", n, "ch1", &[])
+            .unwrap();
+        let plot = led
+            .record_decision(NarrativeKind::PlotPoint, "escape by sea waits for the thaw", n, "ch9", &[])
+            .unwrap();
+        led.commit(plot, smysl::Commitment::Canonical, "author").unwrap();
+        // Reground the committed plot onto base → plot is superseded; its commitment
+        // now lives on the superseded uid (found via commitment_live).
+        let plot2 = led.reground(plot, &[base]).unwrap();
+        assert_ne!(plot2, plot);
+        let pre = led.all_decisions().unwrap();
+        assert_eq!(
+            pre.iter().find(|v| v.gist.contains("thaw")).unwrap().commitment,
+            Some(smysl::Commitment::Canonical)
+        );
+
+        // Compact: the superseded plot version is dropped, records shrink.
+        let rep = led.compact().unwrap();
+        assert!(rep.dropped_units >= 1, "the superseded version was dropped");
+        assert!(rep.records_after < rep.records_before, "records shrank");
+
+        // The live decision, its grounds, and its commitment all survive.
+        let post = led.all_decisions().unwrap();
+        assert_eq!(post.len(), 2, "base + the live plot");
+        let live = post.iter().find(|v| v.gist.contains("thaw")).unwrap();
+        assert_eq!(live.commitment, Some(smysl::Commitment::Canonical), "commitment survived compaction");
+        assert!(led.why(live.uid).unwrap().iter().any(|v| v.gist.contains("freezes")), "grounds survived");
+
+        // Idempotent + durable: nothing left to drop, commitment still there.
+        assert_eq!(led.compact().unwrap().dropped_units, 0, "second compact is a no-op");
+        let led2 = CanonLedger::new(&path_s);
+        assert_eq!(
+            led2.all_decisions().unwrap().iter().find(|v| v.gist.contains("thaw")).unwrap().commitment,
+            Some(smysl::Commitment::Canonical),
+            "commitment persists across reopen after compaction"
         );
     }
 

@@ -3575,12 +3575,18 @@ impl App {
                     // blocking thread so they never stall a tokio runtime worker.
                     let s = store_for_sync.clone();
                     let _ = tokio::task::spawn_blocking(move || {
-                        if let Err(e) = s.sync() {
-                            tracing::warn!("background sync failed: {e}");
-                        }
-                        if let Err(e) = s.checkpoint() {
-                            tracing::warn!("background checkpoint failed: {e}");
-                        }
+                        // Suppress the crash hook's terminal-restore if a DuckDB
+                        // save panics — this runs while the editor is drawing. The
+                        // spawn_blocking boundary contains the unwind; this just
+                        // keeps a panic from tearing the live terminal down.
+                        crate::crash::suppress_panic_report(move || {
+                            if let Err(e) = s.sync() {
+                                tracing::warn!("background sync failed: {e}");
+                            }
+                            if let Err(e) = s.checkpoint() {
+                                tracing::warn!("background checkpoint failed: {e}");
+                            }
+                        })
                     })
                     .await;
                 }
@@ -17380,11 +17386,12 @@ impl App {
     /// forks. Enter jumps to a decision's source paragraph.
     fn open_canon(&mut self) {
         let (rows, anchors, decisions) = self.build_canon_rows();
-        let jumps = anchors.iter().filter(|a| a.is_some()).count();
-        self.status = if jumps == 0 {
-            "canon · Esc".into()
-        } else {
+        // Advertise the actions whenever there are decisions — g/h work on any
+        // decision row, even one with no jump anchor (a node-less/merged decision).
+        self.status = if decisions.iter().any(|d| d.is_some()) {
             "canon · ↑↓ scroll · Enter jump · g ground · h history · Esc".into()
+        } else {
+            "canon · Esc".into()
         };
         self.modal = Modal::Canon { rows, anchors, decisions, cursor: 0, grounding: None };
     }
@@ -28312,16 +28319,18 @@ impl App {
     /// sources a decision (the common case, so a normal delete stays quiet).
     fn build_canon_delete_note(&self, ids: &[Uuid]) -> Vec<String> {
         let canon = self.store.raw().canon();
+        // The paragraph leaves in the delete set (the superseded set is computed
+        // once inside units_for_nodes, not per paragraph).
+        let paras: Vec<Uuid> = ids
+            .iter()
+            .copied()
+            .filter(|pid| self.hierarchy.get(*pid).map(|n| n.kind) == Some(NodeKind::Paragraph))
+            .collect();
         let mut sourced: Vec<crate::canon::CanonView> = Vec::new();
-        for pid in ids {
-            if self.hierarchy.get(*pid).map(|n| n.kind) != Some(NodeKind::Paragraph) {
-                continue;
-            }
-            if let Ok(uids) = canon.units_for_node(*pid) {
-                for u in uids {
-                    if let Ok(Some(v)) = canon.view(u) {
-                        sourced.push(v);
-                    }
+        if let Ok(uids) = canon.units_for_nodes(&paras) {
+            for u in uids {
+                if let Ok(Some(v)) = canon.view(u) {
+                    sourced.push(v);
                 }
             }
         }

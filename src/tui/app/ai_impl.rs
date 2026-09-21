@@ -901,6 +901,13 @@ impl super::App {
             self.status = "Help: empty question".into();
             return;
         }
+        // Single-flight: one help search at a time (mirrors `start_bg_job`'s
+        // `bg_job.is_some()` guard). Without this, mashing Enter on the query modal
+        // spawns a fresh full-store embed+HNSW thread per press.
+        if self.help_search.is_some() {
+            self.status = "Help: a search is already running…".into();
+            return;
+        }
 
         // Locate the Help book; required as the RAG source.
         let Some(help_id) = self.system_book_id(crate::store::SYSTEM_TAG_HELP) else {
@@ -931,7 +938,16 @@ impl super::App {
         let store = self.store.clone();
         let q = query.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(store.search_text(&q, 40).map_err(|e| e.to_string()));
+            // Isolate a library panic (ONNX embed / HNSW query) so it can't reach
+            // the process-global crash hook and tear the live terminal down
+            // mid-draw. Mirrors `start_bg_job`; `search_text` is fully sync, so no
+            // tokio handle is needed. On panic `tx` drops and `pump_help_search`
+            // recovers via the channel's `Disconnected` arm.
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+                crate::crash::suppress_panic_report(move || {
+                    let _ = tx.send(store.search_text(&q, 40).map_err(|e| e.to_string()));
+                })
+            }));
         });
         self.help_search = Some(super::HelpSearch {
             query,

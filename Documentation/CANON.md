@@ -1,9 +1,11 @@
 # The Canon Ledger (CANON)
 
-*(3.11 CANON-LEDGER-1; 3.12 CANON-2 "Grounds That Hold" — the dependency graph now
+*(3.11 CANON-LEDGER-1; 3.12 CANON-2 "Grounds That Hold" — the dependency graph
 populates itself, so `impact`/`why` work; plus development history and the pre-cut
-guard. See [`PROPOSALS/CANON-LEDGER-1_PLAN.md`](PROPOSALS/CANON-LEDGER-1_PLAN.md),
-[`PROPOSALS/CANON-2_PLAN.md`](PROPOSALS/CANON-2_PLAN.md), and
+guard. 3.13 CANON-3 "Tend the Ledger" — `reground` backfill, `compact`, and the
+`graph` view. See [`PROPOSALS/CANON-LEDGER-1_PLAN.md`](PROPOSALS/CANON-LEDGER-1_PLAN.md),
+[`PROPOSALS/CANON-2_PLAN.md`](PROPOSALS/CANON-2_PLAN.md),
+[`PROPOSALS/CANON-3_PLAN.md`](PROPOSALS/CANON-3_PLAN.md), and
 [`PROPOSALS/SMYSL-1_RFC.md`](PROPOSALS/SMYSL-1_RFC.md). Built on the
 [`smysl`](https://github.com/vulogov/smysl) crate.)*
 
@@ -94,6 +96,7 @@ Three ways, in increasing model-involvement:
 | How did the canon settle? | `canon log` | Every commitment event across the ledger, oldest first. |
 | How settled is it? | `canon commit <id> --level <l>` | Set the canonicity (`floated…canonical…retconned`). |
 | Am I building on sand? | `canon check` | Decisions committed **above** the weakest thing they rest on (SMY-W057). |
+| Show me the whole shape | `canon graph [<id>]` | The grounds DAG — foundations, with what rests on them indented beneath. |
 | Draw / cut a dependency | `canon ground <id> --on <g>` · `canon unground <id> --from <g>` | Ground a decision on another by hand, or remove an edge. |
 | Where do agents disagree? | `canon forks` | Commitment forks — concurrent disagreement on canonicity (SMY-W058). |
 | Ground an answer on canon | `canon context "<query>"` | Fit the relevant decisions (+ their grounds/rebuttals) to a token budget. |
@@ -123,6 +126,23 @@ locus to rewrite, so you reconcile the *ledger* (with `canon commit` / `canon
 merge`), not the manuscript. A single-author ledger never forks, so this line is
 empty and free in the common case.
 
+## Maintenance (3.12+)
+
+Three commands keep the ledger healthy now that the graph holds real edges:
+
+- **`canon reground [--dry-run]`** — deterministically backfill grounds across the
+  *whole* ledger. A ledger recorded before 3.12 (or otherwise under-grounded) has
+  no edges, so `impact`/`why` come back empty; this runs the same inference the
+  harvest applies at creation over the existing decisions, so the graph fills
+  without a re-harvest. `--dry-run` previews the edges it would add. Idempotent.
+- **`canon compact`** — reclaim the append-only churn. Grounding a decision mints a
+  new version that supersedes the old one; `compact` drops the superseded versions
+  nothing live needs. Pure bookkeeping — live decisions keep their ids, their
+  grounds, **and their commitment** (carried onto the live version first, so a
+  regrounded canonical decision stays canonical).
+- **`canon graph [<id>]`** — see the whole structure: each foundation, with what
+  transitively rests on it indented beneath (or one decision's subtree).
+
 ## Configuration
 
 The `canon:` block ([`CONFIGURATION.md`](CONFIGURATION.md#311--canon-the-decision-ledger-canon-ledger-1))
@@ -130,9 +150,9 @@ holds behavioural knobs only (the ledger is derived data, nothing to tune there)
 `harvest_on_save` (default `true`) toggles the deterministic on-save tag harvest;
 `context_budget` / `context_reserve` set the default token budget for `canon
 context` when its `--budget` / `--reserve` flags are omitted. A Bund script reads
-the ledger through `ink.canon.{list,impact,why,history,forks}` (read-only — the
-writes, `commit`, `ground`/`unground`, and the author-confirmed harvest/`accept`,
-stay on the CLI and in the editor).
+the ledger through `ink.canon.{list,impact,why,history,forks,graph}` (read-only —
+the writes, `commit`, `ground`/`unground`, `reground`, `compact`, and the
+author-confirmed harvest/`accept`, stay on the CLI and in the editor).
 
 ## Quick start
 
@@ -156,9 +176,9 @@ inkhaven canon check                     # anything canonical resting on sand?
 ## Principles it keeps
 
 - **Advisory.** The model never writes canon; it proposes, you confirm.
-- **Deterministic + free.** `impact`/`why`/`list`/`history`/`log`/`check`/`forks`
-  and grounding are pure functions over the store — no model call, milliseconds at
-  book scale.
+- **Deterministic + free.** `impact`/`why`/`list`/`history`/`log`/`check`/`forks`/
+  `graph`, grounding, `reground`, and `compact` are pure functions over the store —
+  no model call, milliseconds at book scale.
 - **Off the hot path.** On-save harvest is deterministic and backgrounded; the LLM
   harvest is explicit and opt-in.
 - **Multilingual.** Harvested gists are written in your project language.
