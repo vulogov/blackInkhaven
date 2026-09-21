@@ -1767,6 +1767,29 @@ pub enum CanonCommand {
         /// A decision id (canonical or short prefix, as printed by `list`).
         id: String,
     },
+    /// Show a decision's development history — its grounds and commitment trajectory.
+    History {
+        /// A decision id (canonical or short prefix, as printed by `list`).
+        id: String,
+    },
+    /// Show the ledger's commitment log — the story's canon settling over time.
+    Log,
+    /// Ground one decision on another by hand: `<id>` rests on `--on <id>`.
+    Ground {
+        /// The decision that rests on another (canonical or short prefix).
+        id: String,
+        /// The decision it rests on (its ground).
+        #[arg(long = "on")]
+        on: String,
+    },
+    /// Remove a hand-drawn (or inferred) ground: `<id>` no longer rests on `--from <id>`.
+    Unground {
+        /// The decision to unground (canonical or short prefix).
+        id: String,
+        /// The ground to remove.
+        #[arg(long = "from")]
+        from: String,
+    },
     /// Mark a decision's commitment (canonicity) level.
     Commit {
         /// A decision id (canonical or short prefix, as printed by `list`).
@@ -6667,6 +6690,14 @@ impl Cli {
                 CanonCommand::List => canon::list(&project).map_err(Into::into),
                 CanonCommand::Impact { id } => canon::impact(&project, &id).map_err(Into::into),
                 CanonCommand::Why { id } => canon::why(&project, &id).map_err(Into::into),
+                CanonCommand::History { id } => canon::history(&project, &id).map_err(Into::into),
+                CanonCommand::Log => canon::log(&project).map_err(Into::into),
+                CanonCommand::Ground { id, on } => {
+                    canon::ground(&project, &id, &on).map_err(Into::into)
+                }
+                CanonCommand::Unground { id, from } => {
+                    canon::unground(&project, &id, &from).map_err(Into::into)
+                }
                 CanonCommand::Commit { id, level, as_agent } => {
                     canon::commit(&project, &id, &level, as_agent).map_err(Into::into)
                 }

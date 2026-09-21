@@ -17379,63 +17379,67 @@ impl App {
     /// the development-ledger decisions with kind + commitment, plus commitment
     /// forks. Enter jumps to a decision's source paragraph.
     fn open_canon(&mut self) {
-        let (rows, anchors) = self.build_canon_rows();
+        let (rows, anchors, decisions) = self.build_canon_rows();
         let jumps = anchors.iter().filter(|a| a.is_some()).count();
         self.status = if jumps == 0 {
             "canon · Esc".into()
         } else {
-            "canon · ↑↓ scroll · Enter jump to source · Esc".into()
+            "canon · ↑↓ scroll · Enter jump · g ground · h history · Esc".into()
         };
-        self.modal = Modal::Canon { rows, anchors, cursor: 0 };
+        self.modal = Modal::Canon { rows, anchors, decisions, cursor: 0, grounding: None };
     }
 
-    fn build_canon_rows(&self) -> (Vec<String>, Vec<Option<Uuid>>) {
+    fn build_canon_rows(&self) -> (Vec<String>, Vec<Option<Uuid>>, Vec<Option<smysl::Uid>>) {
         let mut rows: Vec<String> = Vec::new();
         let mut anchors: Vec<Option<Uuid>> = Vec::new();
-        let mut push = |text: String, anchor: Option<Uuid>| {
+        let mut decisions_ids: Vec<Option<smysl::Uid>> = Vec::new();
+        let mut push = |text: String, anchor: Option<Uuid>, decision: Option<smysl::Uid>| {
             rows.push(text);
             anchors.push(anchor);
+            decisions_ids.push(decision);
         };
         let canon = self.store.raw().canon();
         let decisions = match canon.all_decisions() {
             Ok(d) => d,
             Err(e) => {
-                push(format!("canon unavailable: {e}"), None);
-                return (rows, anchors);
+                push(format!("canon unavailable: {e}"), None, None);
+                return (rows, anchors, decisions_ids);
             }
         };
         if decisions.is_empty() {
-            push("◆ Canon ledger".into(), None);
-            push(String::new(), None);
+            push("◆ Canon ledger".into(), None, None);
+            push(String::new(), None, None);
             push(
                 "  no decisions yet — tag paragraphs (rel:…) or run `inkhaven canon harvest`.".into(),
                 None,
+                None,
             );
-            return (rows, anchors);
+            return (rows, anchors, decisions_ids);
         }
-        push(format!("◆ Canon ledger — {} decision(s)", decisions.len()), None);
-        push(String::new(), None);
+        push(format!("◆ Canon ledger — {} decision(s)", decisions.len()), None, None);
+        push(String::new(), None, None);
         for v in &decisions {
             let kind = v
                 .kind
                 .map(|k| k.schema_str().trim_start_matches("x.narrative/"))
                 .unwrap_or("?");
             let commit = v.commitment.map(|c| format!(" «{c}»")).unwrap_or_default();
-            push(format!("  [{kind}]{commit} {}", v.gist), v.node);
+            push(format!("  [{kind}]{commit} {}", v.gist), v.node, Some(v.uid));
         }
         if let Ok(forks) = canon.commitment_forks() {
             if !forks.is_empty() {
-                push(String::new(), None);
+                push(String::new(), None, None);
                 push(
                     format!("⚠ {} commitment fork(s) — agents disagree on canonicity", forks.len()),
                     None,
+                    None,
                 );
                 for fk in &forks {
-                    push(format!("  {}", fk.unit.gist), fk.unit.node);
+                    push(format!("  {}", fk.unit.gist), fk.unit.node, None);
                 }
             }
         }
-        (rows, anchors)
+        (rows, anchors, decisions_ids)
     }
 
     fn canon_handle_key(&mut self, key: KeyEvent) -> bool {
@@ -17449,10 +17453,53 @@ impl App {
             }
             return true;
         }
+        // Whether we're currently picking a ground target (CG-P3).
+        let grounding = matches!(&self.modal, Modal::Canon { grounding: Some(_), .. });
         match key.code {
+            KeyCode::Esc if grounding => {
+                // Cancel target-picking, keep the dashboard open.
+                if let Modal::Canon { grounding, .. } = &mut self.modal {
+                    *grounding = None;
+                }
+                self.status = "canon · grounding cancelled".into();
+            }
             KeyCode::Esc => {
                 self.modal = Modal::None;
                 self.status = "canon: closed".into();
+            }
+            KeyCode::Char('g') if !grounding => {
+                // Begin grounding the cursored decision, if this row is one.
+                match &mut self.modal {
+                    Modal::Canon { decisions, cursor, grounding, .. }
+                        if decisions.get(*cursor).copied().flatten().is_some() =>
+                    {
+                        *grounding = Some(*cursor);
+                        self.status =
+                            "canon · pick the decision it rests on, Enter to ground · Esc cancel".into();
+                    }
+                    _ => self.status = "canon: put the cursor on a decision, then g".into(),
+                }
+            }
+            KeyCode::Char('h') if !grounding => {
+                // Show the cursored decision's development history in Thoughts.
+                let target = match &self.modal {
+                    Modal::Canon { decisions, cursor, .. } => decisions.get(*cursor).copied().flatten(),
+                    _ => None,
+                };
+                match target {
+                    Some(uid) => self.canon_show_history(uid),
+                    None => self.status = "canon: put the cursor on a decision, then h".into(),
+                }
+            }
+            KeyCode::Enter if grounding => {
+                let (src, dst) = match &self.modal {
+                    Modal::Canon { decisions, cursor, grounding: Some(g), .. } => (
+                        decisions.get(*g).copied().flatten(),
+                        decisions.get(*cursor).copied().flatten(),
+                    ),
+                    _ => (None, None),
+                };
+                self.canon_apply_ground(src, dst);
             }
             KeyCode::Enter => {
                 let anchor = match &self.modal {
@@ -17471,6 +17518,90 @@ impl App {
             _ => {}
         }
         true
+    }
+
+    /// CG-P3 — apply a dashboard grounding: `src` rests on `dst`, then rebuild the
+    /// modal so the (superseded) ids and rows stay in sync. Advisory and reversible
+    /// (`canon unground` from the CLI).
+    fn canon_apply_ground(&mut self, src: Option<smysl::Uid>, dst: Option<smysl::Uid>) {
+        let (src, dst) = match (src, dst) {
+            (Some(s), Some(d)) => (s, d),
+            _ => {
+                self.status = "canon: pick a decision to ground on".into();
+                return;
+            }
+        };
+        if src == dst {
+            self.status = "canon: a decision cannot ground on itself".into();
+            if let Modal::Canon { grounding, .. } = &mut self.modal {
+                *grounding = None;
+            }
+            return;
+        }
+        let canon = self.store.raw().canon();
+        let outcome = canon.reground(src, &[dst]).and_then(|new| canon.sync().map(|_| new));
+        match outcome {
+            Ok(new) if new == src => self.status = "canon: already grounded — no change".into(),
+            Ok(_) => self.status = "canon · grounded".into(),
+            Err(e) => self.status = format!("canon: grounding failed — {e}"),
+        }
+        // Rebuild (grounding cleared), reflecting the new/​superseded ids.
+        let (rows, anchors, decisions) = self.build_canon_rows();
+        let cursor = match &self.modal {
+            Modal::Canon { cursor, .. } => (*cursor).min(rows.len().saturating_sub(1)),
+            _ => 0,
+        };
+        self.modal = Modal::Canon { rows, anchors, decisions, cursor, grounding: None };
+    }
+
+    /// CG-P4 — render the cursored decision's development history (grounds +
+    /// commitment trajectory) into the Thoughts pane and show it.
+    fn canon_show_history(&mut self, uid: smysl::Uid) {
+        let hist = match self.store.raw().canon().history(uid) {
+            Ok(Some(h)) => h,
+            Ok(None) => {
+                self.status = "canon: no such decision".into();
+                return;
+            }
+            Err(e) => {
+                self.status = format!("canon: {e}");
+                return;
+            }
+        };
+        let kind = hist
+            .decision
+            .kind
+            .map(|k| k.schema_str().trim_start_matches("x.narrative/"))
+            .unwrap_or("?");
+        let commit = hist.decision.commitment.map(|c| format!(" «{c}»")).unwrap_or_default();
+        let mut md = format!("## ◆ Canon history\n\n**[{kind}]{commit}** {}\n", hist.decision.gist);
+        if hist.grounds.is_empty() {
+            md.push_str("\n_rests on nothing recorded — a base decision._\n");
+        } else {
+            md.push_str("\n**Rests on:**\n\n");
+            for g in &hist.grounds {
+                md.push_str(&format!("- {}\n", g.gist));
+            }
+        }
+        md.push_str("\n**Commitment history:**\n\n");
+        if hist.trajectory.is_empty() {
+            md.push_str("_no commitments recorded yet._\n");
+        } else {
+            for e in &hist.trajectory {
+                let ts = if e.wall_ms == 0 {
+                    "—".to_string()
+                } else {
+                    chrono::DateTime::from_timestamp_millis(e.wall_ms as i64)
+                        .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
+                        .unwrap_or_else(|| "—".to_string())
+                };
+                md.push_str(&format!("- {ts}  {} → {}\n", e.agent, e.level));
+            }
+        }
+        self.modal = Modal::None;
+        self.push_thought(md);
+        self.right_pane = RightPane::Thoughts;
+        self.status = "canon · history → Thoughts".into();
     }
 
     /// KEN-1 (KEN-P5) — `Ctrl+B Shift+Z`: the knowledge dashboard. Runs the
@@ -28161,6 +28292,7 @@ impl App {
             .filter(|n| n.kind == NodeKind::Paragraph)
             .map(|n| n.word_count)
             .sum();
+        let canon_note = self.build_canon_delete_note(&ids);
         self.modal = Modal::Deleting {
             root_id: id,
             root_kind: node.kind,
@@ -28168,7 +28300,56 @@ impl App {
             descendant_count,
             word_count,
             ids,
+            canon_note,
         };
+    }
+
+    /// CANON-2 (CG-P5) — the pre-cut guard. Advisory lines for the delete
+    /// confirmation naming the canon decisions the paragraphs being deleted
+    /// *established*, and how many other decisions rest on them. The ledger is
+    /// derived and separate, so deleting the prose does NOT prune these decisions
+    /// — it leaves them source-orphaned; the note says so. Empty when nothing here
+    /// sources a decision (the common case, so a normal delete stays quiet).
+    fn build_canon_delete_note(&self, ids: &[Uuid]) -> Vec<String> {
+        let canon = self.store.raw().canon();
+        let mut sourced: Vec<crate::canon::CanonView> = Vec::new();
+        for pid in ids {
+            if self.hierarchy.get(*pid).map(|n| n.kind) != Some(NodeKind::Paragraph) {
+                continue;
+            }
+            if let Ok(uids) = canon.units_for_node(*pid) {
+                for u in uids {
+                    if let Ok(Some(v)) = canon.view(u) {
+                        sourced.push(v);
+                    }
+                }
+            }
+        }
+        if sourced.is_empty() {
+            return Vec::new();
+        }
+        let mut lines = vec![format!(
+            "⚠ {} canon decision(s) were established here:",
+            sourced.len()
+        )];
+        for v in sourced.iter().take(3) {
+            let kind =
+                v.kind.map(|k| k.schema_str().trim_start_matches("x.narrative/")).unwrap_or("?");
+            let commit = v.commitment.map(|c| format!(" «{c}»")).unwrap_or_default();
+            let deps = canon.impact(v.uid).map(|d| d.len()).unwrap_or(0);
+            let rest = if deps > 0 {
+                format!(" — {deps} rest on it")
+            } else {
+                String::new()
+            };
+            let gist: String = v.gist.chars().take(46).collect();
+            lines.push(format!("  [{kind}]{commit} {gist}{rest}"));
+        }
+        if sourced.len() > 3 {
+            lines.push(format!("  …and {} more", sourced.len() - 3));
+        }
+        lines.push("The ledger keeps these (run `canon impact` before cutting).".into());
+        lines
     }
 
     /// Returns `Some(reason)` if the given node (or any ancestor) is a

@@ -16,7 +16,7 @@ use crate::ai::stream::collect_blocking;
 use crate::ai::AiClient;
 use crate::canon::{
     language_name, parse_proposals, system_prompt, CanonView, CommitmentForkView, CommitmentWarning,
-    MergeSummary, PackedContext, Proposal, StagedCanon,
+    DecisionHistory, LogEntry, MergeSummary, PackedContext, Proposal, StagedCanon,
 };
 use crate::config::Config;
 use crate::error::{Error, Result};
@@ -114,6 +114,103 @@ pub fn harvest(project: &Path, scope: &str) -> Result<()> {
     Ok(())
 }
 
+/// A `wall_ms` epoch timestamp as `YYYY-MM-DD HH:MM`, or `—` when unset (0).
+fn fmt_ts(wall_ms: u64) -> String {
+    if wall_ms == 0 {
+        return "—".to_string();
+    }
+    chrono::DateTime::from_timestamp_millis(wall_ms as i64)
+        .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
+        .unwrap_or_else(|| "—".to_string())
+}
+
+/// `inkhaven canon history <id>` — a decision's development history: its grounds
+/// and its commitment trajectory over time (CG-P4).
+pub fn history(project: &Path, id: &str) -> Result<()> {
+    let store = open(project)?;
+    let canon = store.raw().canon();
+    let uid = canon.resolve(id).map_err(store_err)?;
+    let h: DecisionHistory = match canon.history(uid).map_err(store_err)? {
+        Some(h) => h,
+        None => {
+            eprintln!("no canon decision matches id {id:?}");
+            return Ok(());
+        }
+    };
+    eprint!("Decision: ");
+    print_view(&h.decision);
+    if h.grounds.is_empty() {
+        eprintln!("  rests on nothing recorded — a base decision.");
+    } else {
+        eprintln!("  rests on:");
+        for g in &h.grounds {
+            print_view(g);
+        }
+    }
+    if h.trajectory.is_empty() {
+        eprintln!("  no commitments recorded yet — set canonicity with `canon commit`.");
+    } else {
+        eprintln!("  commitment history:");
+        for e in &h.trajectory {
+            println!("    {}  {} → {}", fmt_ts(e.wall_ms), e.agent, e.level);
+        }
+    }
+    Ok(())
+}
+
+/// `inkhaven canon log` — the ledger's commitment log, the story's canon settling
+/// over time (oldest first, CG-P4).
+pub fn log(project: &Path) -> Result<()> {
+    let store = open(project)?;
+    let entries: Vec<LogEntry> = store.raw().canon().log().map_err(store_err)?;
+    if entries.is_empty() {
+        eprintln!("No commitments recorded yet. Set canonicity with `canon commit <id> --level <l>`.");
+        return Ok(());
+    }
+    eprintln!("canon log — {} commitment event(s), oldest first:", entries.len());
+    for e in &entries {
+        println!("  {}  {}  {}  [{}]  {}", fmt_ts(e.wall_ms), e.uid.short(), e.agent, e.level, e.gist);
+    }
+    Ok(())
+}
+
+/// `inkhaven canon ground <id> --on <ground>` — ground one decision on another by
+/// hand (the edge the harvest missed), via the supersede primitive.
+pub fn ground(project: &Path, id: &str, on: &str) -> Result<()> {
+    let store = open(project)?;
+    let canon = store.raw().canon();
+    let src = canon.resolve(id).map_err(store_err)?;
+    let dst = canon.resolve(on).map_err(store_err)?;
+    if src == dst {
+        return Err(Error::Store("a decision cannot ground on itself".into()));
+    }
+    let new = canon.reground(src, &[dst]).map_err(store_err)?;
+    canon.sync().map_err(store_err)?;
+    if new == src {
+        eprintln!("{} already rests on {} — no change.", src.short(), dst.short());
+    } else {
+        eprintln!("{} now rests on {} (was {}).", new.short(), dst.short(), src.short());
+    }
+    Ok(())
+}
+
+/// `inkhaven canon unground <id> --from <ground>` — remove a ground (a wrong or
+/// unwanted edge), superseding back.
+pub fn unground(project: &Path, id: &str, from: &str) -> Result<()> {
+    let store = open(project)?;
+    let canon = store.raw().canon();
+    let src = canon.resolve(id).map_err(store_err)?;
+    let dst = canon.resolve(from).map_err(store_err)?;
+    let new = canon.unground(src, &[dst]).map_err(store_err)?;
+    canon.sync().map_err(store_err)?;
+    if new == src {
+        eprintln!("{} did not rest on {} — no change.", src.short(), dst.short());
+    } else {
+        eprintln!("{} no longer rests on {} (was {}).", new.short(), dst.short(), src.short());
+    }
+    Ok(())
+}
+
 /// `inkhaven canon staged` — list the model's proposals awaiting confirmation.
 pub fn staged(project: &Path) -> Result<()> {
     let layout = ProjectLayout::new(project);
@@ -127,6 +224,9 @@ pub fn staged(project: &Path) -> Result<()> {
     for p in &staged.proposals {
         let kind = p.kind.schema_str().trim_start_matches("x.narrative/");
         println!("  [{kind}]  {}  ({})", p.gist, p.breadcrumb);
+        for g in &p.grounds {
+            println!("      ↳ rests on: {g}");
+        }
     }
     Ok(())
 }
@@ -144,13 +244,21 @@ pub fn accept(project: &Path) -> Result<()> {
         return Ok(());
     }
     let canon = store.raw().canon();
-    let mut n = 0usize;
-    for p in &staged.proposals {
-        canon
-            .record_decision(p.kind, &p.gist, p.node, &p.breadcrumb, &[])
-            .map_err(store_err)?;
-        n += 1;
-    }
+    // CG-P1 — decisions are born with their deterministically-inferred grounds,
+    // in the project language (so `canon impact`/`why` have a graph to walk).
+    let (language, _) = crate::prose::resolve_prose_language(None, &cfg.language);
+    let items: Vec<crate::canon::NewDecision> = staged
+        .proposals
+        .iter()
+        .map(|p| crate::canon::NewDecision {
+            kind: p.kind,
+            gist: p.gist.clone(),
+            node: p.node,
+            breadcrumb: p.breadcrumb.clone(),
+            proposed_grounds: p.grounds.clone(),
+        })
+        .collect();
+    let n = canon.record_grounded_batch(&items, &language).map_err(store_err)?.len();
     canon.sync().map_err(store_err)?;
     StagedCanon::clear(&layout).map_err(store_err)?;
     eprintln!("accepted {n} proposal(s) into the canon ledger (uncommitted — set canonicity with `canon commit`).");

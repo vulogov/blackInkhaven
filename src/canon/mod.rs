@@ -33,10 +33,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use uuid::Uuid;
 
-use smysl::{canonical_uid, from_cbor_seq, to_cbor_seq, Record, Status, Store, Uid, UnitCoreBuilder};
+use smysl::{
+    canonical_uid, from_cbor_seq, relink, to_cbor_seq, Record, RelKind, Relation, Status, Store,
+    Uid, UnitCoreBuilder,
+};
 
 mod commit;
 mod context;
+mod grounding;
 mod harvest;
 mod harvest_llm;
 mod merge;
@@ -48,7 +52,20 @@ pub use harvest::harvest_tags;
 pub use harvest_llm::{language_name, parse_proposals, system_prompt, Proposal, StagedCanon};
 pub use merge::{CommitmentForkView, MergeSummary};
 pub use model::NarrativeKind;
-pub use query::CanonView;
+pub use query::{CanonView, DecisionHistory, LogEntry};
+
+/// One decision to record via [`CanonLedger::record_grounded_batch`], with the
+/// grounds the LLM harvest proposed (CG-P2) carried as gist references — resolved
+/// to Uids at record time and unioned with the deterministic inference (CG-P1).
+pub struct NewDecision {
+    pub kind: NarrativeKind,
+    pub gist: String,
+    pub node: Uuid,
+    pub breadcrumb: String,
+    /// Gists of sibling decisions this one rests on, as the model named them.
+    /// Empty for a deterministic-only path (e.g. a decision with no model grounds).
+    pub proposed_grounds: Vec<String>,
+}
 
 /// After this many consecutive background-flush failures, give up the pass
 /// (leaving `dirty` set for the next trigger) rather than spinning — the same
@@ -160,12 +177,136 @@ impl CanonLedger {
         Ok(uid)
     }
 
-    /// CL-P1 — the node bridge (reverse lookup): the `Uid`s of every canon unit
-    /// derived from `node`, via the `inkhaven:<uuid>` source-reference prefix.
-    /// Consumed by the CL-P6 query→canon context bridge.
+    /// CANON-2 (CG-P1/P2) — record a batch of new decisions, each **born with its
+    /// grounds**: the deterministically-inferred edges (kind rules + salient-word
+    /// overlap of gists, free, no model — CG-P1) unioned with any the LLM harvest
+    /// *proposed* by gist reference (resolved against this batch + the ledger,
+    /// unresolved/ambiguous refs dropped — CG-P2). Ground-providers (world-facts,
+    /// setups) are recorded first, so a dependent in the same batch (a reveal, a
+    /// plot point) can rest on a same-batch provider as well as on the existing
+    /// ledger. Grounds are set at creation, so no supersession is needed. Returns
+    /// the recorded uids (in recording order). Caller flushes (`sync`).
+    pub fn record_grounded_batch(
+        &self,
+        items: &[NewDecision],
+        language: &crate::prose::ProseLanguage,
+    ) -> Result<Vec<Uid>> {
+        let lang = grounding::stemmer_language_name(language);
+        // Existing live decisions are the initial candidate grounds.
+        let mut candidates: Vec<grounding::Candidate> = self
+            .all_decisions()?
+            .into_iter()
+            .filter_map(|v| {
+                v.kind.map(|k| grounding::Candidate { uid: v.uid, kind: k, gist: v.gist })
+            })
+            .collect();
+        let mut order: Vec<usize> = (0..items.len()).collect();
+        order.sort_by_key(|&i| grounding::ground_rank(items[i].kind));
+        let mut out = Vec::with_capacity(items.len());
+        for &i in &order {
+            let it = &items[i];
+            let mut grounds = grounding::infer_grounds(it.kind, &it.gist, lang, &candidates);
+            // Union the model-proposed grounds (CG-P2), resolved by gist against
+            // the batch-so-far + ledger (the item itself is not yet a candidate,
+            // so a ref can't resolve to self).
+            for gref in &it.proposed_grounds {
+                if let Some(uid) = grounding::resolve_gist_ref(gref, &candidates) {
+                    if !grounds.contains(&uid) {
+                        grounds.push(uid);
+                    }
+                }
+            }
+            let uid = self.record_decision(it.kind, &it.gist, it.node, &it.breadcrumb, &grounds)?;
+            candidates.push(grounding::Candidate { uid, kind: it.kind, gist: it.gist.clone() });
+            out.push(uid);
+        }
+        Ok(out)
+    }
+
+    /// CANON-2 (CG-P0) — the supersede primitive. A unit's `grounds` are part of
+    /// its content address, so grounds cannot be mutated in place: this rebuilds
+    /// the decision (same kind / gist / source) with `mutate`d grounds into a NEW
+    /// unit that **supersedes** the old one, then relinks so anything that rested
+    /// on the old decision follows to the new one (smysl `relink`, append-only).
+    /// `mutate` returns `true` if it changed the set; a no-op returns the existing
+    /// `Uid` unchanged. Caller flushes (`sync`).
+    fn supersede_grounds(
+        &self,
+        uid: Uid,
+        mutate: impl FnOnce(&mut std::collections::BTreeSet<Uid>) -> bool,
+    ) -> Result<Uid> {
+        let dirty = self.dirty.clone();
+        self.with_store(|s| {
+            let unit = s
+                .get(&uid)
+                .ok_or_else(|| anyhow!("canon: no decision matches id {}", uid.short()))?;
+            let core = &unit.core;
+            let mut grounds: std::collections::BTreeSet<Uid> = core.grounds.iter().copied().collect();
+            let changed = mutate(&mut grounds);
+            grounds.remove(&uid); // a decision never grounds on itself
+            if !changed {
+                return Ok(uid);
+            }
+            let mut builder = UnitCoreBuilder::new(core.schema.clone(), core.gist.clone(), core.status)
+                .grounds(grounds.iter().copied());
+            if let Some(src) = core.source.clone() {
+                builder = builder.source(src);
+            }
+            let new_core = builder.build().map_err(|e| anyhow!("canon: reground {}: {e}", uid.short()))?;
+            let new_uid = canonical_uid(&new_core);
+            s.append(&[
+                Record::Unit(new_core),
+                Record::Relation(Relation::new(RelKind::Supersedes, new_uid, uid)),
+            ])
+            .map_err(|e| anyhow!("canon: reground append failed: {e}"))?;
+            // Re-point every decision that rested on the old unit onto the new one
+            // (append-only corrections + their own supersedes edges, cascading).
+            let relinked = relink(s);
+            if !relinked.records.is_empty() {
+                s.append(&relinked.records)
+                    .map_err(|e| anyhow!("canon: reground relink failed: {e}"))?;
+            }
+            dirty.store(true, Ordering::Release);
+            Ok(new_uid)
+        })
+    }
+
+    /// CANON-2 — add grounds to an existing decision (CG-P0 primitive; consumer:
+    /// the manual `canon ground` command, CG-P3). Returns the new (or unchanged,
+    /// on a no-op) `Uid`.
+    pub fn reground(&self, uid: Uid, added: &[Uid]) -> Result<Uid> {
+        self.supersede_grounds(uid, |grounds| {
+            let before = grounds.len();
+            grounds.extend(added.iter().copied());
+            grounds.len() != before
+        })
+    }
+
+    /// CANON-2 (CG-P3) — remove grounds from a decision (correcting a wrong or
+    /// inferred edge), superseding back. Returns the new (or unchanged) `Uid`.
+    pub fn unground(&self, uid: Uid, removed: &[Uid]) -> Result<Uid> {
+        self.supersede_grounds(uid, |grounds| {
+            let before = grounds.len();
+            for r in removed {
+                grounds.remove(r);
+            }
+            grounds.len() != before
+        })
+    }
+
+    /// CL-P1 — the node bridge (reverse lookup): the `Uid`s of every LIVE canon
+    /// unit derived from `node`, via the `inkhaven:<uuid>` source-reference prefix
+    /// (superseded versions are skipped). Consumed by the CL-P6 query→canon
+    /// context bridge.
     pub fn units_for_node(&self, node: Uuid) -> Result<Vec<Uid>> {
         let prefix = model::node_prefix(node);
-        self.with_store(|s| Ok(s.units_with_source_prefix(&prefix)))
+        self.with_store(|s| {
+            let dead = query::superseded_uids(s);
+            Ok(s.units_with_source_prefix(&prefix)
+                .into_iter()
+                .filter(|u| !dead.contains(u))
+                .collect())
+        })
     }
 
     /// Flush to disk, but only when there are unpersisted writes. The clean-path
@@ -437,6 +578,87 @@ mod tests {
             led.units_for_node(node).unwrap().len(),
             1,
             "the harvested tag became one canon unit under its node"
+        );
+    }
+
+    #[test]
+    fn grounded_batch_wires_impact_and_why_deterministically() {
+        // CG-P1 end to end: a mixed batch, given dependents-first to prove the
+        // providers-first ordering fixes it, comes out with edges so impact/why
+        // are non-empty — the whole point of "Grounds That Hold".
+        use crate::prose::ProseLanguage;
+        let dir = tempfile::tempdir().unwrap();
+        let path_s = dir.path().join("canon.cbor").to_str().unwrap().to_string();
+        let led = CanonLedger::new(&path_s);
+        let n = Uuid::from_u128(0x33);
+
+        let mk = |kind, gist: &str, bc: &str| NewDecision {
+            kind,
+            gist: gist.to_string(),
+            node: n,
+            breadcrumb: bc.to_string(),
+            proposed_grounds: Vec::new(),
+        };
+        let items = vec![
+            mk(NarrativeKind::Reveal, "the tremors are the beast waking", "ch9"),
+            mk(NarrativeKind::PlotPoint, "the escape uses the sea gate in the leviathan's flank", "ch12"),
+            mk(NarrativeKind::WorldFact, "the city floats on a sleeping leviathan", "ch1"),
+            mk(NarrativeKind::Setup, "the tremors shake the lower city", "ch3"),
+        ];
+        led.record_grounded_batch(&items, &ProseLanguage::En).unwrap();
+
+        let all = led.all_decisions().unwrap();
+        assert_eq!(all.len(), 4, "four decisions, no supersession (grounds set at birth)");
+
+        // The leviathan world-fact has the plot-point in its blast radius.
+        let leviathan = all.iter().find(|v| v.gist.contains("floats")).unwrap().uid;
+        assert!(
+            led.impact(leviathan).unwrap().iter().any(|v| v.gist.contains("sea gate")),
+            "the plot-point grounds the leviathan world-fact"
+        );
+        // The reveal rests on the tremor setup (dependents-first input, correctly ordered).
+        let reveal = all.iter().find(|v| v.gist.contains("beast waking")).unwrap().uid;
+        assert!(
+            led.why(reveal).unwrap().iter().any(|v| v.gist.contains("shake the lower city")),
+            "the reveal grounds the tremor setup even though it was listed first"
+        );
+    }
+
+    #[test]
+    fn model_proposed_grounds_draw_an_edge_overlap_would_miss() {
+        // CG-P2: a plot point that shares NO salient word with the world-fact —
+        // deterministic overlap gives nothing — but the model asserted the
+        // dependency by gist reference, so accept wires it.
+        use crate::prose::ProseLanguage;
+        let dir = tempfile::tempdir().unwrap();
+        let path_s = dir.path().join("canon.cbor").to_str().unwrap().to_string();
+        let led = CanonLedger::new(&path_s);
+        let n = Uuid::from_u128(0x44);
+
+        let items = vec![
+            NewDecision {
+                kind: NarrativeKind::WorldFact,
+                gist: "the moons rise together at midsummer".into(),
+                node: n,
+                breadcrumb: "ch1".into(),
+                proposed_grounds: Vec::new(),
+            },
+            NewDecision {
+                kind: NarrativeKind::PlotPoint,
+                gist: "the escape uses the sea gate".into(),
+                node: n,
+                breadcrumb: "ch12".into(),
+                // No shared word, but the model says it rests on the moons fact.
+                proposed_grounds: vec!["the moons rise together at midsummer".into()],
+            },
+        ];
+        led.record_grounded_batch(&items, &ProseLanguage::En).unwrap();
+
+        let all = led.all_decisions().unwrap();
+        let moons = all.iter().find(|v| v.gist.contains("moons")).unwrap().uid;
+        assert!(
+            led.impact(moons).unwrap().iter().any(|v| v.gist.contains("sea gate")),
+            "the model-proposed ground wired the edge deterministic overlap would have missed"
         );
     }
 
