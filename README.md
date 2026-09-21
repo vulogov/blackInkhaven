@@ -27,107 +27,36 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 3.11.0 — The Canon Ledger
+## Latest release · 3.12.0 — Grounds That Hold
 
-The current release is **3.11.0**, a new axis: inkhaven now remembers **the
-decisions behind the fiction**, not just the text (git) or the current state
-(Facts / SEMNET / KEN / SENTINEL) or the readers' findings over time (CHRONICLE).
-Deterministic core, warning-free:
+3.12.0 makes the **Canon Ledger** — the record of the *decisions behind the
+fiction*, distinct from the text (git) or the current state (Facts / SEMNET / KEN /
+SENTINEL) — deliver on its flagship question. Each decision is recorded with its
+**grounds** (what it rests on), a **commitment** level (`floated → … → canonical →
+retconned`), and a link to its source paragraph; 3.11.0 recorded them but nothing
+populated the dependency graph, so `canon impact` came back empty. Now it fills
+itself. Deterministic core, warning-free:
 
-- **The Canon Ledger.** Every load-bearing decision — a world-fact, character
-  trait, plot point, reveal, or setup — is recorded with its **grounds** (what it
-  rests on), a **commitment** level (`floated → drafted → committed → canonical →
-  retconned`), and a link back to its source paragraph. So you can finally ask
-  the question revision keeps raising: **`canon impact <id>` — what breaks if I
-  cut this?** — the transitive blast radius, before the cut. `canon why` traces
-  the grounds; `canon check` flags a canonical scene resting on a floated premise.
-- **Author always in control.** Decisions enter deterministically from the `rel:`
-  tags you already write (on save, free), or from an **opt-in `canon harvest`**
-  that *proposes* decisions from prose in your project language — staged, and
-  **nothing enters the ledger until you `canon accept`**. The model proposes; you
-  decide. The ledger is a **derived** artifact: a lost `canon.cbor` costs a
-  re-harvest, never prose.
-- **Reachable everywhere.** The reader hub (`Ctrl+B *`) gains a **Canon**
-  dashboard (`Enter` jumps to source); commitment forks (after a `canon merge`)
-  surface in the Editorial Pass; `ink.canon.*` reads the ledger from Bund; the
-  `canon:` config block tunes on-save harvest and the context budget. Built on the
-  pure-profile [`smysl`](https://github.com/vulogov/smysl) crate.
+- **The dependency graph populates itself.** A decision's grounds are inferred at
+  no cost (kind rules + shared content words, in your project language), proposed
+  by the opt-in `canon harvest` (still author-confirmed via `canon accept`), or
+  drawn by hand (`canon ground` / `unground`, or `g` in the dashboard). So
+  **`canon impact <id>` — what breaks if I cut this?** — returns real answers, and
+  `canon why` traces the chain the other way.
+- **Development history.** `canon history <id>` shows a decision's grounds and its
+  commitment trajectory over time; `canon log` shows the whole canon settling,
+  draft by draft — read straight off the append-only ledger.
+- **The pre-cut guard.** Deleting a paragraph that established decisions warns with
+  their blast radius first — advisory, and the ledger keeps the decisions regardless.
 
-Read the full notes: [`Documentation/RELEASE_NOTES/3.11.0.md`](Documentation/RELEASE_NOTES/3.11.0.md).
+Read the full notes: [`Documentation/RELEASE_NOTES/3.12.0.md`](Documentation/RELEASE_NOTES/3.12.0.md).
+No breaking changes; existing projects open unchanged; compiles warning-free.
 
-### Recent releases
-
-- **3.10.0 — Own the Index.** Two tracks aimed at F1: an in-tree vector store on
-  `hnsw_rs` that **loads** the HNSW graph (~50 ms) instead of rebuilding it
-  (15–31 s) + DuckDB checkpointing — first F1 search **40–60 s → about a second**;
-  and **`inkhaven rebuild-help`**, a self-building F1 help corpus fetched and
-  curated from GitHub, searched on a background thread.
-  [notes](Documentation/RELEASE_NOTES/3.10.0.md)
-
-- **3.9.0 — Panes That Keep Up.** The third TUI pass: the AI pane gains a
-  multi-line compose box, retry / edit-and-resend, navigable Book-scope citations,
-  and a named conversation library (`Ctrl+Z l`); the split AI response scrolls +
-  follows the stream with `Esc` cancel; the Search bar recalls queries and its
-  results overlay scrolls/pages; Thoughts gains copy-out.
-  [notes](Documentation/RELEASE_NOTES/3.9.0.md)
-
-- **3.6.0 — Faithful Exports, a Trustworthy Worklist.** A widen-and-polish fix
-  release from a five-agent audit: authored emphasis + footnotes survive into the
-  `manuscript`/`docx` exporters, EPUB footnote-id uniqueness, third-party EPUB
-  blockquote/table import, dedup keeps distinct occurrences, book-level findings
-  don't false-anchor, Spanish accent stress + French rhyme gender, `bonds --ledger`
-  + `ink.world.findings`.
-  [notes](Documentation/RELEASE_NOTES/3.6.0.md)
-
-- **3.5.0 — Finished Imports, One Reader Hub, a Deeper KEN.** Scrivener non-ASCII
-  `.rtf` keeps its markup, the EPUB-import footnote round-trip works, and the
-  single-chapter epub toy is retired; **`Ctrl+B *`** opens one menu of every
-  reader dashboard with live counts (`inkhaven read` is its CLI overview); and
-  **`inkhaven knowledge --ledger`** surfaces the grants model.
-  [notes](Documentation/RELEASE_NOTES/3.5.0.md)
-- **3.4.0 — Export Fidelity & a Smoother Revision Loop.** The shared
-  `typst_to_markdown` converter gained figure-image / footnote / `@ref` support
-  (three formats at once), docx + Shunn PDF render authored `*bold*`/`_italic_`,
-  the CLI `export epub` went multi-chapter, HTML verse preserved line breaks, and
-  the Editorial Pass gained return-to-position + auto-reopen-after-batch.
-  [notes](Documentation/RELEASE_NOTES/3.4.0.md)
-- **3.3.0 — Wider Reach, Sharper Tools.** Multilingual parity (SENTINEL numeric
-  DE+RU, CHORUS register DE+ES, Inner Socrates tense-shift DE/FR/ES), the
-  `ink.world.*` Bund reads, and the first Editorial Pass ergonomics (session-skip
-  persistence + the `r` response-kind filter).
-  [notes](Documentation/RELEASE_NOTES/3.3.0.md)
-- **3.2.0 — ENSEMBLE: Your Cast, Connected.** Deepened the people layer: declared
-  `rel:` bonds became first-class **`relates` graph edges** (traversable via
-  `graph neighbors` / the `Ctrl+B z` hub / F9 Graph chat), and the **Dramatis
-  Personae** (`inkhaven cast`, hub → `c`) joined the cast × bonds × arc state into
-  one book-wide view.
-  [notes](Documentation/RELEASE_NOTES/3.2.0.md) · [`ENSEMBLE.md`](Documentation/ENSEMBLE.md)
-- **3.1.0 — BONDS: Are the Bonds Earned?** KEN's sibling: relationship
-  *continuity* — are the bonds you declare (`rel:` tags) earned on the page?
-  `unwritten_bond` / `unearned_shift` / `dropped_bond` + opt-in `implied_cooling`,
-  the `Ctrl+V Shift+O` dashboard, `ink.bonds.*`.
-  [notes](Documentation/RELEASE_NOTES/3.1.0.md) · [`BONDS.md`](Documentation/BONDS.md)
-
-### The stable baseline · 3.0.0 — The Stable Edition
-
-**3.0.0** remains the stable baseline. It closed the 2.x arc and promoted Inkhaven
-to a **stable, maintained edition** — the intelligence suite that watches, reads,
-and remembers itself (SEMNET → GRAPHMIND → CHORUS → SENTINEL → LECTOR → REDLINE →
-CHRONICLE → KEN) verified sound by a seven-partition adversarial audit of all 304K
-lines (zero Critical), with every surviving finding fixed and zero breaking
-changes. The 3.0.x line (through 3.0.9) then hardened the Bund scripting coverage
-and the export/import/keymap/assembly subsystems through successive targeted
-audits, each leaving a build-time guard behind. **3.1.0 lifted the feature freeze**
-(BONDS); **3.2.0** (ENSEMBLE), **3.3.0** (multilingual parity), **3.4.0** (export fidelity), **3.5.0** (imports + reader hub), **3.6.0** (fidelity + worklist fixes), **3.7.0** (the TUI pass), **3.8.0** (a second TUI pass — rendering + the Tree and Output panes), **3.9.0** (a third — the AI / Search / Thoughts panes, plus AI-pane depth), **3.10.0** (a self-building F1 help corpus + an owned, load-on-open vector index), and **3.11.0** (the Canon Ledger — the decisions behind the fiction, and what breaks if you cut one) continue
-on that hardened surface. Full 3.0.0 notes:
-[`Documentation/RELEASE_NOTES/3.0.0.md`](Documentation/RELEASE_NOTES/3.0.0.md).
-
-### Dependencies & compatibility
-
-No new dependencies, no breaking changes. Existing projects open unchanged. Compiles
-warning-free. Test suite → 3009.
-
-Every prior release lives under
+**Stable baseline · 3.0.0.** 3.0.0 remains the stable, maintained edition — the
+intelligence suite that watches, reads, and remembers itself (SEMNET → GRAPHMIND →
+CHORUS → SENTINEL → LECTOR → REDLINE → CHRONICLE → KEN), verified by a
+seven-partition adversarial audit — and every release since has built on that
+hardened surface. Every release's notes live under
 [`Documentation/RELEASE_NOTES/`](Documentation/RELEASE_NOTES/).
 
 ## Why Inkhaven
@@ -237,6 +166,17 @@ Every prior release lives under
   markup).
 
 ### Examined authorship & analysis
+- **The reading intelligences** — a suite that watches, reads, and remembers the
+  whole book: **SENTINEL** (continuity), **KEN** (who knows what, when), **BONDS**
+  (are declared relationships earned?), **LECTOR** (the forward read-through),
+  **CHORUS** (voice at book scale), **REDLINE** (the revision worklist / Editorial
+  Pass, `Ctrl+V Shift+R`), and **CHRONICLE** (did the draft get better?). One
+  **reader hub** (`Ctrl+B *`) opens every dashboard; deterministic cores are free.
+- **The Canon Ledger** (`inkhaven canon`, hub → **Canon**) — the *decisions behind
+  the fiction* (world-facts, plot points, reveals) with their **grounds** and a
+  **commitment** level. **`canon impact`** answers *"what breaks if I cut this?"*;
+  `canon why` / `history` / `log` trace and time it; grounds populate themselves;
+  the model may *propose* decisions but only `canon accept` writes.
 - **The companions** — a triad that observes craft without rewriting your prose:
   the **World fact-checker** (`Ctrl+B W`, checks scenes against your worldbuilding
   + timeline), **Inner Socrates** (`Ctrl+B J`, Socratic questions about content
@@ -285,6 +225,8 @@ Every prior release lives under
   bibliography checks (CI-ready; exit non-zero on a problem).
 - `inner-socrates` / `inner-editor` / `realworld` — the companions from the
   shell; `check` runs the fast deterministic pass over the project.
+- `canon list` / `impact` / `why` / `history` / `log` / `commit` / `ground` /
+  `harvest` — the Canon Ledger from the shell (impact = the blast radius of a cut).
 - `import-epub` / `import-scrivener` — bring an existing manuscript in.
 - `backup` / `restore` — see above.
 - `ai "prompt"` — one-shot inference from the shell (no TUI).
