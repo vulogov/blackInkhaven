@@ -981,6 +981,10 @@ pub(super) enum Modal {
         decisions: Vec<Option<smysl::Uid>>,
         cursor: usize,
         grounding: Option<usize>,
+        /// CANON-3 (3.14) — `t` toggles between the flat decision list (false) and
+        /// the indented grounds-DAG view (true). Both share the row/anchor/decision
+        /// machinery, so Enter-jump / `g` / `h` work in either.
+        graph: bool,
     },
     /// KEN-1 (2.6, KEN-P5) — the knowledge dashboard (`Ctrl+B Shift+Z`): the
     /// epistemic-continuity findings (who knows what, when) grouped by kind. `↑↓`
