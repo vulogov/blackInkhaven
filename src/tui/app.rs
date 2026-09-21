@@ -3575,12 +3575,18 @@ impl App {
                     // blocking thread so they never stall a tokio runtime worker.
                     let s = store_for_sync.clone();
                     let _ = tokio::task::spawn_blocking(move || {
-                        if let Err(e) = s.sync() {
-                            tracing::warn!("background sync failed: {e}");
-                        }
-                        if let Err(e) = s.checkpoint() {
-                            tracing::warn!("background checkpoint failed: {e}");
-                        }
+                        // Suppress the crash hook's terminal-restore if a DuckDB
+                        // save panics — this runs while the editor is drawing. The
+                        // spawn_blocking boundary contains the unwind; this just
+                        // keeps a panic from tearing the live terminal down.
+                        crate::crash::suppress_panic_report(move || {
+                            if let Err(e) = s.sync() {
+                                tracing::warn!("background sync failed: {e}");
+                            }
+                            if let Err(e) = s.checkpoint() {
+                                tracing::warn!("background checkpoint failed: {e}");
+                            }
+                        })
                     })
                     .await;
                 }
