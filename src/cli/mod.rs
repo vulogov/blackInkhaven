@@ -1800,6 +1800,11 @@ pub enum CanonCommand {
     /// Reclaim append-only churn: drop superseded decision versions left by
     /// grounding/ungrounding. Live decisions and their commitments are preserved.
     Compact,
+    /// Show the grounds DAG — foundations and, indented beneath, what rests on them.
+    Graph {
+        /// Optional decision id (canonical or short prefix); shows just its subtree.
+        id: Option<String>,
+    },
     /// Mark a decision's commitment (canonicity) level.
     Commit {
         /// A decision id (canonical or short prefix, as printed by `list`).
@@ -6712,6 +6717,9 @@ impl Cli {
                     canon::reground(&project, dry_run).map_err(Into::into)
                 }
                 CanonCommand::Compact => canon::compact(&project).map_err(Into::into),
+                CanonCommand::Graph { id } => {
+                    canon::graph(&project, id.as_deref()).map_err(Into::into)
+                }
                 CanonCommand::Commit { id, level, as_agent } => {
                     canon::commit(&project, &id, &level, as_agent).map_err(Into::into)
                 }
