@@ -17385,18 +17385,18 @@ impl App {
     /// the development-ledger decisions with kind + commitment, plus commitment
     /// forks. Enter jumps to a decision's source paragraph.
     fn open_canon(&mut self) {
-        let (rows, anchors, decisions) = self.build_canon_rows();
+        let (rows, anchors, decisions) = self.build_canon_rows(false);
         // Advertise the actions whenever there are decisions — g/h work on any
         // decision row, even one with no jump anchor (a node-less/merged decision).
         self.status = if decisions.iter().any(|d| d.is_some()) {
-            "canon · ↑↓ scroll · Enter jump · g ground · h history · Esc".into()
+            "canon · ↑↓ · Enter jump · g ground · h history · t graph · Esc".into()
         } else {
             "canon · Esc".into()
         };
-        self.modal = Modal::Canon { rows, anchors, decisions, cursor: 0, grounding: None };
+        self.modal = Modal::Canon { rows, anchors, decisions, cursor: 0, grounding: None, graph: false };
     }
 
-    fn build_canon_rows(&self) -> (Vec<String>, Vec<Option<Uuid>>, Vec<Option<smysl::Uid>>) {
+    fn build_canon_rows(&self, graph: bool) -> (Vec<String>, Vec<Option<Uuid>>, Vec<Option<smysl::Uid>>) {
         let mut rows: Vec<String> = Vec::new();
         let mut anchors: Vec<Option<Uuid>> = Vec::new();
         let mut decisions_ids: Vec<Option<smysl::Uid>> = Vec::new();
@@ -17406,6 +17406,35 @@ impl App {
             decisions_ids.push(decision);
         };
         let canon = self.store.raw().canon();
+        let fmt = |kind: Option<crate::canon::NarrativeKind>, commit: Option<smysl::Commitment>| {
+            let k = kind.map(|k| k.schema_str().trim_start_matches("x.narrative/")).unwrap_or("?");
+            (k, commit.map(|c| format!(" «{c}»")).unwrap_or_default())
+        };
+        // CANON-3 (3.14) — the grounds-DAG view: each foundation, then what rests
+        // on it, indented. Shares the anchor/decision machinery with the list.
+        if graph {
+            let dag = match canon.graph(None) {
+                Ok(g) => g,
+                Err(e) => {
+                    push(format!("canon graph unavailable: {e}"), None, None);
+                    return (rows, anchors, decisions_ids);
+                }
+            };
+            if dag.is_empty() {
+                push("◆ Canon graph".into(), None, None);
+                push(String::new(), None, None);
+                push("  no decisions yet.".into(), None, None);
+                return (rows, anchors, decisions_ids);
+            }
+            push("◆ Canon graph — foundations, then what rests on them".into(), None, None);
+            push(String::new(), None, None);
+            for r in &dag {
+                let (kind, commit) = fmt(r.view.kind, r.view.commitment);
+                let indent = "  ".repeat(r.depth + 1);
+                push(format!("{indent}[{kind}]{commit} {}", r.view.gist), r.view.node, Some(r.view.uid));
+            }
+            return (rows, anchors, decisions_ids);
+        }
         let decisions = match canon.all_decisions() {
             Ok(d) => d,
             Err(e) => {
@@ -17426,11 +17455,7 @@ impl App {
         push(format!("◆ Canon ledger — {} decision(s)", decisions.len()), None, None);
         push(String::new(), None, None);
         for v in &decisions {
-            let kind = v
-                .kind
-                .map(|k| k.schema_str().trim_start_matches("x.narrative/"))
-                .unwrap_or("?");
-            let commit = v.commitment.map(|c| format!(" «{c}»")).unwrap_or_default();
+            let (kind, commit) = fmt(v.kind, v.commitment);
             push(format!("  [{kind}]{commit} {}", v.gist), v.node, Some(v.uid));
         }
         if let Ok(forks) = canon.commitment_forks() {
@@ -17498,6 +17523,17 @@ impl App {
                     None => self.status = "canon: put the cursor on a decision, then h".into(),
                 }
             }
+            KeyCode::Char('t') if !grounding => {
+                // Toggle the flat list ↔ the grounds-DAG view, rebuilding rows.
+                let graph = !matches!(&self.modal, Modal::Canon { graph: true, .. });
+                let (rows, anchors, decisions) = self.build_canon_rows(graph);
+                self.status = if graph {
+                    "canon graph · ↑↓ · Enter jump · g ground · h history · t list · Esc".into()
+                } else {
+                    "canon · ↑↓ · Enter jump · g ground · h history · t graph · Esc".into()
+                };
+                self.modal = Modal::Canon { rows, anchors, decisions, cursor: 0, grounding: None, graph };
+            }
             KeyCode::Enter if grounding => {
                 let (src, dst) = match &self.modal {
                     Modal::Canon { decisions, cursor, grounding: Some(g), .. } => (
@@ -17552,13 +17588,15 @@ impl App {
             Ok(_) => self.status = "canon · grounded".into(),
             Err(e) => self.status = format!("canon: grounding failed — {e}"),
         }
-        // Rebuild (grounding cleared), reflecting the new/​superseded ids.
-        let (rows, anchors, decisions) = self.build_canon_rows();
+        // Rebuild (grounding cleared), reflecting the new/​superseded ids and
+        // preserving the current list/graph view.
+        let graph = matches!(&self.modal, Modal::Canon { graph: true, .. });
+        let (rows, anchors, decisions) = self.build_canon_rows(graph);
         let cursor = match &self.modal {
             Modal::Canon { cursor, .. } => (*cursor).min(rows.len().saturating_sub(1)),
             _ => 0,
         };
-        self.modal = Modal::Canon { rows, anchors, decisions, cursor, grounding: None };
+        self.modal = Modal::Canon { rows, anchors, decisions, cursor, grounding: None, graph };
     }
 
     /// CG-P4 — render the cursored decision's development history (grounds +
