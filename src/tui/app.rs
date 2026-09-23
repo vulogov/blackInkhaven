@@ -1865,6 +1865,11 @@ pub(crate) struct App {
     tree_badges: std::collections::HashMap<Uuid, (usize, crate::pane::output::Severity)>,
     /// When `tree_badges` was last recomputed (throttle clock).
     tree_badges_at: std::time::Instant,
+    /// CANON-UI-1 (A1) — manuscript nodes that source a canon decision, for the
+    /// Tree/Outline `◈` marker. Refreshed on the same throttle as `tree_badges`.
+    canon_source_nodes: std::collections::HashSet<Uuid>,
+    /// When `canon_source_nodes` was last recomputed (throttle clock).
+    canon_source_nodes_at: std::time::Instant,
     /// WORLD-4 — the debounced fast fact-checker. Enabled when the project has a
     /// `world.hjson` (set at open + after a compile). `fc_last_fp` fingerprints
     /// the open paragraph; a change arms `fc_activity_at`, and 5 s of quiet fires
@@ -3740,6 +3745,8 @@ impl App {
             output_query_focused: false,
             tree_badges: std::collections::HashMap::new(),
             tree_badges_at: std::time::Instant::now(),
+            canon_source_nodes: std::collections::HashSet::new(),
+            canon_source_nodes_at: std::time::Instant::now(),
             tree_cursor: 0,
             tree_scroll: 0,
             search_input: TextInput::new(),
@@ -20243,6 +20250,17 @@ impl App {
         if self.tree_badges_at.elapsed() >= std::time::Duration::from_millis(900) {
             self.refresh_tree_badges();
         }
+        if self.canon_source_nodes_at.elapsed() >= std::time::Duration::from_millis(900) {
+            self.refresh_canon_source_nodes();
+        }
+    }
+
+    /// CANON-UI-1 (A1) — recompute which nodes source a canon decision, for the
+    /// Tree/Outline marker. Cheap (a read over the small per-project ledger).
+    fn refresh_canon_source_nodes(&mut self) {
+        self.canon_source_nodes =
+            self.store.raw().canon().decision_source_nodes().unwrap_or_default();
+        self.canon_source_nodes_at = std::time::Instant::now();
     }
 
     /// Rebuild `tree_badges` from the active Output findings.
