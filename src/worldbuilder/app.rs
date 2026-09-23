@@ -1699,13 +1699,27 @@ impl WorldbuilderApp {
             return;
         }
         let path = self.layout.root.join("world.hjson");
-        let mut value = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|r| serde_hjson::from_str::<serde_json::Value>(&r).ok())
-            .unwrap_or_else(|| serde_json::json!({}));
-        for op in &self.pending_ops {
-            op.apply(&mut value);
-        }
+        // Start from the existing definition, or — on a fresh project — from the
+        // starter template (named from a pending `name` op), so the REQUIRED
+        // astronomy / calendar scaffolding exists for the deltas to overlay.
+        // Folding onto `{}` produced a definition the schema could not load.
+        let base = match self.world_base_value() {
+            Ok(b) => b,
+            Err(e) => {
+                self.status = format!("write refused — existing world.hjson does not parse: {e} · fix it by hand first");
+                return;
+            }
+        };
+        // Validate before writing: a delta that would leave `world.hjson`
+        // unparseable is refused (pending ops kept for the author to fix), never
+        // written — no shaping path can corrupt the definition on disk.
+        let value = match super::commands::fold_ops(base, &self.pending_ops) {
+            Ok(v) => v,
+            Err(e) => {
+                self.status = format!("write refused — world.hjson would not parse: {e} · /diff, /undo");
+                return;
+            }
+        };
         let json = serde_json::to_string_pretty(&value).unwrap_or_default();
         match crate::io_atomic::write(&path, json.as_bytes()) {
             Ok(()) => {
@@ -2087,14 +2101,38 @@ impl WorldbuilderApp {
     /// yet. Shared by the plausibility score, `/compile`, and `/validate` so they
     /// all reason over the same in-progress world.
     pub(super) fn current_world_def(&self) -> Option<crate::world::types::WorldDefinition> {
-        let mut value = std::fs::read_to_string(self.layout.root.join("world.hjson"))
-            .ok()
-            .and_then(|r| serde_hjson::from_str::<serde_json::Value>(&r).ok())
-            .unwrap_or_else(|| serde_json::json!({}));
+        let mut value = self.world_base_value().ok()?;
         for op in &self.pending_ops {
             op.apply(&mut value);
         }
         serde_json::from_value::<crate::world::types::WorldDefinition>(value).ok()
+    }
+
+    /// The JSON the pending deltas fold onto: `world.hjson` as it stands, or —
+    /// when the project has no definition yet — the starter template (named from
+    /// a pending `name` op, else "Untitled world"). Folding onto `{}` left every
+    /// REQUIRED field (name, star, planet, orbit, calendar) missing, so a fresh
+    /// interview wrote a `world.hjson` the schema could not load back. A file
+    /// that EXISTS but does not parse is an error, never silently replaced by
+    /// the starter — the author's hand edits are theirs to fix.
+    fn world_base_value(&self) -> Result<serde_json::Value, String> {
+        match std::fs::read_to_string(self.layout.root.join("world.hjson")) {
+            Ok(raw) => serde_hjson::from_str::<serde_json::Value>(&raw).map_err(|e| e.to_string()),
+            Err(_) => {
+                let name = self
+                    .pending_ops
+                    .iter()
+                    .find_map(|op| match op {
+                        super::commands::Op::Set { path, value } if path.len() == 1 && path[0] == "name" => {
+                            value.as_str().map(str::to_string)
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| "Untitled world".to_string());
+                serde_hjson::from_str::<serde_json::Value>(&crate::world::starter_template(&name))
+                    .map_err(|e| format!("starter template: {e}"))
+            }
+        }
     }
 
     pub(super) fn refresh_plausibility(&mut self) {

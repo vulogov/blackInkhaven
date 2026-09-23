@@ -466,10 +466,10 @@ line starting with `/` is a command.
 
 | Command | Effect |
 |---|---|
-| `/interview` | start the guided five-stage world interview |
+| `/interview` | start the guided world interview (World · Sky · Land · People · Rules) |
 | `/set <dot.path> <value>` | set any `world.hjson` key |
-| `/star <class>` · `/tilt <deg>` · `/moon <name> [days]` | shape the sky |
-| `/nation <name> [era] [kind] [traits…]` | add a nation |
+| `/star <class>` · `/tilt <deg>` · `/moon <name> [period_days]` | shape the sky (`/star` also sets a typical luminosity for the class) |
+| `/nation <name> [x y]` | add a nation, optionally pinned to a capital cell (unpinned nations seat at the largest unclaimed settlement) |
 | `/magic on\|off` · `/rule <kind> <cat,cat> [desc]` | the magic ledger |
 | `/wfact <statement>` | record an author fact into the Facts book (`fact:world`) |
 | `/research <query>` | retrieve related Facts into the Research pane |
@@ -485,7 +485,10 @@ Shaping commands (`/set`, `/star`, `/rule`, interview answers, …) accumulate i
 **pending delta** — accepted-but-uncommitted edits, previewed before they join and
 saved with the session so they survive a quit. `/write` folds them into
 `world.hjson` atomically; the plausibility score moves the moment an edit is
-accepted, before it is committed.
+accepted, before it is committed. On a project with no `world.hjson` yet the delta
+folds onto the same starter scaffold `realworld new` writes (named from the
+interview's first answer), and `/write` refuses — keeping the delta — rather than
+save a definition the schema would not load back.
 
 > The Map pane draws an ASCII biome minimap from the compiled layers after `/compile`;
 > `/map` shows the real plakat raster on kitty / iTerm2 / sixel terminals.

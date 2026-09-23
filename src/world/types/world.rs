@@ -87,7 +87,11 @@ pub struct EcologyRegionDef {
 pub struct NationDef {
     pub name: String,
     /// The capital's map cell `[x, y]`; the nearest settlement becomes its seat.
-    pub capital: [usize; 2],
+    /// Optional: a nation declared without one (e.g. from the worldbuilder
+    /// interview, before any map exists) is seated at the largest settlement no
+    /// other declared nation has claimed.
+    #[serde(default)]
+    pub capital: Option<[usize; 2]>,
     /// Declared relations with other named nations (override the seeded ones).
     #[serde(default)]
     pub relations: Vec<NationRelation>,

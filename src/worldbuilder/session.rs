@@ -220,7 +220,7 @@ mod tests {
         let mut s = WorldbuilderSession::open_or_create(&layout, "s", "now".into()).unwrap();
         s.pending_ops = vec![
             super::super::commands::Op::Set {
-                path: vec!["astronomy".into(), "star_class".into()],
+                path: vec!["astronomy".into(), "star".into(), "class".into()],
                 value: serde_json::json!("K"),
             },
             super::super::commands::Op::Push {
