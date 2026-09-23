@@ -252,6 +252,13 @@ impl CanonLedger {
         })
     }
 
+    /// CANON-UI-1 (A1) — the set of live manuscript nodes that source at least one
+    /// canon decision, for the editor's decision-source marker. Built from the live
+    /// decisions' source references (superseded versions already filtered).
+    pub fn decision_source_nodes(&self) -> Result<HashSet<Uuid>> {
+        Ok(self.all_decisions()?.into_iter().filter_map(|v| v.node).collect())
+    }
+
     /// CANON-3 (CG3-P3) — the grounds DAG as an indented walk: each **root** (a
     /// decision that rests on nothing — a foundation) followed by what transitively
     /// **rests on** it, depth-first, so the foundations and their blast radius read
