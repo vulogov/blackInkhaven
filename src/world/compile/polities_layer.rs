@@ -86,15 +86,30 @@ pub fn compile_polities(
     // capital cell), then the largest remaining settlements fill to the target.
     let mut used: HashSet<(usize, usize)> = HashSet::new();
     let mut caps: Vec<(&Settlement, Option<&crate::world::types::NationDef>)> = Vec::new();
-    for nd in declared {
+    // Pinned nations seat first, so an unpinned one declared earlier cannot take
+    // the settlement at a pinned nation's own capital cell.
+    let seating: Vec<&crate::world::types::NationDef> = declared
+        .iter()
+        .filter(|nd| nd.capital.is_some())
+        .chain(declared.iter().filter(|nd| nd.capital.is_none()))
+        .collect();
+    for nd in seating {
         // The nearest settlement not already seated by an earlier declared
         // capital — so two declared nations near one settlement don't collapse
-        // into one (the second would otherwise be silently dropped).
-        if let Some(s) = settlements
-            .iter()
-            .filter(|s| !used.contains(&(s.x, s.y)))
-            .min_by_key(|s| dist2((s.x, s.y), (nd.capital[0], nd.capital[1])))
-        {
+        // into one (the second would otherwise be silently dropped). A nation
+        // declared without a capital cell (the interview can't know one) seats
+        // at the largest unclaimed settlement instead.
+        let seat = match nd.capital {
+            Some(c) => settlements
+                .iter()
+                .filter(|s| !used.contains(&(s.x, s.y)))
+                .min_by_key(|s| dist2((s.x, s.y), (c[0], c[1]))),
+            None => settlements
+                .iter()
+                .filter(|s| !used.contains(&(s.x, s.y)))
+                .max_by(|a, b| a.population.cmp(&b.population).then((b.x, b.y).cmp(&(a.x, a.y)))),
+        };
+        if let Some(s) = seat {
             used.insert((s.x, s.y));
             caps.push((s, Some(nd)));
         }
@@ -193,22 +208,28 @@ pub fn lint_polities(
             ));
         }
     }
+    if declared.len() > demo.settlements.len() && !demo.settlements.is_empty() {
+        w.push(format!(
+            "{} nations are declared but the world has only {} settlement(s) — the extras get no realm; raise the population or declare fewer",
+            declared.len(),
+            demo.settlements.len()
+        ));
+    }
     for nd in declared {
-        match demo
-            .settlements
-            .iter()
-            .map(|s| dist2((s.x, s.y), (nd.capital[0], nd.capital[1])))
-            .min()
-        {
-            None => w.push(format!("nation `{}`: the world has no settlements to seat a capital", nd.name)),
-            Some(d2) => {
-                let d = (d2 as f64).sqrt();
-                if d > 10.0 {
-                    w.push(format!(
-                        "nation `{}`: capital cell ({}, {}) is {:.0} cells from the nearest settlement — is it in the wilderness?",
-                        nd.name, nd.capital[0], nd.capital[1], d
-                    ));
-                }
+        if demo.settlements.is_empty() {
+            w.push(format!("nation `{}`: the world has no settlements to seat a capital", nd.name));
+            continue;
+        }
+        // An unpinned nation (no capital cell) is seated at the largest unclaimed
+        // settlement, so there is no wilderness distance to check.
+        let Some(c) = nd.capital else { continue };
+        if let Some(d2) = demo.settlements.iter().map(|s| dist2((s.x, s.y), (c[0], c[1]))).min() {
+            let d = (d2 as f64).sqrt();
+            if d > 10.0 {
+                w.push(format!(
+                    "nation `{}`: capital cell ({}, {}) is {:.0} cells from the nearest settlement — is it in the wilderness?",
+                    nd.name, c[0], c[1], d
+                ));
             }
         }
     }
@@ -245,15 +266,15 @@ mod tests {
         use crate::world::types::NationDef;
         let d = demo(vec![settle(0, 0, 90_000), settle(40, 40, 80_000)]);
         let declared = vec![
-            NationDef { name: "Karon".into(), capital: [0, 0], relations: Vec::new() },
-            NationDef { name: "karon".into(), capital: [40, 40], relations: Vec::new() },
+            NationDef { name: "Karon".into(), capital: Some([0, 0]), relations: Vec::new() },
+            NationDef { name: "karon".into(), capital: Some([40, 40]), relations: Vec::new() },
         ];
         let w = lint_polities(&declared, &d);
         assert!(w.iter().any(|s| s.contains("declared 2 times")), "no dup-name warning: {w:?}");
         // A distinct-named set produces no dup warning.
         let ok = vec![
-            NationDef { name: "Karon".into(), capital: [0, 0], relations: Vec::new() },
-            NationDef { name: "Serai".into(), capital: [40, 40], relations: Vec::new() },
+            NationDef { name: "Karon".into(), capital: Some([0, 0]), relations: Vec::new() },
+            NationDef { name: "Serai".into(), capital: Some([40, 40]), relations: Vec::new() },
         ];
         assert!(!lint_polities(&ok, &d).iter().any(|s| s.contains("times")));
     }
@@ -302,10 +323,10 @@ mod tests {
         let declared = vec![
             NationDef {
                 name: "Karon".into(),
-                capital: [0, 0],
+                capital: Some([0, 0]),
                 relations: vec![NationRelation { with: "Serai".into(), stance: "rival".into() }],
             },
-            NationDef { name: "Serai".into(), capital: [50, 50], relations: vec![] },
+            NationDef { name: "Serai".into(), capital: Some([50, 50]), relations: vec![] },
         ];
         let p = compile_polities(&d, &declared, 0x1);
         assert!(p.polities.iter().any(|x| x.name == "Karon"));
@@ -320,7 +341,7 @@ mod tests {
     fn a_wilderness_capital_is_flagged() {
         use crate::world::types::NationDef;
         let d = demo(vec![settle(0, 0, 5000)]);
-        let declared = vec![NationDef { name: "Faraway".into(), capital: [900, 900], relations: vec![] }];
+        let declared = vec![NationDef { name: "Faraway".into(), capital: Some([900, 900]), relations: vec![] }];
         assert!(lint_polities(&declared, &d).iter().any(|s| s.contains("wilderness")));
     }
 
@@ -331,8 +352,8 @@ mod tests {
         // settlement rather than the second being silently dropped.
         let d = demo(vec![settle(0, 0, 50_000), settle(80, 80, 40_000)]);
         let declared = vec![
-            NationDef { name: "Aa".into(), capital: [1, 1], relations: vec![] },
-            NationDef { name: "Bb".into(), capital: [2, 2], relations: vec![] },
+            NationDef { name: "Aa".into(), capital: Some([1, 1]), relations: vec![] },
+            NationDef { name: "Bb".into(), capital: Some([2, 2]), relations: vec![] },
         ];
         let p = compile_polities(&d, &declared, 1);
         assert!(p.polities.iter().any(|x| x.name == "Aa"));
@@ -344,9 +365,54 @@ mod tests {
         use crate::world::types::NationDef;
         let d = demo(vec![settle(0, 0, 5000)]);
         let declared =
-            vec![NationDef { name: "Far".into(), capital: [3_000_000_000, 0], relations: vec![] }];
+            vec![NationDef { name: "Far".into(), capital: Some([3_000_000_000, 0]), relations: vec![] }];
         let p = compile_polities(&d, &declared, 1); // must not overflow-panic
         assert_eq!(p.polities.len(), 1);
         assert!(lint_polities(&declared, &d).iter().any(|s| s.contains("wilderness")));
+    }
+
+    #[test]
+    fn an_unpinned_nation_seats_at_the_largest_unclaimed_settlement() {
+        use crate::world::types::NationDef;
+        let d = demo(vec![settle(0, 0, 90_000), settle(50, 50, 80_000), settle(9, 9, 1_000)]);
+        let declared = vec![
+            NationDef { name: "Karon".into(), capital: Some([50, 50]), relations: vec![] },
+            NationDef { name: "Velmari".into(), capital: None, relations: vec![] },
+        ];
+        let p = compile_polities(&d, &declared, 1);
+        let v = p.polities.iter().find(|x| x.name == "Velmari").expect("unpinned nation gets a realm");
+        assert_eq!(v.capital_pos, (0, 0), "seats at the largest unclaimed settlement");
+        let k = p.polities.iter().find(|x| x.name == "Karon").unwrap();
+        assert_eq!(k.capital_pos, (50, 50));
+        // Unpinned nations raise no wilderness warning.
+        assert!(!lint_polities(&declared, &d).iter().any(|s| s.contains("wilderness")));
+    }
+
+    #[test]
+    fn pinned_nations_seat_before_unpinned_ones_whatever_the_declaration_order() {
+        use crate::world::types::NationDef;
+        let d = demo(vec![settle(0, 0, 90_000), settle(50, 50, 80_000)]);
+        // Unpinned first: without pinned-first seating it would take (0,0) and push
+        // the pinned nation off its own capital cell.
+        let declared = vec![
+            NationDef { name: "Velmari".into(), capital: None, relations: vec![] },
+            NationDef { name: "Karon".into(), capital: Some([0, 0]), relations: vec![] },
+        ];
+        let p = compile_polities(&d, &declared, 1);
+        let k = p.polities.iter().find(|x| x.name == "Karon").unwrap();
+        assert_eq!(k.capital_pos, (0, 0), "pinned nation keeps its cell");
+        let v = p.polities.iter().find(|x| x.name == "Velmari").unwrap();
+        assert_eq!(v.capital_pos, (50, 50));
+    }
+
+    #[test]
+    fn more_nations_than_settlements_is_flagged() {
+        use crate::world::types::NationDef;
+        let d = demo(vec![settle(0, 0, 5000)]);
+        let declared = vec![
+            NationDef { name: "Aa".into(), capital: None, relations: vec![] },
+            NationDef { name: "Bb".into(), capital: None, relations: vec![] },
+        ];
+        assert!(lint_polities(&declared, &d).iter().any(|s| s.contains("extras get no realm")));
     }
 }

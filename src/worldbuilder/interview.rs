@@ -1,6 +1,6 @@
 //! WBLD-1 (WB-P8) — the guided world interview.
 //!
-//! A fixed five-stage script (Sky · Land · People · Rules · Review) that walks
+//! A fixed six-stage script (World · Sky · Land · People · Rules · Review) that walks
 //! the author from an empty project to a first coherent frame. Each step is a
 //! plain question whose answer fills a **shaping-command template** — the same
 //! `/star`, `/tilt`, `/set …` commands the author could type by hand (WB-P4) — so
@@ -10,9 +10,11 @@
 //! delta, so the ★ score moves live and the author reviews everything at the end
 //! with `/diff` before `/write`. It never generates prose: it only asks and records.
 
-/// The five conversational stages (Review is the closing summary, not a step).
+/// The five question stages (Review is the closing summary, not a step).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Stage {
+    /// The world's identity — its name is a REQUIRED `world.hjson` field.
+    World,
     Sky,
     Land,
     People,
@@ -22,6 +24,7 @@ pub(super) enum Stage {
 impl Stage {
     pub(super) fn label(self) -> &'static str {
         match self {
+            Stage::World => "World",
             Stage::Sky => "Sky",
             Stage::Land => "Land",
             Stage::People => "People",
@@ -42,6 +45,11 @@ pub(super) struct Step {
 /// shaping command, so answers can only produce valid `world.hjson` edits.
 static SCRIPT: &[Step] = &[
     Step {
+        stage: Stage::World,
+        prompt: "What is the world called?",
+        template: "/set name {}",
+    },
+    Step {
         stage: Stage::Sky,
         prompt: "What kind of star? (G Sun-like · K orange · M red dwarf)",
         template: "/star {}",
@@ -53,7 +61,7 @@ static SCRIPT: &[Step] = &[
     },
     Step {
         stage: Stage::Sky,
-        prompt: "Add a moon? (name, optional period in days — blank to skip)",
+        prompt: "Add a moon? (name, optional orbital period in Earth-days — blank to skip)",
         template: "/moon {}",
     },
     Step {
@@ -78,7 +86,7 @@ static SCRIPT: &[Step] = &[
     },
     Step {
         stage: Stage::People,
-        prompt: "Name a nation? (name [era] [polity_kind] [traits…] — blank to skip)",
+        prompt: "Name a nation? (name, optionally its capital cell x y — blank to skip)",
         template: "/nation {}",
     },
     Step {
@@ -139,7 +147,7 @@ mod tests {
     fn cursor_walks_the_whole_script_then_reports_done() {
         let mut iv = Interview::new();
         assert_eq!(iv.progress(), (1, SCRIPT.len()));
-        assert_eq!(iv.current().unwrap().stage, Stage::Sky);
+        assert_eq!(iv.current().unwrap().stage, Stage::World);
         for _ in 0..SCRIPT.len() {
             assert!(!iv.done());
             iv.advance();
@@ -149,13 +157,14 @@ mod tests {
     }
 
     #[test]
-    fn stages_appear_in_sky_land_people_rules_order() {
+    fn stages_appear_in_world_sky_land_people_rules_order() {
         let mut last = 0usize;
         let order = |s: Stage| match s {
-            Stage::Sky => 0,
-            Stage::Land => 1,
-            Stage::People => 2,
-            Stage::Rules => 3,
+            Stage::World => 0,
+            Stage::Sky => 1,
+            Stage::Land => 2,
+            Stage::People => 3,
+            Stage::Rules => 4,
         };
         for step in SCRIPT {
             let o = order(step.stage);

@@ -179,20 +179,31 @@ pub(super) fn parse(input: &str) -> Command {
                 return Command::Unknown("usage: /star <type> (e.g. G, K, M)".into());
             }
             let sc = rest.to_uppercase();
-            Command::Shape {
-                label: format!("star → {sc}"),
-                ops: vec![Op::Set {
-                    path: vec!["astronomy".into(), "star_class".into()],
-                    value: json!(sc),
-                }],
-            }
+            // The schema nests the star (`astronomy.star.class`), and its
+            // required `luminosity_solar` drives the compiler — so a K/M dwarf
+            // must not be left as bright as the Sun. Set a class-typical value.
+            let mut ops = vec![Op::Set {
+                path: vec!["astronomy".into(), "star".into(), "class".into()],
+                value: json!(sc),
+            }];
+            let label = match typical_luminosity(&sc) {
+                Some(lum) => {
+                    ops.push(Op::Set {
+                        path: vec!["astronomy".into(), "star".into(), "luminosity_solar".into()],
+                        value: json!(lum),
+                    });
+                    format!("star → {sc} ({lum} L☉)")
+                }
+                None => format!("star → {sc}"),
+            };
+            Command::Shape { label, ops }
         }
 
         "tilt" => match rest.parse::<f64>() {
             Ok(v) => Command::Shape {
                 label: format!("axial tilt → {v}°"),
                 ops: vec![Op::Set {
-                    path: vec!["astronomy".into(), "axial_tilt".into()],
+                    path: vec!["astronomy".into(), "planet".into(), "axial_tilt_deg".into()],
                     value: json!(v),
                 }],
             },
@@ -203,14 +214,15 @@ pub(super) fn parse(input: &str) -> Command {
             let mut it = rest.splitn(2, char::is_whitespace);
             let name = it.next().unwrap_or("").trim();
             if name.is_empty() {
-                return Command::Unknown("usage: /moon <name> <period>".into());
+                return Command::Unknown("usage: /moon <name> [period_days]".into());
             }
-            let mut moon = json!({ "name": name });
-            if let Some(p) = it.next().and_then(|s| s.trim().parse::<f64>().ok()) {
-                moon["period"] = json!(p);
-            }
+            // `period_days` is required by the schema (a moon without it makes
+            // world.hjson unparseable); default to Earth's Moon when omitted, and
+            // give it a lunar mass so it actually raises tides.
+            let period = it.next().and_then(|s| s.trim().parse::<f64>().ok()).unwrap_or(27.32);
+            let moon = json!({ "name": name, "period_days": period, "mass_lunar": 1.0 });
             Command::Shape {
-                label: format!("moon {name}"),
+                label: format!("moon {name} ({period} d)"),
                 ops: vec![Op::Push {
                     path: vec!["astronomy".into(), "moons".into()],
                     value: moon,
@@ -267,24 +279,34 @@ pub(super) fn parse(input: &str) -> Command {
         }
 
         "nation" => {
-            let mut it = rest.split_whitespace();
-            let name = it.next().unwrap_or("").to_string();
+            // /nation <name…> [x y] — the schema's `NationDef` is {name, capital?,
+            // relations}. A trailing pair of integers is the capital cell; without
+            // one the compiler seats the nation at the largest unclaimed
+            // settlement. (The old era/polity_kind/traits fields never existed in
+            // the schema — they were silently dropped and, with no `capital`,
+            // broke the parse.)
+            let toks: Vec<&str> = rest.split_whitespace().collect();
+            let (name_toks, capital) = match toks.as_slice() {
+                [head @ .., x, y] if !head.is_empty() => match (x.parse::<usize>(), y.parse::<usize>()) {
+                    (Ok(cx), Ok(cy)) => (head, Some([cx, cy])),
+                    _ => (toks.as_slice(), None),
+                },
+                _ => (toks.as_slice(), None),
+            };
+            let name = name_toks.join(" ");
             if name.is_empty() {
-                return Command::Unknown("usage: /nation <name> [era] [polity_kind] [traits…]".into());
+                return Command::Unknown("usage: /nation <name> [capital-x capital-y]".into());
             }
             let mut n = json!({ "name": name });
-            if let Some(era) = it.next() {
-                n["era"] = json!(era);
-            }
-            if let Some(kind) = it.next() {
-                n["polity_kind"] = json!(kind);
-            }
-            let traits: Vec<&str> = it.collect();
-            if !traits.is_empty() {
-                n["traits"] = json!(traits);
-            }
+            let label = match capital {
+                Some([x, y]) => {
+                    n["capital"] = json!([x, y]);
+                    format!("nation {name} (capital {x},{y})")
+                }
+                None => format!("nation {name}"),
+            };
             Command::Shape {
-                label: format!("nation {name}"),
+                label,
                 ops: vec![Op::Push { path: vec!["nations".into()], value: n }],
             }
         }
@@ -293,6 +315,35 @@ pub(super) fn parse(input: &str) -> Command {
             "unknown command `/{other}` — supports /interview /roll /adopt /map /mapcheck /terrain /journey /sessions /switch /export[ --pdf] /set /star /tilt /moon /nation /magic /rule /wfact /research /compile /validate /write /undo /reset /diff"
         )),
     }
+}
+
+/// Typical main-sequence bolometric luminosity (solar units) for a spectral
+/// class letter — so `/star K` doesn't leave a K-dwarf as bright as the Sun.
+fn typical_luminosity(class: &str) -> Option<f64> {
+    match class.chars().next()?.to_ascii_uppercase() {
+        'O' => Some(30000.0),
+        'B' => Some(1000.0),
+        'A' => Some(20.0),
+        'F' => Some(3.0),
+        'G' => Some(1.0),
+        'K' => Some(0.4),
+        'M' => Some(0.05),
+        _ => None,
+    }
+}
+
+/// Fold `ops` onto `base` and **validate** the result parses as a
+/// [`crate::world::types::WorldDefinition`] — the gate that keeps every shaping
+/// path (interview, `/set`, map tools) from ever writing an unloadable
+/// `world.hjson`. On `Err` nothing should be written; the message is the schema
+/// error for the author to act on.
+pub(super) fn fold_ops(mut base: Value, ops: &[Op]) -> Result<Value, String> {
+    for op in ops {
+        op.apply(&mut base);
+    }
+    serde_json::from_value::<crate::world::types::WorldDefinition>(base.clone())
+        .map_err(|e| e.to_string())?;
+    Ok(base)
 }
 
 /// Best-effort scalar parse for `/set` values: bool → int → float → string.
@@ -382,14 +433,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn star_sets_the_astronomy_class() {
+    fn star_sets_the_nested_class_and_a_typical_luminosity() {
         match parse("/star k") {
             Command::Shape { ops, .. } => {
                 assert_eq!(
                     ops,
+                    vec![
+                        Op::Set {
+                            path: vec!["astronomy".into(), "star".into(), "class".into()],
+                            value: json!("K"),
+                        },
+                        Op::Set {
+                            path: vec!["astronomy".into(), "star".into(), "luminosity_solar".into()],
+                            value: json!(0.4),
+                        },
+                    ]
+                );
+            }
+            other => panic!("expected Shape, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn tilt_sets_the_planet_axial_tilt() {
+        match parse("/tilt 28.5") {
+            Command::Shape { ops, .. } => {
+                assert_eq!(
+                    ops,
                     vec![Op::Set {
-                        path: vec!["astronomy".into(), "star_class".into()],
-                        value: json!("K"),
+                        path: vec!["astronomy".into(), "planet".into(), "axial_tilt_deg".into()],
+                        value: json!(28.5),
                     }]
                 );
             }
@@ -398,19 +471,100 @@ mod tests {
     }
 
     #[test]
-    fn nation_with_traits_builds_a_valid_push() {
-        match parse("/nation Velmari bronze_age confederation seafaring trade") {
+    fn moon_pushes_a_schema_shaped_moon_with_a_default_period() {
+        match parse("/moon Selene") {
+            Command::Shape { ops, .. } => {
+                let Op::Push { path, value } = &ops[0] else { panic!("expected Push") };
+                assert_eq!(path, &vec!["astronomy".to_string(), "moons".to_string()]);
+                assert_eq!(value["name"], json!("Selene"));
+                assert_eq!(value["period_days"], json!(27.32));
+                assert_eq!(value["mass_lunar"], json!(1.0));
+            }
+            other => panic!("expected Shape, got {other:?}"),
+        }
+        match parse("/moon Selene 12.5") {
+            Command::Shape { ops, .. } => {
+                let Op::Push { value, .. } = &ops[0] else { panic!("expected Push") };
+                assert_eq!(value["period_days"], json!(12.5));
+            }
+            other => panic!("expected Shape, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn nation_pushes_name_and_optional_capital_only() {
+        match parse("/nation Velmari") {
             Command::Shape { ops, .. } => {
                 assert_eq!(ops.len(), 1);
                 let Op::Push { path, value } = &ops[0] else { panic!("expected Push") };
                 assert_eq!(path, &vec!["nations".to_string()]);
-                assert_eq!(value["name"], json!("Velmari"));
-                assert_eq!(value["era"], json!("bronze_age"));
-                assert_eq!(value["polity_kind"], json!("confederation"));
-                assert_eq!(value["traits"], json!(["seafaring", "trade"]));
+                assert_eq!(value, &json!({ "name": "Velmari" }));
             }
             other => panic!("expected Shape, got {other:?}"),
         }
+        match parse("/nation Free Cities of Velmari 12 40") {
+            Command::Shape { ops, .. } => {
+                let Op::Push { value, .. } = &ops[0] else { panic!("expected Push") };
+                assert_eq!(value["name"], json!("Free Cities of Velmari"));
+                assert_eq!(value["capital"], json!([12, 40]));
+                assert!(value.get("era").is_none() && value.get("traits").is_none());
+            }
+            other => panic!("expected Shape, got {other:?}"),
+        }
+    }
+
+    /// The full interview's answers, folded onto the starter base, must yield a
+    /// definition the schema loads with every answer landing where the
+    /// compilers read it (the bug: `/star`, `/tilt`, `/moon`, `/nation` wrote
+    /// stray keys or non-schema shapes and the file no longer parsed).
+    #[test]
+    fn interview_answers_fold_onto_the_starter_base_into_a_valid_world() {
+        let base: Value =
+            serde_hjson::from_str(&crate::world::starter_template("Thalor")).expect("starter parses");
+        let mut ops = Vec::new();
+        for line in [
+            "/star M",
+            "/tilt 31",
+            "/moon Selene 9.5",
+            "/set geology.generated.continents 4",
+            "/set geology.generated.sea_level 0.55",
+            "/set geology.generated.mountain_orogeny active",
+            "/set primary_language Russian",
+            "/nation Velmari 3 4",
+            "/nation Karon",
+            "/set magic.enabled true",
+        ] {
+            match parse(line) {
+                Command::Shape { ops: o, .. } => ops.extend(o),
+                other => panic!("{line}: expected Shape, got {other:?}"),
+            }
+        }
+        let folded = fold_ops(base, &ops).expect("folded world is schema-valid");
+        let world: crate::world::types::WorldDefinition =
+            serde_json::from_value(folded).expect("parses as WorldDefinition");
+        assert_eq!(world.name, "Thalor");
+        assert_eq!(world.astronomy.star.class, "M");
+        assert!((world.astronomy.star.luminosity_solar - 0.05).abs() < 1e-9);
+        assert!((world.astronomy.planet.axial_tilt_deg - 31.0).abs() < 1e-9);
+        let selene = world.astronomy.moons.iter().find(|m| m.name == "Selene").expect("moon pushed");
+        assert!((selene.period_days - 9.5).abs() < 1e-9);
+        let generated = world.geology.as_ref().and_then(|g| g.generated.as_ref()).expect("generated geology");
+        assert_eq!(generated.continents, 4);
+        assert_eq!(world.nations.len(), 2);
+        assert_eq!(world.nations[0].capital, Some([3, 4]));
+        assert_eq!(world.nations[1].capital, None);
+        assert!(world.magic.as_ref().map(|m| m.enabled).unwrap_or(false));
+    }
+
+    #[test]
+    fn fold_ops_refuses_a_delta_that_breaks_the_schema() {
+        let base: Value =
+            serde_hjson::from_str(&crate::world::starter_template("Thalor")).expect("starter parses");
+        let ops = vec![Op::Set {
+            path: vec!["astronomy".into(), "star".into(), "luminosity_solar".into()],
+            value: json!("bright"),
+        }];
+        assert!(fold_ops(base, &ops).is_err());
     }
 
     #[test]

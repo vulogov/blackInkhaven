@@ -2160,7 +2160,9 @@ fn new(project: &Path, name: &str, force: bool) -> Result<()> {
             path.display()
         )));
     }
-    let body = starter_template(name);
+    let body = crate::world::starter_template(name);
+    crate::world::types::WorldDefinition::from_hjson(&body)
+        .map_err(|e| Error::Config(format!("starter world for `{name}` does not parse: {e}")))?;
     crate::io_atomic::write(&path, body.as_bytes())
         .map_err(|e| Error::Store(format!("writing {}: {e}", path.display())))?;
     println!("scaffolded {} for world `{name}`", path.display());
@@ -2495,7 +2497,7 @@ fn write_critique_notes(
             .create_node(&cfg, &h, NodeKind::Paragraph, &title, Some(&notes), None, InsertPosition::End)
             .map_err(|e| Error::Store(format!("creating Note: {e}")))?;
         if let Some(rel) = &node.file {
-            std::fs::write(store.project_root().join(rel), body.as_bytes())
+            crate::io_atomic::write(&store.project_root().join(rel), body.as_bytes())
                 .map_err(|e| Error::Store(format!("writing Note: {e}")))?;
         }
         store
@@ -3167,47 +3169,6 @@ fn materialize_to_store(
     crate::world::materialize::materialize_astronomy(&store, &cfg, out)
 }
 
-/// A minimal, valid starter `world.hjson` (Earth-like, one moon) — enough to
-/// `compile` immediately; the author edits from here.
-fn starter_template(name: &str) -> String {
-    format!(
-        r#"// A world definition for `inkhaven realworld`.
-// Edit freely, then `inkhaven realworld compile --materialize` to compile and
-// write the whole world (astronomy · geology · climate · hydrology · demographics)
-// into the World book, or `compile --layer <name>` for one layer. Geology /
-// climate / hydrology / demographics are generated from `seed` below; add an
-// optional block for any of them to override the defaults, and `magic: {{ … }}`
-// to declare an author rules ledger (`realworld magic`).
-{{
-    name: "{name}"
-    seed: 0x1A2B3C
-    primary_language: "en"
-
-    astronomy: {{
-        star: {{ class: "G2V", age_gyr: 4.6, luminosity_solar: 1.0 }}
-        planet: {{
-            mass_earth: 1.0
-            radius_earth: 1.0
-            axial_tilt_deg: 23.4
-            day_length_hours: 24.0
-            rotation_direction: "prograde"
-        }}
-        orbit: {{ semi_major_axis_au: 1.0, eccentricity: 0.017, year_length_days: 365 }}
-        moons: [
-            {{ name: "Moon", mass_lunar: 1.0, period_days: 27.32 }}
-        ]
-        calendar: {{
-            months: 12
-            month_length_days: 30
-            weekdays: 7
-            new_year_aligns_to: "winter_solstice"
-        }}
-    }}
-}}
-"#
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3259,7 +3220,7 @@ mod tests {
     #[test]
     fn calendar_bridge_maps_astronomy() {
         // W7-P3 — the astronomy calendar → story-Timeline CalendarConfig mapping.
-        let def = crate::world::types::WorldDefinition::from_hjson(&starter_template("Test"))
+        let def = crate::world::types::WorldDefinition::from_hjson(&crate::world::starter_template("Test"))
             .expect("starter template parses");
         let astro = crate::world::compile::compile_astronomy(&def.astronomy);
         let tl = build_timeline_calendar(&def, &astro);
