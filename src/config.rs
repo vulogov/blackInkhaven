@@ -4487,11 +4487,17 @@ pub struct CanonConfig {
     /// Default tokens reserved (out of `context_budget`) for the prompt framing
     /// and the model's answer, used when `--reserve` is left at its default.
     pub context_reserve: usize,
+    /// CANON-UI-1 — when `true` (default), the AI pane's **Book** scope also
+    /// grounds each conversation on the canon ledger: the decisions behind the
+    /// retrieved passages (packed to `context_budget`) ride along with the prose,
+    /// so the model answers from the story's *decisions*, not just its text. An
+    /// empty ledger costs nothing. Toggle per session with `*` in the AI pane.
+    pub ground_ai: bool,
 }
 
 impl Default for CanonConfig {
     fn default() -> Self {
-        Self { harvest_on_save: true, context_budget: 2000, context_reserve: 400 }
+        Self { harvest_on_save: true, context_budget: 2000, context_reserve: 400, ground_ai: true }
     }
 }
 

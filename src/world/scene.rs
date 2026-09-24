@@ -90,14 +90,11 @@ pub fn scene_brief(
 
     // The culture of the realm whose capital sits nearest the place.
     if let Some(p) = place {
-        if let Some((i, pol)) = polities.polities.iter().enumerate().min_by_key(|(_, q)| {
-            let dx = q.capital_pos.0 as i64 - p.x as i64;
-            let dy = q.capital_pos.1 as i64 - p.y as i64;
-            // The grid is equirectangular (an x-cell spans more ground than a
-            // y-cell, ~3:2), so weight the axes before comparing squared distance
-            // — otherwise the *geometrically* nearer realm can lose to a farther.
-            9 * dx * dx + 4 * dy * dy
-        }) {
+        // The same realm metric `compile_polities` uses for membership, so the
+        // brief names the realm the settlement actually belongs to.
+        if let Some((i, pol)) = crate::world::compile::polities_layer::nearest_realm(polities, p.x, p.y)
+            .map(|i| (i, &polities.polities[i]))
+        {
             b.realm = Some(pol.name.clone());
             if let Some(c) = cultures.cultures.get(i) {
                 b.ethos = Some(c.ethos.clone());

@@ -78,3 +78,62 @@ impl fmt::Display for WorldError {
 }
 
 impl std::error::Error for WorldError {}
+
+/// The `world.hjson` scaffold `inkhaven realworld new` writes, and the base the
+/// worldbuilder folds deltas onto when a project has no definition yet — so
+/// every REQUIRED field (name, astronomy star/planet/orbit/calendar) is present.
+pub fn starter_template(name: &str) -> String {
+    // A JSON string literal is valid HJSON, so quotes / backslashes / newlines
+    // in the name can no longer break the file the scaffold writes.
+    let name = serde_json::to_string(name).unwrap_or_else(|_| "\"Untitled world\"".to_string());
+    format!(
+        r#"// A world definition for `inkhaven realworld`.
+// Edit freely, then `inkhaven realworld compile --materialize` to compile and
+// write the whole world (astronomy · geology · climate · hydrology · demographics)
+// into the World book, or `compile --layer <name>` for one layer. Geology /
+// climate / hydrology / demographics are generated from `seed` below; add an
+// optional block for any of them to override the defaults, and `magic: {{ … }}`
+// to declare an author rules ledger (`realworld magic`).
+{{
+    name: {name}
+    seed: 0x1A2B3C
+    primary_language: "en"
+
+    astronomy: {{
+        star: {{ class: "G2V", age_gyr: 4.6, luminosity_solar: 1.0 }}
+        planet: {{
+            mass_earth: 1.0
+            radius_earth: 1.0
+            axial_tilt_deg: 23.4
+            day_length_hours: 24.0
+            rotation_direction: "prograde"
+        }}
+        orbit: {{ semi_major_axis_au: 1.0, eccentricity: 0.017, year_length_days: 365 }}
+        moons: [
+            {{ name: "Moon", mass_lunar: 1.0, period_days: 27.32 }}
+        ]
+        calendar: {{
+            months: 12
+            month_length_days: 30
+            weekdays: 7
+            new_year_aligns_to: "winter_solstice"
+        }}
+    }}
+}}
+"#
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn starter_template_survives_a_hostile_name() {
+        for name in ["Thalor", "The \"Ninth\" Lantern", "back\\slash", "two\nlines", "Земля"] {
+            let def = crate::world::types::WorldDefinition::from_hjson(&starter_template(name))
+                .unwrap_or_else(|e| panic!("{name:?}: {e}"));
+            assert_eq!(def.name, name);
+        }
+    }
+
+    use super::starter_template;
+}

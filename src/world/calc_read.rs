@@ -57,32 +57,33 @@ pub fn chapter(store: &Store, chapter_head: &str) -> Option<Json> {
 /// World book chapter isn't materialized; `None` when there's no `world.hjson` or
 /// the chapter isn't a known layer.
 fn recompile_chapter(store: &Store, chapter_head: &str) -> Option<Json> {
-    use crate::world::compile::{
-        compile_astronomy, compile_climate, compile_demographics, compile_geology, compile_hydrology,
-    };
+    use crate::world::compile::{compile_astronomy, compile_climate, compile_demographics, compile_hydrology};
     use crate::world::types::WorldDefinition;
 
-    let raw = std::fs::read_to_string(store.project_root().join("world.hjson")).ok()?;
+    let root = store.project_root();
+    let raw = std::fs::read_to_string(root.join("world.hjson")).ok()?;
     let def = WorldDefinition::from_hjson(&raw).ok()?;
+    // DEM-aware, like the CLI — the fallback must not contradict the World book.
+    let geology = || crate::world::compile::compile_geology_at_or_generated(&def, &root);
     // The layer dependency chain: astronomy/geology from the definition; the rest
     // consume upstream outputs.
     let value = match chapter_head.to_ascii_lowercase().as_str() {
         "astronomy" => serde_json::to_value(compile_astronomy(&def.astronomy)),
-        "geology" => serde_json::to_value(compile_geology(&def)),
+        "geology" => serde_json::to_value(geology()),
         "climate" => {
             let astro = compile_astronomy(&def.astronomy);
-            let geo = compile_geology(&def);
+            let geo = geology();
             serde_json::to_value(compile_climate(&def, &astro, &geo))
         }
         "hydrology" => {
             let astro = compile_astronomy(&def.astronomy);
-            let geo = compile_geology(&def);
+            let geo = geology();
             let clim = compile_climate(&def, &astro, &geo);
             serde_json::to_value(compile_hydrology(&geo, &clim))
         }
         "demographics" => {
             let astro = compile_astronomy(&def.astronomy);
-            let geo = compile_geology(&def);
+            let geo = geology();
             let clim = compile_climate(&def, &astro, &geo);
             let hydro = compile_hydrology(&geo, &clim);
             serde_json::to_value(compile_demographics(&clim, &hydro))

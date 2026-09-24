@@ -1708,6 +1708,38 @@ pub(crate) enum RightPane {
     /// (e.g. the Inner Theologian slow track). Behaves like the AI pane for
     /// scrolling; no input prompt.
     Thoughts,
+    /// CANON-UI-1 (CU1-P3) — the paragraph-aware Canon pane: the decisions the
+    /// OPEN paragraph sources, live as the cursor moves between paragraphs, each
+    /// with what rests on it (`impact`) and what it rests on (`why`). Read-first;
+    /// a small key set acts in place (jump to a ground, history, the dashboard).
+    Canon,
+}
+
+/// CANON-UI-1 (CU1-P3) — one decision row in the Canon pane.
+#[derive(Debug, Clone)]
+pub(crate) struct CanonPaneRow {
+    pub uid: smysl::Uid,
+    pub kind: String,
+    pub commitment: Option<String>,
+    pub gist: String,
+    /// How many decisions transitively rest on this one.
+    pub impact: usize,
+    /// The nearest grounds this one rests on: (gist, source node), nearest first.
+    pub grounds: Vec<(String, Option<Uuid>)>,
+    /// Grounds beyond the ones listed.
+    pub grounds_more: usize,
+}
+
+/// CANON-UI-1 (CU1-P3) — the Canon pane's cached view of the open paragraph.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct CanonPaneState {
+    /// The paragraph the rows were computed for (`None` = nothing open).
+    pub node: Option<Uuid>,
+    pub title: String,
+    pub rows: Vec<CanonPaneRow>,
+    pub cursor: usize,
+    /// Set when the ledger could not be read (shown instead of rows).
+    pub error: Option<String>,
 }
 
 /// WORLD-10 — the world-level compile cached for the scene context (recomputed
@@ -1725,6 +1757,7 @@ impl RightPane {
             RightPane::Output => "Output",
             RightPane::Ai => "AI",
             RightPane::Thoughts => "Thoughts",
+            RightPane::Canon => "Canon",
         }
     }
 }
@@ -1865,6 +1898,11 @@ pub(crate) struct App {
     tree_badges: std::collections::HashMap<Uuid, (usize, crate::pane::output::Severity)>,
     /// When `tree_badges` was last recomputed (throttle clock).
     tree_badges_at: std::time::Instant,
+    /// CANON-UI-1 (A1) — manuscript nodes that source a canon decision, for the
+    /// Tree/Outline `◈` marker. Refreshed on the same throttle as `tree_badges`.
+    canon_source_nodes: std::collections::HashSet<Uuid>,
+    /// When `canon_source_nodes` was last recomputed (throttle clock).
+    canon_source_nodes_at: std::time::Instant,
     /// WORLD-4 — the debounced fast fact-checker. Enabled when the project has a
     /// `world.hjson` (set at open + after a compile). `fc_last_fp` fingerprints
     /// the open paragraph; a change arms `fc_activity_at`, and 5 s of quiet fires
@@ -2429,6 +2467,13 @@ pub(crate) struct App {
     /// BOOK_RAG-1 — whether the "Retrieved passages" transparency section is
     /// expanded in the chat pane. Collapsed by default; toggled with `p`.
     book_rag_passages_expanded: bool,
+    /// CANON-UI-1 (CU1-P2) — whether Book scope grounds on the canon ledger too
+    /// (seeded from `canon.ground_ai`; `*` in the AI pane toggles it per session).
+    book_rag_canon_grounding: bool,
+    /// CANON-UI-1 (CU1-P2) — the canon decisions packed for the last Book-scope
+    /// retrieval (cached with it for the session; shown in the transparency
+    /// section + the `◈ N canon` title cue). `None` when off / nothing relevant.
+    book_rag_last_canon: Option<crate::canon::PackedContext>,
     /// 3.9 — cursor into the answer's cited passages for `[`/`]` navigation
     /// (jump to the cited paragraph). `usize::MAX` = not started; reset on each
     /// fresh retrieval.
@@ -2521,6 +2566,10 @@ pub(crate) struct App {
     thoughts: Vec<String>,
     /// Lines scrolled up from the bottom of the Thoughts pane (PageUp adds).
     thoughts_scroll: usize,
+    /// CANON-UI-1 (CU1-P3) — the Canon pane's rows for the open paragraph, and
+    /// when they were computed (refreshed on paragraph change + a slow tick).
+    canon_pane: CanonPaneState,
+    canon_pane_at: std::time::Instant,
 
     /// Active chat-history search state (Ctrl+F in AI-fullscreen).
     /// While Some, matching lines render with a highlight bg and
@@ -3624,6 +3673,7 @@ impl App {
             None
         };
         let initial_mouse_captured = cfg.editor.mouse_captured;
+        let canon_ground_ai = cfg.canon.ground_ai;
         // Resolve the TTS engine before the struct
         // literal moves `cfg` + `layout` into the App.
         // T.1: "auto" falls through to System on every
@@ -3740,6 +3790,8 @@ impl App {
             output_query_focused: false,
             tree_badges: std::collections::HashMap::new(),
             tree_badges_at: std::time::Instant::now(),
+            canon_source_nodes: std::collections::HashSet::new(),
+            canon_source_nodes_at: std::time::Instant::now(),
             tree_cursor: 0,
             tree_scroll: 0,
             search_input: TextInput::new(),
@@ -3802,6 +3854,8 @@ impl App {
             chat_history: Vec::new(),
             thoughts: Vec::new(),
             thoughts_scroll: 0,
+            canon_pane: CanonPaneState::default(),
+            canon_pane_at: std::time::Instant::now(),
             system_prompt_override: None,
             pending_chat_user_msg: None,
             pending_paragraph_memory_target: None,
@@ -3834,6 +3888,8 @@ impl App {
             graph_walk: None,
             pending_book_rag_cited: None,
             book_rag_passages_expanded: false,
+            book_rag_canon_grounding: canon_ground_ai,
+            book_rag_last_canon: None,
             book_rag_cite_cursor: usize::MAX,
             book_rag_nudged_stale: false,
             inference_mode: InferenceMode::Full,
@@ -5852,6 +5908,7 @@ impl App {
             // THOUGHTS-1 — when it shows Thoughts, the Thoughts scroll keys win.
             Focus::Ai if self.right_pane == RightPane::Output => self.handle_output_key(key),
             Focus::Ai if self.right_pane == RightPane::Thoughts => self.handle_thoughts_key(key),
+            Focus::Ai if self.right_pane == RightPane::Canon => self.handle_canon_pane_key(key),
             Focus::Ai => self.handle_passive_key(key),
             Focus::SearchBar => self.handle_input_key(key, true),
             Focus::AiPrompt => self.handle_input_key(key, false),
@@ -6934,6 +6991,18 @@ impl App {
             };
             return Ok(false);
         }
+        // CANON-UI-1 (CU1-P2) — `*` toggles canon grounding for Book scope
+        // (the same `*` that opens the Canon dashboard under Ctrl+B).
+        if self.focus == Focus::Ai && matches!(key.code, KeyCode::Char('*')) {
+            self.book_rag_canon_grounding = !self.book_rag_canon_grounding;
+            self.status = if self.book_rag_canon_grounding {
+                "canon grounding: on — the next Book-scope retrieval also packs ◈ decisions".into()
+            } else {
+                self.book_rag_last_canon = None;
+                "canon grounding: off — Book scope grounds on prose only".into()
+            };
+            return Ok(false);
+        }
         // 3.9 — scroll the split-view single-response view (works while
         // streaming or done). `ai_response_scroll` is a distance UP from the
         // bottom-pin: 0 follows the streaming tail; Home tops out, End re-arms
@@ -7213,6 +7282,7 @@ impl App {
             "Output" => self.right_pane = RightPane::Output,
             "Ai" => self.right_pane = RightPane::Ai,
             "Thoughts" => self.right_pane = RightPane::Thoughts,
+            "Canon" => self.right_pane = RightPane::Canon,
             _ => {}
         }
         // PANE-1 filtering — restore the Output pane's saved filter.
@@ -9643,7 +9713,8 @@ impl App {
     /// only Output and AI today both directions toggle; focus moves to the
     /// region so its keys (and the cycle chord) take effect immediately.
     fn cycle_right_pane(&mut self, forward: bool) {
-        const ORDER: [RightPane; 3] = [RightPane::Output, RightPane::Ai, RightPane::Thoughts];
+        const ORDER: [RightPane; 4] =
+            [RightPane::Output, RightPane::Ai, RightPane::Thoughts, RightPane::Canon];
         let idx = ORDER.iter().position(|p| *p == self.right_pane).unwrap_or(0);
         let target = if forward {
             ORDER[(idx + 1) % ORDER.len()]
@@ -9656,9 +9727,15 @@ impl App {
         // AI for Focus::Ai — THOUGHTS-1).
         self.change_focus(Focus::Ai);
         self.right_pane = target;
+        if target == RightPane::Canon {
+            self.refresh_canon_pane(true);
+        }
         // PANE-1 — persist the pane choice so it survives a restart.
         let _ = self.save_session();
-        self.status = format!("pane → {}", right_pane_label(target));
+        self.status = match target {
+            RightPane::Canon => "pane → Canon · the open paragraph's decisions · ↑↓ · Enter ground · h history · * ledger".into(),
+            other => format!("pane → {}", right_pane_label(other)),
+        };
     }
 
     /// THOUGHTS-1 — append a reflective block to the Thoughts pane and surface it
@@ -15946,10 +16023,10 @@ impl App {
         {
             use crate::world::compile::{
                 compile_climate, compile_culture, compile_demographics, compile_ecology,
-                compile_geology, compile_history, compile_hydrology, compile_polities,
+                compile_history, compile_hydrology, compile_polities,
             };
             let seed = def.seed_u64();
-            let geo = compile_geology(&def);
+            let geo = crate::world::compile::compile_geology_at_or_generated(&def, root);
             let climate = compile_climate(&def, &out, &geo);
             let hydro = compile_hydrology(&geo, &climate);
             let demo = compile_demographics(&climate, &hydro);
@@ -15990,7 +16067,7 @@ impl App {
 
             // WORLD-8/9 — the derived history + peoples passes.
             let declared_hist = def.history.as_ref().map(|h| h.events.as_slice()).unwrap_or(&[]);
-            let hist = compile_history(&demo, declared_hist, seed);
+            let hist = compile_history(&demo, declared_hist, &def.nations, seed);
             rows.push(format!("History  (derived)  {}", mark("History")));
             rows.push(format!(
                 "  {} years · {} epoch(s) · {} founding(s) · {} event(s)",
@@ -16260,24 +16337,34 @@ impl App {
         let trade = compile_trade(&pol, &geo, def.astronomy.planet.radius_earth);
 
         use crate::world::materialize as m;
-        let steps: Vec<crate::error::Result<m::MaterializeReport>> = vec![
-            m::materialize_astronomy(&self.store, &self.cfg, &astro),
-            m::materialize_geology(&self.store, &self.cfg, &geo),
-            m::materialize_climate(&self.store, &self.cfg, &climate),
-            m::materialize_hydrology(&self.store, &self.cfg, &hydro),
-            m::materialize_demographics(&self.store, &self.cfg, &demo),
-            m::materialize_polities(&self.store, &self.cfg, &pol),
-            m::materialize_culture(&self.store, &self.cfg, &cultures, &demo.role_archetypes, &capital_biomes),
-            m::materialize_ecology(&self.store, &self.cfg, &eco),
-            m::materialize_trade(&self.store, &self.cfg, &pol, &trade),
-            m::materialize_magic(&self.store, &self.cfg, &def.magic.clone().unwrap_or_default()),
-            m::materialize_setting(&self.store, &self.cfg, &def),
+        // Sequential, stopping at the first failure (the earlier `vec![…]` ran
+        // every step eagerly and reported only the first error); the hierarchy
+        // is refreshed either way so the partial writes are visible.
+        let magic = def.magic.clone().unwrap_or_default();
+        let steps: Vec<(&str, Box<dyn FnOnce() -> crate::error::Result<m::MaterializeReport> + '_>)> = vec![
+            ("astronomy", Box::new(|| m::materialize_astronomy(&self.store, &self.cfg, &astro))),
+            ("geology", Box::new(|| m::materialize_geology(&self.store, &self.cfg, &geo))),
+            ("climate", Box::new(|| m::materialize_climate(&self.store, &self.cfg, &climate))),
+            ("hydrology", Box::new(|| m::materialize_hydrology(&self.store, &self.cfg, &hydro))),
+            ("demographics", Box::new(|| m::materialize_demographics(&self.store, &self.cfg, &demo))),
+            ("polities", Box::new(|| m::materialize_polities(&self.store, &self.cfg, &pol))),
+            ("culture", Box::new(|| m::materialize_culture(&self.store, &self.cfg, &cultures, &demo.role_archetypes, &capital_biomes))),
+            ("ecology", Box::new(|| m::materialize_ecology(&self.store, &self.cfg, &eco))),
+            ("trade", Box::new(|| m::materialize_trade(&self.store, &self.cfg, &pol, &trade))),
+            ("magic", Box::new(|| m::materialize_magic(&self.store, &self.cfg, &magic))),
+            ("setting", Box::new(|| m::materialize_setting(&self.store, &self.cfg, &def))),
         ];
-        for s in &steps {
-            if let Err(e) = s {
-                self.status = format!("world materialize: {e}");
-                return;
+        let mut failed: Option<String> = None;
+        for (layer, step) in steps {
+            if let Err(e) = step() {
+                failed = Some(format!("world materialize ({layer}): {e} — later layers skipped"));
+                break;
             }
+        }
+        if let Some(msg) = failed {
+            self.refresh_hierarchy_after_world_write();
+            self.status = msg;
+            return;
         }
 
         // Everything the world offers: Places, plus the culture-derived bridges
@@ -17385,18 +17472,18 @@ impl App {
     /// the development-ledger decisions with kind + commitment, plus commitment
     /// forks. Enter jumps to a decision's source paragraph.
     fn open_canon(&mut self) {
-        let (rows, anchors, decisions) = self.build_canon_rows();
+        let (rows, anchors, decisions) = self.build_canon_rows(false);
         // Advertise the actions whenever there are decisions — g/h work on any
         // decision row, even one with no jump anchor (a node-less/merged decision).
         self.status = if decisions.iter().any(|d| d.is_some()) {
-            "canon · ↑↓ scroll · Enter jump · g ground · h history · Esc".into()
+            "canon · ↑↓ · Enter jump · g ground · h history · t graph · Esc".into()
         } else {
             "canon · Esc".into()
         };
-        self.modal = Modal::Canon { rows, anchors, decisions, cursor: 0, grounding: None };
+        self.modal = Modal::Canon { rows, anchors, decisions, cursor: 0, grounding: None, graph: false };
     }
 
-    fn build_canon_rows(&self) -> (Vec<String>, Vec<Option<Uuid>>, Vec<Option<smysl::Uid>>) {
+    fn build_canon_rows(&self, graph: bool) -> (Vec<String>, Vec<Option<Uuid>>, Vec<Option<smysl::Uid>>) {
         let mut rows: Vec<String> = Vec::new();
         let mut anchors: Vec<Option<Uuid>> = Vec::new();
         let mut decisions_ids: Vec<Option<smysl::Uid>> = Vec::new();
@@ -17406,6 +17493,35 @@ impl App {
             decisions_ids.push(decision);
         };
         let canon = self.store.raw().canon();
+        let fmt = |kind: Option<crate::canon::NarrativeKind>, commit: Option<smysl::Commitment>| {
+            let k = kind.map(|k| k.schema_str().trim_start_matches("x.narrative/")).unwrap_or("?");
+            (k, commit.map(|c| format!(" «{c}»")).unwrap_or_default())
+        };
+        // CANON-3 (3.14) — the grounds-DAG view: each foundation, then what rests
+        // on it, indented. Shares the anchor/decision machinery with the list.
+        if graph {
+            let dag = match canon.graph(None) {
+                Ok(g) => g,
+                Err(e) => {
+                    push(format!("canon graph unavailable: {e}"), None, None);
+                    return (rows, anchors, decisions_ids);
+                }
+            };
+            if dag.is_empty() {
+                push("◆ Canon graph".into(), None, None);
+                push(String::new(), None, None);
+                push("  no decisions yet.".into(), None, None);
+                return (rows, anchors, decisions_ids);
+            }
+            push("◆ Canon graph — foundations, then what rests on them".into(), None, None);
+            push(String::new(), None, None);
+            for r in &dag {
+                let (kind, commit) = fmt(r.view.kind, r.view.commitment);
+                let indent = "  ".repeat(r.depth + 1);
+                push(format!("{indent}[{kind}]{commit} {}", r.view.gist), r.view.node, Some(r.view.uid));
+            }
+            return (rows, anchors, decisions_ids);
+        }
         let decisions = match canon.all_decisions() {
             Ok(d) => d,
             Err(e) => {
@@ -17426,11 +17542,7 @@ impl App {
         push(format!("◆ Canon ledger — {} decision(s)", decisions.len()), None, None);
         push(String::new(), None, None);
         for v in &decisions {
-            let kind = v
-                .kind
-                .map(|k| k.schema_str().trim_start_matches("x.narrative/"))
-                .unwrap_or("?");
-            let commit = v.commitment.map(|c| format!(" «{c}»")).unwrap_or_default();
+            let (kind, commit) = fmt(v.kind, v.commitment);
             push(format!("  [{kind}]{commit} {}", v.gist), v.node, Some(v.uid));
         }
         if let Ok(forks) = canon.commitment_forks() {
@@ -17498,6 +17610,17 @@ impl App {
                     None => self.status = "canon: put the cursor on a decision, then h".into(),
                 }
             }
+            KeyCode::Char('t') if !grounding => {
+                // Toggle the flat list ↔ the grounds-DAG view, rebuilding rows.
+                let graph = !matches!(&self.modal, Modal::Canon { graph: true, .. });
+                let (rows, anchors, decisions) = self.build_canon_rows(graph);
+                self.status = if graph {
+                    "canon graph · ↑↓ · Enter jump · g ground · h history · t list · Esc".into()
+                } else {
+                    "canon · ↑↓ · Enter jump · g ground · h history · t graph · Esc".into()
+                };
+                self.modal = Modal::Canon { rows, anchors, decisions, cursor: 0, grounding: None, graph };
+            }
             KeyCode::Enter if grounding => {
                 let (src, dst) = match &self.modal {
                     Modal::Canon { decisions, cursor, grounding: Some(g), .. } => (
@@ -17552,13 +17675,15 @@ impl App {
             Ok(_) => self.status = "canon · grounded".into(),
             Err(e) => self.status = format!("canon: grounding failed — {e}"),
         }
-        // Rebuild (grounding cleared), reflecting the new/​superseded ids.
-        let (rows, anchors, decisions) = self.build_canon_rows();
+        // Rebuild (grounding cleared), reflecting the new/​superseded ids and
+        // preserving the current list/graph view.
+        let graph = matches!(&self.modal, Modal::Canon { graph: true, .. });
+        let (rows, anchors, decisions) = self.build_canon_rows(graph);
         let cursor = match &self.modal {
             Modal::Canon { cursor, .. } => (*cursor).min(rows.len().saturating_sub(1)),
             _ => 0,
         };
-        self.modal = Modal::Canon { rows, anchors, decisions, cursor, grounding: None };
+        self.modal = Modal::Canon { rows, anchors, decisions, cursor, grounding: None, graph };
     }
 
     /// CG-P4 — render the cursored decision's development history (grounds +
@@ -20139,14 +20264,14 @@ impl App {
     fn compute_scene_world(&self) -> Option<SceneWorld> {
         use crate::world::compile::{
             compile_astronomy, compile_climate, compile_culture, compile_demographics,
-            compile_geology, compile_hydrology, compile_polities,
+            compile_hydrology, compile_polities,
         };
         let root = self.store.project_root();
         let raw = std::fs::read_to_string(root.join("world.hjson")).ok()?;
         let def = crate::world::types::WorldDefinition::from_hjson(&raw).ok()?;
         let seed = def.seed_u64();
         let astro = compile_astronomy(&def.astronomy);
-        let geo = compile_geology(&def);
+        let geo = crate::world::compile::compile_geology_at_or_generated(&def, &root);
         let climate = compile_climate(&def, &astro, &geo);
         let hydro = compile_hydrology(&geo, &climate);
         let demo = compile_demographics(&climate, &hydro);
@@ -20205,6 +20330,148 @@ impl App {
         if self.tree_badges_at.elapsed() >= std::time::Duration::from_millis(900) {
             self.refresh_tree_badges();
         }
+        if self.canon_source_nodes_at.elapsed() >= std::time::Duration::from_millis(900) {
+            self.refresh_canon_source_nodes();
+        }
+        // CANON-UI-1 (CU1-P3) — keep the Canon pane on the open paragraph. A
+        // paragraph change refreshes at once; otherwise a slow tick picks up
+        // ledger edits (harvest on save, dashboard grounding) while visible.
+        if self.right_pane == RightPane::Canon {
+            let opened = self.opened.as_ref().map(|d| d.id);
+            let stale = self.canon_pane_at.elapsed() >= std::time::Duration::from_millis(2500);
+            if opened != self.canon_pane.node || stale {
+                self.refresh_canon_pane(opened != self.canon_pane.node);
+            }
+        }
+    }
+
+    /// CANON-UI-1 (CU1-P3) — recompute the Canon pane for the open paragraph:
+    /// the decisions it sources, each with its impact count and nearest grounds.
+    /// `reset_cursor` when the paragraph changed. Bounded by the per-project
+    /// ledger (small); read-only.
+    fn refresh_canon_pane(&mut self, reset_cursor: bool) {
+        let opened = self.opened.as_ref().map(|d| d.id);
+        let title = opened
+            .and_then(|id| self.hierarchy.get(id))
+            .map(|n| n.title.clone())
+            .unwrap_or_default();
+        let mut state = CanonPaneState { node: opened, title, ..Default::default() };
+        if let Some(id) = opened {
+            let canon = self.store.raw().canon();
+            match canon.units_for_node(id) {
+                Ok(uids) => {
+                    for uid in uids {
+                        let Ok(Some(v)) = canon.view(uid) else { continue };
+                        let impact = canon.impact(uid).map(|d| d.len()).unwrap_or(0);
+                        let why = canon.why(uid).unwrap_or_default();
+                        let direct: Vec<(String, Option<Uuid>)> = why
+                            .iter()
+                            .filter(|g| v.grounds.contains(&g.uid))
+                            .map(|g| (g.gist.clone(), g.node))
+                            .collect();
+                        let grounds_more = why.len().saturating_sub(direct.len());
+                        state.rows.push(CanonPaneRow {
+                            uid,
+                            kind: v
+                                .kind
+                                .map(|k| k.schema_str().trim_start_matches("x.narrative/").to_string())
+                                .unwrap_or_else(|| "?".into()),
+                            commitment: v.commitment.map(|c| c.to_string()),
+                            gist: v.gist.clone(),
+                            impact,
+                            grounds: direct,
+                            grounds_more,
+                        });
+                    }
+                }
+                Err(e) => state.error = Some(e.to_string()),
+            }
+        }
+        state.cursor = if reset_cursor {
+            0
+        } else {
+            self.canon_pane.cursor.min(state.rows.len().saturating_sub(1))
+        };
+        self.canon_pane = state;
+        self.canon_pane_at = std::time::Instant::now();
+    }
+
+    /// CANON-UI-1 (CU1-P3) — keys while the Canon pane has focus. Read-first: move
+    /// between the paragraph's decisions; `Enter` jumps to the cursored decision's
+    /// first ground's source paragraph (what it rests on); `h` shows its history in
+    /// Thoughts; `*` opens the whole-ledger dashboard on it; `Esc` back.
+    fn handle_canon_pane_key(&mut self, key: KeyEvent) -> Result<bool> {
+        let n = self.canon_pane.rows.len();
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.canon_pane.cursor = self.canon_pane.cursor.saturating_sub(1);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if n > 0 {
+                    self.canon_pane.cursor = (self.canon_pane.cursor + 1).min(n - 1);
+                }
+            }
+            KeyCode::Char('g') | KeyCode::Home => self.canon_pane.cursor = 0,
+            KeyCode::Char('G') | KeyCode::End => self.canon_pane.cursor = n.saturating_sub(1),
+            KeyCode::Char('r') | KeyCode::Char('R') => {
+                self.refresh_canon_pane(false);
+                self.status = "canon pane refreshed".into();
+            }
+            KeyCode::Enter => {
+                let target = self
+                    .canon_pane
+                    .rows
+                    .get(self.canon_pane.cursor)
+                    .and_then(|r| r.grounds.iter().find_map(|(_, node)| *node));
+                match target {
+                    Some(id) => {
+                        if let Err(e) = self.open_paragraph_by_uuid(id) {
+                            self.status = format!("canon: {e}");
+                        }
+                    }
+                    None if n == 0 => self.status = "canon: nothing to jump to".into(),
+                    None => {
+                        self.status =
+                            "canon: this decision rests on nothing with a source paragraph · Ctrl+B * → g to ground it"
+                                .into()
+                    }
+                }
+            }
+            KeyCode::Char('h') | KeyCode::Char('H') => {
+                match self.canon_pane.rows.get(self.canon_pane.cursor).map(|r| r.uid) {
+                    Some(uid) => self.canon_show_history(uid),
+                    None => self.status = "canon: no decision under the cursor".into(),
+                }
+            }
+            KeyCode::Char('*') => {
+                let uid = self.canon_pane.rows.get(self.canon_pane.cursor).map(|r| r.uid);
+                self.open_canon();
+                // Land the dashboard cursor on the same decision.
+                if let (Some(uid), Modal::Canon { decisions, cursor, .. }) = (uid, &mut self.modal) {
+                    if let Some(i) = decisions.iter().position(|d| *d == Some(uid)) {
+                        *cursor = i;
+                    }
+                }
+            }
+            KeyCode::Esc => {
+                if self.right_fullscreen {
+                    self.right_fullscreen = false;
+                    self.status = "exited fullscreen".into();
+                } else {
+                    self.change_focus(Focus::Editor);
+                }
+            }
+            _ => return Ok(false),
+        }
+        Ok(false)
+    }
+
+    /// CANON-UI-1 (A1) — recompute which nodes source a canon decision, for the
+    /// Tree/Outline marker. Cheap (a read over the small per-project ledger).
+    fn refresh_canon_source_nodes(&mut self) {
+        self.canon_source_nodes =
+            self.store.raw().canon().decision_source_nodes().unwrap_or_default();
+        self.canon_source_nodes_at = std::time::Instant::now();
     }
 
     /// Rebuild `tree_badges` from the active Output findings.
@@ -26315,7 +26582,7 @@ impl App {
     fn toggle_right_pane_fullscreen(&mut self) {
         match self.right_pane {
             RightPane::Ai => self.toggle_ai_fullscreen(),
-            RightPane::Output | RightPane::Thoughts => {
+            RightPane::Output | RightPane::Thoughts | RightPane::Canon => {
                 self.right_fullscreen = !self.right_fullscreen;
                 if self.right_fullscreen {
                     // The three fullscreens are exclusive.
@@ -31670,7 +31937,9 @@ impl App {
         // THOUGHTS-1 — fullscreen the current right pane when it is Output or
         // Thoughts (the AI pane has its own `ai_fullscreen` layout above). Tree,
         // editor, search bar, and AI prompt are hidden; one status line remains.
-        if self.right_fullscreen && matches!(self.right_pane, RightPane::Output | RightPane::Thoughts) {
+        if self.right_fullscreen
+            && matches!(self.right_pane, RightPane::Output | RightPane::Thoughts | RightPane::Canon)
+        {
             let outer = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Min(0), Constraint::Length(1)])
@@ -31683,6 +31952,7 @@ impl App {
             match self.right_pane {
                 RightPane::Output => self.draw_output(f, outer[0]),
                 RightPane::Thoughts => self.draw_thoughts(f, outer[0]),
+                RightPane::Canon => self.draw_canon_pane(f, outer[0]),
                 RightPane::Ai => {}
             }
             self.draw_status(f, outer[1]);
@@ -31760,6 +32030,7 @@ impl App {
                 RightPane::Output => self.draw_output(f, body[2]),
                 RightPane::Ai => self.draw_ai(f, body[2]),
                 RightPane::Thoughts => self.draw_thoughts(f, body[2]),
+                RightPane::Canon => self.draw_canon_pane(f, body[2]),
             }
         }
         self.draw_ai_prompt(f, outer[2]);
@@ -32724,7 +32995,7 @@ impl App {
     /// underlying `save_current` writes to disk + bdslib + re-embeds.
     /// THOUGHTS-1 — the plain-Tab focus cycle (Tree → Editor → right region →
     /// Tree). When it lands on the right region (`Focus::Ai`), keep whatever pane
-    /// is currently shown (Output / AI / Thoughts) instead of forcing AI —
+    /// is currently shown (Output / AI / Thoughts / Canon) instead of forcing AI —
     /// `change_focus` forces AI for one-shot AI ops, which Tab is not.
     fn focus_cycle(&mut self, new: Focus) {
         let keep = self.right_pane;

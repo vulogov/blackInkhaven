@@ -184,10 +184,13 @@ geography: {
 
 #section("An AI reading of your world")
 
-The world checks itself as far as arithmetic can: `realworld validate` compiles
-every layer and runs the deterministic lints — a river that flows uphill, a
-seafaring people with no coast, a declared nation that sits on no land. Those
-checks are certain, but they are narrow. They cannot tell you that a 360-day
+The world checks itself as far as arithmetic can: `realworld validate` lints the
+definition itself — a calendar with no months, an orbit that is not closed, a
+`stance` or an orogeny spelled in a way no compiler recognises, a relation with a
+nation you never declared — then compiles every layer and runs the deterministic
+lints downstream: a river that flows uphill, a seafaring people with no coast, a
+declared nation that sits on no land, more nations than there are settlements to
+seat them. Those checks are certain, but they are narrow. They cannot tell you that a 360-day
 calendar quietly disagrees with a 365-day orbit, or that an Earth-like planet has
 no business freezing to a mean of five below. For the judgements that need a
 reader rather than a rule, there is one more pass, and it is the only place in the

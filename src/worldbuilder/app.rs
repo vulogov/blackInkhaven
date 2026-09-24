@@ -131,6 +131,9 @@ pub(crate) struct WorldbuilderApp {
     // — World shaping (WB-P4) ——————————————————————————————————————————
     /// Accepted-but-uncommitted edits; `/write` folds them into world.hjson.
     pub(super) pending_ops: Vec<super::commands::Op>,
+    /// Delta boundaries over `pending_ops` (sizes, in order) — `/undo` drops a
+    /// whole accepted delta (`/star` = 2 ops), never half of one.
+    pending_groups: Vec<usize>,
     /// A shaping delta awaiting the author's y/n confirmation.
     pub(super) hjson_preview: Option<(String, Vec<super::commands::Op>)>,
 
@@ -234,6 +237,10 @@ impl WorldbuilderApp {
         let now = chrono::Utc::now().to_rfc3339();
         let session_name = inv.session.as_deref().unwrap_or("default");
         let session = WorldbuilderSession::open_or_create(&layout, session_name, now)?;
+        let initial_status = match session.recovered_from.as_deref() {
+            Some(p) => format!("session file could not be read — moved aside to {p}; starting fresh"),
+            None => "worldbuilder — Tab cycles panes · Ctrl+Q quits".to_string(),
+        };
 
         let theme = Theme::from_config(&cfg.theme);
         let cfg_images_preview = cfg.images.preview_enabled;
@@ -266,6 +273,7 @@ impl WorldbuilderApp {
             streaming_turn: None,
             // WB-P10 — restore the accepted-but-uncommitted delta from the session.
             pending_ops: session.pending_ops.clone(),
+            pending_groups: session.pending_groups.clone(),
             hjson_preview: None,
             plausibility_score: None,
             compiled_summary: None,
@@ -299,7 +307,7 @@ impl WorldbuilderApp {
             plausibility_warnings: Vec::new(),
             session,
             should_quit: false,
-            status: "worldbuilder — Tab cycles panes · Ctrl+Q quits".to_string(),
+            status: initial_status,
             show_hints: true,
             theme,
         };
@@ -345,9 +353,7 @@ impl WorldbuilderApp {
     /// uncommitted delta survives a quit.
     fn persist_pending(&mut self) {
         self.session.pending_ops = self.pending_ops.clone();
-        if self.session.world_name.is_empty() {
-            self.session.world_name = self.world_name().to_string();
-        }
+        self.session.pending_groups = self.pending_groups.clone();
         if let Err(e) = self.session.save(&self.layout) {
             self.status = format!("session save failed: {e}");
         }
@@ -603,6 +609,7 @@ impl WorldbuilderApp {
             Command::Reset => {
                 let n = self.pending_ops.len();
                 self.pending_ops.clear();
+                self.pending_groups.clear();
                 self.refresh_plausibility();
                 self.persist_pending();
                 self.status = format!("reset — discarded {n} pending delta(s)");
@@ -839,13 +846,18 @@ impl WorldbuilderApp {
             self.status = "terrain buffer invalid".into();
             return;
         };
-        if let Err(e) = img.save(self.layout.root.join(rel)) {
+        let mut png: Vec<u8> = Vec::new();
+        if let Err(e) = img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png) {
+            self.status = format!("terrain PNG encode failed: {e}");
+            return;
+        }
+        if let Err(e) = crate::io_atomic::write(&self.layout.root.join(rel), &png) {
             self.status = format!("terrain PNG write failed: {e}");
             return;
         }
         let sea_px = (self.map_terrain_sea.clamp(0.0, 1.0) * 65535.0) as u16;
         let value = serde_json::json!({ "path": rel, "sea_level_pixel_value": sea_px });
-        self.pending_ops.push(super::commands::Op::Set {
+        self.push_pending_one(super::commands::Op::Set {
             path: vec!["geology".into(), "dem".into()],
             value,
         });
@@ -981,11 +993,10 @@ impl WorldbuilderApp {
     /// Place a region anchor into `geography.regions[]` as a pending edit (P4).
     fn place_region(&mut self, x: usize, y: usize, name: String, biome: String) {
         let value = serde_json::json!({ "name": name, "biome": biome, "x": x, "y": y });
-        self.pending_ops.push(super::commands::Op::Push {
+        self.push_pending_one(super::commands::Op::Push {
             path: vec!["geography".into(), "regions".into()],
             value,
         });
-        self.refresh_plausibility();
         if let Some(def) = self.current_world_def() {
             self.populate_map_caches(&def);
         }
@@ -1002,11 +1013,10 @@ impl WorldbuilderApp {
     /// Place a road into `geography.roads[]` connecting two named landmarks (P6).
     fn place_road(&mut self, from: String, to: String) {
         let value = serde_json::json!({ "from": from, "to": to, "kind": "road" });
-        self.pending_ops.push(super::commands::Op::Push {
+        self.push_pending_one(super::commands::Op::Push {
             path: vec!["geography".into(), "roads".into()],
             value,
         });
-        self.refresh_plausibility();
         if let Some(def) = self.current_world_def() {
             self.populate_map_caches(&def);
         }
@@ -1083,11 +1093,10 @@ impl WorldbuilderApp {
             "from": [from.0, from.1],
             "to": [to.0, to.1],
         });
-        self.pending_ops.push(super::commands::Op::Push {
+        self.push_pending_one(super::commands::Op::Push {
             path: vec!["hydrology".into(), "rivers".into()],
             value,
         });
-        self.refresh_plausibility();
         if let Some(def) = self.current_world_def() {
             self.populate_map_caches(&def);
         }
@@ -1121,11 +1130,10 @@ impl WorldbuilderApp {
     /// re-populate the map caches so it appears immediately (P2).
     fn place_landmark(&mut self, x: usize, y: usize, name: String, geo_kind: &str) {
         let value = serde_json::json!({ "name": name, "kind": geo_kind, "x": x, "y": y });
-        self.pending_ops.push(super::commands::Op::Push {
+        self.push_pending_one(super::commands::Op::Push {
             path: vec!["geography".into(), "landmarks".into()],
             value,
         });
-        self.refresh_plausibility();
         if let Some(def) = self.current_world_def() {
             self.populate_map_caches(&def);
         }
@@ -1163,14 +1171,14 @@ impl WorldbuilderApp {
 
     /// Push a `RemoveAt` for `geography.<array>[index]`, re-populate, and report.
     fn remove_feature(&mut self, array: &str, index: usize, label: &str, at: (usize, usize)) {
-        self.pending_ops.push(super::commands::Op::RemoveAt {
+        self.push_pending_one(super::commands::Op::RemoveAt {
             path: vec!["geography".into(), array.into()],
             index,
         });
-        self.refresh_plausibility();
         if let Some(def) = self.current_world_def() {
             self.populate_map_caches(&def);
         }
+        self.record_turn(format!("map: remove {label}"), format!("at ({},{})", at.0, at.1), Vec::new());
         self.status = format!("removed {label} at ({},{}) · /write to commit", at.0, at.1);
     }
 
@@ -1347,6 +1355,7 @@ impl WorldbuilderApp {
         self.session.left_split = self.left_split;
         self.session.split_ratio = self.split_ratio;
         self.session.pending_ops = self.pending_ops.clone();
+        self.session.pending_groups = self.pending_groups.clone();
         let _ = self.session.save(&self.layout);
 
         let now = chrono::Utc::now().to_rfc3339();
@@ -1361,10 +1370,17 @@ impl WorldbuilderApp {
         self.left_split = target.left_split.clamp(2, 8);
         self.split_ratio = target.split_ratio.clamp(2, 8);
         self.pending_ops = target.pending_ops.clone();
+        self.pending_groups = target.pending_groups.clone();
+        let recovered = target.recovered_from.clone();
         self.session = target;
         // Fresh conversation + research state for the new session.
         self.chat.clear();
         self.chat_scroll = 0;
+        self.stream_rx = None;
+        self.streaming_turn = None;
+        if let Some(p) = recovered {
+            self.push_turn(String::new(), format!("session file could not be read — moved aside to {p}; starting fresh"));
+        }
         self.research_query = None;
         self.research_hits.clear();
         self.research_cursor = 0;
@@ -1429,8 +1445,11 @@ impl WorldbuilderApp {
         let cmd = step.template.replace("{}", answer);
         match super::commands::parse(&cmd) {
             super::commands::Command::Shape { label, ops } => {
-                self.pending_ops.extend(ops);
-                self.refresh_plausibility();
+                if let Err(e) = self.push_pending(ops) {
+                    // Keep the step; let the author retry with the reason.
+                    self.push_turn(answer.to_string(), format!("didn't take that — {e}"));
+                    return;
+                }
                 let d = self.plausibility_delta_chip();
                 let note = if d.is_empty() {
                     format!("recorded · {label}")
@@ -1675,12 +1694,49 @@ impl WorldbuilderApp {
         }
     }
 
+    /// The world the pending delta folds onto right now (disk + pending ops),
+    /// for accept-time validation. `Err` when `world.hjson` exists but does not
+    /// parse (nothing can be validated against it).
+    fn pending_base(&self) -> Result<serde_json::Value, String> {
+        let base = self.world_base_value()?;
+        super::commands::fold_ops(base, &self.pending_ops)
+    }
+
+    /// Validate a shaping delta against the world as it stands, then record it
+    /// as ONE pending delta (however many ops it carries) and persist. Returns
+    /// the refusal message when the schema would not accept it — the author sees
+    /// which delta is at fault now, not a bare serde error at `/write`.
+    fn push_pending(&mut self, ops: Vec<super::commands::Op>) -> Result<(), String> {
+        let base = self.pending_base()?;
+        let ops = super::commands::validate_ops(&base, ops)?;
+        if ops.is_empty() {
+            return Ok(());
+        }
+        self.pending_groups.push(ops.len());
+        self.pending_ops.extend(ops);
+        self.refresh_plausibility();
+        self.persist_pending();
+        Ok(())
+    }
+
+    /// [`Self::push_pending`] for a single op built in code (map placements,
+    /// `/terrain`): these come from typed cursors, so a refusal is a bug, not an
+    /// author error — reported in the status line all the same.
+    fn push_pending_one(&mut self, op: super::commands::Op) {
+        if let Err(e) = self.push_pending(vec![op]) {
+            self.status = format!("edit refused — {e}");
+        }
+    }
+
     /// `y` in the preview — fold the previewed ops into the pending delta and
     /// rescore (the score responds before `/write` commits to disk).
     fn accept_pending(&mut self) {
         if let Some((label, ops)) = self.hjson_preview.take() {
-            self.pending_ops.extend(ops);
-            self.refresh_plausibility();
+            if let Err(e) = self.push_pending(ops) {
+                self.status = format!("✗ {label} — {e}");
+                self.focus = Focus::QueryPrompt;
+                return;
+            }
             let d = self.plausibility_delta_chip();
             self.status = if d.is_empty() {
                 format!("✓ {label} · /write to commit")
@@ -1699,35 +1755,71 @@ impl WorldbuilderApp {
             return;
         }
         let path = self.layout.root.join("world.hjson");
-        let mut value = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|r| serde_hjson::from_str::<serde_json::Value>(&r).ok())
-            .unwrap_or_else(|| serde_json::json!({}));
-        for op in &self.pending_ops {
-            op.apply(&mut value);
-        }
+        // Start from the existing definition, or — on a fresh project — from the
+        // starter template (named from a pending `name` op), so the REQUIRED
+        // astronomy / calendar scaffolding exists for the deltas to overlay.
+        // Folding onto `{}` produced a definition the schema could not load.
+        let base = match self.world_base_value() {
+            Ok(b) => b,
+            Err(e) => {
+                self.status = format!("write refused — existing world.hjson does not parse: {e} · fix it by hand first");
+                return;
+            }
+        };
+        // Validate before writing: a delta that would leave `world.hjson`
+        // unparseable is refused (pending ops kept for the author to fix), never
+        // written — no shaping path can corrupt the definition on disk.
+        let value = match super::commands::fold_ops(base, &self.pending_ops) {
+            Ok(v) => v,
+            Err(e) => {
+                self.status = format!("write refused — world.hjson would not parse: {e} · /diff, /undo");
+                return;
+            }
+        };
         let json = serde_json::to_string_pretty(&value).unwrap_or_default();
+        // Keep the previous definition (comments and all — the fold writes
+        // JSON) as `.inkhaven/world.hjson.bak`, so a `/write` can be walked back.
+        let backed_up = match std::fs::read(&path) {
+            Ok(prev) => {
+                let bak = self.layout.root.join(".inkhaven").join("world.hjson.bak");
+                crate::io_atomic::write(&bak, &prev).is_ok()
+            }
+            Err(_) => false,
+        };
         match crate::io_atomic::write(&path, json.as_bytes()) {
             Ok(()) => {
                 let n = self.pending_ops.len();
                 self.pending_ops.clear();
+                self.pending_groups.clear();
                 self.refresh_plausibility();
-                self.status = format!("✓ wrote {n} delta(s) to world.hjson");
+                self.persist_pending();
+                self.status = if backed_up {
+                    format!("✓ wrote {n} delta(s) to world.hjson (previous kept at .inkhaven/world.hjson.bak)")
+                } else {
+                    format!("✓ wrote {n} delta(s) to world.hjson")
+                };
                 self.record_turn("/write".into(), format!("committed {n} delta(s)"), Vec::new());
             }
             Err(e) => self.status = format!("write failed: {e}"),
         }
     }
 
-    /// `/undo` — drop the last pending op and rescore.
+    /// `/undo` — drop the last accepted delta (all of its ops) and rescore.
     fn undo_pending(&mut self) {
-        if self.pending_ops.pop().is_some() {
-            self.refresh_plausibility();
-            self.persist_pending();
-            self.status = format!("undone — {} pending delta(s) left", self.pending_ops.len());
-        } else {
+        if self.pending_ops.is_empty() {
             self.status = "nothing to undo".into();
+            return;
         }
+        let n = self.pending_groups.pop().unwrap_or(1).clamp(1, self.pending_ops.len());
+        let keep = self.pending_ops.len() - n;
+        self.pending_ops.truncate(keep);
+        self.refresh_plausibility();
+        self.persist_pending();
+        self.status = format!(
+            "undone ({n} op{}) — {} pending delta(s) left",
+            if n == 1 { "" } else { "s" },
+            self.pending_groups.len()
+        );
     }
 
     /// Shell-wide keys reachable from any navigable pane. Returns whether the key
@@ -2028,7 +2120,9 @@ impl WorldbuilderApp {
     fn replay_history(&self) -> Vec<AiTurn> {
         let mut h = Vec::new();
         for t in &self.chat {
-            if t.streaming {
+            // Interview questions and notices carry no author prompt; replaying
+            // them as empty User turns is rejected by strict chat APIs.
+            if t.streaming || t.prompt.trim().is_empty() {
                 continue;
             }
             h.push(AiTurn::User(t.prompt.clone()));
@@ -2087,14 +2181,47 @@ impl WorldbuilderApp {
     /// yet. Shared by the plausibility score, `/compile`, and `/validate` so they
     /// all reason over the same in-progress world.
     pub(super) fn current_world_def(&self) -> Option<crate::world::types::WorldDefinition> {
-        let mut value = std::fs::read_to_string(self.layout.root.join("world.hjson"))
-            .ok()
-            .and_then(|r| serde_hjson::from_str::<serde_json::Value>(&r).ok())
-            .unwrap_or_else(|| serde_json::json!({}));
+        let mut value = self.world_base_value().ok()?;
         for op in &self.pending_ops {
             op.apply(&mut value);
         }
         serde_json::from_value::<crate::world::types::WorldDefinition>(value).ok()
+    }
+
+    /// The JSON the pending deltas fold onto: `world.hjson` as it stands, or —
+    /// when the project has no definition yet — the starter template (named from
+    /// a pending `name` op, else "Untitled world"). Folding onto `{}` left every
+    /// REQUIRED field (name, star, planet, orbit, calendar) missing, so a fresh
+    /// interview wrote a `world.hjson` the schema could not load back. A file
+    /// that EXISTS but does not parse is an error, never silently replaced by
+    /// the starter — the author's hand edits are theirs to fix.
+    fn world_base_value(&self) -> Result<serde_json::Value, String> {
+        match std::fs::read_to_string(self.layout.root.join("world.hjson")) {
+            Ok(raw) => {
+                crate::hjson_guard::check_hjson_depth(&raw)?;
+                serde_hjson::from_str::<serde_json::Value>(&raw).map_err(|e| e.to_string())
+            }
+            // Only a MISSING file means "start from the starter"; a file that
+            // exists but cannot be read (permissions, non-UTF-8 bytes) is an
+            // error, never a reason to replace the author's file.
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+                Err(format!("reading world.hjson: {e}"))
+            }
+            Err(_) => {
+                let name = self
+                    .pending_ops
+                    .iter()
+                    .find_map(|op| match op {
+                        super::commands::Op::Set { path, value } if path.len() == 1 && path[0] == "name" => {
+                            value.as_str().map(str::to_string)
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| "Untitled world".to_string());
+                serde_hjson::from_str::<serde_json::Value>(&crate::world::starter_template(&name))
+                    .map_err(|e| format!("starter template: {e}"))
+            }
+        }
     }
 
     pub(super) fn refresh_plausibility(&mut self) {
@@ -2110,6 +2237,13 @@ impl WorldbuilderApp {
         self.map_roads.clear();
         self.map_findings.clear();
         let def = self.current_world_def();
+        // The title bar / dossier / LLM framing name the world from the live
+        // definition (disk + pending), not a placeholder pinned at first save.
+        if let Some(d) = def.as_ref() {
+            if !d.name.trim().is_empty() && self.session.world_name != d.name {
+                self.session.world_name = d.name.clone();
+            }
+        }
         self.ledger_snapshot = def.as_ref().and_then(|d| d.magic.clone());
         self.plausibility_prev = self.plausibility_score;
         match def {

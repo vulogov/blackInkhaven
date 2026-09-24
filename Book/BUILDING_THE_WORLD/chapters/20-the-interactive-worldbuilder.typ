@@ -93,34 +93,46 @@ bar shown above the Query prompt; press `Ctrl+Q` to leave.
 
 If you are beginning from nothing, do not reach for commands. Type `/interview` (or
 launch with `inkhaven worldbuilder --interview`) and answer plain questions. The
-worldbuilder walks five short stages — *Sky*, *Land*, *People*, *Rules*, and a
-closing review — asking one thing at a time.
+worldbuilder walks five short stages — *World* (its name), *Sky*, *Land*, *People*,
+*Rules* — and a closing review, asking one thing at a time.
 
 #screen(caption: "Mid-interview — the Sky stage")[```
 ┌ Chat ─────────────────────── Ctrl+R cycles ┐
 │ [World Builder]                             │
-│ Interview — I'll ask about the sky, land,   │
-│ people, and rules. Answer in your own words │
-│ (blank to skip, Esc to leave).              │
+│ [World · 1/10] What is the world called?    │
+│ [You]  Aldoria                              │
+│ [World Builder]  recorded · name = "Aldoria"│
 │                                             │
 │ [World Builder]                             │
-│ [Sky · 1/9] What kind of star? (G Sun-like  │
+│ [Sky · 2/10] What kind of star? (G Sun-like │
 │ · K orange · M red dwarf)                   │
 │                                             │
-│ [You]  K                                    │
-│ [World Builder]  recorded · star → K  (★ ▲2)│
+│ [You]  orange                               │
+│ [World Builder]  recorded · star → K        │
+│                  (0.4 L☉)  (★ ▲2)           │
 │                                             │
 │ [World Builder]                             │
-│ [Sky · 2/9] Axial tilt in degrees? (Earth   │
+│ [Sky · 3/10] Axial tilt in degrees? (Earth  │
 │ 23.4 — higher means harsher seasons)        │
 └─────────────────────────────────────────────┘
  interview — answer in the Query prompt · Esc to leave
 ```]
 
 Every answer becomes a *pending edit* — a proposed change to `world.hjson` that has
-not been committed yet — and you watch each one recorded in the conversation. A blank
-line skips a question; `Esc` leaves the interview at any point without losing what you
-have already answered.
+not been committed yet — and you watch each one recorded in the conversation. Answer
+in the prompt's own words or in the schema's: "orange" and `K` are the same star, and
+the worldbuilder sets a class-typical brightness with it, so a red dwarf is not left
+as bright as the Sun. A blank line skips a question; `Esc` leaves the interview at any
+point without losing what you have already answered.
+
+#note[
+  Each answer is checked against the world's schema the moment it is recorded — not
+  later, at `/write`. An answer the schema cannot take is refused with the reason
+  ("didn't take that — `geology.generated.continents = "three"` refused — invalid
+  type") and the question is asked again. A name that happens to look like a number
+  or a word like `True` is still a name. Answering "yes" or "no" to the magic question
+  is fine.
+]
 
 #insight[
   The plausibility score at the bottom of the screen moves as you answer, so you feel
@@ -141,10 +153,13 @@ the pending delta.
   column-gutter: 12pt,
   inset: (x: 0pt, y: 3.5pt),
   [`/set <path> <value>`], [set any dotted key, e.g. `/set geology.generated.sea_level 0.6`],
-  [`/star <class>`], [the star's spectral class — `G`, `K`, `M`],
+  [`/star <class>`], [the star's spectral class — `G`, `K`, `M` (or `G2V`), or a word:
+    `Sun-like`, `orange`, `red dwarf`. Sets a class-typical luminosity too],
   [`/tilt <degrees>`], [axial tilt; higher means harsher seasons],
-  [`/moon <name> [days]`], [add a moon, optionally with its period],
-  [`/nation <name> [era] [kind] [traits…]`], [add a nation],
+  [`/moon <name…> [period_days]`], [add a moon; a trailing number is its orbital period
+    (Earth's Moon, 27.32, when omitted)],
+  [`/nation <name…> [x y]`], [add a nation, optionally pinned to a capital cell; an
+    unpinned nation seats at the largest unclaimed settlement],
   [`/magic on|off`], [enable or disable the magic ledger],
   [`/rule <kind> <cat,cat> [description]`], [declare a magic rule (enables the ledger)],
 )
@@ -157,7 +172,7 @@ screen, showing exactly what will change:
    │ moon Lunara                                │
    │                                            │
    │   astronomy.moons[] += {"name":"Lunara",   │
-   │     "period":29.5}                         │
+   │     "period_days":29.5,"mass_lunar":1.0}   │
    │                                            │
    │ y accept (into pending) · n/Esc discard    │
    │ · then /write to commit                    │
@@ -165,13 +180,27 @@ screen, showing exactly what will change:
 ```]
 
 Press `y` to fold the edit into the pending delta, or `n` to discard it. Nothing
-touches `world.hjson` until you say so.
+touches `world.hjson` until you say so. Accepting is where the edit is *checked*: a
+value the schema cannot hold, or a path that is not a `world.hjson` key at all
+(`/set astronmy.star.class K` — a typo), is refused on the spot with the reason,
+rather than landing on disk as a stray key or surfacing as a parse error later.
 
 #term("The pending delta")[
   The stack of accepted-but-uncommitted edits. `/diff` lists it, `/undo` drops the
-  last edit, `/reset` clears it, and `/write` folds all of it into `world.hjson` at
-  once — atomically. The pending delta is #emph[saved with your session], so if you
+  last edit (the #emph[whole] edit — `/star` records the class and its luminosity as
+  one), `/reset` clears it, and `/write` folds all of it into `world.hjson` at once —
+  atomically, after checking that the result still parses. On a project with no
+  `world.hjson` yet, the delta folds onto the same Earth-like starter that
+  `realworld new` writes, named from your first interview answer, so every required
+  block is present. The pending delta is #emph[saved with your session], so if you
   quit mid-thought, your uncommitted edits are waiting when you return.
+]
+
+#note[
+  `/write` keeps the previous definition at `.inkhaven/world.hjson.bak` before it
+  overwrites — the one way back after a commit, since the fold writes plain JSON and
+  any comments in a hand-written file do not survive it. A `world.hjson` that exists
+  but does not parse is never replaced by `/write`; fix it by hand first.
 ]
 
 #section("Seeing what your choices imply")
@@ -184,7 +213,10 @@ reasons over the #emph[simulated] world, not merely what you declared.
 
 `/validate` runs the plausibility lints and reports the score with every warning,
 graded high, medium, or low. This is the same score that rides in the status bar; the
-command spells out what is costing you points.
+command spells out what is costing you points. The lints start with the definition
+itself — a calendar with no months, a star with no light, an orbit that is not closed,
+a `sea_level` outside 0..1, a `mountain_orogeny` spelling the compiler would not
+recognise — and go on to what the compiled layers imply.
 
 #screen(caption: "/compile and /validate, reported into Chat")[```
 ┌ Chat ─────────────────────── Ctrl+R cycles ┐
@@ -310,7 +342,9 @@ committed write, every recorded fact is a step in the session's timeline. See it
 ```]
 
 Sessions are named — `inkhaven worldbuilder --session aldoria-v2` — and `/sessions`
-lists them. When you want the world out of the tool and onto paper, `/export`
+lists them. A session file that has been damaged (a hand edit, a truncated write) is
+moved aside as `<name>.corrupt-<stamp>.json`, never silently overwritten, and the
+worldbuilder tells you so when it opens. When you want the world out of the tool and onto paper, `/export`
 assembles a single readable Markdown dossier — the compiled state, the plausibility
 report, the magic ledger, your recorded facts, and the whole journey — and writes it
 under `exports/` in your project. It is a record you can read, share, or drop into an
@@ -328,10 +362,12 @@ appendix.
   [`inkhaven worldbuilder` is a four-pane front-end to the `realworld` pipeline: Facts
    and World trees, a cycling right pane (Chat · Research · Map · Ledger), a Query
    prompt, and a live plausibility score. Every change lands in `world.hjson`.],
-  [Build by *asking* — `/interview` walks Sky · Land · People · Rules; or shape
-   directly with `/set`, `/star`, `/tilt`, `/moon`, `/nation`, `/magic`, `/rule`.],
+  [Build by *asking* — `/interview` walks World · Sky · Land · People · Rules; or shape
+   directly with `/set`, `/star`, `/tilt`, `/moon`, `/nation`, `/magic`, `/rule`.
+   Every edit is checked against the schema when it is accepted.],
   [Edits accumulate as a *pending delta* — previewed, `/diff`-able, `/undo`-able,
-   saved with the session — and commit atomically with `/write`.],
+   saved with the session — and commit atomically with `/write`, which keeps the
+   previous file at `.inkhaven/world.hjson.bak`.],
   [`/compile` makes the AI reason over the simulated world; `/validate` grades the
    plausibility warnings; the Map pane draws the compiled biomes on any terminal.],
   [Record world facts with `/wfact` (`◎`, retrievable via `/research`), keep a

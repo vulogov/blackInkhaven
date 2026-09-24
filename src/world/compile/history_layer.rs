@@ -85,6 +85,7 @@ fn antiquity(s: &Settlement, seed: u64) -> f64 {
 pub fn compile_history(
     demo: &DemographicsOutput,
     declared: &[crate::world::types::HistEventDef],
+    nations: &[crate::world::types::NationDef],
     seed: u64,
 ) -> HistoryOutput {
     let mut settlements: Vec<&Settlement> = demo.settlements.iter().collect();
@@ -134,7 +135,9 @@ pub fn compile_history(
 
     // Richer events: polity rise/fall + migrations between biomes.
     let mut events: Vec<HistEvent> = Vec::new();
-    let pol = super::polities_layer::compile_polities(demo, &[], seed);
+    // The same realms the Nations chapter lists — declared nations rise and
+    // wane under their own names, not a generated twin's.
+    let pol = super::polities_layer::compile_polities(demo, nations, seed);
     for (i, p) in pol.polities.iter().enumerate() {
         // Realms rise across the early epochs, spread out.
         let rise = -span + third * ((mix(i as u64, seed) % 3) as i64);
@@ -188,7 +191,14 @@ pub fn compile_history(
 
 /// WORLD-11 — the epoch a year falls in, given the compiled epochs.
 pub fn epoch_of(year: i64, epochs: &[Epoch]) -> Option<&Epoch> {
-    epochs.iter().find(|e| year >= e.start_year && year < e.end_year)
+    epochs.iter().find(|e| epoch_contains(e, year))
+}
+
+/// Whether `year` falls in `e`. Epochs end exclusively, except that the present
+/// (year 0, the end of the last epoch) belongs to it — a declared event "now"
+/// used to fall in no epoch and vanish from every listing.
+pub fn epoch_contains(e: &Epoch, year: i64) -> bool {
+    year >= e.start_year && (year < e.end_year || (e.end_year == 0 && year == 0))
 }
 
 /// WORLD-13 — the world's *accumulated* state at a given year, derived purely
@@ -302,7 +312,7 @@ mod tests {
             settle(2, 2, 90_000, "city", "river_mouth"),
             settle(3, 3, 5_000, "town", "fertile_valley"),
         ]);
-        let h = compile_history(&d, &[], 0x1234);
+        let h = compile_history(&d, &[], &[], 0x1234);
         // The big river-mouth city is the oldest (most negative year).
         assert_eq!(h.foundings.first().unwrap().class, "city");
         assert!(h.foundings.first().unwrap().year < h.foundings.last().unwrap().year);
@@ -318,7 +328,7 @@ mod tests {
             settle(1, 1, 3_000, "town", "fertile_valley"),
             settle(41, 39, 2_000, "village", "coast"),
         ]);
-        let h = compile_history(&d, &[], 0x55);
+        let h = compile_history(&d, &[], &[], 0x55);
         // Nothing exists before recorded history begins.
         let before = state_at(&h, h.span_years * -2);
         assert_eq!(before.settlements, 0);
@@ -348,7 +358,7 @@ mod tests {
         let mut d = d;
         d.settlements[1].biome = "hot_desert".into();
         d.settlements[3].biome = "taiga".into();
-        let h = compile_history(&d, &[], 0x55);
+        let h = compile_history(&d, &[], &[], 0x55);
         assert!(h.events.iter().any(|e| e.kind == "rise"));
         assert!(h.events.iter().any(|e| e.kind == "migration"));
         // Chronologically ordered.
@@ -366,7 +376,7 @@ mod tests {
             HistEventDef { year: -100, title: "The Sundering".into(), epoch: None, places: None, description: String::new() },
             HistEventDef { year: 50, title: "An Impossible Future".into(), epoch: None, places: None, description: String::new() },
         ];
-        let h = compile_history(&d, &declared, 0x1);
+        let h = compile_history(&d, &declared, &[], 0x1);
         assert!(h.events.iter().any(|e| e.kind == "declared" && e.description == "The Sundering"));
         let w = lint_history(&declared, &h);
         // The year-50 event is after the present (0) and must be flagged.
@@ -384,14 +394,14 @@ mod tests {
             settle(1, 1, 500, "village", "coast"),
             settle(2, 2, 90_000, "city", "river_mouth"),
         ]);
-        assert_eq!(compile_history(&d, &[], 7), compile_history(&d, &[], 7));
+        assert_eq!(compile_history(&d, &[], &[], 7), compile_history(&d, &[], &[], 7));
     }
 
     #[test]
     fn span_scales_with_settlement_count_and_is_capped() {
         let one = demo(vec![settle(1, 1, 100, "village", "coast")]);
         let many = demo((0..500).map(|i| settle(i, i, 100, "village", "coast")).collect());
-        assert!(compile_history(&one, &[], 0).span_years < compile_history(&many, &[], 0).span_years);
-        assert!(compile_history(&many, &[], 0).span_years <= 4000);
+        assert!(compile_history(&one, &[], &[], 0).span_years < compile_history(&many, &[], &[], 0).span_years);
+        assert!(compile_history(&many, &[], &[], 0).span_years <= 4000);
     }
 }

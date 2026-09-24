@@ -407,6 +407,12 @@ impl super::App {
                 ));
             }
         }
+        // CANON-UI-1 (A1) — a paragraph that established a canon decision carries a
+        // ◈ marker, so load-bearing prose is visible while navigating the tree.
+        if node.kind == NodeKind::Paragraph && self.canon_source_nodes.contains(&node.id) {
+            pip_spans.push(Span::raw(" "));
+            pip_spans.push(Span::styled("◈", Style::default().fg(Color::LightMagenta)));
+        }
         let pip_width: usize = pip_spans
             .iter()
             .map(|s| s.content.chars().count())

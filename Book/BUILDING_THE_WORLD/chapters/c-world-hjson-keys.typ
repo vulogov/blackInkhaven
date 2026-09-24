@@ -3,17 +3,21 @@
 #appendix(letter: "C", title: "The world.hjson Keys")
 
 Every value you can set in `world.hjson`, block by block. Only `name` and the
-`astronomy` block are required; every other block is optional, and every layer
-that lacks an explicit block is generated from the `seed`. Types are given as
-`number`, `text`, `list`, or `block`; where a value has a natural default (the
-Earth-like starter), it is noted.
+`astronomy` block are required (and within it the fields marked *required*
+below); every other block is optional, and every layer that lacks an explicit
+block is generated from the `seed`. Types are given as `number`, `text`, `list`, or
+`block`; where a value has a natural default (the Earth-like starter), it is noted.
+A key the schema does not know is ignored on read — so check spellings here — and
+the interactive worldbuilder refuses one outright.
 
 #section("Top level")
 
 #gloss("name")[`text` — the world's name. Required.]
 #gloss("seed")[`number` — the single value that fixes every generated choice
   (coastlines, which valley grows the first city). Accepts a decimal integer or a
-  `0x…` hex value. The same seed always grows the same world. Defaults to `0`.]
+  `0x…` hex value of up to sixteen hex digits. The same seed always grows the same
+  world. Defaults to `0`. A string that is neither hex nor decimal still compiles
+  (deterministically, from a hash of the text) and `validate` warns about it.]
 #gloss("primary_language")[`text` — the world's common tongue, used when labelling
   materialised output. Defaults to `"en"`.]
 
@@ -33,38 +37,41 @@ settlement — depends on it.
 #gloss("age_gyr")[`number` — the star's age in billions of years. Descriptive.]
 
 #subsection("planet")
-#gloss("mass_earth")[`number` — planet mass in Earth masses (`1.0` = Earth).]
-#gloss("radius_earth")[`number` — planet radius in Earth radii; sets the world's
-  physical size, and so the real distance a rider or ship must cross.]
-#gloss("axial_tilt_deg")[`number` — the tilt of the axis in degrees. Earth is
-  `23.4`. Tilt drives the *strength* of the seasons: near `0`, seasons all but
-  vanish; large tilts give violent ones.]
-#gloss("day_length_hours")[`number` — the length of one rotation, in hours.]
+#gloss("mass_earth")[`number`, required — planet mass in Earth masses (`1.0` = Earth).]
+#gloss("radius_earth")[`number`, required — planet radius in Earth radii; sets the
+  world's physical size, and so the real distance a rider or ship must cross.]
+#gloss("axial_tilt_deg")[`number`, required — the tilt of the axis in degrees
+  (`0`–`180`). Earth is `23.4`. Tilt drives the *strength* of the seasons: near
+  `0`, seasons all but vanish; large tilts give violent ones.]
+#gloss("day_length_hours")[`number`, required — the length of one rotation, in hours.]
 #gloss("rotation_direction")[`text` — `"prograde"` (like Earth) or `"retrograde"`,
-  which flips the prevailing winds.]
+  which flips the prevailing winds. Any letter case.]
 
 #subsection("orbit")
-#gloss("semi_major_axis_au")[`number` — orbital distance in astronomical units
-  (`1.0` = Earth's distance from the Sun).]
+#gloss("semi_major_axis_au")[`number`, required — orbital distance in astronomical
+  units (`1.0` = Earth's distance from the Sun).]
 #gloss("eccentricity")[`number` — how elliptical the orbit is (`0` is a circle;
-  Earth is `0.017`).]
+  Earth is `0.017`; `1` or more is not a closed orbit and `validate` says so).]
 #gloss("year_length_days")[`number` — the declared length of the year in days. The
   sky computes the *true* length from the orbit and flags a year that contradicts
   it (see the calendar check).]
 
 #subsection("moons")
 A `list` of moons, each a `block`:
-#gloss("name")[`text` — the moon's name.]
+#gloss("name")[`text`, required — the moon's name.]
 #gloss("mass_lunar")[`number` — mass in units of our Moon; larger moons raise
-  bigger tides.]
-#gloss("period_days")[`number` — orbital period in days, from which the synodic
-  period (the visible month) is computed.]
+  bigger tides. Defaults to `0` (the worldbuilder's `/moon` sets `1.0`).]
+#gloss("period_days")[`number`, required — orbital period in days, from which the
+  synodic period (the visible month) is computed.]
 #gloss("eccentricity")[`number`, optional — how elliptical the moon's orbit is
   (`0` is a circle). Descriptive.]
 
 #subsection("calendar")
-#gloss("months")[`number` — months in the year.]
-#gloss("month_length_days")[`number` — days in a month.]
+The block itself is required. `realworld calendar` turns it into a story-Timeline
+calendar (day → month → year; `month.per_parent` = days in a month,
+`year.per_parent` = months in a year).
+#gloss("months")[`number`, required — months in the year (at least `1`).]
+#gloss("month_length_days")[`number`, required — days in a month (at least `1`).]
 #gloss("weekdays")[`number` — days in a week.]
 #gloss("month_names")[`list` of `text` — optional names for the months; used when
   the calendar is adopted into the story Timeline.]
@@ -85,7 +92,8 @@ defaults.
   (default `7`). More plates → more, smaller landmasses and coastlines.]
 #gloss("continents")[`number` — the target number of continents (default `4`).]
 #gloss("mountain_orogeny")[`text` — `"active"` (default, tall young ranges),
-  `"quiet"`, or `"ancient"` (low, worn-down ranges). Drives peak elevation.]
+  `"quiet"`, or `"ancient"` (low, worn-down ranges), any letter case. Drives peak
+  elevation. Anything else reads as `active`, and `validate` warns.]
 #gloss("sea_level")[`number` `0.0`–`1.0` — the land/sea threshold on the height
   scale (default `0.4`). Raise it to drown the map, lower it to expose more land.]
 #gloss("volcanism")[`text` — `"quiet"` / `"moderate"` / `"active"`. Descriptive.]
@@ -99,7 +107,8 @@ defaults.
 #gloss("dem")[`block` — bring-your-own-map. `dem.path` (`text`) is the heightmap
   image, relative to the project root; `dem.scale_km_per_pixel` (`number`) sets
   its real scale; `dem.sea_level_pixel_value` (`number`) marks the pixel level at
-  or below which land is sea.]
+  or below which land is sea, in the image's own depth (`0`–`255` for an 8-bit
+  image, `0`–`65535` for 16-bit).]
 
 #section("geography — named places (optional)")
 
@@ -107,7 +116,8 @@ Author-declared regions and landmarks. These feed the gazetteer and let the
 fact-checker resolve places you name in prose.
 
 #gloss("regions")[`list` of `block`, each: `name` (`text`), `biome` (`text`),
-  `climate` (`text`), `description` (`text`).]
+  `climate` (`text`), `description` (`text`), and an optional position as raw grid
+  `x` + `y` (`number`, cells).]
 #gloss("landmarks")[`list` of `block`, each: `name` (`text`), `kind` (`text`, e.g.
   `"city"`, `"port"`, `"mountain"`), `climate_zone` (`text`), `population`
   (`number`), `description` (`text`). Optional position: `lat` + `lon` (`number`,
@@ -139,8 +149,8 @@ Descriptive names laid over the procedural rivers, which still run.
 
 #section("magic — declared exceptions to physics (optional)")
 
-#gloss("enabled")[`text`/`number` — `true` turns the ledger on; `false` gates it
-  entirely.]
+#gloss("enabled")[`true`/`false` (a bare boolean — `1` or `"true"` fails the
+  parse) — `true` turns the ledger on; `false` gates it entirely.]
 #gloss("rules")[`list` of `block`. Each rule: `kind` (`text`, your own label, e.g.
   `"messenger_birds"`); `covers` (`list` of `text` — which fact-check categories
   it may suppress: `astronomy`, `climate`, `climate_anomaly`, `date_coherence`,
@@ -159,7 +169,8 @@ adopts place-linked ones onto the story Timeline.
   inferred from the year when omitted); `places` (`list` of `text`, optional —
   accepted Place names, for Timeline links); `description` (`text`, optional).
   The world warns if a year is after the present or before recorded history, or
-  if a declared `epoch` does not contain the year.]
+  if a declared `epoch` does not contain the year. Year `0` — the present — belongs
+  to the Present Age.]
 
 #section("nations — declared realms (optional)")
 
@@ -167,12 +178,15 @@ A `list` of nations; each pins a named realm, and the remaining settlements
 cluster into generated realms around them.
 
 #gloss("name")[`text` — the realm's name.]
-#gloss("capital")[`[x, y]` — the capital's map cell; the nearest settlement becomes
-  its seat. The world warns if it sits far from any settlement (in the
-  wilderness).]
+#gloss("capital")[`[x, y]`, optional — the capital's map cell; the nearest
+  settlement becomes its seat. Omit it and the nation seats at the largest
+  settlement no other realm has claimed (pinned nations seat first). The world
+  warns if a declared cell sits far from any settlement (in the wilderness), and
+  if more nations are declared than there are settlements to seat them.]
 #gloss("relations")[`list` of `block`, each `with` (`text` — another nation's name)
-  + `stance` (`text` — `"allied"`, `"rival"`, `"neutral"`). Override the seeded
-  relations.]
+  + `stance` (`text` — `"allied"`, `"rival"`, `"neutral"`, any letter case).
+  Override the seeded relations. `validate` warns about any other stance and about
+  a `with` that names no declared nation.]
 
 #section("cultures — pinned cultures (optional)")
 
