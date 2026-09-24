@@ -20,13 +20,14 @@ The `realworld` group is Inkhaven's world builder; the few rows outside it
 
 #chord_table((
   chord_row("realworld new <name>", "Scaffold a starter world.hjson with Earth-like defaults; never overwrites an existing one."),
-  chord_row("realworld validate", "Compile every layer in turn and report each one ok — your proof the definition is sound before you build on it."),
+  chord_row("realworld validate", "Lint the definition itself (a 0-month calendar, a dark star, an open orbit, unknown spellings), then compile every layer in turn and report each one ok — your proof the definition is sound before you build on it."),
   chord_row("realworld compile", "Compile the whole world — every layer, in order: astronomy → geology → climate → hydrology → demographics. `--materialize` writes it all into the World book, the human half (nations, cultures, ecology) included."),
   chord_row("… --layer <name>", "Compile just one named layer (or all) and read what it found on its own."),
   chord_row("… --materialize", "Write the compiled layers as chapters into the World system book."),
   chord_row("… --json", "Emit the result as structured data, for tools and scripts."),
   chord_row("realworld variants --count N", "Propose N candidate worlds from consecutive seeds (a one-line summary each) so you can pick a seed — the world proposes, you choose."),
   chord_row("realworld show", "Print the world definition; --json for structured form."),
+  chord_row("inkhaven worldbuilder [--interview]", "The interactive front-end to all of the above (Chapter 20): an interview or shaping commands build a pending delta, checked against the schema as each edit is accepted; /write commits it and keeps the previous file at .inkhaven/world.hjson.bak."),
   chord_row("Ctrl+B W", "Open the read-only World overview — every compiled layer, plus a \"This scene\" header when the cursor is in a scene."),
 ))
 
