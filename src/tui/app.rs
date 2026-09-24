@@ -1708,6 +1708,38 @@ pub(crate) enum RightPane {
     /// (e.g. the Inner Theologian slow track). Behaves like the AI pane for
     /// scrolling; no input prompt.
     Thoughts,
+    /// CANON-UI-1 (CU1-P3) — the paragraph-aware Canon pane: the decisions the
+    /// OPEN paragraph sources, live as the cursor moves between paragraphs, each
+    /// with what rests on it (`impact`) and what it rests on (`why`). Read-first;
+    /// a small key set acts in place (jump to a ground, history, the dashboard).
+    Canon,
+}
+
+/// CANON-UI-1 (CU1-P3) — one decision row in the Canon pane.
+#[derive(Debug, Clone)]
+pub(crate) struct CanonPaneRow {
+    pub uid: smysl::Uid,
+    pub kind: String,
+    pub commitment: Option<String>,
+    pub gist: String,
+    /// How many decisions transitively rest on this one.
+    pub impact: usize,
+    /// The nearest grounds this one rests on: (gist, source node), nearest first.
+    pub grounds: Vec<(String, Option<Uuid>)>,
+    /// Grounds beyond the ones listed.
+    pub grounds_more: usize,
+}
+
+/// CANON-UI-1 (CU1-P3) — the Canon pane's cached view of the open paragraph.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct CanonPaneState {
+    /// The paragraph the rows were computed for (`None` = nothing open).
+    pub node: Option<Uuid>,
+    pub title: String,
+    pub rows: Vec<CanonPaneRow>,
+    pub cursor: usize,
+    /// Set when the ledger could not be read (shown instead of rows).
+    pub error: Option<String>,
 }
 
 /// WORLD-10 — the world-level compile cached for the scene context (recomputed
@@ -1725,6 +1757,7 @@ impl RightPane {
             RightPane::Output => "Output",
             RightPane::Ai => "AI",
             RightPane::Thoughts => "Thoughts",
+            RightPane::Canon => "Canon",
         }
     }
 }
@@ -2533,6 +2566,10 @@ pub(crate) struct App {
     thoughts: Vec<String>,
     /// Lines scrolled up from the bottom of the Thoughts pane (PageUp adds).
     thoughts_scroll: usize,
+    /// CANON-UI-1 (CU1-P3) — the Canon pane's rows for the open paragraph, and
+    /// when they were computed (refreshed on paragraph change + a slow tick).
+    canon_pane: CanonPaneState,
+    canon_pane_at: std::time::Instant,
 
     /// Active chat-history search state (Ctrl+F in AI-fullscreen).
     /// While Some, matching lines render with a highlight bg and
@@ -3817,6 +3854,8 @@ impl App {
             chat_history: Vec::new(),
             thoughts: Vec::new(),
             thoughts_scroll: 0,
+            canon_pane: CanonPaneState::default(),
+            canon_pane_at: std::time::Instant::now(),
             system_prompt_override: None,
             pending_chat_user_msg: None,
             pending_paragraph_memory_target: None,
@@ -5869,6 +5908,7 @@ impl App {
             // THOUGHTS-1 — when it shows Thoughts, the Thoughts scroll keys win.
             Focus::Ai if self.right_pane == RightPane::Output => self.handle_output_key(key),
             Focus::Ai if self.right_pane == RightPane::Thoughts => self.handle_thoughts_key(key),
+            Focus::Ai if self.right_pane == RightPane::Canon => self.handle_canon_pane_key(key),
             Focus::Ai => self.handle_passive_key(key),
             Focus::SearchBar => self.handle_input_key(key, true),
             Focus::AiPrompt => self.handle_input_key(key, false),
@@ -7242,6 +7282,7 @@ impl App {
             "Output" => self.right_pane = RightPane::Output,
             "Ai" => self.right_pane = RightPane::Ai,
             "Thoughts" => self.right_pane = RightPane::Thoughts,
+            "Canon" => self.right_pane = RightPane::Canon,
             _ => {}
         }
         // PANE-1 filtering — restore the Output pane's saved filter.
@@ -9672,7 +9713,8 @@ impl App {
     /// only Output and AI today both directions toggle; focus moves to the
     /// region so its keys (and the cycle chord) take effect immediately.
     fn cycle_right_pane(&mut self, forward: bool) {
-        const ORDER: [RightPane; 3] = [RightPane::Output, RightPane::Ai, RightPane::Thoughts];
+        const ORDER: [RightPane; 4] =
+            [RightPane::Output, RightPane::Ai, RightPane::Thoughts, RightPane::Canon];
         let idx = ORDER.iter().position(|p| *p == self.right_pane).unwrap_or(0);
         let target = if forward {
             ORDER[(idx + 1) % ORDER.len()]
@@ -9685,9 +9727,15 @@ impl App {
         // AI for Focus::Ai — THOUGHTS-1).
         self.change_focus(Focus::Ai);
         self.right_pane = target;
+        if target == RightPane::Canon {
+            self.refresh_canon_pane(true);
+        }
         // PANE-1 — persist the pane choice so it survives a restart.
         let _ = self.save_session();
-        self.status = format!("pane → {}", right_pane_label(target));
+        self.status = match target {
+            RightPane::Canon => "pane → Canon · the open paragraph's decisions · ↑↓ · Enter ground · h history · * ledger".into(),
+            other => format!("pane → {}", right_pane_label(other)),
+        };
     }
 
     /// THOUGHTS-1 — append a reflective block to the Thoughts pane and surface it
@@ -20285,6 +20333,137 @@ impl App {
         if self.canon_source_nodes_at.elapsed() >= std::time::Duration::from_millis(900) {
             self.refresh_canon_source_nodes();
         }
+        // CANON-UI-1 (CU1-P3) — keep the Canon pane on the open paragraph. A
+        // paragraph change refreshes at once; otherwise a slow tick picks up
+        // ledger edits (harvest on save, dashboard grounding) while visible.
+        if self.right_pane == RightPane::Canon {
+            let opened = self.opened.as_ref().map(|d| d.id);
+            let stale = self.canon_pane_at.elapsed() >= std::time::Duration::from_millis(2500);
+            if opened != self.canon_pane.node || stale {
+                self.refresh_canon_pane(opened != self.canon_pane.node);
+            }
+        }
+    }
+
+    /// CANON-UI-1 (CU1-P3) — recompute the Canon pane for the open paragraph:
+    /// the decisions it sources, each with its impact count and nearest grounds.
+    /// `reset_cursor` when the paragraph changed. Bounded by the per-project
+    /// ledger (small); read-only.
+    fn refresh_canon_pane(&mut self, reset_cursor: bool) {
+        let opened = self.opened.as_ref().map(|d| d.id);
+        let title = opened
+            .and_then(|id| self.hierarchy.get(id))
+            .map(|n| n.title.clone())
+            .unwrap_or_default();
+        let mut state = CanonPaneState { node: opened, title, ..Default::default() };
+        if let Some(id) = opened {
+            let canon = self.store.raw().canon();
+            match canon.units_for_node(id) {
+                Ok(uids) => {
+                    for uid in uids {
+                        let Ok(Some(v)) = canon.view(uid) else { continue };
+                        let impact = canon.impact(uid).map(|d| d.len()).unwrap_or(0);
+                        let why = canon.why(uid).unwrap_or_default();
+                        let direct: Vec<(String, Option<Uuid>)> = why
+                            .iter()
+                            .filter(|g| v.grounds.contains(&g.uid))
+                            .map(|g| (g.gist.clone(), g.node))
+                            .collect();
+                        let grounds_more = why.len().saturating_sub(direct.len());
+                        state.rows.push(CanonPaneRow {
+                            uid,
+                            kind: v
+                                .kind
+                                .map(|k| k.schema_str().trim_start_matches("x.narrative/").to_string())
+                                .unwrap_or_else(|| "?".into()),
+                            commitment: v.commitment.map(|c| c.to_string()),
+                            gist: v.gist.clone(),
+                            impact,
+                            grounds: direct,
+                            grounds_more,
+                        });
+                    }
+                }
+                Err(e) => state.error = Some(e.to_string()),
+            }
+        }
+        state.cursor = if reset_cursor {
+            0
+        } else {
+            self.canon_pane.cursor.min(state.rows.len().saturating_sub(1))
+        };
+        self.canon_pane = state;
+        self.canon_pane_at = std::time::Instant::now();
+    }
+
+    /// CANON-UI-1 (CU1-P3) — keys while the Canon pane has focus. Read-first: move
+    /// between the paragraph's decisions; `Enter` jumps to the cursored decision's
+    /// first ground's source paragraph (what it rests on); `h` shows its history in
+    /// Thoughts; `*` opens the whole-ledger dashboard on it; `Esc` back.
+    fn handle_canon_pane_key(&mut self, key: KeyEvent) -> Result<bool> {
+        let n = self.canon_pane.rows.len();
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                self.canon_pane.cursor = self.canon_pane.cursor.saturating_sub(1);
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if n > 0 {
+                    self.canon_pane.cursor = (self.canon_pane.cursor + 1).min(n - 1);
+                }
+            }
+            KeyCode::Char('g') | KeyCode::Home => self.canon_pane.cursor = 0,
+            KeyCode::Char('G') | KeyCode::End => self.canon_pane.cursor = n.saturating_sub(1),
+            KeyCode::Char('r') | KeyCode::Char('R') => {
+                self.refresh_canon_pane(false);
+                self.status = "canon pane refreshed".into();
+            }
+            KeyCode::Enter => {
+                let target = self
+                    .canon_pane
+                    .rows
+                    .get(self.canon_pane.cursor)
+                    .and_then(|r| r.grounds.iter().find_map(|(_, node)| *node));
+                match target {
+                    Some(id) => {
+                        if let Err(e) = self.open_paragraph_by_uuid(id) {
+                            self.status = format!("canon: {e}");
+                        }
+                    }
+                    None if n == 0 => self.status = "canon: nothing to jump to".into(),
+                    None => {
+                        self.status =
+                            "canon: this decision rests on nothing with a source paragraph · Ctrl+B * → g to ground it"
+                                .into()
+                    }
+                }
+            }
+            KeyCode::Char('h') | KeyCode::Char('H') => {
+                match self.canon_pane.rows.get(self.canon_pane.cursor).map(|r| r.uid) {
+                    Some(uid) => self.canon_show_history(uid),
+                    None => self.status = "canon: no decision under the cursor".into(),
+                }
+            }
+            KeyCode::Char('*') => {
+                let uid = self.canon_pane.rows.get(self.canon_pane.cursor).map(|r| r.uid);
+                self.open_canon();
+                // Land the dashboard cursor on the same decision.
+                if let (Some(uid), Modal::Canon { decisions, cursor, .. }) = (uid, &mut self.modal) {
+                    if let Some(i) = decisions.iter().position(|d| *d == Some(uid)) {
+                        *cursor = i;
+                    }
+                }
+            }
+            KeyCode::Esc => {
+                if self.right_fullscreen {
+                    self.right_fullscreen = false;
+                    self.status = "exited fullscreen".into();
+                } else {
+                    self.change_focus(Focus::Editor);
+                }
+            }
+            _ => return Ok(false),
+        }
+        Ok(false)
     }
 
     /// CANON-UI-1 (A1) — recompute which nodes source a canon decision, for the
@@ -26403,7 +26582,7 @@ impl App {
     fn toggle_right_pane_fullscreen(&mut self) {
         match self.right_pane {
             RightPane::Ai => self.toggle_ai_fullscreen(),
-            RightPane::Output | RightPane::Thoughts => {
+            RightPane::Output | RightPane::Thoughts | RightPane::Canon => {
                 self.right_fullscreen = !self.right_fullscreen;
                 if self.right_fullscreen {
                     // The three fullscreens are exclusive.
@@ -31758,7 +31937,9 @@ impl App {
         // THOUGHTS-1 — fullscreen the current right pane when it is Output or
         // Thoughts (the AI pane has its own `ai_fullscreen` layout above). Tree,
         // editor, search bar, and AI prompt are hidden; one status line remains.
-        if self.right_fullscreen && matches!(self.right_pane, RightPane::Output | RightPane::Thoughts) {
+        if self.right_fullscreen
+            && matches!(self.right_pane, RightPane::Output | RightPane::Thoughts | RightPane::Canon)
+        {
             let outer = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Min(0), Constraint::Length(1)])
@@ -31771,6 +31952,7 @@ impl App {
             match self.right_pane {
                 RightPane::Output => self.draw_output(f, outer[0]),
                 RightPane::Thoughts => self.draw_thoughts(f, outer[0]),
+                RightPane::Canon => self.draw_canon_pane(f, outer[0]),
                 RightPane::Ai => {}
             }
             self.draw_status(f, outer[1]);
@@ -31848,6 +32030,7 @@ impl App {
                 RightPane::Output => self.draw_output(f, body[2]),
                 RightPane::Ai => self.draw_ai(f, body[2]),
                 RightPane::Thoughts => self.draw_thoughts(f, body[2]),
+                RightPane::Canon => self.draw_canon_pane(f, body[2]),
             }
         }
         self.draw_ai_prompt(f, outer[2]);
@@ -32812,7 +32995,7 @@ impl App {
     /// underlying `save_current` writes to disk + bdslib + re-embeds.
     /// THOUGHTS-1 — the plain-Tab focus cycle (Tree → Editor → right region →
     /// Tree). When it lands on the right region (`Focus::Ai`), keep whatever pane
-    /// is currently shown (Output / AI / Thoughts) instead of forcing AI —
+    /// is currently shown (Output / AI / Thoughts / Canon) instead of forcing AI —
     /// `change_focus` forces AI for one-shot AI ops, which Tab is not.
     fn focus_cycle(&mut self, new: Focus) {
         let keep = self.right_pane;
