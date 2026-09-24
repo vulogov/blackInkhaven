@@ -119,6 +119,15 @@ It's advisory: it informs, never blocks, and since the ledger is derived and
 separate, deleting the prose keeps the decisions (they're left source-orphaned, not
 pruned) — so *"what breaks if I cut this?"* is answered at the moment of cutting.
 
+**Grounded chat (3.14).** The AI pane's **Book** scope ("chat with your book")
+grounds each conversation on the ledger as well as the prose: the decisions behind
+the retrieved passages are packed (closure-complete, to `canon.context_budget`) and
+follow the passages into the prompt, framed in the project language as *the
+author's decisions, not inferences* — so the model answers from what you decided,
+and says so when a passage and a decision disagree. The title shows `◈ N canon`,
+the `p` transparency section lists the decisions, and `*` toggles it per session
+(`canon.ground_ai` sets the default). An empty ledger adds nothing.
+
 Commitment **forks** — two agents disagreeing on a decision's canonicity after a
 `canon merge` — also surface in the unified worklist (`inkhaven revise` / the
 Editorial Pass, `Ctrl+V Shift+R`) as advisory **Briefs**: there's no single prose
@@ -149,7 +158,9 @@ The `canon:` block ([`CONFIGURATION.md`](CONFIGURATION.md#311--canon-the-decisio
 holds behavioural knobs only (the ledger is derived data, nothing to tune there):
 `harvest_on_save` (default `true`) toggles the deterministic on-save tag harvest;
 `context_budget` / `context_reserve` set the default token budget for `canon
-context` when its `--budget` / `--reserve` flags are omitted. A Bund script reads
+context` (and the Book-scope grounding pack) when its `--budget` / `--reserve`
+flags are omitted; `ground_ai` (default `true`) is whether Book-scope chat grounds
+on the ledger at all. A Bund script reads
 the ledger through `ink.canon.{list,impact,why,history,forks,graph}` (read-only —
 the writes, `commit`, `ground`/`unground`, `reground`, `compact`, and the
 author-confirmed harvest/`accept`, stay on the CLI and in the editor).

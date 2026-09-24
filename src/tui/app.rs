@@ -2434,6 +2434,13 @@ pub(crate) struct App {
     /// BOOK_RAG-1 — whether the "Retrieved passages" transparency section is
     /// expanded in the chat pane. Collapsed by default; toggled with `p`.
     book_rag_passages_expanded: bool,
+    /// CANON-UI-1 (CU1-P2) — whether Book scope grounds on the canon ledger too
+    /// (seeded from `canon.ground_ai`; `*` in the AI pane toggles it per session).
+    book_rag_canon_grounding: bool,
+    /// CANON-UI-1 (CU1-P2) — the canon decisions packed for the last Book-scope
+    /// retrieval (cached with it for the session; shown in the transparency
+    /// section + the `◈ N canon` title cue). `None` when off / nothing relevant.
+    book_rag_last_canon: Option<crate::canon::PackedContext>,
     /// 3.9 — cursor into the answer's cited passages for `[`/`]` navigation
     /// (jump to the cited paragraph). `usize::MAX` = not started; reset on each
     /// fresh retrieval.
@@ -3629,6 +3636,7 @@ impl App {
             None
         };
         let initial_mouse_captured = cfg.editor.mouse_captured;
+        let canon_ground_ai = cfg.canon.ground_ai;
         // Resolve the TTS engine before the struct
         // literal moves `cfg` + `layout` into the App.
         // T.1: "auto" falls through to System on every
@@ -3841,6 +3849,8 @@ impl App {
             graph_walk: None,
             pending_book_rag_cited: None,
             book_rag_passages_expanded: false,
+            book_rag_canon_grounding: canon_ground_ai,
+            book_rag_last_canon: None,
             book_rag_cite_cursor: usize::MAX,
             book_rag_nudged_stale: false,
             inference_mode: InferenceMode::Full,
@@ -6938,6 +6948,18 @@ impl App {
                 "retrieved passages: expanded".into()
             } else {
                 "retrieved passages: collapsed".into()
+            };
+            return Ok(false);
+        }
+        // CANON-UI-1 (CU1-P2) — `*` toggles canon grounding for Book scope
+        // (the same `*` that opens the Canon dashboard under Ctrl+B).
+        if self.focus == Focus::Ai && matches!(key.code, KeyCode::Char('*')) {
+            self.book_rag_canon_grounding = !self.book_rag_canon_grounding;
+            self.status = if self.book_rag_canon_grounding {
+                "canon grounding: on — the next Book-scope retrieval also packs ◈ decisions".into()
+            } else {
+                self.book_rag_last_canon = None;
+                "canon grounding: off — Book scope grounds on prose only".into()
             };
             return Ok(false);
         }

@@ -3538,12 +3538,14 @@ manuscript), so the only knobs are behavioural, not data.
 | `canon.harvest_on_save` | bool | `true` | When on, saving a paragraph deterministically harvests its authored tags (e.g. `rel:`) into the ledger — off-thread, advisory, and free for untagged paragraphs. Off keeps the ledger populated only by explicit `canon harvest`/`accept`; every query still works. |
 | `canon.context_budget` | usize | `2000` | Default soft token budget for `canon context` (the grounded-context pack) when `--budget` is not passed. Informative, never blocks. |
 | `canon.context_reserve` | usize | `400` | Default tokens reserved (out of the budget) for the prompt framing and answer when `--reserve` is not passed. |
+| `canon.ground_ai` | bool | `true` | (3.14) When on, the AI pane's **Book** scope also grounds each conversation on the canon ledger: the decisions behind the retrieved passages, packed to `context_budget`, ride along with the prose. An empty ledger adds nothing. `*` in the AI pane toggles it for the session. |
 
 ```hjson
 canon: {
   harvest_on_save: true
   context_budget: 2000
   context_reserve: 400
+  ground_ai: true
 }
 ```
 
