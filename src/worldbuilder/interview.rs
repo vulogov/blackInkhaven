@@ -91,7 +91,7 @@ static SCRIPT: &[Step] = &[
     },
     Step {
         stage: Stage::Rules,
-        prompt: "Is there magic in this world? (true/false)",
+        prompt: "Is there magic in this world? (yes/no)",
         template: "/set magic.enabled {}",
     },
 ];

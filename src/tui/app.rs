@@ -15975,10 +15975,10 @@ impl App {
         {
             use crate::world::compile::{
                 compile_climate, compile_culture, compile_demographics, compile_ecology,
-                compile_geology, compile_history, compile_hydrology, compile_polities,
+                compile_history, compile_hydrology, compile_polities,
             };
             let seed = def.seed_u64();
-            let geo = compile_geology(&def);
+            let geo = crate::world::compile::compile_geology_at_or_generated(&def, root);
             let climate = compile_climate(&def, &out, &geo);
             let hydro = compile_hydrology(&geo, &climate);
             let demo = compile_demographics(&climate, &hydro);
@@ -16019,7 +16019,7 @@ impl App {
 
             // WORLD-8/9 — the derived history + peoples passes.
             let declared_hist = def.history.as_ref().map(|h| h.events.as_slice()).unwrap_or(&[]);
-            let hist = compile_history(&demo, declared_hist, seed);
+            let hist = compile_history(&demo, declared_hist, &def.nations, seed);
             rows.push(format!("History  (derived)  {}", mark("History")));
             rows.push(format!(
                 "  {} years · {} epoch(s) · {} founding(s) · {} event(s)",
@@ -16289,24 +16289,34 @@ impl App {
         let trade = compile_trade(&pol, &geo, def.astronomy.planet.radius_earth);
 
         use crate::world::materialize as m;
-        let steps: Vec<crate::error::Result<m::MaterializeReport>> = vec![
-            m::materialize_astronomy(&self.store, &self.cfg, &astro),
-            m::materialize_geology(&self.store, &self.cfg, &geo),
-            m::materialize_climate(&self.store, &self.cfg, &climate),
-            m::materialize_hydrology(&self.store, &self.cfg, &hydro),
-            m::materialize_demographics(&self.store, &self.cfg, &demo),
-            m::materialize_polities(&self.store, &self.cfg, &pol),
-            m::materialize_culture(&self.store, &self.cfg, &cultures, &demo.role_archetypes, &capital_biomes),
-            m::materialize_ecology(&self.store, &self.cfg, &eco),
-            m::materialize_trade(&self.store, &self.cfg, &pol, &trade),
-            m::materialize_magic(&self.store, &self.cfg, &def.magic.clone().unwrap_or_default()),
-            m::materialize_setting(&self.store, &self.cfg, &def),
+        // Sequential, stopping at the first failure (the earlier `vec![…]` ran
+        // every step eagerly and reported only the first error); the hierarchy
+        // is refreshed either way so the partial writes are visible.
+        let magic = def.magic.clone().unwrap_or_default();
+        let steps: Vec<(&str, Box<dyn FnOnce() -> crate::error::Result<m::MaterializeReport> + '_>)> = vec![
+            ("astronomy", Box::new(|| m::materialize_astronomy(&self.store, &self.cfg, &astro))),
+            ("geology", Box::new(|| m::materialize_geology(&self.store, &self.cfg, &geo))),
+            ("climate", Box::new(|| m::materialize_climate(&self.store, &self.cfg, &climate))),
+            ("hydrology", Box::new(|| m::materialize_hydrology(&self.store, &self.cfg, &hydro))),
+            ("demographics", Box::new(|| m::materialize_demographics(&self.store, &self.cfg, &demo))),
+            ("polities", Box::new(|| m::materialize_polities(&self.store, &self.cfg, &pol))),
+            ("culture", Box::new(|| m::materialize_culture(&self.store, &self.cfg, &cultures, &demo.role_archetypes, &capital_biomes))),
+            ("ecology", Box::new(|| m::materialize_ecology(&self.store, &self.cfg, &eco))),
+            ("trade", Box::new(|| m::materialize_trade(&self.store, &self.cfg, &pol, &trade))),
+            ("magic", Box::new(|| m::materialize_magic(&self.store, &self.cfg, &magic))),
+            ("setting", Box::new(|| m::materialize_setting(&self.store, &self.cfg, &def))),
         ];
-        for s in &steps {
-            if let Err(e) = s {
-                self.status = format!("world materialize: {e}");
-                return;
+        let mut failed: Option<String> = None;
+        for (layer, step) in steps {
+            if let Err(e) = step() {
+                failed = Some(format!("world materialize ({layer}): {e} — later layers skipped"));
+                break;
             }
+        }
+        if let Some(msg) = failed {
+            self.refresh_hierarchy_after_world_write();
+            self.status = msg;
+            return;
         }
 
         // Everything the world offers: Places, plus the culture-derived bridges
@@ -20206,14 +20216,14 @@ impl App {
     fn compute_scene_world(&self) -> Option<SceneWorld> {
         use crate::world::compile::{
             compile_astronomy, compile_climate, compile_culture, compile_demographics,
-            compile_geology, compile_hydrology, compile_polities,
+            compile_hydrology, compile_polities,
         };
         let root = self.store.project_root();
         let raw = std::fs::read_to_string(root.join("world.hjson")).ok()?;
         let def = crate::world::types::WorldDefinition::from_hjson(&raw).ok()?;
         let seed = def.seed_u64();
         let astro = compile_astronomy(&def.astronomy);
-        let geo = compile_geology(&def);
+        let geo = crate::world::compile::compile_geology_at_or_generated(&def, &root);
         let climate = compile_climate(&def, &astro, &geo);
         let hydro = compile_hydrology(&geo, &climate);
         let demo = compile_demographics(&climate, &hydro);

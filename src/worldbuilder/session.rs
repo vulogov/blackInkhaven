@@ -26,7 +26,13 @@ pub(crate) fn session_slug(name: &str) -> String {
     let s: String = name
         .trim()
         .chars()
-        .map(|c| if c.is_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+        .flat_map(|c| {
+            if c.is_alphanumeric() {
+                c.to_lowercase().collect::<Vec<char>>()
+            } else {
+                vec!['-']
+            }
+        })
         .collect();
     // Collapse runs of '-' and trim the ends.
     let mut out = String::with_capacity(s.len());
@@ -91,6 +97,17 @@ pub(crate) struct WorldbuilderSession {
     /// pending edits survive a quit; cleared by `/write` or `/reset`.
     #[serde(default)]
     pub pending_ops: Vec<super::commands::Op>,
+    /// Sizes of the accepted deltas in `pending_ops`, in order — one shaping
+    /// command (or interview answer / map placement) can record several ops
+    /// (`/star` sets class + luminosity), and `/undo` drops a whole delta, not
+    /// half of one. Reconciled on load: when the sizes don't add up to
+    /// `pending_ops.len()` (an older session file), every op is its own delta.
+    #[serde(default)]
+    pub pending_groups: Vec<usize>,
+    /// Set (not persisted) when the session file on disk could not be parsed
+    /// and was moved aside — surfaced once as a status line.
+    #[serde(skip)]
+    pub recovered_from: Option<String>,
     /// Persisted pane sizing (WB-P1 resize gestures). `left_split` = Facts/World
     /// vertical ratio; `split_ratio` = left-column/right-pane width ratio. Both
     /// clamped 2–8 on load.
@@ -114,7 +131,26 @@ impl WorldbuilderSession {
 
     fn load(layout: &ProjectLayout, slug: &str) -> Option<WorldbuilderSession> {
         let raw = std::fs::read_to_string(WorldbuilderSession::path(layout, slug)).ok()?;
-        serde_json::from_str(&raw).ok()
+        let mut s: WorldbuilderSession = serde_json::from_str(&raw).ok()?;
+        if s.pending_groups.iter().sum::<usize>() != s.pending_ops.len() {
+            s.pending_groups = vec![1; s.pending_ops.len()];
+        }
+        Some(s)
+    }
+
+    /// A session file that exists but does not parse (hand edit, truncation, an
+    /// `Op` from a newer build) is moved aside as `<slug>.corrupt-<stamp>.json`
+    /// — never silently overwritten by a fresh empty session — and its path is
+    /// returned so the app can say so.
+    fn set_aside_corrupt(layout: &ProjectLayout, slug: &str) -> Option<String> {
+        let path = WorldbuilderSession::path(layout, slug);
+        if !path.exists() {
+            return None;
+        }
+        let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%SZ");
+        let aside = sessions_dir(layout).join(format!("{slug}.corrupt-{stamp}.json"));
+        std::fs::rename(&path, &aside).ok()?;
+        Some(aside.display().to_string())
     }
 
     /// Open the named session, creating (and persisting) an empty one if absent.
@@ -129,6 +165,7 @@ impl WorldbuilderSession {
             s.split_ratio = s.split_ratio.clamp(2, 8);
             return Ok(s);
         }
+        let recovered_from = WorldbuilderSession::set_aside_corrupt(layout, &slug);
         let s = WorldbuilderSession {
             name: display_name.trim().to_string(),
             slug,
@@ -136,6 +173,8 @@ impl WorldbuilderSession {
             world_name: String::new(),
             turns: Vec::new(),
             pending_ops: Vec::new(),
+            pending_groups: Vec::new(),
+            recovered_from,
             left_split: default_left_split(),
             split_ratio: default_split_ratio(),
         };
@@ -175,6 +214,41 @@ impl WorldbuilderSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_corrupt_session_file_is_set_aside_not_overwritten() {
+        let dir = tempfile::tempdir().unwrap();
+        let layout = ProjectLayout::new(dir.path());
+        let s = WorldbuilderSession::open_or_create(&layout, "s", "now".into()).unwrap();
+        let path = WorldbuilderSession::path(&layout, &s.slug);
+        std::fs::write(&path, "{ this is not json").unwrap();
+        let fresh = WorldbuilderSession::open_or_create(&layout, "s", "later".into()).unwrap();
+        let aside = fresh.recovered_from.expect("the corrupt file was moved aside");
+        assert!(std::path::Path::new(&aside).exists());
+        assert_eq!(std::fs::read_to_string(aside).unwrap(), "{ this is not json");
+        assert!(fresh.turns.is_empty());
+    }
+
+    #[test]
+    fn slugs_lowercase_beyond_ascii() {
+        assert_eq!(session_slug("Мир"), session_slug("мир"));
+        assert_eq!(session_slug("Mon Été"), "mon-été");
+    }
+
+    #[test]
+    fn pending_groups_are_reconciled_on_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let layout = ProjectLayout::new(dir.path());
+        let mut s = WorldbuilderSession::open_or_create(&layout, "g", "now".into()).unwrap();
+        s.pending_ops = vec![
+            super::super::commands::Op::Set { path: vec!["name".into()], value: serde_json::json!("A") },
+            super::super::commands::Op::Set { path: vec!["seed".into()], value: serde_json::json!(1) },
+        ];
+        s.pending_groups = vec![7]; // stale: does not add up
+        s.save(&layout).unwrap();
+        let r = WorldbuilderSession::open_or_create(&layout, "g", "x".into()).unwrap();
+        assert_eq!(r.pending_groups, vec![1, 1]);
+    }
 
     #[test]
     fn slug_is_stable_and_filesystem_safe() {

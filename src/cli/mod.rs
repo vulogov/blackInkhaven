@@ -5936,7 +5936,7 @@ pub enum RealworldCommand {
         #[arg(long, default_value_t = 0.0)]
         day: f64,
         /// Latitude in degrees (negative = southern hemisphere).
-        #[arg(long, default_value_t = 45.0)]
+        #[arg(long, default_value_t = 45.0, allow_hyphen_values = true)]
         lat: f64,
     },
     /// WORLD — flora / fauna archetypes + a keystone animal per land biome.
@@ -5954,13 +5954,13 @@ pub enum RealworldCommand {
         /// Destination place name; overrides --to-x/-y.
         #[arg(long)]
         to: Option<String>,
-        #[arg(long, default_value_t = 0.0)]
+        #[arg(long, default_value_t = 0.0, allow_hyphen_values = true)]
         from_x: f64,
-        #[arg(long, default_value_t = 0.0)]
+        #[arg(long, default_value_t = 0.0, allow_hyphen_values = true)]
         from_y: f64,
-        #[arg(long, default_value_t = 0.0)]
+        #[arg(long, default_value_t = 0.0, allow_hyphen_values = true)]
         to_x: f64,
-        #[arg(long, default_value_t = 0.0)]
+        #[arg(long, default_value_t = 0.0, allow_hyphen_values = true)]
         to_y: f64,
         /// Claimed journey time in days.
         #[arg(long, default_value_t = 1.0)]
@@ -5979,7 +5979,7 @@ pub enum RealworldCommand {
         #[arg(long, default_value_t = 0.0)]
         day: f64,
         /// Latitude override (else derived from the place's map row).
-        #[arg(long)]
+        #[arg(long, allow_hyphen_values = true)]
         lat: Option<f64>,
     },
     /// Show the magic ledger — the declared exceptions to physics the
