@@ -90,9 +90,12 @@ realworld validate
 ```
 
 This compiles every layer in turn and reports each one `ok`, or stops at the first
-value it cannot make sense of — a negative year, a calendar whose months do not add
-up. It is the quickest way to catch a broken edit, and worth running whenever you
-change the file.
+value it cannot make sense of — a missing required field, a moon with no period.
+Before the layers it also reads the definition on its own terms and *warns* about
+values that parse but cannot be: a calendar with no months, a star with no light, an
+orbit that is not closed, a sea level outside 0..1. Those never stop the compile
+(the compilers clamp them to something finite) — they are told to you. It is the
+quickest way to catch a broken edit, and worth running whenever you change the file.
 
 #section("Compiling the world")
 
