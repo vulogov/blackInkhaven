@@ -1,7 +1,8 @@
 # CANON-UI-1 — "Canon at Hand" (3.14.0)
 
-*Status: PLAN. The build of the A2 + B + A1 options from
-[`CANON-UI-1_PROPOSAL.md`](CANON-UI-1_PROPOSAL.md). On `3.14.0-dev`.*
+*Status: SHIPPED in 3.14.0 "Canon at Hand" (CU1-P1 f5224fd2 · CU1-P2 f6071b04 ·
+CU1-P3 e31da15b · CU1-P4 docs + cut). The build of the A2 + B + A1 options from
+[`CANON-UI-1_PROPOSAL.md`](CANON-UI-1_PROPOSAL.md).*
 
 ## Why
 

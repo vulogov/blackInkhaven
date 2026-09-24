@@ -125,7 +125,17 @@ choices rather than the findings.
 The reader hub (`Ctrl+B *` → *Canon*) opens the ledger as a scrollable dashboard —
 every decision with its kind and `«commitment»` — and `⏎` jumps to the paragraph a
 decision came from, the same jump the other ledgers give you. `g` grounds the
-cursored decision on a target you pick; `h` shows its history in the Thoughts pane.
+cursored decision on a target you pick; `h` shows its history in the Thoughts pane;
+`t` turns the list into the grounds graph.
+
+But the ledger no longer waits for you to open it. A paragraph that *established* a
+decision wears a `◈` in the tree, and opening it tells you what rests on it. Cycle
+the right pane (`Ctrl+B Tab`) to *Canon* and the decisions of whatever paragraph
+you have open sit beside the prose as you move — each with how much rests on it and
+what it rests on; `⏎` follows a ground upstream to the scene that set it, `*` opens
+the dashboard on that decision. And when you chat with your book, the answer is
+grounded on the decisions behind the passages it retrieved, not only the passages —
+the title says `◈ N canon`, `p` shows which, `*` turns it off for the session.
 And when you go to *delete* a paragraph that established decisions, the confirmation
 warns first — naming them and how much rests on them — so *"what breaks if I cut
 this?"* reaches you at the moment of the cut. (It only warns; the ledger keeps the
@@ -160,7 +170,9 @@ keep alone never forks, so the day it appears is the day it matters.
   on the dashboard). `canon history` / `canon log` read the development history off
   the append-only store.],
   [The reader hub (`Ctrl+B *` → *Canon*) is the dashboard (`⏎` source, `g` ground,
-  `h` history); deleting a decision's source paragraph warns with its blast radius;
+  `h` history, `t` graph); the `◈` pip and the *Canon* pane keep the open
+  paragraph's decisions beside the prose, and Book-scope chat is grounded on them;
+  deleting a decision's source paragraph warns with its blast radius;
   `canon forks` (after a `merge`) reaches the Editorial Pass as a brief. The ledger
   is *derived* and safe to lose — a re-harvest, never prose.],
 ))

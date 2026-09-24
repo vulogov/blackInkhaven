@@ -516,8 +516,23 @@ Inside the editor the reader hub (`Ctrl+B *`) gains a *Canon* entry: a scrollabl
 dashboard of every decision with its kind and `«commitment»`, plus a
 commitment-forks section. `⏎` jumps to the decision's source paragraph — the same
 jump the read-through and continuity ledgers give you — `g` grounds the cursored
-decision on a target you then pick, and `h` renders its development history (its
-grounds and commitment trajectory) into the Thoughts pane.
+decision on a target you then pick, `h` renders its development history (its
+grounds and commitment trajectory) into the Thoughts pane, and `t` toggles the flat
+list into the grounds DAG — each foundation, then what rests on it.
+
+Since 3.14 the ledger is also present *while you draft*, not only a modal away.
+Every Tree and Outline paragraph that *established* a decision carries a `◈` pip,
+and opening one says so in the status line — *"canon: this paragraph sources 2
+decision(s) · 3 rest on them"*. `Ctrl+B Tab` cycles the right region to a fourth
+pane, *Canon*, which follows the open paragraph: its decisions with kind and
+`«commitment»`, how many decisions rest on each, and the nearest grounds it rests
+on. `⏎` there jumps *upstream* to a ground's source paragraph, `h` sends the
+decision's history to Thoughts, `*` opens the dashboard with the cursor already on
+it. And the AI pane's *Book* scope grounds its answers on the ledger as well as the
+prose: the decisions behind the retrieved passages are packed into the prompt (in
+your project language, framed as your decisions rather than inferences), a
+`◈ N canon` cue shows in the title, the `p` transparency section lists them, and
+`*` in the AI pane toggles it (`canon.ground_ai` sets the default).
 
 The blast radius also finds you at the moment you would cause it: delete a
 paragraph that *established* canon decisions and the confirmation warns first,
@@ -538,7 +553,8 @@ is empty and free until the day you merge.
 The ledger is *derived* — rebuildable by re-harvest — so the `canon:` config block
 holds only behavioural knobs: `harvest_on_save` (default `true`) toggles the
 deterministic on-save tag harvest, and `context_budget` / `context_reserve` set
-the defaults `canon context` uses when its flags are omitted. Six Bund words
+the defaults `canon context` uses when its flags are omitted (and the budget the
+Book-scope grounding packs to); `ground_ai` is whether that grounding is on. Six Bund words
 expose the ledger read-only, mirroring CHRONICLE's discipline — the writes
 (`commit`, `ground`/`unground`, `reground`, `compact`, and the author-confirmed
 harvest) stay on the CLI and in the editor.
