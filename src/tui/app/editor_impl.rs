@@ -738,6 +738,27 @@ impl super::App {
         self.detect_paragraph_language();
         self.change_focus(Focus::Editor);
         self.status = format!("opened {}", abs.display());
+        // CANON-UI-1 (A1) — if this paragraph established canon decisions, say so
+        // (and how much rests on them) right where the author is about to edit it.
+        // Membership check is cheap; the summary read runs only on the hit.
+        if self.canon_source_nodes.contains(&node.id) {
+            let canon = self.store.raw().canon();
+            if let Ok(uids) = canon.units_for_node(node.id) {
+                if !uids.is_empty() {
+                    let mut dependents = std::collections::HashSet::new();
+                    for u in &uids {
+                        if let Ok(views) = canon.impact(*u) {
+                            dependents.extend(views.into_iter().map(|v| v.uid));
+                        }
+                    }
+                    let n = uids.len();
+                    let m = dependents.len();
+                    self.status = format!(
+                        "canon: this paragraph sources {n} decision(s) · {m} rest on them · Ctrl+B * → Canon"
+                    );
+                }
+            }
+        }
         // HAIKU-1 T2 — if this is the freshly-created manuscript paragraph armed
         // by `commit_add`, greet the blank buffer with a haiku now that it's open
         // for editing. Fires once (the id is cleared on match), and only for the

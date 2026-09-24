@@ -148,9 +148,13 @@ nations: [
 The `capital` is a *map cell* — an `[x, y]` coordinate on the world grid, not a
 city name — and the world seats the realm at the settlement nearest that cell,
 then clusters the surrounding towns around it exactly as `polities` does for a
-generated seat. The `relations` list overrides the seeded web pair by pair: each
-`{ with, stance }` names another realm and the stance this one takes toward it —
-`rival`, `allied`, `neutral` — replacing whatever the seed rolled for that pair.
+generated seat. It is optional: a nation declared with only a `name` (as the
+interactive worldbuilder's interview does) seats at the largest settlement no other
+realm has claimed. Pinned nations take their seats first, whatever order you list
+them in, so an unpinned realm can never push a pinned one off its own cell. The
+`relations` list overrides the seeded web pair by pair: each `{ with, stance }`
+names another realm and the stance this one takes toward it — `rival`, `allied`,
+`neutral`, in any letter case — replacing whatever the seed rolled for that pair.
 Everything you do not declare is still inferred, so a single named realm can sit
 inside a map of otherwise generated neighbours.
 

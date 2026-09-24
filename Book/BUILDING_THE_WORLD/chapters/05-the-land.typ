@@ -92,8 +92,10 @@ geology: {
 
 The `dem` block also carries the `scale_km_per_pixel` that turns pixels into real
 ground — so that later, when a rider crosses your map, the distance is true — and
-the `sea_level_pixel_value`, the pixel brightness (0–255) Inkhaven reads as the
-shoreline: anything at or below it is sea.
+the `sea_level_pixel_value`, the pixel brightness Inkhaven reads as the
+shoreline: anything at or below it is sea. Give it in the image's own depth — `0`–`255`
+for an ordinary 8-bit PNG (the number your image editor shows), `0`–`65535` for a
+16-bit one.
 
 #hjson[```
 geology: {
@@ -237,8 +239,9 @@ out, and Inkhaven puts the shoreline at 40% up your height range — the lowest 
 of the land becomes ocean. To get more sea, paint more of your image dark; for
 more land, paint more of it bright. That trial-and-error is usually all you need.
 (If you want to place the coast at an exact brightness, `sea_level_pixel_value`
-takes a number from `0` to `65535`, where `0` is black and `65535` is white;
-everything at or below it is sea.)
+takes a number in the image's own depth — `0`–`255` for an 8-bit image, `0`–`65535`
+for a 16-bit one, `0` black and the top value white; everything at or below it is
+sea.)
 
 #subsection("Three shortcuts")
 

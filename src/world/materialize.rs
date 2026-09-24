@@ -67,6 +67,7 @@ pub fn materialize_astronomy(
         match ensure_paragraph(store, cfg, &chapter, title, &body)? {
             Outcome::Created => report.created.push(title.to_string()),
             Outcome::Updated => report.updated.push(title.to_string()),
+        Outcome::Unchanged => {}
         }
     }
     Ok(report)
@@ -108,6 +109,7 @@ pub fn materialize_history(
         match ensure_paragraph(store, cfg, &chapter, title, &body)? {
             Outcome::Created => report.created.push(title.to_string()),
             Outcome::Updated => report.updated.push(title.to_string()),
+        Outcome::Unchanged => {}
         }
     }
     Ok(report)
@@ -158,6 +160,7 @@ pub fn materialize_geology(
         match ensure_paragraph(store, cfg, &chapter, title, &body)? {
             Outcome::Created => report.created.push(title.to_string()),
             Outcome::Updated => report.updated.push(title.to_string()),
+        Outcome::Unchanged => {}
         }
     }
     Ok(report)
@@ -189,6 +192,7 @@ pub fn materialize_climate(
         match ensure_paragraph(store, cfg, &chapter, title, &body)? {
             Outcome::Created => report.created.push(title.to_string()),
             Outcome::Updated => report.updated.push(title.to_string()),
+        Outcome::Unchanged => {}
         }
     }
     Ok(report)
@@ -225,6 +229,7 @@ pub fn materialize_hydrology(
         match ensure_paragraph(store, cfg, &chapter, title, &body)? {
             Outcome::Created => report.created.push(title.to_string()),
             Outcome::Updated => report.updated.push(title.to_string()),
+        Outcome::Unchanged => {}
         }
     }
     Ok(report)
@@ -259,6 +264,7 @@ pub fn materialize_demographics(
         match ensure_paragraph(store, cfg, &chapter, title, &body)? {
             Outcome::Created => report.created.push(title.to_string()),
             Outcome::Updated => report.updated.push(title.to_string()),
+        Outcome::Unchanged => {}
         }
     }
     Ok(report)
@@ -301,6 +307,7 @@ pub fn materialize_polities(
         match ensure_paragraph(store, cfg, &chapter, title, &body)? {
             Outcome::Created => report.created.push(title.to_string()),
             Outcome::Updated => report.updated.push(title.to_string()),
+        Outcome::Unchanged => {}
         }
     }
     Ok(report)
@@ -341,6 +348,7 @@ pub fn materialize_culture(
     match ensure_paragraph(store, cfg, &chapter, "Peoples", &body)? {
         Outcome::Created => report.created.push("Peoples".into()),
         Outcome::Updated => report.updated.push("Peoples".into()),
+        Outcome::Unchanged => {}
     }
     Ok(report)
 }
@@ -371,6 +379,7 @@ pub fn materialize_ecology(
     match ensure_paragraph(store, cfg, &chapter, "Life by biome", &body)? {
         Outcome::Created => report.created.push("Life by biome".into()),
         Outcome::Updated => report.updated.push("Life by biome".into()),
+        Outcome::Unchanged => {}
     }
     Ok(report)
 }
@@ -403,6 +412,7 @@ pub fn materialize_trade(
     match ensure_paragraph(store, cfg, &chapter, "Routes", &body)? {
         Outcome::Created => report.created.push("Routes".into()),
         Outcome::Updated => report.updated.push("Routes".into()),
+        Outcome::Unchanged => {}
     }
     Ok(report)
 }
@@ -425,6 +435,7 @@ pub fn materialize_magic(
     match ensure_paragraph(store, cfg, &chapter, "Rules", &body)? {
         Outcome::Created => report.created.push("Rules".into()),
         Outcome::Updated => report.updated.push("Rules".into()),
+        Outcome::Unchanged => {}
     }
     Ok(report)
 }
@@ -524,6 +535,7 @@ pub fn materialize_setting(
         match ensure_paragraph(store, cfg, &chapter, title, body.trim_end())? {
             Outcome::Created => report.created.push(title.into()),
             Outcome::Updated => report.updated.push(title.into()),
+        Outcome::Unchanged => {}
         }
     }
     Ok(report)
@@ -543,7 +555,11 @@ fn write_heightmap_png(root: &Path, out: &GeologyOutput) -> Result<PathBuf> {
             img.put_pixel(x as u32, y as u32, image::Luma([v]));
         }
     }
-    img.save(&path).map_err(|e| Error::Store(format!("writing {}: {e}", path.display())))?;
+    let mut png: Vec<u8> = Vec::new();
+    img.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .map_err(|e| Error::Store(format!("encoding {}: {e}", path.display())))?;
+    crate::io_atomic::write(&path, &png)
+        .map_err(|e| Error::Store(format!("writing {}: {e}", path.display())))?;
     Ok(path)
 }
 
@@ -576,6 +592,9 @@ fn ensure_chapter(store: &Store, cfg: &Config, book: &Node, title: &str) -> Resu
 enum Outcome {
     Created,
     Updated,
+    /// The leaf already holds exactly this body — nothing rewritten, no
+    /// re-embed churn on a no-change recompile.
+    Unchanged,
 }
 
 /// Find or create a paragraph by title under a chapter, setting its content.
@@ -608,12 +627,17 @@ fn ensure_paragraph(
             (p, Outcome::Created)
         }
     };
-    // A structured-data leaf (RFC §7.4): flag it HJSON and write the body to the
-    // file (the on-disk source of truth), then sync DB + embeddings — exactly
-    // how `cli::language::create_chapter_paragraph` seeds a language block.
-    node.content_type = Some("hjson".to_string());
+    // A structured-data leaf (RFC §7.4) is flagged HJSON; the Setting chapter's
+    // leaves are prose (Typst headings + lists), so they keep the default
+    // content type — flagging them HJSON broke Jinja linking + highlighting.
+    node.content_type = if body.trim_start().starts_with('{') { Some("hjson".to_string()) } else { None };
     if let Some(rel) = &node.file {
         let abs = store.project_root().join(rel);
+        if matches!(outcome, Outcome::Updated)
+            && std::fs::read(&abs).map(|cur| cur == body.as_bytes()).unwrap_or(false)
+        {
+            return Ok(Outcome::Unchanged);
+        }
         // The on-disk source of truth — write atomically (temp + rename) so a
         // crash mid-write can't leave a corrupted world leaf.
         crate::io_atomic::write(&abs, body.as_bytes())

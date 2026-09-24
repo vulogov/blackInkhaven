@@ -65,6 +65,56 @@ pub fn compose_context_prefix(passages: &[RetrievedPassage]) -> String {
     out
 }
 
+/// CANON-UI-1 (CU1-P2) — frame a packed canon context (`PackedContext::to_prompt`)
+/// as the block that follows the retrieved passages in a Book-scope prompt. The
+/// framing is localised like [`system_prompt`]; the decisions themselves are in
+/// whatever language the author recorded them. Empty `body` → empty block, so an
+/// empty ledger adds nothing to the prompt.
+pub fn canon_context_block(lang: &str, body: &str) -> String {
+    if body.trim().is_empty() {
+        return String::new();
+    }
+    let code: String = lang.chars().take(2).flat_map(|c| c.to_lowercase()).collect();
+    let (open, note, close) = match code.as_str() {
+        "ru" => (
+            "── Канон (решения автора о сюжете, стоящие за этими фрагментами) ──",
+            "Каждая строка — решение: (вид [степень канона]) суть (место). Это решения \
+автора, а не выводы из прозы: если фрагмент расходится с решением, скажите об \
+этом прямо, а не выбирайте молча.",
+            "── конец канона ──",
+        ),
+        "es" => (
+            "── Canon (las decisiones del autor sobre la historia detrás de estos pasajes) ──",
+            "Cada línea es una decisión: (tipo [grado de canon]) esencia (lugar). Son \
+decisiones del autor, no inferencias de la prosa: si un pasaje contradice una \
+decisión, dilo abiertamente en lugar de elegir en silencio.",
+            "── fin del canon ──",
+        ),
+        "fr" => (
+            "── Canon (les décisions de l'auteur sur l'histoire derrière ces passages) ──",
+            "Chaque ligne est une décision : (genre [degré de canon]) essentiel (lieu). Ce \
+sont des décisions de l'auteur, non des déductions tirées de la prose : si un \
+passage contredit une décision, dites-le franchement au lieu de trancher en silence.",
+            "── fin du canon ──",
+        ),
+        "de" => (
+            "── Kanon (die Entscheidungen des Autors zur Geschichte hinter diesen Passagen) ──",
+            "Jede Zeile ist eine Entscheidung: (Art [Kanongrad]) Kern (Ort). Es sind \
+Entscheidungen des Autors, keine Schlüsse aus der Prosa: widerspricht eine Passage \
+einer Entscheidung, sagen Sie es offen, statt stillschweigend zu wählen.",
+            "── Ende Kanon ──",
+        ),
+        _ => (
+            "── Canon (the author's story decisions behind these passages) ──",
+            "Each line is a decision: (kind [canon level]) gist (location). These are the \
+author's decisions, not inferences from the prose: when a passage and a decision \
+disagree, say so plainly rather than choosing silently.",
+            "── end canon ──",
+        ),
+    };
+    format!("{open}\n{note}\n\n{}\n{close}", body.trim_end())
+}
+
 /// The set of citation tokens (the passages' location paths) the retrieval
 /// makes available — used by the citation validator to flag any the LLM
 /// invented. (The paragraph's UUID stays in `RetrievedPassage::id` for
@@ -324,6 +374,21 @@ mod tests {
         let valid = std::collections::HashSet::new();
         let out = validate_citations("oops [act-two/the-storm and on", &valid);
         assert!(out.contains("act-two/the-storm and on"));
+    }
+
+    #[test]
+    fn canon_block_localises_and_is_empty_for_an_empty_ledger() {
+        assert_eq!(canon_context_block("en", "   "), "");
+        let en = canon_context_block("en-US", "- (character) Ada is left-handed\n");
+        assert!(en.starts_with("── Canon"));
+        assert!(en.contains("Ada is left-handed"));
+        assert!(en.ends_with("── end canon ──"));
+        for code in ["ru", "es", "fr", "de"] {
+            let b = canon_context_block(code, "- x");
+            assert_ne!(b, canon_context_block("en", "- x"), "{code} must localise");
+            assert!(b.contains("- x"));
+        }
+        assert_eq!(canon_context_block("ja", "- x"), canon_context_block("en", "- x"));
     }
 
     #[test]

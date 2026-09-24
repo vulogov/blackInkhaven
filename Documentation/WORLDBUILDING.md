@@ -88,15 +88,25 @@ astronomy: {
 
 | Field | Default | Notes |
 |---|---|---|
+| `name` | **required** | |
 | `star.class` / `age_gyr` / `mass_solar` | — / 0 / derived | descriptive + mass for the year-length law |
-| `star.luminosity_solar` | — | sets the climate's stellar flux |
-| `planet.axial_tilt_deg` | — | the seasons |
-| `planet.day_length_hours` | — | planet-day → calendar units |
-| `planet.rotation_direction` | `"prograde"` | `prograde` / `retrograde` |
-| `orbit.eccentricity` | `0` | |
+| `star.luminosity_solar` | **required** | sets the climate's stellar flux (Sun = 1.0) |
+| `planet.mass_earth` / `radius_earth` | **required** | Earth = 1.0 |
+| `planet.axial_tilt_deg` | **required** | the seasons (Earth 23.4) |
+| `planet.day_length_hours` | **required** | planet-day → calendar units |
+| `planet.rotation_direction` | `"prograde"` | `prograde` / `retrograde` (case-insensitive) |
+| `orbit.semi_major_axis_au` | **required** | Earth = 1.0 |
+| `orbit.eccentricity` | `0` | must be `0 ≤ e < 1` |
 | `orbit.year_length_days` | computed | a declared value is *checked* against Kepler's; a >1-day gap warns |
+| `moons[].name` / `period_days` | **required** | |
 | `moons[].mass_lunar` / `eccentricity` | `0` / `0` | mass drives the tide share |
+| `calendar.months` / `month_length_days` | **required** | |
 | `calendar.weekdays` | `0` | |
+
+`inkhaven realworld validate` lints the definition's own domain too (a 0-month
+calendar, a dark star, an open orbit, `sea_level` outside 0..1, unknown
+`mountain_orogeny` / `rotation_direction` / `stance` spellings, a seed that is
+neither hex nor decimal) before compiling the layers — advisory, never blocking.
 
 ### `geology` — `generated` or `dem`
 
@@ -466,10 +476,10 @@ line starting with `/` is a command.
 
 | Command | Effect |
 |---|---|
-| `/interview` | start the guided five-stage world interview |
+| `/interview` | start the guided world interview (World · Sky · Land · People · Rules) |
 | `/set <dot.path> <value>` | set any `world.hjson` key |
-| `/star <class>` · `/tilt <deg>` · `/moon <name> [days]` | shape the sky |
-| `/nation <name> [era] [kind] [traits…]` | add a nation |
+| `/star <class>` · `/tilt <deg>` · `/moon <name> [period_days]` | shape the sky (`/star` also sets a typical luminosity for the class) |
+| `/nation <name> [x y]` | add a nation, optionally pinned to a capital cell (unpinned nations seat at the largest unclaimed settlement) |
 | `/magic on\|off` · `/rule <kind> <cat,cat> [desc]` | the magic ledger |
 | `/wfact <statement>` | record an author fact into the Facts book (`fact:world`) |
 | `/research <query>` | retrieve related Facts into the Research pane |
@@ -485,7 +495,10 @@ Shaping commands (`/set`, `/star`, `/rule`, interview answers, …) accumulate i
 **pending delta** — accepted-but-uncommitted edits, previewed before they join and
 saved with the session so they survive a quit. `/write` folds them into
 `world.hjson` atomically; the plausibility score moves the moment an edit is
-accepted, before it is committed.
+accepted, before it is committed. On a project with no `world.hjson` yet the delta
+folds onto the same starter scaffold `realworld new` writes (named from the
+interview's first answer), and `/write` refuses — keeping the delta — rather than
+save a definition the schema would not load back.
 
 > The Map pane draws an ASCII biome minimap from the compiled layers after `/compile`;
 > `/map` shows the real plakat raster on kitty / iTerm2 / sixel terminals.

@@ -45,9 +45,10 @@ pub struct UnitDef {
     /// User-visible name (`day`, `month`, `year`, …).
     /// Lowercase by convention.
     pub name: String,
-    /// How many of THIS unit make ONE of the parent unit.
-    /// `0` on the top-most unit means "unbounded" (the
-    /// chain ends here).
+    /// How many of the unit BELOW make ONE of this unit
+    /// (`month.per_parent = 30` days, `year.per_parent = 12`
+    /// months). The base unit carries `0`; the top-most unit
+    /// is unbounded above (nothing multiplies past it).
     #[serde(default)]
     pub per_parent: u32,
     /// Optional display names. Index 0 == "1" in human-
@@ -195,6 +196,13 @@ impl Calendar {
             }
         }
         Self { cfg, ticks_per }
+    }
+
+    /// Ticks (base units) in one of the named unit — `None` for an unknown name.
+    #[cfg(test)]
+    pub fn ticks_per_unit(&self, name: &str) -> Option<i64> {
+        let i = self.cfg.units.iter().position(|u| u.name == name)?;
+        self.ticks_per.get(i).copied()
     }
 
     pub fn unit_names(&self) -> Vec<&str> {
@@ -397,8 +405,10 @@ impl Calendar {
                     out[i] = -(value + 1);
                 } else {
                     // Reverse subordinate so "year -1 day 1"
-                    // is the latest tick BEFORE the epoch.
-                    let max_minus_1 = self.cfg.units[i].per_parent as i64 - 1;
+                    // is the latest tick BEFORE the epoch. The
+                    // count of THIS unit per its parent lives on
+                    // the parent (`units[i+1].per_parent`).
+                    let max_minus_1 = self.cfg.units[i + 1].per_parent as i64 - 1;
                     out[i] = max_minus_1 - value + 1;
                 }
             }

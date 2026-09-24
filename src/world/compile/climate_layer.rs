@@ -57,7 +57,7 @@ pub fn compile_climate(
         // Prevailing wind for this band: easterlies in the tropics & poles,
         // westerlies in the mid-latitudes (flipped for a retrograde planet).
         let wind_west = matches!(lat.abs() as u32, 30..=60);
-        let prograde = def.astronomy.planet.rotation_direction != "retrograde";
+        let prograde = !def.astronomy.planet.rotation_direction.trim().eq_ignore_ascii_case("retrograde");
         let wind_dx: i32 = if wind_west == prograde { 1 } else { -1 };
 
         for x in 0..w {

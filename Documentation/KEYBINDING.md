@@ -672,6 +672,7 @@ keystroke away. Pane title shows provider, streaming status, and a
 | `z` | chat has a completed turn | (3.9) **Regenerate** — re-send the last prompt under the current scope. |
 | `e` | chat has a completed turn | (3.9) **Edit last** — pull the last prompt back into the compose box to tweak and resend. |
 | `[` / `]` | Book-scope answer with retrieval | (3.9) **Navigable citations** — jump to the previous / next cited paragraph (in citation order; falls back to the direct hits). A `[ ] cited ¶` cue shows in the title. |
+| `*` | any | (3.14, CANON-UI-1) **Toggle canon grounding** for Book scope — when on (default `canon.ground_ai`), the next Book-scope retrieval also packs the canon decisions behind the retrieved passages into the prompt; a `◈ N canon` cue shows in the title and the decisions list under the `p` transparency section. Off grounds on prose only. |
 | `r` / `R` | inference done, doc open        | Replace editor selection (or entire doc if no selection) with the AI text. Marks dirty, refocuses Editor. |
 | `i` / `I` | inference done, doc open        | Insert AI text at cursor. Marks dirty.              |
 | `t` / `T` | inference done, doc open        | Prepend AI text to top of paragraph (with blank line separator). |
@@ -699,16 +700,37 @@ prior set of chat turns won't dilute their grounding.
 `Ctrl+B Tab` / `Ctrl+B Shift+Tab` cycle the right region between the **Output**
 pane (structured one-way notifications from every subsystem — fact-check,
 Socratic, timeline critique, translation, lexicon, Bund, …), the **AI** pane,
-and (1.4.18; THOUGHTS-1) the **Thoughts** pane — a read-only, scrollable home for
-long reflective output, e.g. the Inner Theologian slow track (`Ctrl+B J→T`). In
+(1.4.18; THOUGHTS-1) the **Thoughts** pane — a read-only, scrollable home for
+long reflective output, e.g. the Inner Theologian slow track (`Ctrl+B J→T`) —
+and (3.14; CANON-UI-1) the **Canon** pane, which follows the *open paragraph*
+and lists the canon decisions it sources, each with how many decisions rest on
+it and what it rests on (see below). In
 the Thoughts pane: `↑↓`/`j`/`k` scroll, `PageUp`/`PageDown`, `g`/`G` top/bottom,
 (3.9) **`y` copy** the whole transcript to the clipboard, `c` clear, `Esc` to
 the editor. Plain **`Tab`** now cycles Tree → Editor → *the
 currently-shown right pane* (no longer forced to AI). The active right pane is
 remembered across restarts. **`Ctrl+Z f`** fullscreens the current right pane
-(Output / Thoughts; the AI pane uses `Ctrl+B K`). When content arrives for a
+(Output / Thoughts / Canon; the AI pane uses `Ctrl+B K`). When content arrives for a
 pane it auto-surfaces — unless you're actively working in a right pane, so it
 never steals focus mid-read.
+
+### 4.2 Canon pane (3.14, CANON-UI-1)
+
+Read-first. It tracks the open paragraph as you move between paragraphs (a
+paragraph change refreshes at once; a slow tick picks up ledger edits while the
+pane is showing) and shows, per decision: `[kind] «commitment» gist`, `↳ N
+decisions rest on this`, and `↳ rests on ¶ …` for each nearest ground (`¶` =
+the ground has a source paragraph to jump to). The tree's `◈` pip marks the
+paragraphs that have something to show here.
+
+| Key | Action |
+| --- | ------ |
+| `↑`/`↓` (`k`/`j`), `g`/`G` | move between the paragraph's decisions |
+| `Enter` | **jump to the ground** — open the source paragraph of the first ground the cursored decision rests on (the reading path *upstream*) |
+| `h` | the decision's development history (grounds + commitment trajectory) into Thoughts |
+| `*` | open the whole-ledger **Canon dashboard** with the cursor on this decision (ground it with `g` there) |
+| `r` | refresh now |
+| `Esc` | back to the editor (or exit fullscreen) |
 
 (3.8) Findings arrive **newest-first at the top**. The selection is **anchored
 by message id**, so a finding streaming in no longer shifts the cursor onto a

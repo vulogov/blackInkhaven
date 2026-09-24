@@ -141,12 +141,12 @@ its living:
 ```
 geography: {
   regions: [
-    { name: "The Vale of Enst", kind: "river_valley",
-      center_lat: 34.0, center_lon: -12.0 }
+    { name: "The Vale of Enst", biome: "temperate_forest",
+      description: "the river valley below the mouth-city", x: 41, y: 22 }
   ]
 }
 economy: {
-  base: "agrarian"
+  tech_level: "iron"
   trade_goods: ["grain", "river-fish", "mountain-iron"]
 }
 ```

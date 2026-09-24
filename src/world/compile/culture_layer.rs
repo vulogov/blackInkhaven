@@ -121,12 +121,14 @@ pub fn culture_style_name(culture: &Culture, seed: u64, index: usize) -> String 
     let base = culture.polity.bytes().fold(seed ^ 0x5EED, |a, b| h(a, b as u64));
     let on = |k: u64| ONSET[(h(base, k) as usize) % ONSET.len()];
     let ta = |k: u64| TAIL[(h(base, 100 + k) as usize) % TAIL.len()];
+    // Draw on the full index (not `i % 3`): settlements 0 and 3 of a realm
+    // used to share a name more often than not.
     let i = index as u64;
     if h(base, 900 + i) % 3 == 0 {
         // A longer, two-onset name.
-        format!("{}{}{}", on(i % 3), on((i + 1) % 3).to_lowercase(), ta(i % 3))
+        format!("{}{}{}", on(i), on(i + 1).to_lowercase(), ta(i))
     } else {
-        format!("{}{}", on(i % 3), ta((i + 1) % 3))
+        format!("{}{}", on(i), ta(i + 1))
     }
 }
 

@@ -27,24 +27,30 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 3.13.0 — Tend the Ledger
+## Latest release · 3.14.0 — Canon at Hand
 
-3.13.0 is the maintenance trio for the **Canon Ledger** — the record of the
-*decisions behind the fiction* (distinct from the text, the current state, or the
-readers' findings), whose dependency graph now populates itself (3.12) so
-**`canon impact` — "what breaks if I cut this?"** — returns real answers. This
-release keeps that graph healthy. Deterministic core, warning-free:
+3.14.0 brings the **Canon Ledger** — the record of the *decisions behind the
+fiction* and the graph of what rests on what — **into the writing surface**, so
+it is present while you draft rather than a dashboard away. No new store, no new
+dependency, warning-free:
 
-- **`canon reground`** — backfill grounds across a whole existing ledger (the
-  migration path for a pre-3.12 ledger, so `impact`/`why` light up without a
-  re-harvest); `--dry-run` previews.
-- **`canon compact`** — reclaim the append-only churn from hand-grounding, keeping
-  every live decision's id, grounds, **and commitment** (carried onto the live
-  version before the superseded ones are dropped).
-- **`canon graph`** — see the whole shape: each foundation, with what transitively
-  rests on it indented beneath (`canon graph <id>` for one decision's subtree).
+- **The `◈` glyph** — every Tree/Outline paragraph that *established* a canon
+  decision is marked; opening one says how much rests on it ("sources 2
+  decision(s) · 3 rest on them").
+- **The Canon pane** — `Ctrl+B Tab` cycles a fourth right-pane mode that follows
+  the open paragraph: its decisions with kind and «commitment», how many rest on
+  each, the nearest grounds; `Enter` jumps upstream to a ground's source
+  paragraph, `h` history, `*` the dashboard on that decision.
+- **Grounded chat** — the AI pane's Book scope packs the decisions behind the
+  retrieved passages into the prompt (in your project language, framed as *your*
+  decisions), with a `◈ N canon` cue and a transparency list; `*` toggles,
+  `canon.ground_ai` sets the default.
+- Also: the dashboard's grounds-DAG view (`t`), a thread-aware crash hook, and
+  two correctness passes over the **worldbuilder interview** and `realworld`
+  (schema-checked deltas, a `validate` that lints the definition itself, the
+  calendar/history/DEM fixes) with *Building the World* refreshed to match.
 
-Read the full notes: [`Documentation/RELEASE_NOTES/3.13.0.md`](Documentation/RELEASE_NOTES/3.13.0.md).
+Read the full notes: [`Documentation/RELEASE_NOTES/3.14.0.md`](Documentation/RELEASE_NOTES/3.14.0.md).
 No breaking changes; existing projects open unchanged; compiles warning-free.
 
 **Stable baseline · 3.0.0.** 3.0.0 remains the stable, maintained edition — the
@@ -167,12 +173,15 @@ hardened surface. Every release's notes live under
   **CHORUS** (voice at book scale), **REDLINE** (the revision worklist / Editorial
   Pass, `Ctrl+V Shift+R`), and **CHRONICLE** (did the draft get better?). One
   **reader hub** (`Ctrl+B *`) opens every dashboard; deterministic cores are free.
-- **The Canon Ledger** (`inkhaven canon`, hub → **Canon**) — the *decisions behind
-  the fiction* (world-facts, plot points, reveals) with their **grounds** and a
-  **commitment** level. **`canon impact`** answers *"what breaks if I cut this?"*;
-  `canon why` / `history` / `log` / `graph` trace, time, and map it; grounds
-  populate themselves (`reground` backfills an old ledger, `compact` tidies it);
-  the model may *propose* decisions but only `canon accept` writes.
+- **The Canon Ledger** (`inkhaven canon`, hub → **Canon**, the **Canon pane**) —
+  the *decisions behind the fiction* (world-facts, plot points, reveals) with their
+  **grounds** and a **commitment** level. **`canon impact`** answers *"what breaks
+  if I cut this?"*; `canon why` / `history` / `log` / `graph` trace, time, and map
+  it; grounds populate themselves (`reground` backfills an old ledger, `compact`
+  tidies it). In the editor a `◈` marks the paragraphs that established decisions,
+  the Canon pane (`Ctrl+B Tab`) keeps the open paragraph's decisions beside the
+  prose, and Book-scope chat is grounded on them; the model may *propose*
+  decisions but only `canon accept` writes.
 - **The companions** — a triad that observes craft without rewriting your prose:
   the **World fact-checker** (`Ctrl+B W`, checks scenes against your worldbuilding
   + timeline), **Inner Socrates** (`Ctrl+B J`, Socratic questions about content

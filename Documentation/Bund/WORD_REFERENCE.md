@@ -129,6 +129,15 @@ Read and mutate the project tree, tags, snapshots, and DB. Reads are
 | `ink.world.fact_check.timeline.events_near` | store_read | `( point window -- list )` | events whose start is within window ticks of point |
 | `ink.world.fact_check.timeline.season_for` | store_read | `( point -- season )` | the calendar season covering a point ("" if none) |
 
+**`calc.world.*` — the World-book readers of the `calc.*` stdlib (`store_read`: they open the store and `world.hjson`, unlike the pure `calc.*` math)**
+
+| Word | Category | Stack | Description |
+|------|----------|-------|-------------|
+| `calc.world.get` | store_read | `( path -- float \| NODATA )` | a World-book value by `Chapter/key` path (compiled from `world.hjson` when the chapter is not materialized) |
+| `calc.world.check` | store_read | `( path computed -- delta \| NODATA )` | signed difference (declared − computed) between a World-book fact and a `/calc` value |
+| `calc.world.has` | store_read | `( path -- bool )` | whether the path resolves to a value |
+| `calc.world.dict` | store_read | `( chapter -- dict \| NODATA )` | a whole World layer as a dict |
+
 **`ink.world.*` — WORLD-REPORT (the `inkhaven world` reads, all `store_read`)**
 
 | Word | Category | Stack | Description |

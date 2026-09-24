@@ -1847,6 +1847,112 @@ impl super::super::App {
         }
     }
 
+    /// CANON-UI-1 (CU1-P3) — the paragraph-aware Canon pane: the open
+    /// paragraph's decisions, each with what rests on it and what it rests on.
+    pub(in crate::tui::app) fn draw_canon_pane(&self, f: &mut ratatui::Frame, area: Rect) {
+        let focused =
+            self.focus == Focus::Ai && self.right_pane == crate::tui::app::RightPane::Canon;
+        let border_style = if focused {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+        let st = &self.canon_pane;
+        let title = if st.node.is_some() {
+            format!(" Canon · ◈ {} · {} ", st.rows.len(), st.title)
+        } else {
+            " Canon ".to_string()
+        };
+        let block = Block::default().borders(Borders::ALL).border_style(border_style).title(title);
+        let inner = block.inner(area);
+        f.render_widget(block, area);
+
+        let dim = Style::default().fg(Color::DarkGray);
+        let accent = Style::default().fg(Color::LightMagenta);
+        let mut lines: Vec<Line> = Vec::new();
+        if let Some(e) = &st.error {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(format!("  canon unavailable: {e}"), dim)));
+        } else if st.node.is_none() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled("  Open a paragraph to see the canon it sources.", dim)));
+            lines.push(Line::from(Span::styled("  Ctrl+B * shows the whole ledger.", dim)));
+        } else if st.rows.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled("  This paragraph sources no canon decisions.", dim)));
+            lines.push(Line::from(Span::styled(
+                "  Tag it (rel:…, secret:…) and save, or `inkhaven canon harvest`.",
+                dim,
+            )));
+            lines.push(Line::from(Span::styled("  Ctrl+B * shows the whole ledger.", dim)));
+        } else {
+            let mut cursor_line: usize = 0;
+            for (i, r) in st.rows.iter().enumerate() {
+                let selected = focused && i == st.cursor;
+                if selected {
+                    cursor_line = lines.len();
+                }
+                let head_style = if selected {
+                    Style::default().add_modifier(Modifier::BOLD).add_modifier(Modifier::REVERSED)
+                } else {
+                    Style::default()
+                };
+                let commit = r.commitment.as_deref().map(|c| format!(" «{c}»")).unwrap_or_default();
+                lines.push(Line::from(vec![
+                    Span::styled(if selected { "▸ " } else { "  " }, accent),
+                    Span::styled(format!("[{}]{commit} ", r.kind), accent),
+                    Span::styled(r.gist.clone(), head_style),
+                ]));
+                let rests = if r.impact == 1 {
+                    "1 decision rests on this".to_string()
+                } else {
+                    format!("{} decisions rest on this", r.impact)
+                };
+                lines.push(Line::from(Span::styled(format!("      ↳ {rests}"), dim)));
+                if r.grounds.is_empty() && r.grounds_more == 0 {
+                    lines.push(Line::from(Span::styled("      ↳ rests on nothing recorded", dim)));
+                } else {
+                    for (g, node) in &r.grounds {
+                        let mark = if node.is_some() { "¶ " } else { "  " };
+                        lines.push(Line::from(Span::styled(format!("      ↳ rests on {mark}{g}"), dim)));
+                    }
+                    if r.grounds_more > 0 {
+                        lines.push(Line::from(Span::styled(
+                            format!("        … and {} further down the chain", r.grounds_more),
+                            dim,
+                        )));
+                    }
+                }
+                lines.push(Line::from(""));
+            }
+            // Keep the cursored decision in view.
+            let footer_h: u16 = if inner.height > 1 { 1 } else { 0 };
+            let body_h = inner.height.saturating_sub(footer_h) as usize;
+            // Scroll only once the cursored row (plus its detail lines) would
+            // fall below the body; never past the end of the content.
+            let need = cursor_line + 4;
+            let scroll = if need <= body_h { 0 } else { need - body_h }
+                .min(lines.len().saturating_sub(body_h));
+            let body_rect = Rect { height: inner.height - footer_h, ..inner };
+            let para = Paragraph::new(lines)
+                .wrap(Wrap { trim: false })
+                .scroll((scroll.min(u16::MAX as usize) as u16, 0));
+            f.render_widget(para, body_rect);
+            if footer_h == 1 {
+                let footer = Rect { x: inner.x, y: inner.y + inner.height - 1, width: inner.width, height: 1 };
+                f.render_widget(
+                    Paragraph::new(Line::from(Span::styled(
+                        " ↑↓ · Enter → its ground ¶ · h history · * ledger · r refresh · Ctrl+B Tab panes ",
+                        Style::default().add_modifier(Modifier::DIM),
+                    ))),
+                    footer,
+                );
+            }
+            return;
+        }
+        f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+    }
+
     pub(in crate::tui::app) fn draw_output(&self, f: &mut ratatui::Frame, area: Rect) {
         use crate::pane::output::Severity;
 
@@ -2363,6 +2469,13 @@ impl super::super::App {
                 Style::default().fg(Color::Cyan),
             ));
         }
+        // CANON-UI-1 (CU1-P2) — how many canon decisions ground this conversation.
+        if let Some(ctx) = self.book_rag_last_canon.as_ref().filter(|c| !c.views.is_empty()) {
+            spans.push(Span::styled(
+                format!(" · ◈ {} canon", ctx.views.len()),
+                Style::default().fg(Color::LightMagenta),
+            ));
+        }
         // 3.9 — single-response scroll cue: `⟳follow` while the view is pinned to
         // the streaming tail, `↑scrolled` (End to re-follow) once scrolled back.
         if self.ai_mode != AiMode::Book && self.graph_walk().is_none() {
@@ -2625,17 +2738,21 @@ impl super::super::App {
             (None, None) => return Vec::new(),
         };
 
+        // CANON-UI-1 (CU1-P2) — the canon decisions packed alongside (Book scope).
+        let canon = self.book_rag_last_canon.as_ref().filter(|c| !c.views.is_empty());
+        let canon_tag = canon.map(|c| format!(" · ◈ {} canon", c.views.len())).unwrap_or_default();
+
         let mut out: Vec<Line<'static>> = Vec::new();
         if !self.book_rag_passages_expanded {
             out.push(Line::from(Span::styled(
-                format!("▶ {title} ({n}) · p to expand"),
+                format!("▶ {title} ({n}){canon_tag} · p to expand"),
                 dim,
             )));
             out.push(Line::from(""));
             return out;
         }
         out.push(Line::from(Span::styled(
-            format!("▼ {title} ({n}) · p to collapse"),
+            format!("▼ {title} ({n}){canon_tag} · p to collapse"),
             dim,
         )));
 
@@ -2673,6 +2790,39 @@ impl super::super::App {
                         dim,
                     )));
                 }
+            }
+        }
+
+        // CANON-UI-1 (CU1-P2) — the decisions the answer is grounded on, one
+        // line each: (kind [commitment]) gist (location). `*` toggles grounding.
+        if let Some(ctx) = canon {
+            out.push(Line::from(vec![
+                Span::styled("  ◈ ", Style::default().fg(Color::LightMagenta)),
+                Span::styled(
+                    format!(
+                        "Canon decisions ({}) · {}/{} tokens · * toggles grounding",
+                        ctx.views.len(),
+                        ctx.used,
+                        ctx.budget
+                    ),
+                    dim,
+                ),
+            ]));
+            for v in &ctx.views {
+                let kind = v
+                    .kind
+                    .map(|k| k.schema_str().trim_start_matches("x.narrative/").to_string())
+                    .unwrap_or_else(|| "?".into());
+                let commit = v.commitment.map(|c| format!(" [{c}]")).unwrap_or_default();
+                let gist: String = v.gist.chars().take(72).collect();
+                let mut spans = vec![
+                    Span::styled(format!("    ({kind}{commit}) "), scope_fg),
+                    Span::styled(gist, dim),
+                ];
+                if let Some(loc) = &v.locator {
+                    spans.push(Span::styled(format!(" ({loc})"), dim));
+                }
+                out.push(Line::from(spans));
             }
         }
 

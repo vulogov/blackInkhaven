@@ -6342,6 +6342,10 @@ impl super::super::App {
                     chip_style,
                 ));
             }
+            // CANON-UI-1 (A1) — decision-source marker, as in the Tree pane.
+            if matches!(node.kind, NodeKind::Paragraph) && self.canon_source_nodes.contains(&r.id) {
+                spans.push(Span::styled(" ◈", Style::default().fg(Color::LightMagenta)));
+            }
             lines.push(Line::from(spans));
         }
         f.render_widget(Paragraph::new(lines), body_rect);
@@ -6734,9 +6738,10 @@ impl super::super::App {
     /// decisions with kind + commitment, plus commitment forks. Same scrollable-rows
     /// shape as the chronicle; decision rows carry a jump anchor to their source.
     pub(in crate::tui::app) fn draw_canon_modal(&self, f: &mut ratatui::Frame, area: Rect) {
-        let Modal::Canon { rows, anchors, cursor, grounding, .. } = &self.modal else {
+        let Modal::Canon { rows, anchors, cursor, grounding, graph, decisions: _ } = &self.modal else {
             return;
         };
+        let title = if *graph { " Canon · graph " } else { " Canon " };
         let width = area.width.saturating_sub(6).clamp(52, 92);
         let height = area.height.saturating_sub(4).max(12);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
@@ -6746,7 +6751,7 @@ impl super::super::App {
 
         let block = Block::default()
             .borders(Borders::ALL)
-            .title(" Canon ")
+            .title(title)
             .border_style(Style::default().fg(self.theme.modal_border).add_modifier(Modifier::BOLD))
             .style(Style::default().bg(self.theme.modal_bg).fg(self.theme.modal_fg));
         let inner = block.inner(rect);
@@ -6783,8 +6788,10 @@ impl super::super::App {
         let footer = Rect { x: inner.x, y: inner.y + inner.height - 1, width: inner.width, height: 1 };
         let footer_hint = if grounding.is_some() {
             "pick the decision it rests on · Enter ground · Esc cancel"
+        } else if *graph {
+            "grounds DAG · Enter jumps · g ground · h history · t list"
         } else {
-            "Enter jumps to source · g grounds · h history"
+            "Enter jumps to source · g grounds · h history · t graph"
         };
         let footer_text = dashboard_footer(footer_hint, start, list_h, rows.len());
         f.render_widget(
