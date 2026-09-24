@@ -62,6 +62,25 @@ fn realm_name(seed: u64) -> String {
     )
 }
 
+/// The ONE realm-membership metric: squared grid distance weighted for the
+/// equirectangular grid (an x-cell spans ~3:2 the ground of a y-cell).
+/// Membership here, `realworld name` and the scene brief all use it, so a
+/// settlement is never counted in realm A and named as realm B's.
+pub fn realm_dist2(a: (usize, usize), b: (usize, usize)) -> i64 {
+    let dx = (a.0 as i64 - b.0 as i64).clamp(-1_000_000, 1_000_000);
+    let dy = (a.1 as i64 - b.1 as i64).clamp(-1_000_000, 1_000_000);
+    9 * dx * dx + 4 * dy * dy
+}
+
+/// Index of the realm whose capital is nearest (by [`realm_dist2`]) to a cell.
+pub fn nearest_realm(pol: &PolitiesOutput, x: usize, y: usize) -> Option<usize> {
+    pol.polities
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, q)| realm_dist2((x, y), q.capital_pos))
+        .map(|(i, _)| i)
+}
+
 fn describe(s: &Settlement) -> String {
     format!("the {} {}", s.biome, s.class)
 }
@@ -131,7 +150,7 @@ pub fn compile_polities(
     for s in settlements {
         let (mut best, mut best_d) = (0usize, i64::MAX);
         for (ci, (cap, _)) in caps.iter().enumerate() {
-            let d = dist2((s.x, s.y), (cap.x, cap.y));
+            let d = realm_dist2((s.x, s.y), (cap.x, cap.y));
             if d < best_d {
                 best_d = d;
                 best = ci;
@@ -164,7 +183,7 @@ pub fn compile_polities(
                 if let Some(j) = polities.iter().position(|p| p.name.eq_ignore_ascii_case(&r.with)) {
                     let (a, b) = if i < j { (i, j) } else { (j, i) };
                     if a != b {
-                        declared_pairs.insert((a, b), r.stance.clone());
+                        declared_pairs.insert((a, b), r.stance.trim().to_ascii_lowercase());
                     }
                 }
             }

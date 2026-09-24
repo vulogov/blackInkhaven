@@ -158,6 +158,12 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.inner_socrates.personas.list", category::STORE_READ),
     ("ink.inner_socrates.usage.today", category::STORE_READ),
     // World fact-check timeline queries — read-only lookups over the calendar.
+    // `calc.world.*` are NOT pure math: they read the World book + world.hjson
+    // (and recompile layers) — classified here so the store_read gate holds.
+    ("calc.world.get", category::STORE_READ),
+    ("calc.world.check", category::STORE_READ),
+    ("calc.world.has", category::STORE_READ),
+    ("calc.world.dict", category::STORE_READ),
     ("ink.world.report", category::STORE_READ),
     ("ink.world.undescribed", category::STORE_READ),
     ("ink.world.findings", category::STORE_READ),
@@ -945,7 +951,7 @@ mod tests {
         let mut doc: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         for line in DOC.lines() {
             let line = line.trim_start();
-            if !line.starts_with("| `ink.") {
+            if !line.starts_with("| `ink.") && !line.starts_with("| `calc.") {
                 continue;
             }
             let cols: Vec<&str> = line.split('|').collect();
@@ -954,7 +960,7 @@ mod tests {
             }
             let word = cols[1].trim().trim_matches('`').trim();
             let cat = cols[2].trim();
-            if word.starts_with("ink.") {
+            if word.starts_with("ink.") || word.starts_with("calc.") {
                 doc.insert(word.to_string(), cat.to_string());
             }
         }

@@ -172,6 +172,8 @@ impl WorldDefinition {
 #[serde(untagged)]
 pub enum SeedValue {
     Int(i64),
+    /// A decimal above `i64::MAX` (e.g. a seed `variants` printed in full).
+    UInt(u64),
     Str(String),
 }
 
@@ -183,18 +185,35 @@ impl Default for SeedValue {
 
 impl SeedValue {
     /// Resolve to a `u64`. Hex (`0x…`) and decimal strings are both accepted;
-    /// an unparseable string resolves to 0 (a valid, if unhelpful, seed).
+    /// an unparseable string resolves to a stable hash of its text (so the world
+    /// still compiles deterministically) — [`Self::parse_error`] says so.
     pub fn resolve(&self) -> u64 {
         match self {
             SeedValue::Int(n) => *n as u64,
-            SeedValue::Str(s) => {
-                let t = s.trim();
-                if let Some(hex) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
-                    u64::from_str_radix(hex, 16).unwrap_or(0)
-                } else {
-                    t.parse::<u64>().unwrap_or(0)
-                }
-            }
+            SeedValue::UInt(n) => *n,
+            SeedValue::Str(s) => Self::parse_str(s).unwrap_or_else(|| {
+                s.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0100_0000_01b3))
+            }),
+        }
+    }
+
+    fn parse_str(s: &str) -> Option<u64> {
+        let t = s.trim();
+        if let Some(hex) = t.strip_prefix("0x").or_else(|| t.strip_prefix("0X")) {
+            u64::from_str_radix(hex, 16).ok()
+        } else {
+            t.parse::<u64>().ok()
+        }
+    }
+
+    /// Why a string seed did not parse as hex / decimal (it still resolves, via
+    /// a text hash) — a lint for `validate`, so a typo is not silently seed 0.
+    pub fn parse_error(&self) -> Option<String> {
+        match self {
+            SeedValue::Str(s) if Self::parse_str(s).is_none() => Some(format!(
+                "seed {s:?} is neither hex (0x…, up to 16 digits) nor decimal — compiled from a hash of the text"
+            )),
+            _ => None,
         }
     }
 }

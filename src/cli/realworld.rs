@@ -723,10 +723,14 @@ fn build_timeline_calendar(
     let months = cal.months.max(1);
     let month_len = cal.month_length_days.max(1);
 
+    // `per_parent` on unit i = how many of unit i-1 make ONE of unit i (the
+    // convention `Calendar::new` multiplies up: month = 30 days, year = 12
+    // months); the base unit carries 0. Writing it one level down gave 12-day
+    // months and 12-day years when the block was adopted.
     let units = vec![
-        UnitDef { name: "day".into(), per_parent: month_len, names: Vec::new() },
-        UnitDef { name: "month".into(), per_parent: months, names: cal.month_names.clone() },
-        UnitDef { name: "year".into(), per_parent: 0, names: Vec::new() },
+        UnitDef { name: "day".into(), per_parent: 0, names: Vec::new() },
+        UnitDef { name: "month".into(), per_parent: month_len, names: cal.month_names.clone() },
+        UnitDef { name: "year".into(), per_parent: months, names: Vec::new() },
     ];
 
     // Each astronomy marker starts a season and spans to the next; marker names
@@ -1205,7 +1209,7 @@ fn history(project: &Path, json: bool, materialize: bool) -> Result<()> {
     let hydro = compile_hydrology(&geo, &climate);
     let demo = compile_demographics(&climate, &hydro);
     let declared = def.history.as_ref().map(|h| h.events.as_slice()).unwrap_or(&[]);
-    let hist = compile_history(&demo, declared, def.seed_u64());
+    let hist = compile_history(&demo, declared, &def.nations, def.seed_u64());
 
     let mat_report = if materialize {
         use crate::config::Config;
@@ -1241,10 +1245,10 @@ fn history(project: &Path, json: bool, materialize: bool) -> Result<()> {
     for e in &hist.epochs {
         println!("\n  {} ({}…{})", e.name, e.start_year, e.end_year);
         println!("    {}", e.note);
-        for ev in hist.events.iter().filter(|v| v.year >= e.start_year && v.year < e.end_year) {
+        for ev in hist.events.iter().filter(|v| crate::world::compile::history_layer::epoch_contains(e, v.year)) {
             println!("    · year {:>5}  {}", ev.year, ev.description);
         }
-        for f in hist.foundings.iter().filter(|f| f.year >= e.start_year && f.year < e.end_year) {
+        for f in hist.foundings.iter().filter(|f| crate::world::compile::history_layer::epoch_contains(e, f.year)) {
             println!("    · year {:>5}  {} founded  (pop {})", f.year, f.label, fmt_pop(f.population));
         }
     }
@@ -1299,7 +1303,7 @@ fn chronicle(project: &Path, json: bool) -> Result<()> {
     let hydro = compile_hydrology(&geo, &climate);
     let demo = compile_demographics(&climate, &hydro);
     let declared = def.history.as_ref().map(|h| h.events.as_slice()).unwrap_or(&[]);
-    let hist = compile_history(&demo, declared, def.seed_u64());
+    let hist = compile_history(&demo, declared, &def.nations, def.seed_u64());
 
     if json {
         let v = serde_json::json!({
@@ -1316,7 +1320,7 @@ fn chronicle(project: &Path, json: bool) -> Result<()> {
                         "realms_fallen": st.realms_fallen,
                     },
                     "events": hist.events.iter()
-                        .filter(|v| v.year >= e.start_year && v.year < e.end_year)
+                        .filter(|v| crate::world::compile::history_layer::epoch_contains(e, v.year))
                         .map(|v| serde_json::json!({ "year": v.year, "kind": v.kind, "description": v.description }))
                         .collect::<Vec<_>>(),
                 })
@@ -1355,7 +1359,7 @@ fn chronicle(project: &Path, json: bool) -> Result<()> {
             st.realms_active(),
         );
         let events: Vec<&crate::world::compile::history_layer::HistEvent> =
-            hist.events.iter().filter(|v| v.year >= e.start_year && v.year < e.end_year).collect();
+            hist.events.iter().filter(|v| crate::world::compile::history_layer::epoch_contains(e, v.year)).collect();
         if events.is_empty() {
             println!("    (a quiet age — no recorded upheavals)");
         } else {
@@ -1405,11 +1409,8 @@ fn name(project: &Path, json: bool) -> Result<()> {
     let mut per_realm: Vec<usize> = vec![0; pol.polities.len()];
     let mut rows: Vec<(String, String, String)> = Vec::new(); // (generic, styled, realm)
     for s in &demo.settlements {
-        let realm = pol.polities.iter().enumerate().min_by_key(|(_, q)| {
-            let dx = q.capital_pos.0 as i64 - s.x as i64;
-            let dy = q.capital_pos.1 as i64 - s.y as i64;
-            9 * dx * dx + 4 * dy * dy
-        });
+        let realm = crate::world::compile::polities_layer::nearest_realm(&pol, s.x, s.y)
+            .map(|i| (i, &pol.polities[i]));
         let generic = settlement_name(seed, s.x, s.y);
         match realm {
             Some((i, p)) => {
@@ -1662,6 +1663,11 @@ fn gazetteer(project: &Path, output: Option<&str>) -> Result<()> {
     }
 
     match output {
+        Some(path) if std::path::Path::new(path).file_name().and_then(|f| f.to_str()) == Some(WORLD_FILE) => {
+            return Err(Error::Config(format!(
+                "refusing to write the gazetteer over {WORLD_FILE} — pick another --output path"
+            )));
+        }
         Some(path) => {
             crate::io_atomic::write(std::path::Path::new(path), md.as_bytes())
                 .map_err(|e| Error::Store(format!("writing {path}: {e}")))?;
@@ -2143,13 +2149,7 @@ fn geology_for(
     project: &Path,
     def: &WorldDefinition,
 ) -> Result<crate::world::types::GeologyOutput> {
-    use crate::world::compile::{compile_geology, compile_geology_dem};
-    if let Some(dem) = def.geology.as_ref().and_then(|g| g.dem.as_ref()) {
-        let path = project.join(&dem.path);
-        compile_geology_dem(def, &path).map_err(Error::Config)
-    } else {
-        Ok(compile_geology(def))
-    }
+    crate::world::compile::compile_geology_at(def, project).map_err(Error::Config)
 }
 
 fn new(project: &Path, name: &str, force: bool) -> Result<()> {
@@ -2342,7 +2342,7 @@ fn collect_world_lints(
     let mut out = Vec::new();
     let declared_hist = def.history.as_ref().map(|h| h.events.as_slice()).unwrap_or(&[]);
     if !declared_hist.is_empty() {
-        let hist = crate::world::compile::compile_history(demo, declared_hist, seed);
+        let hist = crate::world::compile::compile_history(demo, declared_hist, &def.nations, seed);
         for w in crate::world::compile::history_layer::lint_history(declared_hist, &hist) {
             out.push(format!("history: {w}"));
         }
@@ -2493,9 +2493,19 @@ fn write_critique_notes(
             it.recommendation.trim(),
         );
         let h = Hierarchy::load(&store)?;
-        let mut node = store
-            .create_node(&cfg, &h, NodeKind::Paragraph, &title, Some(&notes), None, InsertPosition::End)
-            .map_err(|e| Error::Store(format!("creating Note: {e}")))?;
+        // Idempotent by title: a re-run refreshes the existing Note for this
+        // aspect instead of stacking a new one each time.
+        let existing = h
+            .children_of(Some(notes.id))
+            .into_iter()
+            .find(|n| n.kind == NodeKind::Paragraph && n.title == title)
+            .cloned();
+        let mut node = match existing {
+            Some(n) => n,
+            None => store
+                .create_node(&cfg, &h, NodeKind::Paragraph, &title, Some(&notes), None, InsertPosition::End)
+                .map_err(|e| Error::Store(format!("creating Note: {e}")))?,
+        };
         if let Some(rel) = &node.file {
             crate::io_atomic::write(&store.project_root().join(rel), body.as_bytes())
                 .map_err(|e| Error::Store(format!("writing Note: {e}")))?;
@@ -2598,6 +2608,16 @@ fn validate(project: &Path) -> Result<()> {
         def.seed_u64(),
         def.primary_language
     );
+    // The definition's own domain first: values that parse but cannot be (a
+    // 0-month calendar, a dark star, an open orbit) and enum-like strings the
+    // compilers would silently default. Advisory — the layers still compile.
+    let dw = crate::world::plausibility::lint_definition(&def);
+    if !dw.is_empty() {
+        println!("  definition:   {} warning(s):", dw.len());
+        for x in &dw {
+            println!("                  ⚠ {x}");
+        }
+    }
     // WORLD-7 (W7-P4) — validate every layer actually compiles, not just that
     // the definition parses. A broken DEM path or an inconsistent block surfaces
     // here as a compile error rather than at materialize time.
@@ -2627,7 +2647,7 @@ fn validate(project: &Path) -> Result<()> {
     // W11-P1 — verify declared history events (advisory).
     let declared_hist = def.history.as_ref().map(|h| h.events.as_slice()).unwrap_or(&[]);
     if !declared_hist.is_empty() {
-        let hist = crate::world::compile::compile_history(&demo, declared_hist, def.seed_u64());
+        let hist = crate::world::compile::compile_history(&demo, declared_hist, &def.nations, def.seed_u64());
         let w = crate::world::compile::history_layer::lint_history(declared_hist, &hist);
         if w.is_empty() {
             println!("  history:      ok · {} declared event(s)", declared_hist.len());
@@ -2768,7 +2788,7 @@ fn compile_all_cli(project: &Path, json: bool, materialize: bool) -> Result<()> 
         reports.push(m::materialize_demographics(&store, &cfg, &demo)?);
         // WORLD-8 — the world's past lands with the whole-world compile.
         let declared_hist = def.history.as_ref().map(|h| h.events.as_slice()).unwrap_or(&[]);
-        let hist = crate::world::compile::compile_history(&demo, declared_hist, def.seed_u64());
+        let hist = crate::world::compile::compile_history(&demo, declared_hist, &def.nations, def.seed_u64());
         reports.push(m::materialize_history(&store, &cfg, &hist)?);
         // WORLD-14 — the human half of the world (nations, cultures, ecology).
         let seed = def.seed_u64();
@@ -3229,9 +3249,14 @@ mod tests {
         assert_eq!(tl.base_unit, "day");
         // day → month → year stack, from the world calendar (30-day months, 12/yr).
         assert_eq!(tl.units.len(), 3);
-        assert_eq!(tl.units[0].per_parent, 30);
-        assert_eq!(tl.units[1].per_parent, 12);
-        assert_eq!(tl.units[2].per_parent, 0); // year is unbounded
+        assert_eq!(tl.units[0].per_parent, 0); // the base unit
+        assert_eq!(tl.units[1].per_parent, 30); // 30 days make a month
+        assert_eq!(tl.units[2].per_parent, 12); // 12 months make a year
+        // Adopted as a timeline calendar, a year must be 360 ticks — the bug
+        // wrote the stack one level down and a year came out 12 days long.
+        let cal = crate::timeline::calendar::Calendar::from_config(tl.clone());
+        assert_eq!(cal.ticks_per_unit("year"), Some(360));
+        assert_eq!(cal.ticks_per_unit("month"), Some(30));
         // Four season markers, each a valid in-range span.
         assert_eq!(tl.seasons.len(), 4);
         for s in &tl.seasons {

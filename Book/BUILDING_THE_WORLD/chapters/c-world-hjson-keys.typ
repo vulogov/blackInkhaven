@@ -139,8 +139,8 @@ Descriptive names laid over the procedural rivers, which still run.
 
 #section("magic — declared exceptions to physics (optional)")
 
-#gloss("enabled")[`text`/`number` — `true` turns the ledger on; `false` gates it
-  entirely.]
+#gloss("enabled")[`true`/`false` (a bare boolean — `1` or `"true"` fails the
+  parse) — `true` turns the ledger on; `false` gates it entirely.]
 #gloss("rules")[`list` of `block`. Each rule: `kind` (`text`, your own label, e.g.
   `"messenger_birds"`); `covers` (`list` of `text` — which fact-check categories
   it may suppress: `astronomy`, `climate`, `climate_anomaly`, `date_coherence`,

@@ -87,10 +87,14 @@ pub fn compile_geology_dem(
     limits.max_image_width = Some(16_384);
     limits.max_image_height = Some(16_384);
     reader.limits(limits);
-    let img = reader
+    let decoded = reader
         .decode()
-        .map_err(|e| format!("decoding DEM {}: {e}", dem_path.display()))?
-        .to_luma16();
+        .map_err(|e| format!("decoding DEM {}: {e}", dem_path.display()))?;
+    // `sea_level_pixel_value` is the number an image editor shows; for an 8-bit
+    // source that is 0..255, but the samples are read as 16-bit (0..65535), so
+    // scale the declared value to the sample depth before comparing.
+    let eight_bit = decoded.color().bits_per_pixel() / decoded.color().channel_count() as u16 <= 8;
+    let img = decoded.to_luma16();
     let (iw, ih) = (img.width() as usize, img.height() as usize);
     if iw == 0 || ih == 0 {
         return Err(format!("DEM {} is empty", dem_path.display()));
@@ -115,7 +119,10 @@ pub fn compile_geology_dem(
 
     // Sea level: from the declared sea pixel value (normalised), else the default.
     let sea_level = match dem.sea_level_pixel_value {
-        Some(pv) => ((pv.saturating_sub(lo)) as f32 / span).clamp(0.0, 1.0),
+        Some(pv) => {
+            let pv = if eight_bit && pv <= 255 { pv.saturating_mul(257) } else { pv };
+            ((pv.saturating_sub(lo)) as f32 / span).clamp(0.0, 1.0)
+        }
         None => 0.4,
     };
 
@@ -247,7 +254,7 @@ fn build_heightmap(
     g: &GeneratedGeology,
 ) -> Vec<f32> {
     let perlin = Perlin::new(seed as u32);
-    let orogeny = match g.mountain_orogeny.as_str() {
+    let orogeny = match g.mountain_orogeny.trim().to_ascii_lowercase().as_str() {
         "quiet" => 0.25_f32,
         "ancient" => 0.12,
         _ => 0.45, // active (default)
