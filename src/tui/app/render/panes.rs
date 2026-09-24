@@ -2363,6 +2363,13 @@ impl super::super::App {
                 Style::default().fg(Color::Cyan),
             ));
         }
+        // CANON-UI-1 (CU1-P2) — how many canon decisions ground this conversation.
+        if let Some(ctx) = self.book_rag_last_canon.as_ref().filter(|c| !c.views.is_empty()) {
+            spans.push(Span::styled(
+                format!(" · ◈ {} canon", ctx.views.len()),
+                Style::default().fg(Color::LightMagenta),
+            ));
+        }
         // 3.9 — single-response scroll cue: `⟳follow` while the view is pinned to
         // the streaming tail, `↑scrolled` (End to re-follow) once scrolled back.
         if self.ai_mode != AiMode::Book && self.graph_walk().is_none() {
@@ -2625,17 +2632,21 @@ impl super::super::App {
             (None, None) => return Vec::new(),
         };
 
+        // CANON-UI-1 (CU1-P2) — the canon decisions packed alongside (Book scope).
+        let canon = self.book_rag_last_canon.as_ref().filter(|c| !c.views.is_empty());
+        let canon_tag = canon.map(|c| format!(" · ◈ {} canon", c.views.len())).unwrap_or_default();
+
         let mut out: Vec<Line<'static>> = Vec::new();
         if !self.book_rag_passages_expanded {
             out.push(Line::from(Span::styled(
-                format!("▶ {title} ({n}) · p to expand"),
+                format!("▶ {title} ({n}){canon_tag} · p to expand"),
                 dim,
             )));
             out.push(Line::from(""));
             return out;
         }
         out.push(Line::from(Span::styled(
-            format!("▼ {title} ({n}) · p to collapse"),
+            format!("▼ {title} ({n}){canon_tag} · p to collapse"),
             dim,
         )));
 
@@ -2673,6 +2684,39 @@ impl super::super::App {
                         dim,
                     )));
                 }
+            }
+        }
+
+        // CANON-UI-1 (CU1-P2) — the decisions the answer is grounded on, one
+        // line each: (kind [commitment]) gist (location). `*` toggles grounding.
+        if let Some(ctx) = canon {
+            out.push(Line::from(vec![
+                Span::styled("  ◈ ", Style::default().fg(Color::LightMagenta)),
+                Span::styled(
+                    format!(
+                        "Canon decisions ({}) · {}/{} tokens · * toggles grounding",
+                        ctx.views.len(),
+                        ctx.used,
+                        ctx.budget
+                    ),
+                    dim,
+                ),
+            ]));
+            for v in &ctx.views {
+                let kind = v
+                    .kind
+                    .map(|k| k.schema_str().trim_start_matches("x.narrative/").to_string())
+                    .unwrap_or_else(|| "?".into());
+                let commit = v.commitment.map(|c| format!(" [{c}]")).unwrap_or_default();
+                let gist: String = v.gist.chars().take(72).collect();
+                let mut spans = vec![
+                    Span::styled(format!("    ({kind}{commit}) "), scope_fg),
+                    Span::styled(gist, dim),
+                ];
+                if let Some(loc) = &v.locator {
+                    spans.push(Span::styled(format!(" ({loc})"), dim));
+                }
+                out.push(Line::from(spans));
             }
         }
 

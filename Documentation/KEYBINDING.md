@@ -672,6 +672,7 @@ keystroke away. Pane title shows provider, streaming status, and a
 | `z` | chat has a completed turn | (3.9) **Regenerate** — re-send the last prompt under the current scope. |
 | `e` | chat has a completed turn | (3.9) **Edit last** — pull the last prompt back into the compose box to tweak and resend. |
 | `[` / `]` | Book-scope answer with retrieval | (3.9) **Navigable citations** — jump to the previous / next cited paragraph (in citation order; falls back to the direct hits). A `[ ] cited ¶` cue shows in the title. |
+| `*` | any | (3.14, CANON-UI-1) **Toggle canon grounding** for Book scope — when on (default `canon.ground_ai`), the next Book-scope retrieval also packs the canon decisions behind the retrieved passages into the prompt; a `◈ N canon` cue shows in the title and the decisions list under the `p` transparency section. Off grounds on prose only. |
 | `r` / `R` | inference done, doc open        | Replace editor selection (or entire doc if no selection) with the AI text. Marks dirty, refocuses Editor. |
 | `i` / `I` | inference done, doc open        | Insert AI text at cursor. Marks dirty.              |
 | `t` / `T` | inference done, doc open        | Prepend AI text to top of paragraph (with blank line separator). |
