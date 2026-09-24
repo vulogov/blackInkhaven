@@ -119,6 +119,18 @@ It's advisory: it informs, never blocks, and since the ledger is derived and
 separate, deleting the prose keeps the decisions (they're left source-orphaned, not
 pruned) — so *"what breaks if I cut this?"* is answered at the moment of cutting.
 
+**The Canon pane (3.14).** `Ctrl+B Tab` cycles the right region to **Canon**, a
+pane that follows the *open paragraph*: the decisions this paragraph sources,
+each with its kind and `«commitment»`, how many decisions rest on it, and the
+nearest grounds it rests on. It refreshes as you move between paragraphs (and on a
+slow tick while showing, so a harvest-on-save or a dashboard grounding appears
+without leaving the editor). `Enter` jumps to the source paragraph of the first
+ground — the reading path upstream — `h` shows the decision's history in Thoughts,
+`*` opens the whole-ledger dashboard on it, `Esc` returns to the editor. Read-only;
+grounding stays on the dashboard and the CLI. The tree's `◈` pip marks the
+paragraphs that have something to show here, and opening one says so in the
+status line ("canon: this paragraph sources 2 decision(s) · 3 rest on them").
+
 **Grounded chat (3.14).** The AI pane's **Book** scope ("chat with your book")
 grounds each conversation on the ledger as well as the prose: the decisions behind
 the retrieved passages are packed (closure-complete, to `canon.context_budget`) and
