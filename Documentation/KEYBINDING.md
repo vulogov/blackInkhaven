@@ -721,7 +721,9 @@ paragraph change refreshes at once; a slow tick picks up ledger edits while the
 pane is showing) and shows, per decision: `[kind] «commitment» gist`, `↳ N
 decisions rest on this`, and `↳ rests on ¶ …` for each nearest ground (`¶` =
 the ground has a source paragraph to jump to). The tree's `◈` pip marks the
-paragraphs that have something to show here.
+paragraphs that have something to show here; (3.15) it is tinted by how settled
+their canon is — dim (unmarked / floated), plain (drafted / committed), bold
+(canonical), struck (all retconned).
 
 | Key | Action |
 | --- | ------ |
