@@ -9733,7 +9733,7 @@ impl App {
         // PANE-1 — persist the pane choice so it survives a restart.
         let _ = self.save_session();
         self.status = match target {
-            RightPane::Canon => "pane → Canon · the open paragraph's decisions · ↑↓ · Enter ground · h history · * ledger".into(),
+            RightPane::Canon => "pane → Canon · the open paragraph's decisions · ↑↓ · Enter ground · c commit · h history · * ledger".into(),
             other => format!("pane → {}", right_pane_label(other)),
         };
     }
@@ -17476,7 +17476,7 @@ impl App {
         // Advertise the actions whenever there are decisions — g/h work on any
         // decision row, even one with no jump anchor (a node-less/merged decision).
         self.status = if decisions.iter().any(|d| d.is_some()) {
-            "canon · ↑↓ · Enter jump · g ground · h history · t graph · Esc".into()
+            "canon · ↑↓ · Enter jump · g ground · c commit · h history · t graph · Esc".into()
         } else {
             "canon · Esc".into()
         };
@@ -17610,14 +17610,27 @@ impl App {
                     None => self.status = "canon: put the cursor on a decision, then h".into(),
                 }
             }
+            KeyCode::Char('c') if !grounding => {
+                // CU2-P1 — set the cursored decision's commitment level.
+                let (target, at) = match &self.modal {
+                    Modal::Canon { decisions, cursor, graph, .. } => {
+                        (decisions.get(*cursor).copied().flatten(), (*cursor, *graph))
+                    }
+                    _ => (None, (0, false)),
+                };
+                match target {
+                    Some(uid) => self.open_canon_commit(uid, Some(at)),
+                    None => self.status = "canon: put the cursor on a decision, then c".into(),
+                }
+            }
             KeyCode::Char('t') if !grounding => {
                 // Toggle the flat list ↔ the grounds-DAG view, rebuilding rows.
                 let graph = !matches!(&self.modal, Modal::Canon { graph: true, .. });
                 let (rows, anchors, decisions) = self.build_canon_rows(graph);
                 self.status = if graph {
-                    "canon graph · ↑↓ · Enter jump · g ground · h history · t list · Esc".into()
+                    "canon graph · ↑↓ · Enter jump · g ground · c commit · h history · t list · Esc".into()
                 } else {
-                    "canon · ↑↓ · Enter jump · g ground · h history · t graph · Esc".into()
+                    "canon · ↑↓ · Enter jump · g ground · c commit · h history · t graph · Esc".into()
                 };
                 self.modal = Modal::Canon { rows, anchors, decisions, cursor: 0, grounding: None, graph };
             }
@@ -17648,6 +17661,78 @@ impl App {
             _ => {}
         }
         true
+    }
+
+    /// CANON-UI-2 (CU2-P1) — open the commitment picker for `uid`. `back` is the
+    /// dashboard state to return to (`None` from the Canon pane). The cursor
+    /// starts on the decision's current level (else the first).
+    fn open_canon_commit(&mut self, uid: smysl::Uid, back: Option<(usize, bool)>) {
+        let view = match self.store.raw().canon().view(uid) {
+            Ok(Some(v)) => v,
+            Ok(None) => {
+                self.status = "canon: no such decision".into();
+                return;
+            }
+            Err(e) => {
+                self.status = format!("canon: {e}");
+                return;
+            }
+        };
+        let cursor = view
+            .commitment
+            .and_then(|c| smysl::Commitment::ALL.iter().position(|l| *l == c))
+            .unwrap_or(0);
+        self.status = "canon · how settled is it? ↑↓ · Enter set · Esc cancel".into();
+        self.modal =
+            Modal::CanonCommit { uid, gist: view.gist, current: view.commitment, cursor, back };
+    }
+
+    /// CANON-UI-2 (CU2-P1) — keys in the commitment picker.
+    fn canon_commit_handle_key(&mut self, key: KeyEvent) {
+        let n = smysl::Commitment::ALL.len();
+        let Modal::CanonCommit { uid, cursor, back, .. } = &mut self.modal else { return };
+        let (uid, back) = (*uid, *back);
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => *cursor = cursor.saturating_sub(1),
+            KeyCode::Down | KeyCode::Char('j') => *cursor = (*cursor + 1).min(n.saturating_sub(1)),
+            KeyCode::Home => *cursor = 0,
+            KeyCode::End => *cursor = n.saturating_sub(1),
+            KeyCode::Esc => {
+                self.close_canon_commit(back);
+                self.status = "canon: commitment unchanged".into();
+            }
+            KeyCode::Enter => {
+                let level = smysl::Commitment::ALL[(*cursor).min(n.saturating_sub(1))];
+                let canon = self.store.raw().canon();
+                let status = match canon.commit(uid, level, "author") {
+                    Ok(()) => {
+                        // Tell "built on sand" at the moment it is created.
+                        match canon.commitment_notes_for(uid).ok().and_then(|n| n.into_iter().next()) {
+                            Some(note) => format!("canon · «{level}» set — ⚠ {note}"),
+                            None => format!("canon · «{level}» set"),
+                        }
+                    }
+                    Err(e) => format!("canon: commit failed — {e}"),
+                };
+                self.close_canon_commit(back);
+                self.refresh_canon_pane(false);
+                self.status = status;
+            }
+            _ => {}
+        }
+    }
+
+    /// Leave the commitment picker: back to the dashboard it came from (rows
+    /// rebuilt so the new level shows, cursor restored), or to no modal.
+    fn close_canon_commit(&mut self, back: Option<(usize, bool)>) {
+        match back {
+            Some((cursor, graph)) => {
+                let (rows, anchors, decisions) = self.build_canon_rows(graph);
+                let cursor = cursor.min(rows.len().saturating_sub(1));
+                self.modal = Modal::Canon { rows, anchors, decisions, cursor, grounding: None, graph };
+            }
+            None => self.modal = Modal::None,
+        }
     }
 
     /// CG-P3 — apply a dashboard grounding: `src` rests on `dst`, then rebuild the
@@ -20440,6 +20525,12 @@ impl App {
             KeyCode::Char('h') | KeyCode::Char('H') => {
                 match self.canon_pane.rows.get(self.canon_pane.cursor).map(|r| r.uid) {
                     Some(uid) => self.canon_show_history(uid),
+                    None => self.status = "canon: no decision under the cursor".into(),
+                }
+            }
+            KeyCode::Char('c') | KeyCode::Char('C') => {
+                match self.canon_pane.rows.get(self.canon_pane.cursor).map(|r| r.uid) {
+                    Some(uid) => self.open_canon_commit(uid, None),
                     None => self.status = "canon: no decision under the cursor".into(),
                 }
             }
@@ -28992,6 +29083,10 @@ impl App {
         }
         if matches!(self.modal, Modal::Canon { .. }) {
             self.canon_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::CanonCommit { .. }) {
+            self.canon_commit_handle_key(key);
             return Ok(false);
         }
         if matches!(self.modal, Modal::Knowledge { .. }) {

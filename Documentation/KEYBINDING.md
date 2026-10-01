@@ -727,6 +727,7 @@ paragraphs that have something to show here.
 | --- | ------ |
 | `↑`/`↓` (`k`/`j`), `g`/`G` | move between the paragraph's decisions |
 | `Enter` | **jump to the ground** — open the source paragraph of the first ground the cursored decision rests on (the reading path *upstream*) |
+| `c` | (3.15) **set its commitment** — a picker over floated → drafted → committed → canonical → retconned, recorded as the author; the status line warns at once if the new level leaves something canonical resting on something only floated. Also `c` on the Canon dashboard. |
 | `h` | the decision's development history (grounds + commitment trajectory) into Thoughts |
 | `*` | open the whole-ledger **Canon dashboard** with the cursor on this decision (ground it with `g` there) |
 | `r` | refresh now |

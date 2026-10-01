@@ -126,8 +126,12 @@ nearest grounds it rests on. It refreshes as you move between paragraphs (and on
 slow tick while showing, so a harvest-on-save or a dashboard grounding appears
 without leaving the editor). `Enter` jumps to the source paragraph of the first
 ground — the reading path upstream — `h` shows the decision's history in Thoughts,
-`*` opens the whole-ledger dashboard on it, `Esc` returns to the editor. Read-only;
-grounding stays on the dashboard and the CLI. The tree's `◈` pip marks the
+`*` opens the whole-ledger dashboard on it, `Esc` returns to the editor. Since 3.15
+**`c` sets the decision's commitment** from a five-level picker (the same `c` works
+on the dashboard): it records the level as the author, exactly like `canon commit`,
+and tells you immediately if the choice leaves a firm decision resting on a soft
+one — the `canon check` advisory, at the moment you create it rather than later.
+Grounding stays on the dashboard and the CLI. The tree's `◈` pip marks the
 paragraphs that have something to show here, and opening one says so in the
 status line ("canon: this paragraph sources 2 decision(s) · 3 rest on them").
 
