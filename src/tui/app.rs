@@ -1737,6 +1737,11 @@ pub(crate) struct CanonPaneState {
     pub node: Option<Uuid>,
     pub title: String,
     pub rows: Vec<CanonPaneRow>,
+    /// CU2-P2 — staged (model-proposed, unconfirmed) decisions for this
+    /// paragraph, listed under the live ones; the cursor runs through both.
+    pub staged: Vec<crate::canon::Proposal>,
+    /// Staged proposals for OTHER paragraphs (shown as a count only).
+    pub staged_elsewhere: usize,
     pub cursor: usize,
     /// Set when the ledger could not be read (shown instead of rows).
     pub error: Option<String>,
@@ -20472,13 +20477,37 @@ impl App {
                 Err(e) => state.error = Some(e.to_string()),
             }
         }
-        state.cursor = if reset_cursor {
-            0
-        } else {
-            self.canon_pane.cursor.min(state.rows.len().saturating_sub(1))
-        };
+        // CU2-P2 — the staged proposals for this paragraph (a small sidecar read).
+        if let Ok(staged) = crate::canon::StagedCanon::load(&self.layout) {
+            let (here, elsewhere): (Vec<_>, Vec<_>) =
+                staged.proposals.into_iter().partition(|p| Some(p.node) == opened);
+            state.staged = here;
+            state.staged_elsewhere = elsewhere.len();
+        }
+        let total = state.rows.len() + state.staged.len();
+        state.cursor = if reset_cursor { 0 } else { self.canon_pane.cursor.min(total.saturating_sub(1)) };
         self.canon_pane = state;
         self.canon_pane_at = std::time::Instant::now();
+    }
+
+    /// CANON-UI-2 (CU2-P2) — the author's confirmation from the pane: record the
+    /// staged proposals `select` picks (the shared accept path), then refresh the
+    /// pane and the ◈ source-node set so the new decisions show at once.
+    fn canon_pane_accept(&mut self, select: impl Fn(&crate::canon::Proposal) -> bool) {
+        let (language, _) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        let outcome = crate::canon::StagedCanon::accept_where(
+            &self.layout,
+            self.store.raw().canon(),
+            &language,
+            select,
+        );
+        self.status = match outcome {
+            Ok(0) => "canon: nothing to accept".into(),
+            Ok(n) => format!("canon · accepted {n} decision(s) into the ledger — `c` sets how settled"),
+            Err(e) => format!("canon: accept failed — {e} (the proposals stay staged)"),
+        };
+        self.refresh_canon_source_nodes();
+        self.refresh_canon_pane(false);
     }
 
     /// CANON-UI-1 (CU1-P3) — keys while the Canon pane has focus. Read-first: move
@@ -20486,7 +20515,52 @@ impl App {
     /// first ground's source paragraph (what it rests on); `h` shows its history in
     /// Thoughts; `*` opens the whole-ledger dashboard on it; `Esc` back.
     fn handle_canon_pane_key(&mut self, key: KeyEvent) -> Result<bool> {
-        let n = self.canon_pane.rows.len();
+        // The cursor runs through the live decisions, then the staged proposals.
+        let live = self.canon_pane.rows.len();
+        let n = live + self.canon_pane.staged.len();
+        let on_staged = self.canon_pane.cursor >= live && self.canon_pane.cursor < n;
+        // CU2-P2 — the confirm / discard keys for staged proposals.
+        match key.code {
+            KeyCode::Char('a') => {
+                if on_staged {
+                    let p = self.canon_pane.staged[self.canon_pane.cursor - live].clone();
+                    self.canon_pane_accept(move |q| q.same_as(&p));
+                } else {
+                    self.status = "canon: `a` accepts a PROPOSED decision — move to one (below the ◈ rows)".into();
+                }
+                return Ok(false);
+            }
+            KeyCode::Char('A') => {
+                match self.canon_pane.node {
+                    Some(node) if !self.canon_pane.staged.is_empty() => {
+                        self.canon_pane_accept(move |q| q.node == node)
+                    }
+                    _ => self.status = "canon: nothing proposed for this paragraph".into(),
+                }
+                return Ok(false);
+            }
+            KeyCode::Char('x') | KeyCode::Char('X') => {
+                if on_staged {
+                    let p = self.canon_pane.staged[self.canon_pane.cursor - live].clone();
+                    self.status = match crate::canon::StagedCanon::discard_where(&self.layout, |q| q.same_as(&p)) {
+                        Ok(_) => "canon · proposal discarded".into(),
+                        Err(e) => format!("canon: discard failed — {e}"),
+                    };
+                    self.refresh_canon_pane(false);
+                } else {
+                    self.status = "canon: `x` discards a PROPOSED decision — live ones are not deleted here".into();
+                }
+                return Ok(false);
+            }
+            // The decision-only actions need a live decision under the cursor.
+            KeyCode::Enter | KeyCode::Char('h') | KeyCode::Char('H') | KeyCode::Char('c') | KeyCode::Char('C')
+                if on_staged =>
+            {
+                self.status = "canon: this is only proposed — `a` accepts it into the ledger first".into();
+                return Ok(false);
+            }
+            _ => {}
+        }
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
                 self.canon_pane.cursor = self.canon_pane.cursor.saturating_sub(1);

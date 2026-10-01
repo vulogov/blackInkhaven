@@ -131,7 +131,16 @@ ground — the reading path upstream — `h` shows the decision's history in Tho
 on the dashboard): it records the level as the author, exactly like `canon commit`,
 and tells you immediately if the choice leaves a firm decision resting on a soft
 one — the `canon check` advisory, at the moment you create it rather than later.
-Grounding stays on the dashboard and the CLI. The tree's `◈` pip marks the
+Grounding stays on the dashboard and the CLI.
+
+**Proposals in the pane (3.15).** What `canon harvest` staged for the open paragraph
+is listed under its live decisions as `? [kind] gist` rows (with the grounds each
+*would* rest on), and the pane title counts them. Move down to one and press **`a`**
+to accept it into the ledger or **`x`** to discard it; **`A`** accepts all of this
+paragraph's. It is the same confirmation as `canon accept` — one shared code path —
+at the grain of a single proposal, so the model still only proposes and you still
+decide, now beside the prose the proposal was read from. Proposals staged for other
+paragraphs show as a count. The tree's `◈` pip marks the
 paragraphs that have something to show here, and opening one says so in the
 status line ("canon: this paragraph sources 2 decision(s) · 3 rest on them").
 
