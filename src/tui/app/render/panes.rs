@@ -1942,7 +1942,7 @@ impl super::super::App {
                 let footer = Rect { x: inner.x, y: inner.y + inner.height - 1, width: inner.width, height: 1 };
                 f.render_widget(
                     Paragraph::new(Line::from(Span::styled(
-                        " ↑↓ · Enter → its ground ¶ · h history · * ledger · r refresh · Ctrl+B Tab panes ",
+                        " ↑↓ · Enter → its ground ¶ · c commit · h history · * ledger · r refresh · Ctrl+B Tab ",
                         Style::default().add_modifier(Modifier::DIM),
                     ))),
                     footer,

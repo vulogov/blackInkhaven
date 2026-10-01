@@ -986,6 +986,18 @@ pub(super) enum Modal {
         /// machinery, so Enter-jump / `g` / `h` work in either.
         graph: bool,
     },
+    /// CANON-UI-2 (CU2-P1) — the commitment picker for one canon decision
+    /// (`c` in the Canon pane or the Canon dashboard): `↑↓` choose a level,
+    /// Enter records it as the author, Esc cancels. `back` restores the
+    /// dashboard (cursor, graph view) the picker was opened from; `None` when it
+    /// came from the pane.
+    CanonCommit {
+        uid: smysl::Uid,
+        gist: String,
+        current: Option<smysl::Commitment>,
+        cursor: usize,
+        back: Option<(usize, bool)>,
+    },
     /// KEN-1 (2.6, KEN-P5) — the knowledge dashboard (`Ctrl+B Shift+Z`): the
     /// epistemic-continuity findings (who knows what, when) grouped by kind. `↑↓`
     /// scroll, Enter jumps to the offending paragraph, Esc closes. `anchors`
