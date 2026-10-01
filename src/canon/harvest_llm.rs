@@ -66,9 +66,66 @@ impl StagedCanon {
         crate::io_atomic::write(&p, &json).map_err(|e| anyhow!("write {p:?}: {e}"))
     }
 
-    /// Clear the sidecar (after the proposals are accepted or discarded).
+    /// Clear the sidecar. (Accept/discard rewrite it through
+    /// [`Self::accept_where`] / [`Self::discard_where`]; tests reset with this.)
+    #[cfg(test)]
     pub fn clear(layout: &ProjectLayout) -> Result<()> {
         StagedCanon::default().save(layout)
+    }
+
+    /// The author's confirmation, for the staged proposals `select` picks: record
+    /// them into `ledger` (born with their grounds, in the project language),
+    /// flush, and remove exactly those entries from staging. The ONE accept path —
+    /// `canon accept` passes `|_| true`, the Canon pane passes a per-proposal or
+    /// per-paragraph predicate — so the two can never drift. Returns how many
+    /// decisions were recorded. Staging is rewritten only after the ledger write
+    /// succeeded, so a failure leaves the proposals staged.
+    pub fn accept_where(
+        layout: &ProjectLayout,
+        ledger: &super::CanonLedger,
+        language: &crate::prose::ProseLanguage,
+        select: impl Fn(&Proposal) -> bool,
+    ) -> Result<usize> {
+        let staged = StagedCanon::load(layout)?;
+        let (take, keep): (Vec<Proposal>, Vec<Proposal>) =
+            staged.proposals.into_iter().partition(|p| select(p));
+        if take.is_empty() {
+            return Ok(0);
+        }
+        let items: Vec<super::NewDecision> = take
+            .iter()
+            .map(|p| super::NewDecision {
+                kind: p.kind,
+                gist: p.gist.clone(),
+                node: p.node,
+                breadcrumb: p.breadcrumb.clone(),
+                proposed_grounds: p.grounds.clone(),
+            })
+            .collect();
+        let n = ledger.record_grounded_batch(&items, language)?.len();
+        ledger.sync()?;
+        StagedCanon { proposals: keep }.save(layout)?;
+        Ok(n)
+    }
+
+    /// Drop the staged proposals `select` picks without recording them. Returns
+    /// how many were removed.
+    pub fn discard_where(layout: &ProjectLayout, select: impl Fn(&Proposal) -> bool) -> Result<usize> {
+        let staged = StagedCanon::load(layout)?;
+        let before = staged.proposals.len();
+        let keep: Vec<Proposal> = staged.proposals.into_iter().filter(|p| !select(p)).collect();
+        let removed = before - keep.len();
+        if removed > 0 {
+            StagedCanon { proposals: keep }.save(layout)?;
+        }
+        Ok(removed)
+    }
+}
+
+impl Proposal {
+    /// Whether two proposals are the same staged entry (paragraph + kind + gist).
+    pub fn same_as(&self, other: &Proposal) -> bool {
+        self.node == other.node && self.kind == other.kind && self.gist == other.gist
     }
 }
 
@@ -209,6 +266,47 @@ mod tests {
         assert!(p.contains("Russian") && p.contains("Do NOT translate"));
         assert!(p.contains("world-fact") && p.contains("JSON array"));
         assert!(p.contains("grounds"), "the prompt asks for ground references");
+    }
+
+    #[test]
+    fn accept_where_records_the_subset_and_leaves_the_rest_staged() {
+        let dir = tempfile::tempdir().unwrap();
+        let layout = ProjectLayout::new(dir.path());
+        let led = crate::canon::CanonLedger::new(dir.path().join("canon.cbor").to_str().unwrap());
+        let (a, b) = (Uuid::from_u128(0xA), Uuid::from_u128(0xB));
+        let mk = |node, gist: &str| Proposal {
+            node,
+            breadcrumb: "ch1".into(),
+            kind: NarrativeKind::WorldFact,
+            gist: gist.into(),
+            grounds: Vec::new(),
+        };
+        StagedCanon {
+            proposals: vec![mk(a, "the harbour freezes each winter"), mk(a, "the gate is hidden"), mk(b, "the moon is green")],
+        }
+        .save(&layout)
+        .unwrap();
+        let lang = crate::prose::ProseLanguage::En;
+
+        // One proposal of paragraph A.
+        let one = mk(a, "the gate is hidden");
+        assert_eq!(StagedCanon::accept_where(&layout, &led, &lang, |p| p.same_as(&one)).unwrap(), 1);
+        assert_eq!(led.units_for_node(a).unwrap().len(), 1);
+        assert_eq!(StagedCanon::load(&layout).unwrap().proposals.len(), 2);
+
+        // Discard B's; A's remaining one stays.
+        assert_eq!(StagedCanon::discard_where(&layout, |p| p.node == b).unwrap(), 1);
+        assert!(led.units_for_node(b).unwrap().is_empty(), "a discard records nothing");
+        let left = StagedCanon::load(&layout).unwrap().proposals;
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].gist, "the harbour freezes each winter");
+
+        // Nothing selected → nothing written, staging untouched.
+        assert_eq!(StagedCanon::accept_where(&layout, &led, &lang, |_| false).unwrap(), 0);
+        // Everything (the CLI path) → staging empties.
+        assert_eq!(StagedCanon::accept_where(&layout, &led, &lang, |_| true).unwrap(), 1);
+        assert!(StagedCanon::load(&layout).unwrap().proposals.is_empty());
+        assert_eq!(led.units_for_node(a).unwrap().len(), 2);
     }
 
     #[test]
