@@ -1906,6 +1906,13 @@ pub(crate) struct App {
     /// CANON-UI-1 (A1) — manuscript nodes that source a canon decision, for the
     /// Tree/Outline `◈` marker. Refreshed on the same throttle as `tree_badges`.
     canon_source_nodes: std::collections::HashSet<Uuid>,
+    /// CANON-UI-2 (CU2-P4) — the strongest commitment among each source node's
+    /// decisions, for tinting the ◈ marker. Rebuilt with `canon_source_nodes`.
+    canon_source_levels: std::collections::HashMap<Uuid, Option<smysl::Commitment>>,
+    /// CANON-UI-2 (CU2-P4) — paragraphs already told "decisions rest on this" on
+    /// a save this session, so the impact-on-edit advisory informs once, not on
+    /// every save.
+    canon_edit_noted: std::collections::HashSet<Uuid>,
     /// When `canon_source_nodes` was last recomputed (throttle clock).
     canon_source_nodes_at: std::time::Instant,
     /// WORLD-4 — the debounced fast fact-checker. Enabled when the project has a
@@ -3796,6 +3803,8 @@ impl App {
             tree_badges: std::collections::HashMap::new(),
             tree_badges_at: std::time::Instant::now(),
             canon_source_nodes: std::collections::HashSet::new(),
+            canon_source_levels: std::collections::HashMap::new(),
+            canon_edit_noted: std::collections::HashSet::new(),
             canon_source_nodes_at: std::time::Instant::now(),
             tree_cursor: 0,
             tree_scroll: 0,
@@ -20743,9 +20752,46 @@ impl App {
     /// CANON-UI-1 (A1) — recompute which nodes source a canon decision, for the
     /// Tree/Outline marker. Cheap (a read over the small per-project ledger).
     fn refresh_canon_source_nodes(&mut self) {
-        self.canon_source_nodes =
-            self.store.raw().canon().decision_source_nodes().unwrap_or_default();
+        self.canon_source_levels =
+            self.store.raw().canon().decision_source_levels().unwrap_or_default();
+        self.canon_source_nodes = self.canon_source_levels.keys().copied().collect();
         self.canon_source_nodes_at = std::time::Instant::now();
+    }
+
+    /// CANON-UI-2 (CU2-P4) — the ◈ marker's style for a source paragraph: how
+    /// settled the strongest decision it established is. Dim = unmarked or only
+    /// floated; plain = drafted / committed; bold = canonical; struck = every
+    /// decision it established has been retconned.
+    pub(super) fn canon_glyph_style(&self, node: Uuid) -> Style {
+        let base = Style::default().fg(Color::LightMagenta);
+        match self.canon_source_levels.get(&node).copied().flatten() {
+            None | Some(smysl::Commitment::Floated) => base.add_modifier(Modifier::DIM),
+            Some(smysl::Commitment::Drafted) | Some(smysl::Commitment::Committed) => base,
+            Some(smysl::Commitment::Canonical) => base.add_modifier(Modifier::BOLD),
+            Some(smysl::Commitment::Retconned) => {
+                Style::default().fg(Color::DarkGray).add_modifier(Modifier::CROSSED_OUT)
+            }
+            Some(_) => base, // a level added upstream (non-exhaustive enum)
+        }
+    }
+
+    /// CANON-UI-2 (CU2-P4, impact-on-edit) — after a save: if this paragraph
+    /// established decisions that OTHER decisions rest on, say so once per
+    /// paragraph per session. Advisory — the save already happened; this extends
+    /// the pre-cut delete guard from deleting the source to changing it.
+    pub(super) fn canon_note_edit_of_source(&mut self, node: Uuid) {
+        if !self.canon_source_nodes.contains(&node) || self.canon_edit_noted.contains(&node) {
+            return;
+        }
+        let Ok((_, dependents)) = self.store.raw().canon().node_stake(node) else { return };
+        if dependents == 0 {
+            return;
+        }
+        self.canon_edit_noted.insert(node);
+        let rest = if dependents == 1 { "1 decision rests".to_string() } else { format!("{dependents} decisions rest") };
+        self.status = format!(
+            "saved · ◈ canon: {rest} on what this paragraph established — check they still hold (Ctrl+B Tab → Canon)"
+        );
     }
 
     /// Rebuild `tree_badges` from the active Output findings.

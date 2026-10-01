@@ -6344,7 +6344,7 @@ impl super::super::App {
             }
             // CANON-UI-1 (A1) — decision-source marker, as in the Tree pane.
             if matches!(node.kind, NodeKind::Paragraph) && self.canon_source_nodes.contains(&r.id) {
-                spans.push(Span::styled(" ◈", Style::default().fg(Color::LightMagenta)));
+                spans.push(Span::styled(" ◈", self.canon_glyph_style(r.id)));
             }
             lines.push(Line::from(spans));
         }

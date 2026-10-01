@@ -153,6 +153,20 @@ the *saved* text, so save first. Whole chapters and books stay a shell job
 paragraphs that have something to show here, and opening one says so in the
 status line ("canon: this paragraph sources 2 decision(s) · 3 rest on them").
 
+**The glyph says how settled (3.15).** The `◈` in the Tree and the Outline is
+tinted by the *strongest* commitment among the decisions the paragraph established:
+dim when they are unmarked or only floated, plain for drafted / committed, **bold**
+for canonical, and struck through only when every decision it established has been
+retconned. A glance down the tree shows where the story's settled ground is.
+
+**Impact on edit (3.15).** The delete guard warns before you cut a paragraph that
+established decisions; saving one now does the changing-it half. When *other*
+decisions rest on what the paragraph established, the save's status line says so —
+"◈ canon: 3 decisions rest on what this paragraph established — check they still
+hold" — once per paragraph per session, so it informs without nagging. The save
+has already happened; nothing is blocked. (Decisions of the same paragraph resting
+on one another are not counted: the question is what breaks *elsewhere*.)
+
 **Grounded chat (3.14).** The AI pane's **Book** scope ("chat with your book")
 grounds each conversation on the ledger as well as the prose: the decisions behind
 the retrieved passages are packed (closure-complete, to `canon.context_budget`) and
