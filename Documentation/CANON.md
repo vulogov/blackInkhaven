@@ -140,7 +140,16 @@ to accept it into the ledger or **`x`** to discard it; **`A`** accepts all of th
 paragraph's. It is the same confirmation as `canon accept` — one shared code path —
 at the grain of a single proposal, so the model still only proposes and you still
 decide, now beside the prose the proposal was read from. Proposals staged for other
-paragraphs show as a count. The tree's `◈` pip marks the
+paragraphs show as a count.
+
+**Harvest from the pane (3.15).** **`H`** asks the model to propose decisions for
+the open paragraph: one call, the same in-language prompt `canon harvest` uses, off
+the UI thread (`Esc` cancels; the status line shows the size of the call before it
+runs — informative, never a cap). What comes back goes to staging, never to the
+ledger, and anything that merely repeats a decision the paragraph already has — or
+one already staged — is dropped, so harvesting twice does not stage twice. It reads
+the *saved* text, so save first. Whole chapters and books stay a shell job
+(`canon harvest <scope>`). The tree's `◈` pip marks the
 paragraphs that have something to show here, and opening one says so in the
 status line ("canon: this paragraph sources 2 decision(s) · 3 rest on them").
 

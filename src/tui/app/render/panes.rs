@@ -1864,7 +1864,16 @@ impl super::super::App {
             } else {
                 format!(" · ? {} proposed", st.staged.len())
             };
-            format!(" Canon · ◈ {}{proposed} · {} ", st.rows.len(), st.title)
+            let harvesting = if self.bg_job.as_ref().map(|j| j.kind)
+                == Some(crate::tui::app::BgJobKind::CanonHarvest)
+            {
+                const SPIN: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+                let started = self.bg_job.as_ref().map(|j| j.started.elapsed().as_millis()).unwrap_or(0);
+                format!(" · {} harvesting", SPIN[(started / 80) as usize % SPIN.len()])
+            } else {
+                String::new()
+            };
+            format!(" Canon · ◈ {}{proposed}{harvesting} · {} ", st.rows.len(), st.title)
         } else {
             " Canon ".to_string()
         };
@@ -1904,9 +1913,10 @@ impl super::super::App {
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled("  This paragraph sources no canon decisions.", dim)));
             lines.push(Line::from(Span::styled(
-                "  Tag it (rel:…, secret:…) and save, or `inkhaven canon harvest`.",
+                "  Press H to have the model propose some (you confirm each), or tag",
                 dim,
             )));
+            lines.push(Line::from(Span::styled("  the paragraph (rel:…, secret:…) and save.", dim)));
             lines.push(Line::from(Span::styled("  Ctrl+B * shows the whole ledger.", dim)));
             elsewhere(&mut lines);
             f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
@@ -1990,11 +2000,11 @@ impl super::super::App {
         if footer_h == 1 {
             let on_staged = st.cursor >= st.rows.len() && !st.staged.is_empty();
             let hint = if on_staged {
-                " ↑↓ · a accept · x discard · A accept all for this ¶ · Ctrl+B Tab "
+                " ↑↓ · a accept · x discard · A accept all for this ¶ · H harvest again "
             } else if !st.staged.is_empty() {
                 " ↑↓ · Enter → ground ¶ · c commit · h history · * ledger · ↓ to the proposals (a/x/A) "
             } else {
-                " ↑↓ · Enter → its ground ¶ · c commit · h history · * ledger · r refresh · Ctrl+B Tab "
+                " ↑↓ · Enter → its ground ¶ · c commit · h history · H harvest · * ledger · Ctrl+B Tab "
             };
             let footer = Rect { x: inner.x, y: inner.y + inner.height - 1, width: inner.width, height: 1 };
             f.render_widget(

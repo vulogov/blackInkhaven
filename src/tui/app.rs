@@ -4815,6 +4815,33 @@ impl App {
                 }
                 Err(e) => self.status = format!("world overview failed: {e}"),
             },
+            BgJobKind::CanonHarvest => match result {
+                Ok(payload) => {
+                    let proposals: Vec<crate::canon::Proposal> =
+                        serde_json::from_str(&payload).unwrap_or_default();
+                    let node = proposals.first().map(|p| p.node);
+                    // What the paragraph already has in the ledger — a proposal
+                    // that repeats it says nothing new.
+                    let canon = self.store.raw().canon();
+                    let live: Vec<(crate::canon::NarrativeKind, String)> = node
+                        .and_then(|n| canon.units_for_node(n).ok())
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter_map(|u| canon.view(u).ok().flatten())
+                        .filter_map(|v| v.kind.map(|k| (k, v.gist)))
+                        .collect();
+                    self.status = match crate::canon::StagedCanon::stage_new(&self.layout, proposals, &live) {
+                        Ok((0, 0)) => "canon harvest: the model proposed no decisions for this ¶".into(),
+                        Ok((0, d)) => format!("canon harvest: nothing new — {d} proposal(s) repeat what is already there"),
+                        Ok((n, 0)) => format!("canon harvest · {n} proposal(s) staged — a accept · x discard · A all ({elapsed_secs}s)"),
+                        Ok((n, d)) => format!("canon harvest · {n} proposal(s) staged, {d} already known — a accept · x discard · A all"),
+                        Err(e) => format!("canon harvest: could not stage the proposals — {e}"),
+                    };
+                    self.refresh_canon_pane(false);
+                }
+                Err(e) if e == "cancelled" => self.status = "canon harvest cancelled — nothing staged".into(),
+                Err(e) => self.status = format!("canon harvest failed: {e}"),
+            },
             BgJobKind::Confront => {
                 let target = self.confront_para.take();
                 match result {
@@ -8392,6 +8419,11 @@ pub(super) enum BgJobKind {
     /// paragraph against the research corpus and emits the anchored relation
     /// findings to Output directly; the `Ok` payload is the emitted count.
     Confront,
+    /// CANON-UI-2 (CU2-P3) — harvest the open paragraph from the Canon pane
+    /// (`H`): one model call proposing canon decisions. The `Ok` payload is the
+    /// proposals as JSON; the completion handler stages them (main thread, so
+    /// staging has one writer) — nothing enters the ledger until the author's `a`.
+    CanonHarvest,
     /// 1.8.24 — the AI-thesaurus fallback (`Ctrl+V Shift+Y` for a language with no
     /// local WordNet, e.g. Russian). The worker makes the LLM call off the UI
     /// thread; the `Ok` payload is the raw JSON, parsed + shown as a picker in the
@@ -20490,6 +20522,73 @@ impl App {
         self.canon_pane_at = std::time::Instant::now();
     }
 
+    /// CANON-UI-2 (CU2-P3) — `H`: ask the model to propose canon decisions for
+    /// the OPEN paragraph. One call, off the UI thread (the shared single-flight,
+    /// panic-contained background job), in the project language. The result is
+    /// staged only — the ledger is untouched until the author accepts. Harvests
+    /// the SAVED text, so what is proposed matches what is on disk.
+    fn canon_pane_harvest(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "canon harvest: open a paragraph first".into();
+            return;
+        };
+        if doc.dirty {
+            self.status = "canon harvest: save the paragraph first (it reads the saved text)".into();
+            return;
+        }
+        let id = doc.id;
+        let Some(node) = self.hierarchy.get(id) else {
+            self.status = "canon harvest: the open paragraph is not in the tree".into();
+            return;
+        };
+        let mut breadcrumb = node.path.join("/");
+        if !breadcrumb.is_empty() {
+            breadcrumb.push('/');
+        }
+        breadcrumb.push_str(&node.slug);
+        let text = match self.store.get_content(id) {
+            Ok(Some(bytes)) => String::from_utf8_lossy(&bytes).into_owned(),
+            Ok(None) => String::new(),
+            Err(e) => {
+                self.status = format!("canon harvest: {e}");
+                return;
+            }
+        };
+        if text.trim().is_empty() {
+            self.status = "canon harvest: the paragraph is empty".into();
+            return;
+        }
+        // Pre-flight the provider so a missing key fails fast (no orphan job).
+        let model = match self.ai.resolve_provider(&self.cfg.llm, None) {
+            Ok((m, _env)) => m.to_string(),
+            Err(e) => {
+                self.status = format!("canon harvest needs an LLM provider: {e}");
+                return;
+            }
+        };
+        let (lang, _) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        let system = crate::canon::system_prompt(crate::canon::language_name(&lang));
+        let client = self.ai.client.clone();
+        // Informative, never blocking: the size of the one call about to be made.
+        let tokens_in = (system.chars().count() + text.chars().count()) / 4;
+        let model_label = model.clone();
+        let started = self.start_bg_job(BgJobKind::CanonHarvest, "canon harvest", move |tx, cancel| {
+            let result = crate::ai::stream::collect_blocking(client, model, Some(system), text).and_then(|raw| {
+                if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                    return Err("cancelled".to_string());
+                }
+                let found = crate::canon::parse_proposals(&raw, id, &breadcrumb);
+                serde_json::to_string(&found).map_err(|e| e.to_string())
+            });
+            let _ = tx.send(BgMsg::Done(result));
+        });
+        if started {
+            self.status = format!(
+                "⟳ canon harvest · one model call (~{tokens_in} tokens in) via {model_label} · stages proposals only · Esc cancels"
+            );
+        }
+    }
+
     /// CANON-UI-2 (CU2-P2) — the author's confirmation from the pane: record the
     /// staged proposals `select` picks (the shared accept path), then refresh the
     /// pane and the ◈ source-node set so the new decisions show at once.
@@ -20553,7 +20652,17 @@ impl App {
                 return Ok(false);
             }
             // The decision-only actions need a live decision under the cursor.
-            KeyCode::Enter | KeyCode::Char('h') | KeyCode::Char('H') | KeyCode::Char('c') | KeyCode::Char('C')
+            KeyCode::Char('H') => {
+                self.canon_pane_harvest();
+                return Ok(false);
+            }
+            KeyCode::Esc
+                if self.bg_job.as_ref().map(|j| j.kind) == Some(BgJobKind::CanonHarvest) =>
+            {
+                self.cancel_bg_job();
+                return Ok(false);
+            }
+            KeyCode::Enter | KeyCode::Char('h') | KeyCode::Char('c') | KeyCode::Char('C')
                 if on_staged =>
             {
                 self.status = "canon: this is only proposed — `a` accepts it into the ledger first".into();
@@ -20596,7 +20705,7 @@ impl App {
                     }
                 }
             }
-            KeyCode::Char('h') | KeyCode::Char('H') => {
+            KeyCode::Char('h') => {
                 match self.canon_pane.rows.get(self.canon_pane.cursor).map(|r| r.uid) {
                     Some(uid) => self.canon_show_history(uid),
                     None => self.status = "canon: no decision under the cursor".into(),
