@@ -92,3 +92,8 @@ in the shell); remembering rejected proposals across harvests (a discard just
 removes the staged entry); auto-accept of any kind; checking prose *against* the
 ledger (the "canon as a reader" candidate — a natural 3.16 follow-on once the
 ledger is easy to fill).
+
+## What follows
+
+[`WORLD-KEEP-1`](WORLD-KEEP-1_PLAN.md) — "A World That Keeps Its Word" — is
+sequenced directly after this flagship.
