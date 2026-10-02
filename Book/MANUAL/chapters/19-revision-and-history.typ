@@ -534,6 +534,17 @@ your project language, framed as your decisions rather than inferences), a
 `◈ N canon` cue shows in the title, the `p` transparency section lists them, and
 `*` in the AI pane toggles it (`canon.ground_ai` sets the default).
 
+Since 3.15 the pane is also where the ledger is *tended*. `c` on a decision opens a
+picker over the five commitment levels and records your choice as the author — and
+tells you at once if it leaves something firm resting on something soft. What
+`canon harvest` staged for the open paragraph is listed under its live decisions as
+`?` rows: `a` accepts one into the ledger, `x` discards it, `A` accepts all of this
+paragraph's. And `H` harvests the open paragraph itself — one model call in the
+background, in your project language — into that same staging list, never straight
+into the ledger. The `◈` pip is tinted by how settled a paragraph's canon is (dim,
+plain, bold for canonical), and saving a paragraph that other decisions rest on
+says so once, so a change to load-bearing prose does not pass unremarked.
+
 The blast radius also finds you at the moment you would cause it: delete a
 paragraph that *established* canon decisions and the confirmation warns first,
 naming them and how many others rest on them. It never blocks — and because the

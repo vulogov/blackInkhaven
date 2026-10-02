@@ -742,19 +742,10 @@ impl super::App {
         // (and how much rests on them) right where the author is about to edit it.
         // Membership check is cheap; the summary read runs only on the hit.
         if self.canon_source_nodes.contains(&node.id) {
-            let canon = self.store.raw().canon();
-            if let Ok(uids) = canon.units_for_node(node.id) {
-                if !uids.is_empty() {
-                    let mut dependents = std::collections::HashSet::new();
-                    for u in &uids {
-                        if let Ok(views) = canon.impact(*u) {
-                            dependents.extend(views.into_iter().map(|v| v.uid));
-                        }
-                    }
-                    let n = uids.len();
-                    let m = dependents.len();
+            if let Ok((n, m)) = self.store.raw().canon().node_stake(node.id) {
+                if n > 0 {
                     self.status = format!(
-                        "canon: this paragraph sources {n} decision(s) · {m} rest on them · Ctrl+B * → Canon"
+                        "canon: this paragraph sources {n} decision(s) · {m} elsewhere rest on them · Ctrl+B Tab → Canon"
                     );
                 }
             }
@@ -991,6 +982,9 @@ impl super::App {
         // SENTINEL-1 (CT-P5) — the continuity watch: re-check what this edit
         // touched and surface the delta. No-op unless `continuity.ambient`.
         self.continuity_scan_saved_paragraph(node.id);
+        // CANON-UI-2 (CU2-P4) — impact-on-edit: this prose established decisions
+        // other decisions rest on. Said once per paragraph per session.
+        self.canon_note_edit_of_source(node.id);
         Ok(())
     }
 

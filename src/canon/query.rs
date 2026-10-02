@@ -255,8 +255,35 @@ impl CanonLedger {
     /// CANON-UI-1 (A1) — the set of live manuscript nodes that source at least one
     /// canon decision, for the editor's decision-source marker. Built from the live
     /// decisions' source references (superseded versions already filtered).
-    pub fn decision_source_nodes(&self) -> Result<HashSet<Uuid>> {
-        Ok(self.all_decisions()?.into_iter().filter_map(|v| v.node).collect())
+    ///
+    /// CANON-UI-2 (CU2-P4) — each node maps to the **strongest** commitment among
+    /// the decisions it sources (see [`stronger_commitment`]), so the marker can
+    /// say at a glance how settled the paragraph's canon is.
+    pub fn decision_source_levels(&self) -> Result<HashMap<Uuid, Option<Commitment>>> {
+        let mut out: HashMap<Uuid, Option<Commitment>> = HashMap::new();
+        for v in self.all_decisions()? {
+            let Some(node) = v.node else { continue };
+            out.entry(node)
+                .and_modify(|cur| *cur = stronger_commitment(*cur, v.commitment))
+                .or_insert(v.commitment);
+        }
+        Ok(out)
+    }
+
+    /// CANON-UI-2 (CU2-P4) — for the decisions `node` sources: how many there are,
+    /// and how many OTHER decisions (from any paragraph) transitively rest on
+    /// them. The paragraph's own decisions resting on one another are not counted
+    /// as dependents — the question is what breaks *elsewhere* if this prose
+    /// changes. `(0, 0)` when the node sources nothing.
+    pub fn node_stake(&self, node: Uuid) -> Result<(usize, usize)> {
+        let own = self.units_for_node(node)?;
+        let own_set: HashSet<Uid> = own.iter().copied().collect();
+        let mut dependents: HashSet<Uid> = HashSet::new();
+        for u in &own {
+            dependents.extend(self.impact(*u)?.into_iter().map(|v| v.uid));
+        }
+        dependents.retain(|d| !own_set.contains(d));
+        Ok((own.len(), dependents.len()))
     }
 
     /// CANON-3 (CG3-P3) — the grounds DAG as an indented walk: each **root** (a
@@ -389,9 +416,60 @@ pub struct LogEntry {
     pub counter: u32,
 }
 
+/// CANON-UI-2 (CU2-P4) — the stronger of two commitment levels for the "how
+/// settled is this paragraph's canon" marker: canonical > committed > drafted >
+/// floated > unmarked > retconned. Retconned ranks last so a withdrawn decision
+/// never outshines a live one beside it; a paragraph reads as retconned only
+/// when everything it established has been withdrawn.
+pub fn stronger_commitment(a: Option<Commitment>, b: Option<Commitment>) -> Option<Commitment> {
+    fn rank(c: Option<Commitment>) -> i8 {
+        match c {
+            Some(Commitment::Retconned) => -1,
+            None => 0,
+            Some(Commitment::Floated) => 1,
+            Some(Commitment::Drafted) => 2,
+            Some(Commitment::Committed) => 3,
+            Some(Commitment::Canonical) => 4,
+            // `Commitment` is non-exhaustive: a level added upstream reads as
+            // marked-but-unranked (above unmarked, below drafted).
+            Some(_) => 1,
+        }
+    }
+    if rank(b) > rank(a) { b } else { a }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_levels_take_the_strongest_and_stake_counts_only_other_decisions() {
+        let dir = tempfile::tempdir().unwrap();
+        let led = CanonLedger::new(dir.path().join("canon.cbor").to_str().unwrap());
+        let (a, b, c) = (Uuid::from_u128(0xA), Uuid::from_u128(0xB), Uuid::from_u128(0xC));
+        // Paragraph A: a foundation and a second decision resting on it (same ¶).
+        let base = led.record_decision(NarrativeKind::WorldFact, "the harbour freezes", a, "ch1", &[]).unwrap();
+        let own = led.record_decision(NarrativeKind::WorldFact, "ships winter in port", a, "ch1", &[base]).unwrap();
+        // Paragraph B rests on A's; paragraph C stands alone and is withdrawn.
+        let _far = led.record_decision(NarrativeKind::PlotPoint, "the escape waits for the thaw", b, "ch9", &[own]).unwrap();
+        let gone = led.record_decision(NarrativeKind::WorldFact, "the moon is green", c, "ch2", &[]).unwrap();
+
+        // A sources 2 decisions; only B's one (not A's own second) rests on them.
+        assert_eq!(led.node_stake(a).unwrap(), (2, 1));
+        assert_eq!(led.node_stake(b).unwrap(), (1, 0));
+        assert_eq!(led.node_stake(Uuid::from_u128(0xFF)).unwrap(), (0, 0));
+
+        led.commit(base, Commitment::Floated, "author").unwrap();
+        led.commit(own, Commitment::Canonical, "author").unwrap();
+        led.commit(gone, Commitment::Retconned, "author").unwrap();
+        let levels = led.decision_source_levels().unwrap();
+        assert_eq!(levels.get(&a), Some(&Some(Commitment::Canonical)), "strongest of floated + canonical");
+        assert_eq!(levels.get(&b), Some(&None), "unmarked");
+        assert_eq!(levels.get(&c), Some(&Some(Commitment::Retconned)), "retconned only when all are");
+
+        assert_eq!(stronger_commitment(Some(Commitment::Retconned), None), None);
+        assert_eq!(stronger_commitment(None, Some(Commitment::Floated)), Some(Commitment::Floated));
+    }
 
     #[test]
     fn impact_why_and_list_over_a_grounded_ledger() {

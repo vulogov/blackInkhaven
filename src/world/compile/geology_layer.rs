@@ -18,6 +18,9 @@ use crate::world::types::world::{GeneratedGeology, WorldDefinition};
 /// seed climate / hydrology; plakat upsamples for cartography later.
 const W: usize = 160;
 const H: usize = 120;
+/// The model grid every layer shares (a DEM is resampled onto it).
+pub const GRID_W: usize = W;
+pub const GRID_H: usize = H;
 
 /// Compile the generated geology layer. (The DEM-import path is separate.)
 pub fn compile_geology(def: &WorldDefinition) -> GeologyOutput {
@@ -44,6 +47,7 @@ pub fn compile_geology(def: &WorldDefinition) -> GeologyOutput {
     let elevation = elevation_stats(&heightmap, land_fraction);
 
     GeologyOutput {
+        cell_km: None,
         source: "generated".into(),
         width: W,
         height: H,
@@ -131,7 +135,16 @@ pub fn compile_geology_dem(
     let continents = count_continents(&heightmap, sea_level);
     let elevation = elevation_stats(&heightmap, land_fraction);
 
+    // WK-P1 — a declared scale is in source pixels; the model grid resamples the
+    // image, so one model cell covers `iw / W` × `ih / H` of them.
+    let cell_km = dem
+        .scale_km_per_pixel
+        .map(|s| s as f64)
+        .filter(|s| s.is_finite() && *s > 0.0)
+        .map(|s| (s * iw as f64 / W as f64, s * ih as f64 / H as f64));
+
     Ok(GeologyOutput {
+        cell_km,
         source: "dem".into(),
         width: W,
         height: H,
@@ -253,7 +266,10 @@ fn build_heightmap(
     boundaries: &[Boundary],
     g: &GeneratedGeology,
 ) -> Vec<f32> {
-    let perlin = Perlin::new(seed as u32);
+    // Fold the whole seed: `seed as u32` dropped the high half, so two seeds
+    // differing only above bit 32 grew the same terrain noise. Seeds that fit
+    // in 32 bits (every hand-typed one) are unchanged.
+    let perlin = Perlin::new(((seed >> 32) ^ seed) as u32);
     let orogeny = match g.mountain_orogeny.trim().to_ascii_lowercase().as_str() {
         "quiet" => 0.25_f32,
         "ancient" => 0.12,
@@ -556,7 +572,7 @@ mod tests {
             generated: None,
             dem: Some(DemGeology {
                 path: path.display().to_string(),
-                scale_km_per_pixel: 5.0,
+                scale_km_per_pixel: Some(5.0),
                 sea_level_pixel_value: None,
             }),
         });

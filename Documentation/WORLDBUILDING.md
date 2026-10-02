@@ -101,7 +101,18 @@ astronomy: {
 | `moons[].name` / `period_days` | **required** | |
 | `moons[].mass_lunar` / `eccentricity` | `0` / `0` | mass drives the tide share |
 | `calendar.months` / `month_length_days` | **required** | |
-| `calendar.weekdays` | `0` | |
+| `calendar.weekdays` / `day_names` | `0` / none | (3.15) the week — `realworld weather`, `scene` and `calendar` date a day with it ("day 2 of Frostmoon · Fourday"); counted from the first day of the year |
+
+**One ruler (3.15).** Distance, trade routes and population are measured with the
+same cell size. On a whole-planet map a cell is as large as the planet's radius
+makes it (and narrower toward the poles), so a bigger planet holds more people. A
+heightmap that declares `scale_km_per_pixel` is a *region* of that size — journeys
+across it are as long as the scale says, and it holds a region's population. Omit
+the scale and the image is the whole planet. (A regional map's climate still runs
+pole to pole down the image; `validate` says so when the two disagree.)
+
+**The interview speaks your project's language (3.15)** — en / ru / fr / de / es —
+and takes answers in it: `оранжевая`, `naine rouge`, `ja`, `0,6`, `древние`.
 
 `inkhaven realworld validate` lints the definition's own domain too (a 0-month
 calendar, a dark star, an open orbit, `sea_level` outside 0..1, unknown
@@ -132,7 +143,7 @@ geology: {
 geology: {
     dem: {
         path: "assets/earth_heightmap.png"   // grayscale; brighter = higher
-        scale_km_per_pixel: 50.0             // default 5.0
+        scale_km_per_pixel: 50.0             // optional — omit for a whole-planet map
         sea_level_pixel_value: 128           // pixels ≤ this are ocean
     }
 }
@@ -480,6 +491,7 @@ line starting with `/` is a command.
 | `/set <dot.path> <value>` | set any `world.hjson` key |
 | `/star <class>` · `/tilt <deg>` · `/moon <name> [period_days]` | shape the sky (`/star` also sets a typical luminosity for the class) |
 | `/nation <name> [x y]` | add a nation, optionally pinned to a capital cell (unpinned nations seat at the largest unclaimed settlement) |
+| `/orogeny active\|quiet\|ancient` | (3.15) the mountains — accepts the same word in ru / fr / de / es |
 | `/magic on\|off` · `/rule <kind> <cat,cat> [desc]` | the magic ledger |
 | `/wfact <statement>` | record an author fact into the Facts book (`fact:world`) |
 | `/research <query>` | retrieve related Facts into the Research pane |

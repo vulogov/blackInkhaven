@@ -1859,7 +1859,21 @@ impl super::super::App {
         };
         let st = &self.canon_pane;
         let title = if st.node.is_some() {
-            format!(" Canon · ◈ {} · {} ", st.rows.len(), st.title)
+            let proposed = if st.staged.is_empty() {
+                String::new()
+            } else {
+                format!(" · ? {} proposed", st.staged.len())
+            };
+            let harvesting = if self.bg_job.as_ref().map(|j| j.kind)
+                == Some(crate::tui::app::BgJobKind::CanonHarvest)
+            {
+                const SPIN: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+                let started = self.bg_job.as_ref().map(|j| j.started.elapsed().as_millis()).unwrap_or(0);
+                format!(" · {} harvesting", SPIN[(started / 80) as usize % SPIN.len()])
+            } else {
+                String::new()
+            };
+            format!(" Canon · ◈ {}{proposed}{harvesting} · {} ", st.rows.len(), st.title)
         } else {
             " Canon ".to_string()
         };
@@ -1869,88 +1883,135 @@ impl super::super::App {
 
         let dim = Style::default().fg(Color::DarkGray);
         let accent = Style::default().fg(Color::LightMagenta);
+        let proposed_fg = Style::default().fg(Color::Yellow);
         let mut lines: Vec<Line> = Vec::new();
+        // Proposals staged for other paragraphs are worth one line wherever the
+        // pane is, so a shell harvest does not sit unseen.
+        let elsewhere = |lines: &mut Vec<Line>| {
+            if st.staged_elsewhere > 0 {
+                lines.push(Line::from(Span::styled(
+                    format!("  ? {} proposal(s) staged for other paragraphs", st.staged_elsewhere),
+                    dim,
+                )));
+            }
+        };
         if let Some(e) = &st.error {
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(format!("  canon unavailable: {e}"), dim)));
-        } else if st.node.is_none() {
+            f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+            return;
+        }
+        if st.node.is_none() {
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled("  Open a paragraph to see the canon it sources.", dim)));
             lines.push(Line::from(Span::styled("  Ctrl+B * shows the whole ledger.", dim)));
-        } else if st.rows.is_empty() {
+            elsewhere(&mut lines);
+            f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+            return;
+        }
+        if st.rows.is_empty() && st.staged.is_empty() {
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled("  This paragraph sources no canon decisions.", dim)));
             lines.push(Line::from(Span::styled(
-                "  Tag it (rel:…, secret:…) and save, or `inkhaven canon harvest`.",
+                "  Press H to have the model propose some (you confirm each), or tag",
                 dim,
             )));
+            lines.push(Line::from(Span::styled("  the paragraph (rel:…, secret:…) and save.", dim)));
             lines.push(Line::from(Span::styled("  Ctrl+B * shows the whole ledger.", dim)));
-        } else {
-            let mut cursor_line: usize = 0;
-            for (i, r) in st.rows.iter().enumerate() {
-                let selected = focused && i == st.cursor;
+            elsewhere(&mut lines);
+            f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+            return;
+        }
+
+        let mut cursor_line: usize = 0;
+        let sel_style = Style::default().add_modifier(Modifier::BOLD).add_modifier(Modifier::REVERSED);
+        for (i, r) in st.rows.iter().enumerate() {
+            let selected = focused && i == st.cursor;
+            if selected {
+                cursor_line = lines.len();
+            }
+            let head_style = if selected { sel_style } else { Style::default() };
+            let commit = r.commitment.as_deref().map(|c| format!(" «{c}»")).unwrap_or_default();
+            lines.push(Line::from(vec![
+                Span::styled(if selected { "▸ " } else { "  " }, accent),
+                Span::styled(format!("[{}]{commit} ", r.kind), accent),
+                Span::styled(r.gist.clone(), head_style),
+            ]));
+            let rests = if r.impact == 1 {
+                "1 decision rests on this".to_string()
+            } else {
+                format!("{} decisions rest on this", r.impact)
+            };
+            lines.push(Line::from(Span::styled(format!("      ↳ {rests}"), dim)));
+            if r.grounds.is_empty() && r.grounds_more == 0 {
+                lines.push(Line::from(Span::styled("      ↳ rests on nothing recorded", dim)));
+            } else {
+                for (g, node) in &r.grounds {
+                    let mark = if node.is_some() { "¶ " } else { "  " };
+                    lines.push(Line::from(Span::styled(format!("      ↳ rests on {mark}{g}"), dim)));
+                }
+                if r.grounds_more > 0 {
+                    lines.push(Line::from(Span::styled(
+                        format!("        … and {} further down the chain", r.grounds_more),
+                        dim,
+                    )));
+                }
+            }
+            lines.push(Line::from(""));
+        }
+        // CU2-P2 — the staged proposals for this paragraph: not in the ledger
+        // until the author accepts each one.
+        if !st.staged.is_empty() {
+            lines.push(Line::from(Span::styled(
+                format!("  ? Proposed — {} awaiting your call (not in the ledger)", st.staged.len()),
+                proposed_fg,
+            )));
+            for (k, p) in st.staged.iter().enumerate() {
+                let selected = focused && st.rows.len() + k == st.cursor;
                 if selected {
                     cursor_line = lines.len();
                 }
-                let head_style = if selected {
-                    Style::default().add_modifier(Modifier::BOLD).add_modifier(Modifier::REVERSED)
-                } else {
-                    Style::default()
-                };
-                let commit = r.commitment.as_deref().map(|c| format!(" «{c}»")).unwrap_or_default();
+                let head_style = if selected { sel_style } else { Style::default() };
+                let kind = p.kind.schema_str().trim_start_matches("x.narrative/");
                 lines.push(Line::from(vec![
-                    Span::styled(if selected { "▸ " } else { "  " }, accent),
-                    Span::styled(format!("[{}]{commit} ", r.kind), accent),
-                    Span::styled(r.gist.clone(), head_style),
+                    Span::styled(if selected { "▸ " } else { "  " }, proposed_fg),
+                    Span::styled(format!("? [{kind}] "), proposed_fg),
+                    Span::styled(p.gist.clone(), head_style),
                 ]));
-                let rests = if r.impact == 1 {
-                    "1 decision rests on this".to_string()
-                } else {
-                    format!("{} decisions rest on this", r.impact)
-                };
-                lines.push(Line::from(Span::styled(format!("      ↳ {rests}"), dim)));
-                if r.grounds.is_empty() && r.grounds_more == 0 {
-                    lines.push(Line::from(Span::styled("      ↳ rests on nothing recorded", dim)));
-                } else {
-                    for (g, node) in &r.grounds {
-                        let mark = if node.is_some() { "¶ " } else { "  " };
-                        lines.push(Line::from(Span::styled(format!("      ↳ rests on {mark}{g}"), dim)));
-                    }
-                    if r.grounds_more > 0 {
-                        lines.push(Line::from(Span::styled(
-                            format!("        … and {} further down the chain", r.grounds_more),
-                            dim,
-                        )));
-                    }
+                for g in &p.grounds {
+                    lines.push(Line::from(Span::styled(format!("      ↳ would rest on: {g}"), dim)));
                 }
-                lines.push(Line::from(""));
             }
-            // Keep the cursored decision in view.
-            let footer_h: u16 = if inner.height > 1 { 1 } else { 0 };
-            let body_h = inner.height.saturating_sub(footer_h) as usize;
-            // Scroll only once the cursored row (plus its detail lines) would
-            // fall below the body; never past the end of the content.
-            let need = cursor_line + 4;
-            let scroll = if need <= body_h { 0 } else { need - body_h }
-                .min(lines.len().saturating_sub(body_h));
-            let body_rect = Rect { height: inner.height - footer_h, ..inner };
-            let para = Paragraph::new(lines)
-                .wrap(Wrap { trim: false })
-                .scroll((scroll.min(u16::MAX as usize) as u16, 0));
-            f.render_widget(para, body_rect);
-            if footer_h == 1 {
-                let footer = Rect { x: inner.x, y: inner.y + inner.height - 1, width: inner.width, height: 1 };
-                f.render_widget(
-                    Paragraph::new(Line::from(Span::styled(
-                        " ↑↓ · Enter → its ground ¶ · h history · * ledger · r refresh · Ctrl+B Tab panes ",
-                        Style::default().add_modifier(Modifier::DIM),
-                    ))),
-                    footer,
-                );
-            }
-            return;
+            lines.push(Line::from(""));
         }
-        f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+        elsewhere(&mut lines);
+
+        // Keep the cursored row (plus its detail lines) in view; never scroll
+        // past the end of the content.
+        let footer_h: u16 = if inner.height > 1 { 1 } else { 0 };
+        let body_h = inner.height.saturating_sub(footer_h) as usize;
+        let need = cursor_line + 4;
+        let scroll = if need <= body_h { 0 } else { need - body_h }.min(lines.len().saturating_sub(body_h));
+        let body_rect = Rect { height: inner.height - footer_h, ..inner };
+        let para = Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((scroll.min(u16::MAX as usize) as u16, 0));
+        f.render_widget(para, body_rect);
+        if footer_h == 1 {
+            let on_staged = st.cursor >= st.rows.len() && !st.staged.is_empty();
+            let hint = if on_staged {
+                " ↑↓ · a accept · x discard · A accept all for this ¶ · H harvest again "
+            } else if !st.staged.is_empty() {
+                " ↑↓ · Enter → ground ¶ · c commit · h history · * ledger · ↓ to the proposals (a/x/A) "
+            } else {
+                " ↑↓ · Enter → its ground ¶ · c commit · h history · H harvest · * ledger · Ctrl+B Tab "
+            };
+            let footer = Rect { x: inner.x, y: inner.y + inner.height - 1, width: inner.width, height: 1 };
+            f.render_widget(
+                Paragraph::new(Line::from(Span::styled(hint, Style::default().add_modifier(Modifier::DIM)))),
+                footer,
+            );
+        }
     }
 
     pub(in crate::tui::app) fn draw_output(&self, f: &mut ratatui::Frame, area: Rect) {

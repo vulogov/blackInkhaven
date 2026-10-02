@@ -6344,7 +6344,7 @@ impl super::super::App {
             }
             // CANON-UI-1 (A1) — decision-source marker, as in the Tree pane.
             if matches!(node.kind, NodeKind::Paragraph) && self.canon_source_nodes.contains(&r.id) {
-                spans.push(Span::styled(" ◈", Style::default().fg(Color::LightMagenta)));
+                spans.push(Span::styled(" ◈", self.canon_glyph_style(r.id)));
             }
             lines.push(Line::from(spans));
         }
@@ -6737,6 +6737,54 @@ impl super::super::App {
     /// CANON-LEDGER-1 (CL-P8) — the canon dashboard: the story's development-ledger
     /// decisions with kind + commitment, plus commitment forks. Same scrollable-rows
     /// shape as the chronicle; decision rows carry a jump anchor to their source.
+    /// CANON-UI-2 (CU2-P1) — the commitment picker: the five levels, the
+    /// decision's current one marked, one line on what each means.
+    pub(in crate::tui::app) fn draw_canon_commit_modal(&self, f: &mut ratatui::Frame, area: Rect) {
+        let Modal::CanonCommit { gist, current, cursor, .. } = &self.modal else { return };
+        let levels = smysl::Commitment::ALL;
+        let width = area.width.saturating_sub(6).clamp(48, 74);
+        let height = (levels.len() as u16 + 6).min(area.height.saturating_sub(2)).max(8);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let rect = Rect { x, y, width, height };
+        f.render_widget(ratatui::widgets::Clear, rect);
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title(" Canon · how settled is it? ")
+            .border_style(Style::default().fg(self.theme.modal_border).add_modifier(Modifier::BOLD))
+            .style(Style::default().bg(self.theme.modal_bg).fg(self.theme.modal_fg));
+        let inner = block.inner(rect);
+        f.render_widget(block, rect);
+
+        let dim = Style::default().add_modifier(Modifier::DIM);
+        let sel = Style::default().bg(self.theme.modal_border).fg(self.theme.modal_bg).add_modifier(Modifier::BOLD);
+        let mut lines: Vec<Line> = vec![
+            Line::from(Span::styled(truncate_to(gist, inner.width.saturating_sub(1) as usize), Style::default().add_modifier(Modifier::BOLD))),
+            Line::from(""),
+        ];
+        for (i, level) in levels.iter().enumerate() {
+            let name = level.to_string();
+            let what = match name.as_str() {
+                "floated" => "an idea in play — nothing relies on it yet",
+                "drafted" => "written into the draft",
+                "committed" => "the story relies on it",
+                "canonical" => "settled — changing it would be a retcon",
+                "retconned" => "withdrawn — a later choice replaced it",
+                _ => "",
+            };
+            let mark = if *current == Some(*level) { "●" } else { " " };
+            let row = format!(" {mark} {name:<10} {what}");
+            let style = if i == *cursor { sel } else { Style::default() };
+            lines.push(Line::from(Span::styled(truncate_to(&row, inner.width as usize), style)));
+        }
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            " ↑↓ choose · Enter set (as the author) · Esc cancel · ● current",
+            dim,
+        )));
+        f.render_widget(Paragraph::new(lines), inner);
+    }
+
     pub(in crate::tui::app) fn draw_canon_modal(&self, f: &mut ratatui::Frame, area: Rect) {
         let Modal::Canon { rows, anchors, cursor, grounding, graph, decisions: _ } = &self.modal else {
             return;
@@ -6789,9 +6837,9 @@ impl super::super::App {
         let footer_hint = if grounding.is_some() {
             "pick the decision it rests on · Enter ground · Esc cancel"
         } else if *graph {
-            "grounds DAG · Enter jumps · g ground · h history · t list"
+            "grounds DAG · Enter jumps · g ground · c commit · h history · t list"
         } else {
-            "Enter jumps to source · g grounds · h history · t graph"
+            "Enter jumps to source · g grounds · c commit · h history · t graph"
         };
         let footer_text = dashboard_footer(footer_hint, start, list_h, rows.len());
         f.render_widget(

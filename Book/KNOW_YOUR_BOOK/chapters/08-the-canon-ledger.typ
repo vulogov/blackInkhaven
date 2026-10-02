@@ -136,6 +136,14 @@ what it rests on; `⏎` follows a ground upstream to the scene that set it, `*` 
 the dashboard on that decision. And when you chat with your book, the answer is
 grounded on the decisions behind the passages it retrieved, not only the passages —
 the title says `◈ N canon`, `p` shows which, `*` turns it off for the session.
+
+And you no longer leave the scene to feed the ledger. In the *Canon* pane, `H` asks
+the model what this paragraph decides; its answers appear as `?` proposals — not
+yet canon — and you take each with `a` or drop it with `x`. `c` says how settled a
+decision is, from *floated* to *canonical*, and warns you on the spot if you have
+just built something firm on something soft. The `◈` darkens as a paragraph's canon
+firms up, and when you save a paragraph that other decisions lean on, the status
+line reminds you once that they do.
 And when you go to *delete* a paragraph that established decisions, the confirmation
 warns first — naming them and how much rests on them — so *"what breaks if I cut
 this?"* reaches you at the moment of the cut. (It only warns; the ledger keeps the
@@ -171,7 +179,8 @@ keep alone never forks, so the day it appears is the day it matters.
   the append-only store.],
   [The reader hub (`Ctrl+B *` → *Canon*) is the dashboard (`⏎` source, `g` ground,
   `h` history, `t` graph); the `◈` pip and the *Canon* pane keep the open
-  paragraph's decisions beside the prose, and Book-scope chat is grounded on them;
+  paragraph's decisions beside the prose — where `H` harvests, `a`/`x` confirm or
+  drop a proposal, and `c` sets commitment — and Book-scope chat is grounded on them;
   deleting a decision's source paragraph warns with its blast radius;
   `canon forks` (after a `merge`) reaches the Editorial Pass as a brief. The ledger
   is *derived* and safe to lose — a re-harvest, never prose.],
