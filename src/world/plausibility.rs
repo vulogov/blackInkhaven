@@ -364,6 +364,20 @@ pub fn run_fast_with(
                 .map(|w| w.prefixed("history")),
         );
     }
+    // WK-P1 — a heightmap with a declared scale is a REGION, measured as one
+    // (distances, trade, population). Its climate, though, still runs pole to
+    // pole down the image: say so when the two disagree by a wide margin.
+    if let Some((_, yk)) = geo.cell_km {
+        let tall_km = yk * geo.height as f64;
+        let pole_to_pole =
+            std::f64::consts::PI * 6371.0 * def.astronomy.planet.radius_earth.max(0.01);
+        if tall_km < 0.5 * pole_to_pole {
+            out.push(Warning::low(format!(
+                "geology: the heightmap's declared scale makes the map {:.0} km tall — a region — but its climate still spans pole to pole across it ({:.0} km on this planet); omit `scale_km_per_pixel` for a whole-world map, or expect polar and tropical bands on a regional one",
+                tall_km, pole_to_pole
+            )));
+        }
+    }
     // A landmark on a realm capital's cell is dropped by the map (the capital
     // claims the cell first), along with every road declared to it.
     if let Some(g) = def.geography.as_ref() {
@@ -475,6 +489,58 @@ mod tests {
         let without = compile_layers(&def);
         assert_ne!(with.geology.source, without.geology.source, "the DEM is honoured only with a root");
         assert!(!run_fast_at(&def, Some(dir.path())).iter().any(|x| x.text.contains("could not be used")));
+    }
+
+    #[test]
+    fn one_ruler_population_follows_the_planet_and_a_declared_map_scale() {
+        let def = crate::world::types::WorldDefinition::from_hjson(&crate::world::starter_template("S")).unwrap();
+        let earth = compile_layers(&def);
+        // An Earth-like world keeps a bronze-age population (tens of millions).
+        let p = earth.demographics.total_population;
+        assert!((20_000_000..80_000_000).contains(&p), "Earth-like population {p}");
+        // Per-row areas exist, widest at the equator, pinched at the poles.
+        let areas = &earth.climate.cell_area_km2;
+        assert_eq!(areas.len(), earth.climate.height);
+        assert!(areas[areas.len() / 2] > areas[0] * 10.0);
+        // The same ruler travel uses: an equatorial cell is cell_km x × y.
+        let (xk, yk) = crate::world::travel::cell_km(1.0, earth.geology.width, earth.geology.height);
+        assert!((areas[areas.len() / 2] / (xk * yk) - 1.0).abs() < 0.01);
+
+        // Twice the radius → four times the ground → about four times the people
+        // (the old fixed cell ignored the planet's size entirely).
+        let mut big = def.clone();
+        big.astronomy.planet.radius_earth = 2.0;
+        let ratio = compile_layers(&big).demographics.total_population as f64 / p as f64;
+        assert!((3.0..5.5).contains(&ratio), "radius 2 → ~4× population, got {ratio:.2}×");
+
+        // A heightmap WITH a scale is a region; without one it is the planet.
+        let dir = tempfile::tempdir().unwrap();
+        let img = image::ImageBuffer::<image::Luma<u16>, Vec<u16>>::from_fn(320, 240, |x, y| {
+            image::Luma([(((x * 37 + y * 91) % 997) * 60) as u16])
+        });
+        img.save(dir.path().join("h.png")).unwrap();
+        let dem = |scale: Option<f32>| {
+            let mut d = def.clone();
+            let mut v = serde_json::json!({ "path": "h.png" });
+            if let Some(s) = scale {
+                v["scale_km_per_pixel"] = serde_json::json!(s);
+            }
+            d.geology = Some(crate::world::types::GeologyDef { generated: None, dem: Some(serde_json::from_value(v).unwrap()) });
+            d
+        };
+        let globe = compile_layers_at(&dem(None), Some(dir.path()));
+        assert_eq!(globe.geology.cell_km, None, "no scale → the whole planet");
+        let region_def = dem(Some(5.0));
+        let region = compile_layers_at(&region_def, Some(dir.path()));
+        // 320 px × 5 km over 160 cells = 10 km per cell, both ways.
+        assert_eq!(region.geology.cell_km, Some((10.0, 10.0)));
+        let d_region = crate::world::travel::distance_km_on(1.0, &region.geology, 30.0, 40.0);
+        assert!((d_region - 500.0).abs() < 1e-6, "30×40 cells at 10 km = 500 km, got {d_region}");
+        assert!(crate::world::travel::distance_km_on(1.0, &globe.geology, 30.0, 40.0) > 5.0 * d_region);
+        assert!(region.demographics.total_population < globe.demographics.total_population / 10);
+        // …and the region/pole-to-pole mismatch is told.
+        assert!(run_fast_at(&region_def, Some(dir.path())).iter().any(|w| w.text.contains("a region")));
+        assert!(!run_fast_at(&dem(None), Some(dir.path())).iter().any(|w| w.text.contains("a region")));
     }
 
     #[test]

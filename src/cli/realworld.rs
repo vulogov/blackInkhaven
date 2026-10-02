@@ -944,7 +944,7 @@ fn scene(project: &Path, place: Option<String>, day: f64, lat: Option<f64>) -> R
     // Any coordinate-bearing Place (compiler-born or hand-positioned via
     // `set-coords`) can be the anchor or the neighbour.
     if let Some(here) = &link {
-        if let Some((name, kind, km, dir)) = nearest_feature(project, &def, geo.width, geo.height, here) {
+        if let Some((name, kind, km, dir)) = nearest_feature(project, &def, &geo, here) {
             println!("  nearby:   {name} ({kind}) — {km:.0} km {dir}");
         }
     }
@@ -960,10 +960,10 @@ fn scene(project: &Path, place: Option<String>, day: f64, lat: Option<f64>) -> R
 fn nearest_feature(
     project: &Path,
     def: &WorldDefinition,
-    w: usize,
-    h: usize,
+    geo: &crate::world::types::GeologyOutput,
     here: &crate::world::proposals::PlaceLink,
 ) -> Option<(String, &'static str, f64, &'static str)> {
+    let (w, h) = (geo.width, geo.height);
     // Candidate coordinate-bearing named features (excluding the anchor's cell).
     let mut cands: Vec<(String, &'static str, usize, usize)> = Vec::new();
     if let Ok(ws) = crate::world::storage::WorldStore::open_for_project(project) {
@@ -999,7 +999,7 @@ fn nearest_feature(
         .map(|(name, kind, x, y)| {
             let dx = x as f64 - here.x as f64;
             let dy = y as f64 - here.y as f64;
-            (name, kind, crate::world::travel::distance_km(radius, w, h, dx, dy), bearing(here.x, here.y, x, y))
+            (name, kind, crate::world::travel::distance_km_on(radius, geo, dx, dy), bearing(here.x, here.y, x, y))
         })
         .min_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal))
 }
@@ -1047,10 +1047,9 @@ fn travel(
         None => (to_x, to_y),
     };
     let cells = ((to_x - from_x).powi(2) + (to_y - from_y).powi(2)).sqrt();
-    let dist = crate::world::travel::distance_km(
+    let dist = crate::world::travel::distance_km_on(
         def.astronomy.planet.radius_earth,
-        geo.width,
-        geo.height,
+        &geo,
         to_x - from_x,
         to_y - from_y,
     );
@@ -2653,6 +2652,15 @@ fn validate(project: &Path) -> Result<()> {
     );
     let geo = geology_for(project, &def)?;
     println!("  geology:      ok · {} plate(s), {} continent(s)", geo.plates.len(), geo.continents);
+    if let Some((xk, yk)) = geo.cell_km {
+        println!(
+            "                  map scale declared: {:.1} × {:.1} km per cell ({:.0} × {:.0} km overall)",
+            xk,
+            yk,
+            xk * geo.width as f64,
+            yk * geo.height as f64
+        );
+    }
     if let Some(declared) = def.geology.as_ref().and_then(|g| g.generated.as_ref()) {
         if declared.plates > crate::world::compile::geology_layer::MAX_PLATES {
             println!(

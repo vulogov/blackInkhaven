@@ -60,6 +60,13 @@ pub struct ClimateOutput {
     /// Per-cell precipitation (mm/yr). Not serialised.
     #[serde(skip)]
     pub precipitation_mm: Vec<f32>,
+    /// WORLD-KEEP-1 (WK-P1) — the ground area of one cell in each ROW, km²
+    /// (`height` entries). On a whole-planet grid a cell narrows toward the
+    /// poles (× cos latitude); on a map with a declared scale every cell is the
+    /// same. Empty for a hand-built climate (the demographics layer then uses
+    /// its legacy fixed cell). Not serialised.
+    #[serde(skip)]
+    pub cell_area_km2: Vec<f64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Default, Deserialize, Serialize)]

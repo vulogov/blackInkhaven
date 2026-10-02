@@ -482,16 +482,16 @@ fn default_sea_level() -> f32 {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DemGeology {
     pub path: String,
-    #[serde(default = "default_dem_scale")]
-    pub scale_km_per_pixel: f32,
+    /// Real ground distance per SOURCE-IMAGE pixel, km. Declared → the map is a
+    /// region of that size (distances, trade routes and population density use
+    /// it). Omitted → the image is the whole planet, sized from its radius.
+    #[serde(default)]
+    pub scale_km_per_pixel: Option<f32>,
     /// Pixel values at or below this are treated as sea.
     #[serde(default)]
     pub sea_level_pixel_value: Option<u16>,
 }
 
-fn default_dem_scale() -> f32 {
-    5.0
-}
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Calendar {
