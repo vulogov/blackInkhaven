@@ -310,10 +310,16 @@ pub(crate) fn slow_llm_call(
     // WK-P4 — the findings are read by the author: have them written in the
     // project language (the JSON keys / enum values stay as specified).
     let (language, _) = crate::prose::resolve_prose_language(None, &cfg.language);
-    let system = format!(
-        "{system} Write every \"explanation\" in {}.",
-        crate::canon::language_name(&language)
-    );
+    // (An unrecognised project language gets no directive — `language_name`
+    // would say "English" and overrule a model that was following the prose.)
+    let system = if matches!(language, crate::prose::ProseLanguage::Other(_)) {
+        system.to_string()
+    } else {
+        format!(
+            "{system} Write every \"explanation\" in {}; keep the JSON keys and the category / severity values exactly as specified.",
+            crate::canon::language_name(&language)
+        )
+    };
     let system = system.as_str();
     // The LLM provider (errors cleanly when none is configured).
     let ai = crate::ai::AiClient::from_config(&cfg.llm)
@@ -927,7 +933,7 @@ fn scene(project: &Path, place: Option<String>, day: f64, lat: Option<f64>) -> R
         astro.year_length_planet_days,
         latitude.map(|l| format!(" · lat {l:.0}°")).unwrap_or_default()
     );
-    let date = def.astronomy.calendar.date_label(day);
+    let date = def.astronomy.calendar.date_label(wrap_day(day, astro.year_length_planet_days));
     if !date.is_empty() {
         println!("  date:     {date}");
     }
@@ -1194,6 +1200,13 @@ fn ecology(project: &Path) -> Result<()> {
 /// WORLD-10 — `realworld weather --day <N> --lat <deg>`: the local season +
 /// relative insolation for a day-of-year at a latitude, from the compiled
 /// astronomy. So a scene's weather stays consistent with the planet.
+/// A day-of-year wrapped into `[0, year)`, as `weather_at` does — so a date is
+/// printed for the day whose season is reported. Non-finite input stays as is
+/// (and dates as nothing).
+fn wrap_day(day: f64, year: f64) -> f64 {
+    if day.is_finite() && year.is_finite() && year > 0.0 { day.rem_euclid(year) } else { day }
+}
+
 fn weather(project: &Path, day: f64, lat: f64) -> Result<()> {
     use crate::world::compile::compile_astronomy;
     let def = load(project)?;
@@ -1203,7 +1216,8 @@ fn weather(project: &Path, day: f64, lat: f64) -> Result<()> {
         "weather · {} · day {:.0} of {:.0} · lat {:.0}°",
         def.name, day, astro.year_length_planet_days, lat
     );
-    let date = def.astronomy.calendar.date_label(day);
+    // The same day `weather_at` reads: wrapped into the year.
+    let date = def.astronomy.calendar.date_label(wrap_day(day, astro.year_length_planet_days));
     if !date.is_empty() {
         println!("  date:       {date}");
     }
@@ -2676,6 +2690,24 @@ fn validate(project: &Path) -> Result<()> {
     println!("  hydrology:    ok · {} river(s), {} lake(s)", hydro.river_count, hydro.lake_count);
     let demo = compile_demographics(&climate, &hydro);
     println!("  demographics: ok · {} settlement(s)", demo.settlements.len());
+    // The map lints the worldbuilder's score also runs (regional scale vs
+    // pole-to-pole climate, a map larger than its planet, a landmark on a
+    // capital's cell) — one function, so the two never disagree.
+    let layers = crate::world::plausibility::CompiledLayers {
+        astronomy: astro,
+        geology: geo,
+        climate,
+        hydrology: hydro,
+        demographics: demo,
+    };
+    let mw = crate::world::plausibility::lint_map(&def, Some(project), &layers);
+    if !mw.is_empty() {
+        println!("  map:          {} warning(s):", mw.len());
+        for x in &mw {
+            println!("                  ⚠ {x}");
+        }
+    }
+    let crate::world::plausibility::CompiledLayers { geology: geo, climate, demographics: demo, .. } = layers;
     // W11-P1 — verify declared history events (advisory).
     let declared_hist = def.history.as_ref().map(|h| h.events.as_slice()).unwrap_or(&[]);
     if !declared_hist.is_empty() {

@@ -91,7 +91,7 @@ pub fn harvest(project: &Path, scope: &str) -> Result<()> {
         "harvesting canon from {} paragraph(s) via {model} — one LLM call each…",
         paragraphs.len()
     );
-    let mut proposals: Vec<Proposal> = Vec::new();
+    let mut proposals: Vec<(uuid::Uuid, Vec<Proposal>)> = Vec::new();
     for (i, node) in paragraphs.iter().enumerate() {
         let bytes = store.get_content(node.id)?.unwrap_or_default();
         let text = String::from_utf8_lossy(&bytes);
@@ -103,15 +103,45 @@ pub fn harvest(project: &Path, scope: &str) -> Result<()> {
             .map_err(|e| Error::Store(format!("llm harvest failed: {e}")))?;
         let found = parse_proposals(&raw, node.id, &breadcrumb_of(node));
         eprintln!("{} proposal(s)", found.len());
-        proposals.extend(found);
+        proposals.push((node.id, found));
     }
 
-    let staged = StagedCanon { proposals };
-    let n = staged.proposals.len();
-    staged.save(&layout).map_err(store_err)?;
-    eprintln!("\nstaged {n} proposal(s) → .inkhaven/canon-staged.json (nothing entered the ledger).");
-    eprintln!("review with `inkhaven canon staged`, then `inkhaven canon accept`.");
+    // Staging is a shared list (the Canon pane stages into it too), so a harvest
+    // ADDS to it — it used to overwrite, discarding whatever was awaiting review
+    // — and, like the pane, drops a proposal that repeats a decision the
+    // paragraph already has or an entry already staged for it.
+    let canon = store.raw().canon();
+    let (mut added, mut dropped) = (0usize, 0usize);
+    for (node, found) in proposals {
+        let live: Vec<(crate::canon::NarrativeKind, String)> = canon
+            .units_for_node(node)
+            .map_err(store_err)?
+            .into_iter()
+            .filter_map(|u| canon.view(u).ok().flatten())
+            .filter_map(|v| v.kind.map(|k| (k, v.gist)))
+            .collect();
+        let (a, d) = StagedCanon::stage_new(&layout, found, &live).map_err(store_err)?;
+        added += a;
+        dropped += d;
+    }
+    let total = StagedCanon::load(&layout).map_err(store_err)?.proposals.len();
+    eprintln!(
+        "\nstaged {added} new proposal(s){} → .inkhaven/canon-staged.json ({total} awaiting review; nothing entered the ledger).",
+        if dropped > 0 { format!(", {dropped} already known") } else { String::new() }
+    );
+    eprintln!("review with `inkhaven canon staged`, then `inkhaven canon accept` / `canon discard`.");
     Ok(())
+}
+
+/// The paragraph ids at or under `scope` (a slug path), for `--node` filters.
+fn scope_paragraphs(store: &Store, scope: &str) -> Result<std::collections::HashSet<uuid::Uuid>> {
+    let h = Hierarchy::load(store)?;
+    let node = h
+        .find_by_path(scope)
+        .ok_or_else(|| Error::Store(format!("no node at path {scope:?}")))?;
+    let mut paragraphs: Vec<&Node> = Vec::new();
+    collect_paragraphs(&h, node, &mut paragraphs);
+    Ok(paragraphs.into_iter().map(|n| n.id).collect())
 }
 
 /// A `wall_ms` epoch timestamp as `YYYY-MM-DD HH:MM`, or `—` when unset (0).
@@ -314,7 +344,7 @@ pub fn staged(project: &Path) -> Result<()> {
 
 /// `inkhaven canon accept` — the author's confirmation: record the staged
 /// proposals into the ledger (uncommitted), then clear staging.
-pub fn accept(project: &Path) -> Result<()> {
+pub fn accept(project: &Path, node: Option<&str>) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
     let cfg = Config::load_layered(&layout.config_path())?;
@@ -329,8 +359,40 @@ pub fn accept(project: &Path) -> Result<()> {
     // in the project language (so `canon impact`/`why` have a graph to walk).
     // CU2-P2 — the same accept path the Canon pane uses, selecting everything.
     let (language, _) = crate::prose::resolve_prose_language(None, &cfg.language);
-    let n = StagedCanon::accept_where(&layout, canon, &language, |_| true).map_err(store_err)?;
-    eprintln!("accepted {n} proposal(s) into the canon ledger (uncommitted — set canonicity with `canon commit`).");
+    // `--node <path>` narrows the accept to the paragraphs at or under that node.
+    let only = node.map(|s| scope_paragraphs(&store, s)).transpose()?;
+    let n = StagedCanon::accept_where(&layout, canon, &language, |p| {
+        only.as_ref().map_or(true, |set| set.contains(&p.node))
+    })
+    .map_err(store_err)?;
+    let left = StagedCanon::load(&layout).map_err(store_err)?.proposals.len();
+    eprintln!(
+        "accepted {n} proposal(s) into the canon ledger (uncommitted — set canonicity with `canon commit`); {left} still staged."
+    );
+    Ok(())
+}
+
+/// `inkhaven canon discard (--node <path> | --all)` — drop staged proposals
+/// without recording them. The shell twin of `x` in the Canon pane.
+pub fn discard(project: &Path, node: Option<&str>, all: bool) -> Result<()> {
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let n = match (node, all) {
+        (Some(scope), _) => {
+            let cfg = Config::load_layered(&layout.config_path())?;
+            let store = Store::open(layout.clone(), &cfg)?;
+            let set = scope_paragraphs(&store, scope)?;
+            StagedCanon::discard_where(&layout, |p| set.contains(&p.node)).map_err(store_err)?
+        }
+        (None, true) => StagedCanon::discard_where(&layout, |_| true).map_err(store_err)?,
+        (None, false) => {
+            return Err(Error::Config(
+                "say which: `canon discard --node <path>` for one paragraph/chapter, or `--all`".into(),
+            ))
+        }
+    };
+    let left = StagedCanon::load(&layout).map_err(store_err)?.proposals.len();
+    eprintln!("discarded {n} staged proposal(s); {left} still staged. The ledger is untouched.");
     Ok(())
 }
 

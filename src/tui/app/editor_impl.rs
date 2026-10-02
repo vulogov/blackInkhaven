@@ -829,6 +829,9 @@ impl super::App {
             self.status = "Help is read-only — nothing to save".into();
             return Ok(());
         }
+        // Whether this save carries an actual edit (Ctrl+S on an untouched
+        // buffer still re-saves) — the canon impact-on-edit note is about edits.
+        let was_dirty = doc.dirty;
         let body = doc.textarea.lines().join("\n");
         // Capture pre-save word count before we overwrite anything
         // — used by the progress event log to compute word_delta.
@@ -984,7 +987,9 @@ impl super::App {
         self.continuity_scan_saved_paragraph(node.id);
         // CANON-UI-2 (CU2-P4) — impact-on-edit: this prose established decisions
         // other decisions rest on. Said once per paragraph per session.
-        self.canon_note_edit_of_source(node.id);
+        if was_dirty {
+            self.canon_note_edit_of_source(node.id);
+        }
         Ok(())
     }
 
