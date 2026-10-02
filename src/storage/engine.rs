@@ -75,6 +75,72 @@ impl StorageEngine {
         Ok(engine)
     }
 
+    /// Open like [`StorageEngine::new_versioned`], then bring an older on-disk
+    /// schema forward. `migrations` are `(to_version, statements)` in ascending
+    /// order; every step whose `to_version` is above the stamped version runs,
+    /// then the store is stamped `current`. A store newer than `current` is
+    /// refused, as before.
+    ///
+    /// Each statement MUST be idempotent (`ADD COLUMN IF NOT EXISTS`, `CREATE
+    /// INDEX IF NOT EXISTS`): a brand-new database is created by `init_sql`
+    /// already in the current shape, and a store with no version anchor at all
+    /// (a pre-freeze project) is indistinguishable from one, so every step is
+    /// applied to both and has to be a no-op where the shape is already there.
+    /// Forward-only and non-destructive by convention — add, never drop.
+    pub fn new_migrating<P: AsRef<Path>>(
+        path: P,
+        init_sql: &str,
+        pool_size: u32,
+        current: i64,
+        migrations: &[(i64, &[&str])],
+    ) -> Result<Self> {
+        let engine = Self::new(path, init_sql, pool_size)?;
+        engine.execute(
+            "CREATE TABLE IF NOT EXISTS _inkhaven_schema (
+                singleton INTEGER NOT NULL PRIMARY KEY,
+                version   BIGINT  NOT NULL
+            )",
+        )?;
+        let on_disk = engine.schema_version()?;
+        if let Some(v) = on_disk {
+            if v > current {
+                return Err(anyhow!(
+                    "store schema is v{v}, but this inkhaven only supports v{current} — \
+                     upgrade inkhaven to open this project"
+                ));
+            }
+        }
+        let from = on_disk.unwrap_or(0);
+        for (to, statements) in migrations {
+            if *to > from && *to <= current {
+                for sql in *statements {
+                    engine
+                        .execute(sql)
+                        .map_err(|e| anyhow!("schema migration to v{to} failed: {e}"))?;
+                }
+            }
+        }
+        if on_disk != Some(current) {
+            engine.execute_with(
+                "INSERT INTO _inkhaven_schema (singleton, version) VALUES (1, ?) \
+                 ON CONFLICT (singleton) DO UPDATE SET version = excluded.version",
+                &[&current],
+            )?;
+        }
+        Ok(engine)
+    }
+
+    /// The stamped schema version, or `None` for a store with no anchor row.
+    pub fn schema_version(&self) -> Result<Option<i64>> {
+        let rows = self.select_all("SELECT version FROM _inkhaven_schema WHERE singleton = 1")?;
+        Ok(rows.into_iter().next().and_then(|r| r.into_iter().next()).and_then(|v| match v {
+            DuckValue::BigInt(v) => Some(v),
+            DuckValue::Int(v) => Some(v as i64),
+            DuckValue::HugeInt(v) => Some(v as i64),
+            _ => None,
+        }))
+    }
+
     /// Create the `_inkhaven_schema` anchor if absent and stamp `current`;
     /// error if the store was written by a schema *newer* than `current` so an
     /// old binary fails loudly rather than misreading a shape it can't parse. A
