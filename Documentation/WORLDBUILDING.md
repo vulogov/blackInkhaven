@@ -108,7 +108,8 @@ same cell size. On a whole-planet map a cell is as large as the planet's radius
 makes it (and narrower toward the poles), so a bigger planet holds more people. A
 heightmap that declares `scale_km_per_pixel` is a *region* of that size — journeys
 across it are as long as the scale says, and it holds a region's population. Omit
-the scale and the image is the whole planet. (A regional map's climate still runs
+the scale — or give one that makes the image as tall as the planet itself, such as
+a whole-Earth map at 50 km per pixel — and the image is the whole planet. (A regional map's climate still runs
 pole to pole down the image; `validate` says so when the two disagree.)
 
 **The interview speaks your project's language (3.15)** — en / ru / fr / de / es —

@@ -229,7 +229,8 @@ hardened surface. Every release's notes live under
 - `inner-socrates` / `inner-editor` / `realworld` — the companions from the
   shell; `check` runs the fast deterministic pass over the project.
 - `canon list` / `impact` / `why` / `history` / `log` / `graph` / `commit` /
-  `ground` / `reground` / `compact` / `harvest` — the Canon Ledger from the shell
+  `ground` / `reground` / `compact` / `harvest` / `accept` / `discard` — the Canon
+  Ledger from the shell
   (impact = the blast radius of a cut).
 - `import-epub` / `import-scrivener` — bring an existing manuscript in.
 - `backup` / `restore` — see above.

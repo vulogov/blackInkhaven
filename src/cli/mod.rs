@@ -1847,7 +1847,20 @@ pub enum CanonCommand {
     /// List the model's staged canon proposals awaiting confirmation.
     Staged,
     /// Confirm the staged proposals into the ledger (author's accept).
-    Accept,
+    Accept {
+        /// Only the proposals for paragraphs at or under this slug path.
+        #[arg(long)]
+        node: Option<String>,
+    },
+    /// Drop staged proposals without recording them (the ledger is untouched).
+    Discard {
+        /// Only the proposals for paragraphs at or under this slug path.
+        #[arg(long)]
+        node: Option<String>,
+        /// Drop every staged proposal.
+        #[arg(long)]
+        all: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -6731,7 +6744,10 @@ impl Cli {
                 }
                 CanonCommand::Harvest { scope } => canon::harvest(&project, &scope).map_err(Into::into),
                 CanonCommand::Staged => canon::staged(&project).map_err(Into::into),
-                CanonCommand::Accept => canon::accept(&project).map_err(Into::into),
+                CanonCommand::Accept { node } => canon::accept(&project, node.as_deref()).map_err(Into::into),
+                CanonCommand::Discard { node, all } => {
+                    canon::discard(&project, node.as_deref(), all).map_err(Into::into)
+                }
             },
             Command::Reindex { prune, adopt } => {
                 reindex::run(&project, prune, adopt).map_err(Into::into)

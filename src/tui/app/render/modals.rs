@@ -6742,8 +6742,12 @@ impl super::super::App {
     pub(in crate::tui::app) fn draw_canon_commit_modal(&self, f: &mut ratatui::Frame, area: Rect) {
         let Modal::CanonCommit { gist, current, cursor, .. } = &self.modal else { return };
         let levels = smysl::Commitment::ALL;
-        let width = area.width.saturating_sub(6).clamp(48, 74);
-        let height = (levels.len() as u16 + 6).min(area.height.saturating_sub(2)).max(8);
+        // Never larger than the terminal: `Clear` on a rect outside the buffer panics.
+        let width = area.width.saturating_sub(6).clamp(48, 74).min(area.width);
+        let height = (levels.len() as u16 + 6).min(area.height.saturating_sub(2)).max(8).min(area.height);
+        if width < 4 || height < 3 {
+            return;
+        }
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
         let rect = Rect { x, y, width, height };
