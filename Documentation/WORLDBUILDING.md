@@ -290,7 +290,13 @@ $ inkhaven realworld proposals accept-all    # or accept/reject <id>
 $ inkhaven realworld places                  # the accepted cross-references
 ```
 
-Re-running `propose` never re-offers a resolved site. These accepted Places are
+Re-running `propose` never re-offers a resolved site. A settlement is identified
+by its cell on the map, so (3.16) an accept or reject applies **under the seed it
+was made under** — change the seed and the new world's settlements are offered
+afresh, rather than being silently skipped because a different town once stood on
+the same cell. Decisions made before 3.16 carry no seed and keep applying under
+every seed; rulers, languages and myths are identified by name and stay settled
+across seeds. These accepted Places are
 what the fact-checker resolves place names against — closing the loop: **compile
 → accept cities → write → check.** TUI: **`Ctrl+B W` → `P`** (Enter accept, `r`
 reject).
@@ -599,6 +605,16 @@ Cycle to the Map pane, press `e` to edit, and draw the world — every mark is a
 
 `/terrain` writes the sculpted heightmap as a grayscale DEM under `assets/maps/` and
 sets `geology.dem`; `realworld compile` (DEM-aware) then rebuilds the world from it.
+
+---
+
+## Upgrading a project to 3.16
+
+The first time 3.16 opens a project, `.inkhaven/world.db` is upgraded in place
+(two added columns; nothing is rewritten or lost). The upgrade is **one-way**: an
+older inkhaven then refuses that file and asks you to upgrade, by the same guard
+that protects every store. Nothing else changes unless you ask for it — a world
+without `dem.center_lat` compiles to the same output as before.
 
 ---
 
