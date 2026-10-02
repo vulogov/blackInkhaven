@@ -1831,6 +1831,16 @@ pub enum CanonCommand {
         /// Exit non-zero when there is anything to report (for CI).
         #[arg(long)]
         strict: bool,
+        /// Add the opt-in LLM contradiction pass: for the decisions you marked
+        /// committed or canonical, ask a model whether any related passage of
+        /// the book contradicts them. One call; its findings are stored and
+        /// expire when the passage or the decision changes.
+        #[arg(long)]
+        deep: bool,
+        /// Token budget for `--deep` — the prompt is fitted to it (decisions
+        /// that do not fit are reported as unchecked; nothing is refused).
+        #[arg(long, default_value_t = 8000)]
+        max_cost: usize,
     },
     /// Merge another project's canon ledger into this one.
     Merge {
@@ -6751,8 +6761,8 @@ impl Cli {
                     canon::commit(&project, &id, &level, as_agent).map_err(Into::into)
                 }
                 CanonCommand::Check => canon::check(&project).map_err(Into::into),
-                CanonCommand::Read { scope, json, strict } => {
-                    canon::read(&project, &scope, json, strict).map_err(Into::into)
+                CanonCommand::Read { scope, json, strict, deep, max_cost } => {
+                    canon::read(&project, &scope, json, strict, deep, max_cost).map_err(Into::into)
                 }
                 CanonCommand::Merge { path } => canon::merge(&project, &path).map_err(Into::into),
                 CanonCommand::Forks => canon::forks(&project).map_err(Into::into),

@@ -299,6 +299,20 @@ pub(crate) fn slow_llm_call(
     };
     use crate::world::storage::WorldStore;
 
+    // This runs from the shell AND from the editor's background workers. In the
+    // editor the terminal belongs to the renderer — a stray stderr line lands on
+    // the raw-mode screen and stays there. The Output store exists only inside
+    // the TUI, so its presence is the "do not touch the terminal" signal (the
+    // same one `collect_blocking` uses for its progress dots).
+    let quiet = crate::pane::output::active().is_some();
+    macro_rules! say {
+        ($($arg:tt)*) => {
+            if !quiet {
+                eprintln!($($arg)*);
+            }
+        };
+    }
+
     // Load config first so the daily-cap day-key honors goals.day_boundary.
     let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
     crate::dayclock::set_boundary(cfg.goals.day_boundary);
@@ -337,7 +351,7 @@ pub(crate) fn slow_llm_call(
         // Cost control is informative, not a gate: past the daily budget we warn
         // and proceed — the author decides whether to keep going.
         PreflightVerdict::DailyCapReached => {
-            eprintln!(
+            say!(
                 "{label}: past today's slow-track budget ({}/{} calls) — continuing (the cap is informative, see `inkhaven cost`).",
                 pf.calls_used, cfg.cost.world_daily_call_cap
             );
@@ -350,7 +364,7 @@ pub(crate) fn slow_llm_call(
         }
         PreflightVerdict::Proceed => {}
     }
-    eprintln!(
+    say!(
         "{label} · model: {model} · ~{} tokens · {}/{} calls today · checking…",
         pf.est_total_tokens, pf.calls_used, pf.daily_cap
     );
@@ -373,7 +387,7 @@ pub(crate) fn slow_llm_call(
                 last_err = e.to_string();
                 if attempt + 1 < MAX_ATTEMPTS && is_transient(&last_err) {
                     let d = backoff_delay(attempt);
-                    eprintln!("  transient error ({last_err}); retrying in {:.1}s…", d.as_secs_f32());
+                    say!("  transient error ({last_err}); retrying in {:.1}s…", d.as_secs_f32());
                     std::thread::sleep(d);
                     continue;
                 }

@@ -3540,12 +3540,15 @@ manuscript), so the only knobs are behavioural, not data.
 | `canon.context_reserve` | usize | `400` | Default tokens reserved (out of the budget) for the prompt framing and answer when `--reserve` is not passed. |
 | `canon.ground_ai` | bool | `true` | (3.14) When on, the AI pane's **Book** scope also grounds each conversation on the canon ledger: the decisions behind the retrieved passages, packed to `context_budget`, ride along with the prose. An empty ledger adds nothing. `*` in the AI pane toggles it for the session. |
 
+| `canon.deep_budget` | usize | `8000` | (3.16) Token budget the editor's opt-in contradiction pass (`D` on the Canon dashboard) fits its one prompt to. Informative: decisions that do not fit are reported as unchecked; the run is never refused. The shell's `canon read --deep` takes `--max-cost`. |
+
 ```hjson
 canon: {
   harvest_on_save: true
   context_budget: 2000
   context_reserve: 400
   ground_ai: true
+  deep_budget: 8000
 }
 ```
 

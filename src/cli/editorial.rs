@@ -193,7 +193,10 @@ pub fn collect(
                 {
                     let (language, _) = crate::prose::resolve_prose_language(None, &cfg.language);
                     let view = crate::cli::canon::ManuscriptView { store: &store, hierarchy: &h };
-                    for f in crate::canon::read::check(store.raw().canon(), &view, &language)
+                    // (`check_all` also includes the contradictions still standing
+                    // from the last opt-in `--deep` pass — read from its sidecar,
+                    // no model call here.)
+                    for f in crate::canon::deep::check_all(store.raw().canon(), &view, &language, &layout)
                         .unwrap_or_default()
                     {
                         raw.push(editorial::from_canon_finding(&f));

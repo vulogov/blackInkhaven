@@ -726,7 +726,9 @@ their canon is — dim (unmarked / floated), plain (drafted / committed), bold
 (canonical), struck (all retconned). (3.16) A decision the canon reader has
 a finding about carries a `⚠ drifted` / `⚠ on sand` / `⚠ unsettled` line under its
 row, and the Canon dashboard lists the findings first — `Enter` opens the paragraph
-involved, `c` / `g` / `h` act on the decision.
+involved, `c` / `g` / `h` act on the decision. **`D`** on the dashboard runs the
+opt-in contradiction pass (one model call over the decisions you marked committed
+or canonical; the result is stored, nothing is edited).
 
 | Key | Action |
 | --- | ------ |

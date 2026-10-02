@@ -6841,9 +6841,9 @@ impl super::super::App {
         let footer_hint = if grounding.is_some() {
             "pick the decision it rests on · Enter ground · Esc cancel"
         } else if *graph {
-            "grounds DAG · Enter jumps · g ground · c commit · h history · t list"
+            "grounds DAG · Enter jumps · g ground · c commit · h history · t list · D deep"
         } else {
-            "Enter jumps to source · g grounds · c commit · h history · t graph"
+            "Enter jumps to source · g grounds · c commit · h history · t graph · D deep"
         };
         let footer_text = dashboard_footer(footer_hint, start, list_h, rows.len());
         f.render_widget(

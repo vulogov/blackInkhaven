@@ -117,12 +117,35 @@ changed.
 | **Orphaned** | The paragraph that established it no longer exists. |
 | **Built on sand** | Committed above something it rests on (what `canon check` reports). |
 | **Unsettled foundation** | Two or more decisions rest on one still unmarked or only floated. |
+| **Contradicted** *(opt-in, `--deep`)* | A passage of the book says the opposite of a decision you committed to. |
 
 Notes on what it deliberately does *not* say. Drift is conservative: a rephrase
 that keeps any of the decision's words is not drift. A decision harvested from a
 `rel:` tag is carried by the tag, so it drifts only when the tag is removed.
 Unsettled foundations are reported only once you have committed *something* — a
 ledger where nothing is marked is not using that axis.
+
+**The contradiction pass (opt-in).** The four findings above can tell that a scene
+no longer *mentions* a decision. They cannot tell that a scene *says the opposite*.
+`canon read --deep` (or **`D`** on the Canon dashboard) asks a model, once:
+
+- Only decisions you marked **committed** or **canonical** are checked — the ones a
+  contradiction matters for, which is also what keeps the call small.
+- For each, the passages most related to it are retrieved locally; all of it goes
+  in **one** prompt, fitted to `--max-cost` (default 8000 tokens; `canon.deep_budget`
+  in the editor). Decisions that do not fit are reported as unchecked — the run is
+  never refused.
+- The model must cite the decision and the passage; a citation it was not offered
+  is dropped. A character lying, guessing or dreaming is not a contradiction, and
+  the prompt says so.
+- The result is stored (`.inkhaven/canon-contradictions.json`), so every later
+  `canon read`, the Editorial Pass, CHRONICLE and the dashboard show it without
+  another call. A stored finding **expires on its own** when the passage it cites
+  changes or the decision is no longer committed — fix the scene and it is gone;
+  re-run the pass to check the new text.
+
+A **Contradicted** finding opens the passage that contradicts the decision, and is
+a Decision like *drifted*: the scene or the ledger?
 
 **In the worklist and the history.** The same findings join the other readers'
 in the Editorial Pass (`Ctrl+V Shift+R`) and `inkhaven revise`, under the source
