@@ -75,7 +75,6 @@ pub fn compile_trade(pol: &PolitiesOutput, geo: &GeologyOutput, radius_earth: f6
     if n < 2 {
         return TradeOutput::default();
     }
-    let (w, h) = (geo.width, geo.height);
     let coastal: Vec<bool> =
         pol.polities.iter().map(|p| is_coastal(geo, p.capital_pos.0, p.capital_pos.1)).collect();
 
@@ -90,7 +89,7 @@ pub fn compile_trade(pol: &PolitiesOutput, geo: &GeologyOutput, radius_earth: f6
             .map(|b| {
                 let dx = pol.polities[a].capital_pos.0 as f64 - pol.polities[b].capital_pos.0 as f64;
                 let dy = pol.polities[a].capital_pos.1 as f64 - pol.polities[b].capital_pos.1 as f64;
-                (b, crate::world::travel::distance_km(radius_earth, w, h, dx, dy), stance_of(pol, a, b))
+                (b, crate::world::travel::distance_km_on(radius_earth, geo, dx, dy), stance_of(pol, a, b))
             })
             .filter(|(_, _, stance)| *stance != "rival")
             .collect();

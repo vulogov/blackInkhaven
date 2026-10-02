@@ -28,6 +28,12 @@ pub struct GeologyOutput {
     /// Row-major normalised heightmap (`width * height`, 0..1). Not serialised.
     #[serde(skip)]
     pub heightmap: Vec<f32>,
+    /// WORLD-KEEP-1 (WK-P1) — kilometres per model cell `(east–west,
+    /// north–south)` when the map's real scale is DECLARED (a heightmap with
+    /// `dem.scale_km_per_pixel`). `None` = the grid is the whole planet and the
+    /// cell size follows from its radius ([`crate::world::travel::cell_km`]).
+    #[serde(skip)]
+    pub cell_km: Option<(f64, f64)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]

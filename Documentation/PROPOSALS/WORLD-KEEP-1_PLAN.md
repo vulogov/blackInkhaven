@@ -18,21 +18,29 @@ Every item below was verified in the 3.14.0 tree.
 
 ## Phases (each independently shippable; value core = P1 + P4)
 
-- **WK-P1 — one ruler.** Distances and areas come from a single cell-size
-  function.
-  - `demographics_layer` hard-codes `CELL_KM2 = 625` (25 km cells) while
-    `travel::cell_km` derives roughly 250 × 167 km cells from the planet radius
-    and grid. Population density and travel time therefore disagree about how big
-    the world is. Demographics takes its cell area from `cell_km`.
-  - `geology.dem.scale_km_per_pixel` is parsed, documented ("default 5.0") and
-    read nowhere: a DEM world is always treated as the whole globe. When a DEM
-    declares a scale, travel/trade distance and cell area use it (resampled to
-    the model grid); latitude span follows from the map's north–south extent.
-    Pre-flight: decide the latitude anchor for a regional map (centre on a
-    declared `lat`, default equator-centred) — a small schema addition
-    (`dem.center_lat`, optional, defaulted).
-  - Re-baseline the affected tests; note the population change in the release
-    notes (numbers move — a determinism break for existing worlds, called out).
+- **WK-P1 — one ruler.** *(Done; calibrated rather than naively unified.)*
+  - Demographics hard-coded a 625 km² cell (a 4000×3000 km region) while climate,
+    travel and trade treat the grid as the whole planet (≈250 × 167 km cells at
+    the equator). The climate layer now carries each row's true cell area — the
+    same `cell_km` travel uses, × cos latitude on a planet — and demographics
+    measures with it.
+  - Unifying the area alone put **2.4 billion** people on the starter world: the
+    biome capacities are densities of *worked* land, and the old undersized cell
+    had been hiding that. A `SETTLED_FRACTION` (1.57 % of habitable land under
+    cultivation) is calibrated so an Earth-sized, Earth-like world keeps its
+    bronze-age ~38 M — the starter world's population and settlements are
+    unchanged. What changes: population now scales with the planet's radius
+    (twice the radius, about four times the people) and with where the land sits
+    (polar cells count for less), so other seeds and non-Earth-sized worlds move.
+  - `geology.dem.scale_km_per_pixel` is now optional. Declared, the map is a
+    region of that size: travel and trade distances, the scene's nearest-feature
+    distance and population density all use it. Omitted, the image is the whole
+    planet (the previous behaviour for everything).
+  - *Not done:* a regional map's **latitude**. Its climate still runs pole to
+    pole down the image; the row→latitude mapping is shared by climate, weather,
+    the scene brief, `set-coords` and the landmark grid, and re-anchoring it
+    (`dem.center_lat`) changes every biome of an existing DEM world. The mismatch
+    is reported as a low-severity warning instead.
 
 - **WK-P2 — the week exists.** `calendar.weekdays` and `calendar.day_names` are
   parsed and unused. `realworld calendar` emits them into the adopted Timeline

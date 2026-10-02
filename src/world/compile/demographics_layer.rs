@@ -8,10 +8,19 @@ use crate::world::types::climate::{Biome, ClimateOutput};
 use crate::world::types::demographics::*;
 use crate::world::types::hydrology::HydrologyOutput;
 
-/// Area of one model cell, in km² (the grid is treated as a ~4000×3000 km
-/// regional map: 25 km/cell). A coarse default; populations are order-of-
-/// magnitude estimates, not census figures.
+/// Legacy fixed cell area, km² — used only for a hand-built climate that
+/// carries no per-row areas. The compiled pipeline measures each cell with the
+/// same ruler travel and trade use (see `ClimateOutput::cell_area_km2`).
 const CELL_KM2: f64 = 625.0;
+
+/// The share of habitable land actually under cultivation / settlement. The
+/// biome capacities below are densities of *worked* land; a pre-industrial
+/// world works only a sliver of what could carry people. Calibrated so an
+/// Earth-sized, Earth-like world holds a bronze-age population (tens of
+/// millions) — the figure the old fixed 625 km² cell produced by accident,
+/// when the grid was sized as a 4000×3000 km region while every other layer
+/// treated it as the whole planet.
+const SETTLED_FRACTION: f64 = 0.0157;
 
 /// Bronze-age agricultural carrying capacity by biome (people / km²).
 fn capacity(b: Biome) -> f64 {
@@ -50,7 +59,12 @@ pub fn compile_demographics(climate: &ClimateOutput, hydro: &HydrologyOutput) ->
         if hydro.is_river[i] {
             cap *= 2.5; // river valleys carry far more people
         }
-        total_pop += cap * CELL_KM2;
+        let y = if climate.width > 0 { i / climate.width } else { 0 };
+        let area = match climate.cell_area_km2.get(y) {
+            Some(a) => a * SETTLED_FRACTION,
+            None => CELL_KM2,
+        };
+        total_pop += cap * area;
     }
     let total_population = total_pop.round() as u64;
     let habitable_fraction = if land > 0 { habitable as f32 / land as f32 } else { 0.0 };

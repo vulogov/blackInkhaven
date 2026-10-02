@@ -47,6 +47,7 @@ pub fn compile_geology(def: &WorldDefinition) -> GeologyOutput {
     let elevation = elevation_stats(&heightmap, land_fraction);
 
     GeologyOutput {
+        cell_km: None,
         source: "generated".into(),
         width: W,
         height: H,
@@ -134,7 +135,16 @@ pub fn compile_geology_dem(
     let continents = count_continents(&heightmap, sea_level);
     let elevation = elevation_stats(&heightmap, land_fraction);
 
+    // WK-P1 — a declared scale is in source pixels; the model grid resamples the
+    // image, so one model cell covers `iw / W` × `ih / H` of them.
+    let cell_km = dem
+        .scale_km_per_pixel
+        .map(|s| s as f64)
+        .filter(|s| s.is_finite() && *s > 0.0)
+        .map(|s| (s * iw as f64 / W as f64, s * ih as f64 / H as f64));
+
     Ok(GeologyOutput {
+        cell_km,
         source: "dem".into(),
         width: W,
         height: H,
@@ -562,7 +572,7 @@ mod tests {
             generated: None,
             dem: Some(DemGeology {
                 path: path.display().to_string(),
-                scale_km_per_pixel: 5.0,
+                scale_km_per_pixel: Some(5.0),
                 sea_level_pixel_value: None,
             }),
         });
