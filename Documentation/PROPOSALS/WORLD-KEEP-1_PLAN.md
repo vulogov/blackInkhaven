@@ -70,13 +70,25 @@ Every item below was verified in the 3.14.0 tree.
     reader); `primary_language` stays the *world's* common tongue, used by the
     language proposals — and the docs say exactly that.
 
-- **WK-P5 — compiles leave the UI thread.** Worldbuilder `/roll` (up to eight
-  full compiles), `/compile`, `/export --pdf`, and every map placement (two
-  compiles each); the main TUI's `Ctrl+B W` map and compile (DEM decode + eleven
-  materialize steps + the map renderer) and the idle fact-check's uncached
-  recompile. A single-flight background job with a spinner and a cached
-  `CompiledLayers` keyed on the definition hash, panic-contained like the other
-  background work. The world is re-read once per change, not once per query.
+- **WK-P5 — compile once, not once per consumer.** *(Re-scoped by measurement.)*
+  The plan was to move compiles off the UI thread. Measured first: a whole
+  `realworld validate` — process start, every layer, every lint — takes ~0.26 s
+  in a **debug** build, so one compile of a generated world is not what freezes
+  anything. What cost time was *repetition*: the worldbuilder compiled the world
+  for the ★ score and again for the map on every change (and WK-P3 made each of
+  those a heightmap decode for a DEM world), and the main TUI's idle fact-check
+  recompiled geology on every run just to list minerals.
+  - `run_fast_with` lints layers the caller already compiled; the worldbuilder
+    compiles once per world change and hands the layers from the scorer to the
+    map (keyed on the definition).
+  - The idle fact-check keeps its world context (moons, minerals) until
+    `world.hjson` or its heightmap changes on disk.
+  - *Not done:* moving `Ctrl+B W` → compile/materialize (eleven World-book
+    writes + embeddings) and `/export --pdf` to a background job. Materialize
+    creates and rewrites store nodes; doing that from a worker while the editor
+    is live is a concurrency change that needs a real session to verify, and
+    since 3.14.0 a re-compile already skips unchanged leaves. Left on the UI
+    thread deliberately.
 
 - **WK-P6 — small promises.**
   - `Perlin::new(seed as u32)` truncates: seeds differing only in the high 32

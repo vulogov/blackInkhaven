@@ -150,6 +150,10 @@ pub(crate) struct WorldbuilderApp {
     /// The compiled layer grids from the last `/compile`, rendered as an ASCII
     /// biome minimap in the Map right-pane (WB-P6). Invalidated with the summary.
     pub(super) compiled_layers: Option<crate::world::plausibility::CompiledLayers>,
+    /// WK-P5 — the layers compiled for the live ★ score, kept (keyed on the
+    /// definition) so the map caches built right after reuse them instead of
+    /// compiling — and, for a heightmap world, decoding the image — again.
+    layers_scratch: Option<(u64, crate::world::plausibility::CompiledLayers)>,
 
     // — Raster map (WS-P2) —————————————————————————————————————————————
     /// The terminal's image protocol, if it can display images and
@@ -278,6 +282,7 @@ impl WorldbuilderApp {
             plausibility_score: None,
             compiled_summary: None,
             compiled_layers: None,
+            layers_scratch: None,
             // WS-P2 — query the terminal once for image support (gated by config).
             image_picker: if cfg_images_preview {
                 ratatui_image::picker::Picker::from_query_stdio().ok()
@@ -1615,7 +1620,11 @@ impl WorldbuilderApp {
     /// edits don't change the grid, so the editor re-runs this after a placement
     /// to keep the map live (refresh_plausibility having cleared the caches).
     fn populate_map_caches(&mut self, def: &crate::world::types::WorldDefinition) {
-        let layers = crate::world::plausibility::compile_layers_at(def, Some(&self.layout.root));
+        let key = Self::def_key(def);
+        let layers = match self.layers_scratch.take() {
+            Some((k, layers)) if k == key => layers,
+            _ => crate::world::plausibility::compile_layers_at(def, Some(&self.layout.root)),
+        };
         self.compiled_summary =
             Some(crate::world::plausibility::summarise_compiled(def, &layers));
         let (w, h) = (layers.geology.width, layers.geology.height);
@@ -1813,6 +1822,15 @@ impl WorldbuilderApp {
             }
             Err(e) => self.status = format!("write failed: {e}"),
         }
+    }
+
+    /// WK-P5 — a stable key for "the same world definition" (its canonical JSON),
+    /// so compiled layers can be handed from the scorer to the map.
+    fn def_key(def: &crate::world::types::WorldDefinition) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        serde_json::to_string(def).unwrap_or_default().hash(&mut h);
+        h.finish()
     }
 
     /// WORLD-KEEP-1 (WK-P6) — a `/terrain` sculpt writes its heightmap at once; when
@@ -2290,7 +2308,12 @@ impl WorldbuilderApp {
         self.plausibility_prev = self.plausibility_score;
         match def {
             Some(def) => {
-                let warnings = crate::world::plausibility::run_fast_at(&def, Some(&self.layout.root));
+                // One compile per world change: the score lints these layers, and
+                // `populate_map_caches` takes them rather than compiling again.
+                let layers = crate::world::plausibility::compile_layers_at(&def, Some(&self.layout.root));
+                let warnings =
+                    crate::world::plausibility::run_fast_with(&def, Some(&self.layout.root), &layers);
+                self.layers_scratch = Some((Self::def_key(&def), layers));
                 self.plausibility_score =
                     Some(crate::world::plausibility::compute_plausibility_score(&warnings));
                 self.plausibility_warnings = warnings;

@@ -326,12 +326,23 @@ pub fn run_fast(def: &WorldDefinition) -> Vec<Warning> {
 /// judges the world the CLI compiles. A declared heightmap that cannot be read
 /// is a high-severity warning (the lints below then ran on generated terrain).
 pub fn run_fast_at(def: &WorldDefinition, root: Option<&std::path::Path>) -> Vec<Warning> {
+    let layers = compile_layers_at(def, root);
+    run_fast_with(def, root, &layers)
+}
+
+/// WORLD-KEEP-1 (WK-P5) — the lints over layers the caller has ALREADY compiled,
+/// so a surface that needs both the score and the layers (the worldbuilder: ★
+/// score + map + summary) compiles the world once per change instead of once per
+/// consumer. With a declared heightmap that is one image decode, not three.
+pub fn run_fast_with(
+    def: &WorldDefinition,
+    root: Option<&std::path::Path>,
+    layers: &CompiledLayers,
+) -> Vec<Warning> {
     use crate::world::compile::{
         culture_layer, ecology_layer, history_layer, hydrology_layer, polities_layer,
     };
-
-    let CompiledLayers { astronomy: _astro, geology: geo, climate, hydrology: _hydro, demographics: demo } =
-        compile_layers_at(def, root);
+    let (geo, climate, demo) = (&layers.geology, &layers.climate, &layers.demographics);
     let seed = def.seed_u64();
 
     let mut out: Vec<Warning> = lint_definition(def);
@@ -346,7 +357,7 @@ pub fn run_fast_at(def: &WorldDefinition, root: Option<&std::path::Path>) -> Vec
 
     let declared_hist = def.history.as_ref().map(|h| h.events.as_slice()).unwrap_or(&[]);
     if !declared_hist.is_empty() {
-        let hist = history_layer::compile_history(&demo, declared_hist, &def.nations, seed);
+        let hist = history_layer::compile_history(demo, declared_hist, &def.nations, seed);
         out.extend(
             history_layer::lint_history(declared_hist, &hist)
                 .into_iter()
@@ -362,7 +373,7 @@ pub fn run_fast_at(def: &WorldDefinition, root: Option<&std::path::Path>) -> Vec
             .filter_map(|l| l.grid(geo.width, geo.height).map(|c| (l.name.as_str(), c)))
             .collect();
         if !placed.is_empty() {
-            let pol = polities_layer::compile_polities(&demo, &def.nations, seed);
+            let pol = polities_layer::compile_polities(demo, &def.nations, seed);
             for (name, cell) in placed {
                 if let Some(p) = pol.polities.iter().find(|p| p.capital_pos == cell) {
                     out.push(Warning::low(format!(
@@ -375,7 +386,7 @@ pub fn run_fast_at(def: &WorldDefinition, root: Option<&std::path::Path>) -> Vec
     }
     if !def.nations.is_empty() {
         out.extend(
-            polities_layer::lint_polities(&def.nations, &demo)
+            polities_layer::lint_polities(&def.nations, demo)
                 .into_iter()
                 .map(|w| w.prefixed("nations")),
         );
@@ -383,14 +394,14 @@ pub fn run_fast_at(def: &WorldDefinition, root: Option<&std::path::Path>) -> Vec
     if let Some(hy) = def.hydrology.as_ref() {
         if hy.rivers.iter().any(|r| r.from.is_some() && r.to.is_some()) {
             out.extend(
-                hydrology_layer::lint_rivers(hy, &geo)
+                hydrology_layer::lint_rivers(hy, geo)
                     .into_iter()
                     .map(|w| w.prefixed("rivers")),
             );
         }
     }
     if !def.cultures.is_empty() {
-        let pol = polities_layer::compile_polities(&demo, &def.nations, seed);
+        let pol = polities_layer::compile_polities(demo, &def.nations, seed);
         let capital_biomes: Vec<String> = pol
             .polities
             .iter()
@@ -410,7 +421,7 @@ pub fn run_fast_at(def: &WorldDefinition, root: Option<&std::path::Path>) -> Vec
     }
     if let Some(eco) = def.ecology.as_ref().filter(|e| !e.regions.is_empty()) {
         out.extend(
-            ecology_layer::lint_ecology(&eco.regions, &climate)
+            ecology_layer::lint_ecology(&eco.regions, climate)
                 .into_iter()
                 .map(|w| w.prefixed("ecology")),
         );
