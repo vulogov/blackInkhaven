@@ -92,10 +92,10 @@ pub fn weather_at(astro: &AstronomyOutput, day_of_year: f64, lat_deg: f64) -> We
     // A planet with (almost) no axial tilt has no seasons to describe: the
     // day-of-year still falls in a calendar "season", but the sky does not
     // change — say so instead of announcing a deep winter that never comes.
-    let seasonless = astro.axial_tilt_deg.abs() < 1.0
-        || band.map(|b| (b.summer - b.winter).abs() < 1e-3).unwrap_or(false);
+    let tilt = astro.axial_tilt_deg.abs() % 360.0;
+    let seasonless = tilt < 1.0 || (tilt - 180.0).abs() < 1.0;
     let descriptor = match local_frac {
-        _ if seasonless => "no real seasons — the axis barely tilts, so the year turns without them",
+        _ if seasonless => "no real seasons — the axis stands upright to the orbit, so the year turns without them",
         f if f >= 0.85 => "high summer",
         f if f >= 0.6 => "warm, late spring / early summer",
         f if f >= 0.4 => "mild, near the equinox",
@@ -138,6 +138,10 @@ mod tests {
             let w = weather_at(&astro, day, 45.0);
             assert!(w.descriptor.contains("no real seasons"), "day {day}: {}", w.descriptor);
         }
+        // An axis flipped right over (180°) is as upright as one at 0°.
+        def.astronomy.planet.axial_tilt_deg = 180.0;
+        let flipped = compile_astronomy(&def.astronomy);
+        assert!(weather_at(&flipped, 10.0, 30.0).descriptor.contains("no real seasons"));
         // Earth still has its winter.
         let e = earth();
         assert!(!weather_at(&e, 0.0, 45.0).descriptor.contains("no real seasons"));
