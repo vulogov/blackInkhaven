@@ -1,6 +1,6 @@
 # WORLD-KEEP-2 — "The Rest of the Word" (3.16.0)
 
-*Status: IN PROGRESS on `3.16.0-dev` (WK2-P1–P4 done), sequenced after
+*Status: COMPLETE on `3.16.0-dev` (WK2-P1–P5 done; not yet cut), sequenced after
 [`CANON-READER-1`](CANON-READER-1_PLAN.md). The four items
 [`WORLD-KEEP-1`](WORLD-KEEP-1_PLAN.md) deferred, each with the reason it was
 deferred turned into its first step.*
@@ -99,7 +99,13 @@ deferred turned into its first step.*
   status line said "5 layers materialized" — it is eleven.
 
 - **WK2-P5 — docs.** WORLDBUILDING.md, the book (appendix C, the land and map
-  chapters), release notes.
+  chapters), release notes. *(Done.)* WORLDBUILDING.md gained the seed-scoping
+  paragraph and an "Upgrading a project to 3.16" section (the per-phase sections
+  were written with each phase); *Building the World* ch17 (the queue's language,
+  decisions per seed, hand-set coordinates) and appendix A, version stamp 3.16.0,
+  PDF rebuilt; Manual ch14; `RELEASE_NOTES/3.16.0.md` now carries both tracks.
+  Left for the cut: the notes-index row, the README regeneration, the help
+  corpus.
 
 ## Decisions to make
 

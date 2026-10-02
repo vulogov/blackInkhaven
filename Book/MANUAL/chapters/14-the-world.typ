@@ -229,8 +229,12 @@ editor.
 ))
 
 `Ctrl+B W → C` is the one-key path through the whole compiler: it compiles and
-materializes all five layers *and* seeds the proposal queue in a single step, so
-a fresh world is one chord from existing. The other keys open the queue, arm the
+materializes every layer *and* seeds the proposal queue in a single step, so
+a fresh world is one chord from existing. It runs in the background: the status
+line names each layer as it is written, and you can close the overview and keep
+writing and saving. Pressing `C` again cancels between layers — what was written
+stays, and the next `C` finishes. The proposals it queues are written in the
+project's language. The other keys open the queue, arm the
 fact-checker's scope picker, draw the map, and toggle the background slow check —
 each covered in its own place below.
 
