@@ -295,6 +295,42 @@ what the fact-checker resolves place names against — closing the loop: **compi
 → accept cities → write → check.** TUI: **`Ctrl+B W` → `P`** (Enter accept, `r`
 reject).
 
+### In your book's language (3.16)
+
+Proposals follow the project's `language` (English, Russian, French, German,
+Spanish; anything else reads in English). That covers what you **read** — the
+rationale in `proposals list` and the `P` queue — and what is **committed** on
+accept: the Place paragraph, the ruler's Character stub, the language design
+brief, the Mythology entry, and the `critique` Notes' titles and frames.
+
+```
+0ee34412 [pending] Drulaemar — Посёлок, ~9491 жителей, у слияния рек; природная зона: холодная пустыня.
+
+Korason — город с населением около 22944 человек. Расположение: в устье реки.
+Природная зона: умеренные степи.
+```
+
+It is the vocabulary that is translated, not just the sentence: settlement
+class, siting, the twelve biomes, the culture layer's ethos and beliefs, the
+language-profile terms. Three things to know:
+
+- **Your own words are left alone.** An ethos or belief you *declared* in
+  `world.hjson` is passed through as written — write it in your language.
+- **Mythology vocabularies are in the prose language**, because `myth scan`
+  looks for those words in your manuscript. It matches whole words exactly, so
+  the Russian and German seeds carry the commonest case forms; extend the list
+  in the Mythology book as you would any declared symbol. A declared belief in
+  any script now yields a vocabulary too (it used to need ASCII).
+- **Names are not translated.** Realm, ruler and settlement names come from the
+  world's own phonology; word order (`SOV`) is notation.
+
+The stored proposal keeps its canonical English keys, so dedup, re-proposal and
+the fact-checker behave identically in every language. Proposals already
+*pending* in English are rewritten the next time you run `propose` (or open the
+hub); paragraphs already accepted stay as they were committed. A `critique`
+Note is matched by title, so a non-English project gets fresh Notes rather than
+refreshing the English-titled ones from an earlier run.
+
 ---
 
 ## Maps

@@ -37,6 +37,7 @@ pub mod fact_check_lang;
 pub mod language_proposals;
 pub mod latmap;
 pub mod fact_check_slow;
+pub mod i18n;
 pub mod materialize;
 pub mod plakat;
 pub mod plausibility;

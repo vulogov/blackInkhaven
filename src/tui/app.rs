@@ -16510,6 +16510,7 @@ impl App {
         // Everything the world offers: Places, plus the culture-derived bridges
         // (Mythology symbols, realm rulers, and languages). Each kind clears only
         // its own pending set and skips sites the author already resolved.
+        let wlang = crate::world::i18n::WLang::of_config(&self.cfg.language);
         let n_proposed = (|| -> crate::error::Result<usize> {
             use crate::world::language_proposals::language_proposals;
             use crate::world::myth_proposals::myth_proposals;
@@ -16528,7 +16529,8 @@ impl App {
                 ("language", language_proposals(&pol, &cultures, seed)),
             ];
             let mut n = 0;
-            for (like, batch) in batches {
+            for (like, mut batch) in batches {
+                crate::world::i18n::localize_all(&mut batch, wlang);
                 ws.clear_pending_kinds(like).map_err(|e| crate::error::Error::Store(format!("{e}")))?;
                 for p in batch {
                     if !resolved.contains(&p.signature) {

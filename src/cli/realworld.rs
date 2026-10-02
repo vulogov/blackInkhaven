@@ -1904,7 +1904,8 @@ fn propose(project: &Path) -> Result<()> {
         .map_err(|e| Error::Store(format!("reading proposals: {e}")))?;
     store.clear_pending_kinds("place").map_err(|e| Error::Store(format!("clearing proposals: {e}")))?;
 
-    let proposals = place_proposals(&demo, def.seed_u64());
+    let mut proposals = place_proposals(&demo, def.seed_u64());
+    crate::world::i18n::localize_all(&mut proposals, crate::world::i18n::WLang::of_project(project));
     let (mut added, mut skipped) = (0usize, 0usize);
     for p in &proposals {
         if resolved.contains(&p.signature) {
@@ -1962,7 +1963,8 @@ fn propose_myth(project: &Path) -> Result<()> {
         .clear_pending_kinds("myth-%")
         .map_err(|e| Error::Store(format!("clearing proposals: {e}")))?;
 
-    let proposals = myth_proposals(&cul, seed);
+    let mut proposals = myth_proposals(&cul, seed);
+    crate::world::i18n::localize_all(&mut proposals, crate::world::i18n::WLang::of_project(project));
     let (mut added, mut skipped) = (0usize, 0usize);
     for p in &proposals {
         if resolved.contains(&p.signature) {
@@ -2024,7 +2026,8 @@ fn propose_rulers(project: &Path) -> Result<()> {
         .clear_pending_kinds("character")
         .map_err(|e| Error::Store(format!("clearing proposals: {e}")))?;
 
-    let proposals = ruler_proposals(&pol, &cultures, seed);
+    let mut proposals = ruler_proposals(&pol, &cultures, seed);
+    crate::world::i18n::localize_all(&mut proposals, crate::world::i18n::WLang::of_project(project));
     let (mut added, mut skipped) = (0usize, 0usize);
     for p in &proposals {
         if resolved.contains(&p.signature) {
@@ -2086,7 +2089,8 @@ fn propose_language(project: &Path) -> Result<()> {
         .clear_pending_kinds("language")
         .map_err(|e| Error::Store(format!("clearing proposals: {e}")))?;
 
-    let proposals = language_proposals(&pol, &cultures, seed);
+    let mut proposals = language_proposals(&pol, &cultures, seed);
+    crate::world::i18n::localize_all(&mut proposals, crate::world::i18n::WLang::of_project(project));
     let (mut added, mut skipped) = (0usize, 0usize);
     for p in &proposals {
         if resolved.contains(&p.signature) {
@@ -2523,6 +2527,7 @@ fn write_critique_notes(
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
     let cfg = Config::load_layered(&layout.config_path())?;
+    let lang = crate::world::i18n::WLang::of_config(&cfg.language);
     let store = Store::open(layout, &cfg)?;
     let notes = Hierarchy::load(&store)?
         .iter()
@@ -2538,13 +2543,18 @@ fn write_critique_notes(
             _ => "medium",
         };
         let aspect = if it.aspect.trim().is_empty() { "world" } else { it.aspect.trim() };
-        let title = format!("World critique — {aspect} ({sev})");
-        let body = format!(
-            "Recommendation for the world `{world_name}` ({aspect}, {sev} severity).\n\n\
-             Issue: {}\n\nRecommendation: {}\n\n\
-             // from `inkhaven realworld critique` — advisory; edit world.hjson as you see fit\n",
+        // The Note is the author's reading matter: title and frame follow the
+        // project language (the model already answers in it).
+        let (title, frame) = crate::world::i18n::critique_note(
+            lang,
+            world_name,
+            aspect,
+            sev,
             it.issue.trim(),
             it.recommendation.trim(),
+        );
+        let body = format!(
+            "{frame}// from `inkhaven realworld critique` — advisory; edit world.hjson as you see fit\n"
         );
         let h = Hierarchy::load(&store)?;
         // Idempotent by title: a re-run refreshes the existing Note for this
