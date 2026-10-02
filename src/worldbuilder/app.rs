@@ -604,10 +604,23 @@ impl WorldbuilderApp {
         use super::commands::Command;
         match super::commands::parse(input) {
             Command::Shape { label, ops } => {
-                // Preview before it enters the pending delta.
-                self.hjson_preview = Some((label, ops));
-                self.focus = Focus::ConfirmationOverlay;
-                self.status = "review the delta — y accept · n discard".into();
+                // Check the delta against the schema BEFORE previewing it, so the
+                // overlay shows the edit exactly as it will be recorded (`/set
+                // name Ja` is the text "Ja", not `true`) and a refusal is told now
+                // rather than after `y`.
+                let typed = ops.iter().any(|o| matches!(o, super::commands::Op::SetTyped { .. }));
+                match self.pending_base().and_then(|b| super::commands::validate_ops(&b, ops)) {
+                    Ok(ops) => {
+                        let label = match (typed, ops.as_slice()) {
+                            (true, [one]) => one.preview(),
+                            _ => label,
+                        };
+                        self.hjson_preview = Some((label, ops));
+                        self.focus = Focus::ConfirmationOverlay;
+                        self.status = "review the delta — y accept · n discard".into();
+                    }
+                    Err(e) => self.status = format!("✗ {label} — {e}"),
+                }
             }
             Command::Write => self.write_pending(),
             Command::Undo => self.undo_pending(),
@@ -704,7 +717,8 @@ impl WorldbuilderApp {
             let mut def = base.clone();
             def.seed = crate::world::types::SeedValue::Str(format!("0x{seed:x}"));
             let layers = crate::world::plausibility::compile_layers_at(&def, Some(&self.layout.root));
-            let warns = crate::world::plausibility::run_fast_at(&def, Some(&self.layout.root));
+            let warns =
+                crate::world::plausibility::run_fast_with(&def, Some(&self.layout.root), &layers);
             let score = crate::world::plausibility::compute_plausibility_score(&warns);
             let (g, c, d) = (&layers.geology, &layers.climate, &layers.demographics);
             let marker = if i == 0 { "*" } else { " " };
@@ -870,7 +884,17 @@ impl WorldbuilderApp {
             return;
         }
         let sea_px = (self.map_terrain_sea.clamp(0.0, 1.0) * 65535.0) as u16;
-        let value = serde_json::json!({ "path": rel, "sea_level_pixel_value": sea_px });
+        let mut value = serde_json::json!({ "path": rel, "sea_level_pixel_value": sea_px });
+        // Replacing `geology.dem` must not drop a declared scale: without it a
+        // regional world would silently become planet-sized.
+        if let Some(scale) = self
+            .current_world_def()
+            .and_then(|d| d.geology)
+            .and_then(|g| g.dem)
+            .and_then(|d| d.scale_km_per_pixel)
+        {
+            value["scale_km_per_pixel"] = serde_json::json!(scale);
+        }
         self.push_pending_one(super::commands::Op::Set {
             path: vec!["geology".into(), "dem".into()],
             value,
@@ -1460,6 +1484,24 @@ impl WorldbuilderApp {
             return;
         }
 
+        // "A moon — its name…?" answered "no" skips; "yes" asks for the name.
+        if step.optional {
+            match super::commands::yes_no_word(answer) {
+                Some(false) => {
+                    if let Some(iv) = self.interview.as_mut() {
+                        iv.advance();
+                    }
+                    self.push_turn(answer.to_string(), say(super::interview::Line::Skipped).to_string());
+                    self.after_interview_step();
+                    return;
+                }
+                Some(true) => {
+                    self.push_turn(answer.to_string(), say(super::interview::Line::NameIt).to_string());
+                    return;
+                }
+                None => {}
+            }
+        }
         let cmd = step.template.replace("{}", answer);
         match super::commands::parse(&cmd) {
             super::commands::Command::Shape { label, ops } => {
@@ -1846,14 +1888,20 @@ impl WorldbuilderApp {
                 _ => None,
             }
         };
-        let on_disk = std::fs::read_to_string(self.layout.root.join("world.hjson"))
-            .ok()
-            .and_then(|r| serde_hjson::from_str::<serde_json::Value>(&r).ok())
-            .and_then(|v| v.pointer("/geology/dem/path").and_then(|p| p.as_str()).map(str::to_string));
+        let norm = |p: &str| p.trim_start_matches("./").to_string();
+        let on_disk = match std::fs::read_to_string(self.layout.root.join("world.hjson")) {
+            Ok(raw) => match serde_hjson::from_str::<serde_json::Value>(&raw) {
+                Ok(v) => v.pointer("/geology/dem/path").and_then(|p| p.as_str()).map(norm),
+                // A definition that exists but cannot be read: we cannot tell
+                // what it references, so remove nothing.
+                Err(_) => return,
+            },
+            Err(_) => None,
+        };
         let still_pending: Vec<String> = self.pending_ops.iter().filter_map(dem_path).collect();
         for rel in dropped.iter().filter_map(dem_path) {
             let ours = rel.starts_with("assets/maps/terrain-") && rel.ends_with(".png") && !rel.contains("..");
-            if ours && on_disk.as_deref() != Some(rel.as_str()) && !still_pending.contains(&rel) {
+            if ours && on_disk.as_deref() != Some(norm(&rel).as_str()) && !still_pending.contains(&rel) {
                 let _ = std::fs::remove_file(self.layout.root.join(&rel));
             }
         }

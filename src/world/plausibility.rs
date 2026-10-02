@@ -271,6 +271,13 @@ pub fn lint_definition(def: &WorldDefinition) -> Vec<Warning> {
     if let Some(e) = def.seed.parse_error() {
         w.push(Warning::medium(e));
     }
+    if let Some(s) = def.geology.as_ref().and_then(|g| g.dem.as_ref()).and_then(|d| d.scale_km_per_pixel) {
+        if !s.is_finite() || s <= 0.0 {
+            w.push(Warning::medium(format!(
+                "geology: dem.scale_km_per_pixel {s} must be a positive number — ignored (the image is read as the whole planet)"
+            )));
+        }
+    }
     // Declared positions that fall off the map are clamped to its edge by the
     // renderer — a typo then draws a marker on the border, silently.
     if let Some(g) = def.geography.as_ref() {
@@ -315,6 +322,80 @@ pub fn lint_definition(def: &WorldDefinition) -> Vec<Warning> {
     w
 }
 
+/// WORLD-KEEP-1 — the lints about the MAP as compiled: a declared heightmap that
+/// could not be used, a regional map whose climate still spans pole to pole, a
+/// map larger than its planet, and a landmark sitting on a realm capital's
+/// cell. Shared by the worldbuilder's score and `realworld validate`, so the
+/// two cannot say different things about the same world.
+pub fn lint_map(
+    def: &WorldDefinition,
+    root: Option<&std::path::Path>,
+    layers: &CompiledLayers,
+) -> Vec<Warning> {
+    use crate::world::compile::polities_layer;
+    let (geo, demo) = (&layers.geology, &layers.demographics);
+    let mut out: Vec<Warning> = Vec::new();
+    let dem = def.geology.as_ref().and_then(|g| g.dem.as_ref());
+    // The layers were compiled DEM-aware; if a heightmap is declared and they
+    // are not DEM-sourced, it could not be read (no second decode to find out).
+    if let (Some(_), Some(dem)) = (root, dem) {
+        if geo.source != "dem" {
+            out.push(Warning::high(format!(
+                "geology: the declared heightmap `{}` could not be used — showing generated terrain instead (`realworld validate` names the error)",
+                dem.path
+            )));
+        }
+    }
+    let pole_to_pole = std::f64::consts::PI * 6371.0 * def.astronomy.planet.radius_earth.max(0.01);
+    if let Some((_, yk)) = geo.cell_km {
+        let tall_km = yk * geo.height as f64;
+        if tall_km < 0.5 * pole_to_pole {
+            out.push(Warning::low(format!(
+                "geology: the heightmap's declared scale makes the map {:.0} km tall — a region — but its climate still spans pole to pole across it ({:.0} km on this planet); omit `scale_km_per_pixel` for a whole-world map, or expect polar and tropical bands on a regional one",
+                tall_km, pole_to_pole
+            )));
+        }
+    } else if let (Some(scale), true) = (dem.and_then(|d| d.scale_km_per_pixel), geo.source == "dem") {
+        // A declared scale that was NOT applied: the map is planet-sized (fine)
+        // or larger than the planet (a typo worth a word).
+        if scale.is_finite() && scale > 0.0 {
+            if let Some((_, ih)) = dem
+                .and_then(|d| root.map(|r| r.join(&d.path)))
+                .and_then(|p| image::image_dimensions(p).ok())
+            {
+                let tall_km = scale as f64 * ih as f64;
+                if tall_km > 1.5 * pole_to_pole {
+                    out.push(Warning::medium(format!(
+                        "geology: dem.scale_km_per_pixel {scale} makes the map {:.0} km tall — larger than the planet ({:.0} km pole to pole); read as the whole planet (a typo?)",
+                        tall_km, pole_to_pole
+                    )));
+                }
+            }
+        }
+    }
+    // A landmark on a realm capital's cell is dropped by the map (the capital
+    // claims the cell first), along with every road declared to it.
+    if let Some(g) = def.geography.as_ref() {
+        let placed: Vec<(&str, (usize, usize))> = g
+            .landmarks
+            .iter()
+            .filter_map(|l| l.grid(geo.width, geo.height).map(|c| (l.name.as_str(), c)))
+            .collect();
+        if !placed.is_empty() {
+            let pol = polities_layer::compile_polities(demo, &def.nations, def.seed_u64());
+            for (name, cell) in placed {
+                if let Some(p) = pol.polities.iter().find(|p| p.capital_pos == cell) {
+                    out.push(Warning::low(format!(
+                        "geography: landmark `{name}` sits on the capital cell of `{}` — the map draws the capital and drops the landmark (and any road to it); move it a cell",
+                        p.name
+                    )));
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Compile every layer and run every deterministic lint, returning the aggregate
 /// warnings (layer-prefixed). No LLM, no I/O beyond the pure compile chain —
 /// suitable for the worldbuilder's live score.
@@ -346,14 +427,7 @@ pub fn run_fast_with(
     let seed = def.seed_u64();
 
     let mut out: Vec<Warning> = lint_definition(def);
-    if let (Some(r), Some(dem)) = (root, def.geology.as_ref().and_then(|g| g.dem.as_ref())) {
-        if let Err(e) = crate::world::compile::compile_geology_at(def, r) {
-            out.push(Warning::high(format!(
-                "geology: the declared heightmap `{}` could not be used ({e}) — showing generated terrain instead",
-                dem.path
-            )));
-        }
-    }
+    out.extend(lint_map(def, root, layers));
 
     let declared_hist = def.history.as_ref().map(|h| h.events.as_slice()).unwrap_or(&[]);
     if !declared_hist.is_empty() {
@@ -363,40 +437,6 @@ pub fn run_fast_with(
                 .into_iter()
                 .map(|w| w.prefixed("history")),
         );
-    }
-    // WK-P1 — a heightmap with a declared scale is a REGION, measured as one
-    // (distances, trade, population). Its climate, though, still runs pole to
-    // pole down the image: say so when the two disagree by a wide margin.
-    if let Some((_, yk)) = geo.cell_km {
-        let tall_km = yk * geo.height as f64;
-        let pole_to_pole =
-            std::f64::consts::PI * 6371.0 * def.astronomy.planet.radius_earth.max(0.01);
-        if tall_km < 0.5 * pole_to_pole {
-            out.push(Warning::low(format!(
-                "geology: the heightmap's declared scale makes the map {:.0} km tall — a region — but its climate still spans pole to pole across it ({:.0} km on this planet); omit `scale_km_per_pixel` for a whole-world map, or expect polar and tropical bands on a regional one",
-                tall_km, pole_to_pole
-            )));
-        }
-    }
-    // A landmark on a realm capital's cell is dropped by the map (the capital
-    // claims the cell first), along with every road declared to it.
-    if let Some(g) = def.geography.as_ref() {
-        let placed: Vec<(&str, (usize, usize))> = g
-            .landmarks
-            .iter()
-            .filter_map(|l| l.grid(geo.width, geo.height).map(|c| (l.name.as_str(), c)))
-            .collect();
-        if !placed.is_empty() {
-            let pol = polities_layer::compile_polities(demo, &def.nations, seed);
-            for (name, cell) in placed {
-                if let Some(p) = pol.polities.iter().find(|p| p.capital_pos == cell) {
-                    out.push(Warning::low(format!(
-                        "geography: landmark `{name}` sits on the capital cell of `{}` — the map draws the capital and drops the landmark (and any road to it); move it a cell",
-                        p.name
-                    )));
-                }
-            }
-        }
     }
     if !def.nations.is_empty() {
         out.extend(
@@ -538,6 +578,17 @@ mod tests {
         assert!((d_region - 500.0).abs() < 1e-6, "30×40 cells at 10 km = 500 km, got {d_region}");
         assert!(crate::world::travel::distance_km_on(1.0, &globe.geology, 30.0, 40.0) > 5.0 * d_region);
         assert!(region.demographics.total_population < globe.demographics.total_population / 10);
+        // A scale that makes the image planet-sized IS the planet (cells narrow
+        // toward the poles); one larger than the planet is a typo worth a word.
+        let whole = compile_layers_at(&dem(Some(100.0)), Some(dir.path())); // 24 000 km tall
+        assert_eq!(whole.geology.cell_km, None, "a planet-sized scaled map is the planet");
+        assert_eq!(whole.demographics.total_population, globe.demographics.total_population);
+        let huge = dem(Some(5000.0));
+        assert!(run_fast_at(&huge, Some(dir.path())).iter().any(|w| w.text.contains("larger than the planet")));
+        let mut bad = dem(Some(0.0));
+        assert!(lint_definition(&bad).iter().any(|w| w.text.contains("scale_km_per_pixel")));
+        bad = dem(None);
+        assert!(!lint_definition(&bad).iter().any(|w| w.text.contains("scale_km_per_pixel")));
         // …and the region/pole-to-pole mismatch is told.
         assert!(run_fast_at(&region_def, Some(dir.path())).iter().any(|w| w.text.contains("a region")));
         assert!(!run_fast_at(&dem(None), Some(dir.path())).iter().any(|w| w.text.contains("a region")));
@@ -556,6 +607,11 @@ mod tests {
         cal.month_names = (1..=12).map(|i| format!("M{i}")).collect();
         cal.day_names = ["Oneday", "Twoday", "Threeday", "Fourday", "Fiveday", "Sixday", "Restday"].map(String::from).to_vec();
         assert_eq!(cal.date_label(31.0), "day 2 of M2 · Fourday");
+        // Non-finite and absurd days never panic or underflow.
+        assert_eq!(cal.date_label(f64::NAN), "");
+        assert_eq!(cal.date_label(f64::NEG_INFINITY), "");
+        assert!(cal.date_label(-5.0).starts_with("day 1 of M1"));
+        let _ = cal.date_label(1e300);
         // No week declared → no weekday invented.
         cal.weekdays = 0;
         assert_eq!(cal.weekday(5.0), None);

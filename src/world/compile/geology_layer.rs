@@ -137,11 +137,19 @@ pub fn compile_geology_dem(
 
     // WK-P1 — a declared scale is in source pixels; the model grid resamples the
     // image, so one model cell covers `iw / W` × `ih / H` of them.
+    //
+    // A scale that makes the image as tall as the planet itself (≥ 3/4 of pole
+    // to pole) is a whole-world map with its scale written down — that stays a
+    // planet (cells narrow toward the poles), exactly as with no scale at all.
+    // Only a clearly smaller map is measured as a flat region.
+    let pole_to_pole_km =
+        std::f64::consts::PI * 6371.0 * def.astronomy.planet.radius_earth.max(0.01);
     let cell_km = dem
         .scale_km_per_pixel
         .map(|s| s as f64)
         .filter(|s| s.is_finite() && *s > 0.0)
-        .map(|s| (s * iw as f64 / W as f64, s * ih as f64 / H as f64));
+        .map(|s| (s * iw as f64 / W as f64, s * ih as f64 / H as f64))
+        .filter(|(_, yk)| yk * (H as f64) < 0.75 * pole_to_pole_km);
 
     Ok(GeologyOutput {
         cell_km,

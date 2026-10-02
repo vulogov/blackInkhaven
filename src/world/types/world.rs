@@ -545,12 +545,15 @@ impl Calendar {
                 Some(name) => parts.push(format!("day {d} of {name}")),
                 None => parts.push(format!("day {d} of month {m}")),
             },
-            None if self.months > 0 && self.month_length_days > 0 => {
-                let past = day_of_year.max(0.0).floor() as u64
-                    - self.months as u64 * self.month_length_days as u64;
-                parts.push(format!("intercalary day {} (past the last month)", past + 1));
+            None if self.months > 0 && self.month_length_days > 0 && day_of_year.is_finite() => {
+                let past = (day_of_year.max(0.0).floor() as u64)
+                    .saturating_sub(self.months as u64 * self.month_length_days as u64);
+                parts.push(format!("intercalary day {} (past the last month)", past.saturating_add(1)));
             }
             None => {}
+        }
+        if !day_of_year.is_finite() {
+            return String::new();
         }
         match self.weekday(day_of_year) {
             Some((_, Some(name))) => parts.push(name.to_string()),

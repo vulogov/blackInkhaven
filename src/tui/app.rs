@@ -1767,6 +1767,20 @@ impl RightPane {
     }
 }
 
+/// Whether the process runs inside a terminal multiplexer that will not answer
+/// a graphics-capability query (tmux, GNU screen). See the image-picker probe.
+fn inside_multiplexer() -> bool {
+    multiplexer_env(
+        std::env::var_os("TMUX").is_some(),
+        std::env::var_os("STY").is_some(),
+        std::env::var("TERM").ok().as_deref(),
+    )
+}
+
+fn multiplexer_env(tmux: bool, sty: bool, term: Option<&str>) -> bool {
+    tmux || sty || term.is_some_and(|t| t.starts_with("screen") || t.starts_with("tmux"))
+}
+
 fn right_pane_label(p: RightPane) -> &'static str {
     p.label()
 }
@@ -3680,12 +3694,25 @@ impl App {
         // image-preview modal can pick kitty / sixel / iterm2 / half-
         // block. Errors here just disable the preview pane; the rest
         // of the app behaves identically.
+        //
+        // The probe writes a query and reads the reply from stdin on a helper
+        // thread. A multiplexer (tmux without passthrough, GNU screen) never
+        // answers, the probe times out — and its reader thread is left running
+        // for the life of the process, taking every other keystroke away from
+        // the editor. Inside a multiplexer, skip the query and pick from the
+        // environment instead (half-blocks, or the outer terminal's protocol
+        // when the library can tell): no stray reader, and previews still work.
         let image_picker = if cfg.images.preview_enabled {
-            match ratatui_image::picker::Picker::from_query_stdio() {
-                Ok(p) => Some(p),
-                Err(e) => {
-                    tracing::info!("image preview disabled — terminal probe: {e}");
-                    None
+            if inside_multiplexer() {
+                tracing::info!("image preview: inside tmux/screen — protocol from the environment, no stdin probe");
+                Some(ratatui_image::picker::Picker::from_fontsize((10, 20)))
+            } else {
+                match ratatui_image::picker::Picker::from_query_stdio() {
+                    Ok(p) => Some(p),
+                    Err(e) => {
+                        tracing::info!("image preview disabled — terminal probe: {e}");
+                        None
+                    }
                 }
             }
         } else {
@@ -17796,6 +17823,9 @@ impl App {
                     Err(e) => format!("canon: commit failed — {e}"),
                 };
                 self.close_canon_commit(back);
+                // The ◈ tint follows commitment — refresh it now, not on the
+                // next throttled tick.
+                self.refresh_canon_source_nodes();
                 self.refresh_canon_pane(false);
                 self.status = status;
             }
@@ -20576,6 +20606,10 @@ impl App {
             self.status = "canon harvest: open a paragraph first".into();
             return;
         };
+        if doc.read_only {
+            self.status = "canon harvest: this paragraph is read-only (Help) — nothing to harvest".into();
+            return;
+        }
         if doc.dirty {
             self.status = "canon harvest: save the paragraph first (it reads the saved text)".into();
             return;
@@ -20622,6 +20656,13 @@ impl App {
                     return Err("cancelled".to_string());
                 }
                 let found = crate::canon::parse_proposals(&raw, id, &breadcrumb);
+                // An empty list is a valid answer only when the model actually
+                // said `[]`; a truncated or malformed reply must not read as
+                // "this paragraph decides nothing".
+                let compact: String = raw.chars().filter(|c| !c.is_whitespace()).collect();
+                if found.is_empty() && !compact.contains("[]") {
+                    return Err("the model's reply was not the expected list of decisions (truncated or malformed) — try H again".to_string());
+                }
                 serde_json::to_string(&found).map_err(|e| e.to_string())
             });
             let _ = tx.send(BgMsg::Done(result));
@@ -20647,7 +20688,7 @@ impl App {
         self.status = match outcome {
             Ok(0) => "canon: nothing to accept".into(),
             Ok(n) => format!("canon · accepted {n} decision(s) into the ledger — `c` sets how settled"),
-            Err(e) => format!("canon: accept failed — {e} (the proposals stay staged)"),
+            Err(e) => format!("canon: accept failed — {e}"),
         };
         self.refresh_canon_source_nodes();
         self.refresh_canon_pane(false);
@@ -20658,6 +20699,11 @@ impl App {
     /// first ground's source paragraph (what it rests on); `h` shows its history in
     /// Thoughts; `*` opens the whole-ledger dashboard on it; `Esc` back.
     fn handle_canon_pane_key(&mut self, key: KeyEvent) -> Result<bool> {
+        // The pane's keys are PLAIN keys (Shift allowed, for A / H / G). A chord
+        // such as Ctrl+A must never reach the `a` arm and write to the ledger.
+        if key.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER) {
+            return Ok(false);
+        }
         // The cursor runs through the live decisions, then the staged proposals.
         let live = self.canon_pane.rows.len();
         let n = live + self.canon_pane.staged.len();
@@ -20666,8 +20712,19 @@ impl App {
         match key.code {
             KeyCode::Char('a') => {
                 if on_staged {
-                    let p = self.canon_pane.staged[self.canon_pane.cursor - live].clone();
+                    let k = self.canon_pane.cursor - live;
+                    let p = self.canon_pane.staged[k].clone();
                     self.canon_pane_accept(move |q| q.same_as(&p));
+                    // The accepted proposal became a live row above; keep the
+                    // cursor on the proposal that FOLLOWED it (same slot in the
+                    // staged list), so `a a` accepts two in a row rather than
+                    // jumping back onto an earlier one.
+                    let (rows, staged) = (self.canon_pane.rows.len(), self.canon_pane.staged.len());
+                    self.canon_pane.cursor = if staged == 0 {
+                        rows.saturating_sub(1)
+                    } else {
+                        rows + k.min(staged - 1)
+                    };
                 } else {
                     self.status = "canon: `a` accepts a PROPOSED decision — move to one (below the ◈ rows)".into();
                 }
@@ -20701,7 +20758,10 @@ impl App {
                 return Ok(false);
             }
             KeyCode::Esc
-                if self.bg_job.as_ref().map(|j| j.kind) == Some(BgJobKind::CanonHarvest) =>
+                if self.bg_job.as_ref().is_some_and(|j| {
+                    j.kind == BgJobKind::CanonHarvest
+                        && !j.cancel.load(std::sync::atomic::Ordering::Relaxed)
+                }) =>
             {
                 self.cancel_bg_job();
                 return Ok(false);
@@ -37159,5 +37219,20 @@ mod tests_case_range {
         if let Some((s, e)) = r {
             assert!(s <= n && e <= n, "indices {s},{e} exceed char count {n}");
         }
+    }
+}
+
+#[cfg(test)]
+mod multiplexer_tests {
+    use super::multiplexer_env;
+
+    #[test]
+    fn a_multiplexer_is_recognised_from_the_environment() {
+        assert!(multiplexer_env(true, false, Some("xterm-256color")), "TMUX set");
+        assert!(multiplexer_env(false, true, None), "STY set (GNU screen)");
+        assert!(multiplexer_env(false, false, Some("screen-256color")));
+        assert!(multiplexer_env(false, false, Some("tmux-256color")));
+        assert!(!multiplexer_env(false, false, Some("xterm-kitty")));
+        assert!(!multiplexer_env(false, false, None));
     }
 }

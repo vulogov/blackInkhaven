@@ -104,7 +104,11 @@ impl StagedCanon {
             .collect();
         let n = ledger.record_grounded_batch(&items, language)?.len();
         ledger.sync()?;
-        StagedCanon { proposals: keep }.save(layout)?;
+        StagedCanon { proposals: keep }.save(layout).map_err(|e| {
+            anyhow!(
+                "{n} decision(s) WERE recorded in the ledger, but the staging file could not be updated ({e}) — they will still show as proposed; discard them"
+            )
+        })?;
         Ok(n)
     }
 
