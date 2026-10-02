@@ -93,8 +93,11 @@ geology: {
 The `dem` block also carries the `scale_km_per_pixel` that turns pixels into real
 ground — so that later, when a rider crosses your map, the distance is true (and
 the land holds a region's worth of people, not a planet's). Leave it out when the
-image is the *whole world*: the map is then sized from the planet itself. It also
-carries
+image is the *whole world*: the map is then sized from the planet itself. A
+regional map should also say *where* it lies — add `center_lat` (and, if you place
+things by longitude, `center_lon`) and the land is weathered as that latitude's
+region, rather than with a pole at the top of the picture and another at the
+bottom. It also carries
 the `sea_level_pixel_value`, the pixel brightness Inkhaven reads as the
 shoreline: anything at or below it is sea. Give it in the image's own depth — `0`–`255`
 for an ordinary 8-bit PNG (the number your image editor shows), `0`–`65535` for a

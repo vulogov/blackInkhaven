@@ -1,6 +1,6 @@
 # WORLD-KEEP-2 — "The Rest of the Word" (3.16.0)
 
-*Status: IN PROGRESS on `3.16.0-dev` (WK2-P1 done), sequenced after
+*Status: IN PROGRESS on `3.16.0-dev` (WK2-P1, P2 done), sequenced after
 [`CANON-READER-1`](CANON-READER-1_PLAN.md). The four items
 [`WORLD-KEEP-1`](WORLD-KEEP-1_PLAN.md) deferred, each with the reason it was
 deferred turned into its first step.*
@@ -26,15 +26,21 @@ deferred turned into its first step.*
   - One-way: once migrated, a 3.15.0 binary refuses the store ("upgrade
     inkhaven"), by the existing guard.
 
-- **WK2-P2 — a regional map has a latitude.** A heightmap with a declared scale
-  is measured as a region but still weathered pole to pole. `geology.dem` gains
-  an optional **`center_lat`**: with it, the rows of the image span the
-  latitudes the map's height actually covers around that centre, and climate,
-  weather, the scene brief, `set-coords` and the landmark grid all read latitude
-  from **one** shared mapping (eighteen call sites today compute it inline).
-  Strictly opt-in: a world that does not declare `center_lat` compiles exactly as
-  it does now, so no existing world's biomes move. The 3.15.0 warning then names
-  the key that resolves it.
+- **WK2-P2 — a regional map has a latitude.** *(Done.)* `geology.dem` gains
+  optional **`center_lat`** and `center_lon`. With a regional scale and a
+  `center_lat`, `world::latmap::LatMap` is the band of latitude the map's height
+  really covers around that centre; otherwise it is the globe, with the exact
+  arithmetic the layers always used. Climate, the editor's scene brief, the
+  CLI's scene / `set-coords` and every landmark-in-degrees placement read
+  latitude through it (carried on `GeologyOutput`). Strictly opt-in — verified:
+  five seeds × four layers compile byte-identically to the published 3.15.0.
+  The 3.15.0 region warning now names the key and goes quiet once it is set.
+  - The census of "eighteen call sites" in the first draft was mostly tests: the
+    real readers were climate, the two scene paths, `set-coords`, and the
+    landmark grid (nine callers).
+  - One pre-existing inconsistency removed: the editor's scene brief used a
+    `y/(h−1)` edge convention where the climate and the CLI use cell centres —
+    up to half a cell (~0.75°) apart. It now uses the shared mapping.
 
 - **WK2-P3 — proposals in the project's language.** `propose`,
   `propose-rulers`, `propose-language`, `propose-myth` and the `critique` Notes

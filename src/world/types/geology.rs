@@ -34,6 +34,10 @@ pub struct GeologyOutput {
     /// cell size follows from its radius ([`crate::world::travel::cell_km`]).
     #[serde(skip)]
     pub cell_km: Option<(f64, f64)>,
+    /// WORLD-KEEP-2 (WK2-P2) — the geographic extent the grid covers. The globe
+    /// unless a regional heightmap declares `dem.center_lat`.
+    #[serde(skip)]
+    pub latmap: crate::world::latmap::LatMap,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]

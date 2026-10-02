@@ -222,6 +222,7 @@ pub(super) fn lint_map(
 ) -> Vec<MapFinding> {
     let c = &layers.climate;
     let (w, h) = (c.width, c.height);
+    let latmap = &layers.geology.latmap;
     let is_ocean = |x: usize, y: usize| -> bool {
         x < w && y < h && c.biome.get(y * w + x).copied() == Some(Biome::Ocean)
     };
@@ -234,12 +235,12 @@ pub(super) fn lint_map(
             if rx >= w || ry >= h {
                 out.push(MapFinding {
                     text: format!("landmark '{}' is off the map ({rx},{ry})", lm.name),
-                    at: lm.grid(w, h),
+                    at: lm.grid_on(w, h, latmap),
                 });
                 continue;
             }
         }
-        match lm.grid(w, h) {
+        match lm.grid_on(w, h, latmap) {
             Some((x, y)) if is_ocean(x, y) => {
                 let noun = if matches!(lm.kind.as_str(), "city" | "port" | "town") {
                     "settlement"

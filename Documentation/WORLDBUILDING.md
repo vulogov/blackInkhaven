@@ -109,8 +109,16 @@ makes it (and narrower toward the poles), so a bigger planet holds more people. 
 heightmap that declares `scale_km_per_pixel` is a *region* of that size — journeys
 across it are as long as the scale says, and it holds a region's population. Omit
 the scale — or give one that makes the image as tall as the planet itself, such as
-a whole-Earth map at 50 km per pixel — and the image is the whole planet. (A regional map's climate still runs
-pole to pole down the image; `validate` says so when the two disagree.)
+a whole-Earth map at 50 km per pixel — and the image is the whole planet.
+
+**A regional map's latitude (3.16).** Measured as a region, a scaled heightmap is
+still *weathered* pole to pole unless you say where it is. Add **`dem.center_lat`**
+(and optionally `center_lon`) and its rows span the latitudes its height really
+covers around that centre: a 1200 km map at 10°N is tropical from edge to edge, the
+same map at 80°N is cold throughout. Climate, `weather`, the scene brief,
+`set-coords --lat/--lon` and landmarks given in degrees all read the same band.
+Opt-in: a world without `center_lat` compiles exactly as before. (Without `center_lat` a regional map's climate still runs pole to pole down the
+image; `validate` says so, and names the key.)
 
 **The interview speaks your project's language (3.15)** — en / ru / fr / de / es —
 and takes answers in it: `оранжевая`, `naine rouge`, `ja`, `0,6`, `древние`.
@@ -146,6 +154,8 @@ geology: {
         path: "assets/earth_heightmap.png"   // grayscale; brighter = higher
         scale_km_per_pixel: 50.0             // optional — omit for a whole-planet map
         sea_level_pixel_value: 128           // pixels ≤ this are ocean
+        // center_lat: 45.0                  // optional — a REGIONAL map's latitude (3.16)
+        // center_lon: 10.0                  // optional — and its longitude (default 0)
     }
 }
 ```

@@ -895,6 +895,14 @@ impl WorldbuilderApp {
         {
             value["scale_km_per_pixel"] = serde_json::json!(scale);
         }
+        if let Some(dem) = self.current_world_def().and_then(|d| d.geology).and_then(|g| g.dem) {
+            if let Some(lat) = dem.center_lat {
+                value["center_lat"] = serde_json::json!(lat);
+            }
+            if let Some(lon) = dem.center_lon {
+                value["center_lon"] = serde_json::json!(lon);
+            }
+        }
         self.push_pending_one(super::commands::Op::Set {
             path: vec!["geology".into(), "dem".into()],
             value,
@@ -1187,9 +1195,10 @@ impl WorldbuilderApp {
         let cursor = self.map_cursor;
         let Some(def) = self.current_world_def() else { return };
         let geo = def.geography.as_ref();
+        let latmap = self.compiled_layers.as_ref().map(|l| l.geology.latmap).unwrap_or_default();
         // Landmark under the cursor?
         if let Some(i) =
-            geo.and_then(|g| g.landmarks.iter().position(|lm| lm.grid(w, h) == Some(cursor)))
+            geo.and_then(|g| g.landmarks.iter().position(|lm| lm.grid_on(w, h, &latmap) == Some(cursor)))
         {
             self.remove_feature("landmarks", i, "landmark", cursor);
             return;
@@ -1677,7 +1686,7 @@ impl WorldbuilderApp {
                 g.landmarks
                     .iter()
                     .filter_map(|lm| {
-                        lm.grid(w, h).map(|(x, y)| MapMarker {
+                        lm.grid_on(w, h, &layers.geology.latmap).map(|(x, y)| MapMarker {
                             x,
                             y,
                             name: lm.name.clone(),

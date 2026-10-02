@@ -1753,6 +1753,9 @@ pub(crate) struct CanonPaneState {
 /// WORLD-10 — the world-level compile cached for the scene context (recomputed
 /// lazily; the per-paragraph place/date resolution is cheap on top of it).
 struct SceneWorld {
+    /// The map's geographic extent (WK2-P2) — a scene's latitude is read
+    /// through it, exactly as the climate under that place was computed.
+    latmap: crate::world::latmap::LatMap,
     astro: crate::world::types::AstronomyOutput,
     pol: crate::world::compile::polities_layer::PolitiesOutput,
     cul: crate::world::compile::culture_layer::CultureOutput,
@@ -16363,7 +16366,7 @@ impl App {
                 g.landmarks
                     .iter()
                     .filter_map(|lm| {
-                        lm.grid(geo.width, geo.height).map(|(x, y)| plakat::DeclaredLandmark {
+                        lm.grid_on(geo.width, geo.height, &geo.latmap).map(|(x, y)| plakat::DeclaredLandmark {
                             name: lm.name.clone(),
                             kind: lm.kind.clone(),
                             x,
@@ -20566,13 +20569,9 @@ impl App {
             return;
         }
         let day = date.map(|t| (t as f64).rem_euclid(sw.astro.year_length_planet_days.max(1.0)));
-        let lat = place.as_ref().map(|p| {
-            if sw.height <= 1 {
-                0.0
-            } else {
-                90.0 - (p.y as f64 / (sw.height - 1) as f64) * 180.0
-            }
-        });
+        // The cell-centre latitude the climate layer uses (the old `y/(h−1)` edge
+        // convention here disagreed with it — and with the CLI — by half a cell).
+        let lat = place.as_ref().map(|p| sw.latmap.row_lat(p.y, sw.height));
         let brief =
             crate::world::scene::scene_brief(&sw.astro, &sw.pol, &sw.cul, place.as_ref(), day, lat);
         if !brief.is_empty() {
@@ -20609,7 +20608,7 @@ impl App {
             })
             .collect();
         let cul = compile_culture(&pol, &capital_biomes, &def.cultures, seed);
-        Some(SceneWorld { astro, pol, cul, height: climate.height })
+        Some(SceneWorld { latmap: geo.latmap, astro, pol, cul, height: climate.height })
     }
 
     /// Resolve the open paragraph's place + date: a place-linked Timeline event
