@@ -467,6 +467,25 @@ mod tests {
     }
 
     #[test]
+    fn the_calendar_dates_a_day_with_its_month_and_weekday() {
+        let mut def = crate::world::types::WorldDefinition::from_hjson(&crate::world::starter_template("C")).unwrap();
+        let cal = &mut def.astronomy.calendar; // 12 × 30, 7-day week
+        assert_eq!(cal.month_day(0.0), Some((1, 1)));
+        assert_eq!(cal.month_day(31.0), Some((2, 2)));
+        assert_eq!(cal.month_day(360.0), None, "past the last month");
+        assert_eq!(cal.weekday(8.0), Some((2, None)));
+        assert_eq!(cal.date_label(31.0), "day 2 of month 2 · day 4 of the 7-day week");
+        assert!(cal.date_label(362.0).starts_with("intercalary day 3"));
+        cal.month_names = (1..=12).map(|i| format!("M{i}")).collect();
+        cal.day_names = ["Oneday", "Twoday", "Threeday", "Fourday", "Fiveday", "Sixday", "Restday"].map(String::from).to_vec();
+        assert_eq!(cal.date_label(31.0), "day 2 of M2 · Fourday");
+        // No week declared → no weekday invented.
+        cal.weekdays = 0;
+        assert_eq!(cal.weekday(5.0), None);
+        assert_eq!(cal.date_label(31.0), "day 2 of M2");
+    }
+
+    #[test]
     fn definition_lints_catch_impossible_values_and_bad_enums() {
         let mut def = crate::world::types::WorldDefinition::from_hjson(&crate::world::starter_template("L")).unwrap();
         assert!(lint_definition(&def).is_empty(), "the starter is clean");

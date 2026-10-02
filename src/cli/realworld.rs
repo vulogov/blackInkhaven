@@ -781,6 +781,14 @@ fn calendar(project: &Path) -> Result<()> {
         cal.month_names.join(", ")
     };
     println!("  months:  {names}");
+    if cal.weekdays > 0 {
+        let days = if cal.day_names.is_empty() {
+            "(unnamed)".to_string()
+        } else {
+            cal.day_names.join(", ")
+        };
+        println!("  week:    {} days — {days} (counted from the first day of the year)", cal.weekdays);
+    }
     println!(
         "  seasons: {}",
         tl.seasons
@@ -911,6 +919,10 @@ fn scene(project: &Path, place: Option<String>, day: f64, lat: Option<f64>) -> R
         astro.year_length_planet_days,
         latitude.map(|l| format!(" · lat {l:.0}°")).unwrap_or_default()
     );
+    let date = def.astronomy.calendar.date_label(day);
+    if !date.is_empty() {
+        println!("  date:     {date}");
+    }
     if let (Some(s), Some(c)) = (&brief.season, &brief.conditions) {
         println!("  season:   {s} · {c}");
     }
@@ -1184,6 +1196,10 @@ fn weather(project: &Path, day: f64, lat: f64) -> Result<()> {
         "weather · {} · day {:.0} of {:.0} · lat {:.0}°",
         def.name, day, astro.year_length_planet_days, lat
     );
+    let date = def.astronomy.calendar.date_label(day);
+    if !date.is_empty() {
+        println!("  date:       {date}");
+    }
     println!("  season:     {}", w.season);
     println!("  conditions: {}", w.descriptor);
     println!(
