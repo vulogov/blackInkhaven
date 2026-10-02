@@ -40,6 +40,7 @@ use smysl::{
 
 mod commit;
 mod context;
+pub mod deep;
 mod grounding;
 mod harvest;
 mod harvest_llm;

@@ -4870,6 +4870,39 @@ impl App {
                 }
                 Err(e) => self.status = format!("world overview failed: {e}"),
             },
+            BgJobKind::CanonDeep => match result {
+                Ok(payload) => {
+                    let sidecar: crate::canon::deep::DeepSidecar =
+                        serde_json::from_str(&payload).unwrap_or_default();
+                    let (n, checked, of) = (sidecar.findings.len(), sidecar.checked, sidecar.of);
+                    self.status = match sidecar.save(&self.layout) {
+                        Ok(()) => {
+                            let scope = if checked < of {
+                                format!("{checked} of {of} committed decisions (raise the budget for the rest)")
+                            } else {
+                                format!("{checked} committed decision(s)")
+                            };
+                            if n == 0 {
+                                format!("canon deep read · no contradictions in {scope} ({elapsed_secs}s)")
+                            } else {
+                                format!("canon deep read · {n} contradiction(s) in {scope} — Ctrl+B * → Canon ({elapsed_secs}s)")
+                            }
+                        }
+                        Err(e) => format!("canon deep read: could not store the result — {e}"),
+                    };
+                    self.invalidate_canon_findings();
+                    self.refresh_canon_findings(std::time::Duration::ZERO);
+                    // An open dashboard shows the new findings at once.
+                    if let Modal::Canon { graph, .. } = &self.modal {
+                        let graph = *graph;
+                        let (rows, anchors, decisions) = self.build_canon_rows(graph);
+                        self.modal = Modal::Canon { rows, anchors, decisions, cursor: 0, grounding: None, graph };
+                    }
+                    self.refresh_canon_pane(false);
+                }
+                Err(e) if e == "cancelled" => self.status = "canon deep read cancelled — nothing stored".into(),
+                Err(e) => self.status = format!("canon deep read failed: {e}"),
+            },
             BgJobKind::CanonHarvest => match result {
                 Ok(payload) => {
                     let proposals: Vec<crate::canon::Proposal> =
@@ -8479,6 +8512,10 @@ pub(super) enum BgJobKind {
     /// proposals as JSON; the completion handler stages them (main thread, so
     /// staging has one writer) — nothing enters the ledger until the author's `a`.
     CanonHarvest,
+    /// CANON-READER-1 (CR-P5) — the opt-in contradiction pass (`D` on the Canon
+    /// dashboard): one model call over the committed / canonical decisions. The
+    /// `Ok` payload is the sidecar as JSON; the completion handler stores it.
+    CanonDeep,
     /// 1.8.24 — the AI-thesaurus fallback (`Ctrl+V Shift+Y` for a language with no
     /// local WordNet, e.g. Russian). The worker makes the LLM call off the UI
     /// thread; the `Ok` payload is the raw JSON, parsed + shown as a picker in the
@@ -17598,7 +17635,7 @@ impl App {
         // Advertise the actions whenever there are decisions — g/h work on any
         // decision row, even one with no jump anchor (a node-less/merged decision).
         self.status = if decisions.iter().any(|d| d.is_some()) {
-            "canon · ↑↓ · Enter jump · g ground · c commit · h history · t graph · Esc".into()
+            "canon · ↑↓ · Enter jump · g ground · c commit · h history · t graph · D deep read · Esc".into()
         } else {
             "canon · Esc".into()
         };
@@ -17768,14 +17805,15 @@ impl App {
                     None => self.status = "canon: put the cursor on a decision, then c".into(),
                 }
             }
+            KeyCode::Char('D') if !grounding => self.canon_deep_read(),
             KeyCode::Char('t') if !grounding => {
                 // Toggle the flat list ↔ the grounds-DAG view, rebuilding rows.
                 let graph = !matches!(&self.modal, Modal::Canon { graph: true, .. });
                 let (rows, anchors, decisions) = self.build_canon_rows(graph);
                 self.status = if graph {
-                    "canon graph · ↑↓ · Enter jump · g ground · c commit · h history · t list · Esc".into()
+                    "canon graph · ↑↓ · Enter jump · g ground · c commit · h history · t list · D deep read · Esc".into()
                 } else {
-                    "canon · ↑↓ · Enter jump · g ground · c commit · h history · t graph · Esc".into()
+                    "canon · ↑↓ · Enter jump · g ground · c commit · h history · t graph · D deep read · Esc".into()
                 };
                 self.modal = Modal::Canon { rows, anchors, decisions, cursor: 0, grounding: None, graph };
             }
@@ -17806,6 +17844,50 @@ impl App {
             _ => {}
         }
         true
+    }
+
+    /// CANON-READER-1 (CR-P5) — `D` on the dashboard: the opt-in contradiction
+    /// pass. Retrieval happens here (local vector search); the one model call
+    /// runs in the shared background job. Only decisions marked committed or
+    /// canonical are checked. The result is stored as an advisory sidecar and
+    /// shown as `⚠ contradicted` findings; nothing is edited.
+    fn canon_deep_read(&mut self) {
+        let cases = match crate::cli::canon::deep_cases(&self.store, &self.hierarchy) {
+            Ok(c) => c,
+            Err(e) => {
+                self.status = format!("canon deep read: {e}");
+                return;
+            }
+        };
+        if cases.is_empty() {
+            self.status =
+                "canon deep read: nothing is marked committed or canonical yet — `c` sets how settled a decision is".into();
+            return;
+        }
+        if let Err(e) = self.ai.resolve_provider(&self.cfg.llm, None) {
+            self.status = format!("canon deep read needs an LLM provider: {e}");
+            return;
+        }
+        let budget = self.cfg.canon.deep_budget;
+        let (prompt, included) = crate::canon::deep::build_prompt(&cases, budget.max(1));
+        let tokens_in = (crate::canon::deep::DEEP_SYSTEM.chars().count() + prompt.chars().count()) / 4;
+        let (n, root) = (cases.len(), self.layout.root.clone());
+        let started = self.start_bg_job(BgJobKind::CanonDeep, "canon deep read", move |tx, cancel| {
+            let result = crate::cli::canon::run_deep(&root, &cases, budget)
+                .map_err(|e| e.to_string())
+                .and_then(|sidecar| {
+                    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                        return Err("cancelled".to_string());
+                    }
+                    serde_json::to_string(&sidecar).map_err(|e| e.to_string())
+                });
+            let _ = tx.send(BgMsg::Done(result));
+        });
+        if started {
+            self.status = format!(
+                "⟳ canon deep read · one model call (~{tokens_in} tokens in) over {included} of {n} committed decision(s) · result is stored, nothing is edited"
+            );
+        }
     }
 
     /// CANON-UI-2 (CU2-P1) — open the commitment picker for `uid`. `back` is the
@@ -20593,7 +20675,8 @@ impl App {
         let (language, _) = crate::prose::resolve_prose_language(None, &self.cfg.language);
         let view = crate::cli::canon::ManuscriptView { store: &self.store, hierarchy: &self.hierarchy };
         self.canon_findings =
-            crate::canon::read::check(self.store.raw().canon(), &view, &language).unwrap_or_default();
+            crate::canon::deep::check_all(self.store.raw().canon(), &view, &language, &self.layout)
+                .unwrap_or_default();
         self.canon_findings_at = Some(std::time::Instant::now());
     }
 
