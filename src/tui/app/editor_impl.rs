@@ -989,6 +989,8 @@ impl super::App {
         // other decisions rest on. Said once per paragraph per session.
         if was_dirty {
             self.canon_note_edit_of_source(node.id);
+            // The prose changed: a decision may have drifted (or come back).
+            self.invalidate_canon_findings();
         }
         Ok(())
     }

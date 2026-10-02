@@ -1937,6 +1937,12 @@ impl super::super::App {
                 Span::styled(format!("[{}]{commit} ", r.kind), accent),
                 Span::styled(r.gist.clone(), head_style),
             ]));
+            if !r.markers.is_empty() {
+                lines.push(Line::from(Span::styled(
+                    format!("      {}", r.markers.join(" · ")),
+                    Style::default().fg(Color::Yellow),
+                )));
+            }
             let rests = if r.impact == 1 {
                 "1 decision rests on this".to_string()
             } else {

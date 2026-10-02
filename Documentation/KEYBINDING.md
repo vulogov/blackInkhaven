@@ -723,7 +723,10 @@ decisions rest on this`, and `↳ rests on ¶ …` for each nearest ground (`¶`
 the ground has a source paragraph to jump to). The tree's `◈` pip marks the
 paragraphs that have something to show here; (3.15) it is tinted by how settled
 their canon is — dim (unmarked / floated), plain (drafted / committed), bold
-(canonical), struck (all retconned).
+(canonical), struck (all retconned). (3.16) A decision the canon reader has
+a finding about carries a `⚠ drifted` / `⚠ on sand` / `⚠ unsettled` line under its
+row, and the Canon dashboard lists the findings first — `Enter` opens the paragraph
+involved, `c` / `g` / `h` act on the decision.
 
 | Key | Action |
 | --- | ------ |

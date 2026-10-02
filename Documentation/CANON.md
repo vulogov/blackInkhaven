@@ -134,6 +134,15 @@ they flow through the shared worklist, `chronicle mark` counts them too, so a
 milestone records whether the ledger and the book were in step — and the next one
 shows which findings cleared.
 
+**In the editor.** The Canon pane marks a decision the reader has something to say
+about — `⚠ drifted`, `⚠ on sand`, `⚠ unsettled`, `⚠ orphaned` — under its row. The
+Canon dashboard (`Ctrl+B *` → Canon) opens with the findings listed first: `Enter`
+on one opens the paragraph involved, and `c` / `g` / `h` act on its decision, so a
+finding is one keystroke from its fix. The same markers trail each decision in the
+list and the graph. The reader hub shows how many canon findings there are beside
+the other readers' counts. Findings are recomputed when you save, accept, commit
+or ground, and whenever the dashboard opens.
+
 `canon read <scope>` limits the report to decisions sourced under a chapter or
 paragraph; `--json` emits it for scripts (each finding says whether it resolves as
 a `decision` — a scene-or-ledger choice — or a `brief`); `--strict` exits non-zero
