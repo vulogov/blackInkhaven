@@ -19,6 +19,13 @@ use serde_json::{Value, json};
 pub(crate) enum Op {
     /// Set a dot-path leaf (creating intermediate objects).
     Set { path: Vec<String>, value: Value },
+    /// A `/set` whose typed text READ as a bool or a number (`Ja`, `1984`, `on`)
+    /// but may have been meant as text. It carries both readings; accept-time
+    /// validation ([`validate_ops`]) keeps the typed `value` when the schema
+    /// takes it, and otherwise the author's own `text` — never a re-stringified
+    /// `"true"`. Resolved to a plain [`Op::Set`] before it is recorded, so it
+    /// never reaches the pending delta or the session file.
+    SetTyped { path: Vec<String>, value: Value, text: String },
     /// Append to the array at a dot-path (creating it if absent).
     Push { path: Vec<String>, value: Value },
     /// Remove the element at `index` from the array at a dot-path (MAPED-P2).
@@ -29,7 +36,9 @@ impl Op {
     /// A one-line HJSON-ish preview of the edit.
     pub(super) fn preview(&self) -> String {
         match self {
-            Op::Set { path, value } => format!("{} = {}", path.join("."), compact(value)),
+            Op::Set { path, value } | Op::SetTyped { path, value, .. } => {
+                format!("{} = {}", path.join("."), compact(value))
+            }
             Op::Push { path, value } => format!("{}[] += {}", path.join("."), compact(value)),
             Op::RemoveAt { path, index } => format!("{}[{index}] removed", path.join(".")),
         }
@@ -38,7 +47,9 @@ impl Op {
     /// Apply this edit to the world root value in place.
     pub(super) fn apply(&self, root: &mut Value) {
         match self {
-            Op::Set { path, value } => set_path(root, path, value.clone()),
+            Op::Set { path, value } | Op::SetTyped { path, value, .. } => {
+                set_path(root, path, value.clone())
+            }
             Op::Push { path, value } => push_path(root, path, value.clone()),
             Op::RemoveAt { path, index } => remove_at_path(root, path, *index),
         }
@@ -168,10 +179,15 @@ pub(super) fn parse(input: &str) -> Command {
             }
             let path: Vec<String> = path_s.split('.').map(|s| s.to_string()).collect();
             let value = parse_scalar(val_s);
-            Command::Shape {
-                label: format!("{path_s} = {}", compact(&value)),
-                ops: vec![Op::Set { path, value }],
-            }
+            let label = format!("{path_s} = {}", compact(&value));
+            // Text that read as a bool / number keeps the author's own words
+            // alongside, for a field that turns out to want text.
+            let op = if value.is_string() {
+                Op::Set { path, value }
+            } else {
+                Op::SetTyped { path, value, text: val_s.to_string() }
+            };
+            Command::Shape { label, ops: vec![op] }
         }
 
         "star" => {
@@ -247,7 +263,9 @@ pub(super) fn parse(input: &str) -> Command {
             // (any number of words) is the name. `period_days` is required by the
             // schema (a moon without it makes world.hjson unparseable); default to
             // Earth's Moon when omitted, and give it a lunar mass so it raises tides.
-            let mut toks: Vec<&str> = rest.split_whitespace().collect();
+            let cleaned = rest.replace(", ", " ");
+            let mut toks: Vec<&str> =
+                cleaned.split_whitespace().map(|t| t.trim_end_matches(',')).filter(|t| !t.is_empty()).collect();
             let period = match toks.last().and_then(|s| s.parse::<f64>().ok().or_else(|| decimal_comma(s))) {
                 Some(p) if p.is_finite() && p > 0.0 && toks.len() > 1 => {
                     toks.pop();
@@ -324,7 +342,9 @@ pub(super) fn parse(input: &str) -> Command {
             // settlement. (The old era/polity_kind/traits fields never existed in
             // the schema — they were silently dropped and, with no `capital`,
             // broke the parse.)
-            let toks: Vec<&str> = rest.split_whitespace().collect();
+            let cleaned = rest.replace(", ", " ");
+            let toks: Vec<&str> =
+                cleaned.split_whitespace().map(|t| t.trim_end_matches(',')).filter(|t| !t.is_empty()).collect();
             let (name_toks, capital) = match toks.as_slice() {
                 [head @ .., x, y] if !head.is_empty() => match (x.parse::<usize>(), y.parse::<usize>()) {
                     (Ok(cx), Ok(cy)) => (head, Some([cx, cy])),
@@ -351,7 +371,7 @@ pub(super) fn parse(input: &str) -> Command {
         }
 
         other => Command::Unknown(format!(
-            "unknown command `/{other}` — supports /interview /roll /adopt /map /mapcheck /terrain /journey /sessions /switch /export[ --pdf] /set /star /tilt /moon /nation /magic /rule /wfact /research /compile /validate /write /undo /reset /diff"
+            "unknown command `/{other}` — supports /interview /roll /adopt /map /mapcheck /terrain /journey /sessions /switch /export[ --pdf] /set /star /tilt /moon /orogeny /nation /magic /rule /wfact /research /compile /validate /write /undo /reset /diff"
         )),
     }
 }
@@ -370,11 +390,12 @@ fn star_class_of(answer: &str) -> Option<String> {
         | "как солнце" | "солнцеподобная" | "жёлтая" | "желтая" | "жёлтый карлик" | "желтый карлик"
         | "semblable au soleil" | "jaune" | "naine jaune"
         | "sonnenähnlich" | "gelb" | "gelber zwerg"
-        | "similar al sol" | "amarilla" | "enana amarilla" => Some("G"),
+        | "similar al sol" | "amarilla" | "amarillo" | "enana amarilla" | "жёлтый" | "желтый"
+        | "gelber" | "gelbe" => Some("G"),
         "orange" | "orange dwarf" | "k-type" | "оранжевая" | "оранжевый карлик" | "naine orange"
-        | "oranger zwerg" | "naranja" | "enana naranja" => Some("K"),
+        | "oranger zwerg" | "naranja" | "enana naranja" | "оранжевый" | "oranger" | "orange zwerg" => Some("K"),
         "red" | "red dwarf" | "m-type" | "красная" | "красный карлик" | "rouge" | "naine rouge"
-        | "rot" | "roter zwerg" | "roja" | "enana roja" => Some("M"),
+        | "rot" | "roter zwerg" | "roja" | "rojo" | "enana roja" | "красный" | "roter" | "rote" => Some("M"),
         "yellow-white" | "yellow white" | "f-type" | "жёлто-белая" | "желто-белая" => Some("F"),
         "white" | "a-type" | "белая" | "blanche" | "weiß" | "weiss" | "blanca" => Some("A"),
         "blue-white" | "blue white" | "b-type" | "бело-голубая" => Some("B"),
@@ -383,6 +404,16 @@ fn star_class_of(answer: &str) -> Option<String> {
     };
     if let Some(c) = by_word {
         return Some(c.to_string());
+    }
+    // The prompt writes its choices as "K orange" / "M — красный карлик": an
+    // answer copied in that form is the class in its first word.
+    if t.split_whitespace().count() > 1 {
+        let first = t.split_whitespace().next().unwrap_or("");
+        if first.chars().count() <= 3 {
+            if let Some(c) = star_class_of(first) {
+                return Some(c);
+            }
+        }
     }
     // A spectral class token: letter O/B/A/F/G/K/M, optional subtype digit,
     // optional luminosity class (V, IV, III, II, I). A class letter typed on a
@@ -419,11 +450,14 @@ fn star_class_of(answer: &str) -> Option<String> {
 fn orogeny_of(answer: &str) -> Option<&'static str> {
     let w = answer.trim().to_lowercase();
     let starts = |stems: &[&str]| stems.iter().any(|s| w.starts_with(s));
-    if starts(&["activ", "aktiv", "актив", "young", "молод"]) {
+    // German `alt` is matched as a word, not a prefix: Spanish `altas` (high)
+    // and `altitude` are not "ancient".
+    let alt = matches!(w.as_str(), "alt" | "alte" | "alten" | "altes" | "alter");
+    if starts(&["activ", "aktiv", "актив", "young", "молод", "jeune", "jung", "jóven", "joven"]) {
         Some("active")
     } else if starts(&["quiet", "calm", "tranquil", "ruhig", "спокой", "тих"]) {
         Some("quiet")
-    } else if starts(&["ancient", "ancien", "antig", "uralt", "alt", "old", "vieil", "vieux", "viej", "древн", "стар"]) {
+    } else if alt || starts(&["ancient", "ancien", "antig", "uralt", "old", "vieil", "vieux", "viej", "древн", "стар"]) {
         Some("ancient")
     } else {
         None
@@ -494,12 +528,26 @@ fn parse_scalar(s: &str) -> Value {
     json!(t)
 }
 
+/// Whether an answer is a bare "no" / "yes" in one of the five interview
+/// languages — for the optional steps ("Add a moon?"), where "no" means skip
+/// and must not become a moon called "no".
+pub(super) fn yes_no_word(answer: &str) -> Option<bool> {
+    match answer.trim().trim_end_matches(['.', '!']).to_lowercase().as_str() {
+        "yes" | "y" | "да" | "oui" | "ja" | "sí" | "si" => Some(true),
+        "no" | "n" | "none" | "нет" | "non" | "nein" | "нету" | "aucune" | "keine" | "keinen" | "ninguna" | "ninguno" => Some(false),
+        _ => None,
+    }
+}
+
 /// `23,4` → `23.4`: exactly one comma between digits, no dot, optional sign.
 fn decimal_comma(t: &str) -> Option<f64> {
     let body = t.strip_prefix(['-', '+']).unwrap_or(t);
     let (a, b) = body.split_once(',')?;
     let digits = |s: &str| !s.is_empty() && s.bytes().all(|c| c.is_ascii_digit());
-    if digits(a) && digits(b) {
+    // `30,000` is thirty thousand in English, not thirty: three digits after the
+    // comma is read as a fraction only when the whole part is a lone 0 (`0,125`).
+    let thousands = b.len() == 3 && a != "0";
+    if digits(a) && digits(b) && !thousands {
         t.replace(',', ".").parse::<f64>().ok().filter(|f| f.is_finite())
     } else {
         None
@@ -508,9 +556,8 @@ fn decimal_comma(t: &str) -> Option<f64> {
 
 /// Accept-time validation of a shaping delta against the world as it stands
 /// (`base` = `world.hjson` + the pending ops). Returns the ops to record — a
-/// scalar the schema wants as a string is retried as one (`/set name 1984`,
-/// `/set name True`), so the typed text lands rather than a bool/number the
-/// schema refuses. Errors name the offending delta, so the author can tell
+/// [`Op::SetTyped`] the schema wants as text lands as the author's own text
+/// (`/set name 1984`, `/set name Ja`), not as a bool/number the schema refuses. Errors name the offending delta, so the author can tell
 /// which op is at fault instead of meeting a bare serde error at `/write`.
 /// A `Set` whose path is not a schema field is refused too (serde would drop
 /// it silently and the stray key would land on disk).
@@ -524,17 +571,21 @@ pub(super) fn validate_ops(base: &Value, ops: Vec<Op>) -> Result<Vec<Op>, String
     let mut out = Vec::with_capacity(ops.len());
     let mut cur = base.clone();
     for op in ops {
-        let mut try_op = op.clone();
+        // A typed `/set` resolves here: the typed value if the schema takes it,
+        // else the text exactly as the author wrote it (`Ja` stays `Ja`).
+        let (mut try_op, text) = match &op {
+            Op::SetTyped { path, value, text } => {
+                (Op::Set { path: path.clone(), value: value.clone() }, Some((path.clone(), text.clone())))
+            }
+            other => (other.clone(), None),
+        };
         let mut ok = fold_ops(cur.clone(), std::slice::from_ref(&try_op));
         if ok.is_err() {
-            if let Op::Set { path, value } = &op {
-                if !value.is_string() && !value.is_object() && !value.is_array() && !value.is_null() {
-                    let as_text = match value {
-                        Value::String(s) => s.clone(),
-                        other => other.to_string(),
-                    };
-                    try_op = Op::Set { path: path.clone(), value: json!(as_text) };
-                    ok = fold_ops(cur.clone(), std::slice::from_ref(&try_op));
+            if let Some((path, text)) = text {
+                let as_text = Op::Set { path, value: json!(text) };
+                if let Ok(v) = fold_ops(cur.clone(), std::slice::from_ref(&as_text)) {
+                    try_op = as_text;
+                    ok = Ok(v);
                 }
             }
         }
@@ -821,6 +872,53 @@ mod tests {
         let Command::Shape { ops, .. } = parse("/set magic.enabled yes") else { panic!() };
         let ops = validate_ops(&base, ops).expect("yes → true");
         assert_eq!(ops[0], Op::Set { path: vec!["magic".into(), "enabled".into()], value: json!(true) });
+    }
+
+    #[test]
+    fn a_name_that_reads_as_yes_or_a_number_stays_the_text_typed() {
+        let base: Value =
+            serde_hjson::from_str(&crate::world::starter_template("Thalor")).expect("starter parses");
+        for name in ["Ja", "Si", "Non", "Да", "on", "007", "1,5", "+5", "True"] {
+            let Command::Shape { ops, .. } = parse(&format!("/set name {name}")) else { panic!() };
+            let ops = validate_ops(&base, ops).unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert_eq!(ops, vec![Op::Set { path: vec!["name".into()], value: json!(name) }], "{name}");
+        }
+        // Where the schema wants the typed value, it keeps it.
+        let Command::Shape { ops, .. } = parse("/set magic.enabled ja") else { panic!() };
+        assert_eq!(
+            validate_ops(&base, ops).unwrap(),
+            vec![Op::Set { path: vec!["magic".into(), "enabled".into()], value: json!(true) }]
+        );
+        let Command::Shape { ops, .. } = parse("/set geology.generated.sea_level 0,6") else { panic!() };
+        assert_eq!(
+            validate_ops(&base, ops).unwrap(),
+            vec![Op::Set { path: vec!["geology".into(), "generated".into(), "sea_level".into()], value: json!(0.6) }]
+        );
+    }
+
+    #[test]
+    fn commas_spanish_heights_and_hint_style_answers() {
+        // A thousands separator is not a decimal comma.
+        assert_eq!(parse_scalar("30,000"), json!("30,000"));
+        assert_eq!(parse_scalar("0,125"), json!(0.125));
+        assert_eq!(parse_scalar("23,4"), json!(23.4));
+        // `altas` (Spanish: high) is not German `alt`.
+        assert_eq!(orogeny_of("altas"), None);
+        assert_eq!(orogeny_of("alt"), Some("ancient"));
+        assert_eq!(orogeny_of("Jeunes"), Some("active"));
+        // The prompt's own "K orange" form, and masculine adjectives.
+        assert_eq!(star_class_of("K orange").as_deref(), Some("K"));
+        assert_eq!(star_class_of("M — красный карлик").as_deref(), Some("M"));
+        assert_eq!(star_class_of("красный").as_deref(), Some("M"));
+        assert_eq!(star_class_of("purple haze"), None);
+        // A list-style comma after a name is not part of the name.
+        let Command::Shape { ops, .. } = parse("/moon Selene, 27,3") else { panic!() };
+        let Op::Push { value, .. } = &ops[0] else { panic!() };
+        assert_eq!(value["name"], json!("Selene"));
+        assert_eq!(value["period_days"], json!(27.3));
+        assert_eq!(yes_no_word("Нет"), Some(false));
+        assert_eq!(yes_no_word("oui"), Some(true));
+        assert_eq!(yes_no_word("Selene"), None);
     }
 
     #[test]

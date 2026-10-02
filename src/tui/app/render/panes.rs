@@ -2000,11 +2000,11 @@ impl super::super::App {
         if footer_h == 1 {
             let on_staged = st.cursor >= st.rows.len() && !st.staged.is_empty();
             let hint = if on_staged {
-                " ↑↓ · a accept · x discard · A accept all for this ¶ · H harvest again "
+                " a accept · x drop · A all · H "
             } else if !st.staged.is_empty() {
-                " ↑↓ · Enter → ground ¶ · c commit · h history · * ledger · ↓ to the proposals (a/x/A) "
+                " ⏎ ground · c commit · ↓ proposals "
             } else {
-                " ↑↓ · Enter → its ground ¶ · c commit · h history · H harvest · * ledger · Ctrl+B Tab "
+                " ⏎ ground · c commit · H harvest "
             };
             let footer = Rect { x: inner.x, y: inner.y + inner.height - 1, width: inner.width, height: 1 };
             f.render_widget(

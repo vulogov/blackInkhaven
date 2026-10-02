@@ -149,7 +149,9 @@ runs — informative, never a cap). What comes back goes to staging, never to th
 ledger, and anything that merely repeats a decision the paragraph already has — or
 one already staged — is dropped, so harvesting twice does not stage twice. It reads
 the *saved* text, so save first. Whole chapters and books stay a shell job
-(`canon harvest <scope>`). The tree's `◈` pip marks the
+(`canon harvest <scope>`), which adds to the same staging list; from the shell
+`canon accept --node <path>` confirms one paragraph's or chapter's proposals and
+`canon discard (--node <path> | --all)` drops them unrecorded. The tree's `◈` pip marks the
 paragraphs that have something to show here, and opening one says so in the
 status line ("canon: this paragraph sources 2 decision(s) · 3 rest on them").
 
