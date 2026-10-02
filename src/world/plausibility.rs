@@ -278,6 +278,27 @@ pub fn lint_definition(def: &WorldDefinition) -> Vec<Warning> {
             )));
         }
     }
+    if let Some(d) = def.geology.as_ref().and_then(|g| g.dem.as_ref()) {
+        if let Some(lat) = d.center_lat {
+            if !lat.is_finite() || lat.abs() > 90.0 {
+                w.push(Warning::medium(format!(
+                    "geology: dem.center_lat {lat} must be between -90 and 90 — clamped"
+                )));
+            }
+            if d.scale_km_per_pixel.is_none() {
+                w.push(Warning::low(
+                    "geology: dem.center_lat is set but the heightmap declares no scale_km_per_pixel — without a scale the image is the whole planet and center_lat is ignored",
+                ));
+            }
+        }
+        if let Some(lon) = d.center_lon {
+            if !lon.is_finite() || lon.abs() > 180.0 {
+                w.push(Warning::medium(format!(
+                    "geology: dem.center_lon {lon} must be between -180 and 180 — clamped"
+                )));
+            }
+        }
+    }
     // Declared positions that fall off the map are clamped to its edge by the
     // renderer — a typo then draws a marker on the border, silently.
     if let Some(g) = def.geography.as_ref() {
@@ -349,9 +370,11 @@ pub fn lint_map(
     let pole_to_pole = std::f64::consts::PI * 6371.0 * def.astronomy.planet.radius_earth.max(0.01);
     if let Some((_, yk)) = geo.cell_km {
         let tall_km = yk * geo.height as f64;
-        if tall_km < 0.5 * pole_to_pole {
+        // Resolved once the map says where it is: `dem.center_lat` gives it the
+        // latitude band its height really covers.
+        if tall_km < 0.5 * pole_to_pole && !geo.latmap.is_regional() {
             out.push(Warning::low(format!(
-                "geology: the heightmap's declared scale makes the map {:.0} km tall — a region — but its climate still spans pole to pole across it ({:.0} km on this planet); omit `scale_km_per_pixel` for a whole-world map, or expect polar and tropical bands on a regional one",
+                "geology: the heightmap's declared scale makes the map {:.0} km tall — a region — but its climate still spans pole to pole across it ({:.0} km on this planet); add `dem.center_lat` to weather it as a region at that latitude, or omit `scale_km_per_pixel` for a whole-world map",
                 tall_km, pole_to_pole
             )));
         }
@@ -379,7 +402,7 @@ pub fn lint_map(
         let placed: Vec<(&str, (usize, usize))> = g
             .landmarks
             .iter()
-            .filter_map(|l| l.grid(geo.width, geo.height).map(|c| (l.name.as_str(), c)))
+            .filter_map(|l| l.grid_on(geo.width, geo.height, &geo.latmap).map(|c| (l.name.as_str(), c)))
             .collect();
         if !placed.is_empty() {
             let pol = polities_layer::compile_polities(demo, &def.nations, def.seed_u64());
@@ -592,6 +615,72 @@ mod tests {
         // …and the region/pole-to-pole mismatch is told.
         assert!(run_fast_at(&region_def, Some(dir.path())).iter().any(|w| w.text.contains("a region")));
         assert!(!run_fast_at(&dem(None), Some(dir.path())).iter().any(|w| w.text.contains("a region")));
+    }
+
+    #[test]
+    fn a_regional_heightmap_with_a_centre_latitude_is_weathered_as_that_region() {
+        let def = crate::world::types::WorldDefinition::from_hjson(&crate::world::starter_template("R")).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let img = image::ImageBuffer::<image::Luma<u16>, Vec<u16>>::from_fn(320, 240, |x, y| {
+            image::Luma([(20_000 + ((x * 37 + y * 91) % 997) * 40) as u16])
+        });
+        img.save(dir.path().join("h.png")).unwrap();
+        let dem = |extra: serde_json::Value| {
+            let mut d = def.clone();
+            let mut v = serde_json::json!({ "path": "h.png", "scale_km_per_pixel": 5.0, "sea_level_pixel_value": 1 });
+            for (k, val) in extra.as_object().unwrap() {
+                v[k] = val.clone();
+            }
+            d.geology = Some(crate::world::types::GeologyDef { generated: None, dem: Some(serde_json::from_value(v).unwrap()) });
+            d
+        };
+        // Without center_lat: measured as a region, weathered as a globe, and told so.
+        let plain_def = dem(serde_json::json!({}));
+        let plain = compile_layers_at(&plain_def, Some(dir.path()));
+        assert!(!plain.geology.latmap.is_regional());
+        assert!(run_fast_at(&plain_def, Some(dir.path())).iter().any(|w| w.text.contains("center_lat")));
+
+        // With center_lat 10°N: a 1200 km band in the tropics — warm everywhere,
+        // no ice at the top edge. With 80°N: the same land is cold.
+        let tropic_def = dem(serde_json::json!({ "center_lat": 10.0 }));
+        let tropic = compile_layers_at(&tropic_def, Some(dir.path()));
+        assert!(tropic.geology.latmap.is_regional());
+        assert!((tropic.geology.latmap.north - tropic.geology.latmap.south - 10.79).abs() < 0.1);
+        let polar = compile_layers_at(&dem(serde_json::json!({ "center_lat": 80.0 })), Some(dir.path()));
+        assert!(
+            tropic.climate.mean_land_temp_c > polar.climate.mean_land_temp_c + 15.0,
+            "tropic {} vs polar {}",
+            tropic.climate.mean_land_temp_c,
+            polar.climate.mean_land_temp_c
+        );
+        // The band is narrow: top and bottom rows of the tropical map differ by a
+        // few degrees, not the pole-to-equator range the globe mapping gives.
+        let w = tropic.climate.width;
+        let row_mean = |c: &crate::world::types::ClimateOutput, y: usize| {
+            c.temperature_c[y * w..(y + 1) * w].iter().sum::<f32>() / w as f32
+        };
+        let h = tropic.climate.height;
+        assert!((row_mean(&tropic.climate, 0) - row_mean(&tropic.climate, h - 1)).abs() < 15.0);
+        assert!((row_mean(&plain.climate, 0) - row_mean(&plain.climate, h / 2)).abs() > 20.0);
+        // The warning is resolved by the key it names.
+        assert!(!run_fast_at(&tropic_def, Some(dir.path())).iter().any(|w| w.text.contains("a region")));
+
+        // A landmark given in degrees lands on the row weathered at that latitude.
+        let lm: crate::world::types::world::GeoLandmark =
+            serde_json::from_value(serde_json::json!({ "name": "Port", "lat": 12.0, "lon": 0.0 })).unwrap();
+        let (_, row) = lm.grid_on(w, h, &tropic.geology.latmap).unwrap();
+        assert!((tropic.geology.latmap.row_lat(row, h) - 12.0).abs() < 0.1);
+        let (_, globe_row) = lm.grid(w, h).unwrap();
+        assert_ne!(row, globe_row, "on the globe 12°N is a different row");
+
+        // Sanity lints.
+        let mut odd = def.clone();
+        odd.geology = Some(crate::world::types::GeologyDef {
+            generated: None,
+            dem: Some(serde_json::from_value(serde_json::json!({ "path": "h.png", "center_lat": 120.0 })).unwrap()),
+        });
+        let text = lint_definition(&odd).iter().map(|w| w.text.clone()).collect::<Vec<_>>().join("\n");
+        assert!(text.contains("between -90 and 90") && text.contains("center_lat is ignored"), "{text}");
     }
 
     #[test]

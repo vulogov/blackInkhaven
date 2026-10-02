@@ -68,8 +68,18 @@ pub fn today_key() -> String {
 mod tests {
     use super::*;
 
+    /// The day boundary is process-global, and the test harness runs tests in
+    /// parallel: one test switching to `Local` while another asserts UTC
+    /// arithmetic failed intermittently. These tests take this lock (poison is
+    /// ignored — a failed assertion must not cascade).
+    static BOUNDARY: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    fn boundary_lock() -> std::sync::MutexGuard<'static, ()> {
+        BOUNDARY.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     #[test]
     fn utc_default_matches_plain_division() {
+        let _g = boundary_lock();
         set_boundary(DayBoundary::Utc);
         assert_eq!(offset_secs(), 0);
         assert_eq!(today_days(), now_secs().div_euclid(86_400));
@@ -79,6 +89,7 @@ mod tests {
 
     #[test]
     fn today_key_is_consistent_with_today_days() {
+        let _g = boundary_lock();
         set_boundary(DayBoundary::Utc);
         // The key's date, parsed back to days, equals today_days.
         let key = today_key();
@@ -89,6 +100,7 @@ mod tests {
 
     #[test]
     fn local_offset_shifts_the_day_start_into_alignment() {
+        let _g = boundary_lock();
         set_boundary(DayBoundary::Local);
         // today_start + a full day brackets `now` regardless of tz, and
         // today_start lands on a boundary day edge (now − start in [0, 86400)).

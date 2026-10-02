@@ -499,6 +499,233 @@ pub fn check(project: &Path) -> Result<()> {
     Ok(())
 }
 
+/// The manuscript as the canon reader sees it: a paragraph's text and authored
+/// tags from the open store, `None` for a node that is no longer in the tree.
+/// Shared by `canon read` and the editor (CANON-READER-1).
+pub(crate) struct ManuscriptView<'a> {
+    pub store: &'a Store,
+    pub hierarchy: &'a Hierarchy,
+}
+
+impl crate::canon::read::SourceText for ManuscriptView<'_> {
+    fn text(&self, node: uuid::Uuid) -> Option<String> {
+        // Presence is decided by the tree; a paragraph with no stored content
+        // yet still exists (and reads as empty).
+        self.hierarchy.get(node)?;
+        Some(
+            self.store
+                .get_content(node)
+                .ok()
+                .flatten()
+                .map(|b| String::from_utf8_lossy(&b).into_owned())
+                .unwrap_or_default(),
+        )
+    }
+
+    fn tags(&self, node: uuid::Uuid) -> Vec<String> {
+        self.hierarchy.get(node).map(|n| n.tags.clone()).unwrap_or_default()
+    }
+}
+
+/// How many passages are offered to the model per decision, and how much of
+/// each (characters). Small on purpose: the pass is one call for the whole book.
+const DEEP_PASSAGES_PER_DECISION: usize = 4;
+const DEEP_PASSAGE_CHARS: usize = 900;
+
+/// CANON-READER-1 (CR-P5) — gather the cases for the contradiction pass: every
+/// live decision marked committed or canonical (canonical first), each with the
+/// manuscript passages most related to it by the existing semantic search.
+/// Only user-book prose is offered (no Help / Prompts / World system books).
+/// No model call — local retrieval only.
+pub(crate) fn deep_cases(store: &Store, hierarchy: &Hierarchy) -> Result<Vec<crate::canon::deep::DeepCase>> {
+    use crate::canon::deep::{is_checkable, DeepCase, DeepPassage};
+    let canon = store.raw().canon();
+    let mut decisions: Vec<CanonView> = canon
+        .all_decisions()
+        .map_err(store_err)?
+        .into_iter()
+        .filter(|v| is_checkable(v.commitment))
+        .collect();
+    decisions.sort_by(|a, b| b.commitment.cmp(&a.commitment).then(a.gist.cmp(&b.gist)));
+
+    let in_user_book = |node: &Node| -> bool {
+        let book = if node.kind == NodeKind::Book {
+            Some(node)
+        } else {
+            hierarchy.ancestors(node).into_iter().find(|n| n.kind == NodeKind::Book)
+        };
+        book.is_some_and(|b| b.system_tag.is_none())
+    };
+    let mut cases = Vec::with_capacity(decisions.len());
+    for v in decisions {
+        let hits = store
+            .raw()
+            .search_document_text(&v.gist, DEEP_PASSAGES_PER_DECISION * 2)
+            .unwrap_or_default();
+        let mut passages: Vec<DeepPassage> = Vec::new();
+        for hit in &hits {
+            let Some(id) = hit.get("id").and_then(|x| x.as_str()).and_then(|s| uuid::Uuid::parse_str(s).ok())
+            else {
+                continue;
+            };
+            let Some(node) = hierarchy.get(id) else { continue };
+            if node.kind != NodeKind::Paragraph || !in_user_book(node) || passages.iter().any(|p| p.node == id) {
+                continue;
+            }
+            let text = store
+                .get_content(id)
+                .ok()
+                .flatten()
+                .map(|b| String::from_utf8_lossy(&b).into_owned())
+                .unwrap_or_default();
+            if text.trim().is_empty() {
+                continue;
+            }
+            passages.push(DeepPassage {
+                node: id,
+                locator: breadcrumb_of(node),
+                text: text.chars().take(DEEP_PASSAGE_CHARS).collect(),
+            });
+            if passages.len() >= DEEP_PASSAGES_PER_DECISION {
+                break;
+            }
+        }
+        let kind = v
+            .kind
+            .map(|k| k.schema_str().trim_start_matches("x.narrative/").to_string())
+            .unwrap_or_else(|| "decision".into());
+        let Some(commitment) = v.commitment else { continue };
+        cases.push(DeepCase { decision: v.uid, gist: v.gist, kind, commitment, passages });
+    }
+    Ok(cases)
+}
+
+/// CANON-READER-1 (CR-P5) — the one model call of the contradiction pass. Packs
+/// as many cases as fit `max_cost` tokens into a single prompt (so the budget
+/// shapes the prompt rather than refusing the run), calls the model through the
+/// shared slow-track path (daily accounting, retries, explanations in the
+/// project language), and returns the sidecar to store. Callable from a worker.
+pub(crate) fn run_deep(
+    project: &Path,
+    cases: &[crate::canon::deep::DeepCase],
+    max_cost: usize,
+) -> Result<crate::canon::deep::DeepSidecar> {
+    use crate::canon::deep::{build_prompt, parse_reply, DeepSidecar, DEEP_SYSTEM};
+    let (prompt, included) = build_prompt(cases, max_cost.max(1));
+    if prompt.is_empty() {
+        // Nothing committed, or nothing in the book relates to what is.
+        return Ok(DeepSidecar { findings: Vec::new(), checked: included, of: cases.len() });
+    }
+    // `force`: the prompt was already fitted to the budget above.
+    let replies = crate::cli::realworld::slow_llm_call(project, "canon contradictions", DEEP_SYSTEM, prompt, max_cost, true)?;
+    let explanations: Vec<String> = replies.into_iter().map(|f| f.body_en).collect();
+    Ok(DeepSidecar { findings: parse_reply(&explanations, cases, included), checked: included, of: cases.len() })
+}
+
+/// `inkhaven canon read [<scope>] [--json] [--strict]` — CANON-READER-1: the
+/// ledger read against the manuscript. Deterministic and free; `--strict`
+/// exits non-zero when there is anything to report (for CI).
+pub fn read(project: &Path, scope: &str, json: bool, strict: bool, deep: bool, max_cost: usize) -> Result<()> {
+    use crate::canon::read::{CanonFinding, CanonFindingKind};
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout.clone(), &cfg)?;
+    let hierarchy = Hierarchy::load(&store)?;
+    let (language, _) = crate::prose::resolve_prose_language(None, &cfg.language);
+    let view = ManuscriptView { store: &store, hierarchy: &hierarchy };
+    let canon = store.raw().canon();
+
+    // `--deep`: one opt-in model call over the committed / canonical decisions.
+    // Its findings are stored, so later reads (and the editor) show them free.
+    if deep {
+        let cases = deep_cases(&store, &hierarchy)?;
+        if cases.is_empty() {
+            eprintln!("canon read --deep: no decision is marked committed or canonical — nothing for the model to check.");
+        } else {
+            let sidecar = run_deep(project, &cases, max_cost)?;
+            eprintln!(
+                "canon read --deep: checked {} of {} committed decision(s); {} contradiction(s) reported.",
+                sidecar.checked,
+                sidecar.of,
+                sidecar.findings.len()
+            );
+            if sidecar.checked < sidecar.of {
+                eprintln!("  (the rest did not fit --max-cost {max_cost}; raise it to check them all)");
+            }
+            sidecar.save(&layout).map_err(store_err)?;
+        }
+    }
+
+    let mut findings: Vec<CanonFinding> =
+        crate::canon::deep::check_all(canon, &view, &language, &layout).map_err(store_err)?;
+
+    // An optional scope narrows the report to decisions sourced at or under a
+    // node (an orphan has no node any more — it is matched by where it WAS).
+    let scope = scope.trim();
+    if !(scope.is_empty() || scope == "." || scope == "all") {
+        let inside = scope_paragraphs(&store, scope)?;
+        let source_of: std::collections::HashMap<_, _> = canon
+            .all_decisions()
+            .map_err(store_err)?
+            .into_iter()
+            .filter_map(|v| v.node.map(|n| (v.uid, n)))
+            .collect();
+        let prefix = format!("{}/", scope.trim_end_matches('/'));
+        findings.retain(|f| {
+            source_of.get(&f.decision).is_some_and(|n| inside.contains(n))
+                || f.locator.as_deref().is_some_and(|l| l == scope || l.starts_with(&prefix))
+        });
+    }
+
+    if json {
+        let rows: Vec<serde_json::Value> = findings
+            .iter()
+            .map(|f| {
+                serde_json::json!({
+                    "kind": f.kind.as_str(),
+                    "decision": f.decision.short(),
+                    "gist": f.gist,
+                    "node": f.node.map(|n| n.to_string()),
+                    "locator": f.locator,
+                    "related": f.related.map(|u| u.short()),
+                    "message": f.message,
+                    "weight": f.weight,
+                    // How it is resolved: a scene-or-ledger choice, or ledger
+                    // housekeeping; and whether a model produced it.
+                    "resolve": if f.kind.is_decision() { "decision" } else { "brief" },
+                    "deterministic": f.kind.is_deterministic(),
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&rows).map_err(|e| Error::Store(format!("serializing findings: {e}")))?
+        );
+    } else if findings.is_empty() {
+        eprintln!("canon read — the ledger and the manuscript agree (nothing contradicted, orphaned, drifted, built on sand, or unsettled).");
+    } else {
+        eprintln!("canon read — {} finding(s):", findings.len());
+        for kind in CanonFindingKind::ALL {
+            let of_kind: Vec<&CanonFinding> = findings.iter().filter(|f| f.kind == kind).collect();
+            if of_kind.is_empty() {
+                continue;
+            }
+            println!("\n{} ({})", kind.heading(), of_kind.len());
+            for f in of_kind {
+                let loc = f.locator.as_deref().map(|l| format!("  ({l})")).unwrap_or_default();
+                println!("  {}{loc}", f.decision.short());
+                println!("      {}", f.message);
+            }
+        }
+        eprintln!("\nadvisory — nothing was changed. `canon commit` / `canon ground` / the Canon pane act on these.");
+    }
+    if strict && !findings.is_empty() {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
 /// `inkhaven canon merge <path>`
 pub fn merge(project: &Path, other: &str) -> Result<()> {
     let store = open(project)?;

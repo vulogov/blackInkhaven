@@ -144,6 +144,26 @@ decision is, from *floated* to *canonical*, and warns you on the spot if you hav
 just built something firm on something soft. The `◈` darkens as a paragraph's canon
 firms up, and when you save a paragraph that other decisions lean on, the status
 line reminds you once that they do.
+
+#section("When the book and the ledger part ways")
+
+A ledger you fill and never check goes stale, and a stale ledger is worse than
+none — it tells you, and the AI you chat with, that something is decided when the
+book has moved on. So the ledger checks itself. `inkhaven canon read` — and the
+Canon dashboard, which now opens with its findings first — tells you four things
+for free: a decision whose scene no longer mentions it (*drifted*), one whose
+scene is gone (*orphaned*), a firm decision standing on a soft one (*built on
+sand*), and a decision much else rests on that you never called settled
+(*unsettled foundation*).
+
+One thing it cannot work out by counting words is whether a scene says the
+*opposite*. For that there is an opt-in pass — `canon read --deep`, or `D` on the
+dashboard — that asks a model once about only the decisions you marked committed
+or canonical, and shows you the passage. Fix the passage and the finding goes
+away on its own.
+
+None of this rewrites anything. A *drifted* or *contradicted* decision reaches the
+Editorial Pass as a choice — the scene or the ledger? — and the rest as briefs.
 And when you go to *delete* a paragraph that established decisions, the confirmation
 warns first — naming them and how much rests on them — so *"what breaks if I cut
 this?"* reaches you at the moment of the cut. (It only warns; the ledger keeps the
@@ -184,4 +204,8 @@ keep alone never forks, so the day it appears is the day it matters.
   deleting a decision's source paragraph warns with its blast radius;
   `canon forks` (after a `merge`) reaches the Editorial Pass as a brief. The ledger
   is *derived* and safe to lose — a re-harvest, never prose.],
+  [The ledger *reads back*: `canon read` (and the dashboard) reports decisions that
+  drifted from their scene, lost it, rest on soft ground, or were never settled —
+  free — and, with `--deep` / `D`, passages that contradict a committed decision.
+  The findings join the Editorial Pass and CHRONICLE under `canon`.],
 ))

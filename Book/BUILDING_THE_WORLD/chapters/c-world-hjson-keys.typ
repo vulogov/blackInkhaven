@@ -112,7 +112,10 @@ defaults.
   optional) declares its real scale — with it the map is a *region* of that size
   (journey distances, trade routes and population all follow); without it, or
   when the scale makes the image as tall as the planet itself, the image is the
-  whole planet; `dem.sea_level_pixel_value` (`number`) marks the pixel level at
+  whole planet; `dem.center_lat` (`number`, optional, with a regional scale) is the
+  latitude at the centre of a regional map — its climate is then that of the band
+  the map's height really covers, instead of running pole to pole — and
+  `dem.center_lon` (`number`, optional, default `0`) its longitude; `dem.sea_level_pixel_value` (`number`) marks the pixel level at
   or below which land is sea, in the image's own depth (`0`–`255` for an 8-bit
   image, `0`–`65535` for 16-bit).]
 

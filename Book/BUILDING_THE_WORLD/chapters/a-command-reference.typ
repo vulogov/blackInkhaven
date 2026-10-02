@@ -29,6 +29,7 @@ The `realworld` group is Inkhaven's world builder; the few rows outside it
   chord_row("realworld show", "Print the world definition; --json for structured form."),
   chord_row("inkhaven worldbuilder [--interview]", "The interactive front-end to all of the above (Chapter 20): an interview or shaping commands build a pending delta, checked against the schema as each edit is accepted; /write commits it and keeps the previous file at .inkhaven/world.hjson.bak."),
   chord_row("Ctrl+B W", "Open the read-only World overview — every compiled layer, plus a \"This scene\" header when the cursor is in a scene."),
+  chord_row("Ctrl+B W → C", "Compile the world, write it into the World book and seed the proposal queue — in the background: the status line names each layer and you can go on writing. C again cancels between layers; what was written stays."),
 ))
 
 #section("Deepen — a past and a people")

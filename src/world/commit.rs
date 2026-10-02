@@ -14,6 +14,7 @@ use crate::error::{Error, Result};
 use crate::store::hierarchy::Hierarchy;
 use crate::store::{InsertPosition, NodeKind, Store};
 use crate::store::{SYSTEM_TAG_CHARACTERS, SYSTEM_TAG_LANGUAGES, SYSTEM_TAG_MYTHOLOGY, SYSTEM_TAG_PLACES};
+use crate::world::i18n::{self, WLang};
 use crate::world::proposals::{PlaceLink, PlaceProposal};
 use crate::world::storage::WorldStore;
 use uuid::Uuid;
@@ -41,7 +42,10 @@ pub(crate) fn commit_proposal(
         // H10 — the Place node is already created; a failed cross-reference write
         // must NOT bubble up and leave the proposal un-accepted, or a retry would
         // create a duplicate Place. Record the link best-effort and proceed.
-        if let Err(e) = ws.insert_place_link(&PlaceLink::from_proposal(place_id, p)) {
+        if let Err(e) = ws.insert_place_link(
+            &PlaceLink::from_proposal(place_id, p),
+            crate::world::storage::CoordsSource::Compiled,
+        ) {
             eprintln!("warning: Place `{}` created but its world cross-reference did not save: {e}", p.name);
         }
         Ok("Places")
@@ -93,11 +97,12 @@ pub(crate) fn commit_place(store: &Store, cfg: &Config, p: &PlaceProposal) -> Re
     let places = book(&h, SYSTEM_TAG_PLACES, "Places")?.clone();
     let pop = p.payload.get("population").and_then(|v| v.as_u64()).unwrap_or(0);
     let class = p.payload.get("class").and_then(|v| v.as_str()).unwrap_or("settlement");
-    let basis = p.payload.get("basis").and_then(|v| v.as_str()).unwrap_or("").replace('_', " ");
-    let biome = p.payload.get("biome").and_then(|v| v.as_str()).unwrap_or("").replace('_', " ");
+    let basis = p.payload.get("basis").and_then(|v| v.as_str()).unwrap_or("");
+    let biome = p.payload.get("biome").and_then(|v| v.as_str()).unwrap_or("");
     let prose = format!(
-        "{} is a {} of roughly {} people, set at a {} in a {} zone.\n\n// world-compiler proposal {}\n",
-        p.name, class, pop, basis, biome, p.signature
+        "{}\n\n// world-compiler proposal {}\n",
+        i18n::place_prose(WLang::of_config(&cfg.language), &p.name, class, pop, basis, biome),
+        p.signature
     );
     write_paragraph(store, cfg, &places, &p.name, &prose, None, false)
 }
@@ -107,7 +112,7 @@ pub(crate) fn commit_myth(store: &Store, cfg: &Config, p: &PlaceProposal) -> Res
     let h = Hierarchy::load(store)?;
     let myth = book(&h, SYSTEM_TAG_MYTHOLOGY, "Mythology")?.clone();
     let tag = p.payload.get("tag").and_then(|v| v.as_str()).unwrap_or("para:myth-symbol");
-    let body = crate::world::myth_proposals::myth_entry_body(p);
+    let body = crate::world::myth_proposals::myth_entry_body(p, WLang::of_config(&cfg.language));
     write_paragraph(store, cfg, &myth, &p.name, &body, Some(tag), true)?;
     Ok(())
 }
@@ -116,7 +121,7 @@ pub(crate) fn commit_myth(store: &Store, cfg: &Config, p: &PlaceProposal) -> Res
 pub(crate) fn commit_character(store: &Store, cfg: &Config, p: &PlaceProposal) -> Result<()> {
     let h = Hierarchy::load(store)?;
     let chars = book(&h, SYSTEM_TAG_CHARACTERS, "Characters")?.clone();
-    let body = crate::world::ruler_proposals::ruler_body(p);
+    let body = crate::world::ruler_proposals::ruler_body(p, WLang::of_config(&cfg.language));
     write_paragraph(store, cfg, &chars, &p.name, &body, None, false)?;
     Ok(())
 }
@@ -140,7 +145,7 @@ pub(crate) fn commit_language(store: &Store, cfg: &Config, p: &PlaceProposal) ->
         .into_iter()
         .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Meta"))
     {
-        let body = crate::world::language_proposals::language_brief_body(p);
+        let body = crate::world::language_proposals::language_brief_body(p, WLang::of_config(&cfg.language));
         write_paragraph(store, cfg, &meta, "world-profile", &body, None, false)?;
     }
     Ok(())

@@ -13,6 +13,7 @@
 
 use crate::world::compile::culture_layer::CultureOutput;
 use crate::world::compile::polities_layer::PolitiesOutput;
+use crate::world::i18n::WLang;
 use crate::world::proposals::{now_secs, PlaceProposal};
 
 /// A stable slug for a realm name, for the proposal signature (dedup key).
@@ -67,8 +68,20 @@ pub fn language_proposals(pol: &PolitiesOutput, cultures: &CultureOutput, _seed:
 
 /// The design-brief body seeded into the new language's `Meta` chapter — the
 /// world's profile, written where the author will build the real language.
-pub fn language_brief_body(p: &PlaceProposal) -> String {
+///
+/// Written in `lang` (WK2-P3) — the terms of the profile translated with it.
+pub fn language_brief_body(p: &PlaceProposal, lang: WLang) -> String {
     let s = |k: &str| p.payload.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    if let Some(brief) = crate::world::i18n::language_brief(
+        lang,
+        &s("realm"),
+        &s("word_order"),
+        &s("morphology"),
+        &s("sound"),
+        &s("naming_sample"),
+    ) {
+        return format!("{brief}// World × ConLang bridge — from `realworld propose-language`\n");
+    }
     format!(
         "The world proposes this tongue for {}. It is a *profile*, not a finished \
          language — realise it in the ConLang suite (Phonology, Grammar, Dictionary).\n\n\
@@ -131,7 +144,7 @@ mod tests {
         assert_eq!(props[0].name, "Karon");
         assert_eq!(props[0].signature, "language:karon");
         // The brief keeps the three axes + the sample.
-        let brief = language_brief_body(&props[0]);
+        let brief = language_brief_body(&props[0], WLang::En);
         assert!(brief.contains("SVO"));
         assert!(brief.contains("fusional"));
         assert!(brief.contains("tonal"));
@@ -148,7 +161,7 @@ mod tests {
     fn is_deterministic() {
         let a = language_proposals(&pol(&["Karon"]), &cultures(&[("Karon", "VSO · isolating · guttural", "Kor")]), 9);
         let b = language_proposals(&pol(&["Karon"]), &cultures(&[("Karon", "VSO · isolating · guttural", "Kor")]), 9);
-        assert_eq!(language_brief_body(&a[0]), language_brief_body(&b[0]));
+        assert_eq!(language_brief_body(&a[0], WLang::En), language_brief_body(&b[0], WLang::En));
         assert_eq!(a[0].signature, b[0].signature);
     }
 }
