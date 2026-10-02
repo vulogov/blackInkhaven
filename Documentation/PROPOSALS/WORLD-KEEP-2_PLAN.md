@@ -1,26 +1,30 @@
 # WORLD-KEEP-2 — "The Rest of the Word" (3.16.0)
 
-*Status: PLAN. On `3.16.0-dev`, sequenced after
+*Status: IN PROGRESS on `3.16.0-dev` (WK2-P1 done), sequenced after
 [`CANON-READER-1`](CANON-READER-1_PLAN.md). The four items
 [`WORLD-KEEP-1`](WORLD-KEEP-1_PLAN.md) deferred, each with the reason it was
 deferred turned into its first step.*
 
 ## Phases
 
-- **WK2-P1 — a migration path for `world.db`.** Two fixes waited on this. The
-  store has no schema version: tables are `CREATE TABLE IF NOT EXISTS`, so a
-  column cannot be added to an existing project. Add a `world_meta` key/value
-  table carrying `schema_version`, and an idempotent, forward-only migration
-  step run at open (add-column-if-missing; never destructive; a newer file than
-  the binary understands opens read-compatible). Tested against a `world.db`
-  created by the 3.15.0 schema.
+- **WK2-P1 — a migration path for `world.db`.** *(Done.)* Correction to this
+  plan's first draft: the store was not unversioned — every feature store has
+  carried a `_inkhaven_schema` anchor since the 3.0.0 freeze, stamped `1`, so a
+  newer file is refused by an older binary. What was missing was the *step*: the
+  "older than current" arm did nothing, so no store could ever change shape.
+  `StorageEngine::new_migrating` adds it — ordered, forward-only, idempotent
+  statements (`ADD COLUMN IF NOT EXISTS`), then the stamp. `world.db` is now v2.
+  Verified against a store written by the published 3.15.0 binary.
   - **Author-set coordinates survive map ingest.** `world_place_links` gains
     `coords_source` (`compiled` | `author` | `map`). `set-coords` marks `author`;
-    `realworld map` ingest refines only rows that are not `author`. Existing rows
-    default to `compiled` (today's behaviour for them).
-  - **Seed-scoped proposals.** `world_proposals` gains `seed`. A place accepted
-    or rejected under one seed no longer suppresses a settlement at the same cell
-    of a different, adopted seed.
+    a map render refines only rows that are not. Existing rows read as `compiled`.
+  - **Seed-scoped place proposals.** `world_proposals` gains `seed`. A *place*
+    signature is a map cell, so a place decision now applies only under the seed
+    it was made under; rows from before the migration carry no seed and keep
+    applying under every seed. Name-keyed kinds (rulers, languages, myths) stay
+    global — their signature already identifies the thing.
+  - One-way: once migrated, a 3.15.0 binary refuses the store ("upgrade
+    inkhaven"), by the existing guard.
 
 - **WK2-P2 — a regional map has a latitude.** A heightmap with a declared scale
   is measured as a region but still weathered pole to pole. `geology.dem` gains

@@ -722,7 +722,9 @@ fn set_coords(
         x: cx,
         y: cy,
     };
-    ws.insert_place_link(&link).map_err(|e| Error::Store(format!("writing link: {e}")))?;
+    // The author placed it: mark it so a later map render does not move it.
+    ws.insert_place_link(&link, crate::world::storage::CoordsSource::Author)
+        .map_err(|e| Error::Store(format!("writing link: {e}")))?;
 
     let latd = row_to_latitude(cy, h);
     let lond = col_to_lon(cx, w);
@@ -1861,13 +1863,16 @@ fn map(project: &Path, spec_only: bool, no_ingest: bool) -> Result<()> {
 
     // Ingest: refine each accepted Place's coordinates from the landmark plakat
     // resolved for it.
-    let mut updated = 0usize;
+    let (mut updated, mut kept) = (0usize, 0usize);
     if !no_ingest {
         if let Some(s) = store.as_ref() {
             for lm in &art.landmarks {
                 if let Some(pid) = lm.place_id() {
-                    if s.update_place_link_coords(pid, lm.x, lm.y).is_ok() {
-                        updated += 1;
+                    // Coordinates the author set with `set-coords` are never moved.
+                    match s.refine_place_link_coords(pid, lm.x, lm.y) {
+                        Ok(true) => updated += 1,
+                        Ok(false) => kept += 1,
+                        Err(_) => {}
                     }
                 }
             }
@@ -1876,7 +1881,13 @@ fn map(project: &Path, spec_only: bool, no_ingest: bool) -> Result<()> {
     println!(
         "  {} landmark(s) resolved{}",
         art.landmarks.len(),
-        if no_ingest { String::new() } else { format!(", {updated} Place coordinate(s) refined") }
+        if no_ingest {
+            String::new()
+        } else if kept > 0 {
+            format!(", {updated} Place coordinate(s) refined ({kept} kept — set by you, or not linked)")
+        } else {
+            format!(", {updated} Place coordinate(s) refined")
+        }
     );
     Ok(())
 }
@@ -1897,7 +1908,7 @@ fn propose(project: &Path) -> Result<()> {
     let store = WorldStore::open_for_project(project)
         .map_err(|e| Error::Store(format!("opening world store: {e}")))?;
     let resolved = store
-        .resolved_signatures()
+        .resolved_signatures(def.seed_u64())
         .map_err(|e| Error::Store(format!("reading proposals: {e}")))?;
     store.clear_pending_kinds("place").map_err(|e| Error::Store(format!("clearing proposals: {e}")))?;
 
@@ -1908,7 +1919,7 @@ fn propose(project: &Path) -> Result<()> {
             skipped += 1; // already accepted or rejected — don't re-propose
             continue;
         }
-        store.insert(p).map_err(|e| Error::Store(format!("inserting proposal: {e}")))?;
+        store.insert(p, Some(def.seed_u64())).map_err(|e| Error::Store(format!("inserting proposal: {e}")))?;
         added += 1;
     }
     println!(
@@ -1953,7 +1964,7 @@ fn propose_myth(project: &Path) -> Result<()> {
     let store = WorldStore::open_for_project(project)
         .map_err(|e| Error::Store(format!("opening world store: {e}")))?;
     let resolved = store
-        .resolved_signatures()
+        .resolved_signatures(def.seed_u64())
         .map_err(|e| Error::Store(format!("reading proposals: {e}")))?;
     store
         .clear_pending_kinds("myth-%")
@@ -1966,7 +1977,7 @@ fn propose_myth(project: &Path) -> Result<()> {
             skipped += 1; // already accepted or rejected — don't re-propose
             continue;
         }
-        store.insert(p).map_err(|e| Error::Store(format!("inserting proposal: {e}")))?;
+        store.insert(p, Some(def.seed_u64())).map_err(|e| Error::Store(format!("inserting proposal: {e}")))?;
         added += 1;
     }
     if proposals.is_empty() {
@@ -2015,7 +2026,7 @@ fn propose_rulers(project: &Path) -> Result<()> {
     let store = WorldStore::open_for_project(project)
         .map_err(|e| Error::Store(format!("opening world store: {e}")))?;
     let resolved = store
-        .resolved_signatures()
+        .resolved_signatures(def.seed_u64())
         .map_err(|e| Error::Store(format!("reading proposals: {e}")))?;
     store
         .clear_pending_kinds("character")
@@ -2028,7 +2039,7 @@ fn propose_rulers(project: &Path) -> Result<()> {
             skipped += 1;
             continue;
         }
-        store.insert(p).map_err(|e| Error::Store(format!("inserting proposal: {e}")))?;
+        store.insert(p, Some(def.seed_u64())).map_err(|e| Error::Store(format!("inserting proposal: {e}")))?;
         added += 1;
     }
     if proposals.is_empty() {
@@ -2077,7 +2088,7 @@ fn propose_language(project: &Path) -> Result<()> {
     let store = WorldStore::open_for_project(project)
         .map_err(|e| Error::Store(format!("opening world store: {e}")))?;
     let resolved = store
-        .resolved_signatures()
+        .resolved_signatures(def.seed_u64())
         .map_err(|e| Error::Store(format!("reading proposals: {e}")))?;
     store
         .clear_pending_kinds("language")
@@ -2090,7 +2101,7 @@ fn propose_language(project: &Path) -> Result<()> {
             skipped += 1;
             continue;
         }
-        store.insert(p).map_err(|e| Error::Store(format!("inserting proposal: {e}")))?;
+        store.insert(p, Some(def.seed_u64())).map_err(|e| Error::Store(format!("inserting proposal: {e}")))?;
         added += 1;
     }
     if proposals.is_empty() {

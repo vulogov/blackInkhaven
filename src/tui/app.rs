@@ -16398,7 +16398,8 @@ impl App {
                 if let Some(s) = store.as_ref() {
                     for lm in &art.landmarks {
                         if let Some(pid) = lm.place_id() {
-                            if s.update_place_link_coords(pid, lm.x, lm.y).is_ok() {
+                            // Author-set coordinates (`set-coords`) are never moved.
+                            if s.refine_place_link_coords(pid, lm.x, lm.y).unwrap_or(false) {
                                 refined += 1;
                             }
                         }
@@ -16515,7 +16516,7 @@ impl App {
             let ws = WorldStore::open_for_project(&root)
                 .map_err(|e| crate::error::Error::Store(format!("world store: {e}")))?;
             let resolved = ws
-                .resolved_signatures()
+                .resolved_signatures(seed)
                 .map_err(|e| crate::error::Error::Store(format!("{e}")))?;
             let batches: Vec<(&str, Vec<crate::world::proposals::PlaceProposal>)> = vec![
                 ("place", place_proposals(&demo, seed)),
@@ -16528,7 +16529,7 @@ impl App {
                 ws.clear_pending_kinds(like).map_err(|e| crate::error::Error::Store(format!("{e}")))?;
                 for p in batch {
                     if !resolved.contains(&p.signature) {
-                        ws.insert(&p).map_err(|e| crate::error::Error::Store(format!("{e}")))?;
+                        ws.insert(&p, Some(seed)).map_err(|e| crate::error::Error::Store(format!("{e}")))?;
                         n += 1;
                     }
                 }

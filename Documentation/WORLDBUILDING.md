@@ -304,7 +304,9 @@ $ inkhaven realworld map
 Mountains come from clustering the heightfield's high cells; rivers run their real
 D8 watercourse; landmarks are your largest settlements (coastal cities → ports).
 plakat's resolved landmark positions are read back to **refine each accepted
-Place's coordinates**.
+Place's coordinates**. (3.16) Coordinates you set yourself with `realworld
+set-coords` are never moved by a render — the map refines only positions that came
+from the compiler or from an earlier render.
 
 | Flag / chord | Effect |
 |---|---|
