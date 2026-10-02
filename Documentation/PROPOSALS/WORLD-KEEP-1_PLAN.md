@@ -54,9 +54,14 @@ Every item below was verified in the 3.14.0 tree.
     is hard-coded English → a per-language script keyed on the project language,
     with the answer words (`orange` / `оранжевая` / …, `yes` / `да` / …)
     accepted in each;
-  - the rationales and committed prose of `propose`, `propose-rulers`,
-    `propose-language`, `propose-myth`, and the `critique` Note titles/bodies are
-    hard-coded English → localised templates;
+  - *Deferred — larger than a template pass:* the rationales and committed prose
+    of `propose`, `propose-rulers`, `propose-language`, `propose-myth` and the
+    `critique` Note titles are hard-coded English, but their slots are filled
+    from the compile layers' own English vocabulary (settlement class, siting
+    basis, biome, the generated ethos and belief phrases). Translating only the
+    sentence frame would commit mixed-language prose into the author's books;
+    doing it properly means five-language tables for every one of those
+    vocabularies. Scoped as its own item;
   - the `coherence` and slow fact-check system prompts never name the project
     language → they do.
   - Decision to make here: `primary_language` is only *displayed* today, though
