@@ -1,6 +1,7 @@
 # CANON-UI-2 — "Canon in Hand" (3.15.0)
 
-*Status: PLAN. On `3.15.0-dev`. Follows [`CANON-UI-1_PLAN.md`](CANON-UI-1_PLAN.md)
+*Status: SHIPPED in 3.15.0 "Canon in Hand" (CU2-P1 83d82c28 · CU2-P2 24031292 ·
+CU2-P3 75a2473b · CU2-P4 6c3ad9de · CU2-P5 docs + cut). Follows [`CANON-UI-1_PLAN.md`](CANON-UI-1_PLAN.md)
 (3.14.0 "Canon at Hand") and closes its two deferred proposals (C, D) as riders.*
 
 ## Why
