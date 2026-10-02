@@ -18,6 +18,11 @@
 //!   positions:[{agent, level}], resolved}.
 //! - `ink.canon.graph` ( -- list )     the grounds adjacency: every decision as a
 //!   dict {uid, kind, gist, commitment, grounds:[uid]} (what it rests on).
+//! - `ink.canon.read` ( -- list )      CANON-READER-1: the ledger read against
+//!   the manuscript — findings as dicts {kind, uid, gist, node, locator,
+//!   related, message, weight, resolve}. Deterministic; includes the
+//!   contradictions still standing from the last opt-in deep pass (read from
+//!   its sidecar — a script never triggers the model call).
 
 use std::collections::HashMap;
 
@@ -26,7 +31,7 @@ use easy_error::Error as BundError;
 use rust_dynamic::value::Value;
 use rust_multistackvm::multistackvm::VM;
 
-use super::helpers::{active_store, pull, push, value_to_string};
+use super::helpers::{active_config, active_store, pull, push, value_to_string};
 use crate::canon::CanonView;
 
 pub fn register(vm: &mut VM) -> Result<()> {
@@ -37,6 +42,7 @@ pub fn register(vm: &mut VM) -> Result<()> {
         ("ink.canon.history", w_history),
         ("ink.canon.forks", w_forks),
         ("ink.canon.graph", w_graph),
+        ("ink.canon.read", w_read),
     ];
     for (name, f) in words {
         vm.register_inline(name.to_string(), *f).map_err(|e| anyhow!("register {name}: {e}"))?;
@@ -168,6 +174,40 @@ fn do_history(vm: &mut VM) -> Result<&mut VM> {
             d.insert("level".into(), Value::from_string(e.level.to_string()));
             d.insert("agent".into(), Value::from_string(&e.agent));
             d.insert("ts".into(), Value::from_int(e.wall_ms as i64));
+            Value::from_dict(d)
+        })
+        .collect();
+    push(vm, Value::from_list(list));
+    Ok(vm)
+}
+
+word!(w_read, do_read);
+fn do_read(vm: &mut VM) -> Result<&mut VM> {
+    let tag = "ink.canon.read";
+    let store = active_store(tag)?;
+    let cfg = active_config(tag)?;
+    let hierarchy = crate::store::hierarchy::Hierarchy::load(store).map_err(|e| anyhow!("{tag}: {e}"))?;
+    let layout = crate::project::ProjectLayout::new(store.project_root());
+    let (language, _) = crate::prose::resolve_prose_language(None, &cfg.language);
+    let view = crate::cli::canon::ManuscriptView { store, hierarchy: &hierarchy };
+    let findings = crate::canon::deep::check_all(store.raw().canon(), &view, &language, &layout)
+        .map_err(|e| anyhow!("{tag}: {e}"))?;
+    let list: Vec<Value> = findings
+        .iter()
+        .map(|f| {
+            let mut d: HashMap<String, Value> = HashMap::new();
+            d.insert("kind".into(), Value::from_string(f.kind.as_str()));
+            d.insert("uid".into(), Value::from_string(f.decision.short()));
+            d.insert("gist".into(), Value::from_string(&f.gist));
+            d.insert("node".into(), Value::from_string(f.node.map(|n| n.to_string()).unwrap_or_default()));
+            d.insert("locator".into(), Value::from_string(f.locator.clone().unwrap_or_default()));
+            d.insert("related".into(), Value::from_string(f.related.map(|u| u.short()).unwrap_or_default()));
+            d.insert("message".into(), Value::from_string(&f.message));
+            d.insert("weight".into(), Value::from_int(f.weight as i64));
+            d.insert(
+                "resolve".into(),
+                Value::from_string(if f.kind.is_decision() { "decision" } else { "brief" }),
+            );
             Value::from_dict(d)
         })
         .collect();

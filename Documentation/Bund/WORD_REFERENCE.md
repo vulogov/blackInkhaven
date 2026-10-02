@@ -423,6 +423,7 @@ Read-only. Setting a decision's commitment (`commit`) and the opt-in, author-con
 | `ink.canon.history` | store_read | `( id -- list )` | `id`'s commitment trajectory over time `{level, agent, ts}` (oldest first) |
 | `ink.canon.forks` | store_read | `( -- list )` | commitment forks `{uid, gist, positions:[{agent, level}], resolved}` |
 | `ink.canon.graph` | store_read | `( -- list )` | the grounds adjacency: every decision `{uid, kind, gist, commitment, grounds:[uid]}` |
+| `ink.canon.read` | store_read | `( -- list )` | (3.16) the ledger read against the manuscript: findings `{kind, uid, gist, node, locator, related, message, weight, resolve}` — `kind` is `contradicted` / `built_on_sand` / `drifted_source` / `orphaned_decision` / `unsettled_foundation`; contradictions come from the stored result of the last deep pass (a script never calls the model) |
 
 **`ink.knowledge.*` — KEN, epistemic continuity**
 

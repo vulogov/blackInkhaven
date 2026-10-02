@@ -259,6 +259,7 @@ pub const WORD_CATEGORIES: &[(&str, &str)] = &[
     ("ink.canon.history", category::STORE_READ),
     ("ink.canon.forks", category::STORE_READ),
     ("ink.canon.graph", category::STORE_READ),
+    ("ink.canon.read", category::STORE_READ),
     // KEN — the epistemic check (who knows what, when); read-only, deterministic.
     // The opt-in --deep LLM implied_irony pass is not exposed (it costs).
     ("ink.knowledge.grants", category::STORE_READ),
