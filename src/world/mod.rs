@@ -30,6 +30,7 @@
 
 pub mod calc_read;
 pub mod commit;
+pub mod compile_job;
 pub mod compile;
 pub mod critique;
 pub mod fact_check;
