@@ -78,7 +78,6 @@ impl CanonFindingKind {
     }
 
     /// The short marker shown beside a decision in the Canon pane / dashboard.
-    #[allow(dead_code)] // consumed by the editor surfaces in CR-P4
     pub fn marker(self) -> &'static str {
         match self {
             CanonFindingKind::Contradicted => "⚠ contradicted",

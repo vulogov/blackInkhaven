@@ -1724,6 +1724,9 @@ pub(crate) struct CanonPaneRow {
     pub gist: String,
     /// How many decisions transitively rest on this one.
     pub impact: usize,
+    /// CANON-READER-1 (CR-P4) — what the canon reader says about this decision
+    /// (`⚠ drifted`, `⚠ on sand`, …); empty when the ledger and the book agree.
+    pub markers: Vec<&'static str>,
     /// The nearest grounds this one rests on: (gist, source node), nearest first.
     pub grounds: Vec<(String, Option<Uuid>)>,
     /// Grounds beyond the ones listed.
@@ -1927,6 +1930,12 @@ pub(crate) struct App {
     /// a save this session, so the impact-on-edit advisory informs once, not on
     /// every save.
     canon_edit_noted: std::collections::HashSet<Uuid>,
+    /// CANON-READER-1 (CR-P4) — the canon reader's deterministic findings, for
+    /// the pane markers and the dashboard. Recomputed when stale (`None`, or
+    /// older than a few seconds while a canon surface is showing) and
+    /// invalidated by anything that changes the ledger or saves prose.
+    canon_findings: Vec<crate::canon::read::CanonFinding>,
+    canon_findings_at: Option<std::time::Instant>,
     /// WK-P5 — the world context the idle fact-check needs from a geology
     /// compile (moon names, mineral names), keyed on the mtimes of world.hjson
     /// and its heightmap. Interior-mutable: the collector takes `&self`.
@@ -3839,6 +3848,8 @@ impl App {
             canon_source_nodes: std::collections::HashSet::new(),
             canon_source_levels: std::collections::HashMap::new(),
             canon_edit_noted: std::collections::HashSet::new(),
+            canon_findings: Vec::new(),
+            canon_findings_at: None,
             fact_check_world_cache: std::cell::RefCell::new(None),
             canon_source_nodes_at: std::time::Instant::now(),
             tree_cursor: 0,
@@ -17580,6 +17591,9 @@ impl App {
     /// the development-ledger decisions with kind + commitment, plus commitment
     /// forks. Enter jumps to a decision's source paragraph.
     fn open_canon(&mut self) {
+        // Opening the dashboard reads the ledger against the book afresh.
+        self.invalidate_canon_findings();
+        self.refresh_canon_findings(std::time::Duration::ZERO);
         let (rows, anchors, decisions) = self.build_canon_rows(false);
         // Advertise the actions whenever there are decisions — g/h work on any
         // decision row, even one with no jump anchor (a node-less/merged decision).
@@ -17601,6 +17615,11 @@ impl App {
             decisions_ids.push(decision);
         };
         let canon = self.store.raw().canon();
+        // A decision row's trailing reader markers (` ⚠ drifted ⚠ on sand`).
+        let marks_of = |uid: smysl::Uid| -> String {
+            let m = self.canon_markers_for(uid);
+            if m.is_empty() { String::new() } else { format!("  {}", m.join(" ")) }
+        };
         let fmt = |kind: Option<crate::canon::NarrativeKind>, commit: Option<smysl::Commitment>| {
             let k = kind.map(|k| k.schema_str().trim_start_matches("x.narrative/")).unwrap_or("?");
             (k, commit.map(|c| format!(" «{c}»")).unwrap_or_default())
@@ -17626,7 +17645,8 @@ impl App {
             for r in &dag {
                 let (kind, commit) = fmt(r.view.kind, r.view.commitment);
                 let indent = "  ".repeat(r.depth + 1);
-                push(format!("{indent}[{kind}]{commit} {}", r.view.gist), r.view.node, Some(r.view.uid));
+                let marks = marks_of(r.view.uid);
+                push(format!("{indent}[{kind}]{commit} {}{marks}", r.view.gist), r.view.node, Some(r.view.uid));
             }
             return (rows, anchors, decisions_ids);
         }
@@ -17647,11 +17667,28 @@ impl App {
             );
             return (rows, anchors, decisions_ids);
         }
+        // CANON-READER-1 (CR-P4) — where the ledger and the book disagree, first:
+        // each row opens the paragraph involved and acts on its decision (c / g / h).
+        if !self.canon_findings.is_empty() {
+            push(
+                format!(
+                    "⚠ {} finding(s) — the ledger and the book disagree (Enter opens the paragraph)",
+                    self.canon_findings.len()
+                ),
+                None,
+                None,
+            );
+            for f in &self.canon_findings {
+                push(format!("  {} · {}", f.kind.marker(), f.gist), f.node, Some(f.decision));
+            }
+            push(String::new(), None, None);
+        }
         push(format!("◆ Canon ledger — {} decision(s)", decisions.len()), None, None);
         push(String::new(), None, None);
         for v in &decisions {
             let (kind, commit) = fmt(v.kind, v.commitment);
-            push(format!("  [{kind}]{commit} {}", v.gist), v.node, Some(v.uid));
+            let marks = marks_of(v.uid);
+            push(format!("  [{kind}]{commit} {}{marks}", v.gist), v.node, Some(v.uid));
         }
         if let Ok(forks) = canon.commitment_forks() {
             if !forks.is_empty() {
@@ -17822,6 +17859,9 @@ impl App {
                     }
                     Err(e) => format!("canon: commit failed — {e}"),
                 };
+                // A new level changes built-on-sand / unsettled-foundation.
+                self.invalidate_canon_findings();
+                self.refresh_canon_findings(std::time::Duration::ZERO);
                 self.close_canon_commit(back);
                 // The ◈ tint follows commitment — refresh it now, not on the
                 // next throttled tick.
@@ -17871,6 +17911,8 @@ impl App {
             Ok(_) => self.status = "canon · grounded".into(),
             Err(e) => self.status = format!("canon: grounding failed — {e}"),
         }
+        self.invalidate_canon_findings();
+        self.refresh_canon_findings(std::time::Duration::ZERO);
         // Rebuild (grounding cleared), reflecting the new/​superseded ids and
         // preserving the current list/graph view.
         let graph = matches!(&self.modal, Modal::Canon { graph: true, .. });
@@ -18332,7 +18374,7 @@ impl App {
             ("Character arc", None, Action::OpenCharacterArc),
             ("Myth", None, Action::OpenMythHeatmap),
             ("Chronicle", None, Action::OpenChronicle),
-            ("Canon (development ledger)", None, Action::OpenCanon),
+            ("Canon (development ledger)", Some("canon"), Action::OpenCanon),
             ("Story bible", None, Action::OpenStoryBible),
         ];
         let mut rows: Vec<String> = Vec::new();
@@ -20541,6 +20583,37 @@ impl App {
         }
     }
 
+    /// CANON-READER-1 (CR-P4) — make sure the cached canon-reader findings are
+    /// current: recompute when invalidated or older than `max_age`. Deterministic
+    /// and read-only; a ledger that cannot be read leaves the list empty.
+    pub(super) fn refresh_canon_findings(&mut self, max_age: std::time::Duration) {
+        if self.canon_findings_at.is_some_and(|at| at.elapsed() < max_age) {
+            return;
+        }
+        let (language, _) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        let view = crate::cli::canon::ManuscriptView { store: &self.store, hierarchy: &self.hierarchy };
+        self.canon_findings =
+            crate::canon::read::check(self.store.raw().canon(), &view, &language).unwrap_or_default();
+        self.canon_findings_at = Some(std::time::Instant::now());
+    }
+
+    /// The ledger or the prose changed — the cached findings are stale.
+    pub(super) fn invalidate_canon_findings(&mut self) {
+        self.canon_findings_at = None;
+    }
+
+    /// The reader's markers for one decision, most serious first, de-duplicated.
+    fn canon_markers_for(&self, uid: smysl::Uid) -> Vec<&'static str> {
+        let mut out: Vec<&'static str> = Vec::new();
+        for f in self.canon_findings.iter().filter(|f| f.decision == uid) {
+            let m = f.kind.marker();
+            if !out.contains(&m) {
+                out.push(m);
+            }
+        }
+        out
+    }
+
     /// CANON-UI-1 (CU1-P3) — recompute the Canon pane for the open paragraph:
     /// the decisions it sources, each with its impact count and nearest grounds.
     /// `reset_cursor` when the paragraph changed. Bounded by the per-project
@@ -20552,6 +20625,8 @@ impl App {
             .map(|n| n.title.clone())
             .unwrap_or_default();
         let mut state = CanonPaneState { node: opened, title, ..Default::default() };
+        // The reader's findings mark the rows (cached; a few seconds stale at most).
+        self.refresh_canon_findings(std::time::Duration::from_secs(5));
         if let Some(id) = opened {
             let canon = self.store.raw().canon();
             match canon.units_for_node(id) {
@@ -20575,6 +20650,7 @@ impl App {
                             commitment: v.commitment.map(|c| c.to_string()),
                             gist: v.gist.clone(),
                             impact,
+                            markers: self.canon_markers_for(uid),
                             grounds: direct,
                             grounds_more,
                         });
@@ -20690,6 +20766,7 @@ impl App {
             Ok(n) => format!("canon · accepted {n} decision(s) into the ledger — `c` sets how settled"),
             Err(e) => format!("canon: accept failed — {e}"),
         };
+        self.invalidate_canon_findings();
         self.refresh_canon_source_nodes();
         self.refresh_canon_pane(false);
     }
