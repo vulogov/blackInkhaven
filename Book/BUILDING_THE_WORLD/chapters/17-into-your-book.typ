@@ -50,6 +50,24 @@ you choose.
   the Places book until you accept it — the world never writes on its own.
 ]
 
+Two things about the queue are worth knowing before you lean on it.
+
+*It speaks your book's language.* If your project is written in Russian, French,
+German or Spanish, the proposals are too — the line you read in the queue, and
+the paragraph that lands in your Places book when you accept. It is the words
+that are translated, not only the sentence around them: the kind of settlement,
+where it sits, the land it stands in. The same holds for the other things the
+world offers this way — a ruler for each realm, a design brief for each people's
+tongue, a symbol for each belief. A belief or a temperament you *declared* is
+left exactly as you wrote it, and names are never translated: they come from the
+world's own sounds.
+
+*A decision belongs to the world it was made in.* A settlement is known by where
+it stands on the map. Reject a village and it stays rejected, however often you
+propose again — but change the seed, and you have grown a different world, whose
+towns are offered afresh. A ruler, a language or a symbol is known by its name,
+so those stay settled whatever you do to the seed.
+
 #section("The calendar and history into the Timeline")
 
 The second bridge carries time. Your world computed a calendar from its sky and a
@@ -175,8 +193,9 @@ You may pass geographic degrees (`--lat`/`--lon`) or raw grid cells
 (`--x`/`--y`); Inkhaven fills in the biome under that cell from the compiled
 climate, so a hand-placed Place arrives knowing what land it stands on. From then
 on it is a first-class location: `realworld map` draws and labels it like any
-other, and the round-trip refines its position just the same. Move it later by
-running the command again with new coordinates.
+other. A position you set yourself is yours: rendering the map refines the
+places the world put down, and leaves alone the ones you placed by hand. Move
+it later by running the command again with new coordinates.
 
 #note[
   `set-coords` works on any Place in the Places book, whether the world proposed

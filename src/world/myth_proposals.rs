@@ -13,6 +13,7 @@
 use std::collections::BTreeMap;
 
 use crate::world::compile::culture_layer::CultureOutput;
+use crate::world::i18n::WLang;
 use crate::world::proposals::{now_secs, PlaceProposal};
 
 /// A seeded Mythology entry: either a symbol (a named vocabulary with a meaning)
@@ -97,9 +98,10 @@ fn belief_slug(belief: &str) -> String {
 fn belief_vocabulary(belief: &str) -> Vec<String> {
     const STOP: &[&str] = &["the", "and", "with", "from", "into", "that", "this", "their", "a", "an", "of", "for"];
     let mut out: Vec<String> = Vec::new();
-    for raw in belief.split(|c: char| !c.is_ascii_alphanumeric()) {
+    // Unicode-aware: a belief declared in Russian has words too.
+    for raw in belief.split(|c: char| !c.is_alphanumeric()) {
         let w = raw.to_lowercase();
-        if w.len() > 3 && !STOP.contains(&w.as_str()) && !out.contains(&w) {
+        if w.chars().count() > 3 && !STOP.contains(&w.as_str()) && !out.contains(&w) {
             out.push(w);
         }
         if out.len() == 4 {
@@ -188,7 +190,7 @@ pub fn myth_proposals(cultures: &CultureOutput, _seed: u64) -> Vec<PlaceProposal
 /// Render a proposal's payload as the HJSON body of a `para:myth-*` paragraph —
 /// the exact block `src/myth/parse.rs` reads back. Emits strict JSON, which the
 /// HJSON parser accepts, so quoting is always correct.
-pub fn myth_entry_body(p: &PlaceProposal) -> String {
+pub fn myth_entry_body(p: &PlaceProposal, lang: WLang) -> String {
     let get_str = |k: &str| p.payload.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
     let get_vec = |k: &str| {
         p.payload
@@ -202,7 +204,7 @@ pub fn myth_entry_body(p: &PlaceProposal) -> String {
         let desc = {
             let peoples = get_vec("traditions");
             let base = get_str("gloss");
-            if peoples.is_empty() { base } else { format!("{base} — held by {}", peoples.join(", ")) }
+            if peoples.is_empty() { base } else { format!("{base}{}", crate::world::i18n::held_by(lang, &peoples)) }
         };
         serde_json::json!({
             "myth_motif": { "name": get_str("name"), "description": desc, "valence": valence }
@@ -243,7 +245,7 @@ mod tests {
         assert_eq!(props[0].kind, "myth-symbol");
         assert_eq!(props[0].signature, "myth:a-sky-pantheon");
         // The body is a parseable myth_symbol block crediting the people.
-        let body = myth_entry_body(&props[0]);
+        let body = myth_entry_body(&props[0], WLang::En);
         let s = crate::myth::parse_symbol_block_for_test("p", &body).unwrap();
         assert!(s.vocabulary.iter().any(|v| v == "sky"));
         assert_eq!(s.traditions, vec!["Karon"]);
@@ -254,7 +256,7 @@ mod tests {
         let cul = CultureOutput { cultures: vec![culture("Serai", "a cult of the seasons")] };
         let props = myth_proposals(&cul, 1);
         assert_eq!(props[0].kind, "myth-motif");
-        let body = myth_entry_body(&props[0]);
+        let body = myth_entry_body(&props[0], WLang::En);
         let m = crate::myth::parse_motif_block_for_test("p", &body).unwrap();
         assert_eq!(m.name, "the turning year");
         assert!(m.description.contains("Serai")); // peoples folded into the description
@@ -270,7 +272,7 @@ mod tests {
         };
         let props = myth_proposals(&cul, 3);
         assert_eq!(props.len(), 1, "one symbol, credited to both peoples");
-        let body = myth_entry_body(&props[0]);
+        let body = myth_entry_body(&props[0], WLang::En);
         let s = crate::myth::parse_symbol_block_for_test("p", &body).unwrap();
         assert_eq!(s.traditions, vec!["Karon", "Serai"]);
     }
@@ -280,7 +282,7 @@ mod tests {
         let cul = CultureOutput { cultures: vec![culture("Vael", "the tide-mother and her drowned choir")] };
         let props = myth_proposals(&cul, 5);
         assert_eq!(props[0].kind, "myth-symbol");
-        let body = myth_entry_body(&props[0]);
+        let body = myth_entry_body(&props[0], WLang::En);
         let s = crate::myth::parse_symbol_block_for_test("p", &body).unwrap();
         // Vocabulary drawn from the belief's own words (de-articled, len > 3).
         assert!(s.vocabulary.iter().any(|v| v == "tide" || v == "mother" || v == "drowned" || v == "choir"));
@@ -291,7 +293,7 @@ mod tests {
         let cul = CultureOutput { cultures: vec![culture("Karon", "one hidden god")] };
         let a = myth_proposals(&cul, 9);
         let b = myth_proposals(&cul, 9);
-        assert_eq!(myth_entry_body(&a[0]), myth_entry_body(&b[0]));
+        assert_eq!(myth_entry_body(&a[0], WLang::En), myth_entry_body(&b[0], WLang::En));
         assert_eq!(a[0].signature, b[0].signature);
     }
 }

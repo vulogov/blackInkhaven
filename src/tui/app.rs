@@ -1724,6 +1724,9 @@ pub(crate) struct CanonPaneRow {
     pub gist: String,
     /// How many decisions transitively rest on this one.
     pub impact: usize,
+    /// CANON-READER-1 (CR-P4) — what the canon reader says about this decision
+    /// (`⚠ drifted`, `⚠ on sand`, …); empty when the ledger and the book agree.
+    pub markers: Vec<&'static str>,
     /// The nearest grounds this one rests on: (gist, source node), nearest first.
     pub grounds: Vec<(String, Option<Uuid>)>,
     /// Grounds beyond the ones listed.
@@ -1750,6 +1753,9 @@ pub(crate) struct CanonPaneState {
 /// WORLD-10 — the world-level compile cached for the scene context (recomputed
 /// lazily; the per-paragraph place/date resolution is cheap on top of it).
 struct SceneWorld {
+    /// The map's geographic extent (WK2-P2) — a scene's latitude is read
+    /// through it, exactly as the climate under that place was computed.
+    latmap: crate::world::latmap::LatMap,
     astro: crate::world::types::AstronomyOutput,
     pol: crate::world::compile::polities_layer::PolitiesOutput,
     cul: crate::world::compile::culture_layer::CultureOutput,
@@ -1927,6 +1933,12 @@ pub(crate) struct App {
     /// a save this session, so the impact-on-edit advisory informs once, not on
     /// every save.
     canon_edit_noted: std::collections::HashSet<Uuid>,
+    /// CANON-READER-1 (CR-P4) — the canon reader's deterministic findings, for
+    /// the pane markers and the dashboard. Recomputed when stale (`None`, or
+    /// older than a few seconds while a canon surface is showing) and
+    /// invalidated by anything that changes the ledger or saves prose.
+    canon_findings: Vec<crate::canon::read::CanonFinding>,
+    canon_findings_at: Option<std::time::Instant>,
     /// WK-P5 — the world context the idle fact-check needs from a geology
     /// compile (moon names, mineral names), keyed on the mtimes of world.hjson
     /// and its heightmap. Interior-mutable: the collector takes `&self`.
@@ -1991,6 +2003,9 @@ pub(crate) struct App {
     /// they were built from. A matching mtime re-opens the overview instantly;
     /// otherwise it recompiles off-thread (no UI freeze on DEM / large worlds).
     world_overview_cache: Option<(std::time::SystemTime, Vec<String>)>,
+    /// WK2-P4 — the report of a compile that finished while the overview was
+    /// open, restored to the status line once the overview has re-rendered.
+    world_compile_note: Option<String>,
     /// HAIKU-3 — cached whole-book centroid keyed on the manuscript paragraph
     /// count, so the `haiku_scope: "book"` haiku doesn't re-embed the book on every
     /// new-paragraph / on-demand trigger. Rebuilds when a paragraph is added/removed.
@@ -3814,6 +3829,7 @@ impl App {
             scene_world: None,
             scene_world_mtime: None,
             world_overview_cache: None,
+            world_compile_note: None,
             book_haiku_centroid: None,
             wordnet_index: None,
             wordnet_pivot_en: None,
@@ -3839,6 +3855,8 @@ impl App {
             canon_source_nodes: std::collections::HashSet::new(),
             canon_source_levels: std::collections::HashMap::new(),
             canon_edit_noted: std::collections::HashSet::new(),
+            canon_findings: Vec::new(),
+            canon_findings_at: None,
             fact_check_world_cache: std::cell::RefCell::new(None),
             canon_source_nodes_at: std::time::Instant::now(),
             tree_cursor: 0,
@@ -4840,6 +4858,7 @@ impl App {
                 }
                 Err(e) => self.status = format!("revision brief skipped: {e}"),
             },
+            BgJobKind::WorldCompile => self.finish_world_compile(result),
             BgJobKind::WorldOverview => match result {
                 Ok(joined) => {
                     let rows: Vec<String> = joined.split('\n').map(str::to_string).collect();
@@ -4853,11 +4872,51 @@ impl App {
                     if let Modal::WorldOverview { rows: r, cursor } = &mut self.modal {
                         *cursor = (*cursor).min(rows.len().saturating_sub(1));
                         *r = rows;
-                        self.status =
-                            "World · ↑↓ scroll · C compile · P proposals · F fact-check · M map · Esc".into();
+                        // A compile that just finished keeps its report on the
+                        // status line; the overview refresh was only its echo.
+                        self.status = self.world_compile_note.take().unwrap_or_else(|| {
+                            "World · ↑↓ scroll · C compile · P proposals · F fact-check · M map · Esc".into()
+                        });
                     }
+                    self.world_compile_note = None;
                 }
-                Err(e) => self.status = format!("world overview failed: {e}"),
+                Err(e) => {
+                    self.world_compile_note = None;
+                    self.status = format!("world overview failed: {e}");
+                }
+            },
+            BgJobKind::CanonDeep => match result {
+                Ok(payload) => {
+                    let sidecar: crate::canon::deep::DeepSidecar =
+                        serde_json::from_str(&payload).unwrap_or_default();
+                    let (n, checked, of) = (sidecar.findings.len(), sidecar.checked, sidecar.of);
+                    self.status = match sidecar.save(&self.layout) {
+                        Ok(()) => {
+                            let scope = if checked < of {
+                                format!("{checked} of {of} committed decisions (raise the budget for the rest)")
+                            } else {
+                                format!("{checked} committed decision(s)")
+                            };
+                            if n == 0 {
+                                format!("canon deep read · no contradictions in {scope} ({elapsed_secs}s)")
+                            } else {
+                                format!("canon deep read · {n} contradiction(s) in {scope} — Ctrl+B * → Canon ({elapsed_secs}s)")
+                            }
+                        }
+                        Err(e) => format!("canon deep read: could not store the result — {e}"),
+                    };
+                    self.invalidate_canon_findings();
+                    self.refresh_canon_findings(std::time::Duration::ZERO);
+                    // An open dashboard shows the new findings at once.
+                    if let Modal::Canon { graph, .. } = &self.modal {
+                        let graph = *graph;
+                        let (rows, anchors, decisions) = self.build_canon_rows(graph);
+                        self.modal = Modal::Canon { rows, anchors, decisions, cursor: 0, grounding: None, graph };
+                    }
+                    self.refresh_canon_pane(false);
+                }
+                Err(e) if e == "cancelled" => self.status = "canon deep read cancelled — nothing stored".into(),
+                Err(e) => self.status = format!("canon deep read failed: {e}"),
             },
             BgJobKind::CanonHarvest => match result {
                 Ok(payload) => {
@@ -8417,6 +8476,10 @@ pub(super) enum BgMsg {
 pub(super) enum BgJobKind {
     /// The deep AI refresh (facts check / facts scan / drift / continuity).
     DeepRefresh,
+    /// WORLD-KEEP-2 (WK2-P4) — `Ctrl+B W` → `C`: compile the world, write the
+    /// World book, seed the proposal queue. Deterministic, no model call. The
+    /// `Ok` payload is the number of proposals queued.
+    WorldCompile,
     /// WORLD-4 — an idle-triggered slow-track fact check (LLM). The worker emits
     /// its findings to Output directly; the `Ok` payload is the finding count.
     SlowFactCheck,
@@ -8468,6 +8531,10 @@ pub(super) enum BgJobKind {
     /// proposals as JSON; the completion handler stages them (main thread, so
     /// staging has one writer) — nothing enters the ledger until the author's `a`.
     CanonHarvest,
+    /// CANON-READER-1 (CR-P5) — the opt-in contradiction pass (`D` on the Canon
+    /// dashboard): one model call over the committed / canonical decisions. The
+    /// `Ok` payload is the sidecar as JSON; the completion handler stores it.
+    CanonDeep,
     /// 1.8.24 — the AI-thesaurus fallback (`Ctrl+V Shift+Y` for a language with no
     /// local WordNet, e.g. Russian). The worker makes the LLM call off the UI
     /// thread; the `Ok` payload is the raw JSON, parsed + shown as a picker in the
@@ -16315,7 +16382,7 @@ impl App {
                 g.landmarks
                     .iter()
                     .filter_map(|lm| {
-                        lm.grid(geo.width, geo.height).map(|(x, y)| plakat::DeclaredLandmark {
+                        lm.grid_on(geo.width, geo.height, &geo.latmap).map(|(x, y)| plakat::DeclaredLandmark {
                             name: lm.name.clone(),
                             kind: lm.kind.clone(),
                             x,
@@ -16350,7 +16417,8 @@ impl App {
                 if let Some(s) = store.as_ref() {
                     for lm in &art.landmarks {
                         if let Some(pid) = lm.place_id() {
-                            if s.update_place_link_coords(pid, lm.x, lm.y).is_ok() {
+                            // Author-set coordinates (`set-coords`) are never moved.
+                            if s.refine_place_link_coords(pid, lm.x, lm.y).unwrap_or(false) {
                                 refined += 1;
                             }
                         }
@@ -16367,12 +16435,17 @@ impl App {
         }
     }
 
-    /// WORLD-4 — `Ctrl+B W` → `C`. Compile every MVP layer, materialize them into
-    /// the World book (+ heightmap asset), and seed the Place proposal queue.
-    /// Reuses the already-open project store (no second handle).
+    /// WORLD-4 — `Ctrl+B W` → `C`. Compile every layer, materialize them into
+    /// the World book (+ heightmap asset), and seed the proposal queue — in the
+    /// background (WK2-P4), on a clone of the already-open project store.
     fn run_world_compile(&mut self) {
-        use crate::world::compile::*;
         use crate::world::types::WorldDefinition;
+        // Pressing `C` while a compile is running cancels it (it stops between
+        // layers) — never a second compile racing the first over the same leaves.
+        if self.bg_job.as_ref().is_some_and(|j| j.kind == BgJobKind::WorldCompile) {
+            self.cancel_bg_job();
+            return;
+        }
         let root = self.store.project_root().to_path_buf();
         let raw = match std::fs::read_to_string(root.join("world.hjson")) {
             Ok(r) => r,
@@ -16388,115 +16461,62 @@ impl App {
                 return;
             }
         };
-        // Geology: DEM if declared, else generated.
-        let geo = match def.geology.as_ref().and_then(|g| g.dem.as_ref()) {
-            Some(dem) => match compile_geology_dem(&def, &root.join(&dem.path)) {
-                Ok(g) => g,
-                Err(e) => {
-                    self.status = format!("world geology: {e}");
-                    return;
-                }
-            },
-            None => compile_geology(&def),
-        };
-        let astro = compile_astronomy(&def.astronomy);
-        let climate = compile_climate(&def, &astro, &geo);
-        let hydro = compile_hydrology(&geo, &climate);
-        let demo = compile_demographics(&climate, &hydro);
-
-        // The human half of the world, compiled up front so it materializes with
-        // the physical layers and seeds the proposal queue below.
-        let seed = def.seed_u64();
-        let pol = compile_polities(&demo, &def.nations, seed);
-        let capital_biomes: Vec<String> = pol
-            .polities
-            .iter()
-            .map(|q| {
-                demo.settlements
-                    .iter()
-                    .find(|s| (s.x, s.y) == q.capital_pos)
-                    .map(|s| s.biome.clone())
-                    .unwrap_or_default()
-            })
-            .collect();
-        let cultures = compile_culture(&pol, &capital_biomes, &def.cultures, seed);
-        let eco_declared = def.ecology.as_ref().map(|e| e.regions.as_slice()).unwrap_or(&[]);
-        let eco = compile_ecology(&climate, eco_declared, seed);
-        let trade = compile_trade(&pol, &geo, def.astronomy.planet.radius_earth);
-
-        use crate::world::materialize as m;
-        // Sequential, stopping at the first failure (the earlier `vec![…]` ran
-        // every step eagerly and reported only the first error); the hierarchy
-        // is refreshed either way so the partial writes are visible.
-        let magic = def.magic.clone().unwrap_or_default();
-        let steps: Vec<(&str, Box<dyn FnOnce() -> crate::error::Result<m::MaterializeReport> + '_>)> = vec![
-            ("astronomy", Box::new(|| m::materialize_astronomy(&self.store, &self.cfg, &astro))),
-            ("geology", Box::new(|| m::materialize_geology(&self.store, &self.cfg, &geo))),
-            ("climate", Box::new(|| m::materialize_climate(&self.store, &self.cfg, &climate))),
-            ("hydrology", Box::new(|| m::materialize_hydrology(&self.store, &self.cfg, &hydro))),
-            ("demographics", Box::new(|| m::materialize_demographics(&self.store, &self.cfg, &demo))),
-            ("polities", Box::new(|| m::materialize_polities(&self.store, &self.cfg, &pol))),
-            ("culture", Box::new(|| m::materialize_culture(&self.store, &self.cfg, &cultures, &demo.role_archetypes, &capital_biomes))),
-            ("ecology", Box::new(|| m::materialize_ecology(&self.store, &self.cfg, &eco))),
-            ("trade", Box::new(|| m::materialize_trade(&self.store, &self.cfg, &pol, &trade))),
-            ("magic", Box::new(|| m::materialize_magic(&self.store, &self.cfg, &magic))),
-            ("setting", Box::new(|| m::materialize_setting(&self.store, &self.cfg, &def))),
-        ];
-        let mut failed: Option<String> = None;
-        for (layer, step) in steps {
-            if let Err(e) = step() {
-                failed = Some(format!("world materialize ({layer}): {e} — later layers skipped"));
-                break;
-            }
-        }
-        if let Some(msg) = failed {
-            self.refresh_hierarchy_after_world_write();
-            self.status = msg;
+        // WK2-P4 — everything past the parse runs on the shared background job:
+        // the compile, eleven chapters written and re-embedded, the proposal
+        // queue. The worker owns a cloned store handle and the config; the
+        // editor stays live, and `on_bg_job_done` refreshes the tree.
+        let (store, cfg) = (self.store.clone(), self.cfg.clone());
+        let (w_store, w_cfg, w_root, w_def) = (store.clone(), cfg.clone(), root.clone(), def.clone());
+        let started = self.start_bg_job(BgJobKind::WorldCompile, "world compile", move |tx, cancel| {
+            let mut progress = |line: String| {
+                let _ = tx.send(BgMsg::Progress(line));
+            };
+            let result = crate::world::compile_job::compile_and_materialize(
+                &w_store, &w_cfg, &w_root, &w_def, &mut progress, &cancel,
+            );
+            let _ = tx.send(BgMsg::Done(result.map(|n| n.to_string())));
+        });
+        if started {
+            self.status = "⟳ world compile — writing the World book in the background; keep working".into();
             return;
         }
+        // The job slot is busy (the overview may still be compiling): run inline
+        // so `C` always compiles, as it did before.
+        let never = std::sync::atomic::AtomicBool::new(false);
+        let result = crate::world::compile_job::compile_and_materialize(&store, &cfg, &root, &def, &mut |_| {}, &never);
+        self.finish_world_compile(result.map(|n| n.to_string()));
+    }
 
-        // Everything the world offers: Places, plus the culture-derived bridges
-        // (Mythology symbols, realm rulers, and languages). Each kind clears only
-        // its own pending set and skips sites the author already resolved.
-        let n_proposed = (|| -> crate::error::Result<usize> {
-            use crate::world::language_proposals::language_proposals;
-            use crate::world::myth_proposals::myth_proposals;
-            use crate::world::proposals::place_proposals;
-            use crate::world::ruler_proposals::ruler_proposals;
-            use crate::world::storage::WorldStore;
-            let ws = WorldStore::open_for_project(&root)
-                .map_err(|e| crate::error::Error::Store(format!("world store: {e}")))?;
-            let resolved = ws
-                .resolved_signatures()
-                .map_err(|e| crate::error::Error::Store(format!("{e}")))?;
-            let batches: Vec<(&str, Vec<crate::world::proposals::PlaceProposal>)> = vec![
-                ("place", place_proposals(&demo, seed)),
-                ("myth-%", myth_proposals(&cultures, seed)),
-                ("character", ruler_proposals(&pol, &cultures, seed)),
-                ("language", language_proposals(&pol, &cultures, seed)),
-            ];
-            let mut n = 0;
-            for (like, batch) in batches {
-                ws.clear_pending_kinds(like).map_err(|e| crate::error::Error::Store(format!("{e}")))?;
-                for p in batch {
-                    if !resolved.contains(&p.signature) {
-                        ws.insert(&p).map_err(|e| crate::error::Error::Store(format!("{e}")))?;
-                        n += 1;
-                    }
-                }
-            }
-            Ok(n)
-        })();
-        match n_proposed {
+    /// The UI-thread half of a world compile, shared by the background job's
+    /// completion and the inline fallback: pick up what the worker wrote.
+    fn finish_world_compile(&mut self, result: std::result::Result<String, String>) {
+        // Whatever happened, some layers may have been written: show them.
+        self.refresh_hierarchy_after_world_write();
+        *self.fact_check_world_cache.borrow_mut() = None;
+        match result {
             Ok(n) => {
                 self.fact_check_enabled = true; // a compiled world → live checking
-                self.world_overview_cache = None; // materialized layers → re-render marks
-                self.refresh_hierarchy_after_world_write();
-                self.status = format!(
-                    "world compiled — 5 layers materialized, {n} proposal(s) across Places · Mythology · Characters · Languages (Ctrl+B W → P)"
+                let n: usize = n.parse().unwrap_or(0);
+                let note = format!(
+                    "world compiled — {} layers materialized, {n} proposal(s) across Places · Mythology · Characters · Languages (Ctrl+B W → P)",
+                    crate::world::compile_job::LAYERS
                 );
+                // An open overview still says "not materialized": recompute it,
+                // and let its completion put this message back on the status line.
+                if matches!(self.modal, Modal::WorldOverview { .. }) {
+                    self.world_compile_note = Some(note.clone());
+                    self.open_world_overview();
+                    if !matches!(self.bg_job.as_ref().map(|j| j.kind), Some(BgJobKind::WorldOverview)) {
+                        self.world_compile_note = None;
+                    }
+                }
+                self.status = note;
             }
-            Err(e) => self.status = format!("world proposals: {e}"),
+            Err(e) if e == crate::world::compile_job::CANCELLED => {
+                self.status =
+                    "world compile cancelled — layers already written stay; press C to finish".into();
+            }
+            Err(e) => self.status = e,
         }
     }
 
@@ -17580,11 +17600,14 @@ impl App {
     /// the development-ledger decisions with kind + commitment, plus commitment
     /// forks. Enter jumps to a decision's source paragraph.
     fn open_canon(&mut self) {
+        // Opening the dashboard reads the ledger against the book afresh.
+        self.invalidate_canon_findings();
+        self.refresh_canon_findings(std::time::Duration::ZERO);
         let (rows, anchors, decisions) = self.build_canon_rows(false);
         // Advertise the actions whenever there are decisions — g/h work on any
         // decision row, even one with no jump anchor (a node-less/merged decision).
         self.status = if decisions.iter().any(|d| d.is_some()) {
-            "canon · ↑↓ · Enter jump · g ground · c commit · h history · t graph · Esc".into()
+            "canon · ↑↓ · Enter jump · g ground · c commit · h history · t graph · D deep read · Esc".into()
         } else {
             "canon · Esc".into()
         };
@@ -17601,6 +17624,11 @@ impl App {
             decisions_ids.push(decision);
         };
         let canon = self.store.raw().canon();
+        // A decision row's trailing reader markers (` ⚠ drifted ⚠ on sand`).
+        let marks_of = |uid: smysl::Uid| -> String {
+            let m = self.canon_markers_for(uid);
+            if m.is_empty() { String::new() } else { format!("  {}", m.join(" ")) }
+        };
         let fmt = |kind: Option<crate::canon::NarrativeKind>, commit: Option<smysl::Commitment>| {
             let k = kind.map(|k| k.schema_str().trim_start_matches("x.narrative/")).unwrap_or("?");
             (k, commit.map(|c| format!(" «{c}»")).unwrap_or_default())
@@ -17626,7 +17654,8 @@ impl App {
             for r in &dag {
                 let (kind, commit) = fmt(r.view.kind, r.view.commitment);
                 let indent = "  ".repeat(r.depth + 1);
-                push(format!("{indent}[{kind}]{commit} {}", r.view.gist), r.view.node, Some(r.view.uid));
+                let marks = marks_of(r.view.uid);
+                push(format!("{indent}[{kind}]{commit} {}{marks}", r.view.gist), r.view.node, Some(r.view.uid));
             }
             return (rows, anchors, decisions_ids);
         }
@@ -17647,11 +17676,28 @@ impl App {
             );
             return (rows, anchors, decisions_ids);
         }
+        // CANON-READER-1 (CR-P4) — where the ledger and the book disagree, first:
+        // each row opens the paragraph involved and acts on its decision (c / g / h).
+        if !self.canon_findings.is_empty() {
+            push(
+                format!(
+                    "⚠ {} finding(s) — the ledger and the book disagree (Enter opens the paragraph)",
+                    self.canon_findings.len()
+                ),
+                None,
+                None,
+            );
+            for f in &self.canon_findings {
+                push(format!("  {} · {}", f.kind.marker(), f.gist), f.node, Some(f.decision));
+            }
+            push(String::new(), None, None);
+        }
         push(format!("◆ Canon ledger — {} decision(s)", decisions.len()), None, None);
         push(String::new(), None, None);
         for v in &decisions {
             let (kind, commit) = fmt(v.kind, v.commitment);
-            push(format!("  [{kind}]{commit} {}", v.gist), v.node, Some(v.uid));
+            let marks = marks_of(v.uid);
+            push(format!("  [{kind}]{commit} {}{marks}", v.gist), v.node, Some(v.uid));
         }
         if let Ok(forks) = canon.commitment_forks() {
             if !forks.is_empty() {
@@ -17731,14 +17777,15 @@ impl App {
                     None => self.status = "canon: put the cursor on a decision, then c".into(),
                 }
             }
+            KeyCode::Char('D') if !grounding => self.canon_deep_read(),
             KeyCode::Char('t') if !grounding => {
                 // Toggle the flat list ↔ the grounds-DAG view, rebuilding rows.
                 let graph = !matches!(&self.modal, Modal::Canon { graph: true, .. });
                 let (rows, anchors, decisions) = self.build_canon_rows(graph);
                 self.status = if graph {
-                    "canon graph · ↑↓ · Enter jump · g ground · c commit · h history · t list · Esc".into()
+                    "canon graph · ↑↓ · Enter jump · g ground · c commit · h history · t list · D deep read · Esc".into()
                 } else {
-                    "canon · ↑↓ · Enter jump · g ground · c commit · h history · t graph · Esc".into()
+                    "canon · ↑↓ · Enter jump · g ground · c commit · h history · t graph · D deep read · Esc".into()
                 };
                 self.modal = Modal::Canon { rows, anchors, decisions, cursor: 0, grounding: None, graph };
             }
@@ -17769,6 +17816,50 @@ impl App {
             _ => {}
         }
         true
+    }
+
+    /// CANON-READER-1 (CR-P5) — `D` on the dashboard: the opt-in contradiction
+    /// pass. Retrieval happens here (local vector search); the one model call
+    /// runs in the shared background job. Only decisions marked committed or
+    /// canonical are checked. The result is stored as an advisory sidecar and
+    /// shown as `⚠ contradicted` findings; nothing is edited.
+    fn canon_deep_read(&mut self) {
+        let cases = match crate::cli::canon::deep_cases(&self.store, &self.hierarchy) {
+            Ok(c) => c,
+            Err(e) => {
+                self.status = format!("canon deep read: {e}");
+                return;
+            }
+        };
+        if cases.is_empty() {
+            self.status =
+                "canon deep read: nothing is marked committed or canonical yet — `c` sets how settled a decision is".into();
+            return;
+        }
+        if let Err(e) = self.ai.resolve_provider(&self.cfg.llm, None) {
+            self.status = format!("canon deep read needs an LLM provider: {e}");
+            return;
+        }
+        let budget = self.cfg.canon.deep_budget;
+        let (prompt, included) = crate::canon::deep::build_prompt(&cases, budget.max(1));
+        let tokens_in = (crate::canon::deep::DEEP_SYSTEM.chars().count() + prompt.chars().count()) / 4;
+        let (n, root) = (cases.len(), self.layout.root.clone());
+        let started = self.start_bg_job(BgJobKind::CanonDeep, "canon deep read", move |tx, cancel| {
+            let result = crate::cli::canon::run_deep(&root, &cases, budget)
+                .map_err(|e| e.to_string())
+                .and_then(|sidecar| {
+                    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                        return Err("cancelled".to_string());
+                    }
+                    serde_json::to_string(&sidecar).map_err(|e| e.to_string())
+                });
+            let _ = tx.send(BgMsg::Done(result));
+        });
+        if started {
+            self.status = format!(
+                "⟳ canon deep read · one model call (~{tokens_in} tokens in) over {included} of {n} committed decision(s) · result is stored, nothing is edited"
+            );
+        }
     }
 
     /// CANON-UI-2 (CU2-P1) — open the commitment picker for `uid`. `back` is the
@@ -17822,6 +17913,9 @@ impl App {
                     }
                     Err(e) => format!("canon: commit failed — {e}"),
                 };
+                // A new level changes built-on-sand / unsettled-foundation.
+                self.invalidate_canon_findings();
+                self.refresh_canon_findings(std::time::Duration::ZERO);
                 self.close_canon_commit(back);
                 // The ◈ tint follows commitment — refresh it now, not on the
                 // next throttled tick.
@@ -17871,6 +17965,8 @@ impl App {
             Ok(_) => self.status = "canon · grounded".into(),
             Err(e) => self.status = format!("canon: grounding failed — {e}"),
         }
+        self.invalidate_canon_findings();
+        self.refresh_canon_findings(std::time::Duration::ZERO);
         // Rebuild (grounding cleared), reflecting the new/​superseded ids and
         // preserving the current list/graph view.
         let graph = matches!(&self.modal, Modal::Canon { graph: true, .. });
@@ -18332,7 +18428,7 @@ impl App {
             ("Character arc", None, Action::OpenCharacterArc),
             ("Myth", None, Action::OpenMythHeatmap),
             ("Chronicle", None, Action::OpenChronicle),
-            ("Canon (development ledger)", None, Action::OpenCanon),
+            ("Canon (development ledger)", Some("canon"), Action::OpenCanon),
             ("Story bible", None, Action::OpenStoryBible),
         ];
         let mut rows: Vec<String> = Vec::new();
@@ -20441,13 +20537,9 @@ impl App {
             return;
         }
         let day = date.map(|t| (t as f64).rem_euclid(sw.astro.year_length_planet_days.max(1.0)));
-        let lat = place.as_ref().map(|p| {
-            if sw.height <= 1 {
-                0.0
-            } else {
-                90.0 - (p.y as f64 / (sw.height - 1) as f64) * 180.0
-            }
-        });
+        // The cell-centre latitude the climate layer uses (the old `y/(h−1)` edge
+        // convention here disagreed with it — and with the CLI — by half a cell).
+        let lat = place.as_ref().map(|p| sw.latmap.row_lat(p.y, sw.height));
         let brief =
             crate::world::scene::scene_brief(&sw.astro, &sw.pol, &sw.cul, place.as_ref(), day, lat);
         if !brief.is_empty() {
@@ -20484,7 +20576,7 @@ impl App {
             })
             .collect();
         let cul = compile_culture(&pol, &capital_biomes, &def.cultures, seed);
-        Some(SceneWorld { astro, pol, cul, height: climate.height })
+        Some(SceneWorld { latmap: geo.latmap, astro, pol, cul, height: climate.height })
     }
 
     /// Resolve the open paragraph's place + date: a place-linked Timeline event
@@ -20541,6 +20633,38 @@ impl App {
         }
     }
 
+    /// CANON-READER-1 (CR-P4) — make sure the cached canon-reader findings are
+    /// current: recompute when invalidated or older than `max_age`. Deterministic
+    /// and read-only; a ledger that cannot be read leaves the list empty.
+    pub(super) fn refresh_canon_findings(&mut self, max_age: std::time::Duration) {
+        if self.canon_findings_at.is_some_and(|at| at.elapsed() < max_age) {
+            return;
+        }
+        let (language, _) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        let view = crate::cli::canon::ManuscriptView { store: &self.store, hierarchy: &self.hierarchy };
+        self.canon_findings =
+            crate::canon::deep::check_all(self.store.raw().canon(), &view, &language, &self.layout)
+                .unwrap_or_default();
+        self.canon_findings_at = Some(std::time::Instant::now());
+    }
+
+    /// The ledger or the prose changed — the cached findings are stale.
+    pub(super) fn invalidate_canon_findings(&mut self) {
+        self.canon_findings_at = None;
+    }
+
+    /// The reader's markers for one decision, most serious first, de-duplicated.
+    fn canon_markers_for(&self, uid: smysl::Uid) -> Vec<&'static str> {
+        let mut out: Vec<&'static str> = Vec::new();
+        for f in self.canon_findings.iter().filter(|f| f.decision == uid) {
+            let m = f.kind.marker();
+            if !out.contains(&m) {
+                out.push(m);
+            }
+        }
+        out
+    }
+
     /// CANON-UI-1 (CU1-P3) — recompute the Canon pane for the open paragraph:
     /// the decisions it sources, each with its impact count and nearest grounds.
     /// `reset_cursor` when the paragraph changed. Bounded by the per-project
@@ -20552,6 +20676,8 @@ impl App {
             .map(|n| n.title.clone())
             .unwrap_or_default();
         let mut state = CanonPaneState { node: opened, title, ..Default::default() };
+        // The reader's findings mark the rows (cached; a few seconds stale at most).
+        self.refresh_canon_findings(std::time::Duration::from_secs(5));
         if let Some(id) = opened {
             let canon = self.store.raw().canon();
             match canon.units_for_node(id) {
@@ -20575,6 +20701,7 @@ impl App {
                             commitment: v.commitment.map(|c| c.to_string()),
                             gist: v.gist.clone(),
                             impact,
+                            markers: self.canon_markers_for(uid),
                             grounds: direct,
                             grounds_more,
                         });
@@ -20690,6 +20817,7 @@ impl App {
             Ok(n) => format!("canon · accepted {n} decision(s) into the ledger — `c` sets how settled"),
             Err(e) => format!("canon: accept failed — {e}"),
         };
+        self.invalidate_canon_findings();
         self.refresh_canon_source_nodes();
         self.refresh_canon_pane(false);
     }

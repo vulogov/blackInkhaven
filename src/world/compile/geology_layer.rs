@@ -48,6 +48,7 @@ pub fn compile_geology(def: &WorldDefinition) -> GeologyOutput {
 
     GeologyOutput {
         cell_km: None,
+        latmap: crate::world::latmap::LatMap::globe(),
         source: "generated".into(),
         width: W,
         height: H,
@@ -151,8 +152,22 @@ pub fn compile_geology_dem(
         .map(|s| (s * iw as f64 / W as f64, s * ih as f64 / H as f64))
         .filter(|(_, yk)| yk * (H as f64) < 0.75 * pole_to_pole_km);
 
+    // WK2-P2 — a regional map that says where it is gets a real latitude band.
+    // Opt-in: without `center_lat` (or without a regional scale) it is the globe.
+    let latmap = match (cell_km, dem.center_lat) {
+        (Some((xk, yk)), Some(lat)) => crate::world::latmap::LatMap::regional(
+            lat,
+            dem.center_lon.unwrap_or(0.0),
+            xk * W as f64,
+            yk * H as f64,
+            def.astronomy.planet.radius_earth,
+        ),
+        _ => crate::world::latmap::LatMap::globe(),
+    };
+
     Ok(GeologyOutput {
         cell_km,
+        latmap,
         source: "dem".into(),
         width: W,
         height: H,
@@ -581,6 +596,8 @@ mod tests {
             dem: Some(DemGeology {
                 path: path.display().to_string(),
                 scale_km_per_pixel: Some(5.0),
+                center_lat: None,
+                center_lon: None,
                 sea_level_pixel_value: None,
             }),
         });

@@ -27,27 +27,32 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 3.15.0 — Canon in Hand
+## Latest release · 3.16.0 — The Ledger Reads Back
 
-3.15.0 lets you **tend the Canon Ledger where you write**, and makes the
-worldbuilder keep its word. No new store, no new dependency, warning-free:
+3.16.0 makes the **Canon Ledger speak first**, and finishes what the world track
+had deferred. No new store, no new dependency, warning-free:
 
-- **Tend canon from the Canon pane** — `c` sets how settled a decision is
-  (floated → canonical), warning at once if something firm now rests on
-  something soft; proposals from `canon harvest` are reviewed beside the prose
-  (`a` accept · `x` discard · `A` all); `H` harvests the open paragraph in the
-  background. The model only ever stages — you confirm each decision.
-- **The glyph says how settled** — `◈` is tinted by the strongest commitment a
-  paragraph established, and saving a paragraph other decisions rest on says so.
-- **A world that keeps its word** — one ruler for distance, area and population;
-  a heightmap's declared scale is honoured (it is a region, not a planet); the
-  guided interview speaks en / ru / fr / de / es and takes answers in them; the
-  declared week dates a day; the worldbuilder compiles your heightmap, once per
-  change.
+- **Canon as a reader** — `inkhaven canon read` checks the ledger against the
+  manuscript and reports where they have come apart: a decision whose source
+  paragraph no longer says it, one whose source is gone, one committed above what
+  it rests on, a foundation left unsettled. Deterministic and free; the findings
+  join the Canon dashboard and pane, the reader hub, the Editorial Pass and
+  CHRONICLE.
+- **One opt-in contradiction pass** — `canon read --deep` (or `D` on the
+  dashboard) asks a model once whether any passage says the opposite of a
+  committed decision. The answer is stored and expires on its own when the
+  passage changes.
+- **A regional map has a latitude** — `dem.center_lat` weathers a scaled
+  heightmap as the region it is, instead of pole to pole.
+- **The world writes in your language** — proposals, and the Places, rulers,
+  language briefs and Mythology entries committed from them, follow the project
+  language (en / ru / fr / de / es).
+- **The world compiles in the background** — `Ctrl+B W` → `C` no longer freezes
+  the editor; keep writing while it works, `C` again to cancel.
 
-Read the full notes: [`Documentation/RELEASE_NOTES/3.15.0.md`](Documentation/RELEASE_NOTES/3.15.0.md).
-Two behaviour changes are listed there under *Upgrade notes* (population figures;
-scaled heightmaps); existing projects open unchanged; compiles warning-free.
+Read the full notes: [`Documentation/RELEASE_NOTES/3.16.0.md`](Documentation/RELEASE_NOTES/3.16.0.md).
+One thing to know before upgrading is listed there under *Upgrade notes*: the
+world store upgrades itself in place, one way. Compiles warning-free.
 
 **Stable baseline · 3.0.0.** 3.0.0 remains the stable, maintained edition — the
 intelligence suite that watches, reads, and remembers itself (SEMNET → GRAPHMIND →
@@ -179,7 +184,16 @@ hardened surface. Every release's notes live under
   open paragraph's decisions beside the prose — where you set commitment (`c`),
   harvest the paragraph (`H`), and accept or discard each proposal (`a` / `x`).
   Book-scope chat is grounded on the ledger; the model may *propose* decisions
-  but only your confirmation writes.
+  but only your confirmation writes. **`canon read`** turns the ledger into a
+  reader: it reports decisions that have drifted from their source, lost it, or
+  are committed above what they rest on — free and deterministic, with one
+  opt-in pass (`--deep`) for outright contradictions.
+- **The world simulator** (`inkhaven realworld`, `inkhaven worldbuilder`,
+  `Ctrl+B W`) — a world compiled from one `world.hjson`: sky and calendar, land
+  (generated or your own heightmap, as a planet or a region at its latitude),
+  climate, rivers, settlements, realms, cultures, trade. It *proposes* Places,
+  rulers, languages and myths in your book's language and you accept what
+  crosses over; the compile runs in the background.
 - **The companions** — a triad that observes craft without rewriting your prose:
   the **World fact-checker** (`Ctrl+B W`, checks scenes against your worldbuilding
   + timeline), **Inner Socrates** (`Ctrl+B J`, Socratic questions about content
@@ -228,10 +242,10 @@ hardened surface. Every release's notes live under
   bibliography checks (CI-ready; exit non-zero on a problem).
 - `inner-socrates` / `inner-editor` / `realworld` — the companions from the
   shell; `check` runs the fast deterministic pass over the project.
-- `canon list` / `impact` / `why` / `history` / `log` / `graph` / `commit` /
-  `ground` / `reground` / `compact` / `harvest` / `accept` / `discard` — the Canon
-  Ledger from the shell
-  (impact = the blast radius of a cut).
+- `canon list` / `read` / `impact` / `why` / `history` / `log` / `graph` /
+  `commit` / `ground` / `reground` / `compact` / `harvest` / `accept` / `discard`
+  — the Canon Ledger from the shell (read = the ledger checked against the
+  manuscript; impact = the blast radius of a cut).
 - `import-epub` / `import-scrivener` — bring an existing manuscript in.
 - `backup` / `restore` — see above.
 - `ai "prompt"` — one-shot inference from the shell (no TUI).

@@ -48,7 +48,13 @@ pub fn compile_climate(
     let mut biome = vec![Biome::Ocean; w * h];
 
     for y in 0..h {
-        let lat = 90.0 - (y as f32 + 0.5) / h as f32 * 180.0;
+        // The globe keeps the exact f32 arithmetic it always had (so no existing
+        // world's biomes move); a regional map reads its real latitude band.
+        let lat = if geo.latmap.is_regional() {
+            geo.latmap.row_lat(y, h) as f32
+        } else {
+            90.0 - (y as f32 + 0.5) / h as f32 * 180.0
+        };
         let insol = interp_insolation(astro, lat);
         let lat_factor = ((insol - imin) / ispan).clamp(0.0, 1.0);
         // Equator (factor 1) → mean+11; pole (factor 0) → mean-40.

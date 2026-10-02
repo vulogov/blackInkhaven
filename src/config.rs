@@ -4493,11 +4493,22 @@ pub struct CanonConfig {
     /// so the model answers from the story's *decisions*, not just its text. An
     /// empty ledger costs nothing. Toggle per session with `*` in the AI pane.
     pub ground_ai: bool,
+    /// CANON-READER-1 — the token budget the editor's opt-in contradiction pass
+    /// (`D` on the Canon dashboard) fits its one prompt to. Informative: decisions
+    /// that do not fit are reported as unchecked, the run is never refused. The
+    /// shell's `canon read --deep --max-cost N` takes its own.
+    pub deep_budget: usize,
 }
 
 impl Default for CanonConfig {
     fn default() -> Self {
-        Self { harvest_on_save: true, context_budget: 2000, context_reserve: 400, ground_ai: true }
+        Self {
+            harvest_on_save: true,
+            context_budget: 2000,
+            context_reserve: 400,
+            ground_ai: true,
+            deep_budget: 8000,
+        }
     }
 }
 

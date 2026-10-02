@@ -504,6 +504,7 @@ a pure function over the project's own small ledger.
   chord_row("canon commit <id> --level <l>", "Set how settled a decision is: floated → drafted → committed → canonical → retconned. This is authorial canonicity, not real-world truth."),
   chord_row("canon ground / unground", "Draw a grounds edge by hand (--on), or remove one (--from)."),
   chord_row("canon check", "Anything you have marked canonical that rests on something only floated — a scene built on sand (the SMY-W057 support check)."),
+  chord_row("canon read [--deep]", "The ledger read against the manuscript: decisions whose source paragraph drifted or is gone, firm ones on soft ground, unsettled foundations — and, with --deep, passages that contradict a decision you committed to."),
   chord_row("canon forks", "Commitment forks: decisions whose agents disagree on canonicity after a merge (SMY-W058)."),
   chord_row("canon context \"<query>\"", "Fit the relevant decisions and their grounds to a token budget, closure-complete — grounded context for an answer."),
 ))
@@ -545,6 +546,25 @@ into the ledger. The `◈` pip is tinted by how settled a paragraph's canon is (
 plain, bold for canonical), and saving a paragraph that other decisions rest on
 says so once, so a change to load-bearing prose does not pass unremarked.
 
+And since 3.16 the ledger *reads back*. Everything so far is a question you ask;
+`canon read` is the ledger speaking first, checking itself against the manuscript.
+It reports a decision whose source paragraph no longer mentions it (*drifted*) or
+no longer exists (*orphaned*), a firm decision resting on a soft one (*built on
+sand*), and a decision several others rest on that you never settled (*unsettled
+foundation*). All four are computed, free, at any size. One more is opt-in: with
+`--deep` — or `D` on the Canon dashboard — a model is asked, once, whether any
+passage *contradicts* a decision you marked committed or canonical; its answer is
+stored, shown everywhere without another call, and expires by itself when you
+change the passage.
+
+The findings appear where the other readers' do. The Canon dashboard lists them
+first, `Enter` opening the paragraph involved; the Canon pane marks the decision
+(`⚠ drifted`, `⚠ on sand`); the reader hub counts them; and they join the Editorial
+Pass and every CHRONICLE milestone under the source `canon`. A *drifted* or
+*contradicted* decision is a *⇄ Decision* — the scene or the ledger, you say which —
+and the rest are *✉ Briefs*, because you reconcile the ledger and no prose is
+touched.
+
 The blast radius also finds you at the moment you would cause it: delete a
 paragraph that *established* canon decisions and the confirmation warns first,
 naming them and how many others rest on them. It never blocks — and because the
@@ -565,7 +585,8 @@ The ledger is *derived* — rebuildable by re-harvest — so the `canon:` config
 holds only behavioural knobs: `harvest_on_save` (default `true`) toggles the
 deterministic on-save tag harvest, and `context_budget` / `context_reserve` set
 the defaults `canon context` uses when its flags are omitted (and the budget the
-Book-scope grounding packs to); `ground_ai` is whether that grounding is on. Six Bund words
+Book-scope grounding packs to); `ground_ai` is whether that grounding is on; `deep_budget`
+is the token budget of the editor's contradiction pass. Seven Bund words
 expose the ledger read-only, mirroring CHRONICLE's discipline — the writes
 (`commit`, `ground`/`unground`, `reground`, `compact`, and the author-confirmed
 harvest) stay on the CLI and in the editor.
@@ -578,6 +599,8 @@ ink.canon.why     ( id -- list )   the grounds chain it rests on
 ink.canon.history ( id -- list )   its commitment trajectory over time
 ink.canon.forks   ( -- list )      { uid, gist, positions, resolved }
 ink.canon.graph   ( -- list )      grounds adjacency per decision
+ink.canon.read    ( -- list )      findings: { kind, uid, gist, node,
+                                     locator, message, resolve, … }
 ```]
 
 Three maintenance commands round it out. *`canon reground`* deterministically

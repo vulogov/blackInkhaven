@@ -96,12 +96,80 @@ Three ways, in increasing model-involvement:
 | How did the canon settle? | `canon log` | Every commitment event across the ledger, oldest first. |
 | How settled is it? | `canon commit <id> --level <l>` | Set the canonicity (`floated…canonical…retconned`). |
 | Am I building on sand? | `canon check` | Decisions committed **above** the weakest thing they rest on (SMY-W057). |
+| **Does the book still agree with the ledger?** | `canon read [<scope>]` | (3.16) The ledger read against the manuscript — see below. |
 | Show me the whole shape | `canon graph [<id>]` | The grounds DAG — foundations, with what rests on them indented beneath. |
 | Draw / cut a dependency | `canon ground <id> --on <g>` · `canon unground <id> --from <g>` | Ground a decision on another by hand, or remove an edge. |
 | Where do agents disagree? | `canon forks` | Commitment forks — concurrent disagreement on canonicity (SMY-W058). |
 | Ground an answer on canon | `canon context "<query>"` | Fit the relevant decisions (+ their grounds/rebuttals) to a token budget. |
 
 `<id>` is the short id printed by `canon list` (a prefix is fine).
+
+## The ledger reads back (3.16)
+
+Everything above is a question *you* ask. **`inkhaven canon read`** is the ledger
+speaking first: it reads itself against the manuscript and reports where the two
+have come apart. Deterministic, free at any size, and advisory — nothing is
+changed.
+
+| Finding | What it means |
+|---|---|
+| **Drifted from its source** | The paragraph that established a decision no longer carries it: none of the decision's content words remain (stemmed, in your project language), and no tag on the paragraph declares it. The scene was rewritten into something else — which is right, the scene or the decision? |
+| **Orphaned** | The paragraph that established it no longer exists. |
+| **Built on sand** | Committed above something it rests on (what `canon check` reports). |
+| **Unsettled foundation** | Two or more decisions rest on one still unmarked or only floated. |
+| **Contradicted** *(opt-in, `--deep`)* | A passage of the book says the opposite of a decision you committed to. |
+
+Notes on what it deliberately does *not* say. Drift is conservative: a rephrase
+that keeps any of the decision's words is not drift. A decision harvested from a
+`rel:` tag is carried by the tag, so it drifts only when the tag is removed.
+Unsettled foundations are reported only once you have committed *something* — a
+ledger where nothing is marked is not using that axis.
+
+**The contradiction pass (opt-in).** The four findings above can tell that a scene
+no longer *mentions* a decision. They cannot tell that a scene *says the opposite*.
+`canon read --deep` (or **`D`** on the Canon dashboard) asks a model, once:
+
+- Only decisions you marked **committed** or **canonical** are checked — the ones a
+  contradiction matters for, which is also what keeps the call small.
+- For each, the passages most related to it are retrieved locally; all of it goes
+  in **one** prompt, fitted to `--max-cost` (default 8000 tokens; `canon.deep_budget`
+  in the editor). Decisions that do not fit are reported as unchecked — the run is
+  never refused.
+- The model must cite the decision and the passage; a citation it was not offered
+  is dropped. A character lying, guessing or dreaming is not a contradiction, and
+  the prompt says so.
+- The result is stored (`.inkhaven/canon-contradictions.json`), so every later
+  `canon read`, the Editorial Pass, CHRONICLE and the dashboard show it without
+  another call. A stored finding **expires on its own** when the passage it cites
+  changes or the decision is no longer committed — fix the scene and it is gone;
+  re-run the pass to check the new text.
+
+A **Contradicted** finding opens the passage that contradicts the decision, and is
+a Decision like *drifted*: the scene or the ledger?
+
+**In the worklist and the history.** The same findings join the other readers'
+in the Editorial Pass (`Ctrl+V Shift+R`) and `inkhaven revise`, under the source
+`canon`. A *drifted* decision is a **Decision** — you say which is right, the
+scene as it now reads or the decision, and either bring the scene back to it (a
+confirmed rewrite, like every other) or retcon the decision yourself. The other
+three are **Briefs**: you reconcile the ledger, and no prose is touched. Because
+they flow through the shared worklist, `chronicle mark` counts them too, so a
+milestone records whether the ledger and the book were in step — and the next one
+shows which findings cleared.
+
+**In the editor.** The Canon pane marks a decision the reader has something to say
+about — `⚠ drifted`, `⚠ on sand`, `⚠ unsettled`, `⚠ orphaned` — under its row. The
+Canon dashboard (`Ctrl+B *` → Canon) opens with the findings listed first: `Enter`
+on one opens the paragraph involved, and `c` / `g` / `h` act on its decision, so a
+finding is one keystroke from its fix. The same markers trail each decision in the
+list and the graph. The reader hub shows how many canon findings there are beside
+the other readers' counts. Findings are recomputed when you save, accept, commit
+or ground, and whenever the dashboard opens.
+
+`canon read <scope>` limits the report to decisions sourced under a chapter or
+paragraph; `--json` emits it for scripts (each finding says whether it resolves as
+a `decision` — a scene-or-ledger choice — or a `brief`); `--strict` exits non-zero
+when there is anything to report, for CI.
 
 ## In the editor
 
@@ -211,7 +279,7 @@ holds behavioural knobs only (the ledger is derived data, nothing to tune there)
 context` (and the Book-scope grounding pack) when its `--budget` / `--reserve`
 flags are omitted; `ground_ai` (default `true`) is whether Book-scope chat grounds
 on the ledger at all. A Bund script reads
-the ledger through `ink.canon.{list,impact,why,history,forks,graph}` (read-only —
+the ledger through `ink.canon.{list,impact,why,history,forks,graph,read}` (read-only —
 the writes, `commit`, `ground`/`unground`, `reground`, `compact`, and the
 author-confirmed harvest/`accept`, stay on the CLI and in the editor).
 

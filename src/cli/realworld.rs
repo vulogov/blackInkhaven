@@ -299,6 +299,20 @@ pub(crate) fn slow_llm_call(
     };
     use crate::world::storage::WorldStore;
 
+    // This runs from the shell AND from the editor's background workers. In the
+    // editor the terminal belongs to the renderer — a stray stderr line lands on
+    // the raw-mode screen and stays there. The Output store exists only inside
+    // the TUI, so its presence is the "do not touch the terminal" signal (the
+    // same one `collect_blocking` uses for its progress dots).
+    let quiet = crate::pane::output::active().is_some();
+    macro_rules! say {
+        ($($arg:tt)*) => {
+            if !quiet {
+                eprintln!($($arg)*);
+            }
+        };
+    }
+
     // Load config first so the daily-cap day-key honors goals.day_boundary.
     let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
     crate::dayclock::set_boundary(cfg.goals.day_boundary);
@@ -337,7 +351,7 @@ pub(crate) fn slow_llm_call(
         // Cost control is informative, not a gate: past the daily budget we warn
         // and proceed — the author decides whether to keep going.
         PreflightVerdict::DailyCapReached => {
-            eprintln!(
+            say!(
                 "{label}: past today's slow-track budget ({}/{} calls) — continuing (the cap is informative, see `inkhaven cost`).",
                 pf.calls_used, cfg.cost.world_daily_call_cap
             );
@@ -350,7 +364,7 @@ pub(crate) fn slow_llm_call(
         }
         PreflightVerdict::Proceed => {}
     }
-    eprintln!(
+    say!(
         "{label} · model: {model} · ~{} tokens · {}/{} calls today · checking…",
         pf.est_total_tokens, pf.calls_used, pf.daily_cap
     );
@@ -373,7 +387,7 @@ pub(crate) fn slow_llm_call(
                 last_err = e.to_string();
                 if attempt + 1 < MAX_ATTEMPTS && is_transient(&last_err) {
                     let d = backoff_delay(attempt);
-                    eprintln!("  transient error ({last_err}); retrying in {:.1}s…", d.as_secs_f32());
+                    say!("  transient error ({last_err}); retrying in {:.1}s…", d.as_secs_f32());
                     std::thread::sleep(d);
                     continue;
                 }
@@ -659,7 +673,8 @@ fn set_coords(
     // Resolve the target cell from grid args or geographic degrees.
     let (cx, cy) = match (x, y, lat, lon) {
         (Some(gx), Some(gy), _, _) => (gx.min(w.saturating_sub(1)), gy.min(h.saturating_sub(1))),
-        (_, _, Some(la), Some(lo)) => (lon_to_col(lo, w), lat_to_row(la, h)),
+        // Degrees go through the map's own extent (a regional map's band).
+        (_, _, Some(la), Some(lo)) => (geo.latmap.lon_col(lo, w), geo.latmap.lat_row(la, h)),
         _ => {
             return Err(Error::Config(
                 "pass a location: --x <col> --y <row>, or --lat <deg> --lon <deg>".into(),
@@ -708,10 +723,12 @@ fn set_coords(
         x: cx,
         y: cy,
     };
-    ws.insert_place_link(&link).map_err(|e| Error::Store(format!("writing link: {e}")))?;
+    // The author placed it: mark it so a later map render does not move it.
+    ws.insert_place_link(&link, crate::world::storage::CoordsSource::Author)
+        .map_err(|e| Error::Store(format!("writing link: {e}")))?;
 
-    let latd = row_to_latitude(cy, h);
-    let lond = col_to_lon(cx, w);
+    let latd = geo.latmap.row_lat(cy, h);
+    let lond = geo.latmap.col_lon(cx, w);
     println!(
         "{} · cell ({cx},{cy}) · {:.1}°{} {:.1}°{}{}",
         node.title,
@@ -851,38 +868,28 @@ fn resolve_place(project: &Path, name: &str) -> Result<(f64, f64)> {
 /// convention the climate layer uses (`90 − (y+0.5)/h·180`, climate_layer.rs).
 /// BUG-16: the old `y/(h−1)` edge convention disagreed with the climate a
 /// settlement actually experiences by a half-cell (~0.75° on the 120-row grid).
+#[cfg(test)] // the globe arithmetic, pinned by the tests below; callers use `geo.latmap`
 fn row_to_latitude(y: usize, height: usize) -> f64 {
-    if height == 0 {
-        return 0.0;
-    }
-    90.0 - (y as f64 + 0.5) / height as f64 * 180.0
+    crate::world::latmap::LatMap::globe().row_lat(y, height)
 }
 
 /// Latitude (−90..90) → grid row (inverse of [`row_to_latitude`]), clamped.
+#[cfg(test)] // the globe arithmetic, pinned by the tests below; callers use `geo.latmap`
 fn lat_to_row(lat: f64, height: usize) -> usize {
-    if height == 0 {
-        return 0;
-    }
-    let y = (90.0 - lat.clamp(-90.0, 90.0)) / 180.0 * height as f64 - 0.5;
-    y.round().clamp(0.0, (height - 1) as f64) as usize
+    crate::world::latmap::LatMap::globe().lat_row(lat, height)
 }
 
 /// Grid column → longitude in degrees, at the column's cell centre (col 0's
 /// centre is just east of −180°, spanning the full 360°).
+#[cfg(test)] // the globe arithmetic, pinned by the tests below; callers use `geo.latmap`
 fn col_to_lon(x: usize, width: usize) -> f64 {
-    if width == 0 {
-        return 0.0;
-    }
-    (x as f64 + 0.5) / width as f64 * 360.0 - 180.0
+    crate::world::latmap::LatMap::globe().col_lon(x, width)
 }
 
 /// Longitude (−180..180) → grid column (inverse of [`col_to_lon`]), clamped.
+#[cfg(test)] // the globe arithmetic, pinned by the tests below; callers use `geo.latmap`
 fn lon_to_col(lon: f64, width: usize) -> usize {
-    if width == 0 {
-        return 0;
-    }
-    let x = (lon.clamp(-180.0, 180.0) + 180.0) / 360.0 * width as f64 - 0.5;
-    x.round().clamp(0.0, (width - 1) as f64) as usize
+    crate::world::latmap::LatMap::globe().lon_col(lon, width)
 }
 
 /// WORLD-10 — `realworld scene --place <name> --day <N>`: a scene brief for the
@@ -904,7 +911,7 @@ fn scene(project: &Path, place: Option<String>, day: f64, lat: Option<f64>) -> R
     let seed = def.seed_u64();
 
     let link = place.as_deref().map(|n| resolve_place_link(project, n)).transpose()?;
-    let latitude = lat.or_else(|| link.as_ref().map(|l| row_to_latitude(l.y, climate.height)));
+    let latitude = lat.or_else(|| link.as_ref().map(|l| geo.latmap.row_lat(l.y, climate.height)));
 
     // Peoples for the nearest-realm culture, then the shared composition.
     let pol = compile_polities(&demo, &def.nations, seed);
@@ -983,7 +990,7 @@ fn nearest_feature(
     }
     if let Some(g) = def.geography.as_ref() {
         for lm in &g.landmarks {
-            if let Some((x, y)) = lm.grid(w, h) {
+            if let Some((x, y)) = lm.grid_on(w, h, &geo.latmap) {
                 if (x, y) != (here.x, here.y) {
                     cands.push((lm.name.clone(), "landmark", x, y));
                 }
@@ -1721,6 +1728,7 @@ fn declared_map_landmarks(
     def: &WorldDefinition,
     w: usize,
     h: usize,
+    latmap: &crate::world::latmap::LatMap,
 ) -> Vec<crate::world::plakat::DeclaredLandmark> {
     def.geography
         .as_ref()
@@ -1728,7 +1736,7 @@ fn declared_map_landmarks(
             g.landmarks
                 .iter()
                 .filter_map(|lm| {
-                    lm.grid(w, h).map(|(x, y)| crate::world::plakat::DeclaredLandmark {
+                    lm.grid_on(w, h, latmap).map(|(x, y)| crate::world::plakat::DeclaredLandmark {
                         name: lm.name.clone(),
                         kind: lm.kind.clone(),
                         x,
@@ -1761,7 +1769,7 @@ pub(crate) fn render_world_map(
     let hydro = compile_hydrology(&geo, &climate);
     let demo = compile_demographics(&climate, &hydro);
     let links = store.and_then(|s| s.list_place_links().ok()).unwrap_or_default();
-    let declared = declared_map_landmarks(def, geo.width, geo.height);
+    let declared = declared_map_landmarks(def, geo.width, geo.height, &geo.latmap);
     let declared_roads = declared_map_roads(def);
     let pol = compile_polities(&demo, &def.nations, def.seed_u64());
     let trade = compile_trade(&pol, &geo, def.astronomy.planet.radius_earth);
@@ -1810,7 +1818,7 @@ fn map(project: &Path, spec_only: bool, no_ingest: bool) -> Result<()> {
         let hydro = compile_hydrology(&geo, &climate);
         let demo = compile_demographics(&climate, &hydro);
         let links = store.as_ref().and_then(|s| s.list_place_links().ok()).unwrap_or_default();
-        let declared = declared_map_landmarks(&def, geo.width, geo.height);
+        let declared = declared_map_landmarks(&def, geo.width, geo.height, &geo.latmap);
         let declared_roads = declared_map_roads(&def);
         let pol = compile_polities(&demo, &def.nations, def.seed_u64());
         let trade = compile_trade(&pol, &geo, def.astronomy.planet.radius_earth);
@@ -1847,13 +1855,16 @@ fn map(project: &Path, spec_only: bool, no_ingest: bool) -> Result<()> {
 
     // Ingest: refine each accepted Place's coordinates from the landmark plakat
     // resolved for it.
-    let mut updated = 0usize;
+    let (mut updated, mut kept) = (0usize, 0usize);
     if !no_ingest {
         if let Some(s) = store.as_ref() {
             for lm in &art.landmarks {
                 if let Some(pid) = lm.place_id() {
-                    if s.update_place_link_coords(pid, lm.x, lm.y).is_ok() {
-                        updated += 1;
+                    // Coordinates the author set with `set-coords` are never moved.
+                    match s.refine_place_link_coords(pid, lm.x, lm.y) {
+                        Ok(true) => updated += 1,
+                        Ok(false) => kept += 1,
+                        Err(_) => {}
                     }
                 }
             }
@@ -1862,7 +1873,13 @@ fn map(project: &Path, spec_only: bool, no_ingest: bool) -> Result<()> {
     println!(
         "  {} landmark(s) resolved{}",
         art.landmarks.len(),
-        if no_ingest { String::new() } else { format!(", {updated} Place coordinate(s) refined") }
+        if no_ingest {
+            String::new()
+        } else if kept > 0 {
+            format!(", {updated} Place coordinate(s) refined ({kept} kept — set by you, or not linked)")
+        } else {
+            format!(", {updated} Place coordinate(s) refined")
+        }
     );
     Ok(())
 }
@@ -1883,18 +1900,19 @@ fn propose(project: &Path) -> Result<()> {
     let store = WorldStore::open_for_project(project)
         .map_err(|e| Error::Store(format!("opening world store: {e}")))?;
     let resolved = store
-        .resolved_signatures()
+        .resolved_signatures(def.seed_u64())
         .map_err(|e| Error::Store(format!("reading proposals: {e}")))?;
     store.clear_pending_kinds("place").map_err(|e| Error::Store(format!("clearing proposals: {e}")))?;
 
-    let proposals = place_proposals(&demo, def.seed_u64());
+    let mut proposals = place_proposals(&demo, def.seed_u64());
+    crate::world::i18n::localize_all(&mut proposals, crate::world::i18n::WLang::of_project(project));
     let (mut added, mut skipped) = (0usize, 0usize);
     for p in &proposals {
         if resolved.contains(&p.signature) {
             skipped += 1; // already accepted or rejected — don't re-propose
             continue;
         }
-        store.insert(p).map_err(|e| Error::Store(format!("inserting proposal: {e}")))?;
+        store.insert(p, Some(def.seed_u64())).map_err(|e| Error::Store(format!("inserting proposal: {e}")))?;
         added += 1;
     }
     println!(
@@ -1939,20 +1957,21 @@ fn propose_myth(project: &Path) -> Result<()> {
     let store = WorldStore::open_for_project(project)
         .map_err(|e| Error::Store(format!("opening world store: {e}")))?;
     let resolved = store
-        .resolved_signatures()
+        .resolved_signatures(def.seed_u64())
         .map_err(|e| Error::Store(format!("reading proposals: {e}")))?;
     store
         .clear_pending_kinds("myth-%")
         .map_err(|e| Error::Store(format!("clearing proposals: {e}")))?;
 
-    let proposals = myth_proposals(&cul, seed);
+    let mut proposals = myth_proposals(&cul, seed);
+    crate::world::i18n::localize_all(&mut proposals, crate::world::i18n::WLang::of_project(project));
     let (mut added, mut skipped) = (0usize, 0usize);
     for p in &proposals {
         if resolved.contains(&p.signature) {
             skipped += 1; // already accepted or rejected — don't re-propose
             continue;
         }
-        store.insert(p).map_err(|e| Error::Store(format!("inserting proposal: {e}")))?;
+        store.insert(p, Some(def.seed_u64())).map_err(|e| Error::Store(format!("inserting proposal: {e}")))?;
         added += 1;
     }
     if proposals.is_empty() {
@@ -2001,20 +2020,21 @@ fn propose_rulers(project: &Path) -> Result<()> {
     let store = WorldStore::open_for_project(project)
         .map_err(|e| Error::Store(format!("opening world store: {e}")))?;
     let resolved = store
-        .resolved_signatures()
+        .resolved_signatures(def.seed_u64())
         .map_err(|e| Error::Store(format!("reading proposals: {e}")))?;
     store
         .clear_pending_kinds("character")
         .map_err(|e| Error::Store(format!("clearing proposals: {e}")))?;
 
-    let proposals = ruler_proposals(&pol, &cultures, seed);
+    let mut proposals = ruler_proposals(&pol, &cultures, seed);
+    crate::world::i18n::localize_all(&mut proposals, crate::world::i18n::WLang::of_project(project));
     let (mut added, mut skipped) = (0usize, 0usize);
     for p in &proposals {
         if resolved.contains(&p.signature) {
             skipped += 1;
             continue;
         }
-        store.insert(p).map_err(|e| Error::Store(format!("inserting proposal: {e}")))?;
+        store.insert(p, Some(def.seed_u64())).map_err(|e| Error::Store(format!("inserting proposal: {e}")))?;
         added += 1;
     }
     if proposals.is_empty() {
@@ -2063,20 +2083,21 @@ fn propose_language(project: &Path) -> Result<()> {
     let store = WorldStore::open_for_project(project)
         .map_err(|e| Error::Store(format!("opening world store: {e}")))?;
     let resolved = store
-        .resolved_signatures()
+        .resolved_signatures(def.seed_u64())
         .map_err(|e| Error::Store(format!("reading proposals: {e}")))?;
     store
         .clear_pending_kinds("language")
         .map_err(|e| Error::Store(format!("clearing proposals: {e}")))?;
 
-    let proposals = language_proposals(&pol, &cultures, seed);
+    let mut proposals = language_proposals(&pol, &cultures, seed);
+    crate::world::i18n::localize_all(&mut proposals, crate::world::i18n::WLang::of_project(project));
     let (mut added, mut skipped) = (0usize, 0usize);
     for p in &proposals {
         if resolved.contains(&p.signature) {
             skipped += 1;
             continue;
         }
-        store.insert(p).map_err(|e| Error::Store(format!("inserting proposal: {e}")))?;
+        store.insert(p, Some(def.seed_u64())).map_err(|e| Error::Store(format!("inserting proposal: {e}")))?;
         added += 1;
     }
     if proposals.is_empty() {
@@ -2506,6 +2527,7 @@ fn write_critique_notes(
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
     let cfg = Config::load_layered(&layout.config_path())?;
+    let lang = crate::world::i18n::WLang::of_config(&cfg.language);
     let store = Store::open(layout, &cfg)?;
     let notes = Hierarchy::load(&store)?
         .iter()
@@ -2521,13 +2543,18 @@ fn write_critique_notes(
             _ => "medium",
         };
         let aspect = if it.aspect.trim().is_empty() { "world" } else { it.aspect.trim() };
-        let title = format!("World critique — {aspect} ({sev})");
-        let body = format!(
-            "Recommendation for the world `{world_name}` ({aspect}, {sev} severity).\n\n\
-             Issue: {}\n\nRecommendation: {}\n\n\
-             // from `inkhaven realworld critique` — advisory; edit world.hjson as you see fit\n",
+        // The Note is the author's reading matter: title and frame follow the
+        // project language (the model already answers in it).
+        let (title, frame) = crate::world::i18n::critique_note(
+            lang,
+            world_name,
+            aspect,
+            sev,
             it.issue.trim(),
             it.recommendation.trim(),
+        );
+        let body = format!(
+            "{frame}// from `inkhaven realworld critique` — advisory; edit world.hjson as you see fit\n"
         );
         let h = Hierarchy::load(&store)?;
         // Idempotent by title: a re-run refreshes the existing Note for this

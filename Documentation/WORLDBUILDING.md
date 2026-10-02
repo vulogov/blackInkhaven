@@ -109,8 +109,16 @@ makes it (and narrower toward the poles), so a bigger planet holds more people. 
 heightmap that declares `scale_km_per_pixel` is a *region* of that size — journeys
 across it are as long as the scale says, and it holds a region's population. Omit
 the scale — or give one that makes the image as tall as the planet itself, such as
-a whole-Earth map at 50 km per pixel — and the image is the whole planet. (A regional map's climate still runs
-pole to pole down the image; `validate` says so when the two disagree.)
+a whole-Earth map at 50 km per pixel — and the image is the whole planet.
+
+**A regional map's latitude (3.16).** Measured as a region, a scaled heightmap is
+still *weathered* pole to pole unless you say where it is. Add **`dem.center_lat`**
+(and optionally `center_lon`) and its rows span the latitudes its height really
+covers around that centre: a 1200 km map at 10°N is tropical from edge to edge, the
+same map at 80°N is cold throughout. Climate, `weather`, the scene brief,
+`set-coords --lat/--lon` and landmarks given in degrees all read the same band.
+Opt-in: a world without `center_lat` compiles exactly as before. (Without `center_lat` a regional map's climate still runs pole to pole down the
+image; `validate` says so, and names the key.)
 
 **The interview speaks your project's language (3.15)** — en / ru / fr / de / es —
 and takes answers in it: `оранжевая`, `naine rouge`, `ja`, `0,6`, `древние`.
@@ -146,6 +154,8 @@ geology: {
         path: "assets/earth_heightmap.png"   // grayscale; brighter = higher
         scale_km_per_pixel: 50.0             // optional — omit for a whole-planet map
         sea_level_pixel_value: 128           // pixels ≤ this are ocean
+        // center_lat: 45.0                  // optional — a REGIONAL map's latitude (3.16)
+        // center_lon: 10.0                  // optional — and its longitude (default 0)
     }
 }
 ```
@@ -280,10 +290,52 @@ $ inkhaven realworld proposals accept-all    # or accept/reject <id>
 $ inkhaven realworld places                  # the accepted cross-references
 ```
 
-Re-running `propose` never re-offers a resolved site. These accepted Places are
+Re-running `propose` never re-offers a resolved site. A settlement is identified
+by its cell on the map, so (3.16) an accept or reject applies **under the seed it
+was made under** — change the seed and the new world's settlements are offered
+afresh, rather than being silently skipped because a different town once stood on
+the same cell. Decisions made before 3.16 carry no seed and keep applying under
+every seed; rulers, languages and myths are identified by name and stay settled
+across seeds. These accepted Places are
 what the fact-checker resolves place names against — closing the loop: **compile
 → accept cities → write → check.** TUI: **`Ctrl+B W` → `P`** (Enter accept, `r`
 reject).
+
+### In your book's language (3.16)
+
+Proposals follow the project's `language` (English, Russian, French, German,
+Spanish; anything else reads in English). That covers what you **read** — the
+rationale in `proposals list` and the `P` queue — and what is **committed** on
+accept: the Place paragraph, the ruler's Character stub, the language design
+brief, the Mythology entry, and the `critique` Notes' titles and frames.
+
+```
+0ee34412 [pending] Drulaemar — Посёлок, ~9491 жителей, у слияния рек; природная зона: холодная пустыня.
+
+Korason — город с населением около 22944 человек. Расположение: в устье реки.
+Природная зона: умеренные степи.
+```
+
+It is the vocabulary that is translated, not just the sentence: settlement
+class, siting, the twelve biomes, the culture layer's ethos and beliefs, the
+language-profile terms. Three things to know:
+
+- **Your own words are left alone.** An ethos or belief you *declared* in
+  `world.hjson` is passed through as written — write it in your language.
+- **Mythology vocabularies are in the prose language**, because `myth scan`
+  looks for those words in your manuscript. It matches whole words exactly, so
+  the Russian and German seeds carry the commonest case forms; extend the list
+  in the Mythology book as you would any declared symbol. A declared belief in
+  any script now yields a vocabulary too (it used to need ASCII).
+- **Names are not translated.** Realm, ruler and settlement names come from the
+  world's own phonology; word order (`SOV`) is notation.
+
+The stored proposal keeps its canonical English keys, so dedup, re-proposal and
+the fact-checker behave identically in every language. Proposals already
+*pending* in English are rewritten the next time you run `propose` (or open the
+hub); paragraphs already accepted stay as they were committed. A `critique`
+Note is matched by title, so a non-English project gets fresh Notes rather than
+refreshing the English-titled ones from an earlier run.
 
 ---
 
@@ -304,7 +356,9 @@ $ inkhaven realworld map
 Mountains come from clustering the heightfield's high cells; rivers run their real
 D8 watercourse; landmarks are your largest settlements (coastal cities → ports).
 plakat's resolved landmark positions are read back to **refine each accepted
-Place's coordinates**.
+Place's coordinates**. (3.16) Coordinates you set yourself with `realworld
+set-coords` are never moved by a render — the map refines only positions that came
+from the compiler or from an earlier render.
 
 | Flag / chord | Effect |
 |---|---|
@@ -447,6 +501,23 @@ inkhaven fact-check (--text "…" | --paragraph <id>) [--slow] [--max-cost <n>] 
 | → `M` | render the world map with plakat |
 | → `S` | toggle the idle auto slow-check |
 
+**`C` compiles in the background (3.16).** The compile, the World-book chapters
+it writes and re-embeds, and the proposal queue all run off the UI thread: the
+status line reports each layer (`⟳ world compile: climate (3/11)`), and you can
+close the overview and keep writing and saving while it works. When it lands
+the tree picks up the new chapters and an open overview re-renders itself.
+
+- **`C` again cancels.** It stops between layers; the layers already written
+  stay (each leaf is written atomically and a re-run is idempotent), and the
+  next `C` finishes the job.
+- **One job at a time.** If another background job holds the slot, `C` compiles
+  inline as it always did rather than refusing.
+- **Don't edit a World-book leaf while it compiles** — the compiler owns those
+  paragraphs and will rewrite them underneath you. A leaf you had open before
+  the compile shows its old text until you re-open it.
+- Quitting mid-compile is safe: you are left with a partial compile, completed
+  by the next `C`.
+
 ---
 
 ## The interactive worldbuilder (`inkhaven worldbuilder`)
@@ -534,6 +605,16 @@ Cycle to the Map pane, press `e` to edit, and draw the world — every mark is a
 
 `/terrain` writes the sculpted heightmap as a grayscale DEM under `assets/maps/` and
 sets `geology.dem`; `realworld compile` (DEM-aware) then rebuilds the world from it.
+
+---
+
+## Upgrading a project to 3.16
+
+The first time 3.16 opens a project, `.inkhaven/world.db` is upgraded in place
+(two added columns; nothing is rewritten or lost). The upgrade is **one-way**: an
+older inkhaven then refuses that file and asks you to upgrade, by the same guard
+that protects every store. Nothing else changes unless you ask for it — a world
+without `dem.center_lat` compiles to the same output as before.
 
 ---
 

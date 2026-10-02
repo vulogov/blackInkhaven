@@ -11,6 +11,7 @@
 
 use crate::world::compile::culture_layer::CultureOutput;
 use crate::world::compile::polities_layer::PolitiesOutput;
+use crate::world::i18n::WLang;
 use crate::world::proposals::{now_secs, settlement_name, PlaceProposal};
 
 /// A stable slug for a realm name, for the proposal signature (dedup key).
@@ -67,10 +68,17 @@ pub fn ruler_proposals(pol: &PolitiesOutput, cultures: &CultureOutput, seed: u64
 
 /// The prose body of an accepted ruler Character — a factual stub the author
 /// fleshes out. No invented arc or backstory: only what the world entails.
-pub fn ruler_body(p: &PlaceProposal) -> String {
+///
+/// Written in `lang` (WK2-P3): the payload keeps the compile layer's English
+/// values, and the stub is translated here, at the moment it becomes prose.
+pub fn ruler_body(p: &PlaceProposal, lang: WLang) -> String {
     let s = |k: &str| p.payload.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
     let pop = p.payload.get("population").and_then(|v| v.as_u64()).unwrap_or(0);
     let realm = s("realm");
+    if let Some(mut body) = crate::world::i18n::ruler_body(lang, &p.name, &realm, &s("capital"), pop, &s("ethos"), &s("belief")) {
+        body.push_str(&format!("// world-compiler proposal {}\n", p.signature));
+        return body;
+    }
     let capital = s("capital").replace('_', " ");
     let ethos = s("ethos");
     let belief = s("belief");
@@ -144,7 +152,7 @@ mod tests {
     #[test]
     fn body_is_grounded_in_the_realm_and_culture() {
         let props = ruler_proposals(&pol(&["Karon"]), &cultures(&["Karon"]), 3);
-        let body = ruler_body(&props[0]);
+        let body = ruler_body(&props[0], WLang::En);
         assert!(body.contains("rules Karon"));
         assert!(body.contains("mercantile and civic"));
         assert!(body.contains("a sky-pantheon"));
@@ -156,6 +164,6 @@ mod tests {
         let a = ruler_proposals(&pol(&["Karon"]), &cultures(&["Karon"]), 9);
         let b = ruler_proposals(&pol(&["Karon"]), &cultures(&["Karon"]), 9);
         assert_eq!(a[0].name, b[0].name);
-        assert_eq!(ruler_body(&a[0]), ruler_body(&b[0]));
+        assert_eq!(ruler_body(&a[0], WLang::En), ruler_body(&b[0], WLang::En));
     }
 }
