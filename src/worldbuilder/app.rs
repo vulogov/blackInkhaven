@@ -697,8 +697,8 @@ impl WorldbuilderApp {
             let seed = base_seed.wrapping_add(i as u64);
             let mut def = base.clone();
             def.seed = crate::world::types::SeedValue::Str(format!("0x{seed:x}"));
-            let layers = crate::world::plausibility::compile_layers(&def);
-            let warns = crate::world::plausibility::run_fast(&def);
+            let layers = crate::world::plausibility::compile_layers_at(&def, Some(&self.layout.root));
+            let warns = crate::world::plausibility::run_fast_at(&def, Some(&self.layout.root));
             let score = crate::world::plausibility::compute_plausibility_score(&warns);
             let (g, c, d) = (&layers.geology, &layers.climate, &layers.demographics);
             let marker = if i == 0 { "*" } else { " " };
@@ -861,8 +861,8 @@ impl WorldbuilderApp {
             path: vec!["geology".into(), "dem".into()],
             value,
         });
-        // Rebuild caches (procedural — the worldbuilder compile isn't DEM-aware),
-        // but keep the terrain preview.
+        // Rebuild caches — the compile is DEM-aware (WK-P3), so it now reads back
+        // the heightmap just written; keep the in-memory sculpt as the preview.
         let preview = self.map_terrain.take();
         self.refresh_plausibility();
         if let Some(def) = self.current_world_def() {
@@ -1233,7 +1233,7 @@ impl WorldbuilderApp {
         let compiled = self
             .current_world_def()
             .map(|def| {
-                let layers = crate::world::plausibility::compile_layers(&def);
+                let layers = crate::world::plausibility::compile_layers_at(&def, Some(&self.layout.root));
                 crate::world::plausibility::summarise_compiled(&def, &layers)
             });
         let facts = self.collect_world_facts();
@@ -1604,7 +1604,7 @@ impl WorldbuilderApp {
     /// edits don't change the grid, so the editor re-runs this after a placement
     /// to keep the map live (refresh_plausibility having cleared the caches).
     fn populate_map_caches(&mut self, def: &crate::world::types::WorldDefinition) {
-        let layers = crate::world::plausibility::compile_layers(def);
+        let layers = crate::world::plausibility::compile_layers_at(def, Some(&self.layout.root));
         self.compiled_summary =
             Some(crate::world::plausibility::summarise_compiled(def, &layers));
         let (w, h) = (layers.geology.width, layers.geology.height);
@@ -2248,7 +2248,7 @@ impl WorldbuilderApp {
         self.plausibility_prev = self.plausibility_score;
         match def {
             Some(def) => {
-                let warnings = crate::world::plausibility::run_fast(&def);
+                let warnings = crate::world::plausibility::run_fast_at(&def, Some(&self.layout.root));
                 self.plausibility_score =
                     Some(crate::world::plausibility::compute_plausibility_score(&warnings));
                 self.plausibility_warnings = warnings;

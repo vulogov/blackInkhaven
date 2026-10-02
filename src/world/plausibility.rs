@@ -95,15 +95,26 @@ pub struct CompiledLayers {
 }
 
 /// Run the pure compile chain (astronomy → geology → climate → hydrology →
-/// demographics) with no LLM and no I/O beyond the definition. NB: geology uses
-/// the pure `compile_geology` (not the project-DEM `geology_for`); DEM-aware
-/// geology is a later refinement.
+/// demographics) with no LLM and no I/O beyond the definition. Geology is always
+/// GENERATED here; a surface that knows the project root should call
+/// [`compile_layers_at`] so a declared heightmap is honoured.
 pub fn compile_layers(def: &WorldDefinition) -> CompiledLayers {
+    compile_layers_at(def, None)
+}
+
+/// WORLD-KEEP-1 (WK-P3) — [`compile_layers`], DEM-aware: with a project root, a
+/// declared `geology.dem` is read (as the CLI does) instead of compiling the
+/// world's procedural twin. A heightmap that cannot be read falls back to the
+/// generated terrain; [`run_fast_at`] reports that as a warning.
+pub fn compile_layers_at(def: &WorldDefinition, root: Option<&std::path::Path>) -> CompiledLayers {
     use crate::world::compile::{
         astronomy_layer, climate_layer, demographics_layer, geology_layer, hydrology_layer,
     };
     let astronomy = astronomy_layer::compile_astronomy(&def.astronomy);
-    let geology = geology_layer::compile_geology(def);
+    let geology = match root {
+        Some(r) => crate::world::compile::compile_geology_at_or_generated(def, r),
+        None => geology_layer::compile_geology(def),
+    };
     let climate = climate_layer::compile_climate(def, &astronomy, &geology);
     let hydrology = hydrology_layer::compile_hydrology(&geology, &climate);
     let demographics = demographics_layer::compile_demographics(&climate, &hydrology);
@@ -279,15 +290,30 @@ pub fn lint_definition(def: &WorldDefinition) -> Vec<Warning> {
 /// warnings (layer-prefixed). No LLM, no I/O beyond the pure compile chain —
 /// suitable for the worldbuilder's live score.
 pub fn run_fast(def: &WorldDefinition) -> Vec<Warning> {
+    run_fast_at(def, None)
+}
+
+/// WORLD-KEEP-1 (WK-P3) — [`run_fast`] over the DEM-aware compile, so the score
+/// judges the world the CLI compiles. A declared heightmap that cannot be read
+/// is a high-severity warning (the lints below then ran on generated terrain).
+pub fn run_fast_at(def: &WorldDefinition, root: Option<&std::path::Path>) -> Vec<Warning> {
     use crate::world::compile::{
         culture_layer, ecology_layer, history_layer, hydrology_layer, polities_layer,
     };
 
     let CompiledLayers { astronomy: _astro, geology: geo, climate, hydrology: _hydro, demographics: demo } =
-        compile_layers(def);
+        compile_layers_at(def, root);
     let seed = def.seed_u64();
 
     let mut out: Vec<Warning> = lint_definition(def);
+    if let (Some(r), Some(dem)) = (root, def.geology.as_ref().and_then(|g| g.dem.as_ref())) {
+        if let Err(e) = crate::world::compile::compile_geology_at(def, r) {
+            out.push(Warning::high(format!(
+                "geology: the declared heightmap `{}` could not be used ({e}) — showing generated terrain instead",
+                dem.path
+            )));
+        }
+    }
 
     let declared_hist = def.history.as_ref().map(|h| h.events.as_slice()).unwrap_or(&[]);
     if !declared_hist.is_empty() {
@@ -366,6 +392,29 @@ mod tests {
         // Clamp at 0.
         let many: Vec<Warning> = (0..20).map(|_| Warning::high("x")).collect();
         assert_eq!(compute_plausibility_score(&many), 0);
+    }
+
+    #[test]
+    fn the_dem_aware_compile_reads_the_heightmap_and_reports_a_missing_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut def = crate::world::types::WorldDefinition::from_hjson(&crate::world::starter_template("D")).unwrap();
+        def.geology = Some(crate::world::types::GeologyDef {
+            generated: None,
+            dem: Some(serde_json::from_value(serde_json::json!({ "path": "h.png" })).unwrap()),
+        });
+        // Missing file: falls back to generated terrain, and says so.
+        let w = run_fast_at(&def, Some(dir.path()));
+        assert!(w.iter().any(|x| x.text.contains("could not be used")), "missing DEM is reported");
+        assert_ne!(compile_layers_at(&def, Some(dir.path())).geology.source, "dem");
+        // A real heightmap: the compile is DEM-sourced, and the warning is gone.
+        let img = image::ImageBuffer::<image::Luma<u16>, Vec<u16>>::from_fn(64, 48, |x, y| {
+            image::Luma([((x * 1000 + y * 300) % 65535) as u16])
+        });
+        img.save(dir.path().join("h.png")).unwrap();
+        let with = compile_layers_at(&def, Some(dir.path()));
+        let without = compile_layers(&def);
+        assert_ne!(with.geology.source, without.geology.source, "the DEM is honoured only with a root");
+        assert!(!run_fast_at(&def, Some(dir.path())).iter().any(|x| x.text.contains("could not be used")));
     }
 
     #[test]

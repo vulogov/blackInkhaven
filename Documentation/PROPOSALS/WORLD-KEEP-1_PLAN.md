@@ -1,8 +1,7 @@
 # WORLD-KEEP-1 — "A World That Keeps Its Word"
 
-*Status: PLAN. Sequenced **after** [`CANON-UI-2`](CANON-UI-2_PLAN.md) on
-`3.15.0-dev`. Whether it ships inside 3.15.0 as a second track or opens 3.16.0 is
-decided when CANON-UI-2 is done — the phases below do not depend on that.*
+*Status: IN PROGRESS — ships in **3.15.0** alongside
+[`CANON-UI-2`](CANON-UI-2_PLAN.md) (the author's call, 2026-10-01).*
 
 ## Why
 
