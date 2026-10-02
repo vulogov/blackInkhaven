@@ -1,7 +1,9 @@
 # WORLD-KEEP-1 — "A World That Keeps Its Word"
 
-*Status: IN PROGRESS — ships in **3.15.0** alongside
-[`CANON-UI-2`](CANON-UI-2_PLAN.md) (the author's call, 2026-10-01).*
+*Status: BUILT on `3.15.0-dev` (WK-P1…P7), shipping in **3.15.0** alongside
+[`CANON-UI-2`](CANON-UI-2_PLAN.md). Each phase below records what was done and —
+where the measured or discovered shape differed from the plan — what was
+deliberately left out and why.*
 
 ## Why
 

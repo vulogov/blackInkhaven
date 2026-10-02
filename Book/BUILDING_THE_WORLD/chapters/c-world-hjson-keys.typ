@@ -72,10 +72,13 @@ calendar (day → month → year; `month.per_parent` = days in a month,
 `year.per_parent` = months in a year).
 #gloss("months")[`number`, required — months in the year (at least `1`).]
 #gloss("month_length_days")[`number`, required — days in a month (at least `1`).]
-#gloss("weekdays")[`number` — days in a week.]
+#gloss("weekdays")[`number` — days in a week. With it, `realworld weather`, `scene`
+  and `calendar` name the weekday of a day (the week is counted from the first
+  day of the year).]
 #gloss("month_names")[`list` of `text` — optional names for the months; used when
   the calendar is adopted into the story Timeline.]
-#gloss("day_names")[`list` of `text` — optional names for the days of the week.]
+#gloss("day_names")[`list` of `text` — optional names for the days of the week;
+  used wherever a date is shown ("day 2 of Frostmoon · Fourday").]
 #gloss("new_year_aligns_to")[`text` — the season marker the new year begins on,
   e.g. `"winter_solstice"`, `"vernal_equinox"`.]
 
@@ -105,8 +108,10 @@ defaults.
 
 #subsection("dem")
 #gloss("dem")[`block` — bring-your-own-map. `dem.path` (`text`) is the heightmap
-  image, relative to the project root; `dem.scale_km_per_pixel` (`number`) sets
-  its real scale; `dem.sea_level_pixel_value` (`number`) marks the pixel level at
+  image, relative to the project root; `dem.scale_km_per_pixel` (`number`,
+  optional) declares its real scale — with it the map is a *region* of that size
+  (journey distances, trade routes and population all follow), without it the
+  image is the whole planet; `dem.sea_level_pixel_value` (`number`) marks the pixel level at
   or below which land is sea, in the image's own depth (`0`–`255` for an 8-bit
   image, `0`–`65535` for 16-bit).]
 
