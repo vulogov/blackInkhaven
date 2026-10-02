@@ -1,6 +1,6 @@
 # WORLD-KEEP-2 — "The Rest of the Word" (3.16.0)
 
-*Status: IN PROGRESS on `3.16.0-dev` (WK2-P1, P2, P3 done), sequenced after
+*Status: IN PROGRESS on `3.16.0-dev` (WK2-P1–P4 done), sequenced after
 [`CANON-READER-1`](CANON-READER-1_PLAN.md). The four items
 [`WORLD-KEEP-1`](WORLD-KEEP-1_PLAN.md) deferred, each with the reason it was
 deferred turned into its first step.*
@@ -78,6 +78,25 @@ deferred turned into its first step.*
   method used for the 3.15.0 re-cut exercises exactly this — compile in the
   background while saving a paragraph in the foreground. That live check is the
   gate; without it the phase does not ship.
+
+  *(Done — the gate passed.)* The compile moved out of the TUI method into
+  `world::compile_job::compile_and_materialize`, which borrows nothing from the
+  app: a cloned `Store` (pooled DuckDB; embedder, vector store and canon ledger
+  each behind their own lock; Bund hooks behind the VM's), per-layer progress,
+  a cancel flag checked between layers. `BgJobKind::WorldCompile`; the
+  completion handler and the inline fallback share `finish_world_compile`.
+  Live check, tmux, throwaway project, debug build: 24 typed tokens and 8
+  `Ctrl+S` saves across a compile (two saves landing mid-compile) — no
+  keystroke lost, every save succeeded, file and store agree, no error in the
+  log; an overview left open re-rendered and kept the compile's report on the
+  status line; `C` during a compile cancelled between layers; `C` while the
+  overview job held the slot compiled inline; quitting mid-compile left a store
+  that reopens and recompiles. Not covered by a unit test — a `Store` needs the
+  embedding model, and there is no in-test store helper. Known limits, by
+  design: a World-book leaf edited *during* a compile can lose to the compiler
+  (it owns those leaves); a leaf already open shows its old text until
+  re-opened, as before; quitting mid-compile is silent. Also corrected: the
+  status line said "5 layers materialized" — it is eleven.
 
 - **WK2-P5 — docs.** WORLDBUILDING.md, the book (appendix C, the land and map
   chapters), release notes.

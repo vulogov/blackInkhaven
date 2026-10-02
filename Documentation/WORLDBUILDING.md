@@ -495,6 +495,23 @@ inkhaven fact-check (--text "…" | --paragraph <id>) [--slow] [--max-cost <n>] 
 | → `M` | render the world map with plakat |
 | → `S` | toggle the idle auto slow-check |
 
+**`C` compiles in the background (3.16).** The compile, the World-book chapters
+it writes and re-embeds, and the proposal queue all run off the UI thread: the
+status line reports each layer (`⟳ world compile: climate (3/11)`), and you can
+close the overview and keep writing and saving while it works. When it lands
+the tree picks up the new chapters and an open overview re-renders itself.
+
+- **`C` again cancels.** It stops between layers; the layers already written
+  stay (each leaf is written atomically and a re-run is idempotent), and the
+  next `C` finishes the job.
+- **One job at a time.** If another background job holds the slot, `C` compiles
+  inline as it always did rather than refusing.
+- **Don't edit a World-book leaf while it compiles** — the compiler owns those
+  paragraphs and will rewrite them underneath you. A leaf you had open before
+  the compile shows its old text until you re-open it.
+- Quitting mid-compile is safe: you are left with a partial compile, completed
+  by the next `C`.
+
 ---
 
 ## The interactive worldbuilder (`inkhaven worldbuilder`)
