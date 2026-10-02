@@ -404,6 +404,14 @@ impl GeoLandmark {
     /// cell-centre conversion of `lat`/`lon` (matching the climate convention),
     /// else `None` when the landmark carries no position.
     pub fn grid(&self, w: usize, h: usize) -> Option<(usize, usize)> {
+        self.grid_on(w, h, &crate::world::latmap::LatMap::globe())
+    }
+
+    /// [`Self::grid`] on a map with a known geographic extent: a `lat`/`lon`
+    /// position is placed through the same [`LatMap`](crate::world::latmap::LatMap)
+    /// the climate uses, so a landmark at 45°N sits on the row that is weathered
+    /// as 45°N — on a regional map as much as on a globe.
+    pub fn grid_on(&self, w: usize, h: usize, map: &crate::world::latmap::LatMap) -> Option<(usize, usize)> {
         if let (Some(x), Some(y)) = (self.x, self.y) {
             return Some((x.min(w.saturating_sub(1)), y.min(h.saturating_sub(1))));
         }
@@ -411,13 +419,7 @@ impl GeoLandmark {
             if w == 0 || h == 0 {
                 return None;
             }
-            let gy = ((90.0 - lat.clamp(-90.0, 90.0)) / 180.0 * h as f64 - 0.5)
-                .round()
-                .clamp(0.0, (h - 1) as f64) as usize;
-            let gx = ((lon.clamp(-180.0, 180.0) + 180.0) / 360.0 * w as f64 - 0.5)
-                .round()
-                .clamp(0.0, (w - 1) as f64) as usize;
-            return Some((gx, gy));
+            return Some((map.lon_col(lon, w), map.lat_row(lat, h)));
         }
         None
     }
@@ -490,6 +492,17 @@ pub struct DemGeology {
     /// Pixel values at or below this are treated as sea.
     #[serde(default)]
     pub sea_level_pixel_value: Option<u16>,
+    /// WORLD-KEEP-2 — the latitude (degrees, −90..90) at the CENTRE of a regional
+    /// map. With a regional `scale_km_per_pixel`, this makes the map's rows span
+    /// the latitudes its height really covers, so its climate is that of the
+    /// region rather than of a whole planet. Omitted → the image is weathered
+    /// pole to pole (the behaviour before 3.16). Ignored without a regional scale.
+    #[serde(default)]
+    pub center_lat: Option<f64>,
+    /// The longitude (degrees, −180..180) at the centre of a regional map; only
+    /// read alongside `center_lat`. Default 0.
+    #[serde(default)]
+    pub center_lon: Option<f64>,
 }
 
 
