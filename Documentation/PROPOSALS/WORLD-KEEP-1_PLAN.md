@@ -76,10 +76,12 @@ Every item below was verified in the 3.14.0 tree.
 - **WK-P6 — small promises.**
   - `Perlin::new(seed as u32)` truncates: seeds differing only in the high 32
     bits share terrain noise → fold the full seed.
-  - Place-proposal signatures ignore the seed, so accept/reject decisions leak
-    across an adopted seed → include it.
-  - `realworld map` ingest overwrites coordinates the author set with
-    `set-coords` → author-set coordinates win; ingest fills only the unset.
+  - *Deferred (needs a `world.db` migration decision):* place-proposal
+    signatures ignore the seed, so accept/reject decisions leak across an adopted
+    seed — but changing the signature would re-propose every Place an existing
+    project already resolved; and `realworld map` ingest overwrites coordinates
+    set with `set-coords` — but the place-link table records no provenance, so
+    "author-set wins" needs a new column. Both wait for that decision.
   - A landmark declared outside the grid is clamped to the border silently, and a
     landmark on a capital's cell (with every road to it) is dropped silently →
     both warn in `validate`.

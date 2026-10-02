@@ -18,6 +18,9 @@ use crate::world::types::world::{GeneratedGeology, WorldDefinition};
 /// seed climate / hydrology; plakat upsamples for cartography later.
 const W: usize = 160;
 const H: usize = 120;
+/// The model grid every layer shares (a DEM is resampled onto it).
+pub const GRID_W: usize = W;
+pub const GRID_H: usize = H;
 
 /// Compile the generated geology layer. (The DEM-import path is separate.)
 pub fn compile_geology(def: &WorldDefinition) -> GeologyOutput {
@@ -253,7 +256,10 @@ fn build_heightmap(
     boundaries: &[Boundary],
     g: &GeneratedGeology,
 ) -> Vec<f32> {
-    let perlin = Perlin::new(seed as u32);
+    // Fold the whole seed: `seed as u32` dropped the high half, so two seeds
+    // differing only above bit 32 grew the same terrain noise. Seeds that fit
+    // in 32 bits (every hand-typed one) are unchanged.
+    let perlin = Perlin::new(((seed >> 32) ^ seed) as u32);
     let orogeny = match g.mountain_orogeny.trim().to_ascii_lowercase().as_str() {
         "quiet" => 0.25_f32,
         "ancient" => 0.12,

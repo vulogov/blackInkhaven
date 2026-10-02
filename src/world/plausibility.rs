@@ -271,6 +271,35 @@ pub fn lint_definition(def: &WorldDefinition) -> Vec<Warning> {
     if let Some(e) = def.seed.parse_error() {
         w.push(Warning::medium(e));
     }
+    // Declared positions that fall off the map are clamped to its edge by the
+    // renderer — a typo then draws a marker on the border, silently.
+    if let Some(g) = def.geography.as_ref() {
+        use crate::world::compile::geology_layer::{GRID_H, GRID_W};
+        for l in &g.landmarks {
+            if l.x.is_some_and(|x| x >= GRID_W) || l.y.is_some_and(|y| y >= GRID_H) {
+                w.push(Warning::medium(format!(
+                    "geography: landmark `{}` at cell ({}, {}) is off the {GRID_W}×{GRID_H} map — drawn clamped to the edge",
+                    l.name, l.x.unwrap_or(0), l.y.unwrap_or(0)
+                )));
+            }
+            if l.lat.is_some_and(|v| !v.is_finite() || v.abs() > 90.0)
+                || l.lon.is_some_and(|v| !v.is_finite() || v.abs() > 180.0)
+            {
+                w.push(Warning::medium(format!(
+                    "geography: landmark `{}` has lat/lon outside ±90 / ±180 — drawn clamped to the edge",
+                    l.name
+                )));
+            }
+        }
+        for r in &g.regions {
+            if r.x.is_some_and(|x| x >= GRID_W) || r.y.is_some_and(|y| y >= GRID_H) {
+                w.push(Warning::medium(format!(
+                    "geography: region `{}` at cell ({}, {}) is off the {GRID_W}×{GRID_H} map",
+                    r.name, r.x.unwrap_or(0), r.y.unwrap_or(0)
+                )));
+            }
+        }
+    }
     let names: Vec<String> = def.nations.iter().map(|n| n.name.trim().to_lowercase()).collect();
     for n in &def.nations {
         for r in &n.relations {
@@ -323,6 +352,26 @@ pub fn run_fast_at(def: &WorldDefinition, root: Option<&std::path::Path>) -> Vec
                 .into_iter()
                 .map(|w| w.prefixed("history")),
         );
+    }
+    // A landmark on a realm capital's cell is dropped by the map (the capital
+    // claims the cell first), along with every road declared to it.
+    if let Some(g) = def.geography.as_ref() {
+        let placed: Vec<(&str, (usize, usize))> = g
+            .landmarks
+            .iter()
+            .filter_map(|l| l.grid(geo.width, geo.height).map(|c| (l.name.as_str(), c)))
+            .collect();
+        if !placed.is_empty() {
+            let pol = polities_layer::compile_polities(&demo, &def.nations, seed);
+            for (name, cell) in placed {
+                if let Some(p) = pol.polities.iter().find(|p| p.capital_pos == cell) {
+                    out.push(Warning::low(format!(
+                        "geography: landmark `{name}` sits on the capital cell of `{}` — the map draws the capital and drops the landmark (and any road to it); move it a cell",
+                        p.name
+                    )));
+                }
+            }
+        }
     }
     if !def.nations.is_empty() {
         out.extend(
@@ -445,6 +494,16 @@ mod tests {
         for needle in ["calendar.months is 0", "luminosity_solar", "semi_major_axis_au", "eccentricity", "rotation_direction", "sea_level", "mountain_orogeny", "seed", "stance", "not a declared nation"] {
             assert!(text.contains(needle), "missing lint for {needle}:\n{text}");
         }
+        // Positions off the map are named, not silently clamped.
+        def.geography = Some(serde_json::from_value(serde_json::json!({
+            "landmarks": [ { "name": "Edge", "x": 9999, "y": 2 }, { "name": "Polar", "lat": 123.0, "lon": 0.0 } ],
+            "regions": [ { "name": "Nowhere", "x": 1, "y": 9999 } ]
+        })).unwrap());
+        let text = lint_definition(&def).iter().map(|x| x.text.clone()).collect::<Vec<_>>().join("\n");
+        for needle in ["landmark `Edge`", "landmark `Polar`", "region `Nowhere`"] {
+            assert!(text.contains(needle), "missing lint for {needle}:\n{text}");
+        }
+        def.geography = None;
         // Case only is fine for the enum-like strings.
         def.astronomy.planet.rotation_direction = "Retrograde".into();
         assert!(!lint_definition(&def).iter().any(|x| x.text.contains("rotation_direction")));

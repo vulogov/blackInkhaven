@@ -608,7 +608,8 @@ impl WorldbuilderApp {
             Command::Undo => self.undo_pending(),
             Command::Reset => {
                 let n = self.pending_ops.len();
-                self.pending_ops.clear();
+                let dropped: Vec<super::commands::Op> = std::mem::take(&mut self.pending_ops);
+                self.remove_orphaned_terrain(&dropped);
                 self.pending_groups.clear();
                 self.refresh_plausibility();
                 self.persist_pending();
@@ -838,8 +839,16 @@ impl WorldbuilderApp {
             self.status = format!("terrain save failed: {e}");
             return;
         }
-        let rel = "assets/maps/terrain.png";
         let raw: Vec<u16> = hm.iter().map(|&e| (e.clamp(0.0, 1.0) * 65535.0) as u16).collect();
+        // Name the file by its content: a new sculpt never overwrites the
+        // heightmap a committed world.hjson already points at (the old fixed
+        // `terrain.png` was clobbered before `/write`, so `/undo` could not
+        // bring the committed terrain back).
+        let digest = raw.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, v| {
+            (h ^ *v as u64).wrapping_mul(0x0100_0000_01b3)
+        });
+        let rel_owned = format!("assets/maps/terrain-{:08x}.png", digest as u32);
+        let rel = rel_owned.as_str();
         let Some(img) =
             image::ImageBuffer::<image::Luma<u16>, Vec<u16>>::from_raw(w as u32, h as u32, raw)
         else {
@@ -1371,6 +1380,8 @@ impl WorldbuilderApp {
         self.split_ratio = target.split_ratio.clamp(2, 8);
         self.pending_ops = target.pending_ops.clone();
         self.pending_groups = target.pending_groups.clone();
+        // An unsaved sculpt belongs to the session being left.
+        self.map_terrain = None;
         let recovered = target.recovered_from.clone();
         self.session = target;
         // Fresh conversation + research state for the new session.
@@ -1804,6 +1815,36 @@ impl WorldbuilderApp {
         }
     }
 
+    /// WORLD-KEEP-1 (WK-P6) — a `/terrain` sculpt writes its heightmap at once; when
+    /// the delta that referenced it is undone or reset, remove the file unless
+    /// the committed `world.hjson` or a still-pending delta points at it. Only
+    /// ever touches the worldbuilder's own `assets/maps/terrain-*.png`.
+    fn remove_orphaned_terrain(&mut self, dropped: &[super::commands::Op]) {
+        let dem_path = |op: &super::commands::Op| -> Option<String> {
+            match op {
+                super::commands::Op::Set { path, value } if path.len() == 2 && path[0] == "geology" && path[1] == "dem" => {
+                    value.get("path").and_then(|p| p.as_str()).map(str::to_string)
+                }
+                _ => None,
+            }
+        };
+        let on_disk = std::fs::read_to_string(self.layout.root.join("world.hjson"))
+            .ok()
+            .and_then(|r| serde_hjson::from_str::<serde_json::Value>(&r).ok())
+            .and_then(|v| v.pointer("/geology/dem/path").and_then(|p| p.as_str()).map(str::to_string));
+        let still_pending: Vec<String> = self.pending_ops.iter().filter_map(dem_path).collect();
+        for rel in dropped.iter().filter_map(dem_path) {
+            let ours = rel.starts_with("assets/maps/terrain-") && rel.ends_with(".png") && !rel.contains("..");
+            if ours && on_disk.as_deref() != Some(rel.as_str()) && !still_pending.contains(&rel) {
+                let _ = std::fs::remove_file(self.layout.root.join(&rel));
+            }
+        }
+        // The in-memory sculpt belonged to the dropped delta.
+        if dropped.iter().any(|op| dem_path(op).is_some()) {
+            self.map_terrain = None;
+        }
+    }
+
     /// `/undo` — drop the last accepted delta (all of its ops) and rescore.
     fn undo_pending(&mut self) {
         if self.pending_ops.is_empty() {
@@ -1812,7 +1853,8 @@ impl WorldbuilderApp {
         }
         let n = self.pending_groups.pop().unwrap_or(1).clamp(1, self.pending_ops.len());
         let keep = self.pending_ops.len() - n;
-        self.pending_ops.truncate(keep);
+        let dropped: Vec<super::commands::Op> = self.pending_ops.split_off(keep);
+        self.remove_orphaned_terrain(&dropped);
         self.refresh_plausibility();
         self.persist_pending();
         self.status = format!(
