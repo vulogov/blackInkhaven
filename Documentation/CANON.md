@@ -124,6 +124,16 @@ that keeps any of the decision's words is not drift. A decision harvested from a
 Unsettled foundations are reported only once you have committed *something* — a
 ledger where nothing is marked is not using that axis.
 
+**In the worklist and the history.** The same findings join the other readers'
+in the Editorial Pass (`Ctrl+V Shift+R`) and `inkhaven revise`, under the source
+`canon`. A *drifted* decision is a **Decision** — you say which is right, the
+scene as it now reads or the decision, and either bring the scene back to it (a
+confirmed rewrite, like every other) or retcon the decision yourself. The other
+three are **Briefs**: you reconcile the ledger, and no prose is touched. Because
+they flow through the shared worklist, `chronicle mark` counts them too, so a
+milestone records whether the ledger and the book were in step — and the next one
+shows which findings cleared.
+
 `canon read <scope>` limits the report to decisions sourced under a chapter or
 paragraph; `--json` emits it for scripts (each finding says whether it resolves as
 a `decision` — a scene-or-ledger choice — or a `brief`); `--strict` exits non-zero

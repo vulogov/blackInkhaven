@@ -185,6 +185,20 @@ pub fn collect(
                 for f in store.raw().canon().commitment_forks().unwrap_or_default() {
                     raw.push(editorial::from_canon_fork(&f));
                 }
+                // CANON-READER-1 (3.16) — the ledger read against the manuscript:
+                // decisions whose source drifted or is gone, firm ones resting on
+                // soft ones, unsettled foundations. Deterministic and free;
+                // self-gating (an empty ledger reports nothing). Advisory — a
+                // failure to read the ledger just contributes no findings.
+                {
+                    let (language, _) = crate::prose::resolve_prose_language(None, &cfg.language);
+                    let view = crate::cli::canon::ManuscriptView { store: &store, hierarchy: &h };
+                    for f in crate::canon::read::check(store.raw().canon(), &view, &language)
+                        .unwrap_or_default()
+                    {
+                        raw.push(editorial::from_canon_finding(&f));
+                    }
+                }
             }
         }
     }
