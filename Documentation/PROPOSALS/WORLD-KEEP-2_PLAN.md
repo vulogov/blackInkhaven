@@ -1,6 +1,6 @@
 # WORLD-KEEP-2 — "The Rest of the Word" (3.16.0)
 
-*Status: IN PROGRESS on `3.16.0-dev` (WK2-P1, P2 done), sequenced after
+*Status: IN PROGRESS on `3.16.0-dev` (WK2-P1, P2, P3 done), sequenced after
 [`CANON-READER-1`](CANON-READER-1_PLAN.md). The four items
 [`WORLD-KEEP-1`](WORLD-KEEP-1_PLAN.md) deferred, each with the reason it was
 deferred turned into its first step.*
@@ -52,6 +52,23 @@ deferred turned into its first step.*
   dedup and the fact-checker are unaffected); only what the author reads and what
   is committed to their books is localised. Pre-flight: inventory the culture
   layer's generators — the size of that vocabulary sets the size of this phase.
+
+  *(Done.)* The inventory came out small: 3 classes, 3 siting bases, 12 biomes,
+  15 ethos phrases + `settled`, 7 beliefs, 7 language-profile terms, 8 myth
+  glosses/motif names — `src/world/i18n.rs`, with a test that compiles a real
+  world and fails if a layer ever emits a term the tables lack. Frames are
+  written to need no grammatical agreement (locative siting phrases; `Народ: …`
+  / `Ein Volk: …` lists). The generators keep their signatures and their English
+  output byte-for-byte; `localize_all` rewrites a batch after generation, and
+  the four commit bodies take the language from the project config. Two things
+  the plan did not foresee: (1) a Mythology symbol's **vocabulary** is scanner
+  input, so it has to be in the prose language and — `myth scan` being
+  exact-match — carry case forms for Russian and German; (2) `belief_vocabulary`
+  split on ASCII, so a belief declared in Russian produced no words at all —
+  now Unicode-aware. Left alone: author-declared ethos/belief (already the
+  author's words), names, and the ConLang chapter titles the brief points at
+  (they are scaffolded in English). The translations are the implementer's; a
+  native read of ru/fr/de/es would be worth having.
 
 - **WK2-P4 — materialize off the UI thread.** `Ctrl+B W` → compile writes eleven
   World-book chapters and re-embeds them on the UI thread. Move it to the shared
