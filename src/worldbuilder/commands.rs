@@ -206,7 +206,15 @@ pub(super) fn parse(input: &str) -> Command {
             Command::Shape { label, ops }
         }
 
-        "tilt" => match rest.parse::<f64>() {
+        "tilt" => match rest
+            .trim_end_matches('°')
+            .trim()
+            .parse::<f64>()
+            .ok()
+            .or_else(|| decimal_comma(rest.trim_end_matches('°').trim()))
+            .filter(|v| v.is_finite())
+            .ok_or(())
+        {
             Ok(v) => Command::Shape {
                 label: format!("axial tilt → {v}°"),
                 ops: vec![Op::Set {
@@ -217,13 +225,30 @@ pub(super) fn parse(input: &str) -> Command {
             Err(_) => Command::Unknown("usage: /tilt <degrees>".into()),
         },
 
+        "orogeny" => {
+            // The interview's mountains question, in any of the five languages:
+            // the schema stores one of three lowercase words.
+            let Some(word) = orogeny_of(rest) else {
+                return Command::Unknown(
+                    "usage: /orogeny active | quiet | ancient (активные · спокойные · древние / actives · calmes · anciennes / aktiv · ruhig · uralt / activas · tranquilas · antiguas)".into(),
+                );
+            };
+            Command::Shape {
+                label: format!("mountains → {word}"),
+                ops: vec![Op::Set {
+                    path: vec!["geology".into(), "generated".into(), "mountain_orogeny".into()],
+                    value: json!(word),
+                }],
+            }
+        }
+
         "moon" => {
             // `<name…> [period_days]` — a trailing number is the period, the rest
             // (any number of words) is the name. `period_days` is required by the
             // schema (a moon without it makes world.hjson unparseable); default to
             // Earth's Moon when omitted, and give it a lunar mass so it raises tides.
             let mut toks: Vec<&str> = rest.split_whitespace().collect();
-            let period = match toks.last().and_then(|s| s.parse::<f64>().ok()) {
+            let period = match toks.last().and_then(|s| s.parse::<f64>().ok().or_else(|| decimal_comma(s))) {
                 Some(p) if p.is_finite() && p > 0.0 && toks.len() > 1 => {
                     toks.pop();
                     p
@@ -338,22 +363,41 @@ pub(super) fn parse(input: &str) -> Command {
 /// `red`, `red dwarf`, `blue`, `white`). `None` when it is neither.
 fn star_class_of(answer: &str) -> Option<String> {
     let t = answer.trim();
-    let lower = t.to_ascii_lowercase();
+    // The words each interview language offers (WK-P4), plus English.
+    let lower = t.to_lowercase();
     let by_word = match lower.as_str() {
-        "sun-like" | "sunlike" | "sun like" | "yellow" | "sun" | "yellow dwarf" | "g-type" => Some("G"),
-        "orange" | "orange dwarf" | "k-type" => Some("K"),
-        "red" | "red dwarf" | "m-type" => Some("M"),
-        "yellow-white" | "yellow white" | "f-type" => Some("F"),
-        "white" | "a-type" => Some("A"),
-        "blue-white" | "blue white" | "b-type" => Some("B"),
-        "blue" | "blue giant" | "o-type" => Some("O"),
+        "sun-like" | "sunlike" | "sun like" | "yellow" | "sun" | "yellow dwarf" | "g-type"
+        | "как солнце" | "солнцеподобная" | "жёлтая" | "желтая" | "жёлтый карлик" | "желтый карлик"
+        | "semblable au soleil" | "jaune" | "naine jaune"
+        | "sonnenähnlich" | "gelb" | "gelber zwerg"
+        | "similar al sol" | "amarilla" | "enana amarilla" => Some("G"),
+        "orange" | "orange dwarf" | "k-type" | "оранжевая" | "оранжевый карлик" | "naine orange"
+        | "oranger zwerg" | "naranja" | "enana naranja" => Some("K"),
+        "red" | "red dwarf" | "m-type" | "красная" | "красный карлик" | "rouge" | "naine rouge"
+        | "rot" | "roter zwerg" | "roja" | "enana roja" => Some("M"),
+        "yellow-white" | "yellow white" | "f-type" | "жёлто-белая" | "желто-белая" => Some("F"),
+        "white" | "a-type" | "белая" | "blanche" | "weiß" | "weiss" | "blanca" => Some("A"),
+        "blue-white" | "blue white" | "b-type" | "бело-голубая" => Some("B"),
+        "blue" | "blue giant" | "o-type" | "голубая" | "bleue" | "blau" | "azul" => Some("O"),
         _ => None,
     };
     if let Some(c) = by_word {
         return Some(c.to_string());
     }
     // A spectral class token: letter O/B/A/F/G/K/M, optional subtype digit,
-    // optional luminosity class (V, IV, III, II, I).
+    // optional luminosity class (V, IV, III, II, I). A class letter typed on a
+    // Cyrillic layout (К, М, О, А, В look identical) is the Latin letter meant.
+    let t: String = t
+        .chars()
+        .map(|c| match c {
+            'К' | 'к' => 'K',
+            'М' | 'м' => 'M',
+            'О' | 'о' => 'O',
+            'А' | 'а' => 'A',
+            'В' | 'в' => 'B',
+            other => other,
+        })
+        .collect();
     let up = t.to_ascii_uppercase();
     let mut chars = up.chars();
     let first = chars.next()?;
@@ -368,6 +412,22 @@ fn star_class_of(answer: &str) -> Option<String> {
             .chars()
             .all(|c| matches!(c, 'I' | 'V'));
     if rest_ok && up.len() <= 6 { Some(up) } else { None }
+}
+
+/// Resolve the interview's mountains answer (any of the five languages) to the
+/// schema word: `active` / `quiet` / `ancient`. `None` when it is none of them.
+fn orogeny_of(answer: &str) -> Option<&'static str> {
+    let w = answer.trim().to_lowercase();
+    let starts = |stems: &[&str]| stems.iter().any(|s| w.starts_with(s));
+    if starts(&["activ", "aktiv", "актив", "young", "молод"]) {
+        Some("active")
+    } else if starts(&["quiet", "calm", "tranquil", "ruhig", "спокой", "тих"]) {
+        Some("quiet")
+    } else if starts(&["ancient", "ancien", "antig", "uralt", "alt", "old", "vieil", "vieux", "viej", "древн", "стар"]) {
+        Some("ancient")
+    } else {
+        None
+    }
 }
 
 fn typical_luminosity(class: &str) -> Option<f64> {
@@ -411,13 +471,19 @@ fn parse_scalar(s: &str) -> Value {
             return json!(t[1..t.len() - 1]);
         }
     }
-    match t.to_ascii_lowercase().as_str() {
-        "true" | "yes" | "on" => return json!(true),
-        "false" | "no" | "off" => return json!(false),
+    match t.to_lowercase().as_str() {
+        // yes / no in the five interview languages (WK-P4).
+        "true" | "yes" | "on" | "да" | "oui" | "ja" | "sí" | "si" => return json!(true),
+        "false" | "no" | "off" | "нет" | "non" | "nein" => return json!(false),
         _ => {}
     }
     if let Ok(i) = t.parse::<i64>() {
         return json!(i);
+    }
+    // A decimal comma (`0,6`, `23,4`) is how four of the five languages write
+    // a fraction; read it as the number it is.
+    if let Some(f) = decimal_comma(t) {
+        return json!(f);
     }
     if let Ok(f) = t.parse::<f64>() {
         if f.is_finite() {
@@ -426,6 +492,18 @@ fn parse_scalar(s: &str) -> Value {
         return json!(t);
     }
     json!(t)
+}
+
+/// `23,4` → `23.4`: exactly one comma between digits, no dot, optional sign.
+fn decimal_comma(t: &str) -> Option<f64> {
+    let body = t.strip_prefix(['-', '+']).unwrap_or(t);
+    let (a, b) = body.split_once(',')?;
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|c| c.is_ascii_digit());
+    if digits(a) && digits(b) {
+        t.replace(',', ".").parse::<f64>().ok().filter(|f| f.is_finite())
+    } else {
+        None
+    }
 }
 
 /// Accept-time validation of a shaping delta against the world as it stands

@@ -307,6 +307,14 @@ pub(crate) fn slow_llm_call(
         .map_err(|e| Error::Store(format!("world store: {e}")))?;
     let used = store.llm_calls_today(&day).map_err(|e| Error::Store(format!("{e}")))?;
 
+    // WK-P4 — the findings are read by the author: have them written in the
+    // project language (the JSON keys / enum values stay as specified).
+    let (language, _) = crate::prose::resolve_prose_language(None, &cfg.language);
+    let system = format!(
+        "{system} Write every \"explanation\" in {}.",
+        crate::canon::language_name(&language)
+    );
+    let system = system.as_str();
     // The LLM provider (errors cleanly when none is configured).
     let ai = crate::ai::AiClient::from_config(&cfg.llm)
         .map_err(|e| Error::Config(format!("no LLM provider for the {label}: {e}")))?;

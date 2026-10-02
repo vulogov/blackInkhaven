@@ -1405,16 +1405,16 @@ impl WorldbuilderApp {
     /// the Chat pane, and post the first question. Answers accumulate into the
     /// pending delta (reviewable with `/diff`, committed with `/write`).
     fn start_interview(&mut self) {
-        let iv = super::interview::Interview::new();
+        // WK-P4 — the interview speaks the project language.
+        let (language, _) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        let lang = super::interview::Lang::of(&language);
+        let iv = super::interview::Interview::new(lang);
         self.interview = Some(iv);
         self.right_pane = RightPane::Chat;
         self.focus = Focus::QueryPrompt;
         self.push_turn(
             String::new(),
-            "Interview — I'll ask about the sky, land, people, and rules. Answer in your own \
-             words (blank to skip a question, Esc to leave). Your answers become pending edits; \
-             review them with /diff and commit with /write, then /compile."
-                .to_string(),
+            super::interview::line(lang, super::interview::Line::Opening).to_string(),
         );
         self.post_interview_question();
         self.status = "interview started — answer in the Query prompt · Esc to leave".into();
@@ -1426,7 +1426,7 @@ impl WorldbuilderApp {
         let q = self.interview.as_ref().and_then(|iv| {
             iv.current().map(|s| {
                 let (n, total) = iv.progress();
-                format!("[{} · {n}/{total}] {}", s.stage.label(), s.prompt)
+                format!("[{} · {n}/{total}] {}", s.stage.label(iv.lang()), s.prompt(iv.lang()))
             })
         });
         if let Some(q) = q {
@@ -1439,6 +1439,8 @@ impl WorldbuilderApp {
     /// answer skips; a malformed one is reported and the step is retried.
     fn submit_interview_answer(&mut self, answer: &str) {
         let answer = answer.trim();
+        let lang = self.interview.as_ref().map(|iv| iv.lang()).unwrap_or(super::interview::Lang::En);
+        let say = |which| super::interview::line(lang, which);
         let Some(step) = self.interview.as_ref().and_then(|iv| iv.current()) else {
             self.interview = None;
             return;
@@ -1448,7 +1450,7 @@ impl WorldbuilderApp {
             if let Some(iv) = self.interview.as_mut() {
                 iv.advance();
             }
-            self.push_turn(String::new(), "(skipped)".into());
+            self.push_turn(String::new(), say(super::interview::Line::Skipped).to_string());
             self.after_interview_step();
             return;
         }
@@ -1458,14 +1460,14 @@ impl WorldbuilderApp {
             super::commands::Command::Shape { label, ops } => {
                 if let Err(e) = self.push_pending(ops) {
                     // Keep the step; let the author retry with the reason.
-                    self.push_turn(answer.to_string(), format!("didn't take that — {e}"));
+                    self.push_turn(answer.to_string(), format!("{} — {e}", say(super::interview::Line::NotTaken)));
                     return;
                 }
                 let d = self.plausibility_delta_chip();
                 let note = if d.is_empty() {
-                    format!("recorded · {label}")
+                    format!("{} · {label}", say(super::interview::Line::Recorded))
                 } else {
-                    format!("recorded · {label}  (★ {d})")
+                    format!("{} · {label}  (★ {d})", say(super::interview::Line::Recorded))
                 };
                 self.push_turn(answer.to_string(), note);
                 self.record_turn(format!("interview: {answer}"), label, Vec::new());
@@ -1476,7 +1478,7 @@ impl WorldbuilderApp {
             }
             super::commands::Command::Unknown(msg) => {
                 // Keep the step; let the author retry.
-                self.push_turn(answer.to_string(), format!("didn't take that — {msg}"));
+                self.push_turn(answer.to_string(), format!("{} — {msg}", say(super::interview::Line::NotTaken)));
             }
             _ => {
                 // A template that parses to a session command shouldn't happen;
@@ -1493,14 +1495,12 @@ impl WorldbuilderApp {
     fn after_interview_step(&mut self) {
         let done = self.interview.as_ref().map(|iv| iv.done()).unwrap_or(true);
         if done {
+            let lang = self.interview.as_ref().map(|iv| iv.lang()).unwrap_or(super::interview::Lang::En);
             self.interview = None;
-            let n = self.pending_ops.len();
+            let n = self.pending_groups.len();
             self.push_turn(
                 String::new(),
-                format!(
-                    "That's the frame — {n} pending edit(s). Review with /diff, commit with \
-                     /write, then /compile to see the world your choices imply."
-                ),
+                super::interview::line(lang, super::interview::Line::Closing).replace("{n}", &n.to_string()),
             );
             self.status = format!("interview complete — {n} pending edit(s) · /diff · /write");
         } else {
