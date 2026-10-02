@@ -279,7 +279,7 @@ holds behavioural knobs only (the ledger is derived data, nothing to tune there)
 context` (and the Book-scope grounding pack) when its `--budget` / `--reserve`
 flags are omitted; `ground_ai` (default `true`) is whether Book-scope chat grounds
 on the ledger at all. A Bund script reads
-the ledger through `ink.canon.{list,impact,why,history,forks,graph}` (read-only —
+the ledger through `ink.canon.{list,impact,why,history,forks,graph,read}` (read-only —
 the writes, `commit`, `ground`/`unground`, `reground`, `compact`, and the
 author-confirmed harvest/`accept`, stay on the CLI and in the editor).
 

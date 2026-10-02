@@ -1,7 +1,8 @@
 # CANON-READER-1 — "The Ledger Reads Back" (3.16.0)
 
-*Status: PLAN. On `3.16.0-dev`. The flagship; [`WORLD-KEEP-2`](WORLD-KEEP-2_PLAN.md)
-follows it in the same release.*
+*Status: BUILT on `3.16.0-dev` (CR-P0 ef6fcffb · CR-P1 369dc16f · CR-P2 8a802526 ·
+CR-P3 dee2dc16 · CR-P4 c3d07f49 · CR-P5 873e99ec · CR-P6 Bund + docs). The cut
+waits for [`WORLD-KEEP-2`](WORLD-KEEP-2_PLAN.md), which ships in the same release.*
 
 ## Why
 
