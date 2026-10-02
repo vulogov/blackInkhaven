@@ -71,7 +71,7 @@ impl Stage {
         let l: L5 = match self {
             Stage::World => ["World", "Мир", "Monde", "Welt", "Mundo"],
             Stage::Sky => ["Sky", "Небо", "Ciel", "Himmel", "Cielo"],
-            Stage::Land => ["Land", "Земля", "Terre", "Land", "Tierra"],
+            Stage::Land => ["Land", "Суша", "Terres", "Land", "Tierra"],
             Stage::People => ["People", "Народы", "Peuples", "Völker", "Pueblos"],
             Stage::Rules => ["Rules", "Законы", "Règles", "Regeln", "Reglas"],
         };
@@ -85,6 +85,9 @@ pub(super) struct Step {
     pub stage: Stage,
     prompts: L5,
     pub template: &'static str,
+    /// An "add one, or skip" step (a moon, a nation): a bare "no" skips it and
+    /// a bare "yes" asks for the name, instead of naming a moon "no".
+    pub optional: bool,
 }
 
 impl Step {
@@ -101,110 +104,120 @@ static SCRIPT: &[Step] = &[
         prompts: [
             "What is the world called?",
             "Как называется мир?",
-            "Comment s'appelle le monde ?",
+            "Comment s'appelle le monde ?",
             "Wie heißt die Welt?",
             "¿Cómo se llama el mundo?",
         ],
         template: "/set name {}",
+        optional: false,
     },
     Step {
         stage: Stage::Sky,
         prompts: [
             "What kind of star? (G Sun-like · K orange · M red dwarf)",
             "Какая звезда? (G — как Солнце · K — оранжевая · M — красный карлик)",
-            "Quelle étoile ? (G semblable au Soleil · K orange · M naine rouge)",
+            "Quel type d'étoile ? (G semblable au Soleil · K orange · M naine rouge)",
             "Was für ein Stern? (G sonnenähnlich · K orange · M roter Zwerg)",
             "¿Qué tipo de estrella? (G similar al Sol · K naranja · M enana roja)",
         ],
         template: "/star {}",
+        optional: false,
     },
     Step {
         stage: Stage::Sky,
         prompts: [
             "Axial tilt in degrees? (Earth 23.4 — higher means harsher seasons)",
             "Наклон оси в градусах? (у Земли 23,4 — чем больше, тем резче времена года)",
-            "Inclinaison de l'axe en degrés ? (Terre 23,4 — plus elle est forte, plus les saisons sont marquées)",
+            "Inclinaison de l'axe en degrés ? (la Terre : 23,4 — plus elle est forte, plus les saisons sont marquées)",
             "Achsneigung in Grad? (Erde 23,4 — je größer, desto härter die Jahreszeiten)",
             "¿Inclinación del eje en grados? (Tierra 23,4 — cuanto mayor, más duras las estaciones)",
         ],
         template: "/tilt {}",
+        optional: false,
     },
     Step {
         stage: Stage::Sky,
         prompts: [
-            "Add a moon? (name, optional orbital period in Earth-days — blank to skip)",
-            "Добавить луну? (имя и, по желанию, период обращения в земных сутках — пусто, чтобы пропустить)",
-            "Ajouter une lune ? (nom, puis sa période orbitale en jours terrestres si vous voulez — vide pour passer)",
-            "Einen Mond hinzufügen? (Name, optional die Umlaufzeit in Erdtagen — leer zum Überspringen)",
-            "¿Añadir una luna? (nombre y, si quieres, su periodo orbital en días terrestres — vacío para omitir)",
+            "A moon — its name, then (if you like) its orbital period in Earth-days? Leave blank for none.",
+            "Луна — её имя и, по желанию, период обращения в земных сутках? Оставьте пустым, если луны нет.",
+            "Une lune — son nom, puis sa période orbitale en jours terrestres si vous le souhaitez ? Laissez vide s'il n'y en a pas.",
+            "Ein Mond — sein Name, dann (wenn Sie möchten) die Umlaufzeit in Erdtagen? Leer lassen, wenn es keinen gibt.",
+            "Una luna: ¿su nombre y, si lo desea, su periodo orbital en días terrestres? Deje vacío si no hay ninguna.",
         ],
         template: "/moon {}",
+        optional: true,
     },
     Step {
         stage: Stage::Land,
         prompts: [
             "How many continents? (e.g. 3)",
             "Сколько континентов? (например, 3)",
-            "Combien de continents ? (par ex. 3)",
+            "Combien de continents ? (par ex. 3)",
             "Wie viele Kontinente? (z. B. 3)",
             "¿Cuántos continentes? (p. ej. 3)",
         ],
         template: "/set geology.generated.continents {}",
+        optional: false,
     },
     Step {
         stage: Stage::Land,
         prompts: [
             "Sea level, 0..1? (Earth ≈ 0.6 — higher means more ocean)",
             "Уровень моря, от 0 до 1? (у Земли ≈ 0,6 — чем выше, тем больше океана)",
-            "Niveau de la mer, de 0 à 1 ? (Terre ≈ 0,6 — plus haut, plus d'océan)",
+            "Niveau de la mer, de 0 à 1 ? (la Terre ≈ 0,6 — plus haut, plus d'océan)",
             "Meeresspiegel, 0 bis 1? (Erde ≈ 0,6 — je höher, desto mehr Ozean)",
             "¿Nivel del mar, de 0 a 1? (Tierra ≈ 0,6 — cuanto más alto, más océano)",
         ],
         template: "/set geology.generated.sea_level {}",
+        optional: false,
     },
     Step {
         stage: Stage::Land,
         prompts: [
             "Mountains — active, quiet, or ancient?",
             "Горы — активные, спокойные или древние?",
-            "Montagnes — actives, calmes ou anciennes ?",
+            "Montagnes — actives, calmes ou anciennes ?",
             "Gebirge — aktiv, ruhig oder uralt?",
             "Montañas: ¿activas, tranquilas o antiguas?",
         ],
         template: "/orogeny {}",
+        optional: false,
     },
     Step {
         stage: Stage::People,
         prompts: [
             "Primary language? (e.g. English)",
             "Основной язык мира? (например, русский)",
-            "Langue principale ? (par ex. français)",
+            "Langue principale ? (par ex. français)",
             "Hauptsprache? (z. B. Deutsch)",
             "¿Idioma principal? (p. ej. español)",
         ],
         template: "/set primary_language {}",
+        optional: false,
     },
     Step {
         stage: Stage::People,
         prompts: [
-            "Name a nation? (name, optionally its capital cell x y — blank to skip)",
-            "Назвать государство? (название и, по желанию, клетка столицы x y — пусто, чтобы пропустить)",
-            "Nommer une nation ? (nom, puis la case de sa capitale x y si vous voulez — vide pour passer)",
-            "Eine Nation benennen? (Name, optional die Hauptstadtzelle x y — leer zum Überspringen)",
-            "¿Nombrar una nación? (nombre y, si quieres, la celda de su capital x y — vacío para omitir)",
+            "A nation — its name, then (if you like) its capital cell x y? Leave blank for none.",
+            "Государство — его название и, по желанию, клетка столицы x y? Оставьте пустым, чтобы пропустить.",
+            "Une nation — son nom, puis la case de sa capitale x y si vous le souhaitez ? Laissez vide pour passer.",
+            "Eine Nation — ihr Name, dann (wenn Sie möchten) die Zelle der Hauptstadt x y? Leer lassen zum Überspringen.",
+            "Una nación: ¿su nombre y, si lo desea, la celda de su capital x y? Deje vacío para omitir.",
         ],
         template: "/nation {}",
+        optional: true,
     },
     Step {
         stage: Stage::Rules,
         prompts: [
             "Is there magic in this world? (yes/no)",
             "Есть ли в этом мире магия? (да/нет)",
-            "Y a-t-il de la magie dans ce monde ? (oui/non)",
+            "Y a-t-il de la magie dans ce monde ? (oui/non)",
             "Gibt es Magie in dieser Welt? (ja/nein)",
             "¿Hay magia en este mundo? (sí/no)",
         ],
         template: "/set magic.enabled {}",
+        optional: false,
     },
 ];
 
@@ -221,6 +234,8 @@ pub(super) enum Line {
     NotTaken,
     /// The closing turn; `{n}` is the pending-edit count.
     Closing,
+    /// After a bare "yes" to an optional step: ask for the name itself.
+    NameIt,
 }
 
 pub(super) fn line(lang: Lang, which: Line) -> &'static str {
@@ -228,25 +243,32 @@ pub(super) fn line(lang: Lang, which: Line) -> &'static str {
         Line::Opening => [
             "Interview — I'll ask about the world, its sky, land, people, and rules. Answer in your own words (blank to skip a question, Esc to leave). Your answers become pending edits; review them with /diff and commit with /write, then /compile.",
             "Интервью — я спрошу о мире, его небе, земле, народах и законах. Отвечайте своими словами (пустая строка — пропустить вопрос, Esc — выйти). Ответы становятся отложенными правками: просмотрите их через /diff, запишите через /write, затем /compile.",
-            "Entretien — je vous interroge sur le monde, son ciel, sa terre, ses peuples et ses règles. Répondez avec vos mots (ligne vide pour passer une question, Échap pour quitter). Vos réponses deviennent des modifications en attente : relisez-les avec /diff, validez avec /write, puis /compile.",
+            "Entretien — je vais vous interroger sur le monde, son ciel, ses terres, ses peuples et ses règles. Répondez avec vos propres mots (ligne vide pour passer une question, Échap pour quitter). Vos réponses deviennent des modifications en attente : relisez-les avec /diff, validez avec /write, puis /compile.",
             "Interview — ich frage nach der Welt, ihrem Himmel, ihrem Land, ihren Völkern und ihren Regeln. Antworten Sie in eigenen Worten (leere Zeile überspringt eine Frage, Esc beendet). Ihre Antworten werden zu ausstehenden Änderungen: mit /diff prüfen, mit /write übernehmen, dann /compile.",
-            "Entrevista: te preguntaré por el mundo, su cielo, su tierra, sus pueblos y sus reglas. Responde con tus palabras (línea vacía para omitir una pregunta, Esc para salir). Tus respuestas quedan como cambios pendientes: revísalos con /diff, confírmalos con /write y luego /compile.",
+            "Entrevista: le preguntaré por el mundo, su cielo, su tierra, sus pueblos y sus reglas. Responda con sus propias palabras (línea vacía para omitir una pregunta, Esc para salir). Sus respuestas quedan como cambios pendientes: revíselos con /diff, confírmelos con /write y luego /compile.",
         ],
-        Line::Skipped => ["(skipped)", "(пропущено)", "(passé)", "(übersprungen)", "(omitido)"],
+        Line::Skipped => ["(skipped)", "(пропущено)", "(ignoré)", "(übersprungen)", "(omitido)"],
         Line::Recorded => ["recorded", "записано", "noté", "notiert", "anotado"],
         Line::NotTaken => [
             "didn't take that",
             "не удалось принять ответ",
             "réponse non retenue",
-            "das ging nicht",
+            "nicht übernommen",
             "no se pudo anotar",
+        ],
+        Line::NameIt => [
+            "then give it a name",
+            "тогда назовите",
+            "alors donnez-lui un nom",
+            "dann geben Sie einen Namen an",
+            "entonces dele un nombre",
         ],
         Line::Closing => [
             "That's the frame — {n} pending edit(s). Review with /diff, commit with /write, then /compile to see the world your choices imply.",
             "Каркас готов — отложенных правок: {n}. Просмотрите их через /diff, запишите через /write, затем /compile покажет мир, который следует из ваших решений.",
             "Voilà le cadre — {n} modification(s) en attente. Relisez-les avec /diff, validez avec /write, puis /compile pour voir le monde qu'impliquent vos choix.",
             "Das ist der Rahmen — {n} ausstehende Änderung(en). Mit /diff prüfen, mit /write übernehmen, dann /compile, um die Welt zu sehen, die aus Ihren Entscheidungen folgt.",
-            "Ese es el marco: {n} cambio(s) pendiente(s). Revísalos con /diff, confírmalos con /write y luego /compile para ver el mundo que implican tus decisiones.",
+            "Este es el marco: {n} cambio(s) pendiente(s). Revíselos con /diff, confírmelos con /write y luego /compile para ver el mundo que implican sus decisiones.",
         ],
     };
     l[lang.idx()]
@@ -348,7 +370,7 @@ mod tests {
                 assert_ne!(step.prompt(*lang), step.prompt(Lang::En));
             }
         }
-        for which in [Line::Opening, Line::Skipped, Line::Recorded, Line::NotTaken, Line::Closing] {
+        for which in [Line::Opening, Line::Skipped, Line::Recorded, Line::NotTaken, Line::Closing, Line::NameIt] {
             for lang in ALL {
                 assert!(!line(lang, which).is_empty());
             }

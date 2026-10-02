@@ -36,7 +36,7 @@
     auto_fallback: true
     providers: {
       gemini: {
-        model: gemini-2.5-pro
+        model: gemini-3.1-pro-preview
         api_key_env: GEMINI_API_KEY
       }
       claude: {
