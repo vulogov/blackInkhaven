@@ -1818,6 +1818,20 @@ pub enum CanonCommand {
     },
     /// Flag decisions committed above their foundation (SMY-W057).
     Check,
+    /// Read the ledger against the manuscript: decisions whose source paragraph
+    /// is gone or no longer carries them, firm decisions resting on soft ones,
+    /// unsettled foundations. Deterministic, free, advisory.
+    Read {
+        /// Slug path to read under; empty / `all` for the whole project.
+        #[arg(default_value = "")]
+        scope: String,
+        /// Emit the findings as JSON.
+        #[arg(long)]
+        json: bool,
+        /// Exit non-zero when there is anything to report (for CI).
+        #[arg(long)]
+        strict: bool,
+    },
     /// Merge another project's canon ledger into this one.
     Merge {
         /// Path to the other project's `canon.cbor`.
@@ -6737,6 +6751,9 @@ impl Cli {
                     canon::commit(&project, &id, &level, as_agent).map_err(Into::into)
                 }
                 CanonCommand::Check => canon::check(&project).map_err(Into::into),
+                CanonCommand::Read { scope, json, strict } => {
+                    canon::read(&project, &scope, json, strict).map_err(Into::into)
+                }
                 CanonCommand::Merge { path } => canon::merge(&project, &path).map_err(Into::into),
                 CanonCommand::Forks => canon::forks(&project).map_err(Into::into),
                 CanonCommand::Context { query, budget, reserve, limit } => {

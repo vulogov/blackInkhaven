@@ -499,6 +499,115 @@ pub fn check(project: &Path) -> Result<()> {
     Ok(())
 }
 
+/// The manuscript as the canon reader sees it: a paragraph's text and authored
+/// tags from the open store, `None` for a node that is no longer in the tree.
+/// Shared by `canon read` and the editor (CANON-READER-1).
+pub(crate) struct ManuscriptView<'a> {
+    pub store: &'a Store,
+    pub hierarchy: &'a Hierarchy,
+}
+
+impl crate::canon::read::SourceText for ManuscriptView<'_> {
+    fn text(&self, node: uuid::Uuid) -> Option<String> {
+        // Presence is decided by the tree; a paragraph with no stored content
+        // yet still exists (and reads as empty).
+        self.hierarchy.get(node)?;
+        Some(
+            self.store
+                .get_content(node)
+                .ok()
+                .flatten()
+                .map(|b| String::from_utf8_lossy(&b).into_owned())
+                .unwrap_or_default(),
+        )
+    }
+
+    fn tags(&self, node: uuid::Uuid) -> Vec<String> {
+        self.hierarchy.get(node).map(|n| n.tags.clone()).unwrap_or_default()
+    }
+}
+
+/// `inkhaven canon read [<scope>] [--json] [--strict]` — CANON-READER-1: the
+/// ledger read against the manuscript. Deterministic and free; `--strict`
+/// exits non-zero when there is anything to report (for CI).
+pub fn read(project: &Path, scope: &str, json: bool, strict: bool) -> Result<()> {
+    use crate::canon::read::{check, CanonFinding, CanonFindingKind};
+    let layout = ProjectLayout::new(project);
+    layout.require_initialized()?;
+    let cfg = Config::load_layered(&layout.config_path())?;
+    let store = Store::open(layout, &cfg)?;
+    let hierarchy = Hierarchy::load(&store)?;
+    let (language, _) = crate::prose::resolve_prose_language(None, &cfg.language);
+    let view = ManuscriptView { store: &store, hierarchy: &hierarchy };
+    let canon = store.raw().canon();
+    let mut findings: Vec<CanonFinding> = check(canon, &view, &language).map_err(store_err)?;
+
+    // An optional scope narrows the report to decisions sourced at or under a
+    // node (an orphan has no node any more — it is matched by where it WAS).
+    let scope = scope.trim();
+    if !(scope.is_empty() || scope == "." || scope == "all") {
+        let inside = scope_paragraphs(&store, scope)?;
+        let source_of: std::collections::HashMap<_, _> = canon
+            .all_decisions()
+            .map_err(store_err)?
+            .into_iter()
+            .filter_map(|v| v.node.map(|n| (v.uid, n)))
+            .collect();
+        let prefix = format!("{}/", scope.trim_end_matches('/'));
+        findings.retain(|f| {
+            source_of.get(&f.decision).is_some_and(|n| inside.contains(n))
+                || f.locator.as_deref().is_some_and(|l| l == scope || l.starts_with(&prefix))
+        });
+    }
+
+    if json {
+        let rows: Vec<serde_json::Value> = findings
+            .iter()
+            .map(|f| {
+                serde_json::json!({
+                    "kind": f.kind.as_str(),
+                    "decision": f.decision.short(),
+                    "gist": f.gist,
+                    "node": f.node.map(|n| n.to_string()),
+                    "locator": f.locator,
+                    "related": f.related.map(|u| u.short()),
+                    "message": f.message,
+                    "weight": f.weight,
+                    // How it is resolved: a scene-or-ledger choice, or ledger
+                    // housekeeping; and whether a model produced it.
+                    "resolve": if f.kind.is_decision() { "decision" } else { "brief" },
+                    "deterministic": f.kind.is_deterministic(),
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&rows).map_err(|e| Error::Store(format!("serializing findings: {e}")))?
+        );
+    } else if findings.is_empty() {
+        eprintln!("canon read — the ledger and the manuscript agree (nothing orphaned, drifted, built on sand, or unsettled).");
+    } else {
+        eprintln!("canon read — {} finding(s):", findings.len());
+        for kind in CanonFindingKind::ALL {
+            let of_kind: Vec<&CanonFinding> = findings.iter().filter(|f| f.kind == kind).collect();
+            if of_kind.is_empty() {
+                continue;
+            }
+            println!("\n{} ({})", kind.heading(), of_kind.len());
+            for f in of_kind {
+                let loc = f.locator.as_deref().map(|l| format!("  ({l})")).unwrap_or_default();
+                println!("  {}{loc}", f.decision.short());
+                println!("      {}", f.message);
+            }
+        }
+        eprintln!("\nadvisory — nothing was changed. `canon commit` / `canon ground` / the Canon pane act on these.");
+    }
+    if strict && !findings.is_empty() {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
 /// `inkhaven canon merge <path>`
 pub fn merge(project: &Path, other: &str) -> Result<()> {
     let store = open(project)?;
