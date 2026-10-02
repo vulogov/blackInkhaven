@@ -186,7 +186,12 @@ pub fn response_kind(category: &str) -> ResponseKind {
         // BONDS (3.1): a relationship whose state changed with no scene to turn
         // it — the author chooses (add the scene, or soften the declaration).
         // unwritten_bond / dropped_bond stay Brief (advice, no single-locus fix).
-        | "unearned_shift" => {
+        | "unearned_shift"
+        // CANON-READER-1 (3.16): the scene and the ledger disagree — the author
+        // says which is right (keep the scene and retcon the decision, or bring
+        // the scene back to it). orphaned_decision / built_on_sand /
+        // unsettled_foundation stay Brief: ledger housekeeping, no prose locus.
+        | "drifted_source" | "contradicted" => {
             ResponseKind::Decision
         }
         // Structural / book-level — a suggestion, never a rewrite.
@@ -730,6 +735,33 @@ pub(crate) fn from_canon_fork(f: &crate::canon::CommitmentForkView) -> Editorial
     }
 }
 
+/// CANON-READER-1 (CR-P3) — a canon-reader finding → the shared worklist. The
+/// `category` is the finding kind's stable name, which is what [`response_kind`]
+/// routes on: `drifted_source` / `contradicted` are Decisions (scene or ledger?),
+/// the rest Briefs (the author reconciles the *ledger*; nothing rewrites prose).
+/// The paragraph to open anchors the row; an orphan has none, so it carries the
+/// breadcrumb of where its source used to be.
+pub(crate) fn from_canon_finding(f: &crate::canon::read::CanonFinding) -> EditorialFinding {
+    use crate::canon::read::CanonFindingKind as K;
+    EditorialFinding {
+        category: f.kind.as_str().to_string(),
+        severity: match f.kind {
+            K::Contradicted => Severity::Error,
+            K::BuiltOnSand | K::DriftedSource | K::OrphanedDecision => Severity::Warn,
+            K::UnsettledFoundation => Severity::Info,
+        },
+        location: Location {
+            paragraph: f.node,
+            path: if f.node.is_none() { f.locator.clone() } else { None },
+            ..Default::default()
+        },
+        message: f.message.clone(),
+        hint: None,
+        source: "canon",
+        autofixable: false,
+    }
+}
+
 /// `"ch. N"` for a 1-based chapter ordinal, or `None` for book-level (0).
 fn chapter_label(chapter: u32) -> Option<String> {
     (chapter > 0).then(|| format!("ch. {chapter}"))
@@ -1024,6 +1056,47 @@ mod tests {
         for c in ["structure", "shape_sag", "put_down_risk", "distinctiveness", "tension", "mystery-kind", "commitment_fork"] {
             assert_eq!(response_kind(c), Brief, "{c} is a Brief");
         }
+        // CANON-READER-1: the reader's own routing and the worklist's agree for
+        // every kind — a scene-or-ledger choice is a Decision, the rest Briefs.
+        for k in crate::canon::read::CanonFindingKind::ALL {
+            let want = if k.is_decision() { Decision } else { Brief };
+            assert_eq!(response_kind(k.as_str()), want, "{} routing", k.as_str());
+        }
+    }
+
+    #[test]
+    fn canon_findings_enter_the_worklist_with_an_anchor_or_a_breadcrumb() {
+        use crate::canon::read::{CanonFinding, CanonFindingKind};
+        let dir = tempfile::tempdir().unwrap();
+        let led = crate::canon::CanonLedger::new(dir.path().join("canon.cbor").to_str().unwrap());
+        let node = Uuid::from_u128(5);
+        let uid = led
+            .record_decision(crate::canon::NarrativeKind::WorldFact, "the harbour freezes", node, "ch1/a", &[])
+            .unwrap();
+        let mk = |kind, node: Option<Uuid>| CanonFinding {
+            kind,
+            decision: uid,
+            gist: "the harbour freezes".into(),
+            node,
+            locator: Some("ch1/a".into()),
+            related: None,
+            message: "msg".into(),
+            weight: 1,
+        };
+        let drift = from_canon_finding(&mk(CanonFindingKind::DriftedSource, Some(node)));
+        assert_eq!((drift.source, drift.category.as_str()), ("canon", "drifted_source"));
+        assert_eq!(drift.location.paragraph, Some(node));
+        assert_eq!(drift.location.path, None);
+        assert_eq!(response_kind(&drift.category), ResponseKind::Decision);
+        assert!(!drift.autofixable);
+
+        let orphan = from_canon_finding(&mk(CanonFindingKind::OrphanedDecision, None));
+        assert_eq!(orphan.location.paragraph, None);
+        assert_eq!(orphan.location.path.as_deref(), Some("ch1/a"), "an orphan says where it was");
+        assert_eq!(response_kind(&orphan.category), ResponseKind::Brief);
+
+        assert_eq!(from_canon_finding(&mk(CanonFindingKind::Contradicted, Some(node))).severity, Severity::Error);
+        assert_eq!(from_canon_finding(&mk(CanonFindingKind::UnsettledFoundation, Some(node))).severity, Severity::Info);
     }
 
     #[test]
