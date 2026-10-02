@@ -46,6 +46,7 @@ mod harvest_llm;
 mod merge;
 mod model;
 mod query;
+pub mod read;
 pub use commit::CommitmentWarning;
 pub use context::PackedContext;
 pub use harvest::harvest_tags;
