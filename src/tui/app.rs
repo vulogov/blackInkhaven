@@ -16011,6 +16011,13 @@ impl App {
             if let (Some(s), Some(c)) = (&b.season, &b.conditions) {
                 rows.push(format!("  when:    {s} · {c}"));
             }
+            // WK-P2 — the scene's day on the world's own calendar (month, weekday).
+            if let Some(day) = b.day_of_year {
+                let date = def.astronomy.calendar.date_label(day);
+                if !date.is_empty() {
+                    rows.push(format!("  date:    {date}"));
+                }
+            }
             if let Some(r) = &b.realm {
                 let ethos = b.ethos.as_deref().map(|e| format!(" — {e}")).unwrap_or_default();
                 rows.push(format!("  people:  {r}{ethos}"));
