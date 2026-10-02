@@ -96,12 +96,38 @@ Three ways, in increasing model-involvement:
 | How did the canon settle? | `canon log` | Every commitment event across the ledger, oldest first. |
 | How settled is it? | `canon commit <id> --level <l>` | Set the canonicity (`floated…canonical…retconned`). |
 | Am I building on sand? | `canon check` | Decisions committed **above** the weakest thing they rest on (SMY-W057). |
+| **Does the book still agree with the ledger?** | `canon read [<scope>]` | (3.16) The ledger read against the manuscript — see below. |
 | Show me the whole shape | `canon graph [<id>]` | The grounds DAG — foundations, with what rests on them indented beneath. |
 | Draw / cut a dependency | `canon ground <id> --on <g>` · `canon unground <id> --from <g>` | Ground a decision on another by hand, or remove an edge. |
 | Where do agents disagree? | `canon forks` | Commitment forks — concurrent disagreement on canonicity (SMY-W058). |
 | Ground an answer on canon | `canon context "<query>"` | Fit the relevant decisions (+ their grounds/rebuttals) to a token budget. |
 
 `<id>` is the short id printed by `canon list` (a prefix is fine).
+
+## The ledger reads back (3.16)
+
+Everything above is a question *you* ask. **`inkhaven canon read`** is the ledger
+speaking first: it reads itself against the manuscript and reports where the two
+have come apart. Deterministic, free at any size, and advisory — nothing is
+changed.
+
+| Finding | What it means |
+|---|---|
+| **Drifted from its source** | The paragraph that established a decision no longer carries it: none of the decision's content words remain (stemmed, in your project language), and no tag on the paragraph declares it. The scene was rewritten into something else — which is right, the scene or the decision? |
+| **Orphaned** | The paragraph that established it no longer exists. |
+| **Built on sand** | Committed above something it rests on (what `canon check` reports). |
+| **Unsettled foundation** | Two or more decisions rest on one still unmarked or only floated. |
+
+Notes on what it deliberately does *not* say. Drift is conservative: a rephrase
+that keeps any of the decision's words is not drift. A decision harvested from a
+`rel:` tag is carried by the tag, so it drifts only when the tag is removed.
+Unsettled foundations are reported only once you have committed *something* — a
+ledger where nothing is marked is not using that axis.
+
+`canon read <scope>` limits the report to decisions sourced under a chapter or
+paragraph; `--json` emits it for scripts (each finding says whether it resolves as
+a `decision` — a scene-or-ledger choice — or a `brief`); `--strict` exits non-zero
+when there is anything to report, for CI.
 
 ## In the editor
 

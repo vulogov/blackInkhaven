@@ -17,9 +17,6 @@
 //!
 //! Advisory throughout: a finding never edits prose and never edits the ledger.
 
-// CR-P0 lays types the later phases consume; remove once CR-P2 wires the shell.
-#![allow(dead_code)]
-
 use std::collections::BTreeSet;
 
 use anyhow::Result;
@@ -81,6 +78,7 @@ impl CanonFindingKind {
     }
 
     /// The short marker shown beside a decision in the Canon pane / dashboard.
+    #[allow(dead_code)] // consumed by the editor surfaces in CR-P4
     pub fn marker(self) -> &'static str {
         match self {
             CanonFindingKind::Contradicted => "⚠ contradicted",
