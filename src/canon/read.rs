@@ -7,12 +7,13 @@
 //! a foundation nobody has settled — and, opt-in, a passage that contradicts a
 //! decision the author committed to.
 //!
-//! **CR-P0 (this file's first cut) is the pure substrate**: the finding shape,
-//! its kinds and how each is routed, the view of the manuscript a detector
-//! needs ([`SourceText`]), the word-overlap measure `drifted_source` rests on,
-//! and the stable ordering of a report. The detectors arrive in CR-P1, the shell
-//! in CR-P2, the worklist bridge in CR-P3. Nothing here reads a store or calls a
-//! model; everything is unit-tested on plain values.
+//! CR-P0 laid the pure substrate: the finding shape, its kinds and how each is
+//! routed, the view of the manuscript a detector needs ([`SourceText`]), the
+//! word-overlap measure `drifted_source` rests on, and the stable ordering of a
+//! report. **CR-P1 adds the four deterministic detectors** behind one entry
+//! point, [`check`] — free, no model, any ledger size. The shell arrives in
+//! CR-P2, the worklist bridge in CR-P3. Nothing here calls a model, and the
+//! manuscript is only ever seen through [`SourceText`].
 //!
 //! Advisory throughout: a finding never edits prose and never edits the ledger.
 
@@ -21,10 +22,13 @@
 
 use std::collections::BTreeSet;
 
-use smysl::Uid;
+use anyhow::Result;
+use smysl::{Commitment, Uid};
 use uuid::Uuid;
 
 use super::grounding::{salient_tokens, stemmer_language_name};
+use super::query::CanonView;
+use super::CanonLedger;
 use crate::prose::ProseLanguage;
 
 /// What kind of disagreement between ledger and manuscript a finding reports.
@@ -132,6 +136,13 @@ pub trait SourceText {
     /// The current text of `node`: `None` when the node no longer exists,
     /// `Some("")` when it exists but is empty.
     fn text(&self, node: Uuid) -> Option<String>;
+
+    /// The node's authored tags. A decision harvested from a tag (`rel:…`) is
+    /// carried by the TAG, not by the prose, so the drift check consults these
+    /// first. Default: none.
+    fn tags(&self, _node: Uuid) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 impl SourceText for std::collections::HashMap<Uuid, String> {
@@ -192,10 +203,273 @@ pub fn sort_findings(mut findings: Vec<CanonFinding>) -> Vec<CanonFinding> {
     findings
 }
 
+/// How many decisions must rest on an unsettled one before it is reported as a
+/// foundation. One dependent is an ordinary edge; two or more is load.
+const FOUNDATION_MIN_DEPENDENTS: usize = 2;
+
+/// CR-P1 — read the ledger against the manuscript: the four deterministic
+/// detectors, in one sorted report. Free (no model), read-only, and only as
+/// large as the ledger. `src` is the caller's view of the manuscript.
+///
+/// - **orphaned_decision** — the source paragraph no longer exists.
+/// - **drifted_source** — the source paragraph exists but no longer carries the
+///   decision: none of its content words (stemmed, in `language`) remain, and no
+///   authored tag on the paragraph declares it any more.
+/// - **built_on_sand** — committed above something it rests on (the support
+///   check `canon check` prints).
+/// - **unsettled_foundation** — at least two decisions rest on one still
+///   unmarked or floated. Reported only once the author has committed
+///   *something* (a ledger with no commitments is not using the axis, and
+///   flagging every foundation in it would be noise).
+pub fn check(
+    ledger: &CanonLedger,
+    src: &dyn SourceText,
+    language: &ProseLanguage,
+) -> Result<Vec<CanonFinding>> {
+    let decisions = ledger.all_decisions()?;
+    let mut out: Vec<CanonFinding> = Vec::new();
+
+    // ── orphaned / drifted: each decision against its own source paragraph ──
+    for v in &decisions {
+        let Some(node) = v.node else { continue }; // node-less (merged) decisions have no source to check
+        match src.text(node) {
+            None => out.push(CanonFinding {
+                kind: CanonFindingKind::OrphanedDecision,
+                decision: v.uid,
+                gist: v.gist.clone(),
+                node: None,
+                locator: v.locator.clone(),
+                related: None,
+                message: format!(
+                    "“{}” was established in a paragraph that no longer exists{} — re-source it, retcon it, or let it stand on its grounds.",
+                    v.gist,
+                    v.locator.as_deref().map(|l| format!(" ({l})")).unwrap_or_default()
+                ),
+                weight: 0,
+            }),
+            Some(text) => {
+                if still_declared_by_tag(v, &src.tags(node)) {
+                    continue;
+                }
+                let o = overlap(&v.gist, &text, language);
+                if o.is_gone() {
+                    let what = if text.trim().is_empty() {
+                        "its source paragraph is now empty"
+                    } else {
+                        "its source paragraph no longer mentions any of it"
+                    };
+                    out.push(CanonFinding {
+                        kind: CanonFindingKind::DriftedSource,
+                        decision: v.uid,
+                        gist: v.gist.clone(),
+                        node: Some(node),
+                        locator: v.locator.clone(),
+                        related: None,
+                        message: format!(
+                            "“{}” — {what}. Which is right: the scene as it now reads, or the decision?",
+                            v.gist
+                        ),
+                        weight: o.total as u32,
+                    });
+                }
+            }
+        }
+    }
+
+    // ── built on sand: the support check, as findings ──
+    let mut sand_grounds: std::collections::HashSet<Uid> = std::collections::HashSet::new();
+    for w in ledger.commitment_warnings()? {
+        sand_grounds.insert(w.weakest_ground.uid);
+        out.push(CanonFinding {
+            kind: CanonFindingKind::BuiltOnSand,
+            decision: w.unit.uid,
+            gist: w.unit.gist.clone(),
+            node: w.unit.node,
+            locator: w.unit.locator.clone(),
+            related: Some(w.weakest_ground.uid),
+            message: format!(
+                "“{}” is «{}» but rests on “{}”, which is only «{}» — settle the ground or soften the claim.",
+                w.unit.gist, w.level, w.weakest_ground.gist, w.ground_level
+            ),
+            // The gap in levels: canonical-on-floated outranks committed-on-drafted.
+            weight: (w.level as u32).saturating_sub(w.ground_level as u32),
+        });
+    }
+
+    // ── unsettled foundations ──
+    let author_uses_commitment = decisions.iter().any(|v| v.commitment.is_some());
+    if author_uses_commitment {
+        for v in &decisions {
+            if !matches!(v.commitment, None | Some(Commitment::Floated)) {
+                continue;
+            }
+            if sand_grounds.contains(&v.uid) {
+                continue; // already named as the weak ground of a built-on-sand finding
+            }
+            let dependents = ledger.impact(v.uid)?.len();
+            if dependents < FOUNDATION_MIN_DEPENDENTS {
+                continue;
+            }
+            let state = if v.commitment.is_some() { "only floated" } else { "not marked at all" };
+            out.push(CanonFinding {
+                kind: CanonFindingKind::UnsettledFoundation,
+                decision: v.uid,
+                gist: v.gist.clone(),
+                node: v.node,
+                locator: v.locator.clone(),
+                related: None,
+                message: format!(
+                    "{dependents} decisions rest on “{}”, which is {state} — say how settled it is (`c` in the Canon pane, or `canon commit`).",
+                    v.gist
+                ),
+                weight: dependents as u32,
+            });
+        }
+    }
+
+    Ok(sort_findings(out))
+}
+
+/// Whether one of the paragraph's authored tags still declares this decision —
+/// the deterministic tag harvest would produce the same kind and gist from it.
+fn still_declared_by_tag(v: &CanonView, tags: &[String]) -> bool {
+    if tags.is_empty() {
+        return false;
+    }
+    super::harvest_tags(tags).into_iter().any(|(kind, gist)| Some(kind) == v.kind && gist == v.gist)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::canon::{CanonLedger, NarrativeKind};
+
+    /// A manuscript view with text and tags, for the detector tests.
+    #[derive(Default)]
+    struct Book {
+        text: std::collections::HashMap<Uuid, String>,
+        tags: std::collections::HashMap<Uuid, Vec<String>>,
+    }
+    impl SourceText for Book {
+        fn text(&self, node: Uuid) -> Option<String> {
+            self.text.get(&node).cloned()
+        }
+        fn tags(&self, node: Uuid) -> Vec<String> {
+            self.tags.get(&node).cloned().unwrap_or_default()
+        }
+    }
+
+    fn kinds(fs: &[CanonFinding]) -> Vec<&'static str> {
+        fs.iter().map(|f| f.kind.as_str()).collect()
+    }
+
+    #[test]
+    fn a_ledger_that_matches_the_book_reads_clean() {
+        let dir = tempfile::tempdir().unwrap();
+        let led = CanonLedger::new(dir.path().join("canon.cbor").to_str().unwrap());
+        let n = Uuid::from_u128(0xA);
+        led.record_decision(NarrativeKind::WorldFact, "the harbour freezes each winter", n, "ch1", &[]).unwrap();
+        let mut book = Book::default();
+        book.text.insert(n, "Every winter the harbour froze, and the fleet waited.".into());
+        assert!(check(&led, &book, &ProseLanguage::En).unwrap().is_empty());
+        // An empty ledger reads clean too.
+        let empty = CanonLedger::new(dir.path().join("empty.cbor").to_str().unwrap());
+        assert!(check(&empty, &book, &ProseLanguage::En).unwrap().is_empty());
+    }
+
+    #[test]
+    fn orphaned_and_drifted_are_told_apart() {
+        let dir = tempfile::tempdir().unwrap();
+        let led = CanonLedger::new(dir.path().join("canon.cbor").to_str().unwrap());
+        let (kept, rewritten, emptied, deleted) =
+            (Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3), Uuid::from_u128(4));
+        led.record_decision(NarrativeKind::WorldFact, "the harbour freezes each winter", kept, "ch1/a", &[]).unwrap();
+        let drift = led.record_decision(NarrativeKind::Reveal, "Tomas knows where the key is hidden", rewritten, "ch1/b", &[]).unwrap();
+        led.record_decision(NarrativeKind::WorldFact, "the lighthouse burns whale oil", emptied, "ch1/c", &[]).unwrap();
+        let gone = led.record_decision(NarrativeKind::PlotPoint, "the fleet sails at the thaw", deleted, "ch1/d", &[]).unwrap();
+
+        let mut book = Book::default();
+        book.text.insert(kept, "The harbour froze again that winter.".into());
+        book.text.insert(rewritten, "Mara counted the coins twice and said nothing.".into());
+        book.text.insert(emptied, "   ".into());
+        // `deleted` is absent from the book.
+
+        let fs = check(&led, &book, &ProseLanguage::En).unwrap();
+        assert_eq!(kinds(&fs), ["drifted_source", "drifted_source", "orphaned_decision"]);
+        let d = fs.iter().find(|f| f.decision == drift).unwrap();
+        assert_eq!(d.node, Some(rewritten), "a drifted finding opens the paragraph that drifted");
+        assert!(d.message.contains("no longer mentions"));
+        assert!(fs.iter().any(|f| f.message.contains("now empty")));
+        let o = fs.iter().find(|f| f.decision == gone).unwrap();
+        assert_eq!(o.node, None, "nothing to open for an orphan");
+        assert_eq!(o.locator.as_deref(), Some("ch1/d"));
+    }
+
+    #[test]
+    fn a_tag_declared_decision_drifts_only_when_its_tag_goes() {
+        let dir = tempfile::tempdir().unwrap();
+        let led = CanonLedger::new(dir.path().join("canon.cbor").to_str().unwrap());
+        let n = Uuid::from_u128(7);
+        let tags = vec!["rel:mentor:Bob:Cara".to_string()];
+        let (kind, gist) = crate::canon::harvest_tags(&tags).remove(0);
+        led.record_decision(kind, &gist, n, "ch2", &[]).unwrap();
+
+        // The prose never names them; the TAG carries the decision.
+        let mut book = Book::default();
+        book.text.insert(n, "Rain fell on the quay all morning.".into());
+        book.tags.insert(n, tags);
+        assert!(check(&led, &book, &ProseLanguage::En).unwrap().is_empty());
+
+        // Remove the tag and nothing declares it any more.
+        book.tags.clear();
+        assert_eq!(kinds(&check(&led, &book, &ProseLanguage::En).unwrap()), ["drifted_source"]);
+    }
+
+    #[test]
+    fn sand_and_unsettled_foundations() {
+        let dir = tempfile::tempdir().unwrap();
+        let led = CanonLedger::new(dir.path().join("canon.cbor").to_str().unwrap());
+        let n = Uuid::from_u128(9);
+        let rec = |kind, gist: &str, grounds: &[Uid]| led.record_decision(kind, gist, n, "ch1", grounds).unwrap();
+        let gate = rec(NarrativeKind::WorldFact, "there is a hidden sea gate", &[]);
+        let ice = rec(NarrativeKind::WorldFact, "the harbour freezes each winter", &[]);
+        let escape = rec(NarrativeKind::PlotPoint, "the escape uses the sea gate", &[gate]);
+        let wait = rec(NarrativeKind::PlotPoint, "the escape waits for the thaw", &[ice]);
+        let fleet = rec(NarrativeKind::PlotPoint, "the fleet is trapped by the harbour ice", &[ice]);
+
+        let mut book = Book::default();
+        book.text.insert(
+            n,
+            "A hidden sea gate; the harbour froze each winter; the escape used the gate and waited for the thaw; the fleet lay trapped in the ice.".into(),
+        );
+        let en = ProseLanguage::En;
+
+        // Nobody has committed anything: the axis is not in use, nothing is said.
+        assert!(check(&led, &book, &en).unwrap().is_empty());
+
+        // The author starts committing. `ice` carries two decisions and is unmarked.
+        led.commit(wait, Commitment::Drafted, "author").unwrap();
+        let fs = check(&led, &book, &en).unwrap();
+        assert_eq!(kinds(&fs), ["unsettled_foundation"]);
+        assert_eq!(fs[0].decision, ice);
+        assert_eq!(fs[0].weight, 2);
+        assert!(fs[0].message.contains("not marked at all"));
+        // `gate` carries only one decision — an edge, not a foundation.
+        assert!(!fs.iter().any(|f| f.decision == gate));
+
+        // Canonical on floated is built-on-sand — and is not ALSO called unsettled.
+        led.commit(escape, Commitment::Canonical, "author").unwrap();
+        led.commit(gate, Commitment::Floated, "author").unwrap();
+        let fs = check(&led, &book, &en).unwrap();
+        assert_eq!(kinds(&fs), ["built_on_sand", "unsettled_foundation"]);
+        assert_eq!((fs[0].decision, fs[0].related), (escape, Some(gate)));
+        assert!(fs[0].message.contains("canonical") && fs[0].message.contains("floated"));
+
+        // Settle the foundation and it goes quiet.
+        led.commit(ice, Commitment::Committed, "author").unwrap();
+        let _ = fleet;
+        assert_eq!(kinds(&check(&led, &book, &en).unwrap()), ["built_on_sand"]);
+    }
 
     fn uid(led: &CanonLedger, gist: &str) -> Uid {
         led.record_decision(NarrativeKind::WorldFact, gist, Uuid::from_u128(1), "ch1", &[]).unwrap()
