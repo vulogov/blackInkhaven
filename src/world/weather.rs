@@ -89,7 +89,13 @@ pub fn weather_at(astro: &AstronomyOutput, day_of_year: f64, lat_deg: f64) -> We
         None => (local_frac, lat_deg),
     };
 
+    // A planet with (almost) no axial tilt has no seasons to describe: the
+    // day-of-year still falls in a calendar "season", but the sky does not
+    // change — say so instead of announcing a deep winter that never comes.
+    let seasonless = astro.axial_tilt_deg.abs() < 1.0
+        || band.map(|b| (b.summer - b.winter).abs() < 1e-3).unwrap_or(false);
     let descriptor = match local_frac {
+        _ if seasonless => "no real seasons — the axis barely tilts, so the year turns without them",
         f if f >= 0.85 => "high summer",
         f if f >= 0.6 => "warm, late spring / early summer",
         f if f >= 0.4 => "mild, near the equinox",
@@ -120,6 +126,21 @@ mod tests {
         )
         .unwrap();
         compile_astronomy(&def.astronomy)
+    }
+
+
+    #[test]
+    fn a_planet_with_no_tilt_has_no_seasons_to_describe() {
+        let mut def = WorldDefinition::from_hjson(&crate::world::starter_template("Flat")).unwrap();
+        def.astronomy.planet.axial_tilt_deg = 0.0;
+        let astro = compile_astronomy(&def.astronomy);
+        for day in [0.0, 90.0, 180.0, 270.0] {
+            let w = weather_at(&astro, day, 45.0);
+            assert!(w.descriptor.contains("no real seasons"), "day {day}: {}", w.descriptor);
+        }
+        // Earth still has its winter.
+        let e = earth();
+        assert!(!weather_at(&e, 0.0, 45.0).descriptor.contains("no real seasons"));
     }
 
     #[test]

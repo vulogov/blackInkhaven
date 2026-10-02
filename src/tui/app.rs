@@ -1737,6 +1737,11 @@ pub(crate) struct CanonPaneState {
     pub node: Option<Uuid>,
     pub title: String,
     pub rows: Vec<CanonPaneRow>,
+    /// CU2-P2 — staged (model-proposed, unconfirmed) decisions for this
+    /// paragraph, listed under the live ones; the cursor runs through both.
+    pub staged: Vec<crate::canon::Proposal>,
+    /// Staged proposals for OTHER paragraphs (shown as a count only).
+    pub staged_elsewhere: usize,
     pub cursor: usize,
     /// Set when the ledger could not be read (shown instead of rows).
     pub error: Option<String>,
@@ -1901,6 +1906,20 @@ pub(crate) struct App {
     /// CANON-UI-1 (A1) — manuscript nodes that source a canon decision, for the
     /// Tree/Outline `◈` marker. Refreshed on the same throttle as `tree_badges`.
     canon_source_nodes: std::collections::HashSet<Uuid>,
+    /// CANON-UI-2 (CU2-P4) — the strongest commitment among each source node's
+    /// decisions, for tinting the ◈ marker. Rebuilt with `canon_source_nodes`.
+    canon_source_levels: std::collections::HashMap<Uuid, Option<smysl::Commitment>>,
+    /// CANON-UI-2 (CU2-P4) — paragraphs already told "decisions rest on this" on
+    /// a save this session, so the impact-on-edit advisory informs once, not on
+    /// every save.
+    canon_edit_noted: std::collections::HashSet<Uuid>,
+    /// WK-P5 — the world context the idle fact-check needs from a geology
+    /// compile (moon names, mineral names), keyed on the mtimes of world.hjson
+    /// and its heightmap. Interior-mutable: the collector takes `&self`.
+    #[allow(clippy::type_complexity)]
+    fact_check_world_cache: std::cell::RefCell<
+        Option<((Option<std::time::SystemTime>, Option<std::time::SystemTime>), Vec<String>, Vec<String>)>,
+    >,
     /// When `canon_source_nodes` was last recomputed (throttle clock).
     canon_source_nodes_at: std::time::Instant,
     /// WORLD-4 — the debounced fast fact-checker. Enabled when the project has a
@@ -3791,6 +3810,9 @@ impl App {
             tree_badges: std::collections::HashMap::new(),
             tree_badges_at: std::time::Instant::now(),
             canon_source_nodes: std::collections::HashSet::new(),
+            canon_source_levels: std::collections::HashMap::new(),
+            canon_edit_noted: std::collections::HashSet::new(),
+            fact_check_world_cache: std::cell::RefCell::new(None),
             canon_source_nodes_at: std::time::Instant::now(),
             tree_cursor: 0,
             tree_scroll: 0,
@@ -4809,6 +4831,33 @@ impl App {
                     }
                 }
                 Err(e) => self.status = format!("world overview failed: {e}"),
+            },
+            BgJobKind::CanonHarvest => match result {
+                Ok(payload) => {
+                    let proposals: Vec<crate::canon::Proposal> =
+                        serde_json::from_str(&payload).unwrap_or_default();
+                    let node = proposals.first().map(|p| p.node);
+                    // What the paragraph already has in the ledger — a proposal
+                    // that repeats it says nothing new.
+                    let canon = self.store.raw().canon();
+                    let live: Vec<(crate::canon::NarrativeKind, String)> = node
+                        .and_then(|n| canon.units_for_node(n).ok())
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter_map(|u| canon.view(u).ok().flatten())
+                        .filter_map(|v| v.kind.map(|k| (k, v.gist)))
+                        .collect();
+                    self.status = match crate::canon::StagedCanon::stage_new(&self.layout, proposals, &live) {
+                        Ok((0, 0)) => "canon harvest: the model proposed no decisions for this ¶".into(),
+                        Ok((0, d)) => format!("canon harvest: nothing new — {d} proposal(s) repeat what is already there"),
+                        Ok((n, 0)) => format!("canon harvest · {n} proposal(s) staged — a accept · x discard · A all ({elapsed_secs}s)"),
+                        Ok((n, d)) => format!("canon harvest · {n} proposal(s) staged, {d} already known — a accept · x discard · A all"),
+                        Err(e) => format!("canon harvest: could not stage the proposals — {e}"),
+                    };
+                    self.refresh_canon_pane(false);
+                }
+                Err(e) if e == "cancelled" => self.status = "canon harvest cancelled — nothing staged".into(),
+                Err(e) => self.status = format!("canon harvest failed: {e}"),
             },
             BgJobKind::Confront => {
                 let target = self.confront_para.take();
@@ -8387,6 +8436,11 @@ pub(super) enum BgJobKind {
     /// paragraph against the research corpus and emits the anchored relation
     /// findings to Output directly; the `Ok` payload is the emitted count.
     Confront,
+    /// CANON-UI-2 (CU2-P3) — harvest the open paragraph from the Canon pane
+    /// (`H`): one model call proposing canon decisions. The `Ok` payload is the
+    /// proposals as JSON; the completion handler stages them (main thread, so
+    /// staging has one writer) — nothing enters the ledger until the author's `a`.
+    CanonHarvest,
     /// 1.8.24 — the AI-thesaurus fallback (`Ctrl+V Shift+Y` for a language with no
     /// local WordNet, e.g. Russian). The worker makes the LLM call off the UI
     /// thread; the `Ok` payload is the raw JSON, parsed + shown as a picker in the
@@ -9733,7 +9787,7 @@ impl App {
         // PANE-1 — persist the pane choice so it survives a restart.
         let _ = self.save_session();
         self.status = match target {
-            RightPane::Canon => "pane → Canon · the open paragraph's decisions · ↑↓ · Enter ground · h history · * ledger".into(),
+            RightPane::Canon => "pane → Canon · the open paragraph's decisions · ↑↓ · Enter ground · c commit · h history · * ledger".into(),
             other => format!("pane → {}", right_pane_label(other)),
         };
     }
@@ -15965,6 +16019,13 @@ impl App {
             if let (Some(s), Some(c)) = (&b.season, &b.conditions) {
                 rows.push(format!("  when:    {s} · {c}"));
             }
+            // WK-P2 — the scene's day on the world's own calendar (month, weekday).
+            if let Some(day) = b.day_of_year {
+                let date = def.astronomy.calendar.date_label(day);
+                if !date.is_empty() {
+                    rows.push(format!("  date:    {date}"));
+                }
+            }
             if let Some(r) = &b.realm {
                 let ethos = b.ethos.as_deref().map(|e| format!(" — {e}")).unwrap_or_default();
                 rows.push(format!("  people:  {r}{ethos}"));
@@ -16429,22 +16490,42 @@ impl App {
             .ok()
             .and_then(|raw| WorldDefinition::from_hjson(&raw).ok());
         let ledger = def.as_ref().and_then(|d| d.magic.clone()).unwrap_or_default();
-        let moons: Vec<String> = def
+        // WK-P5 — the moons and minerals need a geology compile (a heightmap
+        // decode for a DEM world); this runs on every idle fact-check, so keep
+        // them until world.hjson (or its heightmap) changes on disk.
+        let stamp = |p: &std::path::Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+        let dem_path = def
             .as_ref()
-            .map(|d| compile_astronomy(&d.astronomy).moons.iter().map(|m| m.name.clone()).collect())
-            .unwrap_or_default();
-        let minerals: Vec<String> = def
+            .and_then(|d| d.geology.as_ref())
+            .and_then(|g| g.dem.as_ref())
+            .map(|dem| root.join(&dem.path));
+        let key = (stamp(&root.join("world.hjson")), dem_path.as_deref().and_then(stamp));
+        let cached = self
+            .fact_check_world_cache
+            .borrow()
             .as_ref()
-            .map(|d| {
-                let geo = match d.geology.as_ref().and_then(|g| g.dem.as_ref()) {
-                    Some(dem) => {
-                        crate::world::compile::compile_geology_dem(d, &root.join(&dem.path)).ok()
-                    }
-                    None => Some(crate::world::compile::compile_geology(d)),
-                };
-                geo.map(|g| g.minerals.iter().map(|m| m.mineral.clone()).collect()).unwrap_or_default()
-            })
-            .unwrap_or_default();
+            .filter(|(k, _, _)| *k == key)
+            .map(|(_, moons, minerals)| (moons.clone(), minerals.clone()));
+        let (moons, minerals): (Vec<String>, Vec<String>) = match cached {
+            Some(hit) => hit,
+            None => {
+                let moons: Vec<String> = def
+                    .as_ref()
+                    .map(|d| compile_astronomy(&d.astronomy).moons.iter().map(|m| m.name.clone()).collect())
+                    .unwrap_or_default();
+                let minerals: Vec<String> = def
+                    .as_ref()
+                    .map(|d| {
+                        crate::world::compile::compile_geology_at(d, &root)
+                            .ok()
+                            .map(|g| g.minerals.iter().map(|m| m.mineral.clone()).collect())
+                            .unwrap_or_default()
+                    })
+                    .unwrap_or_default();
+                *self.fact_check_world_cache.borrow_mut() = Some((key, moons.clone(), minerals.clone()));
+                (moons, minerals)
+            }
+        };
         let mut places = WorldStore::open_for_project(&root)
             .ok()
             .and_then(|ws| ws.list_place_links().ok())
@@ -17476,7 +17557,7 @@ impl App {
         // Advertise the actions whenever there are decisions — g/h work on any
         // decision row, even one with no jump anchor (a node-less/merged decision).
         self.status = if decisions.iter().any(|d| d.is_some()) {
-            "canon · ↑↓ · Enter jump · g ground · h history · t graph · Esc".into()
+            "canon · ↑↓ · Enter jump · g ground · c commit · h history · t graph · Esc".into()
         } else {
             "canon · Esc".into()
         };
@@ -17610,14 +17691,27 @@ impl App {
                     None => self.status = "canon: put the cursor on a decision, then h".into(),
                 }
             }
+            KeyCode::Char('c') if !grounding => {
+                // CU2-P1 — set the cursored decision's commitment level.
+                let (target, at) = match &self.modal {
+                    Modal::Canon { decisions, cursor, graph, .. } => {
+                        (decisions.get(*cursor).copied().flatten(), (*cursor, *graph))
+                    }
+                    _ => (None, (0, false)),
+                };
+                match target {
+                    Some(uid) => self.open_canon_commit(uid, Some(at)),
+                    None => self.status = "canon: put the cursor on a decision, then c".into(),
+                }
+            }
             KeyCode::Char('t') if !grounding => {
                 // Toggle the flat list ↔ the grounds-DAG view, rebuilding rows.
                 let graph = !matches!(&self.modal, Modal::Canon { graph: true, .. });
                 let (rows, anchors, decisions) = self.build_canon_rows(graph);
                 self.status = if graph {
-                    "canon graph · ↑↓ · Enter jump · g ground · h history · t list · Esc".into()
+                    "canon graph · ↑↓ · Enter jump · g ground · c commit · h history · t list · Esc".into()
                 } else {
-                    "canon · ↑↓ · Enter jump · g ground · h history · t graph · Esc".into()
+                    "canon · ↑↓ · Enter jump · g ground · c commit · h history · t graph · Esc".into()
                 };
                 self.modal = Modal::Canon { rows, anchors, decisions, cursor: 0, grounding: None, graph };
             }
@@ -17648,6 +17742,78 @@ impl App {
             _ => {}
         }
         true
+    }
+
+    /// CANON-UI-2 (CU2-P1) — open the commitment picker for `uid`. `back` is the
+    /// dashboard state to return to (`None` from the Canon pane). The cursor
+    /// starts on the decision's current level (else the first).
+    fn open_canon_commit(&mut self, uid: smysl::Uid, back: Option<(usize, bool)>) {
+        let view = match self.store.raw().canon().view(uid) {
+            Ok(Some(v)) => v,
+            Ok(None) => {
+                self.status = "canon: no such decision".into();
+                return;
+            }
+            Err(e) => {
+                self.status = format!("canon: {e}");
+                return;
+            }
+        };
+        let cursor = view
+            .commitment
+            .and_then(|c| smysl::Commitment::ALL.iter().position(|l| *l == c))
+            .unwrap_or(0);
+        self.status = "canon · how settled is it? ↑↓ · Enter set · Esc cancel".into();
+        self.modal =
+            Modal::CanonCommit { uid, gist: view.gist, current: view.commitment, cursor, back };
+    }
+
+    /// CANON-UI-2 (CU2-P1) — keys in the commitment picker.
+    fn canon_commit_handle_key(&mut self, key: KeyEvent) {
+        let n = smysl::Commitment::ALL.len();
+        let Modal::CanonCommit { uid, cursor, back, .. } = &mut self.modal else { return };
+        let (uid, back) = (*uid, *back);
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => *cursor = cursor.saturating_sub(1),
+            KeyCode::Down | KeyCode::Char('j') => *cursor = (*cursor + 1).min(n.saturating_sub(1)),
+            KeyCode::Home => *cursor = 0,
+            KeyCode::End => *cursor = n.saturating_sub(1),
+            KeyCode::Esc => {
+                self.close_canon_commit(back);
+                self.status = "canon: commitment unchanged".into();
+            }
+            KeyCode::Enter => {
+                let level = smysl::Commitment::ALL[(*cursor).min(n.saturating_sub(1))];
+                let canon = self.store.raw().canon();
+                let status = match canon.commit(uid, level, "author") {
+                    Ok(()) => {
+                        // Tell "built on sand" at the moment it is created.
+                        match canon.commitment_notes_for(uid).ok().and_then(|n| n.into_iter().next()) {
+                            Some(note) => format!("canon · «{level}» set — ⚠ {note}"),
+                            None => format!("canon · «{level}» set"),
+                        }
+                    }
+                    Err(e) => format!("canon: commit failed — {e}"),
+                };
+                self.close_canon_commit(back);
+                self.refresh_canon_pane(false);
+                self.status = status;
+            }
+            _ => {}
+        }
+    }
+
+    /// Leave the commitment picker: back to the dashboard it came from (rows
+    /// rebuilt so the new level shows, cursor restored), or to no modal.
+    fn close_canon_commit(&mut self, back: Option<(usize, bool)>) {
+        match back {
+            Some((cursor, graph)) => {
+                let (rows, anchors, decisions) = self.build_canon_rows(graph);
+                let cursor = cursor.min(rows.len().saturating_sub(1));
+                self.modal = Modal::Canon { rows, anchors, decisions, cursor, grounding: None, graph };
+            }
+            None => self.modal = Modal::None,
+        }
     }
 
     /// CG-P3 — apply a dashboard grounding: `src` rests on `dst`, then rebuild the
@@ -20387,13 +20553,104 @@ impl App {
                 Err(e) => state.error = Some(e.to_string()),
             }
         }
-        state.cursor = if reset_cursor {
-            0
-        } else {
-            self.canon_pane.cursor.min(state.rows.len().saturating_sub(1))
-        };
+        // CU2-P2 — the staged proposals for this paragraph (a small sidecar read).
+        if let Ok(staged) = crate::canon::StagedCanon::load(&self.layout) {
+            let (here, elsewhere): (Vec<_>, Vec<_>) =
+                staged.proposals.into_iter().partition(|p| Some(p.node) == opened);
+            state.staged = here;
+            state.staged_elsewhere = elsewhere.len();
+        }
+        let total = state.rows.len() + state.staged.len();
+        state.cursor = if reset_cursor { 0 } else { self.canon_pane.cursor.min(total.saturating_sub(1)) };
         self.canon_pane = state;
         self.canon_pane_at = std::time::Instant::now();
+    }
+
+    /// CANON-UI-2 (CU2-P3) — `H`: ask the model to propose canon decisions for
+    /// the OPEN paragraph. One call, off the UI thread (the shared single-flight,
+    /// panic-contained background job), in the project language. The result is
+    /// staged only — the ledger is untouched until the author accepts. Harvests
+    /// the SAVED text, so what is proposed matches what is on disk.
+    fn canon_pane_harvest(&mut self) {
+        let Some(doc) = self.opened.as_ref() else {
+            self.status = "canon harvest: open a paragraph first".into();
+            return;
+        };
+        if doc.dirty {
+            self.status = "canon harvest: save the paragraph first (it reads the saved text)".into();
+            return;
+        }
+        let id = doc.id;
+        let Some(node) = self.hierarchy.get(id) else {
+            self.status = "canon harvest: the open paragraph is not in the tree".into();
+            return;
+        };
+        let mut breadcrumb = node.path.join("/");
+        if !breadcrumb.is_empty() {
+            breadcrumb.push('/');
+        }
+        breadcrumb.push_str(&node.slug);
+        let text = match self.store.get_content(id) {
+            Ok(Some(bytes)) => String::from_utf8_lossy(&bytes).into_owned(),
+            Ok(None) => String::new(),
+            Err(e) => {
+                self.status = format!("canon harvest: {e}");
+                return;
+            }
+        };
+        if text.trim().is_empty() {
+            self.status = "canon harvest: the paragraph is empty".into();
+            return;
+        }
+        // Pre-flight the provider so a missing key fails fast (no orphan job).
+        let model = match self.ai.resolve_provider(&self.cfg.llm, None) {
+            Ok((m, _env)) => m.to_string(),
+            Err(e) => {
+                self.status = format!("canon harvest needs an LLM provider: {e}");
+                return;
+            }
+        };
+        let (lang, _) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        let system = crate::canon::system_prompt(crate::canon::language_name(&lang));
+        let client = self.ai.client.clone();
+        // Informative, never blocking: the size of the one call about to be made.
+        let tokens_in = (system.chars().count() + text.chars().count()) / 4;
+        let model_label = model.clone();
+        let started = self.start_bg_job(BgJobKind::CanonHarvest, "canon harvest", move |tx, cancel| {
+            let result = crate::ai::stream::collect_blocking(client, model, Some(system), text).and_then(|raw| {
+                if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                    return Err("cancelled".to_string());
+                }
+                let found = crate::canon::parse_proposals(&raw, id, &breadcrumb);
+                serde_json::to_string(&found).map_err(|e| e.to_string())
+            });
+            let _ = tx.send(BgMsg::Done(result));
+        });
+        if started {
+            self.status = format!(
+                "⟳ canon harvest · one model call (~{tokens_in} tokens in) via {model_label} · stages proposals only · Esc cancels"
+            );
+        }
+    }
+
+    /// CANON-UI-2 (CU2-P2) — the author's confirmation from the pane: record the
+    /// staged proposals `select` picks (the shared accept path), then refresh the
+    /// pane and the ◈ source-node set so the new decisions show at once.
+    fn canon_pane_accept(&mut self, select: impl Fn(&crate::canon::Proposal) -> bool) {
+        let (language, _) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        let outcome = crate::canon::StagedCanon::accept_where(
+            &self.layout,
+            self.store.raw().canon(),
+            &language,
+            select,
+        );
+        self.status = match outcome {
+            Ok(0) => "canon: nothing to accept".into(),
+            Ok(n) => format!("canon · accepted {n} decision(s) into the ledger — `c` sets how settled"),
+            Err(e) => format!("canon: accept failed — {e} (the proposals stay staged)"),
+        };
+        self.refresh_canon_source_nodes();
+        self.refresh_canon_pane(false);
     }
 
     /// CANON-UI-1 (CU1-P3) — keys while the Canon pane has focus. Read-first: move
@@ -20401,7 +20658,62 @@ impl App {
     /// first ground's source paragraph (what it rests on); `h` shows its history in
     /// Thoughts; `*` opens the whole-ledger dashboard on it; `Esc` back.
     fn handle_canon_pane_key(&mut self, key: KeyEvent) -> Result<bool> {
-        let n = self.canon_pane.rows.len();
+        // The cursor runs through the live decisions, then the staged proposals.
+        let live = self.canon_pane.rows.len();
+        let n = live + self.canon_pane.staged.len();
+        let on_staged = self.canon_pane.cursor >= live && self.canon_pane.cursor < n;
+        // CU2-P2 — the confirm / discard keys for staged proposals.
+        match key.code {
+            KeyCode::Char('a') => {
+                if on_staged {
+                    let p = self.canon_pane.staged[self.canon_pane.cursor - live].clone();
+                    self.canon_pane_accept(move |q| q.same_as(&p));
+                } else {
+                    self.status = "canon: `a` accepts a PROPOSED decision — move to one (below the ◈ rows)".into();
+                }
+                return Ok(false);
+            }
+            KeyCode::Char('A') => {
+                match self.canon_pane.node {
+                    Some(node) if !self.canon_pane.staged.is_empty() => {
+                        self.canon_pane_accept(move |q| q.node == node)
+                    }
+                    _ => self.status = "canon: nothing proposed for this paragraph".into(),
+                }
+                return Ok(false);
+            }
+            KeyCode::Char('x') | KeyCode::Char('X') => {
+                if on_staged {
+                    let p = self.canon_pane.staged[self.canon_pane.cursor - live].clone();
+                    self.status = match crate::canon::StagedCanon::discard_where(&self.layout, |q| q.same_as(&p)) {
+                        Ok(_) => "canon · proposal discarded".into(),
+                        Err(e) => format!("canon: discard failed — {e}"),
+                    };
+                    self.refresh_canon_pane(false);
+                } else {
+                    self.status = "canon: `x` discards a PROPOSED decision — live ones are not deleted here".into();
+                }
+                return Ok(false);
+            }
+            // The decision-only actions need a live decision under the cursor.
+            KeyCode::Char('H') => {
+                self.canon_pane_harvest();
+                return Ok(false);
+            }
+            KeyCode::Esc
+                if self.bg_job.as_ref().map(|j| j.kind) == Some(BgJobKind::CanonHarvest) =>
+            {
+                self.cancel_bg_job();
+                return Ok(false);
+            }
+            KeyCode::Enter | KeyCode::Char('h') | KeyCode::Char('c') | KeyCode::Char('C')
+                if on_staged =>
+            {
+                self.status = "canon: this is only proposed — `a` accepts it into the ledger first".into();
+                return Ok(false);
+            }
+            _ => {}
+        }
         match key.code {
             KeyCode::Up | KeyCode::Char('k') => {
                 self.canon_pane.cursor = self.canon_pane.cursor.saturating_sub(1);
@@ -20437,9 +20749,15 @@ impl App {
                     }
                 }
             }
-            KeyCode::Char('h') | KeyCode::Char('H') => {
+            KeyCode::Char('h') => {
                 match self.canon_pane.rows.get(self.canon_pane.cursor).map(|r| r.uid) {
                     Some(uid) => self.canon_show_history(uid),
+                    None => self.status = "canon: no decision under the cursor".into(),
+                }
+            }
+            KeyCode::Char('c') | KeyCode::Char('C') => {
+                match self.canon_pane.rows.get(self.canon_pane.cursor).map(|r| r.uid) {
+                    Some(uid) => self.open_canon_commit(uid, None),
                     None => self.status = "canon: no decision under the cursor".into(),
                 }
             }
@@ -20469,9 +20787,46 @@ impl App {
     /// CANON-UI-1 (A1) — recompute which nodes source a canon decision, for the
     /// Tree/Outline marker. Cheap (a read over the small per-project ledger).
     fn refresh_canon_source_nodes(&mut self) {
-        self.canon_source_nodes =
-            self.store.raw().canon().decision_source_nodes().unwrap_or_default();
+        self.canon_source_levels =
+            self.store.raw().canon().decision_source_levels().unwrap_or_default();
+        self.canon_source_nodes = self.canon_source_levels.keys().copied().collect();
         self.canon_source_nodes_at = std::time::Instant::now();
+    }
+
+    /// CANON-UI-2 (CU2-P4) — the ◈ marker's style for a source paragraph: how
+    /// settled the strongest decision it established is. Dim = unmarked or only
+    /// floated; plain = drafted / committed; bold = canonical; struck = every
+    /// decision it established has been retconned.
+    pub(super) fn canon_glyph_style(&self, node: Uuid) -> Style {
+        let base = Style::default().fg(Color::LightMagenta);
+        match self.canon_source_levels.get(&node).copied().flatten() {
+            None | Some(smysl::Commitment::Floated) => base.add_modifier(Modifier::DIM),
+            Some(smysl::Commitment::Drafted) | Some(smysl::Commitment::Committed) => base,
+            Some(smysl::Commitment::Canonical) => base.add_modifier(Modifier::BOLD),
+            Some(smysl::Commitment::Retconned) => {
+                Style::default().fg(Color::DarkGray).add_modifier(Modifier::CROSSED_OUT)
+            }
+            Some(_) => base, // a level added upstream (non-exhaustive enum)
+        }
+    }
+
+    /// CANON-UI-2 (CU2-P4, impact-on-edit) — after a save: if this paragraph
+    /// established decisions that OTHER decisions rest on, say so once per
+    /// paragraph per session. Advisory — the save already happened; this extends
+    /// the pre-cut delete guard from deleting the source to changing it.
+    pub(super) fn canon_note_edit_of_source(&mut self, node: Uuid) {
+        if !self.canon_source_nodes.contains(&node) || self.canon_edit_noted.contains(&node) {
+            return;
+        }
+        let Ok((_, dependents)) = self.store.raw().canon().node_stake(node) else { return };
+        if dependents == 0 {
+            return;
+        }
+        self.canon_edit_noted.insert(node);
+        let rest = if dependents == 1 { "1 decision rests".to_string() } else { format!("{dependents} decisions rest") };
+        self.status = format!(
+            "saved · ◈ canon: {rest} on what this paragraph established — check they still hold (Ctrl+B Tab → Canon)"
+        );
     }
 
     /// Rebuild `tree_badges` from the active Output findings.
@@ -28992,6 +29347,10 @@ impl App {
         }
         if matches!(self.modal, Modal::Canon { .. }) {
             self.canon_handle_key(key);
+            return Ok(false);
+        }
+        if matches!(self.modal, Modal::CanonCommit { .. }) {
+            self.canon_commit_handle_key(key);
             return Ok(false);
         }
         if matches!(self.modal, Modal::Knowledge { .. }) {

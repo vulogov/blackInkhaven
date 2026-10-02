@@ -339,6 +339,10 @@ impl super::App {
             self.draw_canon_modal(f, area);
             return;
         }
+        if matches!(self.modal, Modal::CanonCommit { .. }) {
+            self.draw_canon_commit_modal(f, area);
+            return;
+        }
         if matches!(self.modal, Modal::Bonds { .. }) {
             self.draw_bonds_modal(f, area);
         }

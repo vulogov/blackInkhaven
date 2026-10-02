@@ -150,6 +150,10 @@ pub(crate) struct WorldbuilderApp {
     /// The compiled layer grids from the last `/compile`, rendered as an ASCII
     /// biome minimap in the Map right-pane (WB-P6). Invalidated with the summary.
     pub(super) compiled_layers: Option<crate::world::plausibility::CompiledLayers>,
+    /// WK-P5 — the layers compiled for the live ★ score, kept (keyed on the
+    /// definition) so the map caches built right after reuse them instead of
+    /// compiling — and, for a heightmap world, decoding the image — again.
+    layers_scratch: Option<(u64, crate::world::plausibility::CompiledLayers)>,
 
     // — Raster map (WS-P2) —————————————————————————————————————————————
     /// The terminal's image protocol, if it can display images and
@@ -278,6 +282,7 @@ impl WorldbuilderApp {
             plausibility_score: None,
             compiled_summary: None,
             compiled_layers: None,
+            layers_scratch: None,
             // WS-P2 — query the terminal once for image support (gated by config).
             image_picker: if cfg_images_preview {
                 ratatui_image::picker::Picker::from_query_stdio().ok()
@@ -608,7 +613,8 @@ impl WorldbuilderApp {
             Command::Undo => self.undo_pending(),
             Command::Reset => {
                 let n = self.pending_ops.len();
-                self.pending_ops.clear();
+                let dropped: Vec<super::commands::Op> = std::mem::take(&mut self.pending_ops);
+                self.remove_orphaned_terrain(&dropped);
                 self.pending_groups.clear();
                 self.refresh_plausibility();
                 self.persist_pending();
@@ -697,8 +703,8 @@ impl WorldbuilderApp {
             let seed = base_seed.wrapping_add(i as u64);
             let mut def = base.clone();
             def.seed = crate::world::types::SeedValue::Str(format!("0x{seed:x}"));
-            let layers = crate::world::plausibility::compile_layers(&def);
-            let warns = crate::world::plausibility::run_fast(&def);
+            let layers = crate::world::plausibility::compile_layers_at(&def, Some(&self.layout.root));
+            let warns = crate::world::plausibility::run_fast_at(&def, Some(&self.layout.root));
             let score = crate::world::plausibility::compute_plausibility_score(&warns);
             let (g, c, d) = (&layers.geology, &layers.climate, &layers.demographics);
             let marker = if i == 0 { "*" } else { " " };
@@ -838,8 +844,16 @@ impl WorldbuilderApp {
             self.status = format!("terrain save failed: {e}");
             return;
         }
-        let rel = "assets/maps/terrain.png";
         let raw: Vec<u16> = hm.iter().map(|&e| (e.clamp(0.0, 1.0) * 65535.0) as u16).collect();
+        // Name the file by its content: a new sculpt never overwrites the
+        // heightmap a committed world.hjson already points at (the old fixed
+        // `terrain.png` was clobbered before `/write`, so `/undo` could not
+        // bring the committed terrain back).
+        let digest = raw.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, v| {
+            (h ^ *v as u64).wrapping_mul(0x0100_0000_01b3)
+        });
+        let rel_owned = format!("assets/maps/terrain-{:08x}.png", digest as u32);
+        let rel = rel_owned.as_str();
         let Some(img) =
             image::ImageBuffer::<image::Luma<u16>, Vec<u16>>::from_raw(w as u32, h as u32, raw)
         else {
@@ -861,8 +875,8 @@ impl WorldbuilderApp {
             path: vec!["geology".into(), "dem".into()],
             value,
         });
-        // Rebuild caches (procedural — the worldbuilder compile isn't DEM-aware),
-        // but keep the terrain preview.
+        // Rebuild caches — the compile is DEM-aware (WK-P3), so it now reads back
+        // the heightmap just written; keep the in-memory sculpt as the preview.
         let preview = self.map_terrain.take();
         self.refresh_plausibility();
         if let Some(def) = self.current_world_def() {
@@ -1233,7 +1247,7 @@ impl WorldbuilderApp {
         let compiled = self
             .current_world_def()
             .map(|def| {
-                let layers = crate::world::plausibility::compile_layers(&def);
+                let layers = crate::world::plausibility::compile_layers_at(&def, Some(&self.layout.root));
                 crate::world::plausibility::summarise_compiled(&def, &layers)
             });
         let facts = self.collect_world_facts();
@@ -1371,6 +1385,8 @@ impl WorldbuilderApp {
         self.split_ratio = target.split_ratio.clamp(2, 8);
         self.pending_ops = target.pending_ops.clone();
         self.pending_groups = target.pending_groups.clone();
+        // An unsaved sculpt belongs to the session being left.
+        self.map_terrain = None;
         let recovered = target.recovered_from.clone();
         self.session = target;
         // Fresh conversation + research state for the new session.
@@ -1394,16 +1410,16 @@ impl WorldbuilderApp {
     /// the Chat pane, and post the first question. Answers accumulate into the
     /// pending delta (reviewable with `/diff`, committed with `/write`).
     fn start_interview(&mut self) {
-        let iv = super::interview::Interview::new();
+        // WK-P4 — the interview speaks the project language.
+        let (language, _) = crate::prose::resolve_prose_language(None, &self.cfg.language);
+        let lang = super::interview::Lang::of(&language);
+        let iv = super::interview::Interview::new(lang);
         self.interview = Some(iv);
         self.right_pane = RightPane::Chat;
         self.focus = Focus::QueryPrompt;
         self.push_turn(
             String::new(),
-            "Interview — I'll ask about the sky, land, people, and rules. Answer in your own \
-             words (blank to skip a question, Esc to leave). Your answers become pending edits; \
-             review them with /diff and commit with /write, then /compile."
-                .to_string(),
+            super::interview::line(lang, super::interview::Line::Opening).to_string(),
         );
         self.post_interview_question();
         self.status = "interview started — answer in the Query prompt · Esc to leave".into();
@@ -1415,7 +1431,7 @@ impl WorldbuilderApp {
         let q = self.interview.as_ref().and_then(|iv| {
             iv.current().map(|s| {
                 let (n, total) = iv.progress();
-                format!("[{} · {n}/{total}] {}", s.stage.label(), s.prompt)
+                format!("[{} · {n}/{total}] {}", s.stage.label(iv.lang()), s.prompt(iv.lang()))
             })
         });
         if let Some(q) = q {
@@ -1428,6 +1444,8 @@ impl WorldbuilderApp {
     /// answer skips; a malformed one is reported and the step is retried.
     fn submit_interview_answer(&mut self, answer: &str) {
         let answer = answer.trim();
+        let lang = self.interview.as_ref().map(|iv| iv.lang()).unwrap_or(super::interview::Lang::En);
+        let say = |which| super::interview::line(lang, which);
         let Some(step) = self.interview.as_ref().and_then(|iv| iv.current()) else {
             self.interview = None;
             return;
@@ -1437,7 +1455,7 @@ impl WorldbuilderApp {
             if let Some(iv) = self.interview.as_mut() {
                 iv.advance();
             }
-            self.push_turn(String::new(), "(skipped)".into());
+            self.push_turn(String::new(), say(super::interview::Line::Skipped).to_string());
             self.after_interview_step();
             return;
         }
@@ -1447,14 +1465,14 @@ impl WorldbuilderApp {
             super::commands::Command::Shape { label, ops } => {
                 if let Err(e) = self.push_pending(ops) {
                     // Keep the step; let the author retry with the reason.
-                    self.push_turn(answer.to_string(), format!("didn't take that — {e}"));
+                    self.push_turn(answer.to_string(), format!("{} — {e}", say(super::interview::Line::NotTaken)));
                     return;
                 }
                 let d = self.plausibility_delta_chip();
                 let note = if d.is_empty() {
-                    format!("recorded · {label}")
+                    format!("{} · {label}", say(super::interview::Line::Recorded))
                 } else {
-                    format!("recorded · {label}  (★ {d})")
+                    format!("{} · {label}  (★ {d})", say(super::interview::Line::Recorded))
                 };
                 self.push_turn(answer.to_string(), note);
                 self.record_turn(format!("interview: {answer}"), label, Vec::new());
@@ -1465,7 +1483,7 @@ impl WorldbuilderApp {
             }
             super::commands::Command::Unknown(msg) => {
                 // Keep the step; let the author retry.
-                self.push_turn(answer.to_string(), format!("didn't take that — {msg}"));
+                self.push_turn(answer.to_string(), format!("{} — {msg}", say(super::interview::Line::NotTaken)));
             }
             _ => {
                 // A template that parses to a session command shouldn't happen;
@@ -1482,14 +1500,12 @@ impl WorldbuilderApp {
     fn after_interview_step(&mut self) {
         let done = self.interview.as_ref().map(|iv| iv.done()).unwrap_or(true);
         if done {
+            let lang = self.interview.as_ref().map(|iv| iv.lang()).unwrap_or(super::interview::Lang::En);
             self.interview = None;
-            let n = self.pending_ops.len();
+            let n = self.pending_groups.len();
             self.push_turn(
                 String::new(),
-                format!(
-                    "That's the frame — {n} pending edit(s). Review with /diff, commit with \
-                     /write, then /compile to see the world your choices imply."
-                ),
+                super::interview::line(lang, super::interview::Line::Closing).replace("{n}", &n.to_string()),
             );
             self.status = format!("interview complete — {n} pending edit(s) · /diff · /write");
         } else {
@@ -1604,7 +1620,11 @@ impl WorldbuilderApp {
     /// edits don't change the grid, so the editor re-runs this after a placement
     /// to keep the map live (refresh_plausibility having cleared the caches).
     fn populate_map_caches(&mut self, def: &crate::world::types::WorldDefinition) {
-        let layers = crate::world::plausibility::compile_layers(def);
+        let key = Self::def_key(def);
+        let layers = match self.layers_scratch.take() {
+            Some((k, layers)) if k == key => layers,
+            _ => crate::world::plausibility::compile_layers_at(def, Some(&self.layout.root)),
+        };
         self.compiled_summary =
             Some(crate::world::plausibility::summarise_compiled(def, &layers));
         let (w, h) = (layers.geology.width, layers.geology.height);
@@ -1804,6 +1824,45 @@ impl WorldbuilderApp {
         }
     }
 
+    /// WK-P5 — a stable key for "the same world definition" (its canonical JSON),
+    /// so compiled layers can be handed from the scorer to the map.
+    fn def_key(def: &crate::world::types::WorldDefinition) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        serde_json::to_string(def).unwrap_or_default().hash(&mut h);
+        h.finish()
+    }
+
+    /// WORLD-KEEP-1 (WK-P6) — a `/terrain` sculpt writes its heightmap at once; when
+    /// the delta that referenced it is undone or reset, remove the file unless
+    /// the committed `world.hjson` or a still-pending delta points at it. Only
+    /// ever touches the worldbuilder's own `assets/maps/terrain-*.png`.
+    fn remove_orphaned_terrain(&mut self, dropped: &[super::commands::Op]) {
+        let dem_path = |op: &super::commands::Op| -> Option<String> {
+            match op {
+                super::commands::Op::Set { path, value } if path.len() == 2 && path[0] == "geology" && path[1] == "dem" => {
+                    value.get("path").and_then(|p| p.as_str()).map(str::to_string)
+                }
+                _ => None,
+            }
+        };
+        let on_disk = std::fs::read_to_string(self.layout.root.join("world.hjson"))
+            .ok()
+            .and_then(|r| serde_hjson::from_str::<serde_json::Value>(&r).ok())
+            .and_then(|v| v.pointer("/geology/dem/path").and_then(|p| p.as_str()).map(str::to_string));
+        let still_pending: Vec<String> = self.pending_ops.iter().filter_map(dem_path).collect();
+        for rel in dropped.iter().filter_map(dem_path) {
+            let ours = rel.starts_with("assets/maps/terrain-") && rel.ends_with(".png") && !rel.contains("..");
+            if ours && on_disk.as_deref() != Some(rel.as_str()) && !still_pending.contains(&rel) {
+                let _ = std::fs::remove_file(self.layout.root.join(&rel));
+            }
+        }
+        // The in-memory sculpt belonged to the dropped delta.
+        if dropped.iter().any(|op| dem_path(op).is_some()) {
+            self.map_terrain = None;
+        }
+    }
+
     /// `/undo` — drop the last accepted delta (all of its ops) and rescore.
     fn undo_pending(&mut self) {
         if self.pending_ops.is_empty() {
@@ -1812,7 +1871,8 @@ impl WorldbuilderApp {
         }
         let n = self.pending_groups.pop().unwrap_or(1).clamp(1, self.pending_ops.len());
         let keep = self.pending_ops.len() - n;
-        self.pending_ops.truncate(keep);
+        let dropped: Vec<super::commands::Op> = self.pending_ops.split_off(keep);
+        self.remove_orphaned_terrain(&dropped);
         self.refresh_plausibility();
         self.persist_pending();
         self.status = format!(
@@ -2248,7 +2308,12 @@ impl WorldbuilderApp {
         self.plausibility_prev = self.plausibility_score;
         match def {
             Some(def) => {
-                let warnings = crate::world::plausibility::run_fast(&def);
+                // One compile per world change: the score lints these layers, and
+                // `populate_map_caches` takes them rather than compiling again.
+                let layers = crate::world::plausibility::compile_layers_at(&def, Some(&self.layout.root));
+                let warnings =
+                    crate::world::plausibility::run_fast_with(&def, Some(&self.layout.root), &layers);
+                self.layers_scratch = Some((Self::def_key(&def), layers));
                 self.plausibility_score =
                     Some(crate::world::plausibility::compute_plausibility_score(&warnings));
                 self.plausibility_warnings = warnings;

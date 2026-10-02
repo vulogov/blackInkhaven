@@ -61,6 +61,21 @@ pub fn cell_km(radius_earth: f64, grid_width: usize, grid_height: usize) -> (f64
     (x, y)
 }
 
+/// WORLD-KEEP-1 (WK-P1) — [`distance_km`] on a compiled map: when the geology
+/// carries a DECLARED scale (a heightmap with `scale_km_per_pixel`), distance is
+/// measured with it; otherwise the grid is the whole planet.
+pub fn distance_km_on(
+    radius_earth: f64,
+    geo: &crate::world::types::GeologyOutput,
+    dx: f64,
+    dy: f64,
+) -> f64 {
+    match geo.cell_km {
+        Some((xk, yk)) => ((dx * xk).powi(2) + (dy * yk).powi(2)).sqrt(),
+        None => distance_km(radius_earth, geo.width, geo.height, dx, dy),
+    }
+}
+
 /// Straight-line surface distance in km for a cell delta `(dx, dy)`, respecting
 /// the grid's anisotropy (see [`cell_km`]).
 pub fn distance_km(radius_earth: f64, grid_width: usize, grid_height: usize, dx: f64, dy: f64) -> f64 {

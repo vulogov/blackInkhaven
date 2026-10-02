@@ -125,6 +125,12 @@ the worldbuilder sets a class-typical brightness with it, so a red dwarf is not 
 as bright as the Sun. A blank line skips a question; `Esc` leaves the interview at any
 point without losing what you have already answered.
 
+The interview is asked in your *project's* language — English, Russian, French,
+German or Spanish — and answered in it. "оранжевая", "naine rouge" and "roter
+Zwerg" are stars; "да", "oui" and "ja" are yes; "0,6" is a sea level; "древние" and
+"uralt" are ancient mountains. A spectral letter typed on a Cyrillic keyboard (К, М)
+is read as the Latin one it looks like.
+
 #note[
   Each answer is checked against the world's schema the moment it is recorded — not
   later, at `/write`. An answer the schema cannot take is refused with the reason
@@ -160,6 +166,8 @@ the pending delta.
     (Earth's Moon, 27.32, when omitted)],
   [`/nation <name…> [x y]`], [add a nation, optionally pinned to a capital cell; an
     unpinned nation seats at the largest unclaimed settlement],
+  [`/orogeny <word>`], [the mountains — `active`, `quiet` or `ancient`, in any of the
+    five languages],
   [`/magic on|off`], [enable or disable the magic ledger],
   [`/rule <kind> <cat,cat> [description]`], [declare a magic rule (enables the ledger)],
 )

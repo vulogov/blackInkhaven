@@ -117,6 +117,33 @@ impl CanonLedger {
             Ok(out)
         })
     }
+
+    /// CANON-UI-2 (CU2-P1) — the support-check advisories that involve `uid`,
+    /// on either side: it is committed above something it rests on, or something
+    /// committed above it rests on it. One human line each — what the editor
+    /// shows right after the author sets a level, so "built on sand" is told at
+    /// the moment it is created, not at the next `canon check`.
+    pub fn commitment_notes_for(&self, uid: Uid) -> Result<Vec<String>> {
+        Ok(self
+            .commitment_warnings()?
+            .into_iter()
+            .filter_map(|w| {
+                if w.unit.uid == uid {
+                    Some(format!(
+                        "«{}» rests on «{}» “{}”",
+                        w.level, w.ground_level, w.weakest_ground.gist
+                    ))
+                } else if w.weakest_ground.uid == uid {
+                    Some(format!(
+                        "«{}» “{}” rests on this «{}» decision",
+                        w.level, w.unit.gist, w.ground_level
+                    ))
+                } else {
+                    None
+                }
+            })
+            .collect())
+    }
 }
 
 #[cfg(test)]
@@ -156,13 +183,28 @@ mod tests {
         assert_eq!(warns[0].weakest_ground.uid, base);
         assert_eq!(warns[0].ground_level, Commitment::Floated);
 
+        // CU2-P1: the per-decision notes name the problem from BOTH ends.
+        let up = led.commitment_notes_for(ending).unwrap();
+        assert_eq!(up.len(), 1);
+        assert!(up[0].contains("rests on") && up[0].contains("hidden sea gate"), "{}", up[0]);
+        let down = led.commitment_notes_for(base).unwrap();
+        assert_eq!(down.len(), 1);
+        assert!(down[0].contains("escape uses the sea gate"), "{}", down[0]);
+        assert!(led.commitment_notes_for(smysl_uid_other(&led, n)).unwrap().is_empty());
+
         // Promote the premise to canonical → the warning clears.
         led.commit(base, Commitment::Canonical, "author").unwrap();
+        assert!(led.commitment_notes_for(ending).unwrap().is_empty());
         assert!(led.commitment_warnings().unwrap().is_empty(), "no longer built on sand");
 
         // Persists + latest-wins across reopen.
         let led2 = CanonLedger::new(&path_s);
         assert_eq!(led2.commitment(base).unwrap(), Some(Commitment::Canonical));
+    }
+
+    /// An unrelated decision, for the "notes only involve the asked uid" check.
+    fn smysl_uid_other(led: &CanonLedger, n: Uuid) -> Uid {
+        led.record_decision(NarrativeKind::WorldFact, "the moon is green", n, "ch2", &[]).unwrap()
     }
 
     #[test]

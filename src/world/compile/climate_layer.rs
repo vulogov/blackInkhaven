@@ -108,6 +108,28 @@ pub fn compile_climate(
         biome,
         temperature_c,
         precipitation_mm,
+        cell_area_km2: row_cell_areas(def, geo, h),
+    }
+}
+
+/// WORLD-KEEP-1 (WK-P1) — km² of ground per cell, by row. One ruler for the
+/// whole pipeline: the same cell size travel and trade measure distance with.
+fn row_cell_areas(def: &WorldDefinition, geo: &GeologyOutput, h: usize) -> Vec<f64> {
+    match geo.cell_km {
+        // A map with a declared scale is a flat region: every cell the same.
+        Some((xk, yk)) => vec![xk * yk; h],
+        // The whole planet on an equirectangular grid: east–west cells narrow
+        // with the cosine of latitude.
+        None => {
+            let (xk, yk) =
+                crate::world::travel::cell_km(def.astronomy.planet.radius_earth, geo.width, geo.height);
+            (0..h)
+                .map(|y| {
+                    let lat = 90.0 - (y as f64 + 0.5) / h.max(1) as f64 * 180.0;
+                    xk * lat.to_radians().cos().max(0.0) * yk
+                })
+                .collect()
+        }
     }
 }
 

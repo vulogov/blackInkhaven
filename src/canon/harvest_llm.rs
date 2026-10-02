@@ -66,9 +66,105 @@ impl StagedCanon {
         crate::io_atomic::write(&p, &json).map_err(|e| anyhow!("write {p:?}: {e}"))
     }
 
-    /// Clear the sidecar (after the proposals are accepted or discarded).
+    /// Clear the sidecar. (Accept/discard rewrite it through
+    /// [`Self::accept_where`] / [`Self::discard_where`]; tests reset with this.)
+    #[cfg(test)]
     pub fn clear(layout: &ProjectLayout) -> Result<()> {
         StagedCanon::default().save(layout)
+    }
+
+    /// The author's confirmation, for the staged proposals `select` picks: record
+    /// them into `ledger` (born with their grounds, in the project language),
+    /// flush, and remove exactly those entries from staging. The ONE accept path —
+    /// `canon accept` passes `|_| true`, the Canon pane passes a per-proposal or
+    /// per-paragraph predicate — so the two can never drift. Returns how many
+    /// decisions were recorded. Staging is rewritten only after the ledger write
+    /// succeeded, so a failure leaves the proposals staged.
+    pub fn accept_where(
+        layout: &ProjectLayout,
+        ledger: &super::CanonLedger,
+        language: &crate::prose::ProseLanguage,
+        select: impl Fn(&Proposal) -> bool,
+    ) -> Result<usize> {
+        let staged = StagedCanon::load(layout)?;
+        let (take, keep): (Vec<Proposal>, Vec<Proposal>) =
+            staged.proposals.into_iter().partition(|p| select(p));
+        if take.is_empty() {
+            return Ok(0);
+        }
+        let items: Vec<super::NewDecision> = take
+            .iter()
+            .map(|p| super::NewDecision {
+                kind: p.kind,
+                gist: p.gist.clone(),
+                node: p.node,
+                breadcrumb: p.breadcrumb.clone(),
+                proposed_grounds: p.grounds.clone(),
+            })
+            .collect();
+        let n = ledger.record_grounded_batch(&items, language)?.len();
+        ledger.sync()?;
+        StagedCanon { proposals: keep }.save(layout)?;
+        Ok(n)
+    }
+
+    /// CANON-UI-2 (CU2-P3) — append freshly harvested proposals to staging,
+    /// dropping any that say nothing new: one equal (same kind, same gist up to
+    /// case / spacing / a trailing full stop) to a decision the paragraph
+    /// already has in the ledger (`live`), to an entry already staged for the
+    /// same paragraph, or to an earlier proposal in the same batch. Returns
+    /// `(staged, dropped)`. A re-harvest of an unchanged paragraph therefore
+    /// stages nothing rather than a second copy of everything.
+    pub fn stage_new(
+        layout: &ProjectLayout,
+        proposals: Vec<Proposal>,
+        live: &[(NarrativeKind, String)],
+    ) -> Result<(usize, usize)> {
+        let norm = |g: &str| -> String {
+            g.split_whitespace().collect::<Vec<_>>().join(" ").trim_end_matches('.').to_lowercase()
+        };
+        let mut staged = StagedCanon::load(layout)?;
+        let total = proposals.len();
+        let mut added = 0usize;
+        for p in proposals {
+            let key = norm(&p.gist);
+            if key.is_empty() {
+                continue;
+            }
+            let known = live.iter().any(|(k, g)| *k == p.kind && norm(g) == key)
+                || staged
+                    .proposals
+                    .iter()
+                    .any(|q| q.node == p.node && q.kind == p.kind && norm(&q.gist) == key);
+            if !known {
+                staged.proposals.push(p);
+                added += 1;
+            }
+        }
+        if added > 0 {
+            staged.save(layout)?;
+        }
+        Ok((added, total - added))
+    }
+
+    /// Drop the staged proposals `select` picks without recording them. Returns
+    /// how many were removed.
+    pub fn discard_where(layout: &ProjectLayout, select: impl Fn(&Proposal) -> bool) -> Result<usize> {
+        let staged = StagedCanon::load(layout)?;
+        let before = staged.proposals.len();
+        let keep: Vec<Proposal> = staged.proposals.into_iter().filter(|p| !select(p)).collect();
+        let removed = before - keep.len();
+        if removed > 0 {
+            StagedCanon { proposals: keep }.save(layout)?;
+        }
+        Ok(removed)
+    }
+}
+
+impl Proposal {
+    /// Whether two proposals are the same staged entry (paragraph + kind + gist).
+    pub fn same_as(&self, other: &Proposal) -> bool {
+        self.node == other.node && self.kind == other.kind && self.gist == other.gist
     }
 }
 
@@ -209,6 +305,80 @@ mod tests {
         assert!(p.contains("Russian") && p.contains("Do NOT translate"));
         assert!(p.contains("world-fact") && p.contains("JSON array"));
         assert!(p.contains("grounds"), "the prompt asks for ground references");
+    }
+
+    #[test]
+    fn accept_where_records_the_subset_and_leaves_the_rest_staged() {
+        let dir = tempfile::tempdir().unwrap();
+        let layout = ProjectLayout::new(dir.path());
+        let led = crate::canon::CanonLedger::new(dir.path().join("canon.cbor").to_str().unwrap());
+        let (a, b) = (Uuid::from_u128(0xA), Uuid::from_u128(0xB));
+        let mk = |node, gist: &str| Proposal {
+            node,
+            breadcrumb: "ch1".into(),
+            kind: NarrativeKind::WorldFact,
+            gist: gist.into(),
+            grounds: Vec::new(),
+        };
+        StagedCanon {
+            proposals: vec![mk(a, "the harbour freezes each winter"), mk(a, "the gate is hidden"), mk(b, "the moon is green")],
+        }
+        .save(&layout)
+        .unwrap();
+        let lang = crate::prose::ProseLanguage::En;
+
+        // One proposal of paragraph A.
+        let one = mk(a, "the gate is hidden");
+        assert_eq!(StagedCanon::accept_where(&layout, &led, &lang, |p| p.same_as(&one)).unwrap(), 1);
+        assert_eq!(led.units_for_node(a).unwrap().len(), 1);
+        assert_eq!(StagedCanon::load(&layout).unwrap().proposals.len(), 2);
+
+        // Discard B's; A's remaining one stays.
+        assert_eq!(StagedCanon::discard_where(&layout, |p| p.node == b).unwrap(), 1);
+        assert!(led.units_for_node(b).unwrap().is_empty(), "a discard records nothing");
+        let left = StagedCanon::load(&layout).unwrap().proposals;
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].gist, "the harbour freezes each winter");
+
+        // Nothing selected → nothing written, staging untouched.
+        assert_eq!(StagedCanon::accept_where(&layout, &led, &lang, |_| false).unwrap(), 0);
+        // Everything (the CLI path) → staging empties.
+        assert_eq!(StagedCanon::accept_where(&layout, &led, &lang, |_| true).unwrap(), 1);
+        assert!(StagedCanon::load(&layout).unwrap().proposals.is_empty());
+        assert_eq!(led.units_for_node(a).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn stage_new_drops_what_the_paragraph_already_says() {
+        let dir = tempfile::tempdir().unwrap();
+        let layout = ProjectLayout::new(dir.path());
+        let a = Uuid::from_u128(0xA);
+        let mk = |gist: &str| Proposal {
+            node: a,
+            breadcrumb: "ch1".into(),
+            kind: NarrativeKind::WorldFact,
+            gist: gist.into(),
+            grounds: Vec::new(),
+        };
+        let live = vec![(NarrativeKind::WorldFact, "The harbour freezes each winter".to_string())];
+        // Same as a live decision (case + full stop), a new one, and the new one
+        // again within the batch.
+        let (added, dropped) = StagedCanon::stage_new(
+            &layout,
+            vec![mk("the harbour  freezes each winter."), mk("the gate is hidden"), mk("The gate is hidden")],
+            &live,
+        )
+        .unwrap();
+        assert_eq!((added, dropped), (1, 2));
+        // Re-harvest: everything is already known → nothing staged twice.
+        let (added, dropped) =
+            StagedCanon::stage_new(&layout, vec![mk("the gate is hidden")], &live).unwrap();
+        assert_eq!((added, dropped), (0, 1));
+        assert_eq!(StagedCanon::load(&layout).unwrap().proposals.len(), 1);
+        // A different KIND with the same words is a different decision.
+        let mut other = mk("the gate is hidden");
+        other.kind = NarrativeKind::PlotPoint;
+        assert_eq!(StagedCanon::stage_new(&layout, vec![other], &live).unwrap(), (1, 0));
     }
 
     #[test]

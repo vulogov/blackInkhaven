@@ -482,16 +482,16 @@ fn default_sea_level() -> f32 {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DemGeology {
     pub path: String,
-    #[serde(default = "default_dem_scale")]
-    pub scale_km_per_pixel: f32,
+    /// Real ground distance per SOURCE-IMAGE pixel, km. Declared → the map is a
+    /// region of that size (distances, trade routes and population density use
+    /// it). Omitted → the image is the whole planet, sized from its radius.
+    #[serde(default)]
+    pub scale_km_per_pixel: Option<f32>,
     /// Pixel values at or below this are treated as sea.
     #[serde(default)]
     pub sea_level_pixel_value: Option<u16>,
 }
 
-fn default_dem_scale() -> f32 {
-    5.0
-}
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Calendar {
@@ -505,6 +505,60 @@ pub struct Calendar {
     pub day_names: Vec<String>,
     #[serde(default)]
     pub new_year_aligns_to: Option<String>,
+}
+
+impl Calendar {
+    /// WORLD-KEEP-1 (WK-P2) — where a 0-based day of the year falls on this
+    /// calendar: `(month 1-based, day-of-month 1-based)`, or `None` for a day
+    /// past the last month (an intercalary day — the declared calendar is
+    /// shorter than the orbit) or a calendar with no months/days.
+    pub fn month_day(&self, day_of_year: f64) -> Option<(u32, u32)> {
+        if self.months == 0 || self.month_length_days == 0 || !day_of_year.is_finite() {
+            return None;
+        }
+        let d = day_of_year.max(0.0).floor() as u64;
+        let len = self.month_length_days as u64;
+        let month = d / len;
+        (month < self.months as u64).then(|| (month as u32 + 1, (d % len) as u32 + 1))
+    }
+
+    /// WORLD-KEEP-1 (WK-P2) — the weekday of a 0-based day of the year:
+    /// `(1-based position in the week, its name when `day_names` has one)`.
+    /// The week is counted from the first day of the year (it restarts at each
+    /// new year — the simplest rule that needs no epoch). `None` when the
+    /// calendar declares no week.
+    pub fn weekday(&self, day_of_year: f64) -> Option<(u32, Option<&str>)> {
+        if self.weekdays == 0 || !day_of_year.is_finite() {
+            return None;
+        }
+        let idx = (day_of_year.max(0.0).floor() as u64 % self.weekdays as u64) as usize;
+        Some((idx as u32 + 1, self.day_names.get(idx).map(String::as_str)))
+    }
+
+    /// A one-line calendar date for a day of the year — "day 12 of Frostmoon ·
+    /// Thirdday" — using whatever the definition declares (month names, a week,
+    /// day names) and nothing it does not.
+    pub fn date_label(&self, day_of_year: f64) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        match self.month_day(day_of_year) {
+            Some((m, d)) => match self.month_names.get(m as usize - 1) {
+                Some(name) => parts.push(format!("day {d} of {name}")),
+                None => parts.push(format!("day {d} of month {m}")),
+            },
+            None if self.months > 0 && self.month_length_days > 0 => {
+                let past = day_of_year.max(0.0).floor() as u64
+                    - self.months as u64 * self.month_length_days as u64;
+                parts.push(format!("intercalary day {} (past the last month)", past + 1));
+            }
+            None => {}
+        }
+        match self.weekday(day_of_year) {
+            Some((_, Some(name))) => parts.push(name.to_string()),
+            Some((n, None)) => parts.push(format!("day {n} of the {}-day week", self.weekdays)),
+            None => {}
+        }
+        parts.join(" · ")
+    }
 }
 
 #[cfg(test)]

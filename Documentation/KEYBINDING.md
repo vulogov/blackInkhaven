@@ -721,12 +721,18 @@ paragraph change refreshes at once; a slow tick picks up ledger edits while the
 pane is showing) and shows, per decision: `[kind] «commitment» gist`, `↳ N
 decisions rest on this`, and `↳ rests on ¶ …` for each nearest ground (`¶` =
 the ground has a source paragraph to jump to). The tree's `◈` pip marks the
-paragraphs that have something to show here.
+paragraphs that have something to show here; (3.15) it is tinted by how settled
+their canon is — dim (unmarked / floated), plain (drafted / committed), bold
+(canonical), struck (all retconned).
 
 | Key | Action |
 | --- | ------ |
 | `↑`/`↓` (`k`/`j`), `g`/`G` | move between the paragraph's decisions |
 | `Enter` | **jump to the ground** — open the source paragraph of the first ground the cursored decision rests on (the reading path *upstream*) |
+| `c` | (3.15) **set its commitment** — a picker over floated → drafted → committed → canonical → retconned, recorded as the author; the status line warns at once if the new level leaves something canonical resting on something only floated. Also `c` on the Canon dashboard. |
+| `a` / `x` | (3.15) on a **proposed** row (`?`, listed under the live decisions): **accept** it into the ledger / **discard** it. Proposals are the staged output of `canon harvest` for this paragraph — nothing is in the ledger until `a`. |
+| `A` | (3.15) accept **all** proposals staged for this paragraph |
+| `H` | (3.15) **harvest this paragraph** — one model call, in the project language, proposing canon decisions for the open (saved) paragraph. Runs in the background (`⠋ harvesting` in the title, `Esc` cancels); the status line shows the call's size first. The result is **staged only** — review it with `a` / `x`. Proposals repeating what the paragraph already has are dropped. |
 | `h` | the decision's development history (grounds + commitment trajectory) into Thoughts |
 | `*` | open the whole-ledger **Canon dashboard** with the cursor on this decision (ground it with `g` there) |
 | `r` | refresh now |

@@ -27,31 +27,27 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 3.14.0 — Canon at Hand
+## Latest release · 3.15.0 — Canon in Hand
 
-3.14.0 brings the **Canon Ledger** — the record of the *decisions behind the
-fiction* and the graph of what rests on what — **into the writing surface**, so
-it is present while you draft rather than a dashboard away. No new store, no new
-dependency, warning-free:
+3.15.0 lets you **tend the Canon Ledger where you write**, and makes the
+worldbuilder keep its word. No new store, no new dependency, warning-free:
 
-- **The `◈` glyph** — every Tree/Outline paragraph that *established* a canon
-  decision is marked; opening one says how much rests on it ("sources 2
-  decision(s) · 3 rest on them").
-- **The Canon pane** — `Ctrl+B Tab` cycles a fourth right-pane mode that follows
-  the open paragraph: its decisions with kind and «commitment», how many rest on
-  each, the nearest grounds; `Enter` jumps upstream to a ground's source
-  paragraph, `h` history, `*` the dashboard on that decision.
-- **Grounded chat** — the AI pane's Book scope packs the decisions behind the
-  retrieved passages into the prompt (in your project language, framed as *your*
-  decisions), with a `◈ N canon` cue and a transparency list; `*` toggles,
-  `canon.ground_ai` sets the default.
-- Also: the dashboard's grounds-DAG view (`t`), a thread-aware crash hook, and
-  two correctness passes over the **worldbuilder interview** and `realworld`
-  (schema-checked deltas, a `validate` that lints the definition itself, the
-  calendar/history/DEM fixes) with *Building the World* refreshed to match.
+- **Tend canon from the Canon pane** — `c` sets how settled a decision is
+  (floated → canonical), warning at once if something firm now rests on
+  something soft; proposals from `canon harvest` are reviewed beside the prose
+  (`a` accept · `x` discard · `A` all); `H` harvests the open paragraph in the
+  background. The model only ever stages — you confirm each decision.
+- **The glyph says how settled** — `◈` is tinted by the strongest commitment a
+  paragraph established, and saving a paragraph other decisions rest on says so.
+- **A world that keeps its word** — one ruler for distance, area and population;
+  a heightmap's declared scale is honoured (it is a region, not a planet); the
+  guided interview speaks en / ru / fr / de / es and takes answers in them; the
+  declared week dates a day; the worldbuilder compiles your heightmap, once per
+  change.
 
-Read the full notes: [`Documentation/RELEASE_NOTES/3.14.0.md`](Documentation/RELEASE_NOTES/3.14.0.md).
-No breaking changes; existing projects open unchanged; compiles warning-free.
+Read the full notes: [`Documentation/RELEASE_NOTES/3.15.0.md`](Documentation/RELEASE_NOTES/3.15.0.md).
+Two behaviour changes are listed there under *Upgrade notes* (population figures;
+scaled heightmaps); existing projects open unchanged; compiles warning-free.
 
 **Stable baseline · 3.0.0.** 3.0.0 remains the stable, maintained edition — the
 intelligence suite that watches, reads, and remembers itself (SEMNET → GRAPHMIND →
@@ -178,10 +174,12 @@ hardened surface. Every release's notes live under
   **grounds** and a **commitment** level. **`canon impact`** answers *"what breaks
   if I cut this?"*; `canon why` / `history` / `log` / `graph` trace, time, and map
   it; grounds populate themselves (`reground` backfills an old ledger, `compact`
-  tidies it). In the editor a `◈` marks the paragraphs that established decisions,
-  the Canon pane (`Ctrl+B Tab`) keeps the open paragraph's decisions beside the
-  prose, and Book-scope chat is grounded on them; the model may *propose*
-  decisions but only `canon accept` writes.
+  tidies it). In the editor a `◈` marks the paragraphs that established decisions
+  (tinted by how settled they are), and the Canon pane (`Ctrl+B Tab`) keeps the
+  open paragraph's decisions beside the prose — where you set commitment (`c`),
+  harvest the paragraph (`H`), and accept or discard each proposal (`a` / `x`).
+  Book-scope chat is grounded on the ledger; the model may *propose* decisions
+  but only your confirmation writes.
 - **The companions** — a triad that observes craft without rewriting your prose:
   the **World fact-checker** (`Ctrl+B W`, checks scenes against your worldbuilding
   + timeline), **Inner Socrates** (`Ctrl+B J`, Socratic questions about content
