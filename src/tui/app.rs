@@ -1913,6 +1913,13 @@ pub(crate) struct App {
     /// a save this session, so the impact-on-edit advisory informs once, not on
     /// every save.
     canon_edit_noted: std::collections::HashSet<Uuid>,
+    /// WK-P5 — the world context the idle fact-check needs from a geology
+    /// compile (moon names, mineral names), keyed on the mtimes of world.hjson
+    /// and its heightmap. Interior-mutable: the collector takes `&self`.
+    #[allow(clippy::type_complexity)]
+    fact_check_world_cache: std::cell::RefCell<
+        Option<((Option<std::time::SystemTime>, Option<std::time::SystemTime>), Vec<String>, Vec<String>)>,
+    >,
     /// When `canon_source_nodes` was last recomputed (throttle clock).
     canon_source_nodes_at: std::time::Instant,
     /// WORLD-4 — the debounced fast fact-checker. Enabled when the project has a
@@ -3805,6 +3812,7 @@ impl App {
             canon_source_nodes: std::collections::HashSet::new(),
             canon_source_levels: std::collections::HashMap::new(),
             canon_edit_noted: std::collections::HashSet::new(),
+            fact_check_world_cache: std::cell::RefCell::new(None),
             canon_source_nodes_at: std::time::Instant::now(),
             tree_cursor: 0,
             tree_scroll: 0,
@@ -16482,22 +16490,42 @@ impl App {
             .ok()
             .and_then(|raw| WorldDefinition::from_hjson(&raw).ok());
         let ledger = def.as_ref().and_then(|d| d.magic.clone()).unwrap_or_default();
-        let moons: Vec<String> = def
+        // WK-P5 — the moons and minerals need a geology compile (a heightmap
+        // decode for a DEM world); this runs on every idle fact-check, so keep
+        // them until world.hjson (or its heightmap) changes on disk.
+        let stamp = |p: &std::path::Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+        let dem_path = def
             .as_ref()
-            .map(|d| compile_astronomy(&d.astronomy).moons.iter().map(|m| m.name.clone()).collect())
-            .unwrap_or_default();
-        let minerals: Vec<String> = def
+            .and_then(|d| d.geology.as_ref())
+            .and_then(|g| g.dem.as_ref())
+            .map(|dem| root.join(&dem.path));
+        let key = (stamp(&root.join("world.hjson")), dem_path.as_deref().and_then(stamp));
+        let cached = self
+            .fact_check_world_cache
+            .borrow()
             .as_ref()
-            .map(|d| {
-                let geo = match d.geology.as_ref().and_then(|g| g.dem.as_ref()) {
-                    Some(dem) => {
-                        crate::world::compile::compile_geology_dem(d, &root.join(&dem.path)).ok()
-                    }
-                    None => Some(crate::world::compile::compile_geology(d)),
-                };
-                geo.map(|g| g.minerals.iter().map(|m| m.mineral.clone()).collect()).unwrap_or_default()
-            })
-            .unwrap_or_default();
+            .filter(|(k, _, _)| *k == key)
+            .map(|(_, moons, minerals)| (moons.clone(), minerals.clone()));
+        let (moons, minerals): (Vec<String>, Vec<String>) = match cached {
+            Some(hit) => hit,
+            None => {
+                let moons: Vec<String> = def
+                    .as_ref()
+                    .map(|d| compile_astronomy(&d.astronomy).moons.iter().map(|m| m.name.clone()).collect())
+                    .unwrap_or_default();
+                let minerals: Vec<String> = def
+                    .as_ref()
+                    .map(|d| {
+                        crate::world::compile::compile_geology_at(d, &root)
+                            .ok()
+                            .map(|g| g.minerals.iter().map(|m| m.mineral.clone()).collect())
+                            .unwrap_or_default()
+                    })
+                    .unwrap_or_default();
+                *self.fact_check_world_cache.borrow_mut() = Some((key, moons.clone(), minerals.clone()));
+                (moons, minerals)
+            }
+        };
         let mut places = WorldStore::open_for_project(&root)
             .ok()
             .and_then(|ws| ws.list_place_links().ok())
