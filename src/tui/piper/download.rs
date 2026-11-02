@@ -419,7 +419,7 @@ pub(crate) fn install_tree(
 /// blindly resolving symlinks during install is a
 /// known path-traversal vector.  Errors propagate
 /// verbatim.
-fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
+pub(crate) fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(dst)?;
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
