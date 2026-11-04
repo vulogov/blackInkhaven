@@ -16,6 +16,7 @@ mod continuity;
 mod continuity_bible;
 mod crash;
 mod disk;
+mod fsutil;
 mod facts_scan;
 mod health;
 mod hjson_guard;
