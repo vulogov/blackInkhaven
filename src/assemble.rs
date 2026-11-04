@@ -561,7 +561,7 @@ fn emit_book_images(layout: &ProjectLayout, book_slug: &str, out_book: &Path) ->
     if !src.is_dir() {
         return Ok(false);
     }
-    crate::tui::piper::download::copy_dir_recursive(&src, &out_book.join("images"))
+    crate::fsutil::copy_dir_recursive(&src, &out_book.join("images"))
         .map_err(Error::Io)?;
     Ok(true)
 }

@@ -404,40 +404,13 @@ pub(crate) fn install_tree(
             dst.display(),
         ))
     })?;
-    copy_dir_recursive(src, dst).map_err(|e| {
+    crate::fsutil::copy_dir_recursive(src, dst).map_err(|e| {
         PiperUnavailable::ExtractFailed(format!(
             "copy {} → {}: {e}",
             src.display(),
             dst.display(),
         ))
     })?;
-    Ok(())
-}
-
-/// Recursively copy `src` into `dst`.  Symbolic links
-/// are skipped — Piper's tarballs don't ship any, and
-/// blindly resolving symlinks during install is a
-/// known path-traversal vector.  Errors propagate
-/// verbatim.
-pub(crate) fn copy_dir_recursive(src: &Path, dst: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(dst)?;
-    for entry in std::fs::read_dir(src)? {
-        let entry = entry?;
-        let src_path = entry.path();
-        let dst_path = dst.join(entry.file_name());
-        let file_type = entry.file_type()?;
-        if file_type.is_symlink() {
-            // Skip — see fn-level docs.
-            continue;
-        }
-        if file_type.is_dir() {
-            copy_dir_recursive(&src_path, &dst_path)?;
-        } else {
-            std::fs::copy(&src_path, &dst_path)?;
-            // std::fs::copy preserves Unix mode bits;
-            // no extra chmod needed for the binary.
-        }
-    }
     Ok(())
 }
 

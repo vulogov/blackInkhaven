@@ -4009,7 +4009,7 @@ checksum = "a588916bfdfd92e71cacef98a63d9b1f0d74d6599980d11894290e7ddefffcf7"
 
 [[package]]
 name = "inkhaven"
-version = "3.16.0"
+version = "3.17.0-dev"
 dependencies = [
  "anyhow",
  "arboard",
@@ -4026,7 +4026,6 @@ dependencies = [
  "directories",
  "duckdb",
  "easy-error",
- "encoding_rs",
  "fastembed",
  "flate2",
  "fs2",
@@ -7907,10 +7906,11 @@ dependencies = [
 
 [[package]]
 name = "rtf-parser-tt"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df4cfcd083badf3327eeec373271053dc1901cae1a2b62c1c85e88bf06052ffc"
+checksum = "f6c029ea37d136edc7f10652f89252a5bc5c6d0ca1db5fea2c1e2bb5688ac059"
 dependencies = [
+ "encoding_rs",
  "serde",
 ]
 
