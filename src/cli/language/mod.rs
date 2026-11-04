@@ -1394,7 +1394,7 @@ fn warn_unknown_tokens(text: &str, entries: &[crate::language_entry::DictionaryE
 /// Syllabified surface pronunciation of a headword (e.g. `ka.ta`), or `None`
 /// when it doesn't read as the language's phonemes.
 pub(crate) fn pronounce(phon: &crate::conlang::Phonology, word: &str) -> Option<String> {
-    let seq = phon.segment(&word.to_lowercase());
+    let seq = phon.segment(word);
     if seq.is_empty() || !seq.iter().all(|s| phon.phoneme(s).is_some()) {
         return None;
     }
@@ -1899,6 +1899,23 @@ mod tests {
         assert_eq!(alphabet_bucket("ярости"), Some("Я".to_string()));
         // Greek 'α' uppercases to 'Α'.
         assert_eq!(alphabet_bucket("αυτός"), Some("Α".to_string()));
+    }
+
+    #[test]
+    fn alphabet_bucket_composes_before_bucketing() {
+        // LB-3: a decomposed `e\u{301}` is the letter É, not E.
+        assert_eq!(alphabet_bucket("e\u{0301}le"), Some("\u{00C9}".to_string()));
+        assert_eq!(alphabet_bucket("\u{00E9}le"), Some("\u{00C9}".to_string()));
+    }
+
+    #[test]
+    fn first_unknown_letter_composes_both_sides() {
+        let inv = vec!["\u{00E9}".to_string(), "l".to_string(), "e".to_string()];
+        assert_eq!(first_unknown_letter("e\u{0301}le", &inv), None);
+        let inv_nfd = vec!["e\u{0301}".to_string(), "l".to_string(), "e".to_string()];
+        assert_eq!(first_unknown_letter("\u{00E9}le", &inv_nfd), None);
+        // Still a real check: a letter missing from both forms is reported.
+        assert_eq!(first_unknown_letter("\u{00E9}lo", &inv), Some('o'));
     }
 
     #[test]

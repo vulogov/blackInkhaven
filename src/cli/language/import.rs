@@ -618,10 +618,11 @@ pub(crate) fn collect_phonology_inventories(
 /// accepted (sentences may contain hyphens,
 /// apostrophes, etc.).
 pub(crate) fn first_unknown_letter(word: &str, inventory: &[String]) -> Option<char> {
-    let inventory_lower: Vec<String> = inventory
-        .iter()
-        .map(|s| s.to_lowercase())
-        .collect();
+    // NFC + case-fold on both sides (LB-3) so a decomposed headword is not
+    // rejected letter-by-letter against a precomposed alphabet.
+    use crate::conlang::types::norm::fold;
+    let inventory_lower: Vec<String> = inventory.iter().map(|s| fold(s)).collect();
+    let word = fold(word);
     for c in word.chars() {
         if c.is_whitespace() || c.is_ascii_punctuation() {
             continue;

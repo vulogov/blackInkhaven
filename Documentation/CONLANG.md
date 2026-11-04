@@ -56,6 +56,14 @@ is declared, else a literal phoneme.
 Inspectors: `generate-word`, `syllabify --word`, `ipa --word` (surface),
 `stress --word`, `romanize --text [--reverse] [--scheme]`, `tone --tones`.
 
+**Segmentation is case- and normalisation-insensitive.** Every word, headword,
+grapheme, class member and rule atom is NFC-normalised when loaded or typed, and
+the segmenter case-folds its input, so `Pata`, `pata`, and a decomposed `pãta`
+(`a` + U+0303) all read as the same phoneme sequence. A segment that still
+fails to match prints with its codepoint (`̃ (U+0303)`) so a stray combining
+mark is never shown as a bare accent. Graphemes that differ only by case are
+therefore not distinguishable.
+
 ## Morphology (the `Grammar` chapter)
 
 ```hjson

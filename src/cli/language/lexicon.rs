@@ -432,8 +432,11 @@ pub(crate) fn add_dictionary_entry_impl(
     example: Option<&str>,
     stress: Option<usize>,
 ) -> Result<(crate::store::node::Node, String)> {
-    let body = seed_dictionary_entry_body(word, pos, translation, example, stress);
-    create_dictionary_entry(store, cfg, lang_book, word, &body)
+    // LB-3: one NFC pass at the door so the body, the bucket and the
+    // duplicate check all see the same headword.
+    let word = crate::conlang::types::norm::nfc(word);
+    let body = seed_dictionary_entry_body(&word, pos, translation, example, stress);
+    create_dictionary_entry(store, cfg, lang_book, &word, &body)
 }
 
 /// fully-populated entry record
@@ -471,8 +474,13 @@ pub(crate) fn add_imported_dictionary_entry(
     lang_book: &crate::store::node::Node,
     entry: &ImportEntry,
 ) -> Result<(crate::store::node::Node, String)> {
-    let body = build_imported_entry_body(entry);
-    create_dictionary_entry(store, cfg, lang_book, &entry.word, &body)
+    let word = crate::conlang::types::norm::nfc(&entry.word);
+    let body = if word == entry.word {
+        build_imported_entry_body(entry)
+    } else {
+        build_imported_entry_body(&ImportEntry { word: word.clone(), ..entry.clone() })
+    };
+    create_dictionary_entry(store, cfg, lang_book, &word, &body)
 }
 
 /// Shared bucket-derivation + duplicate-check +
@@ -488,6 +496,9 @@ pub(crate) fn create_dictionary_entry(
     word: &str,
     body: &str,
 ) -> Result<(crate::store::node::Node, String)> {
+    // Idempotent for callers that already normalised; keeps the bucket, the
+    // duplicate check and the node title on the NFC headword (LB-3).
+    let word = &crate::conlang::types::norm::nfc(word);
     let hierarchy = Hierarchy::load(store)?;
     let dictionary = hierarchy
         .children_of(Some(lang_book.id))
@@ -868,6 +879,8 @@ pub(crate) const PHONOLOGY_RULE_SEED_BODY: &str = "{
 /// Greek, hyphen / apostrophe-prefix all map to
 /// their leading letter or symbol.
 pub(crate) fn alphabet_bucket(word: &str) -> Option<String> {
+    // NFC first so a decomposed `e` + U+0301 buckets under `É`, not `E` (LB-3).
+    let word = crate::conlang::types::norm::nfc(word);
     let ch = word.chars().find(|c| !c.is_whitespace())?;
     Some(ch.to_uppercase().to_string())
 }

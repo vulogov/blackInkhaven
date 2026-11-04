@@ -221,16 +221,15 @@ impl MetaOverview {
     /// signal to the caller to fall back to the naive
     /// first-char uppercase bucketing.
     pub fn bucket_for_word(&self, word: &str) -> Option<&str> {
+        use crate::conlang::types::norm::fold;
+        // Compare after NFC + case-folding on both sides (LB-3): a decomposed
+        // headword and a precomposed alphabet entry are the same letter.
+        let word = fold(word);
         let first_char = word.chars().find(|c| !c.is_whitespace())?;
-        let needle = first_char.to_lowercase().collect::<String>();
+        let needle = first_char.to_string();
         self.alphabet
             .iter()
-            .find(|entry| {
-                entry
-                    .to_lowercase()
-                    .chars()
-                    .any(|c| c.to_string() == needle)
-            })
+            .find(|entry| fold(entry).chars().any(|c| c.to_string() == needle))
             .map(|s| s.as_str())
     }
 }

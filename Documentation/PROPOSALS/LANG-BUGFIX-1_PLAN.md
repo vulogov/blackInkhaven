@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Track** | LANG-BUGFIX-1 |
-| **Status** | proposal |
+| **Status** | in progress on 3.17.0-dev — LB-3 + LB-9 landed; LB-1, 2, 4–8, 10, 11 open |
 | **Created** | 2026-11-04 |
 | **Author** | Vladimir Ulogov |
 | **Target version** | 3.17.0 |
@@ -84,6 +84,16 @@ plan recommends the error now and sequences as a follow-up.
 template → finding; `ai > e` → finding; a valid block → no findings.
 
 ### LB-3 · No Unicode normalisation anywhere in the segmenter
+
+**Status: landed (3.17.0-dev).** `conlang::types::norm` (`nfc` / `fold` /
+`describe_segment`); `Phonology::from_hjson` runs `normalize()` over the
+inventory, classes, bigram constraints, allophony + sandhi atoms, romanization
+mappings and tone labels; `segment` composes its input; `add-word`, CSV import
+and the TUI entry path go through one NFC pass in `create_dictionary_entry`;
+`alphabet_bucket`, `MetaOverview::bucket_for_word` and `first_unknown_letter`
+compare composed forms. Unknown segments that carry a combining mark print
+with their codepoint. Tests in `types/mod.rs`, `types/norm.rs`, `oracle.rs`,
+`cli/language/mod.rs`.
 
 **Symptom.** `Phonology::segment` (`types/mod.rs:143-166`) does byte-prefix
 matching against graphemes, so the same word in NFC and NFD forms segments
@@ -236,6 +246,13 @@ new optional `diphthongs: [ai, au]` list in the phonology block). Glides in a
 syllable tests unchanged.
 
 ### LB-9 · Case is handled inconsistently before segmentation
+
+**Status: landed (3.17.0-dev).** `Phonology::segment` case-folds (Unicode
+lowercase, then NFC) both its input and the inventory graphemes; the inline
+`to_lowercase()` at `parse.rs`, `oracle.rs`, `paradigm.rs` and `pronounce` is
+gone. The remaining `let word = e.word.to_lowercase()` bindings in the
+lexicon-wide metrics stay because the lowercase string is also used as a key
+there; they are now redundant for segmentation, not conflicting.
 
 **Symptom.** `check --word Pata` ✓ and `syllabify Pata` → 4 phonemes (the
 capital `P` is an unknown segment that the total segmenter emits verbatim).
