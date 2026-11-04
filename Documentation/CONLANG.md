@@ -56,6 +56,21 @@ is declared, else a literal phoneme.
 Inspectors: `generate-word`, `syllabify --word`, `ipa --word` (surface),
 `stress --word`, `romanize --text [--reverse] [--scheme]`, `tone --tones`.
 
+**Blocks are validated, not just parsed.** An unknown `constraints[].kind`
+no longer disables the language: the constraint is ignored and reported.
+Every command that loads the phonology prints one `phonology error:` /
+`phonology warning:` line per finding to stderr, and `language doctor` lists
+the same findings under *Blocks* with their location (`constraints[2]`,
+`templates.root[0] "C V N"`, `allophony[1] "ai > e / _"`; `--json` carries
+them under `blocks.findings`). Errors are things that silently never apply: an
+unknown constraint kind, a class named in a constraint or template but not
+declared under `classes`, a rule target or context that is neither a phoneme
+nor a class, or a target that spans two phonemes (`ai > e` — declare `ai` as a
+phoneme or write one rule per segment). Warnings cover a class member or
+bigram outside the inventory, a duplicate phoneme, and a replacement that
+spans several phonemes. Malformed HJSON under Phonology or Grammar is reported
+by paragraph title.
+
 **Segmentation is case- and normalisation-insensitive.** Every word, headword,
 grapheme, class member and rule atom is NFC-normalised when loaded or typed, and
 the segmenter case-folds its input, so `Pata`, `pata`, and a decomposed `pãta`

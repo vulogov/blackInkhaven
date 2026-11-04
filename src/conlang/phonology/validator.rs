@@ -43,6 +43,7 @@ fn describe_constraint(c: &PhonotacticConstraint) -> String {
         PhonotacticConstraint::ForbidInOnset(cs) => format!("a forbidden onset ({})", cs.join(", ")),
         PhonotacticConstraint::ForbidInCoda(cs) => format!("a forbidden coda ({})", cs.join(", ")),
         PhonotacticConstraint::SonoritySequencing => "a sonority-sequencing violation".to_string(),
+        PhonotacticConstraint::Unknown(kind) => format!("an unrecognised constraint kind `{kind}`"),
     }
 }
 
@@ -67,6 +68,8 @@ fn satisfies(
         PhonotacticConstraint::SonoritySequencing => {
             sylls.map(|s| s.iter().all(|syl| sonority_well_formed(phon, syl))).unwrap_or(true)
         }
+        // Never fires; `Phonology::validate` reports it.
+        PhonotacticConstraint::Unknown(_) => true,
     }
 }
 

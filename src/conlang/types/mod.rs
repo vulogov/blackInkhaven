@@ -20,6 +20,7 @@ pub mod spatial;
 pub mod stress;
 pub mod template;
 pub mod tone;
+pub mod validate;
 pub mod variety;
 
 pub use allophony::{AllophonyRule, PatternAtom};
@@ -199,7 +200,7 @@ impl Phonology {
             .map(|p| (norm::fold(p.grapheme()), p.ipa.as_str()))
             .filter(|(g, _)| !g.is_empty())
             .collect();
-        graphs.sort_by(|a, b| b.0.chars().count().cmp(&a.0.chars().count()));
+        graphs.sort_by_key(|(g, _)| std::cmp::Reverse(g.chars().count()));
 
         let word = norm::fold(word);
         let mut out = Vec::new();

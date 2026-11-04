@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Track** | LANG-BUGFIX-1 |
-| **Status** | in progress on 3.17.0-dev — LB-3 + LB-9 landed; LB-1, 2, 4–8, 10, 11 open |
+| **Status** | in progress on 3.17.0-dev — LB-1, 2, 3, 9 landed; LB-4–8, 10, 11 open |
 | **Created** | 2026-11-04 |
 | **Author** | Vladimir Ulogov |
 | **Target version** | 3.17.0 |
@@ -28,6 +28,19 @@ landing order is at the end.
 ## P1 — lockouts and data loss
 
 ### LB-1 · One unknown constraint kind locks out the whole language
+
+**Status: landed (3.17.0-dev).** `PhonotacticConstraint::Unknown(kind)`
+replaces the parse error, so the block loads and the one constraint is
+inert; `Phonology::validate` reports it as `constraints[N]: unknown
+constraint kind …` with the known kinds listed. `language doctor` parses
+every Phonology / Grammar / Morphology block (`doctor::block_findings`),
+reports parse errors by paragraph title and validation findings by location
+under a new *Blocks* section (and `blocks.findings` in `--json`). The CLI
+loader prints each finding as a `phonology error:` / `phonology warning:`
+line and continues. Malformed HJSON is still a hard error, now prefixed with
+the paragraph title. Deviation from the plan: the serde position is not
+recovered (serde_hjson custom errors carry none); the index + kind in the
+message replaces it.
 
 **Symptom.** A single typo in a `constraints[].kind` (e.g. `bogus_kind_typo`)
 makes *every* language command fail — `sentence`, `translate`, `parse`,
@@ -61,6 +74,16 @@ wraps it as a hard error and every caller propagates it.
 `syllabify` still runs; the error names the constraint.
 
 ### LB-2 · Undeclared class names in constraints and templates are silent no-ops
+
+**Status: landed (3.17.0-dev).** `src/conlang/types/validate.rs` —
+`Phonology::validate() -> Vec<Finding>` with `Severity::{Warning, Error}`.
+Errors: undeclared class in `forbid_in_onset` / `forbid_in_coda` or a
+template; a rule target or context (allophony, tone sandhi, romanization
+contextual rules) that is neither a declared unit nor a class; a target that
+spans ≥ 2 declared units (`ai > e`). Warnings: class member / bigram outside
+the inventory, duplicate phoneme, multi-unit replacement, tone-class member
+outside `tones`. Multi-segment targets are reported, not supported (the
+follow-up stays open). 9 unit tests on `validate`, 4 on `block_findings`.
 
 **Symptom.** `forbid_in_coda: { classes: [NoSuchClass] }` is accepted and never
 fires. A template typo (`CVN` where `N` is undeclared) makes `generate-word`

@@ -1440,10 +1440,25 @@ pub(crate) fn load_phonology(
         };
         let body = String::from_utf8_lossy(&bytes);
         match crate::conlang::Phonology::from_hjson(&body) {
-            Ok(Some(p)) if !p.phonemes.is_empty() => return Ok(Some(p)),
+            Ok(Some(p)) if !p.phonemes.is_empty() => {
+                // LB-1 / LB-2: structural problems (an unknown constraint kind,
+                // an undeclared class, a rule that can never match) no longer
+                // fail the load. Warn once per finding; `language doctor`
+                // lists the same findings with their locations.
+                for f in p.validate() {
+                    eprintln!(
+                        "phonology {}: Phonology/{}: {}: {}",
+                        f.severity.as_str(),
+                        para.title,
+                        f.location,
+                        f.message
+                    );
+                }
+                return Ok(Some(p));
+            }
             Ok(_) => continue,
             // A malformed block under Phonology is worth surfacing.
-            Err(e) => return Err(Error::Config(e)),
+            Err(e) => return Err(Error::Config(format!("Phonology/{}: {e}", para.title))),
         }
     }
     Ok(None)

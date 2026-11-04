@@ -193,6 +193,9 @@ Chapters
   Phonology      : 1 rules
   Sample texts   : 0 samples
 
+Blocks (Phonology / Grammar HJSON)
+  every block parses and validates
+
 Dictionary coverage
   with example   : 7/11 (63%)
   with paradigm  : 7/11 (63%)

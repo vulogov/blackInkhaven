@@ -291,6 +291,7 @@ fn describe_constraint(c: &PhonotacticConstraint) -> String {
         PhonotacticConstraint::SonoritySequencing => {
             "syllables obey the sonority-sequencing principle".into()
         }
+        PhonotacticConstraint::Unknown(kind) => format!("(unrecognised constraint kind `{kind}`)"),
     }
 }
 

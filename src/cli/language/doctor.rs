@@ -4,9 +4,56 @@
 
 use std::path::Path;
 
+use crate::conlang::types::validate::{Finding, Severity};
 use crate::error::{Error, Result};
 
 use super::*;
+
+/// LB-1: parse and validate every typed HJSON block under a chapter instead
+/// of counting paragraphs. A body that does not look like HJSON (no fenced
+/// block and no leading `{`) is prose and is skipped. Pure, so it is tested
+/// without a store.
+pub(crate) fn block_findings(chapter: &str, paragraph: &str, body: &str) -> Vec<Finding> {
+    use crate::conlang::types::diachronic::Diachronics;
+    use crate::conlang::types::grammar::GrammarSpec;
+    use crate::conlang::types::morphology::Morphology;
+    use crate::conlang::Phonology;
+
+    let looks_like_hjson = crate::language_entry::extract_hjson_block(body).is_some()
+        || body.trim_start().starts_with('{');
+    if !looks_like_hjson {
+        return Vec::new();
+    }
+    let loc = format!("{chapter}/{paragraph}");
+    let err = |message: String| Finding { severity: Severity::Error, location: loc.clone(), message };
+    let mut out = Vec::new();
+    match chapter.to_lowercase().as_str() {
+        "phonology" => {
+            match Phonology::from_hjson(body) {
+                Err(e) => out.push(err(e)),
+                Ok(Some(p)) if !p.phonemes.is_empty() => {
+                    for f in p.validate() {
+                        out.push(Finding { location: format!("{loc}: {}", f.location), ..f });
+                    }
+                }
+                Ok(_) => {}
+            }
+            if let Err(e) = Diachronics::from_hjson(body) {
+                out.push(err(e));
+            }
+        }
+        "grammar" | "morphology" => {
+            if let Err(e) = Morphology::from_hjson(body) {
+                out.push(err(e));
+            }
+            if let Err(e) = GrammarSpec::from_hjson(body) {
+                out.push(err(e));
+            }
+        }
+        _ => {}
+    }
+    out
+}
 
 /// health report for a language
 /// sub-book.  Walks every chapter, counts entries +
@@ -68,6 +115,7 @@ pub(crate) fn doctor(project: &Path, language: &str, json: bool) -> Result<()> {
     let mut grammar_count = 0usize;
     let mut phonology_count = 0usize;
     let mut sample_count = 0usize;
+    let mut findings: Vec<Finding> = Vec::new();
     let mut meta: Option<crate::language_entry::MetaOverview> = None;
     for chapter in &chapters {
         let title_lc = chapter.title.to_lowercase();
@@ -94,8 +142,22 @@ pub(crate) fn doctor(project: &Path, language: &str, json: bool) -> Result<()> {
                     }
                 }
             }
-            "grammar" => grammar_count = paragraphs.len(),
-            "phonology" => phonology_count = paragraphs.len(),
+            "grammar" | "morphology" | "phonology" => {
+                if title_lc == "phonology" {
+                    phonology_count = paragraphs.len();
+                } else {
+                    grammar_count += paragraphs.len();
+                }
+                for p in &paragraphs {
+                    let Ok(Some(bytes)) = store.get_content(p.id) else {
+                        continue;
+                    };
+                    let Ok(body) = std::str::from_utf8(&bytes) else {
+                        continue;
+                    };
+                    findings.extend(block_findings(&chapter.title, &p.title, body));
+                }
+            }
             "sample texts" => sample_count = paragraphs.len(),
             "meta" => {
                 for p in &paragraphs {
@@ -241,6 +303,21 @@ pub(crate) fn doctor(project: &Path, language: &str, json: bool) -> Result<()> {
             }),
         );
         report.insert(
+            "blocks".into(),
+            json!({
+                "errors": findings.iter().filter(|f| f.severity == Severity::Error).count(),
+                "warnings": findings.iter().filter(|f| f.severity == Severity::Warning).count(),
+                "findings": findings
+                    .iter()
+                    .map(|f| json!({
+                        "severity": f.severity.as_str(),
+                        "location": f.location,
+                        "message": f.message,
+                    }))
+                    .collect::<Vec<_>>(),
+            }),
+        );
+        report.insert(
             "coverage".into(),
             json!({
                 "with_example": with_examples,
@@ -304,6 +381,18 @@ pub(crate) fn doctor(project: &Path, language: &str, json: bool) -> Result<()> {
     println!("  Phonology      : {phonology_count} rules");
     println!("  Sample texts   : {sample_count} samples");
     println!();
+    println!("Blocks (Phonology / Grammar HJSON)");
+    if findings.is_empty() {
+        println!("  every block parses and validates");
+    } else {
+        let errors = findings.iter().filter(|f| f.severity == Severity::Error).count();
+        let warnings = findings.len() - errors;
+        println!("  {errors} error(s), {warnings} warning(s)");
+        for f in &findings {
+            println!("  · {f}");
+        }
+    }
+    println!();
     println!("Dictionary coverage");
     if total_entries > 0 {
         let example_pct = with_examples * 100 / total_entries;
@@ -352,4 +441,51 @@ pub(crate) fn doctor(project: &Path, language: &str, json: bool) -> Result<()> {
         println!("  (skipping — no dictionary entries to compare against)");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prose_paragraphs_are_not_blocks() {
+        assert!(block_findings("Phonology", "notes", "The language favours open syllables.").is_empty());
+        assert!(block_findings("Grammar", "notes", "").is_empty());
+    }
+
+    #[test]
+    fn a_phonology_block_with_a_typo_is_reported_by_location() {
+        // LB-1: the unknown kind no longer fails parsing; doctor names it.
+        let body = r#"{
+            phonemes: [ { ipa: "t", kind: "consonant" }, { ipa: "a", kind: "vowel" } ],
+            classes: { C: ["t"] },
+            constraints: [ { kind: "bogus_kind_typo" }, { kind: "forbid_in_coda", classes: ["NoSuchClass"] } ]
+        }"#;
+        let f = block_findings("Phonology", "inventory", body);
+        assert_eq!(f.len(), 2, "{f:?}");
+        assert_eq!(f[0].severity, Severity::Error);
+        assert_eq!(f[0].location, "Phonology/inventory: constraints[0]");
+        assert!(f[0].message.contains("bogus_kind_typo"));
+        assert_eq!(f[1].location, "Phonology/inventory: constraints[1]");
+    }
+
+    #[test]
+    fn a_malformed_block_is_a_parse_error_finding() {
+        let f = block_findings("Phonology", "inventory", "{ phonemes: [ { ipa: \"t\", kind: \"stop\" } ] }");
+        assert_eq!(f.len(), 1, "{f:?}");
+        assert_eq!(f[0].location, "Phonology/inventory");
+        assert!(f[0].message.starts_with("phonology HJSON parse failed"), "{}", f[0].message);
+
+        let g = block_findings("Grammar", "affixes", "{ morphemes: [ { id: 1 } ] }");
+        assert!(!g.is_empty(), "a morphology block with a wrong field type is reported");
+        assert!(g[0].message.starts_with("morphology HJSON parse failed"), "{}", g[0].message);
+    }
+
+    #[test]
+    fn clean_blocks_produce_nothing() {
+        let phon = r#"{ phonemes: [ { ipa: "t", kind: "consonant" }, { ipa: "a", kind: "vowel" } ], classes: { C: ["t"], V: ["a"] }, templates: { root: [ { pattern: "C V" } ] } }"#;
+        assert!(block_findings("Phonology", "inventory", phon).is_empty());
+        let morph = r#"{ morphemes: [ { id: "pl", gloss: "PL", form: "i", position: "suffix" } ] }"#;
+        assert!(block_findings("Grammar", "affixes", morph).is_empty());
+    }
 }
