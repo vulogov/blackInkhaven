@@ -39,6 +39,7 @@ HJSON blocks you add to those chapters; the book stays the home of record.
   ]
   allophony: [ { name: "palatalization", rule: "k > tʃ / _ i" } ]
   stress: "penultimate"                            // initial|final|penultimate|antepenultimate|latin
+  diphthongs: ["ai", "au"]                         // one nucleus each; other vowel pairs are hiatus (a.i.a)
   romanizations: [
     { name: "default", mappings: [ { ipa: "k", roman: "c" }, { ipa: "s", roman: "c" } ],
       contextual: [ { roman: "c", ipa: "s", before: "FrontV" } ] }
@@ -786,6 +787,15 @@ Every word carries a confidence and a decision **trace** (`--trace`): which
 lexicon entry, or *untranslatable* — an English word the lexicon does not cover
 is passed through marked `«word»`, listed so you can coin it or `add-word` it.
 Output is human-readable or `--json`.
+
+**A paragraph is translated sentence by sentence.** Input is split on `.`, `!`,
+`?` and line breaks; each clause is analysed and rendered on its own and the
+results are re-joined with the source punctuation, so `the stone. the river
+flows` gives `«stone». atal sora`, never just the last sentence. A clause the
+analyser cannot place at all is kept as `«…»`. The reported confidence is the
+*minimum* over the clauses, so one untranslatable sentence is not averaged away.
+The same split applies to `reverse` and `cross` (the TUI chord passes the whole
+paragraph).
 
 It also runs **in reverse and across languages**:
 

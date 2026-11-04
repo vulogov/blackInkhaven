@@ -201,6 +201,7 @@ mod tests {
     #[test]
     fn romanization_is_used_when_present() {
         let p = Phonology {
+            diphthongs: Vec::new(),
             phonemes: vec![
                 Phoneme { ipa: "ʃ".into(), romanize: Some("sh".into()), kind: PhonemeKind::Consonant, sonority: None },
                 Phoneme { ipa: "a".into(), romanize: None, kind: PhonemeKind::Vowel, sonority: None },

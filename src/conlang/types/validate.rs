@@ -255,6 +255,16 @@ impl Phonology {
             }
         }
 
+        for (i, d) in self.diphthongs.iter().enumerate() {
+            if crate::conlang::phonology::syllable::split_diphthong(self, d).is_none() {
+                out.push(finding(
+                    Severity::Warning,
+                    format!("diphthongs[{i}] \"{d}\""),
+                    "not a sequence of two or more declared vowels — it never forms a nucleus",
+                ));
+            }
+        }
+
         for (i, r) in self.allophony.iter().enumerate() {
             check_rule(&vocab, &format!("allophony[{i}] \"{}\"", r.source), r, "phoneme", &mut out);
         }
@@ -421,6 +431,18 @@ mod tests {
         assert_eq!(m.len(), 2, "{m:?}");
         assert!(m[0].starts_with("warning: tone.classes.T: member `M` is not in `tone.tones`"), "{}", m[0]);
         assert!(m[1].starts_with("error: tone.sandhi[0] \"L > H / R _\": context `R` is neither a declared tone nor a class"), "{}", m[1]);
+    }
+
+    #[test]
+    fn invalid_diphthongs_warn() {
+        let p = phon(r#"{
+            phonemes: [ { ipa: "t", kind: "consonant" }, { ipa: "a", kind: "vowel" }, { ipa: "i", kind: "vowel" } ],
+            diphthongs: ["ai", "at", "a"]
+        }"#);
+        let m = messages(&p);
+        assert_eq!(m.len(), 2, "{m:?}");
+        assert!(m[0].starts_with("warning: diphthongs[1] \"at\": not a sequence of two or more declared vowels"), "{}", m[0]);
+        assert!(m[1].starts_with("warning: diphthongs[2] \"a\": not a sequence"), "{}", m[1]);
     }
 
     #[test]

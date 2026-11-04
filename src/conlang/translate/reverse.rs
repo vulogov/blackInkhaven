@@ -174,26 +174,24 @@ pub struct ReverseTranslation {
     pub confidence: f32,
 }
 
-/// **Reverse (conlang → English).** Map each surface word back to its gloss by
-/// the (paradigm-expanded) lexicon, read roles off `typology.word_order`, and
-/// generate a plain English sentence.
-pub fn reverse(
-    phon: &Phonology,
-    morph: &Morphology,
+/// Reverse one clause (no sentence terminators inside) into English,
+/// appending its words / unresolved tokens; returns the English and the
+/// clause's mean confidence, or `None` when the clause has no tokens.
+fn reverse_clause(
+    idx: &ReverseIndex,
     typology: &BTreeMap<String, String>,
-    entries: &[DictionaryEntry],
-    surface: &str,
-) -> ReverseTranslation {
-    let idx = ReverseIndex::build(phon, morph, entries);
-
-    let tokens: Vec<String> = surface
+    clause: &str,
+    words: &mut Vec<(String, String)>,
+    unresolved: &mut Vec<String>,
+) -> Option<(String, f32)> {
+    let tokens: Vec<String> = clause
         .split(|c: char| c.is_whitespace() || matches!(c, '.' | ',' | '!' | '?' | ';' | ':'))
         .filter(|t| !t.is_empty())
         .map(|t| t.to_string())
         .collect();
-
-    let mut words: Vec<(String, String)> = Vec::new();
-    let mut unresolved: Vec<String> = Vec::new();
+    if tokens.is_empty() {
+        return None;
+    }
     let mut confs: Vec<f32> = Vec::new();
 
     // Reverse-gloss every token to its English meaning and number (or `«token»`).
@@ -250,11 +248,49 @@ pub fn reverse(
         english.push_str(&format!(" the {}", noun_en(o)));
     }
     let english = english.trim().to_string();
+    let confidence = confs.iter().sum::<f32>() / confs.len() as f32;
+    Some((english, confidence))
+}
 
-    let confidence =
-        if confs.is_empty() { 0.0 } else { confs.iter().sum::<f32>() / confs.len() as f32 };
+/// **Reverse (conlang → English).** Map each surface word back to its gloss by
+/// the (paradigm-expanded) lexicon, read roles off `typology.word_order`, and
+/// generate a plain English sentence.
+///
+/// Multi-sentence input is split on `.` / `!` / `?` and line breaks, each
+/// clause is reversed on its own, and the English is re-joined with the
+/// source punctuation; the confidence is the minimum over the clauses
+/// (LB-7).
+pub fn reverse(
+    phon: &Phonology,
+    morph: &Morphology,
+    typology: &BTreeMap<String, String>,
+    entries: &[DictionaryEntry],
+    surface: &str,
+) -> ReverseTranslation {
+    let idx = ReverseIndex::build(phon, morph, entries);
+    let spans = super::split_clauses(surface);
 
-    ReverseTranslation { source: surface.to_string(), english, words, unresolved, confidence }
+    let mut words: Vec<(String, String)> = Vec::new();
+    let mut unresolved: Vec<String> = Vec::new();
+    let mut englishes: Vec<String> = Vec::new();
+    let mut confidence: Option<f32> = None;
+    for span in &spans {
+        let (en, conf) = reverse_clause(&idx, typology, &span.text, &mut words, &mut unresolved)
+            .unwrap_or_default();
+        englishes.push(en);
+        if conf > 0.0 {
+            confidence = Some(confidence.map_or(conf, |c| c.min(conf)));
+        }
+    }
+    let english = super::join_clauses(&englishes, &spans);
+
+    ReverseTranslation {
+        source: surface.to_string(),
+        english,
+        words,
+        unresolved,
+        confidence: confidence.unwrap_or(0.0),
+    }
 }
 
 /// A finished cross-conlang translation.
@@ -367,6 +403,34 @@ mod tests {
         // Plural subject + object (the -i forms) → bare verb, pluralized nouns.
         let r2 = reverse(&phon, &morph, &svo(), &entries, "kirai nami patai");
         assert_eq!(r2.english, "the birds see the stones");
+    }
+
+    #[test]
+    fn reverses_two_sentences_in_order() {
+        let phon = Phonology::default();
+        let morph = Morphology::default();
+        let entries = lexicon();
+        let r = reverse(&phon, &morph, &svo(), &entries, "kira nami pata. pata nami kira!");
+        assert_eq!(r.english, "the bird sees the stone. the stone sees the bird!");
+        assert_eq!(r.words.len(), 6);
+        // Confidence is the minimum over clauses: one unknown word in the
+        // second clause pulls it down from the first clause's 0.9.
+        let r = reverse(&phon, &morph, &svo(), &entries, "kira nami pata. zuxa");
+        assert_eq!(r.english, "the bird sees the stone. the «zuxa»");
+        assert!(r.confidence < 0.5, "{}", r.confidence);
+        // Cross-translation pivots clause by clause through the same path.
+        let mut b_typ = BTreeMap::new();
+        b_typ.insert("word_order".to_string(), "sov".to_string());
+        let b_entries = vec![
+            entry("turi", "noun", "bird"),
+            entry("vela", "verb", "to see"),
+            entry("moki", "noun", "stone"),
+        ];
+        let a_typ = svo();
+        let from = LangCtx { phon: &phon, morph: &morph, typology: &a_typ, entries: &entries };
+        let to = LangCtx { phon: &phon, morph: &morph, typology: &b_typ, entries: &b_entries };
+        let c = cross(&from, &to, "kira nami pata. pata nami kira");
+        assert_eq!(c.target, "turi moki vela. moki turi vela");
     }
 
     #[test]

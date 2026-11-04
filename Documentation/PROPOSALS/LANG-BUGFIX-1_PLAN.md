@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Track** | LANG-BUGFIX-1 |
-| **Status** | in progress on 3.17.0-dev — LB-1, 2, 3, 4, 5, 6, 9 landed; LB-7, 8, 10, 11 open |
+| **Status** | in progress on 3.17.0-dev — LB-1–9 landed; LB-10, 11 open |
 | **Created** | 2026-11-04 |
 | **Author** | Vladimir Ulogov |
 | **Target version** | 3.17.0 |
@@ -250,6 +250,13 @@ a lexicon. Validate length and emptiness up front
 
 ### LB-7 · Translation treats the whole input as one clause
 
+**Status: landed (3.17.0-dev).** `translate::split_clauses` /
+`join_clauses` split on `.` `!` `?` and line breaks (a `.` between two
+alphanumerics is not a terminator), `translate` and `reverse` run per clause
+and re-join with the source punctuation, `cross` inherits both. A clause the
+analyser cannot place is kept as `«…»` with a `clause` trace entry;
+confidence is the minimum over clauses.
+
 **Symptom.**
 
 ```
@@ -279,6 +286,13 @@ unknown words is preserved as `«stone»`; confidence is the minimum.
 ## P2 — wrong results that propagate
 
 ### LB-8 · The syllabifier merges every vowel run into one nucleus
+
+**Status: landed (3.17.0-dev).** Hiatus by default; a new optional
+`diphthongs: ["ai", "au"]` list (vowel IPA sequences, split by longest match
+over the declared vowels) forms one nucleus, as does a diphthong declared as
+its own phoneme. `Phonology::validate` warns on an entry that is not two or
+more declared vowels. The one existing test that asserted a merged `ai`
+nucleus now declares `diphthongs: ["ai"]`.
 
 **Symptom.** `syllabify --word aia` → `aia`, 1 syllable. `paia` gets a single
 stress mark. Stress, scansion, the saturation metric and `generate-word`'s

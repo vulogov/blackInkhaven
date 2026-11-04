@@ -226,28 +226,124 @@ fn map_np(
     }
 }
 
-/// **Tier 1 (RBMT).** Translate English into the conlang deterministically,
-/// reusing the LANG-1 syntax engine for ordering, case, inflection, and
-/// agreement. `phon` / `morph` / `typology` describe the language; `entries`
-/// are its dictionary.
-pub fn translate(
+/// One clause of a multi-sentence input (LB-7): its text, the terminator run
+/// that closed it (`.`, `!`, `?` — possibly several, empty when none), and
+/// the whitespace that followed it (`" "` or `"\n"`, so a paragraph's line
+/// breaks survive; empty after the last clause).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClauseSpan {
+    pub text: String,
+    pub terminator: String,
+    pub joiner: String,
+}
+
+fn is_terminator(c: char) -> bool {
+    matches!(c, '.' | '!' | '?')
+}
+
+/// Split input into clauses on sentence terminators (`.`, `!`, `?`) and line
+/// breaks, keeping each clause's own punctuation so a translation can be
+/// re-joined in the source's shape. A `.` between two alphanumerics (`3.5`,
+/// `e.g`) is not a terminator; punctuation with no text before it (`...` at
+/// the start) is glued to the previous clause or dropped. Whitespace-only
+/// input yields no clauses.
+pub fn split_clauses(text: &str) -> Vec<ClauseSpan> {
+    fn flush(out: &mut Vec<ClauseSpan>, cur: &mut String, terminator: String, joiner: String) {
+        let t = cur.trim();
+        if !t.is_empty() {
+            out.push(ClauseSpan { text: t.to_string(), terminator, joiner });
+        } else if let Some(last) = out.last_mut() {
+            last.terminator.push_str(&terminator);
+            if !joiner.is_empty() {
+                last.joiner = joiner;
+            }
+        }
+        cur.clear();
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        let inner_dot = c == '.'
+            && i > 0
+            && chars[i - 1].is_alphanumeric()
+            && chars.get(i + 1).is_some_and(|n| n.is_alphanumeric());
+        if is_terminator(c) && !inner_dot {
+            let mut term = String::new();
+            while i < chars.len() && is_terminator(chars[i]) {
+                term.push(chars[i]);
+                i += 1;
+            }
+            let mut joiner = String::new();
+            while i < chars.len() && chars[i].is_whitespace() {
+                if chars[i] == '\n' {
+                    joiner = "\n".to_string();
+                } else if joiner.is_empty() {
+                    joiner = " ".to_string();
+                }
+                i += 1;
+            }
+            if i >= chars.len() {
+                joiner.clear();
+            }
+            flush(&mut out, &mut cur, term, joiner);
+        } else if c == '\n' {
+            while i < chars.len() && chars[i].is_whitespace() {
+                i += 1;
+            }
+            let joiner = if i >= chars.len() { String::new() } else { "\n".to_string() };
+            flush(&mut out, &mut cur, String::new(), joiner);
+        } else {
+            cur.push(c);
+            i += 1;
+        }
+    }
+    flush(&mut out, &mut cur, String::new(), String::new());
+    out
+}
+
+/// Re-join per-clause renderings in the source's shape: each rendering,
+/// then its clause's terminator and the whitespace that followed it.
+pub fn join_clauses(rendered: &[String], spans: &[ClauseSpan]) -> String {
+    let mut out = String::new();
+    for (r, span) in rendered.iter().zip(spans) {
+        out.push_str(r);
+        out.push_str(&span.terminator);
+        out.push_str(&span.joiner);
+    }
+    out.trim_end().to_string()
+}
+
+/// A rendered clause: surface, interlinear words, literal reading, and the
+/// mean confidence of its constituents.
+struct RenderedClause {
+    surface: String,
+    words: Vec<(String, String)>,
+    literal: String,
+    confidence: f32,
+}
+
+/// Translate one clause (no sentence terminators inside), appending its
+/// decisions to `trace` / `unresolved`.
+fn translate_clause(
+    idx: &GlossIndex,
     phon: &Phonology,
     morph: &Morphology,
     typology: &BTreeMap<String, String>,
-    entries: &[DictionaryEntry],
     text: &str,
-) -> Translation {
-    let idx = GlossIndex::build(entries);
-    let parse = structure(&idx, text);
+    trace: &mut Vec<TraceEntry>,
+    unresolved: &mut Vec<String>,
+) -> RenderedClause {
+    let parse = structure(idx, text);
+    let first = trace.len();
 
-    let mut trace: Vec<TraceEntry> = Vec::new();
-    let mut unresolved: Vec<String> = Vec::new();
-
-    let subject = parse.subject.as_ref().map(|np| map_np(&idx, np, "subject", &mut trace, &mut unresolved));
-    let object = parse.object.as_ref().map(|np| map_np(&idx, np, "object", &mut trace, &mut unresolved));
+    let subject = parse.subject.as_ref().map(|np| map_np(idx, np, "subject", trace, unresolved));
+    let object = parse.object.as_ref().map(|np| map_np(idx, np, "object", trace, unresolved));
 
     let verb = parse.verb.as_ref().map(|v| {
-        let (root, decision, conf) = resolve(&idx, v, PosHint::Verb);
+        let (root, decision, conf) = resolve(idx, v, PosHint::Verb);
         if matches!(decision, Decision::Untranslatable) {
             unresolved.push(v.clone());
         }
@@ -272,19 +368,77 @@ pub fn translate(
     };
 
     let rendered = syntax::assemble(phon, morph, typology, &clause);
-
-    let confidence = if trace.is_empty() {
-        0.0
-    } else {
-        trace.iter().map(|t| t.confidence).sum::<f32>() / trace.len() as f32
-    };
-
-    Translation {
-        source: text.to_string(),
-        target: rendered.surface,
+    let own = &trace[first..];
+    if rendered.surface.trim().is_empty() || own.is_empty() {
+        // Nothing the analyser could place (an interjection, a stray
+        // function word): keep the clause visible and marked rather than
+        // letting it vanish from the output.
+        let marked = format!("«{text}»");
+        unresolved.push(text.to_string());
+        trace.push(TraceEntry {
+            source: text.to_string(),
+            role: "clause",
+            target: marked.clone(),
+            decision: Decision::Untranslatable,
+            confidence: 0.2,
+        });
+        return RenderedClause {
+            surface: marked.clone(),
+            words: vec![(marked.clone(), text.to_string())],
+            literal: marked,
+            confidence: 0.2,
+        };
+    }
+    let confidence = own.iter().map(|t| t.confidence).sum::<f32>() / own.len() as f32;
+    RenderedClause {
+        surface: rendered.surface,
         words: rendered.words,
         literal: rendered.literal,
         confidence,
+    }
+}
+
+/// **Tier 1 (RBMT).** Translate English into the conlang deterministically,
+/// reusing the LANG-1 syntax engine for ordering, case, inflection, and
+/// agreement. `phon` / `morph` / `typology` describe the language; `entries`
+/// are its dictionary.
+///
+/// Multi-sentence input is split on `.` / `!` / `?` and line breaks
+/// ([`split_clauses`]); each clause is translated on its own and the
+/// renderings are re-joined with the source punctuation. The reported
+/// confidence is the **minimum** over the clauses, so one untranslatable
+/// sentence is not averaged away by its neighbours (LB-7).
+pub fn translate(
+    phon: &Phonology,
+    morph: &Morphology,
+    typology: &BTreeMap<String, String>,
+    entries: &[DictionaryEntry],
+    text: &str,
+) -> Translation {
+    let idx = GlossIndex::build(entries);
+    let spans = split_clauses(text);
+
+    let mut trace: Vec<TraceEntry> = Vec::new();
+    let mut unresolved: Vec<String> = Vec::new();
+    let mut surfaces: Vec<String> = Vec::new();
+    let mut literals: Vec<String> = Vec::new();
+    let mut words: Vec<(String, String)> = Vec::new();
+    let mut confidence: Option<f32> = None;
+
+    for span in &spans {
+        let r = translate_clause(&idx, phon, morph, typology, &span.text, &mut trace, &mut unresolved);
+        surfaces.push(r.surface);
+        literals.push(r.literal);
+        words.extend(r.words);
+        confidence = Some(confidence.map_or(r.confidence, |c| c.min(r.confidence)));
+    }
+
+    Translation {
+        source: text.to_string(),
+        target: join_clauses(&surfaces, &spans),
+        words,
+        literal: join_clauses(&literals, &spans),
+        confidence: confidence.unwrap_or(0.0),
         trace,
         unresolved,
         alternatives: Vec::new(),
@@ -424,6 +578,61 @@ mod tests {
         assert_eq!(t2.alternatives.len(), 1);
         assert_eq!(t2.alternatives[0].text, "kira nami pata");
         assert!(t2.confidence > 0.98);
+    }
+
+    #[test]
+    fn two_sentences_translate_in_order_with_their_punctuation() {
+        let phon = Phonology::default();
+        let morph = Morphology::default();
+        let mut typ = BTreeMap::new();
+        typ.insert("word_order".to_string(), "svo".to_string());
+        let entries = lexicon();
+
+        let t = translate(&phon, &morph, &typ, &entries, "the bird sees the stone. the stone sees the bird!");
+        assert_eq!(t.target, "kira nami pata. pata nami kira!");
+        assert_eq!(t.trace.len(), 6);
+        assert!(t.unresolved.is_empty());
+        assert!(t.confidence > 0.8);
+        // A line break between sentences is kept as a line break.
+        let t = translate(&phon, &morph, &typ, &entries, "the bird sees the stone\nthe stone sees the bird");
+        assert_eq!(t.target, "kira nami pata\npata nami kira");
+    }
+
+    #[test]
+    fn an_untranslatable_clause_is_kept_and_sets_the_confidence() {
+        let phon = Phonology::default();
+        let morph = Morphology::default();
+        let mut typ = BTreeMap::new();
+        typ.insert("word_order".to_string(), "svo".to_string());
+        let entries = lexicon();
+
+        // The first sentence used to be dropped and the confidence reported high.
+        let t = translate(&phon, &morph, &typ, &entries, "the dragon. the bird sees the stone");
+        assert_eq!(t.target, "«dragon». kira nami pata");
+        assert_eq!(t.unresolved, vec!["dragon".to_string()]);
+        // Minimum over clauses, not the mean: 0.2 for «dragon», 0.9 for the rest.
+        assert!((t.confidence - 0.2).abs() < 1e-6, "{}", t.confidence);
+        // A clause with nothing the analyser can place keeps its text, marked.
+        let t = translate(&phon, &morph, &typ, &entries, "the. the bird sees the stone");
+        assert_eq!(t.target, "«the». kira nami pata");
+    }
+
+    #[test]
+    fn split_clauses_keeps_terminators_and_joiners() {
+        let sp = split_clauses("the stone. the river flows");
+        assert_eq!(sp.len(), 2);
+        assert_eq!((sp[0].text.as_str(), sp[0].terminator.as_str(), sp[0].joiner.as_str()), ("the stone", ".", " "));
+        assert_eq!((sp[1].text.as_str(), sp[1].terminator.as_str(), sp[1].joiner.as_str()), ("the river flows", "", ""));
+        // Runs of punctuation, trailing punctuation, and newlines.
+        let sp = split_clauses("wait... what?!\nnothing.");
+        let flat: Vec<(&str, &str, &str)> = sp.iter().map(|s| (s.text.as_str(), s.terminator.as_str(), s.joiner.as_str())).collect();
+        assert_eq!(flat, vec![("wait", "...", " "), ("what", "?!", "\n"), ("nothing", ".", "")]);
+        // A decimal point is not a terminator; blank input has no clauses.
+        assert_eq!(split_clauses("3.5 birds").len(), 1);
+        assert!(split_clauses("  \n ").is_empty());
+        // Leading punctuation with no text is dropped.
+        assert_eq!(split_clauses("... the bird")[0].text, "the bird");
+        assert_eq!(join_clauses(&["a".into(), "b".into()], &split_clauses("x. y")), "a. b");
     }
 
     #[test]

@@ -60,6 +60,12 @@ pub struct Phonology {
     /// Primary-stress rule (P1.4). `None` = the language marks no stress.
     #[serde(default)]
     pub stress: Option<StressRule>,
+    /// Vowel sequences that form one syllable nucleus (LB-8), each written as
+    /// the IPA of its vowels in order (`"ai"`, `"au"`). Any other adjacent
+    /// vowels are hiatus — separate syllables. A diphthong declared as a
+    /// phoneme of its own (`{ ipa: "ai", kind: "vowel" }`) needs no entry.
+    #[serde(default)]
+    pub diphthongs: Vec<String>,
     /// Named romanization schemes (P1.5). Empty = the per-phoneme `romanize`
     /// field is the only (implicit) scheme.
     #[serde(default)]
@@ -125,6 +131,7 @@ impl Phonology {
             }
         }
         self.allophony.iter_mut().for_each(AllophonyRule::normalize);
+        self.diphthongs.iter_mut().for_each(norm::nfc_in_place);
         for scheme in &mut self.romanizations {
             for m in &mut scheme.mappings {
                 norm::nfc_in_place(&mut m.ipa);
