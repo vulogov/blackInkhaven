@@ -156,11 +156,14 @@ pub struct MetaOverview {
     #[serde(default)]
     pub iso_code: String,
     /// Alphabet entries in the order the author defined
-    /// them.  Each entry is treated as a bucket name; a
-    /// word's bucket is the first entry whose characters
-    /// case-insensitively contain the word's first
-    /// character.  Empty → no consultation (caller falls
-    /// back to first-char uppercase).
+    /// them.  Each entry is a bucket name that declares
+    /// its letters: its characters and its whitespace-
+    /// separated tokens (`"Ch ch"` declares the digraph).
+    /// A word's bucket is the entry whose letter is the
+    /// longest match at the start of the word, compared
+    /// case- and diacritic-insensitively (LB-6).  Empty →
+    /// no consultation (caller falls back to the first
+    /// base letter, uppercased).
     #[serde(default)]
     pub alphabet: Vec<String>,
     #[serde(default)]
@@ -221,16 +224,9 @@ impl MetaOverview {
     /// signal to the caller to fall back to the naive
     /// first-char uppercase bucketing.
     pub fn bucket_for_word(&self, word: &str) -> Option<&str> {
-        use crate::conlang::types::norm::fold;
-        // Compare after NFC + case-folding on both sides (LB-3): a decomposed
-        // headword and a precomposed alphabet entry are the same letter.
-        let word = fold(word);
-        let first_char = word.chars().find(|c| !c.is_whitespace())?;
-        let needle = first_char.to_string();
-        self.alphabet
-            .iter()
-            .find(|entry| fold(entry).chars().any(|c| c.to_string() == needle))
-            .map(|s| s.as_str())
+        // Longest-match on the declared letters, case- and
+        // diacritic-insensitive (LB-3 / LB-6).
+        crate::conlang::lexicon::headword::Alphabet::new(&self.alphabet).bucket_for(word)
     }
 }
 

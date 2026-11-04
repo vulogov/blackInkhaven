@@ -17,6 +17,8 @@
 //! Semantic near-synonymy (e.g. "stone" vs "rock" via embeddings) is the
 //! AI-assisted half and lands with the generation pipeline.
 
+pub mod headword;
+
 use std::collections::BTreeMap;
 
 use serde::Serialize;

@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Track** | LANG-BUGFIX-1 |
-| **Status** | in progress on 3.17.0-dev — LB-1, 2, 3, 9 landed; LB-4–8, 10, 11 open |
+| **Status** | in progress on 3.17.0-dev — LB-1, 2, 3, 4, 5, 6, 9 landed; LB-7, 8, 10, 11 open |
 | **Created** | 2026-11-04 |
 | **Author** | Vladimir Ulogov |
 | **Target version** | 3.17.0 |
@@ -148,6 +148,18 @@ round-trips through `export`.
 
 ### LB-4 · CSV export does not round-trip through CSV import
 
+**Status: landed (3.17.0-dev).** `conlang::lexicon::headword::validate_headword`
+is the one check; `cli::language::HeadwordChecker` loads the alphabet and the
+`Phonology` block once and `add-word`, the CSV pre-flight, `language import`
+(Toolbox / PolyGlot) and the TUI tree-pane add all call it. `--force` now
+works on a single `add-word` too. One deviation from the fix as written: the
+alphabet and the inventory are not both applied — the Phonology inventory is
+the authority when declared, and `Meta/overview.alphabet` is the whitelist
+only when it is not (the scaffold ships an A–Z alphabet that would otherwise
+reject every `ŋ` the inventory declares). Alphabet matching is by letter
+(longest-match, `"Ch ch"` declares a digraph) with diacritics folded to the
+base letter.
+
 **Symptom.** `language export --output words.csv` followed by
 `language import words.csv` fails pre-flight on the exporter's own file:
 
@@ -179,6 +191,12 @@ longest-match. Keep `--force` as the escape hatch on import.
 
 ### LB-5 · The CSV pre-flight phonology check is a stub
 
+**Status: landed (3.17.0-dev).** `collect_phonology_inventories` and
+`first_unknown_letter` are gone; the pre-flight segments each row's word
+with `Phonology::segment` and names the first unknown segment (with its
+codepoint when it is a combining mark). Tutorial 50 describes the real check
+and the `--format csv` round trip.
+
 **Symptom.** Tutorial 50 (line 148) says the import "will" cross-check words
 against the phoneme inventory "in a future release". The code looks like it
 does, but never can.
@@ -197,6 +215,15 @@ check.
 with the segment named; `--force` imports it.
 
 ### LB-6 · `add-word` derives three different keys for one word
+
+**Status: landed (3.17.0-dev).** `create_dictionary_entry` enforces the
+shape (`a headword must be 1–64 characters`, no control characters) before
+anything touches the store, keys the duplicate check on the case-folded NFC
+headword, admits a homograph with a different `type` as `word (2)` (same or
+empty `type` is still the duplicate error, which the importer reports as a
+skip), and buckets on the longest-matching alphabet letter or, as the
+fallback, the first base letter (`ą́` and `a` share `A`; no more `a` / `a-2`
+subchapters).
 
 Three independent decisions are made from the raw headword, and they disagree:
 

@@ -114,40 +114,50 @@ dictionary uses.  For the sample CSV:
 ```
 
 These are the letters every word in the sample
-CSV uses (plus a couple held in reserve).  If you
-skip this step, the import pre-flight will warn
-that words contain characters not in the alphabet
-(because the empty-default `["A", ..., "Z"]`
-allows them, but a tight alphabet is good
-discipline).
+CSV uses (plus a couple held in reserve).  The
+alphabet drives the Dictionary bucket each word
+files under, and — only while the language has
+no Phonology inventory yet — it is the
+whitelist the import pre-flight checks spelling
+against.  Letters are matched longest-first (an
+entry such as `"Ch ch"` declares a digraph) and
+diacritics fold to their base letter, so the
+scaffold's default `["A", ..., "Z"]` accepts
+`éle` under `E` but rejects `ŋa`.
 
 ### Step 3 — (optional) declare a phonology
 
-To exercise the phoneme-inventory validation,
-add a Phonology rule via the TUI (`+` under
-`Language/Tira/Phonology` → type
-`consonant-inventory`):
+Once the language has a Phonology block with a
+phoneme inventory, that inventory — not the
+alphabet — is what the pre-flight checks every
+word against.  Open `Language/Tira/Phonology`
+(the `inventory` paragraph, or any paragraph
+under the chapter) and declare the phonemes:
 
 ```hjson
 {
-  rule_id: "consonant-inventory"
-  category: "consonants"
-  rule: '''
-    Tira has 8 consonants:
-      Stops:     p k t
-      Nasals:    m n
-      Fricative: s
-      Liquids:   l r
-  '''
-  phonemes: ["p", "k", "t", "m", "n", "s", "l", "r"]
+  phonemes: [
+    { ipa: "p", kind: "consonant" }, { ipa: "t", kind: "consonant" },
+    { ipa: "k", kind: "consonant" }, { ipa: "m", kind: "consonant" },
+    { ipa: "n", kind: "consonant" }, { ipa: "s", kind: "consonant" },
+    { ipa: "l", kind: "consonant" }, { ipa: "r", kind: "consonant" },
+    { ipa: "a", kind: "vowel" }, { ipa: "e", kind: "vowel" },
+    { ipa: "i", kind: "vowel" }, { ipa: "o", kind: "vowel" },
+    { ipa: "u", kind: "vowel" }
+  ]
 }
 ```
 
-Without the `phonemes` array populated, phonology
-validation skips silently (alphabet validation
-still runs).  A future release will let `language
-doctor` cross-check this against the actual
-dictionary for completeness.
+Each word is segmented greedily into the
+inventory's written forms (`romanize` when
+given, else the IPA), so a digraph such as
+`{ ipa: "ʃ", romanize: "sh" }` is one letter.
+A segment that matches no phoneme fails the
+pre-flight with that segment named.  The same
+check runs on `language add-word`, on the
+in-TUI `+` chord, and on `language import`
+(Toolbox / PolyGlot), so a word any door
+accepts, every door accepts.
 
 ### Step 4 — import the CSV
 
@@ -276,32 +286,38 @@ replacement.  Belt-and-braces.
 
 Before any writes — including the `--new` wipe
 — the import pre-flight pass walks every CSV
-row and validates each `word` against:
+row and runs each `word` through the same
+headword check `language add-word` uses:
 
-1. **The alphabet** — every non-whitespace,
-   non-punctuation character of every word must
-   appear in some entry of
-   `Meta/overview.alphabet`.  Skipped when the
-   alphabet list is empty.
+1. **Shape** — 1–64 characters, no control
+   characters.  Never skipped: the headword
+   becomes a paragraph title and a file name.
 
-2. **The phoneme inventories** — the union of
-   every Phonology rule's `phonemes` field.
-   Skipped when no Phonology rule declares
-   `phonemes`.
+2. **Spelling, against one authority** — when
+   the language declares a Phonology inventory,
+   every segment of the word (greedy
+   longest-match on the phonemes' written forms)
+   must be a declared phoneme.  Otherwise, when
+   `Meta/overview.alphabet` is non-empty, every
+   letter must be declared there (longest-match,
+   case- and diacritic-insensitive).  With
+   neither declared, only the shape is checked.
+
+Whitespace, hyphens and apostrophes separate
+letter runs and are never segments themselves.
 
 If any word fails validation, the entire import
 is aborted with a per-violation report:
 
 ```
 $ inkhaven language add-word Tira --import bad.csv
-Pre-flight validation failed — 2 violation(s) found:
+Pre-flight validation failed — 2 violation(s) found (checked against the Phonology inventory):
 
-  · row 3: `xeno` contains `x` not in Meta/overview.alphabet
-  · row 5: `zara` contains `z` not in Meta/overview.alphabet
+  · row 3: `xeno` contains `x`, which is not a phoneme of the declared Phonology inventory
+  · row 5: `zara` contains `z`, which is not a phoneme of the declared Phonology inventory
 
 Fix by either:
-  · updating Meta/overview.alphabet to include the missing characters, OR
-  · updating a Phonology rule's `phonemes` list to include them, OR
+  · adding the missing phonemes to the Phonology block (or letters to Meta/overview.alphabet), OR
   · correcting the CSV, OR
   · re-running with --force to bypass validation.
 
@@ -319,10 +335,10 @@ dictionary in a known-good state.
 
 **Bypass with `--force`** when:
 - You're intentionally importing words that
-  exceed the current Meta/overview declaration
-  (e.g. you're seeding the alphabet FROM the
-  CSV — the alphabet check would refuse,
-  defeating the purpose).
+  exceed the current declaration (e.g. you're
+  seeding the alphabet FROM the CSV — the
+  alphabet check would refuse, defeating the
+  purpose).
 - You're importing loanwords that use phonemes
   outside the native inventory (Tira loans
   `samu` from `Atal-Kele` using the same
@@ -335,9 +351,19 @@ dictionary in a known-good state.
 
 ```
 $ inkhaven language add-word Tira --import loanwords.csv --force
-imported `xena` → Tira/Dictionary/X    # 'x' not in alphabet, but --force overrode
+imported `xena` → Tira/Dictionary/X    # 'x' not in the inventory, but --force overrode
 ...
 ```
+
+`--force` works the same way for a single word:
+`inkhaven language add-word Tira xena --type noun
+--translation stranger --force`.
+
+**Homographs.**  A row whose `word` is already
+defined with the *same* `type` is skipped as a
+duplicate; the same spelling with a *different*
+`type` (`pata` noun, `pata` verb) is imported as
+a second entry titled `pata (2)`.
 
 ## Combining flags
 
@@ -402,11 +428,21 @@ the dictionary on every push:
 
 ## Round-tripping with export
 
-Phase D ships `inkhaven language export <lang>
---format <fmt>` — `json` and `anki` and
-`dictionary-twocol`.  None of them currently
-round-trip back to the import CSV format, but
-the `json` export is structurally complete:
+`inkhaven language export <lang> --format csv`
+emits the import-compatible CSV, and because
+`add-word` and the import pre-flight run the
+same headword check, an exported dictionary
+re-imports without `--force`:
+
+```
+$ inkhaven language export Tira --format csv --output tira.csv
+$ inkhaven language add-word Tira --import tira.csv --new
+```
+
+The other formats (`json`, `anki`,
+`dictionary-twocol`) are one-way; the `json`
+export is structurally complete if you need to
+post-process:
 
 ```
 $ inkhaven language export Tira --format json | \
@@ -416,18 +452,13 @@ $ inkhaven language export Tira --format json | \
 ...
 ```
 
-Future candidate: `--format csv` that emits
-import-compatible CSV so the round-trip is
-fully closed.  For now, this `jq` recipe
-covers the common case.
-
 ## Cheat sheet
 
 | Action | Command |
 |-|-|
 | Additive import | `inkhaven language add-word <lang> --import <path.csv>` |
 | Wipe-and-replace | `inkhaven language add-word <lang> --import <path.csv> --new` |
-| Skip alphabet / phonology validation | `... --force` |
+| Skip the phonology / alphabet spelling check | `... --force` (also on a single `add-word`) |
 | Comment a row | put `#` in the `word` cell |
 | Skip a row | leave the `word` cell empty |
 | Inflection format | `nominative=atal;genitive=atale;plural=atatal` |

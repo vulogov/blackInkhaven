@@ -352,6 +352,7 @@ pub(crate) fn add_word(
     translation: &str,
     example: Option<&str>,
     stress: Option<usize>,
+    force: bool,
 ) -> Result<()> {
     let layout = ProjectLayout::new(project);
     layout.require_initialized()?;
@@ -385,6 +386,21 @@ pub(crate) fn add_word(
                 "language `{language}` not found — run `inkhaven language init {language}` first"
             ))
         })?;
+
+    // LB-4: the same spelling check the CSV import runs, so the two doors
+    // agree. `--force` is the escape hatch, as on import.
+    if !force {
+        use crate::conlang::lexicon::headword::HeadwordError;
+        if let Err(e) = HeadwordChecker::load(&store, &hierarchy, &lang_book)?.check(word) {
+            let hint = match e {
+                HeadwordError::UnknownSegment(_) | HeadwordError::UnknownLetter(_) => {
+                    " — fix the spelling, extend the declaration, or pass --force"
+                }
+                _ => "",
+            };
+            return Err(Error::Config(format!("`{word}` {e}{hint}")));
+        }
+    }
 
     let (entry, bucket) = add_dictionary_entry_impl(
         &store,
@@ -436,7 +452,60 @@ pub(crate) fn add_dictionary_entry_impl(
     // duplicate check all see the same headword.
     let word = crate::conlang::types::norm::nfc(word);
     let body = seed_dictionary_entry_body(&word, pos, translation, example, stress);
-    create_dictionary_entry(store, cfg, lang_book, &word, &body)
+    create_dictionary_entry(store, cfg, lang_book, &word, pos, &body)
+}
+
+/// The spelling check every interactive door runs on a headword (LB-4 /
+/// LB-5): the language's `Phonology` inventory when one is declared, else
+/// its `Meta/overview.alphabet`. Load once, check many (the CSV pre-flight
+/// walks every row with one checker).
+pub(crate) struct HeadwordChecker {
+    pub(crate) alphabet: Vec<String>,
+    pub(crate) phonology: Option<crate::conlang::Phonology>,
+}
+
+impl HeadwordChecker {
+    pub(crate) fn load(
+        store: &Store,
+        hierarchy: &Hierarchy,
+        lang_book: &crate::store::node::Node,
+    ) -> Result<Self> {
+        let alphabet = read_meta_overview(store, hierarchy, lang_book)?
+            .map(|m| m.alphabet)
+            .unwrap_or_default();
+        // A block that does not parse at all must not lock the author out
+        // of their own dictionary: warn and fall back to the alphabet.
+        let phonology = match load_phonology(store, hierarchy, lang_book) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("warning: {e} — headwords checked against the alphabet only");
+                None
+            }
+        };
+        Ok(Self { alphabet, phonology })
+    }
+
+    /// Which declaration `check` consults, for messages and summaries.
+    pub(crate) fn authority(&self) -> &'static str {
+        if self.phonology.as_ref().is_some_and(|p| !p.phonemes.is_empty()) {
+            "Phonology inventory"
+        } else if !self.alphabet.is_empty() {
+            "Meta/overview.alphabet"
+        } else {
+            "shape only (no alphabet or Phonology inventory declared)"
+        }
+    }
+
+    pub(crate) fn check(
+        &self,
+        word: &str,
+    ) -> std::result::Result<(), crate::conlang::lexicon::headword::HeadwordError> {
+        crate::conlang::lexicon::headword::validate_headword(
+            word,
+            &self.alphabet,
+            self.phonology.as_ref(),
+        )
+    }
 }
 
 /// fully-populated entry record
@@ -480,7 +549,7 @@ pub(crate) fn add_imported_dictionary_entry(
     } else {
         build_imported_entry_body(&ImportEntry { word: word.clone(), ..entry.clone() })
     };
-    create_dictionary_entry(store, cfg, lang_book, &word, &body)
+    create_dictionary_entry(store, cfg, lang_book, &word, &entry.pos, &body)
 }
 
 /// Shared bucket-derivation + duplicate-check +
@@ -489,16 +558,33 @@ pub(crate) fn add_imported_dictionary_entry(
 /// passed verbatim — callers pick whether they want
 /// the verbose commented template or a compact
 /// concrete entry.
+///
+/// LB-6: the headword is keyed once — NFC for the
+/// title and body, case-folded for the duplicate
+/// check, bucketed on its first alphabet letter.  A
+/// homograph (same spelling, different `pos`) is
+/// allowed and titled `word (2)`, `word (3)`, …; the
+/// same spelling with the same (or an empty) `pos` is
+/// the duplicate the error names.  Shape (1–64
+/// characters, no control characters) is enforced
+/// here so no caller can reach the filesystem with an
+/// empty or overlong title.
 pub(crate) fn create_dictionary_entry(
     store: &Store,
     cfg: &Config,
     lang_book: &crate::store::node::Node,
     word: &str,
+    pos: &str,
     body: &str,
 ) -> Result<(crate::store::node::Node, String)> {
+    use crate::conlang::lexicon::headword;
+    use crate::conlang::types::norm::fold;
+    if let Err(e) = headword::validate_shape(word) {
+        return Err(Error::Config(format!("headword `{}` {e}", word.trim())));
+    }
     // Idempotent for callers that already normalised; keeps the bucket, the
     // duplicate check and the node title on the NFC headword (LB-3).
-    let word = &crate::conlang::types::norm::nfc(word);
+    let word = &crate::conlang::types::norm::nfc(word.trim());
     let hierarchy = Hierarchy::load(store)?;
     let dictionary = hierarchy
         .children_of(Some(lang_book.id))
@@ -539,22 +625,47 @@ pub(crate) fn create_dictionary_entry(
         }
     };
     let hierarchy = Hierarchy::load(store)?;
-    if hierarchy
+    let key = fold(word);
+    let same_spelling: Vec<_> = hierarchy
         .children_of(Some(subchapter.id))
-        .iter()
-        .any(|n| n.title.eq_ignore_ascii_case(word))
-    {
-        return Err(Error::Config(format!(
-            "word `{word}` already defined under `{}/Dictionary/{bucket}`",
-            lang_book.title
-        )));
+        .into_iter()
+        .filter(|n| n.kind == NodeKind::Paragraph && fold(homograph_base(&n.title)) == key)
+        .collect();
+    let mut title = word.clone();
+    if !same_spelling.is_empty() {
+        let pos_key = fold(pos.trim());
+        let mut conflict = pos_key.is_empty();
+        for existing in &same_spelling {
+            let existing_pos = store
+                .get_content(existing.id)?
+                .and_then(|bytes| {
+                    crate::language_entry::parse(&String::from_utf8_lossy(&bytes)).ok().flatten()
+                })
+                .map(|e| fold(e.pos.trim()))
+                .unwrap_or_default();
+            if existing_pos.is_empty() || existing_pos == pos_key {
+                conflict = true;
+            }
+        }
+        if conflict {
+            let as_pos = if pos.trim().is_empty() {
+                String::new()
+            } else {
+                format!(" as {}", pos.trim())
+            };
+            return Err(Error::Config(format!(
+                "word `{word}` already defined{as_pos} under `{}/Dictionary/{bucket}`",
+                lang_book.title
+            )));
+        }
+        title = format!("{word} ({})", same_spelling.len() + 1);
     }
     let hierarchy = Hierarchy::load(store)?;
     let mut entry = store.create_node(
         cfg,
         &hierarchy,
         NodeKind::Paragraph,
-        word,
+        &title,
         Some(&subchapter),
         None,
         InsertPosition::End,
@@ -569,6 +680,21 @@ pub(crate) fn create_dictionary_entry(
         .update_paragraph_content(&mut entry, body.as_bytes())
         .map_err(|e| Error::Store(format!("seed entry: {e}")))?;
     Ok((entry, bucket))
+}
+
+/// The spelling behind an entry title: `pata (2)` → `pata`.  Homograph
+/// titles carry a ` (N)` suffix (LB-6); everything else is returned as is.
+pub(crate) fn homograph_base(title: &str) -> &str {
+    let t = title.trim_end();
+    if let Some(open) = t.rfind(" (") {
+        let inner = &t[open + 2..];
+        if let Some(digits) = inner.strip_suffix(')') {
+            if !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()) {
+                return t[..open].trim_end();
+            }
+        }
+    }
+    t
 }
 
 /// compact concrete HJSON for an
@@ -873,16 +999,13 @@ pub(crate) const PHONOLOGY_RULE_SEED_BODY: &str = "{
 ";
 
 /// Derive the alphabet-bucket subchapter name for a
-/// word.  Uses the first non-whitespace character,
-/// uppercased.  Returns `None` only if the input is
-/// entirely whitespace — alphanumeric, Cyrillic,
-/// Greek, hyphen / apostrophe-prefix all map to
-/// their leading letter or symbol.
+/// word when `Meta/overview.alphabet` does not cover
+/// it: the base letter of the first grapheme cluster,
+/// uppercased (`ą́tal` → `A`, `ŋa` → `Ŋ`, `'ata` → `A`;
+/// LB-3 / LB-6).  Returns `None` only when the input
+/// has no letters at all.
 pub(crate) fn alphabet_bucket(word: &str) -> Option<String> {
-    // NFC first so a decomposed `e` + U+0301 buckets under `É`, not `E` (LB-3).
-    let word = crate::conlang::types::norm::nfc(word);
-    let ch = word.chars().find(|c| !c.is_whitespace())?;
-    Some(ch.to_uppercase().to_string())
+    crate::conlang::lexicon::headword::fallback_bucket(word)
 }
 
 /// Consult the language sub-book's `Meta/overview`

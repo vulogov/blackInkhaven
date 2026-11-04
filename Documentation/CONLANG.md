@@ -447,6 +447,20 @@ Dictionary entries are HJSON paragraphs under **Dictionary** (created by
   register: "formal", domain: ["weapon"], era: "third_age" }
 ```
 
+**One headword check at every door.** `add-word`, `add-word --import`, the
+in-TUI `+` chord and `language import` (Toolbox / PolyGlot) all run the same
+check, so a word one accepts the others accept and `export --format csv` →
+`--import` is a no-op. A headword must be 1–64 characters with no control
+characters. Its spelling is checked against the Phonology inventory when one is
+declared (every greedy-matched segment must be a declared phoneme), else
+against `Meta/overview.alphabet` (every letter declared, longest-match, case-
+and diacritic-insensitive); `--force` skips the spelling check on the CLI. The
+headword is keyed once: NFC for the title, case-folded for the duplicate check
+(`ŋa` and `Ŋa` are one word), and bucketed on its first alphabet letter — or,
+with no alphabet entry covering it, on its first base letter (`ą́tal` and
+`atal` both file under `A`). A homograph (same spelling, different `type`) is
+allowed and titled `pata (2)`.
+
 | Command | Does |
 |---|---|
 | `language generate-lexicon --topic … --count … [--semantic] [--yes]` | AI generation behind the dedup gate (illegal / homophone / duplicate-meaning / near-synonym) |
@@ -586,8 +600,9 @@ inkhaven language import Avesha --file MyLang.pgd  --format polyglot --yes
   part-of-speech table is resolved so each word lands with its class.
 
 Import **previews by default** — it prints what it would add and changes nothing
-until you pass `--yes`. Duplicate headwords are skipped with a warning. (Tools
-that export CSV, such as ConWorkShop, can come in through `add-word --import`.)
+until you pass `--yes`. Duplicate headwords, and words that fail the headword
+check above, are skipped with the reason. (Tools that export CSV, such as
+ConWorkShop, can come in through `add-word --import`.)
 
 ## Worldbuilding links
 

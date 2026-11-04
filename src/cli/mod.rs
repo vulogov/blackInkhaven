@@ -3687,17 +3687,18 @@ pub enum LanguageCommand {
         /// words skipped, new rows added).
         #[arg(long, requires = "import")]
         new: bool,
-        /// skip the pre-flight
-        /// alphabet + phonology validation that
-        /// normally aborts an import when any word
-        /// uses characters outside the language's
-        /// declared alphabet OR uses phonemes
-        /// outside the declared phoneme inventories.
-        /// Use when intentionally importing words
-        /// that exceed the current Meta/overview
-        /// declaration (e.g. you're seeding the
-        /// alphabet from the CSV itself).
-        #[arg(long, requires = "import")]
+        /// skip the headword spelling check
+        /// (the same check for a single word and
+        /// for --import's pre-flight): every segment
+        /// must be a phoneme of the Phonology
+        /// inventory when one is declared, else every
+        /// letter must be in Meta/overview.alphabet.
+        /// Use when intentionally adding words that
+        /// exceed the current declaration (loanwords,
+        /// or seeding the alphabet from the CSV
+        /// itself). The 1–64 character shape rule is
+        /// never skipped.
+        #[arg(long)]
         force: bool,
     },
     /// 1.3.19 LANG-1 P6 — import a dictionary from

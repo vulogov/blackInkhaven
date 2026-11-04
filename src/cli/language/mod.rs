@@ -113,6 +113,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
                     &translation,
                     example.as_deref(),
                     stress,
+                    force,
                 )
             }
         }
@@ -1683,43 +1684,6 @@ mod tests {
     /// catch syntax regressions at test time, not at
     /// the user's first `+` press.
     #[test]
-    fn first_unknown_letter_passes_when_all_chars_in_inventory() {
-        let inv = vec!["A".into(), "B".into(), "C".into()];
-        assert_eq!(first_unknown_letter("abc", &inv), None);
-        // Case-insensitive.
-        assert_eq!(first_unknown_letter("ABC", &inv), None);
-        // Punctuation always passes.
-        assert_eq!(first_unknown_letter("a-b'c", &inv), None);
-        // Whitespace always passes.
-        assert_eq!(first_unknown_letter("a b c", &inv), None);
-    }
-
-    #[test]
-    fn first_unknown_letter_returns_first_violation() {
-        let inv = vec!["A".into(), "B".into()];
-        assert_eq!(first_unknown_letter("abz", &inv), Some('z'));
-        // First violation wins.
-        assert_eq!(first_unknown_letter("xyz", &inv), Some('x'));
-    }
-
-    #[test]
-    fn first_unknown_letter_handles_multichar_inventory_entries() {
-        // Paired-case Latin: each alphabet entry is
-        // a two-char string but we look for the char
-        // as substring.
-        let inv = vec!["Aa".into(), "Bb".into(), "Cc".into()];
-        assert_eq!(first_unknown_letter("aBc", &inv), None);
-        assert_eq!(first_unknown_letter("aBz", &inv), Some('z'));
-    }
-
-    #[test]
-    fn first_unknown_letter_handles_non_latin() {
-        let inv = vec!["А".into(), "Б".into()];
-        assert_eq!(first_unknown_letter("аб", &inv), None);
-        assert_eq!(first_unknown_letter("абя", &inv), Some('я'));
-    }
-
-    #[test]
     fn csv_parser_handles_quoted_fields() {
         let csv = "word,type,translation\n\
                    atal,noun,river\n\
@@ -1918,19 +1882,11 @@ mod tests {
 
     #[test]
     fn alphabet_bucket_composes_before_bucketing() {
-        // LB-3: a decomposed `e\u{301}` is the letter É, not E.
-        assert_eq!(alphabet_bucket("e\u{0301}le"), Some("\u{00C9}".to_string()));
-        assert_eq!(alphabet_bucket("\u{00E9}le"), Some("\u{00C9}".to_string()));
-    }
-
-    #[test]
-    fn first_unknown_letter_composes_both_sides() {
-        let inv = vec!["\u{00E9}".to_string(), "l".to_string(), "e".to_string()];
-        assert_eq!(first_unknown_letter("e\u{0301}le", &inv), None);
-        let inv_nfd = vec!["e\u{0301}".to_string(), "l".to_string(), "e".to_string()];
-        assert_eq!(first_unknown_letter("\u{00E9}le", &inv_nfd), None);
-        // Still a real check: a letter missing from both forms is reported.
-        assert_eq!(first_unknown_letter("\u{00E9}lo", &inv), Some('o'));
+        // LB-3 / LB-6: the decomposed and precomposed spellings land in one
+        // bucket, and that bucket is the base letter (no `E` / `É` split).
+        assert_eq!(alphabet_bucket("e\u{0301}le"), Some("E".to_string()));
+        assert_eq!(alphabet_bucket("\u{00E9}le"), Some("E".to_string()));
+        assert_eq!(alphabet_bucket("\u{0105}\u{0301}tal"), Some("A".to_string()));
     }
 
     #[test]

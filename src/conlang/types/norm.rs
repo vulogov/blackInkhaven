@@ -22,6 +22,14 @@ pub fn fold(s: &str) -> String {
     s.to_lowercase().nfc().collect()
 }
 
+/// `s` with every combining mark removed, recomposed: the *base letters* of
+/// a string (`ą́` → `a`, `é` → `e`, `ŋ` → `ŋ`). Used where a diacritic is a
+/// detail rather than a distinction — alphabet-bucket derivation and the
+/// alphabet check of a headword (LB-4 / LB-6).
+pub fn strip_marks(s: &str) -> String {
+    s.nfd().filter(|c| !is_combining_mark(*c)).nfc().collect()
+}
+
 /// NFC applied in place.
 pub fn nfc_in_place(s: &mut String) {
     use unicode_normalization::{is_nfc_quick, IsNormalized};
@@ -55,6 +63,14 @@ mod tests {
     fn fold_lowercases_then_composes() {
         assert_eq!(fold("PATA"), "pata");
         assert_eq!(fold("E\u{0301}le"), "\u{00E9}le");
+    }
+
+    #[test]
+    fn strip_marks_keeps_base_letters_only() {
+        assert_eq!(strip_marks("\u{0105}\u{0301}tal"), "atal"); // ą́tal
+        assert_eq!(strip_marks("\u{00E9}le"), "ele");
+        assert_eq!(strip_marks("\u{014B}a"), "\u{014B}a"); // ŋ has no decomposition
+        assert_eq!(strip_marks("k\u{0303}a"), "ka");
     }
 
     #[test]
