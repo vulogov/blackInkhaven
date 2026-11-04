@@ -253,9 +253,6 @@ pulldown-cmark = { version = "0.13", default-features = false }
 # Also reused by the `inkhaven export epub` pipeline to assemble the
 # EPUB3 container — same `deflate` feature flag, no extra dep cost.
 zip = { version = "2", default-features = false, features = ["deflate"] }
-# Codepage decoding for Scrivener RTF `\'xx` escapes (honours `\ansicpg`, e.g.
-# windows-1251 Cyrillic / windows-1252). Already in the tree transitively.
-encoding_rs = "0.8"
 # Pure-Rust Typst→LaTeX converter for `inkhaven export tex` and the
 # Ctrl+B O extra-format pipeline. `default-features = false` drops
 # the bundled clap CLI; we only consume the library API
@@ -270,9 +267,13 @@ similar = { version = "2", default-features = false, features = ["text"] }
 # `quick-xml` parses the `.scrivx` binder XML (MIT).
 # `rtf-parser-tt` is a maintained fork of rtf-parser with
 # smart-quote / em-dash support that's essential for prose
-# imports (MIT). Both pure Rust — single binary stays single.
+# imports (MIT). 0.6 decodes `\'xx` escapes through the document's
+# code page / the font's charset itself and returns Err (never
+# panics) on malformed input, so the importer no longer
+# pre-decodes anything (issue #3). Both pure Rust — single binary
+# stays single.
 quick-xml = "0.36"
-rtf-parser-tt = "0.5"
+rtf-parser-tt = "0.6"
 # Human-friendly duration parsing for the auto-backup `max_age` config knob.
 humantime = "2"
 humantime-serde = "1"
