@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Track** | LANG-BUGFIX-1 |
-| **Status** | in progress on 3.17.0-dev — LB-1–9 landed; LB-10, 11 open |
+| **Status** | all eleven items landed on 3.17.0-dev |
 | **Created** | 2026-11-04 |
 | **Author** | Vladimir Ulogov |
 | **Target version** | 3.17.0 |
@@ -340,6 +340,11 @@ scans the same as its lowercase.
 
 ### LB-10 · Typst string literals use the markup escaper
 
+**Status: landed (3.17.0-dev).** `output::typst_string` (quoted, `\\` and
+`"` escaped, control characters as `\u{..}`) replaces `typst_text` inside
+the `#set document(title: …)` and both `text(font: …)` literals, and in
+`writing::compose`'s `text(font: …)`, which interpolated the family raw.
+
 **Symptom.** A language title, font family or document title containing `"`
 breaks compilation of the dictionary and grammar book.
 
@@ -354,6 +359,16 @@ literal; grep the file for `\"{}\"` patterns.
 **Test.** Title `Say "hi"` and font `My "Serif"` compile.
 
 ### LB-11 · Raw user strings become filesystem paths
+
+**Status: landed (3.17.0-dev).** `norm::fs_safe_name` (case-folded NFC,
+`[a-z0-9._-]`, ≤ 64, never empty) keys the translation-memory sidecar; a
+memory saved under the old `<lowercased title>.json` is still read and
+migrates on the next save. Glyph names are not slugged — case is
+significant in a font — but `font::validate_glyph_name` (norad's rules plus
+no path separator, no leading `.`, ≤ 64) runs before the glyph store write,
+on `--slot` names, on the font block at build time and inside `build_ufo`,
+so `norad::Glyph::new` can no longer panic. A `--phoneme /k/` with no
+`--name` names the glyph `k`.
 
 - `src/cli/language/writing.rs:371-394` — the glyph name falls through to
   `--phoneme`, then `dest = dir.join(format!("{glyph_name}.svg"))`, so

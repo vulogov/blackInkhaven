@@ -30,6 +30,27 @@ pub fn strip_marks(s: &str) -> String {
     s.nfd().filter(|c| !is_combining_mark(*c)).nfc().collect()
 }
 
+/// A file-system-safe slug of a user-facing name (LB-11): case-folded NFC,
+/// restricted to `[a-z0-9._-]` with every other run collapsed to `-`, no
+/// leading / trailing `-` or `.`, at most 64 characters, never empty
+/// (`unnamed`). `Old Avesha/Sea` → `old-avesha-sea`; `../x` → `x`.
+pub fn fs_safe_name(name: &str) -> String {
+    let mut out = String::new();
+    let mut prev_dash = false;
+    for c in strip_marks(&fold(name)).chars() {
+        if c.is_ascii_alphanumeric() || matches!(c, '.' | '_') {
+            out.push(c);
+            prev_dash = false;
+        } else if !prev_dash {
+            out.push('-');
+            prev_dash = true;
+        }
+    }
+    let trimmed: String = out.trim_matches(|c| c == '-' || c == '.').chars().take(64).collect();
+    let trimmed = trimmed.trim_matches(|c| c == '-' || c == '.').to_string();
+    if trimmed.is_empty() { "unnamed".to_string() } else { trimmed }
+}
+
 /// NFC applied in place.
 pub fn nfc_in_place(s: &mut String) {
     use unicode_normalization::{is_nfc_quick, IsNormalized};
@@ -63,6 +84,18 @@ mod tests {
     fn fold_lowercases_then_composes() {
         assert_eq!(fold("PATA"), "pata");
         assert_eq!(fold("E\u{0301}le"), "\u{00E9}le");
+    }
+
+    #[test]
+    fn fs_safe_name_slugs_to_a_single_path_component() {
+        assert_eq!(fs_safe_name("Avesha"), "avesha");
+        assert_eq!(fs_safe_name("Old Avesha/Sea"), "old-avesha-sea");
+        assert_eq!(fs_safe_name("../x"), "x");
+        assert_eq!(fs_safe_name("a.b_c"), "a.b_c");
+        assert_eq!(fs_safe_name("\u{00C9}l\u{00E9}"), "ele");
+        assert_eq!(fs_safe_name("///"), "unnamed");
+        assert_eq!(fs_safe_name(&"x".repeat(100)).chars().count(), 64);
+        assert!(!fs_safe_name("k/../../etc").contains('/'));
     }
 
     #[test]

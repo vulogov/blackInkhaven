@@ -838,8 +838,9 @@ inkhaven language memory Eldar                                 # list remembered
 An **exact** remembered translation becomes the primary (the rule-based reading is
 kept as an `alt:` so nothing is silently overridden); a **near** match is surfaced
 as an alternative to pick. A miss is pure RBMT. Memory lives in the
-`.inkhaven/translation-memory/<lang>.json` sidecar (atomic writes; the books are
-never touched).
+`.inkhaven/translation-memory/<lang-slug>.json` sidecar — the slug is the
+language name lower-cased and reduced to `[a-z0-9._-]`, so a title with spaces
+or a `/` still maps to one file (atomic writes; the books are never touched).
 
 Near matches are **semantic**: each remembered English source is embedded once
 with the in-tree `fastembed` model (the same one powering manuscript search) and

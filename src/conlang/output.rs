@@ -112,6 +112,25 @@ pub fn dictionary_markdown(meta: &DictMeta, entries: &[RenderEntry]) -> String {
     s
 }
 
+/// A Typst string literal of `s` — quoted, with `\\` and `"` escaped and
+/// control characters as `\u{..}` (LB-10). Use this, never [`typst_text`],
+/// for anything interpolated inside `"…"`: a `#set document(title: …)`, a
+/// `text(font: …)` family, a file name.
+pub fn typst_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            c if c.is_control() => out.push_str(&format!("\\u{{{:X}}}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
 /// A Typst string literal of `s` as Unicode escapes (safe for any codepoint).
 fn typst_escapes(s: &str) -> String {
     let mut out = String::from("\"");
@@ -122,7 +141,8 @@ fn typst_escapes(s: &str) -> String {
     out
 }
 
-/// Escape Typst markup-special characters in plain text.
+/// Escape Typst markup-special characters in plain text. Markup only — inside
+/// a `"…"` string literal use [`typst_string`] (LB-10).
 fn typst_text(s: &str) -> String {
     let mut out = String::new();
     for c in s.chars() {
@@ -152,8 +172,8 @@ pub fn dictionary_typst(meta: &DictMeta, entries: &[RenderEntry]) -> String {
     // native() default.
     if let Some(f) = meta.font_family {
         s.push_str(&format!(
-            "#let conscript(cp) = text(font: \"{}\", size: 1.5em)[#cp]\n\n",
-            typst_text(f)
+            "#let conscript(cp) = text(font: {}, size: 1.5em)[#cp]\n\n",
+            typst_string(f)
         ));
     }
 
@@ -809,7 +829,7 @@ pub fn book_scaffold(
     cover: Option<&str>,
 ) -> String {
     let mut s = String::new();
-    s.push_str(&format!("#set document(title: \"{}\")\n", typst_text(doc_title)));
+    s.push_str(&format!("#set document(title: {})\n", typst_string(doc_title)));
     s.push_str("#set page(paper: \"iso-b5\", margin: (x: 2.2cm, y: 2.4cm), numbering: \"1\")\n");
     // Fonts: rely on families Typst bundles ("Libertinus Serif", "New Computer
     // Modern") so the book compiles warning-free anywhere; headings get contrast
@@ -828,8 +848,8 @@ pub fn book_scaffold(
     s.push_str("  #text(weight: \"bold\", fill: rgb(\"#2f5d7a\"))[#name] #parbreak() #body\n]\n");
     match font_family {
         Some(f) => s.push_str(&format!(
-            "#let native(cp) = text(font: \"{}\", size: 1.3em)[#cp]\n",
-            typst_text(f)
+            "#let native(cp) = text(font: {}, size: 1.3em)[#cp]\n",
+            typst_string(f)
         )),
         // Degrade gracefully if no font: render the escapes as plain text.
         None => s.push_str("#let native(cp) = text(size: 1.3em)[#cp]\n"),
@@ -1373,6 +1393,24 @@ mod tests {
         assert!(typ.contains("table.header([Word], [Meaning])"));
         assert!(typ.contains("[pata], [stone],"));
         assert!(typ.contains("#practice[Practice this.]"));
+    }
+
+    #[test]
+    fn string_literals_escape_quotes_not_markup() {
+        // LB-10: a `"` inside a Typst string literal must be `\"`, and markup
+        // specials must *not* be backslashed there (`\#` is not a string escape).
+        assert_eq!(typst_string("Say \"hi\""), "\"Say \\\"hi\\\"\"");
+        assert_eq!(typst_string("a\\b"), "\"a\\\\b\"");
+        assert_eq!(typst_string("C# @home"), "\"C# @home\"");
+        assert_eq!(typst_string("x\ny"), "\"x\\u{A}y\"");
+        let typ = book_scaffold("Say \"hi\"", "Say \"hi\"", "", Some("My \"Serif\""), None);
+        assert!(typ.contains("#set document(title: \"Say \\\"hi\\\"\")"), "{typ}");
+        assert!(typ.contains("text(font: \"My \\\"Serif\\\"\", size: 1.3em)"), "{typ}");
+        // The markup title still uses the markup escaper.
+        assert!(typ.contains("[Say \"hi\"]"), "{typ}");
+        let meta = DictMeta { language: "Ave\"sha", font_family: Some("My \"Serif\""), profile: None };
+        let typ = dictionary_typst(&meta, &[]);
+        assert!(typ.contains("#let conscript(cp) = text(font: \"My \\\"Serif\\\"\", size: 1.5em)"), "{typ}");
     }
 
     #[test]
