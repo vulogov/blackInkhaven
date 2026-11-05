@@ -924,26 +924,7 @@ pub(crate) fn remove_dictionary_entry(
     word: &str,
 ) -> Result<()> {
     let hierarchy = Hierarchy::load(store)?;
-    let dictionary = hierarchy
-        .children_of(Some(lang_book.id))
-        .into_iter()
-        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Dictionary"))
-        .cloned()
-        .ok_or_else(|| Error::Config("language has no Dictionary chapter".into()))?;
-    let bucket = derive_alphabet_bucket(store, &hierarchy, lang_book, word)?
-        .or_else(|| alphabet_bucket(word))
-        .ok_or_else(|| Error::Config(format!("could not derive alphabet bucket from `{word}`")))?;
-    let subchapter = hierarchy
-        .children_of(Some(dictionary.id))
-        .into_iter()
-        .find(|n| n.kind == NodeKind::Subchapter && n.title.eq_ignore_ascii_case(&bucket))
-        .cloned()
-        .ok_or_else(|| Error::Config(format!("`{word}` isn't defined (no `{bucket}` bucket)")))?;
-    let entry = hierarchy
-        .children_of(Some(subchapter.id))
-        .into_iter()
-        .find(|n| n.kind == NodeKind::Paragraph && n.title.eq_ignore_ascii_case(word))
-        .cloned()
+    let (_, entry) = find_dictionary_entry(store, &hierarchy, lang_book, word)?
         .ok_or_else(|| Error::Config(format!("word `{word}` not found")))?;
     let ids = hierarchy.collect_subtree(entry.id);
     let fs_rel = entry
@@ -1555,11 +1536,9 @@ fn extract_hjson_examples(body: &str) -> Option<Vec<String>> {
 /// `inkhaven language
 /// remove-word <language> <word>`.  Mirror of
 /// `add-word`: resolves the language sub-book by
-/// case-insensitive title; finds the Dictionary
-/// chapter; locates the bucket subchapter via the
-/// same alphabet-bucket derivation
-/// (`Meta/overview.alphabet` consultation first,
-/// first-char fallback); deletes the entry
+/// case-insensitive title; locates the entry via
+/// `find_dictionary_entry` (the derived bucket
+/// first, then every bucket); deletes the entry
 /// paragraph.  Errors when the entry doesn't
 /// exist rather than silently no-op-ing so the
 /// caller knows their `remove-word foo` against
@@ -1595,51 +1574,13 @@ fn remove_word(project: &Path, language: &str, word: &str) -> Result<()> {
         .ok_or_else(|| {
             Error::Config(format!("language `{language}` not found"))
         })?;
-    let dictionary = hierarchy
-        .children_of(Some(lang_book.id))
-        .into_iter()
-        .find(|n| {
-            n.kind == NodeKind::Chapter
-                && n.title.eq_ignore_ascii_case("Dictionary")
-        })
-        .cloned()
+    // The bucket add-word would derive is searched first, then every bucket
+    // (entries filed under a pre-3.17 bucket are still found by name).
+    let (subchapter, entry) = find_dictionary_entry(&store, &hierarchy, &lang_book, word)?
         .ok_or_else(|| {
-            Error::Config(format!(
-                "language `{language}` has no Dictionary chapter"
-            ))
+            Error::Config(format!("word `{word}` not found under `{language}/Dictionary`"))
         })?;
-    // Same bucket derivation as add-word.
-    let bucket = derive_alphabet_bucket(&store, &hierarchy, &lang_book, word)?
-        .or_else(|| alphabet_bucket(word))
-        .ok_or_else(|| {
-            Error::Config(format!("could not derive alphabet bucket from `{word}`"))
-        })?;
-    let subchapter = hierarchy
-        .children_of(Some(dictionary.id))
-        .into_iter()
-        .find(|n| {
-            n.kind == NodeKind::Subchapter
-                && n.title.eq_ignore_ascii_case(&bucket)
-        })
-        .cloned()
-        .ok_or_else(|| {
-            Error::Config(format!(
-                "no bucket subchapter `{bucket}` under `{language}/Dictionary` — `{word}` isn't defined"
-            ))
-        })?;
-    let entry = hierarchy
-        .children_of(Some(subchapter.id))
-        .into_iter()
-        .find(|n| {
-            n.kind == NodeKind::Paragraph
-                && n.title.eq_ignore_ascii_case(word)
-        })
-        .cloned()
-        .ok_or_else(|| {
-            Error::Config(format!(
-                "word `{word}` not found under `{language}/Dictionary/{bucket}`"
-            ))
-        })?;
+    let bucket = subchapter.title.clone();
     let ids = hierarchy.collect_subtree(entry.id);
     // Entry is a Paragraph — its on-disk path lives
     // in `entry.file` (no children to walk for the
@@ -1878,6 +1819,20 @@ mod tests {
         assert_eq!(alphabet_bucket("ярости"), Some("Я".to_string()));
         // Greek 'α' uppercases to 'Α'.
         assert_eq!(alphabet_bucket("αυτός"), Some("Α".to_string()));
+    }
+
+    #[test]
+    fn entry_titles_match_folded_with_homograph_suffix_rules() {
+        assert!(entry_title_matches("pata", "pata"));
+        assert!(entry_title_matches("Pata", "PATA"));
+        assert!(entry_title_matches("\u{014A}a", "\u{014B}a")); // Ŋa ~ ŋa
+        assert!(entry_title_matches("e\u{0301}le", "\u{00E9}le")); // NFD ~ NFC
+        // A plain query matches a homograph title; a suffixed query only itself.
+        assert!(entry_title_matches("pata (2)", "pata"));
+        assert!(entry_title_matches("pata (2)", "pata (2)"));
+        assert!(!entry_title_matches("pata", "pata (2)"));
+        assert!(!entry_title_matches("pata (3)", "pata (2)"));
+        assert!(!entry_title_matches("patal", "pata"));
     }
 
     #[test]

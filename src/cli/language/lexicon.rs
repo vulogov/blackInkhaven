@@ -344,6 +344,9 @@ pub(crate) fn build_lexgen_prompt(
 /// derives the alphabet bucket for the new word from
 /// the first character (auto-creates the subchapter
 /// when missing); rejects duplicate words.
+// Mirrors the clap `AddWord` arguments one-to-one; a struct would only move
+// the same eight names behind one more indirection.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn add_word(
     project: &Path,
     language: &str,
@@ -680,6 +683,70 @@ pub(crate) fn create_dictionary_entry(
         .update_paragraph_content(&mut entry, body.as_bytes())
         .map_err(|e| Error::Store(format!("seed entry: {e}")))?;
     Ok((entry, bucket))
+}
+
+/// Whether a dictionary entry title names `word`: NFC + case-folded, with
+/// the ` (N)` homograph suffix ignored unless the query itself carries one
+/// (`pata` matches `pata` and `pata (2)`; `pata (2)` matches only itself).
+pub(crate) fn entry_title_matches(title: &str, word: &str) -> bool {
+    use crate::conlang::types::norm::fold;
+    let word = word.trim();
+    if homograph_base(word) != word {
+        fold(title.trim()) == fold(word)
+    } else {
+        fold(homograph_base(title)) == fold(word)
+    }
+}
+
+/// Locate a dictionary entry by headword: the bucket the current rule
+/// derives is searched first, then every bucket under `Dictionary` — an
+/// entry filed before 3.17 (first-character buckets such as `É`), or under
+/// an alphabet that has since changed, is still found by name.  Returns
+/// `(bucket subchapter, entry paragraph)`.
+pub(crate) fn find_dictionary_entry(
+    store: &Store,
+    hierarchy: &Hierarchy,
+    lang_book: &crate::store::node::Node,
+    word: &str,
+) -> Result<Option<(crate::store::node::Node, crate::store::node::Node)>> {
+    use crate::conlang::types::norm::fold;
+    let Some(dictionary) = hierarchy
+        .children_of(Some(lang_book.id))
+        .into_iter()
+        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Dictionary"))
+        .cloned()
+    else {
+        return Ok(None);
+    };
+    let buckets: Vec<crate::store::node::Node> = hierarchy
+        .children_of(Some(dictionary.id))
+        .into_iter()
+        .filter(|n| n.kind == NodeKind::Subchapter)
+        .cloned()
+        .collect();
+    let derived = derive_alphabet_bucket(store, hierarchy, lang_book, word)?
+        .or_else(|| alphabet_bucket(word))
+        .map(|b| fold(&b));
+    let search = |bucket: &crate::store::node::Node| {
+        hierarchy
+            .children_of(Some(bucket.id))
+            .into_iter()
+            .find(|n| n.kind == NodeKind::Paragraph && entry_title_matches(&n.title, word))
+            .cloned()
+    };
+    if let Some(d) = &derived {
+        if let Some(bucket) = buckets.iter().find(|b| fold(&b.title) == *d) {
+            if let Some(entry) = search(bucket) {
+                return Ok(Some((bucket.clone(), entry)));
+            }
+        }
+    }
+    for bucket in &buckets {
+        if let Some(entry) = search(bucket) {
+            return Ok(Some((bucket.clone(), entry)));
+        }
+    }
+    Ok(None)
 }
 
 /// The spelling behind an entry title: `pata (2)` → `pata`.  Homograph
