@@ -757,8 +757,14 @@ fn do_add_word(vm: &mut VM) -> Result<&mut VM> {
         translation,
         ..Default::default()
     };
-    langapi::add_imported_dictionary_entry(store, cfg, &book, &entry)
-        .map_err(|e| anyhow!("{tag}: {e}"))?;
+    // 3.18 LI-3 — the same spelling check as every other door (LB-4): the
+    // Phonology inventory when declared, else Meta/overview.alphabet.
+    let mut writer = langapi::DictionaryWriter::open(store, cfg, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    if let Err(e) = writer.check(&entry.word) {
+        return Err(anyhow!("{tag}: `{}` {e} (checked against the {})", entry.word, writer.authority()));
+    }
+    writer.add_imported(&entry).map_err(|e| anyhow!("{tag}: {e}"))?;
+    writer.finish().map_err(|e| anyhow!("{tag}: {e}"))?;
     Ok(vm)
 }
 
@@ -1237,6 +1243,8 @@ fn do_derive(vm: &mut VM, commit: bool) -> Result<&mut VM> {
     if commit {
         let cfg = active_config(tag)?;
         let mut added = 0i64;
+        let mut writer =
+            langapi::DictionaryWriter::open(store, cfg, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
         for d in &derived {
             let entry = langapi::ImportEntry {
                 word: d.form.clone(),
@@ -1245,10 +1253,11 @@ fn do_derive(vm: &mut VM, commit: bool) -> Result<&mut VM> {
                 etymology: format!("derived from {root} via {}", d.rule),
                 ..Default::default()
             };
-            if langapi::add_imported_dictionary_entry(store, cfg, &book, &entry).is_ok() {
+            if writer.add_imported(&entry).is_ok() {
                 added += 1;
             }
         }
+        writer.finish().map_err(|e| anyhow!("{tag}: {e}"))?;
         push(vm, Value::from_int(added));
     } else {
         let out: Vec<Value> = derived

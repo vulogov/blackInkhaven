@@ -309,6 +309,7 @@ pub(crate) fn derive_lexicon_cmd(project: &Path, language: &str, yes: bool) -> R
     if yes {
         let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
         let mut added = 0usize;
+        let mut writer = DictionaryWriter::open(&store, &cfg, &daughter_book)?;
         for d in &derived {
             let entry = ImportEntry {
                 word: d.form.clone(),
@@ -317,11 +318,12 @@ pub(crate) fn derive_lexicon_cmd(project: &Path, language: &str, yes: bool) -> R
                 etymology: format!("from {proto_name} {} via sound change", d.proto_form),
                 ..Default::default()
             };
-            match add_imported_dictionary_entry(&store, &cfg, &daughter_book, &entry) {
+            match writer.add_imported(&entry) {
                 Ok(_) => added += 1,
                 Err(e) => eprintln!("  skipped {}: {e}", d.form),
             }
         }
+        writer.finish()?;
         eprintln!("\nadded {added} derived entr(y/ies) to {language}'s Dictionary");
     } else {
         eprintln!("\n(dry run — re-run with --yes to add the {} derived entr(y/ies))", derived.len());

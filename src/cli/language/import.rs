@@ -99,11 +99,12 @@ pub(crate) fn import_foreign(
     let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
     // LB-4: same spelling check as add-word / CSV import. A foreign file has
     // no --force; a rejected entry is skipped with its reason.
-    let hierarchy = Hierarchy::load(&store)?;
-    let checker = HeadwordChecker::load(&store, &hierarchy, &lang_book)?;
+    // 3.18 LI-3 — one writer for the whole file: one hierarchy, one
+    // checker, one index flush.
+    let mut writer = DictionaryWriter::open(&store, &cfg, &lang_book)?;
     let (mut added, mut skipped) = (0usize, 0usize);
     for lx in &lexemes {
-        if let Err(e) = checker.check(&lx.word) {
+        if let Err(e) = writer.check(&lx.word) {
             skipped += 1;
             eprintln!("  skipped {}: {e}", lx.word);
             continue;
@@ -118,7 +119,7 @@ pub(crate) fn import_foreign(
             notes: lx.notes.clone(),
             ..Default::default()
         };
-        match add_imported_dictionary_entry(&store, &cfg, &lang_book, &entry) {
+        match writer.add_imported(&entry) {
             Ok(_) => added += 1,
             Err(e) => {
                 skipped += 1;
@@ -126,6 +127,7 @@ pub(crate) fn import_foreign(
             }
         }
     }
+    writer.finish()?;
     eprintln!("\nimported {added} entr(y/ies) into {language}'s Dictionary ({skipped} skipped)");
     Ok(())
 }
@@ -299,6 +301,9 @@ pub(crate) fn import_dictionary_csv(
     let mut skipped_duplicate = 0usize;
     let mut failed = 0usize;
 
+    // 3.18 LI-3 — one writer for the whole CSV (opened after the --new wipe
+    // so its hierarchy snapshot is the post-wipe one).
+    let mut writer = DictionaryWriter::open(&store, &cfg, &lang_book)?;
     for (row_idx, row) in data_rows.into_iter().enumerate() {
         // Row 1 in user terms = header; data starts at row 2.
         let display_row = row_idx + 2;
@@ -319,7 +324,7 @@ pub(crate) fn import_dictionary_csv(
             skipped_comment += 1;
             continue;
         }
-        match add_imported_dictionary_entry(&store, &cfg, &lang_book, &entry) {
+        match writer.add_imported(&entry) {
             Ok((_, bucket)) => {
                 eprintln!("imported `{}` → {language}/Dictionary/{bucket}", entry.word);
                 imported += 1;
@@ -327,7 +332,7 @@ pub(crate) fn import_dictionary_csv(
             Err(e) => {
                 let msg = e.to_string();
                 // The duplicate-detect message comes from
-                // `create_dictionary_entry`; surface as a
+                // `DictionaryWriter::add`; surface as a
                 // skip rather than a failure so an
                 // idempotent re-import doesn't tally the
                 // pre-existing entries as errors.
@@ -341,6 +346,7 @@ pub(crate) fn import_dictionary_csv(
             }
         }
     }
+    writer.finish()?;
 
     eprintln!();
     eprintln!("Import summary for `{language}`");

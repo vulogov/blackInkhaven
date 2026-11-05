@@ -192,6 +192,38 @@ pub struct Store {
     layout: Arc<ProjectLayout>,
 }
 
+/// 3.18 LI-3 — a deferred-flush window from [`Store::begin_batch`]. Call
+/// [`SyncBatch::finish`] to flush and see the error; dropping it flushes
+/// too but can only log.
+pub struct SyncBatch<'a> {
+    store: &'a Store,
+    released: bool,
+}
+
+impl SyncBatch<'_> {
+    /// End the batch; when it was the outermost one, flush the index now.
+    pub fn finish(mut self) -> Result<()> {
+        self.released = true;
+        if self.store.inner.release_sync() {
+            self.store.sync()?;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for SyncBatch<'_> {
+    fn drop(&mut self) {
+        if self.released {
+            return;
+        }
+        if self.store.inner.release_sync() {
+            if let Err(e) = self.store.sync() {
+                tracing::warn!(target: "inkhaven::store", "batch end: vector index flush failed: {e}");
+            }
+        }
+    }
+}
+
 impl Store {
     pub fn open(layout: ProjectLayout, cfg: &Config) -> Result<Self> {
         let root = layout
@@ -744,6 +776,16 @@ symbol/motif proposals you can accept straight into this book.";
         self.inner.sync().map_err(|e| Error::Store(e.to_string()))
     }
 
+    /// 3.18 LI-3 — start a write batch: every `sync()` the per-node write
+    /// paths call is deferred until the returned guard is finished (or
+    /// dropped), when the vector index is flushed once. Content and
+    /// metadata stay durable per write as before; only the derived index
+    /// flush is coalesced. Nestable.
+    pub fn begin_batch(&self) -> SyncBatch<'_> {
+        self.inner.hold_sync();
+        SyncBatch { store: self, released: false }
+    }
+
     /// 1.8.32+ hardening — flush the derived vector index off the calling
     /// thread (used by the editor's routine save path so serializing the HNSW
     /// index never freezes the render thread). See
@@ -893,6 +935,64 @@ symbol/motif proposals you can accept straight into this book.";
         slug_override: Option<&str>,
         position: InsertPosition,
     ) -> Result<Node> {
+        self.create_node_inner(cfg, hierarchy, kind, title, parent, slug_override, position, None)
+    }
+
+    /// 3.18 LI-3 — create a paragraph whose final body is known up front
+    /// (a dictionary entry, an HJSON block). One file write and one
+    /// `add_document` with the real text — the create-then-overwrite path
+    /// wrote a template, embedded it, then re-wrote and re-embedded the
+    /// body. `content_type` lands on the node before it is stored. Fires
+    /// `hook.on_create` and then `hook.on_save`, the sequence the two-step
+    /// path produced.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_paragraph_with_body(
+        &self,
+        cfg: &Config,
+        hierarchy: &Hierarchy,
+        title: &str,
+        parent: Option<&Node>,
+        position: InsertPosition,
+        body: &[u8],
+        content_type: Option<&str>,
+    ) -> Result<Node> {
+        let node = self.create_node_inner(
+            cfg,
+            hierarchy,
+            NodeKind::Paragraph,
+            title,
+            parent,
+            None,
+            position,
+            Some((body, content_type)),
+        )?;
+        // Parity with `update_paragraph_content`: the canon harvest (advisory)
+        // and the save hook.
+        if let Err(e) = self
+            .inner
+            .harvest_paragraph(node.id, &node.path, &node.slug, &node.tags)
+        {
+            tracing::warn!(
+                target: "inkhaven::canon",
+                "canon harvest on create failed (advisory, ignored): {e}"
+            );
+        }
+        fire_hook("hook.on_save", vec![bund_string(&node.id.to_string())]);
+        Ok(node)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn create_node_inner(
+        &self,
+        cfg: &Config,
+        hierarchy: &Hierarchy,
+        kind: NodeKind,
+        title: &str,
+        parent: Option<&Node>,
+        slug_override: Option<&str>,
+        position: InsertPosition,
+        body: Option<(&[u8], Option<&str>)>,
+    ) -> Result<Node> {
         hierarchy.validate_placement(cfg, parent, kind)?;
 
         let slug_seed = slug_override.unwrap_or(title);
@@ -1041,6 +1141,20 @@ symbol/motif proposals you can accept straight into this book.";
             .unwrap_or(false);
 
         let content: Vec<u8> = match kind {
+            NK::Paragraph if body.is_some() => {
+                // 3.18 LI-3 — the final body, once.
+                let (bytes, content_type) = body.unwrap_or((&[], None));
+                if let Some(parent_dir) = abs_path.parent() {
+                    std::fs::create_dir_all(parent_dir)?;
+                }
+                crate::io_atomic::write(&abs_path, bytes)?;
+                node.file = Some(rel_path.to_string_lossy().into_owned());
+                node.word_count = std::str::from_utf8(bytes)
+                    .map(|s| s.split_whitespace().count() as u64)
+                    .unwrap_or(0);
+                node.content_type = content_type.map(str::to_string);
+                bytes.to_vec()
+            }
             NK::Paragraph => {
                 if let Some(parent_dir) = abs_path.parent() {
                     std::fs::create_dir_all(parent_dir)?;

@@ -273,6 +273,7 @@ pub(crate) fn generate_lexicon(
 
     if yes {
         let mut added = 0usize;
+        let mut writer = DictionaryWriter::open(&store, &cfg, &lang_book)?;
         for p in &kept {
             // Commit through the rich-import path so the AI's register /
             // domain tags + the batch era land on the entry (P2.5).
@@ -286,11 +287,12 @@ pub(crate) fn generate_lexicon(
                 era: era.unwrap_or("").trim().to_string(),
                 ..Default::default()
             };
-            match add_imported_dictionary_entry(&store, &cfg, &lang_book, &entry) {
+            match writer.add_imported(&entry) {
                 Ok(_) => added += 1,
                 Err(e) => eprintln!("  skipped {}: {e}", p.form),
             }
         }
+        writer.finish()?;
         eprintln!("\nadded {added} entr(y/ies) to {language}'s Dictionary");
     } else {
         eprintln!(
@@ -451,11 +453,10 @@ pub(crate) fn add_dictionary_entry_impl(
     example: Option<&str>,
     stress: Option<usize>,
 ) -> Result<(crate::store::node::Node, String)> {
-    // LB-3: one NFC pass at the door so the body, the bucket and the
-    // duplicate check all see the same headword.
-    let word = crate::conlang::types::norm::nfc(word);
-    let body = seed_dictionary_entry_body(&word, pos, translation, example, stress);
-    create_dictionary_entry(store, cfg, lang_book, &word, pos, &body)
+    let mut writer = DictionaryWriter::open(store, cfg, lang_book)?;
+    let out = writer.add_seeded(word, pos, translation, example, stress)?;
+    writer.finish()?;
+    Ok(out)
 }
 
 /// The spelling check every interactive door runs on a headword (LB-4 /
@@ -546,143 +547,256 @@ pub(crate) fn add_imported_dictionary_entry(
     lang_book: &crate::store::node::Node,
     entry: &ImportEntry,
 ) -> Result<(crate::store::node::Node, String)> {
-    let word = crate::conlang::types::norm::nfc(&entry.word);
-    let body = if word == entry.word {
-        build_imported_entry_body(entry)
-    } else {
-        build_imported_entry_body(&ImportEntry { word: word.clone(), ..entry.clone() })
-    };
-    create_dictionary_entry(store, cfg, lang_book, &word, &entry.pos, &body)
+    let mut writer = DictionaryWriter::open(store, cfg, lang_book)?;
+    let out = writer.add_imported(entry)?;
+    writer.finish()?;
+    Ok(out)
 }
 
-/// Shared bucket-derivation + duplicate-check +
-/// node-creation + disk/bdslib persistence for both
-/// the interactive and bulk-import paths.  Body is
-/// passed verbatim — callers pick whether they want
-/// the verbose commented template or a compact
-/// concrete entry.
+
+/// 3.18 LI-3 — one batch of dictionary writes.
 ///
-/// LB-6: the headword is keyed once — NFC for the
-/// title and body, case-folded for the duplicate
-/// check, bucketed on its first alphabet letter.  A
-/// homograph (same spelling, different `pos`) is
-/// allowed and titled `word (2)`, `word (3)`, …; the
-/// same spelling with the same (or an empty) `pos` is
-/// the duplicate the error names.  Shape (1–64
-/// characters, no control characters) is enforced
-/// here so no caller can reach the filesystem with an
-/// empty or overlong title.
-pub(crate) fn create_dictionary_entry(
-    store: &Store,
-    cfg: &Config,
-    lang_book: &crate::store::node::Node,
-    word: &str,
-    pos: &str,
-    body: &str,
-) -> Result<(crate::store::node::Node, String)> {
-    use crate::conlang::lexicon::headword;
-    use crate::conlang::types::norm::fold;
-    if let Err(e) = headword::validate_shape(word) {
-        return Err(Error::Config(format!("headword `{}` {e}", word.trim())));
+/// Before this, every entry paid three full hierarchy loads, a re-read and
+/// re-parse of `Meta/overview` for its bucket, a template write + embed
+/// followed by the real body's write + re-embed, and a full flush of the
+/// vector index. The writer loads the hierarchy, the alphabet and the
+/// spelling checker once, keeps its hierarchy snapshot current with the
+/// nodes it creates ([`Hierarchy::insert`]), writes each entry's final
+/// body up front ([`Store::create_paragraph_with_body`]: one embedding
+/// batch per row), and holds a [`crate::store::SyncBatch`] so the index is
+/// flushed once in [`Self::finish`]. The checks are unchanged: LB-6 shape
+/// and NFC keying, the alphabet bucket (declared alphabet first, base
+/// letter fallback), the homograph rule (same spelling + different `pos` is
+/// titled `word (N)`; same or empty `pos` is the duplicate the error names).
+pub(crate) struct DictionaryWriter<'a> {
+    store: &'a Store,
+    cfg: &'a Config,
+    lang_book: crate::store::node::Node,
+    dictionary: crate::store::node::Node,
+    hierarchy: Hierarchy,
+    /// `Meta/overview`, parsed once (a malformed overview is an error, as
+    /// `derive_alphabet_bucket` always treated it).
+    meta: Option<crate::language_entry::MetaOverview>,
+    checker: HeadwordChecker,
+    /// `pos` of the entries this batch created, so the homograph check
+    /// does not read their bodies back.
+    batch_pos: std::collections::HashMap<uuid::Uuid, String>,
+    batch: Option<crate::store::SyncBatch<'a>>,
+}
+
+impl<'a> DictionaryWriter<'a> {
+    /// Load everything a batch needs: one hierarchy, the Dictionary
+    /// chapter, the overview and the spelling checker; and start deferring
+    /// index flushes.
+    pub(crate) fn open(
+        store: &'a Store,
+        cfg: &'a Config,
+        lang_book: &crate::store::node::Node,
+    ) -> Result<Self> {
+        let hierarchy = Hierarchy::load(store)?;
+        let dictionary = hierarchy
+            .children_of(Some(lang_book.id))
+            .into_iter()
+            .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Dictionary"))
+            .cloned()
+            .ok_or_else(|| {
+                Error::Config(format!(
+                    "language `{}` has no `Dictionary` chapter — likely scaffolded with a pre-Phase-A inkhaven",
+                    lang_book.title
+                ))
+            })?;
+        let meta = load_meta_overview_strict(store, &hierarchy, lang_book)?;
+        let checker = HeadwordChecker::load(store, &hierarchy, lang_book)?;
+        Ok(Self {
+            store,
+            cfg,
+            lang_book: lang_book.clone(),
+            dictionary,
+            hierarchy,
+            meta,
+            checker,
+            batch_pos: std::collections::HashMap::new(),
+            batch: Some(store.begin_batch()),
+        })
     }
-    // Idempotent for callers that already normalised; keeps the bucket, the
-    // duplicate check and the node title on the NFC headword (LB-3).
-    let word = &crate::conlang::types::norm::nfc(word.trim());
-    let hierarchy = Hierarchy::load(store)?;
-    let dictionary = hierarchy
+
+    /// The spelling check every door runs (LB-4 / LB-5).
+    pub(crate) fn check(
+        &self,
+        word: &str,
+    ) -> std::result::Result<(), crate::conlang::lexicon::headword::HeadwordError> {
+        self.checker.check(word)
+    }
+
+    /// Which declaration [`Self::check`] consults.
+    pub(crate) fn authority(&self) -> &'static str {
+        self.checker.authority()
+    }
+
+    /// Add an import row (compact HJSON body; LB-3 NFC at the door).
+    pub(crate) fn add_imported(
+        &mut self,
+        entry: &ImportEntry,
+    ) -> Result<(crate::store::node::Node, String)> {
+        let word = crate::conlang::types::norm::nfc(&entry.word);
+        let body = if word == entry.word {
+            build_imported_entry_body(entry)
+        } else {
+            build_imported_entry_body(&ImportEntry { word: word.clone(), ..entry.clone() })
+        };
+        self.add(&word, &entry.pos, &body)
+    }
+
+    /// Add an interactively seeded entry (the commented template body).
+    pub(crate) fn add_seeded(
+        &mut self,
+        word: &str,
+        pos: &str,
+        translation: &str,
+        example: Option<&str>,
+        stress: Option<usize>,
+    ) -> Result<(crate::store::node::Node, String)> {
+        let word = crate::conlang::types::norm::nfc(word);
+        let body = seed_dictionary_entry_body(&word, pos, translation, example, stress);
+        self.add(&word, pos, &body)
+    }
+
+    /// Add one entry with `body` verbatim. Returns the entry node and its
+    /// bucket. A failed row leaves the writer unchanged.
+    pub(crate) fn add(
+        &mut self,
+        word: &str,
+        pos: &str,
+        body: &str,
+    ) -> Result<(crate::store::node::Node, String)> {
+        use crate::conlang::lexicon::headword;
+        use crate::conlang::types::norm::fold;
+        if let Err(e) = headword::validate_shape(word) {
+            return Err(Error::Config(format!("headword `{}` {e}", word.trim())));
+        }
+        // Idempotent for callers that already normalised; keeps the bucket, the
+        // duplicate check and the node title on the NFC headword (LB-3).
+        let word = crate::conlang::types::norm::nfc(word.trim());
+        let bucket = self
+            .meta
+            .as_ref()
+            .and_then(|m| m.bucket_for_word(&word).map(str::to_string))
+            .or_else(|| alphabet_bucket(&word))
+            .ok_or_else(|| Error::Config(format!("could not derive alphabet bucket from `{word}`")))?;
+        let subchapter = match self
+            .hierarchy
+            .children_of(Some(self.dictionary.id))
+            .into_iter()
+            .find(|n| n.kind == NodeKind::Subchapter && n.title == bucket)
+            .cloned()
+        {
+            Some(existing) => existing,
+            None => {
+                let created = self.store.create_node(
+                    self.cfg,
+                    &self.hierarchy,
+                    NodeKind::Subchapter,
+                    &bucket,
+                    Some(&self.dictionary),
+                    None,
+                    InsertPosition::End,
+                )?;
+                self.hierarchy.insert(created.clone());
+                created
+            }
+        };
+        let key = fold(&word);
+        let same_spelling: Vec<crate::store::node::Node> = self
+            .hierarchy
+            .children_of(Some(subchapter.id))
+            .into_iter()
+            .filter(|n| n.kind == NodeKind::Paragraph && fold(homograph_base(&n.title)) == key)
+            .cloned()
+            .collect();
+        let mut title = word.clone();
+        if !same_spelling.is_empty() {
+            let pos_key = fold(pos.trim());
+            let mut conflict = pos_key.is_empty();
+            for existing in &same_spelling {
+                let existing_pos = match self.batch_pos.get(&existing.id) {
+                    Some(p) => fold(p.trim()),
+                    None => self
+                        .store
+                        .get_content(existing.id)?
+                        .and_then(|bytes| {
+                            crate::language_entry::parse(&String::from_utf8_lossy(&bytes)).ok().flatten()
+                        })
+                        .map(|e| fold(e.pos.trim()))
+                        .unwrap_or_default(),
+                };
+                if existing_pos.is_empty() || existing_pos == pos_key {
+                    conflict = true;
+                }
+            }
+            if conflict {
+                let as_pos = if pos.trim().is_empty() {
+                    String::new()
+                } else {
+                    format!(" as {}", pos.trim())
+                };
+                return Err(Error::Config(format!(
+                    "word `{word}` already defined{as_pos} under `{}/Dictionary/{bucket}`",
+                    self.lang_book.title
+                )));
+            }
+            title = format!("{word} ({})", same_spelling.len() + 1);
+        }
+        let entry = self.store.create_paragraph_with_body(
+            self.cfg,
+            &self.hierarchy,
+            &title,
+            Some(&subchapter),
+            InsertPosition::End,
+            body.as_bytes(),
+            Some("hjson"),
+        )?;
+        self.hierarchy.insert(entry.clone());
+        self.batch_pos.insert(entry.id, pos.to_string());
+        Ok((entry, bucket))
+    }
+
+    /// End the batch: flush the vector index once.
+    pub(crate) fn finish(mut self) -> Result<()> {
+        if let Some(batch) = self.batch.take() {
+            batch.finish()?;
+        }
+        Ok(())
+    }
+}
+
+/// `Meta/overview` for bucket derivation, with `derive_alphabet_bucket`'s
+/// strictness: a missing chapter / paragraph / block is `None`; a malformed
+/// block or non-UTF-8 body is an error, so it is noisy enough to fix.
+fn load_meta_overview_strict(
+    store: &Store,
+    hierarchy: &Hierarchy,
+    lang_book: &crate::store::node::Node,
+) -> Result<Option<crate::language_entry::MetaOverview>> {
+    let Some(meta_chapter) = hierarchy
         .children_of(Some(lang_book.id))
         .into_iter()
-        .find(|n| {
-            n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Dictionary")
-        })
-        .cloned()
-        .ok_or_else(|| {
-            Error::Config(format!(
-                "language `{}` has no `Dictionary` chapter — likely scaffolded with a pre-Phase-A inkhaven",
-                lang_book.title
-            ))
-        })?;
-    let bucket = derive_alphabet_bucket(store, &hierarchy, lang_book, word)?
-        .or_else(|| alphabet_bucket(word))
-        .ok_or_else(|| {
-            Error::Config(format!("could not derive alphabet bucket from `{word}`"))
-        })?;
-    let dictionary_kids = hierarchy.children_of(Some(dictionary.id));
-    let subchapter = match dictionary_kids
-        .iter()
-        .find(|n| n.kind == NodeKind::Subchapter && n.title == bucket)
-        .cloned()
-    {
-        Some(existing) => existing.clone(),
-        None => {
-            let hierarchy = Hierarchy::load(store)?;
-            store.create_node(
-                cfg,
-                &hierarchy,
-                NodeKind::Subchapter,
-                &bucket,
-                Some(&dictionary),
-                None,
-                InsertPosition::End,
-            )?
-        }
+        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Meta"))
+    else {
+        return Ok(None);
     };
-    let hierarchy = Hierarchy::load(store)?;
-    let key = fold(word);
-    let same_spelling: Vec<_> = hierarchy
-        .children_of(Some(subchapter.id))
+    let Some(overview) = hierarchy
+        .children_of(Some(meta_chapter.id))
         .into_iter()
-        .filter(|n| n.kind == NodeKind::Paragraph && fold(homograph_base(&n.title)) == key)
-        .collect();
-    let mut title = word.clone();
-    if !same_spelling.is_empty() {
-        let pos_key = fold(pos.trim());
-        let mut conflict = pos_key.is_empty();
-        for existing in &same_spelling {
-            let existing_pos = store
-                .get_content(existing.id)?
-                .and_then(|bytes| {
-                    crate::language_entry::parse(&String::from_utf8_lossy(&bytes)).ok().flatten()
-                })
-                .map(|e| fold(e.pos.trim()))
-                .unwrap_or_default();
-            if existing_pos.is_empty() || existing_pos == pos_key {
-                conflict = true;
-            }
-        }
-        if conflict {
-            let as_pos = if pos.trim().is_empty() {
-                String::new()
-            } else {
-                format!(" as {}", pos.trim())
-            };
-            return Err(Error::Config(format!(
-                "word `{word}` already defined{as_pos} under `{}/Dictionary/{bucket}`",
-                lang_book.title
-            )));
-        }
-        title = format!("{word} ({})", same_spelling.len() + 1);
-    }
-    let hierarchy = Hierarchy::load(store)?;
-    let mut entry = store.create_node(
-        cfg,
-        &hierarchy,
-        NodeKind::Paragraph,
-        &title,
-        Some(&subchapter),
-        None,
-        InsertPosition::End,
-    )?;
-    entry.content_type = Some("hjson".to_string());
-    if let Some(rel) = &entry.file {
-        let abs = store.project_root().join(rel);
-        std::fs::write(&abs, body.as_bytes())
-            .map_err(|e| Error::Store(format!("write entry: {e}")))?;
-    }
-    store
-        .update_paragraph_content(&mut entry, body.as_bytes())
-        .map_err(|e| Error::Store(format!("seed entry: {e}")))?;
-    Ok((entry, bucket))
+        .find(|n| n.kind == NodeKind::Paragraph && n.title.eq_ignore_ascii_case("overview"))
+    else {
+        return Ok(None);
+    };
+    let Some(bytes) = store.get_content(overview.id)? else {
+        return Ok(None);
+    };
+    let body = std::str::from_utf8(&bytes)
+        .map_err(|e| Error::Config(format!("Meta/overview body is not UTF-8: {e}")))?;
+    crate::language_entry::parse_meta_overview(body).map_err(Error::Config)
 }
 
 /// Whether a dictionary entry title names `word`: NFC + case-folded, with
@@ -1250,4 +1364,91 @@ pub(crate) fn seed_dictionary_entry_body(
         example = escape_hjson(example_value),
         stress_line = stress_line,
     )
+}
+
+#[cfg(test)]
+mod writer_tests {
+    use super::*;
+    use crate::project::ProjectLayout;
+
+    fn row(word: &str, pos: &str, gloss: &str) -> ImportEntry {
+        ImportEntry {
+            word: word.into(),
+            pos: pos.into(),
+            translation: gloss.into(),
+            ..Default::default()
+        }
+    }
+
+    /// 3.18 LI-3 — a batch through one `DictionaryWriter` lands the same tree
+    /// the per-row path produced: alphabet buckets, NFC titles, `word (2)`
+    /// homographs, the duplicate error, `hjson` content type, final body in
+    /// the store and on disk — and the vector index is flushed once at
+    /// `finish`, so a fresh open of the project finds it populated.
+    #[test]
+    #[ignore = "opens a real Store (embedding-model download); run locally with --ignored"]
+    fn writer_batch_lands_the_per_row_tree_and_flushes_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        crate::cli::init::run(tmp.path(), true, "empty").unwrap();
+        let layout = ProjectLayout::new(tmp.path());
+        let cfg = Config::load_layered(&layout.config_path()).unwrap();
+        let store = Store::open(layout.clone(), &cfg).unwrap();
+        let book = super::super::init_language(&store, &cfg, "Testlang").unwrap();
+
+        let syl = ["ka", "ta", "pa", "ma", "na", "la"];
+        let mut rows: Vec<ImportEntry> = (0..30)
+            .map(|i| row(&format!("{}{}", syl[i / 6], syl[i % 6]), "noun", &format!("sense {i}")))
+            .collect();
+        rows.push(row("roka", "noun", "stone"));
+        rows.push(row("roka", "verb", "to throw")); // homograph → `roka (2)`
+        rows.push(row("roka", "noun", "again"));    // duplicate → error
+        rows.push(row("e\u{0301}le", "noun", "nfc")); // NFC → `éle`
+
+        let mut writer = DictionaryWriter::open(&store, &cfg, &book).unwrap();
+        let mut ok = 0;
+        let mut errors = Vec::new();
+        for r in &rows {
+            match writer.add_imported(r) {
+                Ok(_) => ok += 1,
+                Err(e) => errors.push(e.to_string()),
+            }
+        }
+        writer.finish().unwrap();
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].contains("already defined as noun"), "{}", errors[0]);
+        assert_eq!(ok, rows.len() - 1, "every non-duplicate row lands: {errors:?}");
+
+        let h = Hierarchy::load(&store).unwrap();
+        let dict = h
+            .children_of(Some(book.id))
+            .into_iter()
+            .find(|n| n.title == "Dictionary")
+            .unwrap();
+        let buckets: Vec<String> = h
+            .children_of(Some(dict.id))
+            .iter()
+            .filter(|n| n.kind == NodeKind::Subchapter)
+            .map(|n| n.title.clone())
+            .collect();
+        assert_eq!(buckets, ["K", "T", "P", "M", "N", "R", "E"]);
+        let r = h.children_of(Some(dict.id)).into_iter().find(|n| n.title == "R").unwrap();
+        let titles: Vec<String> = h.children_of(Some(r.id)).iter().map(|n| n.title.clone()).collect();
+        assert_eq!(titles, ["roka", "roka (2)"]);
+        let e = h.children_of(Some(dict.id)).into_iter().find(|n| n.title == "E").unwrap();
+        let ele = h.children_of(Some(e.id))[0];
+        assert_eq!(ele.title, "éle");
+        assert_eq!(ele.content_type.as_deref(), Some("hjson"));
+        let body = store.get_content(ele.id).unwrap().unwrap();
+        let parsed = crate::language_entry::parse(&String::from_utf8_lossy(&body)).unwrap().unwrap();
+        assert_eq!(parsed.word, "éle");
+        let on_disk = std::fs::read(tmp.path().join(ele.file.as_ref().unwrap())).unwrap();
+        assert_eq!(on_disk, body, "the body is written once, as the final text");
+
+        // The index was flushed at finish: a fresh open sees every vector.
+        let paragraphs = h.iter().filter(|n| n.kind == NodeKind::Paragraph).count();
+        drop(store);
+        let reopened = Store::open(layout, &cfg).unwrap();
+        assert!(!reopened.vector_index_appears_stale());
+        assert!(reopened.vector_count().unwrap() >= 2 * paragraphs);
+    }
 }

@@ -10623,16 +10623,23 @@ impl App {
         };
 
         let mut added = 0usize;
-        for entry in &entries {
-            match crate::cli::language::add_imported_dictionary_entry(
-                &self.store,
-                &cfg,
-                &lang_book,
-                entry,
-            ) {
-                Ok(_) => added += 1,
-                Err(_) => {}
+        // 3.18 LI-3 — one writer for the whole proposal (one hierarchy, one
+        // index flush).
+        let mut writer = match crate::cli::language::DictionaryWriter::open(&self.store, &cfg, &lang_book) {
+            Ok(w) => w,
+            Err(e) => {
+                self.status = format!("Accept: {e}");
+                return;
             }
+        };
+        for entry in &entries {
+            if writer.add_imported(entry).is_ok() {
+                added += 1;
+            }
+        }
+        if let Err(e) = writer.finish() {
+            self.status = format!("Accept: {e}");
+            return;
         }
 
         if let Some(s) = crate::pane::output::active() {

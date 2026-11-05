@@ -212,7 +212,7 @@ fn add(
     // is bdslib-only; the editor reads the .typ
     // file off disk so the on-disk content has to
     // match.  Same pattern as Language entries
-    // (see `cli::language::create_dictionary_entry`).
+    // (see `cli::language::DictionaryWriter::add`).
     if let Some(rel) = &node.file {
         let abs = store.project_root().join(rel);
         std::fs::write(&abs, body.as_bytes())

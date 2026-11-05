@@ -221,6 +221,7 @@ fn build_conlang(store: &Store, cfg: &Config, spec: &FixtureSpec, rng: &mut Xors
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut created = 0usize;
     let mut i = 0usize;
+    let mut writer = lang::DictionaryWriter::open(store, cfg, &book)?;
     while created < spec.conlang_words {
         // CV(C)V or CVCV(C): long enough to be distinct past a few hundred.
         let mut word = String::new();
@@ -239,10 +240,11 @@ fn build_conlang(store: &Store, cfg: &Config, spec: &FixtureSpec, rng: &mut Xors
         let gloss = if i >= glosses.len() { format!("{gloss} {}", i / glosses.len() + 1) } else { gloss };
         let p = pos[i % pos.len()];
         let body = lang::seed_dictionary_entry_body(&word, p, &gloss, None, None);
-        lang::create_dictionary_entry(store, cfg, &book, &word, p, &body)?;
+        writer.add(&word, p, &body)?;
         created += 1;
         i += 1;
     }
+    writer.finish()?;
     Ok(created)
 }
 

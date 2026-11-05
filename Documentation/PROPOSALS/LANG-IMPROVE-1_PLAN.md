@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Track** | LANG-IMPROVE-1 |
-| **Status** | LI-1, LI-2 landed on 3.18.0-dev; LI-3 … LI-10 proposed |
+| **Status** | LI-1, LI-2, LI-3 landed on 3.18.0-dev; LI-4 … LI-10 proposed |
 | **Created** | 2026-11-05 |
 | **Author** | Vladimir Ulogov |
 | **Target version** | 3.18.0 |
@@ -207,6 +207,43 @@ one build; a modified dictionary entry changes `stamp`. Bench: a new
 bench today.
 
 ### LI-3 · Import costs O(rows × nodes) and rewrites the vector index per row
+
+**Status: landed (3.18.0-dev).** `cli::language::DictionaryWriter` owns one
+batch: `open` loads the hierarchy, the Dictionary chapter, `Meta/overview`
+(strict, as `derive_alphabet_bucket` was) and the `HeadwordChecker` once and
+takes a `Store::begin_batch()`; `add` / `add_imported` / `add_seeded` apply
+the unchanged rules (LB-3 NFC, LB-6 shape, alphabet bucket, `word (N)`
+homographs, the duplicate error) against the writer's own hierarchy snapshot,
+which `Hierarchy::insert` (new) keeps current with every bucket and entry it
+creates — one hierarchy load per batch, not three per row; `finish` ends the
+batch and flushes the vector index once. Each entry is written with its final
+body through `Store::create_paragraph_with_body` (new): one atomic file
+write and one `add_document` with the real text (one embedding batch per
+row), the `content_type` on the node before it is stored, then
+`hook.on_create` and `hook.on_save` in the order the template-then-overwrite
+path fired them. The hold is `DocumentStorage::hold_sync` /
+`release_sync`, nestable, honoured by `sync` and `sync_in_background`; the
+`SyncBatch` guard flushes on `finish` (errors surface) or on drop (logged).
+`create_dictionary_entry` is gone — the two wrappers
+(`add_imported_dictionary_entry`, `add_dictionary_entry_impl`) are one-shot
+writers, so the single doors also pay one hierarchy load instead of three.
+Loops converted: CSV import, Toolbox/PolyGlot import, `generate-lexicon
+--yes`, `derive --yes`, daughter lexicon (`derive-lexicon`), the TUI's
+accept-words, Bund `ink.lang.derive_add`, and the fixture's `Benchlang`. Bund
+`ink.lang.add_word` now runs the spelling check like every other door
+(LB-4). Tests: `hierarchy::insert_tests` (sibling and iteration order,
+replace in place), `writer_batch_lands_the_per_row_tree_and_flushes_once`
+(ignored: real store — buckets, NFC title, `roka (2)`, the duplicate error,
+`hjson` content type, body on disk equals the store, and a fresh open finds
+the flushed index). The store-spy counts the proposal asked for are not
+mechanised: the counts are visible by construction (one `Hierarchy::load`
+in `open`, one `create_paragraph_with_body` per row, one flush in `finish`).
+Measured on the scratch project (debug build): a 256-row CSV import went
+from 38.8 s to 16.9 s with byte-identical `export --format csv` output and
+the same bucket tree (≈141 ms → ≈56 ms per row; the rest is the two ONNX
+inferences per entry and DuckDB's per-write commit). The 13-row tutorial
+CSV: 3.4 s → 2.6 s, of which ≈2.5 s is process start and the embedding
+engine.
 
 **Symptom.** `add-word --import` of a few hundred rows takes minutes. Per row,
 `create_dictionary_entry` (`src/cli/language/lexicon.rs:575`) does **three**
