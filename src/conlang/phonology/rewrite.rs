@@ -5,7 +5,10 @@
 //! order to a sequence of string items, each rule a single left-to-right
 //! pass over the previous rule's output (feeding order). A context atom is a
 //! class name (resolved against the supplied class map) or a literal item,
-//! or `#` for a sequence edge. Pure and deterministic.
+//! or `#` for a sequence edge. The target is a sequence of atoms matched at
+//! `seq[i..i + lhs.len()]` and the replacement a sequence of items spliced in
+//! its place (LANG-IMPROVE-1 LI-4), so `a i > e` and `t > t s` both fire.
+//! Pure and deterministic.
 
 use std::collections::BTreeMap;
 
@@ -31,20 +34,18 @@ pub fn apply_ordered(items: &[String], rules: &[AllophonyRule], classes: &Classe
 }
 
 fn apply_rule(seq: &[String], rule: &AllophonyRule, classes: &Classes) -> Vec<String> {
-    let focus_len = if rule.lhs.is_none() { 0 } else { 1 };
+    let focus_len = rule.lhs.len();
     let mut out: Vec<String> = Vec::with_capacity(seq.len());
     let mut i = 0usize;
     while i <= seq.len() {
         let focus_fits = i + focus_len <= seq.len();
         let matched = focus_fits
-            && focus_matches(classes, &rule.lhs, seq, i)
+            && focus_matches(classes, &rule.lhs, &seq[i..i + focus_len])
             && left_matches(classes, &rule.left, &seq[..i])
             && right_matches(classes, &rule.right, &seq[i + focus_len..]);
 
         if matched {
-            if let Some(r) = &rule.rhs {
-                out.push(r.clone());
-            }
+            out.extend(rule.rhs.iter().cloned());
             if focus_len == 0 {
                 if i < seq.len() {
                     out.push(seq[i].clone());
@@ -63,11 +64,10 @@ fn apply_rule(seq: &[String], rule: &AllophonyRule, classes: &Classes) -> Vec<St
     out
 }
 
-fn focus_matches(classes: &Classes, lhs: &Option<PatternAtom>, seq: &[String], i: usize) -> bool {
-    match lhs {
-        None => true,
-        Some(atom) => i < seq.len() && atom_matches(classes, atom, &seq[i]),
-    }
+/// Every target atom matches its segment, in order (`focus.len() == lhs.len()`
+/// is the caller's guarantee).
+fn focus_matches(classes: &Classes, lhs: &[PatternAtom], focus: &[String]) -> bool {
+    lhs.len() == focus.len() && lhs.iter().zip(focus).all(|(atom, seg)| atom_matches(classes, atom, seg))
 }
 
 fn left_matches(classes: &Classes, atoms: &[PatternAtom], left: &[String]) -> bool {

@@ -352,12 +352,16 @@ pub(crate) fn propose_dialect(
         }
     }
     // Validate each rule parses as an AllophonyRule; drop the ones that don't.
+    // Resolve the keepers against the inventory so `ai > e` reads as `a i > e`.
     let valid: Vec<(String, AllophonyRule)> = rules
         .drain(..)
         .filter_map(|r| {
             serde_hjson::from_str::<AllophonyRule>(&format!("{{ rule: \"{r}\" }}"))
                 .ok()
-                .map(|ar| (r, ar))
+                .map(|mut ar| {
+                    phon.resolve_rules(std::slice::from_mut(&mut ar));
+                    (r, ar)
+                })
         })
         .collect();
     if valid.is_empty() {

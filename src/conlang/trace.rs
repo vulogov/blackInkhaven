@@ -55,10 +55,13 @@ pub struct TraceReport {
     pub merged_words: usize,
 }
 
-/// Parse `rule_str` into a rewrite rule (`s > ʃ / _ i`, `d > t / _ #`, …).
-fn parse_rule(rule_str: &str) -> Option<AllophonyRule> {
+/// Parse `rule_str` into a rewrite rule (`s > ʃ / _ i`, `d > t / _ #`, …),
+/// resolved against `phon`'s inventory so `ai > e` reads as `a i > e` (LI-4).
+fn parse_rule(phon: &Phonology, rule_str: &str) -> Option<AllophonyRule> {
     let json = format!("{{ \"rule\": {} }}", serde_json::to_string(rule_str).ok()?);
-    serde_hjson::from_str::<AllophonyRule>(&json).ok()
+    let mut rule = serde_hjson::from_str::<AllophonyRule>(&json).ok()?;
+    phon.resolve_rules(std::slice::from_mut(&mut rule));
+    Some(rule)
 }
 
 /// Trace the consequences of `rule_str` across `entries` under `phon`. `sample`
@@ -71,7 +74,7 @@ pub fn trace_sound_change(
 ) -> TraceReport {
     let mut r = TraceReport { rule: rule_str.to_string(), ..Default::default() };
 
-    let Some(rule) = parse_rule(rule_str) else {
+    let Some(rule) = parse_rule(phon, rule_str) else {
         return r; // rule_valid stays false
     };
     r.rule_valid = true;
@@ -169,6 +172,18 @@ mod tests {
         assert_eq!(r.new_homophones.len(), 1);
         assert_eq!(r.new_homophones[0].form, "ʃa");
         assert_eq!(r.merged_words, 2);
+    }
+
+    #[test]
+    fn a_joined_sequence_target_is_resolved_against_the_inventory() {
+        // LI-4: `ai > e` traces as a two-segment change.
+        let p = phon();
+        let entries = [entry("kai", "sea"), entry("ka", "land")];
+        let r = trace_sound_change(&p, &entries, "ai > e / _ #", 10);
+        assert!(r.rule_valid);
+        assert_eq!(r.affected, 1, "{r:?}");
+        assert_eq!(r.changes[0].word, "kai");
+        assert_eq!(r.changes[0].to, "ke");
     }
 
     #[test]

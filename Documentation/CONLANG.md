@@ -49,10 +49,14 @@ HJSON blocks you add to those chapters; the book stays the home of record.
 }
 ```
 
-**SPE rule notation** (allophony, tone sandhi): `LHS > RHS / LEFT _ RIGHT`.
-`_` marks the target, `#` a word boundary, `∅`/`0` the empty string (insertion
-on the left, deletion on the right). A context token is a class name when one
-is declared, else a literal phoneme.
+**SPE rule notation** (allophony, tone sandhi, sound changes, ablaut):
+`LHS > RHS / LEFT _ RIGHT`. `_` marks the target, `#` a word boundary, `∅`/`0`
+the empty string (insertion on the left, deletion on the right). A token is a
+class name when one is declared, else a literal phoneme. Target and
+replacement are sequences like the contexts: `a i > e / _ #` monophthongises,
+`t > t s / _ i` affricates into two segments. A joined token that is not a
+declared phoneme or class (`ai > e`, `t > ts`) is split against the inventory,
+so both spellings are the same rule; a declared `ai` phoneme stays one segment.
 
 Inspectors: `generate-word`, `syllabify --word`, `ipa --word` (surface),
 `stress --word`, `romanize --text [--reverse] [--scheme]`, `tone --tones`.
@@ -65,12 +69,12 @@ the same findings under *Blocks* with their location (`constraints[2]`,
 `templates.root[0] "C V N"`, `allophony[1] "ai > e / _"`; `--json` carries
 them under `blocks.findings`). Errors are things that silently never apply: an
 unknown constraint kind, a class named in a constraint or template but not
-declared under `classes`, a rule target or context that is neither a phoneme
-nor a class, or a target that spans two phonemes (`ai > e` — declare `ai` as a
-phoneme or write one rule per segment). Warnings cover a class member or
-bigram outside the inventory, a duplicate phoneme, and a replacement that
-spans several phonemes. Malformed HJSON under Phonology or Grammar is reported
-by paragraph title.
+declared under `classes`, or a rule target or context that is neither a
+phoneme nor a class. Warnings cover a class member or bigram outside the
+inventory, a duplicate phoneme, and a joined rule token whose split is
+ambiguous (`abc` over an inventory with both `ab` and `bc`: it is read greedily
+as `ab c`, and the warning shows the other reading — write it with spaces).
+Malformed HJSON under Phonology or Grammar is reported by paragraph title.
 
 **Segmentation is case- and normalisation-insensitive.** Every word, headword,
 grapheme, class member and rule atom is NFC-normalised when loaded or typed, and

@@ -276,6 +276,24 @@ impl LanguageModel {
             }
         }
 
+        // LI-4: every rule set applied over the inventory resolves joined
+        // tokens against it, exactly as the block's own allophony did in
+        // `Phonology::normalize`. Without a phonology there is nothing to
+        // resolve against and the rules stay as written.
+        if let Some(p) = phonology.as_ref() {
+            if let Some(d) = diachronics.as_mut() {
+                p.resolve_rules(&mut d.rules);
+            }
+            if let Some(m) = morphology.as_mut() {
+                for morpheme in &mut m.morphemes {
+                    p.resolve_rules(&mut morpheme.rules);
+                }
+            }
+            for v in &mut varieties.varieties {
+                p.resolve_rules(&mut v.sound_changes);
+            }
+        }
+
         // Dictionary, Texts, Hypotheses: whole subtrees, tree order.
         let entries = chapters("Dictionary")
             .first()
@@ -434,9 +452,12 @@ mod tests {
         classes: { C: ["k", "t"], V: ["a", "i"] },
         constraints: [ { kind: "forbid_in_coda", classes: ["NoSuchClass"] } ]
     }"#;
-    const MORPH: &str = r#"{ morphemes: [ { id: "pl", gloss: "PL", form: "i", position: "suffix" } ] }"#;
+    const MORPH: &str = r#"{ morphemes: [
+        { id: "pl", gloss: "PL", form: "i", position: "suffix" },
+        { id: "past", gloss: "PST", process: "ablaut", rules: [ { rule: "ai > a / _ #" } ] }
+    ] }"#;
     const GRAMMAR: &str = r#"{ grammar: { word_order: "sov" } }"#;
-    const VAR_A: &str = r#"{ varieties: [ { id: "north", name: "Northern" } ] }"#;
+    const VAR_A: &str = r#"{ varieties: [ { id: "north", name: "Northern", sound_changes: [ { rule: "ai > i / _ #" } ] } ] }"#;
     const VAR_B: &str = r#"{ varieties: [ { id: "North", name: "dup" }, { id: "south", name: "Southern" } ] }"#;
     const ENTRY_KATA: &str = r#"{ word: "kata", type: "noun", translation: "stone" }"#;
     const ENTRY_TIKA: &str = r#"{ word: "tika", type: "verb", translation: "to see" }"#;
@@ -501,7 +522,7 @@ mod tests {
         // validate() ran once: the undeclared class is reported.
         assert!(m.findings.iter().any(|x| x.message.contains("NoSuchClass")), "{:?}", m.findings);
         // morphology found under Grammar (no Morphology chapter).
-        assert_eq!(m.morph().morphemes.len(), 1);
+        assert_eq!(m.morph().morphemes.len(), 2);
         assert_eq!(m.typology().get("word_order").map(String::as_str), Some("sov"));
         assert_eq!(m.grammar_node.as_ref().map(|n| n.id), Some(f.grammar_para));
         // varieties merged across paragraphs, ids deduplicated case-insensitively.
@@ -513,6 +534,24 @@ mod tests {
         let words: Vec<&str> = m.entries.iter().map(|e| e.word.as_str()).collect();
         assert_eq!(words, ["kata", "tika"]);
         assert!(m.texts.is_empty() && m.hypotheses.is_empty());
+    }
+
+    #[test]
+    fn rule_sets_outside_the_block_are_resolved_against_the_inventory() {
+        // LI-4: diachronic, ablaut and variety rules written as `ai > …` read
+        // as the two declared segments `a i`, like the block's own allophony.
+        let body = format!(
+            "{}, diachronics: {{ proto: \"Old\", rules: [ {{ rule: \"ai > e / _ #\" }} ] }} }}",
+            PHON.trim_end().trim_end_matches('}')
+        );
+        let f = fixture(&body);
+        let m = LanguageModel::build(&f.hierarchy, &f.book, &f.contents);
+        let two = |lhs: &[crate::conlang::types::PatternAtom]| lhs.len() == 2;
+        assert!(two(&m.diachronics.as_ref().expect("diachronics").rules[0].lhs));
+        let ablaut = m.morph().morphemes.iter().find(|x| x.id == "past").expect("ablaut morpheme");
+        assert!(two(&ablaut.rules[0].lhs), "{:?}", ablaut.rules[0].lhs);
+        let north = m.varieties.varieties.iter().find(|v| v.id == "north").expect("north");
+        assert!(two(&north.sound_changes[0].lhs), "{:?}", north.sound_changes[0].lhs);
     }
 
     #[test]

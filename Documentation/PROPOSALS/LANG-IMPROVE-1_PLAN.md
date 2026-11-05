@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Track** | LANG-IMPROVE-1 |
-| **Status** | LI-1, LI-2, LI-3 landed on 3.18.0-dev; LI-4 … LI-10 proposed |
+| **Status** | LI-1 … LI-4 landed on 3.18.0-dev; LI-5 … LI-10 proposed |
 | **Created** | 2026-11-05 |
 | **Author** | Vladimir Ulogov |
 | **Target version** | 3.18.0 |
@@ -319,6 +319,33 @@ parser wrapper (`src/conlang/trace.rs:59`) follows.
 `monophthongisation_ai_to_e`, `affrication_t_to_t_s_emits_two_segments`,
 `sequence_target_with_class_in_context`; parser tests for the whitespace and
 inventory-split forms; the validate test at `validate.rs:376` inverted.
+
+**Status: landed (3.18.0-dev).** `AllophonyRule.lhs: Vec<PatternAtom>` and
+`rhs: Vec<String>` (empty = insertion / deletion); `parse_rule` splits target
+and replacement on whitespace like a context and rejects `#` on either side.
+`rewrite::apply_rule` matches `seq[i..i + lhs.len()]` atom by atom and splices
+`rhs`. The inventory split lives on the rule, not the matcher:
+`AllophonyRule::resolve(units, classes)` turns a single token that is neither a
+unit nor a class into its greedy longest-unit cover (`split_units`, shared with
+`validate`), for target, replacement *and* contexts; `Phonology::normalize`
+runs it over allophony (phonemes + classes) and tone sandhi (tones + tone
+classes), and the new `Phonology::resolve_rules` is run by `LanguageModel::build`
+over diachronic rules, every morpheme's ablaut `rules` and every variety's
+`sound_changes`, by `trace` on the pending rule and by `propose-dialect` on the
+model's proposals, so all five engines read `ai > e` as `a i > e`. Validate
+keeps the sequence finding only for a rule built in code without `resolve`
+(reworded "is read as one segment — write it as `a i`"), and adds a *warning*
+when the author's joined token (`AllophonyRule::source_tokens`) has more than
+one cover (`alternative_split`), showing both readings. `CONLANG.md` describes
+sequence rules and the new warning. Tests as planned plus `whitespace_splits_
+target_and_replacement_into_sequences`, `resolve_splits_joined_tokens_against_
+the_inventory`, `split_units_is_greedy_and_alternative_split_finds_ambiguity`,
+`from_hjson_splits_joined_rule_tokens_against_the_inventory`, `a_two_tone_
+target_rewrites_the_pair`, `a_sequence_change_monophthongises`, `a_joined_
+sequence_target_is_resolved_against_the_inventory` (trace), `rule_sets_outside_
+the_block_are_resolved_against_the_inventory` (model), and in validate
+`an_ambiguous_joined_token_warns_with_both_readings` and `a_hand_built_sequence_
+symbol_is_still_reported`.
 
 ### LI-5 · The declared alphabet names buckets but does not order anything
 
