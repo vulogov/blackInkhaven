@@ -60,12 +60,19 @@ flattens).
 Each Text document's RTF body is parsed with `rtf-parser-tt`
 and walked to emit Typst markup:
 
-- **Bold** runs → `**bold text**`
+- **Bold** runs → `*bold text*`
 - *Italic* runs → `_italic text_`
 - Paragraph breaks → blank lines
-- Typst-meta characters (`*`, `_`, `@`, `<`, `>`, `#`, `\`)
+- Footnotes → `#footnote[…]` at the point of reference
+- Non-ASCII text is decoded by the parser through the document's
+  code page (`\ansicpg`) or the font's charset — Windows Scrivener's
+  cp1251 Cyrillic, cp1252 curly quotes, Central-European fonts,
+  LibreOffice's `\uN\'xx` form, raw UTF-8 — so prose arrives as
+  the characters you typed.
+- Typst-meta characters (`*`, `_`, `@`, `<`, `>`, `#`, `$`, `\`)
   are escaped with a leading `\`
-- Tables, footnotes, embedded images: silently dropped. The
+- Hidden text, page headers/footers, table structure (the cell
+  text survives, tab-separated), embedded images: dropped. The
   prose survives; embedded media doesn't. (If you need this,
   please file an issue with a sample document — single-file
   Scrivener has a deep grammar and the importer focuses on

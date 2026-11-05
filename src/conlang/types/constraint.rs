@@ -20,6 +20,9 @@ pub enum PhonotacticConstraint {
     ForbidInOnset(Vec<String>),
     /// No syllable coda may contain a phoneme from any listed class. (P1.2)
     ForbidInCoda(Vec<String>),
+    /// A `kind` the parser does not recognise (LB-1). Kept so the rest of the
+    /// block still loads; never fires; reported by `Phonology::validate`.
+    Unknown(String),
     /// Enforce the Sonority Sequencing Principle: within each syllable,
     /// onset sonority strictly rises to the nucleus and coda sonority
     /// strictly falls away from it. (P1.2)
@@ -74,7 +77,10 @@ impl TryFrom<RawConstraint> for PhonotacticConstraint {
                 Ok(Self::ForbidInCoda(r.classes.ok_or("forbid_in_coda needs `classes`")?))
             }
             "sonority_sequencing" | "sonority" => Ok(Self::SonoritySequencing),
-            other => Err(format!("unknown constraint kind `{other}`")),
+            // LB-1: an unknown kind used to fail the whole phonology parse — and
+            // with it every language command. It is now carried as `Unknown`
+            // and surfaced by `Phonology::validate` / `language doctor`.
+            other => Ok(Self::Unknown(other.to_string())),
         }
     }
 }

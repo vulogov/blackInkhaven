@@ -152,6 +152,10 @@ pub fn assemble_book(
     let _snippets_written =
         emit_snippets_directory(layout, &hierarchy, &out_book, cfg, &jinja_env)?;
 
+    // Shared on-disk images (`books/<slug>/images/`) → `<out_book>/images/`, so
+    // prose can use root-absolute `#image("/images/…")` at any depth.
+    emit_book_images(layout, &book_node.slug, &out_book)?;
+
     // Root .typ for the book — applies settings, calls wrap_book on
     // the assembled subtree. The Typst chapter's index.typ body is
     // appended so any user setup (image search paths, imports of
@@ -546,6 +550,28 @@ fn emit_snippets_directory(
         count += 1;
     }
     Ok(count)
+}
+
+/// Copy `<project>/books/<book-slug>/images/` (plain files, not Image nodes)
+/// to `<out_book>/images/`. The assembly wipes `<out_book>` each run and Typst
+/// can't read outside it, so this is the only way a shared images folder
+/// reaches the compile. Returns whether anything was copied; absent → no-op.
+fn emit_book_images(layout: &ProjectLayout, book_slug: &str, out_book: &Path) -> Result<bool> {
+    let src = layout.books_path().join(book_slug).join("images");
+    // `copy_dir_recursive` skips symlinked *entries*, but `is_dir()` and
+    // `read_dir` would follow a symlink at `images/` itself — a hostile
+    // project could point it at `~/.ssh` or `/` and have that copied into
+    // the artefacts. Treat a symlinked folder like an absent one, the same
+    // way the Scrivener importer treats a symlinked `.rtf`.
+    let is_symlink = std::fs::symlink_metadata(&src)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false);
+    if is_symlink || !src.is_dir() {
+        return Ok(false);
+    }
+    crate::fsutil::copy_dir_recursive(&src, &out_book.join("images"))
+        .map_err(Error::Io)?;
+    Ok(true)
 }
 
 /// STRUCT-1 — build the `minijinja` environment from the Snippets system book.
@@ -1402,6 +1428,41 @@ mod tests {
         let written = std::fs::read_to_string(out.join("snippets/warn.typ")).unwrap();
         assert!(written.contains("#block[Careful here.]"), "{written}");
         assert!(!written.contains("= warn"), "heading must be stripped: {written}");
+    }
+
+    #[test]
+    fn emit_book_images_copies_tree_and_absent_is_noop() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let layout = ProjectLayout::new(root);
+        let out = root.join("out");
+        assert!(!emit_book_images(&layout, "sc", &out).unwrap());
+        assert!(!out.join("images").exists());
+
+        let media = root.join("books/sc/images/media");
+        std::fs::create_dir_all(&media).unwrap();
+        std::fs::write(media.join("image1.png"), b"png").unwrap();
+        assert!(emit_book_images(&layout, "sc", &out).unwrap());
+        assert_eq!(std::fs::read(out.join("images/media/image1.png")).unwrap(), b"png");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn emit_book_images_ignores_a_symlinked_images_dir() {
+        // A symlinked `books/<slug>/images` could point anywhere on the host;
+        // it must be treated like an absent folder, not followed.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let layout = ProjectLayout::new(root);
+        let outside = root.join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("secret.png"), b"secret").unwrap();
+        std::fs::create_dir_all(root.join("books/sc")).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("books/sc/images")).unwrap();
+
+        let out = root.join("out");
+        assert!(!emit_book_images(&layout, "sc", &out).unwrap());
+        assert!(!out.join("images").exists(), "symlinked images/ must not be copied");
     }
 
     #[test]

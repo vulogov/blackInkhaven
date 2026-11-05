@@ -80,7 +80,8 @@ pub fn quadrat_typst(
         let dx = (cell.x * 100.0).round();
         let dy = (cell.y * 100.0).round();
         places.push_str(&format!(
-            "  #place(dx: {dx}%, dy: {dy}%, text(font: \"{family}\", size: {h} * {size})[#\"\\u{{{cp:04X}}}\"])\n",
+            "  #place(dx: {dx}%, dy: {dy}%, text(font: {family}, size: {h} * {size})[#\"\\u{{{cp:04X}}}\"])\n",
+            family = crate::conlang::output::typst_string(family),
             h = cell.h,
             cp = *ch as u32,
         ));

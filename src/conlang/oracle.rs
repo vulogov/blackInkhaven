@@ -50,15 +50,18 @@ pub fn check_word(
     word: &str,
 ) -> OracleReport {
     let mut r = OracleReport { word: word.to_string(), ..Default::default() };
-    let seq = phon.segment(&word.to_lowercase());
+    let seq = phon.segment(word);
     if seq.is_empty() {
         r.findings.push(Finding { level: "phonotactics", message: "empty or unsegmentable".into() });
         return r;
     }
 
     // ── Level 1: phonotactics ──
-    let unknown: Vec<&str> =
-        seq.iter().filter(|s| phon.phoneme(s).is_none()).map(|s| s.as_str()).collect();
+    let unknown: Vec<String> = seq
+        .iter()
+        .filter(|s| phon.phoneme(s).is_none())
+        .map(|s| crate::conlang::types::norm::describe_segment(s))
+        .collect();
     if !unknown.is_empty() {
         r.findings.push(Finding {
             level: "phonotactics",
@@ -258,6 +261,38 @@ mod tests {
         Morphology::from_hjson(r#"{ morphemes: [ { id: "pl", gloss: "PL", form: "i", position: "suffix" } ] }"#)
             .unwrap()
             .unwrap()
+    }
+
+    #[test]
+    fn check_word_is_case_and_normalisation_insensitive() {
+        // LB-9: a capitalised headword is the same word.
+        let upper = check_word(&phon(), &morph(), &[], "Kata");
+        let lower = check_word(&phon(), &morph(), &[], "kata");
+        assert_eq!(upper.findings.len(), lower.findings.len());
+        assert!(!upper.findings.iter().any(|f| f.message.contains("not in the inventory")));
+
+        // LB-3: an inventory declared with a decomposed `ã` accepts the
+        // precomposed spelling and vice versa.
+        let body = r#"{ phonemes: [ { ipa: "t", kind: "consonant" }, { ipa: "ã", kind: "vowel" } ] }"#;
+        let p = Phonology::from_hjson(body).unwrap().unwrap();
+        for w in ["t\u{00E3}", "ta\u{0303}"] {
+            let r = check_word(&p, &morph(), &[], w);
+            assert!(
+                !r.findings.iter().any(|f| f.message.contains("not in the inventory")),
+                "{w:?}: {:?}",
+                r.findings
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_combining_mark_is_named_by_codepoint() {
+        // `k` + U+0303 has no precomposed form, so NFC leaves the tilde as a
+        // separate combining mark; it is foreign to the inventory and must not
+        // print as a bare accent.
+        let r = check_word(&phon(), &morph(), &[], "k\u{0303}a");
+        let msg = &r.findings.iter().find(|f| f.message.contains("not in the inventory")).unwrap().message;
+        assert!(msg.contains("U+0303"), "{msg}");
     }
 
     fn entry(w: &str) -> DictionaryEntry {

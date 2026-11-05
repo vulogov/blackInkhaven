@@ -44,6 +44,27 @@ pub struct AllophonyRule {
     pub source: String,
 }
 
+impl PatternAtom {
+    /// NFC-normalise a symbol atom (LB-3); a boundary is unchanged.
+    pub fn normalize(&mut self) {
+        if let PatternAtom::Symbol(s) = self {
+            super::norm::nfc_in_place(s);
+        }
+    }
+}
+
+impl AllophonyRule {
+    /// NFC-normalise the target, replacement and both contexts (LB-3).
+    pub fn normalize(&mut self) {
+        self.lhs.iter_mut().for_each(PatternAtom::normalize);
+        if let Some(r) = self.rhs.as_mut() {
+            super::norm::nfc_in_place(r);
+        }
+        self.left.iter_mut().for_each(PatternAtom::normalize);
+        self.right.iter_mut().for_each(PatternAtom::normalize);
+    }
+}
+
 /// Wire form: `{ name: "palatalization", rule: "k > tʃ / _ i", optional: false }`.
 #[derive(Deserialize)]
 struct RawRule {

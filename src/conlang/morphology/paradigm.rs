@@ -65,7 +65,7 @@ pub fn generate(
             // (ablaut, reduplication, infix, circumfix) reshape it in cell order,
             // and their glosses sit just after the root. Outer prefixes and
             // suffixes wrap the finished stem, ordered by `precedence`.
-            let mut stem = phon.segment(&root.to_lowercase());
+            let mut stem = phon.segment(root);
             let mut inner_gloss: Vec<String> = Vec::new();
             let mut prefixes = Vec::new();
             let mut suffixes = Vec::new();

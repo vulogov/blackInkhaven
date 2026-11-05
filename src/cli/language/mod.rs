@@ -113,6 +113,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
                     &translation,
                     example.as_deref(),
                     stress,
+                    force,
                 )
             }
         }
@@ -923,26 +924,7 @@ pub(crate) fn remove_dictionary_entry(
     word: &str,
 ) -> Result<()> {
     let hierarchy = Hierarchy::load(store)?;
-    let dictionary = hierarchy
-        .children_of(Some(lang_book.id))
-        .into_iter()
-        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Dictionary"))
-        .cloned()
-        .ok_or_else(|| Error::Config("language has no Dictionary chapter".into()))?;
-    let bucket = derive_alphabet_bucket(store, &hierarchy, lang_book, word)?
-        .or_else(|| alphabet_bucket(word))
-        .ok_or_else(|| Error::Config(format!("could not derive alphabet bucket from `{word}`")))?;
-    let subchapter = hierarchy
-        .children_of(Some(dictionary.id))
-        .into_iter()
-        .find(|n| n.kind == NodeKind::Subchapter && n.title.eq_ignore_ascii_case(&bucket))
-        .cloned()
-        .ok_or_else(|| Error::Config(format!("`{word}` isn't defined (no `{bucket}` bucket)")))?;
-    let entry = hierarchy
-        .children_of(Some(subchapter.id))
-        .into_iter()
-        .find(|n| n.kind == NodeKind::Paragraph && n.title.eq_ignore_ascii_case(word))
-        .cloned()
+    let (_, entry) = find_dictionary_entry(store, &hierarchy, lang_book, word)?
         .ok_or_else(|| Error::Config(format!("word `{word}` not found")))?;
     let ids = hierarchy.collect_subtree(entry.id);
     let fs_rel = entry
@@ -1394,7 +1376,7 @@ fn warn_unknown_tokens(text: &str, entries: &[crate::language_entry::DictionaryE
 /// Syllabified surface pronunciation of a headword (e.g. `ka.ta`), or `None`
 /// when it doesn't read as the language's phonemes.
 pub(crate) fn pronounce(phon: &crate::conlang::Phonology, word: &str) -> Option<String> {
-    let seq = phon.segment(&word.to_lowercase());
+    let seq = phon.segment(word);
     if seq.is_empty() || !seq.iter().all(|s| phon.phoneme(s).is_some()) {
         return None;
     }
@@ -1440,10 +1422,25 @@ pub(crate) fn load_phonology(
         };
         let body = String::from_utf8_lossy(&bytes);
         match crate::conlang::Phonology::from_hjson(&body) {
-            Ok(Some(p)) if !p.phonemes.is_empty() => return Ok(Some(p)),
+            Ok(Some(p)) if !p.phonemes.is_empty() => {
+                // LB-1 / LB-2: structural problems (an unknown constraint kind,
+                // an undeclared class, a rule that can never match) no longer
+                // fail the load. Warn once per finding; `language doctor`
+                // lists the same findings with their locations.
+                for f in p.validate() {
+                    eprintln!(
+                        "phonology {}: Phonology/{}: {}: {}",
+                        f.severity.as_str(),
+                        para.title,
+                        f.location,
+                        f.message
+                    );
+                }
+                return Ok(Some(p));
+            }
             Ok(_) => continue,
             // A malformed block under Phonology is worth surfacing.
-            Err(e) => return Err(Error::Config(e)),
+            Err(e) => return Err(Error::Config(format!("Phonology/{}: {e}", para.title))),
         }
     }
     Ok(None)
@@ -1539,11 +1536,9 @@ fn extract_hjson_examples(body: &str) -> Option<Vec<String>> {
 /// `inkhaven language
 /// remove-word <language> <word>`.  Mirror of
 /// `add-word`: resolves the language sub-book by
-/// case-insensitive title; finds the Dictionary
-/// chapter; locates the bucket subchapter via the
-/// same alphabet-bucket derivation
-/// (`Meta/overview.alphabet` consultation first,
-/// first-char fallback); deletes the entry
+/// case-insensitive title; locates the entry via
+/// `find_dictionary_entry` (the derived bucket
+/// first, then every bucket); deletes the entry
 /// paragraph.  Errors when the entry doesn't
 /// exist rather than silently no-op-ing so the
 /// caller knows their `remove-word foo` against
@@ -1579,51 +1574,13 @@ fn remove_word(project: &Path, language: &str, word: &str) -> Result<()> {
         .ok_or_else(|| {
             Error::Config(format!("language `{language}` not found"))
         })?;
-    let dictionary = hierarchy
-        .children_of(Some(lang_book.id))
-        .into_iter()
-        .find(|n| {
-            n.kind == NodeKind::Chapter
-                && n.title.eq_ignore_ascii_case("Dictionary")
-        })
-        .cloned()
+    // The bucket add-word would derive is searched first, then every bucket
+    // (entries filed under a pre-3.17 bucket are still found by name).
+    let (subchapter, entry) = find_dictionary_entry(&store, &hierarchy, &lang_book, word)?
         .ok_or_else(|| {
-            Error::Config(format!(
-                "language `{language}` has no Dictionary chapter"
-            ))
+            Error::Config(format!("word `{word}` not found under `{language}/Dictionary`"))
         })?;
-    // Same bucket derivation as add-word.
-    let bucket = derive_alphabet_bucket(&store, &hierarchy, &lang_book, word)?
-        .or_else(|| alphabet_bucket(word))
-        .ok_or_else(|| {
-            Error::Config(format!("could not derive alphabet bucket from `{word}`"))
-        })?;
-    let subchapter = hierarchy
-        .children_of(Some(dictionary.id))
-        .into_iter()
-        .find(|n| {
-            n.kind == NodeKind::Subchapter
-                && n.title.eq_ignore_ascii_case(&bucket)
-        })
-        .cloned()
-        .ok_or_else(|| {
-            Error::Config(format!(
-                "no bucket subchapter `{bucket}` under `{language}/Dictionary` — `{word}` isn't defined"
-            ))
-        })?;
-    let entry = hierarchy
-        .children_of(Some(subchapter.id))
-        .into_iter()
-        .find(|n| {
-            n.kind == NodeKind::Paragraph
-                && n.title.eq_ignore_ascii_case(word)
-        })
-        .cloned()
-        .ok_or_else(|| {
-            Error::Config(format!(
-                "word `{word}` not found under `{language}/Dictionary/{bucket}`"
-            ))
-        })?;
+    let bucket = subchapter.title.clone();
     let ids = hierarchy.collect_subtree(entry.id);
     // Entry is a Paragraph — its on-disk path lives
     // in `entry.file` (no children to walk for the
@@ -1667,43 +1624,6 @@ mod tests {
     /// each template through serde_hjson directly to
     /// catch syntax regressions at test time, not at
     /// the user's first `+` press.
-    #[test]
-    fn first_unknown_letter_passes_when_all_chars_in_inventory() {
-        let inv = vec!["A".into(), "B".into(), "C".into()];
-        assert_eq!(first_unknown_letter("abc", &inv), None);
-        // Case-insensitive.
-        assert_eq!(first_unknown_letter("ABC", &inv), None);
-        // Punctuation always passes.
-        assert_eq!(first_unknown_letter("a-b'c", &inv), None);
-        // Whitespace always passes.
-        assert_eq!(first_unknown_letter("a b c", &inv), None);
-    }
-
-    #[test]
-    fn first_unknown_letter_returns_first_violation() {
-        let inv = vec!["A".into(), "B".into()];
-        assert_eq!(first_unknown_letter("abz", &inv), Some('z'));
-        // First violation wins.
-        assert_eq!(first_unknown_letter("xyz", &inv), Some('x'));
-    }
-
-    #[test]
-    fn first_unknown_letter_handles_multichar_inventory_entries() {
-        // Paired-case Latin: each alphabet entry is
-        // a two-char string but we look for the char
-        // as substring.
-        let inv = vec!["Aa".into(), "Bb".into(), "Cc".into()];
-        assert_eq!(first_unknown_letter("aBc", &inv), None);
-        assert_eq!(first_unknown_letter("aBz", &inv), Some('z'));
-    }
-
-    #[test]
-    fn first_unknown_letter_handles_non_latin() {
-        let inv = vec!["А".into(), "Б".into()];
-        assert_eq!(first_unknown_letter("аб", &inv), None);
-        assert_eq!(first_unknown_letter("абя", &inv), Some('я'));
-    }
-
     #[test]
     fn csv_parser_handles_quoted_fields() {
         let csv = "word,type,translation\n\
@@ -1899,6 +1819,29 @@ mod tests {
         assert_eq!(alphabet_bucket("ярости"), Some("Я".to_string()));
         // Greek 'α' uppercases to 'Α'.
         assert_eq!(alphabet_bucket("αυτός"), Some("Α".to_string()));
+    }
+
+    #[test]
+    fn entry_titles_match_folded_with_homograph_suffix_rules() {
+        assert!(entry_title_matches("pata", "pata"));
+        assert!(entry_title_matches("Pata", "PATA"));
+        assert!(entry_title_matches("\u{014A}a", "\u{014B}a")); // Ŋa ~ ŋa
+        assert!(entry_title_matches("e\u{0301}le", "\u{00E9}le")); // NFD ~ NFC
+        // A plain query matches a homograph title; a suffixed query only itself.
+        assert!(entry_title_matches("pata (2)", "pata"));
+        assert!(entry_title_matches("pata (2)", "pata (2)"));
+        assert!(!entry_title_matches("pata", "pata (2)"));
+        assert!(!entry_title_matches("pata (3)", "pata (2)"));
+        assert!(!entry_title_matches("patal", "pata"));
+    }
+
+    #[test]
+    fn alphabet_bucket_composes_before_bucketing() {
+        // LB-3 / LB-6: the decomposed and precomposed spellings land in one
+        // bucket, and that bucket is the base letter (no `E` / `É` split).
+        assert_eq!(alphabet_bucket("e\u{0301}le"), Some("E".to_string()));
+        assert_eq!(alphabet_bucket("\u{00E9}le"), Some("E".to_string()));
+        assert_eq!(alphabet_bucket("\u{0105}\u{0301}tal"), Some("A".to_string()));
     }
 
     #[test]

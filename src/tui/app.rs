@@ -30657,6 +30657,21 @@ impl App {
                     "adding `{}` to {}/Dictionary...",
                     title, lang_book.title
                 );
+                // LB-4: the same spelling check as `language add-word`.
+                match crate::cli::language::HeadwordChecker::load(
+                    &self.store,
+                    &self.hierarchy,
+                    &lang_book,
+                )
+                .map_err(|e| e.to_string())
+                .and_then(|c| c.check(&title).map_err(|e| e.to_string()))
+                {
+                    Ok(()) => {}
+                    Err(e) => {
+                        self.status = format!("add word failed: `{title}` {e}");
+                        return;
+                    }
+                }
                 match crate::cli::language::add_dictionary_entry_impl(
                     &self.store,
                     &self.cfg,

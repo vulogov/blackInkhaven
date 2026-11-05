@@ -200,22 +200,49 @@ impl TranslationMemory {
         self.pairs.iter().map(|p| (p.english.as_str(), p.conlang.as_str()))
     }
 
-    /// The sidecar path for a language's memory.
+    /// The sidecar path for a language's memory: one file-system-safe
+    /// component derived from the language name (LB-11), so a title with a
+    /// `/` or spaces cannot escape `.inkhaven/translation-memory/`.
     pub fn sidecar_path(project_root: &Path, language: &str) -> PathBuf {
-        project_root
-            .join(".inkhaven")
-            .join("translation-memory")
-            .join(format!("{}.json", language.to_lowercase()))
+        Self::memory_dir(project_root)
+            .join(format!("{}.json", crate::conlang::types::norm::fs_safe_name(language)))
+    }
+
+    fn memory_dir(project_root: &Path) -> PathBuf {
+        project_root.join(".inkhaven").join("translation-memory")
+    }
+
+    /// The pre-LB-11 sidecar name (`<lowercased title>.json`), read as a
+    /// fallback so an existing memory is not orphaned by the slug change;
+    /// the next `save` writes the slugged path.
+    fn legacy_sidecar_path(project_root: &Path, language: &str) -> Option<PathBuf> {
+        let legacy = language.to_lowercase();
+        let safe = legacy.contains('/') || legacy.contains('\\') || legacy.contains("..");
+        (!safe && legacy != crate::conlang::types::norm::fs_safe_name(language))
+            .then(|| Self::memory_dir(project_root).join(format!("{legacy}.json")))
     }
 
     /// Load a language's memory (empty if none on disk).
     pub fn load(project_root: &Path, language: &str) -> std::io::Result<Self> {
         let path = Self::sidecar_path(project_root, language);
-        match std::fs::read_to_string(&path) {
-            Ok(s) => serde_json::from_str(&s)
+        let read = match std::fs::read_to_string(&path) {
+            Ok(s) => Some(s),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                match Self::legacy_sidecar_path(project_root, language) {
+                    Some(legacy) => match std::fs::read_to_string(&legacy) {
+                        Ok(s) => Some(s),
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                        Err(e) => return Err(e),
+                    },
+                    None => None,
+                }
+            }
+            Err(e) => return Err(e),
+        };
+        match read {
+            Some(s) => serde_json::from_str(&s)
                 .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e)),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(e) => Err(e),
+            None => Ok(Self::default()),
         }
     }
 
@@ -245,6 +272,30 @@ mod tests {
         assert!((0.0..=1.0).contains(&s), "jaccard out of range: {s}");
         // Same token set → exactly 1.0.
         assert_eq!(jaccard(&tokens("the the bird"), &tokens("bird the")), 1.0);
+    }
+
+    #[test]
+    fn sidecar_is_one_safe_component_and_reads_the_legacy_name() {
+        let root = std::env::temp_dir().join(format!("inkhaven-tm-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        // A title with a slash and spaces yields one file under the memory dir.
+        let p = TranslationMemory::sidecar_path(&root, "Old Avesha/Sea");
+        assert_eq!(p, root.join(".inkhaven").join("translation-memory").join("old-avesha-sea.json"));
+        assert_eq!(
+            TranslationMemory::sidecar_path(&root, "Avesha"),
+            root.join(".inkhaven").join("translation-memory").join("avesha.json")
+        );
+        // A memory saved under the pre-LB-11 name is still found, then migrates on save.
+        let mut m = TranslationMemory::default();
+        m.add("the bird flies", "kira");
+        let legacy = root.join(".inkhaven").join("translation-memory").join("old avesha.json");
+        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        std::fs::write(&legacy, serde_json::to_vec(&m).unwrap()).unwrap();
+        let loaded = TranslationMemory::load(&root, "Old Avesha").unwrap();
+        assert_eq!(loaded.len(), 1);
+        loaded.save(&root, "Old Avesha").unwrap();
+        assert!(root.join(".inkhaven").join("translation-memory").join("old-avesha.json").exists());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

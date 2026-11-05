@@ -39,6 +39,7 @@ HJSON blocks you add to those chapters; the book stays the home of record.
   ]
   allophony: [ { name: "palatalization", rule: "k > tʃ / _ i" } ]
   stress: "penultimate"                            // initial|final|penultimate|antepenultimate|latin
+  diphthongs: ["ai", "au"]                         // one nucleus each; other vowel pairs are hiatus (a.i.a)
   romanizations: [
     { name: "default", mappings: [ { ipa: "k", roman: "c" }, { ipa: "s", roman: "c" } ],
       contextual: [ { roman: "c", ipa: "s", before: "FrontV" } ] }
@@ -55,6 +56,29 @@ is declared, else a literal phoneme.
 
 Inspectors: `generate-word`, `syllabify --word`, `ipa --word` (surface),
 `stress --word`, `romanize --text [--reverse] [--scheme]`, `tone --tones`.
+
+**Blocks are validated, not just parsed.** An unknown `constraints[].kind`
+no longer disables the language: the constraint is ignored and reported.
+Every command that loads the phonology prints one `phonology error:` /
+`phonology warning:` line per finding to stderr, and `language doctor` lists
+the same findings under *Blocks* with their location (`constraints[2]`,
+`templates.root[0] "C V N"`, `allophony[1] "ai > e / _"`; `--json` carries
+them under `blocks.findings`). Errors are things that silently never apply: an
+unknown constraint kind, a class named in a constraint or template but not
+declared under `classes`, a rule target or context that is neither a phoneme
+nor a class, or a target that spans two phonemes (`ai > e` — declare `ai` as a
+phoneme or write one rule per segment). Warnings cover a class member or
+bigram outside the inventory, a duplicate phoneme, and a replacement that
+spans several phonemes. Malformed HJSON under Phonology or Grammar is reported
+by paragraph title.
+
+**Segmentation is case- and normalisation-insensitive.** Every word, headword,
+grapheme, class member and rule atom is NFC-normalised when loaded or typed, and
+the segmenter case-folds its input, so `Pata`, `pata`, and a decomposed `pãta`
+(`a` + U+0303) all read as the same phoneme sequence. A segment that still
+fails to match prints with its codepoint (`̃ (U+0303)`) so a stray combining
+mark is never shown as a bare accent. Graphemes that differ only by case are
+therefore not distinguishable.
 
 ## Morphology (the `Grammar` chapter)
 
@@ -424,6 +448,20 @@ Dictionary entries are HJSON paragraphs under **Dictionary** (created by
   register: "formal", domain: ["weapon"], era: "third_age" }
 ```
 
+**One headword check at every door.** `add-word`, `add-word --import`, the
+in-TUI `+` chord and `language import` (Toolbox / PolyGlot) all run the same
+check, so a word one accepts the others accept and `export --format csv` →
+`--import` is a no-op. A headword must be 1–64 characters with no control
+characters. Its spelling is checked against the Phonology inventory when one is
+declared (every greedy-matched segment must be a declared phoneme), else
+against `Meta/overview.alphabet` (every letter declared, longest-match, case-
+and diacritic-insensitive); `--force` skips the spelling check on the CLI. The
+headword is keyed once: NFC for the title, case-folded for the duplicate check
+(`ŋa` and `Ŋa` are one word), and bucketed on its first alphabet letter — or,
+with no alphabet entry covering it, on its first base letter (`ą́tal` and
+`atal` both file under `A`). A homograph (same spelling, different `type`) is
+allowed and titled `pata (2)`.
+
 | Command | Does |
 |---|---|
 | `language generate-lexicon --topic … --count … [--semantic] [--yes]` | AI generation behind the dedup gate (illegal / homophone / duplicate-meaning / near-synonym) |
@@ -563,8 +601,9 @@ inkhaven language import Avesha --file MyLang.pgd  --format polyglot --yes
   part-of-speech table is resolved so each word lands with its class.
 
 Import **previews by default** — it prints what it would add and changes nothing
-until you pass `--yes`. Duplicate headwords are skipped with a warning. (Tools
-that export CSV, such as ConWorkShop, can come in through `add-word --import`.)
+until you pass `--yes`. Duplicate headwords, and words that fail the headword
+check above, are skipped with the reason. (Tools that export CSV, such as
+ConWorkShop, can come in through `add-word --import`.)
 
 ## Worldbuilding links
 
@@ -749,6 +788,15 @@ lexicon entry, or *untranslatable* — an English word the lexicon does not cove
 is passed through marked `«word»`, listed so you can coin it or `add-word` it.
 Output is human-readable or `--json`.
 
+**A paragraph is translated sentence by sentence.** Input is split on `.`, `!`,
+`?` and line breaks; each clause is analysed and rendered on its own and the
+results are re-joined with the source punctuation, so `the stone. the river
+flows` gives `«stone». atal sora`, never just the last sentence. A clause the
+analyser cannot place at all is kept as `«…»`. The reported confidence is the
+*minimum* over the clauses, so one untranslatable sentence is not averaged away.
+The same split applies to `reverse` and `cross` (the TUI chord passes the whole
+paragraph).
+
 It also runs **in reverse and across languages**:
 
 ```
@@ -790,8 +838,9 @@ inkhaven language memory Eldar                                 # list remembered
 An **exact** remembered translation becomes the primary (the rule-based reading is
 kept as an `alt:` so nothing is silently overridden); a **near** match is surfaced
 as an alternative to pick. A miss is pure RBMT. Memory lives in the
-`.inkhaven/translation-memory/<lang>.json` sidecar (atomic writes; the books are
-never touched).
+`.inkhaven/translation-memory/<lang-slug>.json` sidecar — the slug is the
+language name lower-cased and reduced to `[a-z0-9._-]`, so a title with spaces
+or a `/` still maps to one file (atomic writes; the books are never touched).
 
 Near matches are **semantic**: each remembered English source is embedded once
 with the in-tree `fastembed` model (the same one powering manuscript search) and

@@ -48,7 +48,7 @@ const MAX_AFFIXES: usize = 6;
 
 /// Parse `surface` against `morph`'s affixes and the `entries` lexicon.
 pub fn parse(phon: &Phonology, morph: &Morphology, entries: &[DictionaryEntry], surface: &str) -> ParseReport {
-    let segs = phon.segment(&surface.to_lowercase());
+    let segs = phon.segment(surface);
     let mut report = ParseReport { surface: surface.to_string(), segments: segs.clone(), ..Default::default() };
     if segs.is_empty() {
         return report;
@@ -57,7 +57,7 @@ pub fn parse(phon: &Phonology, morph: &Morphology, entries: &[DictionaryEntry], 
     // Roots: each dictionary word's segmentation → its gloss.
     let mut roots: HashMap<Vec<String>, String> = HashMap::new();
     for e in entries {
-        let rs = phon.segment(&e.word.to_lowercase());
+        let rs = phon.segment(&e.word);
         if !rs.is_empty() {
             roots.entry(rs).or_insert_with(|| e.translation.clone());
         }
@@ -88,7 +88,7 @@ pub fn parse(phon: &Phonology, morph: &Morphology, entries: &[DictionaryEntry], 
         }
         let label = affix_label(&m.gloss, &m.id);
         for e in entries {
-            let base = phon.segment(&e.word.to_lowercase());
+            let base = phon.segment(&e.word);
             if base.is_empty() {
                 continue;
             }

@@ -97,8 +97,17 @@ pub(crate) fn import_foreign(
     }
 
     let cfg = Config::load_layered(&ProjectLayout::new(project).config_path())?;
+    // LB-4: same spelling check as add-word / CSV import. A foreign file has
+    // no --force; a rejected entry is skipped with its reason.
+    let hierarchy = Hierarchy::load(&store)?;
+    let checker = HeadwordChecker::load(&store, &hierarchy, &lang_book)?;
     let (mut added, mut skipped) = (0usize, 0usize);
     for lx in &lexemes {
+        if let Err(e) = checker.check(&lx.word) {
+            skipped += 1;
+            eprintln!("  skipped {}: {e}", lx.word);
+            continue;
+        }
         let entry = ImportEntry {
             word: lx.word.clone(),
             pos: lx.pos.clone(),
@@ -221,25 +230,20 @@ pub(crate) fn import_dictionary_csv(
 
     // ── Pre-flight validation ─────────────────────
     //
-    // Walk every CSV row's `word`, collect every
-    // non-whitespace character, and verify against
-    // the language's declared alphabet +
-    // phonology-rule phoneme inventories.  Aborts
-    // the import before ANY writes if there's a
-    // violation, so a partial import doesn't leave
-    // the dictionary in a confused state.  --force
-    // skips this; --new wipes before importing so
-    // the validation also pre-empts a destructive
-    // wipe on a CSV that wouldn't have imported
-    // cleanly anyway.
+    // Run every CSV row's `word` through the same
+    // headword check `add-word` uses (LB-4 / LB-5):
+    // the Phonology inventory when one is declared,
+    // else Meta/overview.alphabet, plus the 1–64
+    // character shape rule.  Aborts the import before
+    // ANY writes if there's a violation, so a partial
+    // import doesn't leave the dictionary in a
+    // confused state.  --force skips the spelling
+    // check (shape is still enforced at create time);
+    // --new wipes before importing so the validation
+    // also pre-empts a destructive wipe on a CSV that
+    // wouldn't have imported cleanly anyway.
     if !force {
-        let meta = read_meta_overview(&store, &hierarchy, &lang_book)?;
-        let phoneme_inventories =
-            collect_phonology_inventories(&store, &hierarchy, &lang_book)?;
-        let alphabet: Vec<String> = meta
-            .as_ref()
-            .map(|m| m.alphabet.clone())
-            .unwrap_or_default();
+        let checker = HeadwordChecker::load(&store, &hierarchy, &lang_book)?;
         let mut violations: Vec<String> = Vec::new();
         for (row_idx, row) in data_rows.iter().enumerate() {
             let display_row = row_idx + 2;
@@ -252,34 +256,22 @@ pub(crate) fn import_dictionary_csv(
             if word.is_empty() || word.starts_with('#') {
                 continue;
             }
-            if !alphabet.is_empty() {
-                if let Some(bad) = first_unknown_letter(&word, &alphabet) {
-                    violations.push(format!(
-                        "row {display_row}: `{word}` contains `{bad}` not in Meta/overview.alphabet"
-                    ));
-                    continue; // skip phonology check for already-flagged word
-                }
-            }
-            if !phoneme_inventories.is_empty() {
-                if let Some(bad) = first_unknown_letter(&word, &phoneme_inventories) {
-                    violations.push(format!(
-                        "row {display_row}: `{word}` contains `{bad}` not in any Phonology inventory"
-                    ));
-                }
+            if let Err(e) = checker.check(&word) {
+                violations.push(format!("row {display_row}: `{word}` {e}"));
             }
         }
         if !violations.is_empty() {
             eprintln!(
-                "Pre-flight validation failed — {} violation(s) found:\n",
-                violations.len()
+                "Pre-flight validation failed — {} violation(s) found (checked against the {}):\n",
+                violations.len(),
+                checker.authority()
             );
             for v in &violations {
                 eprintln!("  · {v}");
             }
             eprintln!(
                 "\nFix by either:\n  \
-                 · updating Meta/overview.alphabet to include the missing characters, OR\n  \
-                 · updating a Phonology rule's `phonemes` list to include them, OR\n  \
+                 · adding the missing phonemes to the Phonology block (or letters to Meta/overview.alphabet), OR\n  \
                  · correcting the CSV, OR\n  \
                  · re-running with --force to bypass validation."
             );
@@ -534,107 +526,6 @@ pub(crate) fn read_meta_overview(
     };
     Ok(crate::language_entry::parse_meta_overview(body)
         .map_err(Error::Config)?)
-}
-
-/// collect the union of every
-/// Phonology rule's `phonemes` field as a single
-/// list of allowed grapheme strings.  Used as the
-/// reference inventory the CSV import validates
-/// every word against.  Returns an empty list when
-/// no Phonology rule declares `phonemes` — in that
-/// case the validator skips the phonology check
-/// (the alphabet check still runs).
-///
-/// Note: phonemes are technically sounds and word
-/// characters are graphemes — we treat them as
-/// interchangeable here because for most invented
-/// languages with Latin / Cyrillic orthography the
-/// author writes phonemes using single-character
-/// graphemes.  Authors with more complex
-/// orthography-to-phonology mappings can run with
-/// --force.
-pub(crate) fn collect_phonology_inventories(
-    store: &Store,
-    hierarchy: &Hierarchy,
-    lang_book: &crate::store::node::Node,
-) -> Result<Vec<String>> {
-    use crate::store::node::NodeKind;
-    use serde::Deserialize;
-    #[derive(Deserialize)]
-    struct PhonologyRule {
-        #[serde(default)]
-        phonemes: Vec<String>,
-    }
-    let Some(phonology) = hierarchy
-        .children_of(Some(lang_book.id))
-        .into_iter()
-        .find(|n| {
-            n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Phonology")
-        })
-        .cloned()
-    else {
-        return Ok(Vec::new());
-    };
-    let mut out: Vec<String> = Vec::new();
-    for id in hierarchy.collect_subtree(phonology.id) {
-        let Some(node) = hierarchy.get(id) else { continue; };
-        if node.kind != NodeKind::Paragraph {
-            continue;
-        }
-        let Ok(Some(bytes)) = store.get_content(id) else { continue; };
-        let Ok(body) = std::str::from_utf8(&bytes) else { continue; };
-        // Try whole-body HJSON first (the new
-        // content_type=hjson format), fall back to
-        // fenced extraction for legacy bodies.
-        // Same parse strategy as
-        // `language_entry::parse_with`.
-        let parsed: Option<PhonologyRule> = serde_hjson::from_str(body)
-            .ok()
-            .or_else(|| {
-                // Reuse the fence extractor by parsing
-                // the wrapping body shape — but the
-                // public extract_hjson_block helper
-                // isn't exported.  For phonology rules
-                // authored on the new template, the
-                // whole-body parse covers us; legacy
-                // fenced bodies will have to be
-                // re-saved by the author (or hit via
-                // --force).
-                None
-            });
-        if let Some(rule) = parsed {
-            out.extend(rule.phonemes);
-        }
-    }
-    Ok(out)
-}
-
-/// find the first character in
-/// `word` that doesn't match any entry in `inventory`.
-/// Returns the offending character so the error
-/// message can name it.  Case-insensitive: `'a'`
-/// matches both `'A'` and `'a'` in the inventory.
-/// Whitespace and ASCII punctuation are always
-/// accepted (sentences may contain hyphens,
-/// apostrophes, etc.).
-pub(crate) fn first_unknown_letter(word: &str, inventory: &[String]) -> Option<char> {
-    let inventory_lower: Vec<String> = inventory
-        .iter()
-        .map(|s| s.to_lowercase())
-        .collect();
-    for c in word.chars() {
-        if c.is_whitespace() || c.is_ascii_punctuation() {
-            continue;
-        }
-        let c_lower = c.to_lowercase().collect::<String>();
-        let found = inventory_lower
-            .iter()
-            .any(|entry| entry.contains(&c_lower));
-        if !found {
-            return Some(c);
-        }
-    }
-    None
 }
 
 /// `--new` wipe.  Deletes every

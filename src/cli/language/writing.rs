@@ -131,6 +131,9 @@ pub(crate) fn collect_glyphs_from_config(
     let mut sources = Vec::new();
     let mut skipped = 0usize;
     for g in &cfg.glyphs {
+        crate::conlang::writing::font::validate_glyph_name(&g.name).map_err(|e| {
+            Error::Config(format!("font block: glyph name `{}` {e}", g.name))
+        })?;
         let path = dir.join(format!("{}.svg", g.name));
         let svg = match std::fs::read_to_string(&path) {
             Ok(s) => s,
@@ -350,6 +353,10 @@ pub(crate) fn bind_glyph_text(
     use crate::conlang::types::font::{self, FontGlyph};
     use crate::conlang::writing::preflight;
 
+    // A phoneme written with IPA delimiters (`/k/`) is the phoneme `k` — for
+    // the derived glyph name, the binding and the note alike (LB-11).
+    let phoneme = phoneme.map(|p| p.trim().trim_matches('/')).filter(|p| !p.is_empty());
+
     let report = preflight::lint_svg(svg_text);
     if !report.is_usable() {
         return Err(Error::Config(format!(
@@ -380,6 +387,11 @@ pub(crate) fn bind_glyph_text(
                 })?,
         },
     };
+    // LB-11: the name becomes a file in the glyph store and a UFO glyph —
+    // reject anything that cannot be either, before any write.
+    crate::conlang::writing::font::validate_glyph_name(&glyph_name).map_err(|e| {
+        Error::Config(format!("glyph name `{glyph_name}` {e} — pass --name with a plain name"))
+    })?;
     // A single-character name implies its own codepoint when none was given.
     let cp = cp.or_else(|| {
         (glyph_name.chars().count() == 1).then(|| glyph_name.chars().next().unwrap())
@@ -543,6 +555,9 @@ pub(crate) fn font_compose(
         for s in slots {
             let (slot, glyph) = s.split_once('=').ok_or_else(|| {
                 Error::Config(format!("bad --slot `{s}` (expected SLOT=GLYPH)"))
+            })?;
+            crate::conlang::writing::font::validate_glyph_name(glyph).map_err(|e| {
+                Error::Config(format!("slot `{slot}`: glyph name `{glyph}` {e}"))
             })?;
             let path = dir.join(format!("{glyph}.svg"));
             let svg = std::fs::read_to_string(&path).map_err(|_| {

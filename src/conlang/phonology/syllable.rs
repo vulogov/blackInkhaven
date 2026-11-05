@@ -6,13 +6,17 @@
 //! rising suffix of the intervocalic cluster, the rest falls to the
 //! preceding coda. Pure and deterministic; the basis for the onset / coda /
 //! sonority constraints and (later) stress placement + interlinear glossing.
+//!
+//! Adjacent vowels are **hiatus** by default — each vowel is its own nucleus
+//! (`aia` → `a.i.a`) — unless the sequence is a declared diphthong
+//! (`Phonology::diphthongs`, e.g. `["ai", "au"]`) or a phoneme of its own, in
+//! which case it forms one nucleus (LB-8).
 
 use crate::conlang::phonology::ipa;
 use crate::conlang::types::{PhonemeKind, Phonology};
 
-/// One syllable: onset consonants, the vowel nucleus (one or more adjacent
-/// vowels form a diphthong nucleus), and coda consonants. Phonemes are IPA
-/// strings.
+/// One syllable: onset consonants, the vowel nucleus (one vowel, or a declared
+/// diphthong's vowels), and coda consonants. Phonemes are IPA strings.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Syllable {
     pub onset: Vec<String>,
@@ -35,19 +39,54 @@ fn is_vowel(phon: &Phonology, ipa: &str) -> bool {
     }
 }
 
+/// Split a declared diphthong (`"ai"`, `"aːi"`) into the IPA of its vowel
+/// phonemes by greedy longest match over the inventory's vowels. `None` when
+/// any part is not a declared vowel — such an entry never forms a nucleus,
+/// and `Phonology::validate` reports it.
+pub fn split_diphthong(phon: &Phonology, diphthong: &str) -> Option<Vec<String>> {
+    let mut vowels: Vec<&str> = phon
+        .phonemes
+        .iter()
+        .filter(|p| p.kind == PhonemeKind::Vowel)
+        .map(|p| p.ipa.as_str())
+        .collect();
+    vowels.sort_by_key(|v| std::cmp::Reverse(v.len()));
+    let mut out = Vec::new();
+    let mut rest = diphthong;
+    while !rest.is_empty() {
+        let v = vowels.iter().find(|v| rest.starts_with(*v))?;
+        out.push((*v).to_string());
+        rest = &rest[v.len()..];
+    }
+    (out.len() >= 2).then_some(out)
+}
+
+/// The declared diphthongs as vowel-IPA sequences, longest first, dropping
+/// any that do not resolve to declared vowels.
+fn diphthongs(phon: &Phonology) -> Vec<Vec<String>> {
+    let mut out: Vec<Vec<String>> =
+        phon.diphthongs.iter().filter_map(|d| split_diphthong(phon, d)).collect();
+    out.sort_by_key(|d| std::cmp::Reverse(d.len()));
+    out
+}
+
 /// Syllabify a phoneme sequence. A run with no vowel at all becomes a single
 /// nucleus-less syllable (all coda) so the function is total; well-formed
 /// words always have at least one vowel.
 pub fn syllabify(phon: &Phonology, seq: &[String]) -> Vec<Syllable> {
-    // Nucleus spans: maximal runs of vowels.
+    // Nucleus spans: one vowel each (hiatus), or a declared diphthong's
+    // vowels (LB-8).
+    let diphs = diphthongs(phon);
     let mut nuclei: Vec<(usize, usize)> = Vec::new(); // [start, end)
     let mut i = 0;
     while i < seq.len() {
         if is_vowel(phon, &seq[i]) {
             let start = i;
-            while i < seq.len() && is_vowel(phon, &seq[i]) {
-                i += 1;
-            }
+            let span = diphs
+                .iter()
+                .find(|d| seq[i..].starts_with(d.as_slice()))
+                .map_or(1, Vec::len);
+            i += span;
             nuclei.push((start, i));
         } else {
             i += 1;
@@ -203,11 +242,45 @@ mod tests {
     }
 
     #[test]
-    fn diphthong_nucleus() {
+    fn adjacent_vowels_are_hiatus_by_default() {
+        // LB-8: /a i a/ is three syllables, not one three-vowel nucleus.
         let p = lang();
+        let s = syllabify(&p, &seq(&["a", "i", "a"]));
+        assert_eq!(render(&p, &s), "a.i.a");
+        assert_eq!(s.len(), 3);
+        // /t a i n/ → ta.in : the consonant codas the second syllable.
+        let s = syllabify(&p, &seq(&["t", "a", "i", "n"]));
+        assert_eq!(render(&p, &s), "ta.in");
+        assert_eq!(s[1].nucleus, seq(&["i"]));
+        assert_eq!(s[1].coda, seq(&["n"]));
+    }
+
+    #[test]
+    fn declared_diphthong_is_one_nucleus() {
+        let mut p = lang();
+        p.diphthongs = vec!["ai".into()];
         let s = syllabify(&p, &seq(&["t", "a", "i", "n"]));
         assert_eq!(s.len(), 1);
         assert_eq!(s[0].nucleus, seq(&["a", "i"]));
         assert_eq!(s[0].coda, seq(&["n"]));
+        // /a i a/ with `ai` declared → ai.a (two syllables); /i a/ stays hiatus.
+        let s = syllabify(&p, &seq(&["a", "i", "a"]));
+        assert_eq!(render(&p, &s), "ai.a");
+        let s = syllabify(&p, &seq(&["t", "i", "a"]));
+        assert_eq!(render(&p, &s), "ti.a");
+    }
+
+    #[test]
+    fn diphthongs_split_by_longest_vowel_match() {
+        let mut p = lang();
+        p.phonemes.push(ph("aː", PhonemeKind::Vowel));
+        assert_eq!(split_diphthong(&p, "aːi"), Some(seq(&["aː", "i"])));
+        assert_eq!(split_diphthong(&p, "ai"), Some(seq(&["a", "i"])));
+        // A single vowel is not a diphthong; a consonant never is.
+        assert_eq!(split_diphthong(&p, "a"), None);
+        assert_eq!(split_diphthong(&p, "at"), None);
+        // An invalid entry is ignored rather than breaking syllabification.
+        p.diphthongs = vec!["at".into(), "ai".into()];
+        assert_eq!(render(&p, &syllabify(&p, &seq(&["t", "a", "i", "n"]))), "tain");
     }
 }

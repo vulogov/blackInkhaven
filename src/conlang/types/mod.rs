@@ -13,12 +13,14 @@ pub mod expression;
 pub mod font;
 pub mod grammar;
 pub mod morphology;
+pub mod norm;
 pub mod phoneme;
 pub mod romanization;
 pub mod spatial;
 pub mod stress;
 pub mod template;
 pub mod tone;
+pub mod validate;
 pub mod variety;
 
 pub use allophony::{AllophonyRule, PatternAtom};
@@ -58,6 +60,12 @@ pub struct Phonology {
     /// Primary-stress rule (P1.4). `None` = the language marks no stress.
     #[serde(default)]
     pub stress: Option<StressRule>,
+    /// Vowel sequences that form one syllable nucleus (LB-8), each written as
+    /// the IPA of its vowels in order (`"ai"`, `"au"`). Any other adjacent
+    /// vowels are hiatus — separate syllables. A diphthong declared as a
+    /// phoneme of its own (`{ ipa: "ai", kind: "vowel" }`) needs no entry.
+    #[serde(default)]
+    pub diphthongs: Vec<String>,
     /// Named romanization schemes (P1.5). Empty = the per-phoneme `romanize`
     /// field is the only (implicit) scheme.
     #[serde(default)]
@@ -94,8 +102,55 @@ impl Phonology {
         // either way.
         let block = crate::language_entry::extract_hjson_block(body).unwrap_or(body);
         serde_hjson::from_str::<Self>(block)
-            .map(Some)
+            .map(|mut p| {
+                p.normalize();
+                Some(p)
+            })
             .map_err(|e| format!("phonology HJSON parse failed: {e}"))
+    }
+
+    /// NFC-normalise every string the phonology compares against user input:
+    /// phoneme IPA and graphemes, class members, bigram constraints, allophony
+    /// rule atoms, romanization mappings and tone labels / sandhi (LB-3). Run
+    /// by [`Phonology::from_hjson`]; a phonology built by hand in code can call
+    /// it directly.
+    pub fn normalize(&mut self) {
+        for p in &mut self.phonemes {
+            norm::nfc_in_place(&mut p.ipa);
+            if let Some(r) = p.romanize.as_mut() {
+                norm::nfc_in_place(r);
+            }
+        }
+        for members in self.classes.values_mut() {
+            members.iter_mut().for_each(norm::nfc_in_place);
+        }
+        for c in &mut self.constraints {
+            if let PhonotacticConstraint::ForbidBigram(a, b) = c {
+                norm::nfc_in_place(a);
+                norm::nfc_in_place(b);
+            }
+        }
+        self.allophony.iter_mut().for_each(AllophonyRule::normalize);
+        self.diphthongs.iter_mut().for_each(norm::nfc_in_place);
+        for scheme in &mut self.romanizations {
+            for m in &mut scheme.mappings {
+                norm::nfc_in_place(&mut m.ipa);
+                norm::nfc_in_place(&mut m.roman);
+            }
+            for r in &mut scheme.contextual {
+                norm::nfc_in_place(&mut r.ipa);
+                norm::nfc_in_place(&mut r.roman);
+                r.before.iter_mut().for_each(PatternAtom::normalize);
+                r.after.iter_mut().for_each(PatternAtom::normalize);
+            }
+        }
+        if let Some(t) = self.tone.as_mut() {
+            t.tones.iter_mut().for_each(norm::nfc_in_place);
+            for members in t.classes.values_mut() {
+                members.iter_mut().for_each(norm::nfc_in_place);
+            }
+            t.sandhi.iter_mut().for_each(AllophonyRule::normalize);
+        }
     }
 
     pub fn phoneme(&self, ipa: &str) -> Option<&Phoneme> {
@@ -140,20 +195,26 @@ impl Phonology {
     /// phoneme is emitted one character at a time, so the function is total.
     /// This is the reverse of word rendering; full contextual deromanization
     /// (digraph disambiguation) arrives with romanization schemes in P1.4.
+    ///
+    /// The word and the graphemes are compared after NFC + Unicode
+    /// case-folding (LB-3 / LB-9): `Pata`, `pata`, and a decomposed `pãta`
+    /// all segment identically, and callers need not lowercase first. An
+    /// unmatched run is emitted in its folded form.
     pub fn segment(&self, word: &str) -> Vec<String> {
-        let mut graphs: Vec<(&str, &str)> = self
+        let mut graphs: Vec<(String, &str)> = self
             .phonemes
             .iter()
-            .map(|p| (p.grapheme(), p.ipa.as_str()))
+            .map(|p| (norm::fold(p.grapheme()), p.ipa.as_str()))
             .filter(|(g, _)| !g.is_empty())
             .collect();
-        graphs.sort_by(|a, b| b.0.chars().count().cmp(&a.0.chars().count()));
+        graphs.sort_by_key(|(g, _)| std::cmp::Reverse(g.chars().count()));
 
+        let word = norm::fold(word);
         let mut out = Vec::new();
-        let mut rest = word;
+        let mut rest = word.as_str();
         'outer: while !rest.is_empty() {
             for (g, ipa) in &graphs {
-                if rest.starts_with(g) {
+                if rest.starts_with(g.as_str()) {
                     out.push((*ipa).to_string());
                     rest = &rest[g.len()..];
                     continue 'outer;
@@ -164,5 +225,69 @@ impl Phonology {
             rest = &rest[ch.len_utf8()..];
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn phon(body: &str) -> Phonology {
+        Phonology::from_hjson(body).unwrap().unwrap()
+    }
+
+    const BASIC: &str = r#"{
+        phonemes: [
+            { ipa: "p", kind: "consonant" }, { ipa: "t", kind: "consonant" },
+            { ipa: "ʃ", romanize: "sh", kind: "consonant" },
+            { ipa: "a", kind: "vowel" }, { ipa: "ã", kind: "vowel" }
+        ],
+        classes: { V: ["a", "ã"] },
+        allophony: [ { rule: "t > ʃ / _ ã" } ]
+    }"#;
+
+    #[test]
+    fn segment_is_case_insensitive() {
+        let p = phon(BASIC);
+        assert_eq!(p.segment("Pata"), p.segment("pata"));
+        assert_eq!(p.segment("SHATA"), vec!["ʃ", "a", "t", "a"]);
+    }
+
+    #[test]
+    fn segment_composes_input_before_matching() {
+        let p = phon(BASIC);
+        let nfc = p.segment("p\u{00E3}ta");
+        let nfd = p.segment("pa\u{0303}ta");
+        assert_eq!(nfc, vec!["p", "\u{00E3}", "t", "a"]);
+        assert_eq!(nfd, nfc);
+    }
+
+    #[test]
+    fn from_hjson_composes_the_inventory_and_rules() {
+        // The inventory, class and rule are authored in decomposed form; the
+        // loaded phonology is NFC throughout, so a precomposed input matches.
+        let p = phon(r#"{
+            phonemes: [ { ipa: "t", kind: "consonant" }, { ipa: "ã", kind: "vowel", romanize: "ã" } ],
+            classes: { V: ["ã"] },
+            constraints: [ { kind: "forbid_bigram", a: "ã", b: "ã" } ],
+            allophony: [ { rule: "t > d / _ ã" } ],
+            tone: { kind: "register", tones: ["ã"], sandhi: [ { rule: "ã > a / _ #" } ] }
+        }"#);
+        assert_eq!(p.phonemes[1].ipa, "\u{00E3}");
+        assert_eq!(p.phonemes[1].romanize.as_deref(), Some("\u{00E3}"));
+        assert_eq!(p.classes["V"], vec!["\u{00E3}"]);
+        assert!(matches!(&p.constraints[0], PhonotacticConstraint::ForbidBigram(a, b) if a == "\u{00E3}" && b == "\u{00E3}"));
+        assert_eq!(p.allophony[0].right, vec![PatternAtom::Symbol("\u{00E3}".into())]);
+        let t = p.tone.as_ref().unwrap();
+        assert_eq!(t.tones, vec!["\u{00E3}"]);
+        assert_eq!(t.sandhi[0].lhs, Some(PatternAtom::Symbol("\u{00E3}".into())));
+        assert_eq!(p.segment("t\u{00E3}"), vec!["t", "\u{00E3}"]);
+        assert!(p.phoneme("\u{00E3}").is_some());
+    }
+
+    #[test]
+    fn unmatched_runs_are_emitted_folded_one_char_at_a_time() {
+        let p = phon(BASIC);
+        assert_eq!(p.segment("Xpa"), vec!["x", "p", "a"]);
     }
 }
