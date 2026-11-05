@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Track** | LANG-IMPROVE-1 |
-| **Status** | proposal |
+| **Status** | LI-1 landed on 3.18.0-dev; LI-2 … LI-10 proposed |
 | **Created** | 2026-11-05 |
 | **Author** | Vladimir Ulogov |
 | **Target version** | 3.18.0 |
@@ -30,6 +30,25 @@ the end.
 ## P1 — cost paid on every command
 
 ### LI-1 · 91 WARN lines on the first store write
+
+**Status: landed (3.18.0-dev).** `apply_policy` now logs the per-word
+`denying …` lines at DEBUG and one summary at INFO (`policy: 91 word(s)
+denied by default (ai_write, editor_write, fs_write, keymap, store_write,
+theme_write); set scripting.enabled_categories, scripting.enabled_words or
+scripting.no_default_deny in inkhaven.hjson to change`). `hooks::fire` asks
+`scripting::scripting_present()` before `init_adam`: the VM is built only
+when it already exists, `scripting.bootstrap` is set, or the store holds at
+least one `Script` node — counted inside DuckDB by the new
+`Store::count_nodes_of_kind` (`JsonStorage::count_by_field`), not by a
+hierarchy load. Trust is still decided inside `init_adam`, so the
+pending-opt-in and deny notices are unchanged. The `.inkhaven/trust` file
+proposed as a third signal was dropped: it grants trust, it does not define
+lambdas. One correction to the text below: `denied_stub` never named the
+word (an inline handler cannot see the word it was called as); its error now
+names the knobs and the DEBUG target instead. The stale comment at
+`policy.rs:95-96` is rewritten. Tests: `default_policy_logs_one_summary_line_not_a_flood`
+(captured subscriber under the CLI filter), `scripting::presence_tests`,
+`json_store_count_by_field_filters_exactly`.
 
 **Symptom.** `inkhaven language add-word …` (and any CLI command that creates
 or saves a node) prints about ninety lines of

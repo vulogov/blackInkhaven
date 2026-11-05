@@ -554,6 +554,25 @@ impl JsonStorage {
             .execute_with("DELETE FROM json_docs WHERE id = ?", &[&id_str])
     }
 
+    /// 3.18 LI-1 — count the documents whose top-level string field
+    /// `field` equals `value`, evaluated inside DuckDB. Used by the
+    /// scripting layer to ask "does this project hold any Script
+    /// node?" without `list_all` + a Rust-side JSON parse of every
+    /// row (the hierarchy load it replaces on the hook path).
+    pub fn count_by_field(&self, field: &str, value: &str) -> Result<usize> {
+        let path = format!("$.{field}");
+        let rows = self.engine.select_all_with(
+            "SELECT COUNT(*) FROM json_docs WHERE json_extract_string(document, ?) = ?",
+            &[&path, &value],
+        )?;
+        match rows.into_iter().next().and_then(|r| r.into_iter().next()) {
+            Some(DuckValue::BigInt(n)) => Ok(n.max(0) as usize),
+            Some(DuckValue::HugeInt(n)) => Ok(n.max(0) as usize),
+            Some(DuckValue::Int(n)) => Ok(n.max(0) as usize),
+            other => Err(anyhow!("count_by_field: unexpected COUNT value {other:?}")),
+        }
+    }
+
     pub fn list_all(&self) -> Result<Vec<(Uuid, JsonValue)>> {
         let rows = self
             .engine
@@ -674,6 +693,33 @@ mod tests {
         assert_eq!(store.list_all().unwrap().len(), 1);
         store.drop_json(id).unwrap();
         assert_eq!(store.get_json(id).unwrap(), None);
+    }
+
+    /// 3.18 LI-1 — `count_by_field` counts inside DuckDB and binds both the
+    /// JSON path and the value, so a `kind` filter is exact (no prefix match,
+    /// no injection surface) and a missing field simply does not count.
+    #[test]
+    fn json_store_count_by_field_filters_exactly() {
+        let dir = TempDir::new().unwrap();
+        let store = JsonStorage::new(&dir.path().join("meta.db"), 2, "doc").unwrap();
+        assert_eq!(store.count_by_field("kind", "script").unwrap(), 0);
+        for (kind, title) in [
+            ("script", "hooks"),
+            ("script", "more hooks"),
+            ("paragraph", "scripture"),
+            ("scripts", "a near miss"),
+        ] {
+            store
+                .add_json_with_id(Uuid::now_v7(), json!({ "kind": kind, "title": title }))
+                .unwrap();
+        }
+        store
+            .add_json_with_id(Uuid::now_v7(), json!({ "title": "no kind field" }))
+            .unwrap();
+        assert_eq!(store.count_by_field("kind", "script").unwrap(), 2);
+        assert_eq!(store.count_by_field("kind", "paragraph").unwrap(), 1);
+        assert_eq!(store.count_by_field("kind", "' OR 1=1 --").unwrap(), 0);
+        assert_eq!(store.count_by_field("title", "no kind field").unwrap(), 1);
     }
 
     /// `App::shutdown_flush` calls `Store::checkpoint()`, which fans out to

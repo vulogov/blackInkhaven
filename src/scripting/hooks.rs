@@ -46,7 +46,10 @@ thread_local! {
 /// Fire `name` against Adam if a lambda with that name is defined.
 /// Silent no-op when:
 ///
-/// - Adam hasn't been initialised yet (called before TUI startup).
+/// - Nothing could have defined a lambda: no `scripting.bootstrap`,
+///   no `Script` node in the store, and Adam not built yet
+///   ([`super::scripting_present`], 3.18 LI-1). The CLI pays no VM
+///   build for `language add-word` in a project without scripts.
 /// - No lambda named `name` is registered.
 /// - The recursion depth cap has been reached.
 ///
@@ -72,6 +75,15 @@ pub fn fire(name: &str, args: Vec<Value>) {
             depth,
             MAX_DEPTH
         );
+        return;
+    }
+
+    // 3.18 LI-1 — a project with no scripts and no bootstrap has
+    // nothing that could answer this hook. Skip before paying for
+    // the VM build (stdlib registration, policy, store scan). The
+    // TUI still builds Adam eagerly at startup, so this only
+    // decides for the CLI and for `Store` writes made before that.
+    if !super::scripting_present() {
         return;
     }
 

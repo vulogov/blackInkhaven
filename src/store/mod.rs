@@ -779,6 +779,16 @@ symbol/motif proposals you can accept straight into this book.";
             .map_err(|e| Error::Store(e.to_string()))
     }
 
+    /// 3.18 LI-1 — how many nodes of `kind` the project holds, counted
+    /// inside DuckDB. Cheap enough for the hook path: the scripting
+    /// layer asks it on every `hooks::fire` until the VM exists, to
+    /// avoid building a VM for a project with no Script node at all.
+    pub fn count_nodes_of_kind(&self, kind: NodeKind) -> Result<usize> {
+        self.inner
+            .count_metadata_by_field("kind", kind.as_str())
+            .map_err(|e| Error::Store(e.to_string()))
+    }
+
     /// 1.2.16+ Phase P.4 — total HNSW vector
     /// count (the store keeps two vectors per
     /// document).

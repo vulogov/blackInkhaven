@@ -324,6 +324,12 @@ impl DocumentStorage {
         self.meta.list_all()
     }
 
+    /// 3.18 LI-1 — count metadata rows whose top-level string field
+    /// `field` equals `value`, evaluated in DuckDB (no row parse).
+    pub fn count_metadata_by_field(&self, field: &str, value: &str) -> Result<usize> {
+        self.meta.count_by_field(field, value)
+    }
+
     // ── search ─────────────────────────────────────────────────────
 
     /// Embed `query` as plain text and return the top `limit`
