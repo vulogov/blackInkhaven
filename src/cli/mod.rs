@@ -1621,6 +1621,11 @@ pub enum Command {
         /// verification harness. Default: English only.
         #[arg(long, default_value = "en", value_delimiter = ',')]
         languages: Vec<String>,
+        /// 3.18 LI-2 — also create the constructed language `Benchlang` with
+        /// this many generated dictionary entries (0 = no language). Drives
+        /// `benches/conlang.rs`.
+        #[arg(long, default_value_t = 0)]
+        conlang_words: usize,
         #[arg(long)]
         force: bool,
     },
@@ -7375,6 +7380,7 @@ impl Cli {
                 target_words,
                 seed,
                 languages,
+                conlang_words,
                 force,
             } => {
                 let spec = gen_fixture::FixtureSpec {
@@ -7385,14 +7391,20 @@ impl Cli {
                     seed,
                     languages,
                     force,
+                    conlang_words,
                     ..gen_fixture::FixtureSpec::default()
                 };
                 let stats = gen_fixture::run(&path, spec)?;
                 eprintln!(
-                    "gen-fixture: {} books · {} chapters · {} paragraphs at {}",
+                    "gen-fixture: {} books · {} chapters · {} paragraphs{} at {}",
                     stats.books_created,
                     stats.chapters_created,
                     stats.paragraphs_created,
+                    if stats.conlang_words_created > 0 {
+                        format!(" · {} {} words", stats.conlang_words_created, gen_fixture::CONLANG_NAME)
+                    } else {
+                        String::new()
+                    },
                     path.display(),
                 );
                 Ok(())

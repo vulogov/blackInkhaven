@@ -131,6 +131,21 @@ fn ctx(tag: &str, name: &str) -> Result<(&'static Store, Hierarchy, Node)> {
     Ok((store, hierarchy, book))
 }
 
+/// 3.18 LI-2 — the cached `LanguageModel` of `book`, with a malformed
+/// phonology block surfaced as the error the block loaders raise.
+fn lang_model(
+    tag: &str,
+    store: &Store,
+    hierarchy: &Hierarchy,
+    book: &Node,
+) -> Result<std::sync::Arc<crate::conlang::model::LanguageModel>> {
+    let m = langapi::model(store, hierarchy, book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    if let Some(e) = &m.phonology_error {
+        return Err(anyhow!("{tag}: {e}"));
+    }
+    Ok(m)
+}
+
 // ── read-only inspectors ─────────────────────────────────────────────────
 
 // ( -- list-of-names )
@@ -337,16 +352,9 @@ fn do_translate(vm: &mut VM) -> Result<&mut VM> {
     let text = value_to_string(pull(vm, tag)?, "text", tag)?;
     let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
     let (store, hierarchy, book) = ctx(tag, &name)?;
-    let phon = langapi::load_phonology(store, &hierarchy, &book)
-        .map_err(|e| anyhow!("{tag}: {e}"))?
-        .unwrap_or_default();
-    let morph = langapi::load_morphology(store, &hierarchy, &book)
-        .map_err(|e| anyhow!("{tag}: {e}"))?
-        .unwrap_or_default();
-    let (grammar_spec, _) =
-        langapi::load_grammar_spec(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
-    let entries =
-        langapi::load_dictionary(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
+    // 3.18 LI-2 — the cached model: a script looping over this word loads the
+    // language once and reuses its gloss index.
+    let m = lang_model(tag, store, &hierarchy, &book)?;
     // Tier 2 (retrieval): layer the translation memory over the rule-based result.
     let mem = translate::memory::TranslationMemory::load(store.project_root(), &name)
         .map_err(|e| anyhow!("{tag}: {e}"))?;
@@ -356,7 +364,7 @@ fn do_translate(vm: &mut VM) -> Result<&mut VM> {
         store.embed_batch(&[text.as_str()]).ok().and_then(|mut v| (!v.is_empty()).then(|| v.remove(0)))
     };
     let t = translate::apply_memory(
-        translate::translate(&phon, &morph, &grammar_spec.grammar, &entries, &text),
+        translate::translate_with(m.gloss(), m.phon(), m.morph(), m.typology(), &text),
         &mem,
         query_embedding.as_deref(),
     );
@@ -400,17 +408,9 @@ fn do_reverse(vm: &mut VM) -> Result<&mut VM> {
     let surface = value_to_string(pull(vm, tag)?, "surface", tag)?;
     let name = value_to_string(pull(vm, tag)?, "lang", tag)?;
     let (store, hierarchy, book) = ctx(tag, &name)?;
-    let phon = langapi::load_phonology(store, &hierarchy, &book)
-        .map_err(|e| anyhow!("{tag}: {e}"))?
-        .unwrap_or_default();
-    let morph = langapi::load_morphology(store, &hierarchy, &book)
-        .map_err(|e| anyhow!("{tag}: {e}"))?
-        .unwrap_or_default();
-    let (spec, _) =
-        langapi::load_grammar_spec(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
-    let entries =
-        langapi::load_dictionary(store, &hierarchy, &book).map_err(|e| anyhow!("{tag}: {e}"))?;
-    let r = reverse::reverse(&phon, &morph, &spec.grammar, &entries, &surface);
+    // 3.18 LI-2 — the cached model's reverse index (paradigm expansion once).
+    let m = lang_model(tag, store, &hierarchy, &book)?;
+    let r = reverse::reverse_with(m.reverse_index(), m.typology(), &surface);
     langapi::emit_translation_output(&name, &surface, &r.english, r.confidence, "reverse", &r.unresolved, serde_json::Value::Null);
     let gloss = r.words.iter().map(|(w, g)| format!("{w}={g}")).collect::<Vec<_>>().join(" ");
     let mut h: HashMap<String, Value> = HashMap::new();

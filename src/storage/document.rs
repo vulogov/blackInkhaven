@@ -309,6 +309,11 @@ impl DocumentStorage {
         self.blobs.get_blob(id)
     }
 
+    /// 3.18 LI-2 — the bodies of many documents in one query per 256 ids.
+    pub fn get_content_batch(&self, ids: &[Uuid]) -> Result<HashMap<Uuid, Vec<u8>>> {
+        self.blobs.get_blobs(ids)
+    }
+
     /// Embed arbitrary texts on demand via the loaded engine (conlang
     /// near-synonym detection); not backed by the stored index.
     pub fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {

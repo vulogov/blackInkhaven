@@ -680,166 +680,56 @@ form). Never assign two entries the same meaning. Keep `pos` a short lowercase t
 `domain` is one or two short semantic-domain tags.";
 
 
-/// Find + parse the `Morphology`-chapter HJSON block for a language sub-book.
+/// The language's morphology block — the first non-empty one under a
+/// `Morphology` or `Grammar` chapter — from the cached [`LanguageModel`]
+/// (3.18 LI-2; the 1.2.13 scaffold has no Morphology chapter, so the block
+/// usually lives under Grammar).
 pub(crate) fn load_morphology(
     store: &Store,
     hierarchy: &Hierarchy,
     lang_book: &crate::store::node::Node,
 ) -> Result<Option<crate::conlang::types::morphology::Morphology>> {
-    // The 1.2.13 scaffold has no Morphology chapter, so the block lives in
-    // the Grammar chapter (or a hand-added Morphology chapter).
-    let chapters: Vec<_> = hierarchy
-        .children_of(Some(lang_book.id))
-        .into_iter()
-        .filter(|n| {
-            n.kind == NodeKind::Chapter
-                && (n.title.eq_ignore_ascii_case("Morphology")
-                    || n.title.eq_ignore_ascii_case("Grammar"))
-        })
-        .cloned()
-        .collect();
-    for chapter in chapters {
-        for para in hierarchy.children_of(Some(chapter.id)) {
-            if para.kind != NodeKind::Paragraph {
-                continue;
-            }
-            let Some(bytes) = store.get_content(para.id)? else { continue };
-            let body = String::from_utf8_lossy(&bytes);
-            match crate::conlang::types::morphology::Morphology::from_hjson(&body) {
-                Ok(Some(m))
-                    if !m.morphemes.is_empty()
-                        || !m.paradigms.is_empty()
-                        || !m.derivations.is_empty() =>
-                {
-                    return Ok(Some(m));
-                }
-                // A Grammar paragraph that isn't a morphology block (a
-                // define-rule rule) just won't match the shape — skip it.
-                Ok(_) | Err(_) => continue,
-            }
-        }
-    }
-    Ok(None)
+    Ok(model(store, hierarchy, lang_book)?.morphology.clone())
 }
 
-/// LANG-2 P1 — load the `{ varieties: [ … ] }` block from the Grammar chapter.
+/// LANG-2 P1 — every `{ varieties: [ … ] }` block under the Grammar chapter,
+/// merged by id (a hand-authored set and AI-proposed dialects written as
+/// separate paragraphs are all seen together). From the cached model.
 pub(crate) fn load_varieties(
     store: &Store,
     hierarchy: &Hierarchy,
     lang_book: &crate::store::node::Node,
 ) -> Result<crate::conlang::types::variety::Varieties> {
-    use crate::conlang::types::variety::Varieties;
-    let chapters: Vec<_> = hierarchy
-        .children_of(Some(lang_book.id))
-        .into_iter()
-        .filter(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Grammar"))
-        .cloned()
-        .collect();
-    // Merge every `{ varieties: [ … ] }` block across the Grammar chapter, so a
-    // hand-authored set and AI-proposed dialects (written as separate paragraphs)
-    // are all seen together.
-    let mut merged = Varieties::default();
-    for chapter in chapters {
-        for para in hierarchy.children_of(Some(chapter.id)) {
-            if para.kind != NodeKind::Paragraph {
-                continue;
-            }
-            let Some(bytes) = store.get_content(para.id)? else { continue };
-            let body = String::from_utf8_lossy(&bytes);
-            if let Ok(Some(v)) = Varieties::from_hjson(&body) {
-                for var in v.varieties {
-                    if !merged.varieties.iter().any(|x| x.id.eq_ignore_ascii_case(&var.id)) {
-                        merged.varieties.push(var);
-                    }
-                }
-            }
-        }
-    }
-    Ok(merged)
+    Ok(model(store, hierarchy, lang_book)?.varieties.clone())
 }
 
-/// LANG-2 P3 — load the `{ contact: { … } }` block from the Grammar chapter
+/// LANG-2 P3 — the `{ contact: { … } }` block from the Grammar chapter
 /// (a language's areal / Sprachbund membership). `None` when absent.
 pub(crate) fn load_contact(
     store: &Store,
     hierarchy: &Hierarchy,
     lang_book: &crate::store::node::Node,
 ) -> Result<Option<crate::conlang::types::contact::Contact>> {
-    use crate::conlang::types::contact::Contact;
-    let chapters: Vec<_> = hierarchy
-        .children_of(Some(lang_book.id))
-        .into_iter()
-        .filter(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Grammar"))
-        .cloned()
-        .collect();
-    for chapter in chapters {
-        for para in hierarchy.children_of(Some(chapter.id)) {
-            if para.kind != NodeKind::Paragraph {
-                continue;
-            }
-            let Ok(Some(bytes)) = store.get_content(para.id) else { continue };
-            if let Ok(Some(c)) = Contact::from_hjson(&String::from_utf8_lossy(&bytes)) {
-                return Ok(Some(c));
-            }
-        }
-    }
-    Ok(None)
+    Ok(model(store, hierarchy, lang_book)?.contact.clone())
 }
 
-/// LANG-2 P2 — load the `{ loan_phonology: { … } }` block from the Phonology
+/// LANG-2 P2 — the `{ loan_phonology: { … } }` block from the Phonology
 /// chapter (how this language nativises borrowings). Defaults when absent.
 pub(crate) fn load_loan_phonology(
     store: &Store,
     hierarchy: &Hierarchy,
     lang_book: &crate::store::node::Node,
 ) -> Result<crate::conlang::types::contact::LoanPhonology> {
-    use crate::conlang::types::contact::LoanPhonology;
-    let chapters: Vec<_> = hierarchy
-        .children_of(Some(lang_book.id))
-        .into_iter()
-        .filter(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Phonology"))
-        .cloned()
-        .collect();
-    for chapter in chapters {
-        for para in hierarchy.children_of(Some(chapter.id)) {
-            if para.kind != NodeKind::Paragraph {
-                continue;
-            }
-            let Ok(Some(bytes)) = store.get_content(para.id) else { continue };
-            if let Ok(Some(lp)) = LoanPhonology::from_hjson(&String::from_utf8_lossy(&bytes)) {
-                return Ok(lp);
-            }
-        }
-    }
-    Ok(LoanPhonology::default())
+    Ok(model(store, hierarchy, lang_book)?.loan_phonology.clone())
 }
 
-/// Load the `{ diachronics: { proto, rules } }` block from the Phonology
-/// chapter.
+/// The `{ diachronics: { proto, rules } }` block from the Phonology chapter.
 pub(crate) fn load_diachronics(
     store: &Store,
     hierarchy: &Hierarchy,
     lang_book: &crate::store::node::Node,
 ) -> Result<Option<crate::conlang::types::diachronic::Diachronics>> {
-    use crate::conlang::types::diachronic::Diachronics;
-    let Some(chapter) = hierarchy
-        .children_of(Some(lang_book.id))
-        .into_iter()
-        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Phonology"))
-        .cloned()
-    else {
-        return Ok(None);
-    };
-    for para in hierarchy.children_of(Some(chapter.id)) {
-        if para.kind != NodeKind::Paragraph {
-            continue;
-        }
-        let Ok(Some(bytes)) = store.get_content(para.id) else { continue };
-        if let Ok(Some(d)) = Diachronics::from_hjson(&String::from_utf8_lossy(&bytes)) {
-            return Ok(Some(d));
-        }
-    }
-    Ok(None)
+    Ok(model(store, hierarchy, lang_book)?.diachronics.clone())
 }
 
 
@@ -951,65 +841,25 @@ fn open_phonology(project: &Path, language: &str) -> Result<(Store, crate::conla
     Ok((store, phonology))
 }
 
-/// Load every parseable `DictionaryEntry` under a language's `Dictionary`
-/// chapter (across all alphabet subchapters).
+/// Every parseable `DictionaryEntry` under a language's `Dictionary`
+/// chapter (across all alphabet subchapters), from the cached model.
 pub(crate) fn load_dictionary(
     store: &Store,
     hierarchy: &Hierarchy,
     lang_book: &crate::store::node::Node,
 ) -> Result<Vec<crate::language_entry::DictionaryEntry>> {
-    let Some(chapter) = hierarchy
-        .children_of(Some(lang_book.id))
-        .into_iter()
-        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Dictionary"))
-        .cloned()
-    else {
-        return Ok(Vec::new());
-    };
-    let mut out = Vec::new();
-    for id in hierarchy.collect_subtree(chapter.id) {
-        let Some(node) = hierarchy.get(id) else { continue };
-        if node.kind != NodeKind::Paragraph {
-            continue;
-        }
-        let Ok(Some(bytes)) = store.get_content(node.id) else { continue };
-        let body = String::from_utf8_lossy(&bytes);
-        if let Ok(Some(entry)) = crate::language_entry::parse(&body) {
-            out.push(entry);
-        }
-    }
-    Ok(out)
+    Ok(model(store, hierarchy, lang_book)?.entries.clone())
 }
 
-/// IGT-1 (Wave 4) — load every stored interlinear under a language's `Texts`
-/// chapter, as `(title, Igt)` in tree order. Best-effort: unparseable paragraphs
-/// are skipped.
+/// IGT-1 (Wave 4) — every stored interlinear under a language's `Texts`
+/// chapter, as `(title, Igt)` in tree order. Best-effort: unparseable
+/// paragraphs are skipped. From the cached model.
 pub(crate) fn load_texts(
     store: &Store,
     hierarchy: &Hierarchy,
     lang_book: &crate::store::node::Node,
 ) -> Vec<(String, crate::conlang::igt::Igt)> {
-    let Some(chapter) = hierarchy
-        .children_of(Some(lang_book.id))
-        .into_iter()
-        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Texts"))
-        .cloned()
-    else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    for id in hierarchy.collect_subtree(chapter.id) {
-        let Some(node) = hierarchy.get(id) else { continue };
-        if node.kind != NodeKind::Paragraph {
-            continue;
-        }
-        let Ok(Some(bytes)) = store.get_content(node.id) else { continue };
-        let body = String::from_utf8_lossy(&bytes);
-        if let Ok(igt) = serde_json::from_str::<crate::conlang::igt::Igt>(&body) {
-            out.push((node.title.clone(), igt));
-        }
-    }
-    out
+    model(store, hierarchy, lang_book).map(|m| m.texts.clone()).unwrap_or_default()
 }
 
 /// CORPUS-1 (Wave 4) — assemble the corpus from `source`: the stored interlinear
@@ -1152,34 +1002,15 @@ pub(crate) fn set_text_translation(
     Ok(true)
 }
 
-/// HYP-1 (Wave 4) — load every stored hypothesis under a language's `Hypotheses`
+/// HYP-1 (Wave 4) — every stored hypothesis under a language's `Hypotheses`
 /// chapter, in tree order. Best-effort: unparseable paragraphs are skipped.
+/// From the cached model.
 pub(crate) fn load_hypotheses(
     store: &Store,
     hierarchy: &Hierarchy,
     lang_book: &crate::store::node::Node,
 ) -> Vec<crate::conlang::hypothesis::Hypothesis> {
-    let Some(chapter) = hierarchy
-        .children_of(Some(lang_book.id))
-        .into_iter()
-        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Hypotheses"))
-        .cloned()
-    else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    for id in hierarchy.collect_subtree(chapter.id) {
-        let Some(node) = hierarchy.get(id) else { continue };
-        if node.kind != NodeKind::Paragraph {
-            continue;
-        }
-        let Ok(Some(bytes)) = store.get_content(node.id) else { continue };
-        if let Ok(h) = serde_json::from_str::<crate::conlang::hypothesis::Hypothesis>(&String::from_utf8_lossy(&bytes))
-        {
-            out.push(h);
-        }
-    }
-    out
+    model(store, hierarchy, lang_book).map(|m| m.hypotheses.clone()).unwrap_or_default()
 }
 
 /// HYP-1 (Wave 4) — update a stored hypothesis in place with `mutate`, then
@@ -1396,54 +1227,48 @@ pub(crate) fn pronounce(phon: &crate::conlang::Phonology, word: &str) -> Option<
 
 
 
-/// Find and parse the `Phonology`-chapter HJSON block for a language
-/// sub-book.  Scans every paragraph under the `Phonology` chapter and
-/// returns the first that parses as a phonology block (so the author can keep
-/// it in `overview`, a dedicated `inventory` paragraph, or wherever).
+/// The language's `Phonology` value — the first paragraph under the
+/// `Phonology` chapter that parses as a phoneme block (so the author can keep
+/// it in `overview`, a dedicated `inventory` paragraph, or wherever) — from
+/// the cached [`LanguageModel`] (3.18 LI-2).
+///
+/// A malformed block under Phonology is still a hard error. The validator's
+/// findings (LB-1 / LB-2: an unknown constraint kind, an undeclared class, a
+/// rule that can never match) are printed once per load of the model, so a
+/// command that asks for the phonology twice warns once; `language doctor`
+/// lists the same findings with their locations.
 pub(crate) fn load_phonology(
     store: &Store,
     hierarchy: &Hierarchy,
     lang_book: &crate::store::node::Node,
 ) -> Result<Option<crate::conlang::Phonology>> {
-    let Some(chapter) = hierarchy
-        .children_of(Some(lang_book.id))
-        .into_iter()
-        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Phonology"))
-        .cloned()
-    else {
-        return Ok(None);
-    };
-    for para in hierarchy.children_of(Some(chapter.id)) {
-        if para.kind != NodeKind::Paragraph {
-            continue;
-        }
-        let Some(bytes) = store.get_content(para.id)? else {
-            continue;
-        };
-        let body = String::from_utf8_lossy(&bytes);
-        match crate::conlang::Phonology::from_hjson(&body) {
-            Ok(Some(p)) if !p.phonemes.is_empty() => {
-                // LB-1 / LB-2: structural problems (an unknown constraint kind,
-                // an undeclared class, a rule that can never match) no longer
-                // fail the load. Warn once per finding; `language doctor`
-                // lists the same findings with their locations.
-                for f in p.validate() {
-                    eprintln!(
-                        "phonology {}: Phonology/{}: {}: {}",
-                        f.severity.as_str(),
-                        para.title,
-                        f.location,
-                        f.message
-                    );
-                }
-                return Ok(Some(p));
-            }
-            Ok(_) => continue,
-            // A malformed block under Phonology is worth surfacing.
-            Err(e) => return Err(Error::Config(format!("Phonology/{}: {e}", para.title))),
+    let (m, fresh) = crate::conlang::model::cached(store, hierarchy, lang_book)?;
+    if let Some(e) = &m.phonology_error {
+        return Err(Error::Config(e.clone()));
+    }
+    if fresh {
+        for f in &m.findings {
+            eprintln!(
+                "phonology {}: Phonology/{}: {}: {}",
+                f.severity.as_str(),
+                m.phonology_title,
+                f.location,
+                f.message
+            );
         }
     }
-    Ok(None)
+    Ok(m.phonology.clone())
+}
+
+/// The cached [`LanguageModel`] of `lang_book` (3.18 LI-2). The block
+/// loaders above are views over it; commands that need several blocks, or
+/// the gloss / reverse / analyzer indexes, take the model directly.
+pub(crate) fn model(
+    store: &Store,
+    hierarchy: &Hierarchy,
+    lang_book: &crate::store::node::Node,
+) -> Result<std::sync::Arc<crate::conlang::model::LanguageModel>> {
+    Ok(crate::conlang::model::cached(store, hierarchy, lang_book)?.0)
 }
 
 

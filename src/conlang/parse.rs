@@ -12,7 +12,7 @@
 //! ablaut (reversed by generate-and-test against the roots). Scoring against a
 //! morphotactic grammar is still to come.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde::Serialize;
 
@@ -47,69 +47,118 @@ pub struct ParseReport {
 const MAX_AFFIXES: usize = 6;
 
 /// Parse `surface` against `morph`'s affixes and the `entries` lexicon.
+///
+/// Builds a one-shot [`Analyzer`]; callers that parse many words (the Oracle's
+/// prose scan, the TUI, a Bund loop) hold one `Analyzer` — or the
+/// `LanguageModel`'s — and call [`Analyzer::analyze`] instead.
 pub fn parse(phon: &Phonology, morph: &Morphology, entries: &[DictionaryEntry], surface: &str) -> ParseReport {
-    let segs = phon.segment(surface);
-    let mut report = ParseReport { surface: surface.to_string(), segments: segs.clone(), ..Default::default() };
-    if segs.is_empty() {
-        return report;
-    }
+    Analyzer::new(phon, morph, entries).analyze(phon, surface)
+}
 
-    // Roots: each dictionary word's segmentation → its gloss.
-    let mut roots: HashMap<Vec<String>, String> = HashMap::new();
-    for e in entries {
-        let rs = phon.segment(&e.word);
-        if !rs.is_empty() {
-            roots.entry(rs).or_insert_with(|| e.translation.clone());
-        }
-    }
+/// 3.18 LI-2 — the parser's precomputed tables: the root map (every
+/// dictionary word's segmentation → its gloss), the pre-segmented
+/// concatenative affixes, the ablaut images, and the listed headwords.
+/// Building them walks and segments the whole lexicon, which `parse()` used
+/// to do per word; build once per lexicon state and reuse.
+pub struct Analyzer {
+    roots: HashMap<Vec<String>, String>,
+    affixes: Vec<(Vec<String>, String, bool)>,
+    ablaut_forms: HashMap<Vec<String>, Vec<AblautForm>>,
+    /// Lowercased headwords (ASCII fold), for the "is it itself a listed
+    /// word?" check the Oracle makes.
+    listed: HashSet<String>,
+    /// Every lowercased surface form (headwords + inflections), for the
+    /// prose scan's conlang-context guard.
+    surface_forms: HashSet<String>,
+}
 
-    // Pre-segment the concatenative affixes.
-    let affixes: Vec<(Vec<String>, String, bool)> = morph
-        .morphemes
-        .iter()
-        .filter_map(|m| match m.position {
-            Some(AffixPosition::Suffix) => Some((phon.segment(&m.form), affix_label(&m.gloss, &m.id), false)),
-            Some(AffixPosition::Prefix) => Some((phon.segment(&m.form), affix_label(&m.gloss, &m.id), true)),
-            _ => None,
-        })
-        .filter(|(f, _, _)| !f.is_empty())
-        .collect();
-
-    // Ablaut forms: run every root forward through each ablaut morpheme's rules
-    // and index it by the resulting (changed) surface. The parser reverses
-    // generation, so a surface that matches an ablaut image analyses as that root
-    // plus the ablaut morpheme. This is generate-and-test — running the real
-    // forward rewriter — rather than trying to invert an SPE rule, which is not
-    // generally invertible (context-sensitive / class-based rules).
-    let mut ablaut_forms: HashMap<Vec<String>, Vec<AblautForm>> = HashMap::new();
-    for m in &morph.morphemes {
-        if !matches!(m.process, Some(MorphProcess::Ablaut)) || m.rules.is_empty() {
-            continue;
-        }
-        let label = affix_label(&m.gloss, &m.id);
+impl Analyzer {
+    pub fn new(phon: &Phonology, morph: &Morphology, entries: &[DictionaryEntry]) -> Self {
+        // Roots: each dictionary word's segmentation → its gloss.
+        let mut roots: HashMap<Vec<String>, String> = HashMap::new();
         for e in entries {
-            let base = phon.segment(&e.word);
-            if base.is_empty() {
+            let rs = phon.segment(&e.word);
+            if !rs.is_empty() {
+                roots.entry(rs).or_insert_with(|| e.translation.clone());
+            }
+        }
+
+        // Pre-segment the concatenative affixes.
+        let affixes: Vec<(Vec<String>, String, bool)> = morph
+            .morphemes
+            .iter()
+            .filter_map(|m| match m.position {
+                Some(AffixPosition::Suffix) => Some((phon.segment(&m.form), affix_label(&m.gloss, &m.id), false)),
+                Some(AffixPosition::Prefix) => Some((phon.segment(&m.form), affix_label(&m.gloss, &m.id), true)),
+                _ => None,
+            })
+            .filter(|(f, _, _)| !f.is_empty())
+            .collect();
+
+        // Ablaut forms: run every root forward through each ablaut morpheme's rules
+        // and index it by the resulting (changed) surface. The parser reverses
+        // generation, so a surface that matches an ablaut image analyses as that root
+        // plus the ablaut morpheme. This is generate-and-test — running the real
+        // forward rewriter — rather than trying to invert an SPE rule, which is not
+        // generally invertible (context-sensitive / class-based rules).
+        let mut ablaut_forms: HashMap<Vec<String>, Vec<AblautForm>> = HashMap::new();
+        for m in &morph.morphemes {
+            if !matches!(m.process, Some(MorphProcess::Ablaut)) || m.rules.is_empty() {
                 continue;
             }
-            let image = crate::conlang::phonology::rewrite::apply_ordered(&base, &m.rules, &phon.classes);
-            if image != base && !image.is_empty() {
-                ablaut_forms.entry(image).or_default().push((
-                    render(phon, &base),
-                    e.translation.clone(),
-                    label.clone(),
-                ));
+            let label = affix_label(&m.gloss, &m.id);
+            for e in entries {
+                let base = phon.segment(&e.word);
+                if base.is_empty() {
+                    continue;
+                }
+                let image = crate::conlang::phonology::rewrite::apply_ordered(&base, &m.rules, &phon.classes);
+                if image != base && !image.is_empty() {
+                    ablaut_forms.entry(image).or_default().push((
+                        render(phon, &base),
+                        e.translation.clone(),
+                        label.clone(),
+                    ));
+                }
             }
         }
+
+        let listed = entries.iter().map(|e| e.word.to_ascii_lowercase()).collect();
+        let surface_forms = entries
+            .iter()
+            .flat_map(|e| e.surface_forms().into_iter().map(|s| s.to_lowercase()))
+            .collect();
+
+        Self { roots, affixes, ablaut_forms, listed, surface_forms }
     }
 
-    let mut applied: Vec<String> = Vec::new();
-    strip(&segs, phon, &roots, &affixes, &ablaut_forms, &mut applied, &mut report.parses);
+    /// Is `word` itself a listed headword (ASCII case-insensitive, as the
+    /// Oracle has always compared)?
+    pub fn is_listed(&self, word: &str) -> bool {
+        self.listed.contains(&word.to_ascii_lowercase())
+    }
 
-    // Fewest affixes first, then by root for stability.
-    report.parses.sort_by(|a, b| a.affixes.len().cmp(&b.affixes.len()).then_with(|| a.root.cmp(&b.root)));
-    report.parses.dedup();
-    report
+    /// Is `word` (already lowercased) a known surface form — a headword or an
+    /// inflected form?
+    pub fn is_known_surface(&self, lowercased: &str) -> bool {
+        self.surface_forms.contains(lowercased)
+    }
+
+    /// Parse `surface` against the precomputed tables.
+    pub fn analyze(&self, phon: &Phonology, surface: &str) -> ParseReport {
+        let segs = phon.segment(surface);
+        let mut report = ParseReport { surface: surface.to_string(), segments: segs.clone(), ..Default::default() };
+        if segs.is_empty() {
+            return report;
+        }
+        let mut applied: Vec<String> = Vec::new();
+        strip(&segs, phon, &self.roots, &self.affixes, &self.ablaut_forms, &mut applied, &mut report.parses);
+
+        // Fewest affixes first, then by root for stability.
+        report.parses.sort_by(|a, b| a.affixes.len().cmp(&b.affixes.len()).then_with(|| a.root.cmp(&b.root)));
+        report.parses.dedup();
+        report
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

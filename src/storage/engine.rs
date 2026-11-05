@@ -20,6 +20,7 @@ use anyhow::{anyhow, Result};
 use duckdb::{types::Value as DuckValue, DuckdbConnectionManager};
 use r2d2::Pool;
 use serde_json::Value as JsonValue;
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -395,6 +396,40 @@ impl BlobStorage {
         }
     }
 
+    /// 3.18 LI-2 — fetch many blobs in one round trip per chunk of
+    /// 256 ids (`WHERE id IN (?, …)`, every id bound). Ids with no blob
+    /// are simply absent from the map. The conlang model loader uses it
+    /// to read a whole language book's paragraphs at once instead of one
+    /// `SELECT` per paragraph.
+    pub fn get_blobs(&self, ids: &[Uuid]) -> Result<HashMap<Uuid, Vec<u8>>> {
+        let mut out = HashMap::with_capacity(ids.len());
+        for chunk in ids.chunks(256) {
+            let id_strs: Vec<String> = chunk.iter().map(|u| u.to_string()).collect();
+            let placeholders = vec!["?"; id_strs.len()].join(", ");
+            let sql = format!("SELECT id, data FROM blobs WHERE id IN ({placeholders})");
+            let args: Vec<&dyn duckdb::ToSql> =
+                id_strs.iter().map(|s| s as &dyn duckdb::ToSql).collect();
+            for row in self.engine.select_all_with(&sql, &args)? {
+                let mut cols = row.into_iter();
+                let id = match cols.next() {
+                    Some(DuckValue::Text(s)) => Uuid::parse_str(&s)
+                        .map_err(|e| anyhow!("invalid UUID in blobs: {e}"))?,
+                    other => return Err(anyhow!("blob row id column unexpected: {other:?}")),
+                };
+                match cols.next() {
+                    Some(DuckValue::Blob(b)) => {
+                        out.insert(id, b);
+                    }
+                    Some(DuckValue::Null) | None => {}
+                    Some(other) => {
+                        return Err(anyhow!("unexpected blob column type: {other:?}"))
+                    }
+                }
+            }
+        }
+        Ok(out)
+    }
+
     pub fn update_blob(&self, id: Uuid, data: &[u8]) -> Result<()> {
         let ts = now_unix_secs();
         let id_str = id.to_string();
@@ -720,6 +755,27 @@ mod tests {
         assert_eq!(store.count_by_field("kind", "paragraph").unwrap(), 1);
         assert_eq!(store.count_by_field("kind", "' OR 1=1 --").unwrap(), 0);
         assert_eq!(store.count_by_field("title", "no kind field").unwrap(), 1);
+    }
+
+    /// 3.18 LI-2 — `get_blobs` returns every stored id in one map, skips the
+    /// ids that have no blob, and handles more ids than one chunk holds.
+    #[test]
+    fn blob_store_get_blobs_batches_and_skips_missing() {
+        let dir = TempDir::new().unwrap();
+        let store = BlobStorage::new(dir.path().join("blobs.db"), 2).unwrap();
+        let ids: Vec<Uuid> = (0..300).map(|_| Uuid::now_v7()).collect();
+        for (i, id) in ids.iter().enumerate() {
+            store.add_blob_with_key(*id, format!("blob {i}").as_bytes()).unwrap();
+        }
+        let missing = Uuid::now_v7();
+        let mut query = ids.clone();
+        query.push(missing);
+        let got = store.get_blobs(&query).unwrap();
+        assert_eq!(got.len(), 300);
+        assert_eq!(got[&ids[0]], b"blob 0");
+        assert_eq!(got[&ids[299]], b"blob 299");
+        assert!(!got.contains_key(&missing));
+        assert!(store.get_blobs(&[]).unwrap().is_empty());
     }
 
     /// `App::shutdown_flush` calls `Store::checkpoint()`, which fans out to

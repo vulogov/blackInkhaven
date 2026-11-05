@@ -16,6 +16,7 @@ use std::collections::BTreeMap;
 
 use serde::Serialize;
 
+use crate::conlang::parse::Analyzer;
 use crate::conlang::phonology::validator;
 use crate::conlang::types::Phonology;
 use crate::conlang::types::morphology::Morphology;
@@ -42,13 +43,19 @@ impl OracleReport {
     }
 }
 
-/// Run the Oracle over `word`.
+/// Run the Oracle over `word`. Builds a one-shot [`Analyzer`]; to judge many
+/// words, build the analyzer once and call [`check_word_with`].
 pub fn check_word(
     phon: &Phonology,
     morph: &Morphology,
     entries: &[DictionaryEntry],
     word: &str,
 ) -> OracleReport {
+    check_word_with(phon, &Analyzer::new(phon, morph, entries), word)
+}
+
+/// Run the Oracle over `word` with a prebuilt analyzer (3.18 LI-2).
+pub fn check_word_with(phon: &Phonology, analyzer: &Analyzer, word: &str) -> OracleReport {
     let mut r = OracleReport { word: word.to_string(), ..Default::default() };
     let seq = phon.segment(word);
     if seq.is_empty() {
@@ -76,9 +83,8 @@ pub fn check_word(
 
     // ── Level 2: morphology ──
     // Skip if it is itself a dictionary word (a bare, listed root is fine).
-    let is_listed = entries.iter().any(|e| e.word.eq_ignore_ascii_case(word));
-    if !is_listed {
-        let parse = crate::conlang::parse::parse(phon, morph, entries, word);
+    if !analyzer.is_listed(word) {
+        let parse = analyzer.analyze(phon, word);
         if parse.parses.is_empty() {
             r.findings.push(Finding {
                 level: "morphology",
@@ -209,12 +215,17 @@ pub fn scan_prose(
     entries: &[DictionaryEntry],
     words: &[String],
 ) -> Vec<ProseFinding> {
+    scan_prose_with(phon, &Analyzer::new(phon, morph, entries), words)
+}
+
+/// [`scan_prose`] with a prebuilt analyzer (3.18 LI-2): the root map and the
+/// known-surface set are built once per lexicon state, not once per
+/// paragraph — and, before this, once per *word*.
+pub fn scan_prose_with(phon: &Phonology, analyzer: &Analyzer, words: &[String]) -> Vec<ProseFinding> {
     use std::collections::HashSet;
 
-    let known: HashSet<String> =
-        entries.iter().flat_map(|e| e.surface_forms().into_iter().map(|s| s.to_lowercase())).collect();
     // Conlang-context guard: skip prose with no anchoring listed word.
-    if !words.iter().any(|w| known.contains(&w.to_lowercase())) {
+    if !words.iter().any(|w| analyzer.is_known_surface(&w.to_lowercase())) {
         return Vec::new();
     }
 
@@ -222,7 +233,7 @@ pub fn scan_prose(
     let mut seen: HashSet<String> = HashSet::new();
     for w in words {
         let lc = w.to_lowercase();
-        if known.contains(&lc) || !seen.insert(lc.clone()) {
+        if analyzer.is_known_surface(&lc) || !seen.insert(lc.clone()) {
             continue;
         }
         // Unmistakably a word of this language: ≥ 2 segments, all in the inventory.
@@ -230,7 +241,7 @@ pub fn scan_prose(
         if seq.len() < 2 || !seq.iter().all(|s| phon.phoneme(s).is_some()) {
             continue;
         }
-        let findings: Vec<Finding> = check_word(phon, morph, entries, &lc)
+        let findings: Vec<Finding> = check_word_with(phon, analyzer, &lc)
             .findings
             .into_iter()
             .filter(|f| f.level == "phonotactics")

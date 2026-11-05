@@ -10,6 +10,8 @@
 //!
 //! Pure and deterministic.
 
+use std::collections::HashMap;
+
 use crate::language_entry::DictionaryEntry;
 
 /// One indexed sense: the conlang headword, its part of speech, and the gloss
@@ -23,6 +25,11 @@ struct Sense {
 /// A built index over a language's lexicon.
 pub struct GlossIndex {
     senses: Vec<Sense>,
+    /// 3.18 LI-2 — folded gloss token → the senses carrying it, in index
+    /// order, so `has_sense` / `map` consult one bucket instead of scanning
+    /// (and lowercasing) every sense per lookup. Order within a bucket is
+    /// the sense order, so "first match wins" is unchanged.
+    by_token: HashMap<String, Vec<usize>>,
 }
 
 /// The result of mapping one English lemma.
@@ -77,7 +84,7 @@ pub enum PosHint {
 impl GlossIndex {
     /// Build the index from a language's dictionary entries.
     pub fn build(entries: &[DictionaryEntry]) -> Self {
-        let senses = entries
+        let senses: Vec<Sense> = entries
             .iter()
             .filter(|e| !e.word.trim().is_empty() && !e.translation.trim().is_empty())
             .map(|e| Sense {
@@ -86,7 +93,21 @@ impl GlossIndex {
                 tokens: content_tokens(&e.translation),
             })
             .collect();
-        GlossIndex { senses }
+        let mut by_token: HashMap<String, Vec<usize>> = HashMap::new();
+        for (i, s) in senses.iter().enumerate() {
+            for t in &s.tokens {
+                let bucket = by_token.entry(t.clone()).or_default();
+                if bucket.last() != Some(&i) {
+                    bucket.push(i);
+                }
+            }
+        }
+        GlossIndex { senses, by_token }
+    }
+
+    /// The senses whose gloss carries `needle`, in index order.
+    fn carrying(&self, needle: &str) -> impl Iterator<Item = &Sense> + '_ {
+        self.by_token.get(needle).into_iter().flatten().map(move |&i| &self.senses[i])
     }
 
     /// Does the lexicon record a sense of the given broad class carrying this
@@ -94,7 +115,7 @@ impl GlossIndex {
     /// an adjective here? is *see* a verb?).
     pub fn has_sense(&self, lemma: &str, hint: PosHint) -> bool {
         let needle = lemma.to_lowercase();
-        self.senses.iter().any(|s| pos_is(&s.pos, hint) && s.tokens.iter().any(|t| t == &needle))
+        self.carrying(&needle).any(|s| pos_is(&s.pos, hint))
     }
 
     /// Map one English lemma to a conlang headword, preferring senses whose part
@@ -102,28 +123,24 @@ impl GlossIndex {
     /// gloss that merely contains the lemma.
     pub fn map(&self, lemma: &str, hint: PosHint) -> Mapping {
         let needle = lemma.to_lowercase();
+        let found = |s: &Sense| Mapping::Found { word: s.word.clone(), pos: s.pos.clone() };
 
         // Pass 1: exact single-token gloss with a matching POS (the cleanest hit).
-        if let Some(s) = self.senses.iter().find(|s| {
-            pos_is(&s.pos, hint) && s.tokens.len() == 1 && s.tokens[0] == needle
-        }) {
-            return Mapping::Found { word: s.word.clone(), pos: s.pos.clone() };
+        if let Some(s) = self.carrying(&needle).find(|s| pos_is(&s.pos, hint) && s.tokens.len() == 1) {
+            return found(s);
         }
         // Pass 2: the lemma appears among a multi-word gloss's content tokens,
         // POS matching.
-        if let Some(s) =
-            self.senses.iter().find(|s| pos_is(&s.pos, hint) && s.tokens.iter().any(|t| t == &needle))
-        {
-            return Mapping::Found { word: s.word.clone(), pos: s.pos.clone() };
+        if let Some(s) = self.carrying(&needle).find(|s| pos_is(&s.pos, hint)) {
+            return found(s);
         }
         // Pass 3: ignore the POS hint — any sense carrying the meaning.
         if let Some(s) = self
-            .senses
-            .iter()
-            .find(|s| s.tokens.len() == 1 && s.tokens[0] == needle)
-            .or_else(|| self.senses.iter().find(|s| s.tokens.iter().any(|t| t == &needle)))
+            .carrying(&needle)
+            .find(|s| s.tokens.len() == 1)
+            .or_else(|| self.carrying(&needle).next())
         {
-            return Mapping::Found { word: s.word.clone(), pos: s.pos.clone() };
+            return found(s);
         }
         Mapping::Missing
     }

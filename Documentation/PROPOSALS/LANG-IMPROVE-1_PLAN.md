@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Track** | LANG-IMPROVE-1 |
-| **Status** | LI-1 landed on 3.18.0-dev; LI-2 … LI-10 proposed |
+| **Status** | LI-1, LI-2 landed on 3.18.0-dev; LI-3 … LI-10 proposed |
 | **Created** | 2026-11-05 |
 | **Author** | Vladimir Ulogov |
 | **Target version** | 3.18.0 |
@@ -89,6 +89,52 @@ captured log has one `policy:` line at INFO and none at WARN; a store test that
 creates a node in a project with no scripts and asserts `ADAM` is still unset.
 
 ### LI-2 · The language model is rebuilt from the store for every call
+
+**Status: landed (3.18.0-dev).** `src/conlang/model.rs`: `LanguageModel::load`
+collects the book's paragraph ids from the hierarchy the caller holds and
+fetches every body in one `Store::get_content_batch` (new;
+`BlobStorage::get_blobs`, `WHERE id IN (…)` in chunks of 256, ids bound), then
+`build` applies the former loaders' rules once — Phonology (first phoneme
+block; a malformed block is kept as `phonology_error` and still surfaces as
+the hard error), the validator findings, Morphology (Morphology or Grammar
+chapter), the typology spec with its node, varieties merged across Grammar
+paragraphs, contact, loan phonology, diachronics, the dictionary, the Texts
+and Hypotheses, and `Meta/overview`. `gloss()`, `reverse_index()` and
+`analyzer()` are `OnceLock`s. `model::cached` keeps one `Arc<LanguageModel>`
+per book for the process and revalidates by `ModelStamp` — the subtree's node
+count and latest `modified_at`, both read from the caller's hierarchy, so a
+hit costs no store access; every store write bumps one of the two. The ten
+loaders (`load_phonology` … `load_hypotheses`, `load_grammar_spec`) are now
+clones out of the cached model, so the ~280 call sites are unchanged;
+`load_phonology` prints the findings only on the call that loaded the model.
+The TUI hub's private loaders and `meta_iso` read the model (silently — no
+stderr in the TUI), and the on-save Oracle scan uses the cached model and
+its analyzer. The Oracle's per-word root map became `parse::Analyzer` (root
+map, affixes, ablaut images, listed and surface-form sets) built once;
+`check_word_with` / `scan_prose_with` take it. `GlossIndex` has a folded-token
+map (`by_token`), so `has_sense` / `map` consult one bucket and "first match
+wins" is preserved. `translate_with` / `reverse_with` / `round_trip_with` take
+prebuilt indexes; `corpus::generate` and `eval::round_trip_all` build theirs
+once per batch, and the Bund `ink.lang.translate` / `ink.lang.reverse` use the
+model's. `INKHAVEN_PERF_TRACE` marks: `conlang.model.fetch`, `.parse`,
+`conlang.translate`. Not done: the translation memory stays a per-call
+sidecar read (one small file; the one writer is unchanged), and the Bund
+`ctx()` still reloads the hierarchy per word — the model behind it is cached,
+the hierarchy scan is LI-3's concern. Bench: `benches/conlang.rs` (syllabify,
+translate_paragraph, reverse, scan_manuscript) on `gen-fixture
+--conlang-words 300`, which now builds `Benchlang`; added to `bench.yml`.
+Tests: `conlang::model::tests` (every block by the loaders' rules, malformed
+block kept as an error, indexes built once, stamp moves on touch and on add,
+cache hit / reload / per-book), `blob_store_get_blobs_batches_and_skips_missing`,
+the fixture's `small_fixture_with_conlang_has_the_language` (ignored: real
+store). Measured on the 16-word scratch project (debug build, median of
+3–5): a Bund script calling `ink.lang.translate` 30 times went from 1110 ms
+to 425 ms; `INKHAVEN_PERF_TRACE` puts the model at 4 ms fetch + 1 ms parse
+and a ten-clause translate at 0.2 ms. One-shot CLI commands are unchanged
+within noise (≈330 ms, of which process start and `Store::open` are ≈180 ms):
+on a small book the per-call rebuild was never what a single command paid
+for; the win is every repeated use — scripts, the TUI's on-save scan, the
+corpus / eval loops.
 
 **Symptom.** Every `language` command, every Bund `ink.lang.*` word, every
 Oracle scan and every TUI translate builds Phonology, Morphology, the grammar

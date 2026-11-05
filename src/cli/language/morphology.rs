@@ -383,32 +383,16 @@ pub(crate) fn parse_surface(project: &Path, language: &str, word: &str, json: bo
     Ok(())
 }
 
-/// Load the `{ grammar: { … } }` typology block from the Grammar chapter,
-/// returning the spec + the paragraph node that holds it (for in-place edits).
+/// The `{ grammar: { … } }` typology block from the Grammar chapter — the
+/// spec + the paragraph node that holds it (for in-place edits) — from the
+/// cached [`crate::conlang::model::LanguageModel`] (3.18 LI-2).
 pub(crate) fn load_grammar_spec(
     store: &Store,
     hierarchy: &Hierarchy,
     lang_book: &crate::store::node::Node,
 ) -> Result<(crate::conlang::types::grammar::GrammarSpec, Option<crate::store::node::Node>)> {
-    use crate::conlang::types::grammar::GrammarSpec;
-    let Some(chapter) = hierarchy
-        .children_of(Some(lang_book.id))
-        .into_iter()
-        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Grammar"))
-        .cloned()
-    else {
-        return Ok((GrammarSpec::default(), None));
-    };
-    for para in hierarchy.children_of(Some(chapter.id)) {
-        if para.kind != NodeKind::Paragraph {
-            continue;
-        }
-        let Ok(Some(bytes)) = store.get_content(para.id) else { continue };
-        if let Ok(Some(spec)) = GrammarSpec::from_hjson(&String::from_utf8_lossy(&bytes)) {
-            return Ok((spec, Some(para.clone())));
-        }
-    }
-    Ok((GrammarSpec::default(), None))
+    let m = super::model(store, hierarchy, lang_book)?;
+    Ok((m.grammar.clone(), m.grammar_node.clone()))
 }
 
 /// LANG-1 P3.4 — the grammar typological questionnaire.

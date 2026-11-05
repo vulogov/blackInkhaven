@@ -91,13 +91,15 @@ pub fn generate(
     pool: &[String],
 ) -> CorpusReport {
     let mut report = CorpusReport::default();
+    // 3.18 LI-2 — one gloss index for the whole pool, not one per sentence.
+    let idx = super::lexmap::GlossIndex::build(entries);
     for en in pool {
         let en = en.trim();
         if en.is_empty() {
             continue;
         }
         report.scanned += 1;
-        let t = super::translate(phon, morph, typology, entries, en);
+        let t = super::translate_with(&idx, phon, morph, typology, en);
         if t.unresolved.is_empty() && !t.target.trim().is_empty() {
             report.accepted.push((en.to_string(), t.target));
         } else {

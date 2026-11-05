@@ -267,7 +267,16 @@ pub fn reverse(
     entries: &[DictionaryEntry],
     surface: &str,
 ) -> ReverseTranslation {
-    let idx = ReverseIndex::build(phon, morph, entries);
+    reverse_with(&ReverseIndex::build(phon, morph, entries), typology, surface)
+}
+
+/// [`reverse`] with a prebuilt index (3.18 LI-2): the paradigm expansion of
+/// every noun and verb happens once per lexicon state, not per call.
+pub fn reverse_with(
+    idx: &ReverseIndex,
+    typology: &BTreeMap<String, String>,
+    surface: &str,
+) -> ReverseTranslation {
     let spans = super::split_clauses(surface);
 
     let mut words: Vec<(String, String)> = Vec::new();
@@ -275,7 +284,7 @@ pub fn reverse(
     let mut englishes: Vec<String> = Vec::new();
     let mut confidence: Option<f32> = None;
     for span in &spans {
-        let (en, conf) = reverse_clause(&idx, typology, &span.text, &mut words, &mut unresolved)
+        let (en, conf) = reverse_clause(idx, typology, &span.text, &mut words, &mut unresolved)
             .unwrap_or_default();
         englishes.push(en);
         if conf > 0.0 {

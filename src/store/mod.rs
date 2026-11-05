@@ -861,6 +861,18 @@ symbol/motif proposals you can accept straight into this book.";
             .map_err(|e| Error::Store(format!("get_content: {e}")))
     }
 
+    /// 3.18 LI-2 — the bodies of `ids` in one round trip per 256 ids; ids
+    /// without a body are absent from the map. `LanguageModel::load` reads a
+    /// whole language book with it.
+    pub fn get_content_batch(
+        &self,
+        ids: &[Uuid],
+    ) -> Result<std::collections::HashMap<Uuid, Vec<u8>>> {
+        self.inner
+            .get_content_batch(ids)
+            .map_err(|e| Error::Store(format!("get_content_batch: {e}")))
+    }
+
     /// Create a hierarchy node end-to-end: validate placement, derive a unique
     /// slug, compute the filesystem path, write a .typ template (paragraphs) or
     /// create a directory (branches), insert into bdslib, sync. Returns the

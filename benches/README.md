@@ -51,6 +51,7 @@ exercises.
 |---------------|------------------|----------|
 | `startup`     | Wall-clock for `inkhaven list books` (touches the full project-load path) | cold (fresh spawn each time), warm (caches primed) |
 | `search`      | Wall-clock for `inkhaven search <query>` against the fixture | common_phrase, named_entity, rare_phrase |
+| `conlang`     | 3.18 LI-2 — wall-clock for `inkhaven language …` on the fixture's `Benchlang` (`gen-fixture --conlang-words 300`): one-block load, forward translation of a ten-clause paragraph, reverse translation, manuscript-wide Oracle scan | syllabify, translate_paragraph, reverse, scan_manuscript |
 
 ### Deferred to I.1.2.b
 

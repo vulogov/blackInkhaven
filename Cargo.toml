@@ -481,6 +481,10 @@ harness = false
 name = "graph"
 harness = false
 
+[[bench]]
+name = "conlang"
+harness = false
+
 [profile.release]
 lto = "thin"
 codegen-units = 1
