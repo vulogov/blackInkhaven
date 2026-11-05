@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Track** | LANG-IMPROVE-1 |
-| **Status** | LI-1 … LI-4 landed on 3.18.0-dev; LI-5 … LI-10 proposed |
+| **Status** | LI-1 … LI-5 landed on 3.18.0-dev; LI-6 … LI-10 proposed |
 | **Created** | 2026-11-05 |
 | **Author** | Vladimir Ulogov |
 | **Target version** | 3.18.0 |
@@ -384,6 +384,44 @@ store's only reorder primitive is `swap_siblings` (`src/store/mod.rs:1245`).
 `reorder_children` renames files and `children_of` returns the permutation. CLI
 test: `sort-dictionary --dry-run` on a scrambled fixture lists the moves;
 export is in alphabet order.
+
+**Status: landed (3.18.0-dev).** `Alphabet::sort_key(title) -> CollationKey`
+(an `Ord` key: declared letters by index via the same longest-match /
+folded / marks-stripped lookup as `bucket_for`, undeclared clusters after
+them by code point, then the `word (N)` number, then the folded and raw
+text), `bucket_sort_key(title)` (declared entry position,
+undeclared buckets after) and `section_for(word)` (the tree's bucket name);
+`split_homograph` is now the one parser of the `(N)` suffix.
+`Store::reorder_children(&mut hierarchy, parent, ids)` sets the permutation
+in one pass: two-phase renames through temporary names, metadata update per
+moved node, descendants' `file` rewritten for a moved bucket, and the
+hierarchy kept current (moved nodes and rewritten descendants re-inserted),
+so entries-then-buckets runs on one snapshot with no reload between. Found on the way: every
+HJSON paragraph (dictionary entry, source, symbol) is written as `.typ` with
+only its `content_type` flipped in metadata, so `fs_name()` names a `.hjson`
+file that never existed and `swap_siblings` / `shift_sibling_order` failed
+with *No such file* on any dictionary entry; the three reorder primitives now
+take a paragraph's on-disk path from its stored `file` and keep its real
+extension when renaming (`Store::on_disk_rel`, `reordered_fs_name`). One deviation from
+the plan: the writer does **not** insert at the collated position — a
+`Before` insert shifts siblings, which would force a hierarchy reload per
+middle insert and undo LI-3 — it appends and then `finish()` reorders each
+touched bucket (and the bucket list when one was created) with one rename
+pass each, so the observable tree is identical and a batch stays one
+hierarchy load. `plan_dictionary_sort` (entries per bucket first, while the
+bucket directories still carry their names, then the buckets; children of
+another kind keep their slots) backs both `finish()` and `language
+sort-dictionary <lang> [--dry-run]`, which lists every move as
+`Dictionary/K: \`kata\` 2 → 1` and applies them inside one `SyncBatch`.
+`export`, the two-column render and `dictionary` (md/typ) sort with the key
+and section by alphabet entry; `grammar-book` does not list the lexicon and
+is unchanged. Tests: `collate_follows_the_declared_alphabet` (headword),
+`plan_orders_buckets_by_alphabet_and_entries_by_collation` (pure, on a
+hand-built hierarchy) and the ignored real-store
+`writer_sorts_touched_buckets_and_sort_dictionary_repairs_a_scrambled_tree`
+(scrambled batch lands sorted; `swap_siblings` scramble repaired; `NN-`
+directories and files renamed; stored `file` paths match the tree; a fresh
+load and `load_dictionary` are in order).
 
 ## P3 — one surface
 

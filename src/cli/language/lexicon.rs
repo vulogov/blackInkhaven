@@ -582,6 +582,10 @@ pub(crate) struct DictionaryWriter<'a> {
     /// does not read their bodies back.
     batch_pos: std::collections::HashMap<uuid::Uuid, String>,
     batch: Option<crate::store::SyncBatch<'a>>,
+    /// Buckets this batch added entries to, and whether it created a bucket:
+    /// the parents [`Self::finish`] re-sorts into alphabet order (LI-5).
+    touched_buckets: std::collections::BTreeSet<uuid::Uuid>,
+    added_bucket: bool,
 }
 
 impl<'a> DictionaryWriter<'a> {
@@ -617,6 +621,8 @@ impl<'a> DictionaryWriter<'a> {
             checker,
             batch_pos: std::collections::HashMap::new(),
             batch: Some(store.begin_batch()),
+            touched_buckets: std::collections::BTreeSet::new(),
+            added_bucket: false,
         })
     }
 
@@ -702,6 +708,7 @@ impl<'a> DictionaryWriter<'a> {
                     InsertPosition::End,
                 )?;
                 self.hierarchy.insert(created.clone());
+                self.added_bucket = true;
                 created
             }
         };
@@ -757,16 +764,146 @@ impl<'a> DictionaryWriter<'a> {
         )?;
         self.hierarchy.insert(entry.clone());
         self.batch_pos.insert(entry.id, pos.to_string());
+        self.touched_buckets.insert(subchapter.id);
         Ok((entry, bucket))
     }
 
-    /// End the batch: flush the vector index once.
+    /// End the batch: put every touched bucket (and the bucket list, when
+    /// one was created) into alphabet order with one rename pass each
+    /// (LI-5), then flush the vector index once. Entries are appended while
+    /// the batch runs and sorted here, so a batch never pays a hierarchy
+    /// reload per middle insert.
     pub(crate) fn finish(mut self) -> Result<()> {
+        let alphabet: Vec<String> = self.meta.as_ref().map(|m| m.alphabet.clone()).unwrap_or_default();
+        let dictionary_id = self.dictionary.id;
+        let plans: Vec<SortPlan> = plan_dictionary_sort(&self.hierarchy, &self.dictionary, &alphabet)
+            .into_iter()
+            .filter(|p| (p.parent.id == dictionary_id && self.added_bucket) || self.touched_buckets.contains(&p.parent.id))
+            .collect();
+        for plan in &plans {
+            self.store.reorder_children(&mut self.hierarchy, Some(plan.parent.id), &plan.order)?;
+        }
         if let Some(batch) = self.batch.take() {
             batch.finish()?;
         }
         Ok(())
     }
+}
+
+/// The reorder `sort-dictionary` would apply under one parent (LI-5): the
+/// children in alphabet order, and the moves that implies.
+#[derive(Debug, Clone)]
+pub(crate) struct SortPlan {
+    pub parent: crate::store::node::Node,
+    /// Every current child, in the new order.
+    pub order: Vec<uuid::Uuid>,
+    /// `(title, from, to)` — 1-based positions of the children that move.
+    pub moves: Vec<(String, usize, usize)>,
+}
+
+/// Plan the dictionary's alphabet order: one plan per bucket whose entries
+/// are out of order (first, while the bucket directories still have their
+/// names), then one for the bucket list itself. Buckets order by declared
+/// alphabet position, undeclared buckets after them; entries by
+/// [`Alphabet::sort_key`]. Children of another kind (a stray note under
+/// the chapter) keep their slots; only the keyed siblings permute.
+pub(crate) fn plan_dictionary_sort(
+    hierarchy: &Hierarchy,
+    dictionary: &crate::store::node::Node,
+    alphabet: &[String],
+) -> Vec<SortPlan> {
+    use crate::conlang::lexicon::headword::Alphabet;
+    let alpha = Alphabet::new(alphabet);
+    let mut plans = Vec::new();
+    let buckets: Vec<&crate::store::node::Node> = hierarchy
+        .children_of(Some(dictionary.id))
+        .into_iter()
+        .filter(|n| n.kind == NodeKind::Subchapter)
+        .collect();
+    for bucket in &buckets {
+        if let Some(plan) = plan_children(hierarchy, bucket, |n| {
+            (n.kind == NodeKind::Paragraph).then(|| alpha.sort_key(&n.title))
+        }) {
+            plans.push(plan);
+        }
+    }
+    if let Some(plan) = plan_children(hierarchy, dictionary, |n| {
+        (n.kind == NodeKind::Subchapter).then(|| alpha.bucket_sort_key(&n.title))
+    }) {
+        plans.push(plan);
+    }
+    plans
+}
+
+/// Sort the keyed children of `parent` among their own slots; `None` when
+/// nothing would move.
+fn plan_children<K: Ord>(
+    hierarchy: &Hierarchy,
+    parent: &crate::store::node::Node,
+    key: impl Fn(&crate::store::node::Node) -> Option<K>,
+) -> Option<SortPlan> {
+    let children = hierarchy.children_of(Some(parent.id));
+    let keyed: Vec<(usize, K)> = children.iter().enumerate().filter_map(|(i, n)| key(n).map(|k| (i, k))).collect();
+    let mut sorted: Vec<&(usize, K)> = keyed.iter().collect();
+    sorted.sort_by(|a, b| a.1.cmp(&b.1));
+    let mut order: Vec<uuid::Uuid> = children.iter().map(|n| n.id).collect();
+    let mut moves = Vec::new();
+    for (slot, (from, _)) in keyed.iter().map(|(slot, _)| slot).zip(sorted.iter().map(|(from, k)| (from, k))) {
+        order[*slot] = children[*from].id;
+        if from != slot {
+            moves.push((children[*from].title.clone(), from + 1, slot + 1));
+        }
+    }
+    (!moves.is_empty()).then(|| SortPlan { parent: parent.clone(), order, moves })
+}
+
+/// `inkhaven language sort-dictionary <lang> [--dry-run]` (LI-5): put the
+/// bucket subchapters and the entries inside each into declared alphabet
+/// order, reporting every move. With no alphabet declared, entries sort by
+/// folded code point and buckets by title.
+pub(crate) fn sort_dictionary(project: &Path, language: &str, dry_run: bool) -> Result<()> {
+    let (store, mut hierarchy, lang_book) = open_lang_book(project, language)?;
+    let dictionary = hierarchy
+        .children_of(Some(lang_book.id))
+        .into_iter()
+        .find(|n| n.kind == NodeKind::Chapter && n.title.eq_ignore_ascii_case("Dictionary"))
+        .cloned()
+        .ok_or_else(|| Error::Config(format!("language `{}` has no `Dictionary` chapter", lang_book.title)))?;
+    let alphabet: Vec<String> = load_meta_overview_strict(&store, &hierarchy, &lang_book)?
+        .map(|m| m.alphabet)
+        .unwrap_or_default();
+    if alphabet.is_empty() {
+        eprintln!("note: {} declares no Meta/overview.alphabet — sorting by letter", lang_book.title);
+    }
+    let plans = plan_dictionary_sort(&hierarchy, &dictionary, &alphabet);
+    if plans.is_empty() {
+        println!("{}/Dictionary is already in alphabet order", lang_book.title);
+        return Ok(());
+    }
+    let (mut buckets_moved, mut entries_moved) = (0usize, 0usize);
+    for plan in &plans {
+        let label = if plan.parent.id == dictionary.id {
+            buckets_moved += plan.moves.len();
+            "Dictionary".to_string()
+        } else {
+            entries_moved += plan.moves.len();
+            format!("Dictionary/{}", plan.parent.title)
+        };
+        for (title, from, to) in &plan.moves {
+            println!("  {label}: `{title}` {from} → {to}");
+        }
+    }
+    if dry_run {
+        println!("(dry run — {buckets_moved} bucket(s) and {entries_moved} entr(y/ies) would move)");
+        return Ok(());
+    }
+    let batch = store.begin_batch();
+    for plan in &plans {
+        store.reorder_children(&mut hierarchy, Some(plan.parent.id), &plan.order)?;
+    }
+    batch.finish()?;
+    println!("sorted {}/Dictionary: {buckets_moved} bucket(s) and {entries_moved} entr(y/ies) moved", lang_book.title);
+    Ok(())
 }
 
 /// `Meta/overview` for bucket derivation, with `derive_alphabet_bucket`'s
@@ -866,16 +1003,7 @@ pub(crate) fn find_dictionary_entry(
 /// The spelling behind an entry title: `pata (2)` → `pata`.  Homograph
 /// titles carry a ` (N)` suffix (LB-6); everything else is returned as is.
 pub(crate) fn homograph_base(title: &str) -> &str {
-    let t = title.trim_end();
-    if let Some(open) = t.rfind(" (") {
-        let inner = &t[open + 2..];
-        if let Some(digits) = inner.strip_suffix(')') {
-            if !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()) {
-                return t[..open].trim_end();
-            }
-        }
-    }
-    t
+    crate::conlang::lexicon::headword::split_homograph(title).0
 }
 
 /// compact concrete HJSON for an
@@ -1367,9 +1495,175 @@ pub(crate) fn seed_dictionary_entry_body(
 }
 
 #[cfg(test)]
+mod sort_tests {
+    use super::*;
+    use crate::store::node::Node;
+    use uuid::Uuid;
+
+    fn node(id: Uuid, kind: &str, title: &str, parent: Option<Uuid>, order: u32) -> Node {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "kind": kind, "title": title,
+            "slug": title.to_lowercase().replace(' ', "-"),
+            "path": [], "parent_id": parent, "order": order, "file": null,
+            "modified_at": "2026-01-01T00:00:00Z",
+        }))
+        .unwrap()
+    }
+
+    /// LI-5: a scrambled dictionary plans into alphabet order — entries
+    /// inside each bucket first, then the buckets; a stray paragraph under
+    /// the chapter keeps its slot; an already-sorted bucket has no plan.
+    #[test]
+    fn plan_orders_buckets_by_alphabet_and_entries_by_collation() {
+        let (dict, b_d, b_ch, b_a, b_ng, note) =
+            (Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7());
+        let (e1, e2, e3, e4) = (Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7());
+        let nodes = vec![
+            node(dict, "chapter", "Dictionary", None, 1),
+            node(b_d, "subchapter", "D", Some(dict), 1),
+            node(note, "paragraph", "notes", Some(dict), 2),
+            node(b_ng, "subchapter", "\u{014A}", Some(dict), 3),
+            node(b_ch, "subchapter", "Ch", Some(dict), 4),
+            node(b_a, "subchapter", "A", Some(dict), 5),
+            node(e1, "paragraph", "chata (2)", Some(b_ch), 1),
+            node(e2, "paragraph", "chata", Some(b_ch), 2),
+            node(e3, "paragraph", "cha", Some(b_ch), 3),
+            node(e4, "paragraph", "ad", Some(b_a), 1),
+        ];
+        let h = Hierarchy::from_nodes_for_test(nodes.clone());
+        let alphabet: Vec<String> = ["A", "B", "Ch", "D"].iter().map(|s| s.to_string()).collect();
+        let plans = plan_dictionary_sort(&h, &nodes[0], &alphabet);
+        assert_eq!(plans.len(), 2, "{plans:?}");
+        // Entries of Ch first (bucket directories still carry their names).
+        assert_eq!(plans[0].parent.id, b_ch);
+        assert_eq!(plans[0].order, vec![e3, e2, e1]);
+        // Moves are listed by destination slot.
+        assert_eq!(plans[0].moves, vec![("cha".to_string(), 3, 1), ("chata (2)".to_string(), 1, 3)]);
+        // Then the buckets: A, Ch, D declared in that order, Ŋ after; the
+        // stray note keeps slot 2.
+        assert_eq!(plans[1].parent.id, dict);
+        assert_eq!(plans[1].order, vec![b_a, note, b_ch, b_d, b_ng]);
+        let moved: Vec<&str> = plans[1].moves.iter().map(|(t, _, _)| t.as_str()).collect();
+        assert_eq!(moved, vec!["A", "Ch", "D", "\u{014A}"]);
+        // Sorted input plans nothing.
+        let sorted = Hierarchy::from_nodes_for_test(vec![
+            node(dict, "chapter", "Dictionary", None, 1),
+            node(b_a, "subchapter", "A", Some(dict), 1),
+            node(e4, "paragraph", "ab", Some(b_a), 1),
+            node(e1, "paragraph", "ad", Some(b_a), 2),
+        ]);
+        assert!(plan_dictionary_sort(&sorted, &nodes[0], &alphabet).is_empty());
+    }
+}
+
+#[cfg(test)]
 mod writer_tests {
     use super::*;
     use crate::project::ProjectLayout;
+    use crate::store::node::Node;
+
+    /// LI-5: a batch added in scrambled order lands sorted, and
+    /// `sort-dictionary` repairs a tree scrambled by hand: files renamed
+    /// with new `NN-` prefixes, descendants' `file` paths rewritten, a
+    /// fresh load in alphabet order, and `export` following it.
+    #[test]
+    #[ignore = "opens a real Store (embedding-model download); run locally with --ignored"]
+    fn writer_sorts_touched_buckets_and_sort_dictionary_repairs_a_scrambled_tree() {
+        let tmp = tempfile::tempdir().unwrap();
+        crate::cli::init::run(tmp.path(), true, "empty").unwrap();
+        let layout = ProjectLayout::new(tmp.path());
+        let cfg = Config::load_layered(&layout.config_path()).unwrap();
+        let store = Store::open(layout.clone(), &cfg).unwrap();
+        let book = super::super::init_language(&store, &cfg, "Sortlang").unwrap();
+
+        // Scrambled batch: buckets T, K, A appear in that order; entries too.
+        let mut writer = DictionaryWriter::open(&store, &cfg, &book).unwrap();
+        for (w, g) in [("tika", "see"), ("kata", "stone"), ("ata", "one"), ("kala", "bird"), ("ta", "two"), ("aka", "three")] {
+            writer.add_imported(&row(w, "noun", g)).unwrap();
+        }
+        writer.finish().unwrap();
+        let titles = |h: &Hierarchy| -> Vec<(String, Vec<String>)> {
+            let dict = h.children_of(Some(book.id)).into_iter().find(|n| n.title == "Dictionary").unwrap();
+            h.children_of(Some(dict.id))
+                .into_iter()
+                .filter(|n| n.kind == NodeKind::Subchapter)
+                .map(|b| (b.title.clone(), h.children_of(Some(b.id)).iter().map(|e| e.title.clone()).collect()))
+                .collect()
+        };
+        let h = Hierarchy::load(&store).unwrap();
+        assert_eq!(
+            titles(&h),
+            vec![
+                ("A".to_string(), vec!["aka".to_string(), "ata".to_string()]),
+                ("K".to_string(), vec!["kala".to_string(), "kata".to_string()]),
+                ("T".to_string(), vec!["ta".to_string(), "tika".to_string()]),
+            ]
+        );
+        // Every entry's stored `file` exists on disk after the bucket renames.
+        for n in h.iter().filter(|n| n.kind == NodeKind::Paragraph && n.parent_id.is_some()) {
+            if let Some(f) = &n.file {
+                if f.contains("dictionary") {
+                    assert!(tmp.path().join(f).exists(), "{f} missing on disk");
+                }
+            }
+        }
+
+        // Scramble by hand: swap the A and T buckets and two entries in K.
+        let dict = h.children_of(Some(book.id)).into_iter().find(|n| n.title == "Dictionary").unwrap().clone();
+        let buckets: Vec<Node> = h.children_of(Some(dict.id)).into_iter().cloned().collect();
+        store.swap_siblings(&h, buckets[0].id, buckets[2].id).unwrap();
+        let h = Hierarchy::load(&store).unwrap();
+        let k = h.children_of(Some(dict.id)).into_iter().find(|n| n.title == "K").unwrap().clone();
+        let ks: Vec<Node> = h.children_of(Some(k.id)).into_iter().cloned().collect();
+        store.swap_siblings(&h, ks[0].id, ks[1].id).unwrap();
+        let h = Hierarchy::load(&store).unwrap();
+        assert_eq!(titles(&h)[0].0, "T");
+        assert_eq!(titles(&h)[1].1, vec!["kata".to_string(), "kala".to_string()]);
+
+        // Plan + apply (what `sort-dictionary` does without --dry-run).
+        let plans = plan_dictionary_sort(&h, &dict, &[]);
+        assert_eq!(plans.len(), 2);
+        let batch = store.begin_batch();
+        let mut moved = 0;
+        let mut live = h;
+        for plan in &plans {
+            moved += store.reorder_children(&mut live, Some(plan.parent.id), &plan.order).unwrap();
+        }
+        batch.finish().unwrap();
+        assert_eq!(moved, 4, "A and T buckets, kala and kata");
+        // The primitive kept its hierarchy current: it matches a fresh load.
+        let h = Hierarchy::load(&store).unwrap();
+        assert_eq!(titles(&live), titles(&h));
+        assert_eq!(
+            titles(&h),
+            vec![
+                ("A".to_string(), vec!["aka".to_string(), "ata".to_string()]),
+                ("K".to_string(), vec!["kala".to_string(), "kata".to_string()]),
+                ("T".to_string(), vec!["ta".to_string(), "tika".to_string()]),
+            ]
+        );
+        let dict = h.children_of(Some(book.id)).into_iter().find(|n| n.title == "Dictionary").unwrap();
+        let a = h.children_of(Some(dict.id))[0];
+        assert_eq!(a.order, 1);
+        assert!(tmp.path().join(h.fs_path(a, &layout)).is_dir(), "A bucket directory renamed to 01-");
+        for n in h.iter().filter(|n| n.kind == NodeKind::Paragraph) {
+            if let Some(f) = &n.file {
+                if f.contains("dictionary") {
+                    assert!(tmp.path().join(f).exists(), "{f} missing on disk after sort");
+                    // The stored path sits in the bucket's renamed directory
+                    // with the entry's new `NN-` prefix.
+                    let dir = tmp.path().join(h.fs_path(h.get(n.parent_id.unwrap()).unwrap(), &layout));
+                    assert_eq!(tmp.path().join(f).parent().unwrap(), dir, "{f} lives in its bucket's current directory");
+                    assert!(f.rsplit('/').next().unwrap().starts_with(&format!("{:02}-", n.order)), "{f} carries order {}", n.order);
+                }
+            }
+        }
+        assert!(plan_dictionary_sort(&h, dict, &[]).is_empty(), "sorted tree plans nothing");
+        // Export follows the same order.
+        let entries = load_dictionary(&store, &h, &book).unwrap();
+        let words: Vec<&str> = entries.iter().map(|e| e.word.as_str()).collect();
+        assert_eq!(words, vec!["aka", "ata", "kala", "kata", "ta", "tika"]);
+    }
 
     fn row(word: &str, pos: &str, gloss: &str) -> ImportEntry {
         ImportEntry {
@@ -1430,7 +1724,8 @@ mod writer_tests {
             .filter(|n| n.kind == NodeKind::Subchapter)
             .map(|n| n.title.clone())
             .collect();
-        assert_eq!(buckets, ["K", "T", "P", "M", "N", "R", "E"]);
+        // 3.18 LI-5: the batch lands in alphabet order, not insertion order.
+        assert_eq!(buckets, ["E", "K", "M", "N", "P", "R", "T"]);
         let r = h.children_of(Some(dict.id)).into_iter().find(|n| n.title == "R").unwrap();
         let titles: Vec<String> = h.children_of(Some(r.id)).iter().map(|n| n.title.clone()).collect();
         assert_eq!(titles, ["roka", "roka (2)"]);

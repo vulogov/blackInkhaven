@@ -2126,10 +2126,16 @@ fn do_dictionary(vm: &mut VM) -> Result<&mut VM> {
             example: (!e.example.trim().is_empty()).then(|| e.example.clone()),
         })
         .collect();
+    let alphabet: Vec<String> = lang_model(tag, store, &hierarchy, &book)?
+        .overview
+        .as_ref()
+        .map(|o| o.alphabet.clone())
+        .unwrap_or_default();
     let meta = DictMeta {
         language: &book.title,
         font_family: if typst { family.as_deref() } else { None },
         profile: Some(&profile),
+        alphabet: &alphabet,
     };
     let doc = if typst {
         output::dictionary_typst(&meta, &rendered)

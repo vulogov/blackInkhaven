@@ -12,6 +12,7 @@
 use std::collections::BTreeMap;
 
 use crate::conlang::analysis::LanguageProfile;
+use crate::conlang::lexicon::headword::Alphabet;
 use crate::conlang::types::constraint::PhonotacticConstraint;
 use crate::conlang::types::expression::Expressions;
 use crate::conlang::types::morphology::{
@@ -43,17 +44,21 @@ pub struct DictMeta<'a> {
     /// Font family to render the conscript in (Typst only).
     pub font_family: Option<&'a str>,
     pub profile: Option<&'a LanguageProfile>,
+    /// `Meta/overview.alphabet`: orders the entries and names the sections
+    /// (LI-5). Empty → folded code-point order, first-letter sections.
+    pub alphabet: &'a [String],
 }
 
-/// The uppercase first character of a headword, used for sectioning.
-fn section_key(word: &str) -> String {
-    word.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default()
+/// The section a headword prints under: its alphabet bucket, the same the
+/// tree files it under.
+fn section_key(alpha: &Alphabet, word: &str) -> String {
+    alpha.section_for(word)
 }
 
-/// Entries sorted case-insensitively by headword.
-fn sorted(entries: &[RenderEntry]) -> Vec<&RenderEntry> {
+/// Entries in declared alphabet order.
+fn sorted<'e>(alpha: &Alphabet, entries: &'e [RenderEntry]) -> Vec<&'e RenderEntry> {
     let mut v: Vec<&RenderEntry> = entries.iter().collect();
-    v.sort_by(|a, b| a.headword.to_lowercase().cmp(&b.headword.to_lowercase()));
+    v.sort_by_cached_key(|e| alpha.sort_key(&e.headword));
     v
 }
 
@@ -88,9 +93,10 @@ pub fn dictionary_markdown(meta: &DictMeta, entries: &[RenderEntry]) -> String {
         s.push('\n');
     }
 
+    let alpha = Alphabet::new(meta.alphabet);
     let mut current = String::new();
-    for e in sorted(entries) {
-        let key = section_key(&e.headword);
+    for e in sorted(&alpha, entries) {
+        let key = section_key(&alpha, &e.headword);
         if key != current {
             s.push_str(&format!("## {key}\n\n"));
             current = key;
@@ -196,9 +202,10 @@ pub fn dictionary_typst(meta: &DictMeta, entries: &[RenderEntry]) -> String {
 
     s.push_str("= The Lexicon\n");
     s.push_str("#columns(2, gutter: 1.2em)[\n");
+    let alpha = Alphabet::new(meta.alphabet);
     let mut current = String::new();
-    for e in sorted(entries) {
-        let key = section_key(&e.headword);
+    for e in sorted(&alpha, entries) {
+        let key = section_key(&alpha, &e.headword);
         if key != current {
             s.push_str(&format!("== {}\n", typst_text(&key)));
             current = key;
@@ -1159,7 +1166,7 @@ mod tests {
 
     #[test]
     fn markdown_sorts_and_sections() {
-        let meta = DictMeta { language: "Avesha", font_family: None, profile: None };
+        let meta = DictMeta { language: "Avesha", font_family: None, profile: None, alphabet: &[] };
         let md = dictionary_markdown(&meta, &entries());
         // `ami` sorts before `kata`; sections A then K.
         let a = md.find("## A").unwrap();
@@ -1173,7 +1180,7 @@ mod tests {
 
     #[test]
     fn typst_embeds_font_and_conscript() {
-        let meta = DictMeta { language: "Avesha", font_family: Some("Eldar"), profile: None };
+        let meta = DictMeta { language: "Avesha", font_family: Some("Eldar"), profile: None, alphabet: &[] };
         let typ = dictionary_typst(&meta, &entries());
         assert!(typ.contains("#set document(title: \"Avesha — Dictionary\")"));
         assert!(typ.contains("text(font: \"Eldar\""));
@@ -1188,7 +1195,7 @@ mod tests {
 
     #[test]
     fn typst_without_font_omits_conscript() {
-        let meta = DictMeta { language: "Avesha", font_family: None, profile: None };
+        let meta = DictMeta { language: "Avesha", font_family: None, profile: None, alphabet: &[] };
         let typ = dictionary_typst(&meta, &entries());
         assert!(!typ.contains("conscript("));
         assert!(!typ.contains("\\u{E000}"));
@@ -1408,7 +1415,7 @@ mod tests {
         assert!(typ.contains("text(font: \"My \\\"Serif\\\"\", size: 1.3em)"), "{typ}");
         // The markup title still uses the markup escaper.
         assert!(typ.contains("[Say \"hi\"]"), "{typ}");
-        let meta = DictMeta { language: "Ave\"sha", font_family: Some("My \"Serif\""), profile: None };
+        let meta = DictMeta { language: "Ave\"sha", font_family: Some("My \"Serif\""), profile: None, alphabet: &[] };
         let typ = dictionary_typst(&meta, &[]);
         assert!(typ.contains("#let conscript(cp) = text(font: \"My \\\"Serif\\\"\", size: 1.5em)"), "{typ}");
     }

@@ -154,6 +154,9 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::RemoveWord { language, word } => {
             remove_word(project, &language, &word)
         }
+        LanguageCommand::SortDictionary { language, dry_run } => {
+            lexicon::sort_dictionary(project, &language, dry_run)
+        }
         LanguageCommand::DefineRule {
             language,
             rule_id,

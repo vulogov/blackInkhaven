@@ -551,6 +551,7 @@ $ inkhaven language --help
   add-word <lang> <word> --type <pos> --translation <text> [--example <text>]
   add-word <lang> --import <path.csv> [--new] [--force]
   remove-word <lang> <word>
+  sort-dictionary <lang> [--dry-run]
   doctor <lang> [--json]
   list
   export <lang> --format <json|anki|dictionary-twocol> --output <path>

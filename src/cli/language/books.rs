@@ -543,10 +543,13 @@ pub(crate) fn dictionary(
         })
         .collect();
 
+    let alphabet: Vec<String> =
+        model(&store, &hierarchy, &lang_book)?.overview.as_ref().map(|o| o.alphabet.clone()).unwrap_or_default();
     let meta = DictMeta {
         language: &lang_book.title,
         font_family: if typst { family.as_deref() } else { None },
         profile: Some(&profile),
+        alphabet: &alphabet,
     };
     let doc = if typst {
         output::dictionary_typst(&meta, &rendered)

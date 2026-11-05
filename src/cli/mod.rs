@@ -3829,6 +3829,22 @@ pub enum LanguageCommand {
         /// title match).
         word: String,
     },
+    /// put a language's Dictionary into
+    /// declared alphabet order (3.18 LI-5): bucket
+    /// subchapters by `Meta/overview.alphabet`
+    /// position and the entries inside each bucket
+    /// letter by letter, renaming the `NN-` file
+    /// prefixes in one pass per parent. Every door
+    /// that adds words keeps this order; this
+    /// command repairs a dictionary built before
+    /// 3.18 or edited by hand.
+    SortDictionary {
+        /// Target language name.
+        language: String,
+        /// Print the moves without applying them.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// 1.2.16+ Phase P.5 — define-or-edit a
     /// grammar or phonology rule in `$EDITOR`.
     /// Opens the rule's HJSON template in the
@@ -6624,6 +6640,7 @@ fn command_mutates(command: &Command) -> bool {
                 LanguageCommand::Init { .. }
                     | LanguageCommand::AddWord { .. }
                     | LanguageCommand::RemoveWord { .. }
+                    | LanguageCommand::SortDictionary { .. }
                     | LanguageCommand::Import { .. }
             )
     )

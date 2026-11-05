@@ -21,6 +21,13 @@
 //!   A–Z alphabet accepts `éle` but not `ŋa`. The alphabet always drives
 //!   bucket derivation ([`Alphabet::bucket_for`]); `--force` is the escape
 //!   hatch on the CLI doors.
+//!
+//! The alphabet also *orders* (LANG-IMPROVE-1 LI-5): [`Alphabet::sort_key`]
+//! collates a headword letter by letter by declared index (longest match,
+//! folded, marks stripped as in `bucket_for`), letters no entry declares
+//! after every declared one by code point, then the `word (N)` homograph
+//! number. The dictionary tree, `export`, the printed dictionary and
+//! `sort-dictionary` all order by it, so the book follows the declaration.
 
 use std::fmt;
 
@@ -120,6 +127,43 @@ pub fn validate_headword(
     Ok(())
 }
 
+/// `pata (2)` → `("pata", Some(2))`; a title without the homograph suffix
+/// keeps its text and `None`. Shared by the writer's duplicate check and
+/// collation.
+pub fn split_homograph(title: &str) -> (&str, Option<u32>) {
+    let t = title.trim_end();
+    if let Some(open) = t.rfind(" (") {
+        let inner = &t[open + 2..];
+        if let Some(digits) = inner.strip_suffix(')') {
+            if !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()) {
+                return (t[..open].trim_end(), digits.parse().ok());
+            }
+        }
+    }
+    (t, None)
+}
+
+/// One collation unit of a headword: a declared letter (by alphabet index)
+/// or, after every declared letter, a cluster no entry covers (by code
+/// point). Variant order *is* the collation order.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum KeyUnit {
+    Letter(usize),
+    Other(String),
+}
+
+/// A headword's position in the declared alphabet (LI-5): the letter
+/// sequence, then the homograph number (`pata` before `pata (2)`), then the
+/// folded and the raw text so equal sequences order deterministically.
+/// Build with [`Alphabet::sort_key`]; compare with `Ord`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct CollationKey {
+    units: Vec<KeyUnit>,
+    homograph: u32,
+    folded: String,
+    raw: String,
+}
+
 /// `Meta/overview.alphabet` compiled for longest-match lookups.
 ///
 /// Each entry contributes its whitespace-separated tokens as letter forms
@@ -164,6 +208,47 @@ impl<'a> Alphabet<'a> {
         let run = letter_runs(word).next()?;
         let run = clusters(&fold(run));
         self.match_at(&run, 0).map(|(idx, _)| self.entries[idx].as_str())
+    }
+
+    /// The collation key of a headword or entry title (LI-5). Separators
+    /// between letter runs do not collate (`ta-sora` sorts as `tasora`).
+    pub fn sort_key(&self, title: &str) -> CollationKey {
+        let (base, n) = split_homograph(title);
+        let mut units = Vec::new();
+        for run in letter_runs(base) {
+            let run = clusters(&fold(run));
+            let mut i = 0;
+            while i < run.len() {
+                match self.match_at(&run, i) {
+                    Some((idx, consumed)) => {
+                        units.push(KeyUnit::Letter(idx));
+                        i += consumed;
+                    }
+                    None => {
+                        units.push(KeyUnit::Other(run[i].clone()));
+                        i += 1;
+                    }
+                }
+            }
+        }
+        CollationKey { units, homograph: n.unwrap_or(0), folded: fold(base), raw: title.to_string() }
+    }
+
+    /// The order of a dictionary *bucket* (a subchapter titled by an
+    /// alphabet entry, or by a fallback base letter): declared entries by
+    /// position, then undeclared buckets collated after them.
+    pub fn bucket_sort_key(&self, bucket_title: &str) -> (usize, CollationKey) {
+        let idx = self.entries.iter().position(|e| e == bucket_title).unwrap_or(usize::MAX);
+        (idx, self.sort_key(bucket_title))
+    }
+
+    /// The section a word prints under: its alphabet bucket, else its
+    /// [`fallback_bucket`], else `?`. The same name the tree files it under.
+    pub fn section_for(&self, word: &str) -> String {
+        self.bucket_for(word)
+            .map(str::to_string)
+            .or_else(|| fallback_bucket(word))
+            .unwrap_or_else(|| "?".into())
     }
 
     /// The first letter (grapheme cluster, folded) of `word` that no form
@@ -324,6 +409,45 @@ mod tests {
         assert_eq!(a.bucket_for("ab"), Some("A"));
         // An undeclared diacritic still folds to its base letter.
         assert_eq!(a.bucket_for("\u{00E1}b"), Some("A"));
+    }
+
+    #[test]
+    fn collate_follows_the_declared_alphabet() {
+        // LI-5: `Ch` is a letter between B and D; an undeclared letter sorts
+        // after every declared one; a homograph follows its base.
+        let alpha = strings(&["A", "B", "Ch", "D"]);
+        let a = Alphabet::new(&alpha);
+        // `p` is not declared here either, so `pata` and `ŋa` both follow the
+        // declared letters, by code point (`p` U+0070 < `ŋ` U+014B).
+        let mut words = strings(&["da", "\u{014B}a", "cha", "pata (2)", "ba", "pata", "ad", "ab"]);
+        words.sort_by_cached_key(|w| a.sort_key(w));
+        assert_eq!(words, strings(&["ab", "ad", "ba", "cha", "da", "pata", "pata (2)", "\u{014B}a"]));
+        // With P declared, `pata` sorts among the letters and `ŋa` last.
+        let alpha_p = strings(&["A", "B", "Ch", "D", "P"]);
+        let ap = Alphabet::new(&alpha_p);
+        let mut words = strings(&["\u{014B}a", "pata (2)", "pata", "da"]);
+        words.sort_by_cached_key(|w| ap.sort_key(w));
+        assert_eq!(words, strings(&["da", "pata", "pata (2)", "\u{014B}a"]));
+        // Case and undeclared diacritics fold; the raw text only breaks ties.
+        let cmp = |x: &str, y: &str| a.sort_key(x).cmp(&a.sort_key(y));
+        assert_eq!(a.sort_key("Ba").units, a.sort_key("ba").units);
+        assert_eq!(cmp("b\u{00E1}", "bb"), std::cmp::Ordering::Less);
+        assert_eq!(a.sort_key("ta-da").units, a.sort_key("tada").units);
+        // `cha` is the letter Ch then A; `cia` is the character `c` of
+        // "Ch", an undeclared `i`, then A — the undeclared unit sorts last.
+        assert_eq!(cmp("cha", "cia"), std::cmp::Ordering::Less);
+        // Bucket order: declared entries by position, others after.
+        let mut buckets = strings(&["D", "\u{014A}", "A", "Ch", "B"]);
+        buckets.sort_by_cached_key(|b| a.bucket_sort_key(b));
+        assert_eq!(buckets, strings(&["A", "B", "Ch", "D", "\u{014A}"]));
+        // Sections name the bucket the tree uses.
+        assert_eq!(a.section_for("chata"), "Ch");
+        assert_eq!(a.section_for("\u{014B}a"), "\u{014A}");
+        // No alphabet: everything is `Other`, ordered by folded code point.
+        let none = Alphabet::new(&[]);
+        assert_eq!(none.sort_key("Zeta").cmp(&none.sort_key("alpha")), std::cmp::Ordering::Greater);
+        assert_eq!(split_homograph("pata (12)"), ("pata", Some(12)));
+        assert_eq!(split_homograph("pata (x)"), ("pata (x)", None));
     }
 
     #[test]

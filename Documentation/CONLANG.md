@@ -466,6 +466,16 @@ with no alphabet entry covering it, on its first base letter (`ą́tal` and
 `atal` both file under `A`). A homograph (same spelling, different `type`) is
 allowed and titled `pata (2)`.
 
+**The alphabet orders the book.** Buckets sit in `Meta/overview.alphabet`
+order (an undeclared bucket such as `Ŋ` after every declared one), entries
+inside a bucket collate letter by letter by the declaration (`Ch` is a letter
+between `B` and `D`, `ŋ` sorts after `z`, `pata (2)` follows `pata`), and
+`export`, `dictionary` and the two-column render use the same order with one
+section per alphabet entry. Every door keeps the order as it adds words;
+`language sort-dictionary <lang> [--dry-run]` repairs a dictionary built
+before 3.18 or rearranged by hand, renaming the `NN-` file prefixes in one pass
+per bucket and listing each move.
+
 | Command | Does |
 |---|---|
 | `language generate-lexicon --topic … --count … [--semantic] [--yes]` | AI generation behind the dedup gate (illegal / homophone / duplicate-meaning / near-synonym) |
