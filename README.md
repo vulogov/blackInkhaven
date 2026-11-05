@@ -27,32 +27,36 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 3.16.0 — The Ledger Reads Back
+## Latest release · 3.17.0 — Every Door Agrees · Pictures in the Build
 
-3.16.0 makes the **Canon Ledger speak first**, and finishes what the world track
-had deferred. No new store, no new dependency, warning-free:
+3.17.0 is a correctness release for the **constructed-language suite**, from
+working one language end to end: eleven defects fixed under one track
+(`LANG-BUGFIX-1`). One small dependency (`unicode-normalization`), no new store,
+warning-free in everything touched:
 
-- **Canon as a reader** — `inkhaven canon read` checks the ledger against the
-  manuscript and reports where they have come apart: a decision whose source
-  paragraph no longer says it, one whose source is gone, one committed above what
-  it rests on, a foundation left unsettled. Deterministic and free; the findings
-  join the Canon dashboard and pane, the reader hub, the Editorial Pass and
-  CHRONICLE.
-- **One opt-in contradiction pass** — `canon read --deep` (or `D` on the
-  dashboard) asks a model once whether any passage says the opposite of a
-  committed decision. The answer is stored and expires on its own when the
-  passage changes.
-- **A regional map has a latitude** — `dem.center_lat` weathers a scaled
-  heightmap as the region it is, instead of pole to pole.
-- **The world writes in your language** — proposals, and the Places, rulers,
-  language briefs and Mythology entries committed from them, follow the project
-  language (en / ru / fr / de / es).
-- **The world compiles in the background** — `Ctrl+B W` → `C` no longer freezes
-  the editor; keep writing while it works, `C` again to cancel.
+- **A bad phonology block reports, not locks** — an unknown constraint kind, an
+  undeclared class, a rule that can never match are **findings with a
+  location**, printed by the CLI and listed by `language doctor` under
+  **Blocks**; the generator, inspectors and translator keep working.
+- **One headword check at every door** — `add-word`, the CSV pre-flight,
+  `language import` and the TUI `+` chord run the same check (shape, then
+  spelling against the Phonology inventory or the alphabet), so a word one door
+  accepts the others accept, and an exported dictionary round-trips. One key per
+  word: `Pata`, `pata` and a decomposed `pãta` are one entry; homographs are
+  admitted as `pata (2)`.
+- **The translator reads the whole paragraph** — sentence by sentence, an
+  unplaceable clause kept as `«…»`, the confidence the *minimum* over clauses
+  instead of a mean that hid a dropped sentence.
+- **Syllables are hiatus by default** — `aia` is `a.i.a` unless you declare
+  `diphthongs: ["ai"]`; stress, scansion and the generator follow.
+- **Pictures in the build** — an imported book's `books/<slug>/images/` folder
+  is copied into the Typst build root, so `#image("/images/…")` compiles at any
+  depth; the Scrivener importer reads RTF through `rtf-parser-tt` 0.6.
 
-Read the full notes: [`Documentation/RELEASE_NOTES/3.16.0.md`](Documentation/RELEASE_NOTES/3.16.0.md).
-One thing to know before upgrading is listed there under *Upgrade notes*: the
-world store upgrades itself in place, one way. Compiles warning-free.
+Read the full notes: [`Documentation/RELEASE_NOTES/3.17.0.md`](Documentation/RELEASE_NOTES/3.17.0.md).
+Four behaviour changes are listed there under *Upgrade notes* (words that no
+longer pass the check, syllable counts, translation confidence, the
+translation-memory sidecar name); existing projects open unchanged.
 
 **Stable baseline · 3.0.0.** 3.0.0 remains the stable, maintained edition — the
 intelligence suite that watches, reads, and remembers itself (SEMNET → GRAPHMIND →
@@ -194,6 +198,14 @@ hardened surface. Every release's notes live under
   climate, rivers, settlements, realms, cultures, trade. It *proposes* Places,
   rulers, languages and myths in your book's language and you accept what
   crosses over; the compile runs in the background.
+- **The constructed-language suite** (`inkhaven language`, `inkhaven
+  linguistic`) — each language is a book: a Phonology block (inventory,
+  classes, templates, constraints, allophony, stress, tone), a Grammar block of
+  morphemes and paradigms, a Dictionary bucketed by the declared alphabet. From
+  them: word generation, syllabification and stress, a rule-based translator
+  that reads a paragraph sentence by sentence (and a reverse), a dictionary and
+  grammar book rendered to PDF with a glyph font you draw, and `language doctor`
+  reporting every finding with its location.
 - **The companions** — a triad that observes craft without rewriting your prose:
   the **World fact-checker** (`Ctrl+B W`, checks scenes against your worldbuilding
   + timeline), **Inner Socrates** (`Ctrl+B J`, Socratic questions about content
@@ -246,6 +258,9 @@ hardened surface. Every release's notes live under
   `commit` / `ground` / `reground` / `compact` / `harvest` / `accept` / `discard`
   — the Canon Ledger from the shell (read = the ledger checked against the
   manuscript; impact = the blast radius of a cut).
+- `language init` / `add-word` / `import` / `export` / `doctor` / `gaps` /
+  `generate-word` / `syllabify` / `compose` — the constructed-language suite
+  from the shell (`doctor` lists a language's block findings).
 - `import-epub` / `import-scrivener` — bring an existing manuscript in.
 - `backup` / `restore` — see above.
 - `ai "prompt"` — one-shot inference from the shell (no TUI).
