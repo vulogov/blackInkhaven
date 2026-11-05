@@ -546,7 +546,7 @@ pub(crate) fn corpus(
 }
 
 /// 1.3.23 LANG-3 P3 — export the translation system as a portable `.itm` bundle.
-pub(crate) fn export_translation(project: &Path, language: &str, out: Option<&str>) -> Result<()> {
+pub(crate) fn export_translation(project: &Path, language: &str, out: Option<&Path>) -> Result<()> {
     use crate::conlang::translate::{export, memory::TranslationMemory};
     let (store, hierarchy, lang_book) = open_lang_book(project, language)?;
     let entries = load_dictionary(&store, &hierarchy, &lang_book)?;
@@ -571,7 +571,7 @@ pub(crate) fn export_translation(project: &Path, language: &str, out: Option<&st
         .map_err(|e| Error::Store(format!("building translation bundle: {e}")))?;
 
     let out_path = match out {
-        Some(p) => std::path::PathBuf::from(p),
+        Some(p) => p.to_path_buf(),
         None => std::path::PathBuf::from(format!("{}-translation.itm", language.to_lowercase())),
     };
     crate::io_atomic::write(&out_path, &bytes)

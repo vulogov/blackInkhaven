@@ -49,7 +49,28 @@ pub(crate) fn font_build(
         }
     };
 
-    emit_font(&resolved_family, resolved_upm, &sources, skipped, out, want_ufo, want_ttf)
+    // LI-6: without `--output` the font lands in the project's `exports/`
+    // folder (per language when built from the book) instead of the shell's
+    // current directory, and the path is printed.
+    if sources.is_empty() {
+        return Err(Error::Config("no usable glyphs to compile".into()));
+    }
+    let default_out;
+    let out = match out {
+        Some(p) => p,
+        None => {
+            let mut dir = project.join("exports");
+            if let Some(lang) = language {
+                dir.push(lang_slug(lang));
+            }
+            dir.push("fonts");
+            std::fs::create_dir_all(&dir)
+                .map_err(|e| Error::Config(format!("creating {}: {e}", dir.display())))?;
+            default_out = dir.join(&resolved_family);
+            &default_out
+        }
+    };
+    emit_font(&resolved_family, resolved_upm, &sources, skipped, Some(out), want_ufo, want_ttf)
 }
 
 /// Build glyph sources from a directory of `.svg` files (filename stem → glyph
@@ -171,8 +192,8 @@ pub(crate) fn emit_font(
     }
     let font = crate::conlang::writing::font::build_ufo(family, upm, sources).map_err(Error::Config)?;
 
-    // `--out` sets the stem; the extension follows the format. When both are
-    // requested, the UFO and TTF share that stem.
+    // `--output` sets the stem; the extension follows the format. When both
+    // are requested, the UFO and TTF share that stem.
     let stem = out
         .map(|p| p.with_extension(""))
         .unwrap_or_else(|| std::path::PathBuf::from(family));

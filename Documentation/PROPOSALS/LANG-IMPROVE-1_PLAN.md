@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Track** | LANG-IMPROVE-1 |
-| **Status** | LI-1 … LI-5 landed on 3.18.0-dev; LI-6 … LI-10 proposed |
+| **Status** | LI-1 … LI-6 landed on 3.18.0-dev; LI-7 … LI-10 proposed |
 | **Created** | 2026-11-05 |
 | **Author** | Vladimir Ulogov |
 | **Target version** | 3.18.0 |
@@ -448,6 +448,28 @@ for new commands.
 
 **Test.** clap `debug_assert` test over `LanguageCommand`: every variant with a
 path-valued output argument names it `output` with short `o`; aliases parse.
+
+**Status: landed (3.18.0-dev).** Twelve `language` commands take
+`-o, --output <PATH>` (`PathBuf`): `export` (already `-o/--output`, now also
+`--out`), `sketch`, `scaffold`, `dictionary`, `grammar-book`, `tutorial`,
+`ecology` (`--svg` kept as a hidden alias beside `--out`), `font-build`,
+`font-compose`, `spatial-typst`, `glyph-draft`, `export-translation`. The three
+`String`-typed handlers (`sketch`, `scaffold_from`, `export_translation`) take
+`Option<&Path>`. `font-build` without `--output` writes
+`<project>/exports/<lang>/fonts/<family>.<ext>` (`exports/fonts/` when built
+from `--glyphs`) and prints the path — `exports/` is the folder the project
+already uses for generated files (the world builder), so no new `artefacts`
+convention was introduced. `--svg` on `glyph-lint` and `font-import-glyph`
+is an *input* and is unchanged. `Documentation/CLI.md` is new (the
+convention, linked from the README); `CONLANG.md` and tutorial 74 use the
+new spelling. Tests in `cli::language_output_flag_tests`: a clap
+`debug_assert` over the `language` subtree (the whole tree cannot be
+asserted: `ai -p/--provider` collides with the global `-p/--project`, a
+pre-existing defect outside this track, left for its own fix) plus
+introspection over every `language` subcommand (no
+argument named `out`; every `output` has `-o`, the hidden `out` alias and no
+visible alias; the set of commands carrying one is pinned), and a parse test
+that `--output`, `--out`, `-o` and `ecology --svg` all land in the same field.
 
 ### LI-7 · `--count 0` blames the constraints
 

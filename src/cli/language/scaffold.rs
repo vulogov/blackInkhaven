@@ -18,12 +18,12 @@ syllable templates that fit the described character. Keep it coherent and typolo
 
 /// LING-1 L-P4 — `inkhaven language scaffold --from "<description>"`: AI-propose a
 /// starter phoneme inventory (as pasteable Phonology-chapter HJSON) from a short
-/// description. Preview-only: it prints (or writes with `--out`) a validated
+/// description. Preview-only: it prints (or writes with `--output`) a validated
 /// block; it never touches an existing language.
 pub(crate) fn scaffold_from(
     project: &Path,
     description: &str,
-    out: Option<&str>,
+    out: Option<&Path>,
     provider: Option<&str>,
 ) -> Result<()> {
     let layout = ProjectLayout::new(project);
@@ -49,11 +49,12 @@ pub(crate) fn scaffold_from(
     let block = crate::language_entry::extract_hjson_block(&raw).unwrap_or(raw.trim()).trim();
     match out {
         Some(path) => {
-            crate::io_atomic::write(Path::new(path), format!("{block}\n").as_bytes())
-                .map_err(|e| Error::Config(format!("write {path}: {e}")))?;
+            crate::io_atomic::write(path, format!("{block}\n").as_bytes())
+                .map_err(|e| Error::Config(format!("write {}: {e}", path.display())))?;
             eprintln!(
-                "wrote a {}-phoneme starter inventory to {path}",
-                phon.phonemes.len()
+                "wrote a {}-phoneme starter inventory to {}",
+                phon.phonemes.len(),
+                path.display()
             );
         }
         None => {

@@ -197,12 +197,12 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::Distribution { language, json } => {
             distribution(project, &language, json)
         }
-        LanguageCommand::Sketch { language, out } => sketch(project, &language, out.as_deref()),
+        LanguageCommand::Sketch { language, output } => sketch(project, &language, output.as_deref()),
         LanguageCommand::SuggestPhonemes { language, json } => {
             suggest_phonemes(project, &language, json)
         }
-        LanguageCommand::Scaffold { from, out, provider } => {
-            scaffold_from(project, &from, out.as_deref(), provider.as_deref())
+        LanguageCommand::Scaffold { from, output, provider } => {
+            scaffold_from(project, &from, output.as_deref(), provider.as_deref())
         }
         LanguageCommand::Parse { language, word, json } => {
             parse_surface(project, &language, &word, json)
@@ -257,14 +257,14 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::Trace { language, rule, limit, json } => {
             trace(project, &language, &rule, limit, json)
         }
-        LanguageCommand::Dictionary { language, format, out, font } => {
-            dictionary(project, &language, &format, out.as_deref(), font.as_deref())
+        LanguageCommand::Dictionary { language, format, output, font } => {
+            dictionary(project, &language, &format, output.as_deref(), font.as_deref())
         }
-        LanguageCommand::GrammarBook { language, format, out, font, study, provider } => {
-            grammar_book(project, &language, &format, out.as_deref(), font.as_deref(), study, provider.as_deref())
+        LanguageCommand::GrammarBook { language, format, output, font, study, provider } => {
+            grammar_book(project, &language, &format, output.as_deref(), font.as_deref(), study, provider.as_deref())
         }
-        LanguageCommand::Tutorial { language, format, out, font, provider } => {
-            tutorial(project, &language, &format, out.as_deref(), font.as_deref(), provider.as_deref())
+        LanguageCommand::Tutorial { language, format, output, font, provider } => {
+            tutorial(project, &language, &format, output.as_deref(), font.as_deref(), provider.as_deref())
         }
         LanguageCommand::LinkPlace {
             place,
@@ -285,7 +285,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             native_variety.as_deref(),
         ),
         LanguageCommand::Speakers { language } => speakers(project, &language),
-        LanguageCommand::Ecology { svg } => ecology(project, svg.as_deref()),
+        LanguageCommand::Ecology { output } => ecology(project, output.as_deref()),
         LanguageCommand::Idiolect {
             character,
             word,
@@ -353,8 +353,8 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
         LanguageCommand::Eval { language, test_set, limit, json } => {
             eval(project, &language, test_set.as_deref(), limit, json)
         }
-        LanguageCommand::ExportTranslation { language, out } => {
-            export_translation(project, &language, out.as_deref())
+        LanguageCommand::ExportTranslation { language, output } => {
+            export_translation(project, &language, output.as_deref())
         }
         LanguageCommand::Relative {
             language,
@@ -526,7 +526,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             family,
             language,
             glyphs,
-            out,
+            output,
             upm,
             format,
         } => font_build(
@@ -534,7 +534,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             family.as_deref(),
             language.as_deref(),
             glyphs.as_deref(),
-            out.as_deref(),
+            output.as_deref(),
             upm,
             &format,
         ),
@@ -563,7 +563,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             codepoint,
             phoneme,
             slots,
-            out,
+            output,
             yes,
         } => font_compose(
             project,
@@ -573,7 +573,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             codepoint.as_deref(),
             phoneme.as_deref(),
             &slots,
-            out.as_deref(),
+            output.as_deref(),
             yes,
         ),
         LanguageCommand::SpatialTypst {
@@ -582,8 +582,8 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             name,
             slots,
             size,
-            out,
-        } => spatial_typst(project, &language, &template, &name, &slots, &size, out.as_deref()),
+            output,
+        } => spatial_typst(project, &language, &template, &name, &slots, &size, output.as_deref()),
         LanguageCommand::Transliterate { language, text, json } => {
             transliterate(project, &language, &text, json)
         }
@@ -594,7 +594,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             codepoint,
             name,
             provider,
-            out,
+            output,
             yes,
         } => glyph_draft(
             project,
@@ -604,7 +604,7 @@ pub fn run(project: &Path, cmd: LanguageCommand) -> Result<()> {
             codepoint.as_deref(),
             name.as_deref(),
             provider.as_deref(),
-            out.as_deref(),
+            output.as_deref(),
             yes,
         ),
         LanguageCommand::GlyphLint { svg } => glyph_lint(&svg),

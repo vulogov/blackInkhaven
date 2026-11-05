@@ -3886,7 +3886,7 @@ pub enum LanguageCommand {
         /// omitted (json + anki only — typst always
         /// needs a path because the renderer doesn't
         /// stream).
-        #[arg(long, short = 'o')]
+        #[arg(long, short = 'o', alias = "out", value_name = "PATH")]
         output: Option<PathBuf>,
     },
 
@@ -4110,13 +4110,13 @@ pub enum LanguageCommand {
 
     /// 1.7 LING-1 L-P4 — a one-page grammar sketch: a deterministic prose
     /// overview of the language, assembling the phonology, typology and lexicon
-    /// analyses. Instant and always current (no AI). `--out` writes to a file.
+    /// analyses. Instant and always current (no AI). `--output` writes to a file.
     Sketch {
         /// Target language name (case-insensitive).
         language: String,
         /// Write the sketch to this file (default: stdout).
-        #[arg(long, value_name = "PATH")]
-        out: Option<String>,
+        #[arg(long, short = 'o', alias = "out", value_name = "PATH")]
+        output: Option<PathBuf>,
     },
 
     /// 1.7 LING-1 Wave-2 — recommend phonemes that would round out the inventory
@@ -4134,7 +4134,7 @@ pub enum LanguageCommand {
 
     /// 1.7 LING-1 L-P4 — scaffold a starter phoneme inventory from a short
     /// description (AI), as pasteable Phonology-chapter HJSON. Preview-only: it
-    /// prints (or `--out` writes) a validated block; it never touches an
+    /// prints (or `--output` writes) a validated block; it never touches an
     /// existing language.
     Scaffold {
         /// A short description of the language's desired sound (e.g. "a flowing,
@@ -4142,8 +4142,8 @@ pub enum LanguageCommand {
         #[arg(long, value_name = "DESCRIPTION")]
         from: String,
         /// Write the proposal to this file (default: stdout).
-        #[arg(long, value_name = "PATH")]
-        out: Option<String>,
+        #[arg(long, short = 'o', alias = "out", value_name = "PATH")]
+        output: Option<PathBuf>,
         /// Override the LLM provider for this call.
         #[arg(long)]
         provider: Option<String>,
@@ -4349,8 +4349,8 @@ pub enum LanguageCommand {
         #[arg(long, default_value = "md")]
         format: String,
         /// Write the document here (otherwise it prints to stdout).
-        #[arg(long)]
-        out: Option<std::path::PathBuf>,
+        #[arg(long, short = 'o', alias = "out", value_name = "PATH")]
+        output: Option<PathBuf>,
         /// Conscript font family for the Typst path (defaults to the `font`
         /// block's family).
         #[arg(long)]
@@ -4370,8 +4370,8 @@ pub enum LanguageCommand {
         #[arg(long, default_value = "md")]
         format: String,
         /// Write the document here (otherwise it prints to stdout).
-        #[arg(long)]
-        out: Option<std::path::PathBuf>,
+        #[arg(long, short = 'o', alias = "out", value_name = "PATH")]
+        output: Option<PathBuf>,
         /// Conscript font family for the Typst path (defaults to the `font`
         /// block's family).
         #[arg(long)]
@@ -4398,8 +4398,8 @@ pub enum LanguageCommand {
         #[arg(long, default_value = "md")]
         format: String,
         /// Write the document here (otherwise it prints to stdout).
-        #[arg(long)]
-        out: Option<std::path::PathBuf>,
+        #[arg(long, short = 'o', alias = "out", value_name = "PATH")]
+        output: Option<PathBuf>,
         /// Conscript font family for the Typst path (defaults to the `font`
         /// block's family).
         #[arg(long)]
@@ -4452,11 +4452,11 @@ pub enum LanguageCommand {
     /// 1.3.22 LANG-2 P4 — the language **ecology**: who speaks what (and which
     /// variety) where.  Lists every place with its language + variety, every
     /// character with their commanded languages + native variety, and the
-    /// contact areas.  With `--svg <path>` writes a node-link **atlas**.
+    /// contact areas.  With `--output <path>` writes a node-link **atlas** as SVG.
     Ecology {
         /// Write the atlas as an SVG file at this path (instead of the text report).
-        #[arg(long)]
-        svg: Option<std::path::PathBuf>,
+        #[arg(long, short = 'o', alias = "svg", alias = "out", value_name = "PATH")]
+        output: Option<PathBuf>,
     },
 
     /// 1.3.22 LANG-2 P4 — render a form / text in a **character's idiolect** —
@@ -4488,9 +4488,11 @@ pub enum LanguageCommand {
         /// Directory of glyph `.svg` files (alternative to `--language`).
         #[arg(long)]
         glyphs: Option<std::path::PathBuf>,
-        /// Output path (extension set by `--format`; defaults to `<family>.<ext>`).
-        #[arg(long)]
-        out: Option<std::path::PathBuf>,
+        /// Output path (extension set by `--format`). Default:
+        /// `<project>/exports/<lang>/fonts/<family>.<ext>` (or
+        /// `exports/fonts/` when building from `--glyphs`).
+        #[arg(long, short = 'o', alias = "out", value_name = "PATH")]
+        output: Option<PathBuf>,
         /// Units per em (the design grid; overrides the config value).
         #[arg(long)]
         upm: Option<f64>,
@@ -4563,8 +4565,8 @@ pub enum LanguageCommand {
         #[arg(long = "slot", value_name = "SLOT=GLYPH")]
         slots: Vec<String>,
         /// Write the composed SVG here (otherwise it prints to stdout).
-        #[arg(long)]
-        out: Option<std::path::PathBuf>,
+        #[arg(long, short = 'o', alias = "out", value_name = "PATH")]
+        output: Option<PathBuf>,
         /// Bind the composed block into the language's `font` block.
         #[arg(long)]
         yes: bool,
@@ -4605,8 +4607,8 @@ pub enum LanguageCommand {
         #[arg(long, default_value = "2em")]
         size: String,
         /// Write the Typst snippet here (otherwise it prints to stdout).
-        #[arg(long)]
-        out: Option<std::path::PathBuf>,
+        #[arg(long, short = 'o', alias = "out", value_name = "PATH")]
+        output: Option<PathBuf>,
     },
 
     /// LANG-1 P5.5 — AI text-to-SVG glyph draft: describe a glyph and the model
@@ -4632,8 +4634,8 @@ pub enum LanguageCommand {
         #[arg(long)]
         provider: Option<String>,
         /// Write the drafted SVG here (otherwise it prints to stdout).
-        #[arg(long)]
-        out: Option<std::path::PathBuf>,
+        #[arg(long, short = 'o', alias = "out", value_name = "PATH")]
+        output: Option<PathBuf>,
         /// Bind the drafted glyph into the language's `font` block.
         #[arg(long)]
         yes: bool,
@@ -5351,8 +5353,8 @@ pub enum LanguageCommand {
         /// Target language name (case-insensitive).
         language: String,
         /// Output path (defaults to `<lang>-translation.itm`).
-        #[arg(long)]
-        out: Option<String>,
+        #[arg(long, short = 'o', alias = "out", value_name = "PATH")]
+        output: Option<PathBuf>,
     },
 
     Lect {
@@ -7511,5 +7513,102 @@ mod prompt_resolve_tests {
         assert_eq!(strip_typst_heading("Just a prompt.\n"), "Just a prompt.");
         // only the FIRST heading is dropped
         assert_eq!(strip_typst_heading("= Title\nbody = x"), "body = x");
+    }
+}
+
+#[cfg(test)]
+mod language_output_flag_tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    /// `Cli::command()` builds a tree of several hundred subcommands and clap's
+    /// `debug_assert` walks it recursively; the default 2 MiB test-thread
+    /// stack overflows (SIGABRT), so run on a thread with room.
+    fn with_big_stack(f: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(256 * 1024 * 1024)
+            .spawn(f)
+            .expect("spawn")
+            .join()
+            .expect("test body panicked");
+    }
+
+    /// 3.18 LI-6: every `language` subcommand that writes a user-named file
+    /// takes `-o, --output <PATH>`; `--out` (and `--svg` on `ecology`) stay as
+    /// hidden aliases. The inventory is pinned so a new command cannot
+    /// quietly reintroduce `--out`.
+    #[test]
+    fn every_language_output_path_is_o_output_with_hidden_aliases() {
+        with_big_stack(every_language_output_path_is_o_output_with_hidden_aliases_body);
+    }
+
+    fn every_language_output_path_is_o_output_with_hidden_aliases_body() {
+        // Only the `language` subtree is asserted (and `build()` is not called,
+        // since it asserts the whole tree): the top-level `ai -p/--provider`
+        // collides with the global `-p/--project`, a pre-existing defect
+        // outside LANG-IMPROVE-1.
+        let cli = Cli::command();
+        let language = cli.find_subcommand("language").expect("language subcommand").clone();
+        language.clone().debug_assert();
+        let mut with_output = Vec::new();
+        for sub in language.get_subcommands() {
+            for arg in sub.get_arguments() {
+                let id = arg.get_id().as_str();
+                assert_ne!(id, "out", "`language {}` still names its output `out`", sub.get_name());
+                if id == "output" {
+                    assert_eq!(arg.get_short(), Some('o'), "`language {} --output` has no -o", sub.get_name());
+                    assert_eq!(arg.get_long(), Some("output"));
+                    let aliases: Vec<&str> = arg.get_all_aliases().unwrap_or_default();
+                    assert!(aliases.contains(&"out"), "`language {} --output` lacks the `--out` alias", sub.get_name());
+                    assert!(
+                        arg.get_visible_aliases().unwrap_or_default().is_empty(),
+                        "`language {} --output` aliases must stay hidden",
+                        sub.get_name()
+                    );
+                    with_output.push(sub.get_name().to_string());
+                }
+            }
+        }
+        with_output.sort();
+        assert_eq!(
+            with_output,
+            [
+                "dictionary", "ecology", "export", "export-translation", "font-build", "font-compose",
+                "glyph-draft", "grammar-book", "scaffold", "sketch", "spatial-typst", "tutorial",
+            ]
+        );
+    }
+
+    #[test]
+    fn output_aliases_parse_to_the_same_field() {
+        with_big_stack(output_aliases_parse_to_the_same_field_body);
+    }
+
+    fn output_aliases_parse_to_the_same_field_body() {
+        let parse = |args: &[&str]| Cli::try_parse_from(args).expect("parses");
+        for form in [["--output", "s.md"], ["--out", "s.md"], ["-o", "s.md"]] {
+            let cli = parse(&["inkhaven", "language", "sketch", "Avesha", form[0], form[1]]);
+            match cli.command {
+                Some(Command::Language(LanguageCommand::Sketch { output, .. })) => {
+                    assert_eq!(output.as_deref(), Some(std::path::Path::new("s.md")), "{form:?}");
+                }
+                other => panic!("unexpected parse: {other:?}"),
+            }
+        }
+        for form in [["--output", "a.svg"], ["--svg", "a.svg"], ["-o", "a.svg"]] {
+            let cli = parse(&["inkhaven", "language", "ecology", form[0], form[1]]);
+            match cli.command {
+                Some(Command::Language(LanguageCommand::Ecology { output })) => {
+                    assert_eq!(output.as_deref(), Some(std::path::Path::new("a.svg")), "{form:?}");
+                }
+                other => panic!("unexpected parse: {other:?}"),
+            }
+        }
+        // `export` keeps its original spelling and gains the alias.
+        let cli = parse(&["inkhaven", "language", "export", "Avesha", "--out", "d.json"]);
+        assert!(matches!(
+            cli.command,
+            Some(Command::Language(LanguageCommand::Export { output: Some(ref p), .. })) if p == std::path::Path::new("d.json")
+        ));
     }
 }

@@ -515,10 +515,16 @@ covers *sun*). Point `--scope` at an HJSON file for a topic of your own:
 
 The missing list is shaped to hand straight to `generate-lexicon --topic …`.
 
+**Output paths.** Every `language` command that writes a file the user names
+takes `-o, --output <PATH>` (3.18). The older `--out` spelling, and `--svg` on
+`ecology`, still parse as hidden aliases. `font-build` without `--output`
+writes under `<project>/exports/<lang>/fonts/` and prints the path. See
+[`CLI.md`](CLI.md) for the convention.
+
 ## Dictionary output
 
 ```
-inkhaven language dictionary Avesha --format md|typ [--out dict.typ] [--font Eldar]
+inkhaven language dictionary Avesha --format md|typ [-o dict.typ] [--font Eldar]
 ```
 
 Renders the dictionary as a real document. **Markdown** (`md`) is a clean,
@@ -531,7 +537,7 @@ language has a `font` block) each headword appears in the **native script**
 --font-path <dir> dict.typ` to get a PDF that embeds and renders the conscript.
 
 ```
-inkhaven language grammar-book Avesha --format md|typ [--out g.typ] [--font Eldar] \
+inkhaven language grammar-book Avesha --format md|typ [-o g.typ] [--font Eldar] \
     [--study --provider …]
 ```
 
@@ -554,7 +560,7 @@ itself stays deterministic; only the study guide is AI-authored (needs a
 provider).
 
 ```
-inkhaven language tutorial Avesha --format md|typ [--out learn.typ] [--font Eldar] [--provider …]
+inkhaven language tutorial Avesha --format md|typ [-o learn.typ] [--font Eldar] [--provider …]
 ```
 
 An **AI-written learner's textbook** — a complete graded course the model
@@ -575,7 +581,7 @@ and [Tutorial 74](Tutorials/74-conlang-end-to-end.md).
 
 ## Interchange (export)
 
-`inkhaven language export <lang> --format <fmt> [--out F]` writes the lexicon to
+`inkhaven language export <lang> --format <fmt> [-o F]` writes the lexicon to
 a portable artefact:
 
 ```
@@ -586,7 +592,7 @@ inkhaven language export Avesha --format ipa-chart
 
 - `json` — full structured dump (dictionary, grammar, phonology, samples).
 - `anki` / `csv` — flashcard / round-trippable CSV (the `--import` path re-ingests `csv`).
-- `dictionary-twocol` / `grammar` / `phrasebook` — printable Typst (need `--out`).
+- `dictionary-twocol` / `grammar` / `phrasebook` — printable Typst (need `--output`).
 - **`xliff`** — XLIFF 1.2 translation memory: each entry is a `trans-unit`
   (working-language *source* → invented-word *target*), loadable into CAT tools
   (OmegaT, memoQ, Weblate). The source language code follows the project working
@@ -675,12 +681,12 @@ Glyph artwork lives in the project glyph store
 ```
 inkhaven language glyph-lint --svg ./a.svg                 # suitability preflight
 inkhaven language glyph-draft Eldar --describe "a vertical stroke \
-    with a hook" --phoneme p [--out p.svg] [--yes]         # AI text-to-SVG draft
+    with a hook" --phoneme p [-o p.svg] [--yes]            # AI text-to-SVG draft
 inkhaven language font-import-glyph Eldar --svg ./a.svg \
     --phoneme a [--codepoint U+E000] [--name a]            # bind + store + record
 inkhaven language font-config Eldar [--json]               # show the bindings
 inkhaven language font-build --language Eldar \
-    [--format ufo|ttf|both] [--out Eldar] [--upm 1000]     # compile from the book
+    [--format ufo|ttf|both] [-o Eldar] [--upm 1000]        # compile from the book
 ```
 
 - **`glyph-lint`** reports whether an SVG is fit for a font outline (filled
@@ -690,7 +696,7 @@ inkhaven language font-build --language Eldar \
   won't honour (cut counters with a reverse-wound subpath instead).
 - **`glyph-draft`** asks the AI to draft an SVG glyph from a description, runs it
   through the same preflight, and previews the result. Advisory: it prints the
-  SVG (or writes `--out`) and the verdict; only `--yes` (and only a *usable*
+  SVG (or writes `--output`) and the verdict; only `--yes` (and only a *usable*
   draft) binds it into the `font` block — the same path as `font-import-glyph`.
 - **`font-import-glyph`** preflights the SVG (refusing unusable artwork), copies
   it into the glyph store, and binds it — to a `--phoneme` and a Unicode
@@ -723,7 +729,7 @@ glyph drops into each cell and the whole is baked into one precomposed glyph.
 inkhaven language font-templates Eldar                     # list templates
 inkhaven language font-compose Eldar --template lr \
     --name ka --codepoint U+AC00 --phoneme ka \
-    --slot left=lead --slot right=vowel [--out ka.svg] [--yes]
+    --slot left=lead --slot right=vowel [-o ka.svg] [--yes]
 ```
 
 Built-in templates: `lr` (left/right), `tb` (top/bottom), `quad` (2×2),
@@ -740,7 +746,7 @@ every quadrat into the font is impractical:
 
 ```
 inkhaven language spatial-typst Glyphic --template tb \
-    --name quadrat_sunbar --slot top=sun --slot bottom=bar [--size 2em] [--out q.typ]
+    --name quadrat_sunbar --slot top=sun --slot bottom=bar [--size 2em] [-o q.typ]
 ```
 
 This emits a Typst `#let <name> = box(...)[ … ]` that `place`s each component
@@ -906,7 +912,7 @@ exports as one small, portable file you can publish alongside a book:
 
 ```
 inkhaven language export-translation Eldar              # → eldar-translation.itm
-inkhaven language export-translation Eldar --out qya.itm
+inkhaven language export-translation Eldar -o qya.itm
 ```
 
 The `.itm` bundle is a zip of the **translation memory** (`memory.tsv` — the
