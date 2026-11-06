@@ -27,36 +27,34 @@ one HJSON line away.
 
 ![Inkhaven screenshot](screen.png)
 
-## Latest release · 3.17.0 — Every Door Agrees · Pictures in the Build
+## Latest release · 3.18.0 — Quieter, Faster, One Surface
 
-3.17.0 is a correctness release for the **constructed-language suite**, from
-working one language end to end: eleven defects fixed under one track
-(`LANG-BUGFIX-1`). One small dependency (`unicode-normalization`), no new store,
-warning-free in everything touched:
+3.18.0 is a consolidation release for the **constructed-language suite**: ten
+items under one track (`LANG-IMPROVE-1`) take the cost out of every language
+command, deliver two results the engine used to withhold, and make the
+hundred-odd `inkhaven language` subcommands one surface. No new store, no new
+dependency, warning-free in everything touched:
 
-- **A bad phonology block reports, not locks** — an unknown constraint kind, an
-  undeclared class, a rule that can never match are **findings with a
-  location**, printed by the CLI and listed by `language doctor` under
-  **Blocks**; the generator, inspectors and translator keep working.
-- **One headword check at every door** — `add-word`, the CSV pre-flight,
-  `language import` and the TUI `+` chord run the same check (shape, then
-  spelling against the Phonology inventory or the alphabet), so a word one door
-  accepts the others accept, and an exported dictionary round-trips. One key per
-  word: `Pata`, `pata` and a decomposed `pãta` are one entry; homographs are
-  admitted as `pata (2)`.
-- **The translator reads the whole paragraph** — sentence by sentence, an
-  unplaceable clause kept as `«…»`, the confidence the *minimum* over clauses
-  instead of a mean that hid a dropped sentence.
-- **Syllables are hiatus by default** — `aia` is `a.i.a` unless you declare
-  `diphthongs: ["ai"]`; stress, scansion and the generator follow.
-- **Pictures in the build** — an imported book's `books/<slug>/images/` folder
-  is copied into the Typst build root, so `#image("/images/…")` compiles at any
-  depth; the Scrivener importer reads RTF through `rtf-parser-tt` 0.6.
+- **Quieter and faster** — one policy summary line instead of 91 `WARN`s, no
+  Bund VM for a project without scripts; one batched, cached `LanguageModel`
+  per language (30× `ink.lang.translate`: 1110 ms → 425 ms); dictionary import
+  as one batch with one index flush (256 rows: 38.8 s → 16.9 s).
+- **Multi-segment rules fire** — `a i > e / _ #`, `t > t s / _ i` in allophony,
+  sandhi, diachronics, ablaut and variety sound changes; `language doctor`
+  warns when a joined token is ambiguous.
+- **The alphabet orders the dictionary** — buckets, entries, the dictionary
+  book and every export follow `Meta/overview.alphabet`; `language
+  sort-dictionary` repairs an older tree.
+- **One surface** — `-o/--output` on every file-writing command (`--out`,
+  `--svg` kept as hidden aliases), `--count` validated by clap, one wording
+  for the family's messages, `--json` on seventeen more commands with shapes
+  that match the Bund words, and a generated **Command index** in `CONLANG.md`
+  guarded by a docs drift test.
 
-Read the full notes: [`Documentation/RELEASE_NOTES/3.17.0.md`](Documentation/RELEASE_NOTES/3.17.0.md).
-Four behaviour changes are listed there under *Upgrade notes* (words that no
-longer pass the check, syllable counts, translation confidence, the
-translation-memory sidecar name); existing projects open unchanged.
+Read the full notes: [`Documentation/RELEASE_NOTES/3.18.0.md`](Documentation/RELEASE_NOTES/3.18.0.md).
+Five behaviour changes are listed there under *Upgrade notes* (joined-target
+rules now apply, dictionary order, `ink.lang.list` rows, confirmations on
+stderr, the `font-build` default location); existing projects open unchanged.
 
 **Stable baseline · 3.0.0.** 3.0.0 remains the stable, maintained edition — the
 intelligence suite that watches, reads, and remembers itself (SEMNET → GRAPHMIND →
